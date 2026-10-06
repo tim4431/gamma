@@ -1,8 +1,10 @@
 """The Admin page's Servers tab (docs/dev/hosted.md "Admin"): a summary
-strip, the hosts with their capacity and orphan containers, the hosted
-servers with their actions, a log viewer and a server's own limits, the
-extra environment (every server's, or one server's), the default image
-tag with automatic upgrades and upgrade runs in waves, and the job queue.
+strip, the hosts with their capacity, public IP and orphan containers,
+the hosted servers with their actions and DNS state, a log viewer, a server's history and its own
+limits, the extra environment (every server's, or one server's), the
+default image tag with automatic upgrades and upgrade runs in waves, and
+the job queue. Hosts and servers carry the last 48 hours of a few series
+(``trend``), drawn as sparklines in their cells.
 ``pages.admin_page`` includes ``ADMIN_TAB`` and appends
 ``ADMIN_JS``, which defines ``loadServers()``, the tab's entry; it uses the
 admin script's ``api``, ``esc``, ``bind``, ``say``, ``act``, ``ask`` and
@@ -13,7 +15,7 @@ the tab is in view, and not at all otherwise. Clicks and selects are
 delegated to the tab through ``data-f`` attributes, which the other tabs'
 ``wire()`` never selects. The ``<style>`` block below holds only what the
 portal's stylesheet has no class for: the capacity meters, the log
-viewer and the notes under a form."""
+viewer, the sparklines and history charts, and the notes under a form."""
 
 import json
 
@@ -34,6 +36,9 @@ STYLE = """<style>
 #tab-servers .section>.body+.body{border-top:1px solid var(--line)}
 #tab-servers #flognote{margin:0}#tab-servers .fnote{margin:10px 0 0;color:var(--muted);font-size:12.5px;line-height:1.5}
 #tab-servers .flog{margin:0;max-height:440px;overflow:auto;background:var(--surface-2);border:1px solid var(--line);border-radius:6px;padding:10px 12px;font:12px/1.5 var(--mono);color:var(--text);white-space:pre-wrap;word-break:break-all}
+#tab-servers .fspark{display:inline-block;width:60px;height:16px;margin-left:6px;vertical-align:-3px}#tab-servers .sub.fnw{white-space:nowrap}
+#tab-servers .fcharts{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:16px}#tab-servers .fcharts b{font-weight:500}
+#tab-servers .fchart{display:block;width:100%;height:60px;margin-top:6px}
 </style>"""
 
 ADMIN_TAB = (
@@ -45,7 +50,11 @@ ADMIN_TAB = (
     "<th>Servers</th><th>Placement</th></tr></thead><tbody id=fhosts></tbody></table></div>"
     "<div class=body><form id=fhost class=inline autocomplete=off><label>Name<input name=name required placeholder='vps-1'></label>"
     "<label>Address<input name=address placeholder='optional, for your notes'></label>"
+    "<label>Public IP<input name=public_ip placeholder='blank: behind this Caddy' spellcheck=false></label>"
     "<button type=submit class='btn btn--primary btn--sm'>Add host</button><div class=msg></div></form>"
+    "<p class=fnote>A host with a public IP runs a Caddy of its own, and each server on it gets a DNS record of "
+    "its own at Cloudflare, so it takes servers only while the Cloudflare token is set. Leave it blank for the "
+    "host that runs beside the account server's Caddy.</p>"
     "<div id=fhosttoken hidden class=secretbox></div></div></div>"
     # hosted servers
     "<div class=section><h2>Hosted servers <span id=fsrvhead>one per account on a hosted plan</span></h2>"
@@ -61,6 +70,12 @@ ADMIN_TAB = (
     "<button type=button class='btn btn--sm' data-f=logagain>Fetch again</button>"
     "<button type=button class='btn btn--sm' data-f=logclose>Close</button></div>"
     "<div class=notice id=flognote hidden></div><pre class=flog id=flogtext hidden></pre></div></div>"
+    # a server's history, opened by its History
+    "<div class=section id=fhist hidden><h2>History <span id=fhistwho></span></h2><div class=body>"
+    "<div class=toolbar><select id=fhistdays class=sm aria-label='Period'><option value=168>7 days</option>"
+    "<option value=720>30 days</option></select><span class=empty id=fhiststate></span><span class=spacer></span>"
+    "<button type=button class='btn btn--sm' data-f=histclose>Close</button></div>"
+    "<div class=fcharts id=fhistcharts></div></div></div>"
     # a server's own limits, opened by its Limits…
     "<div class=section id=flim hidden><h2>Limits <span id=flimwho></span></h2><div class=body>"
     "<form id=flimform class=inline autocomplete=off>"
@@ -80,15 +95,13 @@ ADMIN_TAB = (
     "<div class='body tbl'><table><thead><tr><th>Variable</th><th>For</th><th></th></tr></thead>"
     "<tbody id=fenvlist></tbody></table></div>"
     "<div class=body><form id=fenvform class=inline autocomplete=off>"
-    "<label>Name<input name=name required placeholder='GAMMA_…' spellcheck=false></label>"
+    "<label>Name<input name=name required placeholder='SMTP_HOST' spellcheck=false></label>"
     "<label>Value<input name=value spellcheck=false></label>"
     "<button type=submit class='btn btn--sm'>Save</button><div class=msg></div></form>"
     "<p class=fnote id=fenvnote></p></div>"
     "<div class=body id=fenvall><form id=fenvrun class=inline autocomplete=off>"
     "<label>Wave size<input name=wave_size type=number value=1 min=1 max=100></label>"
-    "<button type=submit class='btn btn--sm'>Apply to every server</button><div class=msg></div></form></div>"
-    "<div class=body id=fenvone hidden><div class=toolbar><span class=spacer></span>"
-    "<button type=button class='btn btn--sm' data-f=envfleet>Every server's</button></div></div></div>"
+    "<button type=submit class='btn btn--sm'>Apply to every server</button><div class=msg></div></form></div></div>"
     # the default image tag, and upgrade runs
     "<div class=section><h2>Upgrade <span>what new servers run, and moving the running ones, a wave at a time</span></h2>"
     "<div class=body><form id=fdef class=inline autocomplete=off><label>Default image tag<input name=tag "
@@ -146,6 +159,23 @@ function meter(total, a, b, title){
   return '<span class="cap' + (pa + pb >= 90 ? ' hot' : '') + '" title="' + esc(title) + '"><b style="width:' + pa.toFixed(1) + '%"></b>'
     + (pb > 0 ? '<i style="width:' + pb.toFixed(1) + '%"></i>' : '') + '</span>';
 }
+// The hourly samples (metrics.py) of key as a line in a w by h box over the times t0 to t1: the values in the accent,
+// from 0 (the baseline, muted) to their highest; title is its tooltip. '' when there is no sample.
+function line(points, key, t0, t1, w, h, cls, title){
+  const p = (points || []).filter(x => x[key] != null && Date.parse(x.at) >= t0);
+  if (!p.length) return '';
+  const top = Math.max(...p.map(x => x[key])) || 1;
+  const xy = x => ((Date.parse(x.at) - t0) / (t1 - t0) * w).toFixed(1) + ',' + (h - 1 - x[key] / top * (h - 2)).toFixed(1);
+  return '<svg class=' + cls + ' viewBox="0 0 ' + w + ' ' + h + '" preserveAspectRatio=none><title>' + esc(title) + '</title>'
+    + '<line x1=0 y1=' + (h - 0.5) + ' x2=' + w + ' y2=' + (h - 0.5) + ' stroke="var(--muted)" vector-effect=non-scaling-stroke />'
+    + '<polyline points="' + p.map(xy).join(' ') + '" fill=none stroke="var(--accent)" stroke-width=1.5 vector-effect=non-scaling-stroke /></svg>';
+}
+// a host's or server's sparkline: the last 48 hours of key from its trend
+function spark(row, key, fmt, what){
+  const t1 = Date.now(), last = (row.trend || []).filter(x => x[key] != null).pop();
+  return last ? line(row.trend, key, t1 - 48 * 3600e3, t1, 60, 16, 'fspark', what + ' over 48 hours, now ' + fmt(last[key])) : '';
+}
+const pct = v => v + ' %';
 function tagOf(image){ image = String(image || ''); const i = image.lastIndexOf(':'); return i > image.lastIndexOf('/') ? image.slice(i + 1) : image; }
 const tagRun = s => s.image_tag || tagOf(s.image);
 function outdated(s){ return s.state !== 'deleted' && !!s.outdated; }
@@ -167,21 +197,31 @@ function memory(h){
   const com = Number(h.committed_mb) || 0, res = Number(h.reserve_mb) || 0, free = Number(h.free_mb) || 0;
   return size(com) + ' / ' + size(total) + ' committed'
     + meter(total, com, res, size(com) + ' committed to servers, ' + size(res) + ' kept for the host, ' + size(free) + ' free for new servers')
-    + '<span class=sub>' + (free > 0 ? size(free) + ' free' : 'full') + ' · ' + size(res) + ' reserve · ' + size(used) + ' in use</span>';
+    + '<span class=sub>' + (free > 0 ? size(free) + ' free' : 'full') + ' · ' + size(res) + ' reserve · ' + size(used) + ' in use'
+    + spark(h, 'memory_used_mb', size, 'memory in use') + '</span>';
 }
 function disk(h){
   const total = Number(h.disk_mb) || 0, used = Number(h.disk_used_mb) || 0;
   if (!total) return '<span class=empty>no heartbeat yet</span>';
-  return size(used) + ' / ' + size(total) + meter(total, used, 0, size(used) + ' of ' + size(total) + ' used') + '<span class=sub>' + size(total - used) + ' free</span>';
+  return size(used) + ' / ' + size(total) + spark(h, 'disk_used_mb', size, 'disk used') + meter(total, used, 0, size(used) + ' of ' + size(total) + ' used')
+    + '<span class=sub>' + size(total - used) + ' free</span>';
+}
+// a routed host (its own Caddy and a DNS record per server): its address, and whether placement may use it
+function route(h){
+  if (!h.public_ip) return '';
+  const pill = h.dns === 'on' ? '<span class="pill pill--ok" title="its own Caddy; each server on it gets a DNS record of its own">dns on</span>'
+    : '<span class="pill pill--warn" title="GAMMA_CLOUD_CF_API_TOKEN and _ZONE_ID are not set: placement skips this host">no dns token: closed</span>';
+  return '<span class=sub><span class=mono>' + esc(h.public_ip) + '</span> ' + pill + '</span>';
 }
 function hostRow(h){
   const orphans = h.orphans || [], id = esc(h.id);
   return '<tr' + (orphans.length ? ' class=fgrp' : '') + '><td><b>' + esc(h.name) + '</b>' + (h.agent_version ? ' <span class=empty>agent ' + esc(h.agent_version) + '</span>' : '')
-      + '<span class="sub mono">' + id + '</span>' + (h.address ? '<span class=sub>' + esc(h.address) + '</span>' : '') + '</td>'
+      + '<span class="sub mono">' + id + '</span>' + (h.address ? '<span class=sub>' + esc(h.address) + '</span>' : '') + route(h) + '</td>'
     + '<td>' + ago(h.last_seen_at) + (h.stale ? ' <span class="pill pill--warn">stale</span>' : '') + '</td>'
     + '<td class=nw>' + memory(h) + '</td><td class=nw>' + disk(h) + '</td><td>' + (Number(h.servers) || 0) + '</td>'
     + '<td>' + (h.accepting ? '<span class="pill pill--ok">open</span>' : '<span class=pill>closed</span>')
-    + ' <button type=button class="btn btn--sm" data-f=accept data-id="' + id + '" data-on=' + (h.accepting ? 0 : 1) + '>' + (h.accepting ? 'Close' : 'Open') + '</button></td></tr>'
+    + ' <button type=button class="btn btn--sm" data-f=accept data-id="' + id + '" data-on=' + (h.accepting ? 0 : 1) + '>' + (h.accepting ? 'Close' : 'Open') + '</button>'
+    + ' <button type=button class="btn btn--sm" data-f=hostip data-id="' + id + '" data-label="' + esc(h.name) + '" data-ip="' + esc(h.public_ip || '') + '">Public IP…</button></td></tr>'
     + (orphans.length ? '<tr><td colspan=6><span class="pill pill--warn">' + plural(orphans.length, 'orphan', 'orphans') + '</span> '
       + '<span class=empty>containers on ' + esc(h.name) + ' that no server names:</span> '
       + orphans.map(l => '<span class=forph><span class=mono>' + esc(l) + '</span><button type=button class="btn btn--sm" data-f=orphan data-id="' + id
@@ -205,8 +245,10 @@ function stateCell(s){
     const word = !ag.running ? 'down' : ag.health === 'unhealthy' ? 'unhealthy' : 'up';
     out += ' <span class="pill ' + (word === 'up' ? 'pill--ok' : 'pill--warn') + '" title="' + esc('container ' + (ag.health || 'running') + (ag.memory_mb ? ', ' + size(ag.memory_mb) + ' memory' : '') + (ag.started_at ? ', started ' + ag.started_at : '')) + '">' + word + '</span>';
     if (ag.oom_killed) out += ' <span class="pill pill--warn" title="Docker killed its process for using all its memory">out of memory</span>';
-    const use = [ag.cpu_pct != null ? 'CPU ' + ag.cpu_pct + ' %' : '', Number(ag.restarts) ? plural(Number(ag.restarts), 'restart', 'restarts') : ''].filter(Boolean);
-    if (use.length) out += '<span class=sub title="from the agent\'s last report">' + use.join(' · ') + '</span>';
+    const use = [ag.memory_mb ? size(ag.memory_mb) + ' memory' + spark(s, 'memory_mb', size, 'memory') : '',
+      ag.cpu_pct != null ? 'CPU ' + ag.cpu_pct + ' %' + spark(s, 'cpu_pct', pct, 'CPU') : '',
+      Number(ag.restarts) ? plural(Number(ag.restarts), 'restart', 'restarts') : ''].filter(Boolean);
+    out += use.map(u => '<span class="sub fnw" title="from the agent\'s last report">' + u + '</span>').join('');
   }
   if (r.note) out += '<span class=sub>' + esc(r.note) + '</span>';
   const busy = (Number(jobs.queued) || 0) + (Number(jobs.running) || 0), failed = Number(jobs.failed) || 0;
@@ -232,7 +274,7 @@ function dataCell(s){
   if (used == null) return '<span class=empty>no report</span>';
   const disk = r.data_bytes != null ? r.data_bytes / 1048576 : ag.data_mb;
   return size(used) + (quota ? ' / ' + size(quota) + meter(quota, used, 0, size(used) + ' of the ' + size(quota) + ' quota') : '')
-    + (disk != null ? '<span class=sub>' + size(disk) + ' on disk</span>' : '')
+    + (disk != null ? '<span class=sub>' + size(disk) + ' on disk' + spark(s, 'data_mb', size, 'data on disk') + '</span>' : '')
     + (r.accounts != null ? '<span class=sub>' + plural(Number(r.accounts) || 0, 'account', 'accounts')
       + (r.active_accounts != null ? ', ' + (Number(r.active_accounts) || 0) + ' active this week' : '') + '</span>' : '');
 }
@@ -248,17 +290,26 @@ function actionsCell(s){
   if (s.state === 'deleted') return '';
   const placed = !!s.host_id, o = [];
   if (placed) o.push(['restart', 'Restart'], ['stop', 'Stop…'], ['start', 'Start'], ['logs', 'Logs']);
-  o.push(['limits', 'Limits…'], ['env', 'Environment…']);
+  o.push(['history', 'History'], ['limits', 'Limits…'], ['env', 'Environment…']);
   o.push(s.state === 'suspended' ? ['resume', 'Resume'] : ['suspend', 'Suspend…']);
   if (placed) o.push(['upgrade', 'Upgrade to…'], ['rollback', 'Roll back…']);
   o.push(['delete', 'Delete…']);
   return '<select class=sm data-f=srv data-id="' + esc(s.id) + '" data-label="' + esc(s.label) + '" aria-label="Actions"><option value="">Actions…</option>'
     + o.map(([v, t]) => '<option value=' + v + '>' + t + '</option>').join('') + '</select>';
 }
+// a server on a routed host: ok once its DNS record points at the host, else pending (the last error on hover)
+function dnsPill(s){
+  if (!s.dns) return '';
+  const err = (s.report || {}).dns || {}, at = err.at ? new Date(err.at) : null;
+  const title = s.dns === 'ok' ? 'its DNS record points at ' + s.host_ip
+    : err.error ? 'the last try' + (at && !isNaN(at) ? ', ' + at.toLocaleString() + ',' : '') + ' failed: ' + err.error
+    : 'no record for ' + s.host_ip + ' yet';
+  return ' <span class="pill ' + (s.dns === 'ok' ? 'pill--ok' : 'pill--warn') + '" title="' + esc(title) + '">dns ' + esc(s.dns) + '</span>';
+}
 function serverRow(s){
   const gone = s.state === 'deleted';
   const name = s.url && !gone ? '<a href="' + esc(s.url) + '" target=_blank rel=noopener><b>' + esc(s.label) + '</b></a>' : '<b>' + esc(s.label) + '</b>';
-  return '<tr' + (gone ? ' class=fgone' : '') + '><td>' + name + '<span class="sub mono">' + esc(s.id) + '</span>' + (s.host ? '<span class=sub>on ' + esc(s.host) + '</span>' : '') + '</td>'
+  return '<tr' + (gone ? ' class=fgone' : '') + '><td>' + name + '<span class="sub mono">' + esc(s.id) + '</span>' + (s.host ? '<span class=sub>on ' + esc(s.host) + dnsPill(s) + '</span>' : '') + '</td>'
     + '<td>' + esc(s.username || '(deleted account)') + '<span class="sub mono">' + esc(s.account_id) + '</span></td>'
     + '<td class=nw>' + planCell(s) + '</td><td>' + stateCell(s) + '</td><td>' + versionCell(s) + '</td><td class=nw>' + dataCell(s) + '</td>'
     + '<td class=nw>' + reportCell(s) + '</td><td>' + actionsCell(s) + '</td></tr>';
@@ -377,6 +428,33 @@ async function pollLog(jobId, n){
 }
 function closeLog(){ clearTimeout(logTimer); logJob = ''; logFor = null; $('flogs').hidden = true; }
 
+// --- a server's history (Actions → History): its hourly samples of the last 7 or 30 days, one line each ---
+const HISTORY = [['memory_mb', 'Memory', size], ['cpu_pct', 'CPU', pct], ['data_mb', 'Data on disk', size],
+  ['accounts', 'Accounts', String], ['active_accounts', 'Active this week', String], ['errors', 'Server errors', String],
+  ['restarts', 'Restarts', String]];
+let histFor = null;
+async function showHistory(){
+  const who = histFor, hours = Number($('fhistdays').value);
+  if (!who) return;
+  $('fhiststate').textContent = 'Loading…';
+  let d;
+  try { d = await api('/api/admin/metrics?kind=server&ref=' + encodeURIComponent(who.id) + '&hours=' + hours, undefined, 'GET'); }
+  catch (e) { if (who === histFor) $('fhiststate').textContent = 'Could not load the history: ' + e.message; return; }
+  if (who !== histFor) return;
+  const p = d.points || [], t1 = Date.now(), t0 = t1 - hours * 3600e3;
+  $('fhiststate').textContent = plural(p.length, 'hour', 'hours') + ' with a report';
+  $('fhistcharts').innerHTML = HISTORY.map(([k, name, fmt]) => {
+    const v = p.map(x => x[k]).filter(x => x != null), last = v[v.length - 1];
+    return '<div><b>' + name + '</b><span class=sub>' + (v.length ? 'min ' + fmt(Math.min(...v)) + ' · max ' + fmt(Math.max(...v)) + ' · last ' + fmt(last)
+      : 'no samples') + '</span>' + line(p, k, t0, t1, 300, 60, 'fchart', name + ', last ' + (v.length ? fmt(last) : 'unknown')) + '</div>';
+  }).join('');
+}
+function openHistory(id, label){
+  histFor = {id, label}; $('fhistwho').textContent = label; $('fhistcharts').innerHTML = '';
+  $('fhist').hidden = false; $('fhist').scrollIntoView({block: 'nearest'}); showHistory();
+}
+$('fhistdays').onchange = () => showHistory();
+
 // --- a server's own limits (Actions → Limits…): an empty field is the plan's number ---
 function showLimits(s){
   const f = $('flimform').elements, own = s.overrides || {}, plan = s.plan_limits || {};
@@ -403,8 +481,9 @@ function showEnv(){
   if (s) rows = rows.concat(fleetEnv.map(n => '<tr><td class=mono>' + esc(n) + '</td><td class=empty>every server'
     + (own.includes(n) ? '; this server\'s own wins' : '') + '</td><td></td></tr>'));
   $('fenvlist').innerHTML = rows.join('') || '<tr><td colspan=3 class=empty>No variables: a container gets only what the fleet sets itself.</td></tr>';
-  $('fenvwho').textContent = s ? s.label + ': its own, over every server\'s' : 'extra variables for every hosted container';
-  $('fenvall').hidden = !!s; $('fenvone').hidden = !s;
+  $('fenvwho').innerHTML = s ? esc(s.label) + '\'s own, over every server\'s · <button type=button class=linkbtn data-f=envfleet>back to every server\'s</button>'
+    : 'extra variables for every hosted container';
+  $('fenvall').hidden = !!s;
   $('fenvnote').textContent = (s ? 'Saving applies it to ' + s.label + ' now when its container runs: an update job rebuilds it on its image.'
     : 'Saving changes nothing that runs: a new server gets the variables, and Apply rebuilds the running containers on their images with them, a wave at a time.')
     + ' A value is never shown again; to change one, save it anew.';
@@ -436,6 +515,7 @@ const ASK = {
   delete: l => 'Delete ' + l + ' now? Its container, data and off-site copies are removed. This cannot be undone.'};
 async function serverAction(id, label, v){
   if (v === 'logs') return openLogs(id, label);
+  if (v === 'history') return openHistory(id, label);
   if (v === 'limits') return openLimits(id);
   if (v === 'env') return openEnv(id);
   if (ASK[v] && !await ask(ASK[v](label), {ok: v.charAt(0).toUpperCase() + v.slice(1), danger: true})) return;
@@ -455,6 +535,12 @@ TAB.addEventListener('click', async (ev) => {
   const id = b.dataset.id, label = b.dataset.label, go = (fn) => act(b, async () => { await fn(); await refresh(); });
   switch (b.dataset.f) {
     case 'accept': go(() => api('/api/admin/hosts/' + encodeURIComponent(id), {accepting: b.dataset.on === '1'}, 'PATCH')); break;
+    case 'hostip': {
+      const ip = await ask('The public IP of ' + label + '? With one, the host runs its own Caddy and each server on it gets a DNS record; '
+        + 'blank puts it behind the account server\'s Caddy.', {input: b.dataset.ip || '', blank: true, ok: 'Save'});
+      if (ip !== null) go(() => api('/api/admin/hosts/' + encodeURIComponent(id), {public_ip: ip}, 'PATCH'));
+      break;
+    }
     case 'orphan': if (await ask('Remove the container ' + label + '? No server row names it; the agent removes the container and its data directory.', {ok: 'Remove', danger: true}))
       go(() => api('/api/admin/hosts/' + encodeURIComponent(id) + '/orphans/' + encodeURIComponent(label) + '/remove', {})); break;
     case 'upgrade': if (await ask('Upgrade ' + label + ' to ' + defTag + '? Its container restarts on the new image; the old one stays until the new one is healthy.', {ok: 'Upgrade'}))
@@ -464,6 +550,7 @@ TAB.addEventListener('click', async (ev) => {
     case 'deleted': showDeleted = !showDeleted; refresh(); break;
     case 'logagain': if (logFor) openLogs(logFor.id, logFor.label); break;
     case 'logclose': closeLog(); break;
+    case 'histclose': histFor = null; $('fhist').hidden = true; break;
     case 'limplan': {
       const msg = $('flimform').querySelector('.msg');
       if (limFor && await ask('Give this server its plan\'s limits again?', {ok: 'Back to the plan\'s'}))
@@ -495,9 +582,11 @@ TAB.addEventListener('click', async (ev) => {
 
 // --- the forms ---
 bind('fhost', async (d, msg) => {
-  const r = await api('/api/admin/hosts', {name: d.name, address: d.address}), box = $('fhosttoken');
+  const r = await api('/api/admin/hosts', {name: d.name, address: d.address, public_ip: d.public_ip}), box = $('fhosttoken');
   box.hidden = false;
-  box.textContent = 'GAMMA_FLEET_HOST_TOKEN=' + r.token + '\n\nShown once. It goes into the agent\'s .env on ' + r.host.name + ' (cloud/fleet/deploy/README.md), then docker compose up -d.';
+  box.textContent = 'GAMMA_FLEET_HOST_TOKEN=' + r.token + '\n\nShown once. On a fresh host, as root, this installs the agent with it'
+    + (r.host.public_ip ? ' and the host\'s own Caddy' : '') + ':\n\n' + r.bootstrap
+    + '\n\nOn a host that runs the agent already, the token goes into its .env (cloud/fleet/deploy/README.md), then docker compose up -d.';
   say(msg, 'Host ' + r.host.name + ' added.'); $('fhost').reset(); refresh();
 });
 // the username search fills the account id (the id can also be pasted)

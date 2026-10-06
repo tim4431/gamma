@@ -35,6 +35,11 @@ are not: an admin edits them on the Admin page and they live in cloud.db
   where every account may sign in and a Lite or Plus library lives.
   Defaults to the share host's address. Empty with no share host = no
   shared server, and no Lite or Plus checkout.
+- ``GAMMA_CLOUD_CF_API_TOKEN`` + ``GAMMA_CLOUD_CF_ZONE_ID`` — a Cloudflare API
+  token with DNS edit rights on the hosting domain's zone, and that zone's
+  id (``dns.py``). With both set (and hosting on), a hosted server placed
+  on a host with a public address of its own gets a DNS record of its own.
+  Without them such a host takes no servers.
 """
 
 import os
@@ -142,6 +147,10 @@ HOSTED_DOMAIN = os.environ.get("GAMMA_CLOUD_HOSTED_DOMAIN", "").strip().lower().
 HOSTED_SUFFIX = os.environ.get("GAMMA_CLOUD_HOSTED_SUFFIX", "-user").strip().lower()
 FLEET_IMAGE = os.environ.get("GAMMA_CLOUD_FLEET_IMAGE", "").strip() or "ghcr.io/tim4431/gamma"
 FLEET_IMAGE_TAG = os.environ.get("GAMMA_CLOUD_FLEET_IMAGE_TAG", "").strip() or "latest"
+# Cloudflare DNS (``dns.py``): a server on a host with its own public address
+# gets a proxied record <label><HOSTED_SUFFIX>.<HOSTED_DOMAIN> -> that address.
+CF_API_TOKEN = os.environ.get("GAMMA_CLOUD_CF_API_TOKEN", "").strip()
+CF_ZONE_ID = os.environ.get("GAMMA_CLOUD_CF_ZONE_ID", "").strip()
 
 # Stripe (``billing.py``). Billing is off while the secret is empty. The
 # price ids map a Stripe Price to the plan and the interval it buys.
@@ -243,6 +252,9 @@ def admin_view(schema_version: int) -> list[dict]:
             _value("Fleet image", "GAMMA_CLOUD_FLEET_IMAGE", FLEET_IMAGE),
             _value("Image tag", "GAMMA_CLOUD_FLEET_IMAGE_TAG", FLEET_IMAGE_TAG,
                    "used while the Admin page stores none"),
+            _switch("DNS records", "GAMMA_CLOUD_CF_API_TOKEN + _ZONE_ID", bool(CF_API_TOKEN and CF_ZONE_ID),
+                    "needs both the token and the zone id" if bool(CF_API_TOKEN) != bool(CF_ZONE_ID)
+                    else "" if CF_API_TOKEN else "a host with a public IP takes no servers"),
         ]},
         {"name": "Sign-in", "items": [
             _switch("Google", "GAMMA_CLOUD_GOOGLE_CLIENT_ID + _SECRET", google,

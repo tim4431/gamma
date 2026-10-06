@@ -634,6 +634,38 @@ def test_automatic_upgrades_stop_at_a_failure(client, hosting):
     assert len(kinds("upgrade")) == 2 and server_by_id(sid)["image_tag"] == "sha-new"   # nothing outdated
 
 
+def test_an_automatic_upgrade_for_a_moved_image_waits_a_day(client, hosting):
+    """A server outdated only by the agent's staleness report is rebuilt by
+    the automatic pass once a day at most, so a report that stayed wrong
+    after a pull cannot restart it every hour; the admin's own Upgrade all
+    outdated is not held back."""
+    register(client, "operator")
+    make_admin("operator")
+    _, token = make_host()
+    [sid, other, third] = _three_running(client, token)
+    image = f"{config.FLEET_IMAGE}:{config.FLEET_IMAGE_TAG}"
+    stale = {"memory_mb": 8192, "disk_mb": 500_000, "containers": [
+        {"label": "alice", "running": True, "image": image, "image_stale": True},
+        {"label": "bob", "running": True}, {"label": "carol", "running": True}]}
+    client.post("/api/fleet/heartbeat", json=stale, headers=bearer(token))
+    set_setting("fleet_auto_upgrade", "on")
+    tick()
+    assert [k[:2] for k in kinds("upgrade")] == [(sid, "queued")]
+    job = _claim(client, token, "upgrade")
+    finish(client, token, job["id"], result={"image": image})
+    client.post("/api/fleet/heartbeat", json=stale, headers=bearer(token))      # the agent still says stale
+    tick()
+    assert len(kinds("upgrade")) == 1                                            # not again today
+    r = client.post("/api/admin/servers/upgrade", json={"outdated": True})       # the admin may, at once
+    assert r.status_code == 200 and r.json()["jobs"] == 1
+    with closing(db.connect()) as conn:
+        fleet.cancel(conn, next(j["id"] for j in fleet.jobs(conn, "queued", 10)), "test")
+        conn.execute("UPDATE fleet_jobs SET finished_at = ? WHERE id = ?", (db.after(-2 * 86400), job["id"]))
+        conn.commit()
+    tick()                                                                       # a day later: taken again
+    assert [k[:2] for k in kinds("upgrade")][-1] == (sid, "queued")
+
+
 # --- the extra environment and update jobs ---------------------------------------
 
 def test_the_environment_is_read_when_the_agent_takes_the_job(client, hosting):
@@ -705,6 +737,10 @@ def test_an_update_job_applies_a_running_servers_variables(client, hosting):
     r = client.patch(f"/api/admin/servers/{sid}", json={"overrides": {"max_accounts": 5}, "env": {"set": {"B": "2"}}})
     assert r.status_code == 200 and r.json()["server"]["overrides"] == {"max_accounts": 5}
     assert r.json()["server"]["env_names"] == ["B", "TOKEN"]
+    # deleting the server cancels the update that waits, blanked like a create
+    [waiting] = client.get("/api/admin/jobs", params={"state": "queued"}).json()["jobs"]
+    assert waiting["kind"] == "update" and client.post(f"/api/admin/servers/{sid}/delete").status_code == 200
+    assert (job_row(waiting["id"])["state"], job_row(waiting["id"])["payload"]) == ("canceled", "{}")
 
 
 def test_the_fleets_variables_and_an_update_run(client, hosting):

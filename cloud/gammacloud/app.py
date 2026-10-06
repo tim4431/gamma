@@ -11,7 +11,7 @@ from urllib.parse import urlsplit
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
-from . import accounts, billing, config, db, hosted, identities, oidc, sessions, settings
+from . import accounts, alerts, billing, config, db, hosted, identities, oidc, sessions, settings
 from .accounts import Problem
 from .log import log
 from .routers import accounts as accounts_router
@@ -39,8 +39,9 @@ def purge() -> None:
         accounts.purge_deleted(conn, config.PURGE_DELETED_DAYS)
         conn.commit()
     with closing(db.connect()) as conn:
-        hosted.tick(conn)
+        due = hosted.tick(conn)
         conn.commit()
+    alerts.notify(due)
     with closing(db.connect()) as conn:
         billing.tick(conn)
         conn.commit()

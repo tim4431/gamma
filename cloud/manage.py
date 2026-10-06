@@ -23,7 +23,8 @@
   python manage.py subscriptions [--status S]     the Stripe subscription copies
   python manage.py billing-sync                   reconcile them with Stripe now
   python manage.py hosts                          the fleet's hosts
-  python manage.py add-host <name> [--address A]  a new host; prints its agent token once
+  python manage.py add-host <name> [--address A] [--public-ip IP]
+                                                  a new host; prints its agent token once
   python manage.py servers                        the hosted servers
   python manage.py provision <username>           host an account on a hosted plan by hand
   python manage.py jobs [--state S]               the fleet's job queue, newest first
@@ -302,17 +303,20 @@ def cmd_hosts(args):
               f"{'stale' if h['stale'] else 'fresh':<5} mem={h['memory_used_mb']}/{h['memory_mb']}MB "
               f"committed={h['committed_mb']}MB free={h['free_mb']}MB disk={h['disk_used_mb']}/{h['disk_mb']}MB "
               f"servers={h['servers']} seen={h['last_seen_at'] or 'never'}"
+              + (f" ip={h['public_ip']} dns={h['dns']}" if h["public_ip"] else "")
               + (f" orphans={','.join(h['orphans'])}" if h["orphans"] else ""))
 
 
 def cmd_add_host(args):
     with closing(db.connect()) as conn:
         try:
-            host, token = fleet.add_host(conn, args.name, args.address or "", actor="cli")
+            host, token = fleet.add_host(conn, args.name, args.address or "", actor="cli",
+                                         public_ip=args.public_ip or "")
         except Problem as e:
             sys.exit(e.detail)
         conn.commit()
-    print(f"host {host['name']} ({host['id']})\nGAMMA_FLEET_HOST_TOKEN={token}\n(the token is shown once)")
+    print(f"host {host['name']} ({host['id']})\nGAMMA_FLEET_HOST_TOKEN={token}\n(the token is shown once)\n"
+          f"on a fresh host, as root:\n{fleet.bootstrap_command(token, bool(host['public_ip']))}")
 
 
 def cmd_servers(args):
@@ -351,7 +355,9 @@ def cmd_jobs(args):
 
 def _fleet_commands(sub):
     sub.add_parser("hosts").set_defaults(fn=cmd_hosts)
-    ah = sub.add_parser("add-host"); ah.add_argument("name"); ah.add_argument("--address"); ah.set_defaults(fn=cmd_add_host)
+    ah = sub.add_parser("add-host"); ah.add_argument("name"); ah.add_argument("--address")
+    ah.add_argument("--public-ip", help="the host's own address: it runs its own Caddy and its servers get DNS records")
+    ah.set_defaults(fn=cmd_add_host)
     sub.add_parser("servers").set_defaults(fn=cmd_servers)
     pv = sub.add_parser("provision"); pv.add_argument("username"); pv.set_defaults(fn=cmd_provision)
     jb = sub.add_parser("jobs"); jb.add_argument("--state", default=""); jb.set_defaults(fn=cmd_jobs)

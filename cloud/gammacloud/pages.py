@@ -17,7 +17,7 @@ import re
 from datetime import datetime, timezone
 from urllib.parse import urlsplit
 
-from . import accounts, config, entrance, pages_billing, pages_fleet, settings
+from . import accounts, config, entrance, pages_billing, pages_fleet, pages_overview, settings
 from .providers import NAMES
 
 SITE = "https://gammapdf.com"
@@ -812,6 +812,22 @@ def _plans_section() -> str:
     return _admin_section("Plans", "which paid plans can be bought", on_sale)
 
 
+def _alerts_section() -> str:
+    """Whether the operator is mailed about problems, and where to
+    (``alerts.py``), with *Send test alert*."""
+    row = srow(
+        "Mail", "One mail lists each new problem once it has lasted: a failed job, a server down, stuck or waiting for "
+        "a host, a host silent or nearly full, a missing DNS record, a Stripe event that matched no account, open "
+        "sign-up without the anti-bot check. Blank sends to every admin's confirmed address; the test goes to the "
+        "saved one.",
+        "<form id=setalerts><div class=fields><label>Alerts<select name=alerts><option value=on>on</option>"
+        "<option value=off>off</option></select></label><label>Send to<input name=alert_email type=email "
+        "placeholder='blank = every admin' autocomplete=off></label></div><div class=formfoot>"
+        "<button type=submit class='btn btn--sm'>Save</button><button type=button class='btn btn--sm' id=testalert>"
+        "Send test alert</button><div class=msg></div></div></form>")
+    return _admin_section("Alerts", "what the operator is mailed about, and where", row)
+
+
 def _config_section() -> str:
     """What the environment fixes (``config.admin_view``), filled in by the
     script, and *Send test mail*."""
@@ -823,11 +839,11 @@ def _config_section() -> str:
 
 
 def _settings_tab() -> str:
-    """The Settings tab, one section after another: the sign-up gate and the
-    plans on sale (``settings.py``), then the configuration. The forms are
-    filled in by the script from ``/api/admin/settings`` like the other
-    tabs, and refilled from each save's answer."""
-    sections = [_signup_section(), _plans_section(), _config_section()]
+    """The Settings tab, one section after another: the sign-up gate, the
+    plans on sale and the alerts (``settings.py``), then the configuration.
+    The forms are filled in by the script from ``/api/admin/settings`` like
+    the other tabs, and refilled from each save's answer."""
+    sections = [_signup_section(), _plans_section(), _alerts_section(), _config_section()]
     return ("<div id=tab-settings hidden>"
             "<div class=notice id=unguarded hidden><span>Registration is open and the anti-bot check is off, so only "
             "the rate limits stop a script. Its accounts stay unverified and cannot sign in to a Gamma server.</span></div>"
@@ -837,11 +853,13 @@ def _settings_tab() -> str:
 def admin_page(account: dict) -> str:
     plans = "".join(f"<option value={p}>{p}</option>" for p in config.PLANS)
     inner = (
-        "<div class=tabs><button class=on data-tab=accounts>Accounts</button><button data-tab=invites>Invites</button>"
+        "<div class=tabs><button class=on data-tab=overview>Overview</button><button data-tab=accounts>Accounts</button>"
+        "<button data-tab=invites>Invites</button>"
         "<button data-tab=clients>Clients</button><button data-tab=servers>Servers</button>"
         "<button data-tab=billing>Billing</button><button data-tab=settings>Settings</button>"
         "<button data-tab=audit>Audit log</button></div>"
-        "<div id=tab-accounts><div class=toolbar><input id=q placeholder='Search username, e-mail or id' autocomplete=off><span class=spacer></span><span class=empty id=count></span></div>"
+        + pages_overview.ADMIN_TAB
+        + "<div id=tab-accounts hidden><div class=toolbar><input id=q placeholder='Search username, e-mail or id' autocomplete=off><span class=spacer></span><span class=empty id=count></span></div>"
         "<div class=section><div class='body tbl'><table><thead><tr><th>Username</th><th>E-mail</th><th>Plan</th><th>Status</th><th>Created</th><th></th></tr></thead><tbody id=accounts></tbody></table></div></div>"
         "<div class=actions><button class='btn btn--sm' id=more>Load more</button></div></div>"
         "<div id=tab-invites hidden><div class=section><h2>New invite <span>leave the days empty for no end</span></h2><div class=body><form id=inv class=inline>"
@@ -866,8 +884,24 @@ def admin_page(account: dict) -> str:
               f"PURGE_DAYS = {config.PURGE_DELETED_DAYS};")
     script = consts + """
 let offset = 0, query = '';
-document.querySelectorAll('.tabs button').forEach(b => b.onclick = () => { document.querySelectorAll('.tabs button').forEach(x => x.classList.toggle('on', x === b));
-  for (const t of ['accounts','invites','clients','servers','billing','settings','audit']) document.getElementById('tab-' + t).hidden = t !== b.dataset.tab; if (b.dataset.tab !== 'accounts') load(b.dataset.tab); });
+// The tabs. The hash names the open one, so /admin#servers opens Servers: a click sets it (through the history, since a
+// scroll to the table whose id is the tab's name would follow), and the back button and a link to #name follow it.
+const TABS = ['overview','accounts','invites','clients','servers','billing','settings','audit'];
+let tabNow = '', accountsLoaded = false;
+function showTab(tab, again){
+  if (!TABS.includes(tab)) tab = 'overview';
+  if (tab === tabNow && !again) return;
+  tabNow = tab;
+  document.querySelectorAll('.tabs button').forEach(x => x.classList.toggle('on', x.dataset.tab === tab));
+  for (const t of TABS) document.getElementById('tab-' + t).hidden = t !== tab;
+  if (tab !== 'accounts') load(tab); else if (!accountsLoaded) { accountsLoaded = true; loadAccounts(true); }
+}
+document.querySelectorAll('.tabs button').forEach(b => b.onclick = () => {
+  if (location.hash !== '#' + b.dataset.tab) history.pushState(null, '', '#' + b.dataset.tab);
+  showTab(b.dataset.tab, true);
+});
+addEventListener('hashchange', () => showTab(location.hash.slice(1)));
+addEventListener('popstate', () => showTab(location.hash.slice(1)));
 // The plan the account is on, and where it comes from: paid (a subscription lifts it above the grant) or granted.
 // The select under it sets the grant only (accounts.set_plan): a courtesy plan, never the subscription; the pill beside it is the day the grant ends.
 function planSelect(a){
@@ -950,6 +984,7 @@ async function loadInvites(){
 }
 document.getElementById('invdone').onclick = () => { showDone = !showDone; loadInvites(); };
 async function load(tab){
+  if (tab === 'overview') await loadOverview();
   if (tab === 'invites') await loadInvites();
   if (tab === 'clients') { const d = await api('/api/admin/clients', undefined, 'GET'); document.getElementById('clients').innerHTML = d.clients.map(c => '<tr><td class=mono>' + esc(c.client_id) + '</td><td>' + esc(c.name) + '</td><td>' + esc(c.kind) + (c.owner_account_id ? '<br><span class=mono>' + esc(c.owner_account_id) + '</span>' : '') + '</td><td class=mono>' + esc(JSON.parse(c.redirect_uris).join(' ')) + '</td><td><button class="btn btn--sm" data-delcli="' + esc(c.client_id) + '">Delete</button></td></tr>').join('') || '<tr><td colspan=5 class=empty>No clients. Local Gammas need none.</td></tr>'; }
   if (tab === 'servers') await loadServers();
@@ -984,6 +1019,8 @@ function showSettings(s){
     document.querySelector('[data-planstate=' + p.plan + ']').innerHTML = !p.on_sale ? '<span class=pill>held back</span>'
       : p.sellable ? '<span class="pill pill--ok">on sale</span>' : '<span class="pill pill--warn">cannot be sold</span> <span class=empty>' + esc(p.reason) + '</span>';
   }
+  const al = document.getElementById('setalerts').elements;
+  al.alerts.value = s.alerts ? 'on' : 'off'; al.alert_email.value = s.alert_email;
 }
 const saveSettings = async (body, msg) => { showSettings(await api('/api/admin/settings', body, 'PATCH')); if (msg) say(msg, 'Saved.'); };
 bind('setreg', (d, msg) => saveSettings({registration: d.registration}, msg));
@@ -991,6 +1028,9 @@ bind('setts', (d, msg) => saveSettings({turnstile_sitekey: d.turnstile_sitekey, 
 bind('setdom', (d, msg) => saveSettings({blocked_email_domains: d.blocked_email_domains}, msg));
 bind('setallow', (d, msg) => saveSettings({allowed_email_domains: d.allowed_email_domains}, msg));
 bind('setplans', (d, msg) => saveSettings({plans_on_sale: [...document.querySelectorAll('#setplans [name=plan]:checked')].map(c => c.value).join(' ')}, msg));
+bind('setalerts', (d, msg) => saveSettings({alerts: d.alerts, alert_email: d.alert_email}, msg));
+const ta = document.getElementById('testalert'), taMsg = ta.parentNode.querySelector('.msg');
+ta.onclick = () => act(ta, async () => { const d = await api('/api/admin/alerts/test', {}); say(taMsg, d.detail); ta.disabled = false; }, taMsg);
 const cs = document.getElementById('clearsecret'), csMsg = cs.parentNode.querySelector('.msg');
 cs.onclick = async () => { if (!await ask('Clear the Turnstile secret? The anti-bot check stops running.', {ok: 'Clear', danger: true})) return;
   act(cs, async () => { await saveSettings({turnstile_secret: null}); cs.disabled = false; say(csMsg, 'Cleared.'); }, csMsg); };
@@ -1004,10 +1044,11 @@ function showConfig(c){
 }
 const tm = document.getElementById('testmail'), tmMsg = document.getElementById('testmailmsg');
 tm.onclick = () => act(tm, async () => { const d = await api('/api/admin/test-mail', {}); say(tmMsg, d.detail); tm.disabled = false; }, tmMsg);
-loadAccounts(true);
-""" + pages_fleet.ADMIN_JS + pages_billing.ADMIN_JS
-    return app("Admin", "Accounts, invites, the clients of hosted servers, the settings and the plans on sale, "
-               "the configuration, and what happened.", account, "admin", inner, script)
+""" + pages_fleet.ADMIN_JS + pages_billing.ADMIN_JS + pages_overview.ADMIN_JS + """
+showTab(location.hash.slice(1), true);   // after every tab's script, whose entry it may call
+"""
+    return app("Admin", "What needs attention, accounts, invites, the clients of hosted servers, the fleet, billing, "
+               "the settings and the plans on sale, the configuration, and what happened.", account, "admin", inner, script)
 
 
 # --- the authorize page -------------------------------------------------------

@@ -1,16 +1,17 @@
 """The admin API under ``/api/admin``: accounts, invites, OIDC clients,
 the server settings with the plans on sale, the environment's configuration
 (read-only) and a test mail, the audit log, the fleet's hosts, hosted servers and
-jobs. Only an account with ``is_admin`` (set
+jobs, the Overview with the operator's alerts, and the fleet's history. Only an
+account with ``is_admin`` (set
 with ``manage.py set-admin``) and only through a portal session — never a
 bearer token from a Gamma server."""
 
 from contextlib import closing
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel
 
-from .. import accounts, billing, config, db, fleet, hosted, mail, oidc, ratelimit, settings
+from .. import accounts, alerts, billing, config, db, fleet, hosted, mail, metrics, oidc, ratelimit, settings
 from ..accounts import Problem
 from .accounts import portal_account, send_mail, verify_message
 
@@ -382,11 +383,13 @@ def refresh_subscription(account_id: str, request: Request):
 class HostBody(BaseModel):
     name: str
     address: str = ""
+    public_ip: str = ""
 
 
 class HostPatch(BaseModel):
     name: str | None = None
     accepting: bool | None = None
+    public_ip: str | None = None
 
 
 class ProvisionBody(BaseModel):
@@ -413,24 +416,27 @@ class ApplyEnvBody(BaseModel):
 def list_hosts(request: Request):
     with closing(db.connect()) as conn:
         require_admin(conn, request)
-        return {"hosts": fleet.hosts(conn)}
+        return {"hosts": _trended(conn, "host", fleet.hosts(conn))}
 
 
 @router.post("/hosts")
 def add_host(body: HostBody, request: Request):
-    """A new host; its agent token is in this answer only."""
+    """A new host; its agent token is in this answer only, with the line
+    that installs the agent with it (and the host's own Caddy when it has a
+    public IP)."""
     with closing(db.connect()) as conn:
         admin = require_admin(conn, request)
-        host, token = fleet.add_host(conn, body.name, body.address, actor=admin["id"])
+        host, token = fleet.add_host(conn, body.name, body.address, actor=admin["id"], public_ip=body.public_ip)
         conn.commit()
-    return {"host": host, "token": token}
+    return {"host": host, "token": token, "bootstrap": fleet.bootstrap_command(token, bool(host["public_ip"]))}
 
 
 @router.patch("/hosts/{host_id}")
 def patch_host(host_id: str, body: HostPatch, request: Request):
     with closing(db.connect()) as conn:
         admin = require_admin(conn, request)
-        host = fleet.update_host(conn, host_id, name=body.name, accepting=body.accepting, actor=admin["id"])
+        host = fleet.update_host(conn, host_id, name=body.name, accepting=body.accepting, public_ip=body.public_ip,
+                                 actor=admin["id"])
         conn.commit()
     return {"host": host}
 
@@ -451,7 +457,7 @@ def remove_orphan(host_id: str, label: str, request: Request):
 def list_servers(request: Request):
     with closing(db.connect()) as conn:
         require_admin(conn, request)
-        return {"servers": hosted.servers(conn), "default_image": fleet.default_image(),
+        return {"servers": _trended(conn, "server", hosted.servers(conn)), "default_image": fleet.default_image(),
                 "auto_upgrade": settings.fleet_auto_upgrade()}
 
 
@@ -607,3 +613,114 @@ def job_action(job_id: str, action: str, request: Request):
         job = (fleet.retry if action == "retry" else fleet.cancel)(conn, job_id, admin["id"])
         conn.commit()
     return {"job": job}
+
+
+# --- the Overview, the alerts and the history (docs/dev/hosted.md) -------------
+# The Overview tab and the alert list bring the alerts up to date before they
+# read them, so a job retried a moment ago is no longer listed; any that fall
+# due then are mailed as the next heartbeat would have mailed them.
+
+TRENDS = {"host": ("memory_used_mb", "disk_used_mb"), "server": ("memory_mb", "cpu_pct", "data_mb")}
+TREND_HOURS = 48
+
+
+def _trended(conn, kind: str, rows: list[dict]) -> list[dict]:
+    """``rows`` (hosts or servers), each with ``trend``: its samples of the
+    last TREND_HOURS hours in the few series the Servers tab draws inline."""
+    trends = metrics.trends(conn, kind, TRENDS[kind], TREND_HOURS)
+    for row in rows:
+        row["trend"] = trends.get(row["id"], [])
+    return rows
+
+
+def _sync_alerts(conn) -> None:
+    db.begin_write(conn)
+    due = alerts.sync(conn)
+    conn.commit()
+    alerts.notify(due)
+
+
+def _counts(conn) -> dict:
+    """The Overview's tiles: accounts, billing (``billing.admin_summary``),
+    the fleet, and the settings that decide who gets in and what is sold."""
+    row = conn.execute("SELECT SUM(deleted_at IS NULL), SUM(deleted_at IS NULL AND created_at >= ?), "
+                       "SUM(deleted_at IS NULL AND email_verified_at IS NULL), SUM(deleted_at IS NOT NULL) "
+                       "FROM accounts", (db.after(-7 * 86400),)).fetchone()
+    hosts = fleet.hosts(conn)
+    servers = conn.execute("SELECT * FROM hosted_servers WHERE state != 'deleted'").fetchall()
+    by_state: dict[str, int] = {}
+    for s in servers:
+        by_state[s["state"]] = by_state.get(s["state"], 0) + 1
+    jobs = dict(conn.execute("SELECT state, COUNT(*) FROM fleet_jobs GROUP BY state").fetchall())
+    view = settings.admin_view()
+    return {
+        "accounts": dict(zip(("total", "new_7d", "unverified", "deleted"), (n or 0 for n in row))),
+        "billing": {**billing.admin_summary(conn), "enabled": billing.enabled()},
+        "fleet": {"hosts": {"fresh": sum(not h["stale"] for h in hosts), "stale": sum(h["stale"] for h in hosts)},
+                  "servers": {"by_state": by_state, "outdated": sum(bool(fleet.outdated_why(s)) for s in servers)},
+                  "jobs": {k: jobs.get(k, 0) for k in ("queued", "running", "failed")}},
+        "settings": {**{k: view[k] for k in ("registration", "turnstile_on", "plans_on_sale", "alerts", "alert_email",
+                                             "fleet_auto_upgrade")}, "fleet_image_tag": fleet.default_tag()},
+    }
+
+
+@router.get("/overview")
+def overview(request: Request):
+    """The Overview tab: the open alerts an admin has not dismissed, and
+    the counts (``_counts``)."""
+    with closing(db.connect()) as conn:
+        require_admin(conn, request)
+        _sync_alerts(conn)
+        return {"alerts": [a for a in alerts.listing(conn) if not a["dismissed_at"]], **_counts(conn)}
+
+
+@router.get("/alerts")
+def list_alerts(request: Request, resolved: bool = Query(False, alias="all")):
+    """The open alerts, dismissed ones too; with ``?all=1``, also those
+    resolved in the last 7 days."""
+    with closing(db.connect()) as conn:
+        require_admin(conn, request)
+        _sync_alerts(conn)
+        return {"alerts": alerts.listing(conn, 7 if resolved else 0)}
+
+
+@router.post("/alerts/test")
+def test_alert(request: Request):
+    """*Send test alert*: an alert mail to where alerts go, sent now."""
+    with closing(db.connect()) as conn:
+        admin = require_admin(conn, request)
+        conn.commit()
+    ratelimit.check(f"test-alert:{admin['id']}", 5, 600)
+    try:
+        to = alerts.send_test()
+    except LookupError:
+        raise Problem(409, "There is no address to send it to: set one, or confirm an admin's address.") from None
+    except mail.MailError as e:
+        raise Problem(502, f"The mail could not be sent: {e}") from e
+    return {"ok": True, "to": to, "detail": f"Sent to {', '.join(to)} through the {config.MAIL_BACKEND} backend."}
+
+
+@router.post("/alerts/{key}/dismiss")
+def dismiss_alert(key: str, request: Request):
+    """Hide an open alert until it resolves and comes back."""
+    with closing(db.connect()) as conn:
+        admin = require_admin(conn, request)
+        db.begin_write(conn)
+        try:
+            alert = alerts.dismiss(conn, key, admin["id"])
+        except LookupError:
+            raise HTTPException(404, "no such open alert") from None
+        conn.commit()
+    return {"alert": alert}
+
+
+@router.get("/metrics")
+def get_metrics(request: Request, kind: str, ref: str, hours: int = 168):
+    """A host's or server's hourly samples (``metrics.series``) of the last
+    ``hours``, at most ``metrics.MAX_HOURS``."""
+    if kind not in metrics.KINDS:
+        raise HTTPException(400, "kind is host or server")
+    hours = max(1, min(hours, metrics.MAX_HOURS))
+    with closing(db.connect()) as conn:
+        require_admin(conn, request)
+        return {"kind": kind, "ref": ref, "hours": hours, "points": metrics.series(conn, kind, ref, hours)}

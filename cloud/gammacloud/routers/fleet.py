@@ -1,6 +1,8 @@
 """What a host's fleet agent calls with its host token (``Authorization:
 Bearer``): the next job (long-polled), a job's result, the heartbeat.
-docs/dev/hosted.md."""
+After a result and after a heartbeat the operator's alerts are brought up
+to date, and the new ones mailed once the write is committed
+(``alerts.py``). docs/dev/hosted.md."""
 
 import time
 from contextlib import closing
@@ -8,7 +10,7 @@ from contextlib import closing
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
-from .. import db, fleet, hosted
+from .. import alerts, db, fleet, hosted
 
 router = APIRouter(prefix="/api/fleet")
 
@@ -48,7 +50,9 @@ def finish_job(job_id: str, body: JobResult, request: Request):
         host = _host(conn, request)
         db.begin_write(conn)
         job = fleet.complete(conn, host, job_id, body.state, body.result)
+        due = alerts.sync(conn)
         conn.commit()
+    alerts.notify(due)
     return {"job": job}
 
 
@@ -59,5 +63,7 @@ def heartbeat(body: dict, request: Request):
         db.begin_write(conn)
         fleet.heartbeat(conn, host, body)
         hosted.place_waiting(conn)
+        due = alerts.sync(conn)
         conn.commit()
+    alerts.notify(due)
     return {"ok": True}

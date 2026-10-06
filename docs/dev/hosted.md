@@ -24,12 +24,18 @@ Code:
   environment, admin actions;
 - `cloud/gammacloud/fleet.py`: hosts, placement, the job queue, upgrade
   and update runs in waves, *outdated* and automatic upgrades;
+- `cloud/gammacloud/dns.py`: the Cloudflare record of each server on a
+  routed host ("Deployment");
+- `cloud/gammacloud/alerts.py` and `metrics.py`: what the operator is
+  mailed about, and the hourly history ("Alerts", "History");
 - `cloud/gammacloud/settings.py`: the default image tag, automatic
-  upgrades on or off, and the fleet's extra environment;
+  upgrades on or off, the fleet's extra environment, and the alerts' switch
+  and address;
 - `cloud/gammacloud/routers/hosted.py` (`/api/hosted/*`),
-  `routers/fleet.py` (`/api/fleet/*`), and the block at the end of
+  `routers/fleet.py` (`/api/fleet/*`), and the blocks at the end of
   `routers/admin.py`;
-- `cloud/gammacloud/pages_fleet.py`: the Admin page's Servers tab;
+- `cloud/gammacloud/pages_fleet.py` and `pages_overview.py`: the Admin
+  page's Servers and Overview tabs;
 - `cloud/fleet/`: the agent, package `gammafleet`, which imports nothing
   from `gammacloud`.
 
@@ -47,14 +53,17 @@ an upgrade moves that tag. The default tag is the Admin page's setting
 
 ## Tables
 
-All three were added in schema step 9 (`db.py`), `hosts.orphans` in step
-10, `hosted_servers.overrides` and `env` in step 11.
+The first three were added in schema step 9 (`db.py`), `hosts.orphans`
+in step 10, `hosts.public_ip`, `hosted_servers.overrides`, `env`,
+`dns_record_id` and `dns_target`, `alerts` and `metrics` in step 11.
 
 | table | what |
 |---|---|
-| `hosts` | a machine an agent runs on: `name`, `address` (a note), `token_hash` (the agent's bearer token, hashed), capacity and use from the last heartbeat (`memory_mb`, `memory_used_mb`, `disk_mb`, `disk_used_mb`), `accepting` (open for new servers), `agent_version`, `orphans` (JSON list: the labels of containers its agent reported that no server row on the host names), `last_seen_at` |
-| `hosted_servers` | one per account (`account_id` unique): `label` (the hostname label, the username at creation, unique), `host_id`, `client_id` (its OIDC client, kind `container`), `image_tag` (the tag it runs), `state`, `read_only`, `limits` (the last sync answer, JSON, which holds the container's size too), `report` (what the container last reported, plus the agent's `agent` part), `reported_at`, `synced_at`, `state_changed_at`, `created_at`, `deleted_at`, `overrides` (JSON: the operator's own numbers for this server over its plan's), `env` (JSON: its own extra environment variables) |
+| `hosts` | a machine an agent runs on: `name`, `address` (a note), `token_hash` (the agent's bearer token, hashed), capacity and use from the last heartbeat (`memory_mb`, `memory_used_mb`, `disk_mb`, `disk_used_mb`), `accepting` (open for new servers), `agent_version`, `orphans` (JSON list: the labels of containers its agent reported that no server row on the host names), `public_ip` (the address its own Caddy answers on, `''` for the host behind the account server's Caddy), `last_seen_at` |
+| `hosted_servers` | one per account (`account_id` unique): `label` (the hostname label, the username at creation, unique), `host_id`, `client_id` (its OIDC client, kind `container`), `image_tag` (the tag it runs), `state`, `read_only`, `limits` (the last sync answer, JSON, which holds the container's size too), `report` (what the container last reported, plus the agent's `agent` part), `reported_at`, `synced_at`, `state_changed_at`, `created_at`, `deleted_at`, `overrides` (JSON: the operator's own numbers for this server over its plan's), `env` (JSON: its own extra environment variables), `dns_record_id` and `dns_target` (its Cloudflare record's id and the address it points at, `''` for none) |
 | `fleet_jobs` | the queue: `host_id`, `server_id` (empty for an orphan's removal), `kind`, `payload` (JSON), `state`, `attempts`, `result` (JSON text, 4000 chars at most; a `logs` job's 100,000, its oldest lines dropped first), `wave` (`<run>/<nnn>` for an upgrade or update run), `created_at`, `started_at`, `finished_at` |
+| `alerts` | one per problem the operator is told about ("Alerts"): `key` (what it is about, `job:<id>`, `down:<server id>`, …), `kind` (the key's first part), `text`, `link` (the Admin tab, `#servers`), `first_at` (when it opened), `last_at` (when it was last found), `mailed_at`, `resolved_at`, `dismissed_at` |
+| `metrics` | one sample per host or server and hour ("History"): `kind` (`host` or `server`), `ref` (its id), `at` (the start of the hour), `data` (JSON: numbers only) |
 
 A job is `queued` (the agent may take it), `held` (a later wave of an
 upgrade or update run), `running` (handed to the agent), `done`, `failed`
@@ -192,7 +201,8 @@ stay in the payload while the job runs and go with the rest of it when it
 ends. A `create` that finishes with other variables than the ones saved
 now is followed by an `update`.
 
-**`tick(conn)`**, hourly from `app.purge`, which commits:
+**`tick(conn)`**, hourly from `app.purge`, which commits and then mails
+what step 8 returns:
 
 1. the stale-host alarm (`fleet.stale_hosts`): a host silent for 15
    minutes (`fleet.STALE_AFTER`) logs a warning on every tick and gets one
@@ -216,7 +226,14 @@ now is followed by an `update`.
      `hosted.delete_warning`);
 4. the next waves of upgrade and update runs are released;
 5. with automatic upgrades on, an upgrade run for the outdated servers
-   (`fleet.auto_upgrade`, "Upgrade waves" below).
+   (`fleet.auto_upgrade`, "Upgrade waves" below);
+6. with DNS on, the records of the servers on routed hosts
+   (`dns.reconcile`, "Deployment" below). It commits what the steps above
+   did before it calls Cloudflare;
+7. samples older than 30 days and alerts resolved more than 30 days ago
+   are deleted (`metrics.purge`, `alerts.purge`);
+8. the alerts are brought up to date (`alerts.sync`, "Alerts" below); the
+   ones due for mail are returned.
 
 So a cancelled subscription is read-only on day 0, stopped on day 30 and
 deleted on day 90. Mail goes through `mail.py` to the account's address:
@@ -236,8 +253,11 @@ happens to use. A host's free memory is its `memory_mb` less the
 keeps for itself (`fleet.HOST_RESERVE_MB`), floored at 0. A host qualifies
 when it is accepting, was seen within 15 minutes, has more free disk
 (`disk_mb - disk_used_mb`) than the server's `quota_mb` and at least its
-`memory_mb` free (its plan's, or its own). The one with the most free memory wins, the
-oldest on a tie. With none the row stays `provisioning` with
+`memory_mb` free (its plan's, or its own). A routed host (one with a
+`public_ip`) qualifies only while DNS is on (`dns.enabled`), since a
+server there is reached through a DNS record of its own ("Deployment").
+The one with the most free
+memory wins, the oldest on a tie. With none the row stays `provisioning` with
 `report.note` = "waiting for a host with room". Every heartbeat places
 the waiting servers (`hosted.place_waiting`), so a new host's first report
 takes them at once, and the hourly tick tries too. *Provision* on a
@@ -257,8 +277,9 @@ accepted write as ISO UTC or null, the answers of 500 and up since the
 sync before, the process's uptime in seconds). Only these fields are
 kept, the counts as whole numbers from 0 and the time as text of at most
 40 characters, and they are stored as `report` (the agent's `agent` part
-is kept), with `reported_at` and `synced_at`. The answer is the server's
-limits, computed fresh and stored as `limits`:
+is kept), with `reported_at` and `synced_at`. Its counts go into the
+hour's sample too ("History"). The answer is the server's limits,
+computed fresh and stored as `limits`:
 
 ```json
 {"plan": "plus", "status": "grace", "read_only": false, "policy": "refuse",
@@ -325,7 +346,9 @@ The agent's calls, `Authorization: Bearer <host token>`, 401 otherwise:
   pulled the newest image), and a done `rollback` whose reported image is
   `FLEET_IMAGE:<tag>` sets `image_tag`, with `image_stale` null until
   the next heartbeat. A done `delete` with no server drops its label from
-  the host's orphans. Then the waves are checked.
+  the host's orphans. Then the waves are checked, and the alerts brought
+  up to date ("Alerts"): a failed job is mailed once the result is
+  committed.
 - `POST /api/fleet/heartbeat` `{agent_version, memory_mb, disk_mb,
   memory_used_mb, disk_used_mb, containers: [{label, running, health,
   memory_mb, memory_limit_mb, cpu_pct, restarts, started_at, oom_killed,
@@ -338,13 +361,15 @@ The agent's calls, `Authorization: Bearer <host token>`, 401 otherwise:
   `oom_killed` false. A label that
   no server row on this host names, in any state, is an orphan. Each
   heartbeat replaces the host's `orphans`, and the admin's view leaves out
-  a label a row has named since.
+  a label a row has named since. The host's use and each server's
+  container go into the hour's samples ("History"), the waiting servers
+  are placed, and the alerts are brought up to date ("Alerts").
 
 Job payloads and results:
 
 | kind | payload | result when done |
 |---|---|---|
-| `create` | `{label, account_id, plan, image, env, extra_env, data_dir, memory_mb, cpus, network, public_url}`. `env`: `GAMMA_HOSTED=1`, `GAMMA_CLOUD_ISSUER`, `GAMMA_CLOUD_CLIENT_ID`, `GAMMA_CLOUD_CLIENT_SECRET`, `GAMMA_CLOUD_POLICY` (the plan's), `GAMMA_CLOUD_ADMIN_SUBJECT` (the account id, which also stops the image seeding an `admin` of its own), `GAMMA_PUBLIC_URL`, `GAMMA_GUEST_MAX=0` (no guest logins: a guest would not count against the plan's accounts). `extra_env`: the operator's variables, `{NAME: value}` ("Its environment"). `memory_mb` and `cpus` are the plan's or the server's own; `network` is null, the agent's own | `{container, image, health}` |
+| `create` | `{label, account_id, plan, image, env, extra_env?, data_dir, memory_mb, cpus, network, public_url}`. `env`: `GAMMA_HOSTED=1`, `GAMMA_CLOUD_ISSUER`, `GAMMA_CLOUD_CLIENT_ID`, `GAMMA_CLOUD_CLIENT_SECRET`, `GAMMA_CLOUD_POLICY` (the plan's), `GAMMA_CLOUD_ADMIN_SUBJECT` (the account id, which also stops the image seeding an `admin` of its own), `GAMMA_PUBLIC_URL`, `GAMMA_GUEST_MAX=0` (no guest logins: a guest would not count against the plan's accounts). `extra_env`: the operator's variables, `{NAME: value}` ("Its environment"); the account server always sends it, and the agent reads a payload without it as none. `memory_mb` and `cpus` are the plan's or the server's own; `network` is null, the agent's own | `{container, image, health}` |
 | `start`, `stop`, `restart` | `{label}` | `{container, health}`; `stop`: `{container, stopped}`, or a `note` when there is no container |
 | `delete` | `{label, account_id}`; an orphan's removal has `account_id` `""` and no server | `{removed, data, bucket_prefix, bucket_objects}` |
 | `upgrade` | `{label, image, tag}`; a resize is `{label, memory_mb, cpus}` | `{container, image, previous, memory_mb, cpus, health}` |
@@ -400,7 +425,11 @@ in flight, which is any `upgrade` job of a run that is `queued`, `held`,
 `running` or `failed`. A failed upgrade so pauses its run and stops the
 automatic pass from starting another until an admin retries or cancels
 it. Nothing outdated, or nothing of it an upgrade takes now, starts
-nothing.
+nothing. A server outdated only because its tag moved in the registry
+(`image`) is taken once a day at most (`fleet.AUTO_UPGRADE_REST`, counted
+from its last done image upgrade): were the agent's staleness report ever
+wrong after a pull, the pass would otherwise rebuild that server every
+hour. The admin's *Upgrade all outdated* is not held back.
 
 **Orphans.** `fleet.remove_orphan(host_id, label)` enqueues a `delete`
 job with `{label, account_id: ""}` and no server. The container and its
@@ -562,31 +591,137 @@ most once an hour (`REGISTRY_EVERY`), a failure included, and on a
 thread waited for at most 5 seconds, so a registry that hangs never holds
 the heartbeat longer.
 
+## Alerts
+
+`alerts.py` tells the operator what needs attention. `collect(conn)`
+derives the problems that exist now from the tables, each with a key, a
+text, the Admin tab that shows it, and a settle time: how long it must
+last before it is mailed.
+
+| key | when | settle |
+|---|---|---|
+| `job:<id>` | a job is `failed` (any kind but `logs`): "create job for alice failed: pull failed". A retry or a cancel ends it | 0 |
+| `waiting:<server id>` | a `provisioning` server has no host | 10 min |
+| `stuck:<server id>` | a `provisioning` server has had a host for over an hour (`state_changed_at`) | 0 |
+| `down:<server id>` | a server in `running`, `grace`, `read_only` or `suspended` whose agent last reported its container not running ("is down") or `unhealthy`. An admin's *Stop* counts too | 10 min |
+| `dns:<server id>` | a server on a host with a `public_ip` whose `dns_target` is not that address, with `report.dns.error` when it has one | 10 min |
+| `host_stale:<host id>` | a host that has reported once is silent past `fleet.STALE_AFTER` | 0 |
+| `host_full:<host id>:memory` | the memory committed to its servers is 90% or more of what can be placed on it (`memory_mb` less the reserve) | 0 |
+| `host_full:<host id>:disk` | `disk_used_mb` is 85% or more of `disk_mb` | 0 |
+| `billing:<event id>` | a webhook event of the last 7 days recorded as `mismatch` or `unknown` | 0 |
+| `signup:unguarded` | registration is open with the anti-bot check off | 0 |
+
+All but the last two link to `#servers`; those to `#billing` and
+`#settings`. A settle of 10 minutes covers two heartbeats, so one bad
+report is not a mail.
+
+`sync(conn)` brings the `alerts` table to what `collect` finds, inside
+the caller's transaction:
+
+- a new key is a new row, `first_at` and `last_at` now;
+- an open key found again gets `last_at` and its current text;
+- an open key no longer found gets `resolved_at`;
+- a resolved key found again opens afresh: `first_at` now, and
+  `resolved_at`, `dismissed_at` and `mailed_at` cleared.
+
+It returns the alerts due for mail and marks them `mailed_at`: open, not
+dismissed, not mailed, and open for at least their settle time. So each
+opening is mailed once. While alerts are off nothing is marked, and
+turning them on mails what is open then. The caller commits and then calls
+`notify(due)`, so a write that rolls back sends nothing. `sync` runs at
+the end of the hourly tick, after every heartbeat and every job result
+(`routers/fleet.py`), and before the Overview and the alert list are read.
+It runs in a savepoint: a failure in it is logged and undone, and the
+heartbeat or result that carried it is kept.
+Resolved alerts are kept 30 days (`alerts.purge`, from the tick).
+
+`notify(alerts)` sends one mail listing them, subject "Gamma Cloud: N
+things need attention" (with one, its text), each line its text and
+`<public url>/admin<link>`. It goes to `settings.alert_email` when set,
+else to every admin account's confirmed address, through `mail.py`; SMTP
+on a thread, a failure logged. Nothing is sent while
+`settings.alerts_on` is off (the Settings tab's *Alerts* section,
+`PATCH /api/admin/settings` `{alerts: "on"|"off", alert_email}`).
+*Send test alert* (`alerts.send_test`) builds and addresses a mail the same
+way and sends it at once, whether alerts are on or off, so a failure
+reaches the admin.
+
+An admin's dismissal (`dismissed_at`, audited `alert.dismiss`) takes an
+open alert off the Overview and out of the mail until it resolves and
+comes back.
+
+## History
+
+`metrics.py` keeps one sample per host or server and hour in `metrics`:
+`record(conn, kind, ref, data)` merges `data` into the row of the current
+hour (`at` is the hour's start). A gauge keeps the last value of the hour,
+and `errors`, a count since the report before, is added up. A value the
+report does not know (`cpu_pct` of a stopped container) is left out.
+
+| kind | from | fields |
+|---|---|---|
+| `host` | the heartbeat | `memory_used_mb`, `disk_used_mb`, `committed_mb`, `servers` |
+| `server` | the heartbeat, per container of a server on the host | `memory_mb`, `cpu_pct`, `data_mb`, `restarts` |
+| `server` | the sync | `uploads_bytes`, `data_bytes`, `accounts`, `active_accounts`, `errors` |
+
+`series(conn, kind, ref, hours)` is the samples of the last `hours`, the
+current one included, oldest first; an hour with no report has no point.
+`trends` reads a few series of every host or server at once for the
+Servers tab's rows. Samples are kept 30 days (`metrics.purge`, from the
+tick). Counts and sizes only, never anything of a library.
+
 ## Admin
 
-The Admin page's **Servers** tab (`pages_fleet.py`), top to bottom:
+The Admin page opens on its **Overview** tab (`pages_overview.py`):
+
+- **Needs attention**: each open alert an admin has not dismissed, with
+  how long it has been open, whether it was mailed, a link to the tab that
+  shows it, and *Dismiss*; "Nothing needs attention." when there is none.
+  The heading says where alerts are mailed, or that they are off;
+- a strip of tiles: accounts (new this week, unverified, deleted), paying
+  subscriptions by plan, what they bring in a month, servers by state with
+  the outdated ones, hosts fresh and stale, and failed jobs with those
+  queued and running;
+- one line: the registration mode, the anti-bot check and the plans on
+  sale.
+
+It reloads every 60 seconds while it is the open tab of a visible page.
+
+The page's tabs follow the address's hash: `/admin#servers` opens the
+Servers tab, a click on a tab sets the hash (through the history, so the
+back button goes to the tab before), and a link to `#billing` switches
+tabs. An unknown hash opens the Overview.
+
+The **Servers** tab (`pages_fleet.py`), top to bottom:
 
 - **a summary strip** (the portal's shared `.tiles`, as on the Billing
   tab): hosts (fresh and stale), servers by state, jobs
   queued, running and failed, and the default image with the number of
   servers that are *outdated* (and whether they are upgraded
   automatically);
-- **hosts**: name, agent version, id and address; the last heartbeat,
-  *stale* past 15 minutes; memory as committed of total, with what is
-  free, the reserve and what is in use, over a thin meter (committed, then
-  the reserve); disk used of total over another; the server count; *Open*
-  / *Close* for placement. A host with orphans gets a row under it with
-  each label and *Remove*. *Add host* shows the agent token once;
-- **hosted servers**: the label linked to its address, its id and host;
+- **hosts**: name, agent version, id and address; a routed host's public
+  IP with *dns on*, or *no dns token: closed* while DNS is off; the last
+  heartbeat, *stale* past 15 minutes; memory as committed of total, with
+  what is free, the reserve and what is in use, over a thin meter
+  (committed, then the reserve); disk used of total over another, each
+  with a sparkline of the last 48 hours of its use; the server count; *Open* / *Close* for placement and *Public IP…* (blank
+  takes it away). A host with orphans gets a row under it with each label
+  and *Remove*. *Add host* takes a name, a note and the public IP, and
+  shows the agent token once with the line that installs the agent with
+  it (`--edge` when the host has a public IP);
+- **hosted servers**: the label linked to its address, its id and host,
+  and on a routed host *dns ok* once its record points at the host's IP,
+  else *dns pending* (the last error on hover);
   the account (username and id); the plan with its quota, memory and
   CPUs, and a *custom* pill when it has limits of its own; pills for the
   lifecycle state, *read-only* where the state does not say it, *up*,
   *down* or *unhealthy* from the agent and *out of memory* when Docker
-  killed it for that, its CPU use and restarts, with any note and the jobs
-  in flight or failed; the image tag, with *outdated* and why (another
-  tag than the default, or a newer image of its tag in the registry) and
-  an inline *Upgrade* to the default tag; data used of the quota over a
-  meter, its size on disk, and its accounts with those active this week;
+  killed it for that, its memory and CPU use (each with a 48-hour
+  sparkline) and restarts, with any note and the jobs in flight or failed;
+  the image tag, with *outdated* and why (another tag than the default, or
+  a newer image of its tag in the registry) and an inline *Upgrade* to the
+  default tag; data used of the quota over a meter, its size on disk with
+  a sparkline, and its accounts with those active this week;
   the last sync, the agent's last report, the container's last write and
   its server errors between its last two syncs; the *Actions* menu.
   Deleted servers are hidden behind *show N deleted*.
@@ -598,6 +733,10 @@ The Admin page's **Servers** tab (`pages_fleet.py`), top to bottom:
   three minutes at most), then the lines in a scrolling monospace block,
   with *Fetch again* and *Close*. A done `logs` job in the Jobs table has
   *View*;
+- **history**: *History* opens the server's samples of the last 7 or 30
+  days under the servers, like the log viewer: memory, CPU, data on disk,
+  accounts, accounts active this week, server errors and restarts, each a
+  plain line from 0 to its highest with its min, max and last value;
 - **limits**: *Limits…* opens a form for that server under the servers,
   like the log viewer: storage, per-file size, accounts, memory and CPUs,
   each blank for the plan's number (the placeholder), with *Save*, *Back
@@ -625,14 +764,23 @@ A reload waits while an *Actions* menu has the focus.
 The API behind it (`/api/admin`, admins through a portal session only):
 
 - `GET /hosts`: each host with `servers`, `committed_mb`, `reserve_mb`,
-  `free_mb` and `orphans`. `POST /hosts` `{name, address}` (the token is
-  in this answer only), `PATCH /hosts/{id}` (`name`, `accepting`),
-  `POST /hosts/{id}/orphans/{label}/remove` → `{job}`;
+  `free_mb`, `orphans`, `public_ip` and `dns` (`on`, `off` while DNS is
+  off, `""` for a host with no public IP). `POST /hosts` `{name, address,
+  public_ip}` → `{host, token, bootstrap}` (the token, and the
+  `bootstrap.sh` line with it, are in this answer only),
+  `PATCH /hosts/{id}` (`name`, `accepting`, `public_ip`); a public IP that
+  is not an IPv4 or IPv6 address is a 400, and one is stored in its usual
+  form. `POST /hosts/{id}/orphans/{label}/remove` → `{job}`. Each host
+  has `trend`: its samples of the last 48 hours, `{at, memory_used_mb,
+  disk_used_mb}`;
 - `GET /servers` → `{servers, default_image, auto_upgrade}`, each server
   with `memory_mb`, `cpus`, `quota_mb`, `image`, `outdated` and
   `outdated_why` (`tag`, `image` or `""`), `overrides` and `plan_limits`
   (its plan's own five numbers), `env_names` (never `env`), its account,
-  its host and its job counts by state. `POST /servers/provision`
+  its host with `host_ip` (its public IP) and `dns` (`ok`, `pending`, or
+  `""` for a server that needs no record; a failure is `report.dns`
+  `{error, at}`), its job counts by state, and `trend` (`{at, memory_mb,
+  cpu_pct, data_mb}` for the last 48 hours). `POST /servers/provision`
   `{account_id}` (the account's effective plan must be hosted; 409 when
   it has a server). `POST /servers/upgrade` `{tag, wave_size,
   server_ids?}`, or `{outdated: true, wave_size}` for the outdated ones to
@@ -649,7 +797,22 @@ The API behind it (`/api/admin`, admins through a portal session only):
   an upgrade or update run `wave_total` and `wave_done` (the run's jobs,
   and how many are done). A `logs` job's lines are only counted there
   (`line_count`); `GET /jobs/{id}` has the whole result.
-  `POST /jobs/{id}/retry|cancel`.
+  `POST /jobs/{id}/retry|cancel`;
+- `GET /metrics?kind=host|server&ref=<id>&hours=<n>` → `{kind, ref, hours,
+  points}` (`metrics.series`; `hours` 168 by default, at most 720; 400 for
+  another kind);
+- `GET /overview` → `{alerts, accounts: {total, new_7d, unverified,
+  deleted}, billing: {…billing.admin_summary, enabled}, fleet: {hosts:
+  {fresh, stale}, servers: {by_state, outdated}, jobs: {queued, running,
+  failed}}, settings: {registration, turnstile_on, plans_on_sale, alerts,
+  alert_email, fleet_auto_upgrade, fleet_image_tag}}`, `alerts` being the
+  open ones not dismissed;
+- `GET /alerts` → `{alerts}`: the open ones, dismissed ones too; with
+  `?all=1`, also those resolved in the last 7 days. Both reads run
+  `alerts.sync` first and mail what falls due. `POST /alerts/{key}/dismiss`
+  → `{alert}` (404 for no open alert). `POST /alerts/test` → `{ok, to,
+  detail}`: 409 when there is no address, 502 with the mail server's
+  error, five in ten minutes per admin.
 
 The server actions:
 
@@ -664,10 +827,13 @@ The server actions:
   agent");
 - `upgrade` `{tag}` is this server's upgrade alone (`fleet.upgrade_one`);
 - *Limits…* and *Environment…* open their sections for the server, which
-  save through `PATCH /servers/{id}`.
+  save through `PATCH /servers/{id}`; *History* opens its history, read
+  from `GET /metrics`.
 
-`manage.py`: `hosts` (with committed and free memory and any orphans),
-`add-host <name> [--address A]` (prints `GAMMA_FLEET_HOST_TOKEN=…` once),
+`manage.py`: `hosts` (with committed and free memory, `ip=… dns=on|off`
+for a routed host, and any orphans), `add-host <name> [--address A]
+[--public-ip IP]` (prints `GAMMA_FLEET_HOST_TOKEN=…` once, with the
+bootstrap line),
 `servers` (with size, tag, `(outdated: tag)` or `(outdated: image)`, and
 `own=` with the server's own limits), `provision <username>`,
 `jobs [--state S]`. `settings fleet_image_tag <tag>` and `settings
@@ -694,20 +860,63 @@ Two compose projects share the work, joined by one external network:
   `/srv/gamma` mounted at the same path, on `gamma-fleet`, with no port.
   Its `.env` holds the account server's public address
   (`GAMMA_FLEET_ACCOUNT_URL=https://account.gammapdf.com`), the host
-  token and the bucket. The `update-fleet` skill updates it;
+  token and the bucket. The `update-fleet` skill updates it. On a routed
+  host (below) the same project also runs a Caddy, under the compose
+  profile `edge`;
 - the network `gamma-fleet`, created once per host with the pinned
   subnet `10.203.0.0/24`. Caddy, the agent and every hosted container
   join it, and each container trusts it for `X-Forwarded-For`.
 
-A host is added on the Servers tab or with `manage.py add-host`. It takes
-servers after its first heartbeat. The agent only calls out, so on a host
-anywhere it needs the token and nothing else.
+A host is added on the Servers tab or with `manage.py add-host`, which
+show its token once with the line that installs the agent on a fresh host
+with it (`fleet.bootstrap_command`: `cloud/fleet/deploy/bootstrap.sh
+--token …`, plus `--edge` for a host with a public IP, and
+`--account-url` and `--domain` when they are not the script's defaults).
+It takes servers after its first heartbeat. The agent only calls out, so
+on a host anywhere it needs the token and nothing else.
 
-Routing to a second host needs a DNS record per server (or an edge proxy)
-and is not built. Caddy reaches a container by its name on `gamma-fleet`,
-which resolves only on Caddy's own host. Until then the agent that runs
-the servers runs beside Caddy, and any other host stays closed for
-placement.
+**Routed hosts and their DNS records.** A proxy reaches a container by its
+name on `gamma-fleet`, which resolves only on its own host. The account
+server's VPS keeps `public_ip` empty: its servers are reached through the
+zone's wildcard record and the account project's Caddy. Every other host
+is *routed*: its `public_ip` (an IPv4 or IPv6 address, set on the Servers
+tab) is where its own Caddy answers (the `edge` profile, with
+`cloud/fleet/deploy/Caddyfile`: a `*.<domain>` site with `tls internal`
+that routes `<label><suffix>.<domain>` to `gamma-<label>:9001` with
+`CF-Connecting-IP` as `X-Forwarded-For`, and answers 404 to any other
+name). Each server placed on it gets a Cloudflare record of its own
+(`dns.py`):
+
+- `<label><HOSTED_SUFFIX>.<HOSTED_DOMAIN>`, `A` or `AAAA` by the address's
+  family, → the host's `public_ip`, proxied, TTL automatic, with the
+  comment `Gamma hosted server <id>`. A named record wins over the
+  wildcard.
+- DNS is on while `GAMMA_CLOUD_CF_API_TOKEN` (a token with DNS edit
+  rights on the zone) and `GAMMA_CLOUD_CF_ZONE_ID` are set and hosting is
+  on (`dns.enabled`). Off, nothing is called, and placement skips routed
+  hosts.
+- `dns.reconcile(conn)` makes the zone match the rows. A server that is not
+  deleted and sits on a routed host should have a record at its host's
+  address, and every other server none; that is compared with
+  `dns_record_id` and `dns_target`, and the record is created, updated (a
+  new address, or `A` to `AAAA`) or deleted. A record that already has the
+  name (an earlier run whose answer was lost, or one made by hand) is
+  taken over, one removed by hand (a 404 on update) is made again, and a
+  404 on delete counts as done. It reads, commits, calls Cloudflare, and
+  writes each answer in a short transaction of its own, so no call is
+  made under the write lock, and a run with nothing to change calls
+  nothing. A failure is logged and kept as the server's `report.dns`
+  `{error, at}` until a later run succeeds; the next run tries again.
+- It runs from the hourly tick and, through `dns.kick`, on a thread after
+  a transaction that placed a server on a routed host (`_provision`, so a
+  heartbeat's `place_waiting` too), deleted a server (`_delete`) or
+  changed a host's public IP. The thread's first step waits for the write
+  lock its caller holds, so it reads what the caller committed. A lock
+  keeps it to one run at a time. `purge_account` removes the row, so it
+  hands the record's id to the kick, which deletes the record unless a row
+  still holds it.
+
+Moving a server to another host is not built.
 
 ## Tests
 
@@ -726,6 +935,22 @@ placement.
   job is taken, update jobs and update runs, logs and rollback jobs, stuck
   jobs with late results and retries, the job rows' durations and run
   progress, schema steps 10 and 11, the admin endpoints and the CLI.
+- `cloud/tests/test_dns.py`: the Cloudflare client's requests and errors
+  (with `urlopen` replaced), and against a fake zone: a record made once
+  and left alone, moved with the host's address and removed with it,
+  removed for a deleted server and one behind the entrance, a failure kept
+  on the row and tried again, a record removed by hand or already there,
+  a purged account's record, no call and no placement on a routed host
+  while DNS is off, a kick that waits for its caller's commit, and the
+  admin's fields, pills, validation and CLI.
+- `cloud/tests/test_alerts.py`: every kind of alert found and gone again,
+  the settle before a mail, one mail to every admin's confirmed address or
+  to the alert address, the switch (off marks nothing), a problem that
+  comes back, dismissal, the mails after a job result, a heartbeat and the
+  hourly pass, the alert endpoints, the Overview and the test alert.
+- `cloud/tests/test_metrics.py`: samples merged by the hour with errors
+  added up, series, trends and the purge, what the heartbeat and the sync
+  record, the rows' `trend` and the metrics endpoint.
 - `cloud/fleet/tests/test_agent.py`, run from `cloud/fleet` with
   `python -m pytest -q`: the agent against a fake Docker client and a
   fake account server, every job kind with its failures and with a second
@@ -733,4 +958,5 @@ placement.
   the HTTP client.
 
 Time is moved by backdating rows (`past_due_since`, `state_changed_at`,
-`last_seen_at`, `started_at`), like the other account-server tests.
+`last_seen_at`, `started_at`, an alert's `first_at`, a sample's `at`),
+like the other account-server tests.

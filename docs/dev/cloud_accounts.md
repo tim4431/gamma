@@ -91,7 +91,10 @@ Admin page's Settings tab, with effect at once:
   `open` and `invite` mode alike ("Registration and the portal");
 - the paid plans on sale (`plans_on_sale`, default all three), the
   operator's switch for each plan ([billing.md](billing.md) "Plans on
-  sale").
+  sale");
+- the operator's alerts: `alerts` (`on` by default) and `alert_email`
+  (empty: every admin's confirmed address) ([hosted.md](hosted.md)
+  "Alerts").
 
 Reads go through accessors (`settings.registration()` and the rest) over a
 process-wide cache, which is safe because the image runs one uvicorn
@@ -254,7 +257,17 @@ page) and the **app** shell (a sidebar and a content column):
     revealed the same way.
   - Password.
   - Deletion in a danger zone, its form revealed by a first click.
-- **Admin** (`/admin`, `is_admin` only, 404 otherwise), in tabs:
+- **Admin** (`/admin`, `is_admin` only, 404 otherwise), in tabs. The
+  address's hash names the open one: `/admin#servers` opens Servers, a
+  click on a tab sets the hash (through the history, so the back button
+  returns to the tab before), and a link to `#billing` switches to it; no
+  hash, or an unknown one, opens the Overview.
+  - **Overview**, open on load: *Needs attention*, the open alerts with
+    how long each has been open, a link to its tab and *Dismiss*; then
+    tiles for accounts, what is paid and brings in a month, servers by
+    state, hosts and failed jobs, and one line of the registration mode
+    and the plans on sale. It reloads every minute while it is in view
+    ([hosted.md](hosted.md) "Alerts" and "Admin").
   - Accounts: search by username, e-mail or id, paged; plan select (the
     granted plan, with the day it ends beside it), *Grant ends…* (a date,
     empty for no end), verify, resend, admin on/off, rename, delete. A
@@ -271,15 +284,19 @@ page) and the **app** shell (a sidebar and a content column):
   - Clients: the OIDC clients of hosted servers — create (the secret is
     shown once as the two env lines a container needs) and delete. A
     `server` client shows the account id that owns it.
-  - Servers: the fleet's hosts, the hosted servers, upgrades in waves and
-    the job queue ([hosted.md](hosted.md) "Admin").
+  - Servers: the fleet's hosts, the hosted servers with their 48-hour
+    sparklines and history, upgrades in waves and the job queue
+    ([hosted.md](hosted.md) "Admin").
   - Billing: what the subscriptions bring in, the subscription copies by
     status, each with a Refresh from Stripe and a link into Stripe's
     dashboard, and the newest webhook events ([billing.md](billing.md)).
   - **Settings**, in sections: *Sign-up* (the mode, Turnstile, the blocked
     and the allowed mail domains), *Plans* (an *On sale* checkbox per paid
     plan with a pill: `on sale`, `held back`, or `cannot be sold` and the
-    reason, [billing.md](billing.md) "Plans on sale") and *Configuration*
+    reason, [billing.md](billing.md) "Plans on sale"), *Alerts* (on or off,
+    the address they go to with "blank = every admin", and *Send test
+    alert*, which mails that address now whatever the switch;
+    [hosted.md](hosted.md) "Alerts") and *Configuration*
     (the environment, read-only, and *Send test mail*; "Running"). Each row
     saves its own keys and the tab redraws from the answer
     (`settings.admin_view` plus the plans' rows). The Turnstile
@@ -754,7 +771,9 @@ that registered with it, `PATCH /invites/{code}` `{disabled}`, audited as
 (`settings.admin_view` / `settings.update`, plus `plans`, a row per paid
 plan `{plan, on_sale, sellable, reason}`); `GET /config` and `POST
 /test-mail` ("Running"); OIDC clients; the audit log;
-the subscriptions; hosts, hosted servers and jobs. The portal's Admin page, the API and `manage.py` are one surface: the page
+the subscriptions; hosts, hosted servers, jobs and their history; the
+Overview, the alerts with their dismissal and the test alert
+([hosted.md](hosted.md) "Admin"). The portal's Admin page, the API and `manage.py` are one surface: the page
 and the CLI call the same functions.
 
 ## Tests
@@ -810,8 +829,10 @@ and the CLI call the same functions.
   the server list (normalization, loopback, the client's own origin, the
   Overview), the build and schema a server reports, the username lookup
   and its limits, deletion, the step-4 and step-8 upgrades, and the share host's address in `/api/me` and discovery.
-- `test_billing.py`, `test_hosted.py` and `test_fleet.py`: billing and the
-  hosted servers ([billing.md](billing.md), [hosted.md](hosted.md) "Tests").
+- `test_billing.py`, `test_hosted.py`, `test_fleet.py`, `test_alerts.py`
+  and `test_metrics.py`: billing, the hosted servers, the operator's alerts
+  and the Overview, and the history ([billing.md](billing.md),
+  [hosted.md](hosted.md) "Tests").
 
 `conftest.py` points the data directory at a temp folder and the mail
 backend at the in-memory outbox before the package is imported. CI runs

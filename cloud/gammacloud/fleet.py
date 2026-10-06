@@ -14,12 +14,14 @@ host's orphan containers, and runs upgrades and environment updates (one
 server, or many in waves), by hand or, for outdated servers, by itself.
 """
 
+import ipaddress
 import json
 import math
 import re
+import shlex
 import threading
 
-from . import config, db, settings
+from . import config, db, dns, metrics, settings
 from .accounts import Problem
 from .log import log
 
@@ -34,6 +36,10 @@ LOGS_RESULT_MAX = 100_000      # a logs job's (its oldest lines go first)
 UPGRADABLE = ("running", "grace", "read_only", "suspended")
 TAG_RE = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$")
 HOST_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$")
+# The agent's installer (cloud/fleet/deploy/bootstrap.sh) and what it assumes when not told otherwise.
+BOOTSTRAP_URL = "https://raw.githubusercontent.com/tim4431/Gamma/main/cloud/fleet/deploy/bootstrap.sh"
+BOOTSTRAP_ACCOUNT_URL = "https://account.gammapdf.com"
+BOOTSTRAP_DOMAIN = "gammapdf.com"
 
 # Wakes a held job poll when a job is enqueued. The poll re-reads the
 # database at least every second anyway, since the enqueue is only visible
@@ -137,18 +143,47 @@ def _check_name(conn, name: str, host_id: str = "") -> str:
     return name
 
 
-def add_host(conn, name: str, address: str = "", actor: str = "") -> tuple[dict, str]:
-    """A new host and its agent token (shown once; stored as its hash)."""
-    name = _check_name(conn, name)
+def _check_ip(value: str) -> str:
+    """A host's public address as stored: "" for none, else an IPv4 or IPv6
+    address in its usual form."""
+    value = (value or "").strip()
+    if not value:
+        return ""
+    try:
+        return str(ipaddress.ip_address(value))
+    except ValueError:
+        raise Problem(400, "A public IP is an IPv4 or IPv6 address, or empty.") from None
+
+
+def add_host(conn, name: str, address: str = "", actor: str = "", public_ip: str = "") -> tuple[dict, str]:
+    """A new host and its agent token (shown once; stored as its hash).
+    ``public_ip`` makes it a routed host (``dns.py``): it runs a Caddy of
+    its own, and each server on it gets a DNS record."""
+    name, public_ip = _check_name(conn, name), _check_ip(public_ip)
     host_id, token = "h_" + db.new_token(9), "gf_" + db.new_token(32)
-    conn.execute("INSERT INTO hosts (id, name, address, token_hash, created_at) VALUES (?, ?, ?, ?, ?)",
-                 (host_id, name, (address or "").strip()[:200], db.token_hash(token), db.now()))
-    db.audit(conn, "fleet.host_add", actor=actor, detail=f"{host_id} {name}")
+    conn.execute("INSERT INTO hosts (id, name, address, public_ip, token_hash, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                 (host_id, name, (address or "").strip()[:200], public_ip, db.token_hash(token), db.now()))
+    db.audit(conn, "fleet.host_add", actor=actor, detail=f"{host_id} {name}" + (f" {public_ip}" if public_ip else ""))
     return host_view(conn, host_id), token
 
 
+def bootstrap_command(token: str, edge: bool) -> str:
+    """The line that installs the agent on a fresh host with ``token``
+    (``cloud/fleet/deploy/bootstrap.sh``); ``edge`` adds the host's own
+    Caddy. The account server's address and the domain are named only when
+    they are not the script's defaults."""
+    args = ["--token", token]
+    if config.PUBLIC_URL != BOOTSTRAP_ACCOUNT_URL:
+        args += ["--account-url", config.PUBLIC_URL]
+    if edge:
+        args.append("--edge")
+        if config.HOSTED_DOMAIN and config.HOSTED_DOMAIN != BOOTSTRAP_DOMAIN:
+            args += ["--domain", config.HOSTED_DOMAIN]
+    return f"curl -fsSL {BOOTSTRAP_URL} | bash -s -- " + " ".join(shlex.quote(a) for a in args)
+
+
 def update_host(conn, host_id: str, *, name: str | None = None, accepting: bool | None = None,
-                actor: str = "") -> dict:
+                public_ip: str | None = None, actor: str = "") -> dict:
     row = conn.execute("SELECT * FROM hosts WHERE id = ?", (host_id,)).fetchone()
     if not row:
         raise Problem(404, "no such host")
@@ -159,6 +194,11 @@ def update_host(conn, host_id: str, *, name: str | None = None, accepting: bool 
     if accepting is not None:
         conn.execute("UPDATE hosts SET accepting = ? WHERE id = ?", (1 if accepting else 0, host_id))
         db.audit(conn, "fleet.host_accepting", actor=actor, detail=f"{host_id} {'on' if accepting else 'off'}")
+    if public_ip is not None and _check_ip(public_ip) != row["public_ip"]:
+        public_ip = _check_ip(public_ip)
+        conn.execute("UPDATE hosts SET public_ip = ? WHERE id = ?", (public_ip, host_id))
+        db.audit(conn, "fleet.host_ip", actor=actor, detail=f"{host_id} {public_ip or 'none'}")
+        dns.kick()          # its servers' records are made, moved or removed once this commits
     return host_view(conn, host_id)
 
 
@@ -197,6 +237,8 @@ def public_host(row, placed: dict | None = None) -> dict:
     out["free_mb"] = _free_mb(row, use["committed_mb"])
     # a server placed since the heartbeat is no orphan any more
     out["orphans"] = [label for label in _json_list(row["orphans"]) if label not in use["labels"]]
+    # a routed host: "on", or "off" while DNS is, which keeps it out of placement
+    out["dns"] = ("on" if dns.enabled() else "off") if row["public_ip"] else ""
     return out
 
 
@@ -218,9 +260,12 @@ def place(conn, need: int, quota: int):
     ``need`` MB of memory free once what is committed to its servers and
     HOST_RESERVE_MB are counted; the most free memory first (the oldest
     host on a tie). None when no host has room. ``hosted`` passes the
-    server's numbers: its plan's, or its own overrides."""
+    server's numbers: its plan's, or its own overrides. A routed host (one
+    with a ``public_ip``) qualifies only while DNS is on: a server there is
+    reached through a record of its own (``dns.py``)."""
     rows = conn.execute("SELECT * FROM hosts WHERE accepting = 1 AND last_seen_at >= ? AND disk_mb - disk_used_mb > ? "
-                        "ORDER BY created_at", (db.after(-STALE_AFTER), quota)).fetchall()
+                        "AND (public_ip = '' OR ?) ORDER BY created_at",
+                        (db.after(-STALE_AFTER), quota, 1 if dns.enabled() else 0)).fetchall()
     placed = _placed(conn)
     fits = [(free, r) for r in rows
             if (free := _free_mb(r, (placed.get(r["id"]) or {}).get("committed_mb", 0))) >= need]
@@ -233,7 +278,9 @@ def heartbeat(conn, host, body: dict) -> None:
     its ``report`` under ``agent`` (what Docker says of it, and whether the
     registry has another image for its tag: ``image_stale``, None when the
     agent could not tell); a container no server row on this host names is
-    kept as one of the host's ``orphans`` until it goes or a row names it."""
+    kept as one of the host's ``orphans`` until it goes or a row names it.
+    The host's use and each server's container are also kept as the hour's
+    sample (``metrics.record``)."""
     ts = db.now()
     labels = {r[0] for r in conn.execute("SELECT label FROM hosted_servers WHERE host_id = ?", (host["id"],))}
     orphans = []
@@ -257,11 +304,17 @@ def heartbeat(conn, host, body: dict) -> None:
                            "last_seen_at": ts}
         conn.execute("UPDATE hosted_servers SET report = ?, reported_at = ? WHERE id = ?",
                      (json.dumps(report), ts, row["id"]))
+        metrics.record(conn, "server", row["id"], {k: report["agent"][k] for k in ("memory_mb", "cpu_pct", "data_mb",
+                                                                                   "restarts")})
     conn.execute("UPDATE hosts SET agent_version = ?, memory_mb = ?, disk_mb = ?, memory_used_mb = ?, "
                  "disk_used_mb = ?, orphans = ?, last_seen_at = ? WHERE id = ?",
                  (str(body.get("agent_version") or "")[:40], nonneg(body.get("memory_mb")), nonneg(body.get("disk_mb")),
                   nonneg(body.get("memory_used_mb")), nonneg(body.get("disk_used_mb")),
                   json.dumps(sorted(orphans)[:100]), ts, host["id"]))
+    use = _placed(conn).get(host["id"]) or {"servers": 0, "committed_mb": 0}
+    metrics.record(conn, "host", host["id"], {"memory_used_mb": nonneg(body.get("memory_used_mb")),
+                                              "disk_used_mb": nonneg(body.get("disk_used_mb")),
+                                              "committed_mb": use["committed_mb"], "servers": use["servers"]})
 
 
 def stale_hosts(conn) -> list[str]:
@@ -637,17 +690,38 @@ def upgrade_in_flight(conn) -> bool:
                         "AND state IN ('queued', 'held', 'running', 'failed') LIMIT 1").fetchone() is not None
 
 
+AUTO_UPGRADE_REST = 86400      # an automatic upgrade for a moved image waits this long after the last one
+
+
+def _upgraded_within(conn, server_id: str, seconds: int) -> bool:
+    """Whether an image upgrade of the server (not a resize) finished within
+    ``seconds``."""
+    return conn.execute("SELECT 1 FROM fleet_jobs WHERE server_id = ? AND kind = 'upgrade' AND state = 'done' "
+                        "AND payload LIKE '%\"image\"%' AND finished_at >= ? LIMIT 1",
+                        (server_id, db.after(-seconds))).fetchone() is not None
+
+
 def auto_upgrade(conn) -> dict | None:
     """The hourly pass's upgrade, while ``settings.fleet_auto_upgrade`` is on:
     the outdated servers one per wave, unless an upgrade run is in flight. A
     failed upgrade so stops the automatic ones too until an admin retries
-    or cancels it. The run, or None when none was started."""
+    or cancels it. A server outdated only because its tag moved in the
+    registry is taken once a day at most (``AUTO_UPGRADE_REST``): were the
+    agent's staleness report ever wrong after a pull, the hourly pass would
+    otherwise rebuild that server every hour. The run, or None when none
+    was started."""
     if not settings.fleet_auto_upgrade() or upgrade_in_flight(conn):
         return None
+    rows = conn.execute("SELECT * FROM hosted_servers WHERE state != 'deleted'").fetchall()
+    ids = [r["id"] for r in rows
+           if outdated_why(r) == "tag"
+           or (outdated_why(r) == "image" and not _upgraded_within(conn, r["id"], AUTO_UPGRADE_REST))]
+    if not ids:
+        return None
     try:
-        run = upgrade_outdated(conn, 1, actor="system")
+        run = upgrade(conn, default_tag(), 1, ids, actor="system")
     except Problem:
-        return None                # nothing outdated, or nothing of it that an upgrade takes now
+        return None                # nothing of it that an upgrade takes now
     db.audit(conn, "fleet.auto_upgrade", actor="system", detail=f"{run['run']} {run['image']} servers={run['jobs']}")
     return run
 

@@ -375,26 +375,34 @@ project's side of it:
 5. `docker compose up -d`, then `docker compose exec caddy caddy reload
    --config /etc/caddy/Caddyfile`.
 6. **The agent**, on this host: [cloud/fleet/deploy/README.md](../fleet/deploy/README.md)
-   (*Add host* on the Servers tab, its token into the agent's own `.env`,
-   `docker compose up -d` in its folder). Its first heartbeat shows the
-   host on the Servers tab with its memory and disk; until then it takes
-   no servers.
+   (*Add host* on the Servers tab with no public IP, then its token into
+   the agent's own `.env` and `docker compose up -d` in its folder, or the
+   bootstrap line it shows). Its first heartbeat shows the host on the
+   Servers tab with its memory and disk; until then it takes no servers.
 7. **A first server by hand.** Give an account a Pro plan on the
    Accounts tab (a courtesy grant), or *Provision* it on the Servers tab.
    The agent pulls the image, starts `gamma-<username>` with its data in
    `/srv/gamma/<username>/data`, waits for its health check, and the
    account gets a "Your Gamma is ready" mail.
 
-Caddy reaches a server by its container name on `gamma-fleet`, which
-resolves only on this host. So the agent that runs the servers must run
-here, next to Caddy, until each server gets a DNS record of its own (the
-fleet README's "One host for now"). Keep any other host closed for
-placement until then.
+This project's Caddy reaches a server by its container name on
+`gamma-fleet`, which resolves only on this host, so it routes the servers
+of the agent beside it, through the wildcard record. **Another host** runs
+a Caddy of its own, and each server placed on it gets a proxied DNS
+record `<label>-user.gammapdf.com` → that host's public IP, which the
+account server makes at Cloudflare and which wins over the wildcard
+(the fleet README's "A second host, with its own Caddy"). For that,
+`.env` holds `GAMMA_CLOUD_CF_API_TOKEN` (a token with *Zone → DNS → Edit*
+on this zone only) and `GAMMA_CLOUD_CF_ZONE_ID`, and the host has its
+public IP on the Servers tab. Without the token a host with a public IP
+takes no servers, and its row says *no dns token: closed*. This host's
+own row keeps the public IP blank.
 
 The Servers tab is the operator's view of the fleet
 ([docs/dev/hosted.md](../../docs/dev/hosted.md) "Admin"). It shows each
-host's capacity, heartbeat and orphan containers, each server's state,
-version and data, the actions (logs, upgrade and rollback among them),
+host's capacity, heartbeat, public IP and orphan containers, each server's
+state, version and data (and, on a host with a public IP, whether its DNS
+record is in place), the actions (logs, upgrade and rollback among them),
 upgrade runs and the job queue. A host silent for 15 minutes shows
 *stale* and takes no new servers until it reports again. `manage.py
 hosts`, `servers`, `jobs`, `add-host` and `provision` do the same from

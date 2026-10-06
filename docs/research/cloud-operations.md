@@ -5,9 +5,9 @@ October 2026, from the operator's chair: selling or holding back a plan,
 deciding who may register, what happens when a payment starts and ends,
 running containers on one host and on a second, updates, configuring a
 customer's container, and what the operator learns about a running
-server. Each section says what the code does now and what is missing; the
-last one ranks the work. Nothing here is built. The mechanics are in
-[dev/cloud_accounts.md](../dev/cloud_accounts.md),
+server. Each section says what the code did then and what was missing;
+the last one ranks the work and marks what has been built since. The
+mechanics are in [dev/cloud_accounts.md](../dev/cloud_accounts.md),
 [dev/billing.md](../dev/billing.md) and [dev/hosted.md](../dev/hosted.md).
 
 ## Which settings the operator can change, and where
@@ -170,31 +170,46 @@ nothing at all to the account server.
    85% of its memory or disk, a container down for two heartbeats, a
    webhook `mismatch`. An Overview tab that opens on the same list, with
    the counts the Servers and Billing strips already compute.
+   *Built:* alerts mailed once they have lasted, and the Overview tab
+   ([dev/hosted.md](../dev/hosted.md) "Alerts").
 2. **Plans on sale as a setting.** A `plans_on_sale` row in `settings`,
    read by `can_sell`, with a checkbox per plan on the Settings tab and
    the reason a plan cannot be sold beside it (billing off, a price id
    missing, no home). `can_sell` should require the plan's price ids, and
    the `switch` flow should ask it. The website's pricing page reads the
-   same answer or is rebuilt with it.
+   same answer or is rebuilt with it. *Built:* all of it, the website
+   reading `/api/plans` ([dev/billing.md](../dev/billing.md) "Plans on
+   sale").
 3. **A configuration panel**, read-only: each environment setting as set,
-   missing or off, Stripe's mode, and a *Send test mail* button.
+   missing or off, Stripe's mode, and a *Send test mail* button. *Built:*
+   the Settings tab's Configuration section
+   ([dev/cloud_accounts.md](../dev/cloud_accounts.md) "Running").
 4. **Invites**: an expiry date, on and off, uses given and left, the
    accounts that used each code, a copyable registration link, and a
    grant that ends on a date (`granted_until`, read by `recompute_plan`).
+   *Built:* all of it ([dev/cloud_accounts.md](../dev/cloud_accounts.md)
+   "Registration and the portal").
 5. **The default image tag as a setting** on the Servers tab, with
    *Upgrade all outdated*, and *outdated* decided by the image the agent
-   reports rather than by the tag's name.
+   reports rather than by the tag's name. *Built:* with automatic upgrades
+   besides ([dev/hosted.md](../dev/hosted.md) "Outdated").
 6. **History.** A `metrics` table of samples from the heartbeat and the
    sync, thinned to an hour and kept 30 days, drawn as small trends on the
    Servers tab; CPU, restarts, last write and active accounts added to
    the reports. Counts only, and [PRIVACY.md](../../PRIVACY.md) says so.
+   *Built:* the hourly samples, sparklines and a server's History
+   ([dev/hosted.md](../dev/hosted.md) "History"); PRIVACY.md does not
+   cover Gamma Cloud yet.
 7. **Per-server overrides** of quota, seats and size, merged over the
    plan in `hosted.limits_for`, and an `update` job that recreates a
-   container with a changed environment.
+   container with a changed environment. *Built:* a server's own limits
+   and environment ([dev/hosted.md](../dev/hosted.md) "What moves a
+   server").
 8. **A second host**: a DNS record per server and a Caddy per host, a
-   bootstrap script for the agent, then a `move` job.
+   bootstrap script for the agent, then a `move` job. *Being built:* the
+   records, the Caddy and the script; no `move` job yet.
 9. The shared server reporting usage per account, which the Plan page and
-   a retention rule for lapsed plans both wait for.
+   a retention rule for lapsed plans both wait for. *Not built.*
 
 Left alone on purpose: the operator as admin inside every customer's
 container. If support needs it, the owner should grant it for a limited

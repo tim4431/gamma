@@ -37,7 +37,7 @@ import threading
 from datetime import timedelta
 from urllib.parse import urlsplit
 
-from . import config, db, fleet, mail, oidc, settings
+from . import alerts, config, db, dns, fleet, mail, metrics, oidc, settings
 from .accounts import Problem
 from .log import log
 
@@ -121,6 +121,12 @@ def _subscription(conn, account_id: str):
 def _host_name(conn, host_id: str) -> str:
     host = conn.execute("SELECT name FROM hosts WHERE id = ?", (host_id,)).fetchone()
     return host["name"] if host else ""
+
+
+def _host_ip(conn, host_id: str) -> str:
+    """The host's public address: "" for a host behind the entrance's proxy."""
+    host = conn.execute("SELECT public_ip FROM hosts WHERE id = ?", (host_id,)).fetchone()
+    return host["public_ip"] if host else ""
 
 
 # --- what the account and its subscription say --------------------------------
@@ -463,6 +469,8 @@ def _provision(conn, row, quiet: bool = False) -> bool:
     conn.execute("UPDATE hosted_servers SET host_id = ?, report = '{}' WHERE id = ?", (host["id"], row["id"]))
     fleet.enqueue(conn, host["id"], row["id"], "create", create_payload(conn, row["id"]))
     db.audit(conn, "hosted.place", row["account_id"], "system", f"{row['label']} on {host['name']}")
+    if host["public_ip"]:
+        dns.kick()          # a routed host: its record is made once the caller commits
     return True
 
 
@@ -498,6 +506,7 @@ def _delete(conn, row, actor: str, why: str = "") -> None:
         oidc.delete_client(conn, row["client_id"], actor=actor)
     _set_state(conn, row, "deleted", actor, why)
     conn.execute("UPDATE hosted_servers SET deleted_at = ? WHERE id = ?", (db.now(), row["id"]))
+    dns.kick()              # its DNS record, if it has one, goes once the caller commits
 
 
 def _note(conn, row, note: str) -> None:
@@ -567,12 +576,17 @@ def job_finished(conn, job: dict, payload: dict, ok: bool, result: dict) -> None
 
 # --- the hourly pass ----------------------------------------------------------
 
-def tick(conn) -> None:
+def tick(conn) -> list[dict]:
     """Hosts gone silent, jobs that never finished, placement retries, the
     lifecycle (grace ending, read-only → stopped → deleted, the warning a
     week before), the next waves of upgrade and update runs, and, with
     automatic upgrades on, a run for the outdated servers
-    (``fleet.auto_upgrade``). The caller commits."""
+    (``fleet.auto_upgrade``), and the DNS records of servers on routed
+    hosts (``dns.reconcile``), which commits the pass before it calls
+    Cloudflare. Then the history and the resolved alerts past their days
+    go, and last the alerts are brought up to date (``alerts.sync``): the
+    ones due for mail are returned, for the caller to send
+    (``alerts.notify``) once it has committed."""
     fleet.stale_hosts(conn)
     fleet.fail_stuck(conn)
     now = db.now()
@@ -587,6 +601,13 @@ def tick(conn) -> None:
         conn.execute("RELEASE hosted_tick")
     fleet.release_waves(conn)
     fleet.auto_upgrade(conn)
+    try:
+        dns.reconcile(conn)
+    except Exception as e:  # noqa: BLE001 — a record left behind is tried again next hour
+        log.warning("dns: reconcile failed: %s", e)
+    metrics.purge(conn)
+    alerts.purge(conn)
+    return alerts.sync(conn)
 
 
 def _tick_one(conn, row, now: str) -> None:
@@ -764,6 +785,10 @@ def admin_view(conn, row) -> dict:
     out["outdated_why"] = fleet.outdated_why(row)
     out["outdated"] = bool(out["outdated_why"])
     out["host"] = _host_name(conn, row["host_id"])
+    # on a routed host: "ok" once its DNS record points at the host's address, else "pending"
+    # (with the last error in report.dns); "" for a server that needs no record
+    out["host_ip"] = ip = _host_ip(conn, row["host_id"])
+    out["dns"] = ("ok" if row["dns_target"] == ip else "pending") if ip and row["state"] != "deleted" else ""
     out["jobs"] = dict(conn.execute("SELECT state, COUNT(*) FROM fleet_jobs WHERE server_id = ? GROUP BY state",
                                     (row["id"],)).fetchall())
     return out
@@ -801,6 +826,8 @@ def purge_account(conn, account_id: str, actor: str = "system") -> None:
     if row["state"] != "deleted":
         _delete(conn, row, actor, "account purged")
     conn.execute("DELETE FROM hosted_servers WHERE account_id = ?", (account_id,))
+    if row["dns_record_id"]:
+        dns.kick(gone=row["dns_record_id"])     # no row is left to name its record: it goes by its id
 
 
 # --- the container's sync and the plan page -------------------------------------
@@ -811,7 +838,8 @@ def _text(value, n: int) -> str:
 
 def sync(conn, server_id: str, body: dict) -> dict:
     """A container's report in, its limits out. The report is a fixed set
-    of fields: counts, sizes and times, never anything of the library."""
+    of fields: counts, sizes and times, never anything of the library. Its
+    counts are also kept as the hour's sample (``metrics.record``)."""
     row = _row(conn, server_id)
     schema = body.get("schema")
     report = {"version": _text(body.get("version"), 80),
@@ -827,6 +855,8 @@ def sync(conn, server_id: str, body: dict) -> dict:
     ts = db.now()
     conn.execute("UPDATE hosted_servers SET report = ?, reported_at = ?, synced_at = ? WHERE id = ?",
                  (json.dumps(report), ts, ts, server_id))
+    metrics.record(conn, "server", server_id, {k: report[k] for k in ("uploads_bytes", "data_bytes", "accounts",
+                                                                      "active_accounts", "errors")})
     if report["public_url"] and report["public_url"].rstrip("/") != url_of(row["label"]):
         log.info("hosted server %s reports public URL %s", row["label"], report["public_url"])
     return _apply(conn, _row(conn, server_id), "container")

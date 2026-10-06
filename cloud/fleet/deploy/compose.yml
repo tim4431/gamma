@@ -15,6 +15,12 @@
 #     10.203.0.0/24 gamma-fleet`, once per host), where every hosted
 #     container answers as gamma-<label>. The agent joins it to reach their
 #     health checks. No port: every call it makes is outbound.
+#
+# `caddy`, under the profile `edge`, is the proxy of a host with a public IP
+# of its own (README.md "A second host"): TLS on the host's 80/443, routing
+# <label>-user.<domain> to gamma-<label>:9001. `COMPOSE_PROFILES=edge` in
+# .env turns it on. Never on the account server's VPS, whose own Caddy holds
+# 80/443 and routes the servers there.
 
 services:
   fleet:
@@ -33,10 +39,34 @@ services:
     networks:
       - fleet
 
+  caddy:
+    image: caddy:2-alpine
+    profiles: ["edge"]
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      # The zone and the hostname suffix of the hosted servers: the suffix
+      # must be the account server's GAMMA_CLOUD_HOSTED_SUFFIX.
+      GAMMA_FLEET_DOMAIN: ${GAMMA_FLEET_DOMAIN:-gammapdf.com}
+      GAMMA_FLEET_SUFFIX: ${GAMMA_FLEET_SUFFIX:--user}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    networks:
+      - fleet
+
+volumes:
+  caddy-data:
+  caddy-config:
+
 networks:
-  # Created by hand with the pinned subnet every hosted server trusts for
-  # X-Forwarded-For. External, so a `docker compose down` here never tries
-  # to remove it from under the running servers and Caddy.
+  # Created once per host (bootstrap.sh does it) with the pinned subnet every
+  # hosted server trusts for X-Forwarded-For. External, so a `docker compose
+  # down` here never tries to remove it from under the running servers and
+  # Caddy.
   fleet:
     name: gamma-fleet
     external: true
