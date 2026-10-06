@@ -111,18 +111,44 @@ proxy's rate limits. A host whose default network predates the pin needs
 ## The sign-up settings
 
 The registration mode (`open` / `invite` / `closed`), the Cloudflare
-Turnstile keys and extra blocked mail domains are edited on the **Admin
-page → Settings**. They live in `cloud.db` and take effect without a
-restart. `GAMMA_CLOUD_REGISTRATION`, `GAMMA_CLOUD_TURNSTILE_*` and
+Turnstile keys, extra blocked mail domains, the allowed mail domains and
+the paid plans on sale are edited on the **Admin page → Settings**. They
+live in `cloud.db` and take effect without a restart.
+`GAMMA_CLOUD_REGISTRATION`, `GAMMA_CLOUD_TURNSTILE_*` and
 `GAMMA_CLOUD_BLOCKED_EMAIL_DOMAINS` in `.env` are not read; the startup
 log names any still set so they can be deleted. `manage.py settings`
-shows and sets the same values from the shell.
+shows and sets the same values from the shell. The same tab shows the
+`.env` values read-only under **Configuration** (a secret only as set or
+missing), with Stripe's test or live mode and **Send test mail**, which
+mails the signed-in admin and says whether the message was sent or only
+logged; check it after setting up mail.
+
+### Invites
+
+The **Invites** tab makes codes with a number of uses, a plan, an
+optional expiry ("Expires in (days)") and an optional end to the plan
+they grant ("Plan lasts (days)": a Pro invite for 90 days lapses like an
+ended subscription). **Copy link** gives
+`https://account.gammapdf.com/register?invite=<code>`, which fills the
+code in. A code can be turned off and on, and **Who used it** lists the
+accounts that registered with it. From the shell: `manage.py invite
+--uses 20 --expires-days 30 --grant-days 90 --plan pro`, and `manage.py
+set-plan <username> pro --until 2026-12-31` for a grant that ends.
+
+### Allowed mail domains
+
+While the list is not empty, only an address at one of those domains
+(or a subdomain) registers without an invite code, whether registration
+is `open` or `invite`; any other address needs a code. A university only:
+set the mode to `invite` and the list to its domain. The throwaway and
+blocked lists still apply, code or not.
 
 ### Opening registration
 
 Set **Registration** to `open`. The sign-up forms drop the invite field
-and a new account gets the `free` plan. Invite codes still work and still
-grant their plan.
+(unless allowed mail domains are set, or the link brought a code) and a
+new account gets the `free` plan. Invite codes still work and still grant
+their plan.
 
 Do these two **before** the switch:
 
@@ -250,8 +276,9 @@ The compose file also runs `share`: one Gamma in cloud mode
 answers at three kinds of address ([docs/dev/cloud_accounts.md](../../docs/dev/cloud_accounts.md)
 "The share host" and "The entrance"):
 
-- `app.gammapdf.com`, the one people use: every account signs in there,
-  and a Lite or Plus library lives there (`GAMMA_PUBLIC_URL` in
+- `app.gammapdf.com`, the one people use: every account starts there, a
+  Lite or Plus library lives there, and a free account is shown the plans
+  instead of being signed in (`GAMMA_PUBLIC_URL` in
   `share.env`, `GAMMA_CLOUD_APP_URL` in `.env`);
 - `share.gammapdf.com`, where Gamma servers publish pages
   (`GAMMA_CLOUD_SHARE_HOST_URL`). A server that has published keeps this
@@ -348,26 +375,34 @@ project's side of it:
 5. `docker compose up -d`, then `docker compose exec caddy caddy reload
    --config /etc/caddy/Caddyfile`.
 6. **The agent**, on this host: [cloud/fleet/deploy/README.md](../fleet/deploy/README.md)
-   (*Add host* on the Servers tab, its token into the agent's own `.env`,
-   `docker compose up -d` in its folder). Its first heartbeat shows the
-   host on the Servers tab with its memory and disk; until then it takes
-   no servers.
+   (*Add host* on the Servers tab with no public IP, then its token into
+   the agent's own `.env` and `docker compose up -d` in its folder, or the
+   bootstrap line it shows). Its first heartbeat shows the host on the
+   Servers tab with its memory and disk; until then it takes no servers.
 7. **A first server by hand.** Give an account a Pro plan on the
    Accounts tab (a courtesy grant), or *Provision* it on the Servers tab.
    The agent pulls the image, starts `gamma-<username>` with its data in
    `/srv/gamma/<username>/data`, waits for its health check, and the
    account gets a "Your Gamma is ready" mail.
 
-Caddy reaches a server by its container name on `gamma-fleet`, which
-resolves only on this host. So the agent that runs the servers must run
-here, next to Caddy, until each server gets a DNS record of its own (the
-fleet README's "One host for now"). Keep any other host closed for
-placement until then.
+This project's Caddy reaches a server by its container name on
+`gamma-fleet`, which resolves only on this host, so it routes the servers
+of the agent beside it, through the wildcard record. **Another host** runs
+a Caddy of its own, and each server placed on it gets a proxied DNS
+record `<label>-user.gammapdf.com` → that host's public IP, which the
+account server makes at Cloudflare and which wins over the wildcard
+(the fleet README's "A second host, with its own Caddy"). For that,
+`.env` holds `GAMMA_CLOUD_CF_API_TOKEN` (a token with *Zone → DNS → Edit*
+on this zone only) and `GAMMA_CLOUD_CF_ZONE_ID`, and the host has its
+public IP on the Servers tab. Without the token a host with a public IP
+takes no servers, and its row says *no dns token: closed*. This host's
+own row keeps the public IP blank.
 
 The Servers tab is the operator's view of the fleet
 ([docs/dev/hosted.md](../../docs/dev/hosted.md) "Admin"). It shows each
-host's capacity, heartbeat and orphan containers, each server's state,
-version and data, the actions (logs, upgrade and rollback among them),
+host's capacity, heartbeat, public IP and orphan containers, each server's
+state, version and data (and, on a host with a public IP, whether its DNS
+record is in place), the actions (logs, upgrade and rollback among them),
 upgrade runs and the job queue. A host silent for 15 minutes shows
 *stale* and takes no new servers until it reports again. `manage.py
 hosts`, `servers`, `jobs`, `add-host` and `provision` do the same from

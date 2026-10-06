@@ -8,7 +8,7 @@ import json
 from contextlib import closing
 
 import pytest
-from conftest import make_admin, register, verify
+from conftest import make_admin, register, set_setting, verify
 from fastapi.testclient import TestClient
 
 from gammacloud import accounts, billing, config, db, hosted
@@ -163,8 +163,10 @@ def test_checkout_refused(client, stripe, monkeypatch):
     verify(client)
     monkeypatch.setitem(config.STRIPE_PRICES, "pro_year", ("pro", "year", ""))
     assert client.post("/api/billing/checkout", json={"price": "pro_year"}).status_code == 400
+    # the page offers both intervals, so a plan missing one price id is not sold at all
+    assert client.post("/api/billing/checkout", json={"price": "pro_month"}).status_code == 503
     completed(client, stripe, alice["id"])
-    r = client.post("/api/billing/checkout", json={"price": "pro_month"})
+    r = client.post("/api/billing/checkout", json={"price": "lite_month"})
     assert r.status_code == 409 and "Plan page" in r.json()["detail"]
     monkeypatch.setattr(config, "STRIPE_SECRET", "")
     assert client.post("/api/billing/checkout", json={"price": "plus_month"}).status_code == 503
@@ -487,7 +489,8 @@ def test_off_without_a_secret(client, monkeypatch):
     assert d["enabled"] is False and d["sells"] == []
     assert client.post("/api/billing/webhook", content=b"{}").status_code == 503
     page = client.get("/plan").text
-    assert "Not available yet" in page and "data-choose=" not in page
+    assert "Coming soon" in page and "data-choose=" not in page
+    assert "Only the Free plan is available right now. Paid plans are coming soon." in page
 
 
 # --- the Plan page ------------------------------------------------------------
@@ -556,19 +559,20 @@ def test_plan_page_for_a_library_on_the_shared_server(client, stripe, monkeypatc
     assert "share.gammapdf.test" in client.get("/").text                               # the Overview's plan card
     stripe.subs["sub_1"]["cancel_at_period_end"] = True
     send(client, "customer.subscription.updated", {"id": "sub_1"})
-    assert "goes back to the free allowance" in client.get("/plan").text
+    assert "your library closes then" in client.get("/plan").text
     stripe.subs["sub_1"]["status"] = "past_due"
     send(client, "invoice.payment_failed", {"subscription": "sub_1"})
     assert "Your plan ends on" in client.get("/plan").text and "Your plan ends on" in client.get("/").text
     stripe.subs["sub_1"]["status"] = "canceled"
     send(client, "customer.subscription.deleted", {"id": "sub_1"})
     page = client.get("/plan").text
-    assert "What happens to your library" in page and "free allowance" in page and "data-resume='plus_month'" in page
+    assert "What happens to your library" in page and "it is closed" in page and "data-resume='plus_month'" in page
+    assert ">Open<" not in page                                                       # nothing leads into a closed library
     assert "Readable until" not in page and "Export" not in page
     # each plan is sold only while its home is configured
     monkeypatch.setattr(config, "HOSTED_DOMAIN", "")
     page = client.get("/plan").text
-    assert "Choose Plus" in page and "Choose Pro" not in page and "Not available yet" in page
+    assert "Choose Plus" in page and "Choose Pro" not in page and "Coming soon" in page
     assert client.get("/api/billing/me").json()["sells"] == ["lite", "plus"]
     assert client.post("/api/billing/checkout", json={"price": "pro_month"}).status_code == 503
     assert client.post("/api/billing/checkout", json={"price": "lite_year"}).status_code == 200
@@ -590,7 +594,114 @@ def test_resume_only_when_checkout_accepts(client, stripe, monkeypatch):
     assert "data-resume='plus_month'" in client.get("/plan").text
     monkeypatch.setattr(config, "APP_URL", "")  # no shared server, so Plus is not sold: no Resume either
     page = client.get("/plan").text
-    assert "data-resume=" not in page and "Not available yet" in page
+    assert "data-resume=" not in page and "Coming soon" in page
+
+
+# --- plans on sale ------------------------------------------------------------
+
+def test_why_not_names_the_first_reason(client, stripe, monkeypatch):
+    assert [billing.why_not(p) for p in ("lite", "plus", "pro")] == ["", "", ""]
+    assert billing.why_not("free") == "not a paid plan" and not billing.can_sell("free")
+    monkeypatch.setitem(config.STRIPE_PRICES, "lite_year", ("lite", "year", ""))
+    assert billing.why_not("lite") == "no yearly Stripe price id"
+    monkeypatch.setitem(config.STRIPE_PRICES, "lite_month", ("lite", "month", ""))
+    assert billing.why_not("lite") == "no monthly or yearly Stripe price id"
+    monkeypatch.setattr(config, "APP_URL", "")
+    assert billing.why_not("plus") == "no shared server address (GAMMA_CLOUD_APP_URL)"
+    monkeypatch.setattr(config, "HOSTED_DOMAIN", "")
+    assert billing.why_not("pro") == "hosting is off (GAMMA_CLOUD_HOSTED_DOMAIN)"
+    monkeypatch.setattr(config, "STRIPE_SECRET", "")
+    assert billing.why_not("pro") == "billing is off (no Stripe secret)"
+    set_setting("plans_on_sale", "lite plus")
+    assert billing.why_not("pro") == "held back by the operator" and not billing.can_sell("pro")
+
+
+def test_a_held_back_plan_is_not_sold(client, stripe):
+    """The operator's switch: no card, no checkout, and the Admin page says
+    why; the page says plainly when nothing paid is for sale."""
+    alice = signed_up(client)
+    make_admin("alice")
+    set_setting("plans_on_sale", "lite plus")
+    page = client.get("/plan").text
+    assert "Choose Plus" in page and "Choose Pro" not in page and "Coming soon" in page
+    assert client.get("/api/billing/me").json()["sells"] == ["lite", "plus"]
+    assert client.post("/api/billing/checkout", json={"price": "pro_month"}).status_code == 503
+    rows = {p["plan"]: p for p in client.get("/api/admin/settings").json()["plans"]}
+    assert rows["plus"] == {"plan": "plus", "on_sale": True, "sellable": True, "reason": ""}
+    assert rows["pro"] == {"plan": "pro", "on_sale": False, "sellable": False, "reason": "held back by the operator"}
+    r = client.patch("/api/admin/settings", json={"plans_on_sale": ""})
+    assert r.status_code == 200 and not any(p["on_sale"] for p in r.json()["plans"])
+    page = client.get("/plan").text
+    assert "data-choose=" not in page and "Only the Free plan is available right now" in page
+    # someone who holds a plan keeps it
+    completed(client, stripe, alice["id"])
+    assert plan_of(alice["id"]) == "plus" and "Your plan stays as it is" in client.get("/plan").text
+
+
+def test_a_switch_needs_the_plan_on_sale(client, stripe, monkeypatch):
+    """A subscriber cannot pay for a plan that cannot be provisioned, and
+    still switches the billing period of the plan they hold."""
+    alice = signed_up(client)
+    completed(client, stripe, alice["id"], sub(price="price_plus_y"))
+    monkeypatch.setattr(config, "HOSTED_DOMAIN", "")   # Pro cannot be provisioned
+    set_setting("plans_on_sale", "lite")               # and Plus is held back
+    page = client.get("/plan").text
+    assert "data-switch=pro" not in page and "Coming soon" in page and "data-switch=lite>Switch to Lite" in page
+    assert "data-switch=plus data-m>Switch to monthly billing" in page
+    assert client.post("/api/billing/portal", json={"flow": "switch", "price": "pro_month"}).status_code == 503
+    r = client.post("/api/billing/portal", json={"flow": "switch", "price": "plus_month"})
+    assert r.status_code == 200
+    assert stripe.portals[-1]["flow_data"]["subscription_update_confirm"]["items"][0]["price"] == "price_plus_m"
+    # without the other period's price id there is no such switch to offer
+    monkeypatch.setitem(config.STRIPE_PRICES, "plus_month", ("plus", "month", ""))
+    page = client.get("/plan").text
+    assert "Switch to monthly billing" not in page and "Your current plan" in page
+    assert client.post("/api/billing/portal", json={"flow": "switch", "price": "plus_month"}).status_code == 400
+
+
+def test_the_website_reads_the_plans_on_sale(client, stripe):
+    r = client.get("/api/plans", headers={"Origin": "https://gammapdf.com"})
+    assert r.status_code == 200
+    assert r.json() == {"plans": {"lite": {"on_sale": True}, "plus": {"on_sale": True}, "pro": {"on_sale": True}}}
+    assert r.headers["access-control-allow-origin"] == "https://gammapdf.com"
+    assert r.headers["cache-control"] == "public, max-age=300"
+    set_setting("plans_on_sale", "lite plus")
+    assert client.get("/api/plans").json()["plans"]["pro"] == {"on_sale": False}
+
+
+# --- grants that end ----------------------------------------------------------
+
+def test_a_grant_that_ends(client, stripe):
+    signed_up(client)
+    make_admin("alice")
+    with TestClient(client.app, base_url="http://testserver") as other:
+        bob = signed_up(other, "bob")
+    url = f"/api/admin/accounts/{bob['id']}"
+    r = client.patch(url, json={"plan": "pro", "granted_until": "2099-01-01"})
+    assert r.json()["account"]["granted_until"] == "2099-01-01T00:00:00.000Z" and r.json()["account"]["plan"] == "pro"
+    assert client.patch(url, json={"granted_until": "2000-01-01"}).status_code == 400   # passed
+    assert client.patch(url, json={"granted_until": "soon"}).status_code == 400
+    # the date alone moves the end of the grant the account has
+    r = client.patch(url, json={"granted_until": "2098-06-01T12:00:00+02:00"}).json()["account"]
+    assert r["granted_until"] == "2098-06-01T10:00:00.000Z" and r["granted_plan"] == "pro"
+    # a plan from the select is a new grant, with no end
+    assert client.patch(url, json={"plan": "plus"}).json()["account"]["granted_until"] is None
+    assert client.patch(url, json={"plan": "free", "granted_until": "2099-01-01"}).status_code == 400
+    client.patch(url, json={"plan": "pro", "granted_until": "2099-01-01"})
+    # when it ends, a subscription keeps its plan and the hosted side hears of the change
+    completed(client, stripe, bob["id"], sub(customer="cus_b"), customer="cus_b")
+    assert plan_of(bob["id"]) == "pro"
+    sql("UPDATE accounts SET granted_until = ? WHERE id = ?", db.after(-60), bob["id"])
+    stripe.plan_changed.clear()
+    with closing(db.connect()) as conn:
+        assert accounts.expire_grants(conn) == 1
+        conn.commit()
+        row = conn.execute("SELECT granted_plan, granted_until FROM accounts WHERE id = ?", (bob["id"],)).fetchone()
+        assert tuple(row) == ("free", None)
+        assert conn.execute("SELECT detail FROM audit WHERE event = 'account.grant_expired' AND account_id = ?",
+                            (bob["id"],)).fetchone()["detail"] == "pro"
+        assert accounts.expire_grants(conn) == 0
+    assert plan_of(bob["id"]) == "plus" and stripe.plan_changed == [bob["id"]]
 
 
 def test_plan_page_never_calls_stripe(client, stripe):

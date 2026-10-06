@@ -2,21 +2,23 @@
 
 Notes and AI replies render closed `mermaid` Markdown fences as SVG diagrams.
 Use `/mermaid` in a note to insert a starter flowchart. A note's diagram is an
-object like a picture: a click selects it, and a double-click opens the
-source editor, as does its right-click menu's "Edit markdown source" (the
-row names the double-click). Leaving the editor renders the updated
+object like a picture: a click selects it, and a double-click or double tap
+opens the source editor, as does its menu's "Edit markdown source" (the
+row names the double-click; the menu opens on a right-click, a held
+finger or the toolbar's "⋯"). Leaving the editor renders the updated
 diagram. The double-click is free for the source because a diagram's body
 has no editing of its own: a picture zooms on double-click, a table edits
-the cell under the pointer. The hover toolbar and the resize grips keep
-their own double-clicks (`editor/MdObject.jsx`). Hovering a diagram shows
-its toolbar, the same flat icon buttons as a note image's hover strip: show
-source (`</>`), copy source, download SVG. Ordinary code blocks keep their
+the cell under the pointer. The toolbar and the resize grips keep
+their own double-clicks (`editor/MdObject.jsx`). Hovering a diagram, or
+selecting a note's, shows its toolbar, the same flat icon buttons as a
+note image's strip: show source (`</>`), copy source, download SVG, and
+in a note the object menu's "⋯". Ordinary code blocks keep their
 existing behavior.
 
 A note's diagram resizes like a note image: a grip on each side
 (`shared/ui/ResizeGrip.jsx`, shared with `MdImage`) drags the width — the
 figure is centred, so the width changes by twice the pointer's travel — and
-double-clicking a grip restores the natural size. The size is stored in the
+a double-click or double tap on a grip restores the natural size. The size is stored in the
 fence's info string after the language — `` ```mermaid width=420 `` —
 which other Markdown renderers ignore, so the source stays portable (the
 diagram analogue of the Obsidian `![alt|420]` image size). `setMermaidWidth`

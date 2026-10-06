@@ -98,8 +98,15 @@ async function start(ws, settings, appInfo) {
   fs.mkdirSync(ws.dataDir, { recursive: true });
 
   // GAMMA_VERSION: the shell's own version, so the server's admin dashboard
-  // (gamma/version.py) reports the app it ships in.
-  const env = { ...process.env, GAMMA_DATA_DIR: ws.dataDir, GAMMA_VERSION: appInfo?.version || '' };
+  // (gamma/version.py) reports the app it ships in. GAMMA_CLOUD_DEFAULT_ISSUER:
+  // Gamma Cloud sign-in is on until the admin saves another account server
+  // or none (gamma/cloud_auth.py); the shell's own environment may name another.
+  const env = {
+    GAMMA_CLOUD_DEFAULT_ISSUER: 'https://account.gammapdf.com',
+    ...process.env,
+    GAMMA_DATA_DIR: ws.dataDir,
+    GAMMA_VERSION: appInfo?.version || '',
+  };
   // Fresh data dir: hand the server its first-admin credentials so the
   // one-time seed matches what the registry remembers.
   if (!fs.existsSync(path.join(ws.dataDir, 'users.db')) && ws.adminUser) {

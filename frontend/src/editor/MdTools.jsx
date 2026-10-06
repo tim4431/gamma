@@ -10,7 +10,8 @@ import React, { useEffect, useRef, useState, useSyncExternalStore } from "react"
 import { createPortal } from "react-dom";
 import { parseTable, scanImages, scanTables, serializeTable } from "./mdScan";
 import { ContextMenu, MenuItem } from "../shared/ui/Menus";
-import { useObjectMenu } from "./MdObject";
+import { ObjectMenuButton, useObjectMenu } from "./MdObject";
+import { doublePress } from "../shared/ui/press.js";
 import { ResizeGrips, useDragResize } from "../shared/ui/ResizeGrip";
 import { Segmented } from "../settings/SettingsKit";
 import { t } from "../shared/i18n/i18n.js";
@@ -229,10 +230,10 @@ export function MdImage({ src, alt, width, idx, onEdit }) {
           width={w || undefined}
           draggable={false}
           // Editable: the press selected the object (its frame) and a drag
-          // moves it, so zoom is a double-click (or the toolbar). Read-only:
-          // a click zooms.
+          // moves it, so zoom is a double-click or double tap (or the
+          // toolbar). Read-only: a click zooms.
           onClick={onEdit ? undefined : (e) => { e.stopPropagation(); setLightbox(true); }}
-          onDoubleClick={onEdit ? (e) => { e.stopPropagation(); setLightbox(true); } : undefined}
+          {...doublePress(onEdit ? (e) => { e.stopPropagation(); setLightbox(true); } : null)}
         />
         {onEdit ? (
           <span className="mdImgTools" onMouseDown={stop} onClick={stop}>
@@ -243,6 +244,7 @@ export function MdImage({ src, alt, width, idx, onEdit }) {
             <a className="ctlBtn" title={t("Download")} href={src} download><DownloadIcon /></a>
             <button type="button" className="ctlBtn danger" title={t("Remove image")}
               onClick={() => onEdit(idx, "delete")}><Trash2Icon /></button>
+            <ObjectMenuButton />
           </span>
         ) : null}
         {onEdit ? <ResizeGrips gripProps={gripProps} /> : null}
@@ -286,7 +288,7 @@ export function MdImage({ src, alt, width, idx, onEdit }) {
 
 // Wrapper around every rendered table: a horizontal scroller, and with onEdit
 // the Notion-style controls — "+" strips on the right/bottom edges, small
-// handles above the hovered column / left of the hovered row opening a menu
+// handles above the hovered or touched column / left of its row opening a menu
 // (insert, align, delete), and click-a-cell in-place editing (Tab/Shift-Tab
 // move between cells, Enter commits, Esc cancels; every commit re-serializes
 // the table pretty-printed). Handle positions are measured from the live DOM
@@ -528,7 +530,9 @@ export function MdTableWrap({ idx, onEdit, model, editKey, children }) {
       data-guide={onEdit ? "notes.table" : undefined}
       data-guide-recent={recent ? "" : undefined}
       ref={wrapRef}
-      onMouseOver={onOver}
+      // A finger's touch places the handles as a pointer's hover does, and
+      // they stay after it lifts (its pointerleave comes with the lift).
+      onPointerOver={onOver}
       onMouseLeave={() => setHover(null)}
       onMouseDown={onCellMouseDown}
     >

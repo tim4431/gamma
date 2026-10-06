@@ -354,7 +354,9 @@ puzzling path count.
 
 `conftest.py` also holds what several files share: the `data_dir` fixture
 (a data directory of the test's own, for the migration, backup and startup
-tests that must not touch the worker's shared one), `at_once` / `together`
+tests that must not touch the worker's shared one; the upload GC's timed
+full pass is off for the session, since it would open whichever test's
+databases are current a minute after import), `at_once` / `together`
 (callables in threads started on one barrier), `slowed` (widens a writer's
 window between its check and its write, so a race test fails without the
 lock) and `recv` (the next message of a kind on a page socket).
@@ -512,7 +514,8 @@ The scenarios live in `tests/e2e/scenarios/`:
 - `mentions.mjs`: paper search, keyboard and touch selection, reference limits,
   persistence, PDF receipts and textarea shrink after clearing context. Run with `--only mentions`.
 - `chatNavigation.mjs`: a library or PDF chat reply keeps streaming and is
-  saved while the user navigates away and back, before or after it finishes.
+  saved while the user navigates away and back, before or after it finishes;
+  the model menu lists one connection's models.
   `--only "chat navigation"`.
 - `publish.mjs`: publishing a page to Gamma Cloud end to end. A second
   Gamma is started as the share host (`new Server({env})` in `harness.mjs`
@@ -594,6 +597,13 @@ The scenarios live in `tests/e2e/scenarios/`:
   block in the bundled stylesheet (`display-mode` cannot be emulated in
   Chromium), and a note editor's editing bar by tap (none with a mouse).
   `--only ipad`.
+- `touch.mjs`: one behaviour for mouse and finger
+  ([ui-design.md](ui-design.md#one-behaviour-for-mouse-and-finger)), in
+  desktop and touch contexts — a window's fold, unfold and drag, a held
+  finger and the "⋯" for every menu, Select mode, the folder menu's moves,
+  the View menu's command rows, the pill's Undo, a notebook's place across
+  its views and tabs, the viewer's touch tools, the editing bar's marks,
+  and the chat's composer and history rows. `--group touch`.
 - `pdfTouch.mjs`: 400% rendering under an emulated canvas limit, distant-page
   release/repaint, live ink, native touch swipes ([pdf_loading.md](pdf_loading.md)).
   `--only "pdf touch"`.

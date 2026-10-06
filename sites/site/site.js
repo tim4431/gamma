@@ -4,6 +4,8 @@
 //  - copy buttons on code blocks
 //  - the latest release: version, per-OS asset links, star count (one call
 //    to api.github.com; every element keeps a working fallback link)
+//  - on the pricing page, "Coming soon" for a plan Gamma Cloud does not sell
+//    right now (one call to its /api/plans; a failure leaves the page as written)
 (() => {
   const REPO = 'tim4431/Gamma';
   const STORE = 'https://apps.microsoft.com/detail/9N8WGWR2J2MV';
@@ -91,6 +93,22 @@
       document.querySelectorAll('[data-stars]').forEach(el => { el.textContent = fmt(n); el.hidden = false; });
     })
     .catch(() => {});
+
+  // Plans on sale: the account server says which paid plans can be bought now.
+  const choose = document.querySelectorAll('[data-plan]');
+  if (choose.length) {
+    fetch('https://account.gammapdf.com/api/plans')
+      .then(r => (r.ok ? r.json() : Promise.reject(r.status)))
+      .then(d => choose.forEach(a => {
+        if (d.plans?.[a.dataset.plan]?.on_sale !== false) return;
+        const soon = document.createElement('span');
+        soon.className = 'btn btn--ghost';
+        soon.setAttribute('aria-disabled', 'true');
+        soon.textContent = 'Coming soon';
+        a.replaceWith(soon);
+      }))
+      .catch(() => {});
+  }
 })();
 
 // The documentation sidebar starts folded on a narrow screen (it is written

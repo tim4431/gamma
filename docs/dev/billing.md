@@ -33,23 +33,32 @@ answer carries, and it is computed. Two inputs feed it:
   page's plan select and `manage.py set-plan` write it
   (`accounts.set_plan`, audited as `account.grant`); registration stores
   the invite's plan there (`accounts.create`). Schema step 9 back-filled it
-  from `plan`.
+  from `plan`. A grant may end: `accounts.granted_until` is when (NULL: it
+  does not). An invite with `grant_days` sets it at registration, and the
+  Admin page's *Grant ends…*, `PATCH /api/admin/accounts/{id}`
+  `{granted_until}` and `set-plan --until` set or clear it; a new plan from
+  the select is a new grant with no end. `accounts.expire_grants`, hourly
+  from `app.purge`, sets every grant whose day has passed back to `free`,
+  clears the date, audits `account.grant_expired` and recomputes the plan,
+  so a hosted server with no subscription behind it lapses through its
+  usual lifecycle ([hosted.md](hosted.md)).
 - the subscription row's `plan`, but only while its status pays for it:
   `active` or `trialing`, or `past_due` for `config.GRACE_DAYS` (7) after
   `past_due_since` (`accounts.billed_plan`).
 
 `accounts.recompute_plan(conn, account_id, actor, source)` sets `plan` to
 the higher of the two by `config.PLAN_RANK` and audits a change as
-`account.plan` with its source (`stripe`, `admin` or `invite`) and both
-inputs. It calls `hosted.plan_changed` when the plan changed; billing passes
+`account.plan` with its source (`stripe`, `admin`, `invite` or `expiry`)
+and both inputs. It calls `hosted.plan_changed` when the plan changed; billing passes
 `notify=True` after every subscription write, so a grace period or a cancel
 reaches the hosted server before the plan itself moves. A webhook therefore
 never erases a courtesy grant, and a lapsed subscription falls back to the
 grant, or to `free`, by itself. Nothing announces the end of a grace
 period, so `billing.tick` recomputes every `past_due` row hourly.
 
-`accounts.public` adds `granted_plan`, `plan_source` (`stripe` when the
-subscription carries the plan, `granted`, or `free`), and `renews_at` /
+`accounts.public` adds `granted_plan`, `granted_until`, `plan_source`
+(`stripe` when the subscription carries the plan, `granted`, or `free`),
+and `renews_at` /
 `cancel_at`, the period end when the subscription renews or ends then. A
 free account skips the subscription read.
 
@@ -75,7 +84,7 @@ until it is set:
 |---|---|
 | `GAMMA_CLOUD_STRIPE_SECRET` | the secret key (`sk_live_…` / `sk_test_…`); empty = billing off |
 | `GAMMA_CLOUD_STRIPE_WEBHOOK_SECRET` | the webhook endpoint's signing secret (`whsec_…`) |
-| `GAMMA_CLOUD_STRIPE_PRICE_LITE_MONTH`, `_LITE_YEAR`, `_PLUS_MONTH`, `_PLUS_YEAR`, `_PRO_MONTH`, `_PRO_YEAR` | the six recurring Price ids; `config.STRIPE_PRICES` maps the key a browser sends (`plus_month`, …) to (plan, interval, price id) |
+| `GAMMA_CLOUD_STRIPE_PRICE_LITE_MONTH`, `_LITE_YEAR`, `_PLUS_MONTH`, `_PLUS_YEAR`, `_PRO_MONTH`, `_PRO_YEAR` | the six recurring Price ids; `config.STRIPE_PRICES` maps the key a browser sends (`plus_month`, …) to (plan, interval, price id). A plan is sold only with both of its ids |
 | `GAMMA_CLOUD_APP_URL` | the shared server's address for people (default: `GAMMA_CLOUD_SHARE_HOST_URL`); Lite and Plus are sold only while there is one |
 | `GAMMA_CLOUD_HOSTED_DOMAIN` | the zone of the hosted containers; Pro is sold only while it is set |
 
@@ -97,10 +106,9 @@ lock.
 
 **Checkout.** `POST /api/billing/checkout {price}` (portal session only,
 rate limited per account) answers `{url}` and the page sends the browser
-there. `billing.checkout_url` refuses while billing is off or the plan
-cannot be sold (503; `billing.can_sell`: the plan's home, the shared server
-or the hosting domain, is configured), for an unknown price key or one
-without a price id (400), for an unconfirmed e-mail (403: a Gamma server
+there. `billing.checkout_url` refuses while billing is off (503), for an
+unknown price key or one without a price id (400), for a plan that cannot
+be sold (503; `billing.can_sell`, "Plans on sale"), for an unconfirmed e-mail (403: a Gamma server
 would not sign it in), and while
 the account holds a subscription in `active`, `trialing`, `past_due`,
 `unpaid` or `paused` (409, pointing at the Plan page). The browser never
@@ -127,7 +135,7 @@ to `/plan`. Every change made there comes back through the webhook.
 | `""` | the portal's home: invoices, billing address, tax id | |
 | `payment` | the payment method | |
 | `cancel` | cancelling this subscription at the end of its period | 409 with no held subscription, or one already set to end |
-| `switch` | Stripe's confirmation of a move to the price key `price`, with what is charged | 400 for an unknown price or the current one; 409 unless the subscription is `active` or `trialing` and not set to end |
+| `switch` | Stripe's confirmation of a move to the price key `price`, with what is charged | 400 for an unknown price or the current one; 503 for another plan that cannot be sold (`can_sell`; the other billing period of the plan held needs only its price id); 409 unless the subscription is `active` or `trialing` and not set to end |
 
 A flow ends with a redirect to `/plan?billing=<flow>`, where the page says
 what was saved. `switch` reads the subscription first for the id of the
@@ -231,6 +239,44 @@ paid one has its receipt) and `pdf` its download. An account Stripe does
 not know answers empty lists without a call. A Stripe that does not answer
 is a 502, and the page says the history is not available.
 
+## Plans on sale
+
+`billing.can_sell(plan)` is the one answer to "may this plan be bought
+now", and `billing.why_not(plan)` says why not in a few words ("" when it
+can). The first reason found, in this order:
+
+1. the operator holds it back: it is not in `settings.plans_on_sale()`
+   (the `plans_on_sale` row in cloud.db, default all three);
+2. billing is off (no `GAMMA_CLOUD_STRIPE_SECRET`);
+3. a price id is missing: the page offers a month and a year, so both are
+   needed ("no yearly Stripe price id");
+4. the plan's home is not configured: `GAMMA_CLOUD_APP_URL` for Lite and
+   Plus, `GAMMA_CLOUD_HOSTED_DOMAIN` for Pro.
+
+Everything that sells asks it: a checkout (503 "This plan is not
+available yet."), a subscriber's switch to another plan in the portal
+(the same 503), the Plan page's cards and Resume, `summary.sells`, and the
+website. A switch between the month and the year of the plan already
+held needs only that price id, so a held-back plan's subscribers can
+still change how they pay. Holding a plan back takes nothing from anyone
+who has it: the subscription, the grant and the server stay as they are.
+Emptying the hosting domain is not a way to stop selling Pro, since it
+also takes every hosted server's address away; the setting is.
+
+The Admin page's Settings tab has a **Plans** section: an *On sale*
+checkbox per paid plan, saved as `PATCH /api/admin/settings
+{plans_on_sale: "lite plus"}`, and a pill per plan, `on sale`, `held back`,
+or `cannot be sold` with the reason. `GET` and `PATCH /api/admin/settings`
+carry the rows as `plans: [{plan, on_sale, sellable, reason}]` (built in
+the router: `settings.py` does not import billing).
+
+`GET /api/plans` is public: `{"plans": {"lite": {"on_sale": true}, …}}`,
+`on_sale` being `can_sell`. It answers with `Access-Control-Allow-Origin:
+https://gammapdf.com` (`pages.SITE`) and `Cache-Control: public,
+max-age=300`, set by the route itself since the middleware's `no-store` on
+`/api/` is only a default. The website's pricing page reads it ("The
+website").
+
 ## The Plan & billing page
 
 `/plan`, a portal page with the **Plan & billing** item in the side
@@ -255,7 +301,10 @@ It has six states (`pages_billing.plan_state`):
   price with the yearly saving, a Monthly/Yearly toggle, and "Choose Lite" /
   "Choose Plus" / "Choose Pro", which post to checkout and follow the URL. A
   line under the cards points to self-hosting. A plan that cannot be sold
-  reads "Not available yet", disabled. A granted plan shows a
+  reads "Coming soon", disabled; when no paid plan sells, a line under the
+  cards says that only the Free plan is available right now and paid
+  plans are coming soon (to someone holding a plan: theirs stays as it
+  is). A granted plan shows a
   strip saying so, its server, and the four cards with the granted one
   marked as the current plan.
 - **Checkout returned** (`?checkout=success` on an account with a Pro
@@ -286,8 +335,9 @@ It has six states (`pages_billing.plan_state`):
     amount, status, and *Receipt* and *PDF* links; an open invoice has
     *Pay*. Its header links to the portal's home for the rest.
   - *Change plan*, while `subscription.can_switch`: the four cards as
-    switches. Another plan reads "Upgrade to …" or "Switch to …"; the
-    current plan's card offers its other billing period. The toggle starts
+    switches. Another plan reads "Upgrade to …" or "Switch to …", or
+    "Coming soon" while it cannot be sold; the current plan's card offers
+    its other billing period while that price id is set. The toggle starts
     on the period the subscription pays by.
 - **Past due.** The same without the cards, under a strip with the date
   the grace ends and Fix payment (the portal's home, where the open invoice
@@ -296,8 +346,9 @@ It has six states (`pages_billing.plan_state`):
   button opens the Customer Portal; a paused subscription is held, so it is
   resumed there, not through a new checkout.
 - **Cancelled or read-only.** For Lite and Plus, a section saying that
-  the library stays where it is under the free allowance, with Open and
-  Resume. For Pro, when the server stops being readable and
+  the library is kept but closed until a plan opens it again
+  ([cloud_accounts.md](cloud_accounts.md) "Who the shared server takes"),
+  with Resume. For Pro, when the server stops being readable and
   when it is deleted (`stops_at` and `deletes_at` of `hosted.status_for`,
   the lifecycle's own dates), Export (`<server url>/?settings=backups`,
   while the server is read-only) and Resume (a new checkout of the same
@@ -350,15 +401,23 @@ at registration gets its server once the link is clicked.
   rows of `billing_events` with the account and the outcome.
 
 Refunds, disputes and invoices stay in Stripe's dashboard. On the Accounts
-tab the plan select shows and sets the granted plan, with a "paid" pill
-when a subscription lifts the effective plan above it. `manage.py
+tab the Plan column names the plan the account is on, with "paid" when a
+subscription lifts it above the grant and "granted" when the grant gives
+it; the select under it, labelled *grant*, shows and sets the granted plan
+only, with the day it ends beside it (*Grant ends…* sets or clears it).
+Which plans are on sale is the Settings tab's Plans section ("Plans on
+sale"). `manage.py
 subscriptions [--status S]` prints the same list.
 
 ## The website
 
 `sites/site/pricing.html` (`/pricing`, in the header, the footer and
 `sitemap.xml`) shows the same four cards with static copy and links Lite,
-Plus and Pro to `https://account.gammapdf.com/plan`. The FAQ's "Is Gamma
+Plus and Pro to `https://account.gammapdf.com/plan`. Those links carry
+`data-plan`; `sites/site/site.js` asks `GET /api/plans` ("Plans on sale")
+and turns the link of a plan not on sale into a disabled "Coming soon".
+A call that fails leaves the page as written. The site's CSP lets
+`https://account.gammapdf.com` through `connect-src` for it. The FAQ's "Is Gamma
 free?" says the app is free and open source and points to it. Keep its
 numbers in step with `config.PLAN_LIMITS` and `config.PLAN_PRICES_USD`.
 Its notes say that payments are not refunded and link to `/terms/`, the
@@ -411,7 +470,8 @@ changes, so a deleted account is never left being charged. A subscription
 that has already ended is left alone. The Stripe call is made after the
 password check and outside the deletion's transaction.
 
-A purge (`accounts.purge`, after the grace period or the admin's Purge now)
+A purge (`accounts.purge`, hourly once `config.PURGE_DELETED_DAYS` (30) have
+passed since the deletion, or the admin's Purge now)
 first hands a live hosted server to `hosted.purge_account`, which deletes it
 and removes its row, then removes the account's `subscriptions` row with
 the rest; `billing_events` keeps its rows.

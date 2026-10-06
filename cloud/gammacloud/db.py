@@ -21,7 +21,7 @@ from datetime import datetime, timezone
 
 from . import config
 
-SCHEMA_VERSION = 10
+SCHEMA_VERSION = 11
 BUSY_TIMEOUT = 10  # seconds a connection waits for another writer
 
 
@@ -156,7 +156,13 @@ BILLING_EVENTS = """CREATE TABLE IF NOT EXISTS billing_events (
 # got from ``/api/hosted/sync``, ``report`` what it last reported.
 # ``fleet_jobs``: the queue a host's agent works through. ``hosts.orphans``
 # (step 10): the labels of containers its agent reported that no server row
-# on that host names.
+# on that host names. Step 11: ``hosts.public_ip`` is the address a host's
+# own proxy answers on ('' for the host behind the entrance's proxy and the
+# wildcard record); a server placed on a host that has one gets a DNS record
+# of its own, kept in ``dns_record_id`` and ``dns_target`` (``dns.py``).
+# ``hosted_servers.overrides`` are the operator's numbers for this server
+# over its plan's (JSON: quota, per-file cap, accounts, memory, CPUs), and
+# ``env`` its extra environment variables (JSON).
 HOSTS = """CREATE TABLE IF NOT EXISTS hosts (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL UNIQUE,
@@ -169,6 +175,7 @@ HOSTS = """CREATE TABLE IF NOT EXISTS hosts (
     accepting INTEGER NOT NULL DEFAULT 1,
     agent_version TEXT NOT NULL DEFAULT '',
     orphans TEXT NOT NULL DEFAULT '[]',
+    public_ip TEXT NOT NULL DEFAULT '',
     last_seen_at TEXT,
     created_at TEXT NOT NULL
 )"""
@@ -187,7 +194,11 @@ HOSTED_SERVERS = """CREATE TABLE IF NOT EXISTS hosted_servers (
     synced_at TEXT,
     state_changed_at TEXT NOT NULL,
     created_at TEXT NOT NULL,
-    deleted_at TEXT
+    deleted_at TEXT,
+    overrides TEXT NOT NULL DEFAULT '{}',
+    env TEXT NOT NULL DEFAULT '{}',
+    dns_record_id TEXT NOT NULL DEFAULT '',
+    dns_target TEXT NOT NULL DEFAULT ''
 )"""
 FLEET_JOBS = """CREATE TABLE IF NOT EXISTS fleet_jobs (
     id TEXT PRIMARY KEY,
@@ -204,6 +215,35 @@ FLEET_JOBS = """CREATE TABLE IF NOT EXISTS fleet_jobs (
     finished_at TEXT
 )"""
 FLEET_JOBS_INDEX = "CREATE INDEX IF NOT EXISTS fleet_jobs_host ON fleet_jobs(host_id, state)"
+
+# --- what the operator is told and shown (step 11) ---
+# ``alerts``: one row per problem the operator should know about
+# (``alerts.py``), keyed by what it is about (``job:<id>``,
+# ``host_stale:<host id>``, ...). A problem that is gone gets
+# ``resolved_at``, one that comes back opens the row again, and
+# ``dismissed_at`` is the admin's "seen, stop showing it". ``mailed_at``
+# keeps the mail to one per opening.
+# ``metrics``: a sample per host or server (``kind``, ``ref``) and hour
+# (``at`` is the start of the hour), ``data`` a JSON object of numbers
+# (``metrics.py``). The history the Servers tab draws.
+ALERTS = """CREATE TABLE IF NOT EXISTS alerts (
+    key TEXT PRIMARY KEY,
+    kind TEXT NOT NULL,
+    text TEXT NOT NULL,
+    link TEXT NOT NULL DEFAULT '',
+    first_at TEXT NOT NULL,
+    last_at TEXT NOT NULL,
+    mailed_at TEXT,
+    resolved_at TEXT,
+    dismissed_at TEXT
+)"""
+METRICS = """CREATE TABLE IF NOT EXISTS metrics (
+    kind TEXT NOT NULL,
+    ref TEXT NOT NULL,
+    at TEXT NOT NULL,
+    data TEXT NOT NULL DEFAULT '{}',
+    PRIMARY KEY (kind, ref, at)
+)"""
 SUBSCRIPTIONS_INDEX = "CREATE INDEX IF NOT EXISTS subscriptions_customer ON subscriptions(stripe_customer_id)"
 
 # A server connection a person approved (``connect.py``), waiting for the
@@ -221,7 +261,9 @@ SCHEMA = [
     # it reaches (accounts.py ``email_canon``), what uniqueness is judged on.
     # Its index is deliberately not UNIQUE: two accounts predating the rule
     # may share a canonical form, and the constraint on ``email`` is enough
-    # of a backstop.
+    # of a backstop. ``invite_code`` is the invite the account registered
+    # with ('' for none); ``granted_until`` is when ``granted_plan`` ends
+    # (NULL = it does not).
     """CREATE TABLE IF NOT EXISTS accounts (
         id TEXT PRIMARY KEY,
         username TEXT NOT NULL UNIQUE,
@@ -235,7 +277,9 @@ SCHEMA = [
         is_admin INTEGER NOT NULL DEFAULT 0,
         created_at TEXT NOT NULL,
         deleted_at TEXT,
-        app_signed_in_at TEXT
+        app_signed_in_at TEXT,
+        invite_code TEXT NOT NULL DEFAULT '',
+        granted_until TEXT
     )""",
     """CREATE INDEX IF NOT EXISTS accounts_email_canon ON accounts(email_canon)""",
     # An account's sign-in through an outside provider (google, github):
@@ -270,13 +314,21 @@ SCHEMA = [
         expires_at TEXT NOT NULL,
         used_at TEXT
     )""",
+    # ``uses_total`` is how many uses the code was made with, ``uses_left``
+    # what remains. ``expires_at`` NULL = no end; ``disabled`` is the
+    # admin's off switch. ``grant_days``: the plan it grants ends that many
+    # days after the registration (NULL = it does not end).
     """CREATE TABLE IF NOT EXISTS invites (
         code TEXT PRIMARY KEY,
         uses_left INTEGER NOT NULL,
         plan TEXT NOT NULL DEFAULT 'free',
         created_by TEXT NOT NULL DEFAULT '',
         created_at TEXT NOT NULL,
-        note TEXT NOT NULL DEFAULT ''
+        note TEXT NOT NULL DEFAULT '',
+        uses_total INTEGER NOT NULL DEFAULT 0,
+        expires_at TEXT,
+        disabled INTEGER NOT NULL DEFAULT 0,
+        grant_days INTEGER
     )""",
     # OIDC clients: ``secret_hash`` NULL = public client (PKCE only).
     # ``kind``: desktop / share-host / container / server. ``redirect_uris``
@@ -371,6 +423,8 @@ SCHEMA = [
     SERVERS_LINKED,
     SERVER_CONNECTS,
     SETTINGS,
+    ALERTS,
+    METRICS,
 ]
 
 
@@ -505,6 +559,28 @@ def _step_fleet_orphans(conn) -> None:
     _add_column(conn, "hosts", "orphans", "TEXT NOT NULL DEFAULT '[]'")
 
 
+def _step_operations(conn) -> None:
+    """What the Admin page gained for running the service: invites that
+    expire, switch off and remember who used them, grants that end, the
+    operator's alerts and the hourly samples, a server's own limits and
+    environment, and a host's public address with each server's DNS record.
+    A code made before this step has ``uses_total`` set to what was left."""
+    _add_column(conn, "invites", "uses_total", "INTEGER NOT NULL DEFAULT 0")
+    _add_column(conn, "invites", "expires_at", "TEXT")
+    _add_column(conn, "invites", "disabled", "INTEGER NOT NULL DEFAULT 0")
+    _add_column(conn, "invites", "grant_days", "INTEGER")
+    conn.execute("UPDATE invites SET uses_total = uses_left WHERE uses_total = 0")
+    _add_column(conn, "accounts", "invite_code", "TEXT NOT NULL DEFAULT ''")
+    _add_column(conn, "accounts", "granted_until", "TEXT")
+    _add_column(conn, "hosts", "public_ip", "TEXT NOT NULL DEFAULT ''")
+    _add_column(conn, "hosted_servers", "overrides", "TEXT NOT NULL DEFAULT '{}'")
+    _add_column(conn, "hosted_servers", "env", "TEXT NOT NULL DEFAULT '{}'")
+    _add_column(conn, "hosted_servers", "dns_record_id", "TEXT NOT NULL DEFAULT ''")
+    _add_column(conn, "hosted_servers", "dns_target", "TEXT NOT NULL DEFAULT ''")
+    conn.execute(ALERTS)
+    conn.execute(METRICS)
+
+
 STEPS: list = [
     # (version, name, fn(conn)) — append only; see docs/dev/cloud_accounts.md.
     (2, "external_logins", _step_external_logins),
@@ -516,6 +592,7 @@ STEPS: list = [
     (8, "server_build", _step_server_build),
     (9, "plans", _step_plans),
     (10, "fleet_orphans", _step_fleet_orphans),
+    (11, "operations", _step_operations),
 ]
 
 

@@ -99,7 +99,11 @@ app ([ipad.md](ipad.md)). Typed text on a page is
   Reading & editing → Handwriting; on by default), with the last pen
   preset armed on the strip. **Fingers never draw**
   when *Draws with* is *Pen only* (`inkPenOnly`, default on touch screens): they keep
-  scrolling and pinch-zooming. The pen's eraser end and barrel button erase.
+  scrolling and pinch-zooming. The first finger that scrolls a page while
+  a tool is armed says so on the status pill, "Fingers scroll while a pen
+  draws", with **Draw with finger** (which turns `inkPenOnly` off): once a
+  session, and never after a pen has drawn. The pen's eraser end and
+  barrel button erase.
 - Strokes on one page join the **current group** until *New group*, a
   stroke on another page, or leaving the page. A group is one block in the
   notes: a rounded pen marker, the strokes as a picture, and the block's
@@ -326,6 +330,12 @@ text box's `text_box`, merged key by key ([text_boxes.md](text_boxes.md)
     and kept from the viewer's pan/pinch handlers. A pen takes over an
     unfinished finger stroke when the palm landed first; a second contact
     never takes over a pen.
+  - A second finger makes a finger's stroke a pinch: the stroke in
+    progress is discarded.
+  - A finger moving alone over a page with a tool armed and *Pen only* on
+    calls `onFingerScroll` (one of the page tools' actions), once a
+    session (`fingerHint`, which a pen press also spends); App puts the
+    hint on the status pill ([ui-design.md](ui-design.md#the-status-pill)).
   - Samples (`ink/inkInput.js`): `getCoalescedEvents()` where available
     (Safari has none but delivers 120/240 Hz moves), hardware timestamps,
     the pressure preference snapshotted at stroke start, the pointer-up
@@ -359,7 +369,8 @@ text box's `text_box`, merged key by key ([text_boxes.md](text_boxes.md)
   - `PageTools.jsx` `PageToolsContext` carries the tools to every layer:
     `{readOnly, ink: {tool, penTool, penOnly, pressure, eraserMode,
     eraserSize, lassoMode}, text, actions}`. The actions are the stroke,
-    erase, select, action, move and jump handlers (and the text boxes'),
+    erase, select, action, move, jump and finger-scroll handlers (and the
+    text boxes'),
     ref-backed through `useStableActions`, so their identity never changes.
     `armedClasses(tools)` gives a surface's container its armed-tool
     classes (`inkArmed`, `inkTouchDraw`, `textArmed`).

@@ -1,4 +1,5 @@
 import { DASH_CLASS, buildSearchRegex, normalizeQuery } from "../shared/lib/textnorm.js";
+import { filingChips } from "./libraryUtils.js";
 
 // Damerau-Levenshtein distance (adjacent transpositions count as one edit),
 // capped: returns max+1 as soon as the budget is provably blown. Both inputs
@@ -102,7 +103,7 @@ function prepareQuery(query, { caseSensitive = false, wholeWord = false } = {}) 
   return { phrase, terms };
 }
 
-// Shared by workspace search and chat's library picker.
+// The workspace search's title ranking, under its case and whole-word options.
 export function createTitleScorer(query, { caseSensitive = false, wholeWord = false } = {}) {
   const prepared = prepareQuery(query, { caseSensitive, wholeWord });
   if (!prepared) return null;
@@ -116,8 +117,8 @@ export function createTitleScorer(query, { caseSensitive = false, wholeWord = fa
   };
 }
 
-// The library's own lookups — the home listing's search box and Ctrl+P —
-// match a title OR its folder/label chips ("cs229" surfaces that label's
+// The library's own lookups — the home listing's search box, Ctrl+P and the
+// chat's page pickers — match a title OR its folder/label chips ("cs229" surfaces that label's
 // papers; "cs229 attention" needs both). Same typo-tolerant scoring as
 // createTitleScorer, with diacritics folded on both sides. Title hits outrank
 // chip-only hits. Returns (title, chips) → score (0 = no hit), or null for an
@@ -134,4 +135,40 @@ export function createLibraryMatcher(query) {
     if (own > 0) return TITLE_TIER + own;
     return chips.length ? scoreTitle([t, ...chips.map(foldMarks)].join(" "), phrase, terms, false) : 0;
   };
+}
+
+// The pages a picker offers for a query, best first: Ctrl+P, the chat's @
+// picker and its "+" page picker. `pages` are the library's page blocks,
+// `tree` its folder and label trees (libraryUtils.libraryTree), `recentViews`
+// App's recents queue ([{id, at}], newest first) and `openTabs` the tab strip.
+// A query ranks through createLibraryMatcher on the title and the page's
+// folder/label chips. Ties, and the whole list with no query, go recently
+// viewed first, then open tabs, then the rest by last edit. Rows are
+// {page, section, time}: `section` is "pages" under a query, else "recent" /
+// "tabs" / "rest"; `time` is when a recent page was viewed, else its last edit.
+export function rankLibraryPages(pages, tree, query, { recentViews = [], openTabs = [], limit = 40 } = {}) {
+  const viewedAt = new Map(recentViews.map((r) => [r.id, r.at]));
+  const recentRank = new Map(recentViews.map((r, i) => [r.id, i]));
+  const tabs = new Set(openTabs.map((tab) => tab.id));
+  const tabRank = recentViews.length;
+  const match = createLibraryMatcher(query);
+  const chipNames = (page) => {
+    const chips = filingChips(tree, page.properties);
+    return [...chips.folders, ...chips.labels].map((c) => c.name);
+  };
+  return pages
+    .map((page) => ({
+      page,
+      score: match ? match(page.content, chipNames(page)) : 1,
+      rank: recentRank.get(page.id) ?? (tabs.has(page.id) ? tabRank : tabRank + 1),
+    }))
+    .filter((r) => r.score > 0)
+    .sort((a, b) => (b.score - a.score) || (a.rank - b.rank)
+      || (b.page.updated_at || "").localeCompare(a.page.updated_at || ""))
+    .slice(0, limit)
+    .map(({ page, rank }) => ({
+      page,
+      section: match ? "pages" : rank < tabRank ? "recent" : rank === tabRank ? "tabs" : "rest",
+      time: viewedAt.get(page.id) || page.updated_at,
+    }));
 }

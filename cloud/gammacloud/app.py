@@ -1,5 +1,6 @@
 """Assembly: the FastAPI app, security headers, the same-origin check, the
-startup upgrade, the hourly purge of expired rows."""
+startup upgrade, the hourly purge of expired rows, ended grants and deleted
+accounts past their grace period."""
 
 import asyncio
 import os
@@ -10,7 +11,7 @@ from urllib.parse import urlsplit
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
-from . import billing, config, db, hosted, identities, oidc, sessions, settings
+from . import accounts, alerts, billing, config, db, hosted, identities, oidc, sessions, settings
 from .accounts import Problem
 from .log import log
 from .routers import accounts as accounts_router
@@ -32,8 +33,15 @@ def purge() -> None:
         identities.purge_expired(conn)
         conn.commit()
     with closing(db.connect()) as conn:
-        hosted.tick(conn)
+        # grants that ended and accounts past their grace period, before the
+        # fleet's tick acts on the plans they changed
+        accounts.expire_grants(conn)
+        accounts.purge_deleted(conn, config.PURGE_DELETED_DAYS)
         conn.commit()
+    with closing(db.connect()) as conn:
+        due = hosted.tick(conn)
+        conn.commit()
+    alerts.notify(due)
     with closing(db.connect()) as conn:
         billing.tick(conn)
         conn.commit()

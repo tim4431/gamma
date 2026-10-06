@@ -1,0 +1,42 @@
+# The Caddy of a fleet host with a public IP of its own (compose.yml's
+# `caddy` service, profile `edge`; README.md "A second host"). Never on the
+# account server's VPS: the account project's Caddy holds 80/443 there and
+# routes that host's servers itself.
+#
+# Every hosted server on this host has a DNS record of its own at Cloudflare,
+# <label>-user.gammapdf.com -> this host's address, proxied, which the account
+# server makes once the host's public IP is set on the Servers tab. The public
+# certificate is Cloudflare's; between Cloudflare and this host Caddy serves
+# its own internal one (`tls internal`, Cloudflare SSL/TLS mode "Full"), as
+# the account project's Caddyfile does.
+#
+# The domain and the suffix come from the environment (compose.yml passes
+# GAMMA_FLEET_DOMAIN and GAMMA_FLEET_SUFFIX from .env, default gammapdf.com
+# and -user): the suffix must be the account server's
+# GAMMA_CLOUD_HOSTED_SUFFIX. Caddy substitutes {$VAR} before it reads the
+# file, so they work inside the regexp too (where the domain's dots match
+# any character; the site address below already admits only the domain).
+*.{$GAMMA_FLEET_DOMAIN} {
+	tls internal
+	encode gzip
+	# <label>-user.<domain> is the container gamma-<label> on the network
+	# gamma-fleet, which Caddy joins. The name is resolved per request, so a
+	# stopped or unknown server is a 502 for its name and nothing else. The
+	# container trusts gamma-fleet's subnet for X-Forwarded-For
+	# (FORWARDED_ALLOW_IPS), so Caddy passes Cloudflare's client address
+	# (README.md "Security": only Cloudflare may reach this port).
+	@hosted header_regexp hosted Host ^([a-z0-9][a-z0-9-]*){$GAMMA_FLEET_SUFFIX}\.{$GAMMA_FLEET_DOMAIN}$
+	handle @hosted {
+		reverse_proxy gamma-{re.hosted.1}:9001 {
+			header_up X-Forwarded-For {http.request.header.CF-Connecting-IP}
+		}
+	}
+	handle {
+		respond 404
+	}
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options nosniff
+		-Server
+	}
+}

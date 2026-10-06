@@ -1,15 +1,14 @@
-// Quick open (Ctrl+P): a VS Code-style palette over the library. Empty
-// query lists the recently viewed pages, then the open tabs, then the rest
-// by last edit, each group under its heading with its time on the right.
-// Typing ranks pages, folders and labels through createLibraryMatcher — the
-// home listing's search: typo-tolerant, on the title or the folder/label
-// chips, title hits first — in sections of their own with the matched
-// characters marked (exact matches only; a typo-only match stays
-// unmarked), and ends with two actions: search inside notes and
-// PDFs for the query (Ctrl+Enter; the workspace search opens with it) and
+// Quick open (Ctrl+P): a VS Code-style palette over the library. Its pages
+// are rankLibraryPages' rows drawn by PageOption, as in the chat's @ picker:
+// an empty query lists the recently viewed pages, then the open tabs, then
+// the rest by last edit, each group under its heading with its time on the
+// right. Typing ranks pages, folders and labels through createLibraryMatcher
+// — the home listing's search: typo-tolerant, on the title or the
+// folder/label chips, title hits first — in sections of their own with the
+// matched characters marked, and ends with two actions: search inside notes
+// and PDFs for the query (Ctrl+Enter; the workspace search opens with it) and
 // create a page titled with it (Shift+Enter). ↑↓ moves, Enter opens, Esc
-// closes. Rows reuse the chat mention picker's option style and the home
-// file rows' folder/label chips.
+// closes. Rows are the chat mention picker's option style.
 //
 // A query starting with ">" is the command palette (Ctrl+Shift+P opens it
 // with the prefix typed): `commands()` — App's list of what applies right
@@ -17,13 +16,13 @@
 // filtered by the same matcher on the label and group, Enter runs the pick.
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { FileGlyph, FolderIcon, LabelIcon, PlusIcon, SearchIcon, TerminalIcon } from "../shared/ui/Icons";
+import { FolderIcon, LabelIcon, PlusIcon, SearchIcon, TerminalIcon } from "../shared/ui/Icons";
 import { commandIcon } from "../app/commandIcons.jsx";
 import { chordLabel } from "../shared/lib/hotkeys.js";
 import { MarkedText } from "../search/SearchPanel";
-import { CardLabels } from "./FileBrowser";
-import { createLibraryMatcher } from "./librarySearch";
-import { filedIn, filingChips, folderPath, formatRelativeTime, pageAttachment } from "./libraryUtils";
+import PageOption, { recencySections } from "./PageOption";
+import { createLibraryMatcher, rankLibraryPages } from "./librarySearch";
+import { filedIn, folderPath } from "./libraryUtils";
 import { t, tn } from "../shared/i18n/i18n.js";
 
 const MAX_ROWS = 40;
@@ -87,36 +86,10 @@ export default function QuickOpen({
         .slice(0, MAX_ROWS)
         .map((r) => ({ key: r.cmd.id, cmd: r.cmd }));
     }
-    const recentAt = new Map(recentViews.map((r) => [r.id, r.at || ""]));
-    const recentRank = new Map(recentViews.map((r, i) => [r.id, i]));
-    const tabs = new Set(openTabs.map((tab) => tab.id));
+    const pageRows = rankLibraryPages(pages, tree, query, { recentViews, openTabs, limit: MAX_ROWS })
+      .map((r) => ({ key: r.page.id, ...r }));
     const match = createLibraryMatcher(query);
-    if (!match) {
-      // No query: recents, then open tabs, then everything else by last edit.
-      const sectionOf = (p) => (recentRank.has(p.id) ? "recent" : tabs.has(p.id) ? "tabs" : "rest");
-      const order = { recent: 0, tabs: 1, rest: 2 };
-      return pages
-        .map((p) => ({ page: p, section: sectionOf(p) }))
-        .sort((a, b) => (order[a.section] - order[b.section])
-          || ((recentRank.get(a.page.id) ?? 0) - (recentRank.get(b.page.id) ?? 0))
-          || (b.page.updated_at || "").localeCompare(a.page.updated_at || ""))
-        .slice(0, MAX_ROWS)
-        .map((r) => ({
-          key: r.page.id, page: r.page, section: r.section,
-          time: r.section === "recent" ? recentAt.get(r.page.id) : r.page.updated_at,
-        }));
-    }
-    const rankOf = (p) => (recentRank.has(p.id) ? recentRank.get(p.id) : tabs.has(p.id) ? 1000 : 2000);
-    const pageRows = pages
-      .map((p) => {
-        const chips = filingChips(tree, p.properties);
-        return { page: p, score: match(p.content, [...chips.folders, ...chips.labels].map((c) => c.name)), rank: rankOf(p) };
-      })
-      .filter((r) => r.score > 0)
-      .sort((a, b) => (b.score - a.score) || (a.rank - b.rank)
-        || (b.page.updated_at || "").localeCompare(a.page.updated_at || ""))
-      .slice(0, MAX_ROWS)
-      .map((r) => ({ key: r.page.id, page: r.page, section: "pages", time: recentAt.get(r.page.id) || r.page.updated_at }));
+    if (!match) return pageRows;
     // A folder matches on its own name or its path ("Physics / Rydberg").
     const folderRows = [...tree.folders.values()]
       .map((f) => { const path = folderPath(tree, f.id); return { folder: f, path, score: match(f.name, [path]) }; })
@@ -155,8 +128,7 @@ export default function QuickOpen({
     else onOpen(r.page.id);
   };
   const sectionTitle = {
-    recent: t("Recent"), tabs: t("Open tabs"), rest: t("Everything else"),
-    pages: t("Pages"), folders: t("Folders"), labels: t("Labels"), actions: t("Actions"),
+    ...recencySections(), pages: t("Pages"), folders: t("Folders"), labels: t("Labels"), actions: t("Actions"),
   };
   const placeholder = commandMode ? t("Type a command") : t("Search pages by title or label");
   const hint = commandMode
@@ -220,21 +192,7 @@ export default function QuickOpen({
         </button>
       );
     }
-    const { page } = r;
-    const meta = page.properties?.meta || {};
-    const authors = (meta.authors || []).slice(0, 2).join(", ");
-    const detail = [authors, meta.year].filter(Boolean).join(" · ");
-    const title = page.content || t("Untitled");
-    return (
-      <button key={r.key} {...optionProps(r, i, { title: [title, detail].filter(Boolean).join("\n"), "data-kind": "page" })}>
-        <FileGlyph isPdf={!!pageAttachment(page)} size={16} />
-        <span><strong><MarkedText text={title} query={q} /></strong>{detail && <small>{detail}</small>}</span>
-        <CardLabels className="fileRowLabels" {...filingChips(tree, page.properties)} />
-        {page.id === currentPageId
-          ? <em className="quickOpenTag">{t("Current")}</em>
-          : r.time ? <em className="quickOpenTime">{formatRelativeTime(r.time)}</em> : null}
-      </button>
-    );
+    return <PageOption key={r.key} {...optionProps(r, i)} row={r} tree={tree} query={q} currentPageId={currentPageId} />;
   };
   return (
     <div className="reportOverlay quickOpenOverlay" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>

@@ -159,21 +159,50 @@
 .pageCardAdd .pageCardCover { background: none; border-bottom-style: dashed; }
 .pageCardAdd .tileGlyph { color: var(--text-dim); width: 40px; height: 40px; }
 .pageCardAdd .pageCardTitle { color: var(--text-muted); font-weight: 400; }
-/* Hover-revealed card overlay buttons (the recents ×, the pin): positioned in
-   the cover corner, solid card background so they stay legible over a
-   snapshot. The × look itself comes from .uiClose.uiCloseSm. */
-:is(.pageCardClose, .tilePinBtn) {
+/* A card's corner buttons: the recents × and the pin in the cover's
+   top-right corner (PageCard's .pageCardCorner), its "⋯" in the top-left
+   (.pageCardMenu), each on a solid card background so it stays legible over
+   a snapshot. The × look itself comes from .uiClose.uiCloseSm. Where a
+   pointer hovers the × and an unpinned pin show with the card; where none
+   does the × is always there and an unpinned pin is not (Pin is in the
+   card's menu). */
+.pageCardCorner {
   position: absolute;
   top: 4px;
   right: 4px;
-  opacity: 0;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+:is(.pageCardClose, .tilePinBtn) {
   transition: opacity var(--dur-fast);
   background: var(--bg-card);
 }
-.pageCard:hover .pageCardClose, .pageCardClose:focus-visible { opacity: 1; }
+.pageCardMenu { position: absolute; top: 4px; left: 4px; background: var(--bg-card); }
+@media (hover: hover) {
+  :is(.pageCardClose, .tilePinBtn) { opacity: 0; }
+  .pageCard:hover .pageCardClose, .pageCardClose:focus-visible { opacity: 1; }
+  .pageCard:hover .tilePinBtn { opacity: 0.7; }
+  .tilePinBtn:hover, .tilePinBtn.pinned, .tilePinBtn:focus-visible { opacity: 1; }
+}
 @media (hover: none) {
   .pageCardClose { opacity: 0.7; }
+  .tilePinBtn:not(.pinned) { display: none; }
 }
+/* Select mode's check (SelectCheck in FileBrowser.jsx): in a row it stands
+   in the glyph's place, on a card in its "⋯"'s, the cover's top-left corner. */
+.selectCheck {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: var(--radius-full);
+  background: var(--accent-fill);
+  color: var(--on-accent);
+}
+.pageCard > .selectCheck { position: absolute; top: 6px; left: 6px; }
 
 /* --- file-browser home: folders --- */
 .folderBrowser {
@@ -277,12 +306,14 @@
 
 /* --- modern file-manager home: view toggle, grid tiles, pinned, pins --- */
 .homeListSpacer { flex: 1; }
+/* Select mode's "{n} selected" beside its "⋯" and Done */
+.homeSelectCount { font-size: var(--fs-xs); color: var(--text-muted); white-space: nowrap; }
 /* listing filter box — matches float to the top, the rest dim in place */
 .homeFindBox {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  height: 28px;
+  height: var(--ctl-btn-sm);
   padding: 0 6px 0 8px;
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
@@ -349,9 +380,10 @@
 /* non-matching rows/cards stay in place, just out of the way */
 .homeDim { opacity: 0.34; }
 .homeDim:hover { opacity: 0.75; }
-/* the sort trigger (a uiBtn sm, ~26px from its padding) sits between the
-   28px-tall toggle groups — pin its height so the toolbar reads as one row */
-.homeListBar .uiSelectBtn { height: 28px; min-height: 28px; padding-top: 0; padding-bottom: 0; }
+/* The toolbar is one row a small button tall: the find box, the sort
+   trigger (a uiBtn sm) and the toggle groups (2 px padding and a border
+   around their buttons). */
+.homeListBar .uiSelectBtn { height: var(--ctl-btn-sm); padding-top: 0; padding-bottom: 0; }
 .homeViewToggle {
   display: inline-flex;
   gap: 2px;
@@ -364,8 +396,8 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 26px;
-  height: 22px;
+  width: var(--ctl-icon-btn);
+  height: calc(var(--ctl-btn-sm) - 6px);
   border: none;
   background: none;
   border-radius: var(--radius-sm);
@@ -440,8 +472,8 @@
   padding: 2px 6px;
 }
 /* The trailing columns every list row shares (rowColumns in App.jsx):
-   kind, the date the sort uses, and the pin slot — fixed widths, so they
-   line up down the list and under the header. */
+   kind, the date the sort uses, the pin slot and the "⋯" — fixed widths,
+   so they line up down the list and under the header. */
 .fileRowKind {
   flex: 0 0 64px;
   font-size: var(--fs-xs);
@@ -460,7 +492,22 @@
   text-overflow: ellipsis;
 }
 .fileRowPin, .fileRowPinSlot { flex: 0 0 22px; width: 22px; }
-.fileRowPin { opacity: 0; transition: opacity var(--dur-fast); }
+.fileRowPin { transition: opacity var(--dur-fast); }
+/* The pin shows with its row where a pointer hovers; where none does only a
+   pinned one is there (Pin is in the row's menu), its slot kept. */
+@media (hover: hover) {
+  .fileRowPin { opacity: 0; }
+  .fileRow:hover .fileRowPin { opacity: 0.6; }
+  .fileRowPin:hover, .fileRowPin.pinned, .fileRowPin:focus-visible { opacity: 1; }
+}
+@media (hover: none) {
+  .fileRowPin:not(.pinned) { visibility: hidden; }
+}
+/* The "⋯" column (MenuButton): it takes the 20 px of the row's first line
+   and overhangs the row's padding, rather than making the row taller; the
+   slot keeps the column where there is no menu. */
+.fileRowMenu { margin-block: calc((20px - var(--ctl-icon-btn)) / 2); }
+.fileRowMenuSlot { visibility: hidden; }
 /* The thin column header above the rows (not a .fileRow: callers count those). */
 .fileListHead {
   display: flex;
@@ -474,6 +521,7 @@
   user-select: none;
 }
 .fileListHead .fileRowKind, .fileListHead .fileRowDate { font-size: inherit; color: inherit; }
+.fileListHead .fileRowMenuSlot { height: 0; }
 .fileListHeadName { flex: 1; min-width: 0; padding-left: 30px; }
 /* A narrow list keeps the name readable: no date column, a tighter kind
    column and a shorter chip line. */
@@ -482,10 +530,8 @@
   .fileRowKind { flex-basis: 52px; }
   .fileList .fileRowLabels { max-width: 34%; }
 }
-.fileRow:hover .fileRowPin { opacity: 0.6; }
-.fileRowPin:hover, .fileRowPin.pinned, .fileRowPin:focus-visible { opacity: 1; }
 /* Chip line on a file row (shared base above): capped so it never pushes the
-   kind/pin off the row. Order in the row: name … [labels] PDF pin. */
+   kind/pin off the row. Order in the row: name … [labels] PDF date pin ⋯. */
 .fileRowLabels {
   gap: 6px;
   flex: 0 1 auto;
@@ -563,9 +609,7 @@
 }
 .pinBtn:hover { color: var(--accent); background: var(--bg-raised); }
 .pinBtn.pinned { color: var(--accent); }
-/* placement/reveal comes from the shared :is(.pageCardClose, .tilePinBtn) rule */
-.pageCard:hover .tilePinBtn { opacity: 0.7; }
-.tilePinBtn:hover, .tilePinBtn.pinned, .tilePinBtn:focus-visible { opacity: 1; }
+/* placement/reveal comes from the card's corner rules (.pageCardCorner) */
 
 /* folder tags on file rows */
 .folderTagBadge {
@@ -587,8 +631,9 @@
 .quickOpenInput .searchInput { flex: 1; }
 .quickOpenList { max-height: min(420px, 55vh); overflow-y: auto; }
 .quickOpenRow { border-radius: var(--radius-xs); }
-/* the chip line keeps its file-row cap; the option style would stretch it */
-.quickOpenRow .fileRowLabels { flex: 0 1 auto; }
+/* A page option's chip line (PageOption: here and in the chat's @ picker)
+   keeps its file-row cap; the option style would stretch it. */
+.chatMentionOption .fileRowLabels { flex: 0 1 auto; }
 .quickOpenTag { flex-shrink: 0; font-style: normal; font-size: var(--fs-2xs); color: var(--text-dim); }
 /* Section headings (Recent / Open tabs / … or Pages / Folders / Labels /
    Actions) and the time or count on a row's right. */
@@ -606,7 +651,7 @@
    view keeps its small label; the breadcrumb above names it), the filter box
    the full width, then sort, kinds and view on one row. A file row gives the
    title its own line, wrapping, with the folder and label chips on a second
-   line under it; the trailing columns (kind, date, pin — rowColumns in
+   line under it; the trailing columns (kind, date, pin, "⋯" — rowColumns in
    App.jsx) keep their widths, so they still line up with the folder rows and
    the header, and a narrow screen drops the date as above. */
 .phoneUI .homeListBar { flex-wrap: wrap; row-gap: 8px; padding: 12px 12px 8px; }
@@ -620,7 +665,7 @@
 .phoneUI .homeFindInput { flex: 1; width: auto; min-width: 0; font-size: var(--fs-body); }
 .phoneUI .fileRow {
   display: grid;
-  grid-template-columns: 20px minmax(0, 1fr) auto auto auto;
+  grid-template-columns: 20px minmax(0, 1fr) auto auto auto auto;
   align-items: start;
   column-gap: 10px;
   row-gap: 4px;
@@ -639,10 +684,12 @@
 .phoneUI .fileRow .fileRowKind { grid-area: 1 / 3; width: 64px; line-height: 20px; }
 .phoneUI .fileRow .fileRowDate { grid-area: 1 / 4; width: 110px; line-height: 20px; }
 .phoneUI .fileRow :is(.fileRowPin, .fileRowPinSlot) { grid-area: 1 / 5; }
+.phoneUI .fileRow .fileRowMenu { grid-area: 1 / 6; }
 @media (max-width: 600px) {
-  .phoneUI .fileRow { grid-template-columns: 20px minmax(0, 1fr) auto auto; }
+  .phoneUI .fileRow { grid-template-columns: 20px minmax(0, 1fr) auto auto auto; }
   .phoneUI .fileRow .fileRowKind { width: 52px; }
   .phoneUI .fileRow :is(.fileRowPin, .fileRowPinSlot) { grid-column: 4; }
+  .phoneUI .fileRow .fileRowMenu { grid-column: 5; }
 }
 
 /* "Start your library" (library/LibraryEmpty.jsx): a fresh library's panel

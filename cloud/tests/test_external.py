@@ -85,6 +85,28 @@ def test_new_person_signs_up(client, provider_says):
     assert r.headers["location"] == "/" and client.get("/api/me").json()["account"]["username"] == "new-person"
 
 
+def test_allowed_domains_apply_to_a_provider_sign_up(client, provider_says):
+    """The password form's rule: an address at an allowed domain needs no
+    code, any other does, and the form asks for one only then."""
+    set_setting("allowed_email_domains", "uni.example")
+    provider_says(gh(email="new@uni.example"))
+    round_trip(client)
+    assert "Invite code <small>if you have one</small>" in client.get("/signup/finish").text
+    assert client.post("/api/oauth/signup", json={"username": "new-person"}).status_code == 201
+    client.post("/api/logout")
+    provider_says(gh(email="out@other.example", subject="43", login="outsider"))
+    round_trip(client)
+    page = client.get("/signup/finish").text
+    assert "<label>Invite code<input name=invite value='' autocomplete=off required></label>" in page
+    assert "sessionStorage.getItem('gc_invite')" in page   # a code typed on the register page comes along
+    r = client.post("/api/oauth/signup", json={"username": "outsider"})
+    assert r.status_code == 403 and "without an invite code" in r.json()["detail"]
+    r = client.post("/api/oauth/signup", json={"username": "outsider", "invite": invite(plan="plus")})
+    assert r.status_code == 201 and r.json()["account"]["plan"] == "plus"
+    with closing(db.connect()) as conn:
+        assert conn.execute("SELECT invite_code FROM accounts WHERE username = 'outsider'").fetchone()[0]
+
+
 def test_state_must_match_the_browser(client, provider_says):
     provider_says(gh())
     client.post("/api/oauth/github/start", json={})

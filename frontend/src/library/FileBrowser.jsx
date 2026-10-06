@@ -5,7 +5,9 @@
 // icons. All interaction (selection, drag, rename, context menus) stays wired
 // in App.jsx alongside the shared handlers.
 import React from "react";
-import { FileIcon, FolderFilesIcon, FolderIcon, GridIcon, ListIcon, LabelIcon, SearchIcon, XIcon } from "../shared/ui/Icons";
+import { CheckIcon, FileIcon, FolderFilesIcon, FolderIcon, GridIcon, ListIcon, LabelIcon, SearchIcon, XIcon } from "../shared/ui/Icons";
+import { MenuButton } from "../shared/ui/Menus";
+import { menuPress } from "../shared/ui/press.js";
 import { t } from "../shared/i18n/i18n.js";
 
 // Folder + label chips for a page, filtered by the Settings → General "File
@@ -33,7 +35,7 @@ function CardLabels({ folders, labels, mode = "both", onLabelMenu, className = "
           key={`l:${l.id}`}
           className="labelTagBadge"
           title={onLabelMenu ? t("Label: {l} — right-click to rename or delete", { l: l.name }) : t("Label: {l}", { l: l.name })}
-          onContextMenu={onLabelMenu ? onLabelMenu(l.id) : undefined}
+          {...menuPress(onLabelMenu?.(l.id))}
         >
           <LabelIcon size={10} />
           {l.name}
@@ -49,15 +51,18 @@ function CardLabels({ folders, labels, mode = "both", onLabelMenu, className = "
 // Used by every card surface — both carousels, the pinned strip and the grid
 // listing — and it renders the SAME geometry everywhere; the container only
 // decides the width (fixed in a carousel, fluid grid track in .fileGrid).
-// Purely presentational: click/drag/context-menu handlers arrive via
-// rootProps, overlay buttons (pin, remove ×) and rename inputs as nodes.
+// Click and drag handlers arrive via rootProps, overlay buttons (pin,
+// remove ×) and rename inputs as nodes.
+// `onMenu` opens the card's menu: a right-click, a held finger, or its "⋯"
+// in the cover's other corner. `checked` marks it picked in Select mode,
+// with a check where the "⋯" was.
 function PageCard({
   glyph, snap, preview, title, tip, renameNode, kind, count, time,
-  folders, labels, labelMode, onLabelMenu,
+  folders, labels, labelMode, onLabelMenu, onMenu, checked = false,
   className = "", children, ...rootProps
 }) {
   return (
-    <div className={`pageCard ${className}`} title={tip || title} {...rootProps}>
+    <div className={`pageCard ${onMenu ? "rowMenuHost" : ""} ${className}`} title={tip || title} {...menuPress(onMenu)} {...rootProps}>
       <div className="pageCardCover">
         {snap ? <img src={snap} alt="" draggable={false} />
           : preview ? <div className="pageCardPreview" aria-hidden="true">{preview}</div>
@@ -74,9 +79,16 @@ function PageCard({
           </div>
         ) : null}
       </div>
-      {children}
+      {checked ? <SelectCheck /> : onMenu ? <MenuButton className="pageCardMenu" open={onMenu} /> : null}
+      {children ? <div className="pageCardCorner">{children}</div> : null}
     </div>
   );
+}
+
+// Select mode's mark on a picked row or card: in a row it takes the glyph's
+// place, on a card the cover's corner.
+function SelectCheck() {
+  return <span className="selectCheck" aria-hidden="true"><CheckIcon size={12} weight={3} /></span>;
 }
 
 // List / Grid segmented control.
@@ -188,4 +200,4 @@ function ListSearchElsewhere({ query, none, keyLabel, onSearch }) {
   );
 }
 
-export { ViewToggle, KindToggle, ListFindBox, ListSearchElsewhere, CardLabels, PageCard };
+export { ViewToggle, KindToggle, ListFindBox, ListSearchElsewhere, CardLabels, PageCard, SelectCheck };

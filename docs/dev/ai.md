@@ -77,6 +77,14 @@ each protocol's administrator-controlled default base URL
 (`config.AI_BASE_URLS`: `GAMMA_AI_ANTHROPIC_BASE_URL`,
 `GAMMA_AI_OPENAI_BASE_URL`, `GAMMA_AI_CHATGPT_BASE_URL`).
 
+The client offers one connection's models at a time. `providerModels` in
+`chat/modelPrefs.js` cuts the registry down to the active connection (the
+account's `ai-provider` pref, picked in Settings → AI → Connections), or to
+the first connection that offers models when nothing is picked or the pick
+is gone. The chat's model menu, the Settings model pickers, the models the
+client sends and the login check all use that one list, so the menu never
+mixes connections.
+
 Named services (`SERVICES` in `gamma/ai_protocols/services.py`, sent as
 `services` with the settings) are form presets, data rather than code: a
 protocol plus a fixed endpoint and its key hints. An entry made from one
@@ -703,6 +711,34 @@ without a picture. Nothing placed at all falls back to the
 plain head excerpt. With a native PDF attachment there is no window and no
 picture, and the passages carry the viewer's page only.
 
+### The composer
+
+The composer is one rounded box: the context chips on top, the message at
+full width, then a toolbar of [+], the Full PDF switch, the model chip, the
+mic, and Send (or Stop while this bucket's reply streams). The box's
+buttons never take the focus (the form cancels a button's `mousedown`), so
+a press keeps an on-screen keyboard up.
+
+- **Return** is decided in `chat/enterKey.js` (`tests/enterKey.test.mjs`).
+  With a keyboard, Enter sends and Shift+Enter breaks the line. While
+  `touchTyping()` holds ([ui-design.md](ui-design.md#one-behaviour-for-mouse-and-finger))
+  Return is the only line break there is, so it breaks the line and Send
+  sends. Ctrl/⌘+Enter sends on either, for a tablet with a keyboard on it.
+  `sendsOnEnter` serves the composer and an edit-and-resend.
+- **Input methods.** An Enter that confirms a word an input method is still
+  composing (Chinese, Japanese, Korean; `isComposing` or key code 229)
+  belongs to it: `composing(e)` keeps it from sending, committing or
+  closing in the composer, an edit, the history's rename and a hand-off
+  card's note.
+- **Searches that raise no keyboard.** The history popover's search and the
+  page picker's take the focus on open only where typing is not on an
+  on-screen keyboard (`autoFocus={!touchTyping()}`).
+- **Message tools.** A message's Copy and Edit, and a code block's Copy, come
+  up with the message where a pointer hovers (taking no press while hidden)
+  and are always there where none does.
+- The draft and App's last ask survive the dock remounting
+  ([chat_history.md](chat_history.md)).
+
 ### Mentioning library papers
 
 `chat/PaperMentionInput.jsx` owns the picker. `chat/paperMentions.js` owns mention text edits
@@ -710,13 +746,21 @@ and `MAX_CHAT_REFERENCES`, shared with `chat/ChatDock.jsx`. The six-reference UI
 mirrors the API's seven-page limit (`pages`, de-duplicated server-side),
 leaving one slot for the current page.
 
-Type `@` in the chat composer to search library titles with the same ranking,
-typo tolerance, and separator matching as library search (`library/librarySearch.js`).
-Arrow keys choose a result; Enter or Tab attaches it, Escape dismisses the
-query, and clicking or tapping a result also works. Results include author,
-year, venue, and folder details. A completed mention inserts the title and
-adds a removable context chip; the chip controls which page IDs are sent.
-The `+` menu offers the same library search.
+Type `@` in the chat composer to pick a library page the way quick open
+(Ctrl+P, [home_library.md](home_library.md)) does. Both lists are
+`rankLibraryPages` (`library/librarySearch.js`) drawn by
+`library/PageOption.jsx`: with nothing typed, the recent pages, the open tabs
+and the rest under their headings; a query matches the title or a
+folder/label chip, typos forgiven, recency breaking ties, with the matched
+characters marked. A row shows authors and year, the page's folder and label
+chips, and a check once attached, "Current" on the open page, or else its
+time; in a narrow dock the time goes and the chip line shortens
+(`.chatMentionPicker`'s container query). Arrow keys choose a result; Enter
+or Tab attaches it, Escape dismisses the query, and clicking or tapping a
+result also works. A completed mention inserts the title and adds a removable
+context chip; the chip controls which page IDs are sent. The `+` menu's page
+picker lists and searches through the same `rankLibraryPages`, as rows to
+tick.
 
 References persist for follow-up questions and are saved as `contextPages`
 on each user message. Loading a conversation restores its last references;
@@ -1048,8 +1092,8 @@ user. `gate` is `ApprovalGate` — a permission set to Ask shows its card
 first. `settle` is `PaperWait` — a fetch a publisher blocked waits for the
 PDF from the user's own browser
 ([ai_tools.md](ai_tools.md#walls-and-the-browser-handoff)). A caller with
-no user to ask passes neither: the background research job drives the same
-loop headless ([tasks.md](tasks.md)).
+no card to show passes neither: `read_paper`'s helper runs the same loop
+inside one of the chat's calls ([ai_tools.md](ai_tools.md#read_paper)).
 
 **A round's reads run together.** The calls of one turn are grouped
 (`AgentLoop._groups`): a run of armed reads that cannot stop on a card is
@@ -1068,7 +1112,9 @@ it runs; a batch sends one step with `batch: n` (and `tools` when they are
 not all the same tool), which the chat reads as "Fetching 4 documents…". A
 call that waits for the user's approval then sends an `{"approval"}` line
 ([Asking before a call](#asking-before-a-call-approvals)), and a blocked
-fetch a `{"handoff"}` line.
+fetch a `{"handoff"}` line. A call that handed a document to a helper
+(`read_paper`) sends `{"helper"}` lines while it runs, one whenever that
+helper's state changes ([ai_tools.md](ai_tools.md#read_paper)).
 The step's `args` are only the short ones the running label reads
 (`ai_agent.STEP_ARGS`: `page_id`, `block_id`, `query`, `title`, `folder`,
 `label`, `source`, `pdf_page`, `mode`, `question`), never a note's content.
@@ -1092,7 +1138,13 @@ the structured fields fall back to their summary. While the reply streams,
 the pill names the step running now ("Searching library for “…”…") in
 place of the "Thinking" pill, from those arguments (`runningLabel`):
 "Renaming “A” to “B”…", "Moving “A” to ML/Generative…", "Appending to a
-note…", "Reading notes of “A”…" when `read_block` names a page. Only
+note…", "Reading notes of “A”…" when `read_block` names a page. A call
+that hands documents to helpers lists them under the pill, one row each:
+the document, then what its helper is doing now (`helperStatus`, from the
+`{"helper"}` lines). The rows go when the call's chip lands. That chip is
+of kind `helper`: it has its own icon, counts the helper's calls beside
+its summary, adds "used 1 helper" to the pill, and expands to those calls
+(`children`). Only
 applied mutations count against `MAX_TOOL_ACTIONS` and trigger the
 home-feed refresh (`onLibraryChange`), and
 the note-block tools' actions carry `page_id`/`src_page_id` so the frontend
@@ -1108,7 +1160,9 @@ gets the PDF
 ([ai_tools.md](ai_tools.md#walls-and-the-browser-handoff)). Every chip also
 carries `ms` (how long the call took) and, for a fetch, the `version` it
 read and whether it was a `probe` or `delivered` by the browser, which the
-chat shows beside the summary (`chipNote` in `chat/agentSteps.js`). A reply that read
+chat shows beside the summary (`chipNote` in `chat/agentSteps.js`). A
+fetch of a PDF also carries the pages its window read (`pdf_pages`), shown
+there as "pp. 3–6". A reply that read
 or named papers ends with a **Save to library** list of them
 (`chat/ReplyPapers.jsx`), saved through `POST /api/clip`. The agent's
 `save_paper` runs the same ingest itself. Its request carries the Reading

@@ -3,10 +3,13 @@
 One small process per host. It holds the Docker socket, makes outbound
 calls only, and works through the job queue the account server keeps for
 its host: create, start, stop, restart, upgrade or resize, roll back and
-delete a hosted Gamma container, and fetch its logs. Every five minutes it
-reports the host's memory and disk and each container's state. It imports
-nothing from `gammacloud`; the two share only the HTTP shape. The whole
-picture, including the API and the job payloads:
+delete a hosted Gamma container, give it a new extra environment
+(`update`, rebuilt as safely as an upgrade), and fetch its logs. Every
+five minutes it reports the host's memory and disk and each container's
+state: memory and CPU use, restarts, start time, an out-of-memory kill,
+data size, and whether its tag names another image in the registry now.
+It imports nothing from `gammacloud`; the two share only the HTTP shape.
+The whole picture, including the API and the job payloads:
 [docs/dev/hosted.md](../../docs/dev/hosted.md).
 
 ```

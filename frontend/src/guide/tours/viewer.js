@@ -41,7 +41,7 @@ export const pdfViewer = {
       title: T("Translate the page you're reading"),
       body: T("Right-click for options; hold {key:Alt} for the original."),
       bodyTouch: T("Long-press for options.") },
-    { id: "pdf-select", anchor: "viewer.selectMode", placement: "right", requires: { phone: true },
+    { id: "pdf-select", anchor: "viewer.selectMode", placement: "right", requires: { touch: true },
       title: T("Choose what a drag does"),
       body: T("Select text, or box a figure.") },
   ],

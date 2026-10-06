@@ -198,10 +198,12 @@ Raw touches carry everything `gamma-ink` stores.
 note's text is sent as `setText` from the text it was edited from, so a
 text changed meanwhile merges. While a field has the keyboard, the editing
 bar (`Views/NoteEditBar.swift`) sits on it. It is the web app's bar
-([below](#the-editing-bar)), with the same tools in the same order:
+([below](#the-editing-bar)), with the same tools in the same order but
+Next math argument:
 
 **Insert** · Outdent · Indent · Move up · Move down · New block · Bold ·
-Italic · Link · Inline equation · Undo · Redo … **Done**
+Italic · Inline code · Strikethrough · Link · Inline equation · Undo ·
+Redo … **Done**
 
 - **Where it sits.** It is the notes' bottom safe-area inset, and the
   keyboard takes the safe area, so the bar rides on the keyboard without
@@ -226,9 +228,9 @@ Italic · Link · Inline equation · Undo · Redo … **Done**
     an insert whose key a sibling has.
   - Whether the text fields' typing and the keyboard's own undo key use
     the same manager is a device check.
-- **Text commands.** Bold, Italic, Link and Inline equation are the web
-  editor's own plans (`markCommands.js` `markPlan`, `linkPlan`,
-  `mathInsertAt`).
+- **Text commands.** Bold, Italic, Inline code, Strikethrough, Link and
+  Inline equation are the web editor's own plans (`markCommands.js`
+  `markPlan` with `**`, `*`, `` ` `` and `~~`, `linkPlan`, `mathInsertAt`).
   - Insert lists the `/` menu's text insertions (`slashInserts.js`) and,
     on a page without a PDF, a page to write on after the note.
   - The core's `format` and `insert` turn a plan into one replacement and
@@ -383,7 +385,7 @@ app counts as one browser, separate from Safari).
 | The icons | `frontend/public/media/icons/apple-touch-icon.png` (180), `icon-192.png`, `icon-512.png`, `icon-maskable-512.png` | Rendered from the one brand mark by `tools/branding/build.mjs` like every other icon ([design/brand](../../design/brand/README.md)); never edited by hand. The `bleed` option of `mark.mjs` gives them a full-bleed square plate — the OS masks the corners itself, and iOS paints transparent corners black — and the maskable one keeps the mark inside the inner 80%. |
 | The head tags | `frontend/index.html` | `manifest`, `apple-touch-icon`, `apple-mobile-web-app-capable` / `mobile-web-app-capable`, the title, `apple-mobile-web-app-status-bar-style` **default**; the pre-paint script adds `theme-color` for the stored theme (below). |
 | The status bar colour | `index.html`'s pre-paint script, then `app/App.jsx`, `paintStatusBar` (the theme effect and the phone-topbar effect) | With the *default* status-bar style the bar sits above the viewport and is painted with `theme-color`. Before the bundle loads, the pre-paint script writes the resolved theme's chrome colour from a small table of each theme's `--bg-page` (`tests/themes.test.mjs` holds it to the tokens), so a cold start never shows another theme's bar. From then on the meta is set to the topbar's background (the chrome, `--bg-page`) whenever the theme changes, so the bar continues the topbar for every theme — or to the library's (the content surface, `--bg-surface`) while the compact layout shows no topbar. Both are resolved to a hex first (`tokenHex`): most tokens are `color-mix()` expressions. `black-translucent` was rejected: it puts content under the bar with fixed light text, wrong on the light themes. |
-| Standalone-mode CSS | `shared/styles/app.css`, `@media (display-mode: standalone)` | The document stops rubber-banding (`overscroll-behavior: none` on html/body; the panes still scroll) and `.app` pads `env(safe-area-inset-bottom)` for the home indicator. There is no top inset to absorb with the default status bar. |
+| Standalone-mode CSS | `shared/styles/app.css`, `@media (display-mode: standalone)` | `.app` pads `env(safe-area-inset-bottom)` for the home indicator. There is no top inset to absorb with the default status bar. The document's `overscroll-behavior: none` (html/body; the panes still scroll) sits outside the block: a Safari tab gets it too. |
 
 ### Layout by orientation
 
@@ -411,13 +413,27 @@ screen, not the device (`PHONE_MQ` / `useIsPhone` in App.jsx):
   and the topbar's actions on the right: Add, Search, a page's Share (and
   a clone's Sync pill), More. Every item is a 22px icon over its word
   (`.barLabel`, `--fs-2xs`, hidden on the desktop topbar), about 50px tall.
+- **A page with sheets** ([notebooks.md](notebooks.md)) has Notebook and
+  Notes tabs in place of the page's tab and the Notes panel's: they switch
+  between its two views (`setNotebookView`), which close any panel over
+  the page.
+- **Panels and jumps.** Notes and Chat show as full-screen panels whose
+  title is a plain label: no "⠿" grip, since a panel neither drags nor
+  folds. A jump from the notes to the page (a handwriting or text box
+  row's, a highlight's) closes the panel over it (`showOnPage`,
+  `jumpToHighlightId`), and Show note on the page brings the notes up
+  (`showInNotes`): the Notes panel, or on a page with sheets its notes
+  view.
 - **More** is the account button (`header.account`) under another name:
   its sheet is the account menu with the rest of the topbar on top —
   Background tasks, the open folder's Share this folder, and the View
   menu's rows (`viewMenuItems`; of the window toggles only PDF, since the
-  tabs switch Notes and Chat). The tasks, folder-share and View buttons are
+  tabs switch Notes and Chat, then Undo, Redo, Go to page and Command
+  palette). The tasks, folder-share and View buttons are
   not rendered; their popovers open from those rows in the sheet's place.
-  While something runs, More shows the tasks spinner.
+  A flyout (the account menu's Tours) opens inline under its row, since
+  beside it the sheet's own scroll box would clip it. While something
+  runs, More shows the tasks spinner.
 - **The topbar** holds only tabs and Back, so with neither (a library with
   no tab open) it is not shown (`.topbar.phoneBare`), and theme-color
   switches to the library's `--bg-surface` so the status bar continues it
@@ -432,7 +448,8 @@ while a note's editor is open on a touch screen, a bar sits on top of the
 keyboard (`editor/EditBar.jsx`):
 
 **Insert** (the `/` menu) · Outdent · Indent · Move up · Move down · New
-block · Bold · Italic · Link · Inline equation · Undo · Redo … **Done**
+block · Bold · Italic · Inline code · Strikethrough · Link · Inline
+equation · Next math argument · Undo · Redo … **Done**
 
 The native app's notes have the same bar ([Editing the notes](#editing-the-notes)).
 
@@ -440,19 +457,25 @@ The native app's notes have the same bar ([Editing the notes](#editing-the-notes
   ([hotkeys.md](hotkeys.md)), run with the context the row's keydown
   dispatches with (`commandContext` in `BlockTree.jsx`). So a button does
   what the same command does from a key or the palette.
-  - Three of them exist for the bar and have no default chord:
-    `block.insertMenu`, `block.newBelow` and `block.math` (each is
-    described in [hotkeys.md](hotkeys.md)).
+  - Four of them exist for the bar and have no default chord:
+    `block.insertMenu`, `block.newBelow`, `block.math` and
+    `block.nextSlot` (each is described in [hotkeys.md](hotkeys.md)).
   - Undo and Redo are the page's block history (App's `undoBlocks`), as
     Ctrl+Z.
   - A button whose command's `when` fails is greyed out: Outdent at the
     top level, Indent and Move up on a first child, Move down on a last.
+  - Next math argument is Tab's hop in a math snippet (the next `{}`
+    slot, past a `\right`, out of the span), which an on-screen keyboard
+    has no key for. It is the one transient tool (`TRANSIENT`): it shows
+    only while its `when` holds, the caret in math with somewhere to go,
+    instead of greying out.
   - Done blurs the editor, which closes it and the keyboard.
 - **When it shows.** It shows when the primary pointer is coarse, or the
-  press that opened the editor was a finger (a touch laptop). Where the
-  primary pointer is fine, a mouse or trackpad press never brings it. It is
-  read once when the editor opens (`touchEditing`). A read-only page opens
-  no editor, so it has no bar.
+  last press was a finger or a pen (a touch laptop). Where the primary
+  pointer is fine, a mouse or trackpad press never brings it. It is read
+  once when the editor opens (`touchTyping()` in `shared/lib/pointer.js`,
+  [ui-design.md](ui-design.md#one-behaviour-for-mouse-and-finger)). A
+  read-only page opens no editor, so it has no bar.
 - **What it looks like.** The markup tool strip's surface and separators
   (`.pdfInkBar`, `.pdfInkSep`), centred and floating 6 px above what it
   sits on. Its `ctlBtn`s carry the strip's 16 px icons and are 36 px, the
@@ -503,15 +526,29 @@ The native app's notes have the same bar ([Editing the notes](#editing-the-notes
   history (its `onUndo`), so the browser never undoes CodeMirror's DOM
   there. An editor without `onUndo` (a text box's, an embed card's) leaves
   them to the browser.
+- **The keyboard's own formats.** The iPad keyboard's B and I, and the
+  Format menu over a selection, send `beforeinput` `formatBold`,
+  `formatItalic` and `formatStrikeThrough`. Every `BlockCmEditor` runs
+  `block.bold`, `block.italic` and `block.strike` for them, the commands
+  of Ctrl+B, Ctrl+I and Ctrl+Shift+X.
+- **Typing aids.** CodeMirror switches the system's typing aids off. In
+  prose the editor turns them back on (`autocorrect`, `autocapitalize`
+  sentences, `spellcheck`, `writingsuggestions`); in a code fence or math,
+  where a corrected word is a broken command, they stay off. The caret's
+  place decides as it moves (`typingAids` in `BlockCmEditor.jsx`).
 
 Apart from the bar and the compact shell, the touch rules are the ones the
-ink layer and the viewers already carry. The viewport meta asks for no
-browser zoom, leaving pinch-zoom to each viewer (the PDF's and the
-notebook's, [notebooks.md](notebooks.md)). Safari tabs ignore it, so the
-compact layout also refuses Safari's gesture events (`App.jsx`). Whether a
-pinch outside the viewers zooms the app in landscape is a device check
-([research/touch.md](../research/touch.md)). `touch-action: manipulation`
-removes double-tap zoom.
+ink layer and the viewers already carry, and the shared ones every control
+follows ([ui-design.md](ui-design.md#one-behaviour-for-mouse-and-finger)).
+The viewport meta asks for no browser zoom, leaving pinch-zoom to each
+viewer (the PDF's and the notebook's, [notebooks.md](notebooks.md)).
+Safari tabs ignore it, so on any touch screen, in either layout, the app
+also refuses Safari's gesture events (`touchScreen()`, `App.jsx`); the
+viewers' own pinch runs off `touchstart` / `touchmove` and is unaffected.
+`touch-action: manipulation` removes double-tap zoom, and
+`overscroll-behavior: none` on html and body keeps the document from
+rubber-banding or pulling to refresh, in a Safari tab as installed; only
+the panes scroll.
 
 ### Not built (and why)
 
@@ -533,16 +570,16 @@ removes double-tap zoom.
 - `frontend/tests/editBar.test.mjs`: the Insert and Inline equation edits
   (`slashInsertAt`, `mathInsertAt` in `editor/markCommands.js`; neither
   applies inside math or a code fence), where Move up / down, Indent and
-  Outdent apply (their `when`), and the bar's three commands starting
-  unbound.
+  Outdent apply (their `when`), Next math argument's hop and where it
+  applies, and the bar's four commands starting unbound.
 - `tests/e2e/scenarios/ipad.mjs` (`npm run e2e -- --only ipad`), in
   Chromium touch contexts:
   - Tablet-sized: the manifest parses with `standalone` display, and every
     icon it and the `apple-touch-icon` link name is a real PNG.
     `theme-color` matches what sits under the status bar (the library with
     no tab open, the topbar once one is) and follows a theme change. The
-    bundled stylesheet carries the standalone block (the document
-    overscroll rule and the home-indicator inset). Chromium cannot emulate
+    document's overscroll is off, and the bundled stylesheet carries the
+    standalone block (the home-indicator inset). Chromium cannot emulate
     `display-mode`: CDP accepts the feature, but `matchMedia` ignores it.
   - Upright (834×1194) is the compact shell: the PDF full width, Notes full
     screen from the bottom bar. Rotating to landscape brings the docks back.

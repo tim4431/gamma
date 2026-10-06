@@ -148,18 +148,74 @@ then restores the response and verifies a reload paints the document.
 ## High zoom and touch scrolling
 
 `shared/lib/canvasSize.js` bounds every PDF and live-ink backing store to 8 Mi pixels
-and 4096 pixels per edge. Normal zooms keep their supersampling; at 400% or
-on oversized pages the raster can fall below one device pixel per CSS pixel
-while layout, text, links and SVG annotations keep the exact zoom. WebKit
-documents both a [canvas area limit](https://bugs.webkit.org/show_bug.cgi?id=171238)
-and [total canvas allocation failures](https://bugs.webkit.org/show_bug.cgi?id=195325),
+and 4096 pixels per edge. WebKit documents both a
+[canvas area limit](https://bugs.webkit.org/show_bug.cgi?id=171238) and
+[total canvas allocation failures](https://bugs.webkit.org/show_bug.cgi?id=195325),
 and an iPad may report a Mac user agent, so the cap applies everywhere.
+Layout, text, links and SVG annotations are DOM and keep the exact zoom
+whatever the canvases do.
+
+The page box carries the zoom; the bitmaps only cover what the screen can
+show. `pdf/pageRaster.js` holds the rules as pure functions and the
+controller (`installPageRaster`) that draws one page's canvases. The survey
+and measurements behind it are in
+[research/pdf-zoom-rendering.md](../research/pdf-zoom-rendering.md).
+
+- **One canvas while it can be sharp.** A page is a single whole-page canvas,
+  supersampled to at least 2 backing pixels per CSS pixel, for as long as
+  the cap leaves it at the screen's pixel ratio or better (`basePlan`).
+- **Detail mode past that.** For A4 the cap leaves about 4.09 / zoom backing
+  pixels per CSS pixel, so on a DPR 2 screen detail mode starts near 205% and
+  on a DPR 1 screen just past 400%. The zoom limit is 800%
+  (`shared/model/zoom.js`); the detail canvas costs the same there as at
+  400%, since it is sized by the viewport. The whole-page canvas
+  (the base) drops to half its capped linear resolution and becomes a
+  preview. A second canvas (the detail) covers the page's part of one render
+  window, at the device pixel ratio.
+- **The render window** is the viewport grown on each side by a margin: what
+  the area and edge limits leave once the viewport itself is covered, at
+  most half the viewport's size (`windowMargin`). Each page's detail canvas is
+  its intersection with that window (`windowSlice`), moved onto the canvas's
+  own pixel grid (`detailPlan`). The slices of one window do not overlap, so
+  the detail canvases of the pages in view add up to about one budget. A
+  slice drawn for an earlier view is kept until it stops covering the view or
+  its page leaves the window, so the total can briefly exceed that.
+- **Scrolling.** Only pages in detail mode listen to the scroller, coalesced
+  to a frame. A page redraws its detail canvas when less than a quarter of
+  the margin is left ahead of the view: at once if no render is in flight.
+  A render the view has moved past is cancelled, and after one has been
+  outrun the next waits for 120 ms without scrolling, so a fast scroll shows
+  the base and sharpens on rest.
+- **Zooming.** Both canvases are sized in percent of the page box, so they
+  stretch with it in the same commit. The redraw starts 150 ms after the
+  last zoom step (`ZOOM_SETTLE_MS`), the part in view first, then the base.
+  A first paint does not wait.
+- **The text layer is built once per page**, after the page's first pixels,
+  and kept across zooms and when the page scrolls away. pdf_viewer.css sets
+  `--scale-factor: 1` on `.pdfViewer`, so the layer is laid out at scale 1
+  and `PdfPage` scales it with a CSS transform. After a zoom settles
+  `TextLayer.update` re-measures the spans at the new size. A text selection
+  and the citation marks survive a zoom.
+- **One renderer.** Every raster goes through `renderRegion`: the base, the
+  detail canvas, the highlight capture (`captureRef`) and the area-note
+  snapshot (`cropPage`). The last two are drawn from the document, not copied
+  off the screen, where the bitmap may be a preview. The transform is passed
+  to pdf.js as its `transform` parameter. pdf.js paints the paper before
+  applying its own transform, so a context translated beforehand leaves the
+  crop without paper.
+
+`.pdfPageCanvas` is a wrapper element around the two canvases. The theme
+treatments (multiply and soft-ink opacity in the paper themes, the invert
+filter of the dark page) sit on the wrapper, which composites the canvases
+before blending. On the canvases themselves the overlap would be blended
+twice.
 
 `PdfPage`'s intersection observer is rooted at the PDF scroller with 900 CSS
-pixels of look-ahead. A page outside it releases its canvas backing store
-and keeps its geometry, text and overlays; it repaints on return, and a
-forced render (jumps, the cited page) still works. Effect cleanup cancels
-the pending pdf.js render and text-layer tasks; unmount zeroes the canvas.
+pixels of look-ahead. A page outside it releases both backing stores
+(`show(null)`) and keeps its geometry, text and overlays; it repaints on
+return without waiting, and a forced render (jumps, the cited page) still
+works. A page inside the look-ahead but outside the render window holds only
+its base. Release and unmount cancel the pending pdf.js renders.
 
 `pdf/verticalScrollSnap.js` is the always-on one-finger vertical alignment
 (`installVerticalScrollSnap`, reinstalled on zoom and document changes). It
@@ -172,13 +228,20 @@ wheel input, a zoom change or teardown drops the pending alignment. Writing
 offsets mid-gesture fights WebKit's native scroll animation
 ([WebKit issue](https://bugs.webkit.org/show_bug.cgi?id=255193)).
 
-`tests/e2e/scenarios/pdfTouch.mjs` covers 400% rendering under an emulated
-canvas allocation limit, distant-page release and repaint, live ink, and
-native Chromium touch swipes with no mid-gesture offset writes; the
-rendering cases also run in Playwright WebKit (`GAMMA_E2E_BROWSER=webkit`).
-Unit tests pin the canvas bounds and the snap timing, cancellation and
-older-Safari fallback. Physical iPad GPU limits and momentum still need a
-device.
+`tests/e2e/scenarios/pdfTouch.mjs` covers 400% and 800% rendering at DPR 2 under an
+emulated canvas allocation limit: a detail canvas at 2 backing pixels per
+CSS pixel over the part in view, every canvas inside the limits, the detail
+canvas following a scroll, both canvases released for distant pages, one
+supersampled canvas again below the cap, and the text layer and its
+selection surviving a zoom. It also covers live ink, native Chromium touch
+swipes with no mid-gesture offset writes, and the paper and ink colour in a
+paper theme, which is what a doubled blend would change. The rendering cases
+are written to run in Playwright WebKit too (`GAMMA_E2E_BROWSER=webkit`);
+the detail-canvas assertions have only been run in Chromium.
+`tests/pageRaster.test.mjs` and `tests/canvasSize.test.mjs` pin the raster
+rules and the canvas bounds; other unit tests pin the snap timing,
+cancellation and older-Safari fallback. Physical iPad GPU limits, render
+times and momentum still need a device.
 
 ## Load phases
 

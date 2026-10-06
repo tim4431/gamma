@@ -64,15 +64,37 @@ every variable), fixed for the life of the container:
   the same server's address for people (`GAMMA_CLOUD_APP_URL`, default the
   share host's), the entrance ("The entrance").
 
-**`cloud.db`** (`cloud/gammacloud/settings.py`), the sign-up gate. An admin
-edits it on the Admin page's Settings tab and a change takes effect at once:
+The Admin page's Settings tab shows these read-only in its Configuration
+section (`config.admin_view`, `GET /api/admin/config`): each variable as
+`set` or `missing` (a switch as `on` or `off`), the value of everything but
+a secret, Stripe's test or live mode from the key's prefix, the schema
+version, and a note where a missing value stops something (no shared
+server address: no Lite or Plus). A secret (the Stripe keys, the SMTP user
+and password, the OAuth client secrets) shows only whether it is set.
+*Send test mail* (`POST /api/admin/test-mail`, five in ten minutes per
+admin) sends a short message to the admin's own address through
+`mail.send_test` and says what became of it: logged by the `console`
+backend, kept by `memory`, or handed to the SMTP host; a failure is a 502
+carrying the mail server's error.
+
+**`cloud.db`** (`cloud/gammacloud/settings.py`), what an admin edits on the
+Admin page's Settings tab, with effect at once:
 
 - the registration mode: `open` / `invite` / `closed`, default `invite`;
 - the Turnstile site key and secret. The check runs only when both are
   stored, since a secret without the widget would refuse every sign-up.
   The tab warns while registration is open and the check is off
   (`settings.unguarded_registration`);
-- extra blocked mail domains, added to `accounts.DISPOSABLE_DOMAINS`.
+- extra blocked mail domains, added to `accounts.DISPOSABLE_DOMAINS`;
+- allowed mail domains: while the list is not empty, only an address at
+  one of them (or a subdomain) registers without an invite code, in
+  `open` and `invite` mode alike ("Registration and the portal");
+- the paid plans on sale (`plans_on_sale`, default all three), the
+  operator's switch for each plan ([billing.md](billing.md) "Plans on
+  sale");
+- the operator's alerts: `alerts` (`on` by default) and `alert_email`
+  (empty: every admin's confirmed address) ([hosted.md](hosted.md)
+  "Alerts").
 
 Reads go through accessors (`settings.registration()` and the rest) over a
 process-wide cache, which is safe because the image runs one uvicorn
@@ -109,12 +131,12 @@ the signing keys and every token hash.
 
 | table | what |
 |---|---|
-| `accounts` | `id` (random, the OIDC `sub`; never changes), `username` (unique; the username on every Gamma server, a paid container's hostname label — `accounts.RESERVED_USERNAMES` keeps the names Gamma and the web use), `email` (unique, as it was typed), `email_canon` (the inbox it reaches — `accounts.email_canon` drops a `+tag` at the providers that ignore one and Gmail's dots, so aliases of one mailbox are one account; indexed, not unique, since rows predating the rule may share a form), `email_verified_at`, `password_hash`, `display_name`, `plan`, `is_admin`, `deleted_at`, `app_signed_in_at` (the first sign-in to a Gamma app or server; step 3) |
+| `accounts` | `id` (random, the OIDC `sub`; never changes), `username` (unique; the username on every Gamma server, a paid container's hostname label — `accounts.RESERVED_USERNAMES` keeps the names Gamma and the web use), `email` (unique, as it was typed), `email_canon` (the inbox it reaches — `accounts.email_canon` drops a `+tag` at the providers that ignore one and Gmail's dots, so aliases of one mailbox are one account; indexed, not unique, since rows predating the rule may share a form), `email_verified_at`, `password_hash`, `display_name`, `plan`, `is_admin`, `deleted_at`, `app_signed_in_at` (the first sign-in to a Gamma app or server; step 3), `invite_code` (the invite it registered with, '' for none) and `granted_until` (when `granted_plan` ends, NULL: it does not; both step 11) |
 | `identities` | an account's Google/GitHub link: (`provider`, `subject`) → account, the provider's address at the last sign-in |
 | `external_logins` | one Google/GitHub sign-in in flight (15 min): `redirect` while at the provider, `signup` while the username form waits; keyed by the hash of the `gc_ext` cookie (step 2) |
 | `portal_sessions` | the portal cookie's hash; sliding 30 days, newest 20 per account |
 | `email_tokens` | verify / reset / change-email links: hash, kind, expiry, `used_at`; one live link per (account, kind) |
-| `invites` | codes with uses left and the plan they grant |
+| `invites` | codes with the uses they were made with (`uses_total`) and the uses left, the plan they grant, `expires_at` (NULL: no end), `disabled` (an admin's off switch) and `grant_days` (the granted plan ends that many days after the registration; NULL: it does not) (step 11) |
 | `settings` | the sign-up gate an admin edits (`settings.DEFAULTS`): registration mode, the Turnstile pair, blocked mail domains. A row for any other key is ignored, so a rollback leaves nothing behind |
 | `oauth_clients` | confidential OIDC clients with exact redirect URIs: share-host and container ones an admin made, and `server` ones a person connected (`owner_account_id`, step 5); the desktop client is built in, not a row |
 | `server_connects` | a server connection a person approved, waiting for the server to fetch its client: the code's hash, the account, the server's address, the PKCE challenge (2 min, single use; step 5) |
@@ -235,21 +257,49 @@ page) and the **app** shell (a sidebar and a content column):
     revealed the same way.
   - Password.
   - Deletion in a danger zone, its form revealed by a first click.
-- **Admin** (`/admin`, `is_admin` only, 404 otherwise), in tabs:
-  - Accounts: search by username, e-mail or id, paged; plan select,
-    verify, resend, admin on/off, rename, delete. A deleted account (the
-    `deleted` pill) offers only Restore and Purge now.
-  - Invites: create with uses, plan and note; delete.
+- **Admin** (`/admin`, `is_admin` only, 404 otherwise), in tabs. The
+  address's hash names the open one: `/admin#servers` opens Servers, a
+  click on a tab sets the hash (through the history, so the back button
+  returns to the tab before), and a link to `#billing` switches to it; no
+  hash, or an unknown one, opens the Overview.
+  - **Overview**, open on load: *Needs attention*, the open alerts with
+    how long each has been open, a link to its tab and *Dismiss*; then
+    tiles for accounts, what is paid and brings in a month, servers by
+    state, hosts and failed jobs, and one line of the registration mode
+    and the plans on sale. It reloads every minute while it is in view
+    ([hosted.md](hosted.md) "Alerts" and "Admin").
+  - Accounts: search by username, e-mail or id, paged; plan select (the
+    granted plan, with the day it ends beside it), *Grant ends…* (a date,
+    empty for no end), verify, resend, admin on/off, rename, delete. A
+    deleted account (the `deleted` pill) offers only Restore and Purge now.
+  - Invites: create with uses, plan, note, *Expires in (days)* and *Plan
+    lasts (days)*, both blank for no end. The table shows the code with
+    *Copy link* (`<public url>/register?invite=<code>`), how many of its
+    uses are taken ("3 of 20"), the plan and how long it lasts, the expiry,
+    a state pill (`active`, `off`, `expired`, `spent`), the note and the
+    day it was made, with *Turn off* / *Turn on*, *Who used it* (the
+    accounts that registered with it, in a row under the code) and
+    *Delete*. Spent and expired codes wait behind a "show N spent or
+    expired" toggle.
   - Clients: the OIDC clients of hosted servers — create (the secret is
     shown once as the two env lines a container needs) and delete. A
     `server` client shows the account id that owns it.
-  - Servers: the fleet's hosts, the hosted servers, upgrades in waves and
-    the job queue ([hosted.md](hosted.md) "Admin").
+  - Servers: the fleet's hosts, the hosted servers with their 48-hour
+    sparklines and history, upgrades in waves and the job queue
+    ([hosted.md](hosted.md) "Admin").
   - Billing: what the subscriptions bring in, the subscription copies by
     status, each with a Refresh from Stripe and a link into Stripe's
     dashboard, and the newest webhook events ([billing.md](billing.md)).
-  - **Settings**: the sign-up gate above. Each row saves its own keys and
-    the tab redraws from the answer (`settings.admin_view`). The Turnstile
+  - **Settings**, in sections: *Sign-up* (the mode, Turnstile, the blocked
+    and the allowed mail domains), *Plans* (an *On sale* checkbox per paid
+    plan with a pill: `on sale`, `held back`, or `cannot be sold` and the
+    reason, [billing.md](billing.md) "Plans on sale"), *Alerts* (on or off,
+    the address they go to with "blank = every admin", and *Send test
+    alert*, which mails that address now whatever the switch;
+    [hosted.md](hosted.md) "Alerts") and *Configuration*
+    (the environment, read-only, and *Send test mail*; "Running"). Each row
+    saves its own keys and the tab redraws from the answer
+    (`settings.admin_view` plus the plans' rows). The Turnstile
     secret never leaves the server: the tab learns only whether one is
     stored, a blank field on save keeps it, and `null` clears it.
     `settings.update` audits each changed key, with `set`/`cleared` in
@@ -260,11 +310,22 @@ page) and the **app** shell (a sidebar and a content column):
   from the shell.
 
 - **Register** (`POST /api/register`): e-mail, username, password, an invite
-  code in `invite` mode, a Turnstile token when configured. Rejected
+  code where one is needed, a Turnstile token when configured. Rejected
   attempts count toward the limit of five an hour per IP (per /64 for
   IPv6). A throwaway-mail domain or a subdomain of one is refused
   (`accounts.check_email_domain`). Only register checks this, so an address
-  already in use keeps working if its domain is listed later. The account starts unverified,
+  already in use keeps working if its domain is listed later.
+  `accounts.take_invite` decides on the code. A code that is off, expired
+  or spent is refused like an unknown one ("That invite code is not
+  valid."); a valid one passes in either mode and grants its plan. Without
+  a code, while allowed mail domains are set, only an address at one of
+  them (or a subdomain) registers, in `open` and `invite` mode alike;
+  with none set, only `open` mode lets it. The account keeps the code it
+  used (`accounts.invite_code`), and an invite with *Plan lasts* dates the
+  grant (`granted_until`, [billing.md](billing.md) "The effective plan").
+  `/register?invite=CODE` fills the field; the field is required where a
+  code is needed, optional where it only grants a plan, and absent in
+  `open` mode with no allowed domains unless a link brought a code. The account starts unverified,
   the verify mail goes out, and the browser is signed in so the account page
   can resend the mail. Taken e-mail or username answers 409 with a message —
   a deleted account keeps both through the grace period. Every mail goes
@@ -301,9 +362,10 @@ page) and the **app** shell (a sidebar and a content column):
   (`accounts.revoke_everything`), keeping only the browser that asked.
 - **Delete** (`/api/me/delete`, password required) is soft: it sets
   `deleted_at`, clears the password, revokes everything and drops the
-  preference profile and the server list. `manage.py purge-deleted --days
-  30` removes the rows later (nothing schedules it). Within the grace
-  period an admin can **restore** it (`POST /api/admin/accounts/{id}/restore`,
+  preference profile and the server list. After `config.PURGE_DELETED_DAYS`
+  (30) the hourly pass (`app.purge`) removes the rows with
+  `accounts.purge_deleted`, the function `manage.py purge-deleted` runs by
+  hand. Within those 30 days an admin can **restore** it (`POST /api/admin/accounts/{id}/restore`,
   `manage.py restore-account`). The row comes back with its id, name and
   e-mail, but not what the delete dropped: the person signs back in
   through a password reset or Google/GitHub on the same e-mail. **Purge
@@ -311,8 +373,12 @@ page) and the **app** shell (a sidebar and a content column):
   takes only a deleted account and frees its name and e-mail at once.
   A purge deletes the account's hosted server first
   (`hosted.purge_account`, [hosted.md](hosted.md)).
-- `PATCH /api/admin/accounts/{id}` takes `plan`, `is_admin`, `verified`
-  and `username`; the rest of the admin API is listed under "Admin".
+- `PATCH /api/admin/accounts/{id}` takes `plan`, `granted_until`,
+  `is_admin`, `verified` and `username`. `plan` is a new grant, with no end
+  unless `granted_until` comes with it; `granted_until` alone dates the
+  grant the account has (an ISO date, its start in UTC, or a date and
+  time; null clears it; a time that has passed is a 400). The rest of the
+  admin API is listed under "Admin".
 - `GET /api/me`: the account, the signed-in devices (portal session only),
   `share_host` (the share host's address, "" when none is configured) and
   `servers`: the hosted one first while it is not deleted, then the linked
@@ -437,9 +503,14 @@ other page keeps `no-referrer`.
   a verified address is refused.
 - **A new person** lands on `/signup/finish`: the provider's address, a
   suggested username (the GitHub login or the address's local part, made
-  valid and free), the invite code in `invite` mode; `POST
-  /api/oauth/signup` creates the account with that address confirmed, no
-  password, and the identity linked. `closed` registration refuses instead.
+  valid and free), and the invite code field by the password form's rules,
+  judged on the provider's address (`take_invite`: required only where
+  that address needs a code). A code typed on the register page, or
+  brought by its `?invite=` link, follows the round trip in the tab's
+  `sessionStorage` and fills the field (or rides along when the form has
+  none). `POST /api/oauth/signup` creates the account with that address
+  confirmed, no password, and the identity linked. `closed` registration
+  refuses instead.
   Its limit is twenty an hour per IP, counted apart from the password form's
   five, since each sign-up here costs a real Google or GitHub account.
 - **A Gamma server's sign-in** that started on the authorize page finishes
@@ -516,8 +587,9 @@ who asks and what it gets. Gamma Cloud's own servers do not show it
 
 `entrance.py`, with the authorize step in `routers/oidc.py` and `/open` in
 `routers/portal.py`. People start at one address, the shared server's
-(`GAMMA_CLOUD_APP_URL`, `app.gammapdf.com`). Most live there. A Pro account
-has a server of its own, and anyone may be a member of somebody else's. No
+(`GAMMA_CLOUD_APP_URL`, `app.gammapdf.com`). A Lite or Plus library lives
+there. A Pro account has a server of its own, anyone may be a member of
+somebody else's, and a free account has no library online. No
 server sits behind another's address: a Gamma server is one hostname (its
 API is rooted at `/`, its session cookie has one name, its tokens and share
 links carry no server), and separate hostnames are what keeps one
@@ -531,14 +603,16 @@ account has a library on, the one to open first at the head:
 | kind | which | when |
 |---|---|---|
 | `own` | the account's hosted server | while it answers (`running`, `grace`, `read_only`, `suspended`) |
-| `shared` | the shared server | the account has no server of its own, or has signed in on the shared server as well (the library it had before Pro) |
+| `shared` | the shared server | the plan gives a library there (`config.shared_limits`: Lite, Plus, and Pro for the library it had before), and the account has no server of its own that answers, or has signed in on the shared server as well |
 | `team` | another person's hosted server | the account has signed in there (it is on its server list) |
 
-Servers people run themselves are never listed. `entrance.decide` is what
-a signed-in, verified account gets at the authorize step:
+A free account has neither of the first two. Servers people run
+themselves are never listed. `entrance.decide` is what a signed-in,
+verified account gets at the authorize step:
 
 | the client asking | answer |
 |---|---|
+| the shared server, and the account has no library (`own` or `shared`): a free plan | the no-library page (`pages.no_library_page`) in place of a sign-in: the plan has no library online, *See plans* (`/plan`), *Get the desktop app*, and the servers it is a member of, if any. No code is issued, and nothing on the page leads into the shared server |
 | the shared server, one destination and it is the shared server | the code, with no page in between |
 | the shared server, one destination and it is the account's own server | a redirect to that server's cloud sign-in (`<server>/api/auth/cloud/start?next=/`); the pending request is dropped |
 | the shared server, several destinations | the chooser (`pages.where_page`, "Where to?"): a row per server; the shared server's row finishes the pending request (`POST /authorize/continue`), the others start a sign-in there |
@@ -553,8 +627,38 @@ forward and the chooser to them and finishes otherwise.
 
 `GET /open` is the portal's *Open Gamma* (a button on the Overview while
 the account has a destination): one destination redirects to that server's
-cloud sign-in, several show the chooser, none goes to the Overview. Signed
-out goes to `/login?next=/open`.
+cloud sign-in, several show the chooser, none goes to the Plan page (the
+Overview for an unconfirmed address). Signed out goes to
+`/login?next=/open`.
+
+**Who the shared server takes.** `accounts.on_shared` is the rule: an
+account whose plan gives a library there (`config.shared_limits`: Lite,
+Plus, and Pro for the library it had before), and a Gamma Cloud admin, who
+runs that server. A free account is not one. `oidc.admits(client, account)`
+applies the rule to the shared server's client and lets every other client
+through. It is asked in the three places the account server could sign
+someone in there:
+
+- `entrance.decide`: the no-library page instead of a code;
+- `POST /authorize/continue`: 403, for a request no page makes;
+- the `refresh_token` grant: `invalid_grant`, and the grant is revoked.
+
+The last closes a session that already exists. The shared server refreshes
+every grant hourly and ends the sessions of one that is refused ("The
+grant check"), so a plan that ended is signed out within the hour, as is
+a free account that signed in before the rule. Nothing is deleted, and a
+new plan opens the library as it was.
+
+A free account still publishes: the exchange runs on the grant of the
+person's own Gamma, never the shared server's ("The exchange"), and its
+pages are stored under the shared server's default quota ("The plan's
+cap"). Keep that default small: it is the whole of a free account's
+storage there. A person on a free plan cannot open a page shared with
+them by username on the shared server; a share link needs no account.
+
+Not built: ending the integration tokens an account made on the shared
+server while it had a plan (an offline copy, the extension, an assistant
+over MCP). They outlive the sessions until they are deleted there.
 
 `entrance.shared_home(account_id)` is the one place that says which shared
 server an account lives on. It answers `config.APP_URL` for everyone; a
@@ -577,7 +681,9 @@ grant's access tokens die, a new pair is issued. For
 more, for a client whose answer was lost; used later, it means two parties
 hold the device's key, and the grant is revoked (`grant.reuse` in the
 audit). A client must therefore refresh one request at a time and keep the
-newest token. Revoking a device on the account page, changing the password
+newest token. A refresh for the shared server is refused, and its grant
+revoked, once the account is not one that server takes (`oidc.admits`,
+"The entrance"). Revoking a device on the account page, changing the password
 or deleting the account revokes the grant; `/revoke` accepts the current
 refresh token or any one the grant rotated away from.
 
@@ -652,12 +758,22 @@ second address), `clients`, `delete-client`, `rotate-key`, `settings`, billing's
 `subscriptions` and `billing-sync` ([billing.md](billing.md)), and the
 fleet's `hosts`, `add-host`, `servers`, `provision`, `jobs`
 ([hosted.md](hosted.md) "Admin"). Every command but `setup` and
-`migrate` refuses an outdated `cloud.db`. `/api/admin/*`
+`migrate` refuses an outdated `cloud.db`. `set-plan` takes `--until
+YYYY-MM-DD` for a grant that ends; `invite` takes `--expires-days N` and
+`--grant-days N`, and `invites` lists each code's uses taken of its total,
+plan and grant length, state and expiry. `/api/admin/*`
 (`routers/admin.py`, admins through a portal session only): search and
-patch accounts (plan, admin, verified), resend a verify mail, delete,
-restore, purge; invites; `GET`/`PATCH /settings` (the sign-up gate,
-`settings.admin_view` / `settings.update`); OIDC clients; the audit log;
-the subscriptions; hosts, hosted servers and jobs. The portal's Admin page, the API and `manage.py` are one surface: the page
+patch accounts (plan, the day the grant ends, admin, verified), resend a
+verify mail, delete, restore, purge; invites (`GET`, `POST` with
+`expires_days` and `grant_days`, `GET /invites/{code}` with the accounts
+that registered with it, `PATCH /invites/{code}` `{disabled}`, audited as
+`invite.disable` / `invite.enable`, `DELETE`); `GET`/`PATCH /settings`
+(`settings.admin_view` / `settings.update`, plus `plans`, a row per paid
+plan `{plan, on_sale, sellable, reason}`); `GET /config` and `POST
+/test-mail` ("Running"); OIDC clients; the audit log;
+the subscriptions; hosts, hosted servers, jobs and their history; the
+Overview, the alerts with their dismissal and the test alert
+([hosted.md](hosted.md) "Admin"). The portal's Admin page, the API and `manage.py` are one surface: the page
 and the CLI call the same functions.
 
 ## Tests
@@ -665,30 +781,36 @@ and the CLI call the same functions.
 `cloud/tests/`:
 
 - `test_accounts.py`: the registration, verify, reset, e-mail change,
-  deletion and rate-limit flows, the pages.
+  deletion and rate-limit flows, an expired invite, the `?invite=` link
+  filling the field, the hourly pass ending a grant, the pages.
 - `test_settings.py`: the defaults and validation, a bad row reading as
   `invite`, admin-only access, the secret kept out of the browser and the
   audit log, blank keeping it and `null` clearing it, Turnstile needing
   both keys, a rejected write changing nothing, the sign-up forms following
-  a mode change, and the upgrade importing the old variables once.
+  a mode change, the Plans section's reasons, the allowed domains, and the
+  upgrade importing the old variables once.
 - `test_signup_abuse.py`: what bounds open registration — the canonical
   form of an address and the aliases it folds, one Gmail inbox refused a
   second account, an unlisted domain keeping its tagged addresses apart,
-  the throwaway-domain list and the admin's additions, the IPv6 /64 bucket,
+  the throwaway-domain list and the admin's additions, the allowed domains
+  in both modes with and without a code, the IPv6 /64 bucket,
   the login and reset windows counted per inbox across aliases, and the
   upgrade's backfill.
 - `test_oidc.py`: discovery and JWKS, the full desktop PKCE flow with a
   decoded ID token, refresh rotation, code replay, redirect and PKCE
   checks, the unverified gate, sign-in on the authorize page, cancel, a
   confidential client with basic auth and revoke, key rotation.
-- `test_admin.py`: gating, the admin flows, that a bearer token never
-  reaches the admin API.
-- `test_manage.py`: the CLI including `settings`, purge, the newer-file refusal.
+- `test_admin.py`: gating, the admin flows, an invite from creation through
+  off and on to spent with the accounts that used it, the configuration
+  never carrying a secret, the test mail and its limit, that a bearer
+  token never reaches the admin API.
+- `test_manage.py`: the CLI including `settings`, invites that end and a
+  dated grant, purge by hand and hourly, the newer-file refusal.
 - `test_external.py`: Google/GitHub with the provider stubbed — signup,
   linking by a trusted address, claiming an unconfirmed account, the
   authorize page's path, state and `next` checks, one tap with a real
   RS256 token, connect/disconnect, accounts without a password, the
-  step-2 upgrade.
+  allowed mail domains on a provider sign-up, the step-2 upgrade.
 - `test_devices.py`: the grants behind the Devices page — a revoke landing
   while a refresh waits for the lock, `/api/health` answering while a
   `/token` request waits, code replay touching only its own grant,
@@ -707,8 +829,10 @@ and the CLI call the same functions.
   the server list (normalization, loopback, the client's own origin, the
   Overview), the build and schema a server reports, the username lookup
   and its limits, deletion, the step-4 and step-8 upgrades, and the share host's address in `/api/me` and discovery.
-- `test_billing.py`, `test_hosted.py` and `test_fleet.py`: billing and the
-  hosted servers ([billing.md](billing.md), [hosted.md](hosted.md) "Tests").
+- `test_billing.py`, `test_hosted.py`, `test_fleet.py`, `test_alerts.py`
+  and `test_metrics.py`: billing, the hosted servers, the operator's alerts
+  and the Overview, and the history ([billing.md](billing.md),
+  [hosted.md](hosted.md) "Tests").
 
 `conftest.py` points the data directory at a temp folder and the mail
 backend at the in-memory outbox before the package is imported. CI runs
@@ -767,7 +891,11 @@ container gets the same through the environment — `GAMMA_CLOUD_ISSUER`,
 `GAMMA_CLOUD_CLIENT_ID`, `GAMMA_CLOUD_CLIENT_SECRET`, `GAMMA_CLOUD_POLICY`,
 `GAMMA_CLOUD_ADMIN_SUBJECT` — which makes the pane read-only (a hosted
 container's policy comes from its plan instead, "Hosted containers"
-below). Under the
+below). The desktop app starts with sign-in on: its sidecar sets
+`GAMMA_CLOUD_DEFAULT_ISSUER=https://account.gammapdf.com`, the address
+while `cloud_issuer` has never been saved. Unlike `GAMMA_CLOUD_ISSUER` it
+leaves the pane editable, and a saved empty address keeps sign-in off.
+A self-hosted server starts with it off. Under the
 `provision` policy the pane also offers *Accept published pages*
 (`cloud_share_host`, env `GAMMA_CLOUD_SHARE_HOST=1`), which makes the server
 the share host (below).
@@ -998,8 +1126,9 @@ its OIDC client lists both callbacks (`manage.py client-redirect` adds
 one).
 
 **Plans on the share host.** The share host is also where a Lite or Plus
-library lives: the person signs in there like anyone else and is an
-ordinary account, not an admin. What the plan adds is storage. The account
+library lives: the person signs in there and is an ordinary account, not
+an admin. Only an account on a plan is signed in ("The entrance", "Who
+the shared server takes"). What the plan adds is storage. The account
 server sends it as the `limits` claim, and
 `server_settings.user_limits` uses it as the account's default quota and
 per-file cap in place of the server's defaults
@@ -1011,20 +1140,24 @@ Three rules keep it honest:
 - the claim counts only while the identity holds a live grant (a refresh
   token, not revoked). The hourly grant check reads the account's claims
   again from `/userinfo` on a share host (`cloud_auth.refresh_claims`), so
-  a plan that lapsed loses its allowance within the hour, and a new plan
-  arrives within the hour or at the next sign-in, which is why the Plan
+  a plan that changed is followed within the hour or at the next sign-in
+  (a plan that ended has its refresh refused instead, which ends the
+  sessions and the allowance together), which is why the Plan
   page's Open goes through the cloud sign-in. A grant signed out on the
   account server loses the allowance with it;
 - an identity made by a publish exchange alone holds no grant, so it has
   the server's defaults until the person signs in on the share host.
 
-A free account, and a plan that ended, have the server's defaults: nothing
-is deleted, and uploads are refused while the account holds more than its
-quota ([user_db.md](user_db.md)). A Pro account's claim carries Plus's
+A free account, and a plan that ended, have the server's defaults for what
+they publish: nothing is deleted, and uploads are refused while the
+account holds more than its quota ([user_db.md](user_db.md)). Neither can
+sign in, so a library left by a plan that ended is closed until a new plan
+opens it. A Pro account's claim carries Plus's
 storage (`config.SHARED_FALLBACK`), for the library it may still have
 there. Not built: the share host reporting each account's usage to the
 account server, so the Plan page shows the allowance but not what is used;
-and deleting files beyond the free allowance after a plan ended.
+and deleting a closed library, or its files beyond the free allowance,
+after a plan ended.
 
 **The plan's cap.** How many pages each plan may publish is
 `config.PLAN_PAGE_LIMITS` in `gamma/config.py`:
@@ -1105,13 +1238,39 @@ through `cloud_auth._http` and its user agent:
 
 ```json
 {"version": "v1.4.0 (abc123def456)", "schema": 31, "accounts": 4,
- "uploads_bytes": 734003200, "data_bytes": 912680550,
- "public_url": "https://alice.gammapdf.com"}
+ "active_accounts": 2, "uploads_bytes": 734003200, "data_bytes": 912680550,
+ "public_url": "https://alice.gammapdf.com",
+ "last_write_at": "2026-10-05T08:41:17Z", "errors": 0, "uptime_s": 259200}
 ```
 
 `accounts` counts non-guest accounts, `uploads_bytes` sums the uploads of
 every workspace (`storage.usage`), `data_bytes` is the size of the whole
 data directory and `public_url` the confirmed public URL ("" without one).
+The last four say whether the server is used and failing, in counts and
+times only:
+
+- `active_accounts` counts the non-guest accounts that, in the last 7
+  days, signed in (a session made then), had a preference saved (the app
+  saves the open tabs and the recently viewed pages as a person opens
+  pages) or were the newest writer of a page (`page_changes`). The sync
+  reads these from users.db and each workspace's pages.db; nothing is
+  written to learn them. Someone who only reads in a tab left open is not
+  counted.
+- `last_write_at` is when the server last answered a POST, PUT, PATCH or
+  DELETE under `/api/` below 400 (a sign-in and a read sent as a POST
+  count too), null when there was none. It is kept in memory and
+  saved in the `settings` KV under `hosted_last_write` at each sync, so a
+  restart loses at most the writes since the last sync.
+- `errors` counts the answers with a 5xx status (an uncaught exception, or
+  a 502 or 503 the server chose) since the last successful sync. A
+  successful sync takes off the ones it reported; a failed one leaves
+  them. It is kept in memory only and starts at 0 after a restart.
+- `uptime_s` is the seconds since this process started.
+
+`app.read_only_gate` notes each answer (`hosted.answered`: a comparison and
+an assignment, no database write). Off a hosted server it passes every
+request on and notes nothing.
+
 The answer is the plan's limits:
 
 ```json

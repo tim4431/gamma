@@ -79,7 +79,7 @@ def _step(conn, req: dict, account) -> tuple[str, object]:
     writes made: ``signin`` and ``verify`` (nobody, or an unconfirmed
     address), ``go`` with the address to send the browser to (the request
     finished, or the person forwarded to a server of their own), and
-    ``choose`` / ``confirm`` from ``entrance.decide``."""
+    ``choose`` / ``upgrade`` / ``confirm`` from ``entrance.decide``."""
     if not account:
         return "signin", None
     if not account["email_verified_at"]:
@@ -102,6 +102,8 @@ def _answer(request: Request, req: dict, account, step: tuple[str, object]):
         return RedirectResponse(value, status_code=302, headers=pages.NO_STORE)
     if what == "choose":
         return HTMLResponse(pages.where_page(account, value, req["id"]), headers=pages.NO_STORE)
+    if what == "upgrade":
+        return HTMLResponse(pages.no_library_page(account, value), headers=pages.NO_STORE)
     return HTMLResponse(pages.authorize_page(req, account, verify_needed=what == "verify"), headers=pages.NO_STORE)
 
 
@@ -165,7 +167,9 @@ class AuthorizeContinue(BaseModel):
 @router.post("/authorize/continue")
 def authorize_continue(body: AuthorizeContinue, request: Request):
     """The signed-in person confirmed the server that is asking (the
-    confirm card's Continue, or the shared server on the chooser)."""
+    confirm card's Continue, or the shared server on the chooser). The
+    shared server is refused for an account it does not take
+    (``oidc.admits``), which no page offers."""
     with closing(db.connect()) as conn:
         req = oidc.pending(conn, body.request_id)
         if not req:
@@ -175,6 +179,8 @@ def authorize_continue(body: AuthorizeContinue, request: Request):
             raise HTTPException(401, "not signed in")
         if not account["email_verified_at"]:
             raise HTTPException(403, "Confirm your e-mail address first.")
+        if not oidc.admits(req["client"], account):
+            raise HTTPException(403, "Your plan has no online library. See the plans on your account's Plan page.")
         redirect = oidc.finish(conn, req, account)
         conn.commit()
     return {"redirect": redirect}

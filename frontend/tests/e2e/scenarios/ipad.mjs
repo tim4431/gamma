@@ -95,7 +95,8 @@ export async function ipadScenarios({ server, browser, alice, makePdf, step, unt
         }
         return out;
       });
-      assert(standalone.some((r) => /^html,\s*body/.test(r) && /overscroll-behavior:\s*none/.test(r)), `document overscroll rule: ${standalone.join(" | ")}`);
+      // The document never rubber-bands or pulls to refresh, in a tab as installed.
+      assertEq(await page.evaluate(() => getComputedStyle(document.documentElement).overscrollBehaviorY), "none", "document overscroll");
       assert(standalone.some((r) => /^\.app\b/.test(r) && /safe-area-inset-bottom/.test(r)), `home indicator inset: ${standalone.join(" | ")}`);
       assertNoProblems(page);
     } finally { await ctx.close(); }

@@ -164,7 +164,7 @@
 /* ToggleGroup: independent on/off chips (multi-select). Layout only — the
    chips are plain uiBtn sm with the shared .on state. */
 .toggleGroup { display: inline-flex; flex-wrap: wrap; justify-content: flex-end; gap: 4px; }
-.toggleGroup .uiBtn { padding: 4px 9px; min-height: 26px; }
+.toggleGroup .uiBtn { padding: 4px 9px; min-height: var(--ctl-icon-btn); }
 /* A chip row's control column is capped so a long set wraps onto a second
    line instead of squeezing the label + hint column. */
 .setRow:has(> .toggleGroup) { grid-template-columns: 28px minmax(0, 1fr) minmax(0, 340px); }
@@ -198,7 +198,7 @@
 .agentToolUnavailable { color: var(--text-dim); }
 .agentToolMobileLabel { display: none; }
 .agentToolNote { margin: var(--space-6) var(--space-4) 0; line-height: var(--lh-read); }
-.agentToolPicker .chatToolPermRow { min-height: 28px; }
+.agentToolPicker .chatToolPermRow { min-height: var(--ctl-btn-sm); }
 .agentToolPicker .chatToolPermRow.select { cursor: default; }
 .agentToolPicker .chatToolPermRow.select:hover { background: none; }
 .chatToolPermLabel { flex: 1; min-width: 0; }
@@ -569,7 +569,7 @@
   border-bottom: 1px solid var(--border-subtle);
   cursor: pointer;
 }
-.metaStatRow .searchToggle { width: 24px; height: 24px; color: var(--text-dim); }
+.metaStatRow .searchToggle { width: var(--ctl-icon-btn-xs); height: var(--ctl-icon-btn-xs); color: var(--text-dim); }
 .metaStatRow .searchToggle:hover { color: var(--text-primary); }
 .metaStatRow:last-child { border-bottom: none; }
 .metaStatRow:hover { background: var(--bg-hover); }

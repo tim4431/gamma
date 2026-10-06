@@ -6,6 +6,7 @@ import {
   DEFAULT_PAPER, blockToSheet, firstSheetId, inkBySheet, insertSheetAfter, newSheet, normalizePaper, paperBefore, paperLines,
   paperSizeKey, sheetAfterPlan, sheetIdAfter, sheetOfBlock, sheetsOf, stableId, turnPaper, withAllSheetsPaper, withSheetPaper,
 } from "../src/notebook/notebook.js";
+import { placeAt, placeY } from "../src/notebook/sheetPlace.js";
 import { treeOf } from "../src/replica/tree.js";
 
 // tests/shared/paper.json: the same cases gamma/notebook.py passes
@@ -144,4 +145,34 @@ test("paper changes: one sheet, or every sheet at any depth", () => {
   assert.equal(all[0].children[0].properties.sheet.width, DEFAULT_PAPER.width);
   const none = [{ id: "a", content: "x", properties: {}, children: [] }];
   assert.equal(withAllSheetsPaper(none, { pattern: "dots" }), none);
+});
+
+// --- the reader's place (sheetPlace.js) ---------------------------------------
+// Two sheets in a column padded by 24 with a gap of 16, at a scale.
+const column = (k) => [{ id: "a", top: 24, height: 800 * k }, { id: "b", top: 24 + 800 * k + 16, height: 800 * k }];
+
+test("a place is the sheet under a height and how far down it; off the sheets, the nearest one's", () => {
+  assert.deepEqual(placeAt(column(1), 424), { id: "a", fy: 0.5 });
+  assert.deepEqual(placeAt(column(1), 1240), { id: "b", fy: 0.5 });
+  assert.deepEqual(placeAt(column(1), 830), { id: "a", fy: 806 / 800 });   // in the gap, nearer a
+  assert.deepEqual(placeAt(column(1), 838), { id: "b", fy: -2 / 800 });    // in the gap, nearer b
+  assert.deepEqual(placeAt(column(1), 0), { id: "a", fy: -24 / 800 });     // the padding above
+  assert.equal(placeAt([], 10), null);
+  assert.equal(placeAt([{ id: "z", top: 0, height: 0 }], 0), null);
+});
+
+test("a place reads back at the same paper after the sheets change size, whatever the gaps", () => {
+  for (const y of [0, 300, 830, 1500]) {
+    assert.ok(Math.abs(placeY(column(1), placeAt(column(1), y)) - y) < 1e-9);
+  }
+  for (const y of [30, 300, 1500]) {
+    const place = placeAt(column(1), y);
+    const back = placeAt(column(1.75), placeY(column(1.75), place));
+    assert.equal(back.id, place.id);
+    assert.ok(Math.abs(back.fy - place.fy) < 1e-9);
+  }
+  // on b's top edge at any scale: not where a ratio of scroll offsets would put it
+  assert.equal(placeY(column(2), { id: "b", fy: 0 }), 24 + 1600 + 16);
+  assert.equal(placeY(column(1), { id: "gone", fy: 0 }), null);
+  assert.equal(placeY(column(1), null), null);
 });

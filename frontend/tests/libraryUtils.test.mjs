@@ -5,7 +5,8 @@ import { test } from "node:test";
 import { generateKeyBetween } from "fractional-indexing";
 import {
   NO_LABEL, NO_LABEL_TITLE, addToFolder, childFolders, defaultPageTitle, filedIn, findNamed, findPageForUrl,
-  firstFolderPath, folderChain, folderEntries, folderPath, folderPosition, folderPositions, folderSubtree, formatFullDate, formatRelativeTime, formatShortDate,
+  firstFolderPath, folderChain, folderEntries, folderNeighbour, folderPath, folderPosition, folderPositions, folderSubtree, folderTargets,
+  formatFullDate, formatRelativeTime, formatShortDate,
   inFolder, isFreshLibrary, labelName, libraryTree, normalizeLinkInput, pageAttachment,
   siblingFolders,
 } from "../src/library/libraryUtils.js";
@@ -56,6 +57,19 @@ test("paths read as names joined, never split; labels by id, No label by its tit
   assert.equal(labelName(tree, "rev"), "Review");
   assert.equal(labelName(tree, NO_LABEL), NO_LABEL_TITLE);
   assert.equal(labelName(tree, "gone"), "");
+});
+
+test("a folder moves into any folder but itself and those below it; it steps past its neighbours", () => {
+  const tree = libraryTree(listing);
+  assert.deepEqual(folderTargets(tree, ["phys"]), ["bio"], "not into itself or its subfolder");
+  assert.deepEqual(folderTargets(tree, ["qec"]), ["phys", "bio"]);
+  assert.deepEqual(folderTargets(tree, ["qec", "bio"]), ["phys"], "several: none of them");
+  assert.deepEqual(folderTargets(tree, ["qec"], ["bio", "qec", "phys"]), ["bio", "phys"], "in the order given");
+  assert.equal(folderNeighbour(tree, "bio", -1), "phys");
+  assert.equal(folderNeighbour(tree, "phys", 1), "bio");
+  assert.equal(folderNeighbour(tree, "phys", -1), "", "already first");
+  assert.equal(folderNeighbour(tree, "qec", 1), "", "an only child");
+  assert.equal(folderNeighbour(tree, "gone", 1), "");
 });
 
 test("a filing keeps the ids that name a block; filing into a folder refines the one above away", () => {

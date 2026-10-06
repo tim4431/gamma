@@ -13,13 +13,15 @@ import { createPortal } from "react-dom";
 import { CheckIcon, ChevronRightIcon, CopyIcon, LanguagesIcon, LinkIcon, MessageSquareIcon, OutlineIcon } from "../shared/ui/Icons";
 import { MarkupLayers, NO_MARKS } from "../markup/MarkupLayers";
 import { armedClasses, usePageTools } from "../markup/PageTools";
-import { canvasSize } from "../shared/lib/canvasSize.js";
+import { ZOOM_SETTLE_MS, cropPage, installPageRaster } from "./pageRaster.js";
 import { installVerticalScrollSnap } from "./verticalScrollSnap.js";
 import { segmentPage, selectionParagraphs } from "./pdfTranslate";
 import { BACKFILL_DELAY_MS, chooseTransport, docIdOf, layoutFromManifest, rangeOpenOptions } from "./pdfSource";
 import { normalizeChars } from "../shared/lib/textnorm";
 import { apiJson, copyText, withShare, withWorkspace } from "../shared/lib/utils";
 import { ChatMarkdown, useCopied } from "../shared/ui/Widgets";
+import { menuPress } from "../shared/ui/press.js";
+import { lastPointer } from "../shared/lib/pointer.js";
 import { PdfCitationOverlay } from "./PdfCitationOverlay";
 import { citationRuns, runChars } from "./pdfCitation.js";
 import { noteBadgeAnchor } from "./noteAnchor.js";
@@ -600,26 +602,9 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
       if (!r || !pn) return null;
       if (docUrlRef.current !== urlRef.current) return null;
       try {
-        const page = await pdfDoc.getPage(pn);
-        const vpBase = page.getViewport({ scale: 1 });
-        // Stored rect is page-relative at its capture-time render size (the
-        // position's width × height) — map to scale-1 page coordinates first.
-        const kx = vpBase.width / (pos.width || vpBase.width);
-        const ky = vpBase.height / (pos.height || vpBase.height);
-        const x1 = r.x1 * kx, y1 = r.y1 * ky;
-        const w = Math.max(1, (r.x2 - r.x1) * kx), hh = Math.max(1, (r.y2 - r.y1) * ky);
-        // Render sharp: at least 2×, more for small crops, capped so a
-        // full-page rectangle doesn't allocate a huge canvas.
-        const s = Math.min(4, Math.max(2, 1200 / w));
-        const out = document.createElement("canvas");
-        out.width = Math.round(w * s); out.height = Math.round(hh * s);
-        const ctx = out.getContext("2d");
-        // Pre-translate so the crop origin lands at the canvas origin — the
-        // render then clips to the canvas (same trick as the DPR transform in
-        // PdfPage).
-        ctx.setTransform(1, 0, 0, 1, -Math.round(x1 * s), -Math.round(y1 * s));
-        await page.render({ canvasContext: ctx, viewport: page.getViewport({ scale: s }) }).promise;
-        return out.toDataURL("image/png");
+        // The stored rect is page-relative at its capture-time render size
+        // (the position's width × height).
+        return await cropPage(await pdfDoc.getPage(pn), r, pos);
       } catch {
         return null;
       }
@@ -1334,15 +1319,6 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
 
   // Text selection for highlight creation
   const [selPopup, setSelPopup] = useState(null);
-  // Whether this session has ever seen a real touch — a ref, not an effect
-  // local: the selection effect re-registers on every render (its callback
-  // prop is a fresh closure each time), which would keep clearing a local.
-  const touchSeenRef = useRef(false);
-  useEffect(() => {
-    function onTouchStart() { touchSeenRef.current = true; }
-    document.addEventListener("touchstart", onTouchStart, { passive: true });
-    return () => document.removeEventListener("touchstart", onTouchStart);
-  }, []);
 
   // Ctrl held (when annotating is allowed) → crosshair over the pages: the
   // cue that dragging now draws an area note instead of selecting text.
@@ -1366,12 +1342,13 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
 
   // A finished Ctrl+drag on a page: hold the rect (drawn by that page while
   // the popup is up) and offer the same color tip as a text selection. The
-  // drawn region also acts as a chat selection — its snapshot goes to the
-  // host right away (like text selections attach on mouseup), whether or not
-  // a note is then created.
+  // drawn region also acts as a chat selection — its snapshot (`image`, a
+  // promise: the page crops it from the document) goes to the host as soon as
+  // it is drawn, like text selections attach on mouseup, whether or not a
+  // note is then created.
   const onAreaSelected = useCallback(({ image, ...sel }) => {
     setSelPopup({ kind: "area", ...sel });
-    if (image) cbRef.current.onAreaSelection?.(image);
+    image?.then((png) => { if (png) cbRef.current.onAreaSelection?.(png); });
   }, []);
 
   // Dismiss the color popup when the user mouses down anywhere outside it
@@ -1388,8 +1365,11 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
     return () => document.removeEventListener("mousedown", onDown);
   }, [selPopup]);
 
+  // Subscribed once while annotating is allowed: the callback is a fresh
+  // closure on every App render, and re-subscribing on it would drop the
+  // pending selectionchange timer below.
   useEffect(() => {
-    if (!onSelectionFinished) return;
+    if (!canAnnotate) return;
     function onMouseUp() {
       setTimeout(syncSelPopup, 10);
     }
@@ -1451,11 +1431,12 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
     // iPadOS/iOS never fires mouseup for a long-press selection or for a drag
     // of the selection handles, so touch devices would never get the highlight
     // popup. selectionchange does fire — debounced, since it fires on every
-    // pixel of a handle drag — and only once a touch has been seen, so mouse
-    // drags keep committing on mouseup (where the modifier key is known).
+    // pixel of a handle drag — and only after a press that was not the
+    // mouse's, so mouse drags keep committing on mouseup (where the modifier
+    // key is known).
     let selTimer = null;
     function onSelectionChange() {
-      if (!touchSeenRef.current) return;
+      if (lastPointer() === "mouse") return;
       clearTimeout(selTimer);
       selTimer = setTimeout(syncSelPopup, 350);
     }
@@ -1466,7 +1447,7 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
       document.removeEventListener("mouseup", onMouseUp);
       document.removeEventListener("selectionchange", onSelectionChange);
     };
-  }, [onSelectionFinished]);
+  }, [canAnnotate]);
 
   function handleSelConfirm(commentText, color, extra) {
     if (!selPopup) return;
@@ -1550,6 +1531,10 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
           lastScrollRef.current = e.currentTarget.scrollTop;
           lastScrollLeftRef.current = e.currentTarget.scrollLeft;
           syncCurPage();
+          // The tip is placed on the screen, not on the page, so a scroll
+          // would leave it over other text; and a touch scroll sends none of
+          // the mousedown that otherwise closes it.
+          if (selPopup) setSelPopup(null);
         }}>
       {/* pdfZoomLayer: the pinch preview's transform target — spans the full
           scroll content so transform-origin 0 0 coincides with content (0,0) */}
@@ -1682,6 +1667,7 @@ function NoteBadge({ hlId, text, style, onClick, onContextMenu }) {
   const hideNow = () => { clearTimeout(timerRef.current); setTip(null); };
   const hold = () => clearTimeout(timerRef.current);
   useEffect(() => () => clearTimeout(timerRef.current), []);
+  const menu = menuPress((e) => { hideNow(); onContextMenu(e); });
   // Tapped-open tip: no pointer leaves a touch screen, so it closes on the
   // next tap outside it (or on the badge again).
   useEffect(() => {
@@ -1697,13 +1683,13 @@ function NoteBadge({ hlId, text, style, onClick, onContextMenu }) {
     <>
       <span className="pdfNoteAnchor" style={style}>
         <button ref={btnRef} type="button" className="pdfNoteBadge" data-hl-id={hlId} aria-label={t("Show highlight note")}
-          onPointerDown={(e) => { touchRef.current = e.pointerType !== "mouse"; }}
+          {...menu}
+          onPointerDown={(e) => { touchRef.current = e.pointerType !== "mouse"; menu.onPointerDown(e); }}
           onMouseEnter={show} onMouseLeave={hide}
           onClick={(e) => {
             if (touchRef.current) { e.stopPropagation(); clearTimeout(timerRef.current); if (tip) setTip(null); else place(); return; }
             hideNow(); onClick(e);
           }}
-          onContextMenu={(e) => { hideNow(); onContextMenu(e); }}
         >
           <MessageSquareIcon size={10} />
         </button>
@@ -1769,15 +1755,23 @@ function TransPending({ lines, busy }) {
 
 const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, scale, highlights, flashId, onJump, onHighlightJump, onLinkHighlight, onHighlightContext, readOnly, forceRender, reservedHeight, reservedWidth, findMarks, onInternalLink, onExternalLink, onLinkContext, onPainted, onAreaSelected, pendingArea, areaMode, hideEmbeddedAnnots, trans, transKey, transShown, toolArmed, marks }) {
   const wrapRef = useRef(null);
-  const canvasRef = useRef(null);
+  const baseRef = useRef(null);
+  const detailRef = useRef(null);
+  const rasterRef = useRef(null);
   const textRef = useRef(null);
-  const pageRef = useRef(null);
-  const linksForRef = useRef(null); // page whose link annotations are already in `links`
+  const textScaleRef = useRef(0); // the scale the text layer's spans were last measured at
   const [pageSize, setPageSize] = useState(null);
-  const [textReady, setTextReady] = useState(null);
+  const [loaded, setLoaded] = useState(null); // {doc, page}: the pdf.js page, once this one has come near the view
+  const page = loaded?.doc === pdfDoc ? loaded.page : null;
+  const [paintedPage, setPaintedPage] = useState(null); // the pdf.js page whose first pixels have landed
+  const [textReady, setTextReady] = useState(null); // {page, layer, runs}: the built pdf.js text layer
   const [visible, setVisible] = useState(false);
   const renderVisible = visible || forceRender;
   const [links, setLinks] = useState([]); // link annotations, rects at scale 1
+  const scaleRef = useRef(scale);
+  scaleRef.current = scale;
+  const onPaintedRef = useRef(onPainted);
+  onPaintedRef.current = onPainted;
   // Translation entry for this page (from the viewer's engine) — display
   // only; the queue and all fetching live in PdfViewer.
   const transEntry = trans && trans.key === transKey ? trans : null;
@@ -1792,71 +1786,68 @@ const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, scal
     return () => obs.disconnect();
   }, [pageNumber]);
 
+  // The page's canvases belong to the raster (pdf/pageRaster.js). This
+  // component only tells it which page, at what zoom, and whether the page is
+  // near enough to the view to hold pixels at all.
   useEffect(() => {
-    const canvas = canvasRef.current;
-    return () => { canvas.width = 0; canvas.height = 0; };
+    const raster = installPageRaster({
+      wrap: wrapRef.current, base: baseRef.current, detail: detailRef.current,
+      onPainted: (p) => { setPaintedPage(p); onPaintedRef.current?.(); },
+      // instanceof, not err.name — minification renames the class
+      isCancel: (err) => err instanceof pdfjsLib.RenderingCancelledException,
+    });
+    rasterRef.current = raster;
+    return () => raster.dispose();
   }, []);
 
+  // The pdf.js page and its size, once this page first comes near the view.
   useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!pdfDoc || !renderVisible) {
-      // Keep page geometry/text/overlays, but release distant raster backing
-      // stores. Otherwise a long reading session retains every visited page.
-      canvas.width = 0; canvas.height = 0;
-      return;
-    }
+    if (!pdfDoc || !renderVisible || page) return;
     let cancelled = false;
-    let task = null;
-    let textTask = null;
-    setTextReady(null);
-    // Render privately: resizing the visible canvas clears its paper and
-    // exposes incomplete paints during rapid zoom changes.
-    const nextCanvas = document.createElement("canvas");
+    pdfDoc.getPage(pageNumber).then((p) => {
+      if (cancelled) return;
+      // Base (scale-1) size — render multiplies by the CURRENT scale, so the
+      // page box resizes in the same commit as a zoom change instead of
+      // keeping its old size until the async redraw completes.
+      const vpBase = p.getViewport({ scale: 1 });
+      setPageSize({ width: vpBase.width, height: vpBase.height });
+      setLoaded({ doc: pdfDoc, page: p });
+    }).catch((e) => {
+      // A cancelled run rejects mid-await (doc swapped, transport
+      // destroyed) — that's teardown, not an error worth logging.
+      if (!cancelled) console.error("PdfPage render error:", e);
+    });
+    return () => { cancelled = true; };
+  }, [pdfDoc, pageNumber, renderVisible, page]);
+
+  useEffect(() => {
+    // A page away from the view keeps its geometry, text and overlays but
+    // releases its raster backing stores. Otherwise a long reading session
+    // retains every visited page.
+    if (!page || !renderVisible) { rasterRef.current.show(null); return; }
+    rasterRef.current.show(page, {
+      scale,
+      // DISABLE keeps embedded markup annotations (e.g. highlights burned in
+      // by a Gamma export, or SumatraPDF/Acrobat ones) out of the canvas so
+      // they don't stack under Gamma's own overlay after an import. Link
+      // regions are unaffected — they're DOM overlays from getAnnotations().
+      annotationMode: hideEmbeddedAnnots ? pdfjsLib.AnnotationMode.DISABLE : pdfjsLib.AnnotationMode.ENABLE,
+    });
+  }, [page, scale, renderVisible, hideEmbeddedAnnots]);
+
+  // The text layer and the link boxes: built once per page, after its first
+  // pixels, and kept when the page scrolls away or the zoom changes. The
+  // layer is laid out at scale 1 and scaled by CSS (its size and transform
+  // in the JSX below), so a zoom has nothing to rebuild.
+  useEffect(() => {
+    if (!page || paintedPage !== page) return;
+    let cancelled = false;
+    let layer = null;
     (async () => {
       try {
-        const page = await pdfDoc.getPage(pageNumber);
-        if (cancelled || !wrapRef.current) return;
-        pageRef.current = page;
-        const vp = page.getViewport({ scale });
         const vpBase = page.getViewport({ scale: 1 });
-        // Base (scale-1) size — render multiplies by the CURRENT scale, so the
-        // page box resizes in the same commit as a zoom change instead of
-        // keeping its old size until this async re-render completes.
-        setPageSize({ width: vpBase.width, height: vpBase.height });
-
-        // Supersample normal zooms, but cap area AND dimensions on all devices
-        // (including iPads that identify as Macs). CSS geometry stays exact.
-        const size = canvasSize(vp.width, vp.height, Math.min(3, Math.max(2, window.devicePixelRatio || 1)));
-        nextCanvas.width = size.width; nextCanvas.height = size.height;
-        const ctx = nextCanvas.getContext("2d");
-        if (!ctx) throw new Error("PDF canvas allocation failed");
-        ctx.setTransform(size.width / vp.width, 0, 0, size.height / vp.height, 0, 0);
-        // DISABLE keeps embedded markup annotations (e.g. highlights burned in
-        // by a Gamma export, or SumatraPDF/Acrobat ones) out of the canvas so
-        // they don't stack under Gamma's own overlay after an import. Link
-        // regions are unaffected — they're DOM overlays from getAnnotations().
-        task = page.render({
-          canvasContext: ctx, viewport: vp,
-          annotationMode: hideEmbeddedAnnots ? pdfjsLib.AnnotationMode.DISABLE : pdfjsLib.AnnotationMode.ENABLE,
-        });
-        try {
-          await task.promise;
-        } catch (err) {
-          // instanceof, not err.name — minification renames the class
-          if (err instanceof pdfjsLib.RenderingCancelledException) return;
-          throw err;
-        }
-        if (cancelled) return;
-        canvas.width = 0; canvas.height = size.height; canvas.width = size.width;
-        canvas.getContext("2d").drawImage(nextCanvas, 0, 0);
-        nextCanvas.width = 0; nextCanvas.height = 0;
-        onPainted?.();
-
         const textL = textRef.current;
         textL.innerHTML = "";
-        textL.style.width = vpBase.width + "px";
-        textL.style.height = vpBase.height + "px";
-        textL.style.transform = `scale(${scale})`;
         const tc = await page.getTextContent();
         if (cancelled) return;
         // pdf.js sizes each span (scaleX) from a canvas measure in the PDF's
@@ -1866,39 +1857,46 @@ const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, scal
         // highlights, selections and search marks with it. An empty lang
         // resolves differently on a canvas and on an element, so "en".
         textL.lang = tc.lang || "en";
-        textTask = new pdfjsLib.TextLayer({ textContentSource: tc, container: textL, viewport: vp });
-        await textTask.render();
+        const measuredAt = scaleRef.current;
+        layer = new pdfjsLib.TextLayer({ textContentSource: tc, container: textL, viewport: page.getViewport({ scale: measuredAt }) });
+        await layer.render();
         if (cancelled) return;
-        setTextReady({ scale, pdfDoc, runs: citationRuns(tc.items, textTask.textDivs) });
+        textScaleRef.current = measuredAt;
+        setTextReady({ page, layer, runs: citationRuns(tc.items, layer.textDivs) });
 
         // Link annotations (in-PDF references + external URLs), stored at
-        // scale 1 and multiplied in JSX — so they only need computing once per
-        // page, not again on every zoom re-render.
-        if (linksForRef.current !== page) {
-          const annots = await page.getAnnotations();
-          if (cancelled) return;
-          linksForRef.current = page;
-          setLinks(annots
-            .filter((a) => a.subtype === "Link" && (a.url || a.dest))
-            .map((a) => {
-              const r = vpBase.convertToViewportRectangle(a.rect);
-              return {
-                left: Math.min(r[0], r[2]), top: Math.min(r[1], r[3]),
-                w: Math.abs(r[2] - r[0]), h: Math.abs(r[3] - r[1]),
-                url: a.url || null, dest: a.dest || null,
-              };
-            }));
-        }
+        // scale 1 and multiplied in JSX.
+        const annots = await page.getAnnotations();
+        if (cancelled) return;
+        setLinks(annots
+          .filter((a) => a.subtype === "Link" && (a.url || a.dest))
+          .map((a) => {
+            const r = vpBase.convertToViewportRectangle(a.rect);
+            return {
+              left: Math.min(r[0], r[2]), top: Math.min(r[1], r[3]),
+              w: Math.abs(r[2] - r[0]), h: Math.abs(r[3] - r[1]),
+              url: a.url || null, dest: a.dest || null,
+            };
+          }));
       } catch (e) {
-        // A cancelled run rejects mid-await (doc swapped, transport
-        // destroyed) — that's teardown, not an error worth logging.
         if (!cancelled) console.error("PdfPage render error:", e);
-      } finally {
-        nextCanvas.width = 0; nextCanvas.height = 0;
       }
     })();
-    return () => { cancelled = true; task?.cancel(); textTask?.cancel(); };
-  }, [pdfDoc, pageNumber, scale, renderVisible, hideEmbeddedAnnots]);
+    return () => { cancelled = true; layer?.cancel(); };
+  }, [page, paintedPage]);
+
+  // Once a zoom settles the spans are re-measured at the new size, which is
+  // what pdf.js's own viewer does in place of a rebuild: the selection, the
+  // spans and the citation runs all survive.
+  useEffect(() => {
+    const layer = textReady?.page === page ? textReady.layer : null;
+    if (!layer || !renderVisible || textScaleRef.current === scale) return;
+    const timer = setTimeout(() => {
+      layer.update({ viewport: page.getViewport({ scale }) });
+      textScaleRef.current = scale;
+    }, ZOOM_SETTLE_MS);
+    return () => clearTimeout(timer);
+  }, [page, scale, renderVisible, textReady]);
 
   // The box the page occupies: pdf.js's measure once it has rendered, else
   // the reserved size from the manifest skeleton (exact too), else nothing
@@ -1910,7 +1908,7 @@ const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, scal
   const baseH = pageSize ? pageSize.height : (reservedHeight ? reservedHeight / scale : undefined);
 
   // Rectangle drag (screenshot-style area note): Ctrl+drag with a mouse, or
-  // any drag while the phone's rectangle mode (areaMode) is on. Pointer
+  // any drag while the rectangle mode (areaMode) is on. Pointer
   // events cover mouse and touch with one path; document-level move/up
   // listeners so the drag survives leaving the page box; rects are clamped
   // to it. Tiny drags are clicks — ignored, so Ctrl+click on highlights
@@ -1918,7 +1916,7 @@ const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, scal
   const [marquee, setMarquee] = useState(null); // live drag rect, current-render px
   function beginAreaDrag(e) {
     if (readOnly || !onAreaSelected) return;
-    if (e.button !== 0) return;
+    if (e.button !== 0 || !e.isPrimary) return;
     const viaCtrl = e.pointerType === "mouse" && e.ctrlKey && !e.metaKey && !e.shiftKey && !e.altKey;
     if (!areaMode && !viaCtrl) return;
     const wrap = wrapRef.current;
@@ -1936,6 +1934,7 @@ const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, scal
     });
     const detach = () => {
       cancelAnimationFrame(moveRaf);
+      document.removeEventListener("pointerdown", onOther, true);
       document.removeEventListener("pointermove", onMove);
       document.removeEventListener("pointerup", onUp, true);
       document.removeEventListener("pointercancel", onCancel);
@@ -1958,6 +1957,10 @@ const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, scal
       detach();
       setMarquee(null);
     }
+    // A second finger makes the drag a pinch: the area goes.
+    function onOther(ev) {
+      if (ev.pointerId !== pointerId) onCancel({ pointerId });
+    }
     function onUp(ev) {
       if (ev.pointerId !== pointerId) return;
       detach();
@@ -1970,26 +1973,18 @@ const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, scal
       const swallow = (ce) => { ce.stopPropagation(); ce.preventDefault(); };
       document.addEventListener("click", swallow, { capture: true, once: true });
       setTimeout(() => document.removeEventListener("click", swallow, { capture: true }), 0);
-      // Crop the region out of the rendered canvas (backing resolution, so
-      // the snapshot stays sharp) — it doubles as a chat attachment.
-      let image = null;
-      const canvas = canvasRef.current;
-      if (canvas && canvas.width) {
-        try {
-          const kx = canvas.width / box.width, ky = canvas.height / box.height;
-          const w = Math.round((r.x2 - r.x1) * kx), h = Math.round((r.y2 - r.y1) * ky);
-          const out = document.createElement("canvas");
-          out.width = w; out.height = h;
-          out.getContext("2d").drawImage(canvas, Math.round(r.x1 * kx), Math.round(r.y1 * ky), w, h, 0, 0, w, h);
-          image = out.toDataURL("image/png");
-        } catch { /* tainted/zero canvas — note creation still works */ }
-      }
+      // The region's snapshot doubles as a chat attachment. It is cropped
+      // from the document, not off the canvases on screen, which at high zoom
+      // are a preview; a page that has not loaded yields none, and the note
+      // can still be created.
+      const annotationMode = hideEmbeddedAnnots ? pdfjsLib.AnnotationMode.DISABLE : pdfjsLib.AnnotationMode.ENABLE;
       onAreaSelected({
         pageNumber, rect: r, width: box.width, height: box.height,
         tip: { left: box.left + r.x1, top: box.top + r.y2 + 8 },
-        image,
+        image: page ? cropPage(page, r, box, annotationMode).catch(() => null) : null,
       });
     }
+    document.addEventListener("pointerdown", onOther, true);
     document.addEventListener("pointermove", onMove);
     document.addEventListener("pointerup", onUp, true);
     document.addEventListener("pointercancel", onCancel);
@@ -2015,10 +2010,15 @@ const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, scal
         height: pageSize || reservedHeight ? curH : undefined,
         minHeight: pageSize || reservedHeight ? undefined : 200,
       }}>
-      {/* 100% of the wrapper: on a zoom change the old bitmap stretches to the
-          new size immediately (blurry for a moment) instead of sitting at its
-          old size in a resized box until the sharp re-render lands. */}
-      <canvas ref={canvasRef} className="pdfPageCanvas" style={{ display: "block", width: "100%", height: "100%" }} />
+      {/* The page's bitmaps, drawn by the raster: the whole page and, at high
+          zoom, a sharp one over the part in view. Both are sized in percent
+          of the page box: on a zoom change the old bitmaps stretch to the new
+          size immediately (blurry for a moment) instead of sitting at their
+          old size in a resized box until the sharp redraw lands. */}
+      <div className="pdfPageCanvas">
+        <canvas ref={baseRef} />
+        <canvas ref={detailRef} className="pdfDetailCanvas" />
+      </div>
       {/* Translated view: masks + refills sit between the canvas and the text
           layer, so selecting the (invisible) original text still paints its
           selection highlight on top of the overlay. pointer-events: none —
@@ -2072,11 +2072,16 @@ const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, scal
         </div>
       ) : null}
       {/* No text selection on a read-only page, nor while a tool is armed: the tool takes the pointer. */}
+      {/* The page at scale 1, scaled up to the page box. Sized here and not
+          only when the text is built: the layer otherwise fills the box
+          (pdf_viewer.css, inset: 0) and the transform would scale an empty
+          one past it, widening the scroll area. */}
       <div ref={textRef} className="textLayer" data-guide="pdf.textLayer" style={{
+        ...(baseW && baseH ? { width: baseW, height: baseH, transform: `scale(${scale})` } : null),
         userSelect: readOnly || toolArmed ? "none" : "text", WebkitUserSelect: readOnly || toolArmed ? "none" : "text",
       }} />
       <PdfCitationOverlay citation={citation} wrapRef={wrapRef}
-        ready={textReady?.scale === scale && textReady?.pdfDoc === pdfDoc ? textReady : null} />
+        ready={textReady?.page === page ? textReady : null} />
       {links.map((l, i) => (
         <div
           key={`lnk-${i}`}
@@ -2093,11 +2098,11 @@ const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, scal
             if (l.url) onExternalLink?.(l.url);
             else onInternalLink?.(l.dest);
           }}
-          onContextMenu={l.url ? (e) => {
+          {...menuPress(l.url ? (e) => {
             e.preventDefault();
             e.stopPropagation();
             onLinkContext?.(l.url);
-          } : undefined}
+          } : null)}
         />
       ))}
       {(findMarks || []).map((m, i) => (
@@ -2132,6 +2137,8 @@ const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, scal
         // it), and a palette colour is tagged with its index: dark pages
         // swap in a dark-tuned set by index (app.css, "Flip page colors").
         const palette = paletteIndex(color);
+        // Right-click, or a finger held on it: colour, link, copy as reference.
+        const openMenu = (e) => { e.preventDefault(); onHighlightContext?.({ id: h.id, x: e.clientX, y: e.clientY }); };
         const elements = [];
         for (const r of rects) {
           elements.push(<div key={h.id + "-" + r.x1 + "-" + r.y1} data-hl-id={h.id}
@@ -2157,7 +2164,7 @@ const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, scal
               if (isLink) onLinkHighlight?.(h);
               else onHighlightJump?.(h.id, e.ctrlKey || e.metaKey);
             }}
-            onContextMenu={function (e) { e.preventDefault(); if (onHighlightContext) onHighlightContext({ id: h.id, x: e.clientX, y: e.clientY }); }}
+            {...menuPress(openMenu)}
           />);
         }
         // Speech-bubble badge at the end of the passage when the user typed a
@@ -2175,7 +2182,7 @@ const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, scal
                 top: r.y1 * curH / storedH - 8,
               }}
               onClick={(e) => { e.stopPropagation(); onHighlightJump?.(h.id, e.ctrlKey || e.metaKey); }}
-              onContextMenu={(e) => { e.preventDefault(); onHighlightContext?.({ id: h.id, x: e.clientX, y: e.clientY }); }}
+              onContextMenu={openMenu}
             />
           );
         }

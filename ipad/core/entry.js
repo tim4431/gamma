@@ -110,6 +110,8 @@ function viewportTransform(box, rotation) {
 const FORMATS = {
   bold: (text, from, to) => markPlan(text, from, to, "**"),
   italic: (text, from, to) => markPlan(text, from, to, "*"),
+  code: (text, from, to) => markPlan(text, from, to, "`"),
+  strike: (text, from, to) => markPlan(text, from, to, "~~"),
   link: linkPlan,
   math: mathInsertAt,
 };

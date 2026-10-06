@@ -171,8 +171,10 @@ export async function triggeredGuideScenarios(env) {
     const { ctx, page } = await open(`&page=${pg.id}`);
     try {
       await page.click('[data-guide="header.share"]');
-      await page.locator(".sharePopover").getByRole("button", { name: "Anyone", exact: true }).click();
+      await page.locator(".sharePopover").getByRole("button", { name: "Share", exact: true }).click();
       await page.waitForSelector('[data-guide-offer="sharing"] .guideCard');
+      await page.locator(".sharePopover").getByRole("button", { name: "Anyone", exact: true }).click();
+      await page.locator(".sharePopover").getByText("Anyone with the link can read this page.").waitFor();
       await page.getByRole("button", { name: "Show me" }).click();
       // the popover top to bottom; an anyone-with-the-link share gets the access step that says so
       for (const id of ["share-link", "share-people", "share-access-anyone"]) {
@@ -194,7 +196,7 @@ export async function triggeredGuideScenarios(env) {
     } finally { await ctx.close(); }
   });
 
-  await step("triggered guide: from the menu, the sharing tour has the user pick who can open the page only when there is no link", async () => {
+  await step("triggered guide: from the menu, the sharing tour has the user press Share only when there is no link", async () => {
     const pg = await user.api("/api/pages", { method: "POST", body: { title: "Menu shared page" } });
     const { ctx, page } = await open(`&page=${pg.id}`);
     const startSharing = async () => {
@@ -205,9 +207,9 @@ export async function triggeredGuideScenarios(env) {
     try {
       await startSharing();
       await page.waitForSelector('[data-guide-overlay="share-create"] .guideCard');
-      await page.locator(".sharePopover").getByRole("button", { name: "Signed in", exact: true }).click();
+      await page.locator(".sharePopover").getByRole("button", { name: "Share", exact: true }).click();
       await page.waitForSelector('[data-guide-overlay="share-link"] .guideCard');
-      assertEq((await user.api(`/api/share-settings/${pg.id}`)).audience, "users", "the pick is the new share's audience");
+      assertEq((await user.api(`/api/share-settings/${pg.id}`)).audience, "users", "Share makes a signed-in link");
       await page.keyboard.press("Escape");
       await until(async () => await page.locator(".guideCard").count() === 0);
       // Shared now: the link shows up only once the popover has loaded, and

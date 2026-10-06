@@ -1,15 +1,17 @@
 """The admin API under ``/api/admin``: accounts, invites, OIDC clients,
-the server settings, the audit log, the fleet's hosts, hosted servers and
-jobs. Only an account with ``is_admin`` (set
+the server settings with the plans on sale, the environment's configuration
+(read-only) and a test mail, the audit log, the fleet's hosts, hosted servers and
+jobs, the Overview with the operator's alerts, and the fleet's history. Only an
+account with ``is_admin`` (set
 with ``manage.py set-admin``) and only through a portal session — never a
 bearer token from a Gamma server."""
 
 from contextlib import closing
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel
 
-from .. import accounts, billing, config, db, fleet, hosted, oidc, settings
+from .. import accounts, alerts, billing, config, db, fleet, hosted, mail, metrics, oidc, ratelimit, settings
 from ..accounts import Problem
 from .accounts import portal_account, send_mail, verify_message
 
@@ -57,6 +59,7 @@ def get_account(account_id: str, request: Request):
 
 class AccountPatch(BaseModel):
     plan: str | None = None
+    granted_until: str | None = None
     is_admin: bool | None = None
     verified: bool | None = None
     username: str | None = None
@@ -64,13 +67,17 @@ class AccountPatch(BaseModel):
 
 @router.patch("/accounts/{account_id}")
 def patch_account(account_id: str, body: AccountPatch, request: Request):
+    """``plan`` replaces the grant, with no end unless ``granted_until``
+    comes with it; ``granted_until`` alone dates the grant the account has
+    (an ISO date or date and time; null clears it)."""
     with closing(db.connect()) as conn:
         admin = require_admin(conn, request)
         account = accounts.by_id(conn, account_id)
         if not account:
             raise HTTPException(404, "no such account")
-        if body.plan is not None:
-            accounts.set_plan(conn, account_id, body.plan, admin["id"])
+        if body.plan is not None or "granted_until" in body.model_fields_set:
+            accounts.set_plan(conn, account_id, account["granted_plan"] if body.plan is None else body.plan,
+                              admin["id"], until=accounts.until_from(body.granted_until))
         if body.is_admin is not None:
             if account_id == admin["id"] and not body.is_admin:
                 raise Problem(400, "you cannot demote yourself")
@@ -151,21 +158,52 @@ class InviteBody(BaseModel):
     uses: int = 1
     plan: str = "free"
     note: str = ""
+    expires_days: int | None = None   # the code stops working that many days from now
+    grant_days: int | None = None     # the plan it grants ends that many days after each registration
+
+
+class InvitePatch(BaseModel):
+    disabled: bool
 
 
 @router.get("/invites")
 def list_invites(request: Request):
+    """Each row with ``used`` and ``state`` (``accounts.invite_view``)."""
     with closing(db.connect()) as conn:
         require_admin(conn, request)
         rows = conn.execute("SELECT * FROM invites ORDER BY created_at DESC LIMIT 500").fetchall()
-        return {"invites": [dict(r) for r in rows]}
+        return {"invites": [accounts.invite_view(r) for r in rows]}
 
 
 @router.post("/invites")
 def create_invite(body: InviteBody, request: Request):
     with closing(db.connect()) as conn:
         admin = require_admin(conn, request)
-        row = accounts.make_invite(conn, uses=body.uses, plan=body.plan, note=body.note, created_by=admin["id"])
+        row = accounts.make_invite(conn, uses=body.uses, plan=body.plan, note=body.note, created_by=admin["id"],
+                                   expires_days=body.expires_days, grant_days=body.grant_days)
+        conn.commit()
+        return {"invite": row}
+
+
+@router.get("/invites/{code}")
+def get_invite(code: str, request: Request):
+    """The invite and the accounts that registered with it, newest first."""
+    with closing(db.connect()) as conn:
+        require_admin(conn, request)
+        row = conn.execute("SELECT * FROM invites WHERE code = ?", (code,)).fetchone()
+        if not row:
+            raise HTTPException(404, "no such invite")
+        used = conn.execute("SELECT id, username, plan, created_at, deleted_at FROM accounts WHERE invite_code = ? "
+                            "ORDER BY created_at DESC", (code,)).fetchall()
+        return {"invite": accounts.invite_view(row), "accounts": [dict(a) for a in used]}
+
+
+@router.patch("/invites/{code}")
+def patch_invite(code: str, body: InvitePatch, request: Request):
+    """Turn a code off, or on again."""
+    with closing(db.connect()) as conn:
+        admin = require_admin(conn, request)
+        row = accounts.set_invite_disabled(conn, code, body.disabled, admin["id"])
         conn.commit()
         return {"invite": row}
 
@@ -184,11 +222,20 @@ def delete_invite(code: str, request: Request):
 
 # --- server settings ----------------------------------------------------------
 
+def _settings_view() -> dict:
+    """``settings.admin_view`` and the Plans section's rows: each paid plan,
+    whether the operator offers it (``on_sale``), whether it can be bought
+    now (``sellable``) and why not (``billing.why_not``)."""
+    plans = [{"plan": p, "on_sale": p in settings.plans_on_sale(), "sellable": billing.can_sell(p),
+              "reason": billing.why_not(p)} for p in settings.PAID_PLANS]
+    return {**settings.admin_view(), "plans": plans}
+
+
 @router.get("/settings")
 def get_settings(request: Request):
     with closing(db.connect()) as conn:
         require_admin(conn, request)
-    return settings.admin_view()
+    return _settings_view()
 
 
 @router.patch("/settings")
@@ -202,7 +249,31 @@ def patch_settings(body: dict, request: Request):
             raise HTTPException(400, str(e)) from e
         conn.commit()
     settings.invalidate()
-    return settings.admin_view()
+    return _settings_view()
+
+
+@router.get("/config")
+def get_config(request: Request):
+    """What the environment fixes, read-only (``config.admin_view``): never
+    a secret's value."""
+    with closing(db.connect()) as conn:
+        require_admin(conn, request)
+    return {"groups": config.admin_view(db.SCHEMA_VERSION)}
+
+
+@router.post("/test-mail")
+def test_mail(request: Request):
+    """A short message to the calling admin's own address; answers what
+    became of it, or 502 with the mail server's error."""
+    with closing(db.connect()) as conn:
+        admin = require_admin(conn, request)
+        conn.commit()
+    ratelimit.check(f"test-mail:{admin['id']}", 5, 600)
+    try:
+        detail = mail.send_test(admin["email"])
+    except mail.MailError as e:
+        raise Problem(502, f"The mail could not be sent: {e}") from e
+    return {"ok": True, "to": admin["email"], "backend": config.MAIL_BACKEND, "detail": detail}
 
 
 # --- OIDC clients -------------------------------------------------------------
@@ -303,19 +374,22 @@ def refresh_subscription(account_id: str, request: Request):
 
 
 # --- hosted servers and the fleet (docs/dev/hosted.md) ------------------------
-# Hosts, hosted servers, their jobs and upgrades: the Servers tab. The
-# actions that enqueue a job for the container (logs, rollback, one
-# server's upgrade, an orphan's removal) answer with that job, which the
-# page polls at GET /jobs/{id}.
+# Hosts, hosted servers, their limits, environment, jobs and upgrades: the
+# Servers tab. The actions that enqueue a job for the container (logs,
+# rollback, one server's upgrade, an orphan's removal) answer with that
+# job, which the page polls at GET /jobs/{id}. An environment variable's
+# value goes in and never comes back out: only names are answered.
 
 class HostBody(BaseModel):
     name: str
     address: str = ""
+    public_ip: str = ""
 
 
 class HostPatch(BaseModel):
     name: str | None = None
     accepting: bool | None = None
+    public_ip: str | None = None
 
 
 class ProvisionBody(BaseModel):
@@ -323,37 +397,46 @@ class ProvisionBody(BaseModel):
 
 
 class UpgradeBody(BaseModel):
-    tag: str
+    tag: str = ""
     wave_size: int = 1
     server_ids: list[str] | None = None
+    outdated: bool = False
 
 
 class ServerUpgradeBody(BaseModel):
     tag: str
 
 
+class ApplyEnvBody(BaseModel):
+    wave_size: int = 1
+    server_ids: list[str] | None = None
+
+
 @router.get("/hosts")
 def list_hosts(request: Request):
     with closing(db.connect()) as conn:
         require_admin(conn, request)
-        return {"hosts": fleet.hosts(conn)}
+        return {"hosts": _trended(conn, "host", fleet.hosts(conn))}
 
 
 @router.post("/hosts")
 def add_host(body: HostBody, request: Request):
-    """A new host; its agent token is in this answer only."""
+    """A new host; its agent token is in this answer only, with the line
+    that installs the agent with it (and the host's own Caddy when it has a
+    public IP)."""
     with closing(db.connect()) as conn:
         admin = require_admin(conn, request)
-        host, token = fleet.add_host(conn, body.name, body.address, actor=admin["id"])
+        host, token = fleet.add_host(conn, body.name, body.address, actor=admin["id"], public_ip=body.public_ip)
         conn.commit()
-    return {"host": host, "token": token}
+    return {"host": host, "token": token, "bootstrap": fleet.bootstrap_command(token, bool(host["public_ip"]))}
 
 
 @router.patch("/hosts/{host_id}")
 def patch_host(host_id: str, body: HostPatch, request: Request):
     with closing(db.connect()) as conn:
         admin = require_admin(conn, request)
-        host = fleet.update_host(conn, host_id, name=body.name, accepting=body.accepting, actor=admin["id"])
+        host = fleet.update_host(conn, host_id, name=body.name, accepting=body.accepting, public_ip=body.public_ip,
+                                 actor=admin["id"])
         conn.commit()
     return {"host": host}
 
@@ -374,7 +457,8 @@ def remove_orphan(host_id: str, label: str, request: Request):
 def list_servers(request: Request):
     with closing(db.connect()) as conn:
         require_admin(conn, request)
-        return {"servers": hosted.servers(conn), "default_image": fleet.default_image()}
+        return {"servers": _trended(conn, "server", hosted.servers(conn)), "default_image": fleet.default_image(),
+                "auto_upgrade": settings.fleet_auto_upgrade()}
 
 
 @router.post("/servers/provision")
@@ -389,12 +473,73 @@ def provision_server(body: ProvisionBody, request: Request):
 
 @router.post("/servers/upgrade")
 def upgrade_servers(body: UpgradeBody, request: Request):
+    """Servers to ``tag`` in waves; with ``outdated``, exactly the outdated
+    servers to the default tag (``tag`` and ``server_ids`` are not read)."""
     with closing(db.connect()) as conn:
         admin = require_admin(conn, request)
         db.begin_write(conn)
-        run = fleet.upgrade(conn, body.tag, body.wave_size, body.server_ids, actor=admin["id"])
+        if body.outdated:
+            run = fleet.upgrade_outdated(conn, body.wave_size, actor=admin["id"])
+        else:
+            run = fleet.upgrade(conn, body.tag, body.wave_size, body.server_ids, actor=admin["id"])
         conn.commit()
     return run
+
+
+@router.post("/servers/apply-env")
+def apply_env(body: ApplyEnvBody, request: Request):
+    """An update run: running servers rebuilt with the extra environment as
+    it is now, in waves."""
+    with closing(db.connect()) as conn:
+        admin = require_admin(conn, request)
+        db.begin_write(conn)
+        run = fleet.update_env(conn, body.wave_size, body.server_ids, actor=admin["id"])
+        conn.commit()
+    return run
+
+
+@router.patch("/servers/{server_id}")
+def patch_server(server_id: str, body: dict, request: Request):
+    """``overrides``: the server's own limits over its plan's
+    (``hosted.set_overrides``); ``env``: ``{set: {NAME: value}, unset:
+    [NAME]}``, its own variables, applied now (``hosted.set_env``)."""
+    with closing(db.connect()) as conn:
+        admin = require_admin(conn, request)
+        if not body or set(body) - {"overrides", "env"}:
+            raise HTTPException(400, "send overrides, env or both")
+        env = body.get("env", {})
+        if not isinstance(env, dict):
+            raise HTTPException(400, "env is {set, unset}")
+        db.begin_write(conn)
+        if "overrides" in body:
+            server = hosted.set_overrides(conn, server_id, body["overrides"], admin["id"])
+        if "env" in body:
+            server = hosted.set_env(conn, server_id, env.get("set"), env.get("unset"), admin["id"])
+        conn.commit()
+    return {"server": server}
+
+
+@router.get("/fleet-env")
+def get_fleet_env(request: Request):
+    """The names of the fleet's extra variables; their values stay here."""
+    with closing(db.connect()) as conn:
+        require_admin(conn, request)
+        return {"names": sorted(settings.fleet_env(conn))}
+
+
+@router.patch("/fleet-env")
+def patch_fleet_env(body: dict, request: Request):
+    """``{set: {NAME: value}, unset: [NAME]}``. Nothing that runs changes:
+    a new server gets them, running ones with POST /servers/apply-env."""
+    with closing(db.connect()) as conn:
+        admin = require_admin(conn, request)
+        db.begin_write(conn)
+        try:
+            names = settings.set_fleet_env(conn, body.get("set"), body.get("unset"), admin["id"])
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from e
+        conn.commit()
+    return {"names": names}
 
 
 # Before /servers/{server_id}/{action}, which would take these paths too.
@@ -458,7 +603,8 @@ def get_job(job_id: str, request: Request):
 @router.post("/jobs/{job_id}/{action}")
 def job_action(job_id: str, action: str, request: Request):
     """``retry`` a failed or canceled job, or ``cancel`` a queued, held or
-    failed one (either lets a paused upgrade run go on)."""
+    failed one (either lets a paused upgrade or update run go on, and lets
+    automatic upgrades start again)."""
     if action not in ("retry", "cancel"):
         raise HTTPException(404, "no such action")
     with closing(db.connect()) as conn:
@@ -467,3 +613,114 @@ def job_action(job_id: str, action: str, request: Request):
         job = (fleet.retry if action == "retry" else fleet.cancel)(conn, job_id, admin["id"])
         conn.commit()
     return {"job": job}
+
+
+# --- the Overview, the alerts and the history (docs/dev/hosted.md) -------------
+# The Overview tab and the alert list bring the alerts up to date before they
+# read them, so a job retried a moment ago is no longer listed; any that fall
+# due then are mailed as the next heartbeat would have mailed them.
+
+TRENDS = {"host": ("memory_used_mb", "disk_used_mb"), "server": ("memory_mb", "cpu_pct", "data_mb")}
+TREND_HOURS = 48
+
+
+def _trended(conn, kind: str, rows: list[dict]) -> list[dict]:
+    """``rows`` (hosts or servers), each with ``trend``: its samples of the
+    last TREND_HOURS hours in the few series the Servers tab draws inline."""
+    trends = metrics.trends(conn, kind, TRENDS[kind], TREND_HOURS)
+    for row in rows:
+        row["trend"] = trends.get(row["id"], [])
+    return rows
+
+
+def _sync_alerts(conn) -> None:
+    db.begin_write(conn)
+    due = alerts.sync(conn)
+    conn.commit()
+    alerts.notify(due)
+
+
+def _counts(conn) -> dict:
+    """The Overview's tiles: accounts, billing (``billing.admin_summary``),
+    the fleet, and the settings that decide who gets in and what is sold."""
+    row = conn.execute("SELECT SUM(deleted_at IS NULL), SUM(deleted_at IS NULL AND created_at >= ?), "
+                       "SUM(deleted_at IS NULL AND email_verified_at IS NULL), SUM(deleted_at IS NOT NULL) "
+                       "FROM accounts", (db.after(-7 * 86400),)).fetchone()
+    hosts = fleet.hosts(conn)
+    servers = conn.execute("SELECT * FROM hosted_servers WHERE state != 'deleted'").fetchall()
+    by_state: dict[str, int] = {}
+    for s in servers:
+        by_state[s["state"]] = by_state.get(s["state"], 0) + 1
+    jobs = dict(conn.execute("SELECT state, COUNT(*) FROM fleet_jobs GROUP BY state").fetchall())
+    view = settings.admin_view()
+    return {
+        "accounts": dict(zip(("total", "new_7d", "unverified", "deleted"), (n or 0 for n in row))),
+        "billing": {**billing.admin_summary(conn), "enabled": billing.enabled()},
+        "fleet": {"hosts": {"fresh": sum(not h["stale"] for h in hosts), "stale": sum(h["stale"] for h in hosts)},
+                  "servers": {"by_state": by_state, "outdated": sum(bool(fleet.outdated_why(s)) for s in servers)},
+                  "jobs": {k: jobs.get(k, 0) for k in ("queued", "running", "failed")}},
+        "settings": {**{k: view[k] for k in ("registration", "turnstile_on", "plans_on_sale", "alerts", "alert_email",
+                                             "fleet_auto_upgrade")}, "fleet_image_tag": fleet.default_tag()},
+    }
+
+
+@router.get("/overview")
+def overview(request: Request):
+    """The Overview tab: the open alerts an admin has not dismissed, and
+    the counts (``_counts``)."""
+    with closing(db.connect()) as conn:
+        require_admin(conn, request)
+        _sync_alerts(conn)
+        return {"alerts": [a for a in alerts.listing(conn) if not a["dismissed_at"]], **_counts(conn)}
+
+
+@router.get("/alerts")
+def list_alerts(request: Request, resolved: bool = Query(False, alias="all")):
+    """The open alerts, dismissed ones too; with ``?all=1``, also those
+    resolved in the last 7 days."""
+    with closing(db.connect()) as conn:
+        require_admin(conn, request)
+        _sync_alerts(conn)
+        return {"alerts": alerts.listing(conn, 7 if resolved else 0)}
+
+
+@router.post("/alerts/test")
+def test_alert(request: Request):
+    """*Send test alert*: an alert mail to where alerts go, sent now."""
+    with closing(db.connect()) as conn:
+        admin = require_admin(conn, request)
+        conn.commit()
+    ratelimit.check(f"test-alert:{admin['id']}", 5, 600)
+    try:
+        to = alerts.send_test()
+    except LookupError:
+        raise Problem(409, "There is no address to send it to: set one, or confirm an admin's address.") from None
+    except mail.MailError as e:
+        raise Problem(502, f"The mail could not be sent: {e}") from e
+    return {"ok": True, "to": to, "detail": f"Sent to {', '.join(to)} through the {config.MAIL_BACKEND} backend."}
+
+
+@router.post("/alerts/{key}/dismiss")
+def dismiss_alert(key: str, request: Request):
+    """Hide an open alert until it resolves and comes back."""
+    with closing(db.connect()) as conn:
+        admin = require_admin(conn, request)
+        db.begin_write(conn)
+        try:
+            alert = alerts.dismiss(conn, key, admin["id"])
+        except LookupError:
+            raise HTTPException(404, "no such open alert") from None
+        conn.commit()
+    return {"alert": alert}
+
+
+@router.get("/metrics")
+def get_metrics(request: Request, kind: str, ref: str, hours: int = 168):
+    """A host's or server's hourly samples (``metrics.series``) of the last
+    ``hours``, at most ``metrics.MAX_HOURS``."""
+    if kind not in metrics.KINDS:
+        raise HTTPException(400, "kind is host or server")
+    hours = max(1, min(hours, metrics.MAX_HOURS))
+    with closing(db.connect()) as conn:
+        require_admin(conn, request)
+        return {"kind": kind, "ref": ref, "hours": hours, "points": metrics.series(conn, kind, ref, hours)}

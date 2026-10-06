@@ -10,6 +10,7 @@ import rehypeKatex from "rehype-katex";
 import "katex/dist/katex.min.css";
 import { CheckIcon, ChevronDownIcon, CopyIcon, ExternalLinkIcon, FileGlyph, FileTextIcon, PinIcon, QuoteIcon, XIcon } from "./Icons";
 import { useWheelPan } from "./wheelPan";
+import { doublePress, menuPress } from "./press.js";
 import { assetUrl, copyText } from "../lib/utils";
 import { gammaLinksIn, parseGammaLink } from "../model/gammaLinks.js";
 import { remarkPaperLinks } from "../lib/remarkPaperLinks.js";
@@ -18,21 +19,34 @@ import { MermaidDiagram, mermaidCodeProps } from "./MermaidDiagram";
 import { highlightCode } from "../../editor/codeHighlight.js";
 import { t } from "../../shared/i18n/i18n.js";
 
-// Shared chrome for every dockable window: one grip (drag to move/reorder,
-// double-click to collapse), the close button right beside it, then the
-// window's own controls. Notes and chat both use this so their behavior
-// can't drift apart.
-function DockWindow({ title, guide, onGrip, onGripDoubleClick, onClose, headerContent, collapsed, children }) {
+// Shared chrome for every dockable window: one grip (drag to move or
+// reorder, double press to fold), the close button right beside it, then
+// the window's own controls. Folded, a window is its header alone, and one
+// press on it anywhere but a button opens it. Notes and chat both use this
+// so their behavior can't drift apart. Without `onGrip` (the compact shell
+// has no drag and no fold) the title is a plain label.
+//
+// When the click that opened a folded window was the first of a double
+// click, the second lands on the opened grip: that one does not fold it.
+let unfoldedAt = -Infinity;
+const UNFOLD_ECHO_MS = 800;
+
+function DockWindow({ title, guide, onGrip, onFold, onClose, headerContent, collapsed, children }) {
+  const unfold = collapsed && onFold ? (e) => {
+    if (e.target.closest("button")) return;
+    unfoldedAt = e.timeStamp;
+    onFold();
+  } : undefined;
   return (
     <div className={`dockWindow ${collapsed ? "collapsed" : ""}`}>
-      <div className="dockWindowHeader">
+      <div className="dockWindowHeader" onClick={unfold}>
         <span
           className="dockGrip"
           data-guide={guide}
           onPointerDown={onGrip}
-          onDoubleClick={onGripDoubleClick}
-          title={t("Drag to move this window · double-click to collapse/expand")}
-        >⠿ {title}</span>
+          {...doublePress(onFold && ((e) => { if (e.timeStamp - unfoldedAt > UNFOLD_ECHO_MS) onFold(); }))}
+          title={onGrip ? (collapsed ? t("Click to expand · drag to move this window") : t("Drag to move this window · double-click to collapse")) : undefined}
+        >{onGrip ? "⠿ " : null}{title}</span>
         {onClose ? (
           <button className="uiClose" onClick={onClose} title={t("Close window (reopen from the View menu)")} aria-label={t("Close {title}", { title: title })}><XIcon size={14} /></button>
         ) : null}
@@ -377,7 +391,8 @@ const AutoGrowTextarea = React.forwardRef(function AutoGrowTextarea(props, forwa
     // placeholder text, which can leave the chat tall after clearing context.
     if (!el.value) { el.style.height = ""; return; }
     el.style.height = "0px";
-    el.style.height = `${el.scrollHeight}px`;
+    // Heights are border-box, and scrollHeight leaves out the border.
+    el.style.height = `${el.scrollHeight + el.offsetHeight - el.clientHeight}px`;
   }, [props.value]);
 
   return (
@@ -550,10 +565,10 @@ function OpenTabs({
                 onClose(tab.id);
               }
             }}
-            onContextMenu={(event) => {
+            {...menuPress((event) => {
               event.preventDefault();
               onContext(tab, event.clientX, event.clientY);
-            }}
+            })}
           >
             <span className="tabKind">{kindIcon(tab, 14)}</span>
             <span className="tabTitle">{tab.title}</span>

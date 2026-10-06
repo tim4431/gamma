@@ -234,12 +234,13 @@ body {
   height: 100dvh;
 }
 
-/* Installed as a home-screen app (docs/dev/ipad.md): the document itself
-   must not rubber-band — only the panes scroll — and the bottom edge keeps
-   clear of the home indicator. The status bar sits above the viewport
-   (status-bar-style "default"), so there is no top inset to absorb. */
+/* The document itself never rubber-bands or pulls to refresh, in a browser
+   tab as installed: only the panes scroll (docs/dev/ipad.md). */
+html, body { overscroll-behavior: none; }
+/* Installed as a home-screen app: the bottom edge keeps clear of the home
+   indicator. The status bar sits above the viewport (status-bar-style
+   "default"), so there is no top inset to absorb. */
 @media (display-mode: standalone) {
-  html, body { overscroll-behavior: none; }
   .app { padding-bottom: env(safe-area-inset-bottom); }
 }
 
@@ -267,8 +268,8 @@ body {
 /* The topbar's icon buttons (a button with text in the topbar is a uiBtn). */
 .topbar .iconBtn {
   padding: 0;
-  width: 32px;
-  height: 32px;
+  width: var(--ctl-btn);
+  height: var(--ctl-btn);
   background: none;
   border: none;
   border-radius: var(--radius-sm);
@@ -285,14 +286,14 @@ body {
 /* --- unified close / dismiss control -------------------------------------
    One look for every × in the app (an XIcon, 14; 16 in Lg), modeled on the
    tab close button: a round, dim glyph that brightens with a soft circular
-   fill on hover and presses in on click. Sizes: Sm 20 (chips, tags, rows), the default 24
-   (docks, cards, find bars), Lg 28 (dialogs, panes). Danger turns red on
-   hover (delete). Apply `.uiClose` to any dismiss button instead of a
-   bespoke class. */
+   fill on hover and presses in on click. Sizes (tokens.css): Sm (chips,
+   tags, rows), the default (docks, cards, find bars), Lg (dialogs, panes).
+   Danger turns red on hover (delete). Apply `.uiClose` to any dismiss
+   button instead of a bespoke class. */
 .uiClose {
   padding: 0;
-  width: 24px;
-  height: 24px;
+  width: var(--ctl-close);
+  height: var(--ctl-close);
   flex-shrink: 0;
   background: none;
   border: none;
@@ -307,8 +308,8 @@ body {
 }
 .uiClose:hover { background: var(--bg-subtle); color: var(--text-bright); }
 .uiClose:active { transform: scale(0.82); }
-.uiClose.uiCloseLg { width: 28px; height: 28px; }
-.uiClose.uiCloseSm { width: 20px; height: 20px; }
+.uiClose.uiCloseLg { width: var(--ctl-close-lg); height: var(--ctl-close-lg); }
+.uiClose.uiCloseSm { width: var(--ctl-close-sm); height: var(--ctl-close-sm); }
 .uiClose.uiCloseDanger:hover { background: var(--danger-bg); color: var(--danger); }
 
 .status {
@@ -446,11 +447,13 @@ body {
   100% { background: transparent; }
 }
 
-/* Look comes from .uiClose; this only handles layout + hover-reveal. */
+/* Look comes from .uiClose; this only handles layout + hover-reveal. Out of
+   sight it takes no press, so a stray tap never deletes a row. */
 .blockDeleteBtn {
   align-self: flex-start;
   margin-top: 2px;
   opacity: 0;
+  pointer-events: none;
   transition: opacity var(--dur-fast), background var(--dur-fast) ease, color var(--dur-fast) ease, transform var(--dur-fast) ease;
 }
 
@@ -458,6 +461,7 @@ body {
 .blockRow.focused .blockDeleteBtn,
 .blockDeleteBtn:focus-visible {
   opacity: 1;
+  pointer-events: auto;
 }
 
 .collapseBtn {
@@ -708,18 +712,24 @@ body {
   pointer-events: none;
   transition: opacity var(--dur-fast) ease;
 }
-/* Hover crossfade: the language badge yields its corner to the copy button.
-   Look comes from .uiClose; this only positions it. */
+/* Where a pointer hovers, a hover crossfade: the language badge yields its
+   corner to the copy button. Where nothing hovers, both stay, the badge
+   beside the button. Look comes from .uiClose; this only positions it. */
 .codeCopyBtn {
   position: absolute;
   top: 3px;
   right: 5px;
   border-radius: var(--radius-sm);
-  opacity: 0;
   z-index: 1;
 }
-:is(.codeBlock, .cmCodeWidget):hover .codeCopyBtn, .codeCopyBtn:focus-visible { opacity: 1; }
-:is(.codeBlock, .cmCodeWidget):is(:hover, :has(.codeCopyBtn:focus-visible)) .codeLangBadge { opacity: 0; }
+@media (hover: hover) {
+  .codeCopyBtn { opacity: 0; pointer-events: none; }
+  :is(.codeBlock, .cmCodeWidget):hover .codeCopyBtn, .codeCopyBtn:focus-visible { opacity: 1; pointer-events: auto; }
+  :is(.codeBlock, .cmCodeWidget):is(:hover, :has(.codeCopyBtn:focus-visible)) .codeLangBadge { opacity: 0; }
+}
+@media (hover: none) {
+  .codeLangBadge { right: calc(var(--ctl-close) + 9px); }
+}
 
 /* highlight.js token colors, theme-aware (dark: VSCode-ish, light: GitHub-ish).
    Applies to both the editor's code widget and the rendered view.
@@ -957,10 +967,13 @@ body {
   line-height: 1;
   cursor: pointer;
   opacity: 0;
+  pointer-events: none;
   transition: opacity var(--dur-fast);
 }
-/* Also while a tour points at the table ([data-guide-active], guide/). */
-.mdTableWrap:hover .mdTableAdd, .mdTableWrap[data-guide-active] .mdTableAdd, .mdTableAdd[data-guide-active], .mdTableAdd:focus-visible { opacity: 1; }
+/* Also while a cell is edited, the table is selected, or a tour points at
+   it ([data-guide-active], guide/); out of sight they take no press. */
+.mdTableWrap:is(:hover, :focus-within, [data-guide-active]) .mdTableAdd, .mdObjectSelected .mdTableAdd,
+.mdTableAdd[data-guide-active], .mdTableAdd:focus-visible { opacity: 1; pointer-events: auto; }
 .mdTableAdd:hover { background: var(--bg-subtle); color: var(--text-bright); border-style: solid; }
 .mdTableAddCol { top: 0; bottom: 0; right: -13px; width: 11px; }
 .mdTableAddRow { left: 0; right: 0; bottom: -13px; height: 11px; }
@@ -998,9 +1011,10 @@ body {
 .mdTableCorner {
   top: -8px; left: -9px; width: 15px; height: 15px;
   display: flex; align-items: center; justify-content: center;
-  cursor: pointer; opacity: 0; transition: opacity var(--dur-fast);
+  cursor: pointer; opacity: 0; pointer-events: none; transition: opacity var(--dur-fast);
 }
-.mdTableWrap:hover .mdTableCorner, .mdObjectSelected .mdTableCorner, .mdTableCorner[data-guide-active], .mdTableCorner:focus-visible { opacity: 1; }
+.mdTableWrap:is(:hover, :focus-within) .mdTableCorner, .mdObjectSelected .mdTableCorner, .mdTableCorner[data-guide-active],
+.mdTableCorner:focus-visible { opacity: 1; pointer-events: auto; }
 
 /* The object frame (MdObject.jsx) around every rendered image, table and
    diagram: a small halo that selects the object on a press instead of
@@ -1064,12 +1078,14 @@ body {
   pointer-events: none;
   transition: opacity var(--dur-fast);
 }
-.mdImgFrame:is(:hover, :has(.mdImgTools :focus-visible)) .mdImgTools { opacity: 1; pointer-events: auto; }
+.mdImgFrame:is(:hover, :has(.mdImgTools :focus-visible)) .mdImgTools,
+.mdObjectSelected .mdImgTools { opacity: 1; pointer-events: auto; }
 .mdImgTools a.ctlBtn { text-decoration: none; }
 .mdImgTools .ctlBtn.danger:hover { background: var(--danger-bg); color: var(--danger); }
 /* The edge drag grips shared by sized figures (note images, Mermaid
    diagrams — shared/ui/ResizeGrip.jsx), one per side; each frame reveals
-   them on hover. */
+   them on hover and while its object is selected, and out of sight they
+   take no press. The bar is thin; its hit area (::before) is a finger's. */
 .mdResizeGrip {
   position: absolute;
   top: 50%;
@@ -1081,13 +1097,15 @@ body {
   border-radius: var(--radius-xs);
   background: var(--accent);
   opacity: 0;
+  pointer-events: none;
   cursor: ew-resize;
   touch-action: none;
   transition: opacity var(--dur-fast);
 }
+.mdResizeGrip::before { content: ""; position: absolute; inset: -6px -9px; }
 .mdResizeGrip.left { right: auto; left: -3px; }
-.mdImgFrame:hover .mdResizeGrip { opacity: 0.55; }
-.mdImgFrame .mdResizeGrip:hover, .mdImgFrame .mdResizeGrip:active { opacity: 0.9; }
+.mdImgFrame:hover .mdResizeGrip, .mdObjectSelected .mdImgFrame .mdResizeGrip { opacity: 0.55; pointer-events: auto; }
+.mdImgFrame .mdResizeGrip:is(:hover, :active) { opacity: 0.9; pointer-events: auto; }
 .mdImgCaption {
   display: block;
   margin: 2px 0 4px;
@@ -1526,10 +1544,15 @@ body {
   background: var(--bg-page);
   border: 1px solid var(--border-light);
   border-radius: var(--radius-xs);
-  padding: 2px 6px;
+  line-height: inherit;
+  /* .titleText.editable's box, its 2px 6px padding less this border, so the
+     text sits and wraps exactly where the shown title's does. */
+  padding: 1px 5px;
   margin-left: -6px;
-  width: 100%;
-  max-width: 480px;
+  width: calc(100% + 6px);
+  display: block;
+  resize: none;
+  overflow: hidden;
 }
 
 /* --- home button (icon-style, identical on editor and read-only) --- */
@@ -1569,7 +1592,8 @@ body {
   height: 22px;
   margin-top: 1px;
 }
-/* Both handles: a flat 18px-wide hit box that appears on row hover. */
+/* Both handles: a flat 18px-wide hit box that appears on row hover, and
+   takes no press while it is out of sight. */
 .rowHandles > .addHandle,
 .rowHandles > .dragHandle {
   width: 18px;
@@ -1582,6 +1606,7 @@ body {
   border: none;
   color: var(--text-muted);
   opacity: 0;
+  pointer-events: none;
   transition: opacity var(--dur-fast) ease, color var(--dur-fast) ease, background var(--dur-fast) ease;
   user-select: none;
 }
@@ -1603,6 +1628,12 @@ body {
 }
 .sortableBlockWrap:is(:hover, :focus-within, :has(:hover)) > .rowHandles > :is(.dragHandle, .addHandle) {
   opacity: 1;
+  pointer-events: auto;
+}
+/* Where nothing hovers, every row's ⋮⋮ stays, quiet, so its menu and drag
+   are in reach; the "+" still comes with the row being edited. */
+@media (hover: none) {
+  .rowHandles > .dragHandle { opacity: 0.4; pointer-events: auto; }
 }
 .rowHandles > .dragHandle:hover,
 .rowHandles > .addHandle:hover {
@@ -1665,8 +1696,8 @@ body {
 
 /* Viewer control boxes — ONE surface, three placements: the zoom column
    (mid-left), the TOC toggle (top-left) and the fullscreen toggle
-   (bottom-left) are all a .pdfCtlBox: the same elevated 32px-wide rounded
-   box with the same 26px transparent inner buttons (.ctlBtn's size). Only the position
+   (bottom-left) are all a .pdfCtlBox: the same elevated rounded box, 3 px
+   around the same transparent inner buttons (.ctlBtn's size). Only the position
    differs, via the modifier class — so any change to how these render
    (sizing, touch targets, theming) lands on all three at once. */
 .pdfCtlBox {
@@ -1676,7 +1707,7 @@ body {
   flex-direction: column;
   align-items: center;
   gap: 2px;
-  width: 32px;
+  width: calc(var(--ctl-icon-btn) + 6px);
   background: var(--bg-elevated);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
@@ -1688,8 +1719,8 @@ body {
 :is(.pdfCtlBox button, .ctlBtn) {
   background: transparent;
   border: none;
-  width: 26px;
-  height: 26px;
+  width: var(--ctl-icon-btn);
+  height: var(--ctl-icon-btn);
   padding: 0;
   border-radius: var(--radius-sm);
   display: flex;
@@ -1703,6 +1734,23 @@ body {
   background: var(--bg-active);
 }
 :is(.pdfCtlBox button, .ctlBtn):disabled { opacity: 0.4; cursor: default; }
+/* A row's "⋯" (MenuButton in shared/ui/Menus.jsx): where a pointer hovers
+   it shows with its row (.rowMenuHost), under the keyboard's focus, and
+   while its menu is open; where nothing hovers it is always there. */
+.rowMenuBtn { flex-shrink: 0; }
+@media (hover: hover) {
+  .rowMenuHost .rowMenuBtn { opacity: 0; }
+  .rowMenuHost:is(:hover, :focus-within) .rowMenuBtn,
+  .rowMenuHost .rowMenuBtn:focus-visible { opacity: 1; }
+}
+/* What a held finger opens a menu on (menuPress in shared/ui/press.js)
+   keeps the system's own long-press out: its link and image callout
+   everywhere, and its text selection where a finger is the pointer. */
+[data-press] { -webkit-touch-callout: none; }
+@media (hover: none) {
+  [data-press] { -webkit-user-select: none; user-select: none; }
+  [data-press] :is(input, textarea, [contenteditable]) { -webkit-user-select: text; user-select: text; }
+}
 .ctlBtnRow { display: flex; align-items: center; gap: 2px; }
 [data-scheme="light"] .pdfCtlBox {
   box-shadow: var(--shadow-2);
@@ -1780,12 +1828,14 @@ body {
    or three lines rounds like a card. */
 .statusPill.error { color: #e07a6a; border-color: rgba(224, 122, 106, 0.5); border-radius: var(--radius-lg); }
 .statusPill.error .pillText { white-space: normal; overflow-wrap: anywhere; text-align: center; }
-.statusPill.interactive { pointer-events: auto; } /* has a Retry button */
-/* Keep feedback away from the handwriting strip, including expanded options. */
+.statusPill.interactive { pointer-events: auto; } /* has an action button: Retry, Undo… */
+/* Keep feedback away from the handwriting strip, including expanded options,
+   and clear of the control boxes on either side (each 14 px in, a control
+   box wide, then 14 px of air), as the strip is. */
 .main:has(.pdfInkBar) > .statusPill {
   top: auto;
   bottom: 12px;
-  max-width: min(calc(100% - 120px), 520px);
+  max-width: min(calc(100% - 2 * (var(--ctl-icon-btn) + 34px)), 520px);
 }
 .main:has(.pdfInkBar) > .statusPill .pillText { min-width: 0; overflow-wrap: anywhere; }
 .pillSpin {
@@ -1813,9 +1863,12 @@ body {
 /* --- PDF table of contents (document outline) --- */
 .pdfOutlinePanel {
   position: absolute;
-  top: 42px; /* below the top-left TOC box */
+  /* Below the top-left TOC box (8 px down, a button and 8 px of padding and
+     border), and above the bottom-left fullscreen box (14 px up, the same
+     box, 4 px of air). */
+  top: calc(var(--ctl-icon-btn) + 16px);
   left: 14px;
-  bottom: 52px; /* stops above the bottom-left fullscreen box */
+  bottom: calc(var(--ctl-icon-btn) + 26px);
   z-index: calc(var(--z-dock) + 5); /* above the zoom column, which sits mid-left under it */
   width: 280px;
   max-width: 70%;
@@ -1918,7 +1971,8 @@ button.pdfOutlineChevron:hover { background: rgba(128, 128, 128, 0.28); color: v
 .categoryFrontmatterInput {
   color: var(--text-secondary);
   flex: 1;
-  min-width: 0;
+  /* Wraps below the chips rather than shrinking to a sliver after them. */
+  min-width: 8em;
   background: transparent;
   border: none;
   outline: none;
@@ -1939,7 +1993,7 @@ button.pdfOutlineChevron:hover { background: rgba(128, 128, 128, 0.28); color: v
   gap: 4px;
   align-items: center;
   background: transparent;
-  min-height: 22px;
+  min-height: calc(var(--ctl-close-sm) + 2px);
 }
 .categoryTag {
   display: inline-flex;
@@ -1961,12 +2015,7 @@ button.pdfOutlineChevron:hover { background: rgba(128, 128, 128, 0.28); color: v
   align-items: center;
   gap: 3px;
 }
-.categorySuggestionItem.categorySuggestionFolder {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-}
-.categorySuggestionItem.categorySuggestionFolder svg {
+.categorySuggestionItem svg {
   flex-shrink: 0;
 }
 .categorySuggestions {
@@ -1983,7 +2032,9 @@ button.pdfOutlineChevron:hover { background: rgba(128, 128, 128, 0.28); color: v
   box-shadow: var(--shadow-2);
 }
 .categorySuggestionItem {
-  display: block;
+  display: flex;
+  align-items: center;
+  gap: 5px;
   width: 100%;
   text-align: left;
   padding: 6px 10px;
@@ -2009,9 +2060,10 @@ button.pdfOutlineChevron:hover { background: rgba(128, 128, 128, 0.28); color: v
   color: var(--accent);
   padding: 0 3px;
   opacity: 0;
+  pointer-events: none;
   transition: opacity var(--dur-base);
 }
-.blockRow:hover .attachModeBtn, .attachModeBtn:focus-visible { opacity: 1; }
+.blockRow:is(:hover, .focused) .attachModeBtn, .attachModeBtn:focus-visible { opacity: 1; pointer-events: auto; }
 /* A link named a page that isn't in this workspace (App's missingPage): a
    dismissible amber notice under the topbar, over the library or the page. */
 .missingPageNotice {
@@ -2155,7 +2207,7 @@ button.pdfOutlineChevron:hover { background: rgba(128, 128, 128, 0.28); color: v
   user-select: none;
   border: 1px solid transparent;
   border-bottom: none;
-  min-height: 30px;
+  min-height: var(--ctl-tab);
   transition: background var(--dur-fast) ease, color var(--dur-fast) ease;
   animation: tabIn var(--dur-base) ease-out;
   will-change: transform;
@@ -2212,7 +2264,7 @@ button.pdfOutlineChevron:hover { background: rgba(128, 128, 128, 0.28); color: v
    close button's place — close one from the right-click menu. */
 .tabPin { color: var(--text-dim); }
 /* The "⌄ n" button after an overflowing strip, and its list of every tab. */
-.topbar .iconBtn.tabsMenuBtn { width: auto; min-width: 32px; padding: 0 6px; gap: 2px; flex-shrink: 0; }
+.topbar .iconBtn.tabsMenuBtn { width: auto; min-width: var(--ctl-btn); padding: 0 6px; gap: 2px; flex-shrink: 0; }
 .tabsMenuCount { font-size: var(--fs-xs); font-variant-numeric: tabular-nums; }
 .tabsPopover { width: 320px; max-width: calc(100vw - 24px); }
 .tabsMenuList { max-height: min(420px, 60vh); overflow-y: auto; display: flex; flex-direction: column; gap: 1px; }
@@ -2462,10 +2514,6 @@ mark.merge-del { background: color-mix(in srgb, var(--danger) 16%, transparent);
 .topbar .sharePopover .setPickItem { padding: 5px 7px; border: 0; border-radius: var(--radius-sm); background: transparent; font-size: var(--fs-xs); }
 .topbar .sharePopover .setPickItem:is(.cursor, :hover) { background: var(--bg-hover); }
 .topbar .sharePopover .setPickItem.picked { background: var(--accent-bg); }
-/* Stop sharing: the button at the end of the link's sections, or its
-   inline confirm across the width. */
-.shareStop { display: flex; justify-content: flex-end; padding: 8px 8px 2px; }
-.shareStop .mirrorConfirm { flex: 1; padding: 4px 0; }
 /* Slide citation / BibTeX: a sub-label line, then a copy box. */
 .citeHead { display: flex; align-items: baseline; gap: 4px; padding: 6px 8px 4px; }
 .citeLabel { font-size: var(--fs-xs); font-weight: 600; color: var(--text-secondary); }
@@ -2758,8 +2806,8 @@ mark.searchMark {
   border-radius: var(--radius-xs);
   color: var(--text-muted);
   font-size: var(--fs-2xs);
-  width: 26px;
-  height: 26px;
+  width: var(--ctl-icon-btn);
+  height: var(--ctl-icon-btn);
   padding: 0;
   display: inline-flex;
   align-items: center;
@@ -2793,8 +2841,8 @@ mark.searchMark {
   margin-right: 4px;
 }
 .searchToggle.searchNavBtn {
-  width: 22px;
-  height: 22px;
+  width: var(--ctl-icon-btn-xs);
+  height: var(--ctl-icon-btn-xs);
   border: none;
   border-radius: var(--radius-xs);
 }
@@ -2840,12 +2888,20 @@ mark.searchMark {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 3px 8px;
+  padding: 3px 8px 3px 0;
   border-bottom: 1px solid var(--border-subtle);
   flex-shrink: 0;
   min-width: 0;
 }
+/* The grip spans the header's full height (through its padding) and is
+   padded past its text: a target for a finger as for a mouse. The close
+   button keeps a clear gap from it. */
 .dockGrip {
+  align-self: stretch;
+  display: flex;
+  align-items: center;
+  margin: -3px 6px -3px 0;
+  padding: 0 8px;
   cursor: grab;
   touch-action: none;
   user-select: none;
@@ -2854,6 +2910,8 @@ mark.searchMark {
   flex-shrink: 0;
 }
 .dockGrip:hover { color: var(--text-primary); }
+/* Folded, the whole header opens it. */
+.dockWindow.collapsed .dockWindowHeader { cursor: pointer; }
 .dockHeaderSpacer { flex: 1; min-width: 0; }
 .dockWindow.collapsed { flex: 0 0 auto; background: var(--bg-page); }
 /* slot layout: collapsed windows are fixed header bars above/beside the
@@ -3009,6 +3067,19 @@ mark.searchMark {
   max-width: none;
   max-height: 70vh;
   overflow-y: auto;
+}
+/* A flyout in the sheet opens under its row: beside it, the sheet's own
+   scroll box would clip it (the account menu's Tours). */
+.phoneBottomBar .popover .ctxSubMenu {
+  position: static;
+  min-width: 0;
+  max-width: none;
+  max-height: none;
+  overflow: visible;
+  padding: 0 0 0 16px;
+  border: none;
+  box-shadow: none;
+  background: none;
 }
 /* An upright tablet (or a landscape phone): roomier items, and a popover
    keeps a menu's width at the right end instead of stretching across the
@@ -3181,8 +3252,8 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
   border-radius: var(--radius-sm);
   color: var(--text-muted);
   cursor: pointer;
-  width: 26px;
-  height: 26px;
+  width: var(--ctl-icon-btn);
+  height: var(--ctl-icon-btn);
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -3255,7 +3326,8 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
 .chatToolPicker { padding: 2px 4px; }
 /* Chat history popover (header clock): search box over the bucket's earlier
    conversations; the active one leads, highlighted. Layout only — rows are
-   plain hover rows, actions are ctlBtn icons, rename is an aiKeyInput. */
+   plain hover rows with a menu each ("⋯", .rowMenuHost), rename is an
+   aiKeyInput. */
 .chatHistoryPop { width: 300px; max-width: 80vw; }
 .chatHistoryPop .searchInput { padding: 6px 9px; font-size: var(--fs-xs); }
 .chatHistList { display: flex; flex-direction: column; gap: 1px; max-height: 320px; overflow-y: auto; }
@@ -3274,15 +3346,12 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
 .chatHistRow.active { background: var(--accent-bg); font-weight: 600; cursor: default; }
 .chatHistTitle { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .chatHistAge { flex: none; font-size: var(--fs-2xs); color: var(--text-dim); padding-right: 4px; }
-.chatHistActs { flex: none; display: none; }
-.chatHistRow:hover .chatHistActs, .chatHistRow:focus-within .chatHistActs { display: flex; }
-.chatHistRow:hover .chatHistAge, .chatHistRow:focus-within .chatHistAge { display: none; }
 .chatHistRow.renaming { padding: 2px; cursor: default; }
 .chatHistRow.renaming .aiKeyInput { width: 100%; font-size: var(--fs-xs); }
-/* Deleting several at once: the tick box comes up on hover and stays while
-   anything is ticked; the bar under the list says how many and removes them. */
+/* Deleting several at once: a row menu's Select ticks the first, and every
+   row shows its tick box while anything is ticked; the bar under the list
+   says how many and removes them. */
 .chatHistPick { flex: none; margin: 0; display: none; }
-.chatHistRow:hover .chatHistPick, .chatHistRow:focus-within .chatHistPick,
 .chatHistList.picking .chatHistPick { display: block; }
 .chatHistBulk {
   display: flex;
@@ -3607,8 +3676,9 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
   line-height: 1.5;
 }
 .chatBubble.ai pre code { background: none; border: none; padding: 0; }
-/* A code block or quote with its own Copy button, floating top-right on
-   hover instead of taking a row of its own. */
+/* A code block or quote with its own Copy button, floating top-right
+   instead of taking a row of its own: on hover where a pointer hovers (no
+   press while hidden), always where none does. */
 .chatCopyBlock { position: relative; min-width: 0; margin: 4px 0 10px; }
 .chatCopyTools {
   position: absolute;
@@ -3616,12 +3686,11 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
   right: 4px;
   z-index: 1;
   user-select: none;
-  opacity: 0;
   transition: opacity var(--dur-fast);
 }
-.chatCopyBlock:hover .chatCopyTools,
-.chatCopyBlock:focus-within .chatCopyTools { opacity: 1; }
-@media (hover: none) { .chatCopyTools { opacity: 1; } }
+@media (hover: hover) {
+  .chatCopyBlock:not(:hover, :focus-within) .chatCopyTools { opacity: 0; pointer-events: none; }
+}
 .chatCopyButton {
   display: inline-flex;
   align-items: center;
@@ -3709,7 +3778,7 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
    keeps its own class; the wrapper only positions the ctlBtn over its right
    edge and takes over the input's bottom margin so the eye stays centred. */
 .pwField { position: relative; display: block; }
-.pwField > input { width: 100%; margin-bottom: 0; padding-right: 34px; }
+.pwField > input { width: 100%; margin-bottom: 0; padding-right: calc(var(--ctl-icon-btn) + 8px); }
 .pwField > .pwToggle { position: absolute; right: 6px; top: 50%; transform: translateY(-50%); }
 .pwField:has(> .aiKeyInput) { margin-bottom: 6px; }
 .setField .pwField { margin-bottom: 0; }
@@ -3767,15 +3836,15 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
    .uiBtn is the secondary button (a bordered rect with a faint lift);
    .primary the one solid accent action of a surface; .ghost a tertiary
    text button with no frame until hover; .danger the outlined destructive
-   button, red at rest, and .primary.danger the solid one. Heights: .sm 28,
-   the default 32; .iconSq is square at the same heights. .on is a chosen
-   option (segmented groups). */
+   button, red at rest, and .primary.danger the solid one. Heights:
+   --ctl-btn, .sm --ctl-btn-sm (tokens.css); .iconSq is square at the same
+   heights. .on is a chosen option (segmented groups). */
 .uiBtn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: var(--space-3);
-  min-height: 32px;
+  min-height: var(--ctl-btn);
   background: var(--bg-elevated);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
@@ -3791,10 +3860,10 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
   transition: background var(--dur-fast) ease, color var(--dur-fast) ease, border-color var(--dur-fast) ease, box-shadow var(--dur-fast) ease;
 }
 .uiBtn:active:not(:disabled) { background: var(--bg-active); box-shadow: none; }
-.uiBtn.sm { min-height: 28px; font-size: var(--fs-xs); padding: var(--space-2) var(--space-5); }
+.uiBtn.sm { min-height: var(--ctl-btn-sm); font-size: var(--fs-xs); padding: var(--space-2) var(--space-5); }
 /* Icon-only square variant (delete/edit row actions). */
-.uiBtn.iconSq { width: 32px; height: 32px; padding: 0; flex-shrink: 0; }
-.uiBtn.sm.iconSq { width: 28px; height: 28px; }
+.uiBtn.iconSq { width: var(--ctl-btn); height: var(--ctl-btn); padding: 0; flex-shrink: 0; }
+.uiBtn.sm.iconSq { width: var(--ctl-btn-sm); height: var(--ctl-btn-sm); }
 /* Dropdown trigger (Codex-style select): a uiBtn whose content is the
    current choice plus a chevron. `.block` stretches it into a form field. */
 .uiSelectBtn { gap: 7px; }
@@ -4138,8 +4207,9 @@ a.shareBrand:hover { background: var(--bg-hover); }
 @keyframes reportRecordPulse { 50% { opacity: 0.35; } }
 @media (prefers-reduced-motion: reduce) { .reportRecordDot { animation: none; } }
 /* The composer: one rounded box holding the context chips, the
-   message at full width and a toolbar ([+], Full PDF, the model chip, mic,
-   send). The box takes the field focus ring while anything inside has focus. */
+   message with send / stop at its end, and a toolbar ([+], Full PDF, the
+   model chip, mic). The box takes the field focus ring while anything inside
+   has focus. */
 .chatComposer {
   position: relative;
   display: flex;
@@ -4205,6 +4275,13 @@ a.shareBrand:hover { background: var(--bg-hover); }
 .chatMentionHeading { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px; border-bottom: 1px solid var(--border); }
 .chatMentionHeading span, .chatMentionHint { color: var(--text-dim); }
 .chatMentionPicker [role="listbox"] { max-height: min(260px, 35vh); overflow-y: auto; }
+/* Its rows are quick open's page rows (PageOption) in a dock that is often
+   narrow: there a row gives up its time and part of its chip line to the title. */
+.chatMentionPicker { container-type: inline-size; }
+@container (max-width: 440px) {
+  .chatMentionPicker .quickOpenTime { display: none; }
+  .chatMentionPicker .fileRowLabels { max-width: 34%; }
+}
 /* Option rows are slash-menu rows (`slashMenuItem`) with a two-line label. */
 .chatMentionOption { border-radius: 0; color: inherit; }
 .chatMentionOption[aria-disabled="true"] { opacity: .5; cursor: default; }
@@ -4477,14 +4554,19 @@ a.shareBrand:hover { background: var(--bg-hover); }
 .pageTitleMain .categoryFrontmatter {
   padding: 0;
   margin: 0;
-  align-items: center;
+  align-items: flex-start;
 }
+/* The icon is one chip row tall, so it lines up with the first row when the
+   chips wrap: a badge row (18px) when shown, a chip-with-close row (24px)
+   while editing. */
 .categoryIcon {
   display: inline-flex;
   align-items: center;
+  height: 18px;
   color: var(--text-dim);
   flex-shrink: 0;
 }
+.categoryFrontmatter.editing .categoryIcon { height: calc(var(--ctl-close-sm) + 2px); }
 
 /* --- ChatGPT-style message chrome --- */
 .chatMsgCol {
@@ -4535,15 +4617,18 @@ a.shareBrand:hover { background: var(--bg-hover); }
 .chatContextRingFill { stroke-linecap: round; transition: stroke-dasharray var(--dur-slow); }
 .chatContextRing.full .chatContextRingFill { stroke: var(--danger); }
 .chatUsageTotal .popoverHint { padding: 0; }
+/* A message's Copy and Edit: where a pointer hovers they come up with the
+   message and take no press while hidden; where none does they are there,
+   muted. The code-block Copy (.chatCopyTools) does the same. */
 .chatMsgActions {
   display: flex;
   gap: 2px;
   padding: 2px 2px 0;
-  opacity: 0;
   transition: opacity var(--dur-fast);
 }
-.chatBubbleRow:hover .chatMsgActions,
-.chatBubbleRow:focus-within .chatMsgActions { opacity: 1; }
+@media (hover: hover) {
+  .chatBubbleRow:not(:hover, :focus-within) .chatMsgActions { opacity: 0; pointer-events: none; }
+}
 .chatMsgActionBtn {
   background: none;
   border: none;
@@ -4720,7 +4805,7 @@ a.shareBrand:hover { background: var(--bg-hover); }
 .chatStepsFailed { flex: none; color: var(--danger); }
 .chatStepsDeclined { flex: none; color: var(--text-secondary); }
 :is(.chatStepsFailed, .chatStepsDeclined)::before { content: "·"; margin-right: 6px; color: var(--text-muted); }
-.chatSteps .transferSpin.inline { flex: none; }
+.chatStepsWrap .transferSpin.inline { flex: none; }
 .chatChanges {
   display: flex;
   flex-direction: column;
@@ -4745,11 +4830,13 @@ a.shareBrand:hover { background: var(--bg-hover); }
 /* Taking a note change back (chat/AgentChanges.jsx): a frameless undo icon
    at the row's end, "Revert all" in the head, a reverted row muted with its
    tag, and the prompt a row shows when the note changed since. */
-.chatChange .ctlBtn.chatChangeRevert { flex: none; width: 22px; height: 22px; margin: -2px 0; }
+/* The compact buttons give back what they stand above an 18 px line (16 in
+   the head), so a row keeps its text's height. */
+.chatChange .ctlBtn.chatChangeRevert { flex: none; width: var(--ctl-icon-btn-xs); height: var(--ctl-icon-btn-xs); margin-block: calc((18px - var(--ctl-icon-btn-xs)) / 2); }
 .chatChange.reverted .chatChangeText { color: var(--text-muted); }
 .chatChange.reverted .chatChangeLink { color: inherit; }
 .chatChangeTag { flex: none; color: var(--text-muted); font-size: calc(var(--fs-2xs) * var(--text-scale, 1)); }
-.uiBtn.chatChangesAll { gap: 4px; min-height: 22px; margin: -3px 0 -3px auto; padding: 0 var(--space-2); }
+.uiBtn.chatChangesAll { gap: 4px; min-height: var(--ctl-icon-btn-xs); margin-block: calc((16px - var(--ctl-icon-btn-xs)) / 2); margin-left: auto; padding: 0 var(--space-2); }
 .chatRevertAsk { margin: 0 0 4px 21px; color: var(--text-secondary); }
 .chatRevertAsk .chatApprovalActions { margin-top: 6px; }
 .chatChangeOld { color: var(--text-muted); }
@@ -4786,6 +4873,15 @@ a.shareBrand:hover { background: var(--bg-hover); }
    how long it took (chat/agentSteps.js chipNote). */
 .chatToolActionNote { flex: none; color: var(--text-muted); opacity: 0.8; }
 .chatToolActionNote::before { content: "·"; margin-right: 6px; }
+/* What a helper did for a call (read_paper), under its chip: its own calls. */
+.chatToolChildren { display: flex; flex-direction: column; gap: 3px; min-width: 0; padding-left: 20px; }
+.chatToolActionHead.err { color: var(--danger); }
+/* The helpers a running call handed documents to, a row each under the steps
+   pill, laid out as the chips are: the document, then what its helper is
+   doing now (chat/agentSteps.js helperStatus). That can be a long address,
+   so it is cut where a chip's note never needs to be. */
+.chatHelpers { display: flex; flex-direction: column; gap: 3px; min-width: 0; padding-left: 10px; }
+.chatHelpers .chatToolActionNote { max-width: 65%; }
 /* Gamma link cards: a link into this library (a chat source or citation, the
    same link pasted into a note) and the chat's external links. Inline with
    the surrounding text, so a citation mid-sentence stays one line. */
@@ -4901,7 +4997,7 @@ a.shareBrand:hover { background: var(--bg-hover); }
   font-size: var(--fs-2xs);
   align-self: center;
   border-radius: var(--radius-full);
-  height: 26px;
+  height: var(--ctl-icon-btn);
   padding: 0 8px;
 }
 /* Info pill next to the PDF toggle when the provider refuses PDF files */
@@ -4910,8 +5006,8 @@ a.shareBrand:hover { background: var(--bg-hover); }
 /* "+" context button and round send/stop */
 .chatAttachToggle.chatPlusBtn {
   border-radius: var(--radius-full);
-  min-width: 26px;
-  height: 26px;
+  min-width: var(--ctl-icon-btn);
+  height: var(--ctl-icon-btn);
   padding: 0 4px;
   justify-content: center;
   line-height: 1;
@@ -4921,11 +5017,11 @@ a.shareBrand:hover { background: var(--bg-hover); }
 .chatPlusCount { font-size: var(--fs-2xs); font-weight: 600; margin-right: 2px; }
 .chatAttachToggle.chatPlusBtn:disabled { opacity: 0.4; cursor: default; }
 .chatInput:disabled { cursor: not-allowed; }
-/* Round send/stop variant of .uiBtn (chat composer). */
+/* Round send/stop variant of .uiBtn (chat composer), a small button's height. */
 .uiBtn.chatCircleBtn {
   border-radius: var(--radius-full);
-  width: 27px;
-  height: 27px;
+  width: var(--ctl-btn-sm);
+  height: var(--ctl-btn-sm);
   min-height: 0;
   padding: 0;
   border: none;
@@ -5125,6 +5221,15 @@ a.shareBrand:hover { background: var(--bg-hover); }
   transform-origin: 0 0;
 }
 
+/* The page's bitmaps (pdf/pageRaster.js): a canvas over the whole page and,
+   at high zoom, a second one over the part in view, which the raster places
+   and shows. The theme treatments further down (blend, opacity, invert) sit
+   on this wrapper, not on the canvases: it composites the two first, so
+   where they overlap the page is not blended twice. */
+.pdfPageCanvas { position: relative; width: 100%; height: 100%; overflow: hidden; }
+.pdfPageCanvas > canvas { display: block; width: 100%; height: 100%; }
+.pdfPageCanvas > .pdfDetailCanvas { position: absolute; display: none; }
+
 /* Ctrl held: dragging draws a rectangle, so cue it over everything on the page. */
 /* Flip page colors (Settings → Reading → PDF viewer): display-only night
    rendering. The canvas is inverted (hue-rotate keeps colors' hue, so figures
@@ -5323,8 +5428,9 @@ a.shareBrand:hover { background: var(--bg-hover); }
 .pdfViewer.areaCursor .textLayer span {
   cursor: crosshair;
 }
-/* Phone rectangle mode: one-finger drags must reach the pointer handlers
-   (not scroll the page), and a long-press must not start a text selection.
+/* Rectangle mode (the touch screen's toggle): one-finger drags must reach
+   the pointer handlers (not scroll the page), and a long-press must not
+   start a text selection.
    Two-finger pinch zoom still works — the viewer's own touch handlers run. */
 .pdfViewer.areaMode .pdfPageWrap {
   touch-action: none;
@@ -5464,13 +5570,13 @@ a.shareBrand:hover { background: var(--bg-hover); }
 /* A citation key is a code token, not prose. */
 .metaCiteKey { font-family: var(--font-mono); font-size: var(--fs-2xs); }
 .metaLink { display: inline-flex; align-items: center; color: var(--accent); flex-shrink: 0; }
-/* Icon buttons inside metadata rows: negative vertical margins keep the 20px
-   hit target from inflating the text row's height, so keys and values stay
-   on one baseline. */
-.metaTable .metaRowBtn { width: 20px; height: 20px; margin: -4px 0; }
+/* Icon buttons inside metadata rows: negative vertical margins give back
+   what the hit target stands above a 12 px line, so it never inflates the
+   text row's height and keys and values stay on one baseline. */
+.metaTable .metaRowBtn { width: var(--ctl-icon-btn-xs); height: var(--ctl-icon-btn-xs); margin-block: calc((12px - var(--ctl-icon-btn-xs)) / 2); }
 /* The Source row's Verify, at the row's end: a compact uiBtn whose negative
    margins keep the row's height, like the icon buttons above. */
-.metaTable .uiBtn.metaVerifyBtn { gap: 4px; min-height: 22px; margin: -3px 0 -3px auto; padding: 0 var(--space-3); }
+.metaTable .uiBtn.metaVerifyBtn { gap: 4px; min-height: var(--ctl-icon-btn-xs); margin-block: calc((16px - var(--ctl-icon-btn-xs)) / 2); margin-left: auto; padding: 0 var(--space-3); }
 /* The source file's path: one line, the whole path in the tooltip. */
 .metaPath { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
@@ -6151,7 +6257,7 @@ a.shareBrand:hover { background: var(--bg-hover); }
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   width: max-content;              /* not shrink-to-fit: left: 50% would clamp it to half the viewer */
-  max-width: calc(100% - 120px);
+  max-width: calc(100% - 2 * (var(--ctl-icon-btn) + 34px)); /* clear of the control boxes on either side */
 }
 [data-scheme="light"] .pdfInkBar {
   box-shadow: var(--shadow-2);
@@ -6180,7 +6286,7 @@ a.shareBrand:hover { background: var(--bg-hover); }
 .pdfInkHistory { display: flex; flex: none; gap: 2px; margin-left: auto; }
 .pdfInkSep { width: 1px; height: 16px; background: var(--border); margin: 0 3px; }
 /* A preset: the icon with its colour bar underneath (the bar's height follows the width). */
-.pdfInkBar .inkToolBtn { position: relative; width: 26px; height: 28px; padding-bottom: 6px; }
+.pdfInkBar .inkToolBtn { position: relative; width: var(--ctl-icon-btn); height: calc(var(--ctl-icon-btn) + 2px); padding-bottom: 6px; }
 .inkToolInk {
   position: absolute;
   left: 6px;
@@ -6199,13 +6305,13 @@ a.shareBrand:hover { background: var(--bg-hover); }
 .inkCustomColor.selected { background: var(--ink-custom); }
 .inkCustomColor input { position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; height: 100%; }
 /* A width choice: a dot of the tool's colour; an eraser size: a hollow ring. */
-.pdfInkBar .inkSizeBtn { width: 24px; }
+.pdfInkBar .inkSizeBtn { width: calc(var(--ctl-icon-btn) - 2px); }
 .inkSizeDot { display: block; border-radius: var(--radius-full); margin: 0 auto; }
 .inkEraserDot { border: 1.5px solid currentColor; box-sizing: border-box; }
 /* Eraser / lasso mode choices: icon + word, a pill when active. */
 .pdfInkBar .inkSegBtn { width: auto; padding: 0 8px; gap: 5px; font-size: var(--fs-xs); border-radius: var(--radius-full); }
 /* The Text tool's sizes as their numbers; "no background" as a struck-out swatch. */
-.pdfInkBar .inkTextSize { width: auto; min-width: 24px; padding: 0 4px; font-size: var(--fs-xs); }
+.pdfInkBar .inkTextSize { width: auto; min-width: calc(var(--ctl-icon-btn) - 2px); padding: 0 4px; font-size: var(--fs-xs); }
 .textNoBackground { background: linear-gradient(135deg, transparent 43%, var(--danger) 43% 57%, transparent 57%), var(--bg-elevated); }
 
 /* The notes: a rounded-square pen marker in the dot slot (a text box's is

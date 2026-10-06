@@ -149,8 +149,9 @@ only a PDF with an outline has it), then the tool column. The two viewers
 share the column up to the pen (zoom out, zoom in, fit to width, the pen,
 in the same places in both). The zoom step's scene visits the three zoom
 buttons; the pen step's presses the pen and writes a stroke on the page.
-What only one viewer has comes after them: Translate and the phone's
-selection mode on a PDF, Paper and Notes view in the notebook view. So the
+What only one viewer has comes after them: Translate and, on a touch screen
+(`requires: {touch: true}`), the selection mode on a PDF; Paper and Notes
+view in the notebook view. So the
 tours are **siblings**: the zoom and pen steps are `shared`, the same step
 objects in both files, and a user who has finished one tour gets the other
 without them. After the PDF tour the notebook view's is two cards (Paper,
@@ -187,10 +188,10 @@ an amber **Tip** chip over one plain sentence that says why it helps, with
 | Adding to your library | Add is opened (`popover.opened {name: "add"}`). The only guide that comes *with* its control rather than after it: opening Add is already the intent, and the rows it explains are on screen only while the popover is | inside the popover, undimmed whole: the address box (a scene typing into it), Upload files, New notebook (a drawing of the one page behind both views) |
 | Arrange windows | a PDF is opened (`page.opened`) on desktop | Chat's title: a scene double-clicking it to fold, then one dragging it to the left dock |
 | Citations in answers | an AI reply finishes with a citation link (`chat.cited`) | the link; a demo clicks it and waits for `citation.shown`, then the marked passage in the PDF |
-| Sharing a page | the page gets its first share link (`share.created`: the first audience tile picked or person invited) | (choose who can open it,) the link, who has access, general access with Stop sharing (worded for what an anyone-with-the-link share exposes when it is one, `shareAudience`) — inside the Share popover, top to bottom, the popover undimmed whole |
+| Sharing a page | the page gets its first share link (`share.created`: the Share popover's Share button) | (press Share,) the link, who has access, general access naming Stop sharing beside the link (worded for what an anyone-with-the-link share exposes when it is one, `shareAudience`) — inside the Share popover, top to bottom, the popover undimmed whole |
 | Editing tables | the user makes a table (/table, or a pasted spreadsheet or html table) and it first renders (`table.created`); opening a page that has one offers nothing | (add one with /table,) a cell to type into, the + strips and the row/column handles, the corner handle (copy, move or delete the whole table), each with a scene clicking it — on the table just made when the page has several, each card clear of the table |
 | Handwriting | the first stroke (`ink.stroke`) | (draw something, with a scene writing on the page,) the drawing's note block and its caption, tap the pen again for colour, width and pen vs monoline, then the eraser and the lasso on one card (Ctrl+Z brings back what was erased); finishing re-arms the pen |
-| The PDF viewer | a PDF is opened (`page.opened`) with its viewer on screen (`viewerTools`), in a load whose offer Arrange windows did not take | the table of contents (if any), zoom and fit, the pen, Translate (if on), the phone's selection mode; after The notebook view, only the outline and Translate |
+| The PDF viewer | a PDF is opened (`page.opened`) with its viewer on screen (`viewerTools`), in a load whose offer Arrange windows did not take | the table of contents (if any), zoom and fit, the pen, Translate (if on), the selection mode on a touch screen; after The notebook view, only the outline and Translate |
 | The notebook view | the notebook view is open (`notebookView`, state) | zoom and fit, the pen, the paper, Notes view (a drawing of the one page behind both views); after The PDF viewer, the paper and Notes view |
 | Pages to write on | a sheet of paper is made (`sheet.created`: a new notebook, **+**, `/note`, or writing low on the last sheet), in the notes view (`notebookView: false`: the notebook view has none of the steps' anchors) | (make one,) the sheet (a scene writing low on it while the next page's outline arrives under it), its pen, the notebook view (a drawing of the one page behind both views). The paper is the notebook view tour's to teach |
 | Background tasks | the account starts a job on the server (`job.started`, from the tasks store's `adopt`, so every kind counts); desktop only — the phone's tray row carries no anchor | the tray button (the job runs on the server and outlives the tab); a task's row with Clear finished, `optional`: a tour started from the menu may find no rows |
@@ -208,7 +209,7 @@ an amber **Tip** chip over one plain sentence that says why it helps, with
 | hint: export | the View menu opens (`popover.opened {name: "menu"}`) on a page with 5+ highlights (`annotatedPage`) — the Export row is on screen only while that menu is | Export…: the PDF with the highlights drawn on it, or Markdown |
 | hint: clone sync | the workspace has an offline copy or a publication (`clonedWorkspace`, state) | the sync pill: what is still to go, and its log |
 | hint: Gamma Connector | the first paper fetched from an address (`paper.fetched`, from App's `openPdf`) in a browser with no Connector (`connectorHere: false` — `shared/lib/connector.js` asks it through the extension's `bridge.js`; unknown in the desktop app, whose Connector would be in the system browser, so nothing is suggested there) | Add: what the extension does for papers a publisher won't hand over, and where to get it |
-| hint: Gamma Cloud | a setting that travels with the account was changed here (`prefsChanged`: the first push after the profile sync has been quiet once, so a profile arriving or seeding itself does not count) on a server offering cloud sign-in to an account that has not linked one (`cloudLinkable`, from `GET /api/auth/cloud/status`) — state, so the card comes once Settings is closed again | the account button: linking carries these settings to the user's other Gamma servers |
+| hint: Gamma Cloud | a setting that travels with the account was changed here (`prefsChanged`: the first push after the profile sync has been quiet once, so a profile arriving or seeding itself does not count) on a server offering cloud sign-in to an account that has not linked one (`cloudLinkable`, from `GET /api/auth/cloud/status`) — state, so the card comes once Settings is closed again | the account button: linking carries these settings to the user's other Gamma servers and publishes pages for free |
 | Your first paper | on the library of a demo server once the guest lands, or of a library with nothing in it yet but the seeded Welcome page (`emptyLibrary`: the listing has loaded and every root page has `properties.seeded`) — state, `trigger: {requires: {view: "home", editable: true}, anyOf: [{demo: true}, {emptyLibrary: true}]}`; not once the tour has any progress | no anchor: the centred welcome card; Start the tour begins with the add demo |
 
 Rules the engine keeps (`useGuide.js`, `triggers.js`):
@@ -312,8 +313,9 @@ Engine abilities available to every step:
   its tiles.
 - **`Section guide="…"`** in the settings kit groups a section's header and
   rows under one anchor (the Share popover's Who has access and General
-  access; its Link section carries `share.link` only once a link exists,
-  which is what the tour's create step waits for).
+  access; its Link section carries `share.start` before a link exists and
+  `share.link` once one does, which is what the tour's create step waits
+  for).
 - **Keys in copy** (`guide/keys.js`). Titles and bodies render `**bold**`,
   `*italic*`, `` `code` `` and key tokens. `{key:app.quickOpen}` names a
   command of the catalog ([hotkeys.md](hotkeys.md)) and shows the chord it
@@ -608,7 +610,8 @@ anchors are the only thing the guide needs from it. No guide code imports App
 state directly; App passes what the engine needs through one `useGuide()`
 call: the facts steps and triggers are matched against (`view`, `hasPdf`,
 `pdfChatVisible`, `aiConfigured`, `aiEditable`, `onPage`, `editable`,
-`phone`, `guideAvailable`, `sharedWorkspace`, `shareAudience`,
+`phone`, `touch` (a touch screen, `touchScreen()`: the viewer offers its
+text / rectangle toggle), `guideAvailable`, `sharedWorkspace`, `shareAudience`,
 `unfiledLibrary`, `emptyLibrary`, `growingLibrary`, `annotatedPage`,
 `notebookView`, `viewerTools`, `clonedWorkspace`, `installable`, `connectorHere`,
 `cloudLinkable`, `prefsChanged`, `demo`, `welcomePdf`), the
@@ -709,14 +712,14 @@ where the thing happens:
 | Event | Emitted by |
 |---|---|
 | `popover.opened` `{name}` | App, when a topbar popover opens |
-| `window.collapsed` `{id, collapsed}`, `window.moved` `{id, side}` | App: a window's title double-clicked, and a window dropped into a dock slot (the Arrange windows tour) |
+| `window.collapsed` `{id, collapsed}`, `window.moved` `{id, side}` | App: a window folded (its title double-clicked or double-tapped) or opened (a press on its folded header), and a window dropped into a dock slot (the Arrange windows tour) |
 | `page.opened` `{id, title}`, `home.opened` | App's page open and `goHome` |
 | `nav.pushed`, `nav.back` | App's `pushNav` (a link jump recorded where you were) and `goBackNav` (the Back button or Alt+←) |
 | `palette.opened` | App, when the Ctrl+P palette opens |
 | `highlight.created` `{id, kind}` | App's highlight creation path |
 | `chat.sent`, `chat.cited` | ChatDock's send, and the end of a reply holding a citation (`gammaLinksIn`) |
 | `citation.shown` | PdfCitationOverlay, once a quote is found and marked |
-| `share.created` | App's `createShareLink` (the Share popover's first audience tile, or its first invitation) |
+| `share.created` | App's `createShareLink` (the Share popover's Share button) |
 | `peer.joined` | App, when another account or a link visitor appears on the open page (a peer whose `user` is not this account) |
 | `ink.stroke` | App's `handleInkStroke` |
 | `ink.options`, `ink.erased`, `ink.undone` | App, when the armed tool's options row opens; `handleInkErase` / `handleInkErasePartial`; `inkUndo` (not redo) |

@@ -17,6 +17,7 @@ const SCENARIOS = path.join(ROOT, "frontend", "tests", "e2e", "scenarios");
 // hand data along share a group (notes → pdf → share).
 export const GROUPS = [
   { id: "guide", files: ["guide.mjs"] }, // ~55
+  { id: "touch", files: ["touch.mjs"] }, // ~50
   { id: "settings", files: ["settings.mjs"] }, // ~45
   { id: "notes-pdf-share", files: ["notes.mjs", "pdf.mjs", "share.mjs"] }, // ~40
   { id: "textbox", files: ["textBoxes.mjs"] }, // ~40
@@ -48,9 +49,9 @@ export const GROUPS = [
 
 const ALL = "all";
 const GUIDES = ["guide", "contextual-guide", "triggered-guide"];
-const CHAT = ["chat-navigation", "mentions", "contextual-guide", "triggered-guide", "notes-pdf-share"];
+const CHAT = ["chat-navigation", "mentions", "contextual-guide", "triggered-guide", "notes-pdf-share", "touch"];
 // every group that opens a PDF in the viewer
-const PDF_VIEW = ["notes-pdf-share", "pdf-load", "pdf-touch", "ink", "ink-editing", "textbox", "collab", "files", "transfers", ...GUIDES];
+const PDF_VIEW = ["notes-pdf-share", "pdf-load", "pdf-touch", "ink", "ink-editing", "textbox", "collab", "files", "transfers", "touch", ...GUIDES];
 const EXPORTS = ["transfers", "files", "ink", "mermaid"];
 
 // [glob, groups], first match wins. `**` spans folders, `*` stays in one.
@@ -76,14 +77,14 @@ export const RULES = [
   ["frontend/src/main.jsx", ALL],
   ["frontend/src/guide/**", GUIDES],
   // (a text box's menu is placed and labelled by the ink layer's helpers)
-  ["frontend/src/ink/**", ["ink", "ink-editing", "pdf-touch", "triggered-guide", "notebooks", "textbox"]],
+  ["frontend/src/ink/**", ["ink", "ink-editing", "pdf-touch", "triggered-guide", "notebooks", "textbox", "touch"]],
   // what a page surface carries (ink and text boxes) and the tool strip, whose anchors the ink tour uses
-  ["frontend/src/markup/**", ["ink", "ink-editing", "pdf-touch", "triggered-guide", "notebooks", "textbox"]],
-  ["frontend/src/notebook/**", ["notebooks", "replica", "textbox"]],
+  ["frontend/src/markup/**", ["ink", "ink-editing", "pdf-touch", "triggered-guide", "notebooks", "textbox", "touch"]],
+  ["frontend/src/notebook/**", ["notebooks", "replica", "textbox", "touch"]],
   ["frontend/src/replica/**", ["replica"]],
   ["frontend/src/pdf/**", PDF_VIEW],
   // (a text box's editor and read mode are the notes')
-  ["frontend/src/editor/**", ["notes-pdf-share", "mermaid", "files", "collab", "transfers", "mcp", "guide", "triggered-guide", "textbox"]],
+  ["frontend/src/editor/**", ["notes-pdf-share", "mermaid", "files", "collab", "transfers", "mcp", "guide", "triggered-guide", "textbox", "touch"]],
   ["frontend/src/chat/**", CHAT],
   ["frontend/src/settings/**", ["settings", "i18n", "mirror", "cloud-sign-in", "mcp", "publish", "triggered-guide"]],
   ["frontend/src/collaboration/MirrorPopover.jsx", ["mirror", "publish"]],

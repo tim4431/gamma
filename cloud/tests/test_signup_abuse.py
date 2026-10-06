@@ -117,6 +117,35 @@ def test_a_reset_still_works_for_an_address_whose_domain_is_now_blocked(client):
     assert client.post("/api/reset/request", json={"email": "x@example.org"}).status_code == 200
 
 
+def bare(client, email, username):
+    """A registration without an invite code."""
+    return client.post("/api/register", json={"email": email, "username": username,
+                                              "password": "correct horse battery"})
+
+
+def test_allowed_domains_let_their_addresses_in_without_a_code(client):
+    set_setting("allowed_email_domains", "uni.example")
+    # invite mode: an address at the domain, or under it, needs no code; any other address does
+    assert bare(client, "a@uni.example", "aaa").status_code == 201
+    assert bare(client, "b@cs.uni.example", "bbb").status_code == 201
+    r = bare(client, "c@other.example", "ccc")
+    assert r.status_code == 403 and "without an invite code" in r.json()["detail"]
+    # a valid code is the operator's own yes, whatever the domain
+    assert signup(client, "c@other.example", "ccc").status_code == 201
+    ratelimit.clear()
+    # open mode: the list still decides who comes in without a code
+    set_setting("registration", "open")
+    assert bare(client, "d@other.example", "ddd").status_code == 403
+    assert bare(client, "d@uni.example", "ddd").status_code == 201
+    # the blocked lists apply as before, with a code or without
+    set_setting("allowed_email_domains", "uni.example mailinator.com")
+    assert bare(client, "e@mailinator.com", "eee").status_code == 400
+    assert signup(client, "e@mailinator.com", "eee").status_code == 400
+    # an empty list leaves it to the mode again
+    set_setting("allowed_email_domains", "")
+    assert bare(client, "f@other.example", "fff").status_code == 201
+
+
 # --- the rate-limit bucket ---------------------------------------------------
 
 @pytest.mark.parametrize("ip, expected", [

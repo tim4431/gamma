@@ -17,8 +17,8 @@ show or save::
     ("truncated", True)   the turn hit the provider's output cap
 
 Two callers drive it: the AI chat streams these to the browser
-(``routers/ai.py``), and a background research job consumes them headless
-(``gamma/paper_research.py``). What differs between them is wired in, not
+(``routers/ai.py``), and a :class:`Helper` runs it inside one of the chat's
+calls, for one document. What differs between them is wired in, not
 branched on:
 
 - ``gate`` decides whether a call may run at all. The chat passes
@@ -28,9 +28,8 @@ branched on:
   blocked waits for the PDF from the user's own browser inside the same
   turn.
 
-A job passes neither: nothing can ask a user who is not there, and a blocked
-fetch simply reports what stopped it (its request still shows in Background
-tasks, where the user can hand the page to their browser later).
+A helper passes neither: it has no card to show, so a blocked fetch reports
+what stopped it and the chat's own wait takes over once the helper answered.
 
 Reads of one round run at the same time (:data:`MAX_PARALLEL_CALLS`), since
 four papers fetched one after another cost four round trips of waiting.
@@ -38,6 +37,7 @@ Anything that changes the library, and anything that may stop on a card,
 runs on its own in call order.
 """
 
+import itertools
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
@@ -58,6 +58,11 @@ MAX_PARALLEL_CALLS = 4
 
 # Provider round-trips a Helper may use on the one document it was given.
 HELPER_ROUNDS = 12
+# The document's name in a Helper's status: a title, cut to one line.
+STATUS_LABEL_MAX = 120
+# What a Helper reads under the last result before its final round.
+LAST_ROUND = ("\n[This was your last read. Answer now from what you have read, and say what "
+              "you did not get to.]")
 
 # Note edits are previewed in the notes panel while the model writes them
 # (the "progress" event). No other tool's arguments are streamed.
@@ -394,11 +399,16 @@ class AgentLoop:
         return progress
 
 
+def _rounds(talk: Conversation) -> int:
+    """The rounds of a conversation that called tools."""
+    return sum(1 for message in talk.messages if message.get("tool_calls"))
+
+
 class Helper:
     """A second, smaller agent the chat can hand one job to.
 
     ``read_paper`` uses it: the helper fetches one document, reads as many
-    windows as the question needs, and hands back a short cited answer. The
+    windows as the question needs, and hands back a cited answer. The
     windows stay in the helper's own conversation, so a forty-page paper
     costs the chat an answer instead of forty thousand characters it has to
     carry for the rest of the reply.
@@ -407,34 +417,79 @@ class Helper:
     no settle: nothing it does can change the library, and a wall it meets
     is reported up to the chat, whose card and wait already exist. Its
     token counts are metered like any other call and handed back so the
-    reply's footer can say what the whole answer cost.
+    reply's footer can say what the whole answer cost. It has
+    :data:`HELPER_ROUNDS` rounds; before the last it is told to answer, and
+    one that still asks for more has no answer.
+
+    While it works it tells ``on_status`` what it is doing, its whole state
+    each time: ``{id, label, state, steps, step?, blocked?}`` — ``state`` is
+    reading, answering, done or failed, ``steps`` the calls it finished,
+    ``step`` the one running now and ``blocked`` the host that stopped a
+    fetch. The parent loop cannot carry this: it is inside the call that
+    started the helper and yields nothing until that returns. So
+    ``on_status`` is called from whichever thread runs the call, and a
+    caller with someone watching puts it on its own stream.
     """
 
-    def __init__(self, *, ws: str, scope: dict, open_call, read_events, on_usage=None):
+    def __init__(self, *, ws: str, open_call, read_events, on_usage=None, on_status=None):
         self.ws = ws
-        self.scope = scope
         self.open_call = open_call
         self.read_events = read_events
         self.on_usage = on_usage
+        self.on_status = on_status
+        self._ids = itertools.count(1)
 
-    def run(self, *, question: str, system: str, tools: list) -> dict:
-        """Answer ``question`` with ``tools`` armed. Returns
-        ``{"text", "actions", "usage"}`` — the answer, the calls it made
-        (for the parent's chip) and what it cost."""
+    def run(self, *, scope: dict, question: str, system: str, tools: list, label: str) -> dict:
+        """Answer ``question`` with ``tools`` armed, in ``scope`` (the
+        calling tool's, with what this job changes in it); ``label`` names
+        the job in its status (the document's title). Returns ``{"text",
+        "actions", "usage"}`` — the answer, the calls it made (for the
+        parent's chip) and what it cost. A helper that used every round
+        without answering returns no text."""
         talk = Conversation([{"role": "user", "content": question}], system)
         usage = {}
-        loop = AgentLoop(ws=self.ws, scope=self.scope, tools=tools, conversation=talk,
-                         open_round=lambda c: self.open_call(c, tools),
+        loop = AgentLoop(ws=self.ws, scope=scope, tools=tools, conversation=talk,
+                         open_round=lambda c: self._reopen(c, tools),
                          read_events=self.read_events, on_usage=self._meter(usage),
                          max_rounds=HELPER_ROUNDS)
         text, actions = [], []
-        for kind, data in loop.run(self.open_call(talk, tools)):
-            if kind == "delta":
-                text.append(data)
-            elif kind == "action":
-                data.pop("images", None)   # a picture never leaves the helper
-                actions.append(data)
-        return {"text": "".join(text).strip(), "actions": actions, "usage": usage}
+        status = {"id": f"h{next(self._ids)}", "label": label[:STATUS_LABEL_MAX],
+                  "state": "reading", "steps": 0}
+        self._say(status)
+        try:
+            for kind, data in loop.run(self.open_call(talk, tools)):
+                if kind == "delta":
+                    text.append(data)
+                    if status["state"] != "answering":
+                        self._say(status, state="answering", step=None)
+                elif kind == "step":
+                    self._say(status, state="reading", step=data)
+                elif kind == "action":
+                    data.pop("images", None)   # a picture never leaves the helper
+                    actions.append(data)
+                    blocked = data.get("handoff", {}).get("host")
+                    self._say(status, steps=len(actions), step=None,
+                              **({"blocked": blocked} if blocked else {}))
+        except BaseException:
+            self._say(status, state="failed", step=None)
+            raise
+        # Out of rounds, the loop's own closing line is all it said: no answer.
+        answer = "" if _rounds(talk) >= HELPER_ROUNDS else "".join(text).strip()
+        self._say(status, state="done" if answer else "failed", step=None)
+        return {"text": answer, "actions": actions, "usage": usage}
+
+    def _reopen(self, talk: Conversation, tools: list):
+        """The helper's next turn. Before its last one, the result it just
+        got says so: a turn spent asking for another read ends the job
+        without an answer."""
+        if _rounds(talk) == HELPER_ROUNDS - 1:
+            talk.messages[-1]["content"] += LAST_ROUND
+        return self.open_call(talk, tools)
+
+    def _say(self, status: dict, **changes) -> None:
+        status.update(changes)
+        if self.on_status:
+            self.on_status({k: v for k, v in status.items() if v is not None})
 
     def _meter(self, into: dict):
         def count(one):

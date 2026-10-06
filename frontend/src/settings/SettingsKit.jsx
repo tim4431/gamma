@@ -612,7 +612,7 @@ export function AccountPicker({ accounts, exclude = [], value, onChange, placeho
   return (
     <span className="setPick">
       <input
-        className="aiKeyInput" type="text" spellCheck={false} autoComplete="off" autoFocus={autoFocus}
+        className="aiKeyInput" type="text" spellCheck={false} autoComplete="off" autoCapitalize="none" autoCorrect="off" autoFocus={autoFocus}
         placeholder={placeholder || t("Search accounts…")} value={query}
         onChange={(event) => type(event.target.value)}
         onKeyDown={onKeyDown}

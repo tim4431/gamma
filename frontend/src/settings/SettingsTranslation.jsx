@@ -142,7 +142,6 @@ function TranslationPerformance({ value }) {
 function TranslateModelSelect({ value }) {
   const models = value.aiModels || [];
   const engines = value.translateEngines || [];
-  const multiProvider = new Set(models.map((m) => m.provider)).size > 1;
   const known = translateModelFor(value.translateModel, engines, models) === value.translateModel;
   const free = translateModelFor("", engines, models) === FREE_TRANSLATE_ENGINE
     && engines.find((e) => e.id === FREE_TRANSLATE_ENGINE);
@@ -153,7 +152,7 @@ function TranslateModelSelect({ value }) {
         ["", free ? t("Default: {name}", { name: free.label })
           : t("Same as chat: {default}", { default: value.chatModelName || t("provider default") })],
         ...engines.map((e) => [e.id, e.label]),
-        ...models.map((m) => [m.id, multiProvider ? `${m.model} · ${m.provider_name || m.provider}` : m.model]),
+        ...models.map((m) => [m.id, m.model]),
       ]}
     />
   );

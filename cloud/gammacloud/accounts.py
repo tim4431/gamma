@@ -12,12 +12,14 @@ answers it.
 
 ``accounts.plan`` is the effective plan every claim reads, and it is
 computed (``recompute_plan``): the higher of ``granted_plan`` (what an admin
-or an invite gave) and the plan the account's Stripe subscription pays for
-while it is live (``billed_plan``). docs/dev/billing.md has the rule.
+or an invite gave, until ``granted_until`` when it ends: ``expire_grants``)
+and the plan the account's Stripe subscription pays for while it is live
+(``billed_plan``). docs/dev/billing.md has the rule.
 """
 
 import re
 from contextlib import closing
+from datetime import datetime, timezone
 
 import bcrypt
 
@@ -105,14 +107,18 @@ def email_canon(email: str) -> str:
     return f"{local}@{domain}" if local else email
 
 
+def email_at(email: str, domains) -> bool:
+    """Whether the address is at one of ``domains``. A listed name covers
+    its subdomains, so the domain and each parent are tried."""
+    parts = email.rpartition("@")[2].split(".")
+    return any(".".join(parts[i:]) in domains for i in range(len(parts) - 1))
+
+
 def check_email_domain(email: str) -> None:
     """Refuse a throwaway-mail domain at registration. Not applied to a
     reset or to an account an operator creates: an address already in use
     must keep working even once its domain lands on the list."""
-    blocked = DISPOSABLE_DOMAINS | settings.blocked_email_domains()
-    parts = email.rpartition("@")[2].split(".")
-    # A listed name covers its subdomains, so try the domain and each parent.
-    if any(".".join(parts[i:]) in blocked for i in range(len(parts) - 1)):
+    if email_at(email, DISPOSABLE_DOMAINS | settings.blocked_email_domains()):
         raise Problem(400, "That mail provider is not accepted. Use a personal or work address.")
 
 
@@ -203,14 +209,15 @@ def email_taken(conn, email: str, exclude_id: str = "") -> bool:
 def public(account, conn=None) -> dict:
     """What the account owner (and ``/api/me``) sees. ``plan_source`` says
     where the effective plan comes from (``stripe`` / ``granted`` / ``free``);
+    ``granted_until`` is when the granted plan ends (None: it does not);
     ``renews_at`` and ``cancel_at`` are the paid period's end when the
     subscription renews or ends then. A paid plan reads the subscription
     row, through ``conn`` or a short connection of its own."""
     out = {
         "id": account["id"], "username": account["username"], "email": account["email"],
         "email_verified": bool(account["email_verified_at"]), "display_name": account["display_name"],
-        "plan": account["plan"], "granted_plan": account["granted_plan"], "plan_source": "free",
-        "renews_at": None, "cancel_at": None,
+        "plan": account["plan"], "granted_plan": account["granted_plan"], "granted_until": account["granted_until"],
+        "plan_source": "free", "renews_at": None, "cancel_at": None,
         "is_admin": bool(account["is_admin"]), "created_at": account["created_at"],
         "has_password": bool(account["password_hash"]),
         "app_signed_in": bool(account["app_signed_in_at"]),
@@ -235,6 +242,15 @@ LIVE_STATUSES = ("active", "trialing")
 
 def _rank(plan: str) -> int:
     return config.PLAN_RANK.get(plan, 0)
+
+
+def on_shared(account) -> bool:
+    """Whether the account may use the shared server: its plan gives a
+    library there (``config.shared_limits``: Lite and Plus, and Pro for the
+    library it had before), or it is a Gamma Cloud admin, who runs that
+    server. A free account may not; it publishes pages there from its own
+    Gamma and never signs in."""
+    return bool(config.shared_limits(account["plan"]) or account["is_admin"])
 
 
 def subscription(conn, account_id: str):
@@ -272,7 +288,7 @@ def plan_terms(account, sub) -> dict:
 def recompute_plan(conn, account_id: str, actor: str = "system", source: str = "", notify: bool = False) -> str:
     """Set ``plan`` to the higher of the granted and the billed plan, and
     return it. A change is audited with its ``source`` (``stripe`` /
-    ``admin`` / ``invite``). The hosted server hears of it
+    ``admin`` / ``invite`` / ``expiry``). The hosted server hears of it
     (``hosted.plan_changed``) when the plan changed, and always with
     ``notify``: billing passes it after every subscription write, so a grace
     period or a cancel reaches the server before the plan itself moves."""
@@ -295,42 +311,93 @@ def recompute_plan(conn, account_id: str, actor: str = "system", source: str = "
 
 # --- creation -----------------------------------------------------------------
 
-def take_invite(conn, code: str) -> str:
-    """Consume one use of an invite code; returns the plan it grants
-    (``create`` stores it as the account's ``granted_plan``). In
-    ``open`` mode a missing code is fine; in ``invite`` mode it is required;
-    in ``closed`` mode registration is refused before this is reached."""
+MAX_DAYS = 3650  # an invite's expiry and the grant it gives, at most
+
+
+def invite_state(row) -> str:
+    """``spent`` (no use left), ``expired``, ``off`` (an admin turned it
+    off) or ``active``, the first that applies: a spent or expired code
+    stays unusable when it is turned on again."""
+    if row["uses_left"] <= 0:
+        return "spent"
+    if row["expires_at"] and row["expires_at"] <= now():
+        return "expired"
+    return "off" if row["disabled"] else "active"
+
+
+def invite_view(row) -> dict:
+    """An invite as the Admin page lists it: the row with ``used`` and
+    ``state``."""
+    return {**dict(row), "used": row["uses_total"] - row["uses_left"], "state": invite_state(row)}
+
+
+def take_invite(conn, code: str, email: str) -> dict:
+    """Consume one use of an invite code and return what ``create`` needs:
+    ``{plan, grant_days, invite_code}``. A code that is off, expired or
+    spent is refused like an unknown one.
+
+    Without a code: while the allowed mail domains are set
+    (``settings.allowed_email_domains``), an address at one of them registers
+    and any other is refused, whatever the mode; otherwise only ``open`` mode
+    lets it. A valid code passes either way, since it is the operator's own
+    yes. ``closed`` mode is refused before this is reached."""
     code = (code or "").strip()
     if not code:
-        if settings.registration() == "open":
-            return "free"
-        raise Problem(403, "Registration needs an invite code right now.")
+        allowed = settings.allowed_email_domains()
+        if allowed and not email_at(email, allowed):
+            raise Problem(403, "This address cannot register without an invite code.")
+        if not allowed and settings.registration() != "open":
+            raise Problem(403, "Registration needs an invite code right now.")
+        return {"plan": "free", "grant_days": None, "invite_code": ""}
     row = conn.execute("SELECT * FROM invites WHERE code = ?", (code,)).fetchone()
-    if not row or row["uses_left"] <= 0:
+    if not row or invite_state(row) != "active":
         raise Problem(403, "That invite code is not valid.")
     conn.execute("UPDATE invites SET uses_left = uses_left - 1 WHERE code = ?", (code,))
-    return row["plan"]
+    return {"plan": row["plan"], "grant_days": row["grant_days"], "invite_code": code}
 
 
-def make_invite(conn, *, uses: int, plan: str, note: str, created_by: str) -> dict:
-    """A new invite code; returns its row."""
+def make_invite(conn, *, uses: int, plan: str, note: str, created_by: str, expires_days: int | None = None,
+                grant_days: int | None = None) -> dict:
+    """A new invite code; returns its row. ``expires_days``: the code stops
+    working that many days from now; ``grant_days``: the plan it grants
+    ends that many days after each registration (``create``). None for
+    either means no end."""
     if plan not in config.PLANS:
         raise Problem(400, "unknown plan")
     if not 1 <= uses <= 10000:
         raise Problem(400, "uses must be 1..10000")
+    for days in (expires_days, grant_days):
+        if days is not None and not 1 <= days <= MAX_DAYS:
+            raise Problem(400, f"A number of days is 1 to {MAX_DAYS}.")
+    if grant_days and plan == "free":
+        raise Problem(400, "A free invite grants no plan that could end.")
     code = new_token(9)
-    conn.execute("INSERT INTO invites (code, uses_left, plan, created_by, created_at, note) VALUES (?, ?, ?, ?, ?, ?)",
-                 (code, uses, plan, created_by, now(), note[:200]))
-    audit(conn, "invite.create", actor=created_by, detail=f"{code} uses={uses} plan={plan}")
-    return dict(conn.execute("SELECT * FROM invites WHERE code = ?", (code,)).fetchone())
+    expires_at = after(expires_days * 86400) if expires_days else None
+    conn.execute("INSERT INTO invites (code, uses_left, uses_total, plan, created_by, created_at, note, expires_at, "
+                 "grant_days) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                 (code, uses, uses, plan, created_by, now(), note[:200], expires_at, grant_days))
+    audit(conn, "invite.create", actor=created_by, detail=f"{code} uses={uses} plan={plan}"
+          + (f" expires={expires_at[:10]}" if expires_at else "") + (f" grant_days={grant_days}" if grant_days else ""))
+    return invite_view(conn.execute("SELECT * FROM invites WHERE code = ?", (code,)).fetchone())
+
+
+def set_invite_disabled(conn, code: str, disabled: bool, actor: str) -> dict:
+    """Turn a code off or on again; its row as ``invite_view``."""
+    if not conn.execute("UPDATE invites SET disabled = ? WHERE code = ?", (1 if disabled else 0, code)).rowcount:
+        raise Problem(404, "no such invite")
+    audit(conn, "invite.disable" if disabled else "invite.enable", actor=actor, detail=code)
+    return invite_view(conn.execute("SELECT * FROM invites WHERE code = ?", (code,)).fetchone())
 
 
 def create(conn, *, email: str, username: str, password: str | None, plan: str = "free",
-           display_name: str = "", verified: bool = False, actor: str = "") -> dict:
+           display_name: str = "", verified: bool = False, actor: str = "", invite_code: str = "",
+           grant_days: int | None = None) -> dict:
     """Insert an account. Uniqueness is checked here so the API can answer
     with a message; the UNIQUE constraints are the backstop. A deleted
     account keeps its e-mail and username for the grace period, so those are
-    unavailable too (the message says so)."""
+    unavailable too (the message says so). ``invite_code`` and
+    ``grant_days`` come from ``take_invite``: the code is kept on the row,
+    and a paid plan it grants ends that many days from now."""
     if email_taken(conn, email):
         raise Problem(409, "There is already an account with that e-mail address.")
     if conn.execute("SELECT 1 FROM accounts WHERE username = ?", (username,)).fetchone():
@@ -339,14 +406,16 @@ def create(conn, *, email: str, username: str, password: str | None, plan: str =
         raise Problem(400, "unknown plan")
     account_id = new_id()
     ts = now()
+    until = after(grant_days * 86400) if grant_days and plan != "free" else None
     # The plan an invite (or the operator) gives is a grant; the effective
     # plan follows from it.
     conn.execute(
         "INSERT INTO accounts (id, username, email, email_canon, email_verified_at, password_hash, display_name, "
-        "plan, granted_plan, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'free', ?, ?)",
+        "plan, granted_plan, granted_until, invite_code, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'free', ?, ?, ?, ?)",
         (account_id, username, email, email_canon(email), ts if verified else None,
-         hash_password(password) if password else None, display_name[:100], plan, ts))
-    audit(conn, "account.create", account_id, actor or account_id, f"username={username} plan={plan}")
+         hash_password(password) if password else None, display_name[:100], plan, until, invite_code, ts))
+    audit(conn, "account.create", account_id, actor or account_id, f"username={username} plan={plan}"
+          + (f" invite={invite_code}" if invite_code else "") + (f" until={until[:10]}" if until else ""))
     if plan != "free":
         recompute_plan(conn, account_id, actor or account_id, "admin" if actor else "invite")
     return by_id(conn, account_id)
@@ -473,15 +542,50 @@ def set_username(conn, account_id: str, username: str, actor: str = "") -> None:
     audit(conn, "account.username", account_id, actor or account_id, username)
 
 
-def set_plan(conn, account_id: str, plan: str, actor: str) -> None:
+def until_from(raw) -> str | None:
+    """An end date as cloud.db stores it, from an ISO 8601 date (its start,
+    UTC) or date and time (UTC when it names no zone); None for an empty
+    value. 400 for anything else, or a time that has passed."""
+    if raw is None or not str(raw).strip():
+        return None
+    try:
+        t = datetime.fromisoformat(str(raw).strip())
+    except ValueError as e:
+        raise Problem(400, "That is not a date: write it as YYYY-MM-DD.") from e
+    stamp = (t if t.tzinfo else t.replace(tzinfo=timezone.utc)).astimezone(timezone.utc)
+    stamp = stamp.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
+    if stamp <= now():
+        raise Problem(400, "That date has passed.")
+    return stamp
+
+
+def set_plan(conn, account_id: str, plan: str, actor: str, until: str | None = None) -> None:
     """The courtesy grant (the Admin page's plan select, ``manage.py
-    set-plan``). A subscription above it keeps the higher plan, and the
-    grant outlives the subscription."""
+    set-plan``), ending at ``until`` (``until_from``; None: it does not end).
+    A new grant replaces the old one with its end. A subscription above it
+    keeps the higher plan, and the grant outlives the subscription."""
     if plan not in config.PLANS:
         raise Problem(400, "unknown plan")
-    conn.execute("UPDATE accounts SET granted_plan = ? WHERE id = ?", (plan, account_id))
-    audit(conn, "account.grant", account_id, actor, plan)
+    if until and plan == "free":
+        raise Problem(400, "A free plan has nothing to end.")
+    conn.execute("UPDATE accounts SET granted_plan = ?, granted_until = ? WHERE id = ?", (plan, until, account_id))
+    audit(conn, "account.grant", account_id, actor, plan + (f" until {until}" if until else ""))
     recompute_plan(conn, account_id, actor, "admin")
+
+
+def expire_grants(conn) -> int:
+    """End every grant whose ``granted_until`` has passed: the granted plan
+    goes back to ``free`` and the plan is recomputed, so a subscription
+    keeps its plan and a hosted server without one lapses through its
+    usual lifecycle (``hosted.plan_changed``). ``app.purge`` runs it hourly;
+    the caller commits. Returns the count."""
+    rows = conn.execute("SELECT id, granted_plan FROM accounts WHERE granted_until IS NOT NULL AND granted_until <= ? "
+                        "AND deleted_at IS NULL", (now(),)).fetchall()
+    for row in rows:
+        conn.execute("UPDATE accounts SET granted_plan = 'free', granted_until = NULL WHERE id = ?", (row["id"],))
+        audit(conn, "account.grant_expired", row["id"], "system", row["granted_plan"])
+        recompute_plan(conn, row["id"], "system", "expiry")
+    return len(rows)
 
 
 def set_admin(conn, account_id: str, is_admin: bool, actor: str) -> None:
@@ -507,7 +611,8 @@ def revoke_everything(conn, account_id: str) -> None:
 
 def delete(conn, account_id: str, actor: str = "") -> None:
     """Soft delete: the row keeps its username and e-mail through the grace
-    period (``manage.py purge-deleted`` removes it), nothing can sign in as
+    period (``config.PURGE_DELETED_DAYS``; ``purge_deleted`` then removes
+    it, hourly from ``app.purge``), nothing can sign in as
     it any more (its Google/GitHub links, preference profile and linked
     servers go at once), and its servers' teardown is the provisioner's job
     (v1)."""

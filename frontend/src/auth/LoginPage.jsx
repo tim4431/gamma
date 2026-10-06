@@ -158,6 +158,10 @@ export function LoginPage({
         placeholder={t("Username")}
         className="loginInput"
         autoFocus
+        autoCapitalize="none"
+        autoCorrect="off"
+        spellCheck={false}
+        autoComplete="username"
       />
       <PasswordInput
         value={password}

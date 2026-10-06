@@ -57,6 +57,9 @@ const NOT_INK = ".inkEditMenu, .inkTransformHandle, .textBoxWidth, .textBoxBand,
 // the stroke's note): the page's own clickable marks. The strokes are drawn
 // above them all, text boxes included (app.css), but take no pointer.
 const ABOVE_PASSIVE_INK = "[data-hl-id], .pdfNoteAnchor, .pdfLinkBox, .textBox";
+// Whether a finger scrolling under an armed tool is still worth explaining
+// (onFingerScroll): once a session, and never once a pen has drawn.
+let fingerHint = true;
 
 // The click a handled pointer-up would deliver to whatever lies under it
 // (a highlight rect, a link box) is not a click on that thing.
@@ -85,8 +88,11 @@ export function Strokes({ ink, hide }) {
 // eraserSize its S/M/L index; lassoMode: "free" (a drawn loop) | "box";
 // blocks: this page's ink blocks; selection: {page, items: [{id, ids}]};
 // flash: {id, nonce} outlines a group briefly.
+// onFingerScroll: a finger dragged with a tool armed and pen only on, and
+// scrolled instead of drawing.
 export function InkLayer({ pageNumber, wrapRef, width, height, blocks, tool, penTool, penOnly, pressure, eraserMode,
-  eraserSize = 1, lassoMode = "free", selection, flash, onStroke, onErase, onErasePartial, onSelect, onAction, onMoveSelection, onJump }) {
+  eraserSize = 1, lassoMode = "free", selection, flash, onStroke, onErase, onErasePartial, onSelect, onAction, onMoveSelection, onJump,
+  onFingerScroll }) {
   useInkVersion();
   const canvasRef = useRef(null);
   const cursorRef = useRef(null);
@@ -116,7 +122,7 @@ export function InkLayer({ pageNumber, wrapRef, width, height, blocks, tool, pen
     }
   }
   live.current = { tool, penTool, penOnly, pressure, eraserMode, eraserSize, lassoMode, width, height, groups, selBox,
-    onStroke, onErase, onErasePartial, onSelect, onMoveSelection, onJump };
+    onStroke, onErase, onErasePartial, onSelect, onMoveSelection, onJump, onFingerScroll };
 
   useEffect(() => {
     const el = wrapRef.current;
@@ -157,6 +163,11 @@ export function InkLayer({ pageNumber, wrapRef, width, height, blocks, tool, pen
     const trackDown = (e) => {
       contacts.add(e.pointerId);
       if (pending && pending.id !== e.pointerId) clearPending(true);
+      if (e.pointerType === "pen") fingerHint = false;
+      // A second finger makes a finger's stroke a pinch: the stroke goes.
+      if (drawing?.pointerType === "touch" && e.pointerType === "touch" && drawing.id !== e.pointerId) {
+        finish({ pointerId: drawing.id }, true);
+      }
     };
     const trackUp = (e) => contacts.delete(e.pointerId);
 
@@ -423,6 +434,13 @@ export function InkLayer({ pageNumber, wrapRef, width, height, blocks, tool, pen
       // While the pen is down, direct contacts are palms, not pan/pinch.
       // As soon as it lifts, fingers can navigate again.
       if (e.touches.length > 1) clearPending(true);
+      // One finger moving over a page with a tool armed scrolls it when only
+      // a pen draws, which nothing on screen explains.
+      if (fingerHint && e.type === "touchmove" && !pencil && !drawing && e.touches.length === 1
+        && L.tool && L.penOnly && L.onFingerScroll) {
+        fingerHint = false;
+        L.onFingerScroll();
+      }
       if (!pencil && drawing?.pointerType !== "pen" && drawing?.mode !== "move") return;
       if (e.cancelable) e.preventDefault();
       e.stopPropagation(); // Do not feed Pencil into the viewer's pan/pinch handlers.

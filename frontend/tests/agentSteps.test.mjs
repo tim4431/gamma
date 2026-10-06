@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { changePlace, chipNote, isChange, runningLabel, splitActions, stepsSummary } from "../src/chat/agentSteps.js";
+import { changePlace, chipNote, helperStatus, isChange, runningLabel, splitActions, stepsSummary, withHelper } from "../src/chat/agentSteps.js";
 
 const actions = [
   { kind: "list", tool: "list_pages", summary: "Listed 12 pages" },
@@ -16,6 +16,9 @@ test("the pill sums every step and names the reading ones", () => {
   assert.equal(stepsSummary(actions), "7 steps · listed, read 1 page");
   assert.equal(stepsSummary([actions[1], actions[1]]), "2 steps · read 2 pages");
   assert.equal(stepsSummary([]), "0 steps");
+  // A helper's run is one step of the chat, named as what it is.
+  assert.equal(stepsSummary([actions[1], { kind: "helper", tool: "read_paper", summary: "Helper read “A”", steps: 5 }]),
+    "2 steps · read 1 page, used 1 helper");
 });
 
 test("changes are split by where they landed; failures and no-ops are not changes", () => {
@@ -87,11 +90,48 @@ test("a batch of calls reads as how many, not as one of them", () => {
     "Fetching doi:10.1/x…");
 });
 
+test("a call that hands a document to a helper says so, and each helper says what it is doing", () => {
+  assert.equal(runningLabel({ tool: "read_paper", args: { source: "arXiv:1905.00450", title: "Cat qubits" } }),
+    "A helper is reading “Cat qubits”…");
+  assert.equal(runningLabel({ tool: "read_paper", args: { source: "arXiv:1905.00450" } }), "A helper is reading arXiv:1905.00450…");
+  assert.equal(runningLabel({ tool: "read_paper", batch: 3 }), "3 helpers are reading documents…");
+  const helper = { id: "h1", label: "Cat qubits", state: "reading", steps: 0 };
+  assert.equal(helperStatus(helper), "Starting…");
+  assert.equal(helperStatus({ ...helper, step: { tool: "fetch_paper", args: { source: "arXiv:1905.00450" } } }),
+    "Fetching arXiv:1905.00450…");
+  assert.equal(helperStatus({ ...helper, steps: 2 }), "Thinking…");
+  assert.equal(helperStatus({ ...helper, state: "answering", steps: 2 }), "Writing its answer…");
+  assert.equal(helperStatus({ ...helper, state: "done", steps: 2 }), "Done · 2 steps");
+  assert.equal(helperStatus({ ...helper, state: "failed" }), "Could not read it");
+  // A wall is what the row ends on, whatever the helper answered about it.
+  assert.equal(helperStatus({ ...helper, state: "done", steps: 1, blocked: "journals.example.org" }),
+    "Needs your browser: journals.example.org · 1 step");
+});
+
+test("a helper's newest state replaces its last; a second run on a document takes the finished row", () => {
+  const a = { id: "h1", label: "A", state: "reading", steps: 0 };
+  const b = { id: "h2", label: "B", state: "reading", steps: 0 };
+  let helpers = withHelper(withHelper([], a), b);
+  helpers = withHelper(helpers, { ...a, state: "done", steps: 1, blocked: "example.org" });
+  assert.deepEqual(helpers.map((h) => [h.id, h.state]), [["h1", "done"], ["h2", "reading"]]);
+  // The browser delivered A, so the same call runs again with a new helper.
+  helpers = withHelper(helpers, { id: "h3", label: "A", state: "reading", steps: 0 });
+  assert.deepEqual(helpers.map((h) => h.id), ["h2", "h3"]);
+  // Two helpers still at work on one document keep a row each.
+  assert.deepEqual(withHelper([a], { id: "h4", label: "A", state: "reading", steps: 0 }).map((h) => h.id), ["h1", "h4"]);
+});
+
 test("a chip says which copy was read, how it came and how long it took", () => {
   assert.equal(chipNote({ version: "publisher", ms: 2400 }), "publisher PDF · 2.4s");
   assert.equal(chipNote({ version: "submitted" }), "open-access, preprint");
   assert.equal(chipNote({ probe: true }), "front matter only");
   assert.equal(chipNote({ delivered: true }), "from your browser");
+  // Reads of one document are told apart by their pages; a page read says its own in its summary.
+  assert.equal(chipNote({ kind: "fetch", version: "publisher", pdf_pages: [3, 6] }), "publisher PDF · pp. 3–6");
+  assert.equal(chipNote({ kind: "fetch", pdf_pages: [7, 7], ms: 1200 }), "p. 7 · 1.2s");
+  assert.equal(chipNote({ kind: "read", pdf_pages: [1, 5] }), "");
+  // A helper's chip counts its calls.
+  assert.equal(chipNote({ kind: "helper", steps: 4, version: "preprint", ms: 50600 }), "4 steps · arXiv preprint · 50.6s");
   // Nothing worth saying: a fast call of unknown version.
   assert.equal(chipNote({ ms: 120 }), "");
   assert.equal(chipNote(null), "");

@@ -2,16 +2,18 @@
 // diagram sits in an MdObject frame. A press on the object itself selects it
 // instead of opening the block's raw editor; a press on the frame's margin
 // is left to the row (click-to-source opens the editor there). A right-click
-// (or the table's corner handle) opens one menu for all three kinds — edit
-// the markdown source, move it to a new block or another page, copy it,
-// delete it — and Delete removes a selected object. The frame is also the
+// or a held finger (or the "⋯" in a toolbar, the table's corner handle)
+// opens one menu for all three kinds — edit the markdown source, move it to
+// a new block or another page, copy it, delete it — and Delete removes a
+// selected object. A selected object shows its tools. The frame is also the
 // drag source: dragging it carries the object's source range
 // (`_dragState.fragment`, read by App's block drop handlers), which lands
 // between two blocks as a new block or inside a block at the gap the pointer
 // is nearest to. Nothing here touches the stored text: every outcome is a
 // source transform in mdObjects.js.
 import React, { createContext, useContext, useEffect, useRef, useState } from "react";
-import { ContextMenu, MenuItem, SubMenuItem } from "../shared/ui/Menus";
+import { ContextMenu, MenuButton, MenuItem, SubMenuItem } from "../shared/ui/Menus";
+import { doublePress, menuPress } from "../shared/ui/press.js";
 import {
   ArrowDownIcon, ArrowUpIcon, CodeIcon, CopyIcon, FileTextIcon, MoveVerticalIcon, Trash2Icon,
 } from "../shared/ui/Icons";
@@ -83,6 +85,13 @@ function constructStartInSource(rendered, content, el) {
 const MdObjectCtx = createContext(null);
 export const useObjectMenu = () => useContext(MdObjectCtx);
 
+// The "⋯" in an object's toolbar (a picture's, a diagram's): the menu a
+// right-click or a held finger opens, for whoever does neither.
+export function ObjectMenuButton() {
+  const menu = useObjectMenu();
+  return menu ? <MenuButton open={menu.openMenu} /> : null;
+}
+
 // `onAction(kind, idx, action, event)`: editRaw · copy · delete ·
 // moveNewAbove · moveNewBelow · moveToPage · dragStart · dragEnd. Without it
 // (read-only, an embed card) the frame is inert layout.
@@ -148,17 +157,17 @@ export function MdObject({ as: Tag = "div", kind, idx, editable = true, onAction
       }}
       // A diagram has no editing of its own — a picture zooms on
       // double-click and a table edits the cell under the pointer — so a
-      // double-click on one opens the block's editor on its source: the
-      // menu's "Edit markdown source" without the menu. The hover toolbar
-      // and the resize grips keep their own double-clicks.
-      onDoubleClick={kind === "mermaid" && editable ? (e) => {
+      // double-click or double tap on one opens the block's editor on its
+      // source: the menu's "Edit markdown source" without the menu. The
+      // toolbar and the resize grips keep their own.
+      {...doublePress(kind === "mermaid" && editable ? (e) => {
         const body = e.target.closest?.(".mermaidDiagram");
         if (!body || !ref.current?.contains(body) || e.target.closest?.(".mermaidTools, .mdResizeGrip")) return;
         e.preventDefault();
         e.stopPropagation();
         act("editRaw", e);
-      } : undefined}
-      onContextMenu={openMenu}
+      } : null)}
+      {...menuPress(openMenu)}
       onDragStart={(e) => {
         e.stopPropagation();
         // The resize grips and the table's handle pills drag with pointer

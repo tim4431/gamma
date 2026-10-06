@@ -691,6 +691,94 @@ def test_an_asking_tool_is_never_batched(org):
         ["read_page"], ["fetch_paper"], ["read_page"]]
 
 
+# --- a helper's status -----------------------------------------------------------
+
+def test_a_helper_says_what_it_is_doing_while_its_call_runs(org, monkeypatch):
+    """read_paper's helper works inside one call of the chat, so the stream
+    carries its status between that call's step and its action: reading,
+    the call it is on, how many it finished, answering, done."""
+    c, _ = org
+    import gamma.routers.ai as ai_mod
+
+    turns = []
+
+    def text(said):
+        return FakeResp([{"type": "content_block_delta", "delta": {"type": "text_delta", "text": said}}])
+
+    def fake_open(messages, system, entry, rt, pdf_b64s=None, **kw):
+        who = "helper" if "ONE document" in system else "chat"
+        turns.append(who)
+        if who == "helper":
+            assert [t["name"] for t in kw["tools"]] == ["fetch_paper"]
+            if turns.count("helper") == 1:
+                return FakeResp(_calls(("f1", "fetch_paper", {"source": "https://example.org/p.pdf"})))
+            return text("They measure T1, p. 1.")
+        if turns.count("chat") == 1:
+            return FakeResp(_calls(("r1", "read_paper", {"source": "https://example.org/p.pdf",
+                                                         "question": "what do they measure?",
+                                                         "title": "A paper"})))
+        return text("A helper read it: T1.")
+
+    monkeypatch.setattr(ai_mod, "_open_ai", fake_open)
+    monkeypatch.setattr("gamma.ai_web.fetch_document", lambda source, published_only=False: {
+        "kind": "pdf", "url": source, "title": "A paper", "pages": ["[p. 1]\ntext"],
+        "chars": 4, "version": "publisher", "note": ""})
+    r = c.post("/api/ai/chat", json={"prompt": "what does it measure?", "agent_scope": "folder", "folder": "",
+                                     "stream": True, "permissions": ALLOW_ALL})
+    assert r.status_code == 200, r.text
+    lines = [json.loads(line) for line in r.text.splitlines() if line.strip()]
+    assert turns == ["chat", "helper", "helper", "chat"]
+    kinds = [next(iter(line)) for line in lines if next(iter(line)) in ("step", "helper", "action")]
+    assert kinds == ["step"] + ["helper"] * 5 + ["action"]
+    said = [line["helper"] for line in lines if "helper" in line]
+    assert [(s["state"], s["steps"]) for s in said] == [
+        ("reading", 0), ("reading", 0), ("reading", 1), ("answering", 1), ("done", 1)]
+    assert {(s["id"], s["label"]) for s in said} == {("h1", "A paper")}
+    # Only the call running now is named: before it and once it ran there is none.
+    assert [s.get("step", {}).get("tool") for s in said] == [None, "fetch_paper", None, None, None]
+    action, = [line["action"] for line in lines if "action" in line]
+    assert action["tool"] == "read_paper" and [child["tool"] for child in action["children"]] == ["fetch_paper"]
+    assert "They measure T1" in action["result"]
+
+
+def test_a_helper_is_told_its_last_read_and_one_that_never_answers_fails(org, monkeypatch):
+    """A helper that keeps asking for the next window runs out of rounds. The
+    result before its last round says so, and what the loop then says about
+    the limit is not passed on as the paper's answer."""
+    c, _ = org
+    import gamma.routers.ai as ai_mod
+    from gamma.ai_agent import HELPER_ROUNDS, LAST_ROUND
+
+    helper_turns = []
+
+    def fake_open(messages, system, entry, rt, pdf_b64s=None, **kw):
+        if "ONE document" in system:
+            helper_turns.append([dict(m) for m in messages])
+            return FakeResp(_calls((f"f{len(helper_turns)}", "fetch_paper",
+                                    {"source": "https://example.org/p.pdf"})))
+        if not helper_turns:
+            return FakeResp(_calls(("r1", "read_paper", {"source": "https://example.org/p.pdf",
+                                                         "question": "summarise everything"})))
+        return FakeResp([{"type": "content_block_delta", "delta": {"type": "text_delta", "text": "It ran out."}}])
+
+    monkeypatch.setattr(ai_mod, "_open_ai", fake_open)
+    monkeypatch.setattr("gamma.ai_web.fetch_document", lambda source, published_only=False: {
+        "kind": "pdf", "url": source, "title": "A paper", "pages": ["text"],
+        "chars": 4, "version": "publisher", "note": ""})
+    r = c.post("/api/ai/chat", json={"prompt": "summarise it", "agent_scope": "folder", "folder": "",
+                                     "stream": True, "permissions": ALLOW_ALL})
+    assert r.status_code == 200, r.text
+    lines = [json.loads(line) for line in r.text.splitlines() if line.strip()]
+    assert len(helper_turns) == HELPER_ROUNDS
+    told = [turn[-1]["content"].endswith(LAST_ROUND) for turn in helper_turns[1:]]
+    assert told == [False] * (HELPER_ROUNDS - 2) + [True], "only the result before the last round says so"
+    action, = [line["action"] for line in lines if "action" in line]
+    assert action["error"] and action["steps"] == HELPER_ROUNDS
+    assert action["result"].startswith("error: the helper did not get to an answer")
+    assert "tool-round limit" not in action["result"]
+    assert [line["helper"]["state"] for line in lines if "helper" in line][-1] == "failed"
+
+
 # --- other OpenAI-compatible services --------------------------------------------
 
 def _deepseek(c) -> str:

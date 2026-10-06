@@ -15,7 +15,13 @@ closers, and delete empty pairs with Backspace; `\{` pairs with `\}`. Prose
 and fenced-code brackets stay plain. `mathTabJump` in `latexCompletion.js`
 moves among argument groups, skips `\begin{...}` / `\end{...}` names, and
 leaves the math span; block indentation handles Tab only when math navigation
-has nowhere to go. The scalable delimiters and snippets below build on this.
+has nowhere to go. An on-screen keyboard has no Tab: the touch editing bar's
+**Next math argument** (`block.nextSlot`, [hotkeys.md](hotkeys.md)) makes the
+same forward hop, and shows only while there is somewhere to go
+([ipad.md](ipad.md#the-editing-bar)). The system's typing aids
+(autocorrect, capitals, spelling) stay off inside math and fenced code,
+where a corrected word is a broken command. The scalable delimiters and
+snippets below build on this.
 
 | Type | Result / action |
 | --- | --- |

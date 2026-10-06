@@ -113,7 +113,7 @@ export async function previewArea(live, cancelled, onCleanup, { find, context = 
   const pointerId = 971;
   let dragging = false;
   const emit = (type, clientX = x, clientY = y, el = document) => el.dispatchEvent(new PointerEvent(type, {
-    bubbles: true, cancelable: true, pointerId, pointerType: "mouse", button: 0,
+    bubbles: true, cancelable: true, pointerId, pointerType: "mouse", isPrimary: true, button: 0,
     buttons: 1, ctrlKey: true, clientX, clientY,
   }));
   const clear = () => {

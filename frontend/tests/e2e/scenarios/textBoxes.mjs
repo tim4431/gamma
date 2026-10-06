@@ -278,9 +278,10 @@ export async function textBoxScenarios({ server, browser, alice, bob, makePdf, s
     // While it is edited, the band just outside its frame moves it.
     const nudged = (await stored(firstId)).properties.text_box;
     const r = await boxEl(firstId).boundingBox();
-    await page.mouse.move(r.x + r.width / 2, r.y - 3);
+    const below = r.y + r.height + 3; // the band under the box: the tool strip floats over the one above it
+    await page.mouse.move(r.x + r.width / 2, below);
     await page.mouse.down();
-    await page.mouse.move(r.x + r.width / 2 + 30, r.y - 3 + 20, { steps: 8 });
+    await page.mouse.move(r.x + r.width / 2 + 30, below + 20, { steps: 8 });
     await page.mouse.up();
     await until(async () => (await stored(firstId)).properties.text_box.x !== nudged.x, { what: "the band's move on the server" });
     near((await stored(firstId)).properties.text_box.y, nudged.y + 20 / k, "the band moved it down");

@@ -280,7 +280,7 @@ export const PREFS = {
   // for the user to open the page.
   fetchInBackground: flag("gamma-ai-fetch-background", ACCOUNT, true),
   // On by default: a chat may give a long document to a helper that reads
-  // it and hands back a short cited answer (the read_paper tool), so the
+  // it and hands back a cited answer (the read_paper tool), so the
   // conversation carries the answer and not the paper. Off makes the chat
   // read every document itself.
   delegateReads: flag("gamma-ai-delegate-reads", ACCOUNT, true),

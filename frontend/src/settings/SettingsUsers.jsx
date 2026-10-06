@@ -18,7 +18,8 @@ import { ManageWorkspaceDialog, useAccounts } from "./SettingsWorkspace";
 import { BookIcon, HardDriveIcon, PenIcon, ShieldIcon, Trash2Icon, UserIcon, UsersIcon } from "../shared/ui/Icons";
 import { T, t } from "../shared/i18n/i18n.js";
 
-export function UsersSettings({ value, selfOnly = false }) {
+// `onServer` (admins) opens Settings → Server at the Gamma Cloud sign-in.
+export function UsersSettings({ value, selfOnly = false, onServer }) {
   const { setStatus, confirm, onSelfRenamed, refreshQuota, isAdmin, me, isGuest, quotaInfo,
     workspaces: mine, switchWorkspace, refreshSession, closeSettings } = value;
   const [info, setInfo] = React.useState(null); // {users, me}
@@ -344,7 +345,7 @@ export function UsersSettings({ value, selfOnly = false }) {
       {isAdmin && !selfOnly ? <PaneHead icon={UsersIcon} title={t("Users")} /> : <PaneHead icon={UserIcon} title={t("Account & sync")} />}
       {isAdmin && !info && !error ? <Empty icon={UsersIcon}>{t("Loading…")}</Empty> : null}
       {(selfOnly ? rows.filter((row) => row.username === me) : rows).map(userRow)}
-      {!isGuest && (selfOnly || !isAdmin) ? <CloudIdentityRow setStatus={setStatus} confirm={confirm} /> : null}
+      {!isGuest && (selfOnly || !isAdmin) ? <CloudIdentityRow setStatus={setStatus} confirm={confirm} onSetUp={onServer} /> : null}
       {edit?.kind === "account" ? accountDialog() : null}
       {edit?.kind === "storage" ? storageDialog() : null}
       {manage ? (

@@ -1,9 +1,10 @@
 """Environment configuration of the account server. Everything is an env
 variable with a ``GAMMA_CLOUD_`` prefix; nothing is read from the request.
 
-What is here is fixed for the life of the container. The sign-up gate
-(registration mode, Turnstile, blocked mail domains) is not: an admin edits
-it on the Admin page and it lives in cloud.db (``settings.py``).
+What is here is fixed for the life of the container, and the Admin page
+shows it read-only (``admin_view``). The sign-up gate and the plans on sale
+are not: an admin edits them on the Admin page and they live in cloud.db
+(``settings.py``).
 
 - ``GAMMA_CLOUD_DATA_DIR`` — where ``cloud.db`` lives (default ``cloud/data``).
   The directory is the secret: it holds the signing keys and every hashed
@@ -34,6 +35,11 @@ it on the Admin page and it lives in cloud.db (``settings.py``).
   where every account may sign in and a Lite or Plus library lives.
   Defaults to the share host's address. Empty with no share host = no
   shared server, and no Lite or Plus checkout.
+- ``GAMMA_CLOUD_CF_API_TOKEN`` + ``GAMMA_CLOUD_CF_ZONE_ID`` — a Cloudflare API
+  token with DNS edit rights on the hosting domain's zone, and that zone's
+  id (``dns.py``). With both set (and hosting on), a hosted server placed
+  on a host with a public address of its own gets a DNS record of its own.
+  Without them such a host takes no servers.
 """
 
 import os
@@ -127,6 +133,9 @@ def shared_limits(plan: str) -> dict | None:
 GRACE_DAYS = 7
 READ_ONLY_DAYS = 30
 DELETE_DAYS = 90
+# A deleted account keeps its username and address this many days, during
+# which an admin can restore it; then the hourly purge removes it.
+PURGE_DELETED_DAYS = 30
 
 # Hosted containers answer <label><HOSTED_SUFFIX>.<HOSTED_DOMAIN>, the
 # label being the owner's username; empty domain = hosting is off (no Pro
@@ -138,6 +147,10 @@ HOSTED_DOMAIN = os.environ.get("GAMMA_CLOUD_HOSTED_DOMAIN", "").strip().lower().
 HOSTED_SUFFIX = os.environ.get("GAMMA_CLOUD_HOSTED_SUFFIX", "-user").strip().lower()
 FLEET_IMAGE = os.environ.get("GAMMA_CLOUD_FLEET_IMAGE", "").strip() or "ghcr.io/tim4431/gamma"
 FLEET_IMAGE_TAG = os.environ.get("GAMMA_CLOUD_FLEET_IMAGE_TAG", "").strip() or "latest"
+# Cloudflare DNS (``dns.py``): a server on a host with its own public address
+# gets a proxied record <label><HOSTED_SUFFIX>.<HOSTED_DOMAIN> -> that address.
+CF_API_TOKEN = os.environ.get("GAMMA_CLOUD_CF_API_TOKEN", "").strip()
+CF_ZONE_ID = os.environ.get("GAMMA_CLOUD_CF_ZONE_ID", "").strip()
 
 # Stripe (``billing.py``). Billing is off while the secret is empty. The
 # price ids map a Stripe Price to the plan and the interval it buys.
@@ -153,3 +166,102 @@ STRIPE_PRICES = {  # key the checkout form sends -> (plan, interval, price id)
 }
 # Shown on the plan page and the website; billing itself uses the Prices.
 PLAN_PRICES_USD = {"lite": {"month": 2, "year": 20}, "plus": {"month": 5, "year": 50}, "pro": {"month": 20, "year": 200}}
+
+
+# --- the Admin page's Configuration section -----------------------------------
+
+def stripe_mode() -> str:
+    """``test`` or ``live`` from the secret key's prefix, ``unknown`` for a
+    key without one, "" without a key."""
+    for mode in ("test", "live"):
+        if STRIPE_SECRET.startswith((f"sk_{mode}_", f"rk_{mode}_")):
+            return mode
+    return "unknown" if STRIPE_SECRET else ""
+
+
+def _item(name: str, env: str, state: str, value: str = "", note: str = "") -> dict:
+    item = {"name": name, "env": env, "state": state}
+    if value:
+        item["value"] = value
+    if note:
+        item["note"] = note
+    return item
+
+
+def _value(name: str, env: str, value: str, note: str = "") -> dict:
+    """A setting shown with its value, ``set`` or ``missing``."""
+    return _item(name, env, "set" if value else "missing", value, note)
+
+
+def _secret(name: str, env: str, value: str, note: str = "") -> dict:
+    """A secret: whether it is set, never what it is."""
+    return _item(name, env, "set" if value else "missing", note=note)
+
+
+def _switch(name: str, env: str, on: bool, note: str = "") -> dict:
+    return _item(name, env, "on" if on else "off", note=note)
+
+
+def admin_view(schema_version: int) -> list[dict]:
+    """The values above as the Admin page shows them, read-only: groups of
+    items ``{name, env, state, value?, note?}``, where ``state`` is ``set`` /
+    ``missing`` for a value and ``on`` / ``off`` for a switch. A secret shows
+    only whether it is set."""
+    smtp = MAIL_BACKEND == "smtp"
+    not_used = "" if smtp else f"not used by the {MAIL_BACKEND} backend"
+    billing = bool(STRIPE_SECRET)
+    stripe = [_switch("Billing", "GAMMA_CLOUD_STRIPE_SECRET", billing, "" if billing else "no paid plan can be bought")]
+    if billing:
+        stripe.append(_item("Mode", "", "set", stripe_mode(), "the secret key's prefix"))
+    stripe.append(_secret("Webhook secret", "GAMMA_CLOUD_STRIPE_WEBHOOK_SECRET", STRIPE_WEBHOOK_SECRET,
+                          "" if STRIPE_WEBHOOK_SECRET or not billing else "Stripe's events are refused"))
+    for key, (plan, interval, price_id) in STRIPE_PRICES.items():
+        stripe.append(_value(f"{plan.capitalize()} {'monthly' if interval == 'month' else 'yearly'} price",
+                             f"GAMMA_CLOUD_STRIPE_PRICE_{key.upper()}", price_id))
+    google = bool(GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET)
+    half = "needs both the client id and the secret"
+    return [
+        {"name": "Server", "items": [
+            _value("Public URL", "GAMMA_CLOUD_PUBLIC_URL", PUBLIC_URL,
+                   "" if PUBLIC_URL.startswith("https://") else "plain HTTP: for a local run only"),
+            _value("Data directory", "GAMMA_CLOUD_DATA_DIR", str(DATA_DIR)),
+            _value("Schema version", "", str(schema_version)),
+        ]},
+        {"name": "Mail", "items": [
+            _value("Backend", "GAMMA_CLOUD_MAIL", MAIL_BACKEND,
+                   {"console": "messages are logged, not sent", "memory": "messages are kept in memory (tests)"}
+                   .get(MAIL_BACKEND, "")),
+            _value("Sender", "GAMMA_CLOUD_MAIL_FROM", MAIL_FROM),
+            _value("SMTP host", "GAMMA_CLOUD_SMTP_HOST", f"{SMTP_HOST}:{SMTP_PORT}" if SMTP_HOST else "",
+                   not_used or ("" if SMTP_HOST else "the smtp backend cannot send without it")),
+            _secret("SMTP user", "GAMMA_CLOUD_SMTP_USER", SMTP_USER, not_used),
+            _secret("SMTP password", "GAMMA_CLOUD_SMTP_PASSWORD", SMTP_PASSWORD, not_used),
+            _switch("STARTTLS", "GAMMA_CLOUD_SMTP_STARTTLS", SMTP_STARTTLS, not_used),
+        ]},
+        {"name": "Stripe", "items": stripe},
+        {"name": "Shared server", "items": [
+            _value("Address for people", "GAMMA_CLOUD_APP_URL", APP_URL,
+                   "" if APP_URL else "Lite and Plus cannot be sold"),
+            _value("Share host", "GAMMA_CLOUD_SHARE_HOST_URL", SHARE_HOST_URL,
+                   "" if SHARE_HOST_URL else "Gamma servers have nowhere to publish"),
+        ]},
+        {"name": "Hosting", "items": [
+            _value("Domain", "GAMMA_CLOUD_HOSTED_DOMAIN", HOSTED_DOMAIN,
+                   "" if HOSTED_DOMAIN else "hosting is off: Pro cannot be sold and no server is made"),
+            _value("Name suffix", "GAMMA_CLOUD_HOSTED_SUFFIX", HOSTED_SUFFIX),
+            _value("Fleet image", "GAMMA_CLOUD_FLEET_IMAGE", FLEET_IMAGE),
+            _value("Image tag", "GAMMA_CLOUD_FLEET_IMAGE_TAG", FLEET_IMAGE_TAG,
+                   "used while the Admin page stores none"),
+            _switch("DNS records", "GAMMA_CLOUD_CF_API_TOKEN + _ZONE_ID", bool(CF_API_TOKEN and CF_ZONE_ID),
+                    "needs both the token and the zone id" if bool(CF_API_TOKEN) != bool(CF_ZONE_ID)
+                    else "" if CF_API_TOKEN else "a host with a public IP takes no servers"),
+        ]},
+        {"name": "Sign-in", "items": [
+            _switch("Google", "GAMMA_CLOUD_GOOGLE_CLIENT_ID + _SECRET", google,
+                    half if bool(GOOGLE_CLIENT_ID) != bool(GOOGLE_CLIENT_SECRET) else ""),
+            _switch("Google one tap", "GAMMA_CLOUD_GOOGLE_ONE_TAP", google and GOOGLE_ONE_TAP),
+            _switch("GitHub", "GAMMA_CLOUD_GITHUB_CLIENT_ID + _SECRET", bool(GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET),
+                    half if bool(GITHUB_CLIENT_ID) != bool(GITHUB_CLIENT_SECRET) else ""),
+            _value("Desktop client id", "GAMMA_CLOUD_DESKTOP_CLIENT_ID", DESKTOP_CLIENT_ID),
+        ]},
+    ]

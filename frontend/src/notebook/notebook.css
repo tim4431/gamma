@@ -81,10 +81,15 @@
 .blockSheetLabel { color: var(--text-tertiary); font-size: var(--fs-xs); }
 
 /* A page among a note's blocks (notebook/NoteSheet.jsx): the paper fitted
-   to the column, its tools under it, the paper menu in the flow. */
+   to the column. Its tools sit at the top right of the block, on its header
+   line rather than over the handwriting (the title keeps clear of them), the
+   paper menu opens in the flow above the paper, and "+" sits under it. */
 .noteSheet { display: block; width: 100%; margin: 6px 0 2px; }
 .noteSheet .nbSheet { margin: 0 auto; }
 .noteSheet.inkArmed .nbSheet { cursor: crosshair; }
 .noteSheet.inkTouchDraw .nbSheet { touch-action: none; }
-.noteSheetBar { display: flex; align-items: center; justify-content: flex-end; gap: 2px; padding-top: 4px; }
-.noteSheet .nbPaperMenu { position: static; margin: 6px 0 0 auto; max-width: 100%; }
+.blockBody:has(> .noteSheet) { position: relative; }
+.blockBody:has(> .noteSheet) > :is(.blockRendered, .blockEditor) { padding-right: calc(4 * var(--ctl-icon-btn) + 8px); }
+.noteSheetBar { position: absolute; top: 0; right: 0; display: flex; align-items: center; gap: 2px; }
+.noteSheetFoot { display: flex; justify-content: flex-end; padding-top: 4px; }
+.noteSheet .nbPaperMenu { position: static; margin: 0 0 6px auto; max-width: 100%; }

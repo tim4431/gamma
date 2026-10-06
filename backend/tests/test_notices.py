@@ -38,6 +38,10 @@ def _quiet_sources(monkeypatch):
     monkeypatch.setattr(version, "VERSION", "0.2.1")
     monkeypatch.setattr(version, "_fetch_latest", lambda: {"version": "0.2.1", "url": "", "published_at": ""})
     monkeypatch.setattr(logbuf, "_last_seq", {"info": 0, "warning": 0, "error": 0})
+    # Gamma Cloud on and every account linked: nothing to set up or link
+    monkeypatch.setattr(notices.cloud_auth, "settings", lambda: {"enabled": True, "share_host": False})
+    monkeypatch.setattr(notices.cloud_auth, "needs_connect", lambda: False)
+    monkeypatch.setattr(notices.cloud_auth, "status_of", lambda user_id: {"username": "linked"})
 
 
 def _ids(client):
@@ -161,6 +165,39 @@ def test_cloud_sync_error_names_the_reason(nuser, monkeypatch):
     assert notice["fingerprint"] == "2026-09-24T10:00:00Z"
     status.update(state="synced")
     assert _only(nuser, "cloud-sync") is None
+
+
+def test_gamma_cloud_set_up_for_admins_then_linked_by_everyone(nadmin, nuser, monkeypatch):
+    cfg = {"enabled": False, "share_host": False, "connect": False}
+    linked = {}
+    monkeypatch.setattr(notices.cloud_auth, "settings", lambda: cfg)
+    monkeypatch.setattr(notices.cloud_auth, "needs_connect", lambda: cfg["connect"])
+    monkeypatch.setattr(notices.cloud_auth, "status_of", lambda user_id: linked.get(user_id))
+    # off: only an admin is told, on the Server pane
+    assert _only(nuser, "cloud-setup") is None and _only(nuser, "cloud-link") is None
+    setup = _only(nadmin, "cloud-setup")
+    assert (setup["tone"], setup["pane"], setup["fingerprint"]) == ("info", "server", "off")
+    assert setup["message"].startswith("Turn on Gamma Cloud sign-in")
+    nadmin.post("/api/notices/cloud-setup/seen", json={"fingerprint": "off"})
+    assert _only(nadmin, "cloud-setup") is None
+    # on but not connected: a new state for the admin, and no link offered to anyone yet
+    cfg.update(enabled=True, connect=True)
+    assert _only(nadmin, "cloud-setup")["fingerprint"] == "connect"
+    assert _only(nuser, "cloud-link") is None and _only(nadmin, "cloud-link") is None
+    # working: each unlinked account is offered the link once, on the Account pane
+    cfg["connect"] = False
+    assert _only(nadmin, "cloud-setup") is None
+    link = _only(nuser, "cloud-link")
+    assert (link["tone"], link["pane"]) == ("info", "account") and link["title"].endswith("with a Gamma Cloud account")
+    nuser.post("/api/notices/cloud-link/seen", json={"fingerprint": link["fingerprint"]})
+    assert _only(nuser, "cloud-link") is None
+    # a linked account is not offered it, nor anyone on the share host
+    assert _only(nadmin, "cloud-link") is not None
+    linked[account_of("nadmin")] = {"username": "nadmin"}
+    assert _only(nadmin, "cloud-link") is None
+    linked.clear()
+    cfg["share_host"] = True
+    assert _only(nadmin, "cloud-link") is None
 
 
 def test_storage_thresholds_and_the_remembered_walk(nuser, monkeypatch):

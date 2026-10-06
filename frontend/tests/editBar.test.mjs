@@ -51,8 +51,29 @@ test("moving and nesting a block apply only where it can go", () => {
   assert.deepEqual(["a", "b", "a1", "a2"].map((b) => can("block.outdent", b)), [false, false, true, true]);
 });
 
+test("next math argument is Tab's hop, offered only where Tab would hop", () => {
+  const cmd = BLOCK_COMMANDS.find((c) => c.id === "block.nextSlot");
+  const editor = (value, at) => {
+    const ed = { value, selectionStart: at, selectionEnd: at, setSelectionRange(a, h) { ed.sel = [a, h]; } };
+    return ed;
+  };
+  const hop = (value, at) => {
+    const ed = editor(value, at);
+    if (!cmd.when({ editor: ed })) return null;
+    cmd.run({ editor: ed });
+    return ed.sel;
+  };
+  const doc = "$\\frac{a}{bc}$ x";
+  assert.deepEqual(hop(doc, 7), [10, 12], "numerator → the denominator, selected");
+  assert.deepEqual(hop(doc, 12), [13, 13], "past the closing brace");
+  assert.deepEqual(hop(doc, 13), [14, 14], "out of the span");
+  assert.equal(hop(doc, 15), null, "in prose there is no slot");
+  assert.equal(hop("```\n$\\frac{a}{b}$\n```", 11), null, "a $ in a code fence is no math");
+  assert.equal(cmd.when({ editor: null }), false);
+});
+
 test("the bar's new commands are in the catalog, unbound", () => {
-  for (const id of ["block.newBelow", "block.insertMenu", "block.math"]) {
+  for (const id of ["block.newBelow", "block.insertMenu", "block.math", "block.nextSlot"]) {
     const c = BLOCK_COMMANDS.find((x) => x.id === id);
     assert.ok(c, id);
     assert.equal(c.keys, null, `${id} starts unbound`);

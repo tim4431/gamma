@@ -114,7 +114,7 @@ Open the chat from the **View menu (≡, top right) → AI Chat**. Configure pro
 - **Model, reasoning effort and speed**: click the model chip (for example *gpt-5.2 ▾*) to switch the model, set the reasoning effort, or pick a speed. The effort menu lists only the levels the picked model takes; a level it lacks becomes the nearest one it has. **Speed** appears when the model's provider offers a faster route to it. *Fast* (Anthropic's fast mode, OpenAI's and Codex's Fast) answers quicker at a higher price per token; *flex* costs less and takes longer. Only models that offer the tier get it. The chip shows it as a lightning bolt (a clock for *flex*); hover for its name. Each answer names the model, effort and speed that wrote it, under the reply. The ⚙ in the chat header keeps the context size, the tools and the token counts.
 - **Voice**: the mic dictates into the box. It shows only when one of your connections can transcribe (an OpenAI API key).
 - **Context**: in a paper the chat reads that paper's text automatically. **Full PDF** (shown while a PDF is in context) attaches the actual file, so the model sees figures and tables; it turns itself off once the file has been sent in a conversation, to avoid re-billing it every message.
-- **Add more**: paste images, Ctrl+drag a region of the page (see [Reading](#reading-and-highlighting)), type **`@`** to attach another paper from your library, or use the **+ menu** to attach files or pick several papers (optionally with your notes and highlights).
+- **Add more**: paste images, Ctrl+drag a region of the page (see [Reading](#reading-and-highlighting)), type **`@`** to attach another paper from your library, or use the **+ menu** to attach files or pick several papers (optionally with your notes and highlights). Both page lists work like **Ctrl+P**: recent pages and open tabs first, filtered by title, folder or label as you type.
 - **Quote passages**: click a highlight to put it in the chat as a **PDF passage**; Ctrl+click more highlights to add up to six passages.
 - **What goes with a message** shows as chips above the message box, each saying what it is. The block your cursor is on rides along by itself (a dashed chip, **Block at your cursor**); its × leaves it out.
 - **Change just part of a note**: drag across a note's text — the note opens and the drag selects, and the chat's chip becomes **Selection in this note**. Ask for the change ("make this more concise", "translate this") and the assistant rewrites only the selected text, never the rest of the note. Hold Ctrl while dragging to select without opening the note and to collect several passages.
@@ -154,7 +154,7 @@ A journal that wants a sign-in or a CAPTCHA can stop the server but not your bro
 
 ### Longer work
 
-Two things keep a long answer affordable. **Read long papers with a helper** (Settings → AI → Tool usage → Tools, on) lets the chat hand one paper and one question to a second pass that reads it and answers in a short paragraph with page numbers, so the conversation keeps the answer instead of the whole document. And the **+** menu in the composer has **Research this in the background**: type the question, and Gamma searches and reads for minutes on its own, then files a report page — with what each paper contributes, which ones match your case and what it could not reach — in the folder you started from. It runs on the server, so you can close the tab; Background tasks follows it, and the pill offers the page when it is done.
+One setting keeps a long answer affordable. **Read long papers with a helper** (Settings → AI → Tool usage → Tools, on) lets the chat hand one paper and one question to a second pass that reads it and answers with page numbers, so the conversation keeps the answer instead of the whole document.
 
 ## Library and organization
 
@@ -189,13 +189,12 @@ The home page is a recents feed of all your pages, with a **Recently viewed** st
 
 ## Sharing a page
 
-The **link button** in the top bar shares the open page, Notion-style. Opening it shares nothing yet:
+The **link button** in the top bar shares the open page, Notion-style. Opening it shares nothing yet: press **Share** to make the link. It starts out readable by anyone signed in to this server, and the access controls appear with it:
 
-- **Link**, on top: once the page is shared, its address and **Copy link**. Copied links carry the workspace, so a teammate opening one lands in the right library.
-- **Who has access**: invite people by name, each with their own **View** or **Edit**. Inviting someone on a page that isn't shared yet creates its link for *invited people only*. In a shared workspace, its members are listed too: they open every page with their workspace role.
-- **General access**: *anyone with the link*, *signed-in users*, or *invited people only*, plus a **View / Edit** toggle for that audience. Picking one on a page that isn't shared yet creates the link with that access.
+- **Link**, on top: the page's address, **Copy link**, and **Stop sharing** beside it, which asks first, then ends the link and every invitation; share again for a new one. Copied links carry the workspace, so a teammate opening one lands in the right library.
+- **Who has access**: invite people by name, each with their own **View** or **Edit**. In a shared workspace, its members are listed too: they open every page with their workspace role.
+- **General access**: *anyone with the link*, *signed-in users*, or *invited people only*, plus a **View / Edit** toggle for that audience.
 - Viewers see the PDF, highlights and notes; with *anyone with the link* no login is needed. Editors edit alongside you, with live cursors. A visitor editing through an anyone-with-the-link share is asked for a display name. The top bar tells a visitor whether they can view or edit and who shared the page, and offers **Sign in**, or **Add to my library** once signed in.
-- **Stop sharing**, at the bottom, asks first, then ends the link and every invitation; share again for a new one.
 - A link for signed-in users asks a visitor to sign in right there. A stopped or incompletely copied link says so and offers the way to the server's own front door.
 
 **Sharing a folder** works the same way: right-click a folder and choose **Share…**, or open the folder and press the top bar's link button. The link opens every page filed in the folder — including pages you file there later — as a read-only library view of that folder; visitors open a page like you would and return with the home button. The same audience and View / Edit choices apply; an edit link lets people edit those pages' notes but never move pages in or out of the folder.
@@ -333,13 +332,13 @@ Something broke? Open the account menu and choose **Report a problem…** (it is
 
 ## Settings at a glance
 
-A **red dot** on the account button means something wants a look: storage nearly full, a failed backup, sync conflicts in a clone, or (for an admin) a new release, errors in the server log or a damaged database. The account menu says what it is, one line each, with a link to the Settings pane that sorts it out; visiting that pane clears the dot.
+A **red dot** on the account button means something wants a look: storage nearly full, a failed backup, sync conflicts in a clone, or (for an admin) a new release, errors in the server log or a damaged database. An accent-coloured dot is only a suggestion: linking a Gamma Cloud account, or (for an admin) turning Gamma Cloud sign-in on, shown once. The account menu says what it is, one line each, with a link to the Settings pane that sorts it out; visiting that pane clears the dot.
 
 Settings (account menu → Settings) has one sidebar: your account card on top (it opens Account & sync), four groups under it, and Help & diagnostics at the bottom. The search box at the top (Ctrl+F) finds any setting by name and says what it does and where it lives — Enter opens the first match, ↑/↓ walk the list.
 
 | Group | Pane | What's there |
 |---|---|---|
-| Account card | Account & sync | Your account, storage meter and Gamma Cloud link; **Settings sync** (*Sync now*; when this server and the cloud hold different settings, a dialog asks *Fetch from cloud* or *Push to cloud*) and published pages |
+| Account card | Account & sync | Your account, storage meter and Gamma Cloud link (free publishing, and your settings on your other servers; in the desktop app it is ready to link, on a self-hosted server an admin turns it on with **Set up**); **Settings sync** (*Sync now*; when this server and the cloud hold different settings, a dialog asks *Fetch from cloud* or *Push to cloud*) and published pages |
 | Preferences | Appearance | Theme (system + seven), dark PDF pages, library cards (thumbnails / folders / labels), interface size, where the sync pill shows, tour suggestions |
 | | Reading & editing | PDFs (imported annotations, open-access fallback, metadata auto-fetch, saving external PDFs), handwriting (pen only / pen and finger, pressure), how search opens |
 | | Language and Translation | The interface language, the viewer's button and language, selection translation, what translates (a chat model or a service, and the services' keys), speed |

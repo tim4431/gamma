@@ -2,21 +2,21 @@
 // link button (the folder view's, for a folder), like the account menu: it
 // hangs off its button (App wraps it in a `data-popover="share"` anchor, so
 // the topbar's outside-click / Escape rules close it) and is built from the
-// settings kit like the workspace Manage dialog. Top to bottom: Link (the
-// address and Copy link once a share exists; before, one line saying that
-// choosing who can open it makes the link), Who has access (the invite box,
-// you, the workspace's members in a shared workspace, the invited people),
-// General access, Stop sharing (confirmed inline), then Gamma Cloud and the
-// Citation. State is the server's share settings (docs/dev/api.md "Shares"):
-// every change saves at once; the link itself only changes on Stop.
-// `target` says what is shared — {kind: "page", title} or {kind: "folder",
-// id, name} (`name` its path) — and only the words differ: a folder share
-// reaches every page filed in the folder, now and later, so its edit
-// wording says so.
+// settings kit like the workspace Manage dialog. Top to bottom: Link (before
+// a share exists, one line and a Share button; after, the address with Copy
+// link and Stop sharing, confirmed inline), then — only once shared — Who has
+// access (the invite box, you, the workspace's members in a shared
+// workspace, the invited people) and General access; then Gamma Cloud and
+// the Citation. State is the server's share settings (docs/dev/api.md
+// "Shares"): every change saves at once; the link itself only changes on
+// Stop. `target` says what is shared — {kind: "page", title} or {kind:
+// "folder", id, name} (`name` its path) — and only the words differ: a
+// folder share reaches every page filed in the folder, now and later, so its
+// edit wording says so.
 //
-// Nothing is shared by opening the popover: the first audience tile picked,
-// or the first person invited (as Invited only), creates the share with
-// that access — never anyone-with-the-link unless that tile is the pick.
+// Nothing is shared by opening the popover: Share creates the share as
+// Signed in · View (NEW_SHARE), a link any account here can read — never
+// anyone-with-the-link until that tile is picked.
 //
 // Access is pictured, not described: three tiles say who may open the link
 // (Anyone / Signed in / Invited only, the same glyphs the read-only view's
@@ -44,7 +44,7 @@ import { mirrorState } from "../collaboration/MirrorPopover";
 import { T, t, tn } from "../shared/i18n/i18n.js";
 import {
   AlertCircleIcon, CheckIcon, CloudIcon, CloudOffIcon, CloudUploadIcon, ExternalLinkIcon, EyeIcon, GlobeIcon,
-  LinkIcon, PenIcon, RefreshIcon, ShieldIcon, Trash2Icon, UserIcon, UsersIcon,
+  LinkIcon, PenIcon, RefreshIcon, ShareIcon, ShieldIcon, Trash2Icon, UnlinkIcon, UserIcon, UsersIcon,
   XIcon,
 } from "../shared/ui/Icons";
 
@@ -79,6 +79,9 @@ const PUBLISH_SIGN_IN = T("Sign in with Gamma Cloud to publish.");
 // A tile pick as a settings patch: opening a link up to everyone never
 // silently makes it editable.
 const audiencePatch = (audience) => (audience === "anyone" ? { audience, role: "view" } : { audience });
+
+// What Share makes: a link any account here can read, until a tile says otherwise.
+const NEW_SHARE = { audience: "users", role: "view" };
 
 // The one sentence that says what the tiles + toggle add up to. The cloud
 // share (`cloud`) has no people list here: its invitations live on the
@@ -125,9 +128,7 @@ function CopyLinkButton({ url, copied, onCopy, primary = false }) {
 
 // Invite, on top of the people: an account from the directory, invited to
 // view (the toggle on their row changes it), additive to general access.
-// Before a link exists the first invitation creates the share, Invited only
-// (App's inviteShareUser). Enter on a picked name invites; the box empties
-// for the next one.
+// Enter on a picked name invites; the box empties for the next one.
 function ShareInvite({ exclude, onInvite }) {
   const accounts = useAccounts();
   const [username, setUsername] = React.useState("");
@@ -155,9 +156,35 @@ function ShareInvite({ exclude, onInvite }) {
   );
 }
 
-// Stop sharing, the popover's last word on the link: a labelled danger
-// button that asks first, saying who loses access.
-function StopSharing({ invited, onStop }) {
+// The Link section before a share exists: one line and the Share button,
+// which makes the link as NEW_SHARE (App's createShareLink); who has access
+// and general access appear with it.
+function StartSharing({ kind, onCreate }) {
+  const [busy, setBusy] = React.useState(false);
+  async function share() {
+    setBusy(true);
+    await onCreate(NEW_SHARE);
+    setBusy(false);
+  }
+  return (
+    <Row icon={LinkIcon} label={t("Share link")} className="shareNoLink"
+      hint={kind === "folder"
+        ? t("Not shared yet. Share makes a link to every page in this folder.")
+        : t("Not shared yet. Share makes a link you can send.")}
+      title={kind === "folder"
+        ? t("A link lets people open every page filed in this folder, including pages you file here later — read-only or editable, for anyone or only for accounts you name.")
+        : t("A link lets people open this page — read-only or editable, for anyone or only for accounts you name.")}>
+      <button type="button" className="uiBtn sm primary" disabled={busy} onClick={share}>
+        <ShareIcon size={14} />{t("Share")}
+      </button>
+    </Row>
+  );
+}
+
+// The Link section once shared: the address with Copy link and Stop
+// sharing — the cloud link's Copy / Unpublish pair — which asks first in the
+// same inline confirm, saying who loses access.
+function ShareLinkRow({ url, copied, onCopy, invited, onStop }) {
   const [confirming, setConfirming] = React.useState(false);
   const [busy, setBusy] = React.useState(false);
   async function stop() {
@@ -167,7 +194,17 @@ function StopSharing({ invited, onStop }) {
     setConfirming(false);
   }
   return (
-    <div className="shareStop" data-guide="share.stop">
+    <>
+      <Row icon={LinkIcon} label={t("Share link")} hint={url} title={url}>
+        <span className="shareLinkBtns">
+          <CopyLinkButton url={url} copied={copied} onCopy={onCopy} primary />
+          <button type="button" className={`uiBtn sm iconSq danger ${confirming ? "on" : ""}`} data-guide="share.stop"
+            disabled={busy} onClick={() => setConfirming((v) => !v)} aria-label={t("Stop sharing")}
+            title={t("Stop sharing: the link stops working; sharing again later makes a new link.")}>
+            <UnlinkIcon size={16} />
+          </button>
+        </span>
+      </Row>
       {confirming ? (
         <div className="mirrorConfirm">
           <AlertCircleIcon size={14} />
@@ -182,13 +219,8 @@ function StopSharing({ invited, onStop }) {
             <button type="button" className="uiBtn sm" disabled={busy} onClick={() => setConfirming(false)}>{t("Cancel")}</button>
           </span>
         </div>
-      ) : (
-        <button type="button" className="uiBtn sm danger" onClick={() => setConfirming(true)}
-          title={t("The link stops working; sharing again later makes a new link.")}>
-          <Trash2Icon size={14} />{t("Stop sharing")}
-        </button>
-      )}
-    </div>
+      ) : null}
+    </>
   );
 }
 
@@ -352,8 +384,8 @@ function PublishSection({ state, busy, error, copied, onCopy, canEdit, onPublish
 // meIsGuest (your account; a guest can't search the account directory, so
 // gets no invite box), workspace (the open workspace, {name, personal,
 // members, access}: a shared one's members already open every page),
-// shareUrl, copied / onCopy, and one callback per action — onCreate takes
-// the new share's settings ({audience, role}). `citation` is the page's
+// shareUrl, copied / onCopy, and one callback per action — onCreate (Share)
+// takes the new share's settings ({audience, role}). `citation` is the page's
 // citation section (App owns it), shown when the page has metadata.
 // `publish` is the Gamma Cloud section's props (PublishSection), or null
 // where the server offers no publishing — App passes neither for a folder.
@@ -370,12 +402,7 @@ export function SharePopover({
   // a shared workspace's members open every page with their workspace role;
   // a public one's, anyone signed in here too
   const members = workspace && !workspace.personal ? workspace.members || 0 : 0;
-
-  // a tile pick: the first one creates the share with that audience
-  function pickAudience(audience) {
-    if (!shared) onCreate(audiencePatch(audience));
-    else if (audience !== settings.audience) onUpdate(audiencePatch(audience));
-  }
+  const errorLine = error ? <div className="settingsPaneHint aiKeysError">{error}</div> : null;
 
   return (
     <div className="popover sharePopover" role="dialog" aria-label={title} data-guide="share.popover">
@@ -386,22 +413,19 @@ export function SharePopover({
       <div className="settingsForm">
         {settings === null ? <Empty icon={LinkIcon}>{t("Loading…")}</Empty> : null}
         {settings ? (
+          <Section title={t("Link")} guide={shared ? "share.link" : "share.start"}>
+            {shared ? (
+              <ShareLinkRow url={shareUrl} copied={copied} onCopy={onCopy} invited={users.length} onStop={onStop} />
+            ) : (
+              <>
+                <StartSharing kind={kind} onCreate={onCreate} />
+                {errorLine}
+              </>
+            )}
+          </Section>
+        ) : null}
+        {shared ? (
           <>
-            <Section title={t("Link")} guide={shared ? "share.link" : undefined}>
-              {shared ? (
-                <Row icon={LinkIcon} label={t("Share link")} hint={shareUrl} title={shareUrl}>
-                  <CopyLinkButton url={shareUrl} copied={copied} onCopy={onCopy} primary />
-                </Row>
-              ) : (
-                <Row icon={LinkIcon} label={t("Share link")} className="shareNoLink"
-                  hint={kind === "folder"
-                    ? t("Choosing who can open this folder creates its link.")
-                    : t("Choosing who can open this page creates its link.")}
-                  title={kind === "folder"
-                    ? t("A link lets people open every page filed in this folder, including pages you file here later — read-only or editable, for anyone or only for accounts you name.")
-                    : t("A link lets people open this page — read-only or editable, for anyone or only for accounts you name.")} />
-              )}
-            </Section>
             <Section title={t("Who has access")} guide="share.people">
               {!meIsGuest ? <ShareInvite exclude={[me, ...users.map((u) => u.name)]} onInvite={onInvite} /> : null}
               <PersonRow name={me} tag={t("you")} sub={t("Owner")} icon={meIsGuest ? UserIcon : ShieldIcon} active />
@@ -428,26 +452,24 @@ export function SharePopover({
                   </button>
                 </PersonRow>
               ))}
-              {error ? <div className="settingsPaneHint aiKeysError">{error}</div> : null}
+              {errorLine}
             </Section>
             <Section
               title={t("General access")}
               guide="share.access"
               action={
                 <Segmented
-                  value={shared ? settings.role : null} options={ROLE_SEGMENTS[kind]}
-                  disabled={!shared || settings.audience === "list"}
-                  onChange={(role) => { if (shared && role !== settings.role) onUpdate({ role }); }}
+                  value={settings.role} options={ROLE_SEGMENTS[kind]} disabled={settings.audience === "list"}
+                  onChange={(role) => { if (role !== settings.role) onUpdate({ role }); }}
                 />
               }
             >
               <IconChoices
-                label={t("Who can open the link")} value={shared ? settings.audience : null} options={AUDIENCE_TILES}
-                onChange={pickAudience}
+                label={t("Who can open the link")} value={settings.audience} options={AUDIENCE_TILES}
+                onChange={(audience) => { if (audience !== settings.audience) onUpdate(audiencePatch(audience)); }}
               />
-              {shared ? <AccessSummary settings={settings} kind={kind} /> : null}
+              <AccessSummary settings={settings} kind={kind} />
             </Section>
-            {shared ? <StopSharing invited={users.length} onStop={onStop} /> : null}
           </>
         ) : null}
         {settings && publish ? <PublishSection {...publish} /> : null}

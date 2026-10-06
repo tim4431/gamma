@@ -778,12 +778,13 @@ page requires **Read pages** and selecting that page as context.
 Delegation, under the same **Fetch documents** permission as `fetch_paper`.
 `read_paper(source, question, title, version)` hands one document and one
 question to a second agent (`ai_agent.Helper`): it fetches the paper, reads
-as many windows as the question needs, and hands back one cited paragraph.
-The windows stay in the helper's own conversation, so the chat carries an
-answer of at most `_HELPER_ANSWER_MAX` (4 000) characters instead of a
-forty-page paper it would have to re-send every round for the rest of the
-reply. Four papers asked the same question cost about what one full read
-would.
+as many windows as the question needs, and hands back a cited answer, as
+long as the question needs and about 1 000 words at most
+(`READ_PAPER_PROMPT`). The windows stay in the helper's own conversation,
+so the chat carries an answer of at most `_HELPER_ANSWER_MAX` (8 000)
+characters instead of a forty-page paper it would have to re-send every
+round for the rest of the reply. Four papers asked the same question cost
+about what one full read would.
 
 The helper runs the same `AgentLoop` with `fetch_paper` as its only tool,
 no gate and no settle, at most `HELPER_ROUNDS` (12) rounds, on the chat's
@@ -793,23 +794,59 @@ does not answer it). Nothing it does can change the library, its pictures
 never leave it, and its cache key is the conversation's with `:helper`
 appended so the two prompts do not fight over one prefix cache.
 
-The parent's chip carries the document the helper actually read (`url`,
-`title`, `pdf`, `version`), its calls as `children` (up to 12, without
-their output — a child's text is the helper's, not the chat's), and
+The helper reads in the widest window the user's read cap allows. The tool
+passes it a scope with `read_default` set to that cap, which `_window_args`
+and the tool's description use in place of `READ_CHARS_DEFAULT` (6 000). A
+150 000-character review is then about eight reads at the default cap of
+20 000, where the short window needs twenty-five. The result the helper
+gets before its last round ends with `LAST_ROUND`, which tells it to
+answer. A helper that still asks for another read has no answer: the call
+fails with "the helper did not get to an answer", and the loop's own line
+about the round limit is not passed on.
+
+The parent's chip has its own kind, `helper`, and its summary names the
+helper ("Helper read “…”"). It carries the document the helper actually
+read (`url`, `title`, `pdf`, `version`), how many calls it made (`steps`),
+those calls as `children` (up to 12, without their output — a child's text
+is the helper's, not the chat's), and
 `spent`, the helper's token counts, which the loop yields as a `usage`
-event so the reply's footer counts the whole answer. A wall the helper met
+event so the reply's footer counts the whole answer. Each `fetch_paper`
+child names the PDF pages its window read (`pdf_pages`, from
+`ai_web.window_pages`), which the chat shows beside its summary. That is
+what tells reads of one document apart. A wall the helper met
 cannot show a card from in there, so its request rides up on the parent
 action as the `handoff`, and the chat's own card and wait take over
 ([above](#walls-and-the-browser-handoff)).
+
+While it works, the helper reports its status (`Helper.on_status`), its
+whole state each time it changes: `{id, label, state, steps, step?,
+blocked?}`.
+
+- `label` is the paper's title, or its source when the call gave none.
+- `state` is `reading`, `answering`, `done` or `failed`.
+- `steps` counts the calls it finished, and `step` is the call running
+  now (the loop's own step payload).
+- `blocked` is the host that stopped a fetch.
+
+The chat's loop cannot carry these: it is inside the `read_paper` call
+until the helper answers. A streamed chat puts them on its stream itself,
+as `{"helper"}` lines. `ai_chat` makes the relay's queue and hands it to
+`keepalive_lines` as `inbox`, and the helper's thread adds to it without
+waiting. A line is dropped when the client reads too slowly; each line
+carries the whole state, so the next one makes up for it. The chat keeps
+the newest state per `id` and shows a row per helper under the steps pill
+until the call's chip lands ([ai.md](ai.md#the-tool-loop)).
 
 The tool is offered only when **Read long papers with a helper**
 (`gamma-ai-delegate-reads`, account-wide, on by default) is set — the
 request's `delegate_reads`, which the scope carries as `delegates` and
 `available()` turns into the entry's `needs: "helper"`. The armed prompt
-says when to reach for it (the answer could be anywhere in a long
-document, or the same question over several papers) and when not (the
-document's own wording, a table, a quotation, or an abstract that already
-settles it).
+says when to reach for it: a request to read, summarise, explain or
+compare papers outside the library (one call per paper, in one turn — a
+probe shows only the front matter and is for checking a candidate), an
+answer that could be anywhere in a long document, or the same question
+over several papers. And when not: the document's own wording, a table, a
+quotation, or an abstract that already settles a narrow question.
 
 ### save_paper (both scopes)
 

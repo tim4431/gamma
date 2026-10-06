@@ -7,8 +7,9 @@
 // menus included (the account menu hosts its flyout through MenuScope).
 import React, { createContext, useContext, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { CheckIcon, ChevronDownIcon, ChevronRightIcon } from "./Icons";
+import { CheckIcon, ChevronDownIcon, ChevronRightIcon, MoreIcon } from "./Icons";
 import { useMenuAim } from "./menuAim";
+import { pressAt } from "./press.js";
 import { t } from "../../shared/i18n/i18n.js";
 
 // Every ContextMenu publishes its submenu state so the rows inside it — at
@@ -125,6 +126,26 @@ function MenuItem({ icon: Icon, children, trailing, keys, danger = false, classN
       <span className="ctxMenuIcon">{Icon ? <Icon size={14} /> : null}</span>
       <span className="ctxMenuText">{children}</span>
       {trailing ?? (keys ? <span className="ctxMenuKey">{keys}</span> : null)}
+    </button>
+  );
+}
+
+// A row's "⋯": the visible way into the menu its right-click or held finger
+// opens (press.js). `open` is that same opener; it gets a press under the
+// button, so the menu drops from it. Inside a `.rowMenuHost` the button shows
+// on hover where a pointer hovers, and at rest where none does (app.css).
+function MenuButton({ open, label = t("Actions"), className = "", ...rest }) {
+  return (
+    <button type="button" className={`ctlBtn rowMenuBtn ${className}`} aria-label={label} title={label} aria-haspopup="menu"
+      onClick={(e) => {
+        e.stopPropagation();
+        const r = e.currentTarget.getBoundingClientRect();
+        open(pressAt(r.left, r.bottom + 4, e.currentTarget));
+      }}
+      onDoubleClick={(e) => e.stopPropagation()}
+      {...rest}
+    >
+      <MoreIcon size={16} />
     </button>
   );
 }
@@ -317,4 +338,4 @@ function ActionMenu({ label, icon: Icon, items, disabled, iconOnly = false }) {
   );
 }
 
-export { ContextMenu, MenuScope, MenuItem, MenuLabel, MenuDivider, menuGroups, SubMenuItem, MenuSelect, ActionMenu };
+export { ContextMenu, MenuScope, MenuItem, MenuButton, MenuLabel, MenuDivider, menuGroups, SubMenuItem, MenuSelect, ActionMenu };

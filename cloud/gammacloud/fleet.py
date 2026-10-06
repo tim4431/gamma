@@ -6,22 +6,27 @@ result and posts a heartbeat every five minutes. The account server never
 touches Docker.
 
 A job is ``queued`` (the agent may take it), ``held`` (a later wave of an
-upgrade run), ``running`` (handed to the agent), ``done``, ``failed`` or
-``canceled``. ``hosted.py`` decides which jobs a server's lifecycle needs;
-this module stores, hands out and completes them, places new servers on a
-host by the memory already committed there, keeps each host's orphan
-containers, and runs upgrades (one server, or every one in waves).
+upgrade or update run), ``running`` (handed to the agent), ``done``,
+``failed`` or ``canceled``. ``hosted.py`` decides which jobs a server's
+lifecycle needs; this module stores, hands out and completes them, places
+new servers on a host by the memory already committed there, keeps each
+host's orphan containers, and runs upgrades and environment updates (one
+server, or many in waves), by hand or, for outdated servers, by itself.
 """
 
+import ipaddress
 import json
+import math
 import re
+import shlex
 import threading
 
-from . import config, db
+from . import config, db, dns, metrics, settings
 from .accounts import Problem
 from .log import log
 
-KINDS = ("create", "start", "stop", "restart", "delete", "upgrade", "rollback", "logs")
+KINDS = ("create", "start", "stop", "restart", "delete", "upgrade", "rollback", "logs", "update")
+SECRET_KINDS = ("create", "update")   # their payload holds secrets while it runs: blanked when the job ends
 STALE_AFTER = 15 * 60          # a host silent this long takes no new placements
 JOB_TIMEOUT = 3600             # a running job with no result after this is failed
 MAX_WAIT = 30                  # the longest a job poll is held open
@@ -31,6 +36,10 @@ LOGS_RESULT_MAX = 100_000      # a logs job's (its oldest lines go first)
 UPGRADABLE = ("running", "grace", "read_only", "suspended")
 TAG_RE = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$")
 HOST_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$")
+# The agent's installer (cloud/fleet/deploy/bootstrap.sh) and what it assumes when not told otherwise.
+BOOTSTRAP_URL = "https://raw.githubusercontent.com/tim4431/Gamma/main/cloud/fleet/deploy/bootstrap.sh"
+BOOTSTRAP_ACCOUNT_URL = "https://account.gammapdf.com"
+BOOTSTRAP_DOMAIN = "gammapdf.com"
 
 # Wakes a held job poll when a job is enqueued. The poll re-reads the
 # database at least every second anyway, since the enqueue is only visible
@@ -71,9 +80,41 @@ def nonneg(value) -> int:
         return 0
 
 
+def _number(value) -> float | None:
+    """A non-negative number from a report, to a tenth; None for anything else."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value < 0:
+        return None
+    return round(float(value), 1)
+
+
+def default_tag() -> str:
+    """The tag a new server runs and what *outdated* compares with: the Admin
+    page's setting, else the environment's (``settings.fleet_image_tag``)."""
+    return settings.fleet_image_tag()
+
+
 def default_image() -> str:
-    """The image a new server runs, and what ``outdated`` compares with."""
-    return f"{config.FLEET_IMAGE}:{config.FLEET_IMAGE_TAG}"
+    return f"{config.FLEET_IMAGE}:{default_tag()}"
+
+
+def outdated_why(row) -> str:
+    """Why a server is outdated: ``tag`` when it runs another tag than the
+    default, ``image`` when its agent reports that the registry's image for
+    the tag it runs is not the one it runs (a container started on
+    ``latest`` months ago). "" when neither, or the server is deleted."""
+    if row["state"] == "deleted":
+        return ""
+    if (row["image_tag"] or default_tag()) != default_tag():
+        return "tag"
+    agent = json_dict(row["report"]).get("agent")
+    return "image" if isinstance(agent, dict) and agent.get("image_stale") is True else ""
+
+
+def created(conn, server_id: str) -> bool:
+    """Whether the server's container exists: its last create job is done."""
+    job = conn.execute("SELECT state FROM fleet_jobs WHERE server_id = ? AND kind = 'create' "
+                       "ORDER BY created_at DESC, rowid DESC LIMIT 1", (server_id,)).fetchone()
+    return bool(job and job["state"] == "done")
 
 
 def size_of(limits: dict) -> tuple[int, float]:
@@ -102,18 +143,47 @@ def _check_name(conn, name: str, host_id: str = "") -> str:
     return name
 
 
-def add_host(conn, name: str, address: str = "", actor: str = "") -> tuple[dict, str]:
-    """A new host and its agent token (shown once; stored as its hash)."""
-    name = _check_name(conn, name)
+def _check_ip(value: str) -> str:
+    """A host's public address as stored: "" for none, else an IPv4 or IPv6
+    address in its usual form."""
+    value = (value or "").strip()
+    if not value:
+        return ""
+    try:
+        return str(ipaddress.ip_address(value))
+    except ValueError:
+        raise Problem(400, "A public IP is an IPv4 or IPv6 address, or empty.") from None
+
+
+def add_host(conn, name: str, address: str = "", actor: str = "", public_ip: str = "") -> tuple[dict, str]:
+    """A new host and its agent token (shown once; stored as its hash).
+    ``public_ip`` makes it a routed host (``dns.py``): it runs a Caddy of
+    its own, and each server on it gets a DNS record."""
+    name, public_ip = _check_name(conn, name), _check_ip(public_ip)
     host_id, token = "h_" + db.new_token(9), "gf_" + db.new_token(32)
-    conn.execute("INSERT INTO hosts (id, name, address, token_hash, created_at) VALUES (?, ?, ?, ?, ?)",
-                 (host_id, name, (address or "").strip()[:200], db.token_hash(token), db.now()))
-    db.audit(conn, "fleet.host_add", actor=actor, detail=f"{host_id} {name}")
+    conn.execute("INSERT INTO hosts (id, name, address, public_ip, token_hash, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                 (host_id, name, (address or "").strip()[:200], public_ip, db.token_hash(token), db.now()))
+    db.audit(conn, "fleet.host_add", actor=actor, detail=f"{host_id} {name}" + (f" {public_ip}" if public_ip else ""))
     return host_view(conn, host_id), token
 
 
+def bootstrap_command(token: str, edge: bool) -> str:
+    """The line that installs the agent on a fresh host with ``token``
+    (``cloud/fleet/deploy/bootstrap.sh``); ``edge`` adds the host's own
+    Caddy. The account server's address and the domain are named only when
+    they are not the script's defaults."""
+    args = ["--token", token]
+    if config.PUBLIC_URL != BOOTSTRAP_ACCOUNT_URL:
+        args += ["--account-url", config.PUBLIC_URL]
+    if edge:
+        args.append("--edge")
+        if config.HOSTED_DOMAIN and config.HOSTED_DOMAIN != BOOTSTRAP_DOMAIN:
+            args += ["--domain", config.HOSTED_DOMAIN]
+    return f"curl -fsSL {BOOTSTRAP_URL} | bash -s -- " + " ".join(shlex.quote(a) for a in args)
+
+
 def update_host(conn, host_id: str, *, name: str | None = None, accepting: bool | None = None,
-                actor: str = "") -> dict:
+                public_ip: str | None = None, actor: str = "") -> dict:
     row = conn.execute("SELECT * FROM hosts WHERE id = ?", (host_id,)).fetchone()
     if not row:
         raise Problem(404, "no such host")
@@ -124,6 +194,11 @@ def update_host(conn, host_id: str, *, name: str | None = None, accepting: bool 
     if accepting is not None:
         conn.execute("UPDATE hosts SET accepting = ? WHERE id = ?", (1 if accepting else 0, host_id))
         db.audit(conn, "fleet.host_accepting", actor=actor, detail=f"{host_id} {'on' if accepting else 'off'}")
+    if public_ip is not None and _check_ip(public_ip) != row["public_ip"]:
+        public_ip = _check_ip(public_ip)
+        conn.execute("UPDATE hosts SET public_ip = ? WHERE id = ?", (public_ip, host_id))
+        db.audit(conn, "fleet.host_ip", actor=actor, detail=f"{host_id} {public_ip or 'none'}")
+        dns.kick()          # its servers' records are made, moved or removed once this commits
     return host_view(conn, host_id)
 
 
@@ -162,6 +237,8 @@ def public_host(row, placed: dict | None = None) -> dict:
     out["free_mb"] = _free_mb(row, use["committed_mb"])
     # a server placed since the heartbeat is no orphan any more
     out["orphans"] = [label for label in _json_list(row["orphans"]) if label not in use["labels"]]
+    # a routed host: "on", or "off" while DNS is, which keeps it out of placement
+    out["dns"] = ("on" if dns.enabled() else "off") if row["public_ip"] else ""
     return out
 
 
@@ -177,15 +254,18 @@ def hosts(conn) -> list[dict]:
     return [public_host(r, placed) for r in conn.execute("SELECT * FROM hosts ORDER BY created_at").fetchall()]
 
 
-def place(conn, plan: str):
-    """The host a new server of ``plan`` goes on: an accepting host seen
-    within STALE_AFTER, with more free disk than the plan's quota and at
-    least the plan's memory free once what is committed to its servers and
+def place(conn, need: int, quota: int):
+    """The host a new server goes on: an accepting host seen within
+    STALE_AFTER, with more free disk than its ``quota`` (MB) and at least
+    ``need`` MB of memory free once what is committed to its servers and
     HOST_RESERVE_MB are counted; the most free memory first (the oldest
-    host on a tie). None when no host has room."""
-    need, quota = config.PLAN_LIMITS[plan]["memory_mb"], config.PLAN_LIMITS[plan]["quota_mb"]
+    host on a tie). None when no host has room. ``hosted`` passes the
+    server's numbers: its plan's, or its own overrides. A routed host (one
+    with a ``public_ip``) qualifies only while DNS is on: a server there is
+    reached through a record of its own (``dns.py``)."""
     rows = conn.execute("SELECT * FROM hosts WHERE accepting = 1 AND last_seen_at >= ? AND disk_mb - disk_used_mb > ? "
-                        "ORDER BY created_at", (db.after(-STALE_AFTER), quota)).fetchall()
+                        "AND (public_ip = '' OR ?) ORDER BY created_at",
+                        (db.after(-STALE_AFTER), quota, 1 if dns.enabled() else 0)).fetchall()
     placed = _placed(conn)
     fits = [(free, r) for r in rows
             if (free := _free_mb(r, (placed.get(r["id"]) or {}).get("committed_mb", 0))) >= need]
@@ -195,9 +275,12 @@ def place(conn, plan: str):
 def heartbeat(conn, host, body: dict) -> None:
     """What an agent reports every five minutes: the host's capacity and
     use, and each container it runs. A server's container is merged into
-    its ``report`` under ``agent``; a container no server row on this host
-    names is kept as one of the host's ``orphans`` until it goes or a row
-    names it."""
+    its ``report`` under ``agent`` (what Docker says of it, and whether the
+    registry has another image for its tag: ``image_stale``, None when the
+    agent could not tell); a container no server row on this host names is
+    kept as one of the host's ``orphans`` until it goes or a row names it.
+    The host's use and each server's container are also kept as the hour's
+    sample (``metrics.record``)."""
     ts = db.now()
     labels = {r[0] for r in conn.execute("SELECT label FROM hosted_servers WHERE host_id = ?", (host["id"],))}
     orphans = []
@@ -215,14 +298,23 @@ def heartbeat(conn, host, body: dict) -> None:
         report["agent"] = {"running": bool(c.get("running")), "health": str(c.get("health") or "")[:40],
                            "memory_mb": nonneg(c.get("memory_mb")), "memory_limit_mb": nonneg(c.get("memory_limit_mb")),
                            "data_mb": nonneg(c.get("data_mb")), "image": str(c.get("image") or "")[:200],
+                           "cpu_pct": _number(c.get("cpu_pct")), "restarts": nonneg(c.get("restarts")),
+                           "started_at": str(c.get("started_at") or "")[:40], "oom_killed": c.get("oom_killed") is True,
+                           "image_stale": c["image_stale"] if isinstance(c.get("image_stale"), bool) else None,
                            "last_seen_at": ts}
         conn.execute("UPDATE hosted_servers SET report = ?, reported_at = ? WHERE id = ?",
                      (json.dumps(report), ts, row["id"]))
+        metrics.record(conn, "server", row["id"], {k: report["agent"][k] for k in ("memory_mb", "cpu_pct", "data_mb",
+                                                                                   "restarts")})
     conn.execute("UPDATE hosts SET agent_version = ?, memory_mb = ?, disk_mb = ?, memory_used_mb = ?, "
                  "disk_used_mb = ?, orphans = ?, last_seen_at = ? WHERE id = ?",
                  (str(body.get("agent_version") or "")[:40], nonneg(body.get("memory_mb")), nonneg(body.get("disk_mb")),
                   nonneg(body.get("memory_used_mb")), nonneg(body.get("disk_used_mb")),
                   json.dumps(sorted(orphans)[:100]), ts, host["id"]))
+    use = _placed(conn).get(host["id"]) or {"servers": 0, "committed_mb": 0}
+    metrics.record(conn, "host", host["id"], {"memory_used_mb": nonneg(body.get("memory_used_mb")),
+                                              "disk_used_mb": nonneg(body.get("disk_used_mb")),
+                                              "committed_mb": use["committed_mb"], "servers": use["servers"]})
 
 
 def stale_hosts(conn) -> list[str]:
@@ -285,9 +377,10 @@ def enqueue(conn, host_id: str, server_id: str, kind: str, payload: dict, *, wav
 
 
 def claim(conn, host_id: str) -> dict | None:
-    """The host's oldest queued job, marked running; None when there is none.
-    The write lock is taken only once a plain read found a job, so an idle
-    long poll never holds it."""
+    """The host's oldest queued job, marked running, with the payload the
+    agent gets (``_handed``); None when there is none. The write lock is
+    taken only once a plain read found a job, so an idle long poll never
+    holds it."""
     sql = "SELECT * FROM fleet_jobs WHERE host_id = ? AND state = 'queued' ORDER BY created_at, id LIMIT 1"
     if conn.execute(sql, (host_id,)).fetchone() is None:
         conn.commit()                                # end the read, so the next poll sees new commits
@@ -298,17 +391,35 @@ def claim(conn, host_id: str) -> dict | None:
         if not row:
             conn.commit()
             return None
-        taken = _orphan_label_taken(conn, row)
-        if not taken:
+        payload, refused = _handed(conn, row)
+        if not refused:
             break
-        # an orphan's removal whose label a server took since it was queued
-        # (or retried): handing it out would delete that server
-        conn.execute("UPDATE fleet_jobs SET state = 'canceled', finished_at = ?, result = ? WHERE id = ?",
-                     (db.now(), json.dumps({"error": taken}), row["id"]))
-    conn.execute("UPDATE fleet_jobs SET state = 'running', started_at = ?, attempts = attempts + 1 WHERE id = ?",
-                 (db.now(), row["id"]))
+        conn.execute("UPDATE fleet_jobs SET state = 'canceled', finished_at = ?, result = ?, payload = ? WHERE id = ?",
+                     (db.now(), json.dumps({"error": refused}),
+                      "{}" if row["kind"] in SECRET_KINDS else row["payload"], row["id"]))
+    conn.execute("UPDATE fleet_jobs SET state = 'running', started_at = ?, attempts = attempts + 1, payload = ? "
+                 "WHERE id = ?", (db.now(), json.dumps(payload), row["id"]))
     conn.commit()
-    return {"id": row["id"], "kind": row["kind"], "server_id": row["server_id"], "payload": json_dict(row["payload"])}
+    return {"id": row["id"], "kind": row["kind"], "server_id": row["server_id"], "payload": payload}
+
+
+def _handed(conn, job) -> tuple[dict, str]:
+    """The payload the agent gets for a job, and why the job must not run
+    ("" when it may). A create or update job's ``extra_env`` (the fleet's
+    variables with the server's own over them) is read now rather than when
+    it was queued, so a job that waited, in a later wave say, or was
+    retried after its payload was blanked, applies the newest; it stays in
+    the payload only while the job runs. An orphan's removal whose label a
+    server took since it was queued (or retried) must not run: it would
+    delete that server."""
+    payload = json_dict(job["payload"])
+    if job["kind"] in SECRET_KINDS and job["server_id"]:
+        server = conn.execute("SELECT * FROM hosted_servers WHERE id = ?", (job["server_id"],)).fetchone()
+        if server is None or server["state"] == "deleted":
+            return payload, "the server is deleted"
+        from . import hosted  # hosted imports this module
+        payload = {**payload, "label": server["label"], "extra_env": hosted.extra_env(conn, server)}
+    return payload, _orphan_label_taken(conn, job)
 
 
 def _orphan_label_taken(conn, job) -> str:
@@ -341,10 +452,11 @@ def _result_text(kind: str, result) -> str:
 
 
 def complete(conn, host, job_id: str, state: str, result) -> dict:
-    """An agent's result for a job it was handed. A create job's payload
-    (it holds the container's client secret) is blanked here. A result
-    that arrives after ``fail_stuck`` gave up on the job still counts, as
-    long as no admin retried or canceled it since."""
+    """An agent's result for a job it was handed. A create or update job's
+    payload (it holds the container's client secret, or its environment)
+    is blanked here. A result that arrives after ``fail_stuck`` gave up on
+    the job still counts, as long as no admin retried or canceled it
+    since."""
     if state not in ("done", "failed"):
         raise Problem(400, "state must be done or failed")
     job_row = conn.execute("SELECT * FROM fleet_jobs WHERE id = ? AND host_id = ?", (job_id, host["id"])).fetchone()
@@ -356,7 +468,7 @@ def complete(conn, host, job_id: str, state: str, result) -> dict:
     payload = json_dict(job_row["payload"])
     conn.execute("UPDATE fleet_jobs SET state = ?, result = ?, finished_at = ?, payload = ? WHERE id = ?",
                  (state, _result_text(job_row["kind"], result), db.now(),
-                  "{}" if job_row["kind"] == "create" else job_row["payload"], job_id))
+                  "{}" if job_row["kind"] in SECRET_KINDS else job_row["payload"], job_id))
     if job_row["kind"] == "delete" and not job_row["server_id"] and state == "done":
         _drop_orphan(conn, host["id"], payload.get("label", ""))
     from . import hosted  # hosted imports this module
@@ -367,7 +479,7 @@ def complete(conn, host, job_id: str, state: str, result) -> dict:
 
 def fail_stuck(conn) -> int:
     """Running jobs with no result after JOB_TIMEOUT (an agent that died
-    mid-job) are failed, which also pauses their upgrade run. A create
+    mid-job) are failed, which also pauses their run. A create or update
     job's payload is blanked as on any finish; a result that comes late is
     still taken (``complete``)."""
     rows = conn.execute("SELECT * FROM fleet_jobs WHERE state = 'running' AND started_at < ?",
@@ -376,7 +488,7 @@ def fail_stuck(conn) -> int:
     result = {"error": "no result from the agent within an hour", "timed_out": True}
     for row in rows:
         conn.execute("UPDATE fleet_jobs SET state = 'failed', result = ?, finished_at = ?, payload = ? WHERE id = ?",
-                     (json.dumps(result), db.now(), "{}" if row["kind"] == "create" else row["payload"], row["id"]))
+                     (json.dumps(result), db.now(), "{}" if row["kind"] in SECRET_KINDS else row["payload"], row["id"]))
         hosted.job_finished(conn, dict(row), json_dict(row["payload"]), False, result)
     return len(rows)
 
@@ -384,8 +496,9 @@ def fail_stuck(conn) -> int:
 def retry(conn, job_id: str, actor: str = "") -> dict:
     """Queue a failed or canceled job again under the same id (so its wave
     can go on). A create job's payload was blanked, so it is rebuilt with a
-    new client secret. Refused for a deleted server (but its delete job)
-    and for a create job a later one replaced."""
+    new client secret; an update job's is built again when the agent takes
+    it (``_handed``). Refused for a deleted server (but its delete job) and
+    for a create job a later one replaced."""
     row = conn.execute("SELECT * FROM fleet_jobs WHERE id = ?", (job_id,)).fetchone()
     if not row:
         raise Problem(404, "no such job")
@@ -420,7 +533,7 @@ def cancel(conn, job_id: str, actor: str = "") -> dict:
     if row["state"] not in ("queued", "held", "failed"):
         raise Problem(409, f"a {row['state']} job cannot be canceled")
     conn.execute("UPDATE fleet_jobs SET state = 'canceled', finished_at = ?, payload = ? WHERE id = ?",
-                 (db.now(), "{}" if row["kind"] == "create" else row["payload"], job_id))
+                 (db.now(), "{}" if row["kind"] in SECRET_KINDS else row["payload"], job_id))
     db.audit(conn, "fleet.job_cancel", actor=actor, detail=f"{job_id} {row['kind']}")
     release_waves(conn)
     return job(conn, job_id)
@@ -435,19 +548,21 @@ def _duration(row) -> float | None:
 
 
 def _waves(conn) -> dict[str, tuple[int, int]]:
-    """Per upgrade run: its jobs, and how many of them are done."""
+    """Per upgrade or update run: its jobs, and how many of them are done."""
     return {r[0]: (r[1], r[2]) for r in conn.execute(
         "SELECT substr(wave, 1, instr(wave, '/') - 1), COUNT(*), SUM(state = 'done') FROM fleet_jobs "
         "WHERE wave != '' GROUP BY 1").fetchall()}
 
 
 def public_job(row, waves: dict | None = None, full: bool = True) -> dict:
-    """A job as the admin sees it: never a create payload's ``env`` (its
-    secrets never leave the queue); in a list (``full`` False) a logs
-    job's lines are only counted."""
+    """A job as the admin sees it: never a create payload's ``env`` and of
+    an ``extra_env`` only the names (their secrets never leave the queue);
+    in a list (``full`` False) a logs job's lines are only counted."""
     out = dict(row)
     payload = json_dict(row["payload"])
     payload.pop("env", None)
+    if isinstance(payload.get("extra_env"), dict):
+        payload["extra_env"] = sorted(payload["extra_env"])
     out["payload"] = payload
     out["label"] = out.get("label") or str(payload.get("label") or "")   # an orphan's removal has no server
     out["duration_s"] = _duration(row)
@@ -484,7 +599,10 @@ def jobs(conn, state: str = "", limit: int = 100) -> list[dict]:
     return [public_job(r, waves, full=False) for r in rows]
 
 
-# --- upgrades -----------------------------------------------------------------
+# --- upgrades and environment updates -------------------------------------------
+# Both recreate containers, one wave of servers at a time: an ``upgrade``
+# run moves them to an image tag, an ``update`` run rebuilds them on their
+# own image with the extra environment as it is now (hosted.extra_env).
 
 def _upgrade_pending(conn) -> set[str]:
     """Servers with an image upgrade queued, held or running. A resize (an
@@ -495,43 +613,130 @@ def _upgrade_pending(conn) -> set[str]:
     return {r["server_id"] for r in rows if json_dict(r["payload"]).get("image")}
 
 
+def update_pending(conn) -> set[str]:
+    """Servers with an update queued or held. It reads the environment when
+    the agent takes it, so it applies the newest anyway; one already
+    running may not, so it does not count."""
+    rows = conn.execute("SELECT server_id FROM fleet_jobs WHERE kind = 'update' AND state IN ('queued', 'held')")
+    return {r[0] for r in rows.fetchall()}
+
+
 def _upgrade_payload(row, tag: str) -> dict:
     return {"label": row["label"], "image": f"{config.FLEET_IMAGE}:{tag}", "tag": tag}
 
 
-def upgrade(conn, tag: str, wave_size: int, server_ids: list[str] | None = None, actor: str = "") -> dict:
-    """Upgrade servers to ``FLEET_IMAGE:tag`` in waves of ``wave_size``: the
-    first wave is queued, the rest held; each wave is released only when
-    every job before it is done (or canceled), so one failure pauses the
-    run until an admin retries or cancels the failed job."""
-    if not TAG_RE.match(tag or ""):
-        raise Problem(400, "bad image tag")
-    wave_size = max(1, min(int(wave_size or 1), 100))
+def _run_rows(conn, server_ids: list[str] | None, busy: set[str], kind: str) -> list:
+    """The servers a run of ``kind`` takes: those with a host in a state an
+    upgrade takes (only ``server_ids`` when given; for an update, only
+    those whose container exists), less the ``busy`` ones."""
     rows = conn.execute("SELECT * FROM hosted_servers WHERE host_id != '' AND state IN (%s) ORDER BY created_at"
                         % ",".join("?" * len(UPGRADABLE)), UPGRADABLE).fetchall()
     if server_ids is not None:
         wanted = set(server_ids)
         rows = [r for r in rows if r["id"] in wanted]
+    if kind == "update":
+        rows = [r for r in rows if created(conn, r["id"])]
     if not rows:
-        raise Problem(400, "no running server to upgrade")
-    busy = _upgrade_pending(conn)
+        raise Problem(400, f"no running server to {kind}")
     rows = [r for r in rows if r["id"] not in busy]
     if not rows:
-        raise Problem(409, "every one of those servers already has an upgrade pending")
-    run = "u" + db.new_token(6)
-    image = f"{config.FLEET_IMAGE}:{tag}"
+        raise Problem(409, f"every one of those servers already has an {kind} pending")
+    return rows
+
+
+def _start_run(conn, kind: str, rows: list, wave_size: int, payload, what: str, actor: str) -> dict:
+    """One ``kind`` job per server row (``payload(row)``) in waves of
+    ``wave_size`` under a new run id: the first wave is queued, the rest
+    held; each wave is released only when every job before it is done (or
+    canceled), so one failure pauses the run until an admin retries or
+    cancels the failed job (``release_waves``)."""
+    wave_size = max(1, min(int(wave_size or 1), 100))
+    run = ("u" if kind == "upgrade" else "e") + db.new_token(6)
     for i, row in enumerate(rows):
         n = i // wave_size + 1
-        enqueue(conn, row["host_id"], row["id"], "upgrade", _upgrade_payload(row, tag),
-                wave=f"{run}/{n:03d}", state="queued" if n == 1 else "held")
+        enqueue(conn, row["host_id"], row["id"], kind, payload(row), wave=f"{run}/{n:03d}",
+                state="queued" if n == 1 else "held")
     waves = (len(rows) - 1) // wave_size + 1
-    db.audit(conn, "fleet.upgrade", actor=actor, detail=f"{run} {image} servers={len(rows)} waves={waves}")
-    return {"run": run, "image": image, "jobs": len(rows), "waves": waves}
+    db.audit(conn, f"fleet.{kind}", actor=actor, detail=f"{run} {what} servers={len(rows)} waves={waves}")
+    return {"run": run, "jobs": len(rows), "waves": waves}
+
+
+def upgrade(conn, tag: str, wave_size: int, server_ids: list[str] | None = None, actor: str = "") -> dict:
+    """Upgrade servers to ``FLEET_IMAGE:tag`` in waves of ``wave_size``. The
+    tag may be the one a server runs already: the agent pulls it, so the
+    server gets the registry's newest image for it."""
+    if not TAG_RE.match(tag or ""):
+        raise Problem(400, "bad image tag")
+    rows = _run_rows(conn, server_ids, _upgrade_pending(conn), "upgrade")
+    image = f"{config.FLEET_IMAGE}:{tag}"
+    return {**_start_run(conn, "upgrade", rows, wave_size, lambda r: _upgrade_payload(r, tag), image, actor),
+            "image": image}
+
+
+def upgrade_outdated(conn, wave_size: int, actor: str = "") -> dict:
+    """An upgrade run to the default tag for exactly the outdated servers
+    (``outdated_why``)."""
+    rows = conn.execute("SELECT * FROM hosted_servers WHERE state != 'deleted'").fetchall()
+    ids = [r["id"] for r in rows if outdated_why(r)]
+    if not ids:
+        raise Problem(409, "no server is outdated")
+    return upgrade(conn, default_tag(), wave_size, ids, actor)
+
+
+def upgrade_in_flight(conn) -> bool:
+    """Whether an upgrade run has a job queued, held, running or failed: a
+    failed one pauses its run until an admin retries or cancels it."""
+    return conn.execute("SELECT 1 FROM fleet_jobs WHERE kind = 'upgrade' AND wave != '' "
+                        "AND state IN ('queued', 'held', 'running', 'failed') LIMIT 1").fetchone() is not None
+
+
+AUTO_UPGRADE_REST = 86400      # an automatic upgrade for a moved image waits this long after the last one
+
+
+def _upgraded_within(conn, server_id: str, seconds: int) -> bool:
+    """Whether an image upgrade of the server (not a resize) finished within
+    ``seconds``."""
+    return conn.execute("SELECT 1 FROM fleet_jobs WHERE server_id = ? AND kind = 'upgrade' AND state = 'done' "
+                        "AND payload LIKE '%\"image\"%' AND finished_at >= ? LIMIT 1",
+                        (server_id, db.after(-seconds))).fetchone() is not None
+
+
+def auto_upgrade(conn) -> dict | None:
+    """The hourly pass's upgrade, while ``settings.fleet_auto_upgrade`` is on:
+    the outdated servers one per wave, unless an upgrade run is in flight. A
+    failed upgrade so stops the automatic ones too until an admin retries
+    or cancels it. A server outdated only because its tag moved in the
+    registry is taken once a day at most (``AUTO_UPGRADE_REST``): were the
+    agent's staleness report ever wrong after a pull, the hourly pass would
+    otherwise rebuild that server every hour. The run, or None when none
+    was started."""
+    if not settings.fleet_auto_upgrade() or upgrade_in_flight(conn):
+        return None
+    rows = conn.execute("SELECT * FROM hosted_servers WHERE state != 'deleted'").fetchall()
+    ids = [r["id"] for r in rows
+           if outdated_why(r) == "tag"
+           or (outdated_why(r) == "image" and not _upgraded_within(conn, r["id"], AUTO_UPGRADE_REST))]
+    if not ids:
+        return None
+    try:
+        run = upgrade(conn, default_tag(), 1, ids, actor="system")
+    except Problem:
+        return None                # nothing of it that an upgrade takes now
+    db.audit(conn, "fleet.auto_upgrade", actor="system", detail=f"{run['run']} {run['image']} servers={run['jobs']}")
+    return run
+
+
+def update_env(conn, wave_size: int, server_ids: list[str] | None = None, actor: str = "") -> dict:
+    """Apply the extra environment to running servers in waves: an
+    ``update`` job each, which rebuilds the container on its own image.
+    Servers with an update waiting already are skipped."""
+    rows = _run_rows(conn, server_ids, update_pending(conn), "update")
+    return _start_run(conn, "update", rows, wave_size, lambda r: {"label": r["label"]}, "environment", actor)
 
 
 def upgrade_one(conn, server_id: str, tag: str, actor: str = "") -> dict:
-    """One server to ``FLEET_IMAGE:tag``, outside any wave. Its
-    ``image_tag`` moves when the job is done."""
+    """One server to ``FLEET_IMAGE:tag``, outside any wave (its own tag
+    too). Its ``image_tag`` moves when the job is done."""
     if not TAG_RE.match(tag or ""):
         raise Problem(400, "bad image tag")
     row = conn.execute("SELECT * FROM hosted_servers WHERE id = ?", (server_id,)).fetchone()

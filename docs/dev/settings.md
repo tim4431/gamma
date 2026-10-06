@@ -13,7 +13,7 @@ Where every setting lives, and how the Settings dialog is built.
 | Per account, seen notices | the account-wide `notices-seen` prefs key (`db.NOTICES_SEEN_PREF_KEY`), `{notice id: fingerprint}`, written only by `POST /api/notices/{id}/seen` (below, "Notices") | which release and which log error the account has already looked at |
 | Per account, server-only | AI provider entries (keys/OAuth tokens) under the reserved `ai-settings` prefs key (account-wide), managed via `/api/ai/providers*`; the browser only ever sees a masked hint. The server's shared entries (next row) are listed after them read-only. Machine-translation keys live the same way under the reserved `translate-engines` key (`/api/translate/engines*`, [ai.md](ai.md) "PDF translation"), and the online search settings under the reserved `search-services` key (`/api/ai/search-services*`, [ai_tools.md](ai_tools.md) "search_web") | API keys, ChatGPT OAuth, Google / Youdao translation keys, the web search engine with Brave / SearXNG / OpenAlex settings |
 | Per workspace | `workspaces` / `workspace_members` in `users.db`, via `/api/workspaces*` ([workspaces.md](workspaces.md)) | name, kind (personal / shared), members and roles, access (private / public + the public role) and a shared workspace's own quota (admins), the account's default workspace, which workspace this tab works in (`?ws=` in the URL, `gamma-last-ws:<user>` remembers the last one) |
-| Server-wide (admin) | `settings` KV in `users.db` via `GET/PUT /api/admin/settings`, plus nullable per-user override columns; the shared AI entries under the `ai_providers` key via `/api/admin/ai-providers*` (keys encrypted with the data directory's key, like the cloud client secret) | default max upload size, default storage quota, public URL, cloud sign-in (and whether this server is the share host), how long guest workspaces last (`guest_ttl_hours`) and demo mode (`demo_mode`, [guests.md](guests.md)), shared AI provider entries, whether guests may use them and the shared AI allowance per account / per guest, the off-site copies (the `offsite` key via `/api/admin/offsite`, its secret key encrypted the same way), a hosted container's last plan answer (`hosted_limits`, written only by the sync, [cloud_accounts.md](cloud_accounts.md) "Hosted containers") |
+| Server-wide (admin) | `settings` KV in `users.db` via `GET/PUT /api/admin/settings`, plus nullable per-user override columns; the shared AI entries under the `ai_providers` key via `/api/admin/ai-providers*` (keys encrypted with the data directory's key, like the cloud client secret) | default max upload size, default storage quota, public URL, cloud sign-in (and whether this server is the share host), how long guest workspaces last (`guest_ttl_hours`) and demo mode (`demo_mode`, [guests.md](guests.md)), shared AI provider entries, whether guests may use them and the shared AI allowance per account / per guest, the off-site copies (the `offsite` key via `/api/admin/offsite`, its secret key encrypted the same way), a hosted container's last plan answer (`hosted_limits`, written only by the sync, [cloud_accounts.md](cloud_accounts.md) "Hosted containers") and the time of its last write (`hosted_last_write`, saved by the sync) |
 
 Adding a preference = one entry in `PREFS` (key, scope, default, and a codec
 if the value needs validation) plus a control in the matching settings pane;
@@ -202,6 +202,8 @@ and integration tokens get an empty list. The sources:
 | `publish-conflicts` | everyone | Account | warn | a workspace publishing pages to Gamma Cloud has open sync conflicts | per publication, as `mirror-conflicts` |
 | `cloud-sync` | everyone | Account | warn | the account's Gamma Cloud sync is in its `error` state (`cloud_sync.profile_status`) | the failure's timestamp |
 | `cloud-sync-choice` | everyone | Account | warn | the first settings sync with Gamma Cloud found two different copies and waits for Fetch from cloud / Push to cloud (state `choose`) | constant: seen once |
+| `cloud-link` | everyone | Account | info | cloud sign-in works here (on, and not waiting for Connect) and the account has no Gamma Cloud identity (`cloud_auth.status_of`); not on the share host. The Account pane's Gamma Cloud row says what linking gives and links it | constant: seen once |
+| `cloud-setup` | admins | Server | info | cloud sign-in is off, or on but the server still has to be connected (`cloud_auth.needs_connect`); Server → Sign-in turns it on | `off` / `connect`, so each state is seen once |
 | `free-translate` | everyone who met the failures | Translation | warn | Microsoft's free translation service failed `FREE_ALERT_AFTER` (3) times in a row, in memory (`translate_engines.free_failing`); one success ends it, and the Microsoft row names the error | the streak's start time |
 | `hosted` | admins (grace), everyone (read-only) | Server for admins, Account for members | warn / error | a hosted container's cached plan answer (`hosted.limits`, from memory) is in `grace` (admins only; names `grace_until`) or read-only (everyone) — [cloud_accounts.md](cloud_accounts.md) "Hosted containers" | the status and since when it holds (`status_since`), so each episode is seen once |
 | `storage` | everyone | Account | warn / error | personal storage past 90 % of the quota / full; only computed for an account under a quota, and the upload walk is remembered ten minutes (`notices.forget_usage`) | `90` / `full` |
@@ -318,7 +320,9 @@ AI:
   the models with the name and test model under More options; its button is
   Connect, and the new connection is tested once saved; the server's shared entries follow the account's own as read-only
   rows tagged "Shared by this server", selectable as the active key but
-  without Test / Manage / delete), the login connection check, the models
+  without Test / Manage / delete; with no key picked, or the picked one
+  removed, the first connection that offers models is the active one, here
+  and in the chat's model menu), the login connection check, the models
   (default chat, metadata, dictation) and the account's token usage
   ([ai.md](ai.md) "Token usage"). While a shared entry applies, the usage
   opens with a **Shared allowance** row ("12k of 50k tokens in the last
@@ -512,10 +516,15 @@ row here.
 Editing shows one Save button as the section's action. Values are stored in
 the server `settings` table (`cloud_*`), read-only when `GAMMA_CLOUD_ISSUER`
 manages them. The login page reads `GET /api/server-config` and shows "Sign
-in with Gamma Cloud" while it is on. The **Account** pane gets a "Gamma
+in with Gamma Cloud" while it is on. The **Account** pane has a "Gamma
 Cloud" row (`CloudIdentityRow`): the linked username and plan with an Unlink
 button, or a "Link Gamma Cloud account" button that round-trips through the
-account server ([cloud_accounts.md](cloud_accounts.md)).
+account server ([cloud_accounts.md](cloud_accounts.md)). Unlinked, its hint
+says what linking gives: free publishing and settings carried to the
+person's other servers. While sign-in is off, or on but waiting for Connect,
+the row stays with that hint. An admin gets a *Set up* button that opens
+Server at the Account server row; anyone else gets an `off` tag, and the
+hover says an admin turns it on.
 
 Search is backed by [settingsSearch.js](../../frontend/src/settings/settingsSearch.js).
 Each entry names its pane, the setting's label, its section, its one-line

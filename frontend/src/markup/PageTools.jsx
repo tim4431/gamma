@@ -11,8 +11,9 @@ import { createContext, useContext, useMemo, useRef } from "react";
 // on a read-only page and while the Text tool is armed. text.armed: the Text
 // tool is armed; text.style: the style of new boxes ({size, color, bg}).
 // actions carries the handlers: the ink ones (onStroke, onErase,
-// onErasePartial, onSelect, onAction, onMoveSelection), onJump (show a
-// mark's block in the notes) and the text boxes' (markup/useTextBoxes.js).
+// onErasePartial, onSelect, onAction, onMoveSelection, onFingerScroll),
+// onJump (show a mark's block in the notes) and the text boxes'
+// (markup/useTextBoxes.js).
 export const PageToolsContext = createContext(null);
 export const usePageTools = () => useContext(PageToolsContext);
 

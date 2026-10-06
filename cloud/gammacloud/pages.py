@@ -17,7 +17,7 @@ import re
 from datetime import datetime, timezone
 from urllib.parse import urlsplit
 
-from . import accounts, config, entrance, pages_billing, pages_fleet, settings
+from . import accounts, config, entrance, pages_billing, pages_fleet, pages_overview, settings
 from .providers import NAMES
 
 SITE = "https://gammapdf.com"
@@ -68,6 +68,7 @@ form .btn{margin-top:14px}.cf-turnstile{margin-top:14px}.msg{min-height:1.3em;fo
 .dests{display:grid;gap:8px;margin:20px 0 4px}.dest{display:flex;align-items:center;gap:12px;width:100%;padding:11px 12px;border:1px solid var(--line-2);border-radius:8px;background:var(--surface);color:var(--text);font:inherit;text-align:left;cursor:pointer;transition:background-color .1s,border-color .1s}
 .dest:hover{background:var(--surface-2);border-color:var(--accent);text-decoration:none}.dest:disabled{opacity:.6;cursor:default}.dest i{width:32px;height:32px;border-radius:7px;background:var(--surface-2);border:1px solid var(--line);display:grid;place-items:center;color:var(--text-2);flex:none}.dest i svg{width:16px;height:16px}
 .dest .txt{flex:1;min-width:0}.dest .txt b,.dest .txt span{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.dest .txt b{font-weight:600}.dest .txt span{color:var(--muted);font-size:12.5px}.dest>svg{width:16px;height:16px;color:var(--muted);flex:none}
+.consent .actions+.gets{margin-top:22px}.gets+.dests{margin-top:0}
 .go{display:flex;justify-content:flex-end;margin-top:24px}.go .btn{min-width:112px}.alt{margin-top:10px;text-align:right;font-size:13px;color:var(--muted)}.alt .sep{margin:0 7px}
 .linkbtn{background:none;border:0;padding:0;font:inherit;color:inherit;cursor:pointer}.linkbtn:hover{color:var(--text);text-decoration:underline}.linkbtn:disabled{opacity:.5;cursor:default}
 .consent .msg{min-height:0}.consent .msg:empty{margin:0}.consent .cfoot{padding:11px 22px;border-top:1px solid var(--line);font-size:12.5px;color:var(--muted)}.consent .cfoot a{color:inherit;text-decoration:underline}
@@ -115,8 +116,12 @@ form.inline{display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap}form.inline
 .section>.body.tbl{padding:0}table{width:100%;border-collapse:collapse;font-size:13.5px}th{text-align:left;color:var(--muted);font-weight:500;font-size:12px;padding:8px 10px;border-bottom:1px solid var(--line)}td{padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:middle}tr:last-child td{border-bottom:0}td .btn{margin:0}
 .tabs{display:flex;gap:2px;border-bottom:1px solid var(--line);margin-bottom:16px}.tabs button{background:none;border:0;border-bottom:2px solid transparent;padding:8px 12px;font:inherit;font-weight:500;color:var(--text-2);cursor:pointer;margin-bottom:-1px}.tabs button.on{color:var(--text);border-bottom-color:var(--text)}
 .toolbar{display:flex;gap:8px;align-items:center;margin-bottom:12px;flex-wrap:wrap}.toolbar input{max-width:320px}.toolbar .spacer{flex:1}
-select.sm{width:auto;padding:3px 6px;font-size:13px}.mono{font-family:var(--mono);font-size:12px}
+select.sm{width:auto;padding:3px 6px;font-size:13px}.grant{display:flex;align-items:center;gap:6px;margin-top:4px;color:var(--muted);font-size:12px}.mono{font-family:var(--mono);font-size:12px}
 .secretbox{background:var(--accent-soft);border:1px solid color-mix(in srgb,var(--accent) 35%,transparent);border-radius:6px;padding:10px 12px;margin-top:10px;font-family:var(--mono);font-size:12.5px;word-break:break-all;white-space:pre-wrap}
+/* the Admin page: checkbox lists, a table's group rows and notes under a value, an invite's accounts */
+.checks label{display:flex;align-items:center;gap:8px;margin:0 0 10px;font-size:13.5px;font-weight:400;color:var(--text);flex-wrap:wrap}.checks input{width:auto;margin:0}.checks b{font-weight:600;min-width:42px}
+td .sub{display:block;color:var(--muted);font-size:12px}tr.group th{background:var(--surface-2);color:var(--text-2);font-weight:600}tr.used td{background:var(--surface-2);font-size:13px;line-height:1.7}
+.tbl+.body{border-top:1px solid var(--line)}#config td:last-child{overflow-wrap:anywhere}td.acts .btn{margin:2px 0}
 .notice svg{width:16px;height:16px;flex:none;margin-right:8px;vertical-align:-3px}
 /* summary tiles (the Admin page's Servers and Billing tabs) */
 .tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;margin-bottom:16px}.tiles>div{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:11px 14px;min-width:0}
@@ -140,7 +145,8 @@ async function api(path, body, method){
 }
 // The pages' own alert, confirm and prompt. toast: a line at the foot that leaves by itself.
 // ask: a dialog answering true or false; with o.input (the field's first value) it answers the
-// text typed, '' when cancelled. o.ok names the button, o.danger colours it.
+// text typed, '' when cancelled. o.blank lets the field be left empty, and a cancel then answers
+// null. o.ok names the button, o.danger colours it.
 function toast(text){
   let t = document.getElementById('toast');
   if (!t) { t = document.createElement('div'); t.id = 'toast'; t.setAttribute('role', 'status'); document.body.appendChild(t); }
@@ -152,14 +158,14 @@ function ask(text, o){
   return new Promise(done => {
     const d = document.createElement('dialog'), typed = o.input !== undefined;
     d.className = 'ask';
-    d.innerHTML = '<form method=dialog><p></p>' + (typed ? '<input aria-label="Answer" autocomplete=off required>' : '')
+    d.innerHTML = '<form method=dialog><p></p>' + (typed ? '<input aria-label="Answer" autocomplete=off' + (o.blank ? '' : ' required') + '>' : '')
       + '<div class=actions><button type=button class="btn btn--sm">Cancel</button>'
       + '<button class="btn btn--sm ' + (o.danger ? 'btn--danger' : 'btn--primary') + '" value=yes></button></div></form>';
     d.querySelector('p').textContent = text;
     d.querySelector('[value=yes]').textContent = o.ok || 'OK';
     d.querySelector('[type=button]').onclick = () => d.close('');
     const input = d.querySelector('input'); if (input) input.value = o.input;
-    d.addEventListener('close', () => { const yes = d.returnValue === 'yes'; d.remove(); done(typed ? (yes ? input.value.trim() : '') : yes); });
+    d.addEventListener('close', () => { const yes = d.returnValue === 'yes'; d.remove(); done(typed ? (yes ? input.value.trim() : (o.blank ? null : '')) : yes); });
     document.body.appendChild(d); d.showModal();
   });
 }
@@ -325,9 +331,29 @@ def _terms() -> str:
     return f"<p class=terms>By continuing you agree to the <a href='{SITE}/privacy/'>privacy policy</a>.</p>"
 
 
-def _invite_field() -> str:
-    return ("<label>Invite code<input name=invite required autocomplete=off></label>"
-            if settings.registration() == "invite" else "")
+def _invite_field(value: str = "", email: str = "") -> str:
+    """The invite code field, filled with ``value`` (a code the link
+    brought). Required where registration needs a code (``take_invite``):
+    ``invite`` mode with no allowed mail domains, or an ``email`` the page
+    knows that is not at one of them. Optional where a code is not needed
+    but still grants its plan; left out in ``open`` mode with no allowed
+    domains unless the link brought a code."""
+    mode, allowed = settings.registration(), settings.allowed_email_domains()
+    if mode != "invite" and not allowed and not value:
+        return ""
+    needed = (mode == "invite" and not allowed) or bool(allowed and email and not accounts.email_at(email, allowed))
+    label = "Invite code" if needed else "Invite code <small>if you have one</small>"
+    return f"<label>{label}<input name=invite value='{esc(value)}' autocomplete=off{' required' if needed else ''}></label>"
+
+
+# The invite code follows a Google or GitHub sign-up from the register page to
+# its finish form, in this tab's sessionStorage.
+KEEP_INVITE_JS = ("const inv = document.querySelector('[name=invite]'), keepInvite = () => { try { "
+                  "sessionStorage.setItem('gc_invite', inv ? inv.value.trim() : ''); } catch (e) {} };"
+                  "if (inv) inv.addEventListener('input', keepInvite); keepInvite();")
+TAKE_INVITE_JS = ("let carried = ''; try { carried = sessionStorage.getItem('gc_invite') || ''; } catch (e) {}"
+                  "const inv = document.querySelector('[name=invite]'); if (inv && !inv.value) inv.value = carried;"
+                  "const dropInvite = () => { try { sessionStorage.removeItem('gc_invite'); } catch (e) {} };")
 
 
 # --- auth pages ---------------------------------------------------------------
@@ -340,7 +366,9 @@ def login_page(social: dict | None = None) -> str:
     return auth("Sign in", "One account for the desktop app and every Gamma server.", inner, script)
 
 
-def register_page(social: dict | None = None) -> str:
+def register_page(social: dict | None = None, invite: str = "") -> str:
+    """``invite``: a code from the link (``/register?invite=``) for the
+    invite field."""
     if settings.registration() == "closed":
         return error_page("Registration is closed", "Gamma Cloud is not taking new accounts right now.")
     tiles, script = _social(social, "sign up", "signup")
@@ -348,22 +376,25 @@ def register_page(social: dict | None = None) -> str:
              "<label>Username <small>lowercase letters, digits, hyphens</small><input name=username autocomplete=username "
              f"pattern='{USERNAME_PATTERN}' required></label>"
              "<label>Password<input name=password type=password autocomplete=new-password minlength=8 required></label>"
-             f"{_invite_field()}{turnstile_widget()}<button type=submit class='btn btn--primary btn--block'>Create account</button><div class=msg></div></form>"
+             f"{_invite_field(invite)}{turnstile_widget()}<button type=submit class='btn btn--primary btn--block'>Create account</button><div class=msg></div></form>"
              f"{tiles}<p class=switch>Already have an account? <a href=/login>Sign in</a></p>{_terms()}")
-    script = "bind('f', async d => { const r = await api('/api/register', d); location.href = r.mailed === false ? '/?mail=failed' : '/'; });" + script
+    script = (KEEP_INVITE_JS + "bind('f', async d => { const r = await api('/api/register', d); "
+              "location.href = r.mailed === false ? '/?mail=failed' : '/'; });" + script)
     return auth("Create your account", "Free. You can change the username and e-mail later.", inner, script)
 
 
 def signup_finish_page(flow: dict, suggestion: str) -> str:
-    """After Google/GitHub for a new person: pick the username (and give the
-    invite code in ``invite`` mode)."""
+    """After Google/GitHub for a new person: pick the username, and give an
+    invite code where registration needs one (``_invite_field``). A code
+    typed on the register page, or brought by its link, comes along."""
     p = flow["provider"]
     inner = (f"<div class=via>{ICONS[p]}<span>{NAMES[p]} · <b>{esc(flow['email'])}</b></span></div>"
              "<form id=f><label>Username <small>your name on every Gamma server</small><input name=username "
              f"value='{esc(suggestion)}' autocomplete=username pattern='{USERNAME_PATTERN}' required autofocus></label>"
-             f"{_invite_field()}<button type=submit class='btn btn--primary btn--block'>Create account</button><div class=msg></div></form>"
+             f"{_invite_field(email=flow['email'])}<button type=submit class='btn btn--primary btn--block'>Create account</button><div class=msg></div></form>"
              f"<p class=switch><a href=/login>Cancel</a></p>{_terms()}")
-    script = "bind('f', async d => { const r = await api('/api/oauth/signup', d); location.href = r.redirect; });"
+    script = (TAKE_INVITE_JS + "bind('f', async d => { if (!inv && carried) d.invite = carried; "
+              "const r = await api('/api/oauth/signup', d); dropInvite(); location.href = r.redirect; });")
     hello = f"Welcome, {esc(flow['name'])}. " if flow.get("name") else ""
     return auth("Finish creating your account", hello + "Pick a username; you can change it later.", inner, script)
 
@@ -709,7 +740,7 @@ def settings_page(account: dict, linked: list[dict] | None = None, enabled: list
     connected = srow("Connected accounts", "Sign in with one click instead of a password.",
                      f"{conns}<div class=msg id=smsg></div>") if conns else ""
     paid = account["plan_source"] == "stripe"   # a subscription pays for the plan: deleting ends it now
-    delete = srow("Delete account", "Signs everything out and removes the account after a grace period. "
+    delete = srow("Delete account", f"Signs everything out and removes the account after {config.PURGE_DELETED_DAYS} days. "
                   + ("Your subscription ends at once, without a refund."
                      if paid else "Gamma servers keep their data."),
                   "<button class='btn btn--sm btn--danger' id=delopen>Delete my account…</button>"
@@ -739,10 +770,12 @@ bind('del', async d => { if (!await ask('Delete this account? This cannot be und
                f"const HAS_PW = {_js(has_pw)}, PAID = {_js(paid)};" + script)
 
 
-def _settings_tab() -> str:
-    """The sign-up gate (``settings.py``). The forms are filled in by the
-    script from ``/api/admin/settings`` like the other tabs, and refilled
-    from each save's answer."""
+def _admin_section(title: str, sub: str, body: str) -> str:
+    """One section of an Admin tab: a heading with a muted line, then rows."""
+    return f"<div class=section><h2>{title}<span>{sub}</span></h2>{body}</div>"
+
+
+def _signup_section() -> str:
     registration = srow(
         "Registration", "Who can create an account. An invite code works in open mode too and still grants its plan.",
         "<form id=setreg><label><span class=sr>Registration</span><select name=registration>"
@@ -760,30 +793,85 @@ def _settings_tab() -> str:
         "A domain covers its subdomains. One per line.",
         "<form id=setdom><label><span class=sr>Blocked e-mail domains</span>"
         f"<textarea name=blocked_email_domains placeholder='spam.example'></textarea></label>{formfoot('Save')}</form>")
+    allowed = srow(
+        "Allowed e-mail domains", "When the list is not empty, only an address at one of these domains (or a "
+        "subdomain) registers without an invite code, in open and invite mode alike. One per line.",
+        "<form id=setallow><label><span class=sr>Allowed e-mail domains</span>"
+        f"<textarea name=allowed_email_domains placeholder='university.example'></textarea></label>{formfoot('Save')}</form>")
+    return _admin_section("Sign-up", "who may register, and what a sign-up has to pass",
+                          registration + turnstile + blocked + allowed)
+
+
+def _plans_section() -> str:
+    """A checkbox per paid plan; the script adds whether each can be sold
+    and why not (``billing.why_not``)."""
+    lines = "".join(f"<label><input type=checkbox name=plan value={p}><b>{p.capitalize()}</b>"
+                    f"<span data-planstate={p}></span></label>" for p in settings.PAID_PLANS)
+    on_sale = srow("On sale", "A plan held back offers no checkout and no switch to it, here or on the website. "
+                   "People who have it keep it.", f"<form id=setplans><div class=checks>{lines}</div>{formfoot('Save')}</form>")
+    return _admin_section("Plans", "which paid plans can be bought", on_sale)
+
+
+def _alerts_section() -> str:
+    """Whether the operator is mailed about problems, and where to
+    (``alerts.py``), with *Send test alert*."""
+    row = srow(
+        "Mail", "One mail lists each new problem once it has lasted: a failed job, a server down, stuck or waiting for "
+        "a host, a host silent or nearly full, a missing DNS record, a Stripe event that matched no account, open "
+        "sign-up without the anti-bot check. Blank sends to every admin's confirmed address; the test goes to the "
+        "saved one.",
+        "<form id=setalerts><div class=fields><label>Alerts<select name=alerts><option value=on>on</option>"
+        "<option value=off>off</option></select></label><label>Send to<input name=alert_email type=email "
+        "placeholder='blank = every admin' autocomplete=off></label></div><div class=formfoot>"
+        "<button type=submit class='btn btn--sm'>Save</button><button type=button class='btn btn--sm' id=testalert>"
+        "Send test alert</button><div class=msg></div></div></form>")
+    return _admin_section("Alerts", "what the operator is mailed about, and where", row)
+
+
+def _config_section() -> str:
+    """What the environment fixes (``config.admin_view``), filled in by the
+    script, and *Send test mail*."""
+    return _admin_section(
+        "Configuration", "set in the container's environment; read-only here",
+        "<div class='body tbl'><table><tbody id=config></tbody></table></div><div class=body><div class=formfoot>"
+        "<button type=button class='btn btn--sm' id=testmail>Send test mail</button><div class=msg id=testmailmsg></div>"
+        "</div></div>")
+
+
+def _settings_tab() -> str:
+    """The Settings tab, one section after another: the sign-up gate, the
+    plans on sale and the alerts (``settings.py``), then the configuration.
+    The forms are filled in by the script from ``/api/admin/settings`` like
+    the other tabs, and refilled from each save's answer."""
+    sections = [_signup_section(), _plans_section(), _alerts_section(), _config_section()]
     return ("<div id=tab-settings hidden>"
             "<div class=notice id=unguarded hidden><span>Registration is open and the anti-bot check is off, so only "
             "the rate limits stop a script. Its accounts stay unverified and cannot sign in to a Gamma server.</span></div>"
-            "<div class=section><h2>Sign-up<span>who may register, and what a sign-up has to pass</span></h2>"
-            + registration + turnstile + blocked + "</div>"
-            "<p class=empty>The public URL, mail and the Google/GitHub clients are set in the container's environment.</p>"
-            "</div>")
+            + "".join(sections) + "</div>")
 
 
 def admin_page(account: dict) -> str:
     plans = "".join(f"<option value={p}>{p}</option>" for p in config.PLANS)
     inner = (
-        "<div class=tabs><button class=on data-tab=accounts>Accounts</button><button data-tab=invites>Invites</button>"
+        "<div class=tabs><button class=on data-tab=overview>Overview</button><button data-tab=accounts>Accounts</button>"
+        "<button data-tab=invites>Invites</button>"
         "<button data-tab=clients>Clients</button><button data-tab=servers>Servers</button>"
         "<button data-tab=billing>Billing</button><button data-tab=settings>Settings</button>"
         "<button data-tab=audit>Audit log</button></div>"
-        "<div id=tab-accounts><div class=toolbar><input id=q placeholder='Search username, e-mail or id' autocomplete=off><span class=spacer></span><span class=empty id=count></span></div>"
+        + pages_overview.ADMIN_TAB
+        + "<div id=tab-accounts hidden><div class=toolbar><input id=q placeholder='Search username, e-mail or id' autocomplete=off><span class=spacer></span><span class=empty id=count></span></div>"
         "<div class=section><div class='body tbl'><table><thead><tr><th>Username</th><th>E-mail</th><th>Plan</th><th>Status</th><th>Created</th><th></th></tr></thead><tbody id=accounts></tbody></table></div></div>"
         "<div class=actions><button class='btn btn--sm' id=more>Load more</button></div></div>"
-        "<div id=tab-invites hidden><div class=section><h2>New invite</h2><div class=body><form id=inv class=inline>"
+        "<div id=tab-invites hidden><div class=section><h2>New invite <span>leave the days empty for no end</span></h2><div class=body><form id=inv class=inline>"
         "<label>Uses<input name=uses type=number value=1 min=1 max=10000></label>"
-        f"<label>Plan<select name=plan>{plans}</select></label><label>Note<input name=note placeholder='who it is for'></label>"
+        f"<label>Plan<select name=plan>{plans}</select></label>"
+        f"<label>Expires in (days)<input name=expires_days type=number min=1 max={accounts.MAX_DAYS} placeholder='never'></label>"
+        f"<label>Plan lasts (days)<input name=grant_days type=number min=1 max={accounts.MAX_DAYS} placeholder='for good'></label>"
+        "<label>Note<input name=note placeholder='who it is for'></label>"
         "<button type=submit class='btn btn--primary btn--sm'>Create</button><div class=msg></div></form></div></div>"
-        "<div class=section><div class='body tbl'><table><thead><tr><th>Code</th><th>Uses left</th><th>Plan</th><th>Note</th><th>Created</th><th></th></tr></thead><tbody id=invites></tbody></table></div></div></div>"
+        "<div class=section><div class='body tbl'><table><thead><tr><th>Code</th><th>Used</th><th>Plan</th><th>Expires</th><th>State</th>"
+        "<th>Note</th><th>Created</th><th></th></tr></thead><tbody id=invites></tbody></table></div></div>"
+        "<div class=actions><button class='btn btn--sm' id=invdone hidden></button></div></div>"
         "<div id=tab-clients hidden><div class=section><h2>New client <span>a hosted Gamma server or the share host</span></h2><div class=body><form id=cli class=inline>"
         "<label>Name<input name=name required></label><label>Kind<select name=kind><option value=container>container</option><option value=share-host>share-host</option></select></label>"
         "<label>Callback URL<input name=redirect placeholder='https://name.gammapdf.com/api/auth/cloud/callback' required></label>"
@@ -792,21 +880,44 @@ def admin_page(account: dict) -> str:
         + pages_fleet.ADMIN_TAB + pages_billing.ADMIN_TAB
         + _settings_tab()
         + "<div id=tab-audit hidden><div class=section><div class='body tbl'><table><thead><tr><th>When</th><th>Event</th><th>Account</th><th>Actor</th><th>Detail</th></tr></thead><tbody id=audit></tbody></table></div></div></div>")
-    script = """
-const PLANS = %s; let offset = 0, query = '';
-document.querySelectorAll('.tabs button').forEach(b => b.onclick = () => { document.querySelectorAll('.tabs button').forEach(x => x.classList.toggle('on', x === b));
-  for (const t of ['accounts','invites','clients','servers','billing','settings','audit']) document.getElementById('tab-' + t).hidden = t !== b.dataset.tab; if (b.dataset.tab !== 'accounts') load(b.dataset.tab); });
-// The select sets the granted plan (accounts.set_plan), so it shows that one, with the effective plan beside it when a subscription lifts it higher.
+    consts = (f"const PLANS = {_js(list(config.PLANS))}, PUBLIC_URL = {_js(config.PUBLIC_URL)}, "
+              f"PURGE_DAYS = {config.PURGE_DELETED_DAYS};")
+    script = consts + """
+let offset = 0, query = '';
+// The tabs. The hash names the open one, so /admin#servers opens Servers: a click sets it (through the history, since a
+// scroll to the table whose id is the tab's name would follow), and the back button and a link to #name follow it.
+const TABS = ['overview','accounts','invites','clients','servers','billing','settings','audit'];
+let tabNow = '', accountsLoaded = false;
+function showTab(tab, again){
+  if (!TABS.includes(tab)) tab = 'overview';
+  if (tab === tabNow && !again) return;
+  tabNow = tab;
+  document.querySelectorAll('.tabs button').forEach(x => x.classList.toggle('on', x.dataset.tab === tab));
+  for (const t of TABS) document.getElementById('tab-' + t).hidden = t !== tab;
+  if (tab !== 'accounts') load(tab); else if (!accountsLoaded) { accountsLoaded = true; loadAccounts(true); }
+}
+document.querySelectorAll('.tabs button').forEach(b => b.onclick = () => {
+  if (location.hash !== '#' + b.dataset.tab) history.pushState(null, '', '#' + b.dataset.tab);
+  showTab(b.dataset.tab, true);
+});
+addEventListener('hashchange', () => showTab(location.hash.slice(1)));
+addEventListener('popstate', () => showTab(location.hash.slice(1)));
+// The plan the account is on, and where it comes from: paid (a subscription lifts it above the grant) or granted.
+// The select under it sets the grant only (accounts.set_plan): a courtesy plan, never the subscription; the pill beside it is the day the grant ends.
 function planSelect(a){
   const g = a.granted_plan || a.plan;
-  return '<select class=sm title="Granted plan" data-plan="' + a.id + '"' + (a.deleted_at ? ' disabled' : '') + '>' + PLANS.map(p => '<option' + (p === g ? ' selected' : '') + '>' + p + '</option>').join('') + '</select>'
-    + (a.plan !== g ? ' <span class="pill pill--ok" title="Paid through Stripe">' + esc(a.plan) + ' paid</span>' : '');
+  const source = a.plan !== g ? ' <span class="pill pill--ok" title="Paid through Stripe">paid</span>'
+    : a.plan !== 'free' ? ' <span class=pill title="Given by an admin or an invite">granted</span>' : '';
+  const until = a.granted_until ? ' <span class=pill title="The granted plan ends ' + esc(a.granted_until.slice(0, 16).replace('T', ' ')) + ' UTC">until ' + esc(a.granted_until.slice(0, 10)) + '</span>' : '';
+  return '<b>' + esc(a.plan) + '</b>' + source + '<span class=grant>grant <select class=sm title="The plan granted by hand; the account has the higher of this and what it pays for" data-plan="' + a.id + '"' + (a.deleted_at ? ' disabled' : '') + '>'
+    + PLANS.map(p => '<option' + (p === g ? ' selected' : '') + '>' + p + '</option>').join('') + '</select>' + until + '</span>';
 }
 function accountRow(a){
   const status = (a.deleted_at ? '<span class=pill>deleted</span> ' : '') + (a.email_verified ? '<span class="pill pill--ok">verified</span>' : '<span class="pill pill--warn">unverified</span>') + (a.is_admin ? ' <span class=pill>admin</span>' : '');
   return '<tr data-id="' + esc(a.id) + '"><td><b>' + esc(a.username) + '</b><br><span class=mono>' + esc(a.id) + '</span></td><td>' + esc(a.email) + '</td><td>' + planSelect(a) + '</td><td>' + status + '</td><td>' + esc(a.created_at.slice(0,10)) + '</td>'
-    + '<td><select class=sm data-act="' + esc(a.id) + '"><option value="">Actions…</option>' + (a.deleted_at ? '<option value=restore>Restore</option><option value=purge>Purge now</option>'
+    + '<td><select class=sm data-act="' + esc(a.id) + '" data-until="' + esc((a.granted_until || '').slice(0, 10)) + '"><option value="">Actions…</option>' + (a.deleted_at ? '<option value=restore>Restore</option><option value=purge>Purge now</option>'
     : (a.email_verified ? '' : '<option value=verify>Mark verified</option><option value=resend>Resend verify mail</option>')
+    + (a.granted_plan && a.granted_plan !== 'free' ? '<option value=until>Grant ends…</option>' : '')
     + '<option value=rename>Rename…</option><option value=' + (a.is_admin ? 'unadmin>Remove admin' : 'admin>Make admin') + '</option><option value=delete>Delete</option>') + '</select></td></tr>';
 }
 async function loadAccounts(reset){
@@ -817,36 +928,79 @@ async function loadAccounts(reset){
   wire();
 }
 function wire(){
-  document.querySelectorAll('[data-plan]').forEach(s => s.onchange = async () => { try { await api('/api/admin/accounts/' + s.dataset.plan, {plan: s.value}, 'PATCH'); } catch (e) { toast(e.message); } });
+  // A new grant replaces the old one and its end, so the row is drawn again from the answer.
+  document.querySelectorAll('[data-plan]').forEach(s => s.onchange = async () => { try { const r = await api('/api/admin/accounts/' + s.dataset.plan, {plan: s.value}, 'PATCH'); s.closest('tr').outerHTML = accountRow(r.account); wire(); } catch (e) { toast(e.message); } });
   document.querySelectorAll('[data-act]').forEach(s => s.onchange = async () => {
     const id = s.dataset.act, v = s.value; s.value = '';
     try {
       if (v === 'verify') await api('/api/admin/accounts/' + id, {verified: true}, 'PATCH');
       else if (v === 'resend') { await api('/api/admin/accounts/' + id + '/resend-verify', {}); toast('Sent.'); return; }
       else if (v === 'admin' || v === 'unadmin') await api('/api/admin/accounts/' + id, {is_admin: v === 'admin'}, 'PATCH');
+      else if (v === 'until') { const u = await ask('End the granted plan on which day? Write it as YYYY-MM-DD, or leave it empty for no end.', {input: s.dataset.until, ok: 'Save', blank: true}); if (u === null) return; await api('/api/admin/accounts/' + id, {granted_until: u || null}, 'PATCH'); }
       else if (v === 'rename') { const u = await ask('New username (lowercase letters, digits, hyphens):', {input: '', ok: 'Rename'}); if (!u) return; await api('/api/admin/accounts/' + id, {username: u}, 'PATCH'); }
-      else if (v === 'delete') { if (!await ask('Delete this account? It is signed out everywhere and purged after the grace period. A subscription is cancelled now, without a refund.', {ok: 'Delete', danger: true})) return; await api('/api/admin/accounts/' + id + '/delete', {}); }
+      else if (v === 'delete') { if (!await ask('Delete this account? It is signed out everywhere at once and purged after ' + PURGE_DAYS + ' days, until when it can be restored. A subscription is cancelled now, without a refund.', {ok: 'Delete', danger: true})) return; await api('/api/admin/accounts/' + id + '/delete', {}); }
       else if (v === 'restore') { await api('/api/admin/accounts/' + id + '/restore', {}); toast('Restored. They sign back in with a password reset, or Google/GitHub on the same e-mail.'); }
       else if (v === 'purge') { if (!await ask('Purge this account now? Its username and e-mail become free for a new account. This cannot be undone.', {ok: 'Purge', danger: true})) return; await api('/api/admin/accounts/' + id + '/purge', {}); }
       else return;
       loadAccounts(true);
     } catch (e) { toast(e.message); }
   });
-  document.querySelectorAll('[data-delinv]').forEach(b => b.onclick = () => act(b, async () => { await api('/api/admin/invites/' + b.dataset.delinv, undefined, 'DELETE'); load('invites'); }));
   document.querySelectorAll('[data-delcli]').forEach(b => b.onclick = async () => { if (!await ask('Delete this client? Its servers can no longer sign people in.', {ok: 'Delete', danger: true})) return; act(b, async () => { await api('/api/admin/clients/' + b.dataset.delcli, undefined, 'DELETE'); load('clients'); }); });
 }
+// Invites: spent and expired codes wait behind a toggle; Who used it opens a row under its code.
+let showDone = false;
+const INVITE_PILL = {active: ' pill--ok', off: '', expired: ' pill--warn', spent: ''};
+function inviteRow(i){
+  const live = i.state === 'active' || i.state === 'off';
+  return '<tr><td><span class=mono>' + esc(i.code) + '</span> <button class=copy data-link="' + esc(i.code) + '">Copy link</button></td>'
+    + '<td>' + i.used + ' of ' + i.uses_total + '</td><td>' + esc(i.plan) + (i.grant_days ? ' <span class=sub>for ' + i.grant_days + ' days</span>' : '') + '</td>'
+    + '<td>' + (i.expires_at ? esc(fmtDay(i.expires_at)) : 'never') + '</td><td><span class="pill' + INVITE_PILL[i.state] + '">' + esc(i.state) + '</span></td>'
+    + '<td>' + esc(i.note) + '</td><td>' + esc(fmtDay(i.created_at)) + '</td><td class=acts>'
+    + (live ? '<button class="btn btn--sm" data-toggleinv="' + esc(i.code) + '" data-off="' + (i.state === 'active' ? 1 : 0) + '">' + (i.state === 'active' ? 'Turn off' : 'Turn on') + '</button> ' : '')
+    + '<button class="btn btn--sm" data-used="' + esc(i.code) + '">Who used it</button> <button class="btn btn--sm" data-delinv="' + esc(i.code) + '">Delete</button></td></tr>';
+}
+async function loadInvites(){
+  const d = await api('/api/admin/invites', undefined, 'GET'), done = d.invites.filter(i => i.state === 'spent' || i.state === 'expired');
+  document.getElementById('invites').innerHTML = d.invites.filter(i => showDone || !done.includes(i)).map(inviteRow).join('') || '<tr><td colspan=8 class=empty>No invites.</td></tr>';
+  const more = document.getElementById('invdone'); more.hidden = !done.length;
+  more.textContent = showDone ? 'Hide spent and expired' : 'Show ' + done.length + ' spent or expired';
+  const code = b => encodeURIComponent(b.dataset.link || b.dataset.toggleinv || b.dataset.used || b.dataset.delinv);
+  document.querySelectorAll('[data-link]').forEach(b => b.onclick = async () => {
+    const link = PUBLIC_URL + '/register?invite=' + code(b);
+    try { await navigator.clipboard.writeText(link); toast('Copied ' + link); } catch (e) { toast(link); }
+  });
+  document.querySelectorAll('[data-toggleinv]').forEach(b => b.onclick = () => act(b, async () => { await api('/api/admin/invites/' + code(b), {disabled: b.dataset.off === '1'}, 'PATCH'); await loadInvites(); }));
+  document.querySelectorAll('[data-delinv]').forEach(b => b.onclick = () => act(b, async () => { await api('/api/admin/invites/' + code(b), undefined, 'DELETE'); await loadInvites(); }));
+  document.querySelectorAll('[data-used]').forEach(b => b.onclick = () => act(b, async () => {
+    const tr = b.closest('tr'), open = tr.nextElementSibling;
+    if (open && open.classList.contains('used')) open.remove();
+    else {
+      const u = await api('/api/admin/invites/' + code(b), undefined, 'GET');
+      tr.insertAdjacentHTML('afterend', '<tr class=used><td colspan=8>' + (u.accounts.map(a => '<b>' + esc(a.username) + '</b> <span class=mono>' + esc(a.id) + '</span> · '
+        + esc(a.plan) + ' · ' + esc(fmtDay(a.created_at)) + (a.deleted_at ? ' · deleted' : '')).join('<br>') || 'Nobody has registered with this code.') + '</td></tr>');
+    }
+    b.disabled = false;
+  }));
+}
+document.getElementById('invdone').onclick = () => { showDone = !showDone; loadInvites(); };
 async function load(tab){
-  if (tab === 'invites') { const d = await api('/api/admin/invites', undefined, 'GET'); document.getElementById('invites').innerHTML = d.invites.map(i => '<tr><td class=mono>' + esc(i.code) + '</td><td>' + i.uses_left + '</td><td>' + esc(i.plan) + '</td><td>' + esc(i.note) + '</td><td>' + esc(i.created_at.slice(0,10)) + '</td><td><button class="btn btn--sm" data-delinv="' + esc(i.code) + '">Delete</button></td></tr>').join('') || '<tr><td colspan=6 class=empty>No invites.</td></tr>'; }
+  if (tab === 'overview') await loadOverview();
+  if (tab === 'invites') await loadInvites();
   if (tab === 'clients') { const d = await api('/api/admin/clients', undefined, 'GET'); document.getElementById('clients').innerHTML = d.clients.map(c => '<tr><td class=mono>' + esc(c.client_id) + '</td><td>' + esc(c.name) + '</td><td>' + esc(c.kind) + (c.owner_account_id ? '<br><span class=mono>' + esc(c.owner_account_id) + '</span>' : '') + '</td><td class=mono>' + esc(JSON.parse(c.redirect_uris).join(' ')) + '</td><td><button class="btn btn--sm" data-delcli="' + esc(c.client_id) + '">Delete</button></td></tr>').join('') || '<tr><td colspan=5 class=empty>No clients. Local Gammas need none.</td></tr>'; }
   if (tab === 'servers') await loadServers();
   if (tab === 'billing') await loadBilling();
-  if (tab === 'settings') showSettings(await api('/api/admin/settings', undefined, 'GET'));
+  if (tab === 'settings') {
+    const [s, c] = await Promise.all([api('/api/admin/settings', undefined, 'GET'), api('/api/admin/config', undefined, 'GET')]);
+    showSettings(s); showConfig(c);
+  }
   if (tab === 'audit') { const d = await api('/api/admin/audit?limit=300', undefined, 'GET'); document.getElementById('audit').innerHTML = d.audit.map(a => '<tr><td class=mono>' + esc(a.at.slice(0,19).replace('T',' ')) + '</td><td>' + esc(a.event) + '</td><td class=mono>' + esc(a.account_id) + '</td><td class=mono>' + esc(a.actor) + '</td><td>' + esc(a.detail) + '</td></tr>').join(''); }
   wire();
 }
 let t; document.getElementById('q').oninput = (e) => { clearTimeout(t); t = setTimeout(() => { query = e.target.value; loadAccounts(true); }, 250); };
 document.getElementById('more').onclick = () => loadAccounts(false);
-bind('inv', async (d, msg) => { const r = await api('/api/admin/invites', {uses: Number(d.uses), plan: d.plan, note: d.note}); say(msg, 'Invite ' + r.invite.code + ' created.'); load('invites'); });
+bind('inv', async (d, msg) => { const days = v => v ? Number(v) : null;
+  const r = await api('/api/admin/invites', {uses: Number(d.uses), plan: d.plan, note: d.note, expires_days: days(d.expires_days), grant_days: days(d.grant_days)});
+  say(msg, 'Invite ' + r.invite.code + ' created.'); loadInvites(); });
 bind('cli', async (d, msg) => { const r = await api('/api/admin/clients', {name: d.name, kind: d.kind, redirect_uris: [d.redirect]}); const box = document.getElementById('secret'); box.hidden = false;
   box.textContent = 'GAMMA_CLOUD_CLIENT_ID=' + r.client_id + '\\nGAMMA_CLOUD_CLIENT_SECRET=' + r.client_secret + '   (shown once)'; say(msg, 'Client created.'); load('clients'); });
 function showSettings(s){
@@ -855,22 +1009,46 @@ function showSettings(s){
   ts.turnstile_sitekey.value = s.turnstile_sitekey;
   ts.turnstile_secret.value = ''; ts.turnstile_secret.placeholder = s.turnstile_secret_set ? 'stored · leave blank to keep' : '';
   document.getElementById('setdom').elements.blocked_email_domains.value = s.blocked_email_domains;
+  document.getElementById('setallow').elements.allowed_email_domains.value = s.allowed_email_domains;
   document.getElementById('tsstate').innerHTML = s.turnstile_on ? '<span class="pill pill--ok">on</span>'
     : '<span class="pill pill--warn">off</span><span class=empty>' + (s.turnstile_secret_set || s.turnstile_sitekey ? 'needs both keys' : 'no keys stored') + '</span>';
   document.getElementById('clearsecret').hidden = !s.turnstile_secret_set;
   document.getElementById('unguarded').hidden = !s.unguarded;
+  for (const p of s.plans) {
+    document.querySelector('#setplans [value=' + p.plan + ']').checked = p.on_sale;
+    document.querySelector('[data-planstate=' + p.plan + ']').innerHTML = !p.on_sale ? '<span class=pill>held back</span>'
+      : p.sellable ? '<span class="pill pill--ok">on sale</span>' : '<span class="pill pill--warn">cannot be sold</span> <span class=empty>' + esc(p.reason) + '</span>';
+  }
+  const al = document.getElementById('setalerts').elements;
+  al.alerts.value = s.alerts ? 'on' : 'off'; al.alert_email.value = s.alert_email;
 }
 const saveSettings = async (body, msg) => { showSettings(await api('/api/admin/settings', body, 'PATCH')); if (msg) say(msg, 'Saved.'); };
 bind('setreg', (d, msg) => saveSettings({registration: d.registration}, msg));
 bind('setts', (d, msg) => saveSettings({turnstile_sitekey: d.turnstile_sitekey, turnstile_secret: d.turnstile_secret}, msg));
 bind('setdom', (d, msg) => saveSettings({blocked_email_domains: d.blocked_email_domains}, msg));
+bind('setallow', (d, msg) => saveSettings({allowed_email_domains: d.allowed_email_domains}, msg));
+bind('setplans', (d, msg) => saveSettings({plans_on_sale: [...document.querySelectorAll('#setplans [name=plan]:checked')].map(c => c.value).join(' ')}, msg));
+bind('setalerts', (d, msg) => saveSettings({alerts: d.alerts, alert_email: d.alert_email}, msg));
+const ta = document.getElementById('testalert'), taMsg = ta.parentNode.querySelector('.msg');
+ta.onclick = () => act(ta, async () => { const d = await api('/api/admin/alerts/test', {}); say(taMsg, d.detail); ta.disabled = false; }, taMsg);
 const cs = document.getElementById('clearsecret'), csMsg = cs.parentNode.querySelector('.msg');
 cs.onclick = async () => { if (!await ask('Clear the Turnstile secret? The anti-bot check stops running.', {ok: 'Clear', danger: true})) return;
   act(cs, async () => { await saveSettings({turnstile_secret: null}); cs.disabled = false; say(csMsg, 'Cleared.'); }, csMsg); };
-loadAccounts(true);
-""" % json.dumps(list(config.PLANS)) + pages_fleet.ADMIN_JS + pages_billing.ADMIN_JS
-    return app("Admin", "Accounts, invites, the clients of hosted servers, the sign-up settings, and what "
-               "happened.", account, "admin", inner, script)
+// The Configuration section: what the environment fixes, read-only, and a test mail to this admin.
+const CONFIG_PILL = {set: ' pill--ok', on: ' pill--ok', missing: ' pill--warn', off: ''};
+function showConfig(c){
+  document.getElementById('config').innerHTML = c.groups.map(g => '<tr class=group><th colspan=3>' + esc(g.name) + '</th></tr>'
+    + g.items.map(i => '<tr><td>' + esc(i.name) + (i.env ? '<span class="sub mono">' + esc(i.env) + '</span>' : '') + '</td>'
+      + '<td><span class="pill' + CONFIG_PILL[i.state] + '">' + esc(i.state) + '</span></td>'
+      + '<td>' + (i.value ? '<span class=mono>' + esc(i.value) + '</span>' : '') + (i.note ? '<span class=sub>' + esc(i.note) + '</span>' : '') + '</td></tr>').join('')).join('');
+}
+const tm = document.getElementById('testmail'), tmMsg = document.getElementById('testmailmsg');
+tm.onclick = () => act(tm, async () => { const d = await api('/api/admin/test-mail', {}); say(tmMsg, d.detail); tm.disabled = false; }, tmMsg);
+""" + pages_fleet.ADMIN_JS + pages_billing.ADMIN_JS + pages_overview.ADMIN_JS + """
+showTab(location.hash.slice(1), true);   // after every tab's script, whose entry it may call
+"""
+    return app("Admin", "What needs attention, accounts, invites, the clients of hosted servers, the fleet, billing, "
+               "the settings and the plans on sale, the configuration, and what happened.", account, "admin", inner, script)
 
 
 # --- the authorize page -------------------------------------------------------
@@ -955,20 +1133,47 @@ def connect_page(origin: str, state: str, challenge: str, account, verify_needed
                "location.href = d.redirect; }, err);"))
 
 
+def _place_row(place: dict, stay: bool = False) -> str:
+    """One server on the entrance's cards: a link that signs the browser in
+    there, or with ``stay`` the button that finishes the pending request."""
+    inner = (f"<i>{ICONS['globe' if place['kind'] == 'shared' else 'server']}</i><span class=txt>"
+             f"<b>{esc(place['name'])}</b><span>{esc(place['url'].split('://', 1)[-1])}</span></span>{ICONS['chevron']}")
+    if stay:
+        return f"<button type=button class=dest id=stay>{inner}</button>"
+    return f"<a class=dest href='{esc(entrance.start_url(place['url']))}'>{inner}</a>"
+
+
+ENTRANCE_JS = ("const err = document.getElementById('err');"
+               "document.getElementById('other').onclick = (e) => act(e.target, async () => { await api('/api/logout', {}); location.reload(); }, err);")
+
+
+def no_library_page(account, places: list[dict]) -> str:
+    """What a free account gets at the entrance in place of a sign-in
+    (``entrance.decide``'s ``upgrade``): its plan has no library online,
+    the plans, the desktop app, and the servers it is a member of
+    (``places``), if any. Nothing on it leads into the shared server."""
+    team = ("<p class=gets>Servers you are a member of</p><div class=dests>"
+            + "".join(_place_row(p) for p in places) + "</div>") if places else ""
+    card = (f"<div class=cbrand>{LOGO}<span>Gamma<em>Cloud</em></span></div><div class=cbody>"
+            "<h1>Your plan has no online library</h1>"
+            f"<p class=lead>You are on the <b>{esc(account['plan'].capitalize())}</b> plan: your library lives in the "
+            "desktop app. Lite, Plus and Pro add one that is always on, so your devices stay in sync and share "
+            "links work with the laptop closed.</p>"
+            f"<div class=actions><a class='btn btn--primary' href='/plan'>See plans</a>"
+            f"<a class=btn href='{SITE}/download'>Get the desktop app</a></div>{team}"
+            f"<p class=alt>Signed in as {esc(account['username'])}<span class=sep aria-hidden=true>·</span>"
+            "<button class=linkbtn id=other>Use another account</button></p><div class=msg id=err></div></div>"
+            "<p class=cfoot>Publishing pages from the desktop app works on every plan.</p>")
+    return _auth_shell("No online library", card, ENTRANCE_JS, cls="consent", top=False)
+
+
 def where_page(account, places: list[dict], request_id: str = "") -> str:
     """The entrance's chooser, for a person whose libraries are on several
     Gamma Cloud servers (``entrance.destinations``; ``account`` needs a
     username and an e-mail). Each row signs the browser in on that server.
     With ``request_id`` the shared server itself asked (the authorize
     step), and its row finishes that request instead of starting another."""
-    rows = ""
-    for place in places:
-        inner = (f"<i>{ICONS['globe' if place['kind'] == 'shared' else 'server']}</i><span class=txt>"
-                 f"<b>{esc(place['name'])}</b><span>{esc(place['url'].split('://', 1)[-1])}</span></span>{ICONS['chevron']}")
-        if request_id and place["kind"] == "shared":
-            rows += f"<button type=button class=dest id=stay>{inner}</button>"
-        else:
-            rows += f"<a class=dest href='{esc(entrance.start_url(place['url']))}'>{inner}</a>"
+    rows = "".join(_place_row(p, stay=bool(request_id) and p["kind"] == "shared") for p in places)
     user = account["username"]
     card = (f"<div class=cbrand>{LOGO}<span>Gamma<em>Cloud</em></span></div><div class=cbody>"
             "<h1>Where to?</h1><p class=where><span>Your account has a library on more than one server.</span></p>"
@@ -976,8 +1181,7 @@ def where_page(account, places: list[dict], request_id: str = "") -> str:
             f"<p class=alt>Signed in as {esc(user)}<span class=sep aria-hidden=true>·</span>"
             "<button class=linkbtn id=other>Use another account</button></p><div class=msg id=err></div></div>"
             "<p class=cfoot>Every server you have signed in to is listed on <a href=/devices>Devices</a>.</p>")
-    script = ("const err = document.getElementById('err');"
-              "document.getElementById('other').onclick = (e) => act(e.target, async () => { await api('/api/logout', {}); location.reload(); }, err);")
+    script = ENTRANCE_JS
     if request_id:
         script += ("const stay = document.getElementById('stay'); if (stay) stay.onclick = () => act(stay, async () => { "
                    f"const d = await api('/authorize/continue', {{request_id: {_js(request_id)}}}); location.href = d.redirect; }}, err);")

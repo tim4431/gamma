@@ -66,13 +66,14 @@ export async function shareScenarios({ server, browser, alice, bob, step, until,
     await page.click("button[aria-label='Share this folder']");
     await page.waitForSelector(".sharePopover");
     assert((await page.textContent(".sharePopover")).includes("Share folder “sharedlab”"), "the popover is about the folder");
-    await page.locator(".sharePopover").getByText("Choosing who can open this folder creates its link.").waitFor();
+    await page.locator(".sharePopover").getByText("Not shared yet. Share makes a link to every page in this folder.").waitFor();
+    await page.locator(".sharePopover").getByRole("button", { name: "Share", exact: true }).click();
     await page.locator(".sharePopover").getByRole("button", { name: "Anyone", exact: true }).click();
     const copyBtn = page.locator(".sharePopover button", { hasText: /Copy link|Copied/ }).first();
     await copyBtn.waitFor({ timeout: 10000 });
     const folderToken = new URL(await copyBtn.getAttribute("title")).searchParams.get("share");
     assert(folderToken, "folder share token");
-    await until(async () => (await page.textContent(".sharePopover")).includes("every page in this folder"), { what: "folder wording" });
+    await until(async () => (await page.textContent(".sharePopover")).includes("Anyone with the link can read every page in this folder"), { what: "folder wording" });
     await page.keyboard.press("Escape");
     await page.locator(".sharePopover").waitFor({ state: "detached" });
     assertNoProblems(page);
@@ -214,33 +215,41 @@ export async function shareScenarios({ server, browser, alice, bob, step, until,
     await alice.api(`/api/share-settings/${gated.id}`, { method: "DELETE" });
   });
 
-  await step("share: opening the popover shares nothing; the first invitation makes an invite-only link; Stop sharing asks first", async () => {
+  await step("share: opening the popover shares nothing; Share makes a signed-in link and shows the access; Stop sharing asks first", async () => {
     const pg = await alice.api("/api/pages", { method: "POST", body: { title: "Invite first" } });
     const ctx = await alice.context(browser);
     const page = await openPage(ctx, `${server.base}/?page=${pg.id}&ws=${alice.ws}`);
     await page.click("button[aria-label='Share']");
     const pop = page.locator(".sharePopover");
-    await pop.getByText("Choosing who can open this page creates its link.").waitFor();
+    const noLink = "Not shared yet. Share makes a link you can send.";
+    await pop.getByText(noLink).waitFor();
     await until(async () => (await pop.textContent()).includes("Share “Invite first”"), { what: "the page's name in the title" });
     assertEq((await alice.api(`/api/share-settings/${pg.id}`)).token, null, "opening the popover shares nothing");
-    assertEq(await pop.locator(".setPictureChoice.on").count(), 0, "no audience is picked before there is a link");
+    assertEq(await pop.locator(".setPictureChoice").count(), 0, "no access controls before Share");
+    assertEq(await pop.getByRole("textbox", { name: "Invite people by name…" }).count(), 0, "no invite box before Share");
+    await pop.getByRole("button", { name: "Share", exact: true }).click();
+    await pop.getByRole("button", { name: "Copy link" }).waitFor();
+    let settings = await alice.api(`/api/share-settings/${pg.id}`);
+    assertEq(`${settings.audience}/${settings.role}`, "users/view", "Share makes a link any account here can read");
+    await pop.getByText("Anyone signed in can read this page.").waitFor();
     await pop.getByRole("textbox", { name: "Invite people by name…" }).fill("bob");
     await pop.getByRole("option", { name: "bob", exact: true }).click();
     await pop.getByRole("button", { name: "Invite", exact: true }).click();
     await pop.locator(".aiProvRow", { hasText: "bob" }).waitFor();
-    const settings = await alice.api(`/api/share-settings/${pg.id}`);
-    assertEq(settings.audience, "list", "the first invitation shares Invited only");
+    settings = await alice.api(`/api/share-settings/${pg.id}`);
     assertEq(JSON.stringify(settings.users), JSON.stringify([{ name: "bob", role: "view" }]), "bob is invited to view");
+    await pop.getByRole("button", { name: "Invited only", exact: true }).click();
     await pop.getByText("Only the people above can open this page; the link does nothing for anyone else.").waitFor();
     assert(await pop.locator(".setSection", { hasText: "General access" }).getByRole("button", { name: "Edit", exact: true }).isDisabled(),
       "the View / Edit toggle stays, disabled, under Invited only");
-    await pop.getByRole("button", { name: "Copy link" }).waitFor();
-    await pop.locator(".shareStop").getByRole("button", { name: "Stop sharing", exact: true }).click();
+    // Stop sharing sits beside Copy link
+    await pop.locator('.setRow[data-setting="Share link"]').getByRole("button", { name: "Stop sharing", exact: true }).click();
     await pop.getByText("Stop sharing? The link stops working and the 1 invited person loses access.").waitFor();
     assert((await alice.api(`/api/share-settings/${pg.id}`)).token, "nothing stops before the confirm");
     await pop.locator(".mirrorConfirm").getByRole("button", { name: "Stop sharing", exact: true }).click();
-    await pop.getByText("Choosing who can open this page creates its link.").waitFor();
+    await pop.getByText(noLink).waitFor();
     assertEq((await alice.api(`/api/share-settings/${pg.id}`)).token, null, "the share stopped");
+    assertEq(await pop.locator(".setPictureChoice").count(), 0, "the access controls go with the link");
     assertNoProblems(page);
     await ctx.close();
   });
@@ -270,7 +279,7 @@ export async function shareScenarios({ server, browser, alice, bob, step, until,
     await page.getByRole("dialog", { name: "Open a page" }).getByRole("option", { name: /Palette plain/ }).click();
     await until(async () => (await page.locator(".pageTitleRow .titleText").textContent()).includes("Palette plain"), { what: "the second page open" });
     await shareFromPalette();
-    await pop.getByText("Choosing who can open this page creates its link.").waitFor();
+    await pop.getByText("Not shared yet. Share makes a link you can send.").waitFor();
     assertEq(await pop.getByRole("button", { name: "Copy link" }).count(), 0, "not the first page's link");
     assertEq((await alice.api(`/api/share-settings/${plain.id}`)).token, null, "opening the popover shares nothing");
     assertNoProblems(page);
@@ -286,16 +295,18 @@ export async function shareScenarios({ server, browser, alice, bob, step, until,
   const up = await account.upload("/api/upload-image", PNG_1PX, "dot.png", "image/png");
   await account.api("/api/blocks", { method: "POST", body: { parent_id: pdfPageId, content: `figure ![](${up.url})` } });
 
-  await step("share: picking Anyone creates the link and shows it on the copy button", async () => {
+  await step("share: Share makes the link, shown on the copy button; picking Anyone opens it to everyone", async () => {
     const ctx = await account.context(browser);
     const page = await openPage(ctx, `${server.base}/?page=${pdfPageId}&ws=${account.ws}`);
     await waitForPdf(page, 1);
     await page.click("button[aria-label='Share']");
     await page.waitForSelector(".sharePopover");
-    await page.locator(".sharePopover").getByRole("button", { name: "Anyone", exact: true }).click();
+    await page.locator(".sharePopover").getByRole("button", { name: "Share", exact: true }).click();
     const copyBtn = page.locator(".sharePopover button", { hasText: /Copy link|Copied/ }).first();
     await copyBtn.waitFor({ timeout: 10000 });
     token = new URL(await copyBtn.getAttribute("title")).searchParams.get("share");
+    await page.locator(".sharePopover").getByRole("button", { name: "Anyone", exact: true }).click();
+    await page.locator(".sharePopover").getByText("Anyone with the link can read this page.").waitFor();
     await page.keyboard.press("Escape");
     await page.locator(".sharePopover").waitFor({ state: "detached" });
     if (!token) token = (await account.api(`/api/share-settings/${pdfPageId}`)).token;

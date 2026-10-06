@@ -64,11 +64,15 @@ sites/
    build only warns.
 
 The pages have no framework and no web fonts (the brand's system font
-stack), and make one kind of outbound request: `site.js` asks the GitHub API
-for the release list to fill in the version, the per-OS installer links and
-the extension zip, and for the star count. Every element keeps a working
-fallback link if that call fails. There are no cookies and no analytics, in
-line with the app's privacy policy.
+stack), and make two kinds of outbound request. `site.js` asks the GitHub
+API for the release list to fill in the version, the per-OS installer links
+and the extension zip, and for the star count. On the pricing page it also
+asks the account server which paid plans are on sale
+(`https://account.gammapdf.com/api/plans`, [docs/dev/billing.md](../docs/dev/billing.md)
+"The website") and turns the button of a plan not sold right now into a
+disabled *Coming soon*; `_headers` lets that origin through `connect-src`.
+Every element keeps a working fallback if a call fails. There are no
+cookies and no analytics, in line with the app's privacy policy.
 
 The header's **Log in** link and the `/login`, `/account` and `/signup`
 short links go to the Gamma Cloud account server at `account.gammapdf.com`

@@ -1,6 +1,6 @@
 # Gamma Cloud terms
 
-_Last updated: 2026-10-04._
+_Last updated: 2026-10-05._
 
 These terms cover Gamma Cloud: the account at
 [account.gammapdf.com](https://account.gammapdf.com) and the paid plans
@@ -69,11 +69,12 @@ If a renewal payment fails, your plan keeps working for 7 days while the
 payment is retried. If it is still unpaid after that, the plan ends as
 described here.
 
-**Lite and Plus.** Your library stays where it is and stays readable, and
-your account goes back to the free allowance. While the library holds more
-than that allowance, new uploads are refused. We may delete files beyond
-the free allowance 90 days after the plan ended, and tell you by e-mail
-before we do. Subscribing again lifts the limit at once.
+**Lite and Plus.** Your library is kept where it is, but it is closed: you
+cannot sign in to it without a plan, so export what you want to keep
+before the plan ends. Your account goes back to the free allowance, and
+the pages you published stay online. We may delete files beyond the free
+allowance 90 days after the plan ended, and tell you by e-mail before we
+do. Subscribing again opens the library at once, as it was.
 
 **Pro.** Your server:
 

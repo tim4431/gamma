@@ -9,7 +9,7 @@ import time
 from contextlib import closing
 
 import pytest
-from conftest import make_admin, register, steps_after
+from conftest import make_admin, register, set_setting, steps_after
 from test_hosted import DOMAIN, hosting, jobs_of, make_account, make_host, server, set_plan, tick  # noqa: F401
 
 import manage
@@ -109,7 +109,8 @@ def test_the_heartbeat_updates_the_host_and_its_servers(client, hosting):
     body = {"agent_version": "0.1", "memory_mb": 16000, "disk_mb": 900000, "memory_used_mb": 3000,
             "disk_used_mb": 20000, "containers": [
                 {"label": "alice", "running": True, "health": "healthy", "memory_mb": 300, "memory_limit_mb": 768,
-                 "data_mb": 42, "image": "ghcr.io/tim4431/gamma:sha-1"},
+                 "data_mb": 42, "image": "ghcr.io/tim4431/gamma:sha-1", "cpu_pct": 12.345, "restarts": 2,
+                 "started_at": "2026-10-05T07:00:00Z", "oom_killed": True, "image_stale": False},
                 {"label": "stranger", "running": True}, "junk"]}
     assert client.post("/api/fleet/heartbeat", json=body, headers=bearer(token)).status_code == 200
     with closing(db.connect()) as conn:
@@ -119,6 +120,15 @@ def test_the_heartbeat_updates_the_host_and_its_servers(client, hosting):
     agent = json.loads(server(alice)["report"])["agent"]
     assert agent["running"] is True and agent["data_mb"] == 42 and agent["image"].endswith("sha-1")
     assert agent["memory_limit_mb"] == 768
+    assert (agent["cpu_pct"], agent["restarts"], agent["started_at"], agent["oom_killed"], agent["image_stale"]) == (
+        12.3, 2, "2026-10-05T07:00:00Z", True, False)
+    # what an older agent sends, or nonsense: unknown, not wrong
+    odd = {"label": "alice", "running": True, "data_mb": 42, "cpu_pct": "high", "restarts": -1, "oom_killed": "yes",
+           "image_stale": "no"}
+    client.post("/api/fleet/heartbeat", json={**body, "containers": [odd]}, headers=bearer(token))
+    agent = json.loads(server(alice)["report"])["agent"]
+    assert (agent["cpu_pct"], agent["restarts"], agent["started_at"], agent["oom_killed"], agent["image_stale"]) == (
+        None, 0, "", False, None)
     # the container's own sync keeps what the agent reported
     from test_hosted import REPORT, basic, credentials
     client.post("/api/hosted/sync", json=REPORT, headers=basic(*credentials(alice)))
@@ -525,15 +535,295 @@ def test_jobs_carry_their_duration_and_their_runs_progress(client, hosting):
     assert done["wave_done"] == 1 and 30 <= done["duration_s"] < 60
 
 
+# --- the default tag, outdated servers, automatic upgrades ----------------------
+
+def kinds(kind, state=None):
+    """Every job of ``kind`` (in ``state``) as (server_id, state, wave), oldest first."""
+    with closing(db.connect()) as conn:
+        return [tuple(r) for r in conn.execute(
+            "SELECT server_id, state, wave FROM fleet_jobs WHERE kind = ? AND (? IS NULL OR state = ?) "
+            "ORDER BY created_at, rowid", (kind, state, state)).fetchall()]
+
+
+def job_row(job_id):
+    with closing(db.connect()) as conn:
+        return dict(conn.execute("SELECT * FROM fleet_jobs WHERE id = ?", (job_id,)).fetchone())
+
+
+def test_the_default_tag_is_a_setting(client, hosting):
+    register(client, "operator")
+    make_admin("operator")
+    _, token = make_host()
+    [sid, _, _] = _three_running(client, token)
+    set_setting("fleet_image_tag", "sha-new")
+    listed = client.get("/api/admin/servers").json()
+    assert listed["default_image"] == fleet.default_image() == f"{config.FLEET_IMAGE}:sha-new"
+    assert listed["auto_upgrade"] is False
+    s = next(x for x in listed["servers"] if x["id"] == sid)
+    assert (s["outdated"], s["outdated_why"], s["image_tag"]) == (True, "tag", config.FLEET_IMAGE_TAG)
+    dora = make_account("dora", "plus")                                     # a new server runs the new default
+    assert server(dora)["image_tag"] == "sha-new"
+    assert json.loads(jobs_of(dora)[0]["payload"])["image"] == f"{config.FLEET_IMAGE}:sha-new"
+    set_setting("fleet_image_tag", "")                                      # back to the environment's
+    assert fleet.default_tag() == config.FLEET_IMAGE_TAG
+    s = next(x for x in client.get("/api/admin/servers").json()["servers"] if x["id"] == sid)
+    assert s["outdated"] is False and s["outdated_why"] == ""
+
+
+def test_outdated_by_its_image_and_an_upgrade_to_the_same_tag(client, hosting):
+    register(client, "operator")
+    make_admin("operator")
+    _, token = make_host()
+    [sid, other, third] = _three_running(client, token)
+    tag = config.FLEET_IMAGE_TAG
+    assert client.post("/api/admin/servers/upgrade", json={"outdated": True}).status_code == 409   # none is
+    beat = {"memory_mb": 8192, "disk_mb": 500_000, "containers": [
+        {"label": "alice", "running": True, "image": f"{config.FLEET_IMAGE}:{tag}", "image_stale": True},
+        {"label": "bob", "running": True, "image_stale": None}, {"label": "carol", "running": True}]}
+    client.post("/api/fleet/heartbeat", json=beat, headers=bearer(token))
+    servers = {x["id"]: x for x in client.get("/api/admin/servers").json()["servers"]}
+    assert (servers[sid]["outdated"], servers[sid]["outdated_why"]) == (True, "image")
+    assert not servers[other]["outdated"] and not servers[third]["outdated"]
+    # one server, to the tag it runs already: the agent pulls it again
+    r = client.post(f"/api/admin/servers/{sid}/upgrade", json={"tag": tag})
+    assert r.status_code == 200 and r.json()["job"]["payload"]["image"] == f"{config.FLEET_IMAGE}:{tag}"
+    finish(client, token, _claim(client, token, "upgrade")["id"], result={"image": f"{config.FLEET_IMAGE}:{tag}"})
+    s = next(x for x in client.get("/api/admin/servers").json()["servers"] if x["id"] == sid)
+    assert s["outdated"] is False and s["report"]["agent"]["image_stale"] is False   # until the next heartbeat
+    # every outdated server, and only those, in a run: by its image, or by its tag
+    client.post("/api/fleet/heartbeat", json=beat, headers=bearer(token))
+    with closing(db.connect()) as conn:
+        conn.execute("UPDATE hosted_servers SET image_tag = 'sha-old' WHERE id = ?", (other,))
+        conn.commit()
+    r = client.post("/api/admin/servers/upgrade", json={"outdated": True, "wave_size": 5})
+    assert r.status_code == 200 and (r.json()["jobs"], r.json()["image"]) == (2, f"{config.FLEET_IMAGE}:{tag}")
+    assert {k[0] for k in kinds("upgrade", "queued")} == {sid, other}
+    assert client.post("/api/admin/servers/upgrade", json={"outdated": True}).status_code == 409   # pending now
+    assert client.post("/api/admin/servers/upgrade", json={"wave_size": 1}).status_code == 400     # no tag
+
+
+def test_automatic_upgrades_stop_at_a_failure(client, hosting):
+    _, token = make_host()
+    [sid, other, third] = _three_running(client, token)
+    set_setting("fleet_image_tag", "sha-new")
+    with closing(db.connect()) as conn:                                     # two of them run it already
+        conn.execute("UPDATE hosted_servers SET image_tag = 'sha-new' WHERE id != ?", (sid,))
+        conn.commit()
+    tick()
+    assert kinds("upgrade") == []                                           # off by default
+    set_setting("fleet_auto_upgrade", "on")
+    tick()
+    [(server_id, state, wave)] = kinds("upgrade")
+    assert (server_id, state) == (sid, "queued") and wave.endswith("/001")
+    with closing(db.connect()) as conn:
+        [audit] = conn.execute("SELECT actor, detail FROM audit WHERE event = 'fleet.auto_upgrade'").fetchall()
+    assert audit["actor"] == "system" and "sha-new" in audit["detail"] and "servers=1" in audit["detail"]
+    tick()
+    assert len(kinds("upgrade")) == 1                                       # a run in flight: no second one
+    job = _claim(client, token, "upgrade")
+    finish(client, token, job["id"], "failed", {"error": "pull failed"})
+    tick()
+    assert len(kinds("upgrade")) == 1                                       # the failure holds the automatic pass
+    with closing(db.connect()) as conn:
+        fleet.cancel(conn, job["id"], "test")
+        conn.commit()
+    tick()
+    assert [k[1] for k in kinds("upgrade")] == ["canceled", "queued"]       # canceled: it tries again
+    finish(client, token, _claim(client, token, "upgrade")["id"])
+    tick()
+    assert len(kinds("upgrade")) == 2 and server_by_id(sid)["image_tag"] == "sha-new"   # nothing outdated
+
+
+def test_an_automatic_upgrade_for_a_moved_image_waits_a_day(client, hosting):
+    """A server outdated only by the agent's staleness report is rebuilt by
+    the automatic pass once a day at most, so a report that stayed wrong
+    after a pull cannot restart it every hour; the admin's own Upgrade all
+    outdated is not held back."""
+    register(client, "operator")
+    make_admin("operator")
+    _, token = make_host()
+    [sid, other, third] = _three_running(client, token)
+    image = f"{config.FLEET_IMAGE}:{config.FLEET_IMAGE_TAG}"
+    stale = {"memory_mb": 8192, "disk_mb": 500_000, "containers": [
+        {"label": "alice", "running": True, "image": image, "image_stale": True},
+        {"label": "bob", "running": True}, {"label": "carol", "running": True}]}
+    client.post("/api/fleet/heartbeat", json=stale, headers=bearer(token))
+    set_setting("fleet_auto_upgrade", "on")
+    tick()
+    assert [k[:2] for k in kinds("upgrade")] == [(sid, "queued")]
+    job = _claim(client, token, "upgrade")
+    finish(client, token, job["id"], result={"image": image})
+    client.post("/api/fleet/heartbeat", json=stale, headers=bearer(token))      # the agent still says stale
+    tick()
+    assert len(kinds("upgrade")) == 1                                            # not again today
+    r = client.post("/api/admin/servers/upgrade", json={"outdated": True})       # the admin may, at once
+    assert r.status_code == 200 and r.json()["jobs"] == 1
+    with closing(db.connect()) as conn:
+        fleet.cancel(conn, next(j["id"] for j in fleet.jobs(conn, "queued", 10)), "test")
+        conn.execute("UPDATE fleet_jobs SET finished_at = ? WHERE id = ?", (db.after(-2 * 86400), job["id"]))
+        conn.commit()
+    tick()                                                                       # a day later: taken again
+    assert [k[:2] for k in kinds("upgrade")][-1] == (sid, "queued")
+
+
+# --- the extra environment and update jobs ---------------------------------------
+
+def test_the_environment_is_read_when_the_agent_takes_the_job(client, hosting):
+    from gammacloud import hosted, settings
+    register(client, "operator")
+    make_admin("operator")
+    _, token = make_host()
+    alice = make_account("alice", "plus")
+    sid = server(alice)["id"]
+    with closing(db.connect()) as conn:
+        settings.set_fleet_env(conn, {"SMTP_HOST": "mail.example", "MODE": "fleet"}, None, "admin")
+        view = hosted.set_env(conn, sid, {"MODE": "own", "TOKEN": "s3cret"}, None, "admin")
+        conn.commit()
+    assert view["env_names"] == ["MODE", "TOKEN"] and "env" not in view and "s3cret" not in json.dumps(view)
+    assert [j["kind"] for j in jobs_of(alice)] == ["create"]                 # no container yet: the create takes them
+    create = next_job(client, token)                                         # queued before they were saved
+    assert create["payload"]["extra_env"] == {"SMTP_HOST": "mail.example", "MODE": "own", "TOKEN": "s3cret"}
+    assert "TOKEN" not in create["payload"]["env"]
+    shown = client.get(f"/api/admin/jobs/{create['id']}").json()["job"]
+    assert shown["payload"]["extra_env"] == ["MODE", "SMTP_HOST", "TOKEN"] and "s3cret" not in json.dumps(shown)
+    with closing(db.connect()) as conn:                                      # saved while it runs: an update follows
+        hosted.set_env(conn, sid, {"TOKEN": "n3w"}, None, "admin")
+        conn.commit()
+    assert [j["kind"] for j in jobs_of(alice)] == ["create"]
+    finish(client, token, create["id"])
+    update = _claim(client, token, "update")
+    assert update["payload"] == {"label": "alice", "extra_env": {"SMTP_HOST": "mail.example", "MODE": "own", "TOKEN": "n3w"}}
+    finish(client, token, update["id"], result={"container": "gamma-alice", "extra_env": ["MODE", "SMTP_HOST", "TOKEN"]})
+    assert [json.loads(j["payload"]) for j in jobs_of(alice)] == [{}, {}]   # neither keeps a value
+    with closing(db.connect()) as conn:
+        audit = [r[0] for r in conn.execute("SELECT detail FROM audit WHERE event IN ('hosted.env', 'settings.fleet_env') "
+                                            "ORDER BY id")]
+    assert audit == ["set MODE,SMTP_HOST", "alice set MODE,TOKEN", "alice set TOKEN"]
+
+
+def test_an_update_job_applies_a_running_servers_variables(client, hosting):
+    register(client, "operator")
+    make_admin("operator")
+    _, token = make_host()
+    [sid, _, _] = _three_running(client, token)
+    r = client.patch(f"/api/admin/servers/{sid}", json={"env": {"set": {"TOKEN": "one"}}})
+    assert r.status_code == 200 and r.json()["server"]["env_names"] == ["TOKEN"]
+    client.patch(f"/api/admin/servers/{sid}", json={"env": {"set": {"TOKEN": "two", "MODE": "x"}}})
+    assert [k[1] for k in kinds("update")] == ["queued"]                     # one job: it reads the newest when taken
+    job = _claim(client, token, "update")
+    assert job["server_id"] == sid and job["payload"] == {"label": "alice", "extra_env": {"TOKEN": "two", "MODE": "x"}}
+    shown = client.get(f"/api/admin/jobs/{job['id']}").json()["job"]
+    assert shown["payload"]["extra_env"] == ["MODE", "TOKEN"] and "two" not in json.dumps(shown["payload"])
+    # it times out: blanked; a retry is built again when the agent takes it
+    with closing(db.connect()) as conn:
+        conn.execute("UPDATE fleet_jobs SET started_at = ? WHERE id = ?", (db.after(-fleet.JOB_TIMEOUT - 60), job["id"]))
+        conn.commit()
+    tick()
+    assert job_row(job["id"])["state"] == "failed" and job_row(job["id"])["payload"] == "{}"
+    assert client.post(f"/api/admin/jobs/{job['id']}/retry").status_code == 200
+    again = _claim(client, token, "update")
+    assert again["id"] == job["id"] and again["payload"]["extra_env"] == {"TOKEN": "two", "MODE": "x"}
+    finish(client, token, again["id"])
+    # canceled before it ran: blanked too
+    client.patch(f"/api/admin/servers/{sid}", json={"env": {"unset": ["MODE"]}})
+    assert [k[1] for k in kinds("update")] == ["done", "queued"]
+    [queued] = client.get("/api/admin/jobs", params={"state": "queued"}).json()["jobs"]
+    assert client.post(f"/api/admin/jobs/{queued['id']}/cancel").json()["job"]["payload"] == {}
+    # what is refused
+    for body in ({"env": {"set": {"GAMMA_CLOUD_CLIENT_SECRET": "x"}}}, {"env": {"set": {"A": "x\ny"}}},
+                 {"env": "A=1"}, {"color": "red"}, {}, {"overrides": {"memory_mb": -1}}):
+        assert client.patch(f"/api/admin/servers/{sid}", json=body).status_code == 400, body
+    assert client.patch("/api/admin/servers/s_nope", json={"env": {"set": {"A": "1"}}}).status_code == 404
+    r = client.patch(f"/api/admin/servers/{sid}", json={"overrides": {"max_accounts": 5}, "env": {"set": {"B": "2"}}})
+    assert r.status_code == 200 and r.json()["server"]["overrides"] == {"max_accounts": 5}
+    assert r.json()["server"]["env_names"] == ["B", "TOKEN"]
+    # deleting the server cancels the update that waits, blanked like a create
+    [waiting] = client.get("/api/admin/jobs", params={"state": "queued"}).json()["jobs"]
+    assert waiting["kind"] == "update" and client.post(f"/api/admin/servers/{sid}/delete").status_code == 200
+    assert (job_row(waiting["id"])["state"], job_row(waiting["id"])["payload"]) == ("canceled", "{}")
+
+
+def test_the_fleets_variables_and_an_update_run(client, hosting):
+    register(client, "operator")
+    make_admin("operator")
+    _, token = make_host()
+    ids = _three_running(client, token)
+    dora = make_account("dora", "plus")                                      # a state a run takes, but no container
+    finish(client, token, _claim(client, token, "create")["id"], "failed", {"error": "pull failed"})
+    client.post(f"/api/admin/servers/{server(dora)['id']}/suspend")
+    assert client.get("/api/admin/fleet-env").json() == {"names": []}
+    r = client.patch("/api/admin/fleet-env", json={"set": {"SMTP_HOST": "mail.example", "SMTP_PASSWORD": "pw-1"}})
+    assert r.status_code == 200 and r.json() == {"names": ["SMTP_HOST", "SMTP_PASSWORD"]}
+    assert client.patch("/api/admin/fleet-env", json={"set": {"GAMMA_PUBLIC_URL": "x"}}).status_code == 400
+    assert client.patch("/api/admin/fleet-env", json={"unset": "SMTP_HOST"}).status_code == 400
+    listed = client.get("/api/admin/fleet-env")
+    assert listed.json() == {"names": ["SMTP_HOST", "SMTP_PASSWORD"]} and "pw-1" not in listed.text
+    assert kinds("update") == []                                             # saving enqueues nothing
+    client.patch(f"/api/admin/servers/{ids[1]}", json={"env": {"set": {"OWN": "1"}}})   # waits already: skipped
+    r = client.post("/api/admin/servers/apply-env", json={"wave_size": 1})
+    assert r.status_code == 200 and (r.json()["jobs"], r.json()["waves"]) == (2, 2) and r.json()["run"].startswith("e")
+    assert [k[0] for k in kinds("update", "held")] == [ids[2]]
+    a, b = next_job(client, token), next_job(client, token)                  # its own update and the first wave
+    assert next_job(client, token) is None                                   # the second wave is held
+    assert {a["server_id"], b["server_id"]} == {ids[0], ids[1]}
+    own = a if a["server_id"] == ids[1] else b
+    assert own["payload"]["extra_env"] == {"SMTP_HOST": "mail.example", "SMTP_PASSWORD": "pw-1", "OWN": "1"}
+    finish(client, token, own["id"])
+    wave1 = b if own is a else a
+    # a variable removed while the run goes on is gone from the waves still held
+    client.patch("/api/admin/fleet-env", json={"unset": ["SMTP_PASSWORD"]})
+    finish(client, token, wave1["id"], "failed", {"error": "health check timed out"})
+    tick()
+    assert next_job(client, token) is None                                   # paused by the failure
+    client.post(f"/api/admin/jobs/{wave1['id']}/cancel")
+    wave2 = _claim(client, token, "update")
+    assert wave2["server_id"] == ids[2] and wave2["payload"]["extra_env"] == {"SMTP_HOST": "mail.example"}
+    shown = next(j for j in client.get("/api/admin/jobs").json()["jobs"] if j["id"] == wave2["id"])
+    assert shown["wave_total"] == 2 and shown["wave"].startswith(r.json()["run"])
+    # one running may predate a change, so it does not count as waiting; a queued one does
+    assert client.post("/api/admin/servers/apply-env", json={"server_ids": [ids[2]]}).json()["jobs"] == 1
+    assert client.post("/api/admin/servers/apply-env", json={"server_ids": [ids[2]]}).status_code == 409
+    assert client.post("/api/admin/servers/apply-env", json={"server_ids": [server(dora)["id"]]}).status_code == 400
+    with closing(db.connect()) as conn:
+        runs = [r[0] for r in conn.execute("SELECT detail FROM audit WHERE event = 'fleet.update' ORDER BY id")]
+    assert runs[0].endswith("environment servers=2 waves=2")
+
+
 def test_step_10_adds_the_orphans_column():
     with closing(db.connect()) as conn:
         conn.execute("ALTER TABLE hosts DROP COLUMN orphans")
         conn.execute("PRAGMA user_version = 9")
         conn.commit()
-    assert db.ensure_current() == steps_after(9) == ["fleet_orphans"]
+    assert db.ensure_current() == steps_after(9) == ["fleet_orphans", "operations"]
     with closing(db.connect()) as conn:
         host, _ = fleet.add_host(conn, "vps-1")
         assert host["orphans"] == []
+
+
+def test_step_11_adds_the_operations_columns_and_tables():
+    """Back to the shape of step 10, with an invite made then: the upgrade
+    adds every column and table, and the code's total is what was left."""
+    added = {"invites": ("uses_total", "expires_at", "disabled", "grant_days"),
+             "accounts": ("invite_code", "granted_until"), "hosts": ("public_ip",),
+             "hosted_servers": ("overrides", "env", "dns_record_id", "dns_target")}
+    with closing(db.connect()) as conn:
+        for table, columns in added.items():
+            for column in columns:
+                conn.execute(f"ALTER TABLE {table} DROP COLUMN {column}")
+        conn.execute("DROP TABLE alerts")
+        conn.execute("DROP TABLE metrics")
+        conn.execute("INSERT INTO invites (code, uses_left, plan, created_at) VALUES ('old', 3, 'free', ?)", (db.now(),))
+        conn.execute("PRAGMA user_version = 10")
+        conn.commit()
+    assert db.ensure_current() == steps_after(10) == ["operations"]
+    with closing(db.connect()) as conn:
+        for table, columns in added.items():
+            have = [r[1] for r in conn.execute(f"PRAGMA table_info({table})")]
+            assert all(column in have for column in columns), table
+        invite = conn.execute("SELECT * FROM invites WHERE code = 'old'").fetchone()
+        assert invite["uses_total"] == 3 and invite["disabled"] == 0 and invite["expires_at"] is None
+        assert conn.execute("SELECT COUNT(*) FROM alerts").fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM metrics").fetchone()[0] == 0
 
 
 # --- admin --------------------------------------------------------------------
@@ -616,5 +906,14 @@ def test_cli(capsys, client, hosting):
     manage.main(["servers"])
     out = capsys.readouterr().out
     assert "dora" in out and "provisioning" in out and "mem=1536MB" in out
+    assert "outdated" not in out and "own=" not in out
+    from gammacloud import hosted
+    with closing(db.connect()) as conn:
+        hosted.set_overrides(conn, conn.execute("SELECT id FROM hosted_servers").fetchone()[0], {"memory_mb": 2048}, "cli")
+        conn.commit()
+    set_setting("fleet_image_tag", "sha-new")
+    manage.main(["servers"])
+    out = capsys.readouterr().out
+    assert "mem=2048MB" in out and "(outdated: tag)" in out and "own=memory_mb=2048" in out
     manage.main(["jobs"])
     assert "create" in capsys.readouterr().out
