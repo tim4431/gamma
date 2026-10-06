@@ -2568,14 +2568,17 @@ TOOLS = [
                 "Hand one document and one question to a helper that reads it for you and "
                 "answers with page citations, in up to about a thousand words. `source` is a DOI, an arXiv id or an "
                 "http(s) URL, `question` says exactly what to find out, and `title` the paper's "
-                "exact title when you know it. Reach for this instead of fetch_paper when the "
-                "answer may be anywhere in a long document, or when you are asking the same "
-                "question of several papers — the helper reads as many windows as it needs and "
-                "you only carry its answer, so four papers cost about what one full read would. "
-                "Use fetch_paper directly when you want the document's own text (a quotation, a "
-                "table, the exact wording), when the abstract already settles it, or to check a "
-                "candidate is the right paper (mode \"probe\"). The answer is the helper's, not "
-                "the document's: ask again with another question to learn more."),
+                "exact title when you know it. Reach for this instead of fetch_paper whenever the "
+                "user asks you to read, summarise, explain or compare papers that are not in their "
+                "library, when the answer may be anywhere in a long document, or when you are "
+                "asking the same question of several papers — one call per paper, all in the same "
+                "turn: the helper reads as many windows as it needs and you only carry its answer, "
+                "so four papers cost about what one full read would. Use fetch_paper directly when "
+                "you want the document's own text (a quotation, a table, the exact wording), when "
+                "the abstract already settles a narrow question, or to check a candidate is the "
+                "right paper (mode \"probe\" — a probe reads the front matter, not the paper). The "
+                "answer is the helper's, not the document's: ask again with another question to "
+                "learn more."),
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -3047,12 +3050,15 @@ def agent_system(scope: dict, perms: dict | None = None, base: str = "") -> str:
                         + ", unless the user asked for that; the chat continues once the PDF arrives."))
         if "read_paper" in names:
             text += (
-                " When the answer could be anywhere in a long document, or you are asking the "
-                "same question of several papers, give the job to read_paper instead: a helper "
-                "reads the document and hands back a cited answer, so you carry the answer "
-                "and not the paper. Read it yourself with fetch_paper when you need its own "
-                "wording, a table or a quotation. Say that a helper read it, and keep its page "
-                "citations.")
+                " When the user asks you to read, summarise, explain or compare papers outside "
+                "their library, read them: give each to read_paper, all in one turn, with a "
+                "question that says what they want to know — a probe only shows the front matter "
+                "and is for checking a candidate, not for reading. Do the same when the answer "
+                "could be anywhere in a long document, or you are asking the same question of "
+                "several papers: a helper reads the document and hands back a cited answer, so "
+                "you carry the answer and not the paper. Read it yourself with fetch_paper when "
+                "you need its own wording, a table or a quotation. Say that a helper read it, "
+                "and keep its page citations.")
     if "edit_block" in names or "create_block" in names or "move_block" in names:
         text += (
             "\nNote editing: call read_block first and use its exact block ids. "

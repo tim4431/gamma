@@ -113,8 +113,9 @@ def login(request: Request, next: str = "/"):
 
 
 @router.get("/register", response_class=HTMLResponse)
-def register(request: Request):
-    return sign_in_page(request, pages.register_page)
+def register(request: Request, invite: str = ""):
+    """``?invite=CODE``: the Admin page's copied link fills the invite field."""
+    return sign_in_page(request, lambda social: pages.register_page(social, invite[:64]))
 
 
 @router.get("/verify", response_class=HTMLResponse)

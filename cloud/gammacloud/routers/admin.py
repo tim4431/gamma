@@ -1,5 +1,6 @@
 """The admin API under ``/api/admin``: accounts, invites, OIDC clients,
-the server settings, the audit log, the fleet's hosts, hosted servers and
+the server settings with the plans on sale, the environment's configuration
+(read-only) and a test mail, the audit log, the fleet's hosts, hosted servers and
 jobs. Only an account with ``is_admin`` (set
 with ``manage.py set-admin``) and only through a portal session — never a
 bearer token from a Gamma server."""
@@ -9,7 +10,7 @@ from contextlib import closing
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
-from .. import accounts, billing, config, db, fleet, hosted, oidc, settings
+from .. import accounts, billing, config, db, fleet, hosted, mail, oidc, ratelimit, settings
 from ..accounts import Problem
 from .accounts import portal_account, send_mail, verify_message
 
@@ -156,21 +157,52 @@ class InviteBody(BaseModel):
     uses: int = 1
     plan: str = "free"
     note: str = ""
+    expires_days: int | None = None   # the code stops working that many days from now
+    grant_days: int | None = None     # the plan it grants ends that many days after each registration
+
+
+class InvitePatch(BaseModel):
+    disabled: bool
 
 
 @router.get("/invites")
 def list_invites(request: Request):
+    """Each row with ``used`` and ``state`` (``accounts.invite_view``)."""
     with closing(db.connect()) as conn:
         require_admin(conn, request)
         rows = conn.execute("SELECT * FROM invites ORDER BY created_at DESC LIMIT 500").fetchall()
-        return {"invites": [dict(r) for r in rows]}
+        return {"invites": [accounts.invite_view(r) for r in rows]}
 
 
 @router.post("/invites")
 def create_invite(body: InviteBody, request: Request):
     with closing(db.connect()) as conn:
         admin = require_admin(conn, request)
-        row = accounts.make_invite(conn, uses=body.uses, plan=body.plan, note=body.note, created_by=admin["id"])
+        row = accounts.make_invite(conn, uses=body.uses, plan=body.plan, note=body.note, created_by=admin["id"],
+                                   expires_days=body.expires_days, grant_days=body.grant_days)
+        conn.commit()
+        return {"invite": row}
+
+
+@router.get("/invites/{code}")
+def get_invite(code: str, request: Request):
+    """The invite and the accounts that registered with it, newest first."""
+    with closing(db.connect()) as conn:
+        require_admin(conn, request)
+        row = conn.execute("SELECT * FROM invites WHERE code = ?", (code,)).fetchone()
+        if not row:
+            raise HTTPException(404, "no such invite")
+        used = conn.execute("SELECT id, username, plan, created_at, deleted_at FROM accounts WHERE invite_code = ? "
+                            "ORDER BY created_at DESC", (code,)).fetchall()
+        return {"invite": accounts.invite_view(row), "accounts": [dict(a) for a in used]}
+
+
+@router.patch("/invites/{code}")
+def patch_invite(code: str, body: InvitePatch, request: Request):
+    """Turn a code off, or on again."""
+    with closing(db.connect()) as conn:
+        admin = require_admin(conn, request)
+        row = accounts.set_invite_disabled(conn, code, body.disabled, admin["id"])
         conn.commit()
         return {"invite": row}
 
@@ -189,11 +221,20 @@ def delete_invite(code: str, request: Request):
 
 # --- server settings ----------------------------------------------------------
 
+def _settings_view() -> dict:
+    """``settings.admin_view`` and the Plans section's rows: each paid plan,
+    whether the operator offers it (``on_sale``), whether it can be bought
+    now (``sellable``) and why not (``billing.why_not``)."""
+    plans = [{"plan": p, "on_sale": p in settings.plans_on_sale(), "sellable": billing.can_sell(p),
+              "reason": billing.why_not(p)} for p in settings.PAID_PLANS]
+    return {**settings.admin_view(), "plans": plans}
+
+
 @router.get("/settings")
 def get_settings(request: Request):
     with closing(db.connect()) as conn:
         require_admin(conn, request)
-    return settings.admin_view()
+    return _settings_view()
 
 
 @router.patch("/settings")
@@ -207,7 +248,31 @@ def patch_settings(body: dict, request: Request):
             raise HTTPException(400, str(e)) from e
         conn.commit()
     settings.invalidate()
-    return settings.admin_view()
+    return _settings_view()
+
+
+@router.get("/config")
+def get_config(request: Request):
+    """What the environment fixes, read-only (``config.admin_view``): never
+    a secret's value."""
+    with closing(db.connect()) as conn:
+        require_admin(conn, request)
+    return {"groups": config.admin_view(db.SCHEMA_VERSION)}
+
+
+@router.post("/test-mail")
+def test_mail(request: Request):
+    """A short message to the calling admin's own address; answers what
+    became of it, or 502 with the mail server's error."""
+    with closing(db.connect()) as conn:
+        admin = require_admin(conn, request)
+        conn.commit()
+    ratelimit.check(f"test-mail:{admin['id']}", 5, 600)
+    try:
+        detail = mail.send_test(admin["email"])
+    except mail.MailError as e:
+        raise Problem(502, f"The mail could not be sent: {e}") from e
+    return {"ok": True, "to": admin["email"], "backend": config.MAIL_BACKEND, "detail": detail}
 
 
 # --- OIDC clients -------------------------------------------------------------
@@ -308,10 +373,11 @@ def refresh_subscription(account_id: str, request: Request):
 
 
 # --- hosted servers and the fleet (docs/dev/hosted.md) ------------------------
-# Hosts, hosted servers, their jobs and upgrades: the Servers tab. The
-# actions that enqueue a job for the container (logs, rollback, one
-# server's upgrade, an orphan's removal) answer with that job, which the
-# page polls at GET /jobs/{id}.
+# Hosts, hosted servers, their limits, environment, jobs and upgrades: the
+# Servers tab. The actions that enqueue a job for the container (logs,
+# rollback, one server's upgrade, an orphan's removal) answer with that
+# job, which the page polls at GET /jobs/{id}. An environment variable's
+# value goes in and never comes back out: only names are answered.
 
 class HostBody(BaseModel):
     name: str
@@ -328,13 +394,19 @@ class ProvisionBody(BaseModel):
 
 
 class UpgradeBody(BaseModel):
-    tag: str
+    tag: str = ""
     wave_size: int = 1
     server_ids: list[str] | None = None
+    outdated: bool = False
 
 
 class ServerUpgradeBody(BaseModel):
     tag: str
+
+
+class ApplyEnvBody(BaseModel):
+    wave_size: int = 1
+    server_ids: list[str] | None = None
 
 
 @router.get("/hosts")
@@ -379,7 +451,8 @@ def remove_orphan(host_id: str, label: str, request: Request):
 def list_servers(request: Request):
     with closing(db.connect()) as conn:
         require_admin(conn, request)
-        return {"servers": hosted.servers(conn), "default_image": fleet.default_image()}
+        return {"servers": hosted.servers(conn), "default_image": fleet.default_image(),
+                "auto_upgrade": settings.fleet_auto_upgrade()}
 
 
 @router.post("/servers/provision")
@@ -394,12 +467,73 @@ def provision_server(body: ProvisionBody, request: Request):
 
 @router.post("/servers/upgrade")
 def upgrade_servers(body: UpgradeBody, request: Request):
+    """Servers to ``tag`` in waves; with ``outdated``, exactly the outdated
+    servers to the default tag (``tag`` and ``server_ids`` are not read)."""
     with closing(db.connect()) as conn:
         admin = require_admin(conn, request)
         db.begin_write(conn)
-        run = fleet.upgrade(conn, body.tag, body.wave_size, body.server_ids, actor=admin["id"])
+        if body.outdated:
+            run = fleet.upgrade_outdated(conn, body.wave_size, actor=admin["id"])
+        else:
+            run = fleet.upgrade(conn, body.tag, body.wave_size, body.server_ids, actor=admin["id"])
         conn.commit()
     return run
+
+
+@router.post("/servers/apply-env")
+def apply_env(body: ApplyEnvBody, request: Request):
+    """An update run: running servers rebuilt with the extra environment as
+    it is now, in waves."""
+    with closing(db.connect()) as conn:
+        admin = require_admin(conn, request)
+        db.begin_write(conn)
+        run = fleet.update_env(conn, body.wave_size, body.server_ids, actor=admin["id"])
+        conn.commit()
+    return run
+
+
+@router.patch("/servers/{server_id}")
+def patch_server(server_id: str, body: dict, request: Request):
+    """``overrides``: the server's own limits over its plan's
+    (``hosted.set_overrides``); ``env``: ``{set: {NAME: value}, unset:
+    [NAME]}``, its own variables, applied now (``hosted.set_env``)."""
+    with closing(db.connect()) as conn:
+        admin = require_admin(conn, request)
+        if not body or set(body) - {"overrides", "env"}:
+            raise HTTPException(400, "send overrides, env or both")
+        env = body.get("env", {})
+        if not isinstance(env, dict):
+            raise HTTPException(400, "env is {set, unset}")
+        db.begin_write(conn)
+        if "overrides" in body:
+            server = hosted.set_overrides(conn, server_id, body["overrides"], admin["id"])
+        if "env" in body:
+            server = hosted.set_env(conn, server_id, env.get("set"), env.get("unset"), admin["id"])
+        conn.commit()
+    return {"server": server}
+
+
+@router.get("/fleet-env")
+def get_fleet_env(request: Request):
+    """The names of the fleet's extra variables; their values stay here."""
+    with closing(db.connect()) as conn:
+        require_admin(conn, request)
+        return {"names": sorted(settings.fleet_env(conn))}
+
+
+@router.patch("/fleet-env")
+def patch_fleet_env(body: dict, request: Request):
+    """``{set: {NAME: value}, unset: [NAME]}``. Nothing that runs changes:
+    a new server gets them, running ones with POST /servers/apply-env."""
+    with closing(db.connect()) as conn:
+        admin = require_admin(conn, request)
+        db.begin_write(conn)
+        try:
+            names = settings.set_fleet_env(conn, body.get("set"), body.get("unset"), admin["id"])
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from e
+        conn.commit()
+    return {"names": names}
 
 
 # Before /servers/{server_id}/{action}, which would take these paths too.
@@ -463,7 +597,8 @@ def get_job(job_id: str, request: Request):
 @router.post("/jobs/{job_id}/{action}")
 def job_action(job_id: str, action: str, request: Request):
     """``retry`` a failed or canceled job, or ``cancel`` a queued, held or
-    failed one (either lets a paused upgrade run go on)."""
+    failed one (either lets a paused upgrade or update run go on, and lets
+    automatic upgrades start again)."""
     if action not in ("retry", "cancel"):
         raise HTTPException(404, "no such action")
     with closing(db.connect()) as conn:

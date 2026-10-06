@@ -231,7 +231,8 @@ def admin_view(schema_version: int) -> list[dict]:
         ]},
         {"name": "Stripe", "items": stripe},
         {"name": "Shared server", "items": [
-            _value("Address for people", "GAMMA_CLOUD_APP_URL", APP_URL, "" if APP_URL else "Lite and Plus cannot be sold"),
+            _value("Address for people", "GAMMA_CLOUD_APP_URL", APP_URL,
+                   "" if APP_URL else "Lite and Plus cannot be sold"),
             _value("Share host", "GAMMA_CLOUD_SHARE_HOST_URL", SHARE_HOST_URL,
                    "" if SHARE_HOST_URL else "Gamma servers have nowhere to publish"),
         ]},

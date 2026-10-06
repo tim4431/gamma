@@ -3,7 +3,7 @@ from contextlib import closing
 import pytest
 from conftest import register
 
-from gammacloud import accounts, db, settings
+from gammacloud import accounts, config, db, settings
 import manage
 
 
@@ -39,6 +39,41 @@ def test_purge_deleted(client):
         assert accounts.purge_deleted(conn, 30) == 1
         assert conn.execute("SELECT COUNT(*) FROM accounts").fetchone()[0] == 0
         conn.commit()
+
+
+def test_the_server_purges_deleted_accounts_after_the_grace_period(client):
+    """``app.purge`` runs hourly what ``purge-deleted`` does by hand."""
+    from gammacloud import app as server
+    account = register(client)
+    client.post("/api/me/delete", json={"password": "correct horse battery"})
+    server.purge()
+    with closing(db.connect()) as conn:
+        assert accounts.by_id_deleted(conn, account["id"])  # still in the grace period
+        conn.execute("UPDATE accounts SET deleted_at = ? WHERE id = ?",
+                     (db.after(-(config.PURGE_DELETED_DAYS + 1) * 86400), account["id"]))
+        conn.commit()
+    server.purge()
+    with closing(db.connect()) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM accounts").fetchone()[0] == 0
+
+
+def test_invites_that_end_and_a_dated_grant(capsys):
+    manage.main(["setup"])
+    manage.main(["create-account", "erin@example.org", "erin", "--password", "correct horse battery"])
+    manage.main(["invite", "--uses", "2", "--plan", "plus", "--expires-days", "7", "--grant-days", "30"])
+    code = capsys.readouterr().out.strip().splitlines()[-1]
+    manage.main(["invites"])
+    out = capsys.readouterr().out
+    assert code in out and "used=0/2" in out and "plus for 30d" in out and " active " in out
+    assert f"expires={db.after(7 * 86400)[:10]}" in out
+    with pytest.raises(SystemExit):
+        manage.main(["invite", "--plan", "free", "--grant-days", "3"])
+    manage.main(["set-plan", "erin", "pro", "--until", "2099-01-01"])
+    assert "erin: pro until 2099-01-01" in capsys.readouterr().out
+    with pytest.raises(SystemExit):
+        manage.main(["set-plan", "erin", "pro", "--until", "2000-01-01"])
+    with closing(db.connect()) as conn:
+        assert accounts.by_username(conn, "erin")["granted_until"] == "2099-01-01T00:00:00.000Z"
 
 
 def test_restore_and_purge_account(capsys):

@@ -93,27 +93,33 @@ def plan_lines(plan: str, username: str) -> list[str]:
 
 
 MINE = "<button class='btn btn--block' disabled{}>Your current plan</button>"
+SOON = "<button class='btn btn--block' disabled>Coming soon</button>"
 
 
 def _button(plan: str, summary: dict, current: bool) -> str:
-    """A card's button. For a subscriber who can switch, the other plans
-    and this plan's other billing period open Stripe's confirmation of that
-    move (``data-switch``); otherwise a paid card starts a checkout
-    (``data-choose``) while one would be accepted."""
+    """A card's button. For a subscriber who can switch, another plan on
+    sale and this plan's other billing period (while it has a price id)
+    open Stripe's confirmation of that move (``data-switch``); otherwise a
+    paid card starts a checkout (``data-choose``) while one would be
+    accepted. A plan that cannot be bought now is *Coming soon*."""
     if plan == "free":
         return MINE.format("") if current else ""
     name, sub = plan.capitalize(), summary["subscription"]
     if _can_switch(summary):
         if sub["plan"] != plan:
+            if plan not in summary["sells"]:
+                return SOON
             verb = "Upgrade" if config.PLAN_RANK[plan] > config.PLAN_RANK.get(sub["plan"], 0) else "Switch"
             return f"<button class='btn btn--primary btn--block' data-switch={plan}>{verb} to {name}</button>"
-        here, there, other = (" data-y", " data-m", "monthly") if sub["interval"] == "year" else (" data-m", " data-y", "yearly")
+        here, there, other = (" data-y", " data-m", "month") if sub["interval"] == "year" else (" data-m", " data-y", "year")
+        if not config.STRIPE_PRICES.get(f"{plan}_{other}", ("", "", ""))[2]:
+            return MINE.format("")
         return (MINE.format(here)
-                + f"<button class='btn btn--block' data-switch={plan}{there}>Switch to {other} billing</button>")
+                + f"<button class='btn btn--block' data-switch={plan}{there}>Switch to {other}ly billing</button>")
     if current:
         return MINE.format("")
     if not can_buy(summary, plan):
-        return "<button class='btn btn--block' disabled>Not available yet</button>"
+        return SOON
     return f"<button class='btn btn--primary btn--block' data-choose={plan}>Choose {name}</button>"
 
 
@@ -145,10 +151,14 @@ def _cards(summary: dict, account: dict) -> str:
     toggle = ("<div class=interval role=group aria-label='Billing period'>"
               f"<button type=button{'' if yearly else ' class=on'} data-interval=month>Monthly</button>"
               f"<button type=button{' class=on' if yearly else ''} data-interval=year>Yearly{free_months}</button></div>")
-    note = "" if summary["sells"] else "<p class='empty gap'>Paid plans are not open yet.</p>"
-    return (toggle + note + f"<div class='plans{' y' if yearly else ''}' id=plans>"
+    note = ""
+    if not summary["sells"]:
+        note = ("<p class='empty gap'>"
+                + ("Only the Free plan is available right now. Paid plans are coming soon." if account["plan"] == "free"
+                   else "Your plan stays as it is. Other plans are coming soon.") + "</p>")
+    return (toggle + f"<div class='plans{' y' if yearly else ''}' id=plans>"
             + "".join(_card(p, summary, account) for p in config.PLANS)
-            + "</div><p class='empty gap'>Rather run it yourself? The server is free and open source: "
+            + "</div>" + note + "<p class='empty gap'>Rather run it yourself? The server is free and open source: "
             f"<a href='{pages.SITE}/#selfhost'>self-host Gamma</a> on your own machine or VPS.</p>")
 
 

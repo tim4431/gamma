@@ -1,8 +1,10 @@
+from contextlib import closing
+
 from conftest import invite, last_link, make_admin, register, set_setting, verify
 
 from fastapi.testclient import TestClient
 
-from gammacloud import accounts, mail, ratelimit
+from gammacloud import accounts, db, mail, ratelimit
 
 
 def test_register_verify_login_flow(client):
@@ -33,6 +35,45 @@ def test_invite_required_and_consumed(client):
     r = client.post("/api/register", json={"email": "b@example.org", "username": "bbb", "password": "correct horse battery",
                                            "invite": code})
     assert r.status_code == 403
+
+
+def test_an_expired_invite_is_refused(client):
+    with closing(db.connect()) as conn:
+        code = accounts.make_invite(conn, uses=5, plan="free", note="", created_by="test", expires_days=1)["code"]
+        conn.execute("UPDATE invites SET expires_at = ? WHERE code = ?", (db.after(-60), code))
+        conn.commit()
+    r = client.post("/api/register", json={"email": "a@example.org", "username": "aaa",
+                                           "password": "correct horse battery", "invite": code})
+    assert r.status_code == 403 and r.json()["detail"] == "That invite code is not valid."
+    with closing(db.connect()) as conn:
+        row = conn.execute("SELECT * FROM invites WHERE code = ?", (code,)).fetchone()
+    assert accounts.invite_state(row) == "expired" and row["uses_left"] == 5
+
+
+def test_the_register_link_fills_the_invite_code(client):
+    page = client.get("/register?invite=abc123").text
+    assert "<input name=invite value='abc123' autocomplete=off required>" in page
+    assert "gc_invite" in page                       # and carries it to a Google/GitHub sign-up's finish form
+    assert "<script>alert" not in client.get("/register?invite=<script>alert(1)</script>").text
+    set_setting("registration", "open")
+    assert "Invite code" not in client.get("/register").text
+    page = client.get("/register?invite=abc123").text
+    assert "if you have one" in page and "value='abc123'" in page
+
+
+def test_the_hourly_pass_ends_grants(client):
+    """A grant whose day has come goes back to free, and the claims follow."""
+    from gammacloud import app as server
+    alice = register(client, code=invite(plan="plus"))
+    assert alice["plan"] == "plus" and alice["granted_until"] is None
+    server.purge()
+    assert client.get("/api/me").json()["account"]["plan"] == "plus"
+    with closing(db.connect()) as conn:
+        conn.execute("UPDATE accounts SET granted_until = ? WHERE id = ?", (db.after(-1), alice["id"]))
+        conn.commit()
+    server.purge()
+    me = client.get("/api/me").json()["account"]
+    assert (me["plan"], me["granted_plan"], me["granted_until"]) == ("free", "free", None)
 
 
 def test_open_and_closed_registration(client):

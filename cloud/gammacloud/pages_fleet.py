@@ -1,7 +1,9 @@
 """The Admin page's Servers tab (docs/dev/hosted.md "Admin"): a summary
 strip, the hosts with their capacity and orphan containers, the hosted
-servers with their actions and a log viewer, an upgrade run in waves, and
-the job queue. ``pages.admin_page`` includes ``ADMIN_TAB`` and appends
+servers with their actions, a log viewer and a server's own limits, the
+extra environment (every server's, or one server's), the default image
+tag with automatic upgrades and upgrade runs in waves, and the job queue.
+``pages.admin_page`` includes ``ADMIN_TAB`` and appends
 ``ADMIN_JS``, which defines ``loadServers()``, the tab's entry; it uses the
 admin script's ``api``, ``esc``, ``bind``, ``say``, ``act``, ``ask`` and
 ``toast``.
@@ -10,8 +12,8 @@ The tables are re-rendered every 4 s while a job is queued or running and
 the tab is in view, and not at all otherwise. Clicks and selects are
 delegated to the tab through ``data-f`` attributes, which the other tabs'
 ``wire()`` never selects. The ``<style>`` block below holds only what the
-portal's stylesheet has no class for: the capacity meters and the log
-viewer."""
+portal's stylesheet has no class for: the capacity meters, the log
+viewer and the notes under a form."""
 
 import json
 
@@ -30,7 +32,7 @@ STYLE = """<style>
 #tab-servers .cap b{display:block;background:var(--accent)}#tab-servers .cap i{display:block;background:color-mix(in srgb,var(--accent) 40%,var(--accent-soft))}
 #tab-servers .cap b+i{border-left:2px solid var(--surface)}#tab-servers .cap.hot b{background:var(--danger)}
 #tab-servers .section>.body+.body{border-top:1px solid var(--line)}
-#tab-servers #flognote{margin:0}
+#tab-servers #flognote{margin:0}#tab-servers .fnote{margin:10px 0 0;color:var(--muted);font-size:12.5px;line-height:1.5}
 #tab-servers .flog{margin:0;max-height:440px;overflow:auto;background:var(--surface-2);border:1px solid var(--line);border-radius:6px;padding:10px 12px;font:12px/1.5 var(--mono);color:var(--text);white-space:pre-wrap;word-break:break-all}
 </style>"""
 
@@ -59,11 +61,45 @@ ADMIN_TAB = (
     "<button type=button class='btn btn--sm' data-f=logagain>Fetch again</button>"
     "<button type=button class='btn btn--sm' data-f=logclose>Close</button></div>"
     "<div class=notice id=flognote hidden></div><pre class=flog id=flogtext hidden></pre></div></div>"
-    # an upgrade run
-    "<div class=section><h2>Upgrade <span>every running server to an image tag, a wave at a time</span></h2>"
+    # a server's own limits, opened by its Limits…
+    "<div class=section id=flim hidden><h2>Limits <span id=flimwho></span></h2><div class=body>"
+    "<form id=flimform class=inline autocomplete=off>"
+    "<label>Storage, MB<input name=quota_mb type=number min=1 step=1></label>"
+    "<label>Per file, MB<input name=max_upload_mb type=number min=1 step=1></label>"
+    "<label>Accounts<input name=max_accounts type=number min=1 step=1></label>"
+    "<label>Memory, MB<input name=memory_mb type=number min=1 step=1></label>"
+    "<label>CPUs<input name=cpus type=number min=0.25 max=64 step=0.25></label>"
+    "<button type=submit class='btn btn--primary btn--sm'>Save</button>"
+    "<button type=button class='btn btn--sm' data-f=limplan>Back to the plan's</button>"
+    "<button type=button class='btn btn--sm' data-f=limclose>Close</button><div class=msg></div></form>"
+    "<p class=fnote>An empty field is the plan's number, shown in grey. The server keeps its own numbers through a "
+    "plan change and a lapse. Memory and CPUs resize the container now, without a restart; the rest reach it at "
+    "its next hourly sync.</p></div></div>"
+    # the extra environment: every server's, or one server's (Actions → Environment…)
+    "<div class=section id=fenv><h2>Environment <span id=fenvwho></span></h2>"
+    "<div class='body tbl'><table><thead><tr><th>Variable</th><th>For</th><th></th></tr></thead>"
+    "<tbody id=fenvlist></tbody></table></div>"
+    "<div class=body><form id=fenvform class=inline autocomplete=off>"
+    "<label>Name<input name=name required placeholder='GAMMA_…' spellcheck=false></label>"
+    "<label>Value<input name=value spellcheck=false></label>"
+    "<button type=submit class='btn btn--sm'>Save</button><div class=msg></div></form>"
+    "<p class=fnote id=fenvnote></p></div>"
+    "<div class=body id=fenvall><form id=fenvrun class=inline autocomplete=off>"
+    "<label>Wave size<input name=wave_size type=number value=1 min=1 max=100></label>"
+    "<button type=submit class='btn btn--sm'>Apply to every server</button><div class=msg></div></form></div>"
+    "<div class=body id=fenvone hidden><div class=toolbar><span class=spacer></span>"
+    "<button type=button class='btn btn--sm' data-f=envfleet>Every server's</button></div></div></div>"
+    # the default image tag, and upgrade runs
+    "<div class=section><h2>Upgrade <span>what new servers run, and moving the running ones, a wave at a time</span></h2>"
+    "<div class=body><form id=fdef class=inline autocomplete=off><label>Default image tag<input name=tag "
+    "spellcheck=false></label><label>Automatic upgrades<select name=auto><option value=off>off</option>"
+    "<option value=on>on</option></select></label>"
+    "<button type=submit class='btn btn--sm'>Save</button><div class=msg></div></form><p class=fnote id=fdefnote></p></div>"
     "<div class=body><form id=fupg class=inline autocomplete=off><label>Image tag<input name=tag required placeholder='sha-abc1234'>"
     "</label><label>Wave size<input name=wave_size type=number value=1 min=1 max=100></label>"
-    "<button type=submit class='btn btn--sm'>Upgrade</button><div class=msg></div></form></div></div>"
+    "<button type=submit class='btn btn--sm'>Upgrade</button>"
+    "<button type=button class='btn btn--sm' data-f=upgold disabled>Upgrade all outdated (0)</button>"
+    "<div class=msg></div></form></div></div>"
     # the job queue
     "<div class=section><h2>Jobs <span>the last 100<select id=fjstate class=sm aria-label='State'>"
     "<option value=''>every state</option>"
@@ -80,8 +116,11 @@ const TAB = document.getElementById('tab-servers'), $ = id => document.getElemen
 const SRV_PILL = {running: 'pill pill--ok', grace: 'pill pill--warn', read_only: 'pill pill--warn', stopped: 'pill pill--warn', suspended: 'pill pill--warn'};
 const JOB_PILL = {done: 'pill pill--ok', failed: 'pill pill--warn'};
 const ORDER = ['running', 'provisioning', 'grace', 'read_only', 'suspended', 'stopped'];
-let timer = 0, live = false, gen = 0, showDeleted = false, defImage = '', defTag = '', servers = [];
-let logJob = '', logFor = null, logTimer = 0;
+const UPGRADABLE = ['running', 'grace', 'read_only', 'suspended'];   // fleet.UPGRADABLE: the states a run takes
+const LIMITS = ['quota_mb', 'max_upload_mb', 'max_accounts', 'memory_mb', 'cpus'];   // hosted.OVERRIDES
+const KIND_WORD = {update: 'environment'};
+let timer = 0, live = false, gen = 0, showDeleted = false, defImage = '', defTag = '', servers = [], autoOn = false;
+let logJob = '', logFor = null, logTimer = 0, limFor = null, envFor = null, fleetEnv = [];
 
 const words = s => String(s || '').replace(/_/g, '-');
 const plural = (n, one, many) => n + ' ' + (n === 1 ? one : many);
@@ -151,9 +190,11 @@ function hostRow(h){
 
 // --- hosted servers ---
 function planCell(s){
-  const lim = s.limits || {}, quota = Number(s.quota_mb) || 0;
+  const lim = s.limits || {}, quota = Number(s.quota_mb) || 0, own = s.overrides || {};
   const size_ = [s.memory_mb ? size(s.memory_mb) : '', s.cpus ? s.cpus + ' CPU' : ''].filter(Boolean).join(' · ');
-  return esc(s.plan || lim.plan || '') + (quota ? '<span class=sub>' + size(quota) + ' quota</span>' : '')
+  const mine = Object.keys(own).map(k => k + ' ' + own[k]).join(', ');
+  return esc(s.plan || lim.plan || '') + (mine ? ' <span class=pill title="' + esc('its own limits: ' + mine) + '">custom</span>' : '')
+    + (quota ? '<span class=sub>' + size(quota) + ' quota</span>' : '')
     + (size_ ? '<span class=sub title="the memory limit and CPUs of the container">' + size_ + '</span>' : '');
 }
 function stateCell(s){
@@ -162,7 +203,10 @@ function stateCell(s){
   if (s.read_only && s.state !== 'read_only') out += ' <span class="pill pill--warn">read-only</span>';
   if (ag.last_seen_at && s.state !== 'deleted') {
     const word = !ag.running ? 'down' : ag.health === 'unhealthy' ? 'unhealthy' : 'up';
-    out += ' <span class="pill ' + (word === 'up' ? 'pill--ok' : 'pill--warn') + '" title="' + esc('container ' + (ag.health || 'running') + (ag.memory_mb ? ', ' + size(ag.memory_mb) + ' memory' : '')) + '">' + word + '</span>';
+    out += ' <span class="pill ' + (word === 'up' ? 'pill--ok' : 'pill--warn') + '" title="' + esc('container ' + (ag.health || 'running') + (ag.memory_mb ? ', ' + size(ag.memory_mb) + ' memory' : '') + (ag.started_at ? ', started ' + ag.started_at : '')) + '">' + word + '</span>';
+    if (ag.oom_killed) out += ' <span class="pill pill--warn" title="Docker killed its process for using all its memory">out of memory</span>';
+    const use = [ag.cpu_pct != null ? 'CPU ' + ag.cpu_pct + ' %' : '', Number(ag.restarts) ? plural(Number(ag.restarts), 'restart', 'restarts') : ''].filter(Boolean);
+    if (use.length) out += '<span class=sub title="from the agent\'s last report">' + use.join(' · ') + '</span>';
   }
   if (r.note) out += '<span class=sub>' + esc(r.note) + '</span>';
   const busy = (Number(jobs.queued) || 0) + (Number(jobs.running) || 0), failed = Number(jobs.failed) || 0;
@@ -174,8 +218,11 @@ function versionCell(s){
   const r = s.report || {}, id = esc(s.id), label = esc(s.label);
   let out = tagRun(s) ? '<span class=mono title="' + esc(s.image || '') + '">' + esc(tagRun(s)) + '</span>' : '<span class=empty>default</span>';
   if (outdated(s)) {
-    out += ' <span class="pill pill--warn" title="' + esc('the default image is ' + defImage) + '">outdated</span>';
+    const image = s.outdated_why === 'image', why = image ? 'newer image of ' + tagRun(s) : 'default is ' + defTag;
+    out += ' <span class="pill pill--warn" title="' + esc(image ? 'the registry has a newer image for ' + tagRun(s) + ' than the one it runs'
+      : 'it runs another tag than the default, ' + defTag) + '">outdated</span>';
     if (s.host_id && defTag && s.state !== 'provisioning') out += ' <button type=button class="btn btn--sm" data-f=upgrade data-id="' + id + '" data-label="' + label + '">Upgrade</button>';
+    out += '<span class=sub>' + esc(why) + '</span>';
   }
   return out + (r.version ? '<span class=sub>Gamma ' + esc(r.version) + '</span>' : '');
 }
@@ -185,12 +232,23 @@ function dataCell(s){
   if (used == null) return '<span class=empty>no report</span>';
   const disk = r.data_bytes != null ? r.data_bytes / 1048576 : ag.data_mb;
   return size(used) + (quota ? ' / ' + size(quota) + meter(quota, used, 0, size(used) + ' of the ' + size(quota) + ' quota') : '')
-    + (disk != null ? '<span class=sub>' + size(disk) + ' on disk</span>' : '');
+    + (disk != null ? '<span class=sub>' + size(disk) + ' on disk</span>' : '')
+    + (r.accounts != null ? '<span class=sub>' + plural(Number(r.accounts) || 0, 'account', 'accounts')
+      + (r.active_accounts != null ? ', ' + (Number(r.active_accounts) || 0) + ' active this week' : '') + '</span>' : '');
+}
+// the last sync and the agent's last report, with the container's last write and its server errors between its last two syncs
+function reportCell(s){
+  const r = s.report || {}, ag = r.agent || {};
+  return ago(s.synced_at) + (ag.last_seen_at ? '<span class=sub>agent ' + ago(ag.last_seen_at) + '</span>' : '')
+    + (r.last_write_at ? '<span class=sub>last write ' + ago(r.last_write_at) + '</span>' : '')
+    + (Number(r.errors) ? '<span class=sub title="answers of 500 and up between its last two syncs">'
+      + plural(Number(r.errors), 'server error', 'server errors') + '</span>' : '');
 }
 function actionsCell(s){
   if (s.state === 'deleted') return '';
   const placed = !!s.host_id, o = [];
   if (placed) o.push(['restart', 'Restart'], ['stop', 'Stop…'], ['start', 'Start'], ['logs', 'Logs']);
+  o.push(['limits', 'Limits…'], ['env', 'Environment…']);
   o.push(s.state === 'suspended' ? ['resume', 'Resume'] : ['suspend', 'Suspend…']);
   if (placed) o.push(['upgrade', 'Upgrade to…'], ['rollback', 'Roll back…']);
   o.push(['delete', 'Delete…']);
@@ -198,17 +256,18 @@ function actionsCell(s){
     + o.map(([v, t]) => '<option value=' + v + '>' + t + '</option>').join('') + '</select>';
 }
 function serverRow(s){
-  const gone = s.state === 'deleted', ag = (s.report || {}).agent || {};
+  const gone = s.state === 'deleted';
   const name = s.url && !gone ? '<a href="' + esc(s.url) + '" target=_blank rel=noopener><b>' + esc(s.label) + '</b></a>' : '<b>' + esc(s.label) + '</b>';
   return '<tr' + (gone ? ' class=fgone' : '') + '><td>' + name + '<span class="sub mono">' + esc(s.id) + '</span>' + (s.host ? '<span class=sub>on ' + esc(s.host) + '</span>' : '') + '</td>'
     + '<td>' + esc(s.username || '(deleted account)') + '<span class="sub mono">' + esc(s.account_id) + '</span></td>'
     + '<td class=nw>' + planCell(s) + '</td><td>' + stateCell(s) + '</td><td>' + versionCell(s) + '</td><td class=nw>' + dataCell(s) + '</td>'
-    + '<td class=nw>' + ago(s.synced_at) + (ag.last_seen_at ? '<span class=sub>agent ' + ago(ag.last_seen_at) + '</span>' : '') + '</td><td>' + actionsCell(s) + '</td></tr>';
+    + '<td class=nw>' + reportCell(s) + '</td><td>' + actionsCell(s) + '</td></tr>';
 }
 
 // --- jobs ---
 // What the job does beyond its kind: an upgrade's tag (none: a resize to the plan's size), and
-// for one of a run, its wave and the run's progress (wave_done of wave_total servers upgraded).
+// for one of a run (an upgrade's or an update's), its wave and the run's progress (wave_done of
+// wave_total servers done).
 function jobWhat(j){
   const p = j.payload || {}, m = String(j.wave || '').match(/^(.*)\/(\d+)$/);
   let out = j.kind === 'upgrade' ? '<span class=sub>' + (p.tag ? 'to <span class=mono>' + esc(p.tag) + '</span>' : 'resize'
@@ -222,7 +281,7 @@ function jobRow(j){
   const btn = (f, text) => '<button type=button class="btn btn--sm" data-f=' + f + ' data-id="' + id + '" data-sid="' + esc(j.server_id) + '" data-label="' + esc(j.label || '') + '">' + text + '</button> ';
   const btns = (j.kind === 'logs' && j.state === 'done' ? btn('view', 'View') : '')
     + (['failed', 'canceled'].includes(j.state) ? btn('retry', 'Retry') : '') + (['queued', 'held', 'failed'].includes(j.state) ? btn('cancel', 'Cancel') : '');
-  return '<tr><td>' + ago(j.created_at) + '</td><td>' + esc(j.kind) + jobWhat(j) + (j.attempts > 1 ? '<span class=sub>attempt ' + j.attempts + '</span>' : '') + '</td>'
+  return '<tr><td>' + ago(j.created_at) + '</td><td>' + esc(KIND_WORD[j.kind] || j.kind) + jobWhat(j) + (j.attempts > 1 ? '<span class=sub>attempt ' + j.attempts + '</span>' : '') + '</td>'
     + '<td>' + esc(j.label || j.server_id || '') + '</td><td>' + esc(j.host || j.host_id || '') + '</td>'
     + '<td><span class="' + (JOB_PILL[j.state] || 'pill') + '">' + esc(j.state) + '</span></td><td>' + took(j) + '</td>'
     + '<td class=fres title="' + esc(full) + '">' + esc(short) + '</td><td>' + btns + '</td></tr>';
@@ -242,7 +301,8 @@ function summary(hosts, list, jobs){
     + tile('Servers', alive.length, ORDER.filter(k => by[k]).map(k => by[k] + ' ' + words(k)).join(' · ') || 'none yet')
     + tile('Jobs in flight', jc.queued + jc.running, jc.queued + ' queued · ' + jc.running + ' running'
       + (jc.failed ? ' · <span class="pill pill--warn">' + jc.failed + ' failed</span>' : '') + (live ? '<span class=sub>refreshing every 4 s</span>' : ''))
-    + tile('Default image', esc(defTag || 'unknown'), esc(repo) + (old ? ' · <span class="pill pill--warn">' + old + ' outdated</span>' : ''), 'mono');
+    + tile('Default image', esc(defTag || 'unknown'), esc(repo) + (old ? ' · <span class="pill pill--warn">' + old + ' outdated</span>' : '')
+      + (autoOn ? '<span class=sub>upgraded automatically</span>' : ''), 'mono');
 }
 
 // --- loading, and the 4 s refresh while jobs run ---
@@ -253,10 +313,11 @@ function tick(){ const a = document.activeElement; if (!shown()) return; if (a &
 async function refresh(){
   clearTimeout(timer); timer = 0;
   const seq = ++gen, st = $('fjstate').value, err = $('ferr');
-  let h, s, j;
+  let h, s, j, fe;
   try {
-    [h, s, j] = await Promise.all([api('/api/admin/hosts', undefined, 'GET'), api('/api/admin/servers', undefined, 'GET'),
-      api('/api/admin/jobs?limit=100' + (st ? '&state=' + encodeURIComponent(st) : ''), undefined, 'GET')]);
+    [h, s, j, fe] = await Promise.all([api('/api/admin/hosts', undefined, 'GET'), api('/api/admin/servers', undefined, 'GET'),
+      api('/api/admin/jobs?limit=100' + (st ? '&state=' + encodeURIComponent(st) : ''), undefined, 'GET'),
+      api('/api/admin/fleet-env', undefined, 'GET')]);
   } catch (e) {
     if (e.status === 401) { location.href = '/login?next=' + encodeURIComponent(location.pathname); return; }
     if (seq === gen) { err.hidden = false; err.textContent = 'Could not load the fleet: ' + e.message; schedule(); }
@@ -264,9 +325,13 @@ async function refresh(){
   }
   if (seq !== gen) return;
   err.hidden = true;
-  servers = s.servers || []; defImage = s.default_image || ''; defTag = tagOf(defImage);
+  servers = s.servers || []; defImage = s.default_image || ''; defTag = tagOf(defImage); autoOn = !!s.auto_upgrade;
+  fleetEnv = fe.names || [];
   const hosts = h.hosts || [], jobs = j.jobs || [], gone = servers.filter(x => x.state === 'deleted').length;
   summary(hosts, servers, jobs);
+  showEnv();
+  const old = servers.filter(x => outdated(x) && x.host_id && UPGRADABLE.includes(x.state)).length, ob = TAB.querySelector('[data-f=upgold]');
+  ob.textContent = 'Upgrade all outdated (' + old + ')'; ob.disabled = !old; ob.dataset.n = old;
   $('fhosts').innerHTML = hosts.map(hostRow).join('') || '<tr><td colspan=6 class=empty>No hosts. Add one below, then start its agent with the token (cloud/fleet/deploy/README.md).</td></tr>';
   const rows = servers.filter(x => showDeleted || x.state !== 'deleted');
   $('fservers').innerHTML = rows.map(serverRow).join('') || '<tr><td colspan=8 class=empty>No hosted servers.</td></tr>';
@@ -312,6 +377,57 @@ async function pollLog(jobId, n){
 }
 function closeLog(){ clearTimeout(logTimer); logJob = ''; logFor = null; $('flogs').hidden = true; }
 
+// --- a server's own limits (Actions → Limits…): an empty field is the plan's number ---
+function showLimits(s){
+  const f = $('flimform').elements, own = s.overrides || {}, plan = s.plan_limits || {};
+  $('flimwho').textContent = s.label + ' · ' + ((s.limits || {}).plan || s.plan || '') + ' plan';
+  LIMITS.forEach(k => { f[k].value = own[k] != null ? own[k] : ''; f[k].placeholder = plan[k] != null ? plan[k] : ''; });
+}
+function openLimits(id){
+  const s = servers.find(x => x.id === id); if (!s) return;
+  limFor = id; showLimits(s); $('flimform').querySelector('.msg').textContent = '';
+  $('flim').hidden = false; $('flim').scrollIntoView({block: 'nearest'});
+}
+async function saveLimits(overrides, msg){
+  const r = await api('/api/admin/servers/' + encodeURIComponent(limFor), {overrides}, 'PATCH');
+  showLimits(r.server); say(msg, 'Saved.'); refresh();
+}
+
+// --- the extra environment: every server's, or one server's (envFor, from Actions → Environment…) ---
+function showEnv(){
+  const s = envFor ? servers.find(x => x.id === envFor) : null;
+  if (!s) envFor = null;
+  const own = s ? s.env_names || [] : fleetEnv;
+  const rm = n => '<button type=button class="btn btn--sm" data-f=envrm data-name="' + esc(n) + '">Remove</button>';
+  let rows = own.map(n => '<tr><td class=mono>' + esc(n) + '</td><td>' + (s ? 'this server' : 'every server') + '</td><td>' + rm(n) + '</td></tr>');
+  if (s) rows = rows.concat(fleetEnv.map(n => '<tr><td class=mono>' + esc(n) + '</td><td class=empty>every server'
+    + (own.includes(n) ? '; this server\'s own wins' : '') + '</td><td></td></tr>'));
+  $('fenvlist').innerHTML = rows.join('') || '<tr><td colspan=3 class=empty>No variables: a container gets only what the fleet sets itself.</td></tr>';
+  $('fenvwho').textContent = s ? s.label + ': its own, over every server\'s' : 'extra variables for every hosted container';
+  $('fenvall').hidden = !!s; $('fenvone').hidden = !s;
+  $('fenvnote').textContent = (s ? 'Saving applies it to ' + s.label + ' now when its container runs: an update job rebuilds it on its image.'
+    : 'Saving changes nothing that runs: a new server gets the variables, and Apply rebuilds the running containers on their images with them, a wave at a time.')
+    + ' A value is never shown again; to change one, save it anew.';
+}
+function openEnv(id){ envFor = id; showEnv(); $('fenvform').querySelector('.msg').textContent = ''; $('fenv').scrollIntoView({block: 'nearest'}); }
+function saveEnv(body){
+  return envFor ? api('/api/admin/servers/' + encodeURIComponent(envFor), {env: body}, 'PATCH') : api('/api/admin/fleet-env', body, 'PATCH');
+}
+
+// --- the default image tag and automatic upgrades (the server settings fleet_image_tag and fleet_auto_upgrade) ---
+function showDefaults(v){
+  const f = $('fdef').elements;
+  f.tag.value = v.fleet_image_tag || ''; f.tag.placeholder = v.fleet_image_tag_default || '';
+  f.auto.value = v.fleet_auto_upgrade ? 'on' : 'off';
+  $('fdefnote').textContent = 'A new server runs the default tag; a server on another tag, or on an older image of it, is outdated. '
+    + 'Blank is the environment\'s tag, ' + (v.fleet_image_tag_default || '') + '. With automatic upgrades on, every hour the outdated servers '
+    + 'are upgraded to it one at a time, and a failed upgrade stops them until you retry or cancel it.';
+}
+async function loadDefaults(){
+  try { showDefaults(await api('/api/admin/settings', undefined, 'GET')); }
+  catch (e) { $('fdef').querySelector('.msg').textContent = 'Could not load the default tag: ' + e.message; }
+}
+
 // --- actions ---
 const ASK = {
   stop: l => 'Stop ' + l + '? Its container stops; the lifecycle state stays, and Start brings it back.',
@@ -320,6 +436,8 @@ const ASK = {
   delete: l => 'Delete ' + l + ' now? Its container, data and off-site copies are removed. This cannot be undone.'};
 async function serverAction(id, label, v){
   if (v === 'logs') return openLogs(id, label);
+  if (v === 'limits') return openLimits(id);
+  if (v === 'env') return openEnv(id);
   if (ASK[v] && !await ask(ASK[v](label), {ok: v.charAt(0).toUpperCase() + v.slice(1), danger: true})) return;
   const base = '/api/admin/servers/' + encodeURIComponent(id) + '/';
   if (v === 'upgrade') { const tag = await ask('Upgrade ' + label + ' to which image tag?', {input: defTag, ok: 'Upgrade'}); if (!tag) return; await api(base + 'upgrade', {tag}); }
@@ -346,6 +464,32 @@ TAB.addEventListener('click', async (ev) => {
     case 'deleted': showDeleted = !showDeleted; refresh(); break;
     case 'logagain': if (logFor) openLogs(logFor.id, logFor.label); break;
     case 'logclose': closeLog(); break;
+    case 'limplan': {
+      const msg = $('flimform').querySelector('.msg');
+      if (limFor && await ask('Give this server its plan\'s limits again?', {ok: 'Back to the plan\'s'}))
+        act(b, async () => { await saveLimits(Object.fromEntries(LIMITS.map(k => [k, null])), msg); b.disabled = false; }, msg);
+      break;
+    }
+    case 'limclose': limFor = null; $('flim').hidden = true; break;
+    case 'envrm': {
+      const name = b.dataset.name, s = servers.find(x => x.id === envFor);
+      const text = s ? 'Remove ' + name + ' from ' + s.label + '? An update job rebuilds its container without it'
+          + (fleetEnv.includes(name) ? ', with every server\'s value instead' : '') + '.'
+        : 'Remove ' + name + ' from every server\'s environment? Running containers keep it until the next Apply.';
+      if (await ask(text, {ok: 'Remove', danger: true})) go(() => saveEnv({unset: [name]}));
+      break;
+    }
+    case 'envfleet': envFor = null; showEnv(); break;
+    case 'upgold': {
+      const f = $('fupg'), n = Math.max(1, Number(f.elements.wave_size.value) || 1), msg = f.querySelector('.msg');
+      if (await ask('Upgrade the ' + plural(Number(b.dataset.n) || 0, 'outdated server', 'outdated servers') + ' to ' + defTag + ', ' + n
+          + ' at a time? Each container restarts on the newest image of it.', {ok: 'Upgrade'}))
+        act(b, async () => {
+          const r = await api('/api/admin/servers/upgrade', {outdated: true, wave_size: n});
+          say(msg, plural(r.jobs, 'server', 'servers') + ' in ' + plural(r.waves, 'wave', 'waves') + ', run ' + r.run + '.'); await refresh();
+        }, msg);
+      break;
+    }
   }
 });
 
@@ -393,6 +537,29 @@ bind('fupg', async (d, msg) => {
   const r = await api('/api/admin/servers/upgrade', {tag, wave_size: n});
   say(msg, plural(r.jobs, 'server', 'servers') + ' in ' + plural(r.waves, 'wave', 'waves') + ', run ' + r.run + '.'); refresh();
 });
-return refresh;
+bind('fdef', async (d, msg) => {
+  if (d.auto === 'on' && !autoOn && !await ask('Upgrade outdated servers automatically? Every hour, each one is upgraded to the default tag, one at a time.', {ok: 'Turn on'})) {
+    $('fdef').elements.auto.value = 'off'; return;
+  }
+  showDefaults(await api('/api/admin/settings', {fleet_image_tag: d.tag.trim(), fleet_auto_upgrade: d.auto}, 'PATCH'));
+  say(msg, 'Saved.'); refresh();
+});
+bind('flimform', (d, msg) => saveLimits(Object.fromEntries(LIMITS.map(k => [k, String(d[k] || '').trim() === '' ? null : Number(d[k])])), msg));
+bind('fenvform', async (d, msg) => {
+  const name = d.name.trim(), s = servers.find(x => x.id === envFor);
+  await saveEnv({set: {[name]: d.value}});
+  $('fenvform').reset();
+  say(msg, name + ' saved' + (!s ? '. Apply to every server to give it to the running ones.'
+    : s.host_id && UPGRADABLE.includes(s.state) ? '; an update job applies it now.' : '; its container gets it when it is made or next updated.'));
+  refresh();
+});
+bind('fenvrun', async (d, msg) => {
+  const n = Math.max(1, Number(d.wave_size) || 1);
+  if (!await ask('Rebuild every running server\'s container on its image with the environment as it is now, ' + n + ' at a time?', {ok: 'Apply'})) return;
+  const r = await api('/api/admin/servers/apply-env', {wave_size: n});
+  say(msg, plural(r.jobs, 'server', 'servers') + ' in ' + plural(r.waves, 'wave', 'waves') + ', run ' + r.run + '.'); refresh();
+});
+// the tab's entry: the settings the Upgrade form shows are read once per opening, the rest by refresh
+return () => { loadDefaults(); return refresh(); };
 })();
 """.replace("__QUOTAS__", json.dumps(_QUOTAS))

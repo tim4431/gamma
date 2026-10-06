@@ -111,18 +111,44 @@ proxy's rate limits. A host whose default network predates the pin needs
 ## The sign-up settings
 
 The registration mode (`open` / `invite` / `closed`), the Cloudflare
-Turnstile keys and extra blocked mail domains are edited on the **Admin
-page → Settings**. They live in `cloud.db` and take effect without a
-restart. `GAMMA_CLOUD_REGISTRATION`, `GAMMA_CLOUD_TURNSTILE_*` and
+Turnstile keys, extra blocked mail domains, the allowed mail domains and
+the paid plans on sale are edited on the **Admin page → Settings**. They
+live in `cloud.db` and take effect without a restart.
+`GAMMA_CLOUD_REGISTRATION`, `GAMMA_CLOUD_TURNSTILE_*` and
 `GAMMA_CLOUD_BLOCKED_EMAIL_DOMAINS` in `.env` are not read; the startup
 log names any still set so they can be deleted. `manage.py settings`
-shows and sets the same values from the shell.
+shows and sets the same values from the shell. The same tab shows the
+`.env` values read-only under **Configuration** (a secret only as set or
+missing), with Stripe's test or live mode and **Send test mail**, which
+mails the signed-in admin and says whether the message was sent or only
+logged; check it after setting up mail.
+
+### Invites
+
+The **Invites** tab makes codes with a number of uses, a plan, an
+optional expiry ("Expires in (days)") and an optional end to the plan
+they grant ("Plan lasts (days)": a Pro invite for 90 days lapses like an
+ended subscription). **Copy link** gives
+`https://account.gammapdf.com/register?invite=<code>`, which fills the
+code in. A code can be turned off and on, and **Who used it** lists the
+accounts that registered with it. From the shell: `manage.py invite
+--uses 20 --expires-days 30 --grant-days 90 --plan pro`, and `manage.py
+set-plan <username> pro --until 2026-12-31` for a grant that ends.
+
+### Allowed mail domains
+
+While the list is not empty, only an address at one of those domains
+(or a subdomain) registers without an invite code, whether registration
+is `open` or `invite`; any other address needs a code. A university only:
+set the mode to `invite` and the list to its domain. The throwaway and
+blocked lists still apply, code or not.
 
 ### Opening registration
 
 Set **Registration** to `open`. The sign-up forms drop the invite field
-and a new account gets the `free` plan. Invite codes still work and still
-grant their plan.
+(unless allowed mail domains are set, or the link brought a code) and a
+new account gets the `free` plan. Invite codes still work and still grant
+their plan.
 
 Do these two **before** the switch:
 

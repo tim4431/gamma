@@ -21,17 +21,23 @@ their transaction) and the clock (``tick``, hourly). ``state``:
 
 ``limits`` is the answer the container gets from ``POST /api/hosted/sync``
 (``limits_for``), recomputed on every pass so its dates and message are
-current. Its ``memory_mb`` and ``cpus`` are the container's size: a pass
-that changes them recreates the container with the new size (``_resize``).
+current: its plan's numbers, with the operator's own for this server over
+them (``overrides``, ``set_overrides``). Its ``memory_mb`` and ``cpus`` are
+the container's size: a pass that changes them resizes the container
+(``_resize``).
+
+``env`` is the server's own extra environment, over the fleet's
+(``settings.fleet_env``); an ``update`` job applies it (``set_env``).
 """
 
 import hashlib
 import json
+import math
 import threading
 from datetime import timedelta
 from urllib.parse import urlsplit
 
-from . import config, db, fleet, mail, oidc
+from . import config, db, fleet, mail, oidc, settings
 from .accounts import Problem
 from .log import log
 
@@ -41,6 +47,8 @@ STATUS = {"provisioning": "active", "running": "active", "grace": "grace", "read
           "suspended": "read_only", "stopped": "stopped", "deleted": "stopped"}
 DELETE_WARNING_DAYS = 7
 WAITING = "waiting for a host with room"   # the report note of a server no host has room for
+OVERRIDES = ("quota_mb", "max_upload_mb", "max_accounts", "memory_mb", "cpus")   # what set_overrides takes
+OVERRIDE_MAX = 10 ** 9
 
 
 def _hosted(plan) -> bool:
@@ -152,10 +160,22 @@ def _message(state: str, row, grace_until: str | None) -> str:
     return ""
 
 
+def overrides_of(row) -> dict:
+    """The operator's own numbers for this server (``set_overrides``)."""
+    return {k: v for k, v in fleet.json_dict(row["overrides"]).items() if k in OVERRIDES}
+
+
+def _numbers(row, plan: str) -> dict:
+    """``plan``'s limits with the server's own overrides over them."""
+    return {**config.PLAN_LIMITS[plan], **overrides_of(row)}
+
+
 def limits_for(row, plan: str, grace_until: str | None) -> dict:
-    """The sync answer for a server in its current state. A grace period
+    """The sync answer for a server in its current state: ``plan``'s numbers
+    with the server's overrides over them, whatever the plan or the state
+    (they are the operator's decision for the server). A grace period
     (``grace_until`` set) shows on a server still being provisioned too."""
-    p = config.PLAN_LIMITS[plan]
+    p = _numbers(row, plan)
     status = STATUS[row["state"]]
     if grace_until and status == "active":
         status = "grace"
@@ -213,10 +233,7 @@ def _store_limits(conn, server_id: str, plan: str, grace_until: str | None) -> d
 
 
 def _created(conn, row) -> bool:
-    """Whether the server's container exists: its last create job is done."""
-    job = conn.execute("SELECT state FROM fleet_jobs WHERE server_id = ? AND kind = 'create' "
-                       "ORDER BY created_at DESC, rowid DESC LIMIT 1", (row["id"],)).fetchone()
-    return bool(job and job["state"] == "done")
+    return fleet.created(conn, row["id"])
 
 
 def _apply(conn, row, actor: str) -> dict:
@@ -258,8 +275,9 @@ def _apply(conn, row, actor: str) -> dict:
 
 
 def _resize_if_moved(conn, server_id: str, was: tuple[int, float] | None, actor: str) -> None:
-    """Resize the server's container when its plan's size is not ``was``
-    (the size it was made or last sized with). ``None`` means unknown, a
+    """Resize the server's container when its size (its plan's, or its
+    overrides') is not ``was`` (the size it was made or last sized with,
+    or had in its limits before a change). ``None`` means unknown, a
     create job whose payload was blanked: resize to be sure, which costs a
     no-op update at most."""
     row = _row(conn, server_id)
@@ -335,8 +353,9 @@ def _free_label(conn, account) -> str:
 
 
 def create(conn, account_id: str, actor: str = "system") -> None:
-    """A new server row for the account (or a deleted one brought back) and
-    its placement."""
+    """A new server row for the account (or a deleted one brought back,
+    which starts fresh: none of its old overrides or environment) and its
+    placement. It runs the fleet's default tag."""
     account = _account(conn, account_id)
     if account is None or account["deleted_at"]:
         raise Problem(404, "no such account")
@@ -352,13 +371,13 @@ def create(conn, account_id: str, actor: str = "system") -> None:
         server_id = "s_" + db.new_token(9)
         conn.execute("INSERT INTO hosted_servers (id, account_id, label, image_tag, state, state_changed_at, "
                      "created_at) VALUES (?, ?, ?, ?, 'provisioning', ?, ?)",
-                     (server_id, account_id, label, config.FLEET_IMAGE_TAG, ts, ts))
+                     (server_id, account_id, label, fleet.default_tag(), ts, ts))
     else:
         server_id = row["id"]
         conn.execute("UPDATE hosted_servers SET label = ?, host_id = '', client_id = '', image_tag = ?, "
                      "state = 'provisioning', read_only = 0, report = '{}', reported_at = NULL, synced_at = NULL, "
-                     "state_changed_at = ?, deleted_at = NULL WHERE id = ?",
-                     (label, config.FLEET_IMAGE_TAG, ts, server_id))
+                     "state_changed_at = ?, deleted_at = NULL, overrides = '{}', env = '{}' WHERE id = ?",
+                     (label, fleet.default_tag(), ts, server_id))
     db.audit(conn, "hosted.create", account_id, actor, f"{server_id} {label}")
     _provision(conn, _row(conn, server_id))
     _apply(conn, _row(conn, server_id), actor)
@@ -375,10 +394,13 @@ def create_payload(conn, server_id: str) -> dict:
     """The ``create`` job's payload, with a new client secret: the
     container's OIDC client is made on first use and its secret rotated on
     every later build (the payload is the only place the secret exists).
-    The container is sized for its plan."""
+    The container is sized for its plan, or by its overrides. ``env`` is
+    what the fleet sets; ``extra_env`` the operator's variables, which the
+    agent applies after its own (``fleet.claim`` reads them again when the
+    agent takes the job)."""
     row = _row(conn, server_id)
     plan = _plan_of(conn, row)
-    p = config.PLAN_LIMITS[plan]
+    p = _numbers(row, plan)
     url = url_of(row["label"])
     if row["client_id"] and oidc.get_client(conn, row["client_id"]):
         client_id, secret = row["client_id"], oidc.rotate_secret(conn, row["client_id"], actor="system")
@@ -394,9 +416,15 @@ def create_payload(conn, server_id: str) -> dict:
            "GAMMA_CLOUD_CLIENT_SECRET": secret, "GAMMA_CLOUD_POLICY": p["policy"],
            "GAMMA_CLOUD_ADMIN_SUBJECT": row["account_id"], "GAMMA_PUBLIC_URL": url, "GAMMA_GUEST_MAX": "0"}
     return {"label": row["label"], "account_id": row["account_id"], "plan": plan,
-            "image": f"{config.FLEET_IMAGE}:{row['image_tag'] or config.FLEET_IMAGE_TAG}", "env": env,
-            "data_dir": row["label"], "memory_mb": p["memory_mb"], "cpus": p["cpus"], "network": None,
-            "public_url": url}
+            "image": f"{config.FLEET_IMAGE}:{row['image_tag'] or fleet.default_tag()}", "env": env,
+            "extra_env": extra_env(conn, row), "data_dir": row["label"], "memory_mb": p["memory_mb"],
+            "cpus": p["cpus"], "network": None, "public_url": url}
+
+
+def extra_env(conn, row) -> dict[str, str]:
+    """The operator's variables for the server's container: the fleet's,
+    with the server's own over them."""
+    return {**settings.fleet_env(conn), **settings.env_of(row["env"])}
 
 
 def _provision(conn, row, quiet: bool = False) -> bool:
@@ -406,7 +434,8 @@ def _provision(conn, row, quiet: bool = False) -> bool:
     ``quiet`` (a heartbeat's retry) logs nothing for a server still
     waiting, since that repeats every five minutes per host."""
     plan = _plan_of(conn, row)
-    host = fleet.place(conn, plan)
+    numbers = _numbers(row, plan)
+    host = fleet.place(conn, numbers["memory_mb"], numbers["quota_mb"])
     if host is None:
         report = fleet.json_dict(row["report"])
         if report.get("note") != WAITING:
@@ -447,7 +476,7 @@ def _delete(conn, row, actor: str, why: str = "") -> None:
     job), the client is removed, the row stays as ``deleted``."""
     fleet.enqueue(conn, row["host_id"], row["id"], "delete", {"label": row["label"], "account_id": row["account_id"]})
     conn.execute("UPDATE fleet_jobs SET state = 'canceled', finished_at = ?, payload = "
-                 "CASE kind WHEN 'create' THEN '{}' ELSE payload END "
+                 "CASE WHEN kind IN ('create', 'update') THEN '{}' ELSE payload END "
                  "WHERE server_id = ? AND state IN ('queued', 'held') AND kind != 'delete'", (db.now(), row["id"]))
     if row["client_id"]:
         oidc.delete_client(conn, row["client_id"], actor=actor)
@@ -472,11 +501,23 @@ def _tag_of(image) -> str:
     return tag if fleet.TAG_RE.match(tag) else ""
 
 
+def _image_known(conn, server_id: str, stale) -> None:
+    """Set what the server's report says of its image (``image_stale``)
+    until its agent's next heartbeat says it again."""
+    row = _row(conn, server_id)
+    report = fleet.json_dict(row["report"])
+    if isinstance(report.get("agent"), dict) and "image_stale" in report["agent"]:
+        report["agent"]["image_stale"] = stale
+        conn.execute("UPDATE hosted_servers SET report = ? WHERE id = ?", (json.dumps(report), server_id))
+
+
 def job_finished(conn, job: dict, payload: dict, ok: bool, result: dict) -> None:
     """What a finished job changes on its server (``fleet.complete``,
-    ``fleet.fail_stuck``): a done create runs the server (and resizes it
-    when its plan's size moved meanwhile), a failed one leaves a note, a
-    done upgrade or rollback moves ``image_tag``."""
+    ``fleet.fail_stuck``): a done create runs the server (and resizes it,
+    or updates its environment, when either moved meanwhile), a failed one
+    leaves a note, a done upgrade or rollback moves ``image_tag``. A done
+    upgrade pulled the newest image for its tag, so the server is no longer
+    outdated by its image; after a rollback that is unknown."""
     row = _row(conn, job["server_id"]) if job["server_id"] else None
     if row is None:
         return
@@ -494,12 +535,18 @@ def job_finished(conn, job: dict, payload: dict, ok: bool, result: dict) -> None
                 "The desktop app, the browser extension and your assistants can all connect to that address."],
                 ("Open your Gamma", url))
         _resize_if_moved(conn, row["id"], fleet.size_of(payload) if payload.get("memory_mb") else None, "agent")
+        # the variables were read when the agent took the job; any saved since go with an update
+        if isinstance(payload.get("extra_env"), dict) and payload["extra_env"] != extra_env(conn, row):
+            _update(conn, _row(conn, row["id"]))
     elif job["kind"] == "create":
         _note(conn, row, f"create failed: {error}")
     elif job["kind"] == "upgrade" and ok and payload.get("tag"):
         conn.execute("UPDATE hosted_servers SET image_tag = ? WHERE id = ?", (payload["tag"], row["id"]))
-    elif job["kind"] == "rollback" and ok and _tag_of(result.get("image")):
-        conn.execute("UPDATE hosted_servers SET image_tag = ? WHERE id = ?", (_tag_of(result["image"]), row["id"]))
+        _image_known(conn, row["id"], False)
+    elif job["kind"] == "rollback" and ok:
+        if _tag_of(result.get("image")):
+            conn.execute("UPDATE hosted_servers SET image_tag = ? WHERE id = ?", (_tag_of(result["image"]), row["id"]))
+        _image_known(conn, row["id"], None)
 
 
 # --- the hourly pass ----------------------------------------------------------
@@ -507,7 +554,9 @@ def job_finished(conn, job: dict, payload: dict, ok: bool, result: dict) -> None
 def tick(conn) -> None:
     """Hosts gone silent, jobs that never finished, placement retries, the
     lifecycle (grace ending, read-only → stopped → deleted, the warning a
-    week before), and the next upgrade waves. The caller commits."""
+    week before), the next waves of upgrade and update runs, and, with
+    automatic upgrades on, a run for the outdated servers
+    (``fleet.auto_upgrade``). The caller commits."""
     fleet.stale_hosts(conn)
     fleet.fail_stuck(conn)
     now = db.now()
@@ -521,6 +570,7 @@ def tick(conn) -> None:
             log.warning("hosted tick for %s failed: %s", row["label"], e)
         conn.execute("RELEASE hosted_tick")
     fleet.release_waves(conn)
+    fleet.auto_upgrade(conn)
 
 
 def _tick_one(conn, row, now: str) -> None:
@@ -605,20 +655,98 @@ def admin_job(conn, server_id: str, kind: str, actor: str) -> dict:
     return fleet.job(conn, _container_job(conn, _live(conn, server_id, need_host=True), kind, actor))
 
 
+def _override_value(key: str, value):
+    """``value`` as stored for ``key``: a whole number from 1, or for
+    ``cpus`` a number from 0.25 to 64."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+        raise Problem(400, f"{key} must be a number.")
+    if key == "cpus":
+        if not 0.25 <= value <= 64:
+            raise Problem(400, "cpus must be from 0.25 to 64.")
+        return float(value)
+    if value != int(value) or not 1 <= value <= OVERRIDE_MAX:
+        raise Problem(400, f"{key} must be a whole number from 1.")
+    return int(value)
+
+
+def set_overrides(conn, server_id: str, overrides, actor: str) -> dict:
+    """The operator's own numbers for one server over its plan's (any of
+    ``OVERRIDES``; None goes back to the plan's). A plan change and a lapse
+    keep them. The server is applied again at once: the container reads
+    its limits at its next sync, and a new size resizes it now, a lapsed
+    server's too, since the operator asked for it."""
+    row = _live(conn, server_id)
+    if not isinstance(overrides, dict):
+        raise Problem(400, "overrides is an object of numbers.")
+    unknown = sorted(set(overrides) - set(OVERRIDES))
+    if unknown:
+        raise Problem(400, f"Not a limit a server can override: {', '.join(unknown)}.")
+    had = overrides_of(row)
+    new = dict(had)
+    for key, value in overrides.items():
+        if value is None:
+            new.pop(key, None)
+        else:
+            new[key] = _override_value(key, value)
+    if new != had:
+        conn.execute("UPDATE hosted_servers SET overrides = ? WHERE id = ?", (json.dumps(new), server_id))
+        db.audit(conn, "hosted.override", row["account_id"], actor, f"{row['label']} " + ", ".join(
+            f"{k}={new[k]}" if k in new else f"{k}=plan" for k in OVERRIDES if new.get(k) != had.get(k)))
+        before = fleet.size_of(fleet.json_dict(row["limits"]))
+        _apply(conn, _row(conn, server_id), actor)
+        _resize_if_moved(conn, server_id, before, actor)
+    return admin_view(conn, _row(conn, server_id))
+
+
+def _update(conn, row) -> None:
+    """An ``update`` job that applies the extra environment to the server's
+    container, when there is one in a state an upgrade takes and no update
+    waits already (the waiting one reads the newest when the agent takes
+    it)."""
+    if (row["host_id"] and row["state"] in fleet.UPGRADABLE and _created(conn, row)
+            and row["id"] not in fleet.update_pending(conn)):
+        fleet.enqueue(conn, row["host_id"], row["id"], "update", {"label": row["label"]})
+
+
+def set_env(conn, server_id: str, values, unset, actor: str) -> dict:
+    """Set and remove the server's own variables (``settings.env_changes``),
+    over the fleet's, and apply them now with an ``update`` job
+    (``_update``). A server with no container yet gets them with its create
+    job; a stopped one with the next update after it runs again."""
+    row = _live(conn, server_id)
+    had = settings.env_of(row["env"])
+    try:
+        new, said = settings.env_changes(had, values, unset)
+    except ValueError as e:
+        raise Problem(400, str(e)) from None
+    if new != had:
+        conn.execute("UPDATE hosted_servers SET env = ? WHERE id = ?", (json.dumps(new), server_id))
+        db.audit(conn, "hosted.env", row["account_id"], actor, f"{row['label']} {said}")
+        _update(conn, _row(conn, server_id))
+    return admin_view(conn, _row(conn, server_id))
+
+
 def admin_view(conn, row) -> dict:
-    """A server as the admin sees it: the row, its size and image (and
-    whether that is the fleet's default), its account and host."""
-    out = {k: row[k] for k in row.keys()}
+    """A server as the admin sees it: the row, its size and image (whether
+    it is outdated, and why: ``fleet.outdated_why``), its own limits and
+    its plan's, the names of its own variables (never their values), its
+    account and host."""
+    out = {k: row[k] for k in row.keys() if k != "env"}
     out["read_only"] = bool(row["read_only"])
     out["limits"], out["report"] = fleet.json_dict(row["limits"]), fleet.json_dict(row["report"])
     out["url"] = url_of(row["label"])
     account = _account(conn, row["account_id"])
     out["username"] = account["username"] if account else ""
     out["plan"] = account["plan"] if account else ""
+    plan = config.PLAN_LIMITS[_plan_of(conn, row)]
+    out["overrides"] = overrides_of(row)
+    out["plan_limits"] = {k: plan[k] for k in OVERRIDES}
+    out["env_names"] = sorted(settings.env_of(row["env"]))
     out["memory_mb"], out["cpus"] = fleet.size_of(out["limits"])
-    out["quota_mb"] = out["limits"].get("quota_mb") or config.PLAN_LIMITS[_plan_of(conn, row)]["quota_mb"]
-    out["image"] = f"{config.FLEET_IMAGE}:{row['image_tag'] or config.FLEET_IMAGE_TAG}"
-    out["outdated"] = row["state"] != "deleted" and out["image"] != fleet.default_image()
+    out["quota_mb"] = out["limits"].get("quota_mb") or out["overrides"].get("quota_mb") or plan["quota_mb"]
+    out["image"] = f"{config.FLEET_IMAGE}:{row['image_tag'] or fleet.default_tag()}"
+    out["outdated_why"] = fleet.outdated_why(row)
+    out["outdated"] = bool(out["outdated_why"])
     out["host"] = _host_name(conn, row["host_id"])
     out["jobs"] = dict(conn.execute("SELECT state, COUNT(*) FROM fleet_jobs WHERE server_id = ? GROUP BY state",
                                     (row["id"],)).fetchall())
@@ -666,13 +794,17 @@ def _text(value, n: int) -> str:
 
 
 def sync(conn, server_id: str, body: dict) -> dict:
-    """A container's report in, its limits out."""
+    """A container's report in, its limits out. The report is a fixed set
+    of fields: counts, sizes and times, never anything of the library."""
     row = _row(conn, server_id)
     schema = body.get("schema")
     report = {"version": _text(body.get("version"), 80),
               "schema": schema if isinstance(schema, int) and not isinstance(schema, bool) else None,
               "accounts": fleet.nonneg(body.get("accounts")), "uploads_bytes": fleet.nonneg(body.get("uploads_bytes")),
-              "data_bytes": fleet.nonneg(body.get("data_bytes")), "public_url": _text(body.get("public_url"), 300)}
+              "data_bytes": fleet.nonneg(body.get("data_bytes")), "public_url": _text(body.get("public_url"), 300),
+              "active_accounts": fleet.nonneg(body.get("active_accounts")),
+              "last_write_at": _text(body.get("last_write_at"), 40) or None,
+              "errors": fleet.nonneg(body.get("errors")), "uptime_s": fleet.nonneg(body.get("uptime_s"))}
     agent = fleet.json_dict(row["report"]).get("agent")
     if agent:
         report["agent"] = agent

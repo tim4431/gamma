@@ -7,13 +7,13 @@
   python manage.py create-account <email> <username> [--password P] [--plan free] [--admin] [--verified]
   python manage.py set-password <username> <password>
   python manage.py set-admin <username> [--off]
-  python manage.py set-plan <username> <free|lite|plus|pro>
+  python manage.py set-plan <username> <free|lite|plus|pro> [--until YYYY-MM-DD]
   python manage.py verify <username>               mark the e-mail confirmed
   python manage.py delete-account <username>
   python manage.py restore-account <username>      undo a delete within the grace period
   python manage.py purge-account <username>        remove a deleted account now
-  python manage.py purge-deleted [--days 30]
-  python manage.py invite [--uses 1] [--plan free] [--note ...]
+  python manage.py purge-deleted [--days 30]       what the server does hourly
+  python manage.py invite [--uses 1] [--plan free] [--note ...] [--expires-days N] [--grant-days N]
   python manage.py invites
   python manage.py create-client <name> <share-host|container> <redirect_uri>... [--server-id ID]
   python manage.py clients
@@ -115,11 +115,12 @@ def cmd_set_plan(args):
     with closing(db.connect()) as conn:
         account = _account(conn, args.username)
         try:
-            accounts.set_plan(conn, account["id"], args.plan, "cli")
+            until = accounts.until_from(args.until)
+            accounts.set_plan(conn, account["id"], args.plan, "cli", until=until)
         except Problem as e:
             sys.exit(e.detail)
         conn.commit()
-    print(f"{args.username}: {args.plan}")
+    print(f"{args.username}: {args.plan}" + (f" until {until[:10]}" if until else ""))
 
 
 def cmd_verify(args):
@@ -135,7 +136,7 @@ def cmd_delete(args):
         account = _account(conn, args.username)
         accounts.delete(conn, account["id"], actor="cli")
         conn.commit()
-    print(f"{args.username}: deleted (purged after the grace period by purge-deleted)")
+    print(f"{args.username}: deleted (purged after {config.PURGE_DELETED_DAYS} days)")
 
 
 def _deleted_account(conn, username: str):
@@ -168,15 +169,22 @@ def cmd_purge(args):
 
 def cmd_invite(args):
     with closing(db.connect()) as conn:
-        row = make_invite(conn, uses=args.uses, plan=args.plan, note=args.note or "", created_by="cli")
+        try:
+            row = make_invite(conn, uses=args.uses, plan=args.plan, note=args.note or "", created_by="cli",
+                              expires_days=args.expires_days, grant_days=args.grant_days)
+        except Problem as e:
+            sys.exit(e.detail)
         conn.commit()
     print(row["code"])
 
 
 def cmd_invites(args):
     with closing(db.connect()) as conn:
-        for r in conn.execute("SELECT * FROM invites ORDER BY created_at").fetchall():
-            print(f"{r['code']:<14} uses_left={r['uses_left']:<4} plan={r['plan']:<5} {r['note']}")
+        rows = [accounts.invite_view(r) for r in conn.execute("SELECT * FROM invites ORDER BY created_at").fetchall()]
+    for r in rows:
+        plan = r["plan"] + (f" for {r['grant_days']}d" if r["grant_days"] else "")
+        print(f"{r['code']:<14} used={r['used']}/{r['uses_total']:<5} plan={plan:<12} {r['state']:<7} "
+              f"expires={(r['expires_at'] or 'never')[:10]:<10} {r['note']}")
 
 
 def cmd_create_client(args):
@@ -308,13 +316,18 @@ def cmd_add_host(args):
 
 
 def cmd_servers(args):
+    """Each server; ``(outdated: tag)`` runs another tag than the default,
+    ``(outdated: image)`` an older image of its tag; ``own=`` lists the
+    limits it has of its own over its plan's."""
     with closing(db.connect()) as conn:
         rows = hosted.servers(conn)
     for s in rows:
+        old = f" (outdated: {s['outdated_why']})" if s["outdated"] else ""
+        own = ",".join(f"{k}={v}" for k, v in s["overrides"].items())
         print(f"{s['label']:<20} {s['username'] or s['account_id']:<20} {s['limits'].get('plan', s['plan']):<5} "
               f"{s['state']:<12} {'read-only ' if s['read_only'] else ''}host={s['host'] or '-'} "
-              f"mem={s['memory_mb']}MB tag={s['image_tag']}{' (outdated)' if s['outdated'] else ''} "
-              f"version={s['report'].get('version', '')} synced={s['synced_at'] or 'never'}")
+              f"mem={s['memory_mb']}MB tag={s['image_tag']}{old} "
+              f"version={s['report'].get('version', '')} synced={s['synced_at'] or 'never'}" + (f" own={own}" if own else ""))
 
 
 def cmd_provision(args):
@@ -356,14 +369,19 @@ def main(argv=None):
     c.add_argument("--admin", action="store_true"); c.add_argument("--verified", action="store_true"); c.set_defaults(fn=cmd_create)
     s = sub.add_parser("set-password"); s.add_argument("username"); s.add_argument("password"); s.set_defaults(fn=cmd_set_password)
     a = sub.add_parser("set-admin"); a.add_argument("username"); a.add_argument("--off", action="store_true"); a.set_defaults(fn=cmd_set_admin)
-    pl = sub.add_parser("set-plan"); pl.add_argument("username"); pl.add_argument("plan", choices=config.PLANS); pl.set_defaults(fn=cmd_set_plan)
+    pl = sub.add_parser("set-plan"); pl.add_argument("username"); pl.add_argument("plan", choices=config.PLANS)
+    pl.add_argument("--until", default="", help="the day the grant ends (YYYY-MM-DD); none: it does not")
+    pl.set_defaults(fn=cmd_set_plan)
     v = sub.add_parser("verify"); v.add_argument("username"); v.set_defaults(fn=cmd_verify)
     d = sub.add_parser("delete-account"); d.add_argument("username"); d.set_defaults(fn=cmd_delete)
     r = sub.add_parser("restore-account"); r.add_argument("username"); r.set_defaults(fn=cmd_restore)
     pa = sub.add_parser("purge-account"); pa.add_argument("username"); pa.set_defaults(fn=cmd_purge_account)
-    pu = sub.add_parser("purge-deleted"); pu.add_argument("--days", type=int, default=30); pu.set_defaults(fn=cmd_purge)
+    pu = sub.add_parser("purge-deleted"); pu.add_argument("--days", type=int, default=config.PURGE_DELETED_DAYS)
+    pu.set_defaults(fn=cmd_purge)
     i = sub.add_parser("invite"); i.add_argument("--uses", type=int, default=1); i.add_argument("--plan", default="free", choices=config.PLANS)
-    i.add_argument("--note"); i.set_defaults(fn=cmd_invite)
+    i.add_argument("--note"); i.add_argument("--expires-days", type=int, help="the code stops working after N days")
+    i.add_argument("--grant-days", type=int, help="the plan it grants ends N days after each registration")
+    i.set_defaults(fn=cmd_invite)
     sub.add_parser("invites").set_defaults(fn=cmd_invites)
     cc = sub.add_parser("create-client"); cc.add_argument("name"); cc.add_argument("kind", choices=("share-host", "container"))
     cc.add_argument("redirect_uri", nargs="+"); cc.add_argument("--server-id"); cc.set_defaults(fn=cmd_create_client)

@@ -841,10 +841,12 @@ The tool is offered only when **Read long papers with a helper**
 (`gamma-ai-delegate-reads`, account-wide, on by default) is set — the
 request's `delegate_reads`, which the scope carries as `delegates` and
 `available()` turns into the entry's `needs: "helper"`. The armed prompt
-says when to reach for it (the answer could be anywhere in a long
-document, or the same question over several papers) and when not (the
-document's own wording, a table, a quotation, or an abstract that already
-settles it).
+says when to reach for it: a request to read, summarise, explain or
+compare papers outside the library (one call per paper, in one turn — a
+probe shows only the front matter and is for checking a candidate), an
+answer that could be anywhere in a long document, or the same question
+over several papers. And when not: the document's own wording, a table, a
+quotation, or an abstract that already settles a narrow question.
 
 ### save_paper (both scopes)
 

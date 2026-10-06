@@ -15,7 +15,8 @@ MIB = 1024 * 1024
 STARTED = "2026-10-04T09:00:00.123456789Z"
 # 0.75 s of CPU over 2 s of the host's 4 CPUs: one and a half CPUs
 STATS = {"memory_stats": {"usage": 300 * MIB},
-         "cpu_stats": {"cpu_usage": {"total_usage": 2_750_000_000}, "system_cpu_usage": 20_000_000_000, "online_cpus": 4},
+         "cpu_stats": {"cpu_usage": {"total_usage": 2_750_000_000}, "system_cpu_usage": 20_000_000_000,
+                       "online_cpus": 4},
          "precpu_stats": {"cpu_usage": {"total_usage": 2_000_000_000}, "system_cpu_usage": 18_000_000_000}}
 
 
@@ -252,6 +253,58 @@ def test_create_takes_the_plans_size(world, tmp_path):
     assert (spec["memory_mb"], spec["cpus"]) == (1536, 2.0)
 
 
+EXTRA = {"OPENAI_API_KEY": "sk-one", "TZ": "Europe/Berlin", "WORKERS": 2,
+         # what the account server or the agent sets is never overridden
+         "GAMMA_HOSTED": "0", "GAMMA_CLOUD_CLIENT_SECRET": "mine", "GAMMA_CLOUD_ISSUER": "https://evil",
+         "GAMMA_PUBLIC_URL": "https://evil", "GAMMA_GUEST_MAX": "9", "FORWARDED_ALLOW_IPS": "*",
+         "GAMMA_S3_BUCKET": "other", "GAMMA_S3_SECRET_KEY": "x",
+         # nor passed off as another variable
+         "": "x", "GAMMA_HOSTED=0": "x"}
+
+
+def spec_of(tmp_path, label="alice"):
+    return json.loads((tmp_path / label / "container.json").read_text())
+
+
+def test_create_with_extra_environment(world, tmp_path):
+    """The payload's env, then the agent's own variables, then extra_env,
+    later winning; extra_env is kept apart in container.json."""
+    agent, docker, _, _ = world
+    payload = {**CREATE, "env": {**CREATE["env"], "TZ": "UTC", "GAMMA_S3_BUCKET": "payload"}, "extra_env": EXTRA}
+    assert agent.apply({"id": "j", "kind": "create", "payload": payload})[0] == "done"
+    env = docker.containers.get("gamma-alice").env
+    assert env["OPENAI_API_KEY"] == "sk-one" and env["WORKERS"] == "2" and env["TZ"] == "Europe/Berlin"
+    assert env["GAMMA_HOSTED"] == "1" and env["GAMMA_CLOUD_CLIENT_SECRET"] == "s3cret"
+    assert env["GAMMA_PUBLIC_URL"] == "https://alice.example" and "GAMMA_CLOUD_ISSUER" not in env
+    assert "GAMMA_GUEST_MAX" not in env and env["FORWARDED_ALLOW_IPS"] == "10.203.0.0/24"
+    assert env["GAMMA_S3_BUCKET"] == "b" and env["GAMMA_S3_SECRET_KEY"] == "SK"
+    assert "" not in env and "GAMMA_HOSTED=0" not in env
+    spec = spec_of(tmp_path)
+    assert spec["extra_env"] == {"OPENAI_API_KEY": "sk-one", "TZ": "Europe/Berlin", "WORKERS": "2"}
+    assert "OPENAI_API_KEY" not in spec["env"] and spec["env"]["TZ"] == "UTC"
+    # a container rebuilt by start, restart or upgrade has it too
+    for kind in ("start", "restart"):
+        docker.containers.get("gamma-alice").remove()
+        assert agent.apply({"id": "j", "kind": kind, "payload": {"label": "alice"}})[0] == "done"
+        assert docker.containers.get("gamma-alice").env["OPENAI_API_KEY"] == "sk-one"
+    agent.apply({"id": "j", "kind": "upgrade", "payload": {"label": "alice", "image": "ghcr.io/tim4431/gamma:sha-2"}})
+    assert docker.containers.get("gamma-alice").env["OPENAI_API_KEY"] == "sk-one"
+    assert spec_of(tmp_path)["extra_env"]["OPENAI_API_KEY"] == "sk-one"
+
+
+def test_a_container_json_from_before_extra_env(world, tmp_path):
+    agent, docker, _, _ = world
+    create(agent)
+    spec = spec_of(tmp_path)
+    del spec["extra_env"]
+    agent.save_spec("alice", spec)
+    docker.containers.get("gamma-alice").remove()
+    assert agent.apply({"id": "j", "kind": "start", "payload": {"label": "alice"}})[0] == "done"
+    assert docker.containers.get("gamma-alice").env == spec["env"]
+    state, result = agent.apply({"id": "j", "kind": "update", "payload": {"label": "alice", "extra_env": {"A": "1"}}})
+    assert state == "done" and docker.containers.get("gamma-alice").env["A"] == "1"
+
+
 def test_create_failures_are_reported(world):
     agent, docker, _, health = world
     assert agent.apply({"id": "j", "kind": "create", "payload": {**CREATE, "label": "../etc"}})[0] == "failed"
@@ -383,6 +436,140 @@ def test_a_resize_leaves_a_stopped_container_stopped(world, tmp_path):
     assert json.loads((tmp_path / "alice" / "container.json").read_text())["memory_mb"] == 768
 
 
+UPDATE = {"id": "j", "kind": "update",
+          "payload": {"label": "alice", "extra_env": {"OPENAI_API_KEY": "sk-two", "MODEL": "big"}}}
+UPDATED = {"container": "gamma-alice", "image": CREATE["image"], "extra_env": ["MODEL", "OPENAI_API_KEY"]}
+
+
+def test_update_rebuilds_the_container_with_the_new_environment(world, tmp_path):
+    agent, docker, _, _ = world
+    agent.apply({"id": "j", "kind": "create",
+                 "payload": {**CREATE, "memory_mb": 1536, "extra_env": {"OPENAI_API_KEY": "sk-one", "TZ": "UTC"}}})
+    agent.settings.s3["secret_key"] = "SK-rotated"                       # the agent's .env changed since the create
+    docker.log.clear()
+    state, result = agent.apply(UPDATE)
+    assert (state, result) == ("done", {**UPDATED, "health": "ok"}) and "sk-two" not in json.dumps(result)
+    assert docker.log == [("rename", "gamma-alice", "gamma-alice-prev"), ("stop", "gamma-alice-prev"),
+                          ("run", "gamma-alice", CREATE["image"]), ("remove", "gamma-alice-prev")]   # no pull
+    c = docker.containers.get("gamma-alice")
+    assert c.env["OPENAI_API_KEY"] == "sk-two" and c.env["MODEL"] == "big" and "TZ" not in c.env
+    assert c.env["GAMMA_S3_SECRET_KEY"] == "SK-rotated" and c.env["GAMMA_CLOUD_CLIENT_SECRET"] == "s3cret"
+    assert c.kwargs["mem_limit"] == "1536m" and set(docker.containers.by_name) == {"gamma-alice"}
+    spec = spec_of(tmp_path)
+    assert spec["extra_env"] == UPDATE["payload"]["extra_env"] and spec["env"]["GAMMA_S3_SECRET_KEY"] == "SK-rotated"
+    # run again after it finished: the same place
+    assert agent.apply(UPDATE) == (state, result)
+    assert docker.containers.get("gamma-alice").env == c.env and spec_of(tmp_path) == spec
+    assert set(docker.containers.by_name) == {"gamma-alice"}
+    # an empty extra_env clears it; a bucket gone from the agent's settings takes its variables along
+    agent.settings.s3 = {}
+    state, result = agent.apply({"id": "j", "kind": "update", "payload": {"label": "alice", "extra_env": {}}})
+    env = docker.containers.get("gamma-alice").env
+    assert state == "done" and result["extra_env"] == [] and not [k for k in env if k.startswith("GAMMA_S3_")]
+    assert "OPENAI_API_KEY" not in env and env["FORWARDED_ALLOW_IPS"] == "10.203.0.0/24" and env["GAMMA_HOSTED"] == "1"
+
+
+def test_a_failed_update_keeps_the_previous_container(world, tmp_path, caplog):
+    agent, docker, _, health = world
+    agent.apply({"id": "j", "kind": "create", "payload": {**CREATE, "extra_env": {"OPENAI_API_KEY": "sk-one"}}})
+    health["ok"] = False
+    state, result = agent.apply(UPDATE)
+    assert state == "failed" and "gamma-alice-prev" in result["error"]
+    assert "sk-two" not in result["error"] and "sk-two" not in caplog.text
+    prev, new = docker.containers.get("gamma-alice-prev"), docker.containers.get("gamma-alice")
+    assert prev.status == "exited" and prev.env["OPENAI_API_KEY"] == "sk-one"
+    assert new.status == "exited" and new.env["OPENAI_API_KEY"] == "sk-two"
+    assert spec_of(tmp_path)["extra_env"] == {"OPENAI_API_KEY": "sk-one"}
+    # a retry that fails again keeps the same fallback
+    assert agent.apply(UPDATE)[0] == "failed" and docker.containers.get("gamma-alice-prev") is prev
+    # rollback brings it back, as after a failed upgrade
+    health["ok"] = True
+    assert agent.apply({"id": "j", "kind": "rollback", "payload": {"label": "alice"}})[0] == "done"
+    assert set(docker.containers.by_name) == {"gamma-alice"} and docker.containers.get("gamma-alice") is prev
+    assert prev.status == "running" and spec_of(tmp_path)["extra_env"] == {"OPENAI_API_KEY": "sk-one"}
+    # a retry that works replaces only the failed container, and drops the fallback once healthy
+    health["ok"] = False
+    agent.apply(UPDATE)
+    health["ok"] = True
+    assert agent.apply(UPDATE) == ("done", {**UPDATED, "health": "ok"})
+    assert set(docker.containers.by_name) == {"gamma-alice"}
+    assert docker.containers.get("gamma-alice").env["OPENAI_API_KEY"] == "sk-two"
+
+
+def test_an_update_run_again_after_a_crash_midway(world, tmp_path):
+    agent, docker, _, _ = world
+    create(agent)
+    c = docker.containers.get("gamma-alice")
+    c.rename("gamma-alice-prev")                                          # died after the rename and the stop
+    c.stop()
+    assert agent.apply(UPDATE) == ("done", {**UPDATED, "health": "ok"})
+    assert set(docker.containers.by_name) == {"gamma-alice"}
+    c = docker.containers.get("gamma-alice")
+    assert c.status == "running" and c.env["MODEL"] == "big"
+    # died after saving container.json, before removing the previous container
+    docker.containers.run(CREATE["image"], name="gamma-alice-prev", labels={"gamma.label": "alice"}).stop()
+    assert agent.apply(UPDATE)[0] == "done"
+    assert set(docker.containers.by_name) == {"gamma-alice"} and docker.containers.get("gamma-alice").env == c.env
+    assert spec_of(tmp_path)["extra_env"] == UPDATE["payload"]["extra_env"]
+
+
+def test_an_update_leaves_a_stopped_container_stopped(world, tmp_path):
+    agent, docker, _, _ = world
+    create(agent)
+    agent.apply({"id": "j", "kind": "stop", "payload": {"label": "alice"}})
+    docker.log.clear()
+    state, result = agent.apply(UPDATE)
+    assert state == "done" and result == {**UPDATED, "health": "unchanged", "note": result["note"]}
+    assert result["note"].startswith("stopped")
+    assert docker.log == [("remove", "gamma-alice"), ("create", "gamma-alice", CREATE["image"])]
+    c = docker.containers.get("gamma-alice")
+    assert c.status == "created" and c.env["MODEL"] == "big"
+    assert c.kwargs["restart_policy"] == {"Name": "unless-stopped"}
+    assert spec_of(tmp_path)["extra_env"] == UPDATE["payload"]["extra_env"]
+    assert agent.apply(UPDATE) == (state, result) and docker.containers.get("gamma-alice").status == "created"
+    # died between removing it and creating its replacement: no container, and container.json already has it
+    docker.containers.get("gamma-alice").remove()
+    state, result = agent.apply(UPDATE)
+    assert state == "done" and result["note"].startswith("no such container") and not docker.containers.by_name
+    # the next start runs with it
+    assert agent.apply({"id": "j", "kind": "start", "payload": {"label": "alice"}})[0] == "done"
+    c = docker.containers.get("gamma-alice")
+    assert c.status == "running" and c.env["MODEL"] == "big"
+    # a crash-looping container is meant to run: it is rebuilt and checked like a running one
+    c.status = "restarting"
+    docker.log.clear()
+    assert agent.apply(UPDATE) == ("done", {**UPDATED, "health": "ok"})
+    assert ("run", "gamma-alice", CREATE["image"]) in docker.log
+
+
+def test_an_update_with_no_container(world, tmp_path):
+    agent, docker, _, _ = world
+    create(agent)
+    docker.containers.get("gamma-alice").remove()
+    docker.log.clear()
+    state, result = agent.apply(UPDATE)
+    assert state == "done" and result == {**UPDATED, "health": "unchanged",
+                                          "note": "no such container: container.json alone changed"}
+    assert docker.log == [] and spec_of(tmp_path)["extra_env"] == UPDATE["payload"]["extra_env"]
+    state, result = agent.apply({"id": "j", "kind": "update", "payload": {"label": "bob", "extra_env": {}}})
+    assert state == "failed" and result["error"].startswith("no container.json")
+
+
+def test_an_update_is_refused_while_a_failed_upgrade_waits(world, tmp_path):
+    agent, docker, _, health = world
+    create(agent)
+    health["ok"] = False
+    agent.apply({"id": "j", "kind": "upgrade", "payload": {"label": "alice", "image": "ghcr.io/tim4431/gamma:sha-2"}})
+    health["ok"] = True
+    docker.log.clear()
+    state, result = agent.apply(UPDATE)
+    assert state == "failed" and "roll it back" in result["error"] and docker.log == []
+    assert spec_of(tmp_path)["extra_env"] == {}
+    # rolled back, it goes through
+    agent.apply({"id": "j", "kind": "rollback", "payload": {"label": "alice"}})
+    assert agent.apply(UPDATE) == ("done", {**UPDATED, "health": "ok"})
+
+
 def test_a_create_without_an_account_is_refused(world):
     agent, docker, _, _ = world
     state, result = agent.apply({"id": "j", "kind": "create", "payload": {**CREATE, "account_id": ""}})
@@ -462,6 +649,93 @@ def test_heartbeat_body(world, tmp_path):
     assert agent.heartbeat_body()["containers"][0]["data_mb"] == 3
     agent.sleep(DATA_EVERY)
     assert agent.heartbeat_body()["containers"][0]["data_mb"] == 5
+
+
+def test_heartbeat_figures_docker_has_or_not(world):
+    agent, docker, _, _ = world
+    create(agent)
+    c = docker.containers.get("gamma-alice")
+    c.inspect = {"RestartCount": 3, "State": {"StartedAt": STARTED, "OOMKilled": True}}
+    (row,) = agent.heartbeat_body()["containers"]
+    assert (row["restarts"], row["started_at"], row["oom_killed"]) == (3, STARTED, True)
+    c.inspect = {"RestartCount": None, "State": {}}                     # unknown: 0, "", false
+    (row,) = agent.heartbeat_body()["containers"]
+    assert (row["restarts"], row["started_at"], row["oom_killed"], row["health"]) == (0, "", False, "running")
+    c.stats_reply = {"memory_stats": {"usage": 300 * MIB}, "cpu_stats": STATS["cpu_stats"], "precpu_stats": {}}
+    (row,) = agent.heartbeat_body()["containers"]
+    assert row["cpu_pct"] is None and row["memory_mb"] == 300               # the first sample: no CPU figure
+    c.stats_reply = RuntimeError("daemon busy")
+    (row,) = agent.heartbeat_body()["containers"]
+    assert row["cpu_pct"] is None and row["memory_mb"] == 0
+    c.stats_reply = STATS
+    agent.apply({"id": "j", "kind": "stop", "payload": {"label": "alice"}})
+    (row,) = agent.heartbeat_body()["containers"]
+    assert row["running"] is False and row["cpu_pct"] is None and row["memory_mb"] == 0
+
+
+def test_cpu_pct():
+    assert cpu_pct(STATS) == 150.0
+    cgroup1 = {"cpu_stats": {"cpu_usage": {"total_usage": 300, "percpu_usage": [1, 2]}, "system_cpu_usage": 2000},
+               "precpu_stats": {"cpu_usage": {"total_usage": 100}, "system_cpu_usage": 1000}}
+    assert cpu_pct(cgroup1) == 40.0                                        # no online_cpus: the per-CPU list
+    idle = {**STATS, "precpu_stats": {**STATS["precpu_stats"], "cpu_usage": STATS["cpu_stats"]["cpu_usage"]}}
+    assert cpu_pct(idle) == 0.0
+    assert cpu_pct({}) is None
+    assert cpu_pct({**STATS, "precpu_stats": {**STATS["precpu_stats"], "system_cpu_usage": 20_000_000_000}}) is None
+    assert cpu_pct({**STATS, "precpu_stats": {"cpu_usage": {"total_usage": 9e9}, "system_cpu_usage": 1}}) is None
+    assert cpu_pct({**STATS, "cpu_stats": {**STATS["cpu_stats"], "system_cpu_usage": None}}) is None
+
+
+def test_heartbeat_image_stale(world):
+    """The registry's digest for the container's reference against the local
+    image's, asked at most once an hour per reference."""
+    agent, docker, _, _ = world
+    create(agent)
+    image, ref = f"sha256:{CREATE['image']}", CREATE["image"]
+
+    def row():
+        return agent.heartbeat_body()["containers"][0]
+    assert row()["image_stale"] is None and docker.images.asked == []     # built here: no digest, no ask
+    docker.images.digests[image] = ["other.io/gamma@sha256:aaa"]
+    assert row()["image_stale"] is None and docker.images.asked == []     # a digest of another repository only
+    docker.images.digests[image] = ["ghcr.io/tim4431/gamma@sha256:aaa"]
+    docker.images.registry[ref] = "sha256:aaa"
+    assert row()["image_stale"] is False and docker.images.asked == [ref]
+    docker.images.registry[ref] = "sha256:bbb"                           # pushed again: told within the hour
+    assert row()["image_stale"] is False and docker.images.asked == [ref]
+    agent.sleep(REGISTRY_EVERY)
+    assert row()["image_stale"] is True and docker.images.asked == [ref] * 2
+    del docker.images.registry[ref]                                       # private, offline: unknown, kept an hour
+    agent.sleep(REGISTRY_EVERY)
+    assert row()["image_stale"] is None and row()["image_stale"] is None and docker.images.asked == [ref] * 3
+    # two containers on one reference: one ask
+    agent.apply({"id": "j", "kind": "create", "payload": {**CREATE, "label": "bob"}})
+    docker.images.registry[ref] = "sha256:aaa"
+    agent.sleep(REGISTRY_EVERY)
+    rows = agent.heartbeat_body()["containers"]
+    assert [r["image_stale"] for r in rows] == [False, False] and docker.images.asked == [ref] * 4
+    # any error is unknown, never a failed heartbeat
+    docker.images.get = lambda image_id: 1 / 0
+    assert row()["image_stale"] is None
+
+
+def test_a_registry_that_hangs_does_not_hold_the_heartbeat(world, monkeypatch):
+    agent, docker, _, _ = world
+    create(agent)
+    docker.images.digests[f"sha256:{CREATE['image']}"] = ["ghcr.io/tim4431/gamma@sha256:aaa"]
+    release = threading.Event()
+
+    def hang(ref):
+        release.wait(10)
+        return FakeRegistryData("sha256:aaa")
+    docker.images.get_registry_data = hang
+    monkeypatch.setattr(agent_module, "REGISTRY_WAIT", 0.05)
+    started = time.monotonic()
+    assert agent.heartbeat_body()["containers"][0]["image_stale"] is None
+    assert time.monotonic() - started < 2
+    release.set()
+    # the late answer is not waited for again within the hour
+    assert agent.heartbeat_body()["containers"][0]["image_stale"] is None
 
 
 def test_the_loop_beats_then_polls_and_reports(world):

@@ -1544,10 +1544,15 @@ html, body { overscroll-behavior: none; }
   background: var(--bg-page);
   border: 1px solid var(--border-light);
   border-radius: var(--radius-xs);
-  padding: 2px 6px;
+  line-height: inherit;
+  /* .titleText.editable's box, its 2px 6px padding less this border, so the
+     text sits and wraps exactly where the shown title's does. */
+  padding: 1px 5px;
   margin-left: -6px;
-  width: 100%;
-  max-width: 480px;
+  width: calc(100% + 6px);
+  display: block;
+  resize: none;
+  overflow: hidden;
 }
 
 /* --- home button (icon-style, identical on editor and read-only) --- */
@@ -1966,7 +1971,8 @@ button.pdfOutlineChevron:hover { background: rgba(128, 128, 128, 0.28); color: v
 .categoryFrontmatterInput {
   color: var(--text-secondary);
   flex: 1;
-  min-width: 0;
+  /* Wraps below the chips rather than shrinking to a sliver after them. */
+  min-width: 8em;
   background: transparent;
   border: none;
   outline: none;
@@ -1987,7 +1993,7 @@ button.pdfOutlineChevron:hover { background: rgba(128, 128, 128, 0.28); color: v
   gap: 4px;
   align-items: center;
   background: transparent;
-  min-height: 22px;
+  min-height: calc(var(--ctl-close-sm) + 2px);
 }
 .categoryTag {
   display: inline-flex;
@@ -2009,12 +2015,7 @@ button.pdfOutlineChevron:hover { background: rgba(128, 128, 128, 0.28); color: v
   align-items: center;
   gap: 3px;
 }
-.categorySuggestionItem.categorySuggestionFolder {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-}
-.categorySuggestionItem.categorySuggestionFolder svg {
+.categorySuggestionItem svg {
   flex-shrink: 0;
 }
 .categorySuggestions {
@@ -2031,7 +2032,9 @@ button.pdfOutlineChevron:hover { background: rgba(128, 128, 128, 0.28); color: v
   box-shadow: var(--shadow-2);
 }
 .categorySuggestionItem {
-  display: block;
+  display: flex;
+  align-items: center;
+  gap: 5px;
   width: 100%;
   text-align: left;
   padding: 6px 10px;
@@ -4555,14 +4558,19 @@ a.shareBrand:hover { background: var(--bg-hover); }
 .pageTitleMain .categoryFrontmatter {
   padding: 0;
   margin: 0;
-  align-items: center;
+  align-items: flex-start;
 }
+/* The icon is one chip row tall, so it lines up with the first row when the
+   chips wrap: a badge row (18px) when shown, a chip-with-close row (24px)
+   while editing. */
 .categoryIcon {
   display: inline-flex;
   align-items: center;
+  height: 18px;
   color: var(--text-dim);
   flex-shrink: 0;
 }
+.categoryFrontmatter.editing .categoryIcon { height: calc(var(--ctl-close-sm) + 2px); }
 
 /* --- ChatGPT-style message chrome --- */
 .chatMsgCol {

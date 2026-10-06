@@ -148,6 +148,31 @@ def test_the_unguarded_flag_is_what_the_page_warns_on(client):
     assert r.json()["unguarded"] is False and r.json()["turnstile_on"] is True
 
 
+def test_the_plans_section_says_why_a_plan_is_not_sold(client):
+    """Without Stripe nothing can be sold; a plan the operator holds back
+    says that first."""
+    admin_client(client)
+    plans = client.get("/api/admin/settings").json()["plans"]
+    assert [(p["plan"], p["on_sale"], p["sellable"]) for p in plans] == [
+        ("lite", True, False), ("plus", True, False), ("pro", True, False)]
+    assert plans[0]["reason"] == "billing is off (no Stripe secret)"
+    r = client.patch("/api/admin/settings", json={"plans_on_sale": "plus, lite"})
+    assert r.status_code == 200 and r.json()["plans_on_sale"] == ["lite", "plus"]
+    assert r.json()["plans"][2] == {"plan": "pro", "on_sale": False, "sellable": False,
+                                    "reason": "held back by the operator"}
+    assert client.patch("/api/admin/settings", json={"plans_on_sale": "lite gold"}).status_code == 400
+    assert settings.plans_on_sale() == {"lite", "plus"}
+
+
+def test_the_allowed_domains_are_saved_like_the_blocked_ones(client):
+    admin_client(client)
+    r = client.patch("/api/admin/settings", json={"allowed_email_domains": "Uni.Example, x@lab.example"})
+    assert r.status_code == 200 and r.json()["allowed_email_domains"] == "uni.example\nlab.example"
+    assert settings.allowed_email_domains() == {"uni.example", "lab.example"}
+    page = client.get("/admin").text
+    assert "id=setallow" in page and "id=setplans" in page and "Send test mail" in page
+
+
 # --- the gate reads the table, not the environment ---------------------------
 
 def test_turnstile_runs_once_both_keys_are_stored(client, monkeypatch):

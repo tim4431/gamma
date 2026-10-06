@@ -215,7 +215,7 @@ def update(conn, changes: dict, actor: str) -> None:
 
 # --- the fleet's extra environment -------------------------------------------
 # Variables every hosted container gets on top of the ones the fleet sets
-# itself (docs/dev/hosted.md "Environment"); a server's own (its ``env``
+# itself (docs/dev/hosted.md "Its environment"); a server's own (its ``env``
 # column) win over them. They are a JSON object in the row FLEET_ENV_KEY,
 # which ``DEFAULTS`` and the cache above do not know, like
 # ``billing.RECONCILED_KEY``: ``update`` refuses the key, nothing caches it,

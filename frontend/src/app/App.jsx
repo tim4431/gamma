@@ -16,6 +16,7 @@ import { parseGammaLink } from "../shared/model/gammaLinks.js";
 import { pageHostUser, publicPath } from "../shared/lib/slug.js";
 import { API, apiJson, getShareToken, setShareView, withShare, withWorkspace, setCurrentWorkspace, getCurrentWorkspace, setLinkName, makeId, fmtBytes, getDocIdForUrl, isPdfFile, isMarkdownFile, PAGE_FILE_ACCEPT, metaSourceInfo, resolvePdfUrl, pdfProxyUrl, probePdfUrl, setExpectedUser, getExpectedUser, usePersistedState, usePersistedFlag, copyText, copyRich, readNdjson } from "../shared/lib/utils";
 import {
+  AutoGrowTextarea,
   BlockDropIndicator,
   ChatMarkdown,
   CopyBox,
@@ -7874,11 +7875,14 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           {!homeMode && <div className="pageTitleRow">
             <div className="pageTitleMain">
             {titleEditing && !readOnly && focusedBlockId ? (
-              <input
+              // A textarea so a long title wraps as it does when shown; a title
+              // stays one line, so pasted line breaks become spaces.
+              <AutoGrowTextarea
                 className="titleEdit"
                 autoFocus
+                rows={1}
                 value={titleDraft}
-                onChange={(e) => setTitleDraft(e.target.value)}
+                onChange={(e) => setTitleDraft(e.target.value.replace(/\s*[\r\n]+\s*/g, " "))}
                 onBlur={() => { renameTitle(titleDraft); setTitleEditing(false); }}
                 onKeyDown={(e) => {
                   if (e.key === "Enter") {
@@ -7919,7 +7923,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
               />
             ) : null}
             {focusedBlockId && !shareMode ? (
-              <div className="categoryFrontmatter">
+              <div className={labelEditing ? "categoryFrontmatter editing" : "categoryFrontmatter"}>
                 <span className="categoryIcon" title={t("Labels")}>
                   <LabelIcon size={14} />
                 </span>
@@ -7991,7 +7995,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                       {suggestions.length > 0 ? (
                         <div className="categorySuggestions">
                           {suggestions.map((s, i) => (
-                            <button key={`${s.kind}:${s.id || s.name}`} className={`categorySuggestionItem${s.kind === "folder" || s.kind === "newFolder" ? " categorySuggestionFolder" : ""}${i === labelSuggestionIdx ? " selected" : ""}`}
+                            <button key={`${s.kind}:${s.id || s.name}`} className={`categorySuggestionItem${i === labelSuggestionIdx ? " selected" : ""}`}
                               onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); pickLabelSuggestion(s); }}
                               onMouseEnter={() => setLabelSuggestionIdx(i)}
                             >{s.kind === "folder" ? <><FolderIcon size={14} />{s.name}</>
