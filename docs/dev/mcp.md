@@ -166,17 +166,55 @@ Ask Codex to find a page, search a topic, or summarize notes. Tools available:
 | `read_block` | One block/subtree or a page's nested note outline |
 | `read_chats` | The AI chat kept with a page or folder: the current conversation as a transcript, earlier ones by `chat_id` |
 | `view_pdf_page` | One PDF page as an image (a scan, a figure, a table's layout) |
+| `view_ink` | The user's handwriting as an image: a group's strokes on their PDF page or sheet of paper, or a whole page with all its handwriting |
+| `view_image` | The pictures a note block embeds (`![alt](/api/uploads/…)` in its markdown), all or one by index |
+| `cite` | The citation records kept with pages: the paper metadata, its BibTeX, the slide citation |
 | `read_gamma_link` | Resolve and read a page, block, or share URL, including PDF page context; a folder-share URL lists the folder's pages |
 | `export_page` | One page as Markdown text, or as a PDF file: the annotated paper or the notes typeset |
 
-The first seven are the Gamma chat's own tools (`gamma/ai_tools.py`, described
+The first ten are the Gamma chat's own tools (`gamma/ai_tools.py`, described
 in [ai_tools.md](ai_tools.md)), run through the same dispatcher with a
-workspace-wide, non-writable scope; `READ_TOOLS` in `mcp_server.py` is the
-allowlist. The chat's other tools stay off: the web tools (`search_papers`,
-`fetch_paper`), because the assistant has its own web access, and every write
-tool, because the connection is read-only. `read_gamma_link` and
-`export_page` exist only here. `view_pdf_page`'s picture goes out as an MCP
-`image` item, which the client shows the model as an image.
+workspace-wide, non-writable scope. The allowlist is derived from the registry
+(`ai_tools.mcp_tools`, `READ_TOOLS` in `mcp_server.py`): every reading tool
+that stays inside the library, so a new reading tool is offered without
+touching the adapter, and `test_mcp.py` pins the resulting names so growth is
+seen. The chat's other tools stay off: the web tools (`search_papers`,
+`fetch_paper`, …), because the assistant has its own web access;
+`list_deleted`, because Recently deleted is out of the reading tools' reach
+and restoring is a change; and every write tool, because the connection is
+read-only. The chat's tool permissions (Settings → AI → Tool usage) do not
+govern this connection: the token is its own grant, created and revoked in
+Integrations. `read_gamma_link` and `export_page` exist only here.
+`view_pdf_page`'s, `view_ink`'s and `view_image`'s pictures go out as MCP `image` items,
+which the client shows the model as images.
+
+### Links in results
+
+Every result starts with one line naming this server and workspace's link
+shapes — page, PDF citation, note block — and each located hit carries its
+own absolute URL: a search hit links its PDF page (`…&page=<id>&pdf_page=N`)
+or its note block (`…&block=<id>`); `read_page` ends with a `[Links: …]` line
+naming the page and the citation form of the window's PDF pages; `read_block`
+and `cite` link in their head lines; `view_pdf_page` beside its page number.
+The executors add these only when the scope carries `link_base`
+(`ai_tools.gamma_link`), which the adapter sets to `<public URL>/?ws=<id>`;
+the chat's results are unchanged, its model writes the relative links the
+chat renders itself. A `Page URL:` footer follows a result that names a page
+without linking it (`read_chats`). The call's location goes out as
+`structuredContent` too: `page_id` and `url`, with `block_id`, `pdf_page` or
+`pdf_pages` when the tool located one.
+
+The server instructions carry the chat's citation instruction
+(`ai_tools.citation_prompt`, [pdf_citations.md](pdf_citations.md)) in its
+absolute form and ask for absolute `https://` Markdown links, never relative
+ones: Codex's terminal UI hyperlinks only absolute http(s) destinations
+(OSC 8, Codex CLI 0.150 and later; other terminals show the raw URL), and
+its IDE extension and desktop app open them in the browser. Such a link in a
+signed-in browser lands in the workspace and opens the page; with `pdf_page`
+and `quote` it highlights the passage. The desktop app's sidecar picks a
+free port per launch (`desktop/lib/sidecar.js`), so links minted against it
+outlive neither a restart nor the OAuth token bound to that address; a stable
+server address is what makes them durable.
 
 ### Export a page
 
@@ -461,10 +499,11 @@ Official references: [Codex MCP configuration](https://learn.chatgpt.com/docs/ex
 
 ## Validation
 
-`backend/tests/test_mcp.py` exercises the SDK endpoint, real tool reads (the
-folder tree, a page's chat, a PDF page as an image), the three export formats
-and their refusals, input validation, workspace isolation, permissions,
-expiration, and revocation.
+`backend/tests/test_mcp.py` exercises the SDK endpoint, the registry-derived
+tool list, real tool reads (the folder tree, a page's chat, a PDF page and
+handwriting as images, a citation record), the links and structured content
+results carry, the three export formats and their refusals, input validation,
+workspace isolation, permissions, expiration, and revocation.
 `test_mcp_oauth.py` covers discovery, approval, PKCE, resource/client/redirect
 binding, expiration, replay prevention, revocation, and streamed body limits.
 It also covers HTTPS proxy consent with saved and environment-configured public

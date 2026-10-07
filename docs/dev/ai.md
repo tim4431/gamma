@@ -447,7 +447,8 @@ for the tools). The built-in chat system prompt frames the model as working
 inside that knowledge base and grounds claims about the pages in text
 actually read (look details up or say they're absent, never fill gaps from
 memory; cite a PDF by page number, say when something comes from the user's
-notes). With a document in context, `_CITATION_PROMPT` is appended, custom
+notes). With a document in context, `CITATION_PROMPT` (`ai_tools.citation_prompt`,
+the text the MCP server's instructions share) is appended, custom
 prompt or not. It asks for `[p. N](/?page=<id>&pdf_page=N&quote=…)` links
 built from the `[PDF page N]` labels and the `Gamma page ID` each context
 section carries ([pdf_citations.md](pdf_citations.md)).
