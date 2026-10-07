@@ -11,8 +11,8 @@ Read papers, keep what you learn. This guide shows each part of Gamma in a short
 | [Follow links and translate](#follow-links-and-translate) | Citations, Back, translation in place |
 | [Notes](#notes) | Markdown and math that render as you type |
 | [Outline and links between pages](#outline-and-links-between-pages) | Nesting, moving notes, `[[` links |
-| [AI chat](#ai-chat) | Ask about the paper, with clickable citations |
-| [The library agent](#the-library-agent) | Let the AI organize and edit, with your approval |
+| [AI chat](#ai-chat) | Ask about the paper, with clickable citations; every AI service you can connect |
+| [The library agent](#the-library-agent) | Let the AI organize and edit, with your approval; what each tool does |
 | [Library](#library) | Folders, labels, Recently deleted |
 | [Search](#search) | Everything at once, Ctrl+P to jump |
 | [Metadata and citations](#metadata-and-citations) | Title, authors, BibTeX |
@@ -20,7 +20,7 @@ Read papers, keep what you learn. This guide shows each part of Gamma in a short
 | [Workspaces](#workspaces) | Personal and shared libraries, editing together |
 | [Offline copies](#offline-copies) | A synced copy on your laptop or iPad |
 | [Gamma Connector](#gamma-connector) | Save papers from the browser |
-| [Assistants](#assistants) | Codex, Claude Code and other MCP clients |
+| [Assistants](#assistants) | Codex, Claude Code, DeepSeek Harness and other MCP clients; the tools they get |
 | [Import and export](#import-and-export) | Zotero, Obsidian, Notion, PDF, BibTeX |
 | [Backups and upgrades](#backups-and-upgrades) | Snapshots, exports, what a new version does |
 | [Install as an app](#install-as-an-app) | iPad, phone, desktop |
@@ -116,7 +116,7 @@ Notes are a nested outline. Highlights and free notes are the same kind of block
 
 <img alt="Ctrl+drag crops a figure into the chat, a question is typed and sent, the answer streams in with a p. 4 citation, and clicking it highlights the passage in the paper" src="assets/chat.svg" width="100%">
 
-Open the chat from the **View menu (≡) → AI Chat**. Connect a provider in Settings → AI → Connections: Anthropic, OpenAI, your ChatGPT subscription, DeepSeek, Kimi, Qwen, GLM, OpenRouter or any OpenAI-compatible gateway. Keys stay on the server.
+Open the chat from the **View menu (≡) → AI Chat**. Gamma has no AI of its own: connect a service in Settings → AI → Connections and the chat uses your account with it. Keys stay on the server and are never sent back to the browser; a server administrator can also add connections everyone on the server shares.
 
 - The chat reads the open paper by itself. **Full PDF** sends the file, so the model sees figures and tables.
 - **Add more**: paste images, Ctrl+drag a region of the page, click highlights to quote them, type **@** to attach another paper.
@@ -125,16 +125,57 @@ Open the chat from the **View menu (≡) → AI Chat**. Connect a provider in Se
 - Select part of a note and ask for a change: the assistant rewrites only that selection.
 - Each paper and folder keeps its own conversation. **New chat** starts over.
 
+### AI services you can connect
+
+A connection is a sign-in or an API key plus the address the chat talks to. The dialog checks the key against the service's own model list, and you pick the models the chat offers from that list.
+
+| Service | Sign-in | Address |
+|---|---|---|
+| **ChatGPT** | Your ChatGPT Plus or Pro subscription, signed in in the browser. No API key | Fixed; nothing to enter |
+| **Anthropic** (Claude) | Console API key | `https://api.anthropic.com`, or any service that speaks the Anthropic Messages API |
+| **OpenAI API** (GPT) | API key | `https://api.openai.com` |
+| **DeepSeek** | API key | `https://api.deepseek.com` |
+| **Kimi** | API key, or a Kimi Code subscription | `https://api.moonshot.ai`; China `https://api.moonshot.cn`; Kimi Code `https://api.kimi.com/coding/v1` |
+| **Qwen** | API key, or a Coding Plan subscription | Model Studio `https://dashscope-intl.aliyuncs.com/compatible-mode/v1`; China `https://dashscope.aliyuncs.com/compatible-mode/v1`; Coding Plan `https://coding-intl.dashscope.aliyuncs.com/v1`, China `https://coding.dashscope.aliyuncs.com/v1` |
+| **GLM** | API key, or a GLM Coding Plan subscription | Z.ai `https://api.z.ai/api/paas/v4`; Zhipu China `https://open.bigmodel.cn/api/paas/v4`; Coding Plan `…/api/coding/paas/v4` on either host |
+| **OpenRouter** | API key | `https://openrouter.ai/api/v1` |
+| **Custom endpoint** | API key, if the server wants one | Any OpenAI-compatible address: a gateway such as LiteLLM, or a local server such as Ollama, vLLM or llama.cpp |
+
+DeepSeek, Kimi, Qwen, GLM, OpenRouter and the custom endpoint sit under the **Other** tile. A coding-plan subscription is an API key the vendor's console makes for that plan, pointed at the plan's own address; Alibaba allows the Qwen Coding Plan only inside coding tools. There is no Anthropic subscription sign-in, since Anthropic's terms do not allow one: Claude is reached with a Console key.
+
 ## The library agent
 
 <img alt="In a folder chat, rename these AuthorYear is sent; a card shows the rename with the old title struck through; Allow once is clicked and the four cards are renamed, with an undo pill" src="assets/agent.svg" width="100%">
 
-On the home page or in a folder, the chat can act on your library: list, read and search the papers in view, rename them, file them into folders, search the web for papers and save them, build BibTeX, and edit your notes.
+On the home page or in a folder, the chat can act on your library: list, read and search the papers in view, rename them, file them into folders, search the web for papers and save them, build BibTeX, and edit your notes. On a paper, the same chat reads, searches and edits that paper and its notes.
 
 - **It asks first.** A change shows as a card. **Allow once**, **Allow in this chat**, **Always allow**, or **Don't allow** (with a line on what to do instead).
 - Everything it changed is listed under the reply, each with an undo.
-- Settings → AI → Tool usage sets each permission to Allow, Ask or Off.
+- Settings → AI → Tool usage sets each permission below to Allow, Ask or Off, for folder, PDF and notes chats separately, with presets from *Read library* to *Allow all*. Reading is allowed by default; anything that changes your library asks.
 - A journal that blocks the server shows a card: open the page in your browser and Gamma Connector sends the PDF back.
+
+### What the chat's tools can do
+
+| Permission | Tools | What they do |
+|---|---|---|
+| **Read your library** | | |
+| List pages | `list_pages`, `list_folders`, `list_deleted` | Browse page titles, folders, metadata and Recently deleted (folder chats) |
+| Read pages | `read_page`, `read_chats`, `cite` | Read PDF text, highlights, notes, earlier chats and citation records (metadata, BibTeX) |
+| Read note blocks | `read_block` | Read individual notes and their outline |
+| View pages and handwriting | `view_pdf_page`, `view_ink` | Look at figures, tables, scanned pages and your handwriting as pictures |
+| Search library | `search_library` | Find text in your notes and PDFs |
+| **Web research** | | |
+| Search papers online | `search_papers`, `related_papers`, `search_web` | Find papers on Crossref, arXiv and OpenAlex, follow their citations, and search the web through your AI connection, Brave Search or SearXNG (Tool usage → Online search) |
+| Fetch documents | `fetch_paper` | Read a DOI, arXiv id or URL without saving it; a paywall or sign-in hands the fetch to your browser |
+| Use journal sign-ins | | Use the publisher sign-ins Gamma Connector saved when fetching |
+| **Make changes** | | |
+| Save papers | `save_paper` | Add a paper found online to the library |
+| Rename pages | `rename_page` | Change a page's title (folder chats) |
+| Move pages | `move_page` | File a page into a folder (folder chats) |
+| Restore deleted pages | `restore_page` | Bring a page back from Recently deleted (folder chats) |
+| Edit note blocks | `edit_block`, `create_block`, `move_block` | Create, edit and move notes, and transcribe handwriting |
+
+The agent cannot delete pages, and an assistant connected from outside ([Assistants](#assistants)) gets the reading tools only.
 
 ## Library
 
@@ -211,11 +252,36 @@ The browser extension saves the paper you are reading in one click: PDF, metadat
 
 <img alt="In a terminal an @Gamma question is typed, the assistant searches the library and reads the page, and answers with a page number while Gamma highlights the passage" src="assets/assistant.svg" width="100%">
 
-Codex, Claude Code, DeepSeek Harness and any MCP client can search and read your papers, notes, highlights and PDF text, read-only, for one workspace you approve in the browser.
+Codex, Claude Code, DeepSeek Harness and any MCP client can search and read your papers, notes, highlights and PDF text, read-only, for one workspace you approve. Gamma runs an MCP server at `<your Gamma>/mcp`; the assistant connects to it and brings its own model. Gamma's own chat does not connect to outside MCP servers.
 
-- Settings → AI → Integrations shows the setup command for each: run it where you use the assistant, approve the workspace, then ask: *"@Gamma, in the blockade paper, how is the blockade radius measured?"*
-- The assistant can also walk your folders, look at a PDF page as a picture, and export a page as Markdown or PDF.
-- A remotely hosted Gamma needs its **Public server URL** confirmed once in Settings → Server.
+- Settings → AI → Integrations shows the setup for each assistant: run it where you use the assistant, approve the workspace in the browser, then ask: *"@Gamma, in the blockade paper, how is the blockade radius measured?"*
+- Paste a Gamma page, block or share link into the question and the assistant reads that page.
+- A remotely hosted Gamma needs its **Public server URL** confirmed once in Settings → Server. A connection expires after 90 days; the same pane disconnects one.
+
+### Connect an assistant
+
+| Assistant | How it connects |
+|---|---|
+| **Codex CLI** | One setup command from the Codex CLI tab: it installs the Gamma plugin and opens the browser sign-in. By hand: `codex mcp add gamma --url <your Gamma>/mcp`, then `codex mcp login gamma` |
+| **Claude Code** | `claude mcp add --transport http --scope user gamma <your Gamma>/mcp`, then `/mcp` → **gamma** → sign in. The optional plugin from a [release](https://github.com/tim4431/Gamma/releases/latest) adds the `/gamma:gamma` workflow |
+| **DeepSeek Harness** | No browser sign-in: create a read-only token in its tab, run the install command once, then the start command, which asks for the token |
+| **Any other MCP client** | Add the MCP URL with the client's sign-in option (OAuth in the browser). A client without OAuth gets a token from **Manual setup (advanced)** and sends it as a bearer token |
+
+### What an assistant can use
+
+| Tool | What it returns |
+|---|---|
+| `list_folders` | The folder tree, each folder with its path and page counts |
+| `list_pages` | Pages with titles, folders, labels and metadata; filter by folder, label or title |
+| `search_library` | Full-text hits in notes and PDF text, with where each one is |
+| `read_page` | A page's notes, highlights, properties and PDF text in windows |
+| `read_block` | One note block or a page's note outline |
+| `read_chats` | The AI chat kept with a page or folder |
+| `view_pdf_page` | One PDF page as a picture: a scan, a figure, a table |
+| `read_gamma_link` | A pasted page, block or share link, read in place; a folder share lists its pages |
+| `export_page` | A page as Markdown, or as a PDF: the annotated paper or the notes typeset |
+
+The first seven are the chat's own reading tools. An assistant never gets the write tools or the web tools: the connection is read-only, and the assistant has web access of its own.
 
 ## Import and export
 
