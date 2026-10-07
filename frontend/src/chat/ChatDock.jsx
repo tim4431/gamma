@@ -6,7 +6,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { API, apiJson, copyText, isPdfFile, makeId, readNdjson, withWorkspace } from "../shared/lib/utils";
 import { stepList } from "../shared/ui/listKeys.js";
-import { DockWindow, ChatCiteContext, ChatMarkdown, AutoGrowTextarea, useCopied, useTextScale } from "../shared/ui/Widgets";
+import { DockWindow, ChatMarkdown, AutoGrowTextarea, useCopied, useTextScale } from "../shared/ui/Widgets";
 import PaperMentionInput from "./PaperMentionInput";
 import FetchHandoffCards, { LiveHandoffCards } from "./FetchHandoffCards";
 import ReplyPapers from "./ReplyPapers";
@@ -776,20 +776,9 @@ export default function ChatDock({
     return () => { cancelled = true; };
   }, [historyOpen, history, chatKey, readOnly]);
   const activeTitle = chatTitle || deriveTitle(chatMessages) || t("Untitled");
-  // Names the paper a reply's citation pill points at: the page title for
-  // its preview, and a short form (first author's surname, else the title
-  // cut short) for replies that cite several papers.
-  const citeTitles = useMemo(() => ({
-    titleOf(id) {
-      const page = homeBlocks.find((b) => b.id === id);
-      const title = page?.content || (id === focusedBlockId ? pageTitle : "") || "";
-      if (!title) return null;
-      const first = page?.properties?.meta?.authors?.[0];
-      const surname = first ? String(first).trim().split(/\s+/).pop() : "";
-      return { title, short: surname || (title.length > 24 ? `${title.slice(0, 24).replace(/\s+\S*$/, "")}…` : title) };
-    },
-  }), [homeBlocks, focusedBlockId, pageTitle]);
-  const pageTitleOf = (id) => citeTitles.titleOf(id)?.title || "";
+  // The page an agent step names (a citation pill gets its paper from
+  // GammaNavContext's citeSource).
+  const pageTitleOf = (id) => homeBlocks.find((b) => b.id === id)?.content || (id === focusedBlockId ? pageTitle : "") || "";
   // Reserve the reply's bubble before the first stream event. This placeholder
   // is display-only; tool activity and answer text replace it in the same row.
   const visibleMessages = busyHere && (!chatMessages.length || chatMessages.at(-1).role === "user")
@@ -1780,7 +1769,6 @@ export default function ChatDock({
           <button className="uiClose" onClick={() => { setChatFindOpen(false); setChatFind(""); }} title={t("Close find")} aria-label={t("Close find")}><XIcon size={14} /></button>
         </div>
       ) : null}
-      <ChatCiteContext.Provider value={citeTitles}>
       <div
         className="chatMessages"
         ref={chatScrollRefCb}
@@ -1992,7 +1980,6 @@ export default function ChatDock({
         {/* An earlier conversation stays readable; the card follows it. */}
         {visibleMessages.length ? setupCard : null}
       </div>
-      </ChatCiteContext.Provider>
       {!readOnly ? (
       // One box: the context chips on top, the message at full
       // width, then a toolbar — [+], the Full PDF switch while a PDF is in

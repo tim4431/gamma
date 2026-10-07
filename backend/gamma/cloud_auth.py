@@ -715,7 +715,11 @@ def _grant_refused(subject: str, used: str) -> None:
     """The account server answered ``invalid_grant`` to ``used``: the grant
     is revoked. Drop the token, mark the identity, and end the sessions a
     cloud sign-in minted for the account (password sessions stay), unless
-    a newer sign-in already holds another token."""
+    a newer sign-in already holds another token. A share host, where a
+    refusal is how a plan's end arrives, also ends the account's
+    integration tokens (an offline copy, the extension, an assistant over
+    MCP): they were the plan's."""
+    share_host = settings()["share_host"]
     with _conn() as conn:
         conn.execute("BEGIN IMMEDIATE")
         row = identity_by_subject(conn, subject)
@@ -725,11 +729,14 @@ def _grant_refused(subject: str, used: str) -> None:
         conn.execute("UPDATE identities SET refresh_token = '', revoked_at = ? WHERE provider = ? AND subject = ?",
                      (page_now(), PROVIDER, subject))
         ended = conn.execute("DELETE FROM sessions WHERE user_id = ? AND via = 'cloud'", (row["user_id"],)).rowcount
+        tokens = (conn.execute("DELETE FROM integration_tokens WHERE user_id = ?", (row["user_id"],)).rowcount
+                  if share_host else 0)
         name = account_name(conn, row["user_id"])
         conn.commit()
     forget_access(subject)
     log.warning(f"cloud: Gamma Cloud revoked the grant of {name} (signed out on the account server); "
-                f"ended {ended} session(s) its cloud sign-ins opened here")
+                f"ended {ended} session(s) its cloud sign-ins opened here"
+                + (f" and {tokens} integration token(s)" if share_host else ""))
 
 
 # --- this server's address -------------------------------------------------------

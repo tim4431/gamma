@@ -7633,14 +7633,26 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     return () => document.removeEventListener('scroll', onScroll, { capture: true });
   }, [pdfUrl, pdfHidden]);
 
+  // Names the paper a citation pill points at, in the chat and in the notes:
+  // the page title for its preview, and a short form (first author's
+  // surname, else the title cut short) for text that cites several papers.
+  function citeSource(id) {
+    const page = homeBlocks.find((b) => b.id === id);
+    const title = page?.content || (id === focusedBlockId ? pageTitle : "") || refCache[id]?.content || "";
+    if (!title) return null;
+    const first = page?.properties?.meta?.authors?.[0];
+    const surname = first ? String(first).trim().split(/\s+/).pop() : "";
+    return { title, short: surname || (title.length > 24 ? `${title.slice(0, 24).replace(/\s+\S*$/, "")}…` : title) };
+  }
+
   // One navigation for every Gamma link card on screen (chat, notes, embeds).
   // Declared above every early return below — it is a hook, and the share
   // gate appears only after the first render.
   // Rebuilt when what the handlers close over changes; a click reads the
   // current value, so the cards themselves never re-render for navigation.
   const gammaNav = useMemo(
-    () => ({ openPage: openPageLink, openBlock: openBlockLink }),
-    [focusedBlockId, blocks, refCache, shareMode],
+    () => ({ openPage: openPageLink, openBlock: openBlockLink, citeSource }),
+    [focusedBlockId, blocks, refCache, shareMode, homeBlocks, pageTitle],
   );
 
   // A share link that can't open yet: sign in (signed-in / specific-people

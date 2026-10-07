@@ -6,7 +6,8 @@ server without cloud sign-in makes no call from here.
 
 - **The grant check** (``check_all``, at startup and hourly from the app
   lifespan): every identity holding a refresh token is refreshed. A
-  refusal (``invalid_grant``) ends the sessions its cloud sign-ins minted
+  refusal (``invalid_grant``) ends the sessions its cloud sign-ins minted,
+  and on a share host the account's integration tokens too
   (``cloud_auth._grant_refused``); a refresh that fails for any other reason
   is tried again an hour later and does nothing else, so a laptop without
   network stays signed in.

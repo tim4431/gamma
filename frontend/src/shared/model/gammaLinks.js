@@ -70,6 +70,12 @@ export function gammaLinksIn(text) {
   return out;
 }
 
+// Whether a markdown source cites more than one paper: then each citation
+// pill also names its source ("Vaswani · p. 2").
+export function citesSeveralPapers(text) {
+  return new Set(gammaLinksIn(text).filter((link) => link.kind === "citation").map((link) => link.pageId)).size > 1;
+}
+
 // The page/block ids a markdown source links to — what a renderer must
 // resolve before it can label (and claim) those links.
 export function gammaLinkIds(text) {
