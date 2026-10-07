@@ -43,8 +43,37 @@ function precompress() {
   };
 }
 
+// The App chunk is imported once the locale catalog is in (main.jsx), a
+// round trip after the entry. A modulepreload for it in the page's head
+// starts that fetch with the entry's own, and its stylesheet goes in the
+// head too (Vite's preload helper finds the link and adds no second one).
+// Nothing the first screen paints changes, only when its bytes start
+// arriving (docs/research/bundle.md).
+function preloadApp() {
+  return {
+    name: "gamma-preload-app",
+    apply: "build",
+    transformIndexHtml: {
+      order: "post",
+      handler(html, ctx) {
+        const bundle = ctx.bundle;
+        if (!bundle) return;
+        // By the module it holds: a dynamic entry's facade id is null here.
+        const app = Object.values(bundle).find((c) => c.type === "chunk" && c.isDynamicEntry
+          && Object.keys(c.modules).some((m) => /[\\/]src[\\/]app[\\/]App\.jsx$/.test(m)));
+        if (!app) return;
+        const tags = [{ tag: "link", attrs: { rel: "modulepreload", crossorigin: true, href: "/" + app.fileName }, injectTo: "head" }];
+        for (const css of app.viteMetadata?.importedCss || []) {
+          tags.push({ tag: "link", attrs: { rel: "stylesheet", crossorigin: true, href: "/" + css }, injectTo: "head" });
+        }
+        return tags;
+      },
+    },
+  };
+}
+
 export default defineConfig({
-  plugins: [react(), precompress()],
+  plugins: [react(), precompress(), preloadApp()],
   server: {
     proxy: {
       // ws: the page's live socket (/api/ws/page/…) rides the same proxy

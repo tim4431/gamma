@@ -4,7 +4,6 @@ import json
 import sqlite3
 import time
 
-import orjson
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 from fractional_indexing import generate_key_between
@@ -40,9 +39,10 @@ from ..blocks_store import (
 )
 from .. import cloud_auth, trash, upload_gc
 from ..db import connect_pages_db, page_now
+from ..json_response import OrjsonResponse
 from ..markdown_export import build_tree
 from ..ops import (MAX_CONTENT, OpError, StorableBody, commit_ops, delete_page, latest_seq, move_across_pages,
-                   note_reload, storable, trash_page)
+                   note_reload, trash_page)
 from ..storage import upload_refs
 from ..textnorm import fuzzy_pattern, literal_runs
 
@@ -51,28 +51,6 @@ router = APIRouter(prefix="/api", tags=["blocks"])
 # The Ctrl+F notes scan answers with what it found so far (``partial``)
 # once it has run this long.
 BLOCK_SEARCH_BUDGET_S = 2.0
-
-
-class TreeJSON(JSONResponse):
-    """The tree reads' answer (a page's subtree, a block's children, the
-    library listing), encoded by orjson (docs/dev/api.md has the timings).
-    The handler builds it, so the encoding runs in its worker thread: a
-    returned dict is encoded on the event loop. NaN and the infinities a
-    stored row may hold go out as null (a write refuses them now). A lone
-    surrogate goes out as U+FFFD (``ops.storable``, told to let the NaN
-    through): UTF-8 has no encoding for one. What orjson still
-    refuses goes through the standard encoder: nesting past 255 levels (a
-    tree about 125 blocks deep), an integer past 64 bits."""
-
-    def render(self, content) -> bytes:
-        try:
-            return orjson.dumps(content)
-        except orjson.JSONEncodeError:
-            content = storable(content, finite=False)
-        try:
-            return orjson.dumps(content)
-        except orjson.JSONEncodeError:
-            return super().render(content)
 
 
 class UBCreateRequest(StorableBody):
@@ -212,7 +190,7 @@ def block_search(request: Request, q: str = "", ids: str = "", limit: int = 10,
                 block["page_root_id"] = block_id
                 block["page_title"] = content
             results.append(block)
-    return {"blocks": results, "partial": True} if partial else {"blocks": results}
+    return OrjsonResponse({"blocks": results, "partial": True} if partial else {"blocks": results})
 
 
 # Route order matters: static-prefix routes must come before /{block_id}
@@ -290,7 +268,7 @@ def ub_get_children(block_id: str, request: Request):
             out = {"children": [page_summary(r, _page_preview(conn, r[0])) for r in rows],
                    **_trees(conn, scope, rows)}
             conn.rollback()
-            return TreeJSON(out)
+            return OrjsonResponse(out)
         if not conn.execute("SELECT 1 FROM unified_blocks WHERE id = ?", (block_id,)).fetchone():
             raise HTTPException(status_code=404, detail="block not found")
         if _reach(conn, block_id, scope) is None:
@@ -299,7 +277,7 @@ def ub_get_children(block_id: str, request: Request):
             f"SELECT {BLOCK_COLUMNS} FROM unified_blocks WHERE parent_id = ? ORDER BY position ASC",
             (block_id,),
         ).fetchall()
-    return TreeJSON({"children": [block_to_dict(r) for r in rows]})
+    return OrjsonResponse({"children": [block_to_dict(r) for r in rows]})
 
 
 def _trees(conn, scope, rows) -> dict:
@@ -394,7 +372,7 @@ def ub_get_subtree(block_id: str, request: Request):
     out = {"block": build_tree(rows, block_id)}
     if seq is not None:
         out["seq"] = seq
-    return TreeJSON(out)
+    return OrjsonResponse(out)
 
 
 @router.get("/blocks/{block_id}/backlinks")

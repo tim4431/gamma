@@ -35,6 +35,7 @@ from fastapi.responses import JSONResponse
 
 from ..auth import require_ws, resolve_ws, share_scope
 from ..db import connect_pages_db, page_now, stamp_after
+from ..json_response import OrjsonResponse
 from ..ops import StorableBody
 
 
@@ -187,7 +188,7 @@ def get_chat(bucket: str, request: Request):
     out = {"messages": json.loads(row[0]) if row else [], "title": (row[1] if row else "") or ""}
     if scope is None:
         out["updated_at"] = row[2] if row else ""
-    return out
+    return OrjsonResponse(out)  # a long conversation: encoded here, not on the event loop
 
 
 @router.put("/{bucket}")

@@ -28,6 +28,7 @@ import {
   useTextScale,
 } from "../shared/ui/Widgets";
 import { BlockTree, _dragState } from "../editor/BlockTree";
+import { refLabelsByBlock } from "../editor/refLabels.js";
 import { BacklinksPanel } from "../editor/BacklinksPanel";
 import { dropGapAtPoint, findObject } from "../editor/MdObject";
 import { cutObject, moveObjectInTree } from "../editor/mdObjects";
@@ -2146,11 +2147,21 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   const snapPushTimerRef = useRef(null);
   const snapsWritableRef = useRef(canWriteWorkspace);
   snapsWritableRef.current = canWriteWorkspace;
+  // The localStorage copy is written once the captures rest: serializing
+  // every cover (hundreds of KB of JPEG) after each scroll-settle capture
+  // was a synchronous stall in the middle of reading. The ref and the state
+  // change at once; the cache lags by a moment and is what the next load
+  // paints first — the server holds the covers themselves.
+  const snapsWriteTimerRef = useRef(null);
   function setSnapsState(next) {
     pageSnapsRef.current = next;
     setPageSnaps(next);
-    const u = prefsUserRef.current;
-    if (u) { try { localStorage.setItem(`gamma-page-snaps:${u}`, JSON.stringify(next)); } catch {} }
+    clearTimeout(snapsWriteTimerRef.current);
+    snapsWriteTimerRef.current = setTimeout(() => {
+      snapsWriteTimerRef.current = null;
+      const u = prefsUserRef.current;
+      if (u) { try { localStorage.setItem(`gamma-page-snaps:${u}`, JSON.stringify(pageSnapsRef.current)); } catch {} }
+    }, 1500);
   }
   // Scroll-settle captures can fire every second or two while reading; batch
   // the uploads so steady reading costs one small PUT burst per 5s, always
@@ -6699,6 +6710,34 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   }
 
   const treeBlocks = useMemo(() => flattenBlocks(blocks), [blocks]);
+  const treeById = useMemo(() => new Map(treeBlocks.map((b) => [b.id, b])), [treeBlocks]);
+  // Every row's [[ref]] and Gamma-link labels, resolved once per tree
+  // change (editor/refLabels.js); a row's entry keeps its identity while
+  // its labels read the same, so a memoized row (BlockTree.jsx) does not
+  // re-render for a keystroke elsewhere.
+  const refLabelsPrevRef = useRef(new Map());
+  const refLabelsById = useMemo(() => {
+    const next = refLabelsByBlock(blocks, treeById, refCache, refLabelsPrevRef.current);
+    refLabelsPrevRef.current = next;
+    return next;
+  }, [blocks, treeById, refCache]);
+  // The row callbacks are made inline in the render below (rowProps). The
+  // rows get one stable wrapper per name that calls the latest one, so a
+  // memoized row re-renders only when one of its data props changed; a
+  // name that is null or undefined (a feature the row gates on) stays so.
+  const rowLatestRef = useRef(null);
+  const rowFnsRef = useRef({});
+  function stableRowProps(props) {
+    rowLatestRef.current = props;
+    const out = {};
+    for (const key of Object.keys(props)) {
+      const value = props[key];
+      if (typeof value !== "function") { out[key] = value; continue; }
+      if (!rowFnsRef.current[key]) rowFnsRef.current[key] = (...args) => rowLatestRef.current[key]?.(...args);
+      out[key] = rowFnsRef.current[key];
+    }
+    return out;
+  }
   // What the open page carries — THE switch for layout and page-level
   // affordances (docs/dev/block_centric.md). pdfUrl is only the viewer's input.
   const pageAttach = useMemo(() => pageAttachment(focusedBlock), [focusedBlock]);
@@ -6727,7 +6766,15 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     return () => cancelAnimationFrame(raf);
   }, [notebook, focusedBlockId]); // eslint-disable-line react-hooks/exhaustive-deps
   const nbInk = useMemo(() => (nbSheets.length ? inkBySheet(blocks) : new Map()), [nbSheets, blocks]);
-  const sheetNumbers = useMemo(() => new Map(nbSheets.map((s) => [s.id, s.index + 1])), [nbSheets]);
+  // Kept by identity while the numbering is the same (nbSheets is derived
+  // from the tree on every edit): a row prop of every block.
+  const sheetNumbersPrev = useRef(new Map());
+  const sheetNumbers = useMemo(() => {
+    const next = new Map(nbSheets.map((s) => [s.id, s.index + 1]));
+    const prev = sheetNumbersPrev.current;
+    const same = prev.size === next.size && [...next].every(([id, n]) => prev.get(id) === n);
+    return (sheetNumbersPrev.current = same ? prev : next);
+  }, [nbSheets]);
   nbSheetsRef.current = nbSheets;
   // The page tools every surface's layers read (markup/PageTools.jsx), and
   // per surface its marks (markup/MarkupLayers.jsx): a PDF page's ink groups
@@ -7445,10 +7492,16 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     prevHighlightsRef.current = { json, value: next };
     return next;
   }, [blocks, treeBlocks]);
-  const highlightColors = useMemo(
-    () => Object.fromEntries(highlights.map((h) => [h.id, h.color])),
-    [highlights]
-  );
+  // Kept by identity while the colours are the same (highlights are rebuilt
+  // from the tree on every edit): a row prop of every block.
+  const highlightColorsPrev = useRef({});
+  const highlightColors = useMemo(() => {
+    const next = Object.fromEntries(highlights.map((h) => [h.id, h.color]));
+    const prev = highlightColorsPrev.current;
+    const keys = Object.keys(next);
+    const same = keys.length === Object.keys(prev).length && keys.every((k) => prev[k] === next[k]);
+    return (highlightColorsPrev.current = same ? prev : next);
+  }, [highlights]);
   useEffect(() => {
     if (pdfHidden) return;
     const id = pendingJumpRef.current;
@@ -7594,6 +7647,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   useEffect(() => {
     if (!pdfUrl || pdfHidden) return;
     let ticking = false;
+    let settle = 0;
     function onScroll(e) {
       // Fast bail without any DOM query: the notes/chat panes pass through
       // here too, but only the PDF scroller itself matters.
@@ -7608,18 +7662,29 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         if (pages.length === 0) return;
         const cr = target.getBoundingClientRect();
         const midY = cr.top + cr.height / 2;
-        for (const el of pages) {
-          const r = el.getBoundingClientRect();
-          if (r.top <= midY && r.bottom >= midY) {
-            const n = parseInt(el.dataset.page);
-            // Record via the tracker, not a pdfPageNumber effect: scrolling
-            // within a page (or back to a page the state already shows) fires
-            // no state change, but must still re-assert this window's
-            // position over one pulled from another window.
-            if (n) { setPdfPageNumber(n); recordScrollPageRef.current?.(n); }
-            break;
-          }
+        // The pages are stacked top to bottom: a binary search over their
+        // boxes finds the one under the middle of the view in a few layout
+        // reads instead of one per page above it.
+        let lo = 0, hi = pages.length - 1, found = null;
+        while (lo <= hi) {
+          const mid = (lo + hi) >> 1;
+          const r = pages[mid].getBoundingClientRect();
+          if (r.bottom < midY) lo = mid + 1;
+          else if (r.top > midY) hi = mid - 1;
+          else { found = pages[mid]; break; }
         }
+        const n = found ? parseInt(found.dataset.page) : 0;
+        if (!n) return;
+        // Record via the tracker, not a pdfPageNumber effect: scrolling
+        // within a page (or back to a page the state already shows) fires
+        // no state change, but must still re-assert this window's
+        // position over one pulled from another window.
+        recordScrollPageRef.current?.(n);
+        // The state (what the session restore saves) follows once the scroll
+        // rests: a flick through fifty pages is one render of the app, not
+        // fifty.
+        clearTimeout(settle);
+        settle = setTimeout(() => setPdfPageNumber(n), 300);
       });
     }
     // Capture-phase listener on the document: element scroll events don't
@@ -7630,7 +7695,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     // and a remount silently drops a per-element listener, ending position
     // tracking for the rest of the session.
     document.addEventListener('scroll', onScroll, { capture: true, passive: true });
-    return () => document.removeEventListener('scroll', onScroll, { capture: true });
+    return () => { clearTimeout(settle); document.removeEventListener('scroll', onScroll, { capture: true }); };
   }, [pdfUrl, pdfHidden]);
 
   // One navigation for every Gamma link card on screen (chat, notes, embeds).
@@ -8925,7 +8990,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                   captureArea: capturePdfArea,
                   docNonce: pdfDocNonce,
                   docKey: pdfUrl,
-                  allBlocks: treeBlocks,
+                  lookupBlock: (id) => treeById.get(id),
+                  refLabelsById,
                   highlightColors,
                   refCache,
                   onFetchRefs,
@@ -9058,7 +9124,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                     setFocusedId(id);
                     return true;
                   },
-                  tree: blocks,
+                  getTree: () => blocks,
                   keybindings,
                   // Attach a block to the next chat message (chip with its id).
                   onAddToChat: shareMode ? null : addBlockToChat,
@@ -9225,7 +9291,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                     {notesInkStrip}
                     <FileChipContext.Provider value={fileChipCtx}>
                       <NoteSheetContext.Provider value={noteSheetCtx}>
-                        <BlockTree blocks={blocks} readOnly={readOnly} rowProps={rowProps} />
+                        <BlockTree blocks={blocks} readOnly={readOnly} rowProps={stableRowProps(rowProps)} />
                       </NoteSheetContext.Provider>
                     </FileChipContext.Provider>
                     {backlinksPanel}

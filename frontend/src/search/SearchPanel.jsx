@@ -165,6 +165,7 @@ export default function SearchPanel({
       const re = pdfSearchRef.current ? buildSearchRegex(q, { caseSensitive, wholeWord }) : null;
       if (re) {
         pdfReq = pdfSearchRef.current(re).then(async (matches) => {
+          if (matches.stale) return; // a query this effect moved past: the newer run answers
           // A library hit was opened: jump to its page's first match now that
           // the document is rendered and re-searched.
           const pending = pendingFindRef.current;
@@ -177,6 +178,7 @@ export default function SearchPanel({
               const re2 = terms.length > 1 && pdfSearchRef.current
                 ? buildSearchRegex(terms[0], { caseSensitive, wholeWord, regex: false }) : null;
               if (re2) matches = (await pdfSearchRef.current(re2).catch(() => [])) || [];
+              if (matches.stale) return;
             }
             if (matches.length) {
               pendingFindRef.current = null;

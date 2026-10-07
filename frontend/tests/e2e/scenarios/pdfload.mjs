@@ -62,7 +62,7 @@ export async function pdfLoadScenarios({ server, browser, alice, makePdf, step, 
     return stat;
   }
   const hasDiskCopy = (page, pdfUrl) => page.evaluate((u) => new Promise((resolve) => {
-    const rq = indexedDB.open("gamma-pdf-cache", 1);
+    const rq = indexedDB.open("gamma-pdf-cache"); // whatever version the app made
     rq.onerror = () => resolve(false);
     rq.onsuccess = () => {
       const db = rq.result;

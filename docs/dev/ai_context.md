@@ -139,6 +139,21 @@ message, and it doesn't stop fabrication — the tools are the better lever.
   took it back after each page before a waiting thread woke. So a fresh
   taker queues at a second lock (the "door") and holds it while it waits,
   and the walk's next page lines up behind it.
+- **The page-text cache** (`pdf_text.iter_page_texts`): a chat reads the
+  paper on every turn (the head excerpt, a selection's placement over the
+  whole document, each `read_page` window from its start page), and a
+  pdfium walk takes seconds on a long book, under the lock, in the way of
+  the viewer's manifest walks and the indexer. A stored PDF never changes
+  under its name (a content hash), so the text of a page, once extracted,
+  is kept in the process: per file the pages read so far (a head read
+  fills the head; the next window goes on from there), at most `TEXT_CACHE_FILES`
+  (64) files and `TEXT_CACHE_CHARS` (32 million characters) together,
+  least recently read dropped first. The key carries the file's size and
+  mtime, so a file rewritten in place (annotations stripped) is read
+  again; bytes sources (a PDF in a chat message) and the search indexer's
+  walk (`cache=False`, so a library's worth of papers does not push out the
+  ones being read) bypass it. `page_count` answers from it too. Tests:
+  `tests/test_pdf_text_cache.py`.
 
 ## Known limits
 

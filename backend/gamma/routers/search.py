@@ -32,6 +32,7 @@ from ..auth import require_ws
 from ..block_index import fts_query
 from ..blocks_store import root_pages, write_lock
 from ..db import connect_data_db, connect_pages_db
+from ..json_response import OrjsonResponse
 from ..logbuf import log
 from ..pdf_text import extract_pages
 from ..textnorm import normalize_text
@@ -42,8 +43,10 @@ _MAX_PAGE_CHARS = 20000   # per page
 
 
 def _extract_pages(path) -> list[str]:
-    """Text per page (1-based order) — the shared extractor in gamma.pdf_text."""
-    return extract_pages(str(path))
+    """Text per page (1-based order) — the shared extractor in gamma.pdf_text.
+    Past its page-text cache: a walk over a library's papers would push out
+    the ones the chat is reading."""
+    return extract_pages(str(path), cache=False)
 
 
 def _index_doc(ws: str, doc_id: str):
@@ -155,7 +158,7 @@ def library_search(request: Request, q: str = "", limit: int = 20, scope: str = 
                 results.append({"source": "pdf", "block_id": page_id, "page_id": page_id,
                                 "doc_id": doc_id, "title": pages[page_id]["title"],
                                 "page": page, "snippet": snippet})
-    return {"results": results, "indexing": len(missing)}
+    return OrjsonResponse({"results": results, "indexing": len(missing)})
 
 
 @router.get("/pdf-search")
@@ -179,4 +182,4 @@ def pdf_search(request: Request, q: str = "", limit: int = 20):
         results = [{"block_id": docs[doc_id]["block_id"], "doc_id": doc_id,
                     "title": docs[doc_id]["title"], "page": page, "snippet": snip}
                    for doc_id, page, snip in pdf_index.search_pdf(conn, fts_query(q), limit, docs)]
-    return {"results": results, "indexing": len(missing)}
+    return OrjsonResponse({"results": results, "indexing": len(missing)})

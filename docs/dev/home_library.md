@@ -473,7 +473,10 @@ version comes back live under the same ids, its chats and op log kept
 
 `gamma/trash.py` deletes pages trashed more than `KEEP_DAYS` (30) days ago
 for good through `ops.delete_page`, the one path that drops a page's chats
-and index rows. The sweeper runs at startup and every hour (`lifespan`).
+and index rows. The sweeper runs at startup and every hour (`lifespan`); a
+workspace whose `pages.db` (and its WAL) has not changed since the last
+sweep is left alone until the expiry that sweep found (`trash._due`), so a
+host with many workspaces does not open them all every hour.
 Delete permanently and Empty take the same path at once. On a share host,
 whose pages are published copies, `DELETE /api/blocks/{id}` deletes for good
 directly. Endpoints: [api.md](api.md) "Recently deleted". Editors and owners

@@ -26,7 +26,7 @@ from .. import pdf_meta, storage
 from ..logbuf import log
 from ..net_guard import guarded_urlopen
 from ..server_settings import can_store
-from ..storage import DIGEST_CHARS, is_pdf, put_upload
+from ..storage import DIGEST_CHARS, is_pdf
 
 router = APIRouter(prefix="/api", tags=["pdf"])
 
@@ -437,34 +437,53 @@ def proxy_pdf(source_url: str, request: Request):
     length = resp.headers.get("Content-Length") or ""
 
     def stream():
-        # Saving buffers chunks on the side and writes the file only after a
-        # complete download — a client abort mid-stream must not leave a
-        # truncated PDF in uploads (it would shadow the source forever).
-        chunks = [] if want_save else None
-        complete = False
+        # Saving spools the bytes to a file beside the uploads (storage.Spool;
+        # never in memory: a scanned book is hundreds of MB) and stores it
+        # only after a complete download — a client abort mid-stream must not leave a truncated
+        # PDF in uploads (it would shadow the source forever). The storage
+        # limits are asked as the bytes arrive: past them the spool is
+        # dropped and the bytes only stream through, and an upstream whose
+        # Content-Length is over them is never spooled at all.
+        spool = None
+        if want_save and (not length.isdigit() or can_store(ws, int(length))):
+            try:
+                spool = storage.Spool(ws)
+            except OSError as e:
+                log.info(f"[pdf] not caching {pdf_doc_id}: {e}")
+        checked = complete = 0
         try:
             while True:
                 chunk = resp.read(65536)
                 if not chunk:
                     complete = True
                     break
-                if chunks is not None:
-                    chunks.append(chunk)
+                if spool is not None:
+                    spool.write(chunk)
+                    if spool.size - checked >= storage.SPOOL_CHECK_BYTES:
+                        checked = spool.size
+                        if not can_store(ws, spool.size):
+                            log.info(f"[pdf] not caching {pdf_doc_id} ({spool.size} bytes so far): over storage limits")
+                            spool.discard()
+                            spool = None
                 yield chunk
         finally:
             resp.close()
-            if chunks is not None and complete:
-                data = b"".join(chunks)
+            if spool is not None:
+                spool.close()
                 # best-effort cache: over the user's storage limits (or not a
                 # PDF after all), just skip the save — the bytes still
                 # streamed through
-                if not is_pdf(data):
+                if not complete:
+                    spool.discard()
+                elif not is_pdf(spool.head):
                     log.info(f"[pdf] not caching {pdf_doc_id}: the body is not a PDF")
-                elif can_store(ws, len(data)):
-                    put_upload(ws, stored_name, data)
+                    spool.discard()
+                elif can_store(ws, spool.size):
+                    storage.put_path(ws, stored_name, spool.path)
                     pdf_meta.schedule(ws, pdf_doc_id)
                 else:
-                    log.info(f"[pdf] not caching {pdf_doc_id} ({len(data)} bytes): over storage limits")
+                    log.info(f"[pdf] not caching {pdf_doc_id} ({spool.size} bytes): over storage limits")
+                    spool.discard()
 
     headers = {"Cache-Control": "private, no-store", "X-Source-Url": final_url}
     if length.isdigit():

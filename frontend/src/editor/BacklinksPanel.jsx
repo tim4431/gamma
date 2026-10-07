@@ -5,7 +5,8 @@
 // preference (backlinksCollapsed). App fetches the list (/blocks/{id}/backlinks)
 // and does the navigation.
 import React, { useEffect, useMemo } from "react";
-import { BlockMarkdown, refLabelOf } from "./BlockTree";
+import { BlockMarkdown } from "./BlockTree";
+import { refLabelOf } from "./refLabels.js";
 import { FileGlyph } from "../shared/ui/Icons";
 import { t, tn } from "../shared/i18n/i18n.js";
 

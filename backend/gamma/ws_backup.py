@@ -623,7 +623,7 @@ def _fresh_ids(rows, taken: set) -> list[list]:
     of the copy is left out."""
     remap, inside, out = {}, set(), []
     for i, row in enumerate(rows):
-        vals = list(row[:-1])  # BLOCK_COLUMNS less the generated kind
+        vals = list(row)  # BLOCK_COLUMNS: the stored columns
         vals[1] = remap.get(vals[1], vals[1])
         if i and vals[1] not in inside:
             continue

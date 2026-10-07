@@ -441,8 +441,8 @@ def test_merge_brings_back_a_page_that_is_only_in_recently_deleted():
 
 
 def test_fresh_ids_never_keep_a_row_outside_the_copy():
-    rows = [("P", "root", "a0", "", "{}", OLD, OLD, "P", "page"), ("X", "P", "a0", "", "{}", OLD, OLD, "P", "note"),
-            ("Y", "X", "a0", "", "{}", OLD, OLD, "P", "note"), ("Q", "elsewhere", "a1", "", "{}", OLD, OLD, "P", "note")]
+    rows = [("P", "root", "a0", "", "{}", OLD, OLD, "P"), ("X", "P", "a0", "", "{}", OLD, OLD, "P"),
+            ("Y", "X", "a0", "", "{}", OLD, OLD, "P"), ("Q", "elsewhere", "a1", "", "{}", OLD, OLD, "P")]
     taken = {"X"}
     out = ws_backup._fresh_ids(rows, taken)
     ids = [r[0] for r in out]

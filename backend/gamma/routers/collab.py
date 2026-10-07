@@ -17,6 +17,7 @@ from ..auth import (ANONYMOUS_NAME, SESSION_COOKIE, actor_of, is_link_visitor, l
                     share_lookup, share_scope, workspace_access)
 from ..blocks_store import is_op_page
 from ..db import connect_pages_db
+from ..json_response import OrjsonResponse
 from ..ops import OpError, OpsRequest, commit_ops, latest_seq, ops_since
 
 router = APIRouter(prefix="/api", tags=["collab"])
@@ -85,7 +86,7 @@ def get_ops(page_id: str, request: Request, since: int = 0):
         seq = latest_seq(conn, page_id)
     if pruned:
         raise HTTPException(status_code=410, detail="op log pruned — reload the page")
-    return {"seq": seq, "batches": batches}
+    return OrjsonResponse({"seq": seq, "batches": batches})  # up to a megabyte: encoded off the event loop
 
 
 def _socket_access(sock: WebSocket, page_id: str) -> tuple[str, collab.Peer] | None:

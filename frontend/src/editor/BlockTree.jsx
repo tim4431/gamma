@@ -12,6 +12,7 @@ import rehypeRaw from "rehype-raw";
 import { isFolded, isHighlightBlock, withLegacyAccessors } from "../shared/model/blockModel";
 import { COLORS } from "../shared/model/highlightColors.js";
 import { gammaLinkId, gammaLinkIds, parseGammaLink, relativeGammaLink } from "../shared/model/gammaLinks.js";
+import { NO_LABELS } from "./refLabels.js";
 import { InkCard } from "../ink/InkLayer";
 import { isTextBox } from "../markup/textBox.js";
 import { isSheet } from "../notebook/notebook";
@@ -56,6 +57,16 @@ import {
 // draggingId: the block a ⋮⋮ handle drags; fragment: {blockId, kind, idx},
 // an image / table / diagram dragged out of a block's rendered view.
 const _dragState = { draggingId: null, dropTarget: null, fragment: null };
+// The legacy accessor view of a block (blockModel.withLegacyAccessors), one
+// per block object: the tree copies only the path of an edit
+// (updateBlockTree), so an untouched block keeps its view, and a memoized
+// row sees the same `block` prop.
+const LEGACY = new WeakMap();
+function legacy(b) {
+  let view = LEGACY.get(b);
+  if (!view) { view = withLegacyAccessors(b); LEGACY.set(b, view); }
+  return view;
+}
 // Embed-card writes per source block, counted: only the latest one's answer
 // may replace what the card shows (BlockRow's embedEditRef).
 const _embedWrites = new Map();
@@ -682,15 +693,6 @@ export const BlockMarkdown = React.memo(function BlockMarkdown({ content, blockI
     && prev.refLabels[id]?.trashed === r.trashed && prev.refLabels[id]?.missing === r.missing)
 );
 
-// A cached ref as the chips and embed cards read it: the block's text and
-// its page's title, or, for a block no page holds (App's onFetchRefs), its
-// page's Recently deleted entry (`trashed`) or `missing`.
-export function refLabelOf(rb) {
-  if (rb.trashed) return { trashed: rb.trashed };
-  if (rb.missing) return { missing: true };
-  return { content: rb.content, page_title: rb.page_title };
-}
-
 // Area-highlight crops shown on note cards. Nothing is stored with the block —
 // the region is re-cropped from the loaded document (App's pdfCaptureRef) and
 // cached here per session, keyed by the document and the rect, so scrolling
@@ -727,7 +729,7 @@ function AreaSnapshot({ block, captureArea, docNonce, docKey }) {
   );
 }
 
-function BlockRow({
+const BlockRow = React.memo(function BlockRow({
   block,
   depth,
   sheetNumber = 0,
@@ -753,7 +755,8 @@ function BlockRow({
   onStartEdit,
   registerRef,
   readOnly,
-  allBlocks,
+  lookupBlock, // a block of the page by id (App's tree), at event time
+  refLabels = NO_LABELS, // this row's [[ref]] and Gamma-link labels (refLabels.js)
   onBlockRefClick,
   refCache,
   onFetchRefs,
@@ -776,7 +779,7 @@ function BlockRow({
   onMergeOpen,
   mergeNav,
   keybindings,
-  tree,
+  getTree, // the page's tree, at event time (the block commands' context)
   onHop,
   onMoveBlock,
   onDuplicate,
@@ -850,7 +853,7 @@ function BlockRow({
   // refused write says so and reloads the source's real text.
   const embedEditRef = useRef(null);
   embedEditRef.current = (refId, newContent, base) => {
-    if (allBlocks?.find((b) => b.id === refId)) {
+    if (lookupBlock?.(refId)) {
       onChangeText(refId, newContent);
       return;
     }
@@ -961,22 +964,8 @@ function BlockRow({
   };
   const stableObjectDragOver = useRef((p) => objectDropRef.current?.over(p)).current;
   const stableObjectDrop = useRef((p) => objectDropRef.current?.drop(p)).current;
-  // Resolve [[ref]] chip labels here (cheap per render) so BlockMarkdown's
-  // memo can compare them as strings instead of depending on allBlocks,
-  // whose identity changes on every edit.
-  const refLabels = useMemo(() => {
-    const out = {};
-    const add = (id, gone) => {
-      const rb = allBlocks?.find((b) => b.id === id) || refCache?.[id];
-      if (rb && (gone || !(rb.trashed || rb.missing))) out[id] = refLabelOf(rb);
-    };
-    for (const [, id] of (block.content || "").matchAll(/\[\[([a-zA-Z0-9_-]+)\]\]/g)) add(id, true);
-    // Gamma links (citations, page links) resolve through the same cache: the
-    // title labels the card, and a link that doesn't resolve stays an
-    // ordinary URL.
-    for (const id of gammaLinkIds(block.content || "")) if (!out[id]) add(id, false);
-    return out;
-  }, [block.content, allBlocks, refCache]);
+  // The [[ref]] chip and Gamma-link card labels come resolved from App
+  // (refLabels.js, once per tree change): `refLabels`.
   // The [[ link picker: { query, anchor } while a "[[" is being typed.
   const [refPopup, setRefPopup] = useState(null);
   const [refSelectedIdx, setRefSelectedIdx] = useState(0);
@@ -1015,7 +1004,7 @@ function BlockRow({
   // other than pages (a page result is a page row) as plain text.
   const refRows = useMemo(() => {
     if (!refPopup) return [];
-    const labelOf = (id) => pages?.find((p) => p.id === id)?.content ?? allBlocks?.find((b) => b.id === id)?.content ?? refCache?.[id]?.content;
+    const labelOf = (id) => pages?.find((p) => p.id === id)?.content ?? lookupBlock?.(id)?.content ?? refCache?.[id]?.content;
     const pageHits = rankRefPages(pages, refPopup.query, rootId);
     const blockHits = searchResults.filter((b) => b.page_root_id !== b.id);
     const [np, nb] = pickerCounts(pageHits.length, blockHits.length);
@@ -1039,7 +1028,7 @@ function BlockRow({
     if (!block.content || !onFetchRefs) return;
     const refIds = [...block.content.matchAll(/\[\[([a-zA-Z0-9_-]+)\]\]/g)].map((m) => m[1]);
     const ids = refIds.concat(gammaLinkIds(block.content));
-    const unknown = ids.filter((id) => !allBlocks?.find((b) => b.id === id) && !refCache?.[id]);
+    const unknown = ids.filter((id) => !lookupBlock?.(id) && !refCache?.[id]);
     // Only a [[ref]]'s id is asked about when the search misses it (a Gamma
     // link may name another server's page).
     if (unknown.length > 0) onFetchRefs(unknown, unknown.filter((id) => refIds.includes(id)));
@@ -1110,7 +1099,7 @@ function BlockRow({
   // What a block command runs with (blockCommands.js): the row's keydown
   // dispatches with it, and the editing bar builds one per press.
   const commandContext = () => ({
-    block, tree, view, folded: collapsed, readOnly, editor: ref.current,
+    block, tree: getTree?.(), view, folded: collapsed, readOnly, editor: ref.current,
     row: { onHop, onMoveBlock, onDuplicate, onDelete, onEnterSibling, onIndent, onOutdent, onToggle, onAddToChat, onMoveToPage },
   });
 
@@ -1895,7 +1884,7 @@ function BlockRow({
       ) : null}
     </div>
   );
-}
+});
 
 // Block subtree → a markdown outline: each block one "- " bullet (extra
 // content lines hang under it), children indented two spaces deeper.
@@ -1907,7 +1896,7 @@ function subtreeMarkdown(b, depth) {
   return [own, ...(b.children || []).map((c) => subtreeMarkdown(c, depth + 1))].join("\n");
 }
 
-function SortableBlockRow({ block, ...rowProps }) {
+const SortableBlockRow = React.memo(function SortableBlockRow({ block, ...rowProps }) {
   const depth = rowProps.depth || 0;
   // Notion-style handle: drag moves the block, a plain click opens the block
   // menu (copy link / reference / embed, delete).
@@ -2040,7 +2029,7 @@ function SortableBlockRow({ block, ...rowProps }) {
       <BlockRow block={block} {...rowProps} />
     </div>
   );
-}
+});
 
 // The stored text plus an addition the agent is appending/prepending (an
 // edit_block call with mode "append"/"prepend", previewed while it streams):
@@ -2115,6 +2104,9 @@ function AiGhostRow({ content, depth }) {
 // `onSheet`: a sheet holds these rows (notebook/notebook.js), which puts
 // a text box among them on it.
 function BlockTree({ blocks, readOnly, rowProps, depth = 0, parentId, onSheet = false }) {
+  // Every row takes its own entry of the labels map, never the map itself
+  // (a new one on every tree change would re-render each memoized row).
+  const { refLabelsById, ...rowRest } = rowProps;
   const live = rowProps.aiLive;
   const ghost = live?.tool === "create_block" && live.parentId === (parentId ?? rowProps.rootId) ? live : null;
   if ((!blocks || blocks.length === 0) && !ghost) return null;
@@ -2132,14 +2124,22 @@ function BlockTree({ blocks, readOnly, rowProps, depth = 0, parentId, onSheet = 
   return (
     <>
       {ghostAt === 0 ? ghostRow : null}
-      {list.map((rawBlock, idx) => { const block = withLegacyAccessors(rawBlock);
+      {list.map((rawBlock, idx) => { const block = legacy(rawBlock);
+        const refLabels = refLabelsById?.get(rawBlock.id) || NO_LABELS;
         const sheetNumber = rowProps.sheetNumbers ? rowProps.sheetNumbers.get(rawBlock.id) || 0
           : depth === 0 && isSheet(rawBlock) ? ++sheets : 0; return (
         <React.Fragment key={block.id}>
+          {/* place: the row's index among its siblings and their count. A
+              memoized row renders again only for a changed prop, and what
+              the editing bar may do (move down, indent) reads the tree's
+              order: a block moved among its siblings, or one added or
+              removed beside it, is the same block at another place. */}
           {!readOnly ? (
-            <SortableBlockRow block={block} depth={depth} sheetNumber={sheetNumber} onSheet={onSheet} {...rowProps} />
+            <SortableBlockRow block={block} depth={depth} sheetNumber={sheetNumber} onSheet={onSheet} refLabels={refLabels}
+              place={idx} siblings={list.length} {...rowRest} />
           ) : (
-            <BlockRow block={block} depth={depth} sheetNumber={sheetNumber} onSheet={onSheet} {...rowProps} />
+            <BlockRow block={block} depth={depth} sheetNumber={sheetNumber} onSheet={onSheet} refLabels={refLabels}
+              place={idx} siblings={list.length} {...rowRest} />
           )}
           {!isFolded(block, rowProps.view) && (block.children?.length > 0 || live?.parentId === block.id) ? (
             <div className="blockChildren">

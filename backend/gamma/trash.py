@@ -89,17 +89,58 @@ def purge_expired(ws: str, *, now: datetime | None = None) -> list[str]:
     return gone
 
 
+# What the last sweep learned per workspace: ``(the files' stamp, when its
+# next page expires)`` — a workspace whose files have not changed since is
+# left alone until then, instead of being opened every hour (a host with a
+# thousand workspaces opened them all, churning the connection cache). The
+# stamp covers the WAL file too: in WAL mode a write dates pages.db itself
+# only at a checkpoint.
+_due: dict[str, tuple[tuple, datetime | None]] = {}
+
+
+def _stamp(ws: str) -> tuple | None:
+    """``(pages.db mtime, its WAL's mtime and size)``; None without a pages.db."""
+    try:
+        db = (ws_dir(ws) / "pages.db").stat()
+    except OSError:
+        return None
+    try:
+        wal = (ws_dir(ws) / "pages.db-wal").stat()
+        return (db.st_mtime_ns, wal.st_mtime_ns, wal.st_size)
+    except OSError:
+        return (db.st_mtime_ns, 0, 0)
+
+
+def _next_expiry(ws: str) -> datetime | None:
+    """When the earliest page still in the workspace's trash expires; None
+    with the trash empty (or an undatable entry, which the next sweep purges)."""
+    stamps = [parse_stamp(page["deleted_at"]) for page in _trashed(ws)]
+    if not stamps:
+        return None
+    return min((at + timedelta(days=KEEP_DAYS) if at else datetime.min.replace(tzinfo=timezone.utc))
+               for at in stamps)
+
+
 def sweep(*, now: datetime | None = None) -> dict[str, list[str]]:
     """``purge_expired`` over every workspace: ``{workspace: [page ids]}``
     for the ones that lost pages. A workspace that cannot be read (deleted
-    meanwhile) is skipped."""
+    meanwhile) is skipped; one whose pages.db has not changed since the
+    last sweep is skipped until the expiry that sweep found (``_due``)."""
+    now = now or datetime.now(timezone.utc)
     out = {}
     for ws in workspace_ids():
-        if not (ws_dir(ws) / "pages.db").is_file():
+        stamp = _stamp(ws)
+        if stamp is None:
+            _due.pop(ws, None)
+            continue
+        known = _due.get(ws)
+        if known and known[0] == stamp and (known[1] is None or now < known[1]):
             continue
         try:
             gone = purge_expired(ws, now=now)
+            _due[ws] = (_stamp(ws) or stamp, _next_expiry(ws))
         except Exception as e:  # noqa: BLE001 — one workspace never stops the sweep
+            _due.pop(ws, None)
             log.warning(f"[trash] workspace {ws}: {e}")
             continue
         if gone:

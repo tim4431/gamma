@@ -134,8 +134,14 @@ All state is SQLite + files on disk under a data directory (env
     in the trees (from `page_id`), else `ink` (an
     `ink_url` key), `text_box`, `sheet` (an object there), `link` (a
     non-empty `link_url` or `link_page_id`), `highlight` (a
-    `pdf_position` object), `note`. The
-    block dict and block search report it.
+    `pdf_position` object), `note`. The filters read the column (its
+    index); the block dict computes the same rule in Python from the
+    properties it has parsed anyway (`blocks_store.block_kind`, checked
+    against the column by `tests/test_block_columns.py`), so a tree read
+    selects the stored columns only. Block search reports the column's.
+  - `idx_ub_updated` on `updated_at`: the newest-first readers (block
+    search, the `[[` picker's suggestions, backlinks) walk it and stop at
+    their limit instead of sorting every candidate.
   - `doc_id` — generated: `properties.doc_id`. "Which page carries this
     PDF" (`page_for_doc`) and "which files are still in use" read its
     partial index (`WHERE doc_id IS NOT NULL`).
@@ -421,7 +427,9 @@ track of the ones nothing uses.
   `.partial/`, stored by a rename) and `sweep_partial`; `check_name`
   refuses a name that is not one path segment. Every read and write of a
   stored file goes through them. The writers are `storage.store_pdf` /
-  `store_file` (hashed names, dedup, quota), `storage.store_pdf_path` (the
+  `store_file` (hashed names, dedup, quota), `storage.store_pdf_stream` (an
+  upload spooled to disk and hashed as it arrives, `storage.Spool`),
+  `storage.store_pdf_path` (the
   same for an upload in parts, below) and `storage.put_upload` (bytes under
   a name chosen elsewhere: the proxy's cache, a clip, a mirror's pull, a
   restore, a stripped PDF, the AI chat's re-download).
