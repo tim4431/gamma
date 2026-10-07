@@ -475,6 +475,59 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
     assertNoProblems(page);
   });
 
+  await step("pdf: a picked picture is stored and attached by URL, and an area drag attaches the region the server draws", async () => {
+    const requests = [];
+    await page.route("**/api/ai/chat", async (route) => {
+      requests.push(route.request().postDataJSON());
+      await route.fulfill({ contentType: "application/x-ndjson", body: `${JSON.stringify({ delta: "A picture." })}\n` });
+    });
+    try {
+      // A picked file goes to POST /api/ai/pictures and comes back stored.
+      const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==", "base64");
+      await page.locator('.chatComposer input[type="file"]').setInputFiles({ name: "figure.png", mimeType: "image/png", buffer: png });
+      const thumbs = page.locator('[data-guide="chat.imageContext"] img');
+      await thumbs.first().waitFor();
+      assert((await thumbs.first().getAttribute("src")).includes("/api/uploads/"), "the composer shows the stored picture");
+      await until(() => thumbs.first().evaluate((img) => img.complete && img.naturalWidth > 0), { what: "the stored picture loads" });
+      // Ctrl+drag a rectangle on the page in view (page 2, from the step
+      // before): its region goes along, drawn by the server.
+      const pageEl = page.locator('[data-page="2"]');
+      await pageEl.scrollIntoViewIfNeeded();
+      const box = await pageEl.boundingBox();
+      const viewport = page.viewportSize();
+      const x0 = box.x + 60, y0 = Math.max(box.y + 80, 120);
+      assert(y0 + 140 < viewport.height, `page 2 is in view (${JSON.stringify(box)})`);
+      await page.keyboard.down("Control");
+      await page.mouse.move(x0, y0);
+      await page.mouse.down();
+      await page.mouse.move(x0 + 100, y0 + 60, { steps: 8 });
+      await page.mouse.move(x0 + 200, y0 + 120, { steps: 8 });
+      await page.mouse.up();
+      await page.keyboard.up("Control");
+      await until(async () => await thumbs.count() === 2, { what: "the region joins the pictures" });
+      const region = await thumbs.nth(1).getAttribute("src");
+      assert(region.includes("/api/ai/page-image/") && region.includes("page=2") && region.includes("box="), `a region URL: ${region}`);
+      await until(() => thumbs.nth(1).evaluate((img) => img.complete && img.naturalWidth > 0), { what: "the region picture loads" });
+      await page.keyboard.press("Escape");
+      await page.locator("textarea.chatInputArea").fill("What are these?");
+      await page.getByRole("button", { name: "Send", exact: true }).click();
+      await until(() => requests.length === 1, { what: "the chat request" });
+      const [sent] = requests;
+      assertEq(sent.images.length, 2, "both pictures go with the message");
+      assert(sent.images[0].url.startsWith("/api/uploads/") && sent.images[0].kind === "file", JSON.stringify(sent.images[0]));
+      assertEq(sent.images[1].kind, "area");
+      assertEq(sent.images[1].page, 2);
+      assert(Array.isArray(sent.images[1].box) && sent.images[1].box.length === 4, "the region's box");
+      assertEq(sent.max_pictures, 12, "the default picture budget");
+      // The sent message shows both, and the composer row is empty again.
+      await until(async () => await page.locator(".chatBubble.user img.chatMsgImage").count() === 2, { what: "the bubble shows the pictures" });
+      assertEq(await thumbs.count(), 0, "the composer's pictures went with the message");
+    } finally {
+      await page.unroute("**/api/ai/chat");
+    }
+    assertNoProblems(page);
+  });
+
   await step("pdf: chat paper recommendations and bare identifiers open clickable source links", async () => {
     const doi = "https://doi.org/10.1103/PhysRevA.69.062320";
     await account.api(`/api/chats/${pageId}`, { method: "PUT", body: { messages: [

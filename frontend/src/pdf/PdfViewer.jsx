@@ -1405,13 +1405,15 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
 
   // A finished Ctrl+drag on a page: hold the rect (drawn by that page while
   // the popup is up) and offer the same color tip as a text selection. The
-  // drawn region also acts as a chat selection — its snapshot (`image`, a
-  // promise: the page crops it from the document) goes to the host as soon as
-  // it is drawn, like text selections attach on mouseup, whether or not a
+  // drawn region also acts as a chat selection — its page and box go to the
+  // host as soon as it is drawn (the server renders the region), like text
+  // selections attach on mouseup, whether or not a
   // note is then created.
-  const onAreaSelected = useCallback(({ image, ...sel }) => {
+  const onAreaSelected = useCallback((sel) => {
     setSelPopup({ kind: "area", ...sel });
-    image?.then((png) => { if (png) cbRef.current.onAreaSelection?.(png); });
+    // The region goes to the chat as its page and box (chat/chatPictures.js
+    // regionPicture); the server draws it from the document.
+    cbRef.current.onAreaSelection?.(sel);
   }, []);
 
   // Dismiss the color popup when the user mouses down anywhere outside it
@@ -2064,15 +2066,12 @@ const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, scal
       const swallow = (ce) => { ce.stopPropagation(); ce.preventDefault(); };
       document.addEventListener("click", swallow, { capture: true, once: true });
       setTimeout(() => document.removeEventListener("click", swallow, { capture: true }), 0);
-      // The region's snapshot doubles as a chat attachment. It is cropped
-      // from the document, not off the canvases on screen, which at high zoom
-      // are a preview; a page that has not loaded yields none, and the note
-      // can still be created.
-      const annotationMode = hideEmbeddedAnnots ? pdfjsLib.AnnotationMode.DISABLE : pdfjsLib.AnnotationMode.ENABLE;
+      // The region doubles as a chat attachment: its page and box go along,
+      // and the server draws it from the document (with the handwriting on
+      // it when asked) — nothing is captured off the screen.
       onAreaSelected({
         pageNumber, rect: r, width: box.width, height: box.height,
         tip: { left: box.left + r.x1, top: box.top + r.y2 + 8 },
-        image: page ? cropPage(page, r, box, annotationMode).catch(() => null) : null,
       });
     }
     document.addEventListener("pointerdown", onOther, true);

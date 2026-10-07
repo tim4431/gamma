@@ -7,7 +7,7 @@ import io
 from gamma.bibtex import build_entry
 from gamma.routers.metadata import _find_doi_candidates
 from gamma.block_index import fts_query
-from gamma.routers.ai import _parse_images
+from gamma.ai_pictures import data_url_picture, dimensions, sniff
 
 
 def test_doi_candidates_handle_glued_suffix():
@@ -63,11 +63,31 @@ def test_fuzzy_pattern_separator_tolerance():
     assert fuzzy_pattern("   ") is None
 
 
-def test_parse_images_validates():
-    good = "data:image/png;base64,iVBORw0KGgo="
-    bad = ["data:text/html;base64,PGI+", "not a data url", good]
-    parsed = _parse_images(bad)
-    assert parsed == [("image/png", "iVBORw0KGgo=")]
+def test_data_url_pictures_are_validated_and_normalized():
+    """An older client's pasted figure (a data URL) is read, sized and
+    labelled; anything that is not a picture is dropped."""
+    import base64
+    from PIL import Image
+
+    out = io.BytesIO()
+    Image.new("RGB", (2000, 1000), "white").save(out, "PNG")
+    good = "data:image/png;base64," + base64.b64encode(out.getvalue()).decode()
+    assert data_url_picture("data:text/html;base64,PGI+") is None
+    assert data_url_picture("not a data url") is None
+    assert data_url_picture("data:image/png;base64,iVBORw0KGgo=") is None  # a header alone is no picture
+    shown = data_url_picture(good)
+    assert shown["group"] == "user" and (shown["width"], shown["height"]) == (1568, 784)
+    assert shown["part"][0] == "image/jpeg" and shown["label"] == "Pasted image, 1568×784 px"
+
+
+def test_picture_headers_are_read_without_pillow():
+    png = bytes.fromhex("89504e470d0a1a0a0000000d49484452") + (300).to_bytes(4, "big") + (200).to_bytes(4, "big")
+    assert sniff(png) == "image/png" and dimensions(png) == (300, 200)
+    gif = b"GIF89a" + (64).to_bytes(2, "little") + (48).to_bytes(2, "little")
+    assert sniff(gif) == "image/gif" and dimensions(gif) == (64, 48)
+    jpeg = bytes.fromhex("ffd8ffe00002") + bytes.fromhex("ffc0001108") + (480).to_bytes(2, "big") + (640).to_bytes(2, "big")
+    assert sniff(jpeg) == "image/jpeg" and dimensions(jpeg) == (640, 480)
+    assert sniff(b"%PDF") == "" and dimensions(b"nope") == (0, 0)
 
 
 def test_parse_files_validates():
@@ -293,8 +313,12 @@ def test_selection_crops_render_unreliable_regions(monkeypatch):
     ]
     located = [{"page": p["page"], "section": "", "found": i != 2, "crop": False}
                for i, p in enumerate(passages)]
-    images = ai_context.selection_crops("u", "d" * 24, passages, located)
-    assert images == [("image/png", "aW1n"), ("image/png", "aW1n")]
+    images = ai_context.selection_crops("u", "d" * 24, passages, located, "A Paper")
+    assert [i["part"] for i in images] == [("image/png", "aW1n"), ("image/png", "aW1n")]
+    assert images[0]["group"] == "selection"
+    assert images[0]["label"] == ("Selected passage 2 of 4 on PDF page 3 of “A Paper” "
+                                  "(its text reads as a formula or table), 10×10 px")
+    assert "was not found" in images[1]["label"]
     assert [w["crop"] for w in located] == [False, True, True, False]
     # The rendered box is saved with the entry (the chat shows it again).
     assert [w.get("box") for w in located] == [None, list(rendered[0][1]), list(rendered[1][1]), None]

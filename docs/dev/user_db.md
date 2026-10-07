@@ -477,7 +477,9 @@ track of the ones nothing uses.
   `/api/uploads/<name>` anywhere in a block's content or properties (images,
   file chips, `ink_url`, `source_url`) and a block's `doc_id` (its PDF,
   `<doc_id>.pdf`). A mirror's file transfer and a page export's file list
-  read references through it too.
+  read references through it too. A saved AI conversation's pictures count
+  as well: `/api/uploads/<name>` in the `chats` and `chat_history`
+  messages ([ai.md](ai.md#pictures)); `upload_gc.referenced` reads both.
 - **Unreferenced files are kept for 30 days.** When the last reference to a
   file goes, the file stays on disk and is served as before. Its name is
   recorded in `upload_orphans` with the time. An undo, a cut pasted in a
@@ -497,8 +499,8 @@ track of the ones nothing uses.
   on the module's own thread a couple of seconds later, never in the
   request. A batch that drops nothing (typing in a block that keeps its
   image, a folder change on a PDF page) costs nothing.
-- **The full pass.** `upload_gc.reconcile` is one scan of the blocks that
-  mention an upload, diffed against the directory's listing
+- **The full pass.** `upload_gc.reconcile` is one scan of the blocks and
+  the AI chats that mention an upload, diffed against the directory's listing
   (`storage.list`). It runs for every
   workspace a minute after startup and every six hours, and catches what
   writers outside the op path (imports, a restore, a mirror) left behind. It

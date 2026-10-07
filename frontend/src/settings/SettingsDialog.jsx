@@ -4,7 +4,7 @@ import { API, apiJson, fmtBytes, isUnverifiedPaperMeta, metaSourceInfo, getCurre
 import { MenuSelect } from "../shared/ui/Menus";
 import { T, t, tn } from "../shared/i18n/i18n.js";
 import {
-  PaneHead, Section, Row, Toggle, Segmented, IconChoices, UnitInput, CharSlider, approxPages,
+  PaneHead, Section, Row, Toggle, Segmented, IconChoices, UnitInput, CharSlider, Stepper, approxPages,
   Stat, Empty, QuotaMeter, LogBox, NavAccountCard, SettingsDraftContext, SettingsSyncContext, useSettingsDraft,
 } from "./SettingsKit";
 import { SECTION_PREFS } from "./sectionPrefs.js";
@@ -32,6 +32,7 @@ import {
   ContrastIcon,
   DatabaseIcon,
   FileTextIcon,
+  ImageIcon,
   FolderIcon,
   FoldersIcon,
   GlobeIcon,
@@ -705,6 +706,11 @@ function ContextSize({ value }) {
           <CharSlider value={current} onChange={setCurrent} />
         </Row>
       ))}
+      <Row icon={ImageIcon} label={t("Pictures per message")}
+        hint={t("Attached pictures, selection crops, handwriting and area highlights share it; the newest earlier pictures stay in the conversation under the same number")}
+        title={t("Every picture is sized to the model's render size first, so each costs about the same: roughly 800 tokens on the OpenAI wires, 1,600 on Anthropic's.")}>
+        <Stepper value={value.chatPictures} onChange={value.setChatPictures} min={1} max={64} step={1} reset={12} />
+      </Row>
     </Section>
   );
 }

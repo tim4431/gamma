@@ -5,7 +5,7 @@ import json
 import urllib.parse
 from urllib.request import Request as URLRequest
 
-from .base import Protocol, as_int, attach_index, note_speed, parse_tool_args, served_speed_name
+from .base import Protocol, as_int, attach_index, note_speed, parse_tool_args, served_speed_name, turn_images
 
 API_VERSION = "2023-06-01"
 # Fast mode is a beta: the flag rides with the ``speed`` parameter. Only some
@@ -74,6 +74,14 @@ def _messages(messages) -> list:
                         for c in m["tool_calls"]]
             out.append({"role": "assistant", "content": content})
         else:
+            content = m["content"]
+            pictures = turn_images(m)
+            if pictures and not isinstance(content, list):
+                # An earlier message's pictures, kept in the conversation:
+                # image blocks before the turn's text, as on the request's own.
+                content = [*[{"type": "image", "source": {"type": "base64", "media_type": media_type, "data": data}}
+                             for media_type, data in pictures],
+                           {"type": "text", "text": content}]
             prev = out[-1] if out else None
             if (m["role"] == "user" and prev and prev["role"] == "user"
                     and isinstance(prev["content"], list)
@@ -82,10 +90,10 @@ def _messages(messages) -> list:
                 # user turn; fold the next real user message into it so roles
                 # keep alternating. Attachment turns already carry block lists.
                 prev["content"].extend(
-                    m["content"] if isinstance(m["content"], list)
-                    else [{"type": "text", "text": m["content"]}])
+                    content if isinstance(content, list)
+                    else [{"type": "text", "text": content}])
             else:
-                out.append({"role": m["role"], "content": m["content"]})
+                out.append({"role": m["role"], "content": content})
     return out
 
 

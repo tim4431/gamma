@@ -10,7 +10,7 @@
 // its own, not as a failure.
 import { t, tn } from "../shared/i18n/i18n.js";
 
-const CHANGE_KINDS = new Set(["rename", "move", "edit", "create", "save", "restore"]);
+const CHANGE_KINDS = new Set(["rename", "move", "edit", "create", "delete", "save", "restore"]);
 const LIBRARY_TOOLS = new Set(["rename_page", "move_page", "save_paper", "restore_page"]);
 
 // A call that changed something (listed in the reply, and ChatDock refreshes
@@ -41,6 +41,8 @@ const READ_VERBS = {
   read: (n) => tn("read {n} page", "read {n} pages", n),
   view: (n) => tn("looked at {n} PDF page", "looked at {n} PDF pages", n),
   ink: (n) => tn("looked at handwriting", "looked at handwriting {n} times", n),
+  image: (n) => tn("looked at a note's pictures", "looked at pictures in {n} notes", n),
+  clip: (n) => tn("clipped {n} picture", "clipped {n} pictures", n),
   cite: (n) => tn("cited", "cited {n} times", n),
   search: (n) => tn("searched", "searched {n} times", n),
   websearch: (n) => tn("searched online", "searched online {n} times", n),
@@ -119,6 +121,10 @@ export function runningLabel(step, titleOf = () => "") {
     case "read_chats": return title ? t("Reading the chat about “{title}”…", { title }) : t("Reading chats…");
     case "view_pdf_page": return t("Looking at PDF page {page}…", { page: args.pdf_page || "?" });
     case "view_ink": return t("Looking at handwriting…");
+    case "view_image": return t("Looking at a note's pictures…");
+    case "clip_region":
+      return args.pdf_page ? t("Clipping a picture of PDF page {page}…", { page: args.pdf_page })
+        : t("Clipping a picture…");
     case "cite": return t("Looking up citation records…");
     case "search_library": return t("Searching library for “{query}”…", { query: args.query || "" });
     case "search_papers": return t("Searching papers for “{query}”…", { query: args.query || "" });
@@ -148,6 +154,7 @@ export function runningLabel(step, titleOf = () => "") {
       }[args.mode]?.() || t("Editing a note…");
     case "create_block": return t("Adding a note…");
     case "move_block": return t("Moving a note…");
+    case "delete_block": return t("Deleting a note…");
     default: return t("Working…");
   }
 }
@@ -179,6 +186,7 @@ export function helperStatus(h) {
 // The sentence of a note change, around the link to its page ({page}).
 export function noteChangeText(a, page) {
   if (a.kind === "create") return t("Added a note in {page}", { page });
+  if (a.kind === "delete") return t("Deleted a note in {page}", { page });
   if (a.kind === "move") return a.src_page_id && a.src_page_id !== a.page_id
     ? t("Moved a note to {page}", { page }) : t("Moved a note in {page}", { page });
   return {

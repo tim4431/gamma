@@ -18,7 +18,7 @@ from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field, field_validator
 
-from .. import (ai_catalog, ai_permissions, ai_protocols, ai_revert, ai_usage, chatgpt_oauth,
+from .. import (ai_catalog, ai_permissions, ai_pictures, ai_protocols, ai_revert, ai_usage, chatgpt_oauth,
                 search_services, translate_engines)
 from ..ai_client import (
     CallRefused,
@@ -52,7 +52,6 @@ from ..ai_context import (
     MAX_CONTEXT_BLOCKS,
     context_markdown,
     gather_inputs as _gather_inputs,
-    parse_images as _parse_images,
     pdf_path as _pdf_path,
     prompt_tokens,
     render_selection_crop,
@@ -85,8 +84,8 @@ from ..ai_settings import (
     update_entry,
     update_provider_entries,
 )
-from ..auth import actor_of, can_write, require_user_id, require_ws
-from ..blocks_store import PATH_SEP, folder_path
+from ..auth import actor_of, can_write, link_ratelimit, require_user_id, require_ws, require_ws_writer
+from ..blocks_store import PATH_SEP, folder_path, page_root_id
 from ..db import connect_data_db, connect_pages_db, page_now
 from ..logbuf import log
 from ..pdf_text import extract_text
@@ -155,7 +154,13 @@ class AIChatRequest(BaseModel):
     # Also include the user's highlights + notes for pages that carry a PDF
     # (a page without one is its notes — they always go).
     include_notes: bool = False
-    images: list = Field(default_factory=list)  # pasted figures as data URLs
+    # The pictures that go with this message (gamma/ai_pictures.py): stored
+    # ones ({kind, url, width, height}) and regions of PDF pages ({kind:
+    # "area"|"view", page_id, page, box, ink?}); an older client's data URLs
+    # are still read. `max_pictures` is the budget they and the context's
+    # own pictures share (Settings → AI → Chat → "Pictures per message").
+    images: list = Field(default_factory=list)
+    max_pictures: int = Field(default=ai_pictures.DEFAULT_BUDGET, ge=1, le=ai_pictures.MAX_BUDGET)
     files: list = Field(default_factory=list)  # uploaded PDFs as {name, data} data URLs
     stream: bool = False  # NDJSON stream of {"delta": …} lines instead of one JSON body
     # Agent chat (gamma/ai_tools.py): agent_scope declares what this chat's
@@ -327,6 +332,85 @@ def selection_crop(doc_id: str, request: Request, page: int, box: str):
     if not image:
         raise HTTPException(status_code=404, detail="not found")
     return Response(image[0], media_type=image[1], headers={"Cache-Control": "private, max-age=86400"})
+
+
+# Rate limit of POST /ai/pictures, like the editor's image uploads.
+PICTURE_UPLOADS_PER_5_MIN = 60
+# A picture with handwriting changes as the user writes: the browser keeps
+# it briefly; a page without is as stable as the PDF file (content-hash name).
+_PICTURE_CACHE = "private, max-age=86400"
+_INK_PICTURE_CACHE = "private, max-age=60"
+
+
+@router.post("/ai/pictures")
+def ai_picture_upload(request: Request, file: UploadFile = File(...)):
+    """Store a picture for the chat (a paste, a drop, a picked file),
+    normalized to the model's size (gamma/ai_pictures.py ``store_picture``:
+    the longer side at most 1568 px, JPEG unless small or translucent) under
+    its content hash in the workspace's uploads → ``{url, width, height,
+    size, already_existed}``. The message keeps the URL; the file is a
+    stored upload like a note's picture (counted by the upload GC through
+    the chat's reference, gamma/upload_gc.py). Writers only: a picture
+    counts against the workspace's storage."""
+    ws = require_ws_writer(request)
+    link_ratelimit(request, "upload", PICTURE_UPLOADS_PER_5_MIN, 300)
+    data = file.file.read(ai_pictures.STORED_MAX_BYTES + 1)
+    if len(data) > ai_pictures.STORED_MAX_BYTES:
+        raise HTTPException(status_code=413, detail="picture too large")
+    stored = ai_pictures.store_picture(ws, data, file.content_type or "")
+    if not stored:
+        raise HTTPException(status_code=400, detail="not a picture this server can read")
+    return stored
+
+
+def _region_box(box: str):
+    """The ``box`` query of a picture route as page fractions, or None for
+    a whole page; 400 for anything else."""
+    if not box:
+        return None
+    parsed = ai_pictures.parse_box(box.split(","))
+    if parsed is None:
+        raise HTTPException(status_code=400, detail="invalid box")
+    return parsed
+
+
+# Sync defs: pdfium renders in the threadpool.
+@router.get("/ai/page-image/{page_id}")
+def page_image(page_id: str, request: Request, page: int, box: str = "", ink: int = 0):
+    """A PDF page of the page ``page_id`` as a picture, or its region
+    ``box`` (``x0,y0,x1,y1`` page fractions), with the user's handwriting
+    written on it when ``ink=1`` — what a reply's view chip expands to, what
+    a region attached to a message shows in the composer and the bubble,
+    and what the model embeds (``![p. N](/api/ai/page-image/…)``) to show
+    the user a page it looked at. Any workspace member."""
+    ws = require_ws(request)
+    if page < 1:
+        raise HTTPException(status_code=400, detail="invalid page")
+    region = _region_box(box)
+    with connect_pages_db(ws) as conn:
+        image, total = ai_pictures.render_region(ws, conn, page_id, page, region, ink=bool(ink))
+    if image is None:
+        raise HTTPException(status_code=404, detail="no such page" if total else "not found")
+    return Response(image[0], media_type=image[1],
+                    headers={"Cache-Control": _INK_PICTURE_CACHE if ink else _PICTURE_CACHE})
+
+
+@router.get("/ai/ink-image/{block_id}")
+def ink_image(block_id: str, request: Request, area: str = "ink"):
+    """The user's handwriting as a picture — the one ``view_ink`` shows the
+    model (gamma/ink_view.py): a group cropped to its strokes, or with
+    ``area=page`` the whole page or sheet with all its handwriting. Any
+    workspace member."""
+    from ..ink_view import picture as ink_picture
+
+    ws = require_ws(request)
+    with connect_pages_db(ws) as conn:
+        page_id = page_root_id(conn, block_id)
+        shown = ink_picture(ws, conn, block_id, page_id, whole=area == "page") if page_id else {"error": "no such block"}
+    if shown.get("error") or not shown.get("image"):
+        raise HTTPException(status_code=404, detail="not found")
+    image = shown["image"]
+    return Response(image[0], media_type=image[1], headers={"Cache-Control": _INK_PICTURE_CACHE})
 
 
 # The grounding clause is deliberate: a PDF's text below this prompt is
@@ -1572,23 +1656,60 @@ def _chat_tools(payload, scope: dict) -> list | None:
     return specs or None
 
 
-def _chat_prompt(ws: str, payload, scope: dict, tools, allow_native: bool, drop: int = 0):
+def _request_pictures(ws: str, payload, scope: dict, pictures_ok: bool) -> list:
+    """The pictures the request's ``images`` carry, resolved once per
+    request (kept on the scope: the prompt is built again for every trim
+    of the window), and the earlier turns' pictures put back on their
+    history items (``ai_pictures.history_pictures``). Nothing for a model
+    that reads text only."""
+    if "pictures_resolved" not in scope:
+        budget = ai_pictures.budget_of(getattr(payload, "max_pictures", None))
+        resolved = []
+        if pictures_ok:
+            with connect_pages_db(ws) as conn:
+                resolved = ai_pictures.request_pictures(ws, conn, payload.images, budget)
+                ai_pictures.history_pictures(ws, conn, payload.history, budget)
+        scope["pictures_resolved"] = resolved
+    return scope["pictures_resolved"]
+
+
+def _chat_prompt(ws: str, payload, scope: dict, tools, allow_native: bool, drop: int = 0,
+                 pictures_ok: bool = True):
     """The request's turns, system prompt and native files, with the
     ``drop`` oldest history items left out — what /ai/chat sends and
     /ai/chat/context exports. Returns ``(pdf_b64s, messages, system,
-    coverage, crops)``; ``crops`` are the pictures of selected regions whose
-    text is unreliable, riding with the user's own images."""
+    coverage, pictures)``; ``pictures`` are the ``(media_type, base64)``
+    parts riding with the last user turn: the user's own pictures and the
+    context's (selection crops, attached handwriting, area highlights),
+    fitted to the request's budget in that order (gamma/ai_pictures.py);
+    the turn's text names each one. ``pictures_ok`` false (a model that
+    reads text only) sends none and says how many were left out."""
     crops = []
-    pdf_b64s, context, coverage, message_context = _gather_inputs(ws, payload, allow_native, crops=crops,
+    pdf_b64s, context, coverage, message_context = _gather_inputs(ws, payload, allow_native,
+                                                                  crops=crops if pictures_ok else None,
                                                                   notes_seen=scope.get("read_texts"))
     # The tools and the agent prompt know what the context already holds
     # (read_page never repeats it; the prompt names the pages to read).
     scope["coverage"] = coverage
     located = next((c["selection"]["passages"] for c in coverage if c.get("selection")), None)
+    budget = ai_pictures.budget_of(getattr(payload, "max_pictures", None))
+    own = _request_pictures(ws, payload, scope, pictures_ok)
+    groups = [("user", own)] + [(g, [c for c in crops if c["group"] == g]) for g in ai_pictures.GROUP_ORDER[1:]]
+    kept, left_out = ai_pictures.fit(groups, budget)
+    if pictures_ok:
+        lines = ai_pictures.label_lines(kept, left_out, budget)
+    else:
+        attached = len([v for v in (payload.images or []) if v])
+        lines = (f"[{attached} picture(s) left out: this model reads text only]" if attached else "")
+    # The coverage says how many area pictures went, after the budget.
+    for entry in coverage:
+        if "area_pictures" in entry:
+            entry["area_pictures"] = len([k for k in kept if k["group"] == "area"
+                                          and k.get("page_id") == entry.get("page_id")])
     # Agent chats replay each saved reply's tool calls/results so the
     # model keeps what it already listed/read/changed across turns.
     messages = _build_messages(payload, context, with_tools=bool(tools), located=located,
-                               message_context=message_context, drop_turns=drop)
+                               message_context=message_context, drop_turns=drop, picture_lines=lines)
     # A custom prompt always applies; the built-in one only when there's a document
     system = (payload.system or "").strip()[:8000] or (_SYSTEM_PROMPT if (context or pdf_b64s) else "")
     if context or pdf_b64s:
@@ -1597,7 +1718,7 @@ def _chat_prompt(ws: str, payload, scope: dict, tools, allow_native: bool, drop:
         system = ((system + "\n\n" if system else "")
                   + agent_system(scope, scope["permissions"],
                                  (payload.agent_system or "").strip()[:8000]))
-    return pdf_b64s, messages, system, coverage, crops
+    return pdf_b64s, messages, system, coverage, ai_pictures.parts(kept)
 
 
 class AIApprovalAnswer(BaseModel):
@@ -1621,7 +1742,7 @@ def ai_approval_answer(approval_id: str, payload: AIApprovalAnswer, request: Req
 
 
 class AIRevert(BaseModel):
-    kind: Literal["edit", "create", "move"]
+    kind: Literal["edit", "create", "move", "delete"]
     block_id: str = Field(max_length=64)
     revert: dict   # the action's `revert`, as the note tool recorded it
     force: bool = False
@@ -1667,9 +1788,8 @@ def ai_chat_context(payload: AIChatContextRequest, request: Request):
     # As the live chat sees it: a streamed chat, whose asking tools are armed.
     scope = _chat_scope(request, ws, user_id, payload, rt, entry, can_ask=True)
     tools = _chat_tools(payload, scope)
-    _, messages, system, coverage, crops = _chat_prompt(ws, payload, scope, tools, allow_native=False)
-    text = context_markdown(payload.title, system, messages, tools, coverage,
-                            _parse_images(payload.images) + crops)
+    _, messages, system, coverage, pictures = _chat_prompt(ws, payload, scope, tools, allow_native=False)
+    text = context_markdown(payload.title, system, messages, tools, coverage, pictures)
     return Response(text, media_type="text/markdown; charset=utf-8")
 
 
@@ -1692,7 +1812,6 @@ def ai_chat(payload: AIChatRequest, request: Request):
     entry = _resolve_model(rt, payload.model)
     effort = _resolve_effort(payload.effort)
     speed = _resolve_speed(payload.speed)
-    images = _parse_images(payload.images)
     # Only a streamed reply can show an approval card and wait for it.
     scope = _chat_scope(request, ws, user_id, payload, rt, entry, effort, can_ask=payload.stream)
     # Set once the client is gone (Stop, a dropped connection; WatchedStream):
@@ -1752,15 +1871,16 @@ def ai_chat(payload: AIChatRequest, request: Request):
     answered = {"id": entry["id"], "name": entry["model"], "effort": effort,
                 "speed": _sent_speed(speed, rt, entry, tools), "tools": bool(tools)}
 
+    # What one picture costs on the wire this call goes over, for the
+    # window estimate (every picture is normalized to one size first).
+    picture_cost = (ai_protocols.get(_wire_protocol(rt, entry, tools)) or ai_protocols.Protocol).picture_tokens
+
     def prepared(allow_native, drop=0):
         """_chat_prompt, keeping the coverage report and the pictures."""
-        pdf_b64s, messages, system, coverage, crops = _chat_prompt(ws, payload, scope, tools, allow_native, drop)
+        pdf_b64s, messages, system, coverage, sent = _chat_prompt(ws, payload, scope, tools, allow_native, drop,
+                                                                  pictures_ok=pictures)
         state["coverage"] = coverage
-        state["images"] = images + crops
-        if state["images"] and not pictures:
-            messages[-1]["content"] += (f"\n\n[{len(state['images'])} picture(s) left out: "
-                                        "this model reads text only]")
-            state["images"] = []
+        state["images"] = sent
         return pdf_b64s, messages, system
 
     def fitted(allow_native):
@@ -1770,7 +1890,8 @@ def ai_chat(payload: AIChatRequest, request: Request):
         drop = state["drop"]
         pdf_b64s, messages, system = prepared(allow_native, drop)
         while (window and drop < history_len
-               and prompt_tokens(messages, system, tools, state["images"]) > window - cap - _ESTIMATE_SLACK):
+               and prompt_tokens(messages, system, tools, state["images"], picture_cost)
+               > window - cap - _ESTIMATE_SLACK):
             drop = _next_drop(drop, history_len)
             pdf_b64s, messages, system = prepared(allow_native, drop)
         if drop != state["drop"]:

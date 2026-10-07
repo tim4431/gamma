@@ -9,18 +9,19 @@ from ai_fixtures import ALL_PERMS, ALL_TOOLS, folder
 def test_registry_scopes_and_permissions():
     assert [t["name"] for t in agent_tools("folder")] == [
         "list_pages", "list_folders", "read_page", "read_block", "read_chats", "view_pdf_page", "view_ink",
-        "cite", "search_library", "search_papers", "related_papers", "fetch_paper", "save_paper",
-        "rename_page", "move_page", "list_deleted", "restore_page", "edit_block", "create_block", "move_block"]
+        "view_image", "cite", "search_library", "search_papers", "related_papers", "fetch_paper", "save_paper",
+        "rename_page", "move_page", "list_deleted", "restore_page", "edit_block", "create_block", "move_block",
+        "delete_block", "clip_region"]
     # Paper chats never list, rename, move or restore pages; the note-block
     # tools and save_paper exist there.
     assert [t["name"] for t in agent_tools("page")] == [
-        "read_page", "read_block", "read_chats", "view_pdf_page", "view_ink", "cite", "search_library",
+        "read_page", "read_block", "read_chats", "view_pdf_page", "view_ink", "view_image", "cite", "search_library",
         "search_papers", "related_papers", "fetch_paper", "save_paper", "edit_block", "create_block",
-        "move_block"]
+        "move_block", "delete_block", "clip_region"]
     assert agent_tools("") == []  # plain chat
     assert [t["name"] for t in agent_tools(
         "folder", {"rename": False, "move": False, "block_edit": False, "save": False, "restore": False})] == [
-        "list_pages", "list_folders", "read_page", "read_block", "read_chats", "view_pdf_page", "view_ink",
+        "list_pages", "list_folders", "read_page", "read_block", "read_chats", "view_pdf_page", "view_ink", "view_image",
         "cite", "search_library", "search_papers", "related_papers", "fetch_paper", "list_deleted"]
     names = [t["name"] for t in agent_tools("folder", {"search": False})]
     assert "search_library" not in names and "read_page" in names
@@ -28,13 +29,13 @@ def test_registry_scopes_and_permissions():
     # pages" the page chats and the citation records; the viewer handwriting.
     names = [t["name"] for t in agent_tools("folder", {"list": False, "read": False, "view": False})]
     assert not {"list_pages", "list_folders", "list_deleted", "read_page", "read_chats", "cite",
-                "view_pdf_page", "view_ink"} & set(names)
+                "view_pdf_page", "view_ink", "view_image"} & set(names)
     # Restoring is a change of its own; listing what is deleted is reading.
     names = [t["name"] for t in agent_tools("folder", {"restore": "off"})]
     assert "restore_page" not in names and {"list_deleted", "save_paper"} <= set(names)
     # One permission gates all three note-editing tools.
     names = [t["name"] for t in agent_tools("page", {"block_edit": False})]
-    assert names == ["read_page", "read_block", "read_chats", "view_pdf_page", "view_ink", "cite",
+    assert names == ["read_page", "read_block", "read_chats", "view_pdf_page", "view_ink", "view_image", "cite",
                      "search_library", "search_papers", "related_papers", "fetch_paper", "save_paper"]
     # The two web tools have their own permissions.
     names = [t["name"] for t in agent_tools("page", {"web_search": False, "web_read": False})]

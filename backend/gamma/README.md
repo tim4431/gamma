@@ -66,6 +66,7 @@ ai_settings.py     AI provider entries (GUI-managed keys): each account's own, t
 chatgpt_oauth.py   ChatGPT subscription sign-in (OAuth PKCE, the flow Codex CLI uses)
 ai_usage.py        token usage per AI call (users.db ai_usage) and the summary Settings → AI shows
 ai_context.py      PDF attachments, extraction, and chat context assembly
+ai_pictures.py     the chat's pictures: one size, the store, the budget, the label lines
 ai_tools.py        the agent's tools: one scope-agnostic registry
 ai_agent.py        the agent tool loop, its two user-facing pauses, and the helper a tool delegates to
 ai_permissions.py  the chat tools' Allow / Ask / Off states and the approvals a reply waits on

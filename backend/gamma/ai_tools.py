@@ -60,6 +60,8 @@ from fractional_indexing import generate_key_between
 
 from . import bibtex as bibtex_mod
 from .ai_permissions import permission_state
+from .ai_pictures import (parts as _parts, picture_url_of_page, read_stored, render_region,
+                          store_picture, upload_name)
 from .ai_context import (DEPRECATED_TOOLS, MAX_AREA_CROPS, area_highlight, canonical_tool,
                          handwriting_label, page_report_section, paths_text, pdf_path, quoted_paths,
                          render_area_crops, text_box_label, under_sheet)
@@ -68,11 +70,13 @@ from .blocks_store import (FOLDERS, LABELS, PATH_SEP, block_to_dict, descend, ex
                            page_attachment, page_root_id, refiled, root_pages, tree_children, tree_parents,
                            write_lock)
 from .db import connect_data_db, connect_pages_db
+from .highlights import is_highlight
 from .ops import after_commit, apply_ops, ensure_filing, move_across_pages
 from .logbuf import log
 from .notebook import is_sheet
 from .pdf_index import pdf_missing, search_pdf
 from .pdf_text import RENDER_MAX_SIDE, image_part, render_page
+from .storage import exists as _upload_exists, upload_refs
 from .text_box import is_text_box
 from .trash import KEEP_DAYS, list_trash
 
@@ -119,7 +123,7 @@ AGENT_PROMPT = (
     "say when something comes from the user's own notes. When asked to organize, "
     "apply an explicit bulk instruction (e.g. a naming scheme) to every matching "
     "page without asking again; ask first when the request is ambiguous. You "
-    "cannot delete anything or edit labels. After making changes, finish with a "
+    "cannot delete pages or edit labels. After making changes, finish with a "
     "short summary of what you changed. Your earlier tool calls and their results "
     "stay in this conversation so you remember what you already listed, read and "
     "changed — but they are snapshots from earlier turns: the user edits their "
@@ -627,10 +631,10 @@ def _run_read_page(conn, ws: str, scope: dict, args: dict):
     # The area highlights' pictures go with the result (the loop moves
     # them onto the tool message, like view_pdf_page's page).
     attachment = page_attachment(props)
-    images = (render_area_crops(ws, attachment["id"], report["areas"])
+    images = (render_area_crops(ws, attachment["id"], report["areas"], title, page_id)
               if attachment and report.get("areas") else [])
     if images:
-        chip["images"] = images
+        chip["images"] = _parts(images)
     return text, chip
 
 
@@ -669,12 +673,16 @@ def _run_view_pdf_page(conn, ws: str, scope: dict, args: dict):
     if image is None:
         return f'error: PDF page {page_no} does not exist — "{title}" has {total} pages', None
     _, _, width, height = image
+    url = picture_url_of_page(page_id, page_no)
     result = (f'PDF page {page_no} of {total} of "{title}" is attached as a {width}×{height} px '
               "picture: read it visually and cite it as PDF page "
-              f"{page_no}. The picture is not kept in the chat history — call again to look at it later.")
+              f"{page_no}. The picture is not kept in the chat history — call again to look at it later. "
+              f"To show the user this page in your reply, embed it as a markdown image: "
+              f"![PDF page {page_no} of {title[:60]}]({url}) (add &box=x0,y0,x1,y1 in page fractions for a "
+              "region of it).")
     return result, {"kind": "view", "page_id": page_id, "pdf_page": page_no,
                     "summary": f"Looked at p. {page_no} of “{title[:60]}”",
-                    "images": [image_part(image)]}
+                    "picture": url, "images": [image_part(image)]}
 
 
 def _run_view_ink(conn, ws: str, scope: dict, args: dict):
@@ -703,6 +711,7 @@ def _run_view_ink(conn, ws: str, scope: dict, args: dict):
         what = (f"All the handwriting on {where}" if shown["whole"]
                 else f'Handwriting block [{block["id"]}] on {where} (cropped to it, with a margin)')
     caption = (block["content"] or "").strip()
+    picture_url = f'/api/ai/ink-image/{block["id"]}' + ("?area=page" if whole else "")
     text = (f"{what} is attached as a {width}×{height} px picture ({shown['strokes']} strokes). "
             + ("The PDF page could not be copied, so the strokes are drawn on blank paper. "
                if shown["bare"] else "")
@@ -710,13 +719,230 @@ def _run_view_ink(conn, ws: str, scope: dict, args: dict):
                if caption else "It has no caption yet. ")
             + "Read the strokes visually and say when an answer comes from handwriting; a word "
             "you cannot read is [illegible], never a guess. The picture is not kept in the chat "
-            "history — call again to look at it later.")
+            "history — call again to look at it later. To show the user this picture in your "
+            f"reply, embed it as a markdown image: ![handwriting]({picture_url})")
     chip = {"kind": "ink", "page_id": page_id, "block_id": block["id"],
             "summary": f"Looked at handwriting in “{page_title[:60]}”" + (f" p. {page_no}" if page_no else ""),
-            "images": [image_part(shown["image"])]}
+            "picture": picture_url, "images": [image_part(shown["image"])]}
     if page_no:
         chip["pdf_page"] = page_no
     return text, chip
+
+
+# A note's pictures: the markdown images in its text that name a stored
+# upload (the editor writes `![alt](/api/uploads/<hash>.png)`, sized
+# Obsidian-style as `![alt|300](…)`).
+_NOTE_IMAGE_RE = re.compile(r"!\[([^\]]*)\]\(\s*(/api/uploads/[^\s)]+)")
+MAX_VIEW_IMAGES = 6  # pictures one view_image call shows
+
+
+def note_pictures(content: str) -> list[tuple[str, str]]:
+    """``[(alt, url)]`` of the pictures a block's markdown embeds, in order;
+    the alt without its size suffix."""
+    out = []
+    for alt, url in _NOTE_IMAGE_RE.findall(content or ""):
+        if upload_name(url):
+            out.append((alt.split("|", 1)[0].strip(), url))
+    return out
+
+
+def _run_view_image(conn, ws: str, scope: dict, args: dict):
+    """The pictures a note block embeds, for a vision model: read_block
+    shows them as ``![alt](/api/uploads/…)`` lines, which say nothing of
+    what the picture holds. Up to MAX_VIEW_IMAGES of the block's own
+    pictures, or the one ``index`` names (1-based). Like view_pdf_page's
+    page they ride on the chip's ``images`` and never reach the saved chat."""
+    loaded, error = _load_scoped_block(conn, scope, args.get("block_id"))
+    if error:
+        return error, None
+    block, page_id, page_title = loaded
+    found = note_pictures(block["content"])
+    if not found:
+        return (f'error: block [{block["id"]}] embeds no picture — a note\'s pictures are '
+                "![alt](/api/uploads/…) lines in its markdown (read_block shows them); pass the id "
+                "of a block that has one", None)
+    try:
+        index = int(args.get("index") or 0)
+    except (TypeError, ValueError):
+        index = 0
+    if index:
+        if not 1 <= index <= len(found):
+            return f'error: block [{block["id"]}] has {len(found)} picture(s) — index must be 1–{len(found)}', None
+        chosen = [(index, *found[index - 1])]
+    else:
+        chosen = [(n, alt, url) for n, (alt, url) in enumerate(found[:MAX_VIEW_IMAGES], start=1)]
+    images, lines = [], []
+    for n, alt, url in chosen:
+        shown = read_stored(ws, url)
+        if not shown:
+            lines.append(f"Picture {n} ({url}): its file is missing on this server.")
+            continue
+        images.append(image_part(shown))
+        lines.append(f"Picture {n} of {len(found)}" + (f', alt text "{alt[:120]}"' if alt else "")
+                     + f", {shown[2]}×{shown[3]} px, {url}: attached.")
+    if not images:
+        return "error: " + " ".join(lines), None
+    more = len(found) - len(chosen) if not index else 0
+    text = (f'Pictures embedded in block [{block["id"]}] of "{page_title}":\n' + "\n".join(lines)
+            + (f"\n(+{more} more — call again with index=N for one of them.)" if more > 0 else "")
+            + "\nRead them visually and say when an answer comes from a picture. They are not kept "
+            "in the chat history — call again to look at them later. To show the user one in your "
+            "reply, embed its URL as a markdown image: ![…](<url>).")
+    return text, {"kind": "image", "page_id": page_id, "block_id": block["id"],
+                  "summary": (f"Looked at {len(images)} picture{'s' if len(images) != 1 else ''} in a note of "
+                              f"“{page_title[:60]}”"),
+                  "picture": chosen[0][2], "images": images}
+
+
+def _plan_clip_region(conn, scope: dict, args: dict):
+    """``(plan, None)``: what clip_region would store — a region of a PDF
+    page (``page_id``, ``pdf_page``, optional ``box``, ``ink``) or the
+    picture of a handwriting block (``block_id``, ``area``) — with its
+    ``page_id``, ``title``, the ``preview`` URL that shows it and
+    ``what`` it is in words; ``(None, answer)`` for a call that cannot."""
+    if args.get("block_id"):
+        loaded, error = _load_scoped_block(conn, scope, args.get("block_id"))
+        if error:
+            return None, error
+        block, page_id, title = loaded
+        if not (block["properties"].get("ink_url") or is_sheet(block["properties"])):
+            return None, ('error: that block holds no handwriting — clip_region takes a handwriting '
+                          "block's or a page of paper's id, or a PDF page (page_id + pdf_page)")
+        whole = str(args.get("area") or "").strip().lower() == "page"
+        return {"page_id": page_id, "title": title, "block_id": block["id"], "whole": whole,
+                "preview": f'/api/ai/ink-image/{block["id"]}' + ("?area=page" if whole else ""),
+                "what": ("the page of paper" if is_sheet(block["properties"])
+                         else "all the handwriting on its page" if whole
+                         else f'the handwriting block [{block["id"]}]')}, None
+    loaded, error = _load_scoped_page(conn, scope, args)
+    if error:
+        return None, error
+    page_id, title, props, _ = loaded
+    if not page_attachment(props):
+        return None, f'error: "{title}" has no PDF attachment to clip from'
+    try:
+        page_no = int(args.get("pdf_page") or 0)
+    except (TypeError, ValueError):
+        page_no = 0
+    if page_no < 1:
+        return None, "error: pdf_page (1-based) is required for a PDF page"
+    box = None
+    if args.get("box") is not None:
+        from .ai_pictures import parse_box
+        box = parse_box(args.get("box"))
+        if box is None:
+            return None, "error: box must be [x0, y0, x1, y1] as fractions of the page (top-left origin), x0 < x1, y0 < y1"
+    ink = bool(args.get("ink"))
+    return {"page_id": page_id, "title": title, "pdf_page": page_no, "box": box, "ink": ink,
+            "preview": picture_url_of_page(page_id, page_no, box, ink),
+            "what": (f"PDF page {page_no}" + (" (a region of it)" if box else "")
+                     + (" with the handwriting on it" if ink else ""))}, None
+
+
+def _preview_clip_region(conn, scope: dict, args: dict):
+    plan, answer = _plan_clip_region(conn, scope, args)
+    if not plan:
+        return None, answer
+    return {"page_id": plan["page_id"], "title": plan["title"], "what": plan["what"],
+            "picture": plan["preview"], **({"pdf_page": plan["pdf_page"]} if plan.get("pdf_page") else {})}, None
+
+
+def _run_clip_region(conn, ws: str, scope: dict, args: dict):
+    """Store a picture of a PDF region or of handwriting as an upload the
+    notes can embed (gamma/ai_pictures.py ``store_picture``: the model's
+    render size, under the workspace's storage quota) → its URL."""
+    plan, answer = _plan_clip_region(conn, scope, args)
+    if not plan:
+        return answer, None
+    if plan.get("block_id"):
+        from .ink_view import picture
+        shown = picture(ws, conn, plan["block_id"], plan["page_id"], whole=plan["whole"])
+        if shown.get("error"):
+            return shown["error"], None
+        image = shown["image"]
+    else:
+        image, total = render_region(ws, conn, plan["page_id"], plan["pdf_page"], plan["box"], ink=plan["ink"])
+        if image is None:
+            return (f'error: PDF page {plan["pdf_page"]} does not exist — "{plan["title"]}" has {total} pages'
+                    if total else "error: the PDF file is not available on this server"), None
+    stored = store_picture(ws, image[0], image[1])
+    if not stored:
+        return "error: the picture could not be stored", None
+    url = stored["url"]
+    text = (f"ok — stored a {stored['width']}×{stored['height']} px picture of {plan['what']} of "
+            f'"{plan["title"]}" as {url}. Put it in a note with create_block or edit_block as a markdown '
+            f"image line of its own: ![<a short caption>]({url}). The user sees it in the chat as well "
+            "when you embed the same line in your reply.")
+    return text, {"kind": "clip", "page_id": plan["page_id"], "title": plan["title"], "url": url, "picture": url,
+                  **({"pdf_page": plan["pdf_page"]} if plan.get("pdf_page") else {}),
+                  **({"block_id": plan["block_id"]} if plan.get("block_id") else {}),
+                  "summary": f"Clipped a picture of {plan['what'][:40]} in “{plan['title'][:50]}”"}
+
+
+# A deletion's revert record (every block of the subtree, parent first) is
+# saved with the chat; a subtree past this many characters is deleted
+# without one, and the result says so.
+_DELETE_REVERT_MAX = 200_000
+
+
+def _plan_delete_block(conn, scope: dict, args: dict):
+    """``(plan, None)``: the ``block`` (on ``page_id`` / ``title``) and the
+    ``rows`` of its subtree; ``(None, answer)`` when it cannot be deleted."""
+    loaded, error = _load_scoped_block(conn, scope, args.get("block_id"))
+    if error:
+        return None, error
+    block, page_id, page_title = loaded
+    if block["parent_id"] == "root":
+        return None, "error: that id is a page — the agent cannot delete pages (the user does, from the library)"
+    rows = fetch_subtree(conn, block["id"])
+    return {"block": block, "page_id": page_id, "title": page_title, "rows": rows}, None
+
+
+def _deleted_kind(props: dict) -> str:
+    """What kind of block a deletion takes, for its card and chip."""
+    if props.get("ink_url"):
+        return "handwriting"
+    if is_sheet(props):
+        return "page of paper"
+    if is_highlight(props):
+        return "highlight"
+    if is_text_box(props):
+        return "text box"
+    return "note"
+
+
+def _preview_delete_block(conn, scope: dict, args: dict):
+    plan, answer = _plan_delete_block(conn, scope, args)
+    if not plan:
+        return None, answer
+    block = plan["block"]
+    return {"page_id": plan["page_id"], "title": plan["title"], "block_id": block["id"],
+            "what": _deleted_kind(block["properties"]), "children": len(plan["rows"]) - 1,
+            "diff": [["del", _excerpt(block["content"], 600) or "(empty)"]]}, None
+
+
+def _run_delete_block(conn, ws: str, scope: dict, args: dict):
+    plan, answer = _plan_delete_block(conn, scope, args)
+    if not plan:
+        return answer, None
+    block, page_id, page_title = plan["block"], plan["page_id"], plan["title"]
+    write_lock(conn)
+    # The subtree as it is under the lock, parent first: what a revert puts back.
+    rows = fetch_subtree(conn, block["id"])
+    record = [[r[0], r[1], r[2], r[3] or "", r[4] or "{}"] for r in rows]
+    revert = {"blocks": record} if len(json.dumps(record)) <= _DELETE_REVERT_MAX else None
+    after_commit(ws, conn, apply_ops(
+        conn, page_id, [{"op": "delete", "id": block["id"]}], actor=scope.get("actor", ""), client="ai"))
+    seen = notes_seen(scope)
+    for r in rows:
+        seen.pop(r[0], None)
+    under = len(rows) - 1
+    what = _deleted_kind(block["properties"])
+    summary = f"Deleted a {what} in “{page_title[:60]}”" + (f" with {under} sub-block{'s' if under != 1 else ''}" if under else "")
+    text = (f'ok — block [{block["id"]}] deleted' + (f" with its {under} sub-block(s)" if under else "")
+            + ("" if revert else " (too large to record for a revert)"))
+    return text, {"kind": "delete", "page_id": page_id, "block_id": block["id"], "title": page_title,
+                  "summary": summary, **({"revert": revert} if revert else {})}
 
 
 def _run_read_block(conn, ws: str, scope: dict, args: dict):
@@ -805,9 +1031,9 @@ def _run_read_block(conn, ws: str, scope: dict, args: dict):
     # the whole outline) the agent is reading.
     chip = {"kind": "read", "page_id": page_id, "block_id": block["id"],
             "summary": f"Read notes of {what}"}
-    images = render_area_crops(ws, _page_doc_id(conn, page_id), areas) if areas else []
+    images = render_area_crops(ws, _page_doc_id(conn, page_id), areas, page_title, page_id) if areas else []
     if images:
-        chip["images"] = images
+        chip["images"] = _parts(images)
     return out, chip
 
 
@@ -1140,6 +1366,8 @@ def _plan_edit_block(conn, scope: dict, args: dict):
         return None, f"error: content too long (>{_BLOCK_CONTENT_MAX} chars)"
     if content == block["content"]:
         return None, "ok — the block already says that"
+    if error := missing_uploads(scope, content, block["content"]):
+        return None, error
     return {"block": block, "page_id": page_id, "title": page_title, "mode": mode,
             "text": content, "base": base, "sel": sel, "start": start}, None
 
@@ -1149,7 +1377,33 @@ def _preview_edit_block(conn, scope: dict, args: dict):
     if not plan:
         return None, answer
     return {"page_id": plan["page_id"], "title": plan["title"], "block_id": plan["block"]["id"],
-            "mode": plan["mode"], "diff": text_diff(plan["block"]["content"] or "", plan["text"])}, None
+            "mode": plan["mode"], "diff": text_diff(plan["block"]["content"] or "", plan["text"]),
+            **_preview_pictures(plan["text"], plan["block"]["content"])}, None
+
+
+def missing_uploads(scope: dict, content: str, before: str = "") -> str:
+    """The error for a block text that names a stored file the workspace
+    does not hold ("" when every ``/api/uploads/`` reference exists, or
+    was in the block already): a model may only embed the URLs it was
+    given — a picture's label line, clip_region's result, read_block."""
+    ws = scope.get("ws")
+    if not ws or "/api/uploads/" not in (content or ""):
+        return ""
+    had = upload_refs(before or "", {})
+    missing = sorted(n for n in upload_refs(content, {}) if n not in had and not _upload_exists(ws, n))
+    if not missing:
+        return ""
+    return ("error: no such stored file: " + ", ".join(f"/api/uploads/{n}" for n in missing)
+            + " — embed only picture URLs you were given (a picture's label line, clip_region's "
+            "result, read_block's text); never invent an upload name")
+
+
+def _preview_pictures(content: str, before: str = "") -> dict:
+    """``{"pictures": [url, …]}`` for the pictures a written text embeds
+    that it did not before (the card shows them), else nothing."""
+    had = {url for _, url in note_pictures(before or "")}
+    urls = [url for _, url in note_pictures(content) if url not in had]
+    return {"pictures": urls[:6]} if urls else {}
 
 
 # What an approval card shows of a text change. Words (and each CJK
@@ -1254,6 +1508,8 @@ def _plan_create_block(conn, scope: dict, args: dict):
     content = str(args.get("content") or "")
     if len(content) > _BLOCK_CONTENT_MAX:
         return None, f"error: content too long (>{_BLOCK_CONTENT_MAX} chars)"
+    if error := missing_uploads(scope, content):
+        return None, error
     position, error = _sibling_position(conn, parent["id"], args.get("after_id"))
     if error:
         return None, error
@@ -1267,7 +1523,7 @@ def _preview_create_block(conn, scope: dict, args: dict):
     parent, page_id, page_title, content, _ = plan
     return {"page_id": page_id, "title": page_title,
             "parent": "" if parent["id"] == page_id else _excerpt(parent["content"]),
-            "diff": text_diff("", content)}, None
+            "diff": text_diff("", content), **_preview_pictures(content)}, None
 
 
 def _run_create_block(conn, ws: str, scope: dict, args: dict):
@@ -2381,6 +2637,26 @@ TOOLS = [
         },
     },
     {
+        "perm": "view", "kind": "image", "scopes": ("folder", "page"), "mutating": False, "run": _run_view_image,
+        "spec": {
+            "name": "view_image",
+            "description": (
+                "Look at the pictures a note block embeds. read_block shows a picture only as "
+                "its markdown, `![alt](/api/uploads/…)`, which says nothing of what it holds; "
+                "this shows you the pictures of `block_id` (up to " + str(MAX_VIEW_IMAGES) + ", or the one "
+                "`index` names, 1-based). Use it when a question is about a figure, screenshot or "
+                "photo the user put in their notes. A picture costs many tokens: look only at "
+                "the blocks you need."),
+            "parameters": {
+                "type": "object",
+                "properties": {"block_id": {"type": "string", "description": "a note block's id"},
+                               "index": {"type": "integer",
+                                         "description": "one picture of the block, 1-based (default: all)"}},
+                "required": ["block_id"],
+            },
+        },
+    },
+    {
         "perm": "read", "kind": "cite", "scopes": ("folder", "page"), "mutating": False, "run": _run_cite,
         "spec": {
             "name": "cite",
@@ -2769,6 +3045,53 @@ TOOLS = [
             },
         },
     },
+    {
+        "perm": "block_edit", "kind": "delete", "scopes": ("folder", "page"), "mutating": True,
+        "run": _run_delete_block, "preview": _preview_delete_block,
+        "spec": {
+            "name": "delete_block",
+            "description": (
+                "Delete a note block with everything nested under it. Only for what the user "
+                "asked to remove (a duplicate, a note they no longer want): prefer edit_block "
+                "to delete a part of a block. A highlight block's deletion removes its mark from "
+                "the PDF too; a handwriting block's removes the handwriting. The user can revert "
+                "it from the reply. Use exact block ids from read_block, never page ids."),
+            "parameters": {
+                "type": "object",
+                "properties": {"block_id": {"type": "string"}},
+                "required": ["block_id"],
+            },
+        },
+    },
+    {
+        "perm": "block_edit", "kind": "clip", "scopes": ("folder", "page"), "mutating": True,
+        "run": _run_clip_region, "preview": _preview_clip_region,
+        "spec": {
+            "name": "clip_region",
+            "description": (
+                "Store a picture of part of a PDF page, or of the user's handwriting, as a file "
+                "the notes can embed, and get its URL. For a PDF: `page_id` + `pdf_page` "
+                "(1-based) and optionally `box` ([x0, y0, x1, y1] as fractions of the page, "
+                "top-left origin — a figure, a table, an equation; the whole page without it) "
+                "and `ink: true` to include the handwriting on it. For handwriting: `block_id` "
+                "of a handwriting block or page of paper (read_block labels them), `area` "
+                "\"page\" for the whole page. Then put the picture in a note with "
+                "create_block or edit_block as its own line, `![caption](<the url>)`. Use it "
+                "when the user asks to put a figure, table or their handwriting into their "
+                "notes; look at the page first (view_pdf_page) to pick the region."),
+            "parameters": {
+                "type": "object",
+                "properties": {"page_id": {"type": "string"},
+                               "pdf_page": {"type": "integer"},
+                               "box": {"type": "array", "items": {"type": "number"},
+                                       "description": "[x0, y0, x1, y1] page fractions; whole page when left out"},
+                               "ink": {"type": "boolean", "description": "draw the user's handwriting on the page"},
+                               "block_id": {"type": "string", "description": "a handwriting block or page of paper"},
+                               "area": {"type": "string", "enum": ["ink", "page"]}},
+                "required": [],
+            },
+        },
+    },
 ]
 
 _BY_NAME = {t["spec"]["name"]: t for t in TOOLS}
@@ -2780,7 +3103,7 @@ for _old, _new in DEPRECATED_TOOLS.items():
 MUTATING_TOOLS = {t["spec"]["name"] for t in TOOLS if t["mutating"]}
 # The tools whose answer is a picture: a model that reads text only gets
 # neither (routers/ai.py, _chat_tools).
-PICTURE_TOOLS = frozenset({"view_pdf_page", "view_ink"})
+PICTURE_TOOLS = frozenset({"view_pdf_page", "view_ink", "view_image"})
 
 
 def available(scope: dict) -> frozenset:
@@ -2967,7 +3290,25 @@ def agent_system(scope: dict, perms: dict | None = None, base: str = "") -> str:
             "\nview_pdf_page shows you a PDF page as a picture. Reach for it when a "
             "page's extracted text is empty or garbled (a scan), or when the answer is "
             "in a figure, a table's layout or handwriting; otherwise the text tools "
-            "are cheaper. Say when an answer was read from the picture.")
+            "are cheaper. Say when an answer was read from the picture. Its result names "
+            "a URL you may embed in your reply as a markdown image to show the user what "
+            "you looked at.")
+    if "view_image" in names:
+        text += (
+            "\nA note's own pictures appear in read_block as ![alt](/api/uploads/…) lines; "
+            "view_image shows them to you when a question is about one.")
+    if "clip_region" in names:
+        text += (
+            "\nclip_region stores a picture of a PDF region or of handwriting and returns its "
+            "/api/uploads/ URL; put it in a note as a line of its own, ![caption](url), with "
+            "create_block or edit_block. The pictures attached to the user's message carry their "
+            "URLs in the lines that name them and can be embedded the same way. Never write an "
+            "/api/uploads/ URL you were not given.")
+    if "delete_block" in names:
+        text += (
+            "\ndelete_block removes a note block with everything under it and the user can "
+            "revert it; delete only what the user asked to remove, and edit instead of "
+            "deleting when only part of a block should go.")
     if "view_ink" in names:
         text += (
             "\nHandwriting: a handwriting block (read_block: \"handwriting on p. N\" or \"on the "
@@ -3113,7 +3454,7 @@ def approval_preview(ws: str, scope: dict, name: str, args: dict) -> tuple:
         return {}, None
     args = args if isinstance(args, dict) else {}
     # The scope run_agent_tool gives a change: attachments never widen it.
-    scope = {**scope, "context_pages": []}
+    scope = {**scope, "context_pages": [], "ws": ws}
     try:
         with connect_pages_db(ws) as conn:
             return tool["preview"](conn, scope, args)
@@ -3158,8 +3499,9 @@ def run_agent_tool(ws: str, scope: dict, name: str, args: dict,
     # The message's counters (saves, web searches, the works already listed)
     # live in one Tally the copy shares.
     ensure_tally(scope)
-    if tool["mutating"]:
-        scope = {**scope, "context_pages": []}
+    notes_seen(scope)  # made on the caller's scope, so the reads of one turn carry over to its edits
+    # The planners check stored files against the workspace (missing_uploads).
+    scope = {**scope, "ws": ws, **({"context_pages": []} if tool["mutating"] else {})}
     started = time.monotonic()
     try:
         with connect_pages_db(ws) as conn:

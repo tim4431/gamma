@@ -151,7 +151,9 @@ def test_attached_handwriting_rides_with_the_message_as_a_picture(stored_pdf):
     section = notes_focus_section(ids["ws"], payload, crops=crops)
     assert f"[{ids['group']}] (handwriting on p. 1, 1 strokes; the text is its caption)" in section
     assert "a picture of this handwriting is attached" in section
-    assert len(crops) == 1 and crops[0][0] in ("image/png", "image/jpeg")
+    assert len(crops) == 1 and crops[0]["part"][0] in ("image/png", "image/jpeg")
+    assert crops[0]["group"] == "ink" and crops[0]["block_id"] == ids["group"]
+    assert crops[0]["label"].startswith(f"The attached handwriting block [{ids['group']}] on PDF page 1")
     # The cursor block rides with every message: labelled, never pictured.
     crops = []
     payload = SimpleNamespace(focus_block_id=ids["group"], context_blocks=[], note_selections=[],

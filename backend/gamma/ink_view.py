@@ -133,6 +133,38 @@ def _render(pdf: bytes, box):
     return image
 
 
+def page_with_handwriting(ws: str, conn, page_id: str, page_no: int):
+    """PDF page ``page_no`` of the page ``page_id`` with every handwriting
+    group written on it, as one-page PDF bytes (``pdf_export.page_with_ink``)
+    — what a picture of "the page as the user sees it" is rendered from —
+    or ``(b"", pages)`` when the page has no such PDF page; ``(None, 0)``
+    for a page without a PDF file on this server. Ink the PDF still embeds
+    is drawn by the file itself and never added twice."""
+    from .ai_context import pdf_path
+    from .pdf_export import page_with_ink, still_embedded
+
+    blocks = [block_to_dict(row) for row in fetch_subtree(conn, page_id)]
+    page = next((b for b in blocks if b["id"] == page_id), None)
+    attachment = page_attachment(page["properties"]) if page else None
+    path = pdf_path(ws, attachment["id"]) if attachment else None
+    if not path:
+        return None, 0
+    uploads = ws_uploads_dir(ws)
+    inks = []
+    for b in blocks:
+        url = b["properties"].get("ink_url")
+        if not url or still_embedded(b["properties"]):
+            continue
+        ink = inkmod.read_upload(uploads, url)
+        if ink is not None and ink.space.kind == "pdf-page" and ink.space.page == page_no:
+            inks.append(ink)
+    try:
+        return page_with_ink(path, page_no, inks)
+    except Exception as e:  # an encrypted or broken file: no handwriting, the page itself still renders
+        log.warning(f"[ink-view] could not copy PDF page {page_no} of {page_id}: {e}")
+        return b"", 0
+
+
 def _done(image, inks, *, whole=False, pdf_page=0, bare=False) -> dict:
     if image is None:
         return {"error": "error: the handwriting could not be drawn"}

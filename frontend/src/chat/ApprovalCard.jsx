@@ -9,9 +9,10 @@
 // never take the focus by themselves, so a keystroke meant for the message
 // box can't answer.
 import React, { useEffect, useState } from "react";
-import { t } from "../shared/i18n/i18n.js";
+import { t, tn } from "../shared/i18n/i18n.js";
 import { ShieldIcon } from "../shared/ui/Icons";
 import { ALLOWING, approvalTitle } from "./approvals.js";
+import { pictureSrc } from "./pictureSrc.js";
 import { permissionIcon, permissionLabel } from "../settings/AssistantTools";
 import { guideEvents } from "../guide/events.js";
 
@@ -26,7 +27,24 @@ export function WordDiff({ diff }) {
 }
 
 function ApprovalPreview({ preview = {}, args = {} }) {
-  if (preview.diff?.length) return <WordDiff diff={preview.diff} />;
+  // The pictures a change embeds (a clip's region, a note's new pictures),
+  // drawn by the server from the same URLs the notes and the chat use.
+  const pictures = preview.pictures?.length ? preview.pictures : preview.picture ? [preview.picture] : [];
+  const gallery = pictures.length ? (
+    <div className="chatApprovalPictures">
+      {pictures.map((url) => <img key={url} src={pictureSrc(url)} alt="" loading="lazy" />)}
+    </div>
+  ) : null;
+  if (preview.diff?.length) {
+    return <>
+      {preview.children ? <div className="chatApprovalNote">
+        {tn("{n} nested block goes with it.", "{n} nested blocks go with it.", preview.children)}
+      </div> : null}
+      <WordDiff diff={preview.diff} />
+      {gallery}
+    </>;
+  }
+  if (gallery) return gallery;
   if ("to" in preview) {
     return <div className="chatApprovalDiff">
       {preview.from ? <del>{preview.from}</del> : null}
