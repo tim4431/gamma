@@ -42,7 +42,7 @@
 
 /* Shared visual primitives. Components keep their layout and sizing rules,
    while these groups own the recurring surface, field, and hover language. */
-:is(.plainTip, .popover, .ctxMenu, .refPopup, .pdfNoteTip, .mathPreviewTip, .latexAcPopup, .slashMenu, .chatMentionPicker, .chatCitePreview) {
+:is(.plainTip, .popover, .ctxMenu, .refPopup, .pdfNoteTip, .mathPreviewTip, .latexAcPopup, .slashMenu, .chatMentionPicker, .citePreview) {
   background: var(--bg-elevated);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
@@ -4882,9 +4882,9 @@ a.shareBrand:hover { background: var(--bg-hover); }
    so it is cut where a chip's note never needs to be. */
 .chatHelpers { display: flex; flex-direction: column; gap: 3px; min-width: 0; padding-left: 10px; }
 .chatHelpers .chatToolActionNote { max-width: 65%; }
-/* Gamma link cards: a link into this library (a chat source or citation, the
-   same link pasted into a note) and the chat's external links. Inline with
-   the surrounding text, so a citation mid-sentence stays one line. */
+/* Gamma link cards: a page or block link into this library (a chat source,
+   the same link pasted into a note) and the chat's external links. Inline
+   with the surrounding text. A citation is a .citePill instead. */
 .gammaLinkCard {
   display: inline-flex;
   align-items: center;
@@ -4920,21 +4920,21 @@ a.shareBrand:hover { background: var(--bg-hover); }
   white-space: nowrap;
 }
 .gammaLinkSrc::before { content: "·"; margin-right: 5px; }
-/* A citation in a chat answer (CitationPill): a small tinted pill on the
-   text's baseline, 17 px tall, so a "p. 2" mid-sentence keeps the line
-   height. */
-.chatCite {
+/* A citation, in a chat answer or a note (CitationPill): a small tinted pill
+   on the text's baseline, sized from the text around it (11 px on 17 px in
+   the chat's 14 px), so a "p. 2" mid-sentence keeps the line height. */
+.citePill {
   display: inline-block;
   box-sizing: border-box;
   max-width: 100%;
-  height: calc(17px * var(--ui-font-scale, 1) * var(--text-scale, 1));
+  height: 1.55em;
   padding: 0 6px;
   border-radius: var(--radius-full);
   background: var(--accent-bg);
   color: var(--accent);
-  font-size: calc(var(--fs-2xs) * var(--text-scale, 1));
+  font-size: 0.79em;
   font-weight: 600;
-  line-height: calc(17px * var(--ui-font-scale, 1) * var(--text-scale, 1));
+  line-height: 1.55em;
   text-decoration: none;
   vertical-align: baseline;
   white-space: nowrap;
@@ -4942,13 +4942,14 @@ a.shareBrand:hover { background: var(--bg-hover); }
   text-overflow: ellipsis;
   cursor: pointer;
 }
-.chatCite:hover { background: color-mix(in srgb, var(--accent) 22%, transparent); }
-.chatCiteSrc { font-weight: 500; }
+.citePill:hover { background: color-mix(in srgb, var(--accent) 22%, transparent); }
+.citePillSrc { font-weight: 500; }
 /* Its preview (a floating surface, see the shared primitives): the cited
-   paper, the PDF page and the quote itself. */
-.chatCitePreview {
+   paper, the PDF page and the quote itself. A tip, so it also clears the
+   note popup on the PDF that a pill can sit in. */
+.citePreview {
   position: fixed;
-  z-index: var(--z-overlay);
+  z-index: var(--z-tip);
   width: max-content;
   max-width: 280px;
   padding: 8px 10px;
@@ -4957,9 +4958,9 @@ a.shareBrand:hover { background: var(--bg-hover); }
   line-height: 1.45;
   pointer-events: none;
 }
-.chatCitePreviewTitle { font-weight: 600; overflow-wrap: anywhere; }
-.chatCitePreviewPage { color: var(--text-muted); font-size: var(--fs-2xs); }
-.chatCitePreviewQuote {
+.citePreviewTitle { font-weight: 600; overflow-wrap: anywhere; }
+.citePreviewPage { color: var(--text-muted); font-size: var(--fs-2xs); }
+.citePreviewQuote {
   margin: 6px 0 0;
   padding: 0 0 0 8px;
   border-left: 2px solid var(--accent);
@@ -4971,8 +4972,8 @@ a.shareBrand:hover { background: var(--bg-hover); }
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
-.chatCitePreviewHint { margin-top: 6px; color: var(--text-muted); font-size: var(--fs-2xs); }
-.chatCitePreviewHint kbd { font-family: inherit; }
+.citePreviewHint { margin-top: 6px; color: var(--text-muted); font-size: var(--fs-2xs); }
+.citePreviewHint kbd { font-family: inherit; }
 .chatToolActionHead:hover:not(.plain) { color: var(--text); }
 .chatToolAction.err .chatToolActionHead { color: var(--danger); }
 .chatToolActionHead svg { flex: none; }

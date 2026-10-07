@@ -663,9 +663,10 @@ cap"). Keep that default small: it is the whole of a free account's
 storage there. A person on a free plan cannot open a page shared with
 them by username on the shared server; a share link needs no account.
 
-Not built: ending the integration tokens an account made on the shared
-server while it had a plan (an offline copy, the extension, an assistant
-over MCP). They outlive the sessions until they are deleted there.
+The refusal also ends the integration tokens the account made on the
+shared server while it had a plan (an offline copy, the extension, an
+assistant over MCP): on a share host `cloud_auth._grant_refused` deletes
+them with the sessions.
 
 There is one shared server, `config.APP_URL`. A second one would need a
 column saying which server an account lives on, read where
@@ -996,8 +997,9 @@ cached token.
 token. `invalid_grant` means the grant is gone: the person signed this
 server out on the Devices page, changed their password or deleted the
 account. Then the refresh token is dropped, the identity gets
-`revoked_at`, and the account's `via = 'cloud'` sessions are deleted.
-Password sessions stay, and so do sessions from before step 18, which
+`revoked_at`, and the account's `via = 'cloud'` sessions are deleted;
+on a share host, its integration tokens too ("Who the shared server
+takes"). Password sessions stay, and so do sessions from before step 18, which
 count as password sessions. Every other failure (no network, a 5xx,
 `invalid_client`) is a warning in the server log and is retried an hour
 later. That is the offline grace: a laptop without network stays signed

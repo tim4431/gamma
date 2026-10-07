@@ -462,8 +462,7 @@ payments are not refunded; `update` jobs, which rebuild a container with
 the fleet's extra environment, and a server's own limits over its plan's
 ([dev/hosted.md](../dev/hosted.md)). Not built: snapshot jobs, the `sync`
 job, a notice to every hosted admin, Pro seats beyond ten, the Plus
-storage add-on, the desktop launcher's first-run sign-in, and a privacy
-policy that covers Gamma Cloud.
+storage add-on, and the desktop launcher's first-run sign-in.
 
 **Lite and Plus on the shared server (October 2026).** The first build
 gave every paid plan a container. Two things argued against that for the

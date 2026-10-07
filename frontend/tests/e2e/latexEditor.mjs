@@ -127,6 +127,16 @@ try {
   await page.keyboard.type("a&=b");
   await page.keyboard.press("Enter");
   assert((await value()).includes("a&=b\n"), "Enter in display math stays in the equation");
+  await reset("$$$$", 2);
+  await page.keyboard.type("\\alp");
+  await page.locator(".latexAcPopup").waitFor();
+  await page.keyboard.press("Enter");
+  assert.equal(await value(), "$$\\alp\n$$", "Enter is a line break, never a completion");
+  assert.equal(await page.locator(".latexAcPopup").count(), 0, "Enter closes the completion popup");
+  await reset("$$$$", 2);
+  await page.keyboard.type("\\alp");
+  await page.keyboard.press("Tab");
+  assert.equal(await value(), "$$\\alpha$$", "Tab accepts the completion");
   await reset();
   await page.keyboard.type("\\sq");
   await page.locator(".latexAcItem").filter({ hasText: "\\sqrt{}" }).click();

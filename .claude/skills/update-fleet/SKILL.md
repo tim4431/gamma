@@ -56,7 +56,10 @@ ssh root@69.63.206.178 "cat /root/Container/gamma-fleet/compose.yml" | diff - <(
 ```
 
 New variables in `cloud/fleet/deploy/.env.example` are named to the user to
-add by hand.
+add by hand. The other way to refresh the host's files is to re-run
+`bootstrap.sh` there (the deploy README): it replaces `compose.yml`,
+`Caddyfile` and `.env.example` with the branch's copies and leaves `.env`
+alone, which also throws away a rollback pin set in `compose.yml`.
 
 ## Update
 
@@ -89,4 +92,5 @@ Report the old → new commit and anything unusual from the log.
 Pin the previous image by its sha tag in the host's `compose.yml`
 (`image: ghcr.io/tim4431/gamma-fleet:sha-<old>`) and `docker compose up -d`.
 A job the restart cut off stays `running` until the account server fails
-it after an hour; retry it from the Jobs table.
+it after an hour; retry it from the Jobs table. The pin lasts until the
+next `bootstrap.sh` run on the host, which replaces `compose.yml`.

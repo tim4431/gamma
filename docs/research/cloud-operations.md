@@ -198,8 +198,8 @@ nothing at all to the account server.
    Servers tab; CPU, restarts, last write and active accounts added to
    the reports. Counts only, and [PRIVACY.md](../../PRIVACY.md) says so.
    *Built:* the hourly samples, sparklines and a server's History
-   ([dev/hosted.md](../dev/hosted.md) "History"); PRIVACY.md does not
-   cover Gamma Cloud yet.
+   ([dev/hosted.md](../dev/hosted.md) "History") and the Gamma Cloud
+   section of PRIVACY.md.
 7. **Per-server overrides** of quota, seats and size, merged over the
    plan in `hosted.limits_for`, and an `update` job that recreates a
    container with a changed environment. *Built:* a server's own limits

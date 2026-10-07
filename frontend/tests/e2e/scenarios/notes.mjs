@@ -546,13 +546,19 @@ export async function noteScenarios({ server, browser, alice, step, until, sleep
       await unroute();
       await p2.keyboard.press("Enter");
       await until(async () => (await tree(alice2, src.id))[0]?.content === `start [[${target.id}]]`, { what: "Enter links the page" });
+      // Tab picks too, like every completion popup.
+      await p2.keyboard.type(" [[quantum scr");
+      await picker.locator(".refPopupItem.selected", { hasText: "Quantum Scratch" }).waitFor();
+      await p2.keyboard.press("Tab");
+      await until(async () => (await tree(alice2, src.id))[0]?.content === `start [[${target.id}]] [[${other.id}]]`, { what: "Tab links the page" });
       // "]]" typed after the exact title of one page links it; an unknown title stays text.
-      await p2.keyboard.type(" [[quantum scratch]] and [[Nothing By This Name]]");
-      await until(async () => (await tree(alice2, src.id))[0]?.content === `start [[${target.id}]] [[${other.id}]] and [[Nothing By This Name]]`,
+      await p2.keyboard.type(" [[quantum linkable target]] and [[Nothing By This Name]]");
+      await until(async () => (await tree(alice2, src.id))[0]?.content === `start [[${target.id}]] [[${other.id}]] [[${target.id}]] and [[Nothing By This Name]]`,
         { what: "the typed title resolved to its page" });
       await closeEditor(p2);
       const r = row(p2, "start");
-      assertEq(JSON.stringify(await r.locator(".blockRefChip").allInnerTexts()), JSON.stringify(["Quantum Linkable Target", "Quantum Scratch"]));
+      assertEq(JSON.stringify(await r.locator(".blockRefChip").allInnerTexts()),
+        JSON.stringify(["Quantum Linkable Target", "Quantum Scratch", "Quantum Linkable Target"]));
       assertEq(await r.locator(".unlinkedRef").innerText(), "Nothing By This Name", "the unknown title is an unlinked chip");
       assertNoProblems(p2);
     } finally {

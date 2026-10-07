@@ -15,13 +15,14 @@ from urllib.parse import parse_qs, urlsplit
 
 import jwt
 import pytest
-from conftest import account_of, login, make_user
+from conftest import account_of, login, make_user, workspace_of
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ed25519
 from fastapi.testclient import TestClient
 
 from gamma import cloud_auth, cloud_sync, migrations, server_settings, version
 from gamma.db import connect_users_db, get_profile, set_profile
+from gamma.integrations import create_token
 from gamma.server_settings import _set_raw
 
 ISSUER = "https://account.test"
@@ -590,11 +591,14 @@ def test_revoked_grant_ends_cloud_sessions_only(cloud):
     with connect_users_db() as conn:
         vias = sorted(r[0] for r in conn.execute("SELECT via FROM sessions WHERE user_id = ?", (account_of("ca_kim"),)))
     assert vias == ["", "", "cloud"]  # the linking browser's password login, the second login, the cloud sign-in
+    token = create_token(account_of("ca_kim"), workspace_of("ca_kim"), "script", 1)["id"]
     # the person signs this server out on the Devices page
     cloud.live.clear()
     assert cloud_sync.check_all() == {account_of("ca_kim"): ""}
     assert cloud_session.get("/api/session").json()["user"] is None
     assert password_session.get("/api/session").json()["user"] == "ca_kim"
+    with connect_users_db() as conn:   # not a share host: what the account made here stays
+        assert conn.execute("SELECT id FROM integration_tokens WHERE user_id = ?", (account_of("ca_kim"),)).fetchone()[0] == token
     status = cloud_auth.status_of(account_of("ca_kim"))
     assert status["offline"] is False and status["revoked_at"]
     # no token left: the next check asks nothing
@@ -605,6 +609,21 @@ def test_revoked_grant_ends_cloud_sessions_only(cloud):
     assert callback(c, start(c)).headers["location"] == "/"
     assert c.get("/api/session").json()["user"] == "ca_kim"
     assert cloud_auth.status_of(account_of("ca_kim"))["revoked_at"] == "" and cloud_auth.refresh_token_of(account_of("ca_kim")) == "rt-1"
+
+
+def test_a_share_host_ends_the_integration_tokens_of_a_refused_grant(cloud, monkeypatch):
+    """On the share host a refused grant is how a plan's end arrives, so the
+    tokens the account made there (an offline copy, the extension, an
+    assistant over MCP) end with its sessions."""
+    c = link_account(cloud, "ca_pat")
+    user = account_of("ca_pat")
+    create_token(user, workspace_of("ca_pat"), "offline copy", 30)
+    monkeypatch.setenv("GAMMA_CLOUD_SHARE_HOST", "1")
+    cloud.live.clear()
+    assert cloud_sync.check_all() == {user: ""}
+    assert c.get("/api/session").json()["user"] is None
+    with connect_users_db() as conn:
+        assert conn.execute("SELECT COUNT(*) FROM integration_tokens WHERE user_id = ?", (user,)).fetchone()[0] == 0
 
 
 def test_offline_check_changes_nothing(cloud, monkeypatch):

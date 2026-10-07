@@ -33,7 +33,7 @@ subsequence match anchored on the first letter (`mbb`, `mcal`, `lra`, `Ra`,
 length, so the fuzzy tail is short and predictable. LaTeX Suite's shorthands
 that no subsequence would find (`ooo`, `xx`, `del`, `RR`) are a small
 abbreviation table rather than automatic rewrites — still typed after the
-backslash, still accepted with Tab/Enter. The catalog was extended from
+backslash, still accepted with Tab. The catalog was extended from
 LaTeX Workshop's snippet list and checked against KaTeX (everything offered
 renders; `\multline`, `\cancelto`, `\lcm`, `\sech` do not and were left out).
 

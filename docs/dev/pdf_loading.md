@@ -257,8 +257,10 @@ supersampled canvas again below the cap, and the text layer and its
 selection surviving a zoom. It also covers live ink, native Chromium touch
 swipes with no mid-gesture offset writes, and the paper and ink colour in a
 paper theme, which is what a doubled blend would change. The rendering cases
-are written to run in Playwright WebKit too (`GAMMA_E2E_BROWSER=webkit`).
-The detail-canvas assertions have only been run in Chromium.
+run in Playwright WebKit too (`GAMMA_E2E_BROWSER=webkit`, after
+`npx playwright install webkit`) and pass there; the swipe and pinch steps
+are Chromium-only, since they drive CDP touch events. A step sets the zoom
+it starts from, since the steps before it differ by browser.
 `tests/pageRaster.test.mjs` and `tests/canvasSize.test.mjs` pin the raster
 rules and the canvas bounds; other unit tests pin the snap timing,
 cancellation and older-Safari fallback. Physical iPad GPU limits, render

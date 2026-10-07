@@ -11,13 +11,13 @@ import rehypeKatex from "rehype-katex";
 import rehypeRaw from "rehype-raw";
 import { isFolded, isHighlightBlock, withLegacyAccessors } from "../shared/model/blockModel";
 import { COLORS } from "../shared/model/highlightColors.js";
-import { gammaLinkId, gammaLinkIds, parseGammaLink, relativeGammaLink } from "../shared/model/gammaLinks.js";
+import { citesSeveralPapers, gammaLinkId, gammaLinkIds, parseGammaLink, relativeGammaLink } from "../shared/model/gammaLinks.js";
 import { NO_LABELS } from "./refLabels.js";
 import { InkCard } from "../ink/InkLayer";
 import { isTextBox } from "../markup/textBox.js";
 import { isSheet } from "../notebook/notebook";
 import { NoteSheet } from "../notebook/NoteSheet";
-import { GammaLinkCard, handleMarkdownCopy } from "../shared/ui/Widgets";
+import { CitationPill, GammaLinkCard, handleMarkdownCopy } from "../shared/ui/Widgets";
 import { MermaidDiagram, mermaidCodeProps } from "../shared/ui/MermaidDiagram";
 import { mapOutsideCodeFences, remarkMermaid, scanMermaidFences, setMermaidWidth } from "../shared/lib/mermaidMarkdown.js";
 import { MdObject, ObjectMenuButton, findObject } from "./MdObject";
@@ -441,8 +441,10 @@ function BlockEmbedCard({ refId, refBlock, refLabels, onBlockRefClick, onEmbedEd
                 const n = mathUi.ac.items.length;
                 if (e.key === "ArrowDown") { e.preventDefault(); setMathAcIdx((i) => Math.min(i + 1, n - 1)); return; }
                 if (e.key === "ArrowUp") { e.preventDefault(); setMathAcIdx((i) => Math.max(i - 1, 0)); return; }
-                if (e.key === "Tab" || e.key === "Enter") { e.preventDefault(); acceptLatexAc(mathUi.ac.items[mathAcIdx]); return; }
+                // Tab accepts; Enter closes the popup and keeps its own job.
+                if (e.key === "Tab" && !e.shiftKey) { e.preventDefault(); acceptLatexAc(mathUi.ac.items[mathAcIdx]); return; }
                 if (e.key === "Escape") { e.preventDefault(); setMathUi((u) => (u ? { ...u, ac: null } : null)); return; }
+                if (e.key === "Enter") setMathUi((u) => (u ? { ...u, ac: null } : null));
               }
               // Same math Tab-hop as the block editor (no indent to fall
               // through to here — an unhandled Tab just moves focus).
@@ -545,6 +547,7 @@ export const BlockMarkdown = React.memo(function BlockMarkdown({ content, blockI
   // (they still consume an index so the mapping stays aligned).
   const tableInfo = useMemo(() => scanTables(content || ""), [content]);
   const mermaidInfo = useMemo(() => scanMermaidFences(content || ""), [content]);
+  const citesSeveral = useMemo(() => citesSeveralPapers(content), [content]);
   return (
     <ReactMarkdown
       // remark-breaks: a single Enter inside a note renders as a real line
@@ -598,15 +601,16 @@ export const BlockMarkdown = React.memo(function BlockMarkdown({ content, blockI
               />
             );
           }
-          // A link into this library (a chat citation pasted into a note,
-          // a copied page/block link) is a card, not an external chip — its
-          // id has to resolve here, which also supplies the page title.
-          // refLabels holds ids this block's content mentions, so an id that
-          // isn't in the library falls through to the external chip below,
-          // whatever host the URL names.
+          // A link into this library is not an external chip: a citation
+          // (pasted from a chat answer) is the chat's pill, a copied
+          // page/block link a card. Its id has to resolve here, which also
+          // supplies the card's page title. refLabels holds ids this block's
+          // content mentions, so an id that isn't in the library falls
+          // through to the external chip below, whatever host the URL names.
           const gl = parseGammaLink(href, window.location.origin);
           const glRef = gl ? refLabels?.[gammaLinkId(gl)] : null;
           if (gl && (!gl.foreign || glRef)) {
+            if (gl.kind === "citation") return <CitationPill link={{ ...gl, href }} multi={citesSeveral}>{children}</CitationPill>;
             return (
               <GammaLinkCard link={{ ...gl, href }} label={glRef?.page_title || glRef?.content}>
                 {children}
@@ -1673,7 +1677,7 @@ const BlockRow = React.memo(function BlockRow({
                 if (refSearchShown) {
                   if (e.key === "ArrowDown") { e.preventDefault(); setRefSelectedIdx((i) => Math.min(i + 1, refRows.length - 1)); return; }
                   if (e.key === "ArrowUp") { e.preventDefault(); setRefSelectedIdx((i) => Math.max(i - 1, 0)); return; }
-                  if (e.key === "Enter") { e.preventDefault(); insertRef(refRows[refSelected]); return; }
+                  if (e.key === "Enter" || (e.key === "Tab" && !e.shiftKey)) { e.preventDefault(); insertRef(refRows[refSelected]); return; }
                   if (e.key === "Escape") { e.preventDefault(); setRefPopup(null); return; }
                 }
                 if (slashMenu) {
@@ -1687,8 +1691,12 @@ const BlockRow = React.memo(function BlockRow({
                   const n = mathUi.ac.items.length;
                   if (e.key === "ArrowDown") { e.preventDefault(); setMathAcIdx((i) => Math.min(i + 1, n - 1)); return; }
                   if (e.key === "ArrowUp") { e.preventDefault(); setMathAcIdx((i) => Math.max(i - 1, 0)); return; }
-                  if (e.key === "Tab" || e.key === "Enter") { e.preventDefault(); acceptLatexAc(mathUi.ac.items[mathAcIdx]); return; }
+                  // Tab accepts; Enter closes the popup and keeps its own job
+                  // (a line break in $$, else the outliner's Enter) — a
+                  // completion the user never asked for must not eat it.
+                  if (e.key === "Tab" && !e.shiftKey) { e.preventDefault(); acceptLatexAc(mathUi.ac.items[mathAcIdx]); return; }
                   if (e.key === "Escape") { e.preventDefault(); setMathUi((u) => u ? { ...u, ac: null } : null); return; }
+                  if (e.key === "Enter") setMathUi((u) => u ? { ...u, ac: null } : null);
                 }
                 // The block commands (blockCommands.js, docs/dev/hotkeys.md):
                 // move / duplicate / delete the block, formatting, the hop to

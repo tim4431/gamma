@@ -887,9 +887,11 @@ report does not know (`cpu_pct` of a stopped container) is left out.
 
 `series(conn, kind, ref, hours)` is the samples of the last `hours`, the
 current one included, oldest first; an hour with no report has no point.
-`trends` reads a few series of every host, server or container at once
-for the rows of the Servers tab, and `latest(conn, kind)` the newest
-sample of each, from which the Machines tab takes a host's `cpu_pct`.
+`trends` reads a few series of every row of a kind at once, for the
+servers' sparklines on the Servers tab, and `latest(conn, kind)` the
+newest sample of each, from which the Machines tab takes a host's
+`cpu_pct`. A host's history is read through `GET /api/admin/metrics`
+only.
 Samples are kept 30 days
 (`metrics.purge`, from the tick). Counts and sizes only, never anything of
 a library.
@@ -1066,11 +1068,9 @@ The API behind both (`/api/admin`, admins through a portal session only):
   the `bootstrap.sh` line with it, are in this answer only),
   `PATCH /hosts/{id}` (`name`, `accepting`, `public_ip`); a public IP that
   is not an IPv4 or IPv6 address is a 400, and one is stored in its usual
-  form. `POST /hosts/{id}/orphans/{label}/remove` → `{job}`. Each host
-  has `trend`: its samples of the last 48 hours, `{at, memory_used_mb,
-  disk_used_mb}`;
+  form. `POST /hosts/{id}/orphans/{label}/remove` → `{job}`;
 - `GET /machines` → `{machines, default_image}`: each host as `GET /hosts`
-  gives it but with no `trend`, with `cpu_pct` (from its latest sample,
+  gives it, with `cpu_pct` (from its latest sample,
   `metrics.latest`), `others` (how many of its containers are not
   Gamma's), `agent_stale`, `updates` (what *Update all* takes, Gamma's
   only) and its last 20 `jobs`, and each of its `containers` with `gamma`,
@@ -1273,8 +1273,8 @@ Moving a server to another host is not built.
 - `cloud/tests/test_metrics.py`: samples merged by the hour with errors
   added up, series, trends and the purge, what the heartbeat (each
   container and the host's CPU too) and the sync record, a host's
-  `cpu_pct` from its latest sample, the rows' `trend` and the metrics
-  endpoint.
+  `cpu_pct` from its latest sample, a server's `trend`, and the metrics
+  endpoint (a host's history is there only).
 - `cloud/fleet/tests/test_agent.py`, run from `cloud/fleet` with
   `python -m pytest -q`: the agent against a fake Docker client and a
   fake account server, every job kind with its failures and with a second

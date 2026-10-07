@@ -1,24 +1,27 @@
 # Gamma privacy policy
 
-_Last updated: 2026-10-04._
+_Last updated: 2026-10-06._
 
 Gamma is an open-source PDF annotation and note-taking application
 ([github.com/tim4431/Gamma](https://github.com/tim4431/Gamma)). This
 policy covers the Gamma desktop app (Windows, macOS, Linux, including the
-Microsoft Store edition "Gamma PDF"), the self-hosted Gamma server, and
-the Gamma Connector browser extension. It is published by the developer of
-Gamma, referred to below as "we".
+Microsoft Store edition "Gamma PDF"), the self-hosted Gamma server, the
+Gamma Connector browser extension, and Gamma Cloud: the optional account
+at account.gammapdf.com and the paid plans that add a library we keep
+running for you. It is published by the developer of Gamma, referred to
+below as "we".
 
 ## The short version
 
-- **We collect nothing.** Gamma has no telemetry, analytics, crash
-  reporting, advertising, or accounts hosted by us. No usage data is sent
-  to the developer.
+- **The software collects nothing.** Gamma has no telemetry, analytics,
+  crash reporting or advertising. No usage data is sent to the developer.
 - **Your data stays where you put it.** Everything you create in Gamma
   (PDFs, highlights, notes, chats, settings) is stored in a data directory
-  on your own computer, or on a server that you or your organisation run.
+  on your own computer, on a server that you or your organisation run, or,
+  on a Gamma Cloud plan, on a server we run for you.
 - **Network requests only happen for features you use**, and go to the
-  services listed below, never to us.
+  services listed below. Only a Gamma Cloud account, which is optional,
+  sends anything to us; what it holds is listed under "Gamma Cloud".
 
 ## What Gamma stores, and where
 
@@ -111,6 +114,93 @@ needs them. What is sent is limited to what the feature requires:
 
 Each of these services receives your IP address as part of the request,
 as any web request does. Gamma adds no identifiers of its own.
+
+## Gamma Cloud
+
+Gamma Cloud is optional. Nothing in this section applies until you create
+an account at account.gammapdf.com; the desktop app and a server you host
+work without one. The account server is open source, in the `cloud/`
+folder of the repository, so what follows can be checked against the
+code. The paid plans have their own [terms](TERMS.md).
+
+**Your account.** The account server stores your e-mail address, your
+username, a salted hash of your password (bcrypt), when the account was
+created and confirmed, and any plan we have granted it by hand. If you
+sign in with Google or GitHub, it stores the identifier that provider
+gives us for you. Sign-in sessions, sign-in and reset codes, invitation
+codes and the tokens issued to Gamma servers are stored as hashes of
+random secrets, never in clear. Signing up and resetting a password may
+show a Cloudflare Turnstile check. We keep an audit log of account events
+(a sign-in, a password reset request, a plan change, a job on a server);
+for sign-ins and reset requests it records the IP address the request
+came from. Sign-ups and sign-in attempts are rate limited by address; the
+counters live in memory and are not kept.
+
+**Signing in to a Gamma server.** When you sign in to a Gamma server with
+your Gamma Cloud account, that server receives your username, e-mail
+address, display name and plan, and a token it keeps to check the sign-in
+once an hour. The account server records which servers you have signed in
+to (their address, name, software version and when they last checked in)
+and shows them on your account's Devices page, where you can sign a server
+out. It also keeps the preference profile the Gamma app syncs between
+your servers: settings only, never notes, highlights or files. A Gamma
+server you run yourself holds your library as before; nothing of it
+reaches us.
+
+**Plans and payment.** Payments are handled by Stripe. We never see or
+store card numbers. We store your Stripe customer id, the plan, billing
+period and status of your subscription, and the events Stripe sends us
+about it. Invoices and the payment method are managed on Stripe's pages,
+under Stripe's privacy policy.
+
+**A Pro server.** A Pro plan gives you a Gamma server of your own, run as
+a container on a host we operate. Its library, and the accounts you make
+on it, are stored in that container's data directory, and you administer
+the server: we have no account inside it. Our fleet agent reports counts
+and sizes to the account server every five minutes (memory, disk and
+storage used, the number of accounts and how many were active in the
+last week, the software version and whether it is healthy), never
+content, and fetches the last 200 lines of the server's log when an
+operator asks for them. Copies of the server's data directory are written
+to an S3-compatible storage bucket on the schedule the plan lists, as the
+server's off-site backup, and are deleted with the server. When the plan
+ends the server becomes read-only at once, is stopped after 30 days and
+is deleted with its files and backups 90 days after the plan ended, as
+the terms describe.
+
+**The shared server.** Lite and Plus plans, and the pages a free account
+publishes, live on one Gamma server we run, app.gammapdf.com. Your
+library there is stored as on any Gamma server, under your account. We
+administer that server, so we can technically reach what is stored on it;
+we do not read it except as the terms say (to run the service, make
+backups, and fix a fault you ask us about). When a Lite or Plus plan ends
+the library is closed but kept; files beyond the free allowance may be
+deleted 90 days later, with notice by e-mail.
+
+**Mail.** We send mail to confirm your address, to sign in or reset a
+password, to the old address when your e-mail address is changed, for
+invitations, and about your plan: a failed payment, a server turning
+read-only, stopping or being deleted, and changes to prices or terms.
+Mail goes out through an SMTP provider, which sees the address and the
+message.
+
+**What we keep, and for how long.** Usage samples of our hosts and
+servers (memory, disk, storage, counts) and resolved operator alerts are
+kept for 30 days. The audit log is kept. Deleting your account, on its
+Settings page, cancels any subscription at Stripe, removes the password,
+the Google or GitHub links, the preference profile and the server list at
+once and signs out every server; 30 days later the account's remaining
+records are removed, and a Pro server still running then is deleted with
+its files and backups. A library on the shared server is closed when the
+account's sign-in ends and is then handled as the terms describe for a
+plan that ended.
+
+**Third parties.** Stripe (payments), Cloudflare (DNS, the proxy and
+certificate in front of every request to our servers, and the Turnstile
+check), the hosting provider of our servers, an S3-compatible storage
+provider for the off-site copies, and an e-mail delivery provider. Each
+sees what its role requires and no more. We sell or share your data with
+no one else.
 
 ## Sharing
 

@@ -422,7 +422,7 @@ class ApplyEnvBody(BaseModel):
 def list_hosts(request: Request):
     with closing(db.connect()) as conn:
         require_admin(conn, request)
-        return {"hosts": _trended(conn, "host", fleet.hosts(conn))}
+        return {"hosts": fleet.hosts(conn)}
 
 
 @router.post("/hosts")
@@ -527,7 +527,13 @@ def container_action(host_id: str, name: str, action: str, request: Request, bod
 def list_servers(request: Request):
     with closing(db.connect()) as conn:
         require_admin(conn, request)
-        return {"servers": _trended(conn, "server", hosted.servers(conn)), "default_image": fleet.default_image(),
+        servers = hosted.servers(conn)
+        # each with its samples of the last TREND_HOURS hours in the
+        # SERVER_TREND series, which the Servers tab draws inline
+        trends = metrics.trends(conn, "server", SERVER_TREND, TREND_HOURS)
+        for row in servers:
+            row["trend"] = trends.get(row["id"], [])
+        return {"servers": servers, "default_image": fleet.default_image(),
                 "auto_upgrade": settings.fleet_auto_upgrade()}
 
 
@@ -690,18 +696,8 @@ def job_action(job_id: str, action: str, request: Request):
 # read them, so a job retried a moment ago is no longer listed; any that fall
 # due then are mailed as the next heartbeat would have mailed them.
 
-TRENDS = {"host": ("memory_used_mb", "disk_used_mb"), "server": ("memory_mb", "cpu_pct", "data_mb")}
+SERVER_TREND = ("memory_mb", "cpu_pct", "data_mb")   # a server's ``trend`` in ``GET /servers``
 TREND_HOURS = 48
-
-
-def _trended(conn, kind: str, rows: list[dict]) -> list[dict]:
-    """``rows`` (hosts or servers), each with ``trend``: its samples of the
-    last TREND_HOURS hours in a few series (``TRENDS``), which the Servers
-    tab draws inline for a server."""
-    trends = metrics.trends(conn, kind, TRENDS[kind], TREND_HOURS)
-    for row in rows:
-        row["trend"] = trends.get(row["id"], [])
-    return rows
 
 
 def _sync_alerts(conn) -> None:

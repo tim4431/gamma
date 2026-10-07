@@ -42,7 +42,9 @@ snippets below build on this.
 | Backspace inside an empty `\left...\right` pair | Removes the whole pair |
 | A `\command` KaTeX doesn't know, a mismatched `\end`, a stray closer | A wavy underline under it; hovering shows KaTeX's message |
 
-Command completion also accepts Enter. The list ranks an exact name first,
+Only Tab accepts a completion: the popup opens unasked while typing, so
+Enter closes it and keeps its own job (a line break in `$$`, else the
+outliner's Enter). The list ranks an exact name first,
 then names the typed letters prefix (a bare `\left` puts `\left(` before
 `\leftarrow`), then the abbreviation table (`\Ra` is `\Rightarrow`, not
 `\rangle`), then case-insensitive prefixes and the `begin`/`big`/`left`

@@ -1,7 +1,7 @@
 // LaTeX editing aids for the block editor, modeled on Overleaf/VSCode:
 // a live KaTeX preview of the math span being typed, docked to the editor
-// column above the caret line, and \command autocompletion (Tab/Enter to
-// accept). The catalog and matching live in editor/latexCompletion.js
+// column above the caret line, and \command autocompletion (Tab accepts;
+// Enter keeps its own job). The catalog and matching live in editor/latexCompletion.js
 // (re-exported here); this file holds the two presentational components and
 // their placement. editor/BlockTree.jsx owns the state and key handling.
 import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
