@@ -27,6 +27,7 @@ the dev doc named there describes how it works now.
 |---|---|---|
 | [collaboration.md](collaboration.md) | How real-time collaborative editing is built elsewhere (OT, record-level last-writer-wins, CRDTs), why a snapshot autosave cannot collaborate, and why Gamma took the Notion / Linear / Figma shape. | Nothing. Built, and since extended with a three-way text merge: [dev/collab.md](../dev/collab.md). |
 | [latex-editing.md](latex-editing.md) | How LaTeX Workshop, Obsidian's LaTeX Suite and Overleaf complete `\commands` and place their equation previews, and which of those Gamma took. | Nothing. Built: [dev/latex_editing.md](../dev/latex_editing.md). |
+| [latex-projects.md](latex-projects.md) | What an Overleaf-like LaTeX project inside Gamma would take — a page whose files are blocks, a whole-document editor reusing the math aids, a build job with pluggable engines, SyncTeX, and the AI's file tools — beside what Overleaf and its open-source relatives do and what each compile runtime weighs. | Everything: a plan, nothing is built; the decisions it leaves to take are listed at its end. |
 | [keyboard-shortcuts.md](keyboard-shortcuts.md) | What VS Code, Obsidian, Logseq and Notion bind for line and block operations, which chords a browser keeps for itself, and why Gamma treats the block as the line and reads physical keys. | Nothing; multi-key chords, multi-cursor and palette prefixes were left out on purpose. Built: [dev/hotkeys.md](../dev/hotkeys.md). |
 
 ## AI
