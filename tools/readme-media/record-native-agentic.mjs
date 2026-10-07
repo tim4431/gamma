@@ -142,7 +142,7 @@ try {
     verified.expandedSteps = await page.locator('.chatToolDetail').count();
     if (verified.expandedSteps) throw new Error('Keep individual tool steps collapsed');
     await page.locator('.chatBubbleRow.ai').last().scrollIntoViewIfNeeded();
-    const citations = page.locator('.chatBubbleRow.ai a.chatCite.gammaLink-citation');
+    const citations = page.locator('.chatBubbleRow.ai a.citePill.gammaLink-citation');
     await citations.first().waitFor();
     // Pick an actual answer link whose quote matches the PDF.js text exactly.
     // Model links can include ellipses or omit formula/reference characters.
@@ -163,8 +163,8 @@ try {
     // Hover the answer's real passage link to preview its quote, then follow it.
     const pill = await citation.boundingBox();
     await page.mouse.move(pill.x + pill.width / 2, pill.y + pill.height / 2, {steps:25});
-    await page.locator('.chatCitePreview').waitFor();
-    framing.preview = await page.locator('.chatCitePreview').boundingBox();
+    await page.locator('.citePreview').waitFor();
+    framing.preview = await page.locator('.citePreview').boundingBox();
     await hold(1800);
     mark('citationClick');
     await citation.click();

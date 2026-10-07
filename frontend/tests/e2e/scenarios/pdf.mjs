@@ -344,7 +344,7 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
     assertNoProblems(page);
   });
 
-  await step("pdf: a citation pasted into a note is a card that opens the passage in place", async () => {
+  await step("pdf: a citation pasted into a note is the chat's pill, previews its passage and opens it in place", async () => {
     const quote = "Page two says hello world";
     const note = await account.api("/api/blocks", { method: "POST", body: {
       parent_id: pageId,
@@ -355,11 +355,21 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
     } });
     await page.reload();
     await waitForPdf(page);
-    const card = page.locator(`.blockRow a.gammaLink-citation`, { hasText: "p. 2" });
-    await card.waitFor();
+    const pill = page.locator(`.blockRow a.gammaLink-citation`, { hasText: "p. 2" });
+    await pill.waitFor();
     assertEq(await page.locator(".blockRow a.linkChip").count(), 0, "a Gamma link is never an external link chip");
+    assertEq(await page.locator(".blockRow a.citePill").count(), 2, "both citations are pills, the moved one too");
+    assertEq(await page.locator(".blockRow a.gammaLinkCard").count(), 0, "a citation is not a card");
+    await pill.hover();
+    const preview = page.locator(".citePreview");
+    await preview.waitFor();
+    const title = (await account.api(`/api/blocks/${pageId}/subtree`)).block.content;
+    assertEq(await preview.locator(".citePreviewTitle").textContent(), title, "the preview names the cited paper");
+    assert((await preview.textContent()).includes(quote), "the preview shows the quote");
+    await page.mouse.move(0, 0);
+    await preview.waitFor({ state: "detached" });
     const url = page.url();
-    await card.click();
+    await pill.click();
     const mark = page.locator('[data-page="2"] .pdfCitationMark').first();
     await mark.waitFor();
     assertEq(page.url(), url, "the citation opens in place, without navigating");
