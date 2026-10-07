@@ -510,6 +510,10 @@ PAGES_SCHEMA = [
         {_HOT_COLUMNS_SQL}
     )""",
     "CREATE INDEX IF NOT EXISTS idx_ub_parent ON unified_blocks(parent_id, position)",
+    # The newest-first readers (block search, the [[ picker's suggestions,
+    # backlinks) walk this index and stop at their limit instead of sorting
+    # every candidate row.
+    "CREATE INDEX IF NOT EXISTS idx_ub_updated ON unified_blocks(updated_at)",
     *BLOCK_HOT_INDEXES,
     # page_changes = the workspace's change log (gamma/blocks_store.py
     # touch_page): one row per page that exists or ever existed, whose `seq`

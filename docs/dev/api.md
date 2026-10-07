@@ -146,13 +146,22 @@ else; in dev, Vite proxies `/api` → `127.0.0.1:9001`.
   touched: streams (the AI chat and translation NDJSON, event streams),
   files and their range requests (uploads, PDFs, the app's assets) and
   anything already encoded pass through as they are. A dict a sync
-  endpoint returns is encoded on the event loop, so the tree reads (`GET
-  /blocks/{id}/subtree`, `/blocks/{id}/children`, the library listing)
-  answer a `routers/blocks.TreeJSON` they encoded in their worker thread
-  (a 5,000-block page stalled the loop ~175 ms otherwise). It encodes with
+  endpoint returns is encoded on the event loop, so the reads whose answer
+  can be large — the tree reads (`GET /blocks/{id}/subtree`,
+  `/blocks/{id}/children`, the library listing), a block search, the two
+  searches, a conversation (`GET /chats/{bucket}`), the op-log catch-up
+  (`GET /pages/{id}/ops`) and the covers (`GET /page-snaps`) — answer a
+  `json_response.OrjsonResponse` they encoded in their worker thread (a 5,000-block page stalled
+  the loop ~175 ms otherwise). It encodes with
   orjson, in about a tenth of the standard library's time, and
   `blocks_store.load_json` parses each row's `properties` with it in about
-  a fifth. A stored NaN goes out as null and a stored lone surrogate as
+  a fifth. A page's subtree is read by its `page_id` (one indexed read;
+  every block of a page carries its id) rather than the recursive walk
+  down the parents, and `kind` is computed in Python from the parsed
+  properties (`blocks_store.block_kind`, the generated column's rule)
+  instead of being selected: the column costs up to six JSON functions per
+  row. On an in-memory database, 5,000 highlight-like blocks of 1.3 KB
+  each: 42 ms the old way, 8 ms this way. A stored NaN goes out as null and a stored lone surrogate as
   U+FFFD (both were a 500; a write refuses a new NaN, [collab.md](collab.md)
   "Ops"); what orjson refuses, such as nesting past 255
   levels (a tree about 125 blocks deep), falls back to the standard

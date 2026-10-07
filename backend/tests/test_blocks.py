@@ -114,7 +114,7 @@ def _stored_props(block_id):
 
 def test_tree_reads_answer_what_the_stored_text_says(guest):
     # orjson parses and encodes the tree reads (blocks_store.load_json,
-    # routers/blocks.TreeJSON). The answers are the stored values; what
+    # json_response.OrjsonResponse). The answers are the stored values; what
     # orjson refuses and json.dumps wrote (NaN, half an emoji) is read as
     # before, then sent as null and U+FFFD.
     page = make_page(guest, "Stored JSON page")

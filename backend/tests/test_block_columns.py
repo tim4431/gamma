@@ -6,10 +6,12 @@ carrying both read-only; the library listing's page summaries. The suite's
 autouse ``_page_ids_kept`` checks every written workspace against the
 parent walk as well; here each writer is checked by name."""
 
+import json
+
 import pytest
 
 from conftest import login, make_folder, make_label, make_user, page_id_drift, workspace_of
-from gamma.blocks_store import fetch_subtree, page_for_doc, page_root_id, trash_entry
+from gamma.blocks_store import BLOCK_COLUMNS, block_kind, fetch_subtree, page_for_doc, page_root_id, trash_entry
 from gamma.db import connect_pages_db
 from gamma.routers import blocks as blocks_router
 
@@ -176,3 +178,73 @@ def test_the_listing_carries_page_summaries(owner):
     assert entry["properties"] == {} and entry["preview"] == ""
     # the page itself still has everything
     assert owner.get(f"/api/blocks/{page['id']}").json()["properties"]["bibtex"] == "@article{x}"
+
+
+# The dict's ``kind`` is computed in Python from the parsed properties
+# (blocks_store.block_kind) while the generated column stays for the
+# filters: both must say the same for every shape a row can have.
+_KIND_SHAPES = [
+    ({}, "note"),
+    ({"ink_url": "/api/uploads/x.gamma-ink"}, "ink"),
+    ({"ink_url": None}, "ink"),                       # the key alone makes it ink, as json_type does
+    ({"text_box": {"x": 1}}, "text_box"),
+    ({"text_box": "no"}, "note"),
+    ({"sheet": {}}, "sheet"),
+    ({"link_url": "https://example.org"}, "link"),
+    ({"link_url": ""}, "note"),
+    ({"link_url": None}, "note"),
+    ({"link_page_id": "p1"}, "link"),
+    ({"link_page_id": "", "link_url": ""}, "note"),
+    ({"link_url": 0}, "link"),                        # a number is not the empty string
+    ({"pdf_position": {"pageNumber": 1}}, "highlight"),
+    ({"pdf_position": "1"}, "note"),
+    ({"text_box": {}, "pdf_position": {}}, "text_box"),   # the first rule wins, in the column's order
+    ({"link_url": "u", "pdf_position": {}}, "link"),
+]
+
+
+def test_the_python_kind_agrees_with_the_generated_column(owner):
+    page = _page(owner, "Kinds")
+    with connect_pages_db(workspace_of(USER)) as conn:
+        for n, (props, expected) in enumerate(_KIND_SHAPES):
+            block_id = f"bcKind{n}"
+            conn.execute(
+                "INSERT INTO unified_blocks (id, parent_id, position, content, properties, created_at, updated_at, page_id) "
+                "VALUES (?, ?, ?, '', ?, 't', 't', ?)", (block_id, page["id"], f"a{n:02d}", json.dumps(props), page["id"]))
+            stored = conn.execute("SELECT kind FROM unified_blocks WHERE id = ?", (block_id,)).fetchone()[0]
+            assert stored == expected, (props, stored)
+            assert block_kind(page["id"], page["id"], props) == expected, props
+        conn.commit()
+    assert block_kind(None, "", {}) is None
+    assert block_kind("root", "p", {}) == "page" and block_kind("trash", "p", {}) == "page"
+    assert block_kind("f1", "folders", {}) == "folder" and block_kind("labels", "labels", {}) == "label"
+    for n, (props, expected) in enumerate(_KIND_SHAPES):
+        assert owner.get(f"/api/blocks/bcKind{n}").json()["kind"] == expected
+    _no_drift()
+
+
+def test_a_page_subtree_by_page_id_is_the_recursive_walk(owner):
+    """A page's rows come by their ``page_id`` (one indexed read); they are
+    the rows the walk down the parents finds, the page first."""
+    page = _page(owner, "Walk")
+    _ops(owner, page["id"], [
+        {"op": "insert", "id": "bcW1", "parent": page["id"], "content": "one"},
+        {"op": "insert", "id": "bcW2", "parent": "bcW1", "content": "two"},
+        {"op": "insert", "id": "bcW3", "parent": "bcW2", "content": "three"},
+        {"op": "insert", "id": "bcW4", "parent": page["id"], "content": "four"}])
+    with connect_pages_db(workspace_of(USER)) as conn:
+        rows = fetch_subtree(conn, page["id"])
+        walked = conn.execute(f"""
+            WITH RECURSIVE subtree AS (
+                SELECT {BLOCK_COLUMNS} FROM unified_blocks WHERE id = ?
+                UNION ALL
+                SELECT {", ".join("ub." + c for c in BLOCK_COLUMNS.split(", "))}
+                FROM unified_blocks ub JOIN subtree s ON ub.parent_id = s.id)
+            SELECT {BLOCK_COLUMNS} FROM subtree""", (page["id"],)).fetchall()
+        assert rows[0][0] == page["id"]
+        assert sorted(rows) == sorted(walked) and len(rows) == 5
+        assert {r[0] for r in fetch_subtree(conn, "bcW1")} == {"bcW1", "bcW2", "bcW3"}, "a block still walks"
+        assert fetch_subtree(conn, "bcNone") == []
+    tree = owner.get(f"/api/blocks/{page['id']}/subtree").json()["block"]
+    assert [c["id"] for c in tree["children"]] == ["bcW1", "bcW4"]
+    assert tree["children"][0]["children"][0]["children"][0]["id"] == "bcW3"

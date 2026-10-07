@@ -152,7 +152,9 @@ run the same code as the jobs.
 - It polls `GET /api/jobs` every 1.5 s while a job runs or waits, or while
   something watches (the tray open, a dialog on a job: `watch()`). Otherwise
   it polls every 30 s, and never while the tab is hidden. An older answer
-  never replaces a newer one.
+  never replaces a newer one, and a listing that reads like the last one
+  changes no state (the idle poll would otherwise re-render the app every
+  half minute).
 - `start(route, body, meta)` and `upload(route, form, {name, meta})` start
   a job, known at once, before the next listing. An upload is a row of its
   own until the server answers with the job. `meta.download` is `auto`

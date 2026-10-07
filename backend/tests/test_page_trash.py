@@ -388,3 +388,31 @@ def test_a_share_host_deletes_for_good(owner, monkeypatch):
     r = owner.delete(f"/api/blocks/{page['id']}")
     assert r.status_code == 200 and "trashed" not in r.json()
     assert _row(ws, page["id"]) is None and page["id"] not in _trashed(owner)
+
+
+def test_the_sweeper_leaves_an_unchanged_workspace_alone_until_a_page_is_due(owner, monkeypatch):
+    """Between two sweeps nothing in the workspace changed and no page came
+    due: the second sweep does not open it. A write (the WAL dates it), or
+    the due time passing, brings it back into the sweep."""
+    ws = workspace_of("tr_owner")
+    page = make_page(owner, "Due later")
+    owner.delete(f"/api/blocks/{page['id']}").raise_for_status()
+    deleted_at = datetime.fromisoformat(_trashed(owner)[page["id"]]["deleted_at"].replace("Z", "+00:00"))
+    reads = []
+    real = trash._trashed
+    monkeypatch.setattr(trash, "_trashed", lambda w: reads.append(w) or real(w))
+    trash._due.clear()
+    trash.sweep(now=deleted_at + timedelta(days=1))
+    assert reads.count(ws) >= 1
+    reads.clear()
+    trash.sweep(now=deleted_at + timedelta(days=2))
+    assert ws not in reads, "nothing changed, nothing due: not opened"
+    make_page(owner, "A write")  # the workspace changed: looked at again
+    trash.sweep(now=deleted_at + timedelta(days=3))
+    assert ws in reads
+    reads.clear()
+    trash.sweep(now=deleted_at + timedelta(days=4))
+    assert ws not in reads
+    swept = trash.sweep(now=deleted_at + timedelta(days=30, minutes=1))
+    assert ws in reads and page["id"] in swept.get(ws, []), "due: swept, and the page went"
+    assert _row(ws, page["id"]) is None

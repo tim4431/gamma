@@ -52,6 +52,7 @@ from ..ai_settings import AI_SETTINGS_PREF_KEY
 from ..search_services import PREF_KEY as SEARCH_PREF_KEY
 from ..translate_engines import ENGINES_PREF_KEY
 from ..auth import require_user_id, require_ws
+from ..json_response import OrjsonResponse
 from ..db import (
     PROFILE_BASE_PREF_KEY,
     PROFILE_PREF_KEY,
@@ -147,7 +148,8 @@ class SnapWriteRequest(BaseModel):
 def read_page_snaps(request: Request, after: str = ""):
     """All stored covers, or (with ?after=<iso>) only ones newer than that —
     the cheap focus-pull form: clients send their newest local `at`."""
-    return {"snaps": get_page_snaps(require_ws(request), after=after)}
+    # Dozens of JPEG data URLs: encoded here, not on the event loop.
+    return OrjsonResponse({"snaps": get_page_snaps(require_ws(request), after=after)})
 
 
 # The covers are the workspace's, shared by its members: changing them takes

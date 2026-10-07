@@ -631,10 +631,10 @@ class _GammaBuilder(_Builder):
         self.upload_names = set()
 
     def _put(self, row):
-        """Copy a block row, less its generated ``kind``; one met twice (a
-        shared subtree) is kept once."""
+        """Copy a block row (``BLOCK_COLUMNS``, the stored columns); one met
+        twice (a shared subtree) is kept once."""
         self.db.execute(f"INSERT OR IGNORE INTO unified_blocks ({STORED_COLUMNS}) "
-                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)", tuple(row[:-1]))
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)", tuple(row))
 
     def add_page(self, n, rows, page):
         self.page_ids.append(page["id"])

@@ -59,10 +59,14 @@ export function useMarks({ ink, inkSelection, inkFlash, boxes, boxSel, boxFlash 
 // armed the ink layer only draws: the pointer is the text layer's. A
 // read-only surface mounts no ink layer without ink. `replay`: a drawing
 // shown in the ink's place while it plays (NoteSheet's replay of its
-// sheet's handwriting), with no ink layer meanwhile.
-export function MarkupLayers({ surface, wrapRef, width, height, marks, replay = null }) {
+// sheet's handwriting), with no ink layer meanwhile. `active`: the surface
+// is near the view (a PDF page within its viewer's look-ahead); one that is
+// not and carries no marks mounts nothing — each layer listens on the
+// window and the document, and a book has hundreds of pages.
+export function MarkupLayers({ surface, wrapRef, width, height, marks, replay = null, active = true }) {
   const { readOnly, ink, text, actions } = usePageTools();
   const edit = readOnly || text.armed ? {} : actions;
+  if (!active && !replay && !marks.ink.length && !marks.boxes.length) return null;
   return (
     <>
       <TextBoxLayer surface={surface} wrapRef={wrapRef} width={width} height={height} marks={marks} />

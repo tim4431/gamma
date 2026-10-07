@@ -69,7 +69,19 @@ what each first screen downloads: [the bundle note](../research/bundle.md).
 
 `frontend/src/app/App.jsx` still combines session checks,
 library mutations, account preference synchronization, page loading and saving,
-PDF state, AI provider state, dock geometry, and most workspace markup.
+PDF state, AI provider state, dock geometry, and most workspace markup. So
+every keystroke in a note renders App, but not the other rows of the
+page. The outliner's rows are memoized (`BlockTree.jsx`):
+`updateBlockTree` copies only the edited block's path, App hands the rows
+one stable wrapper per callback name (`stableRowProps`) and the page's
+blocks through `lookupBlock` / `getTree`, each row's `[[ref]]` labels come
+resolved once per tree change (`editor/refLabels.js`), and the derived
+maps every row takes keep their identity while they read the same. A row
+renders again for its own block, its depth and its place among its
+siblings (`place`, `siblings`: what the editing bar's move and indent
+buttons read from the tree's order). A new row prop must follow that rule
+or every row renders again
+([research/performance.md](../research/performance.md)).
 
 The goal is a small composition root with explicit state owners and commands.
 Extraction should remove coupled responsibilities, not merely move long

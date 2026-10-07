@@ -136,7 +136,7 @@ def storable(value, *, finite: bool = True):
     is refused, OpError(400): Python's JSON reader takes a bare ``NaN`` or
     ``Infinity`` (and ``1e999``), which would be stored and which no JSON
     answer can carry back. ``finite=False`` lets one through, for the tree
-    reads that send a stored one as null (routers/blocks.py ``TreeJSON``)."""
+    reads that send a stored one as null (gamma/json_response.py)."""
     if isinstance(value, str):
         if not _SURROGATE.search(value):
             return value

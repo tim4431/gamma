@@ -63,7 +63,7 @@ from .ai_permissions import permission_state
 from .ai_context import (DEPRECATED_TOOLS, MAX_AREA_CROPS, area_highlight, canonical_tool,
                          handwriting_label, page_report_section, paths_text, pdf_path, quoted_paths,
                          render_area_crops, text_box_label, under_sheet)
-from .blocks_store import (FOLDERS, LABELS, PATH_SEP, descend, existing_in, fetch_subtree, filing,
+from .blocks_store import (FOLDERS, LABELS, PATH_SEP, block_to_dict, descend, existing_in, fetch_subtree, filing,
                            folder_paths, folder_subtree_ids, label_by_name, label_names,
                            page_attachment, page_root_id, refiled, root_pages, tree_children, tree_parents,
                            write_lock)
@@ -1327,7 +1327,7 @@ def cross_page_refusal(conn, block_id: str) -> str:
     rows = fetch_subtree(conn, block_id)
     # Highlights and link regions anchor to a PDF region of their own
     # paper; on another page that anchor points into the wrong document.
-    if any(row[8] in ("highlight", "link") for row in rows):
+    if any(block_to_dict(row)["kind"] in ("highlight", "link") for row in rows):
         return "highlight blocks are anchored to their paper — they can only move within the same page"
     # So is a text box's place, on its PDF page or its sheet, unless the
     # sheet it is on moves along.
