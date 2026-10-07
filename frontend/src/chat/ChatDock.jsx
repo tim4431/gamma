@@ -5,6 +5,9 @@
 // prompt preferences it also needs elsewhere.
 import React, { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { API, apiJson, copyText, isPdfFile, makeId, readNdjson, withWorkspace } from "../shared/lib/utils";
+import { DEFAULT_PICTURE_BUDGET, addPictures, chipPicture, historyPictures, isPictureFile, pictureAlt, pictureUrl } from "./chatPictures.js";
+import { pictureSrc } from "./pictureSrc.js";
+import { postFile } from "../transfers/FileChip";
 import { stepList } from "../shared/ui/listKeys.js";
 import { DockWindow, ChatMarkdown, AutoGrowTextarea, useCopied, useTextScale } from "../shared/ui/Widgets";
 import PaperMentionInput from "./PaperMentionInput";
@@ -36,7 +39,7 @@ import { aiServiceTiles } from "../settings/providerEditor.js";
 import { renderKatex } from "../editor/LatexEditor";
 import { chipSegments } from "./chipText";
 import { effortFor, providerModels, speedFor } from "./modelPrefs";
-import { AlertCircleIcon, ArrowDownIcon, ArrowUpIcon, BookIcon, CheckIcon, ChevronDownIcon, ChevronUpIcon, ClockIcon, CopyIcon, DownloadIcon, FileIcon, FolderIcon, HighlightIcon, HistoryIcon, InfoIcon, MicIcon, OutlineIcon, PaperclipIcon, PencilIcon, PenIcon, PlusIcon, QuoteIcon, SearchIcon, SettingsIcon, ShieldIcon, SlidersIcon, SparklesIcon, SquareCheckIcon, StopIcon, TextCursorIcon, TrashIcon, XIcon, ZapIcon } from "../shared/ui/Icons";
+import { AlertCircleIcon, ArrowDownIcon, ArrowUpIcon, BookIcon, CheckIcon, ChevronDownIcon, ChevronUpIcon, ClockIcon, CopyIcon, DownloadIcon, EyeIcon, FileIcon, FolderIcon, HighlightIcon, HistoryIcon, InfoIcon, MicIcon, OutlineIcon, PaperclipIcon, PencilIcon, PenIcon, PlusIcon, QuoteIcon, SearchIcon, SettingsIcon, ShieldIcon, SlidersIcon, SparklesIcon, SquareCheckIcon, StopIcon, TextCursorIcon, TrashIcon, XIcon, ZapIcon } from "../shared/ui/Icons";
 import { T, getLocale, t, tn } from "../shared/i18n/i18n.js";
 
 const JSON_HEADERS = { "Content-Type": "application/json" };
@@ -272,7 +275,7 @@ function ContextRing({ fraction }) {
 
 // The note-block mutators: their actions carry the page id(s) they touched,
 // so the open page's block tree can reload and show the change.
-const BLOCK_TOOLS = new Set(["edit_block", "create_block", "move_block"]);
+const BLOCK_TOOLS = new Set(["edit_block", "create_block", "move_block", "delete_block"]);
 const toolCallText = (a) => {
   const args = Object.entries(a.args || {}).map(([k, v]) => `${k}: ${v}`).join(", ");
   const head = `${a.tool || a.kind}(${args})`;
@@ -377,7 +380,11 @@ export default function ChatDock({
   // its editor) — both ride with the next message so "this block" and "the
   // selection" mean something. onSelectionSent drops the sent selection.
   chatNotes, setChatNotes, focusedNote, onSelectionSent,
-  chatImages, setChatImages,
+  // chatImages: the pictures pending send (chat/chatPictures.js); the budget
+  // they share with the context's own pictures (Settings → AI → Chat →
+  // "Pictures per message"); onAttachView attaches the visible part of the
+  // open paper, with the handwriting on it (App), when a paper is open.
+  chatImages, setChatImages, chatPictureBudget = DEFAULT_PICTURE_BUDGET, onAttachView,
   chatModel, setChatModel, chatEffort, setChatEffort, chatSpeed, setChatSpeed, chatSystem,
   dictationModel, dictationLang,
   chatContextChars, setChatContextChars, multiContextChars,
@@ -920,9 +927,11 @@ export default function ChatDock({
       ? new Set([...prev].filter((id) => listed.has(id))) : prev));
   }, [listedKey]);
 
-  // Attach picked/pasted files: images join the pasted-figures row, PDFs
-  // become one-shot native attachments (same as the library PDF button).
-  function addChatFiles(files) {
+  // Attach picked/pasted files: pictures are stored at once, sized for the
+  // model (POST /api/ai/pictures — the message keeps the URL, so the
+  // picture outlives this tab and stays in the conversation), PDFs become
+  // one-shot native attachments (same as the library PDF button).
+  function addChatFiles(files, { pasted = false } = {}) {
     for (const f of files) {
       if (isPdfFile(f)) {
         if (f.size > 15 * 1024 * 1024) { setStatus(t("\"{name}\" is too large to attach (max 15 MB).", { name: f.name })); continue; }
@@ -930,10 +939,13 @@ export default function ChatDock({
         reader.onload = () => setChatFiles((prev) => prev.length >= 4 ? prev : [...prev, { name: f.name || "file.pdf", data: reader.result }]);
         reader.readAsDataURL(f);
       } else if (f.type?.startsWith("image/")) {
-        if (f.size > 6 * 1024 * 1024) { setStatus(t("Image too large to attach (max 6 MB).")); continue; }
-        const reader = new FileReader();
-        reader.onload = () => setChatImages((prev) => prev.length >= 4 ? prev : [...prev, reader.result]);
-        reader.readAsDataURL(f);
+        if (!isPictureFile(f)) { setStatus(t("Image too large to attach (max 25 MB).")); continue; }
+        postFile("/api/ai/pictures", f).then((stored) => {
+          if (!stored?.url) { setStatus(t("Couldn't attach \"{name}\".", { name: f.name || t("image") })); return; }
+          const picture = { kind: pasted ? "pasted" : "file", url: stored.url, width: stored.width, height: stored.height,
+            ...(pasted || !f.name ? {} : { name: f.name }) };
+          setChatImages((prev) => addPictures(prev, [picture], chatPictureBudget));
+        });
       } else {
         setStatus(t("Can't attach \"{name}\" — only images and PDFs are supported.", { name: f.name }));
       }
@@ -948,7 +960,7 @@ export default function ChatDock({
       .filter(Boolean);
     if (!files.length) return;
     e.preventDefault();
-    addChatFiles(files);
+    addChatFiles(files, { pasted: true });
   }
 
   const chatFindMatches = useMemo(() => {
@@ -1025,12 +1037,15 @@ export default function ChatDock({
       prompt: text,
       page_id: focusedBlockId || "",
       // Only what the server replays: the text and the tool calls of
-      // each turn — never the pictures, reports and counts saved with
+      // each turn, and a user message's pictures by URL (the server reads
+      // the newest back within the picture budget; a data URL of an old
+      // chat is never re-sent) — not the reports and counts saved with
       // them, nor the texts kept for reverting a change (failed replies
       // aren't answers).
-      history: prevMessages.filter((m) => !m.error).map(({ role, text: turnText, actions: turnActions, reasoning }) => ({
+      history: prevMessages.filter((m) => !m.error).map(({ role, text: turnText, actions: turnActions, reasoning, images: turnImages }) => ({
         role, text: turnText, ...(turnActions?.length ? { actions: forReplay(turnActions) } : {}),
-        ...(reasoning ? { reasoning } : {}) })),
+        ...(reasoning ? { reasoning } : {}),
+        ...(historyPictures(turnImages).length ? { images: historyPictures(turnImages) } : {}) })),
       chat_key: key, // the conversation, for the provider's prompt cache
       model: model || chatModel || "",
       selections: pdfSelections,
@@ -1049,6 +1064,7 @@ export default function ChatDock({
       pages: selectedDocs.length ? contextIds : [],
       include_notes: includeNotes,
       images: chatImages,
+      max_pictures: chatPictureBudget,
       files: chatFiles,
       context_char_limit: chatContextChars,
       multi_context_char_limit: multiContextChars,
@@ -1838,7 +1854,7 @@ export default function ChatDock({
                   <div className={`chatBubble ${isUser ? "user" : "ai"}${m.error && !m.errorKind ? " error" : ""}`}>
                     {m.images?.length ? (
                       <div className="chatMsgImages">
-                        {m.images.map((src, j) => <img key={j} src={src} className="chatMsgImage" alt={t("pasted figure")} />)}
+                        {m.images.map((p, j) => <img key={j} src={pictureSrc(p)} className="chatMsgImage" alt={pictureAlt(p)} title={pictureAlt(p)} loading="lazy" />)}
                       </div>
                     ) : null}
                     {m.pdfs?.length ? (
@@ -1902,6 +1918,10 @@ export default function ChatDock({
                                     );
                                   })}
                                 </div>
+                              ) : null}
+                              {open && chipPicture(a) ? (
+                                // What the assistant looked at or clipped, drawn again by the server.
+                                <img className="chatToolPicture" src={pictureSrc(chipPicture(a))} alt={a.summary} loading="lazy" />
                               ) : null}
                               {open ? <pre className="chatToolDetail">{toolCallText(a)}</pre> : null}
                             </div>
@@ -2051,9 +2071,9 @@ export default function ChatDock({
         ) : null}
         {chatImages.length ? (
           <div className="chatImgPreviewRow" data-guide="chat.imageContext">
-            {chatImages.map((src, i) => (
-              <span key={i} className="chatImgPreview">
-                <img src={src} alt={t("pasted figure")} />
+            {chatImages.map((p, i) => (
+              <span key={pictureUrl(p) || i} className="chatImgPreview" title={pictureAlt(p)}>
+                <img src={pictureSrc(p)} alt={pictureAlt(p)} />
                 <button type="button" className="uiClose uiCloseSm uiCloseDanger chatImgRemove" title={t("Remove image")}
                   onClick={() => setChatImages((prev) => prev.filter((_, j) => j !== i))}><XIcon size={14} /></button>
               </span>
@@ -2095,7 +2115,7 @@ export default function ChatDock({
           placeholder={aiOff ? t("Connect an AI service to start chatting") : (
             // Names what the message will be about, most specific attachment first.
             chatFiles.length ? `Ask about the attached file${chatFiles.length > 1 ? "s" : ""}…`
-            : chatImages.length ? t("Ask about the pasted figure…") : pdfSelections.length > 1 ? `Ask about the ${pdfSelections.length} selected passages…`
+            : chatImages.length ? t("Ask about the attached picture…") : pdfSelections.length > 1 ? `Ask about the ${pdfSelections.length} selected passages…`
             : pdfSelections.length ? t("Ask about the selection…") : chatNotes?.length > 1 ? t("Ask about the {n} attached notes…", { n: chatNotes.length })
             : chatNotes?.length ? (chatNotes[0].kind === "block" ? t("Ask about the attached block…") : t("Ask about the selected note…"))
             : cursorChip?.sel ? t("Ask about the selection…") : cursorChip ? t("Ask about this block…") : chatDocs.length ? `Ask about ${chatDocs.length} attached page${chatDocs.length > 1 ? "s" : ""}…`
@@ -2125,6 +2145,16 @@ export default function ChatDock({
                   <span className="chatPlusMenuLabel">{t("Add photos & files")}</span>
                   <span className="chatPlusMenuHint">{t("Images or PDFs from your computer")}</span>
                 </button>
+                {onAttachView ? (
+                  <button type="button" className="chatPlusMenuItem"
+                    onClick={() => { setOpenPopover(null); onAttachView(); }}>
+                    <span className="chatPlusMenuIcon">
+                      <EyeIcon size={16} />
+                    </span>
+                    <span className="chatPlusMenuLabel">{t("Attach what I see")}</span>
+                    <span className="chatPlusMenuHint">{t("The visible part of the page, with your handwriting")}</span>
+                  </button>
+                ) : null}
                 <button type="button" className="chatPlusMenuItem"
                   onClick={() => { setOpenPopover(null); setDocPickerQuery(""); setDocPicker(true); }}>
                   <span className="chatPlusMenuIcon">

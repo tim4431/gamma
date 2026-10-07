@@ -7,7 +7,7 @@
 // chat/AgentChanges.jsx.
 import { changePlace, isChange } from "./agentSteps.js";
 
-const REVERTIBLE = new Set(["edit", "create", "move"]);
+const REVERTIBLE = new Set(["edit", "create", "move", "delete"]);
 
 // A note change recorded for reverting (changes saved by an older version
 // have no `revert`).
@@ -21,9 +21,11 @@ export function canRevert(a) {
 }
 
 // A reverted change that can be put back. A new note needs the place it
-// was made in, which older actions did not record.
+// was made in, which older actions did not record; a deletion the blocks
+// it took.
 export function canRedo(a) {
-  return recorded(a) && !!a.reverted && (a.kind !== "create" || typeof a.revert.parent === "string");
+  return recorded(a) && !!a.reverted && (a.kind !== "create" || typeof a.revert.parent === "string")
+    && (a.kind !== "delete" || Array.isArray(a.revert.blocks));
 }
 
 // The actions as the request's history sends them for the replay: the

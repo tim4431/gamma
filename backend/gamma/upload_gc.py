@@ -40,13 +40,14 @@ Who notices what:
 Docs: docs/dev/user_db.md "Stored files".
 """
 
+import sqlite3
 import threading
 import time
 
 from . import storage
 from .db import connect_pages_db, page_now, parse_stamp, workspace_ids, ws_dir
 from .logbuf import log
-from .storage import upload_refs
+from .storage import UPLOAD_REF_RE, upload_refs
 
 RETAIN_S = 30 * 86400         # how long an unreferenced file is kept
 UPLOAD_GRACE_S = 15 * 60      # a younger file is never recorded (upload → attach window)
@@ -67,12 +68,23 @@ PURGE_SHARE = 0.2
 def referenced(conn) -> set[str]:
     """Every stored-file name the workspace's blocks reference, lowercased
     (compared without case, as the old ``LIKE`` did), in one pass over the
-    rows that mention an upload or carry a ``doc_id``."""
+    rows that mention an upload or carry a ``doc_id`` — and every one its
+    AI chats name: a picture attached to a message is a stored upload the
+    conversation points at (``/api/uploads/<name>`` in the saved messages'
+    JSON, the one grammar; gamma/ai_pictures.py), in the active
+    conversations and the archived ones alike."""
     names = set()
     for content, props in conn.execute(
             "SELECT content, properties FROM unified_blocks WHERE instr(content, '/api/uploads/') > 0 "
             "OR instr(properties, '/api/uploads/') > 0 OR doc_id IS NOT NULL"):
         names.update(n.lower() for n in upload_refs(content or "", props or "{}"))
+    for table in ("chats", "chat_history"):
+        try:
+            rows = conn.execute(f"SELECT messages FROM {table} WHERE instr(messages, '/api/uploads/') > 0")
+        except sqlite3.OperationalError:  # a database from before the table existed
+            continue
+        for (messages,) in rows:
+            names.update(n.lower() for n in UPLOAD_REF_RE.findall(messages or ""))
     return names
 
 

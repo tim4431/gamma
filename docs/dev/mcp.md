@@ -167,11 +167,12 @@ Ask Codex to find a page, search a topic, or summarize notes. Tools available:
 | `read_chats` | The AI chat kept with a page or folder: the current conversation as a transcript, earlier ones by `chat_id` |
 | `view_pdf_page` | One PDF page as an image (a scan, a figure, a table's layout) |
 | `view_ink` | The user's handwriting as an image: a group's strokes on their PDF page or sheet of paper, or a whole page with all its handwriting |
+| `view_image` | The pictures a note block embeds (`![alt](/api/uploads/…)` in its markdown), all or one by index |
 | `cite` | The citation records kept with pages: the paper metadata, its BibTeX, the slide citation |
 | `read_gamma_link` | Resolve and read a page, block, or share URL, including PDF page context; a folder-share URL lists the folder's pages |
 | `export_page` | One page as Markdown text, or as a PDF file: the annotated paper or the notes typeset |
 
-The first nine are the Gamma chat's own tools (`gamma/ai_tools.py`, described
+The first ten are the Gamma chat's own tools (`gamma/ai_tools.py`, described
 in [ai_tools.md](ai_tools.md)), run through the same dispatcher with a
 workspace-wide, non-writable scope. The allowlist is derived from the registry
 (`ai_tools.mcp_tools`, `READ_TOOLS` in `mcp_server.py`): every reading tool
@@ -184,7 +185,7 @@ and restoring is a change; and every write tool, because the connection is
 read-only. The chat's tool permissions (Settings → AI → Tool usage) do not
 govern this connection: the token is its own grant, created and revoked in
 Integrations. `read_gamma_link` and `export_page` exist only here.
-`view_pdf_page`'s and `view_ink`'s pictures go out as MCP `image` items,
+`view_pdf_page`'s, `view_ink`'s and `view_image`'s pictures go out as MCP `image` items,
 which the client shows the model as images.
 
 ### Links in results

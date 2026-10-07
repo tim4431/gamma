@@ -48,7 +48,7 @@ def test_initialize_and_read_tools(client, connection):
     # a new one is offered without touching the adapter); the literal makes growth visible.
     assert {t["name"] for t in tools} == mcp_tools() | {"read_gamma_link", "export_page"}
     assert {t["name"] for t in tools} == {"list_pages", "list_folders", "read_page", "read_block", "read_chats",
-                                          "view_pdf_page", "view_ink", "cite", "search_library",
+                                          "view_pdf_page", "view_ink", "view_image", "cite", "search_library",
                                           "read_gamma_link", "export_page"}
     assert all(t["annotations"]["readOnlyHint"] for t in tools)
     assert all(t["icons"] == init.json()["result"]["serverInfo"]["icons"] for t in tools)

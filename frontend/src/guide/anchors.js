@@ -98,7 +98,7 @@ export const ANCHORS = {
   "chat.composer": { view: "chat", description: "The message composer and Send button" },
   "chat.input": { view: "chat", description: "Chat message text box" },
   "chat.setup": { view: "chat", description: "The setup card the chat shows while no AI is connected" },
-  "chat.imageContext": { view: "chat", description: "PDF selections attached to the message" },
+  "chat.imageContext": { view: "chat", description: "Pictures attached to the message" },
   "chat.context": { view: "chat", description: "Add attachments or library pages" },
   "chat.settings": { view: "chat", description: "Chat model, reasoning, context and tool settings" },
   "chat.tools": { view: "chat", description: "Enable or disable assistant tools" },

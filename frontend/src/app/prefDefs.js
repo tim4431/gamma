@@ -299,6 +299,11 @@ export const PREFS = {
   chatContextChars: pref("gamma-chat-context-chars", ACCOUNT, 60000, CONTEXT_CHARS),
   metaContextChars: pref("gamma-meta-context-chars", ACCOUNT, 6000, CONTEXT_CHARS),
   multiContextChars: pref("gamma-multi-context-chars", ACCOUNT, 120000, CONTEXT_CHARS),
+  // Pictures per chat message (the request's max_pictures): attached
+  // pictures, selection crops, handwriting and area highlights share it,
+  // and the newest earlier pictures stay in the conversation under the same
+  // number (gamma/ai_pictures.py; its DEFAULT_BUDGET and MAX_BUDGET).
+  chatPictures: pref("gamma-chat-pictures", ACCOUNT, 12, intIn(1, 64)),
 
   // --- Prompts (Settings → AI → Chat; "" = built-in default from /api/ai/models) ---
   chatSystem: pref("gamma-chat-system", ACCOUNT, ""),

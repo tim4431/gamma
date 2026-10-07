@@ -35,6 +35,10 @@ export function approvalTitle(approval, { titleOf = () => "", permission = "" } 
       if (preview.src_title) return t("Move a note from “{from}” to “{title}”", { from: preview.src_title, title });
       return preview.parent ? t("Move a note under “{parent}” in “{title}”", { parent: preview.parent, title })
         : t("Move a note in “{title}”", { title });
+    case "delete_block": return t("Delete a {what} in “{title}”", { what: deletedKind(preview.what), title });
+    case "clip_region":
+      return preview.what ? t("Clip a picture of {what} in “{title}”", { what: preview.what, title })
+        : t("Clip a picture in “{title}”", { title });
     case "save_paper":
       if (preview.existed) return t("File “{title}” in {folder}", { title, folder: preview.to });
       return preview.to ? t("Save “{title}” to {folder}", { title, folder: preview.to })
@@ -47,6 +51,7 @@ export function approvalTitle(approval, { titleOf = () => "", permission = "" } 
     case "read_chats": return t("Read an earlier AI chat");
     case "view_pdf_page": return t("Look at PDF page {page}", { page: args.pdf_page || "?" });
     case "view_ink": return t("Look at your handwriting");
+    case "view_image": return t("Look at a note's pictures");
     case "cite": return t("Look up citation records");
     case "search_library": return t("Search your library for “{query}”", { query: args.query || "" });
     case "search_papers": return t("Search papers online for “{query}”", { query: args.query || "" });
@@ -55,6 +60,15 @@ export function approvalTitle(approval, { titleOf = () => "", permission = "" } 
     case "fetch_paper": return t("Fetch {source}", { source: args.source || t("a document") });
     default: return permission ? t("Use “{permission}”", { permission }) : t("Use a tool");
   }
+}
+
+// What a deletion takes, as the server names it (gamma/ai_tools.py
+// _deleted_kind), in the user's language.
+export function deletedKind(what) {
+  return {
+    highlight: () => t("highlight"), handwriting: () => t("handwriting"), "text box": () => t("text box"),
+    "page of paper": () => t("page of paper"),
+  }[what]?.() || t("note");
 }
 
 // What the chip of a call the user did not allow says: why, and the change

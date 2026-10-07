@@ -80,6 +80,7 @@ results").
 | `read_chats` | Read pages | folder + page | Read the AI chat kept with a page or folder: the current conversation as a numbered transcript, the earlier ones by `chat_id` |
 | `view_pdf_page` | View pages and handwriting | folder + page | Look at one page of the page's PDF as a picture — a scan with no usable text layer, a figure, a table's layout |
 | `view_ink` | View pages and handwriting | folder + page | Look at the user's handwriting as a picture: a group's strokes on their PDF page or page of paper, cropped to them, or the whole page with all its handwriting |
+| `view_image` | View pages and handwriting | folder + page | Look at the pictures a note block embeds (`![alt](/api/uploads/…)` in its markdown), all of them or one by index |
 | `cite` | Read pages | folder + page | The citation records kept with pages: the paper metadata, its BibTeX and the slide citation, for up to 50 pages |
 | `search_library` | Search library | folder + page | Full-text search over the reachable pages' notes AND PDF text; hits carry a `source` (note hits: block id + page, PDF hits: page number). `search_pdfs` is its deprecated alias (replay only) |
 | `search_papers` | Search papers online | folder + page | Scholarly search outside the library — Crossref, arXiv and OpenAlex at once, or a direct DOI / arXiv-id lookup — returning merged registry records (citation count, the start of the abstract) with the `doi:` / `arXiv:` string `fetch_paper` takes; an optional year filter and citation or recency order |
@@ -94,6 +95,8 @@ results").
 | `edit_block` | Edit note blocks | folder + page | Replace one note block's markdown text |
 | `create_block` | Edit note blocks | folder + page | Add a note block under a page or block, optionally after a sibling |
 | `move_block` | Edit note blocks | folder + page | Re-parent/reorder a note block (with its subtree) |
+| `delete_block` | Edit note blocks | folder + page | Delete a note block with everything under it; the user can revert |
+| `clip_region` | Edit note blocks | folder + page | Store a picture of a PDF region (with the handwriting on it, if asked) or of a handwriting block as an upload the notes can embed, and return its URL |
 
 ### list_pages (folder only)
 
@@ -146,12 +149,13 @@ the position's `width` × `height`, into page fractions,
 (`highlights.is_highlight`: a position, no ink group), never for a text
 box, which has no quote either, nor for a highlight placed by its page
 alone. At most
-`MAX_AREA_CROPS` (4) per page per read;
+`MAX_AREA_CROPS` (12) per page per read, a guard against a page covered in rectangles;
 the rest say "no picture: more than the limit on this page". `read_block`
 does the same on its outline lines, and the chat context does it for the
-notes of a context page (the pictures go with the message's images; the
-coverage entry's `area_pictures` says how many, and the chat shows a
-"Pictures of N area highlights sent" pill).
+notes of a context page (the pictures go with the message's own, within
+its picture budget — "Pictures" in [ai.md](ai.md#pictures); the coverage
+entry's `area_pictures` says how many went, and the chat shows a "Pictures
+of N area highlights sent" pill).
 
 What the conversation context already holds is never sent again. The
 chat's coverage report rides in the scope (`scope["coverage"]`,
@@ -250,7 +254,11 @@ The armed prompt tells the model when a picture is worth its tokens
 (missing or garbled extracted text, a figure, handwriting) and to say when
 an answer was read from one. A page without a PDF, a page number past the
 end (the count is named) and a file pdfium can't open are refused in text.
-Its chip is 👁 "Looked at p. N of …", carrying `page_id` + `pdf_page`.
+Its chip is 👁 "Looked at p. N of …", carrying `page_id` + `pdf_page` and
+`picture`, the `GET /api/ai/page-image/{page_id}?page=N` URL the expanded
+chip shows; the result names the same URL for the model to embed in its
+reply as a markdown image when the user should see the page ("Pictures" in
+[ai.md](ai.md#pictures)).
 
 ### view_ink (both scopes)
 
@@ -286,8 +294,9 @@ as every tool picture is. It rides on the chip's `images` like
 `view_pdf_page`'s and is never saved. The result names the block, the
 page and the stroke count, quotes the caption, and asks the model to mark a
 word it cannot read `[illegible]` rather than guess. Its chip is ✎
-"Looked at handwriting in …" (kind `ink`, with `block_id`), and the open
-page rings that block. It shares the View permission with `view_pdf_page`.
+"Looked at handwriting in …" (kind `ink`, with `block_id` and `picture`,
+the `GET /api/ai/ink-image/{block_id}` URL it expands to and the result
+names for the reply), and the open page rings that block. It shares the View permission with `view_pdf_page`.
 
 With `edit_block` armed, the agent prompt also says how to transcribe:
 look with view_ink, then write the text into the group's caption, as an
@@ -296,6 +305,22 @@ block's ⋮⋮ menu) sends exactly that request with the block attached as a
 chip, and an attached handwriting block's picture rides with the message
 (see "Pointing the chat at notes" in [ai.md](ai.md)). So a chat without
 tools still answers with the transcription.
+
+### view_image (both scopes)
+
+The model's eyes on the pictures in the notes. A note's picture is a
+markdown image in its text (`![alt](/api/uploads/<hash>.png)`, sized
+`![alt|300](…)` by the editor), which `read_block` shows as that line and
+nothing more. `block_id` names a note block; its pictures (`note_pictures`,
+in order), up to `MAX_VIEW_IMAGES` (6) or the one `index` names (1-based),
+are read from the workspace's store, sized like every picture
+(`ai_pictures.read_stored`) and ride on the chip's `images` like
+`view_pdf_page`'s page. The result lists them with their alt text and size
+and names each URL, which the model may embed in its reply. A block without
+a picture, an index past the end and a file gone from the store are
+refused in text. Its chip is "Looked at N pictures in a note of …" (kind
+`image`, with `block_id` and `picture`, the first one's URL). Shares the
+View permission and `PICTURE_TOOLS` with the other two.
 
 ### cite (both scopes)
 
@@ -1014,6 +1039,50 @@ summary block to my notes"*. Handwriting, citations, saving and Recently
 deleted: *"transcribe my handwriting on this page"*, *"BibTeX for everything
 in this folder"*, *"save the three most cited follow-ups into refs"*, *"bring
 back the page on Rydberg blockade I deleted last week"*.
+
+### delete_block (both scopes)
+
+Removes a note block with everything nested under it, in the Edit note
+blocks permission. A page id is refused (the agent never deletes pages); a
+highlight block's deletion removes its mark from the PDF and a handwriting
+block's the handwriting, which the approval card says (`what`:
+`_deleted_kind` — note, highlight, handwriting, text box, page of paper —
+and `children`, how many blocks go with it, over a diff of the block's
+text struck out). The action (kind `delete`, with `page_id`, `block_id`,
+`title`) records every block of the subtree, parent first, as `revert`
+(`{"blocks": [[id, parent, position, content, properties], …]}`), so the
+user's revert puts the subtree back where it was with the same ids and the
+redo takes it again (`ai_revert._plan_delete`; a record over
+`_DELETE_REVERT_MAX` chars is not kept and the result says so). The prompt
+tells the model to delete only what the user asked to remove and to edit
+instead when only part of a block should go.
+
+### clip_region (both scopes)
+
+Stores a picture for the notes to embed, in the Edit note blocks
+permission, and answers with its URL: a PDF page of `page_id` (`pdf_page`,
+1-based) or its region `box` (`[x0, y0, x1, y1]` as page fractions), with
+the user's handwriting on it when `ink` is true (`ai_pictures.render_region`);
+or a handwriting block's or a page of paper's picture (`block_id`, `area`
+"page" for the whole page — what `view_ink` shows). The picture is sized
+like every other and stored under its content hash (`ai_pictures.store_picture`,
+the workspace's quota), so the same region clipped twice is one file; the
+upload GC keeps it while a note or a chat names it. The result tells the
+model to put it in a note as a line of its own, `![caption](url)`, with
+`create_block` or `edit_block`. The approval card shows the region from the
+same `GET /api/ai/page-image` / `GET /api/ai/ink-image` URL the chat renders
+(`picture` on the preview), storing nothing until the user allows. Its chip
+is "Clipped a picture of …" (kind `clip`, with `url` and `picture`); it is a
+change the budget counts (`MAX_TOOL_ACTIONS`) but not a note change, so it
+has no revert row.
+
+A written block may only name stored files that exist: `edit_block` and
+`create_block` refuse content whose `/api/uploads/` references the
+workspace does not hold (`missing_uploads`; references the block already
+had are not checked), and their approval cards show the pictures a change
+adds (`pictures` on the preview). The prompt says which URLs the model may
+embed: the ones in a picture's label line, `clip_region`'s result, and
+`read_block`'s text.
 
 ## Guardrails
 

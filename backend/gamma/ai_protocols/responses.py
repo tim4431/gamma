@@ -5,7 +5,7 @@ backend (chatgpt.py)."""
 import json
 from urllib.request import Request as URLRequest
 
-from .base import TOOL_IMAGES_NOTE, Protocol, as_int, note_speed, parse_tool_args, tool_image_turns
+from .base import TOOL_IMAGES_NOTE, Protocol, as_int, note_speed, parse_tool_args, tool_image_turns, turn_images
 
 
 def responses_input(messages, pdf_b64s=None, images=None) -> list:
@@ -31,7 +31,11 @@ def responses_input(messages, pdf_b64s=None, images=None) -> list:
                 items.append({"type": "function_call", "call_id": call["id"],
                               "name": call["name"], "arguments": json.dumps(call["arguments"])})
         else:
-            content = [{"type": "input_text", "text": message["content"]}]
+            # An earlier message's pictures, kept in the conversation, go
+            # before its text like the request's own attachments below.
+            content = [*[{"type": "input_image", "image_url": f"data:{media_type};base64,{data}"}
+                         for media_type, data in turn_images(message)],
+                       {"type": "input_text", "text": message["content"]}]
             items.append({"type": "message", "role": "user", "content": content})
     if pdf_b64s or images:
         last = next((item for item in reversed(items)
@@ -102,6 +106,7 @@ class ResponsesWire(Protocol):
     """The Responses stream and token report; a backend adds its request."""
 
     streams_only = True  # always SSE — read_reply joins the deltas
+    picture_tokens = 800  # as on chat completions: a 1568 px page is four tiles
     # Both Responses backends route by service tier: "priority" is the fast
     # one (OpenAI's fast mode, Codex's own Fast), "flex" the cheaper, slower
     # one. The Codex backend's listing says which tiers each model has.

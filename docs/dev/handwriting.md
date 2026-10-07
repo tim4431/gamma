@@ -125,7 +125,9 @@ app ([ipad.md](ipad.md)). Typed text on a page is
   they were written.
 - **Transcribe with AI**, in a group's ⋮⋮ menu, attaches the block to the
   chat and asks for its text in the caption ([ai_tools.md](ai_tools.md)
-  "view_ink").
+  "view_ink"). The chat's "Attach what I see" sends the visible page with
+  the handwriting on it, and the agent's `clip_region` stores a picture of
+  a group for the notes ([ai.md](ai.md#pictures)).
 - A group erased empty deletes its block, and undo brings it back. A
   group whose block holds a caption or notes keeps its block, with an
   empty drawing, so erasing strokes never deletes text.

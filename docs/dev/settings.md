@@ -344,8 +344,9 @@ AI:
   ([ai.md](ai.md#reasoning-effort)). A speed reaches only models whose
   provider offers that service tier ([ai.md](ai.md#speed-service-tier)).
   **Prompts** is the accordion, with one Cancel / Save pair as its action.
-  **Context size** holds the three budgets, with the Standard / Larger /
-  Custom preset as its action. The old `ai-advanced`, `context` and `prompts` pane ids are
+  **Context size** holds the three text budgets and "Pictures per message"
+  (the chat's picture budget, [ai.md](ai.md#pictures)), with the Standard /
+  Larger / Custom preset as its action. The old `ai-advanced`, `context` and `prompts` pane ids are
   aliases of this pane, each jumping to its section.
 - **Tool usage** (pane id `tools`): **Tools**, the master switch and, per chat
   kind (folder / PDF / notes), a permission table (`AgentToolMatrix` in

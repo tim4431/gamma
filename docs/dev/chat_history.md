@@ -60,7 +60,11 @@ on its next update. A tab that comes back into focus (`focus`,
 its version is not the tab's, as long as the tab's copy is saved and no
 reply streams there; the composer's draft stays. Messages carry
 a client-minted `id`, so the versions of one streamed reply are one message;
-older messages match by content. A save that fails on the network or with a
+older messages match by content. A user message's `images` are the pictures
+it sent, by URL ("Pictures" in [ai.md](ai.md#pictures)): a stored upload or
+a region of a PDF page the server draws, never the bytes (a chat saved
+before the store kept data URLs, which still show). The request's history
+carries them, so the newest stay in the model's view. A save that fails on the network or with a
 5xx is retried (1, 3, 8 s). One that still fails, or a refusal, marks the
 bucket in the session's `failed` map, and the dock shows "This conversation
 isn't saved" with Retry until a save goes through. Covered by `tests/chatConflicts.test.mjs`,

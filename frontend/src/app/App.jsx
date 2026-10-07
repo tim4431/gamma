@@ -39,6 +39,7 @@ import { uploadPdf } from "../shared/lib/uploadParts";
 import { CardLabels, KindToggle, ListFindBox, ListSearchElsewhere, PageCard, SelectCheck, ViewToggle } from "../library/FileBrowser";
 import { createChatSession } from "../chat/chatSession";
 import { providerModels } from "../chat/modelPrefs";
+import { addPictures, isPdfPicture, pictureUrl, regionBox, regionPicture } from "../chat/chatPictures.js";
 import SearchPanel from "../search/SearchPanel";
 import LibraryEmpty from "../library/LibraryEmpty";
 import { ContextMenu, MenuButton, MenuDivider, MenuItem, MenuLabel, MenuScope, MenuSelect, SubMenuItem, menuGroups } from "../shared/ui/Menus";
@@ -349,7 +350,7 @@ const RECENTS_CAP = 24;
 const SASH_MARGINS = { coarse: 6, fine: 6 };
 // Agent tools whose applied action changes the open page's block tree
 // (handleAgentEvent reloads it and lights the block up).
-const AI_BLOCK_TOOLS = ["edit_block", "create_block", "move_block"];
+const AI_BLOCK_TOOLS = ["edit_block", "create_block", "move_block", "delete_block"];
 // The Settings panes of the AI group (old pane names resolve first): entering
 // one loads the masked key list and the prompt drafts.
 const AI_SETTINGS_PANES = ["ai", "assistant", "tools"];
@@ -2543,7 +2544,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     multiContextChars, setMultiContextChars,
     toolRounds, setToolRounds, agentReadChars, setAgentReadChars, agentPerms, setAgentPerms,
     agentEnabled, setAgentEnabled,
-    chatImgAutoClear, setChatImgAutoClear,
+    chatImgAutoClear, setChatImgAutoClear, chatPictures, setChatPictures,
     fetchInBackground, setFetchInBackground, delegateReads, setDelegateReads,
   } = appPrefs;
   const viewerWrapRef = useRef(null);
@@ -2941,19 +2942,45 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       : prev?.id === id && prev.from === from && prev.to === to ? prev : { id, from, to })), 120);
   }
   useEffect(() => { clearTimeout(noteSelTimerRef.current); setNoteSel(null); }, [focusedBlockId]);
-  // Figures pending send in the chat (data URLs) — pasted into the chat input
-  // or captured by a Ctrl+drag area selection on the PDF. Lives here (not in
-  // ChatDock) so the viewer can attach even while the chat window is closed.
+  // Pictures pending send in the chat (chat/chatPictures.js): the ones the
+  // dock stored (pasted, picked) and regions of PDF pages the server draws
+  // — a Ctrl+drag area selection, a rectangle highlight's click, "Attach
+  // what I see". Lives here (not in ChatDock) so the viewer can attach even
+  // while the chat window is closed.
   const [chatImages, setChatImages] = useState([]);
-  // Data URLs that came from the PDF (area drags / rect-highlight clicks), as
-  // opposed to images pasted into the chat input. The auto-clear preference
-  // below only ever drops these — a pasted figure must survive PDF clicks.
+  // The pictures that came from the PDF (by URL), as opposed to pictures
+  // pasted into the chat input. The auto-clear preference below only ever
+  // drops these — a pasted picture must survive PDF clicks.
   const pdfImagesRef = useRef(new Set());
-  function addChatImage(dataUrl) {
-    const seen = pdfImagesRef.current;
-    seen.add(dataUrl);
-    while (seen.size > 16) seen.delete(seen.values().next().value);
-    setChatImages((prev) => prev.length >= 4 || prev.includes(dataUrl) ? prev : [...prev, dataUrl]);
+  function addChatPicture(picture) {
+    if (!picture) return;
+    if (isPdfPicture(picture)) {
+      const seen = pdfImagesRef.current;
+      seen.add(pictureUrl(picture));
+      while (seen.size > 16) seen.delete(seen.values().next().value);
+    }
+    setChatImages((prev) => addPictures(prev, [picture], chatPictures));
+  }
+  // "Attach what I see": the visible part of each PDF page in view (at most
+  // two), with the handwriting on it, as regions the server renders.
+  function attachViewToChat() {
+    const scroller = document.querySelector(".pdfViewer");
+    if (!scroller || !focusedBlockId) return;
+    const vr = scroller.getBoundingClientRect();
+    const round = (v) => Math.round(v * 10000) / 10000;
+    const added = [];
+    for (const wrap of scroller.querySelectorAll(".pdfPageWrap[data-page]")) {
+      const r = wrap.getBoundingClientRect();
+      if (!r.width || !r.height) continue;
+      const x0 = Math.max(vr.left, r.left), x1 = Math.min(vr.right, r.right);
+      const y0 = Math.max(vr.top, r.top), y1 = Math.min(vr.bottom, r.bottom);
+      if (x1 - x0 < 40 || y1 - y0 < 40) continue;
+      const box = [(x0 - r.left) / r.width, (y0 - r.top) / r.height, (x1 - r.left) / r.width, (y1 - r.top) / r.height].map(round);
+      const whole = box[0] <= 0.001 && box[1] <= 0.001 && box[2] >= 0.999 && box[3] >= 0.999;
+      added.push(regionPicture("view", focusedBlockId, Number(wrap.dataset.page), whole ? null : box, { ink: true }));
+      if (added.length >= 2) break;
+    }
+    added.forEach(addChatPicture);
   }
   // Ref-mirror of the snapshot auto-clear preference for the mouseup listener.
   const chatImgAutoClearRef = useRef(chatImgAutoClear);
@@ -2965,7 +2992,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   function addHighlightToChat(h, additive) {
     if (!h) return;
     if (h.position?.area) {
-      pdfCaptureRef.current?.(h).then((img) => { if (img) addChatImage(img); });
+      // Its region, as the server renders it from the document.
+      addChatPicture(regionPicture("area", focusedBlockId, h.position.pageNumber, regionBox(h.position)));
     } else {
       addPdfSelection(h.content?.text, additive, highlightSpot(h.position));
     }
@@ -3489,7 +3517,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
             // Optionally the same gesture drops PDF snapshots pending in the
             // chat (Settings → AI chat). Pasted images are never touched.
             if (chatImgAutoClearRef.current && pdfImagesRef.current.size) {
-              setChatImages((prev) => prev.filter((s) => !pdfImagesRef.current.has(s)));
+              setChatImages((prev) => prev.filter((p) => !pdfImagesRef.current.has(pictureUrl(p))));
             }
           }
           return;
@@ -6989,8 +7017,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       // when the tour ends, the PDF snapshots added since go again (a sent
       // one is gone already, a pasted image is never touched).
       snapshotDemo: () => {
-        const before = new Set(chatImages);
-        return () => setChatImages((prev) => prev.filter((src) => before.has(src) || !pdfImagesRef.current.has(src)));
+        const before = new Set(chatImages.map(pictureUrl));
+        return () => setChatImages((prev) => prev.filter((p) => before.has(pictureUrl(p)) || !pdfImagesRef.current.has(pictureUrl(p))));
       },
       prepareNote: (text) => {
         const flat = flattenBlocks(blocks);
@@ -9367,7 +9395,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           onOpenPage={openPageLink}
           pdfSelections={pdfSelections} setPdfSelections={setPdfSelections}
           chatNotes={chatNotes} setChatNotes={setChatNotes} focusedNote={focusedNote} onSelectionSent={() => setNoteSel(null)}
-          chatImages={chatImages} setChatImages={setChatImages}
+          chatImages={chatImages} setChatImages={setChatImages} chatPictureBudget={chatPictures}
+          onAttachView={!homeMode && pageAttach ? attachViewToChat : undefined}
           chatModel={chatSendModel} setChatModel={setChatModel}
           chatEffort={chatEffort} setChatEffort={setChatEffort}
           chatSpeed={chatSpeed} setChatSpeed={setChatSpeed}
@@ -10289,7 +10318,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                 addHighlightToChat(highlights.find(h => h.id === hlId), additive);
               }}
               onHighlightContext={setHighlightMenu}
-              onAreaSelection={addChatImage}
+              onAreaSelection={(sel) => addChatPicture(regionPicture("area", focusedBlockId, sel.pageNumber,
+                regionBox({ boundingRect: sel.rect, width: sel.width, height: sel.height })))}
               onSelectionFinished={readOnly ? undefined : (position, content, hideTip, extras) => {
                 if (extras?.link) {
                   setLinkDialog({ position, content });
@@ -10807,6 +10837,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         context={{
           chatImgAutoClear,
           setChatImgAutoClear,
+          chatPictures,
+          setChatPictures,
           chatContextChars,
           setChatContextChars,
           metaContextChars,
