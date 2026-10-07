@@ -718,6 +718,12 @@ one page.
   `attachments/<Title>.pdf` (shared by pages of one document); the Bundle
   switch off leaves server links instead.
 
+The folder sync ([folder_sync.md](folder_sync.md)) writes the same dialect
+to a directory on a PC, with the PDF beside the note; `unique_name` (the
+` 2`, ` 3` rule, compared ignoring case) and `VaultContext.place_pages` /
+`place_pdf` are shared with it and with the annotated-PDF folder export,
+and `vault_name` also fends off Windows device names (`CON` → `CON_`).
+
 The vault importer above reads all of this back (titles from filenames,
 `^id` anchors and wikilinks into mentions and synced blocks, `tags` into
 labels, the quoted `source` into the paper) — `test_obsidian.py` has the

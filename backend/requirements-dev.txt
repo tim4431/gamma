@@ -3,5 +3,6 @@ pytest
 pytest-xdist   # python -m pytest tests -n auto --dist loadfile
 pytest-timeout # a test that never ends fails with every thread's stack (pytest.ini)
 httpx
+Pillow        # tests/test_ai_pictures.py and the data-URL test exercise the re-encode path
 -r requirements-s3.txt
 moto[s3]       # an in-process S3 for tests/test_offsite.py (skipped without it)

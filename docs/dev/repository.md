@@ -21,6 +21,7 @@ launcher, and desktop release workflows use these locations.
 | `docs/user_guide/` | The user guide (`user_guide.md`) and its animations (`assets/`), published at gammapdf.com/docs |
 | `docs/assets/` | Documentation images and animations |
 | `tools/readme-media/` | README capture scripts, renderers, and recording recipes |
+| `tools/gamma-sync/` | `gamma_sync.py`, the standalone client that keeps a folder of a workspace as a folder on disk, and its README ([folder_sync.md](folder_sync.md)) |
 | `design/brand/` | Authoritative Gamma artwork, variant guidance and output provenance |
 | `tools/branding/` | Unified asset generation and consistency checks; README and Store layout recipes |
 | `tools/user_guide/` | The user guide's animations: one scene per section, generated into `docs/user_guide/assets/` |
