@@ -12,6 +12,7 @@ pending step.
 """
 
 import hashlib
+import json
 import os
 import secrets
 import sqlite3
@@ -21,7 +22,7 @@ from datetime import datetime, timezone
 
 from . import config
 
-SCHEMA_VERSION = 11
+SCHEMA_VERSION = 12
 BUSY_TIMEOUT = 10  # seconds a connection waits for another writer
 
 
@@ -41,6 +42,16 @@ def now() -> str:
 
 def parse(ts: str) -> datetime:
     return datetime.strptime(ts, "%Y-%m-%dT%H:%M:%S.%fZ").replace(tzinfo=timezone.utc)
+
+
+def json_dict(raw) -> dict:
+    """A JSON object column (``report``, ``limits``, ``payload``, ...) as a
+    dict; {} for NULL, bad JSON or anything but an object."""
+    try:
+        value = json.loads(raw or "{}")
+    except ValueError:
+        return {}
+    return value if isinstance(value, dict) else {}
 
 
 def token_hash(token: str) -> str:
@@ -162,7 +173,9 @@ BILLING_EVENTS = """CREATE TABLE IF NOT EXISTS billing_events (
 # of its own, kept in ``dns_record_id`` and ``dns_target`` (``dns.py``).
 # ``hosted_servers.overrides`` are the operator's numbers for this server
 # over its plan's (JSON: quota, per-file cap, accounts, memory, CPUs), and
-# ``env`` its extra environment variables (JSON).
+# ``env`` its extra environment variables (JSON). Step 12:
+# ``hosts.containers`` is the last list of every container its agent
+# reported (JSON), hosted ones and the host's own services alike.
 HOSTS = """CREATE TABLE IF NOT EXISTS hosts (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL UNIQUE,
@@ -177,7 +190,8 @@ HOSTS = """CREATE TABLE IF NOT EXISTS hosts (
     orphans TEXT NOT NULL DEFAULT '[]',
     public_ip TEXT NOT NULL DEFAULT '',
     last_seen_at TEXT,
-    created_at TEXT NOT NULL
+    created_at TEXT NOT NULL,
+    containers TEXT NOT NULL DEFAULT '[]'
 )"""
 HOSTED_SERVERS = """CREATE TABLE IF NOT EXISTS hosted_servers (
     id TEXT PRIMARY KEY,
@@ -223,9 +237,9 @@ FLEET_JOBS_INDEX = "CREATE INDEX IF NOT EXISTS fleet_jobs_host ON fleet_jobs(hos
 # ``resolved_at``, one that comes back opens the row again, and
 # ``dismissed_at`` is the admin's "seen, stop showing it". ``mailed_at``
 # keeps the mail to one per opening.
-# ``metrics``: a sample per host or server (``kind``, ``ref``) and hour
-# (``at`` is the start of the hour), ``data`` a JSON object of numbers
-# (``metrics.py``). The history the Servers tab draws.
+# ``metrics``: a sample per host, server or container (``kind``, ``ref``)
+# and hour (``at`` is the start of the hour), ``data`` a JSON object of
+# numbers (``metrics.py``). The history the Servers tab draws.
 ALERTS = """CREATE TABLE IF NOT EXISTS alerts (
     key TEXT PRIMARY KEY,
     kind TEXT NOT NULL,
@@ -581,6 +595,11 @@ def _step_operations(conn) -> None:
     conn.execute(METRICS)
 
 
+def _step_fleet_containers(conn) -> None:
+    """Every container a host's agent reports, for the Machines tab."""
+    _add_column(conn, "hosts", "containers", "TEXT NOT NULL DEFAULT '[]'")
+
+
 STEPS: list = [
     # (version, name, fn(conn)) — append only; see docs/dev/cloud_accounts.md.
     (2, "external_logins", _step_external_logins),
@@ -593,6 +612,7 @@ STEPS: list = [
     (9, "plans", _step_plans),
     (10, "fleet_orphans", _step_fleet_orphans),
     (11, "operations", _step_operations),
+    (12, "fleet_containers", _step_fleet_containers),
 ]
 
 

@@ -1,7 +1,8 @@
 """The fleet: host tokens, the job queue an agent works through, the
 heartbeat and orphans, placement by committed memory, resizes, upgrades
-(waves and one server), stuck jobs and retries, and the admin's Servers tab
-API and CLI (docs/dev/hosted.md)."""
+(waves and one server), stuck jobs and retries, every container of a host
+and its jobs, and the admin's Machines and Servers tab API and CLI
+(docs/dev/hosted.md)."""
 
 import json
 import threading
@@ -789,12 +790,358 @@ def test_the_fleets_variables_and_an_update_run(client, hosting):
     assert runs[0].endswith("environment servers=2 waves=2")
 
 
+# --- every container of a host: the Machines tab ------------------------------------
+
+def docker(name, **over):
+    """One entry of a heartbeat's ``docker`` list as an agent 0.3.0 sends it."""
+    return {"id": "c" * 64, "name": name, "image": "caddy:2-alpine", "image_id": "sha256:" + "a" * 64,
+            "status": "running", "health": "", "created_at": "2026-10-01T08:00:00Z",
+            "started_at": "2026-10-05T08:00:00Z", "restarts": 0, "restart_policy": "unless-stopped",
+            "memory_mb": 40, "memory_limit_mb": 0, "cpu_pct": 0.3, "image_stale": False, "managed": False,
+            "self": False, "compose": None, "ports": [], **over}
+
+
+def machine():
+    """What runs on the VPS: the account project (the account server, the
+    share host, Caddy), the demo, the agent itself, a hosted server and the
+    container a failed update of the share host kept."""
+    project = lambda service: {"project": "gamma-account", "service": service}  # noqa: E731
+    return [docker("gamma-account-account-1", image="ghcr.io/tim4431/gamma-cloud:latest", compose=project("account"),
+                   ports=["127.0.0.1:9002->9002/tcp"], image_stale=True),
+            docker("gamma-account-share-1", image="ghcr.io/tim4431/gamma:sha-a0d31c6", compose=project("share"),
+                   image_stale=True),
+            docker("gamma-account-share-1-prev", status="exited", compose=project("share"), image_stale=True),
+            docker("gamma-account-caddy-1", compose=project("caddy"), ports=["0.0.0.0:443->443/tcp"]),
+            docker("gamma-demo", image="ghcr.io/tim4431/gamma:sha-1"),
+            docker("gamma-fleet-fleet-1", image="ghcr.io/tim4431/gamma-fleet:latest", self=True, image_stale=True,
+                   compose={"project": "gamma-fleet", "service": "fleet"}),
+            docker("gamma-alice", image=f"{config.FLEET_IMAGE}:latest", managed=True, image_stale=True)]
+
+
+def report(client, token, containers=(), entries=None, **host):
+    body = {"agent_version": "0.3.0", "memory_mb": 8192, "disk_mb": 500_000, "memory_used_mb": 2048,
+            "disk_used_mb": 20_000, "containers": list(containers), **host}
+    if entries is not None:
+        body["docker"] = entries
+    assert client.post("/api/fleet/heartbeat", json=body, headers=bearer(token)).status_code == 200
+
+
+def stored(host_id):
+    with closing(db.connect()) as conn:
+        return json.loads(conn.execute("SELECT containers FROM hosts WHERE id = ?", (host_id,)).fetchone()[0])
+
+
+def test_the_heartbeat_keeps_every_container_checked(client, hosting):
+    host_id, token = make_host()
+    report(client, token, entries=[
+        docker("gamma-account-account-1", compose={"project": "gamma-account", "service": "account", "x": 1},
+               ports=["127.0.0.1:9002->9002/tcp", 7], image_stale=True, status="restarting", health="unhealthy"),
+        docker("/gamma-fleet-fleet-1", self=True, cpu_pct="high", restarts=-3, status="sleeping", health="meh",
+               managed="yes", ports="80", compose="x", image_stale="no", memory_mb=-5, image=["x"]),
+        docker("gamma-alice", managed=True),
+        docker("gamma-account-account-1", status="dead"),                   # the same name again: the first counts
+        {"name": "bad name!"}, {"name": ""}, {"image": "x"}, "junk", 42, docker("x" * 200)])
+    [account, agent, alice] = stored(host_id)
+    assert (account["name"], account["compose"], account["ports"]) == (
+        "gamma-account-account-1", {"project": "gamma-account", "service": "account"}, ["127.0.0.1:9002->9002/tcp"])
+    assert (account["status"], account["health"], account["image_stale"], account["cpu_pct"]) == (
+        "restarting", "unhealthy", True, 0.3)
+    # what an agent sends as nonsense is unknown, not wrong
+    assert agent["name"] == "gamma-fleet-fleet-1" and agent["self"] is True
+    assert (agent["cpu_pct"], agent["restarts"], agent["status"], agent["health"], agent["managed"], agent["ports"],
+            agent["compose"], agent["image_stale"], agent["memory_mb"], agent["image"]) == (
+        None, 0, "", "", False, [], None, None, 0, "")
+    assert alice["managed"] is True and set(alice) == set(account)
+    report(client, token, entries=[docker(f"c-{i}") for i in range(fleet.CONTAINERS_MAX + 5)])
+    assert len(stored(host_id)) == fleet.CONTAINERS_MAX
+    report(client, token)                                                   # an older agent lists none
+    assert stored(host_id) == []
+
+
+def test_which_containers_are_gammas(monkeypatch):
+    """Gamma's by its name, its Compose project or its image's repository,
+    or as a hosted server's or the agent's own; anything else the machine
+    runs is not."""
+    gamma = lambda **c: fleet.is_gamma({"name": "web-1", "image": "nginx:1.27", "compose": None, **c})  # noqa: E731
+    assert not gamma()
+    assert gamma(name="gamma-demo") and not gamma(name="gamma") and not gamma(name="my-gamma-1")
+    assert gamma(compose={"project": "gamma-account", "service": "share"}) and gamma(compose={"project": "gamma"})
+    assert not gamma(compose={"project": "nextcloud", "service": "gamma"}) and not gamma(compose="gamma")
+    digest = "@sha256:" + "f" * 64
+    for image in ("ghcr.io/tim4431/gamma:sha-1", "ghcr.io/tim4431/gamma", "ghcr.io/tim4431/gamma-cloud:latest",
+                  "ghcr.io/tim4431/gamma-fleet" + digest, "ghcr.io/tim4431/gamma-fleet:latest" + digest):
+        assert gamma(image=image), image
+    for image in ("ghcr.io/someone/gamma:1", "caddy:2-alpine", "sha256:" + "a" * 64, "", "registry.example:5000/gamma"):
+        assert not gamma(image=image), image
+    monkeypatch.setattr(config, "FLEET_IMAGE", "registry.example:5000/me/gamma")      # a fleet image of one's own
+    assert gamma(image="registry.example:5000/me/gamma:sha-2") and gamma(image="registry.example:5000/me/gamma")
+    assert not gamma(image="registry.example:5000/me/gamma-other:1")
+    assert gamma(managed=True) and gamma(self=True) and not gamma(managed="yes", self=1)
+
+
+def test_the_verdict_is_kept_with_each_container(client, hosting):
+    """Stored with the heartbeat (whatever the agent says of it); a list
+    kept before that is classified as it is read, for the view and for
+    *Update all*."""
+    register(client, "operator")
+    make_admin("operator")
+    host_id, token = make_host()
+    report(client, token, entries=[docker("gamma-demo", image_stale=True),
+                                   docker("watchtower", image="containrrr/watchtower:latest", image_stale=True,
+                                          gamma=True)])
+    assert [(c["name"], c["gamma"]) for c in stored(host_id)] == [("gamma-demo", True), ("watchtower", False)]
+    older = [{k: v for k, v in c.items() if k != "gamma"} for c in stored(host_id)]
+    with closing(db.connect()) as conn:
+        conn.execute("UPDATE hosts SET containers = ?", (json.dumps(older),))
+        conn.commit()
+    [m] = client.get("/api/admin/machines").json()["machines"]
+    assert [(c["name"], c["gamma"]) for c in m["containers"]] == [("gamma-demo", True), ("watchtower", False)]
+    assert (m["others"], m["updates"]) == (1, 1)
+    jobs = client.post(f"/api/admin/hosts/{host_id}/update-all").json()["jobs"]
+    assert [j["label"] for j in jobs] == ["gamma-demo"]                     # not the other's newer image
+
+
+def test_a_containers_jobs_and_what_is_refused(client, hosting):
+    register(client, "operator")
+    make_admin("operator")
+    host_id, token = make_host()
+    report(client, token, entries=machine())
+    base = f"/api/admin/hosts/{host_id}/containers"
+    r = client.post(f"{base}/gamma-account-share-1/restart")
+    job = r.json()["job"]
+    assert r.status_code == 200 and (job["kind"], job["server_id"], job["label"], job["state"]) == (
+        "container_restart", "", "gamma-account-share-1", "queued")
+    assert job["payload"] == {"container": "gamma-account-share-1"}
+    assert client.post(f"{base}/gamma-account-share-1/restart").json()["job"]["id"] == job["id"]   # not doubled
+    assert next_job(client, token) == {"id": job["id"], "kind": "container_restart", "server_id": "",
+                                       "payload": {"container": "gamma-account-share-1"}}
+    assert finish(client, token, job["id"], result={"container": "gamma-account-share-1", "status": "running",
+                                                    "health": ""}).status_code == 200
+    # a log, with the lines asked for, and kept like a server's log
+    r = client.post(f"{base}/gamma-account-caddy-1/logs", json={"lines": 5000})
+    assert r.json()["job"]["payload"] == {"container": "gamma-account-caddy-1", "lines": 5000}
+    r = client.post(f"{base}/gamma-account-caddy-1/logs")
+    assert r.json()["job"]["payload"] == {"container": "gamma-account-caddy-1"}
+    for lines in (0, 5001, "many"):
+        assert client.post(f"{base}/gamma-account-caddy-1/logs", json={"lines": lines}).status_code in (400, 422)
+    logs = _claim(client, token, "container_logs")
+    lines = [f"2026-10-06T09:00:00.{i:09d}Z " + "x" * 300 for i in range(1000)]
+    finish(client, token, logs["id"], result={"container": "gamma-account-caddy-1", "lines": lines, "since": ""})
+    kept = json.loads(client.get(f"/api/admin/jobs/{logs['id']}").json()["job"]["result"])
+    assert kept["truncated"] is True and fleet.RESULT_MAX < len(json.dumps(kept)) <= fleet.LOGS_RESULT_MAX
+    listed = next(j for j in client.get("/api/admin/jobs").json()["jobs"] if j["id"] == logs["id"])
+    assert json.loads(listed["result"])["line_count"] == len(kept["lines"])
+    # a hosted server's container is changed only through the server; the agent does not stop itself
+    for action in ("restart", "start", "stop", "update", "rollback"):
+        r = client.post(f"{base}/gamma-alice/{action}")
+        assert r.status_code == 409 and "Servers tab" in r.json()["detail"], action
+    assert client.post(f"{base}/gamma-alice/logs").status_code == 200   # reading it is fine
+    assert client.post(f"{base}/gamma-fleet-fleet-1/stop").status_code == 409
+    assert client.post(f"{base}/gamma-fleet-fleet-1/restart").status_code == 200
+    assert client.post(f"{base}/nobody/restart").status_code == 404
+    assert client.post("/api/admin/hosts/h_nope/containers/gamma-demo/restart").status_code == 404
+    assert client.post(f"{base}/gamma-demo/explode").status_code == 404
+    with closing(db.connect()) as conn:
+        audit = [r[0] for r in conn.execute("SELECT detail FROM audit WHERE event = 'fleet.container' ORDER BY id")]
+    assert audit[0] == f"{host_id} gamma-account-share-1 container_restart" and len(audit) == 5   # none refused
+    # a failed one is retried like any job, and taken again
+    stop = client.post(f"{base}/gamma-demo/stop").json()["job"]
+    for j in [next_job(client, token) for _ in range(4)]:
+        finish(client, token, j["id"], *(("failed", {"error": "no such container"}) if j["id"] == stop["id"] else ()))
+    assert client.post(f"/api/admin/jobs/{stop['id']}/retry").json()["job"]["state"] == "queued"
+    assert next_job(client, token)["id"] == stop["id"]
+
+
+def test_the_agents_own_container(client, hosting):
+    """The agent's own update only starts a helper and is done at once, so
+    its row says so until the next heartbeat. Its -prev is never started
+    beside it, nor it beside its -prev when a failed update left the old
+    agent running under that name."""
+    register(client, "operator")
+    make_admin("operator")
+    host_id, token = make_host()
+    entries = machine() + [docker("gamma-fleet-fleet-1-prev", status="exited", image="ghcr.io/tim4431/gamma-fleet:old")]
+    report(client, token, entries=entries)
+    base = f"/api/admin/hosts/{host_id}/containers"
+    r = client.post(f"{base}/gamma-fleet-fleet-1-prev/start")
+    assert r.status_code == 409 and "second agent" in r.json()["detail"]
+    own = lambda: next(c for c in client.get("/api/admin/machines").json()["machines"][0]["containers"]  # noqa: E731
+                       if c["self"])
+    assert own()["helper"] == ""
+    with closing(db.connect()) as conn:                                     # the last heartbeat, a minute ago
+        conn.execute("UPDATE hosts SET last_seen_at = ?", (db.after(-60),))
+        conn.commit()
+    client.post(f"{base}/gamma-fleet-fleet-1/update")
+    finish(client, token, _claim(client, token, "container_update")["id"],
+           result={"container": "gamma-fleet-fleet-1", "image": "ghcr.io/tim4431/gamma-fleet:latest",
+                   "note": "a helper replaces the agent"})
+    assert own()["helper"] == "container_update"
+    report(client, token, entries=entries)                                  # the new agent's first heartbeat
+    assert own()["helper"] == ""
+    # the helper gave up: the old agent runs again as -prev, the new one is stopped under the name
+    flipped = [e for e in machine() if not e["self"]] + [
+        docker("gamma-fleet-fleet-1", status="exited"), docker("gamma-fleet-fleet-1-prev", self=True)]
+    report(client, token, entries=flipped)
+    assert client.post(f"{base}/gamma-fleet-fleet-1/start").status_code == 409
+    assert client.post(f"{base}/gamma-fleet-fleet-1/rollback").status_code == 200
+    assert client.post(f"{base}/gamma-demo/start").status_code == 200      # any other container starts
+
+
+def test_a_done_update_or_rollback_says_what_is_known_of_the_image(client, hosting):
+    register(client, "operator")
+    make_admin("operator")
+    host_id, token = make_host()
+    report(client, token, entries=machine())
+    base = f"/api/admin/hosts/{host_id}/containers/gamma-account-share-1"
+    stale = lambda: {c["name"]: c for c in stored(host_id)}["gamma-account-share-1"]["image_stale"]  # noqa: E731
+    job = client.post(f"{base}/update").json()["job"]
+    finish(client, token, _claim(client, token, "container_update")["id"], "failed", {"error": "health check"})
+    assert stale() is True                                                    # a failure changes nothing
+    client.post(f"/api/admin/jobs/{job['id']}/retry")
+    finish(client, token, _claim(client, token, "container_update")["id"],
+           result={"container": "gamma-account-share-1", "image": "ghcr.io/tim4431/gamma:sha-a0d31c6"})
+    assert stale() is False                                                   # until the next heartbeat
+    client.post(f"{base}/rollback")
+    finish(client, token, _claim(client, token, "container_rollback")["id"])
+    assert stale() is None
+    report(client, token, entries=machine())
+    assert stale() is True
+
+
+def test_update_all_takes_the_newer_images_and_the_agents_own_last(client, hosting):
+    register(client, "operator")
+    make_admin("operator")
+    host_id, token = make_host()
+    report(client, token, entries=machine() + [docker("watchtower", image="containrrr/watchtower", image_stale=True)])
+    [m] = client.get("/api/admin/machines").json()["machines"]
+    assert (m["updates"], m["agent_stale"]) == (3, True)    # not alice's, the kept share-1-prev's nor the other's
+    r = client.post(f"/api/admin/hosts/{host_id}/update-all")
+    jobs = r.json()["jobs"]
+    assert r.status_code == 200 and [(j["label"], j["state"]) for j in jobs] == [
+        ("gamma-account-account-1", "queued"), ("gamma-account-share-1", "queued"), ("gamma-fleet-fleet-1", "held")]
+    assert len({j["wave"].partition("/")[0] for j in jobs}) == 1 and jobs[2]["wave"].endswith("/002")
+    again = client.post(f"/api/admin/hosts/{host_id}/update-all").json()["jobs"]
+    assert [j["id"] for j in again] == [j["id"] for j in jobs]               # a second click doubles nothing
+    first = {j["payload"]["container"]: j for j in (next_job(client, token), next_job(client, token))}
+    assert set(first) == {"gamma-account-account-1", "gamma-account-share-1"}
+    assert next_job(client, token) is None                                  # the agent's waits for the others
+    finish(client, token, first["gamma-account-account-1"]["id"])
+    finish(client, token, first["gamma-account-share-1"]["id"], "failed", {"error": "pull failed"})
+    assert next_job(client, token) is None                                  # a failure holds it too
+    client.post(f"/api/admin/jobs/{first['gamma-account-share-1']['id']}/cancel")
+    own = next_job(client, token)
+    assert own["payload"] == {"container": "gamma-fleet-fleet-1"}
+    finish(client, token, own["id"], result={"container": "gamma-fleet-fleet-1", "note": "a helper replaces the agent"})
+    [m] = client.get("/api/admin/machines").json()["machines"]
+    assert (m["agent_stale"], m["updates"]) == (False, 1)                   # the share host's is still to do
+    [share] = client.post(f"/api/admin/hosts/{host_id}/update-all").json()["jobs"]
+    assert (share["label"], share["state"]) == ("gamma-account-share-1", "queued")
+    finish(client, token, _claim(client, token, "container_update")["id"])
+    r = client.post(f"/api/admin/hosts/{host_id}/update-all")
+    assert r.status_code == 409 and "newer image" in r.json()["detail"]
+    assert client.post("/api/admin/hosts/h_nope/update-all").status_code == 404
+
+
+def test_a_hosts_token_is_rotated(client, hosting):
+    register(client, "operator")
+    make_admin("operator")
+    host_id, token = make_host()
+    r = client.post(f"/api/admin/hosts/{host_id}/token")
+    new = r.json()["token"]
+    assert r.status_code == 200 and new.startswith("gf_") and new != token and f"--token {new}" in r.json()["bootstrap"]
+    assert "token_hash" not in r.json()["host"]
+    assert client.get("/api/fleet/jobs", headers=bearer(token)).status_code == 401
+    assert next_job(client, new) is None
+    assert client.post("/api/admin/hosts/h_nope/token").status_code == 404
+    with closing(db.connect()) as conn:
+        [detail] = [r[0] for r in conn.execute("SELECT detail FROM audit WHERE event = 'fleet.host_token'")]
+    assert detail == f"{host_id} vps-1" and new not in detail
+
+
+def test_a_host_is_removed_once_no_server_is_on_it(client, hosting):
+    register(client, "operator")
+    make_admin("operator")
+    host_id, token = make_host()
+    alice = make_account("alice", "plus")
+    report(client, token, entries=machine())
+    failed = client.post(f"/api/admin/hosts/{host_id}/containers/gamma-demo/restart").json()["job"]
+    finish(client, token, next_job(client, token)["id"])                    # alice's create
+    finish(client, token, _claim(client, token, "container_restart")["id"], "failed", {"error": "x"})
+    r = client.delete(f"/api/admin/hosts/{host_id}")
+    assert r.status_code == 409 and "1 server" in r.json()["detail"]
+    client.post(f"/api/admin/servers/{server(alice)['id']}/delete")        # its delete job waits
+    assert client.delete(f"/api/admin/hosts/{host_id}").json() == {"ok": True}
+    assert client.get("/api/admin/hosts").json()["hosts"] == []
+    assert client.get("/api/fleet/jobs", headers=bearer(token)).status_code == 401
+    assert {r["state"] for r in jobs_of(alice) if r["kind"] == "delete"} == {"canceled"}
+    assert job_row(failed["id"])["state"] == "canceled"                      # its alert does not linger
+    assert client.delete(f"/api/admin/hosts/{host_id}").status_code == 404
+    with closing(db.connect()) as conn:
+        detail = conn.execute("SELECT detail FROM audit WHERE event = 'fleet.host_remove'").fetchone()[0]
+    assert detail == f"{host_id} vps-1"
+
+
+def test_the_machines_view(client, hosting):
+    me = register(client, "operator")
+    host_id, token = make_host()
+    alice = make_account("alice", "plus")
+    finish(client, token, next_job(client, token)["id"])
+    entries = machine() + [docker("gamma-alice-prev", managed=True, status="exited"),
+                           docker("gamma-ghost", managed=True), docker("watchtower", image_stale=True),
+                           docker("nextcloud-app-1", image="nextcloud:29", compose={"project": "nextcloud",
+                                                                                    "service": "app"})]
+    report(client, token, containers=[{"label": "alice", "running": True}, {"label": "ghost", "running": True}],
+           entries=entries)
+    assert client.get("/api/admin/machines").status_code == 403
+    make_admin("operator")
+    d = client.get("/api/admin/machines").json()
+    [m] = d["machines"]
+    assert d["default_image"] == fleet.default_image() and m["id"] == host_id and "token_hash" not in m
+    cs = {c["name"]: c for c in m["containers"]}
+    assert len(cs) == len(entries)
+    sid = server(alice)["id"]
+    assert cs["gamma-alice"]["server"] == {"id": sid, "label": "alice", "state": "running", "username": "alice"}
+    assert (cs["gamma-alice"]["orphan"], cs["gamma-alice"]["kept"]) == (False, False)
+    assert cs["gamma-alice-prev"]["kept"] is True and cs["gamma-alice-prev"]["server"]["id"] == sid
+    ghost = cs["gamma-ghost"]
+    assert (ghost["orphan"], ghost["server"], ghost["label"]) == (True, None, "ghost")
+    assert cs["gamma-account-share-1-prev"]["kept"] is True and "server" not in cs["gamma-account-share-1"]
+    assert {n for n, c in cs.items() if not c["gamma"]} == {"watchtower", "nextcloud-app-1"} and m["others"] == 2
+    assert (m["agent_stale"], m["updates"], m["servers"], m["cpu_pct"]) == (True, 3, 1, None)   # it sent no CPU
+    assert [j["kind"] for j in m["jobs"]] == ["create"]
+    for _ in range(25):
+        client.post(f"/api/admin/hosts/{host_id}/containers/gamma-demo/logs")
+    [m] = client.get("/api/admin/machines").json()["machines"]
+    assert len(m["jobs"]) == 20 and m["jobs"][0]["kind"] == "container_logs"
+    # the orphan goes through the orphan endpoint, as before
+    r = client.post(f"/api/admin/hosts/{host_id}/orphans/ghost/remove")
+    assert r.status_code == 200 and r.json()["job"]["payload"] == {"label": "ghost", "account_id": ""}
+    page = client.get("/admin").text
+    assert page.index("data-tab=clients") < page.index("data-tab=machines") < page.index("data-tab=servers")
+    assert "id=tab-machines" in page and "loadMachines" in page and "fleetUI" in page and "Update all" in page
+    assert me
+
+
+def test_step_12_adds_the_containers_column():
+    with closing(db.connect()) as conn:
+        conn.execute("ALTER TABLE hosts DROP COLUMN containers")
+        conn.execute("PRAGMA user_version = 11")
+        conn.commit()
+    assert steps_after(11)[0] == "fleet_containers"
+    assert db.ensure_current() == steps_after(11)
+    with closing(db.connect()) as conn:
+        assert "containers" in [r[1] for r in conn.execute("PRAGMA table_info(hosts)")]
+        host, _ = fleet.add_host(conn, "vps-1")
+        assert host["containers"] == []
+
+
 def test_step_10_adds_the_orphans_column():
     with closing(db.connect()) as conn:
         conn.execute("ALTER TABLE hosts DROP COLUMN orphans")
         conn.execute("PRAGMA user_version = 9")
         conn.commit()
-    assert db.ensure_current() == steps_after(9) == ["fleet_orphans", "operations"]
+    assert steps_after(9)[:2] == ["fleet_orphans", "operations"]               # later steps follow
+    assert db.ensure_current() == steps_after(9)
     with closing(db.connect()) as conn:
         host, _ = fleet.add_host(conn, "vps-1")
         assert host["orphans"] == []
@@ -815,7 +1162,8 @@ def test_step_11_adds_the_operations_columns_and_tables():
         conn.execute("INSERT INTO invites (code, uses_left, plan, created_at) VALUES ('old', 3, 'free', ?)", (db.now(),))
         conn.execute("PRAGMA user_version = 10")
         conn.commit()
-    assert db.ensure_current() == steps_after(10) == ["operations"]
+    assert steps_after(10)[0] == "operations"
+    assert db.ensure_current() == steps_after(10)
     with closing(db.connect()) as conn:
         for table, columns in added.items():
             have = [r[1] for r in conn.execute(f"PRAGMA table_info({table})")]
@@ -892,7 +1240,13 @@ def test_cli(capsys, client, hosting):
     assert "GAMMA_FLEET_HOST_TOKEN=gf_" in out
     manage.main(["hosts"])
     out = capsys.readouterr().out
-    assert "vps-1" in out and "committed=0MB" in out
+    assert "vps-1" in out and "committed=0MB" in out and "containers=0 updates=0" in out
+    with closing(db.connect()) as conn:
+        host = conn.execute("SELECT * FROM hosts WHERE name = 'vps-2'").fetchone()
+        fleet.heartbeat(conn, dict(host), {"memory_mb": 8192, "disk_mb": 500_000, "docker": machine()})
+        conn.commit()
+    manage.main(["hosts"])
+    assert "containers=7 updates=3" in capsys.readouterr().out
     make_account("dora", "free")
     with pytest.raises(SystemExit):
         manage.main(["provision", "dora"])                      # free plan

@@ -54,6 +54,14 @@ export async function pdfTouchScenarios({ server, browser, alice, makePdf, step,
     }
     assert(Math.abs(await boxWidth() - width) < 1, `${button} reaches a ${width} px page: ${await boxWidth()}`);
   };
+  const toTop = () => page.locator(".pdfViewer").evaluate((el) => el.scrollTo(0, 0));
+  // 400% at the top of page 1 with its detail canvas in: where a step leaves
+  // the page for the next one.
+  const at400 = async (button) => {
+    await zoomUntil(button, 2448);
+    await toTop();
+    await until(async () => (await raster(1)).covers && painted(1, "detail"), { what: "400% detail again" });
+  };
   const withinCap = (hs) => hs.every((h) => h.canvases.every(([w, ht]) => w * ht <= CAP && Math.max(w, ht) <= 4096));
   await step("pdf touch: 400% paints within iPad canvas limits and releases distant pages", async () => {
     const pdf = makePdf(Array.from({ length: 8 }, (_, p) => Array.from({ length: 24 }, (_, n) => `Page ${p + 1}, line ${n + 1}: high zoom reading`)));
@@ -84,7 +92,7 @@ export async function pdfTouchScenarios({ server, browser, alice, makePdf, step,
       const t = w.querySelector(".textLayer").getBoundingClientRect(), b = w.getBoundingClientRect();
       return t.right <= b.right + 1 && t.bottom <= b.bottom + 1;
     })), "every text layer, built or not, stays inside its page box");
-    await page.locator(".pdfViewer").evaluate((el) => el.scrollTo({ left: 0, top: 0 }));
+    await toTop();
     await until(() => painted(1), { what: "400% bitmap contains PDF text" });
     // Past the cap: the base is a quarter-size preview and a detail canvas at
     // the screen's own resolution covers the part of the page in view.
@@ -132,9 +140,8 @@ export async function pdfTouchScenarios({ server, browser, alice, makePdf, step,
   await step("pdf touch: below the cap one supersampled canvas; the text layer and its selection survive a zoom", async () => {
     // 200% is the last step before the cap bites at DPR 2 (Letter at 220% would
     // need a smaller ratio than 2 backing px per CSS px).
-    for (let i = 0; i < 10; i++) await page.getByRole("button", { name: "Zoom out", exact: true }).click();
-    await until(async () => Math.abs((await page.locator('[data-page="1"]').boundingBox()).width - 1224) < 1, { what: "200%" });
-    await page.locator(".pdfViewer").evaluate((el) => el.scrollTo({ left: 0, top: 0 }));
+    await zoomUntil("Zoom out", 1224);
+    await toTop();
     await until(async () => { const r = await raster(1); return !r.shown && pixels(r.detail) === 0 && r.baseRatio >= 1.99; }, { what: "detail released, base supersampled" });
     assert(await painted(1), "the base alone shows the page");
     assert(withinCap(await holdings()), "bounded backing size");
@@ -147,8 +154,7 @@ export async function pdfTouchScenarios({ server, browser, alice, makePdf, step,
     });
     assert(selected.includes("line 2:"), `selected ${selected}`);
     const base = (await raster(1)).base.join("x");
-    await page.getByRole("button", { name: "Zoom in", exact: true }).click();
-    await until(async () => Math.abs((await page.locator('[data-page="1"]').boundingBox()).width - 1346.4) < 1, { what: "220%" });
+    await zoomUntil("Zoom in", 1346.4);
     await until(async () => { const r = await raster(1); return r.shown && r.covers && r.base.join("x") !== base; }, { what: "220% redrawn in detail mode" });
     await sleep(300); // past the text layer's own settle
     const kept = await page.evaluate(() => {
@@ -159,17 +165,13 @@ export async function pdfTouchScenarios({ server, browser, alice, makePdf, step,
     assert(kept.attached && kept.mark === "kept", "the same span element survives the zoom");
     assert(kept.text === selected && kept.inside, `the selection survives the zoom: ${JSON.stringify(kept.text)}`);
     await page.evaluate(() => getSelection().removeAllRanges());
-    // Back to 400% at the top of page 1 for the steps after this one.
-    for (let i = 0; i < 9; i++) await page.getByRole("button", { name: "Zoom in", exact: true }).click();
-    await until(async () => Math.abs((await page.locator('[data-page="1"]').boundingBox()).width - 2448) < 1);
-    await page.locator(".pdfViewer").evaluate((el) => el.scrollTo({ left: 0, top: 0 }));
-    await until(async () => (await raster(1)).covers && painted(1, "detail"), { what: "400% detail again" });
+    await at400("Zoom in");
     assertNoProblems(page);
   });
 
   await step("pdf touch: 800% is the limit, as sharp as 400% and inside the same canvas limits", async () => {
     await zoomUntil("Zoom in", 4896);
-    await page.locator(".pdfViewer").evaluate((el) => el.scrollTo({ left: 0, top: 0 }));
+    await toTop();
     await until(async () => { const r = await raster(1); return r.shown && r.covers && r.detailRatio >= 1.95; }, { what: "800% redrawn in detail mode" });
     await until(() => painted(1, "detail"), { what: "the 800% detail canvas contains PDF text" });
     const r = await raster(1);
@@ -179,10 +181,7 @@ export async function pdfTouchScenarios({ server, browser, alice, makePdf, step,
     await page.getByRole("button", { name: "Zoom in", exact: true }).click();
     await sleep(300);
     assert(Math.abs(await boxWidth() - 4896) < 1, "800% is the limit");
-    // Back to 400% at the top of page 1 for the steps after this one.
-    await zoomUntil("Zoom out", 2448);
-    await page.locator(".pdfViewer").evaluate((el) => el.scrollTo({ left: 0, top: 0 }));
-    await until(async () => (await raster(1)).covers && painted(1, "detail"), { what: "400% detail again" });
+    await at400("Zoom out");
     assertNoProblems(page);
     return `base ${r.base.join("x")}, detail ${r.detail.join("x")}`;
   });
@@ -250,9 +249,7 @@ export async function pdfTouchScenarios({ server, browser, alice, makePdf, step,
   if (browser.browserType().name() === "chromium") await step("pdf touch: two fingers pinch-zoom the pages and pan; Ctrl+wheel zooms; both hold the point under them", async () => {
     const cdp = await ctx.newCDPSession(page);
     await page.getByRole("button", { name: "Fit to width", exact: true }).click();
-    await until(async () => Math.abs((await page.locator('[data-page="1"]').boundingBox()).width - 612) > 1,
-      { what: "fit-width settles off the 100% width" });
-    const pageWidth = async () => (await page.locator('[data-page="1"]').boundingBox()).width;
+    await until(async () => Math.abs(await boxWidth() - 612) > 1, { what: "fit-width settles off the 100% width" });
     // Which page a view point sits on, and where down it: what a zoom holds.
     const pointAt = (vx, vy) => page.evaluate(([vx, vy]) => {
       for (const node of document.querySelectorAll(".pdfPageWrap")) {
@@ -278,10 +275,10 @@ export async function pdfTouchScenarios({ server, browser, alice, makePdf, step,
     };
 
     for (const [from, to] of [[120, 300], [300, 150]]) {
-      const was = await pageWidth(), held = await pointAt(cx, cy);
+      const was = await boxWidth(), held = await pointAt(cx, cy);
       await twoFingers(from, to);
       const now = await until(async () => {
-        const w = await pageWidth();
+        const w = await boxWidth();
         return Math.abs(w - was) > 1 ? w : false;
       }, { what: `pages resize for a ${(to / from).toFixed(2)}x pinch` });
       assert(Math.abs(now / was - to / from) < 0.03, `pinch ${from}->${to}: ${(now / was).toFixed(3)}x is the fingers' ${(to / from).toFixed(3)}x`);
@@ -291,7 +288,7 @@ export async function pdfTouchScenarios({ server, browser, alice, makePdf, step,
     }
     assertEq(await page.evaluate(() => visualViewport.scale), 1, "the browser's own zoom stays out of it");
 
-    const zoomed = await pageWidth();
+    const zoomed = await boxWidth();
     // Against the room the view actually has: a pan that asks for more than
     // the content has left is clamped, and that is not a failure.
     const room = () => page.locator(".pdfViewer").evaluate((el) => ({
@@ -304,7 +301,7 @@ export async function pdfTouchScenarios({ server, browser, alice, makePdf, step,
     const want = [Math.min(from.left + 120, from.maxLeft), Math.min(from.top + 150, from.maxTop)];
     assert(Math.abs(to.left - want[0]) < 3 && Math.abs(to.top - want[1]) < 3,
       `a two-finger drag pans by what the fingers travelled: ${[from.left, from.top]} -> ${[to.left, to.top]}, wanted ${want}`);
-    assertEq(await pageWidth(), zoomed, "and does not change the zoom");
+    assertEq(await boxWidth(), zoomed, "and does not change the zoom");
 
     // Ctrl+wheel, off the same reader: one notch is the shared rate and the
     // point under the cursor is held.
@@ -312,7 +309,7 @@ export async function pdfTouchScenarios({ server, browser, alice, makePdf, step,
     await sleep(400);
     const off = [Math.round(box.x + box.width * 0.32), Math.round(box.y + box.height * 0.28)];
     const under = await pointAt(...off);
-    const before = await pageWidth();
+    const before = await boxWidth();
     // Against the delta the browser actually delivered, not the one asked
     // for: an emulated device may scale it.
     await page.locator(".pdfViewer").evaluate((el) => {
@@ -324,7 +321,7 @@ export async function pdfTouchScenarios({ server, browser, alice, makePdf, step,
     await page.mouse.wheel(0, -120);
     await page.keyboard.up("Control");
     const after = await until(async () => {
-      const w = await pageWidth();
+      const w = await boxWidth();
       return Math.abs(w - before) > 0.5 ? w : false;
     }, { what: "Ctrl+wheel zooms the pages" });
     const dy = await page.evaluate(() => window.wheelDy);
@@ -399,7 +396,7 @@ export async function pdfTouchScenarios({ server, browser, alice, makePdf, step,
       }, [theme, flip]);
       for (const direction of ["in", "out"]) {
         for (let i = 0; i < 12; i++) await page.getByRole("button", { name: `Zoom ${direction}`, exact: true }).click();
-        await page.locator(".pdfViewer").evaluate((el) => el.scrollTo(0, 0));
+        await toTop();
         await until(() => painted(1));
         // Sampled once the zoom has settled. Zoomed in, past the cap, the
         // point lies under the detail canvas: the two canvases are composited
@@ -416,7 +413,7 @@ export async function pdfTouchScenarios({ server, browser, alice, makePdf, step,
           // the base and the detail were each blended. The clip is the first
           // line's glyphs (72 pt in, baseline 72 pt down) at this zoom.
           if (!flip) {
-            const k = (await page.locator('[data-page="1"]').boundingBox()).width / 612;
+            const k = await boxWidth() / 612;
             const ink = await screenPixel(72 * k, 56 * k, Math.round(Math.min(300, 150 * k)), Math.round(18 * k), true), want = expected.map((v) => v * 0.18);
             assert(ink.every((v, i) => Math.abs(v - want[i]) <= 4), `${theme}: ink ${ink} is blended once (${want.map(Math.round)})`);
           }

@@ -37,11 +37,11 @@ account server's `/root/Container/gamma-account/` and the demo's
 name on `gamma-fleet`, and a Docker network's names resolve only on its
 own host, so every host needs a proxy beside its servers:
 
-- **The account server's VPS** has no public IP on the Servers tab. The
+- **The account server's VPS** has no public IP on the Machines tab. The
   account project's Caddy routes its servers, and the zone's wildcard
   record points there. Its agent runs without the `edge` profile: that
   Caddy already holds ports 80 and 443, and a second one would not start.
-- **Any other host** has its public IP set on the Servers tab: a *routed*
+- **Any other host** has its public IP set on the Machines tab: a *routed*
   host. It runs its own Caddy (the `edge` profile, this folder's
   `Caddyfile`), and the account server gives each server placed on it a
   proxied DNS record of its own at Cloudflare,
@@ -49,7 +49,7 @@ own host, so every host needs a proxy beside its servers:
   wildcard ([docs/dev/hosted.md](../../../docs/dev/hosted.md)
   "Deployment"). That needs `GAMMA_CLOUD_CF_API_TOKEN` and
   `GAMMA_CLOUD_CF_ZONE_ID` in the account server's `.env`; without them a
-  routed host takes no servers, and the Servers tab says *no dns token:
+  routed host takes no servers, and the Machines tab says *no dns token:
   closed*.
 
 ## First deployment
@@ -66,7 +66,7 @@ own host, so every host needs a proxy beside its servers:
    The subnet is pinned because every hosted container trusts it for
    `X-Forwarded-For` (the agent hands it over as `FORWARDED_ALLOW_IPS`).
 2. **The data root.** `mkdir -p /srv/gamma`.
-3. **The host.** On the portal, Admin → Servers → *Add host* with a name
+3. **The host.** On the portal, Admin → Machines → *Add machine* with a name
    (`vps-1`), or from the account project:
 
    ```bash
@@ -90,7 +90,7 @@ own host, so every host needs a proxy beside its servers:
    `gamma-fleet <version>: https://account.gammapdf.com, network
    gamma-fleet, data /srv/gamma` and has no `heartbeat failed` or `job poll
    failed` after it. The first heartbeat goes out at start, so the
-   Servers tab shows the host seen *just now* with its memory and disk. A
+   Machines tab shows the host seen *just now* with its memory and disk. A
    host takes servers only after that first heartbeat.
 
 `bootstrap.sh` without `--edge` ("On a fresh host" below) does steps 1, 2,
@@ -121,7 +121,7 @@ would work the same Docker daemon, so stop the old one first:
 
 ### On a fresh host
 
-*Add host* on the Servers tab (each host has its own name and token)
+*Add machine* on the Machines tab (each host has its own name and token)
 answers with the token and one line to run on the host as root:
 
 ```bash
@@ -136,8 +136,8 @@ curl -fsSL https://raw.githubusercontent.com/tim4431/Gamma/main/cloud/fleet/depl
 - creates `gamma-fleet` with the pinned subnet `10.203.0.0/24` when it is
   absent (and warns when it has another subnet), and `/srv/gamma`;
 - downloads `compose.yml`, `Caddyfile` and `.env.example` of `--ref` into
-  `--dir`, replacing the first two, so a pin in `compose.yml` does not
-  survive a run;
+  `--dir`, replacing the copies there, so a pin in `compose.yml` does not
+  survive a run (`.env` is never downloaded);
 - writes `.env` (mode 600) from `.env.example`, or keeps the one there and
   sets only what the options name: the token, the account server's address,
   `GAMMA_FLEET_DOMAIN`, and `COMPOSE_PROFILES=edge` with `--edge`;
@@ -160,7 +160,7 @@ so a host without `--edge` needs no open port and no DNS record.
    `GAMMA_CLOUD_CF_API_TOKEN` and `GAMMA_CLOUD_CF_ZONE_ID` in its `.env`,
    then `docker compose up -d` there. Admin → Settings → Configuration
    shows *DNS records* on.
-2. **The host**: *Add host* with its **public IP** (IPv4 or IPv6), then the
+2. **The host**: *Add machine* with its **public IP** (IPv4 or IPv6), then the
    line it shows, which has `--edge`, on the host. A host added without
    one gets it with *Public IP…* in its row. `--domain` is needed only
    when the hosting domain is not `gammapdf.com`, and
@@ -168,10 +168,11 @@ so a host without `--edge` needs no open port and no DNS record.
    `GAMMA_CLOUD_HOSTED_SUFFIX` is not `-user`.
 3. **The firewall**: 80 and 443 from Cloudflare's ranges only ("Security"
    below).
-4. **Check.** The host shows *dns on* in the Hosts table. Each server
-   placed on it shows *dns pending* until its record is made (at once
-   after the placement, else within the hour) and then *dns ok*; the
-   error of a failed try is on the pill's hover. From the host,
+4. **Check.** The machine's card on the Machines tab shows *routed* with
+   its IP and no *no dns token: closed* pill. Each server placed on it
+   shows *dns pending* on the Servers tab until its record is made (at
+   once after the placement, else within the hour) and then *dns ok*;
+   the error of a failed try is on the pill's hover. From the host,
    `curl -k --resolve <label>-user.gammapdf.com:443:127.0.0.1
    https://<label>-user.gammapdf.com/api/health` answers 200 once the
    server runs, and the same URL answers from anywhere through
@@ -180,11 +181,6 @@ so a host without `--edge` needs no open port and no DNS record.
 `docker compose logs caddy` shows the internal certificate being made. A
 521 from Cloudflare means it could not reach port 443 of the host; a
 name that is a 404 here is not `<label>-user.<domain>`.
-
-Never use `--edge` (or `COMPOSE_PROFILES=edge`) on the account server's
-VPS: its account project's Caddy holds 80 and 443, and its servers are
-reached through the wildcard record. Leave its public IP blank on the
-Servers tab for the same reason.
 
 ## Updating
 
@@ -246,7 +242,7 @@ copy as a secret.
   "Cloudflare settings worth turning on") applies to every routed host as
   well: allow 80 and 443 from the ranges at
   <https://www.cloudflare.com/ips/> only, in the host's firewall (or the
-  provider's). Note that Docker's published ports bypass a plain `ufw`
+  provider's). Docker's published ports bypass a plain `ufw`
   rule; filter in the provider's firewall or in the `DOCKER-USER` chain.
 - **The Cloudflare token** on the account server can edit every record of
   the zone. Make it for that one zone with *DNS → Edit* only, and keep it

@@ -6400,7 +6400,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     const b = findBlock(blocksRef.current, id);
     if (!b) return;
     setPhonePanel(null); // the compact shell: the page, not a panel over it
-    const tb =isTextBox(b) ? normalizeTextBox(b.properties.text_box) : null;
+    const tb = isTextBox(b) ? normalizeTextBox(b.properties.text_box) : null;
     const box = tb ? [tb.x, tb.y, tb.x + tb.w, tb.y + tb.h] : inkBounds(inkOf(id));
     const flash = () => (tb ? textBoxes.flashBox(id) : setInkFlash({ id, nonce: Date.now() }));
     const sheetId = sheetOfBlock(blocksRef.current, id);
@@ -6874,12 +6874,6 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // has come back: the first tour is offered on it, and the library shows
   // "Start your library".
   const freshLibrary = useMemo(() => homeLoaded && isFreshLibrary(homeBlocks), [homeLoaded, homeBlocks]);
-  // The seeded Welcome page's PDF (gamma/seed.py), the first tour's demo
-  // paper while the library still has it: no arXiv download, works offline.
-  const welcomePdf = useMemo(() => {
-    const page = homeBlocks.find((b) => b.properties?.seeded === "welcome" && b.properties?.doc_id);
-    return page ? `${API}/uploads/${page.properties.doc_id}.pdf` : "";
-  }, [homeBlocks]);
   // What the two "try this" hints need to know (guide/tours/hints.js), each
   // learnt once per load and never again: whether Gamma Connector is in
   // this browser (its content script answers; the desktop app's Connector
@@ -7010,7 +7004,6 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       prefsChanged,
       // a demo server: progress per visit, the first-run tour offered on arrival
       demo: !!serverConfig?.demo,
-      welcomePdf,
     },
     tidy: () => setOpenPopover(null),
   });
@@ -7979,6 +7972,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                             } else if (e.key === "Enter" && labelSuggestionIdx >= 0 && labelSuggestionIdx < suggestions.length) {
                               e.preventDefault();
                               pickLabelSuggestion(suggestions[labelSuggestionIdx]);
+                            } else if (e.key === "Tab" && !e.shiftKey && suggestions.length) {
+                              // Tab completes: the highlighted suggestion, else the first.
+                              e.preventDefault();
+                              pickLabelSuggestion(suggestions[labelSuggestionIdx] || suggestions[0]);
                             } else if (e.key === "Enter" || e.key === "Escape") {
                               e.preventDefault();
                               closeLabelEditor();

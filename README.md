@@ -12,24 +12,24 @@
   <img src="https://get.microsoft.com/images/en-us%20dark.svg" alt="Download Gamma from the Microsoft Store" width="240">
 </a>
 
-**[Install](#install)** · **[User guide](./docs/user_guide.md)** · [Try the demo](https://demo.gammapdf.com) · [Website](https://gammapdf.com) · [Releases](https://github.com/tim4431/Gamma/releases)
+**[Install](#install)** · **[User guide](./docs/user_guide/user_guide.md)** · [Try the demo](https://demo.gammapdf.com) · [Website](https://gammapdf.com) · [Releases](https://github.com/tim4431/Gamma/releases)
 
-Every picture below is clickable and opens the matching part of the [user guide](./docs/user_guide.md).
+Every picture below is clickable and opens the matching part of the [user guide](./docs/user_guide/user_guide.md).
 
 ## Read from any place
 
-<a href="./docs/user_guide.md#offline-copies"><img alt="One library on the lab server, open on a desktop, an iPad and a phone; a note typed from the iPad appears on every other device as the sync between them runs" src="./docs/assets/branding/gamma-anywhere-light.svg" width="100%"></a>
+<a href="./docs/user_guide/user_guide.md#offline-copies"><img alt="One library on the lab server, open on a desktop, an iPad and a phone; a note typed from the iPad appears on every other device as the sync between them runs" src="./docs/assets/branding/gamma-anywhere-light.svg" width="100%"></a>
 
 Your library lives on your server and opens from any browser: the office desktop, the iPad (with the Pencil), your phone. Reading position, open tabs and zoom follow your account from device to device.
 
 - **Offline copy** — keep a full copy of a workspace on your laptop with the desktop app (one click on the workspace's *clone* chip) or on any second Gamma. Read and write it on the train; it syncs itself when the connection returns — edits merge block by block, and the rare conflict is shown on its block with both versions rather than lost.
 - **Install it** — Safari → *Add to Home Screen* on the iPad, *Install Gamma* in Chrome or Edge, or the desktop app for Windows, macOS and Linux.
 
-→ Guide: [Offline copies](./docs/user_guide.md#offline-copies) · [Install as an app](./docs/user_guide.md#install-as-an-app)
+→ Guide: [Offline copies](./docs/user_guide/user_guide.md#offline-copies) · [Install as an app](./docs/user_guide/user_guide.md#install-as-an-app)
 
 ## Highlight, annotate and draw
 
-<a href="./docs/user_guide.md#reading-and-highlighting"><img alt="Highlight a phrase and note why it matters, circle the claim it makes possible and draw an arrow from one to the other, then lasso the arrow and recolor it red" src="./docs/assets/demos/demo-annotate-and-ink.webp" width="100%"></a>
+<a href="./docs/user_guide/user_guide.md#highlight-and-annotate"><img alt="Highlight a phrase and note why it matters, circle the claim it makes possible and draw an arrow from one to the other, then lasso the arrow and recolor it red" src="./docs/assets/demos/demo-annotate-and-ink.webp" width="100%"></a>
 
 Open a paper by pasting any link — arXiv, DOI, or a publisher page; Gamma finds the PDF and falls back to a legal open-access copy when the DOI is paywalled — or drag the file in. Then:
 
@@ -39,11 +39,11 @@ Open a paper by pasting any link — arXiv, DOI, or a publisher page; Gamma find
 - **Follow citations** — references in the PDF are clickable; a global **← Back** unwinds jumps across documents, and a cited arXiv/DOI paper is one click from your library.
 - **Translate** — redraw a page in your language in place, figures untouched, or translate just a selected sentence. Microsoft's free service works with no setup; a chat model, Google or Youdao are one setting away.
 
-→ Guide: [Reading and highlighting](./docs/user_guide.md#reading-and-highlighting) · [Draw with a pen](./docs/user_guide.md#draw-with-a-pen) · [Links inside the PDF](./docs/user_guide.md#links-inside-the-pdf) · [Translate a paper](./docs/user_guide.md#translate-a-paper)
+→ Guide: [Highlight and annotate](./docs/user_guide/user_guide.md#highlight-and-annotate) · [Draw and type on the page](./docs/user_guide/user_guide.md#draw-and-type-on-the-page) · [Follow links and translate](./docs/user_guide/user_guide.md#follow-links-and-translate)
 
 ## Take notes
 
-<a href="./docs/user_guide.md#notes"><img alt="Type markdown, a page link and a live LaTeX equation, then /note drops a sheet of paper into the notes and a pen sketches the result on it" src="./docs/assets/demos/demo-notes.webp" width="100%"></a>
+<a href="./docs/user_guide/user_guide.md#notes"><img alt="Type markdown, a page link and a live LaTeX equation, then /note drops a sheet of paper into the notes and a pen sketches the result on it" src="./docs/assets/demos/demo-notes.webp" width="100%"></a>
 
 Highlights and free notes are the same kind of block, so a paper's notes and a plain page are edited the same way:
 
@@ -53,63 +53,63 @@ Highlights and free notes are the same kind of block, so a paper's notes and a p
 - **Pages to write on** — type `/note` and a sheet of paper opens among your notes; write on it with a stylus or the mouse, or show a page's sheets large as a notebook.
 - **Link and embed** — `[[page]]` mentions, `/page` for a new page linked where you type, `![[block]]` embeds that edit the source in place, backlinks, and a "/" menu for everything else.
 
-→ Guide: [Notes](./docs/user_guide.md#notes)
+→ Guide: [Notes](./docs/user_guide/user_guide.md#notes)
 
 ## Ask an AI about your papers
 
-<a href="./docs/user_guide.md#ai-chat"><img alt="Ctrl+drag a figure into the chat and ask about it, follow a cited passage, then ask for the most-cited follow-up papers: the assistant searches online and saves them once you allow it" src="./docs/assets/demos/demo-native-agentic.webp" width="100%"></a>
+<a href="./docs/user_guide/user_guide.md#ai-chat"><img alt="Ctrl+drag a figure into the chat and ask about it, follow a cited passage, then ask for the most-cited follow-up papers: the assistant searches online and saves them once you allow it" src="./docs/assets/demos/demo-native-agentic.webp" width="100%"></a>
 
 - **Chat with the open paper** — ask about it, Ctrl+drag a figure or table into the question, paste pictures, dictate by voice, or attach the whole PDF so the model sees tables and plots. Answers cite pages; a click jumps the PDF to the passage. Use Anthropic or OpenAI models, or sign in with your ChatGPT subscription — no API key.
 - **Mention a paper** — type `@` to attach a library page; its text stays in context for follow-ups.
 - **Put the agent to work** — ask it to search your library or the web for papers, read and compare them, save the ones you want, rename pages or file them into folders. It asks before each change (once, or for the whole chat), each tool step expands to show what it did, and it can never delete anything. What it changed is listed under its answer, and any note change can be reverted, one at a time or all at once.
 
-<a href="./docs/user_guide.md#the-library-agent"><img alt="Paste a slide's equation into the chat and ask for it in the note: after an approval card, it lands as a KaTeX block under the cursor" src="./docs/assets/demos/demo-agentic-notes.webp" width="100%"></a>
+<a href="./docs/user_guide/user_guide.md#the-library-agent"><img alt="Paste a slide's equation into the chat and ask for it in the note: after an approval card, it lands as a KaTeX block under the cursor" src="./docs/assets/demos/demo-agentic-notes.webp" width="100%"></a>
 
 - **Write into your notes** — paste a slide or a screenshot into the chat and ask: the new block goes where your cursor is, math as KaTeX, once you approve the edit.
 
-→ Guide: [AI chat](./docs/user_guide.md#ai-chat) · [The library agent](./docs/user_guide.md#the-library-agent)
+→ Guide: [AI chat](./docs/user_guide/user_guide.md#ai-chat) · [The library agent](./docs/user_guide/user_guide.md#the-library-agent)
 
 ## Link and organize
 
-<a href="./docs/user_guide.md#library-and-organization"><img alt="Gamma fills metadata when a paper is downloaded, organizes papers with folders and labels, searches titles, notes and PDF text, and follows references to other papers with Back returning to the previous reading position" src="./docs/assets/branding/gamma-library-light.svg" width="100%"></a>
+<a href="./docs/user_guide/user_guide.md#library"><img alt="Gamma fills metadata when a paper is downloaded, organizes papers with folders and labels, searches titles, notes and PDF text, and follows references to other papers with Back returning to the previous reading position" src="./docs/assets/branding/gamma-library-light.svg" width="100%"></a>
 
 - **Folders** build themselves from the paths you use: drop a paper into `qc/neutral-atom` and you get **qc › neutral-atom**; storage stays flat, so one paper can live in several folders.
 - **Labels** are flat tags for facets like an author or a keyword — one click to filter by.
 - **Metadata** fills itself on open (arXiv → DOI → AI) and is editable; one click copies BibTeX or a slide-ready citation with real italics.
 
-<a href="./docs/user_guide.md#search"><img alt="In an open paper Ctrl+F finds a word and steps through its matches in the page, then Ctrl+P finds the quantum computing label and opens its papers" src="./docs/assets/demos/demo-search.webp" width="100%"></a>
+<a href="./docs/user_guide/user_guide.md#search"><img alt="In an open paper Ctrl+F finds a word and steps through its matches in the page, then Ctrl+P finds the quantum computing label and opens its papers" src="./docs/assets/demos/demo-search.webp" width="100%"></a>
 
 - **Find in the paper** — in an open PDF, `Ctrl+F` counts the matches and Enter steps through them, marked in the page.
 - **Jump anywhere** — `Ctrl+P` opens any page, folder or label as you type, typos forgiven; `Ctrl+Enter` there searches notes and PDFs, and `Ctrl+Shift+P` runs any command by name.
 - **Search everything** — `Ctrl+F` searches notes, highlights and the full text of every PDF at once; narrow with label and folder chips. Matching is forgiving: "3000" finds "3,000-qubit" across a line break.
 
-→ Guide: [Library and organization](./docs/user_guide.md#library-and-organization) · [Search](./docs/user_guide.md#search) · [Metadata and citations](./docs/user_guide.md#metadata-and-citations)
+→ Guide: [Library](./docs/user_guide/user_guide.md#library) · [Search](./docs/user_guide/user_guide.md#search) · [Metadata and citations](./docs/user_guide/user_guide.md#metadata-and-citations)
 
 ## Share and work together
 
-<a href="./docs/user_guide.md#workspaces"><img alt="Personal workspaces next to a shared research library where an owner and an editor type into two blocks of the same page at the same time and a viewer reads along" src="./docs/assets/branding/gamma-workspaces-light.svg" width="100%"></a>
+<a href="./docs/user_guide/user_guide.md#workspaces"><img alt="Personal workspaces next to a shared research library where an owner and an editor type into two blocks of the same page at the same time and a viewer reads along" src="./docs/assets/branding/gamma-workspaces-light.svg" width="100%"></a>
 
 - **Workspaces** — keep separate personal libraries, or collaborate in a shared library created by a server administrator: owners manage members, editors change pages, viewers read.
 - **Share a page or a folder** — send a link to an annotated paper, or to a whole folder of them; invite people with view or edit rights, or open it to anyone with the link.
 
-<a href="./docs/user_guide.md#workspaces"><img alt="Three people on one page of a shared workspace: the owner and Maya type two questions into the same block at once while Sam captions another block and pastes a figure from the paper under it, each caret labeled with its writer's name" src="./docs/assets/demos/demo-collab.webp" width="100%"></a>
+<a href="./docs/user_guide/user_guide.md#workspaces"><img alt="Three people on one page of a shared workspace: the owner and Maya type two questions into the same block at once while Sam captions another block and pastes a figure from the paper under it, each caret labeled with its writer's name" src="./docs/assets/demos/demo-collab.webp" width="100%"></a>
 
 - **Edit together** — changes and cursors appear live; edits to different blocks coexist, same-block edits merge.
 
-→ Guide: [Sharing a page](./docs/user_guide.md#sharing-a-page) · [Workspaces](./docs/user_guide.md#workspaces)
+→ Guide: [Share a page](./docs/user_guide/user_guide.md#share-a-page) · [Workspaces](./docs/user_guide/user_guide.md#workspaces)
 
 ## Connect your research
 
-<a href="./docs/user_guide.md#assistants-codex-and-claude-code"><img alt="Gamma in the middle of an assistant prompt that mentions @Gamma and a paper, the Obsidian, Notion and Zotero import and export arrows, and the Gamma Connector saving a paper with the publisher sign-in kept per journal" src="./docs/assets/branding/gamma-connections-light.svg" width="100%"></a>
+<a href="./docs/user_guide/user_guide.md#assistants"><img alt="Gamma in the middle of an assistant prompt that mentions @Gamma and a paper, the Obsidian, Notion and Zotero import and export arrows, and the Gamma Connector saving a paper with the publisher sign-in kept per journal" src="./docs/assets/branding/gamma-connections-light.svg" width="100%"></a>
 
 - **Assistants** — the [Gamma plugin for Codex and Claude Code](./plugins/gamma/) lets either assistant search, read and export your papers, notes and highlights, read-only, for a workspace you approve in the browser: *"@Gamma, in the Rydberg arrays paper, how is the blockade radius measured?"* Setup is one command copied from **Settings → AI → Integrations**; any other MCP client connects with the same URL.
 
-<a href="./docs/user_guide.md#gamma-connector"><img alt="On a Physical Review Letters article page, the Gamma Connector's toolbar badge has found the paper; its popup shows the title and authors, files it under Quantum/Neutral atoms with a label, saves it, and the PDF opens in Gamma with its folder and label" src="./docs/assets/demos/demo-connector.webp" width="100%"></a>
+<a href="./docs/user_guide/user_guide.md#gamma-connector"><img alt="On a Physical Review Letters article page, the Gamma Connector's toolbar badge has found the paper; its popup shows the title and authors, files it under Quantum/Neutral atoms with a label, saves it, and the PDF opens in Gamma with its folder and label" src="./docs/assets/demos/demo-connector.webp" width="100%"></a>
 
 - **Gamma Connector** — the browser extension ([extension/](./extension/)) saves the paper you're reading in one click — PDF, metadata, folder, labels — from the arXiv / DOI / publisher tab, and clips links or selections into your notes. Its cookie button saves your **publisher sign-in per journal**, so the server can fetch that journal's PDFs on its own from then on.
 - **Import** — Zotero libraries and Logseq exports with their annotations; Obsidian vaults, Notion exports and Markdown folders as notes. **Export** — annotated PDF, Markdown, an Obsidian vault, a Logseq graph, a Zotero library, or a Gamma zip another Gamma can merge.
 
-→ Guide: [Assistants: Codex and Claude Code](./docs/user_guide.md#assistants-codex-and-claude-code) · [Gamma Connector](./docs/user_guide.md#gamma-connector) · [Import and export](./docs/user_guide.md#import-and-export) · [Backups](./docs/user_guide.md#backups)
+→ Guide: [Assistants](./docs/user_guide/user_guide.md#assistants) · [Gamma Connector](./docs/user_guide/user_guide.md#gamma-connector) · [Import and export](./docs/user_guide/user_guide.md#import-and-export) · [Backups and upgrades](./docs/user_guide/user_guide.md#backups-and-upgrades)
 
 ---
 
@@ -119,8 +119,8 @@ Highlights and free notes are the same kind of block, so a paper's notes and a p
 
 Get the Windows app from the [**Microsoft Store**](https://apps.microsoft.com/detail/9N8WGWR2J2MV), or download standalone installers from [**GitHub Releases**](https://github.com/tim4431/Gamma/releases/latest).
 
-- **Desktop app** (Windows installer, macOS dmg, Debian/Ubuntu deb) — a self-contained Gamma with local libraries on your disk, no Docker, Python or Node. It also opens any Gamma server you host (the NAS, a VPS) and keeps [offline copies](./docs/user_guide.md#offline-copies) of its workspaces. Details: [desktop/](./desktop/). Builds are not notarized: Windows SmartScreen → *More info → Run anyway*; macOS says *Apple could not verify Gamma* on first launch → *System Settings → Privacy & Security → Open Anyway* (once); Linux: `sudo apt install ./Gamma-<version>-linux-amd64.deb`. Windows and Linux apps update themselves.
-- **iPad, phone, any browser** — open your server and install it from the browser; see [Install as an app](./docs/user_guide.md#install-as-an-app).
+- **Desktop app** (Windows installer, macOS dmg, Debian/Ubuntu deb) — a self-contained Gamma with local libraries on your disk, no Docker, Python or Node. It also opens any Gamma server you host (the NAS, a VPS) and keeps [offline copies](./docs/user_guide/user_guide.md#offline-copies) of its workspaces. Details: [desktop/](./desktop/). Builds are not notarized: Windows SmartScreen → *More info → Run anyway*; macOS says *Apple could not verify Gamma* on first launch → *System Settings → Privacy & Security → Open Anyway* (once); Linux: `sudo apt install ./Gamma-<version>-linux-amd64.deb`. Windows and Linux apps update themselves.
+- **iPad, phone, any browser** — open your server and install it from the browser; see [Install as an app](./docs/user_guide/user_guide.md#install-as-an-app).
 - **Gamma Connector** browser extension (`gamma-connector-<version>.zip` on the [GitHub release](https://github.com/tim4431/Gamma/releases/latest), next to the desktop installers) — unzip, then `chrome://extensions` → *Developer mode* → *Load unpacked*.
 - **Server** — the Docker image below, built from `main` on every merge.
 
@@ -145,7 +145,7 @@ Open <http://localhost:9001> and log in with the seeded `admin` password from `d
 
 Upgrades: the template runs [Watchtower](https://containrrr.dev/watchtower/) beside Gamma, which pulls each new image and restarts the container; Gamma then upgrades its data directory as it starts, and each workspace as it is first opened, after snapshotting the databases. Remove that service to update by hand (`docker compose pull && docker compose up -d`). A very old data directory may need one intermediate release first; if so, the server shows a page at its usual address saying exactly which image to run once, and nothing is changed until you do ([how upgrades work](./docs/dev/migrations.md)).
 
-Backups: a workspace exports as one zip from Settings → Workspaces, snapshots live in Settings → Backups, and administrators snapshot the whole instance from Settings → Server (restore those with the server stopped: `manage.py backups --restore`) and can keep off-site copies of the databases and uploaded files in an S3-compatible bucket (Settings → Backups → *Off-site copies*) — see [Backups](./docs/user_guide.md#backups) and the [backup internals](./docs/dev/workspaces.md#export-and-backups). If you bind-mount `/data` to a host folder, set `PUID`/`PGID` to your user's ids (`id -u` / `id -g`) so the files belong to you instead of root.
+Backups: a workspace exports as one zip from Settings → Workspaces, and snapshots live in Settings → Backups. Administrators snapshot the whole instance from Settings → Server (restore those with the server stopped: `manage.py backups --restore`) and can keep off-site copies of the databases and uploaded files in an S3-compatible bucket (Settings → Backups → *Off-site copies*). See [Backups and upgrades](./docs/user_guide/user_guide.md#backups-and-upgrades) and the [backup internals](./docs/dev/workspaces.md#export-and-backups). If you bind-mount `/data` to a host folder, set `PUID`/`PGID` to your user's ids (`id -u` / `id -g`) so the files belong to you instead of root.
 
 Users are managed in the app: sign in with an admin account → Settings → Users (create/delete accounts, reset passwords, grant or revoke the admin privilege — admin is a flag, not a special name). The CLI equivalent still works:
 

@@ -18,17 +18,7 @@ the same list for its Open Gamma button.
 
 from urllib.parse import quote
 
-from . import accounts, config, db, hosted, oidc, servers
-
-# A hosted server in one of these states answers at its address.
-OPEN_STATES = ("running", "grace", "read_only", "suspended")
-
-
-def shared_home(account_id: str) -> str:
-    """The shared server this account's library lives on ("" = none is
-    configured). One server today; with a second, this is where an account
-    is told apart, and nothing else asks ``config.APP_URL``."""
-    return config.APP_URL
+from . import accounts, config, db, fleet, hosted, oidc, servers
 
 
 def start_url(server_url: str) -> str:
@@ -55,10 +45,10 @@ def destinations(conn, account_id: str) -> list[dict]:
     account = accounts.by_id(conn, account_id)
     out = []
     own = next((r for r in rows if r["hosted"]), None)
-    if own and own["state"] in OPEN_STATES:
+    if own and own["state"] in fleet.UPGRADABLE:    # the states whose container answers at its address
         out.append({"url": own["url"], "kind": "own", "name": "Your server"})
     linked = [r for r in rows if not r["hosted"] and not r["local"]]
-    shared = shared_home(account_id)
+    shared = config.APP_URL       # the one shared server ("" = none is configured)
     if (shared and account and accounts.on_shared(account)
             and (not out or any(r["url"] == shared for r in linked))):
         out.append({"url": shared, "kind": "shared", "name": "Your library on Gamma Cloud"})

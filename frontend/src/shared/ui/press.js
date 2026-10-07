@@ -10,7 +10,7 @@
 // The browser cannot be left to it: iPadOS Safari sends no `contextmenu` for
 // a long press, and its `dblclick` for a double tap is not dependable.
 
-export const HOLD_MS = 500;
+const HOLD_MS = 500;
 const HOLD_SLOP = 10;    // px a finger may wander and still be holding
 const DOUBLE_MS = 400;   // between the two releases
 const DOUBLE_SLOP = 30;  // px between them

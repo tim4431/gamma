@@ -135,6 +135,13 @@ function ProviderRow({ provider, protocol, oauth, active = false, radio = null, 
   );
 }
 
+// The allowance is stored in tokens but set in millions: a real daily
+// budget runs to eight or nine digits, which no longer reads as a number
+// in a settings box. The backend's ceiling is 1e9 tokens = 1000 M.
+const ALLOWANCE_M = 1_000_000;
+const ALLOWANCE_MAX_M = 1000;
+const inMillions = (tokens) => String(Math.max(0, Number(tokens) || 0) / ALLOWANCE_M);
+
 // Settings → Server → Shared AI provider (admins): connections every
 // account on the server may use next to its own (backend
 // gamma/ai_settings.py). An API key, write-only like an account's, or a
@@ -191,11 +198,14 @@ export function SharedAiProviderSettings({ setStatus, confirm }) {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ guests }),
   }));
   // The shared allowance: tokens per account (or guest) per rolling 24 h on
-  // the shared entries, 0 = unlimited (docs/dev/guests.md). Only the changed
-  // field is sent; an invalid entry snaps back to the stored value.
+  // the shared entries, 0 = unlimited (docs/dev/guests.md). The box counts
+  // in millions, the API in tokens. Only the changed field is sent; an
+  // invalid or out-of-range entry snaps back to the stored value.
   async function commitAllowance(key, raw) {
-    const n = Number.parseInt(String(raw).trim(), 10);
-    if (!Number.isFinite(n) || n < 0 || n === (info?.allowance?.[key] ?? 0)) return;
+    const m = Number(String(raw).trim() || NaN);
+    if (!Number.isFinite(m) || m < 0 || m > ALLOWANCE_MAX_M) return;
+    const n = Math.round(m * ALLOWANCE_M);
+    if (n === (info?.allowance?.[key] ?? 0)) return;
     try {
       setInfo(await apiJson(base, {
         method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ allowance: { [key]: n } }),
@@ -242,13 +252,13 @@ export function SharedAiProviderSettings({ setStatus, confirm }) {
       {info && providers.length ? <>
         <Row icon={ActivityIcon} label={t("Allowance per account")} hint={t("Tokens a day on the shared keys; 0 = unlimited")}
           title={t("Input and output tokens each account may spend through the shared connections in any 24 hours, as the providers report them. An account's own keys are never counted.")}>
-          <UnitInput unit={t("tokens")} min={0} label={t("Allowance per account")} value={String(info.allowance?.accounts ?? 0)}
-            onCommit={(raw) => commitAllowance("accounts", raw)} />
+          <UnitInput unit={t("M tokens")} min={0} max={ALLOWANCE_MAX_M} step="any" label={t("Allowance per account")}
+            value={inMillions(info.allowance?.accounts)} onCommit={(raw) => commitAllowance("accounts", raw)} />
         </Row>
         <Row icon={UserIcon} label={t("Allowance per guest")} hint={t("Tokens a day for each guest; 0 = unlimited")}
           title={t("The same allowance for guest accounts, which only use the shared keys while Guests may use it is on.")}>
-          <UnitInput unit={t("tokens")} min={0} label={t("Allowance per guest")} value={String(info.allowance?.guests ?? 0)}
-            onCommit={(raw) => commitAllowance("guests", raw)} />
+          <UnitInput unit={t("M tokens")} min={0} max={ALLOWANCE_MAX_M} step="any" label={t("Allowance per guest")}
+            value={inMillions(info.allowance?.guests)} onCommit={(raw) => commitAllowance("guests", raw)} />
         </Row>
       </> : null}
       {loadError ? <p className="settingsPaneHint aiKeysError" role="alert">{loadError}</p> : null}

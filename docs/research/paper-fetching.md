@@ -333,4 +333,4 @@ services, so the token figure above has no after to compare with. The
 offline tests cover each piece (`test_ai_agent_loop.py` for the batching,
 `test_fetch_handoff.py` for the four wait outcomes, `test_ai_tools_web.py`
 for the probe and the helper, `test_paper_discovery.py` for the filters and
-the dedup, `test_paper_research.py` for the job).
+the dedup).

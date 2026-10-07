@@ -52,9 +52,14 @@ export default {
     next: ["ai", "tours"],
     footnote: T("Replay any tour from the account menu"),
   },
-  // The demo paper: the seeded Welcome page's own PDF while the library has
-  // it (no network needed), else Attention Is All You Need from arXiv.
-  vars: (facts) => ({ demoUrl: facts.welcomePdf || "https://arxiv.org/abs/1706.03762" }),
+  // The demo paper: Attention Is All You Need, the paper the later steps are
+  // written for (its abstract sentence, its attention formula). A library
+  // that already holds it is no trouble — Add opens the saved copy by arXiv
+  // id or DOI instead of resolving the link again (App's openPdf), so the
+  // demo adds no second page and the step still sees page.opened.
+  vars: {
+    demoUrl: "https://arxiv.org/abs/1706.03762", // Attention Is All You Need
+  },
   steps: [
     { ...WELCOME, id: "welcome", requires: { demo: false }, title: T("Welcome to Gamma") },
     { ...WELCOME, id: "welcome-demo", requires: { demo: true }, title: T("Welcome to the Gamma demo") },
@@ -63,7 +68,7 @@ export default {
       anchor: "header.add",
       placement: "left",
       title: T("Add a paper from a link"),
-      body: T("A DOI or an arXiv id works too."), // the Welcome PDF or arXiv (vars)
+      body: T("A DOI or an arXiv id works too."), // the arXiv link the demo types (vars)
       skippable: false, // every later step works on the paper it opens
       do: [
         { click: "header.add" },

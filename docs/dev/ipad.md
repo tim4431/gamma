@@ -198,8 +198,8 @@ Raw touches carry everything `gamma-ink` stores.
 note's text is sent as `setText` from the text it was edited from, so a
 text changed meanwhile merges. While a field has the keyboard, the editing
 bar (`Views/NoteEditBar.swift`) sits on it. It is the web app's bar
-([below](#the-editing-bar)), with the same tools in the same order but
-Next math argument:
+([below](#the-editing-bar)), with the same tools in the same order,
+without Next math argument:
 
 **Insert** · Outdent · Indent · Move up · Move down · New block · Bold ·
 Italic · Inline code · Strikethrough · Link · Inline equation · Undo ·
@@ -421,7 +421,7 @@ screen, not the device (`PHONE_MQ` / `useIsPhone` in App.jsx):
   title is a plain label: no "⠿" grip, since a panel neither drags nor
   folds. A jump from the notes to the page (a handwriting or text box
   row's, a highlight's) closes the panel over it (`showOnPage`,
-  `jumpToHighlightId`), and Show note on the page brings the notes up
+  `jumpToHighlightId`). Show note on the page brings the notes up
   (`showInNotes`): the Notes panel, or on a page with sheets its notes
   view.
 - **More** is the account button (`header.account`) under another name:
@@ -543,11 +543,11 @@ follows ([ui-design.md](ui-design.md#one-behaviour-for-mouse-and-finger)).
 The viewport meta asks for no browser zoom, leaving pinch-zoom to each
 viewer (the PDF's and the notebook's, [notebooks.md](notebooks.md)).
 Safari tabs ignore it, so on any touch screen, in either layout, the app
-also refuses Safari's gesture events (`touchScreen()`, `App.jsx`); the
+also refuses Safari's gesture events (`touchScreen()`, `App.jsx`). The
 viewers' own pinch runs off `touchstart` / `touchmove` and is unaffected.
-`touch-action: manipulation` removes double-tap zoom, and
+`touch-action: manipulation` removes double-tap zoom.
 `overscroll-behavior: none` on html and body keeps the document from
-rubber-banding or pulling to refresh, in a Safari tab as installed; only
+rubber-banding or pulling to refresh, in a Safari tab as installed. Only
 the panes scroll.
 
 ### Not built (and why)
@@ -572,6 +572,11 @@ the panes scroll.
   applies inside math or a code fence), where Move up / down, Indent and
   Outdent apply (their `when`), Next math argument's hop and where it
   applies, and the bar's four commands starting unbound.
+- `tests/e2e/scenarios/touch.mjs` (`npm run e2e -- --only touch`), by
+  finger on an emulated tablet: Inline code and Strikethrough wrap a
+  selection, Next math argument shows only in a math argument and hops to
+  the next, the typing aids are on in prose and off in math, and a tapped
+  picture's toolbar ⋯ opens the object menu.
 - `tests/e2e/scenarios/ipad.mjs` (`npm run e2e -- --only ipad`), in
   Chromium touch contexts:
   - Tablet-sized: the manifest parses with `standalone` display, and every

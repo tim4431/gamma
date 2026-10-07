@@ -65,12 +65,12 @@ every variable), fixed for the life of the container:
   share host's), the entrance ("The entrance").
 
 The Admin page's Settings tab shows these read-only in its Configuration
-section (`config.admin_view`, `GET /api/admin/config`): each variable as
-`set` or `missing` (a switch as `on` or `off`), the value of everything but
-a secret, Stripe's test or live mode from the key's prefix, the schema
-version, and a note where a missing value stops something (no shared
-server address: no Lite or Plus). A secret (the Stripe keys, the SMTP user
-and password, the OAuth client secrets) shows only whether it is set.
+section (`config.admin_view`, `GET /api/admin/config`). Each variable is
+`set` or `missing` (a switch `on` or `off`) with its value, and a note
+says where a missing value stops something (no shared server address: no
+Lite or Plus). The section also shows Stripe's test or live mode, from the
+key's prefix, and the schema version. A secret (the Stripe keys, the SMTP
+user and password, the OAuth client secrets) shows only whether it is set.
 *Send test mail* (`POST /api/admin/test-mail`, five in ten minutes per
 admin) sends a short message to the admin's own address through
 `mail.send_test` and says what became of it: logged by the `console`
@@ -137,7 +137,7 @@ the signing keys and every token hash.
 | `portal_sessions` | the portal cookie's hash; sliding 30 days, newest 20 per account |
 | `email_tokens` | verify / reset / change-email links: hash, kind, expiry, `used_at`; one live link per (account, kind) |
 | `invites` | codes with the uses they were made with (`uses_total`) and the uses left, the plan they grant, `expires_at` (NULL: no end), `disabled` (an admin's off switch) and `grant_days` (the granted plan ends that many days after the registration; NULL: it does not) (step 11) |
-| `settings` | the sign-up gate an admin edits (`settings.DEFAULTS`): registration mode, the Turnstile pair, blocked mail domains. A row for any other key is ignored, so a rollback leaves nothing behind |
+| `settings` | what an admin edits on the Settings and Servers tabs (`settings.DEFAULTS`): the sign-up gate, the plans on sale, the alerts, the fleet's default tag and automatic upgrades; and two rows read on their own, the fleet's extra environment (`settings.FLEET_ENV_KEY`) and billing's last reconcile time (`billing.RECONCILED_KEY`). A row for any other key is ignored, so a rollback leaves nothing behind |
 | `oauth_clients` | confidential OIDC clients with exact redirect URIs: share-host and container ones an admin made, and `server` ones a person connected (`owner_account_id`, step 5); the desktop client is built in, not a row |
 | `server_connects` | a server connection a person approved, waiting for the server to fetch its client: the code's hash, the account, the server's address, the PKCE challenge (2 min, single use; step 5) |
 | `oauth_requests` | a sign-in in progress on the authorize page (10 min) |
@@ -260,8 +260,9 @@ page) and the **app** shell (a sidebar and a content column):
 - **Admin** (`/admin`, `is_admin` only, 404 otherwise), in tabs. The
   address's hash names the open one: `/admin#servers` opens Servers, a
   click on a tab sets the hash (through the history, so the back button
-  returns to the tab before), and a link to `#billing` switches to it; no
-  hash, or an unknown one, opens the Overview.
+  returns to the tab before), and a link to `#billing` switches to it;
+  `#machines/<host id>` opens the Machines tab on that machine. No hash, or
+  an unknown one, opens the Overview.
   - **Overview**, open on load: *Needs attention*, the open alerts with
     how long each has been open, a link to its tab and *Dismiss*; then
     tiles for accounts, what is paid and brings in a month, servers by
@@ -284,9 +285,15 @@ page) and the **app** shell (a sidebar and a content column):
   - Clients: the OIDC clients of hosted servers — create (the secret is
     shown once as the two env lines a container needs) and delete. A
     `server` client shows the account id that owns it.
-  - Servers: the fleet's hosts, the hosted servers with their 48-hour
-    sparklines and history, upgrades in waves and the job queue
+  - Machines: the fleet's hosts as cards, and for the one selected every
+    container on it (the account server, the share host, Caddy, the demo,
+    the agent, the hosted servers) with its image, state and use, and
+    restart, stop, start, logs, update and rollback; the host's placement,
+    public IP, name, token, removal and recent jobs
     ([hosted.md](hosted.md) "Admin").
+  - Servers: the hosted servers with their 48-hour sparklines and
+    history, upgrades in waves and the job queue ([hosted.md](hosted.md)
+    "Admin").
   - Billing: what the subscriptions bring in, the subscription copies by
     status, each with a Refresh from Stripe and a link into Stripe's
     dashboard, and the newest webhook events ([billing.md](billing.md)).
@@ -589,10 +596,10 @@ who asks and what it gets. Gamma Cloud's own servers do not show it
 `routers/portal.py`. People start at one address, the shared server's
 (`GAMMA_CLOUD_APP_URL`, `app.gammapdf.com`). A Lite or Plus library lives
 there. A Pro account has a server of its own, anyone may be a member of
-somebody else's, and a free account has no library online. No
-server sits behind another's address: a Gamma server is one hostname (its
-API is rooted at `/`, its session cookie has one name, its tokens and share
-links carry no server), and separate hostnames are what keeps one
+somebody else's, and a free account has no library online. No server sits
+behind another's address. A Gamma server is one hostname: its API is
+rooted at `/`, its session cookie has one name, and its tokens and share
+links carry no server. Separate hostnames are also what keeps one
 customer's server from reading another's session in the browser. So the
 entrance routes instead, and the account server does it, at the moment
 the shared server asks it to sign someone in.
@@ -660,10 +667,9 @@ Not built: ending the integration tokens an account made on the shared
 server while it had a plan (an offline copy, the extension, an assistant
 over MCP). They outlive the sessions until they are deleted there.
 
-`entrance.shared_home(account_id)` is the one place that says which shared
-server an account lives on. It answers `config.APP_URL` for everyone; a
-second shared server would be told apart there, with a column to hold the
-answer.
+There is one shared server, `config.APP_URL`. A second one would need a
+column saying which server an account lives on, read where
+`entrance.destinations` lists the shared server.
 
 **Tokens.** `POST /token` with `authorization_code` checks the code's
 client, redirect URI, expiry and PKCE verifier; a replayed code revokes
@@ -829,10 +835,15 @@ and the CLI call the same functions.
   the server list (normalization, loopback, the client's own origin, the
   Overview), the build and schema a server reports, the username lookup
   and its limits, deletion, the step-4 and step-8 upgrades, and the share host's address in `/api/me` and discovery.
-- `test_billing.py`, `test_hosted.py`, `test_fleet.py`, `test_alerts.py`
-  and `test_metrics.py`: billing, the hosted servers, the operator's alerts
-  and the Overview, and the history ([billing.md](billing.md),
-  [hosted.md](hosted.md) "Tests").
+- `test_entrance.py`: the entrance — where the authorize step sends a
+  signed-in person when the shared server asks, the sign-ins that skip the
+  confirm card, the chooser, the no-library page, a plan's end closing the
+  shared server, `/open`, a hosted server's address and a client's second
+  redirect URI.
+- `test_billing.py`, `test_hosted.py`, `test_fleet.py`, `test_dns.py`,
+  `test_alerts.py` and `test_metrics.py`: billing, the hosted servers, the
+  DNS records of a routed host, the operator's alerts and the Overview, and
+  the history ([billing.md](billing.md), [hosted.md](hosted.md) "Tests").
 
 `conftest.py` points the data directory at a temp folder and the mail
 backend at the in-memory outbox before the package is imported. CI runs
@@ -1140,11 +1151,11 @@ Three rules keep it honest:
 - the claim counts only while the identity holds a live grant (a refresh
   token, not revoked). The hourly grant check reads the account's claims
   again from `/userinfo` on a share host (`cloud_auth.refresh_claims`), so
-  a plan that changed is followed within the hour or at the next sign-in
-  (a plan that ended has its refresh refused instead, which ends the
-  sessions and the allowance together), which is why the Plan
-  page's Open goes through the cloud sign-in. A grant signed out on the
-  account server loses the allowance with it;
+  a plan that changed is followed within the hour or at the next sign-in;
+  this is why the Plan page's Open goes through the cloud sign-in. A plan
+  that ended has its refresh refused instead, which ends the sessions and
+  the allowance together. A grant signed out on the account server loses
+  the allowance with it;
 - an identity made by a publish exchange alone holds no grant, so it has
   the server's defaults until the person signs in on the share host.
 

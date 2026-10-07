@@ -428,9 +428,7 @@ export function useGuide({ enabled = true, suggest = true, scope = "", facts = {
     }
     let cancelled = false;
     const cleanups = [];
-    // A tour's vars may depend on the facts (the first tour's demo paper).
-    const tourVars = typeof run.tour.vars === "function" ? run.tour.vars(factsRef.current) : run.tour.vars;
-    const vars = { ...(tourVars || {}), ...readVars() };
+    const vars = { ...(run.tour.vars || {}), ...readVars() };
     const seen = [];
     const unsubscribe = guideEvents.subscribe((name, payload) => { seen.push([name, payload]); });
     // progress: [actions done, actions in all], the card's demo line.

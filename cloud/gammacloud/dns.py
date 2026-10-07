@@ -150,14 +150,6 @@ def _in_step(row) -> bool:
     return (row["dns_target"] == want and bool(row["dns_record_id"])) if want else not row["dns_record_id"]
 
 
-def _report(raw) -> dict:
-    try:
-        value = json.loads(raw or "{}")
-    except ValueError:
-        return {}
-    return value if isinstance(value, dict) else {}
-
-
 def _sync(row, want: str) -> tuple[str, str, str]:
     """Make one server's record what ``want`` says: ``(record id, target,
     what was done)``. A record already gone counts as deleted; one removed
@@ -195,7 +187,7 @@ def _store(conn, server_id: str, record_id: str, target: str, error: str = "") -
     db.begin_write(conn)
     row = conn.execute("SELECT report FROM hosted_servers WHERE id = ?", (server_id,)).fetchone()
     if row is not None:
-        report = _report(row["report"])
+        report = db.json_dict(row["report"])
         if error:
             report["dns"] = {"error": error[:ERROR_MAX], "at": db.now()}
         else:
@@ -225,7 +217,7 @@ def reconcile(conn, gone: tuple[str, ...] = ()) -> dict:
         conn.commit()
         for row in rows:
             if _in_step(row):
-                if "dns" in _report(row["report"]):     # an error a later change made moot (the host lost its IP)
+                if "dns" in db.json_dict(row["report"]):     # an error a later change made moot (the host lost its IP)
                     _store(conn, row["id"], row["dns_record_id"], row["dns_target"])
                 continue
             want = wanted(row)

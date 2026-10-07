@@ -17,7 +17,7 @@ import re
 from datetime import datetime, timezone
 from urllib.parse import urlsplit
 
-from . import accounts, config, entrance, pages_billing, pages_fleet, pages_overview, settings
+from . import accounts, config, entrance, pages_billing, pages_fleet, pages_machines, pages_overview, settings
 from .providers import NAMES
 
 SITE = "https://gammapdf.com"
@@ -452,6 +452,11 @@ def _date(iso: str) -> str:
     return f"<time datetime='{esc(iso)}'>{esc(_day(iso))}</time>"
 
 
+def _bare(url: str) -> str:
+    """An address without its scheme, as a link's text."""
+    return url.split("//")[-1]
+
+
 def _ago(iso: str) -> str:
     """"Active now", "3 hours ago", "Yesterday", "12 days ago"; "" after a
     month (the caller shows the date)."""
@@ -855,7 +860,7 @@ def admin_page(account: dict) -> str:
     inner = (
         "<div class=tabs><button class=on data-tab=overview>Overview</button><button data-tab=accounts>Accounts</button>"
         "<button data-tab=invites>Invites</button>"
-        "<button data-tab=clients>Clients</button><button data-tab=servers>Servers</button>"
+        "<button data-tab=clients>Clients</button><button data-tab=machines>Machines</button><button data-tab=servers>Servers</button>"
         "<button data-tab=billing>Billing</button><button data-tab=settings>Settings</button>"
         "<button data-tab=audit>Audit log</button></div>"
         + pages_overview.ADMIN_TAB
@@ -877,7 +882,7 @@ def admin_page(account: dict) -> str:
         "<label>Callback URL<input name=redirect placeholder='https://name.gammapdf.com/api/auth/cloud/callback' required></label>"
         "<button type=submit class='btn btn--primary btn--sm'>Create</button><div class=msg></div></form><div id=secret hidden class=secretbox></div></div></div>"
         "<div class=section><div class='body tbl'><table><thead><tr><th>Client id</th><th>Name</th><th>Kind</th><th>Callback</th><th></th></tr></thead><tbody id=clients></tbody></table></div></div></div>"
-        + pages_fleet.ADMIN_TAB + pages_billing.ADMIN_TAB
+        + pages_fleet.SHARED_STYLE + pages_machines.ADMIN_TAB + pages_fleet.ADMIN_TAB + pages_billing.ADMIN_TAB
         + _settings_tab()
         + "<div id=tab-audit hidden><div class=section><div class='body tbl'><table><thead><tr><th>When</th><th>Event</th><th>Account</th><th>Actor</th><th>Detail</th></tr></thead><tbody id=audit></tbody></table></div></div></div>")
     consts = (f"const PLANS = {_js(list(config.PLANS))}, PUBLIC_URL = {_js(config.PUBLIC_URL)}, "
@@ -886,15 +891,18 @@ def admin_page(account: dict) -> str:
 let offset = 0, query = '';
 // The tabs. The hash names the open one, so /admin#servers opens Servers: a click sets it (through the history, since a
 // scroll to the table whose id is the tab's name would follow), and the back button and a link to #name follow it.
-const TABS = ['overview','accounts','invites','clients','servers','billing','settings','audit'];
+// #machines/<host id> opens the Machines tab on that machine, and selects it when the tab is open already.
+const TABS = ['overview','accounts','invites','clients','machines','servers','billing','settings','audit'];
 let tabNow = '', accountsLoaded = false;
-function showTab(tab, again){
+function showTab(hash, again){
+  const cut = hash.indexOf('/'), sub = cut < 0 ? '' : hash.slice(cut + 1);
+  let tab = cut < 0 ? hash : hash.slice(0, cut);
   if (!TABS.includes(tab)) tab = 'overview';
-  if (tab === tabNow && !again) return;
+  if (tab === tabNow && !again) { if (tab === 'machines' && sub) pickMachine(sub); return; }
   tabNow = tab;
   document.querySelectorAll('.tabs button').forEach(x => x.classList.toggle('on', x.dataset.tab === tab));
   for (const t of TABS) document.getElementById('tab-' + t).hidden = t !== tab;
-  if (tab !== 'accounts') load(tab); else if (!accountsLoaded) { accountsLoaded = true; loadAccounts(true); }
+  if (tab !== 'accounts') load(tab, sub); else if (!accountsLoaded) { accountsLoaded = true; loadAccounts(true); }
 }
 document.querySelectorAll('.tabs button').forEach(b => b.onclick = () => {
   if (location.hash !== '#' + b.dataset.tab) history.pushState(null, '', '#' + b.dataset.tab);
@@ -983,8 +991,9 @@ async function loadInvites(){
   }));
 }
 document.getElementById('invdone').onclick = () => { showDone = !showDone; loadInvites(); };
-async function load(tab){
+async function load(tab, sub){
   if (tab === 'overview') await loadOverview();
+  if (tab === 'machines') await loadMachines(sub);
   if (tab === 'invites') await loadInvites();
   if (tab === 'clients') { const d = await api('/api/admin/clients', undefined, 'GET'); document.getElementById('clients').innerHTML = d.clients.map(c => '<tr><td class=mono>' + esc(c.client_id) + '</td><td>' + esc(c.name) + '</td><td>' + esc(c.kind) + (c.owner_account_id ? '<br><span class=mono>' + esc(c.owner_account_id) + '</span>' : '') + '</td><td class=mono>' + esc(JSON.parse(c.redirect_uris).join(' ')) + '</td><td><button class="btn btn--sm" data-delcli="' + esc(c.client_id) + '">Delete</button></td></tr>').join('') || '<tr><td colspan=5 class=empty>No clients. Local Gammas need none.</td></tr>'; }
   if (tab === 'servers') await loadServers();
@@ -1044,11 +1053,13 @@ function showConfig(c){
 }
 const tm = document.getElementById('testmail'), tmMsg = document.getElementById('testmailmsg');
 tm.onclick = () => act(tm, async () => { const d = await api('/api/admin/test-mail', {}); say(tmMsg, d.detail); tm.disabled = false; }, tmMsg);
-""" + pages_fleet.ADMIN_JS + pages_billing.ADMIN_JS + pages_overview.ADMIN_JS + """
+""" + pages_fleet.SHARED_JS + pages_machines.ADMIN_JS + pages_fleet.ADMIN_JS + pages_billing.ADMIN_JS \
+        + pages_overview.ADMIN_JS + """
 showTab(location.hash.slice(1), true);   // after every tab's script, whose entry it may call
 """
-    return app("Admin", "What needs attention, accounts, invites, the clients of hosted servers, the fleet, billing, "
-               "the settings and the plans on sale, the configuration, and what happened.", account, "admin", inner, script)
+    return app("Admin", "What needs attention, accounts, invites, the clients of hosted servers, the machines and "
+               "every container on them, the hosted servers, billing, the settings and the plans on sale, the "
+               "configuration, and what happened.", account, "admin", inner, script)
 
 
 # --- the authorize page -------------------------------------------------------
@@ -1137,7 +1148,7 @@ def _place_row(place: dict, stay: bool = False) -> str:
     """One server on the entrance's cards: a link that signs the browser in
     there, or with ``stay`` the button that finishes the pending request."""
     inner = (f"<i>{ICONS['globe' if place['kind'] == 'shared' else 'server']}</i><span class=txt>"
-             f"<b>{esc(place['name'])}</b><span>{esc(place['url'].split('://', 1)[-1])}</span></span>{ICONS['chevron']}")
+             f"<b>{esc(place['name'])}</b><span>{esc(_bare(place['url']))}</span></span>{ICONS['chevron']}")
     if stay:
         return f"<button type=button class=dest id=stay>{inner}</button>"
     return f"<a class=dest href='{esc(entrance.start_url(place['url']))}'>{inner}</a>"
@@ -1170,7 +1181,7 @@ def no_library_page(account, places: list[dict]) -> str:
 def where_page(account, places: list[dict], request_id: str = "") -> str:
     """The entrance's chooser, for a person whose libraries are on several
     Gamma Cloud servers (``entrance.destinations``; ``account`` needs a
-    username and an e-mail). Each row signs the browser in on that server.
+    username). Each row signs the browser in on that server.
     With ``request_id`` the shared server itself asked (the authorize
     step), and its row finishes that request instead of starting another."""
     rows = "".join(_place_row(p, stay=bool(request_id) and p["kind"] == "shared") for p in places)

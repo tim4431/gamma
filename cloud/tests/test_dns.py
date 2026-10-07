@@ -342,7 +342,7 @@ def test_the_admin_sets_a_hosts_public_ip_and_sees_the_pills(client, cf, monkeyp
     [s] = [x for x in client.get("/api/admin/servers").json()["servers"] if x["account_id"] == alice]
     assert s["dns"] == "ok" and s["dns_target"] == "198.51.100.9"
     page = client.get("/admin").text
-    assert "name=public_ip" in page and "data-f=hostip" in page and "no dns token: closed" in page and "dnsPill" in page
+    assert "name=public_ip" in page and "Public IP…" in page and "no dns token: closed" in page and "dnsPill" in page
 
 
 def test_the_cli_adds_a_routed_host(capsys, client, cf):

@@ -110,8 +110,9 @@ These describe the implementation unless explicitly marked as plans.
   zoom-in is the open item. The stored shapes as built are in
   [storage](user_db.md) and [home library](home_library.md).
 - [Scaling on SQLite](../research/scaling.md): items 1 to 12 of its work list
-  are built and described in the topic docs above; the cluster items (LiteFS,
-  placement, a router and worker processes) wait for a second node.
+  are done (item 8, the blob seam, was built and then taken out again) and
+  described in the topic docs above; the cluster items (LiteFS, placement, a
+  router and worker processes) wait for a second node.
 - [Research notes](../research/README.md): surveys, findings, and design
   rationale, grouped by area, with what each still leaves open. Keep current
   implementation details in the topic docs above.

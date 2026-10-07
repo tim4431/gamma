@@ -106,7 +106,9 @@ entries only, per account, over a rolling 24 hours:
   the providers report them, `gamma/ai_usage.py`) per account per 24 h,
   `0` = unlimited (the default for both), at most 10^9. A guest account
   takes the `guests` limit, every other account (admins included) the
-  `accounts` one;
+  `accounts` one. Settings → Server sets these in millions of tokens
+  ([settings.md](settings.md) "Shared AI provider"); the API is in whole
+  tokens;
 - `GET/PUT /api/admin/ai-providers` read and write it next to `guests`
   (`PUT {"allowance": {"accounts": N}}`, either key alone; anything but a
   whole number in range is a 400);

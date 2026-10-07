@@ -14,7 +14,7 @@ Code: `frontend/src/markup/` (`textBox.js`, `useTextBoxes.js`,
 
 ## What the user sees
 
-The [user guide](../user_guide.md#type-on-the-page) walks through it.
+The [user guide](../user_guide/user_guide.md#draw-and-type-on-the-page) walks through it.
 These are the rules the code keeps.
 
 - **The Text tool** sits on the markup strip after the lasso

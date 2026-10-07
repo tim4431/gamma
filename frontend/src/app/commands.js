@@ -1,7 +1,7 @@
 // Every command in one list, for the surfaces that show them all: the
 // command palette (library/QuickOpen.jsx, ">" mode), Settings → Keyboard
 // (settings/SettingsKeyboard.jsx) and the tests that keep the cheat sheet
-// in docs/user_guide.md honest. The catalogs themselves live next to their
+// in docs/user_guide/user_guide.md honest. The catalogs themselves live next to their
 // dispatchers: app/appCommands.js (App's window listener) and
 // editor/blockCommands.js (a block row's keydown).
 import { t } from "../shared/i18n/i18n.js";

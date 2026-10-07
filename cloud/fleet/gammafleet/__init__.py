@@ -2,4 +2,4 @@
 the Docker socket, and works through the account server's job queue
 (docs/dev/hosted.md). It imports nothing from ``gammacloud``."""
 
-VERSION = "0.2.0"
+VERSION = "0.3.1"

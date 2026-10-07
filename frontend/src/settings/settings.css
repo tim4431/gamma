@@ -365,6 +365,7 @@
 /* Number input with a fixed unit suffix (MB) hugging its right edge. */
 .unitInput { position: relative; display: block; }
 .unitInput .aiKeyInput { width: 100%; margin-bottom: 0; padding-right: 44px; }
+.unitInput.wideUnit .aiKeyInput { padding-right: 62px; }
 .unitSuffix {
   position: absolute;
   right: 11px;

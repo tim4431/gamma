@@ -174,11 +174,11 @@ tabs, markdown-import and web-clip pages, notes-as-PDF export,
 
 Old rows were historically tolerated forever by read-side shims, which means
 every renamed property or syntax lived twice in the code. The block-centric
-work replaced that with ONE idempotent normalization pass, now
-`gamma/normalize.py`, which the versioned migration runner
-([migrations.md](migrations.md)) applied in its baseline step (removed
-since, with every step below `MIN_UPGRADABLE`) and every backup restore
-still applies to the imported files (`ws_backup._normalize_copies`). Each
+work replaced that with ONE idempotent normalization pass,
+`gamma/normalize.py`, which every backup restore applies to the imported
+files (`ws_backup._normalize_copies`). The versioned migration runner
+([migrations.md](migrations.md)) ran it in its baseline migration too,
+until that migration was dropped with every one below `MIN_UPGRADABLE`. Each
 step only touches rows that still carry the old shape (SQL-filtered), so a
 clean database costs one query per step. Schema changes themselves
 (columns, tables, the workspace layout) are numbered migration steps, no
@@ -200,9 +200,9 @@ Per-workspace `pages.db`
 Per-workspace `data.db`
 - Drop the legacy `annotations`, per-user `shares` and `prefs` tables
   (superseded by `unified_blocks`, the global `shares` table and
-  `user_prefs`); add `chats.title` where missing. The chats have since
-  moved to `pages.db` (migration step 28, `normalize.pages_db_chats`,
-  which gives a missing title `''`).
+  `user_prefs`); add `chats.title` where missing. The chats are in
+  `pages.db` (migration step 28, `normalize.pages_db_chats`, which gives
+  a missing title `''`).
 
 Global `users.db`
 - Backfill `shares.page_id` for rows minted when shares were keyed by PDF
@@ -216,10 +216,9 @@ the stage-3 schema step shipped as migration step 2, and the matching read-side 
 are deleted (`sourceUrl` fallbacks in `ai_context`/`metadata`/`pdf`, the
 `PDF Notes - ` recogniser in `metadata._save_props`, `auth._legacy_share_page`
 + the lazy backfill in `share_lookup`). New code writes only the new shape.
-Steps 1 and 2 have since been deleted with every step below
-`MIN_UPGRADABLE` (19; [migrations.md](migrations.md) "Nothing piles up"),
-so the pass now runs on backup restore only
-(`tests/test_restore_consistency.py`).
+Steps 1 and 2 are gone with every step below `MIN_UPGRADABLE` (19;
+[migrations.md](migrations.md) "Nothing piles up"): the pass runs on
+backup restore only (`tests/test_restore_consistency.py`).
 
 ## Roadmap
 

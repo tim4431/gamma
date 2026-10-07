@@ -106,8 +106,12 @@ def enabled() -> bool:
     return config.hosted()
 
 
+def _stamp(t: datetime) -> str:
+    return t.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
 def _now() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return _stamp(datetime.now(timezone.utc))
 
 
 # --- the cached answer -------------------------------------------------------------
@@ -271,7 +275,7 @@ def _last_write_at() -> str | None:
     so a restart loses at most the writes since the last sync. None when
     nothing was ever written."""
     seen = _last_write
-    at = datetime.fromtimestamp(seen, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ") if seen else ""
+    at = _stamp(datetime.fromtimestamp(seen, timezone.utc)) if seen else ""
     stored = _get_raw(LAST_WRITE_KEY)
     if at > stored:
         _set_raw(LAST_WRITE_KEY, at)

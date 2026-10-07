@@ -185,6 +185,30 @@ export async function folderScenarios(env) {
       const beta = await user.folder("Beta");
       await until(async () => (await pageOf(paper.id)).properties.folders?.includes(beta), { what: "filed in the folder of that name" });
       assertEq((await tree("folders")).filter((f) => f.content.toLowerCase() === "beta").length, 1, "no folder was made");
+
+      // Tab completes a partial name to the first suggestion.
+      await field.click();
+      await page.locator('[data-guide="page.labelInput"]').fill("alph");
+      await page.locator(".categorySuggestionItem", { hasText: /^Alpha$/ }).waitFor();
+      await page.keyboard.press("Tab");
+      // the field stays open for the next name: its chips are the editing ones
+      await page.locator(".categoryTagInputWrap .categoryTag.folderChip", { hasText: /^Alpha$/ }).waitFor();
+      assertEq(await page.locator('[data-guide="page.labelInput"]').inputValue(), "", "the input clears for the next name");
+      const alpha = await user.folder("Alpha");
+      await until(async () => (await pageOf(paper.id)).properties.folders?.includes(alpha), { what: "Tab filed it in Alpha" });
+      await page.keyboard.press("Escape");
+
+      // Search: a matching label is offered, but only Tab makes it a filter.
+      await page.click("button[aria-label='Search']");
+      const search = page.locator(".searchPopover .searchInput");
+      await search.fill("fresh");
+      await page.locator(".searchLabelSuggest .categorySuggestionItem", { hasText: "Fresh, label" }).waitFor();
+      await search.press("Enter");
+      assertEq(await page.locator(".searchPopover .searchChip").count(), 0, "Enter leaves the query a query");
+      assertEq(await search.inputValue(), "fresh");
+      await search.press("Tab");
+      await page.locator(".searchPopover .searchChip", { hasText: "Fresh, label" }).waitFor();
+      assertEq(await search.inputValue(), "", "Tab turned the query into the label filter");
       assertNoProblems(page);
     } finally { await ctx.close(); }
   });

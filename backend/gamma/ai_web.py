@@ -638,6 +638,9 @@ def _fetch(source: str, published_only: bool = False) -> dict:
     return doc
 
 
+_PAGE_GAP = "\n\n"   # between the pages a window is cut from
+
+
 def window(doc: dict, limit: int, offset: int = 0, start_page: int = 1) -> tuple[str, int | None, int]:
     """``(text, next_offset, total)``: ``limit`` chars of the document from
     ``offset`` chars after the start of PDF page ``start_page`` (1-based; every
@@ -659,9 +662,6 @@ def window_pages(doc: dict, limit: int, offset: int = 0, start_page: int = 1) ->
             held.append(page)
         at += len(text) + len(_PAGE_GAP)
     return (held[0], held[-1]) if held else None
-
-
-_PAGE_GAP = "\n\n"
 
 
 def _page_texts(doc: dict, start_page: int) -> list:
