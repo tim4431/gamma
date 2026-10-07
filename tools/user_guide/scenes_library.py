@@ -1,5 +1,5 @@
 """The library: add a paper, folders and labels, search, metadata and citations, sharing."""
-from scene import (AMBER, BAR, BAR_DARK, BLUE, CARD, CHIP, CHIP_INK, EDGE, GREEN, INK, MONO, MUTED, SOFT, YELLOW,
+from scene import (AMBER, BAR, BAR_DARK, BLUE, CARD, CHIP, CHIP_INK, EDGE, GREEN, INK, MONO, MUTED, RED, SOFT, YELLOW,
                    anim, block, bullet, button, chip, field, frame, hide, move, panel, paper, pointer, show, typed,
                    typewriter)
 
@@ -66,7 +66,7 @@ def file_icon(x, y):
     """A PDF file, as a desktop shows one."""
     return (f'<path d="M{x} {y} H{x + 44} L{x + 62} {y + 18} V{y + 80} H{x} Z" fill="{CARD}" stroke="{BAR_DARK}" stroke-width="1.8" stroke-linejoin="round"/>'
             f'<path d="M{x + 44} {y} V{y + 18} H{x + 62}" fill="none" stroke="{BAR_DARK}" stroke-width="1.8" stroke-linejoin="round"/>'
-            f'<rect x="{x + 8}" y="{y + 48}" width="40" height="18" rx="4" fill="#d9534f"/>'
+            f'<rect x="{x + 8}" y="{y + 48}" width="40" height="18" rx="4" fill="{RED}"/>'
             f'<text x="{x + 28}" y="{y + 62}" text-anchor="middle" font-size="12" font-weight="700" fill="#ffffff">PDF</text>')
 
 

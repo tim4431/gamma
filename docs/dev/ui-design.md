@@ -492,7 +492,11 @@ situation's headline on a status page. The card hangs at a fixed height near
 the optical centre instead of being centred, so an error that appears
 mid-form grows it downward and the fields never move. Log in is the one
 primary button; Gamma Cloud is an outlined secondary above an "or use your
-account on this server" divider. A failed sign-in says why (wrong password,
+account on this server" divider. On a Gamma Cloud server (`cloud.lead` in
+`GET /api/server-config`: a hosted container or the share host, where every
+account signs in through Gamma Cloud) the cloud button is the primary
+(`.loginCloudBtn.lead`) and the password form folds behind Admin sign-in,
+as a demo server folds it behind Try the demo. A failed sign-in says why (wrong password,
 too many attempts, server unreachable) in a `--danger`-tinted `.loginError`
 box, and a refused password also takes the focus and a red border.
 
@@ -548,8 +552,9 @@ reading `pointerType`, `matchMedia` or `navigator` itself:
 - **`lastPointer()`**: the pointer of the last press, `"mouse"`,
   `"touch"` or `"pen"`, from one capture-phase `pointerdown` listener. A
   `click` does not say which everywhere. The library reads it (a tap
-  opens where a click selects), and so does the `selectionchange` path
-  that gives a touch selection its highlight tip.
+  opens where a click selects), so does a highlight's note badge (a tap
+  opens its tip where a click jumps to the note), and so does the
+  `selectionchange` path that gives a touch selection its highlight tip.
 - **`touchTyping()`**: text is typed on an on-screen keyboard, because
   the primary pointer is coarse or the last press was a finger or a pen.
   Return is then a line break's only key, and Tab and the Ctrl chords are

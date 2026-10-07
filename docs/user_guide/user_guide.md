@@ -84,7 +84,7 @@ A notebook is a page with sheets of paper to write on, and any page can hold the
 
 - The **文A button** translates the page you are reading, in place. Hold **Alt** to peek at the original; right-click for the whole document.
 - Select text and press 文A in the popup to translate a passage.
-- Settings → Translation picks the language and what translates: a chat model, or a translation service (Microsoft works with no setup).
+- Settings → Language and Translation picks the language and what translates: a chat model, or a translation service (Microsoft works with no setup).
 
 ## Notes
 

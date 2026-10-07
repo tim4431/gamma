@@ -164,19 +164,19 @@ main() {
 	docker compose logs --tail 20 fleet || true
 	say ""
 	say "It should start with 'gamma-fleet <version>: <account server>, network $NETWORK, data $DATA_ROOT'"
-	say "and show no 'heartbeat failed' or 'job poll failed' after it. Admin > Servers then shows this"
+	say "and show no 'heartbeat failed' or 'job poll failed' after it. Admin > Machines then shows this"
 	say "host seen just now, with its memory and disk."
 	say ""
 	say "Still to do by hand:"
 	say "  - the off-site bucket: the GAMMA_FLEET_S3_* lines in $dir/.env (the same bucket as the"
 	say "    other hosts), then docker compose up -d there;"
 	if [ "$edge" -eq 1 ]; then
-		say "  - this host's public IP on Admin > Servers (Public IP...), with GAMMA_CLOUD_CF_API_TOKEN and"
+		say "  - this host's public IP on Admin > Machines (Public IP...), with GAMMA_CLOUD_CF_API_TOKEN and"
 		say "    GAMMA_CLOUD_CF_ZONE_ID set on the account server: until both, the host takes no servers;"
 		say "  - the firewall: 80 and 443 from Cloudflare's ranges only (https://www.cloudflare.com/ips/)."
 	else
 		say "  - for a host with a public IP of its own: run this again with --edge, set the IP on"
-		say "    Admin > Servers, and allow 80 and 443 from Cloudflare's ranges only."
+		say "    Admin > Machines, and allow 80 and 443 from Cloudflare's ranges only."
 	fi
 }
 

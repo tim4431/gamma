@@ -2,9 +2,9 @@
 the notes panel, chips and buttons, the pointer, typing, and the SMIL helpers.
 
 Every animation is one looping SVG (SMIL only, so it plays inside a plain <img> on
-GitHub and on the site), light only, drawn on a 1400 x 620 canvas unless a scene
-asks for another. Typed text goes through branding.typewriter() so the caret lands
-on the last letter in any system font. Every keyTimes list ends at 1."""
+GitHub and on the site), light only, drawn on a 1400 x 620 canvas. Typed text goes
+through branding.typewriter() so the caret lands on the last letter in any system
+font. Every keyTimes list ends at 1."""
 from pathlib import Path
 import re
 import sys
@@ -34,6 +34,9 @@ GREEN = '#3f9a5c'     # success, a third person
 RED = '#d9534f'
 CHIP = '#ecdfc4'      # a folder / label chip
 CHIP_INK = '#5a4a24'
+TINT = '#fbefd6'      # an amber-tinted row or cell: hovered, picked, an armed tool
+FIG_EDGE = '#d6d3cb'  # a figure's frame in a paper
+FIG_LINE = '#b9b6ae'  # the curve in it
 
 W, H = 1400, 620
 
@@ -63,15 +66,15 @@ def hide(loop, start, end=None, fade=0.15):
     return anim('opacity', '1;1;0;0;1;1', loop, 0, start, start + fade, end, end + fade, loop)
 
 
-def move(loop, dx, dy, start, end, back=True):
+def move(loop, dx, dy, start, end):
     """A translate from (0,0) to (dx,dy) between `start` and `end`, undone at the restart."""
-    values = f'0 0;0 0;{dx} {dy};{dx} {dy};0 0' if back else f'0 0;0 0;{dx} {dy};{dx} {dy};{dx} {dy}'
+    values = f'0 0;0 0;{dx} {dy};{dx} {dy};0 0'
     return (f'<animateTransform attributeName="transform" type="translate" values="{values}" '
             f'keyTimes="{keytimes(loop, 0, start, end, loop - 0.3, loop)}" dur="{loop}s" repeatCount="indefinite"/>')
 
 
-def typed(text, x, y, loop, start, end, size=22, family=FONT, fill=INK, label=None):
-    return typewriter(text, x, y, loop, start, end, size=size, family=family, fill=fill, label=label)
+def typed(text, x, y, loop, start, end, size=22, family=FONT, fill=INK):
+    return typewriter(text, x, y, loop, start, end, size=size, family=family, fill=fill)
 
 
 def pointer(points, loop, times, press=()):
@@ -90,23 +93,22 @@ def pointer(points, loop, times, press=()):
             f'keyTimes="{keytimes(loop, *times)}" dur="{loop}s" repeatCount="indefinite"/></g>')
 
 
-def paper(x, y, w, h, lines, seed=0, title=True):
+def paper(x, y, w, h, lines, seed=0):
     """A paper page: title bars and body lines of varied length."""
     out = [f'<rect x="{x}" y="{y}" width="{w}" height="{h}" rx="12" fill="{CARD}" filter="url(#shadow)"/>']
     top = y + 54
-    if title:
-        out += [f'<rect x="{x + 50}" y="{top}" width="{w * 0.55:.0f}" height="14" rx="4" fill="{BAR_DARK}"/>',
-                f'<rect x="{x + 50}" y="{top + 26}" width="{w * 0.4:.0f}" height="9" rx="4" fill="{BAR_DARK}"/>']
-        top += 76
+    out += [f'<rect x="{x + 50}" y="{top}" width="{w * 0.55:.0f}" height="14" rx="4" fill="{BAR_DARK}"/>',
+            f'<rect x="{x + 50}" y="{top + 26}" width="{w * 0.4:.0f}" height="9" rx="4" fill="{BAR_DARK}"/>']
+    top += 76
     for i in range(lines):
         length = [1, 1, 0.86, 1, 0.94, 1, 0.7][(i + seed) % 7]
         out.append(f'<rect x="{x + 50}" y="{top + i * 24}" width="{(w - 100) * length:.0f}" height="9" rx="4.5" fill="{BAR}"/>')
     return '\n'.join(out)
 
 
-def line_y(y, i, title=True):
+def line_y(y, i):
     """The top of a 24 px selection box over body line `i` of a paper() placed at `y`."""
-    return y + 54 + (76 if title else 0) + i * 24 - 7
+    return y + 130 + i * 24 - 7
 
 
 def panel(x, y, w, h, title, body=''):
@@ -149,23 +151,19 @@ def field(x, y, w, h=52, placeholder=''):
     return out
 
 
-def stroke(d, loop, start, end, color=AMBER, width=4, length=900, end_at=None):
+def stroke(d, loop, start, end, color=AMBER, width=4, length=900):
     """A pen stroke drawn along `d` between `start` and `end` (a dash-offset sweep), gone at the restart."""
-    off = end_at if end_at is not None else loop - 0.3
+    off = loop - 0.3
     return (f'<path d="{d}" fill="none" stroke="{color}" stroke-width="{width}" stroke-linecap="round" stroke-linejoin="round" '
             f'stroke-dasharray="{length}" stroke-dashoffset="{length}">'
             + anim('stroke-dashoffset', f'{length};{length};0;0;{length}', loop, 0, start, end, off, loop)
             + anim('opacity', '0;0;1;1;0', loop, 0, start - 0.05, start, off, loop) + '</path>')
 
 
-def caption(text, x=W / 2, y=H - 26):
-    return f'<text x="{x:.0f}" y="{y:.0f}" text-anchor="middle" font-size="19" fill="{MUTED}">{text}</text>'
-
-
-def frame(title, desc, body, w=W, h=H):
+def frame(title, desc, body):
     """The whole document: defs (a card's #shadow, and #lift for small things such as a
     popover or a tool column), the warm background with the amber wave, then `body`."""
-    return f'''<svg xmlns="http://www.w3.org/2000/svg" width="{w}" height="{h}" viewBox="0 0 {w} {h}" role="img" aria-labelledby="title desc">
+    return f'''<svg xmlns="http://www.w3.org/2000/svg" width="{W}" height="{H}" viewBox="0 0 {W} {H}" role="img" aria-labelledby="title desc">
   <title id="title">{title}</title>
   <desc id="desc">{desc}</desc>
   <defs>
@@ -176,8 +174,8 @@ def frame(title, desc, body, w=W, h=H):
       <feDropShadow dx="0" dy="8" stdDeviation="10" flood-color="#000000" flood-opacity="0.10"/>
     </filter>
   </defs>
-  <rect width="{w}" height="{h}" fill="{BG}"/>
-  <g fill="none" stroke="{AMBER}" stroke-width="3" opacity="0.2" transform="scale({w / 1600:.4f} {h / 1000:.4f})">
+  <rect width="{W}" height="{H}" fill="{BG}"/>
+  <g fill="none" stroke="{AMBER}" stroke-width="3" opacity="0.2" transform="scale({W / 1600:.4f} {H / 1000:.4f})">
     <path d="M-60 880 C220 1100 560 1000 820 940 S1300 900 1660 1010"/>
   </g>
   <g font-family="{FONT}">
@@ -299,7 +297,7 @@ def strip(x, y, tools, loop=None, picks=()):
     out = [f'<rect x="{x}" y="{y}" width="{w}" height="{len(tools) * cell + 12}" rx="14" fill="{CARD}" stroke="{EDGE}" stroke-width="1.5" filter="url(#lift)"/>']
     for tool, start, end in picks:
         cx, cy = centres[tool]
-        out.append(f'<rect x="{cx - 23}" y="{cy - 23}" width="46" height="46" rx="10" fill="#fbefd6" stroke="{AMBER}" stroke-width="1.5" opacity="0">'
+        out.append(f'<rect x="{cx - 23}" y="{cy - 23}" width="46" height="46" rx="10" fill="{TINT}" stroke="{AMBER}" stroke-width="1.5" opacity="0">'
                    + show(loop, start, end) + '</rect>')
     for tool, (cx, cy) in centres.items():
         out.append(f'<g transform="translate({cx:.0f} {cy:.0f})">{_GLYPHS[tool]}</g>')

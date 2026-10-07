@@ -5,7 +5,8 @@ plans on sale, all from ``GET /api/admin/overview``.
 
 ``pages.admin_page`` includes ``ADMIN_TAB`` first and appends ``ADMIN_JS``,
 which defines ``loadOverview()``, the tab's entry; it uses the admin
-script's ``api``, ``esc`` and ``act``. An alert's link is a hash
+script's ``api``, ``esc`` and ``act``, and ``fleetUI``
+(``pages_fleet.SHARED_JS``) for its tiles and times. An alert's link is a hash
 (``#servers``, ``#machines/<host id>``), which the admin script's tab switch
 follows. The tab reloads every 60 s while it is the open tab of a visible
 page, and not otherwise.
@@ -20,23 +21,16 @@ ADMIN_TAB = (
 ADMIN_JS = r"""
 // --- Overview tab (pages_overview.py) ---
 const loadOverview = (() => {
+const {plural, since, tile, ORDER} = fleetUI;
 const TAB = document.getElementById('tab-overview'), $ = id => document.getElementById(id);
 const LINKS = {'#machines': 'Machines', '#servers': 'Servers', '#billing': 'Billing', '#settings': 'Settings'};   // by the tab, before any '/'
-const ORDER = ['running', 'provisioning', 'grace', 'read_only', 'suspended', 'stopped'];
 let timer = 0, gen = 0;
 
-const plural = (n, one, many) => n + ' ' + (n === 1 ? one : many);
 const warn = (n, word) => n ? ' · <span class="pill pill--warn">' + n + ' ' + word + '</span>' : '';
-const tile = (label, value, detail) => '<div><span>' + label + '</span><b>' + value + '</b><small>' + detail + '</small></div>';
-function lasted(ts){
-  const s = (Date.now() - Date.parse(ts)) / 1000;
-  if (isNaN(s)) return '';
-  return s < 90 ? 'a moment' : s < 5400 ? Math.round(s / 60) + ' min' : s < 129600 ? Math.round(s / 3600) + ' h' : Math.round(s / 86400) + ' d';
-}
 function alertRow(a){
   const tab = LINKS[String(a.link).split('/')[0]];
   return '<div class=row><div><b>' + esc(a.text) + '</b><span class=sub><span title="' + esc('since ' + new Date(a.first_at).toLocaleString()) + '">for '
-    + lasted(a.first_at) + '</span>' + (a.mailed_at ? ' · mailed' : '') + (tab ? ' · <a href="' + esc(a.link) + '">' + tab + '</a>' : '')
+    + since(a.first_at, 'a moment') + '</span>' + (a.mailed_at ? ' · mailed' : '') + (tab ? ' · <a href="' + esc(a.link) + '">' + tab + '</a>' : '')
     + '</span></div><button type=button class="btn btn--sm" data-odismiss="' + esc(a.key) + '">Dismiss</button></div>';
 }
 function render(d){

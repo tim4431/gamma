@@ -1641,10 +1641,10 @@ function NoteBadge({ hlId, text, style, onClick, onContextMenu }) {
   const btnRef = useRef(null);
   const tipRef = useRef(null);
   const timerRef = useRef(0);
-  // Whether the press that is being handled came from a finger/pen. Touch has
-  // no hover, so a tap opens the tip instead of jumping to the note — the
+  // A press that was not the mouse's (shared/lib/pointer.js). Touch has no
+  // hover, so a tap opens the tip instead of jumping to the note — the
   // notes panel it would jump to isn't even on screen in the phone layout.
-  const touchRef = useRef(false);
+  const tapped = () => lastPointer() !== "mouse";
   const place = () => {
     const r = btnRef.current?.getBoundingClientRect();
     if (!r) return;
@@ -1657,7 +1657,7 @@ function NoteBadge({ hlId, text, style, onClick, onContextMenu }) {
     });
   };
   const show = () => {
-    if (touchRef.current) return; // a tap fires compatibility mouse events too
+    if (tapped()) return; // a tap fires compatibility mouse events too
     clearTimeout(timerRef.current);
     timerRef.current = setTimeout(place, 120);
   };
@@ -1671,7 +1671,7 @@ function NoteBadge({ hlId, text, style, onClick, onContextMenu }) {
   // Tapped-open tip: no pointer leaves a touch screen, so it closes on the
   // next tap outside it (or on the badge again).
   useEffect(() => {
-    if (!tip || !touchRef.current) return;
+    if (!tip || !tapped()) return;
     const away = (e) => {
       if (tipRef.current?.contains(e.target) || btnRef.current?.contains(e.target)) return;
       hideNow();
@@ -1684,10 +1684,9 @@ function NoteBadge({ hlId, text, style, onClick, onContextMenu }) {
       <span className="pdfNoteAnchor" style={style}>
         <button ref={btnRef} type="button" className="pdfNoteBadge" data-hl-id={hlId} aria-label={t("Show highlight note")}
           {...menu}
-          onPointerDown={(e) => { touchRef.current = e.pointerType !== "mouse"; menu.onPointerDown(e); }}
           onMouseEnter={show} onMouseLeave={hide}
           onClick={(e) => {
-            if (touchRef.current) { e.stopPropagation(); clearTimeout(timerRef.current); if (tip) setTip(null); else place(); return; }
+            if (tapped()) { e.stopPropagation(); clearTimeout(timerRef.current); if (tip) setTip(null); else place(); return; }
             hideNow(); onClick(e);
           }}
         >

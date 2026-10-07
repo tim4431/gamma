@@ -206,8 +206,9 @@ nothing at all to the account server.
    and environment ([dev/hosted.md](../dev/hosted.md) "What moves a
    server").
 8. **A second host**: a DNS record per server and a Caddy per host, a
-   bootstrap script for the agent, then a `move` job. *Being built:* the
-   records, the Caddy and the script; no `move` job yet.
+   bootstrap script for the agent, then a `move` job. *Built:* the
+   records, the Caddy and the script ([dev/hosted.md](../dev/hosted.md)
+   "Deployment"); no `move` job.
 9. The shared server reporting usage per account, which the Plan page and
    a retention rule for lapsed plans both wait for. *Not built.*
 

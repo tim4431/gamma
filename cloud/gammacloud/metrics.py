@@ -27,14 +27,6 @@ def hour(ts: str = "") -> str:
     return (ts or db.now())[:13] + ":00:00.000Z"
 
 
-def _data(raw) -> dict:
-    try:
-        value = json.loads(raw or "{}")
-    except ValueError:
-        return {}
-    return value if isinstance(value, dict) else {}
-
-
 def record(conn, kind: str, ref: str, data: dict) -> None:
     """Merge ``data`` into the row of the current hour, inside the caller's
     transaction. A value that is None (not known this time) is left out."""
@@ -43,7 +35,7 @@ def record(conn, kind: str, ref: str, data: dict) -> None:
         return
     at = hour()
     row = conn.execute("SELECT data FROM metrics WHERE kind = ? AND ref = ? AND at = ?", (kind, ref, at)).fetchone()
-    merged = _data(row["data"]) if row else {}
+    merged = db.json_dict(row["data"]) if row else {}
     for k, v in data.items():
         had = merged.get(k)
         merged[k] = had + v if k in SUMMED and isinstance(had, (int, float)) else v
@@ -52,7 +44,7 @@ def record(conn, kind: str, ref: str, data: dict) -> None:
 
 
 def _points(rows) -> list[dict]:
-    return [{"at": r["at"], **_data(r["data"])} for r in rows]
+    return [{"at": r["at"], **db.json_dict(r["data"])} for r in rows]
 
 
 def series(conn, kind: str, ref: str, hours: int) -> list[dict]:
@@ -70,7 +62,7 @@ def trends(conn, kind: str, keys: tuple[str, ...], hours: int = 48) -> dict[str,
     out: dict[str, list[dict]] = {}
     for r in conn.execute("SELECT ref, at, data FROM metrics WHERE kind = ? AND at > ? ORDER BY ref, at",
                           (kind, since)).fetchall():
-        data = _data(r["data"])
+        data = db.json_dict(r["data"])
         out.setdefault(r["ref"], []).append({"at": r["at"], **{k: data[k] for k in keys if k in data}})
     return out
 
@@ -78,7 +70,7 @@ def trends(conn, kind: str, keys: tuple[str, ...], hours: int = 48) -> dict[str,
 def latest(conn, kind: str) -> dict[str, dict]:
     """Per ``ref`` of ``kind``: its newest sample, ``{at, ...}``, in one
     read (SQLite takes ``data`` from the row ``MAX`` picks)."""
-    return {r["ref"]: {"at": r["at"], **_data(r["data"])} for r in conn.execute(
+    return {r["ref"]: {"at": r["at"], **db.json_dict(r["data"])} for r in conn.execute(
         "SELECT ref, MAX(at) AS at, data FROM metrics WHERE kind = ? GROUP BY ref", (kind,)).fetchall()}
 
 

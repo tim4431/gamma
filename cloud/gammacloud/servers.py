@@ -30,9 +30,9 @@ import re
 from ipaddress import IPv6Address
 from urllib.parse import urlsplit
 
-from . import config, fleet
+from . import config
 from .accounts import Problem
-from .db import now
+from .db import json_dict, now
 from .hosted import url_of
 from .oidc import LOOPBACK_HOSTS
 
@@ -144,7 +144,7 @@ def _hosted(conn, account_id: str) -> dict | None:
                        (account_id,)).fetchone()
     if row is None:
         return None
-    report = fleet.json_dict(row["report"])
+    report = json_dict(row["report"])
     schema = report.get("schema")
     return {"url": url_of(row["label"]), "name": HOSTED_NAME, "kind": "hosted",
             "hosted": True, "local": False, "linked_at": row["created_at"],

@@ -25,7 +25,7 @@ const browser = await chromium.launch({ headless: true });
 try {
   const page = await browser.newPage({ viewport: { width, height }, deviceScaleFactor: 1 });
   await page.goto(pathToFileURL(file).href);
-  await page.evaluate(() => { document.fonts.ready; document.documentElement.pauseAnimations(); });
+  await page.evaluate(async () => { await document.fonts.ready; document.documentElement.pauseAnimations(); });
   for (const t of times) {
     await page.evaluate(t => document.documentElement.setCurrentTime(t), t);
     const destination = path.join(out, `${stem}-${t}s.png`);

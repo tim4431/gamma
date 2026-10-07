@@ -36,10 +36,6 @@ def _shared(plan: str) -> bool:
     return bool(config.PLAN_LIMITS.get(plan, {}).get("shared"))
 
 
-def _bare(url: str) -> str:
-    return url.split("//")[-1]
-
-
 def _can_switch(summary: dict) -> bool:
     """Whether the cards are switches: a paid-up subscription that is not
     set to end (``billing._can_switch``)."""
@@ -70,7 +66,7 @@ def plan_lines(plan: str, username: str) -> list[str]:
     """The six lines a card lists (HTML), from ``config.PLAN_LIMITS``."""
     lim = config.PLAN_LIMITS[plan]
     if lim.get("shared"):
-        where = f" at <b>{pages.esc(_bare(config.APP_URL))}</b>" if config.APP_URL else ""
+        where = f" at <b>{pages.esc(pages._bare(config.APP_URL))}</b>" if config.APP_URL else ""
         return [f"Your library on Gamma Cloud, always on{where}",
                 "One account; share links (view or edit) still work for anyone",
                 f"{_size(lim['quota_mb'])} for uploads, {lim['max_upload_mb']} MB per file",
@@ -204,7 +200,7 @@ def _server(hosted: dict | None, plan: str) -> str:
     url = hosted.get("url") or ""
     limits, report = hosted.get("limits") or {}, hosted.get("report") or {}
     state = hosted.get("state") or ""
-    rows = f"<dt>Address</dt><dd><a href='{pages.esc(url)}'>{pages.esc(_bare(url))}</a></dd>" if url else ""
+    rows = f"<dt>Address</dt><dd><a href='{pages.esc(url)}'>{pages.esc(pages._bare(url))}</a></dd>" if url else ""
     storage = _storage(hosted, plan)
     if storage:
         rows += f"<dt>Storage</dt><dd>{storage}</dd>"
@@ -233,7 +229,7 @@ def _library(summary: dict, plan: str) -> str:
     url, limits = summary["shared_url"], config.shared_limits(plan)
     if not url or not limits:
         return ""
-    rows = (f"<dt>Address</dt><dd><a href='{pages.esc(url)}'>{pages.esc(_bare(url))}</a></dd>"
+    rows = (f"<dt>Address</dt><dd><a href='{pages.esc(url)}'>{pages.esc(pages._bare(url))}</a></dd>"
             f"<dt>Storage</dt><dd>{_size(limits['quota_mb'])}, {limits['max_upload_mb']} MB per file</dd>")
     return ("<section class=section><h2>Your library</h2><div class=body>"
             f"<dl class=kv>{rows}</dl><p class='plantext gap'>An account on Gamma Cloud's shared server. Sign in "
@@ -603,11 +599,11 @@ def overview_plan(account: dict, summary: dict) -> str:
     rows = ""
     if _shared(plan) and summary["shared_url"]:
         url = summary["shared_url"]
-        rows += f"<dt>Library</dt><dd><a href='{pages.esc(url)}'>{pages.esc(_bare(url))}</a></dd>"
+        rows += f"<dt>Library</dt><dd><a href='{pages.esc(url)}'>{pages.esc(pages._bare(url))}</a></dd>"
     if hosted and hosted.get("state") != "deleted":
         url = hosted.get("url") or ""
         if url:
-            rows += f"<dt>Server</dt><dd><a href='{pages.esc(url)}'>{pages.esc(_bare(url))}</a></dd>"
+            rows += f"<dt>Server</dt><dd><a href='{pages.esc(url)}'>{pages.esc(pages._bare(url))}</a></dd>"
         storage = _storage(hosted, plan)
         if storage:
             rows += f"<dt>Storage</dt><dd>{storage}</dd>"
@@ -645,9 +641,9 @@ async function loadBilling(){
   sel.onchange = () => loadBilling();
   const [d, ev] = await Promise.all([api('/api/admin/subscriptions?status=' + encodeURIComponent(sel.value), undefined, 'GET'),
                                      api('/api/admin/billing-events', undefined, 'GET')]);
-  const s = d.summary, tile = (label, value, sub) => '<div><span>' + label + '</span><b>' + esc(value) + '</b><small>' + esc(sub) + '</small></div>';
+  const s = d.summary, tile = fleetUI.tile;
   document.getElementById('boff').hidden = d.enabled;
-  document.getElementById('bsum').innerHTML = tile('Paying', s.paying, Object.entries(s.by_plan).map(([p, n]) => n + ' ' + p).join(' · '))
+  document.getElementById('bsum').innerHTML = tile('Paying', s.paying, esc(Object.entries(s.by_plan).map(([p, n]) => n + ' ' + p).join(' · ')))
     + tile('A month', '$' + s.mrr_usd.toFixed(2), 'a yearly plan counts a twelfth')
     + tile('Payment failed', s.past_due, 'in grace or past it') + tile('Ending', s.ending, 'cancelled, still in their period');
   document.getElementById('bcount').textContent = d.subscriptions.length + ' shown';

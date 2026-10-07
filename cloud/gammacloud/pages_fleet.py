@@ -8,9 +8,10 @@ machines they run on, and every other container there, are the Machines
 tab's (``pages_machines.py``).
 
 ``SHARED_STYLE`` and ``SHARED_JS`` are what both tabs draw with: the
-capacity meters, times and durations, a job's result and the log viewer,
-and the sparklines the Servers tab draws. ``pages.admin_page`` includes each once, before either
-tab; ``SHARED_JS`` defines ``fleetUI``. ``pages.admin_page`` also includes
+summary tiles, the capacity meters, times and durations, a job's result
+and the log viewer, and the sparklines the Servers tab draws (the Overview
+and Billing tabs take their tiles from it too). ``pages.admin_page``
+includes each once, before either tab; ``SHARED_JS`` defines ``fleetUI``. ``pages.admin_page`` also includes
 ``ADMIN_TAB`` and appends ``ADMIN_JS``, which defines ``loadServers()``,
 the tab's entry; it uses the admin script's ``api``, ``esc``, ``bind``,
 ``say``, ``act``, ``ask`` and ``toast``.
@@ -124,6 +125,9 @@ const fleetUI = (() => {
 const plural = (n, one, many) => n + ' ' + (n === 1 ? one : many);
 const pct = v => v + ' %';
 const JOB_PILL = {done: 'pill pill--ok', failed: 'pill pill--warn'};
+const ORDER = ['running', 'provisioning', 'grace', 'read_only', 'suspended', 'stopped'];   // a server count's states, in this order
+// a summary tile: a label, the figure (with cls on it) and a line of detail, as HTML
+const tile = (label, value, detail, cls) => '<div><span>' + label + '</span><b' + (cls ? ' class=' + cls : '') + '>' + value + '</b><small>' + detail + '</small></div>';
 function size(mb){ mb = Math.max(0, Number(mb) || 0); return mb >= 1024 ? (mb / 1024).toFixed(1).replace(/\.0$/, '') + ' GB' : Math.round(mb) + ' MB'; }
 function ago(ts){
   if (!ts) return '<span class=empty>never</span>';
@@ -139,6 +143,12 @@ function took(j){
   s = Math.max(0, Math.round(s));
   const t = s < 60 ? s + ' s' : s < 3600 ? Math.floor(s / 60) + ' min ' + (s % 60) + ' s' : Math.floor(s / 3600) + ' h ' + Math.floor(s % 3600 / 60) + ' min';
   return j.state === 'running' ? t + '…' : t;
+}
+// how long since ts, in a word or two ('3 min', '2 h', '4 d'); under 90 s it is `moment`; '' for no time
+function since(ts, moment){
+  const s = (Date.now() - Date.parse(ts)) / 1000;
+  if (isNaN(s)) return '';
+  return s < 90 ? moment : s < 5400 ? Math.round(s / 60) + ' min' : s < 129600 ? Math.round(s / 3600) + ' h' : Math.round(s / 86400) + ' d';
 }
 // A thin meter of total: a (the accent) and b (a lighter step of it) side by side; red from 90 %.
 function meter(total, a, b, title){
@@ -211,18 +221,17 @@ function logViewer(el){
   function close(){ clearTimeout(timer); jobId = ''; start = null; el.sec.hidden = true; }
   return {show, watch, again: () => { if (start) show(label, start); }, close};
 }
-return {plural, pct, size, ago, took, meter, line, spark, resultText, logViewer, JOB_PILL};
+return {plural, pct, size, ago, since, took, meter, line, spark, resultText, logViewer, tile, JOB_PILL, ORDER};
 })();
 """
 
 ADMIN_JS = r"""
 // --- Servers tab (pages_fleet.py) ---
 const loadServers = (() => {
-const {plural, pct, size, ago, took, meter, line, spark, resultText, logViewer, JOB_PILL} = fleetUI;
+const {plural, pct, size, ago, took, meter, line, spark, resultText, logViewer, tile, JOB_PILL, ORDER} = fleetUI;
 const QUOTAS = __QUOTAS__;   // the hosted plans, for the Provision form's hint
 const TAB = document.getElementById('tab-servers'), $ = id => document.getElementById(id);
 const SRV_PILL = {running: 'pill pill--ok', grace: 'pill pill--warn', read_only: 'pill pill--warn', stopped: 'pill pill--warn', suspended: 'pill pill--warn'};
-const ORDER = ['running', 'provisioning', 'grace', 'read_only', 'suspended', 'stopped'];
 const UPGRADABLE = ['running', 'grace', 'read_only', 'suspended'];   // fleet.UPGRADABLE: the states a run takes
 const LIMITS = ['quota_mb', 'max_upload_mb', 'max_accounts', 'memory_mb', 'cpus'];   // hosted.OVERRIDES
 const KIND_WORD = {update: 'environment'};
@@ -355,7 +364,6 @@ function summary(hosts, list, jobs){
   jobs.forEach(j => { if (!j.server_id && j.state in jc) jc[j.state]++; });   // a host's own jobs (a container's, an orphan's removal)
   live = jc.queued + jc.running > 0 || jobs.some(j => j.state === 'queued' || j.state === 'running');
   const old = alive.filter(outdated).length, repo = defImage.slice(0, defImage.length - defTag.length).replace(/:$/, '');
-  const tile = (label, value, detail, cls) => '<div><span>' + label + '</span><b' + (cls ? ' class=' + cls : '') + '>' + value + '</b><small>' + detail + '</small></div>';
   $('fsum').innerHTML = tile('<a href="#machines">Machines</a>', hosts.length, hosts.length ? (hosts.length - stale) + ' fresh' + (stale ? ' · <span class="pill pill--warn">' + stale + ' stale</span>' : '') : 'none yet')
     + tile('Servers', alive.length, ORDER.filter(k => by[k]).map(k => by[k] + ' ' + words(k)).join(' · ') || 'none yet')
     + tile('Jobs in flight', jc.queued + jc.running, jc.queued + ' queued · ' + jc.running + ' running'

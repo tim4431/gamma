@@ -254,12 +254,12 @@ dispatch, it needs the file on `main` once before the first run.
 ## `site.yml`
 
 gammapdf.com ([sites/README.md](../../sites/README.md)); it depends on no
-app code, only on `sites/`, `PRIVACY.md`, `TERMS.md` and `docs/`: the artwork the build
-copies and the documents it renders as pages (the user guide, `docs/dev/`,
-`docs/research/`), so a documentation change on `main` deploys the site.
+app code, only on `sites/`, `PRIVACY.md`, `TERMS.md` and `docs/`: the artwork
+the build copies and the user guide it renders as a page, so a change under
+`docs/` on `main` deploys the site.
 `check`: `npm ci`, `node build.mjs --strict` (fails on an internal link or
 anchor that resolves to nothing), the key pages present in `dist/` (index,
-404, privacy, the user and developer guides, the sitemap, `_redirects`,
+404, pricing, privacy, terms, the user guide, the sitemap, `_redirects`,
 `_headers`, the favicon), no `<!--#include` left unexpanded, and `wrangler
 deploy --dry-run` (bundles the Worker and reads `wrangler.jsonc` — no
 credentials). Runs on a PR touching those paths and first on every deploy. `deploy` (a push to `main` touching those paths, or

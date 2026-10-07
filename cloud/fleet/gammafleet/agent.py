@@ -994,10 +994,15 @@ class Agent:
             c.remove(force=True)
         return ""
 
-    def start_helper(self, own, name: str, image: str, action: str) -> str:
-        """Start the self-update helper (``selfupdate.py``) for the agent's own
-        container ``own``, under ``name``: one-shot from ``image``, removed when
-        it exits, on no network, with the Docker socket the agent has."""
+    def via_helper(self, own, name: str, image: str, action: str) -> dict:
+        """A job on the agent's own container ``own``, handed to the self-update
+        helper (``selfupdate.py``): one-shot from ``image``, removed when it
+        exits, on no network, with the Docker socket the agent has. Done as
+        soon as it started (one at a time); the new agent reports with its
+        first heartbeat."""
+        busy = self.helper_at_work()
+        if busy:
+            return {"container": name, "image": image, "note": f"{busy} is already at work: no second helper"}
         mounts = (own.attrs or {}).get("Mounts") or []
         sock = next((m.get("Source") for m in mounts if m.get("Destination") == DOCKER_SOCK), "") or DOCKER_SOCK
         helper = f"{name}-selfupdate"
@@ -1005,16 +1010,6 @@ class Agent:
                                    name=helper, detach=True, remove=True, network_mode="none",
                                    labels={HELPER_LABEL: name}, volumes={sock: {"bind": DOCKER_SOCK, "mode": "rw"}})
         log.info("started %s to %s %s", helper, action, name)
-        return helper
-
-    def via_helper(self, own, name: str, image: str, action: str) -> dict:
-        """A job on the agent's own container, handed to the helper: done as
-        soon as it started (one at a time). The new agent reports with its
-        first heartbeat."""
-        busy = self.helper_at_work()
-        if busy:
-            return {"container": name, "image": image, "note": f"{busy} is already at work: no second helper"}
-        self.start_helper(own, name, image, action)
         return {"container": name, "image": image,
                 "note": "helper started; the new agent reports with its first heartbeat"}
 

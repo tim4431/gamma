@@ -27,7 +27,7 @@ from . import config, db, mail, settings
 from .db import after, audit, new_id, new_token, now, token_hash
 
 USERNAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]{1,30}[a-z0-9]$")
-EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+EMAIL_RE = settings.EMAIL_RE   # the shape of an address; the alert address is checked by the same rule
 MIN_PASSWORD = 8
 MAX_PASSWORD = 200
 

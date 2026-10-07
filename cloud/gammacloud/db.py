@@ -12,6 +12,7 @@ pending step.
 """
 
 import hashlib
+import json
 import os
 import secrets
 import sqlite3
@@ -41,6 +42,16 @@ def now() -> str:
 
 def parse(ts: str) -> datetime:
     return datetime.strptime(ts, "%Y-%m-%dT%H:%M:%S.%fZ").replace(tzinfo=timezone.utc)
+
+
+def json_dict(raw) -> dict:
+    """A JSON object column (``report``, ``limits``, ``payload``, ...) as a
+    dict; {} for NULL, bad JSON or anything but an object."""
+    try:
+        value = json.loads(raw or "{}")
+    except ValueError:
+        return {}
+    return value if isinstance(value, dict) else {}
 
 
 def token_hash(token: str) -> str:

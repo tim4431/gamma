@@ -50,10 +50,11 @@ sites/
    rules so an anchor written for the repository works on the site too. The
    sidebar lists the page's sections. The developer guide and the research
    notes are written for contributors and are not published: they stay on
-   GitHub, where a link from the user guide to one of them lands. A relative link in a document becomes the page it points at when
-   that document is rendered too, a copy under `/media/` when it is a
-   picture, and otherwise a link to the file on GitHub, so a document can
-   point at code. Each page ends with a link to its source file;
+   GitHub, where a link from the user guide to one of them lands. A relative
+   link in a document becomes the page it points at when that document is
+   rendered too, a copy under `/media/` when it is a picture, and otherwise a
+   link to the file on GitHub, so a document can point at code. Each page
+   ends with a link to its source file;
 
 4. writes `sitemap.xml` from every page in `dist/`, then checks that each
    internal link lands on a page and each anchor on an id in it.
@@ -147,7 +148,7 @@ needs two repository secrets:
   fallback) and in both color schemes (the illustrations are light-only;
   the screenshot and demos are shown as recorded).
 - Documentation pages are edited in `docs/`, never here. A document that
-  should also be on the site is added to `DOCS` in `build.mjs`. Link between documents with relative paths to the
-  `.md` files, as GitHub needs anyway.
+  should also be on the site is added to `DOCS` in `build.mjs`. Link between
+  documents with relative paths to the `.md` files, as GitHub needs anyway.
 - A new hand-written page: add a `.html` under `site/` with the two
   includes; the sitemap picks it up.

@@ -15,7 +15,7 @@ launcher, and desktop release workflows use these locations.
 | `desktop/` | Electron shell and desktop packaging |
 | `ipad/` | The native iPad app: Swift host, the bundle entry of the shared JavaScript, XcodeGen project ([ipad/README.md](../../ipad/README.md)) |
 | `extension/` | Browser connector, loaded unpacked without a build step |
-| `sites/` | The gammapdf.com website: static pages deployed as a Cloudflare Worker; its build copies the branding, demos and screenshot from `docs/assets/` and renders the user guide, `docs/dev/` and `docs/research/` as pages ([sites/README.md](../../sites/README.md)) |
+| `sites/` | The gammapdf.com website: static pages deployed as a Cloudflare Worker; its build copies the branding, demos and screenshot from `docs/assets/` and renders the user guide, the privacy policy and the terms as pages ([sites/README.md](../../sites/README.md)) |
 | `docs/dev/` | Architecture, implementation notes, and plans |
 | `docs/research/` | Design research: surveys, findings, and the reasoning behind chosen shapes |
 | `docs/user_guide/` | The user guide (`user_guide.md`) and its animations (`assets/`), published at gammapdf.com/docs |
@@ -47,23 +47,21 @@ One file per topic. `docs/dev/` files are named in snake_case
 source comments cite them), research notes in kebab-case. Source comments cite
 a doc by its path and section title, so a renamed file or heading needs a
 search of the code as well as of the docs. When a topic outgrows its file,
-move the section into a file of its own and leave a short pointer behind, as
-[translation.md](translation.md), [chat_history.md](chat_history.md) and
-[pdf_typesetting.md](pdf_typesetting.md) were split out, and add its row to
-the developer guide. When a plan or a research gap is built, describe the
+move the section into a file of its own, leave a short pointer behind, and
+add its row to the developer guide ([translation.md](translation.md),
+[chat_history.md](chat_history.md) and [pdf_typesetting.md](pdf_typesetting.md)
+are such files). When a plan or a research gap is built, describe the
 mechanics in the topic doc and mark the plan or note with one clause; the
 [research index](../research/README.md) keeps what each note still leaves open.
 
-The user guide, `docs/dev/` and `docs/research/` are also pages of
-gammapdf.com (`/docs/`, `/docs/dev/<name>/`, `/docs/research/<name>/`),
-rendered from these files by the website build on every push to `main`
-([sites/README.md](../../sites/README.md)). Link between documents with
-relative paths to the `.md` files and use GitHub's heading anchors; the
-build turns those into site links and leaves a link to any other file in the
-repository pointing at GitHub. A link or anchor that resolves to nothing
-fails the site's check, so a renamed heading needs its links updated. The
-developer guide's topic table is also the order and the labels of the
-developer sidebar there.
+The user guide is also a page of gammapdf.com (`/docs/`), rendered from its
+file by the website build on every push to `main`
+([sites/README.md](../../sites/README.md)); `docs/dev/` and `docs/research/`
+stay on GitHub, where a link from the guide to them lands. Link between
+documents with relative paths to the `.md` files and use GitHub's heading
+anchors; the build turns those into site links and leaves a link to any other
+file in the repository pointing at GitHub. A link or anchor that resolves to
+nothing fails the site's check, so a renamed heading needs its links updated.
 
 The root README is for users: plain headings without emoji or icons, "Read
 from any place" first, pictures linked to the matching section of the

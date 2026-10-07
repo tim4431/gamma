@@ -47,7 +47,7 @@ LOG_LINES_MAX = 5000           # the most lines a container_logs job asks for
 CONTAINERS_MAX = 200           # the containers of a host kept from one heartbeat
 GAMMA_REPO = "ghcr.io/tim4431/gamma"   # Gamma's images are under it: the server's, gamma-cloud and gamma-fleet
 UPGRADABLE = ("running", "grace", "read_only", "suspended")
-TAG_RE = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$")
+TAG_RE = settings.IMAGE_TAG_RE   # a Docker image tag; the Admin page's default tag is checked by the same rule
 HOST_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$")
 CONTAINER_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")   # Docker's own rule for a name
 STATUSES = ("running", "restarting", "paused", "created", "exited", "dead", "removing")
@@ -71,14 +71,6 @@ def wake() -> None:
 def wait_for_work(seconds: float) -> None:
     with _wake:
         _wake.wait(seconds)
-
-
-def json_dict(raw) -> dict:
-    try:
-        value = json.loads(raw or "{}")
-    except ValueError:
-        return {}
-    return value if isinstance(value, dict) else {}
 
 
 def _json_list(raw) -> list:
@@ -127,7 +119,7 @@ def outdated_why(row) -> str:
         return ""
     if (row["image_tag"] or default_tag()) != default_tag():
         return "tag"
-    agent = json_dict(row["report"]).get("agent")
+    agent = db.json_dict(row["report"]).get("agent")
     return "image" if isinstance(agent, dict) and agent.get("image_stale") is True else ""
 
 
@@ -271,7 +263,7 @@ def _placed(conn) -> dict[str, dict]:
         use["labels"].add(r["label"])
         if r["state"] != "deleted":
             use["servers"] += 1
-            use["committed_mb"] += size_of(json_dict(r["limits"]))[0]
+            use["committed_mb"] += size_of(db.json_dict(r["limits"]))[0]
     return out
 
 
@@ -416,7 +408,7 @@ def heartbeat(conn, host, body: dict) -> None:
             continue
         row = conn.execute("SELECT id, report FROM hosted_servers WHERE label = ? AND host_id = ?",
                            (label, host["id"])).fetchone()
-        report = json_dict(row["report"])
+        report = db.json_dict(row["report"])
         report["agent"] = {"running": bool(c.get("running")), "health": str(c.get("health") or "")[:40],
                            "memory_mb": nonneg(c.get("memory_mb")), "memory_limit_mb": nonneg(c.get("memory_limit_mb")),
                            "data_mb": nonneg(c.get("data_mb")), "image": str(c.get("image") or "")[:200],
@@ -478,7 +470,7 @@ def remove_orphan(conn, host_id: str, label: str, actor: str = "") -> dict:
         raise Problem(404, f"no orphan container {label} on this host")
     for r in conn.execute("SELECT id, payload FROM fleet_jobs WHERE host_id = ? AND server_id = '' AND kind = 'delete' "
                           "AND state IN ('queued', 'running')", (host_id,)).fetchall():
-        if json_dict(r["payload"]).get("label") == label:
+        if db.json_dict(r["payload"]).get("label") == label:
             return job(conn, r["id"])
     job_id = enqueue(conn, host_id, "", "delete", {"label": label, "account_id": ""})
     db.audit(conn, "fleet.orphan_remove", actor=actor, detail=f"{host_id} {label}")
@@ -563,7 +555,7 @@ def container_job(conn, host_id: str, name: str, kind: str, actor: str = "", lin
     else:
         for r in conn.execute("SELECT id, payload FROM fleet_jobs WHERE host_id = ? AND server_id = '' AND kind = ? "
                               "AND state IN ('queued', 'held', 'running')", (host_id, kind)).fetchall():
-            if json_dict(r["payload"]).get("container") == name:
+            if db.json_dict(r["payload"]).get("container") == name:
                 return job(conn, r["id"])
     job_id = enqueue(conn, host_id, "", kind, payload, wave=wave, state=state)
     db.audit(conn, "fleet.container", actor=actor, detail=f"{host_id} {name} {kind}")
@@ -643,7 +635,7 @@ def machines(conn) -> list[dict]:
                 "AND kind IN ('container_update', 'container_restart', 'container_rollback') AND finished_at > ? "
                 "ORDER BY finished_at DESC", (h["id"], h["last_seen_at"] or "")).fetchall()
             own["helper"] = next((r["kind"] for r in done
-                                  if json_dict(r["payload"]).get("container") == own.get("name")), "")
+                                  if db.json_dict(r["payload"]).get("container") == own.get("name")), "")
         h["updates"] = len(updatable(h["containers"]))
         h["jobs"] = [public_job(r, waves, full=False) for r in conn.execute(
             _JOBS_SQL + " WHERE j.host_id = ? ORDER BY j.created_at DESC, j.id DESC LIMIT 20", (h["id"],)).fetchall()]
@@ -705,7 +697,7 @@ def _handed(conn, job) -> tuple[dict, str]:
     the payload only while the job runs. An orphan's removal whose label a
     server took since it was queued (or retried) must not run: it would
     delete that server."""
-    payload = json_dict(job["payload"])
+    payload = db.json_dict(job["payload"])
     if job["kind"] in SECRET_KINDS and job["server_id"]:
         server = conn.execute("SELECT * FROM hosted_servers WHERE id = ?", (job["server_id"],)).fetchone()
         if server is None or server["state"] == "deleted":
@@ -720,7 +712,7 @@ def _orphan_label_taken(conn, job) -> str:
     not run: a server on that host holds its label now. "" when it may."""
     if job["kind"] != "delete" or job["server_id"]:
         return ""
-    label = json_dict(job["payload"]).get("label", "")
+    label = db.json_dict(job["payload"]).get("label", "")
     held = conn.execute("SELECT 1 FROM hosted_servers WHERE host_id = ? AND label = ? AND state != 'deleted'",
                         (job["host_id"], label)).fetchone()
     return f"{label} belongs to a hosted server now; its removal as an orphan is canceled" if held else ""
@@ -757,10 +749,10 @@ def complete(conn, host, job_id: str, state: str, result) -> dict:
     job_row = conn.execute("SELECT * FROM fleet_jobs WHERE id = ? AND host_id = ?", (job_id, host["id"])).fetchone()
     if not job_row:
         raise Problem(404, "no such job")
-    late = job_row["state"] == "failed" and json_dict(job_row["result"]).get("timed_out")
+    late = job_row["state"] == "failed" and db.json_dict(job_row["result"]).get("timed_out")
     if job_row["state"] != "running" and not late:
         raise Problem(409, f"the job is {job_row['state']}, not running")
-    payload = json_dict(job_row["payload"])
+    payload = db.json_dict(job_row["payload"])
     conn.execute("UPDATE fleet_jobs SET state = ?, result = ?, finished_at = ?, payload = ? WHERE id = ?",
                  (state, _result_text(job_row["kind"], result), db.now(),
                   "{}" if job_row["kind"] in SECRET_KINDS else job_row["payload"], job_id))
@@ -787,7 +779,7 @@ def fail_stuck(conn) -> int:
     for row in rows:
         conn.execute("UPDATE fleet_jobs SET state = 'failed', result = ?, finished_at = ?, payload = ? WHERE id = ?",
                      (json.dumps(result), db.now(), "{}" if row["kind"] in SECRET_KINDS else row["payload"], row["id"]))
-        hosted.job_finished(conn, dict(row), json_dict(row["payload"]), False, result)
+        hosted.job_finished(conn, dict(row), db.json_dict(row["payload"]), False, result)
     return len(rows)
 
 
@@ -857,7 +849,7 @@ def public_job(row, waves: dict | None = None, full: bool = True) -> dict:
     an ``extra_env`` only the names (their secrets never leave the queue);
     in a list (``full`` False) a logs job's lines are only counted."""
     out = dict(row)
-    payload = json_dict(row["payload"])
+    payload = db.json_dict(row["payload"])
     payload.pop("env", None)
     if isinstance(payload.get("extra_env"), dict):
         payload["extra_env"] = sorted(payload["extra_env"])
@@ -868,7 +860,7 @@ def public_job(row, waves: dict | None = None, full: bool = True) -> dict:
     total, done = (waves or {}).get(row["wave"].partition("/")[0], (None, None)) if row["wave"] else (None, None)
     out["wave_total"], out["wave_done"] = total, done
     if not full and row["kind"] in LOG_KINDS:
-        result = json_dict(row["result"])
+        result = db.json_dict(row["result"])
         if isinstance(result.get("lines"), list):
             out["result"] = json.dumps({**{k: v for k, v in result.items() if k != "lines"},
                                         "line_count": len(result["lines"])})
@@ -909,7 +901,7 @@ def _upgrade_pending(conn) -> set[str]:
     the container runs, so either order ends the same."""
     rows = conn.execute("SELECT server_id, payload FROM fleet_jobs WHERE kind = 'upgrade' "
                         "AND state IN ('queued', 'held', 'running')").fetchall()
-    return {r["server_id"] for r in rows if json_dict(r["payload"]).get("image")}
+    return {r["server_id"] for r in rows if db.json_dict(r["payload"]).get("image")}
 
 
 def update_pending(conn) -> set[str]:

@@ -46,14 +46,11 @@ const MEDIA = {
   'demo-collab.webp': 'docs/assets/demos/demo-collab.webp',
 };
 
-// The Markdown pages. `source` is a file or a directory of .md files under the
-// repository root; `at` is where it lands on the site. A directory's README.md
-// becomes its index and every other file a folder of its own name
-// (docs/dev/mcp.md → /docs/dev/mcp/). Everything else comes from the Markdown:
-// the title is the first heading, the description the first paragraph, the
-// sidebar's order and labels are the links of the section's index page, in
-// order of appearance. A `section` puts the pages in the documentation sidebar;
-// without one the page stands alone (the privacy policy, the terms).
+// The Markdown pages. `source` is a .md file under the repository root; `at`
+// is where it lands on the site. Everything else comes from the Markdown: the
+// title is the first heading, the description the first paragraph. A `section`
+// puts the page in the documentation sidebar, with its headings; without one
+// the page stands alone (the privacy policy, the terms).
 const DOCS = [
   { source: 'PRIVACY.md', at: 'privacy/' },
   { source: 'TERMS.md', at: 'terms/' },
@@ -105,22 +102,11 @@ const asset = repoPath => {
 };
 
 // 3. The Markdown pages: first the list, so links between them can be resolved.
-const pages = [];
-for (const doc of DOCS) {
-  const abs = path.join(ROOT, doc.source);
-  if (!fs.existsSync(abs)) throw new Error(`Missing document: ${doc.source}`);
-  const files = fs.statSync(abs).isDirectory()
-    ? fs.readdirSync(abs).filter(f => f.endsWith('.md')).sort().map(f => `${doc.source}/${f}`)
-    : [doc.source];
-  for (const source of files) {
-    const name = path.posix.basename(source, '.md');
-    const index = files.length === 1 || name === 'README';
-    const url = index ? `/${doc.at}` : `/${doc.at}${name}/`;
-    pages.push({ source, url, rel: `${url.slice(1)}index.html`, section: doc.section, index });
-  }
-}
+const pages = DOCS.map(doc => {
+  if (!fs.existsSync(path.join(ROOT, doc.source))) throw new Error(`Missing document: ${doc.source}`);
+  return { source: doc.source, url: `/${doc.at}`, rel: `${doc.at}index.html`, section: doc.section };
+});
 const bySource = new Map(pages.map(p => [p.source, p]));
-const byUrl = new Map(pages.map(p => [p.url, p]));
 
 // GitHub's heading slugs, so links written for the repository keep working.
 const slugger = () => {
@@ -148,7 +134,7 @@ const resolver = page => {
     const m = href.match(/^([^#?]*)(.*)$/);
     const [rel, hash] = [m[1], m[2]];
     const target = path.posix.normalize(path.posix.join(dir, decodeURI(rel))).replace(/\/$/, '');
-    const published = bySource.get(target) ?? bySource.get(`${target}/README.md`);
+    const published = bySource.get(target);
     if (published) return published.url + hash;
     const abs = path.join(ROOT, target);
     if (!fs.existsSync(abs)) {
@@ -201,43 +187,11 @@ const render = page => {
   const text = para ? plain(para.tokens).replace(/\s+/g, ' ').trim() : page.title;
   page.description = text.length > 160 ? `${text.slice(0, 157).replace(/\s+\S*$/, '')}…` : text;
   page.html = marked.parser(tokens).replace(/<table>[\s\S]*?<\/table>/g, m => `<div class="table">${m}</div>`);
-  // The page's links, those in tables first: an index's topic table names
-  // its pages better than a mention in passing does.
-  const links = [];
-  const collect = (list, inTable) => {
-    for (const t of list ?? []) {
-      if (t.type === 'link') links.push({ label: plain(t.tokens), href: t.href, inTable });
-      if (t.type === 'table') {
-        for (const cell of [...t.header, ...t.rows.flat()]) collect(cell.tokens, true);
-      } else {
-        collect(t.tokens, inTable);
-        for (const item of t.items ?? []) collect(item.tokens, inTable);
-      }
-    }
-  };
-  collect(tokens, false);
-  page.links = [...links.filter(l => l.inTable), ...links.filter(l => !l.inTable)];
 };
 pages.forEach(render);
 
-// The sidebar: sections, each with its pages in the order its index links
-// them (then the rest by title) and the current page's headings. The index
-// page's link text is the label, unless it is just the file name.
-const sections = DOCS.filter(d => d.section).map(doc => {
-  const own = pages.filter(p => p.section === doc.section);
-  const index = own.find(p => p.index);
-  const resolve = resolver(index);
-  const labels = new Map();
-  const order = [];
-  for (const { label, href } of index.links) {
-    const target = byUrl.get(resolve(href).replace(/[#?].*$/, ''));
-    if (!target || target.section !== doc.section || target === index || order.includes(target)) continue;
-    order.push(target);
-    if (!/\.md$/.test(label)) labels.set(target, label);
-  }
-  const rest = own.filter(p => p !== index && !order.includes(p)).sort((a, b) => a.title.localeCompare(b.title));
-  return { ...doc, index, pages: [index, ...order, ...rest], labels };
-});
+// The sidebar: each section's pages, the current one with its headings.
+const sections = DOCS.filter(d => d.section).map(doc => ({ ...doc, pages: pages.filter(p => p.section === doc.section) }));
 const nav = page => `<details class="docnav" open>
 <summary>Documentation</summary>
 <nav aria-label="Documentation">
@@ -246,11 +200,10 @@ ${sections.map(s => `<details class="docnav__section"${s.section === page.sectio
 <ul>
 ${s.pages.map(p => {
     const current = p === page;
-    const label = p.index ? (s.pages.length > 1 ? 'Overview' : esc(p.title)) : esc(s.labels.get(p) ?? p.title);
     const toc = current && page.headings.some(h => h.depth === 2)
       ? `\n<ol class="docnav__toc">\n${page.headings.filter(h => h.depth === 2).map(h => `<li><a href="#${h.id}">${esc(h.text)}</a></li>`).join('\n')}\n</ol>`
       : '';
-    return `<li><a href="${p.url}"${current ? ' aria-current="page"' : ''}>${label}</a>${toc}</li>`;
+    return `<li><a href="${p.url}"${current ? ' aria-current="page"' : ''}>${esc(p.title)}</a>${toc}</li>`;
   }).join('\n')}
 </ul>
 </details>`).join('\n')}

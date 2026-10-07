@@ -452,6 +452,11 @@ def _date(iso: str) -> str:
     return f"<time datetime='{esc(iso)}'>{esc(_day(iso))}</time>"
 
 
+def _bare(url: str) -> str:
+    """An address without its scheme, as a link's text."""
+    return url.split("//")[-1]
+
+
 def _ago(iso: str) -> str:
     """"Active now", "3 hours ago", "Yesterday", "12 days ago"; "" after a
     month (the caller shows the date)."""
@@ -1143,7 +1148,7 @@ def _place_row(place: dict, stay: bool = False) -> str:
     """One server on the entrance's cards: a link that signs the browser in
     there, or with ``stay`` the button that finishes the pending request."""
     inner = (f"<i>{ICONS['globe' if place['kind'] == 'shared' else 'server']}</i><span class=txt>"
-             f"<b>{esc(place['name'])}</b><span>{esc(place['url'].split('://', 1)[-1])}</span></span>{ICONS['chevron']}")
+             f"<b>{esc(place['name'])}</b><span>{esc(_bare(place['url']))}</span></span>{ICONS['chevron']}")
     if stay:
         return f"<button type=button class=dest id=stay>{inner}</button>"
     return f"<a class=dest href='{esc(entrance.start_url(place['url']))}'>{inner}</a>"
@@ -1176,7 +1181,7 @@ def no_library_page(account, places: list[dict]) -> str:
 def where_page(account, places: list[dict], request_id: str = "") -> str:
     """The entrance's chooser, for a person whose libraries are on several
     Gamma Cloud servers (``entrance.destinations``; ``account`` needs a
-    username and an e-mail). Each row signs the browser in on that server.
+    username). Each row signs the browser in on that server.
     With ``request_id`` the shared server itself asked (the authorize
     step), and its row finishes that request instead of starting another."""
     rows = "".join(_place_row(p, stay=bool(request_id) and p["kind"] == "shared") for p in places)

@@ -1,5 +1,5 @@
 """Notes and the AI: live rendering, the outline, [[links]], the chat, the library agent."""
-from scene import (AMBER, BAR, BAR_DARK, BLUE, CARD, EDGE, INK, MATH, MONO, MUTED, SOFT, YELLOW, anim,
+from scene import (AMBER, BAR, BAR_DARK, BLUE, CARD, EDGE, FIG_LINE, INK, MATH, MONO, MUTED, SOFT, YELLOW, anim,
                    bullet, button, chip, field, frame, hide, key, keytimes, panel, paper, pointer, show, typed)
 from branding import _advance
 
@@ -10,14 +10,14 @@ LIFT = ('<defs><filter id="lift" x="-20%" y="-40%" width="140%" height="200%">'
         '<feDropShadow dx="0" dy="6" stdDeviation="9" flood-color="#000000" flood-opacity="0.13"/></filter></defs>')
 
 
-def width(text, size, mono=False):
+def width(text, size):
     """How wide typed() lays `text` out, so a chip or a caret can sit right after it."""
-    return sum(_advance(ch, size, mono) for ch in text)
+    return sum(_advance(ch, size, False) for ch in text)
 
 
-def label(text, x, y, size=22, fill=INK, weight=None, anchor=None):
+def label(text, x, y, size=22, fill=INK, weight=None):
     """Static text set to the width typed() would give it, so it lines up with typed text."""
-    extra = (f' font-weight="{weight}"' if weight else '') + (f' text-anchor="{anchor}"' if anchor else '')
+    extra = f' font-weight="{weight}"' if weight else ''
     return (f'<text x="{x}" y="{y}" font-size="{size}" fill="{fill}"{extra} textLength="{width(text, size):.1f}" '
             f'lengthAdjust="spacing">{text}</text>')
 
@@ -37,9 +37,9 @@ def breathe(loop):
     return anim('opacity', '0;1;1;0;0', loop, 0, 0.25, loop - 0.45, loop - 0.3, loop)
 
 
-def page_icon(x, y, color=MUTED):
+def page_icon(x, y):
     """A small page glyph, its top left at (x, y)."""
-    return (f'<path d="M{x} {y} h10 l6 6 v14 h-16 z M{x + 10} {y} v6 h6" fill="none" stroke="{color}" '
+    return (f'<path d="M{x} {y} h10 l6 6 v14 h-16 z M{x + 10} {y} v6 h6" fill="none" stroke="{MUTED}" '
             f'stroke-width="1.6" stroke-linejoin="round"/>')
 
 
@@ -202,12 +202,12 @@ def page_links():
                  'link chip in the line. The page Rydberg arrays then lists that note under “Linked from”.', scene)
 
 
-def figure(x, y, w, h, line=AMBER, stroke_w=3):
+def figure(x, y, w, h, stroke_w=3):
     """A plot: axes and a curve that rises to a plateau."""
-    return (f'<path d="M{x} {y} V{y + h} H{x + w}" fill="none" stroke="#b9b6ae" stroke-width="{stroke_w * 0.7:.1f}"/>'
+    return (f'<path d="M{x} {y} V{y + h} H{x + w}" fill="none" stroke="{FIG_LINE}" stroke-width="{stroke_w * 0.7:.1f}"/>'
             f'<path d="M{x} {y + h * 0.95:.0f} C{x + w * 0.18:.0f} {y + h * 0.3:.0f} {x + w * 0.3:.0f} {y + h * 0.22:.0f} '
             f'{x + w * 0.45:.0f} {y + h * 0.22:.0f} H{x + w * 0.8:.0f} C{x + w * 0.88:.0f} {y + h * 0.22:.0f} '
-            f'{x + w * 0.92:.0f} {y + h * 0.5:.0f} {x + w:.0f} {y + h * 0.62:.0f}" fill="none" stroke="{line}" '
+            f'{x + w * 0.92:.0f} {y + h * 0.5:.0f} {x + w:.0f} {y + h * 0.62:.0f}" fill="none" stroke="{AMBER}" '
             f'stroke-width="{stroke_w}" stroke-linecap="round"/>')
 
 

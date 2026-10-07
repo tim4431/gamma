@@ -11,11 +11,11 @@ data size, and whether its tag names another image in the registry now.
 
 It also reports and manages every other container on the host, by name:
 the account server, the share host, Caddy, the demo and the agent itself.
-It restarts, starts and stops them, fetches their logs, and updates one:
-it pulls the image reference the container was created with and recreates
-the container under the same name, with the configuration Docker reports
-for it, as safely as an upgrade (the old one is kept as `<name>-prev`
-until the new one is up). A failed update can be rolled back.
+It restarts, starts and stops them, fetches their logs, and updates one.
+An update pulls the image reference the container was created with and
+recreates the container under the same name, with the configuration
+Docker reports for it, as safely as an upgrade: the old one is kept as
+`<name>-prev` until the new one is up. A failed update can be rolled back.
 
 The agent cannot stop its own container, so it updates, restarts or rolls
 itself back through a helper: a one-shot container from the new image

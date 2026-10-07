@@ -42,7 +42,7 @@ are in [dev/cloud_accounts.md](../dev/cloud_accounts.md),
 | | Free | Lite | Plus | Pro |
 |---|---|---|---|---|
 | Price | 0 | $2 a month, $20 a year | $5 a month, $50 a year | $20 a month, $200 a year |
-| Library | the desktop app, on disk | an account on the shared server | an account on the shared server | a hosted Gamma of your own at `<username>.gammapdf.com`, for a group |
+| Library | the desktop app, on disk | an account on the shared server | an account on the shared server | a hosted Gamma of your own at `<username>-user.gammapdf.com`, for a group |
 | Accounts on the server | none | 1 (yours) | 1 (yours) | 10 included; more as seats later |
 | Shared workspaces | self-host only | no; share-by-link (view or edit) still works for anyone | no; share-by-link (view or edit) still works for anyone | yes: roles, live cursors, invitations by cloud username |
 | Storage for uploads | the share host's small default | 1 GB | 6 GB | 100 GB pooled, per-workspace quotas |
@@ -457,11 +457,13 @@ the agent as a compose project of its own (`cloud/fleet/deploy/`),
 published by `fleet.yml`; hosted containers with no seeded admin and
 no guests; a Plan & billing page with the payment method, the invoices, a
 cancel that runs to the end of the period and plan switches through the
-portal's flows; and the terms ([TERMS.md](../../TERMS.md)), which say that
-payments are not refunded. Not built: a second host's routing, snapshot
-jobs, the `update` and `sync` jobs, a notice to every hosted admin, Pro
-seats beyond ten, the Plus storage add-on, the desktop launcher's
-first-run sign-in, and a privacy policy that covers Gamma Cloud.
+portal's flows; the terms ([TERMS.md](../../TERMS.md)), which say that
+payments are not refunded; `update` jobs, which rebuild a container with
+the fleet's extra environment, and a server's own limits over its plan's
+([dev/hosted.md](../dev/hosted.md)). Not built: snapshot jobs, the `sync`
+job, a notice to every hosted admin, Pro seats beyond ten, the Plus
+storage add-on, the desktop launcher's first-run sign-in, and a privacy
+policy that covers Gamma Cloud.
 
 **Lite and Plus on the shared server (October 2026).** The first build
 gave every paid plan a container. Two things argued against that for the
@@ -506,9 +508,11 @@ sign-in, and a library that stays readable needs the Gamma server to
 tell a lapsed account from a paid one. Hosted servers took the name
 `<username>-user.gammapdf.com`, so that no username can shadow a service
 name; a separate domain for them would add cookie isolation from the
-account server and remains open. Not built: routing to a second fleet
-host, and a second shared server (`entrance.shared_home` is where an
-account would be told apart).
+account server and remains open. Built since: routing to a second fleet
+host, through a DNS record per server and a Caddy on that host
+([dev/hosted.md](../dev/hosted.md) "Deployment"); a `move` job between
+hosts is not. Not built: a second shared server (`entrance.destinations`
+is where an account would be told apart).
 
 Open decisions for the owner: whether to go with Stripe plus Stripe Tax or
 a merchant of record; whether Pro seats beyond ten are sold at launch or

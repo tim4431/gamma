@@ -49,7 +49,7 @@ portal), [billing.md](billing.md) (plans and Stripe) and
 | **Website** | `sites/`: the front page, pricing, the rendered docs | a Cloudflare Worker | — |
 
 One VPS runs the account server, the shared server, Caddy and one fleet
-agent today. A second host runs an agent and a Caddy of its own, and the
+agent. A second host runs an agent and a Caddy of its own, and the
 servers on it get DNS records of their own ("Hosts" below).
 
 ## Names
@@ -71,9 +71,9 @@ server at sign-in ("The entrance" in cloud_accounts.md).
 
 ## What happens
 
-**Signing in.** Every Gamma server — the desktop app's sidecar, the shared
-server, a hosted container, a server someone runs themselves — is an OIDC
-client of the account server. A sign-in is an authorization-code flow
+**Signing in.** Every Gamma server is an OIDC client of the account
+server: the desktop app's sidecar, the shared server, a hosted container,
+a server someone runs themselves. A sign-in is an authorization-code flow
 with PKCE; the ID token carries the account id (which never changes), the
 username, the plan and, on a paid plan, the storage it allows. The
 server mints its ordinary session from it. An unconfirmed e-mail address
@@ -130,14 +130,14 @@ environment variables, fleet-wide or per server, reach running
 containers the same way, through `update` jobs in waves.
 
 **Watching it.** Every heartbeat and sync becomes an hourly sample kept
-for 30 days, drawn as trends on the Servers tab. A fixed
-list of problems is derived from the state on every heartbeat, job result
-and tick — a failed job, a server waiting for a host, a stale host, a host
-that is full, a hosted server or one of a host's own services that is
-down, a missing DNS record, a Stripe event
-that matched no account, open registration without Turnstile — and each
-new one is mailed to the operator once, after it has persisted for the
-time its kind allows. The Overview tab lists what needs attention.
+for 30 days, drawn as trends on the Servers tab. A fixed list of problems
+is derived from the state on every heartbeat, job result and tick: a
+failed job, a server waiting for a host, a stale host, a host that is
+full, a hosted server or one of a host's own services that is down, a
+missing DNS record, a Stripe event that matched no account, open
+registration without Turnstile. Each new one is mailed to the operator
+once, after it has persisted for the time its kind allows. The Overview
+tab lists what needs attention.
 
 ## Hosts
 

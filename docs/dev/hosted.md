@@ -142,7 +142,8 @@ change between Plus and Pro reaches the container at its next hourly
 sync. No `sync` job exists: the container syncs at startup and every hour.
 
 **Container size.** Each hosted plan in `config.PLAN_LIMITS` names a
-`memory_mb` and `cpus`: Pro has 1536 MB and 2 CPUs. The `create` payload carries them and `limits` keeps them. A pass
+`memory_mb` and `cpus`: Pro has 1536 MB and 2 CPUs. The `create` payload
+carries them and `limits` keeps them. A pass
 whose new limits have another size than the stored ones resizes the
 container (`hosted._resize`, through `_resize_if_moved`). It enqueues an
 `upgrade` job with `{label, memory_mb, cpus}` and no image, which the
@@ -259,8 +260,8 @@ when it is accepting, was seen within 15 minutes, has more free disk
 `memory_mb` free (its plan's, or its own). A routed host (one with a
 `public_ip`) qualifies only while DNS is on (`dns.enabled`), since a
 server there is reached through a DNS record of its own ("Deployment").
-The one with the most free
-memory wins, the oldest on a tie. With none the row stays `provisioning` with
+The one with the most free memory wins, the oldest on a tie. With none
+the row stays `provisioning` with
 `report.note` = "waiting for a host with room". Every heartbeat places
 the waiting servers (`hosted.place_waiting`), so a new host's first report
 takes them at once, and the hourly tick tries too. *Provision* on a
@@ -1278,7 +1279,10 @@ Moving a server to another host is not built.
   `python -m pytest -q`: the agent against a fake Docker client and a
   fake account server, every job kind with its failures and with a second
   run, the heartbeat and its data-size cache, the host's CPU from a fake
-  `/proc/stat`, the loop, the settings and the HTTP client.
+  `/proc/stat`, `image_stale` and a registry that hangs, the `docker`
+  list, `clone_config` and the jobs on any container (an update, its
+  failure and rollback, the agent's own through the helper and what
+  `selfupdate` does), the loop, the settings and the HTTP client.
 
 Time is moved by backdating rows (`past_due_since`, `state_changed_at`,
 `last_seen_at`, `started_at`, an alert's `first_at`, a sample's `at`),

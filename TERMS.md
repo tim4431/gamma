@@ -105,10 +105,9 @@ their data.
 ## Availability and liability
 
 We work to keep the service running and your data safe, and we keep
-backups. The service is nevertheless
-provided as it is, without a guarantee that it will be uninterrupted or
-free of faults. Keep your own copy of anything you cannot afford to lose;
-the export is there for that.
+backups. The service is nevertheless provided as it is, without a guarantee
+that it will be uninterrupted or free of faults. Keep your own copy of
+anything you cannot afford to lose; the export is there for that.
 
 To the extent the law allows, our liability for any claim about the
 service is limited to the amount you paid for it in the 12 months before

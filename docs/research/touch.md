@@ -508,6 +508,10 @@ mechanics are in [dev/ui-design.md](../dev/ui-design.md#one-behaviour-for-mouse-
   document never rubber-bands in a Safari tab either, More's flyouts open
   inline, and the View menu carries Undo, Redo, Go to page and Command
   palette.
+- **Tests.** `tests/e2e/scenarios/touch.mjs` (`npm run e2e -- --only
+  touch`) runs each behaviour once with a mouse on a desktop and once with
+  a finger on an emulated tablet; `tests/press.test.mjs` pins the gesture
+  counting.
 
 Still open:
 

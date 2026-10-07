@@ -136,8 +136,8 @@ curl -fsSL https://raw.githubusercontent.com/tim4431/Gamma/main/cloud/fleet/depl
 - creates `gamma-fleet` with the pinned subnet `10.203.0.0/24` when it is
   absent (and warns when it has another subnet), and `/srv/gamma`;
 - downloads `compose.yml`, `Caddyfile` and `.env.example` of `--ref` into
-  `--dir`, replacing the first two, so a pin in `compose.yml` does not
-  survive a run;
+  `--dir`, replacing the copies there, so a pin in `compose.yml` does not
+  survive a run (`.env` is never downloaded);
 - writes `.env` (mode 600) from `.env.example`, or keeps the one there and
   sets only what the options name: the token, the account server's address,
   `GAMMA_FLEET_DOMAIN`, and `COMPOSE_PROFILES=edge` with `--edge`;
@@ -168,10 +168,11 @@ so a host without `--edge` needs no open port and no DNS record.
    `GAMMA_CLOUD_HOSTED_SUFFIX` is not `-user`.
 3. **The firewall**: 80 and 443 from Cloudflare's ranges only ("Security"
    below).
-4. **Check.** The host shows *dns on* in the Hosts table. Each server
-   placed on it shows *dns pending* until its record is made (at once
-   after the placement, else within the hour) and then *dns ok*; the
-   error of a failed try is on the pill's hover. From the host,
+4. **Check.** The machine's card on the Machines tab shows *routed* with
+   its IP and no *no dns token: closed* pill. Each server placed on it
+   shows *dns pending* on the Servers tab until its record is made (at
+   once after the placement, else within the hour) and then *dns ok*;
+   the error of a failed try is on the pill's hover. From the host,
    `curl -k --resolve <label>-user.gammapdf.com:443:127.0.0.1
    https://<label>-user.gammapdf.com/api/health` answers 200 once the
    server runs, and the same URL answers from anywhere through
@@ -180,11 +181,6 @@ so a host without `--edge` needs no open port and no DNS record.
 `docker compose logs caddy` shows the internal certificate being made. A
 521 from Cloudflare means it could not reach port 443 of the host; a
 name that is a 404 here is not `<label>-user.<domain>`.
-
-Never use `--edge` (or `COMPOSE_PROFILES=edge`) on the account server's
-VPS: its account project's Caddy holds 80 and 443, and its servers are
-reached through the wildcard record. Leave its public IP blank on the
-Machines tab for the same reason.
 
 ## Updating
 
@@ -246,7 +242,7 @@ copy as a secret.
   "Cloudflare settings worth turning on") applies to every routed host as
   well: allow 80 and 443 from the ranges at
   <https://www.cloudflare.com/ips/> only, in the host's firewall (or the
-  provider's). Note that Docker's published ports bypass a plain `ufw`
+  provider's). Docker's published ports bypass a plain `ufw`
   rule; filter in the provider's firewall or in the `DOCKER-USER` chain.
 - **The Cloudflare token** on the account server can edit every record of
   the zone. Make it for that one zone with *DNS → Edit* only, and keep it

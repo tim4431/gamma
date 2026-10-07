@@ -6400,7 +6400,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     const b = findBlock(blocksRef.current, id);
     if (!b) return;
     setPhonePanel(null); // the compact shell: the page, not a panel over it
-    const tb =isTextBox(b) ? normalizeTextBox(b.properties.text_box) : null;
+    const tb = isTextBox(b) ? normalizeTextBox(b.properties.text_box) : null;
     const box = tb ? [tb.x, tb.y, tb.x + tb.w, tb.y + tb.h] : inkBounds(inkOf(id));
     const flash = () => (tb ? textBoxes.flashBox(id) : setInkFlash({ id, nonce: Date.now() }));
     const sheetId = sheetOfBlock(blocksRef.current, id);

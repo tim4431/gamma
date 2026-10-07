@@ -2267,7 +2267,7 @@ export default function ChatDock({
                 // Enter ticks the best match (with a query) and selects the
                 // query, so the next name typed replaces it; on an empty box
                 // it is Done.
-                if (e.key === "Enter" && !e.nativeEvent.isComposing) {
+                if (e.key === "Enter" && !composing(e)) {
                   e.preventDefault();
                   if (!docPickerQuery.trim()) { setDocPicker(false); return; }
                   const first = e.currentTarget.closest(".docPickerModal").querySelector(".docPickerList input[type=checkbox]");

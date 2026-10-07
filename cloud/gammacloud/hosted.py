@@ -168,7 +168,7 @@ def _message(state: str, row, grace_until: str | None) -> str:
 
 def overrides_of(row) -> dict:
     """The operator's own numbers for this server (``set_overrides``)."""
-    return {k: v for k, v in fleet.json_dict(row["overrides"]).items() if k in OVERRIDES}
+    return {k: v for k, v in db.json_dict(row["overrides"]).items() if k in OVERRIDES}
 
 
 def _numbers(row, plan: str) -> dict:
@@ -245,7 +245,7 @@ def _created(conn, row) -> bool:
 def _apply(conn, row, actor: str) -> dict:
     """Move a live server to what its account says now and store its
     limits; returns them. A plan with another size resizes the container."""
-    before = fleet.json_dict(row["limits"])
+    before = db.json_dict(row["limits"])
     previous = before.get("plan", "")
     plan, status, grace_until = target(_account(conn, row["account_id"]), _subscription(conn, row["account_id"]),
                                        previous)
@@ -305,7 +305,7 @@ def _resize_if_moved(conn, server_id: str, was: tuple[int, float] | None, actor:
     row = _row(conn, server_id)
     if row is None or row["state"] == "deleted":
         return
-    size = fleet.size_of(fleet.json_dict(row["limits"]))
+    size = fleet.size_of(db.json_dict(row["limits"]))
     if was != size:
         _resize(conn, row, size, actor)
 
@@ -324,7 +324,7 @@ def _resize(conn, row, size: tuple[int, float], actor: str) -> None:
     kind = "upgrade" if _created(conn, row) else "create"
     for job in conn.execute("SELECT id, payload FROM fleet_jobs WHERE server_id = ? AND kind = ? AND state = 'queued'",
                             (row["id"], kind)).fetchall():
-        payload = fleet.json_dict(job["payload"])
+        payload = db.json_dict(job["payload"])
         if kind == "create" or not payload.get("image"):
             conn.execute("UPDATE fleet_jobs SET payload = ? WHERE id = ?", (json.dumps({**payload, **fields}), job["id"]))
             return
@@ -409,7 +409,7 @@ def _plan_of(conn, row) -> str:
     """The plan a server is placed and created for: the account's effective
     plan while it is hosted, else the last one the server ran, else Pro."""
     account = _account(conn, row["account_id"])
-    return _container_plan(account["plan"] if account else "", fleet.json_dict(row["limits"]).get("plan"))
+    return _container_plan(account["plan"] if account else "", db.json_dict(row["limits"]).get("plan"))
 
 
 def create_payload(conn, server_id: str) -> dict:
@@ -459,7 +459,7 @@ def _provision(conn, row, quiet: bool = False) -> bool:
     numbers = _numbers(row, plan)
     host = fleet.place(conn, numbers["memory_mb"], numbers["quota_mb"])
     if host is None:
-        report = fleet.json_dict(row["report"])
+        report = db.json_dict(row["report"])
         if report.get("note") != WAITING:
             conn.execute("UPDATE hosted_servers SET report = ? WHERE id = ?",
                          (json.dumps({**report, "note": WAITING}), row["id"]))
@@ -511,7 +511,7 @@ def _delete(conn, row, actor: str, why: str = "") -> None:
 
 def _note(conn, row, note: str) -> None:
     """Set (or with ``""`` clear) the admin's note in the server's report."""
-    report = fleet.json_dict(row["report"])
+    report = db.json_dict(row["report"])
     if note:
         report["note"] = note
     elif report.pop("note", None) is None:
@@ -530,7 +530,7 @@ def _image_known(conn, server_id: str, stale) -> None:
     """Set what the server's report says of its image (``image_stale``)
     until its agent's next heartbeat says it again."""
     row = _row(conn, server_id)
-    report = fleet.json_dict(row["report"])
+    report = db.json_dict(row["report"])
     if isinstance(report.get("agent"), dict) and "image_stale" in report["agent"]:
         report["agent"]["image_stale"] = stale
         conn.execute("UPDATE hosted_servers SET report = ? WHERE id = ?", (json.dumps(report), server_id))
@@ -623,7 +623,7 @@ def _tick_one(conn, row, now: str) -> None:
             f"{url_of(row['label']) or row['label']} has been read-only for {config.READ_ONLY_DAYS} days and "
             f"is now stopped. It is deleted with all its files on {_day(_gone_at(row))}.",
             "Resuming the plan before then starts it again as it was."], _plan_button())
-        _store_limits(conn, row["id"], _container_plan(fleet.json_dict(row["limits"]).get("plan")), None)
+        _store_limits(conn, row["id"], _container_plan(db.json_dict(row["limits"]).get("plan")), None)
     elif row["state"] == "stopped":
         gone = _gone_at(row)
         if now >= gone:
@@ -729,7 +729,7 @@ def set_overrides(conn, server_id: str, overrides, actor: str) -> dict:
         conn.execute("UPDATE hosted_servers SET overrides = ? WHERE id = ?", (json.dumps(new), server_id))
         db.audit(conn, "hosted.override", row["account_id"], actor, f"{row['label']} " + ", ".join(
             f"{k}={new[k]}" if k in new else f"{k}=plan" for k in OVERRIDES if new.get(k) != had.get(k)))
-        before = fleet.size_of(fleet.json_dict(row["limits"]))
+        before = fleet.size_of(db.json_dict(row["limits"]))
         _apply(conn, _row(conn, server_id), actor)
         _resize_if_moved(conn, server_id, before, actor)
     return admin_view(conn, _row(conn, server_id))
@@ -770,7 +770,7 @@ def admin_view(conn, row) -> dict:
     account and host."""
     out = {k: row[k] for k in row.keys() if k != "env"}
     out["read_only"] = bool(row["read_only"])
-    out["limits"], out["report"] = fleet.json_dict(row["limits"]), fleet.json_dict(row["report"])
+    out["limits"], out["report"] = db.json_dict(row["limits"]), db.json_dict(row["report"])
     out["url"] = url_of(row["label"])
     account = _account(conn, row["account_id"])
     out["username"] = account["username"] if account else ""
@@ -849,7 +849,7 @@ def sync(conn, server_id: str, body: dict) -> dict:
               "active_accounts": fleet.nonneg(body.get("active_accounts")),
               "last_write_at": _text(body.get("last_write_at"), 40) or None,
               "errors": fleet.nonneg(body.get("errors")), "uptime_s": fleet.nonneg(body.get("uptime_s"))}
-    agent = fleet.json_dict(row["report"]).get("agent")
+    agent = db.json_dict(row["report"]).get("agent")
     if agent:
         report["agent"] = agent
     ts = db.now()
@@ -874,6 +874,6 @@ def status_for(conn, account_id: str) -> dict | None:
     deletes_at = (_plus_days(stops_at, config.DELETE_DAYS - config.READ_ONLY_DAYS) if stops_at
                   else _gone_at(row) if row["state"] == "stopped" else None)
     return {"id": row["id"], "label": row["label"], "url": url_of(row["label"]), "state": row["state"],
-            "read_only": bool(row["read_only"]), "limits": fleet.json_dict(row["limits"]),
-            "report": fleet.json_dict(row["report"]), "reported_at": row["reported_at"], "synced_at": row["synced_at"],
+            "read_only": bool(row["read_only"]), "limits": db.json_dict(row["limits"]),
+            "report": db.json_dict(row["report"]), "reported_at": row["reported_at"], "synced_at": row["synced_at"],
             "stops_at": stops_at, "deletes_at": deletes_at, "host": _host_name(conn, row["host_id"])}

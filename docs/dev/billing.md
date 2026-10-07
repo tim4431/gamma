@@ -9,8 +9,8 @@ are in [research/cloud-plans.md](../research/cloud-plans.md). The account
 server itself is [cloud_accounts.md](cloud_accounts.md).
 
 Where a plan's library lives is `config.PLAN_LIMITS`. Lite and Plus
-(`shared`) are an account on the shared server, whose address is
-`GAMMA_CLOUD_SHARE_HOST_URL`; the plan's storage reaches that server as a
+(`shared`) are an account on the shared server, whose address for people
+is `GAMMA_CLOUD_APP_URL`; the plan's storage reaches that server as a
 claim ([cloud_accounts.md](cloud_accounts.md) "Plans on the share host").
 Pro (`hosted`) provisions a container the account administers
 ([hosted.md](hosted.md)).

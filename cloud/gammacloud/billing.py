@@ -696,7 +696,7 @@ def admin_summary(conn) -> dict:
     """The Billing tab's strip: the subscriptions that pay now by plan,
     what they bring in a month (a yearly price counts a twelfth, from
     ``config.PLAN_PRICES_USD``), and how many are past due or set to end."""
-    by_plan = {p: 0 for p in config.PLANS if p != "free"}
+    by_plan = {p: 0 for p in settings.PAID_PLANS}
     mrr, past_due, ending = 0.0, 0, 0
     for row in conn.execute("SELECT price_id, status, cancel_at_period_end FROM subscriptions WHERE status IN "
                             "('active', 'trialing', 'past_due')").fetchall():

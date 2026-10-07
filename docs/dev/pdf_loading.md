@@ -165,9 +165,9 @@ and measurements behind it are in
   supersampled to at least 2 backing pixels per CSS pixel, for as long as
   the cap leaves it at the screen's pixel ratio or better (`basePlan`).
 - **Detail mode past that.** For A4 the cap leaves about 4.09 / zoom backing
-  pixels per CSS pixel, so on a DPR 2 screen detail mode starts near 205% and
-  on a DPR 1 screen just past 400%. The zoom limit is 800%
-  (`shared/model/zoom.js`); the detail canvas costs the same there as at
+  pixels per CSS pixel. On a DPR 2 screen detail mode starts near 205%, on a
+  DPR 1 screen just past 400%. The zoom limit is 800%
+  (`shared/model/zoom.js`). The detail canvas costs the same there as at
   400%, since it is sized by the viewport. The whole-page canvas
   (the base) drops to half its capped linear resolution and becomes a
   preview. A second canvas (the detail) covers the page's part of one render
@@ -236,8 +236,8 @@ supersampled canvas again below the cap, and the text layer and its
 selection surviving a zoom. It also covers live ink, native Chromium touch
 swipes with no mid-gesture offset writes, and the paper and ink colour in a
 paper theme, which is what a doubled blend would change. The rendering cases
-are written to run in Playwright WebKit too (`GAMMA_E2E_BROWSER=webkit`);
-the detail-canvas assertions have only been run in Chromium.
+are written to run in Playwright WebKit too (`GAMMA_E2E_BROWSER=webkit`).
+The detail-canvas assertions have only been run in Chromium.
 `tests/pageRaster.test.mjs` and `tests/canvasSize.test.mjs` pin the raster
 rules and the canvas bounds; other unit tests pin the snap timing,
 cancellation and older-Safari fallback. Physical iPad GPU limits, render

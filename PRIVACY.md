@@ -59,7 +59,7 @@ needs them. What is sent is limited to what the feature requires:
   look for papers or read one from the web, your search words go to
   Crossref, arXiv and OpenAlex, and a general web search goes to your AI
   provider's own search or to a search service that you or the server's
-  administrator set up (Brave Search or a SearXNG instance); the
+  administrator set up (Brave Search or a SearXNG instance). The
   documents it reads are fetched from the sites that host them.
 - **Translation**: when you translate a page or a selection, that text is
   sent to the translator chosen in Settings: your AI provider, Microsoft's

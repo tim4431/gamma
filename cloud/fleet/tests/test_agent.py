@@ -355,6 +355,10 @@ def create(agent):
     return result
 
 
+def spec_of(tmp_path, label="alice"):
+    return json.loads((tmp_path / label / "container.json").read_text())
+
+
 def test_create_runs_the_container_with_its_configuration(world, tmp_path):
     agent, docker, _, health = world
     assert create(agent) == {"container": "gamma-alice", "image": CREATE["image"], "health": "ok"}
@@ -370,7 +374,7 @@ def test_create_runs_the_container_with_its_configuration(world, tmp_path):
     data = os.path.join(str(tmp_path), "alice", "data")
     assert kw["volumes"] == {data: {"bind": "/data", "mode": "rw"}} and os.path.isdir(data)
     assert health["urls"][-1] == "http://gamma-alice:9001/api/health"
-    spec = json.loads((tmp_path / "alice" / "container.json").read_text())
+    spec = spec_of(tmp_path)
     assert spec["image"] == CREATE["image"] and spec["env"]["GAMMA_HOSTED"] == "1"
     # a retried create replaces the container (and a -prev of an earlier life) and keeps the data
     (tmp_path / "alice" / "data" / "users.db").write_text("x")
@@ -385,7 +389,7 @@ def test_create_takes_the_plans_size(world, tmp_path):
     state, _ = agent.apply({"id": "j", "kind": "create", "payload": {**CREATE, "memory_mb": 1536, "cpus": 2.0}})
     kw = docker.containers.get("gamma-alice").kwargs
     assert state == "done" and kw["mem_limit"] == "1536m" and kw["cpu_quota"] == 200_000
-    spec = json.loads((tmp_path / "alice" / "container.json").read_text())
+    spec = spec_of(tmp_path)
     assert (spec["memory_mb"], spec["cpus"]) == (1536, 2.0)
 
 
@@ -396,10 +400,6 @@ EXTRA = {"OPENAI_API_KEY": "sk-one", "TZ": "Europe/Berlin", "WORKERS": 2,
          "GAMMA_S3_BUCKET": "other", "GAMMA_S3_SECRET_KEY": "x",
          # nor passed off as another variable
          "": "x", "GAMMA_HOSTED=0": "x"}
-
-
-def spec_of(tmp_path, label="alice"):
-    return json.loads((tmp_path / label / "container.json").read_text())
 
 
 def test_create_with_extra_environment(world, tmp_path):
@@ -498,7 +498,7 @@ def test_upgrade_replaces_the_container_and_keeps_its_configuration(world, tmp_p
     new = docker.containers.get("gamma-alice")
     assert new.image.endswith("sha-2") and new.kwargs["environment"]["GAMMA_CLOUD_CLIENT_SECRET"] == "s3cret"
     assert set(docker.containers.by_name) == {"gamma-alice"}
-    assert json.loads((tmp_path / "alice" / "container.json").read_text())["image"].endswith("sha-2")
+    assert spec_of(tmp_path)["image"].endswith("sha-2")
 
 
 def test_a_failed_upgrade_keeps_the_previous_container_stopped(world, tmp_path):
@@ -510,7 +510,7 @@ def test_a_failed_upgrade_keeps_the_previous_container_stopped(world, tmp_path):
     prev, new = docker.containers.get("gamma-alice-prev"), docker.containers.get("gamma-alice")
     assert prev.status == "exited" and prev.image.endswith("sha-1")
     assert new.status == "exited" and new.image.endswith("sha-2")
-    assert json.loads((tmp_path / "alice" / "container.json").read_text())["image"].endswith("sha-1")
+    assert spec_of(tmp_path)["image"].endswith("sha-1")
     assert agent.apply({"id": "j", "kind": "upgrade", "payload": {"label": "nobody", "image": "x:1"}})[0] == "failed"
     # retrying fails again: the known-good sha-1 container is still the -prev one
     state, _ = agent.apply({"id": "j", "kind": "upgrade", "payload": {"label": "alice", "image": "ghcr.io/tim4431/gamma:sha-2"}})
@@ -543,7 +543,7 @@ def test_a_resize_keeps_the_image_and_changes_the_limits(world, tmp_path):
     c = docker.containers.get("gamma-alice")
     assert c.image == CREATE["image"] and c.kwargs["mem_limit"] == "1536m" and c.kwargs["cpu_quota"] == 200_000
     assert c.kwargs["environment"]["GAMMA_CLOUD_CLIENT_SECRET"] == "s3cret"
-    spec = json.loads((tmp_path / "alice" / "container.json").read_text())
+    spec = spec_of(tmp_path)
     assert (spec["memory_mb"], spec["cpus"], spec["image"]) == (1536, 2.0, CREATE["image"])
     assert agent.apply({"id": "j", "kind": "upgrade", "payload": {"label": "alice"}}) == ("failed", {"error": "no image"})
     # while a failed upgrade to another image waits for its retry or rollback, a resize is refused
@@ -569,7 +569,7 @@ def test_a_resize_leaves_a_stopped_container_stopped(world, tmp_path):
     c.remove(force=True)
     state, result = agent.apply({"id": "j", "kind": "upgrade", "payload": {"label": "alice", "memory_mb": 768}})
     assert state == "done" and result["resized"] is False
-    assert json.loads((tmp_path / "alice" / "container.json").read_text())["memory_mb"] == 768
+    assert spec_of(tmp_path)["memory_mb"] == 768
 
 
 UPDATE = {"id": "j", "kind": "update",
@@ -729,7 +729,7 @@ def test_rollback_returns_to_the_kept_container(world, tmp_path):
                               ("rename", "gamma-alice-prev", "gamma-alice"), ("start", "gamma-alice")]
     assert set(docker.containers.by_name) == {"gamma-alice"} and docker.containers.get("gamma-alice") is kept
     assert kept.status == "running"
-    spec = json.loads((tmp_path / "alice" / "container.json").read_text())
+    spec = spec_of(tmp_path)
     assert spec["image"] == CREATE["image"] and spec["rolled_back"] is True
     # twice, or retried after a crash between the rename and the start: it only makes sure it is up
     kept.stop()
@@ -737,7 +737,7 @@ def test_rollback_returns_to_the_kept_container(world, tmp_path):
     assert state == "done" and result["note"] == "already rolled back" and kept.status == "running"
     # the next upgrade clears the mark, after which there is nothing to roll back to
     agent.apply({"id": "j", "kind": "upgrade", "payload": {"label": "alice", "image": "ghcr.io/tim4431/gamma:sha-3"}})
-    assert "rolled_back" not in json.loads((tmp_path / "alice" / "container.json").read_text())
+    assert "rolled_back" not in spec_of(tmp_path)
     assert agent.apply({"id": "j", "kind": "rollback", "payload": {"label": "alice"}})[0] == "failed"
 
 

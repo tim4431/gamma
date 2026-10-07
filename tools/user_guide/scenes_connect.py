@@ -1,12 +1,11 @@
 """Working with others and other tools: a shared workspace, offline copies, the Gamma
 Connector, assistants (Codex, Claude Code), import and export."""
-from scene import (AMBER, BAR, BAR_DARK, BG, BLUE, CARD, EDGE, GREEN, INK, MONO, MUTED, SOFT, YELLOW,
+from scene import (AMBER, BAR, BAR_DARK, BG, BLUE, CARD, EDGE, GREEN, INK, MONO, MUTED, SOFT, TINT, YELLOW,
                    anim, block, bullet, button, chip, frame, mark, move, panel, paper, pointer, show, stroke,
                    keytimes, typed, typewriter)
 
 LIGHT = '#eeebe4'     # text on the dark terminal
 DIM = '#9a988f'       # muted text on the dark terminal
-TINT = '#fbefd6'      # an amber-tinted row: hovered, picked
 
 
 def during(loop, *spans, fade=0.12):
@@ -34,9 +33,9 @@ def spin(cx, cy, loop, *pairs):
             f'keyTimes="{keytimes(loop, *(t for t, _ in pairs))}" dur="{loop}s" repeatCount="indefinite"/>')
 
 
-def check(cx, cy, r=14, fill=GREEN):
+def check(cx, cy, r=14):
     """A tick in a filled circle."""
-    return (f'<circle cx="{cx}" cy="{cy}" r="{r}" fill="{fill}"/>'
+    return (f'<circle cx="{cx}" cy="{cy}" r="{r}" fill="{GREEN}"/>'
             f'<path d="M{cx - r * 0.45:.1f} {cy + r * 0.02:.1f} L{cx - r * 0.1:.1f} {cy + r * 0.36:.1f} L{cx + r * 0.48:.1f} {cy - r * 0.34:.1f}" '
             f'fill="none" stroke="#ffffff" stroke-width="{max(2, r / 5.5):.1f}" stroke-linecap="round" stroke-linejoin="round"/>')
 
@@ -60,7 +59,7 @@ def remote_cursor(name, colour, points, loop, times):
             f'<rect x="16" y="20" width="{w}" height="27" rx="6" fill="{colour}"/>'
             f'<text x="{16 + w / 2:.0f}" y="39" text-anchor="middle" font-size="17" font-weight="600" fill="#ffffff">{name}</text>'
             f'<animateTransform attributeName="transform" type="translate" values="{values}" '
-            f'keyTimes="{";".join(f"{t / loop:.4f}" for t in times)}" dur="{loop}s" repeatCount="indefinite"/></g>')
+            f'keyTimes="{keytimes(loop, *times)}" dur="{loop}s" repeatCount="indefinite"/></g>')
 
 
 def collab():

@@ -78,7 +78,7 @@ ADMIN_TAB = (
 ADMIN_JS = r"""
 // --- Machines tab (pages_machines.py) ---
 const [loadMachines, pickMachine] = (() => {
-const {plural, pct, size, ago, took, meter, resultText, logViewer, JOB_PILL} = fleetUI;
+const {plural, pct, size, ago, since, took, meter, resultText, logViewer, JOB_PILL} = fleetUI;
 const TAB = document.getElementById('tab-machines'), $ = id => document.getElementById(id);
 const UP = ['running', 'restarting', 'paused'], DOWN = ['restarting', 'exited', 'dead'];
 let machines = [], selected = '', tokenFor = '', timer = 0, gen = 0, live = false, loaded = false, showOthers = false;
@@ -87,11 +87,6 @@ const logs = logViewer({sec: $('mlogs'), who: $('mlogwho'), state: $('mlogstate'
 const current = () => machines.find(h => h.id === selected) || null;
 const hostApi = h => '/api/admin/hosts/' + encodeURIComponent(h.id);
 const byName = (a, b) => a.name < b.name ? -1 : a.name > b.name ? 1 : 0;
-function upFor(ts){
-  const s = (Date.now() - Date.parse(ts)) / 1000;
-  if (isNaN(s)) return '';
-  return s < 90 ? 'a minute' : s < 5400 ? Math.round(s / 60) + ' min' : s < 129600 ? Math.round(s / 3600) + ' h' : Math.round(s / 86400) + ' d';
-}
 // the containers this page is served through: the account server's own (compose service account) and its project's Caddy
 function front(h, c){
   const acc = (h.containers || []).find(x => x.compose && x.compose.service === 'account');
@@ -210,7 +205,7 @@ function actsCell(h, c){
     prev ? btn('rollback', 'Roll back…') : ''].filter(Boolean).join(' ');
 }
 function containerRow(h, c){
-  const up = c.status === 'running' && c.started_at ? upFor(c.started_at) : '';
+  const up = c.status === 'running' && c.started_at ? since(c.started_at, 'a minute') : '';
   return '<tr><td class=mname>' + nameCell(h, c) + '</td><td class=mimg>' + imageCell(c) + '</td><td>' + statusCell(c) + '</td>'
     + '<td class=nw>' + (up || '<span class=empty>—</span>') + (c.created_at ? '<span class=sub>made ' + ago(c.created_at) + '</span>' : '') + '</td>'
     + '<td class=nw>' + useCell(c) + '</td><td class=macts><span>' + actsCell(h, c) + '</span></td></tr>';

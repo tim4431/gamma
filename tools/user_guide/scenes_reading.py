@@ -1,7 +1,9 @@
 """Reading a paper: highlight, draw, type on the page, notebooks, links, translation."""
-from scene import (AMBER, BAR, BAR_DARK, BLUE, CARD, CHIP, CHIP_INK, EDGE, INK, MONO, MUTED, RED, SELECT,
-                   SOFT, YELLOW, anim, block, bullet, button, caption, frame, hide, key, line_y, panel, paper,
+from scene import (AMBER, BAR, BAR_DARK, BLUE, CARD, CHIP, CHIP_INK, EDGE, FIG_EDGE, FIG_LINE, INK, MONO, MUTED, RED,
+                   SELECT, SOFT, YELLOW, anim, block, bullet, button, frame, hide, key, keytimes, line_y, panel, paper,
                    path_length, path_points, pointer, show, strip, stroke, typed)
+
+PEN_TOOLS = ['pen', 'highlighter', 'eraser', 'lasso', 'text', 'undo']
 
 
 def annotate():
@@ -32,8 +34,8 @@ def annotate():
                 f'<text x="902" y="393" font-size="19" fill="{MUTED}">ink · p. 3</text>'
                 + show(loop, 7.0) + '</g>')
     scene = (paper(px, py, 500, 440, 5)
-             + f'<rect x="200" y="360" width="360" height="130" rx="8" fill="none" stroke="#d6d3cb" stroke-width="2"/>'
-             f'<path d="M230 470 C300 400 380 392 520 398" stroke="#b9b6ae" stroke-width="3" fill="none"/>'
+             + f'<rect x="200" y="360" width="360" height="130" rx="8" fill="none" stroke="{FIG_EDGE}" stroke-width="2"/>'
+             f'<path d="M230 470 C300 400 380 392 520 398" stroke="{FIG_LINE}" stroke-width="3" fill="none"/>'
              + panel(740, 100, 560, 440, 'Notes')
              + ''.join(body))
     return frame('Highlight a line, note it, draw on the page',
@@ -50,17 +52,23 @@ def _trace(d, start, end, n=12):
 
 def _figure(x, y, w, h):
     """A paper's figure: a frame and one curve."""
-    return (f'<rect x="{x}" y="{y}" width="{w}" height="{h}" rx="8" fill="none" stroke="#d6d3cb" stroke-width="2"/>'
+    return (f'<rect x="{x}" y="{y}" width="{w}" height="{h}" rx="8" fill="none" stroke="{FIG_EDGE}" stroke-width="2"/>'
             f'<path d="M{x + 30} {y + h - 22} C{x + 100} {y + 50} {x + w * 0.55:.0f} {y + 36} {x + w - 30} {y + 40}" '
-            f'stroke="#b9b6ae" stroke-width="3" fill="none"/>')
+            f'stroke="{FIG_LINE}" stroke-width="3" fill="none"/>')
+
+
+def _desk(page, tools):
+    """The desk of pen() and text_box(): a paper with `page` drawn on it and the tool
+    strip beside it, then the Notes window with one line already written."""
+    return (paper(160, 80, 480, 460, 4) + page + tools
+            + panel(740, 80, 560, 460, 'Notes') + bullet(800, 206) + f'<rect x="822" y="201" width="300" height="10" rx="5" fill="{BAR}"/>')
 
 
 def pen():
     """The pen is picked, a phrase is circled and an arrow drawn to the figure; the lasso
     picks up the arrow and it is recoloured red. The notes hold the ink as one block."""
     loop = 12
-    tools, at = strip(60, 150, ['pen', 'highlighter', 'eraser', 'lasso', 'text', 'undo'], loop,
-                      picks=[('pen', 1.05, 6.3), ('lasso', 6.35, None)])
+    tools, at = strip(60, 150, PEN_TOOLS, loop, picks=[('pen', 1.05, 6.3), ('lasso', 6.35, None)])
     circle = 'M298 236 C302 220 410 216 428 232 C444 248 404 260 354 259 C304 258 284 248 302 228'
     arrow = 'M432 250 C478 258 488 298 468 334'
     head = 'M481 323 L468 335 L466 318'
@@ -73,7 +81,7 @@ def pen():
                 f'<path d="{arrow}"/><path d="{head}"/>' + show(loop, 9.0) + '</g>')
     # The lasso: a dashed loop, revealed along its length through a mask.
     lasso_len = path_length(lasso) + 4
-    body.append(f'<mask id="lassoReveal" maskUnits="userSpaceOnUse" x="0" y="0" width="1400" height="620">'
+    body.append('<mask id="lassoReveal" maskUnits="userSpaceOnUse" x="0" y="0" width="1400" height="620">'
                 + stroke(lasso, loop, 6.9, 8.0, color='#ffffff', width=8, length=lasso_len) + '</mask>'
                 f'<g opacity="0"><path d="{lasso}" fill="none" stroke="{MUTED}" stroke-width="2" stroke-dasharray="7 6" mask="url(#lassoReveal)"/>'
                 + show(loop, 6.85, 9.6) + '</g>')
@@ -82,7 +90,7 @@ def pen():
     body.append(f'<g opacity="0"><rect x="526" y="278" width="152" height="44" rx="12" fill="{CARD}" stroke="{EDGE}" stroke-width="1.5" filter="url(#lift)"/>'
                 f'{swatches}' + show(loop, 8.2, 9.3) + '</g>')
     # The notes: one ink block holding both strokes.
-    thumb = f'<g transform="translate(846 258) scale(0.62) translate(-290 -214)" fill="none" stroke-width="5" stroke-linecap="round" stroke-linejoin="round">'
+    thumb = '<g transform="translate(846 258) scale(0.62) translate(-290 -214)" fill="none" stroke-width="5" stroke-linecap="round" stroke-linejoin="round">'
     ink = (thumb + f'<g stroke="{AMBER}"><path d="{circle}"/><path d="{arrow}"/><path d="{head}"/></g>'
            f'<g stroke="{RED}" opacity="0"><path d="{arrow}"/><path d="{head}"/>' + show(loop, 9.3) + '</g></g>')
     body.append('<g opacity="0">' + bullet(800, 290) + block(822, 240, 330, 100) + ink
@@ -98,9 +106,7 @@ def pen():
     p, t = _trace(lasso, 6.9, 8.0)
     pts += [p[0], *p]; ts += [6.75, *t]
     pts += [(616, 300), (616, 300), (640, 420)]; ts += [8.7, 9.0, 9.8]
-    scene = (paper(160, 80, 480, 460, 4) + _figure(260, 340, 300, 150) + tools
-             + panel(740, 80, 560, 460, 'Notes') + bullet(800, 206) + f'<rect x="822" y="201" width="300" height="10" rx="5" fill="{BAR}"/>'
-             + ''.join(body) + pointer(pts, loop, ts, press=[1.0, 6.3, 8.85]))
+    scene = _desk(_figure(260, 340, 300, 150), tools) + ''.join(body) + pointer(pts, loop, ts, press=[1.0, 6.3, 8.85])
     return frame('Draw on the page with the pen',
                  'The pen is picked from the tool strip beside the paper. A phrase is circled and an arrow drawn from it '
                  'to a figure; both strokes appear in the notes as one ink block. Then the lasso is picked, a dashed loop '
@@ -113,8 +119,7 @@ def text_box():
     it; selected, it shows its edge and the right-edge handle, which widens it. The notes
     hold it as a block with a T marker."""
     loop = 10
-    tools, at = strip(60, 150, ['pen', 'highlighter', 'eraser', 'lasso', 'text', 'undo'], loop,
-                      picks=[('text', 1.05, None)])
+    tools, at = strip(60, 150, PEN_TOOLS, loop, picks=[('text', 1.05, None)])
     words = 'Check the error bars.'
     bx, by, bw, bh = 200, 316, 262, 46
     body = []
@@ -139,9 +144,7 @@ def text_box():
            (bx + 120, by + 23), (bx + 120, by + 23), (bx + bw, by + bh / 2), (bx + bw, by + bh / 2),
            (bx + bw + 60, by + bh / 2), (bx + bw + 60, by + bh / 2), (640, 430)]
     ts = [0, 0.8, 1.0, 1.6, 1.8, 2.2, 4.7, 5.2, 5.45, 5.95, 6.3, 7.0, 7.3, 8.2]
-    scene = (paper(160, 80, 480, 460, 4) + lines + tools
-             + panel(740, 80, 560, 460, 'Notes') + bullet(800, 206) + f'<rect x="822" y="201" width="300" height="10" rx="5" fill="{BAR}"/>'
-             + ''.join(body) + pointer(pts, loop, ts, press=[1.0, 1.8, 5.4]))
+    scene = _desk(lines, tools) + ''.join(body) + pointer(pts, loop, ts, press=[1.0, 1.8, 5.4])
     return frame('Type on the page with the Text tool',
                  'T is picked from the tool strip, a click on the page places a text box, and a sentence is typed into it. '
                  'The box appears in the notes as a block with a T marker. Clicked, the box shows a thin edge and a handle '
@@ -206,7 +209,7 @@ def notebook():
             t += n * rate + 0.12
     pts += [(980, 520)]
     ts += [8.3]
-    scene = (f'<clipPath id="notesBody"><rect x="252" y="122" width="896" height="461" rx="12"/></clipPath>'
+    scene = ('<clipPath id="notesBody"><rect x="252" y="122" width="896" height="461" rx="12"/></clipPath>'
              + panel(250, 40, 900, 545, 'Notes') + bullet(300, 160) + f'<rect x="322" y="155" width="340" height="10" rx="5" fill="{BAR}"/>'
              + ''.join(body) + pointer(pts, loop, ts))
     return frame('A notebook sheet among the notes',
@@ -221,7 +224,6 @@ def links():
     loop = 10
     px, pw = 250, 900
     cite_y = 290
-    kt = lambda *ts: ';'.join(f'{t / loop:.4f}' for t in ts)
     lines = []
     for i in range(9):
         y = 140 + i * 30
@@ -252,7 +254,7 @@ def links():
               + ''.join(f'<rect x="{px + 50}" y="{240 + i * 30}" width="{(pw - 100) * f:.0f}" height="9" rx="4.5" fill="{BAR}"/>'
                         for i, f in enumerate(widths))
               + f'<animateTransform attributeName="transform" type="translate" values="560 0;560 0;0 0;0 0;560 0;560 0" '
-                f'keyTimes="{kt(0, 2.8, 3.3, 5.75, 6.25, loop)}" dur="{loop}s" repeatCount="indefinite"/>'
+                f'keyTimes="{keytimes(loop, 0, 2.8, 3.3, 5.75, 6.25, loop)}" dur="{loop}s" repeatCount="indefinite"/>'
               + anim('opacity', '0;0;1;1;0;0', loop, 0, 2.8, 2.95, 6.05, 6.25, loop) + '</g>')
     # The top bar: Back, and the tabs; the active tab's underline follows.
     def tab(x, w):
@@ -263,7 +265,7 @@ def links():
            + tab(250, 140) + '<g opacity="0">' + tab(476, 120) + show(loop, 2.8) + '</g>'
            f'<rect x="262" y="78" width="186" height="4" rx="2" fill="{AMBER}">'
            f'<animateTransform attributeName="transform" type="translate" values="0 0;0 0;226 0;226 0;0 0;0 0" '
-           f'keyTimes="{kt(0, 2.8, 3.1, 5.75, 6.05, loop)}" dur="{loop}s" repeatCount="indefinite"/></rect>')
+           f'keyTimes="{keytimes(loop, 0, 2.8, 3.1, 5.75, 6.05, loop)}" dur="{loop}s" repeatCount="indefinite"/></rect>')
     pts = [(640, 380), (px + 554, cite_y + 5), (px + 554, cite_y + 5), (ox + 110, oy + 28), (ox + 110, oy + 28),
            (900, 470), (166, 54), (166, 54), (640, 380)]
     ts = [0, 1.1, 1.45, 2.1, 2.65, 3.6, 5.3, 5.75, 6.8]

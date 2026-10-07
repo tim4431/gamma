@@ -114,7 +114,7 @@ export function renderRegion(page, { scale, rect, width, height, annotationMode 
 // crop, less where a large one would pass the canvas limits.
 export async function cropPage(page, rect, box, annotationMode) {
   const own = page.getViewport({ scale: 1 });
-  const kx = own.width / (box?.width || own.width), ky = own.height / (box?.height || own.height);
+  const kx = own.width / (box.width || own.width), ky = own.height / (box.height || own.height);
   const w = Math.max(1, (rect.x2 - rect.x1) * kx), h = Math.max(1, (rect.y2 - rect.y1) * ky);
   const s = canvasRatio(w, h, Math.min(4, Math.max(2, 1200 / w)));
   const { canvas, task } = renderRegion(page, {

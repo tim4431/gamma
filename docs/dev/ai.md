@@ -749,12 +749,12 @@ leaving one slot for the current page.
 Type `@` in the chat composer to pick a library page the way quick open
 (Ctrl+P, [home_library.md](home_library.md)) does. Both lists are
 `rankLibraryPages` (`library/librarySearch.js`) drawn by
-`library/PageOption.jsx`: with nothing typed, the recent pages, the open tabs
-and the rest under their headings; a query matches the title or a
+`library/PageOption.jsx`. With nothing typed they list the recent pages, the
+open tabs and the rest under their headings. A query matches the title or a
 folder/label chip, typos forgiven, recency breaking ties, with the matched
 characters marked. A row shows authors and year, the page's folder and label
 chips, and a check once attached, "Current" on the open page, or else its
-time; in a narrow dock the time goes and the chip line shortens
+time. In a narrow dock the time goes and the chip line shortens
 (`.chatMentionPicker`'s container query). Arrow keys choose a result; Enter
 or Tab attaches it, Escape dismisses the query, and clicking or tapping a
 result also works. A completed mention inserts the title and adds a removable

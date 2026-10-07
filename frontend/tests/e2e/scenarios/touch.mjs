@@ -425,21 +425,18 @@ export async function touchScenarios({ server, browser, alice, makePdf, step, un
   const NB = ".nbViewer .nbSheet";    // the notebook view's sheets
   const NOTES = ".noteSheet .nbSheet"; // the notes view's
   // The sheet (1 = the first) at the top of the view that scrolls `scope`'s
-  // sheets, and a scroll that puts sheet `n` there, a little way down it.
-  const sheetAtTop = (page, scope) => page.evaluate((scope) => {
+  // sheets; given `n`, after a scroll that puts sheet `n` there, a little
+  // way down it.
+  const sheetAtTop = (page, scope, n = 0) => page.evaluate(([scope, n]) => {
     const sheets = [...document.querySelectorAll(scope)];
     let el = sheets[0]?.parentElement;
     while (el && !(/(auto|scroll)/.test(getComputedStyle(el).overflowY) && el.scrollHeight > el.clientHeight)) el = el.parentElement;
     if (!el) return 0;
     const top = el.getBoundingClientRect().top;
+    if (n) el.scrollTop += sheets[n - 1].getBoundingClientRect().top - top + 60;
     return sheets.findIndex((s) => s.getBoundingClientRect().bottom > top + 40) + 1;
-  }, scope);
-  const scrollToSheet = (page, scope, n) => page.evaluate(([scope, n]) => {
-    const sheet = document.querySelectorAll(scope)[n - 1];
-    let el = sheet.parentElement;
-    while (el && !(/(auto|scroll)/.test(getComputedStyle(el).overflowY) && el.scrollHeight > el.clientHeight)) el = el.parentElement;
-    el.scrollTop += sheet.getBoundingClientRect().top - el.getBoundingClientRect().top + 60;
   }, [scope, n]);
+  const scrollToSheet = (page, scope, n) => sheetAtTop(page, scope, n);
   const atSheet = (page, scope, n, what) => until(async () => (await page.locator(scope).count()) === 5 && (await sheetAtTop(page, scope)) === n,
     { what, timeout: 10000 });
   const titleNotebookBtn = (page) => page.locator(".pageActionCol button", { hasText: "Notebook" });
