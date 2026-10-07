@@ -359,7 +359,9 @@ export default function SearchPanel({
                 value={query}
                 onChange={(e) => { setQuery(e.target.value); setPinned(false); pendingFindRef.current = null; }}
                 onKeyDown={(e) => {
-                  if ((e.key === "Tab" || e.key === "Enter") && suggestions.length) {
+                  // Only Tab turns the query into a label filter; Enter
+                  // stays the search's own key (next PDF match).
+                  if (e.key === "Tab" && !e.shiftKey && suggestions.length) {
                     e.preventDefault();
                     confirmLabel(suggestions[sugIdx] || suggestions[0]);
                   } else if (e.key === "Enter" && pdfMatches.length) {

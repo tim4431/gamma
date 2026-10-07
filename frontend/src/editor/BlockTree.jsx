@@ -430,8 +430,10 @@ function BlockEmbedCard({ refId, refBlock, refLabels, onBlockRefClick, onEmbedEd
                 const n = mathUi.ac.items.length;
                 if (e.key === "ArrowDown") { e.preventDefault(); setMathAcIdx((i) => Math.min(i + 1, n - 1)); return; }
                 if (e.key === "ArrowUp") { e.preventDefault(); setMathAcIdx((i) => Math.max(i - 1, 0)); return; }
-                if (e.key === "Tab" || e.key === "Enter") { e.preventDefault(); acceptLatexAc(mathUi.ac.items[mathAcIdx]); return; }
+                // Tab accepts; Enter closes the popup and keeps its own job.
+                if (e.key === "Tab" && !e.shiftKey) { e.preventDefault(); acceptLatexAc(mathUi.ac.items[mathAcIdx]); return; }
                 if (e.key === "Escape") { e.preventDefault(); setMathUi((u) => (u ? { ...u, ac: null } : null)); return; }
+                if (e.key === "Enter") setMathUi((u) => (u ? { ...u, ac: null } : null));
               }
               // Same math Tab-hop as the block editor (no indent to fall
               // through to here — an unhandled Tab just moves focus).
@@ -1684,7 +1686,7 @@ function BlockRow({
                 if (refSearchShown) {
                   if (e.key === "ArrowDown") { e.preventDefault(); setRefSelectedIdx((i) => Math.min(i + 1, refRows.length - 1)); return; }
                   if (e.key === "ArrowUp") { e.preventDefault(); setRefSelectedIdx((i) => Math.max(i - 1, 0)); return; }
-                  if (e.key === "Enter") { e.preventDefault(); insertRef(refRows[refSelected]); return; }
+                  if (e.key === "Enter" || (e.key === "Tab" && !e.shiftKey)) { e.preventDefault(); insertRef(refRows[refSelected]); return; }
                   if (e.key === "Escape") { e.preventDefault(); setRefPopup(null); return; }
                 }
                 if (slashMenu) {
@@ -1698,8 +1700,12 @@ function BlockRow({
                   const n = mathUi.ac.items.length;
                   if (e.key === "ArrowDown") { e.preventDefault(); setMathAcIdx((i) => Math.min(i + 1, n - 1)); return; }
                   if (e.key === "ArrowUp") { e.preventDefault(); setMathAcIdx((i) => Math.max(i - 1, 0)); return; }
-                  if (e.key === "Tab" || e.key === "Enter") { e.preventDefault(); acceptLatexAc(mathUi.ac.items[mathAcIdx]); return; }
+                  // Tab accepts; Enter closes the popup and keeps its own job
+                  // (a line break in $$, else the outliner's Enter) — a
+                  // completion the user never asked for must not eat it.
+                  if (e.key === "Tab" && !e.shiftKey) { e.preventDefault(); acceptLatexAc(mathUi.ac.items[mathAcIdx]); return; }
                   if (e.key === "Escape") { e.preventDefault(); setMathUi((u) => u ? { ...u, ac: null } : null); return; }
+                  if (e.key === "Enter") setMathUi((u) => u ? { ...u, ac: null } : null);
                 }
                 // The block commands (blockCommands.js, docs/dev/hotkeys.md):
                 // move / duplicate / delete the block, formatting, the hop to

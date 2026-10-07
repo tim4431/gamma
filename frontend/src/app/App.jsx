@@ -7972,6 +7972,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                             } else if (e.key === "Enter" && labelSuggestionIdx >= 0 && labelSuggestionIdx < suggestions.length) {
                               e.preventDefault();
                               pickLabelSuggestion(suggestions[labelSuggestionIdx]);
+                            } else if (e.key === "Tab" && !e.shiftKey && suggestions.length) {
+                              // Tab completes: the highlighted suggestion, else the first.
+                              e.preventDefault();
+                              pickLabelSuggestion(suggestions[labelSuggestionIdx] || suggestions[0]);
                             } else if (e.key === "Enter" || e.key === "Escape") {
                               e.preventDefault();
                               closeLabelEditor();

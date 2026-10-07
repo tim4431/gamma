@@ -148,7 +148,8 @@ The page header's label field (`page.labels` / `page.labelInput`) files
 the open page by both. Its suggestions are the folders (by path, a folder
 icon) and labels whose names contain what is typed, then *New label "q"*
 and *New folder "q"* (a top-level folder) when no label, or no top-level
-folder, has that name. Enter on a suggestion picks it; Enter (or leaving
+folder, has that name. Enter on a suggestion picks it, and Tab picks the highlighted
+suggestion or else the first; Enter (or leaving
 the field) with none picked takes the label of that name, else the folder
 whose path or name it is, else makes a new label. Each pick writes the
 page at once, a folder with the same refinement as dropping the page on
@@ -282,7 +283,7 @@ takes the full width, then sort, kind and list/grid share one row. A file
 row gives the title its own wrapping line, with the folder and label chips
 on a second line (the Phone block at the end of `library.css`).
 
-Search chips (Tab autosuggest) cover both kinds, named from the trees: a
+Search chips (Tab autosuggest; Enter stays the search's own key) cover both kinds, named from the trees: a
 label chip keeps the pages carrying that label, a folder chip (its path)
 the pages filed in the folder or below it.
 
