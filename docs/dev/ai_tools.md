@@ -64,9 +64,12 @@ before dispatching a mutation, so attachments do not grant editing access.
 The [MCP adapter](mcp.md) exposes a read-only subset of this same registry to
 external assistants. `agent_tools` filters definitions and `run_agent_tool`
 enforces the caller's allowlist at dispatch. Gamma chat passes its armed tool
-set; MCP passes its fixed allowlist of seven read tools that stay inside
-the library (not the web and write tools, `view_ink`, `cite` or
-`list_deleted`) and a non-writable workspace scope.
+set; MCP passes an allowlist derived from the registry (`mcp_tools`: every
+reading tool that stays inside the library — not the web and write tools or
+`list_deleted`) and a non-writable workspace scope whose `link_base` makes
+the results carry absolute links to pages, PDF pages and blocks
+(`gamma_link`; the chat's results carry none, [mcp.md](mcp.md) "Links in
+results").
 
 | Tool | Permission | Scope | What it does |
 |---|---|---|---|

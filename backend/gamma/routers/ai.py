@@ -40,6 +40,7 @@ from ..ai_client import (
 from ..ai_agent import AgentLoop, ApprovalGate, Conversation, Helper, PaperWait
 from ..ai_tools import (
     AGENT_PROMPT,
+    CITATION_PROMPT,
     PICTURE_TOOLS,
     READ_CHARS_MAX,
     agent_system,
@@ -350,21 +351,6 @@ _SYSTEM_PROMPT = (
     "knowledge — just make clear it is background, not something these pages state. "
     "Be concise; when you cite a specific value from a PDF, give its PDF page number, "
     "and say when something comes from the user's notes rather than the document.")
-
-# Appended whenever a document is in context, custom system prompt or not:
-# the clickable-citation link shape (docs/dev/pdf_citations.md).
-_CITATION_PROMPT = (
-    "\n\nWhen citing a passage from a library PDF, provide a clickable citation "
-    "as [p. N](/?page=PAGE_ID&pdf_page=N&quote=URL_ENCODED_QUOTE). "
-    "Use the Gamma page ID supplied in context or tool results, the 1-based physical "
-    "PDF page number from [PDF page N] labels (not printed page numbers), and a "
-    "verbatim, distinctive quote of 8-2000 characters contained on that page, preferably one sentence. "
-    "Percent-encode the quote, including spaces, ampersands and parentheses. "
-    "These links only navigate and visually highlight text; they never create notes. "
-    "Never invent quotes, IDs or page numbers. If the location is unknown, read the "
-    "page first when tools are available, otherwise use an ordinary page link. "
-    "Do not use these links for external or uploaded files without a Gamma page ID."
-)
 
 # Default prompt for AI-based metadata extraction (used when neither an arXiv id
 # nor a DOI identifies the paper). Editable per-user in the frontend prompt editor.
@@ -1591,8 +1577,11 @@ def _chat_prompt(ws: str, payload, scope: dict, tools, allow_native: bool, drop:
                                message_context=message_context, drop_turns=drop)
     # A custom prompt always applies; the built-in one only when there's a document
     system = (payload.system or "").strip()[:8000] or (_SYSTEM_PROMPT if (context or pdf_b64s) else "")
+    # Appended whenever a document is in context, custom system prompt or
+    # not: the clickable-citation link shape (docs/dev/pdf_citations.md),
+    # the text the MCP adapter's instructions share.
     if context or pdf_b64s:
-        system += _CITATION_PROMPT
+        system += "\n\n" + CITATION_PROMPT
     if tools:
         system = ((system + "\n\n" if system else "")
                   + agent_system(scope, scope["permissions"],

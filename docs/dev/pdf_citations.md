@@ -24,10 +24,13 @@ The PDF page is physical and 1-based. Context and `read_page` label pages
 `[PDF page N]` (blank pages counted, a mid-page continuation labelled
 `; continued`) and each context section carries its Gamma page ID
 ([ai_context.md](ai_context.md)); `routers/ai.py` appends the citation
-instruction whenever a document is in context, with tools off and under a
-custom prompt too. A quote should fit on one page and identify one passage.
-Copy it verbatim, including parenthetical references. A shorter distinctive
-substring is also valid; do not add a period where the source continues.
+instruction (`ai_tools.citation_prompt`) whenever a document is in context,
+with tools off and under a custom prompt too. The MCP server's instructions
+carry the same text in its absolute form, and its results link every located
+PDF page and block ([mcp.md](mcp.md) "Links in results"). A quote should fit
+on one page and identify one passage. Copy it verbatim, including
+parenthetical references. A shorter distinctive substring is also valid; do
+not add a period where the source continues.
 
 The link is plain Markdown, so it persists with the reply.
 `shared/model/gammaLinks.js` classifies one link into this library

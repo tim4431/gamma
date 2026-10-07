@@ -83,7 +83,7 @@ def test_discovery_and_browser_signin_roundtrip(browser):
                    json={"jsonrpc": "2.0", "id": 1, "method": "tools/list"})
     assert tools.status_code == 200, tools.text
     assert {tool["name"] for tool in tools.json()["result"]["tools"]} == {
-        "list_pages", "list_folders", "read_page", "read_block", "read_chats", "view_pdf_page",
+        "list_pages", "list_folders", "read_page", "read_block", "read_chats", "view_pdf_page", "view_ink", "cite",
         "search_library", "read_gamma_link", "export_page",
     }
     listing = c.get("/api/integrations/tokens").json()

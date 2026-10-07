@@ -54,7 +54,7 @@ import secrets
 import threading
 import time
 from difflib import SequenceMatcher
-from urllib.parse import urlsplit
+from urllib.parse import urlencode, urlsplit
 
 from fractional_indexing import generate_key_between
 
@@ -105,6 +105,29 @@ _TRUNCATED_MARK = "[truncated — read_block("
 # this many of the longest remaining terms.
 _RELAX_MIN_TERM_LEN = 3
 _RELAX_MAX_TERMS = 3
+
+
+def citation_prompt(link: str) -> str:
+    """The clickable-citation instruction (docs/dev/pdf_citations.md) with
+    the link written as ``link``: the chat's relative shape
+    (``CITATION_PROMPT``), or the absolute one the MCP adapter's results
+    carry. Appended to the chat's system prompt whenever a document is in
+    context, and part of the MCP server's instructions."""
+    return (
+        "When citing a passage from a library PDF, provide a clickable citation "
+        f"as [p. N]({link}). "
+        "Use the Gamma page ID supplied in context or tool results, the 1-based physical "
+        "PDF page number from [PDF page N] labels (not printed page numbers), and a "
+        "verbatim, distinctive quote of 8-2000 characters contained on that page, preferably one sentence. "
+        "Percent-encode the quote, including spaces, ampersands and parentheses. "
+        "These links only navigate and visually highlight text; they never create notes. "
+        "Never invent quotes, IDs or page numbers. If the location is unknown, read the "
+        "page first when tools are available, otherwise use an ordinary page link. "
+        "Do not use these links for external or uploaded files without a Gamma page ID."
+    )
+
+
+CITATION_PROMPT = citation_prompt("/?page=PAGE_ID&pdf_page=N&quote=URL_ENCODED_QUOTE")
 
 # Base role prompt — the user-editable part (prompt editor, "Library agent");
 # agent_system() appends the mechanical scope/permission lines to it.
@@ -557,6 +580,28 @@ def _window_args(scope: dict, args: dict) -> tuple[int, int, int]:
     return budget, offset, page
 
 
+def gamma_link(scope: dict, page_id: str, *, pdf_page: int = 0, block_id: str = "") -> str:
+    """An absolute link into the library — a page, one PDF page of it, or a
+    note block — for a caller whose scope sets ``link_base`` (the MCP
+    adapter: ``https://host/?ws=<id>``, so an external assistant copies URLs
+    out of results instead of assembling them). "" for the chat, whose model
+    writes the relative ``/?page=<id>`` links the chat renders itself."""
+    base = scope.get("link_base")
+    if not base:
+        return ""
+    params = {"block": block_id} if block_id else {"page": page_id}
+    if pdf_page:
+        params["pdf_page"] = pdf_page
+    return base + "&" + urlencode(params)
+
+
+def _where(scope: dict, page_id: str, **link) -> str:
+    """``page_id <id>``, as results name a page, with its link after a
+    semicolon for a caller that wants links (``gamma_link``)."""
+    url = gamma_link(scope, page_id, **link)
+    return f"page_id {page_id}" + (f"; {url}" if url else "")
+
+
 def _int_arg(args: dict, key: str, default: int, lo: int, hi: int) -> int:
     """An integer argument clamped to [lo, hi]; a missing or malformed one
     is ``default``."""
@@ -624,6 +669,13 @@ def _run_read_page(conn, ws: str, scope: dict, args: dict):
     if last:
         chip["pdf_pages"] = [first, last]
         chip["summary"] = f"Read “{title[:60]}” p. {first}" + (f"–{last}" if last > first else "")
+    url = gamma_link(scope, page_id)
+    if url:
+        text += f"\n[Links: page {url}"
+        if last:
+            text += (f"; PDF page {first}: {gamma_link(scope, page_id, pdf_page=first)}, the other pages "
+                     "likewise — add &quote=<percent-encoded verbatim passage> to open at the passage")
+        text += "]"
     # The area highlights' pictures go with the result (the loop moves
     # them onto the tool message, like view_pdf_page's page).
     attachment = page_attachment(props)
@@ -669,9 +721,11 @@ def _run_view_pdf_page(conn, ws: str, scope: dict, args: dict):
     if image is None:
         return f'error: PDF page {page_no} does not exist — "{title}" has {total} pages', None
     _, _, width, height = image
+    url = gamma_link(scope, page_id, pdf_page=page_no)
     result = (f'PDF page {page_no} of {total} of "{title}" is attached as a {width}×{height} px '
               "picture: read it visually and cite it as PDF page "
-              f"{page_no}. The picture is not kept in the chat history — call again to look at it later.")
+              f"{page_no}{f' ({url})' if url else ''}. The picture is not kept in the chat history — "
+              "call again to look at it later.")
     return result, {"kind": "view", "page_id": page_id, "pdf_page": page_no,
                     "summary": f"Looked at p. {page_no} of “{title[:60]}”",
                     "images": [image_part(image)]}
@@ -788,9 +842,9 @@ def _run_read_block(conn, ws: str, scope: dict, args: dict):
     is_page = block["parent_id"] == "root"
     on_sheet = not is_page and under_sheet(conn, block["id"])
     if is_page:
-        head = f'Note outline of page "{page_title}" (page_id {page_id}):'
+        head = f'Note outline of page "{page_title}" ({_where(scope, page_id)}):'
     else:
-        head = (f'Block [{block["id"]}] in page "{page_title}" (page_id {page_id}):\n'
+        head = (f'Block [{block["id"]}] in page "{page_title}" ({_where(scope, page_id, block_id=block["id"])}):\n'
                 + line(block["id"], block["content"], block["properties"], 0, on_sheet, full=True))
         seen[block["id"]] = block["content"]
     walk(block["id"], 0 if is_page else 1, on_sheet or is_sheet(block["properties"]))
@@ -958,7 +1012,7 @@ def _run_cite(conn, ws: str, scope: dict, args: dict):
             continue
         page_id, title, props, _ = loaded
         meta = props.get("meta") if isinstance(props.get("meta"), dict) else None
-        head = f'## "{title}" (page_id {page_id})'
+        head = f'## "{title}" ({_where(scope, page_id)})'
         if not meta:
             missing += 1
             entries.append(head + "\nNo paper metadata yet — the user can look it up with the (i) "
@@ -1438,10 +1492,12 @@ def _run_search_library(conn, ws: str, scope: dict, args: dict):
             return found
         for block_id, page_id, snippet in search_blocks(conn, match, limit, pages):
             found.append(f'- note [{block_id}] in "{pages[page_id]["title"][:80]}" '
-                         f"(page_id {page_id}): {snippet}")
+                         f"({_where(scope, page_id, block_id=block_id)}): {snippet}")
         for doc_id, page, snippet in search_pdf(database, match, limit, docs):
+            ids = doc_pages[doc_id]  # one PDF may hang on several pages: link the first
+            url = gamma_link(scope, ids[0], pdf_page=page)
             found.append(f'- PDF "{docs[doc_id][:80]}" p.{page} '
-                         f'(page_id {", ".join(doc_pages[doc_id])}): {snippet}')
+                         f'(page_id {", ".join(ids)}{f"; {url}" if url else ""}): {snippet}')
         return found
 
     relaxed = ""
@@ -2781,6 +2837,18 @@ MUTATING_TOOLS = {t["spec"]["name"] for t in TOOLS if t["mutating"]}
 # The tools whose answer is a picture: a model that reads text only gets
 # neither (routers/ai.py, _chat_tools).
 PICTURE_TOOLS = frozenset({"view_pdf_page", "view_ink"})
+
+
+def mcp_tools() -> frozenset:
+    """The registry's tools the read-only MCP adapter offers
+    (gamma/mcp_server.py): every reading tool that stays inside the library,
+    so a new one is offered by rule — not the web tools (the assistant has
+    its own web access), not the trash (``list_deleted``: its pages are out
+    of the reading tools' reach and restoring one is a change), and no
+    change tool. ``backend/tests/test_mcp.py`` pins the resulting names."""
+    return frozenset(t["spec"]["name"] for t in TOOLS
+                     if not t["mutating"] and t["perm"] not in ("web_search", "web_read")
+                     and t["spec"]["name"] != "list_deleted")
 
 
 def available(scope: dict) -> frozenset:
