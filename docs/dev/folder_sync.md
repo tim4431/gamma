@@ -4,24 +4,32 @@ A **folder link** keeps one folder of a workspace as a directory on a disk:
 each paper as its PDF beside a Markdown file of its notes, the subfolders
 as subdirectories, kept up to date from Gamma. It is one-way, Gamma to
 disk: what Gamma holds is written out, what you change on disk is never
-sent back and never overwritten either. Two hosts run the same rounds: the
-**server** keeps links on its own disk (Settings → Workspaces → Folders on
-disk; a NAS share then carries the directory to every PC), and the
-**gamma-sync client**, one Python file, keeps a link on any computer over
-HTTP. The design and the reasons, and the way back that is not built, are
-in [research/folder-sync.md](../research/folder-sync.md).
+sent back and never overwritten either. Two hosts run the same rounds:
+
+- The **desktop app** keeps folders on the computer it runs on, through
+  its own local server. A folder comes from one of that server's
+  workspaces, or from another Gamma server such as a NAS, read with a
+  token of it and no clone. No other server keeps folders on disk; a NAS
+  only answers the reads.
+- The **gamma-sync client**, one Python file, keeps a link on any computer
+  over HTTP.
+
+The design, its reasons, and the way back that is not built are in
+[research/folder-sync.md](../research/folder-sync.md).
 
 Code: `gamma/folder_sync.py` (the layout, the manifest and the notes
 files), `gamma/routers/sync.py` (`GET /api/sync/folders*`, beside the
 change feed), `gamma/gamma_sync.py` (the rounds: the client that is also
 the engine, the standard library only), `gamma/folder_links.py` (the
-server's links: their store, the in-process source, the loop's tick),
-`gamma/routers/folder_links.py` (`/api/folder-links*`),
-`frontend/src/settings/SettingsFolderLinks.jsx` (the Settings section).
-Tests: `backend/tests/test_folder_sync.py` (the reads and the client,
-driven over the TestClient), `backend/tests/test_folder_links.py` (the
-server's links), the browser suite's `folder-links` group
-(`frontend/tests/e2e/scenarios/folderLinks.mjs`).
+desktop server's links: their store, the in-process source, the remote
+source's token and poll, the loop's tick),
+`gamma/routers/folder_links.py` (`/api/folder-links*`), and the desktop
+app's flows in `desktop/main.js` with the bar's chooser in
+`desktop/ui/bar.html` ([desktop
+architecture](../../desktop/docs/architecture.md) "Folders on this
+computer"). Tests: `backend/tests/test_folder_sync.py` (the reads and the
+client, driven over the TestClient), `backend/tests/test_folder_links.py`
+(the links), and the desktop suite's folder steps (`desktop/test/e2e.js`).
 
 ## What lands on disk
 
@@ -130,54 +138,93 @@ on disk, `dry_run` reports and writes nothing. The round counts added,
 updated, renamed, removed and kept, and lists the kept files with the
 reason.
 
-## Links kept by the server
+## Folders kept by the desktop app
+
+Only the desktop app's own local server keeps folder links. The shell
+starts it with `GAMMA_FOLDER_LINKS` (`config.folder_links_enabled`, read
+through `folder_links.enabled`). On any other server, a NAS among them,
+`/api/folder-links*` answers 404 with a pointer to the desktop app, and
+`tick` does nothing; a row left from an earlier build stays as it is.
+Such a server only answers the reads above, for a link kept elsewhere.
 
 A **link** is a row of users.db `folder_links` ([user_db.md](user_db.md);
-migration step 35): the workspace, the folder (a folder block id, or
-`root`), the directory's `path` below the **folders root**, whether notes
-files are written, the change-log seq the last round saw (`cursor`) and
-that round's `status`. The folders root is `GAMMA_FOLDERS_DIR`, else
-`folders/` in the data directory (`config.folders_dir`); in Docker it is on
-the data volume by default, and a bind mount plus the variable put it on a
-share (`docker-compose.yml.example`). The path is cleaned (`clean_path`:
-each name through `vault_name`, so nothing leaves the root), defaults to
-the folder's own path, and is unique among the server's links ignoring
-case. A workspace keeps at most ten links. With `GAMMA_FOLDERS_ANYWHERE`
-set (`config.folders_anywhere`) a link may name any directory of the
-machine: `clean_path` keeps an absolute path as the machine resolves it,
-refusing a filesystem root and anything inside the data directory that is
-not below the folders root; the listing answers `anywhere: true` and the
-Settings dialog says a full path is taken. The desktop app sets it for the
-local server it runs as the user, and its bar menu adds the native
-directory picker to the flow ([desktop
-architecture](../../desktop/docs/architecture.md) "Folders on this computer").
+migration steps 35 and 36). It holds the workspace, the folder (a folder
+block id, or `root`), the directory's full `path`,
+whether notes files are written, the change-log seq the last round saw
+(`cursor`) and that round's `status`. A link whose folder is on another
+Gamma server also holds that server (`remote_url`), a token of it
+(`token`, Fernet-encrypted with the data directory's key like the mirrors'
+tokens) and the token's id (`token_id`, for whoever revokes it there).
 
-The directory is the round's: `_ensure_state` writes the state file on
-creation (`server: "local"`) and adopts one an earlier link to the same
-folder left behind — a directory holding another folder's files is
-refused. Rounds run three ways: in the background when a link is made or
-asked to sync, inline for a sync asked to wait, and from `tick`, which the
-app's periodic loop runs every `TICK_S` (30 s): a link is *due* when its
-workspace's change log moved past its cursor (so a quiet workspace costs
-one query per link), when it has never synced, or `RETRY_S` (5 min) after
-a failed round; a round marked running for over ten minutes counts as
-dead. One round per link at a time (`_locks`). A link whose workspace is
-gone is forgotten by the tick. Removing a link leaves the directory as it
-is, or with `remove_files` takes back what the rounds wrote
-(`_remove_written`: the files as recorded and unchanged, the directories
-they made when empty, the state file, the directory when that leaves it
-empty) and nothing else.
+The path is the one the user picked, as the machine resolves it
+(`clean_path`). A relative path, a filesystem root, and anything inside
+the data directory are refused. The path is unique among the links
+ignoring case. A workspace keeps at most ten links, local or remote,
+counted by the workspace the folder belongs to.
 
-`/api/folder-links` ([api.md](api.md)) is session-only, never a guest, and
-takes the editor role to make, change, sync or remove a link; any member
-lists them. **Settings → Workspaces → Folders on disk**
-(`SettingsFolderLinks.jsx`, [settings.md](settings.md)) shows the open
-workspace's links as rows — the folder, the directory under the root, the
-last round's outcome, a `kept` tag listing the files left alone — with
-Sync, and a "more" menu: Write everything again, Replace files changed on
-disk, Papers only / Papers and notes, Remove link, Remove link and files.
-"Keep a folder on disk" picks the folder, names the directory and chooses
-the files.
+**A link with a remote source** (`create_remote_link`) reads its folder
+from another Gamma server with the client's own `RemoteSource`. The server
+then runs for that folder what `gamma_sync.py` would run on a PC:
+
+- `workspace_id` is the workspace on the other server, and the state file
+  says `server: <url>`.
+- The rounds go over HTTP: the three reads above and `/api/uploads/`. Only
+  the folder's files come down, never the rest of the workspace.
+- The token is checked on creation. `/api/sync/whoami` names its
+  workspace, which must match the request's `workspace` when one is given,
+  and the folder must exist there. Read scope is enough; the token is
+  never answered back. The check waits at most `ASK_TIMEOUT_S` (15 s) on
+  a silent server.
+- The link belongs to the account that made it, not to a workspace. Only
+  that account lists, changes and removes it.
+- The token expires as its issuer set it (the desktop app mints a year).
+  A refused token is the round's error; making the link again with a new
+  token adopts the directory.
+- Removing the link leaves the token on the other server. Whoever minted
+  it revokes it, as the desktop app does.
+
+The directory is the round's. `_ensure_state` writes the state file on
+creation (`server: "local"`, or the remote's address). It adopts one that
+an earlier link to the same folder of the same server left behind, and
+refuses a directory holding another folder's files.
+
+Rounds run three ways: in the background when a link is made or asked to
+sync, inline for a sync asked to wait, and from `tick`. The app's periodic
+loop runs `tick` every `TICK_S` (30 s), and a link is *due* when:
+
+- its source moved past its cursor. For a local workspace that is its
+  change log, read directly, so a quiet workspace costs one query per
+  link. For a remote source it is the other server's change feed
+  (`gamma_sync.changed_since`, `GET /sync/changes?since=<cursor>&limit=1`),
+  asked at most every `REMOTE_POLL_S` (60 s) and waited on at most
+  `ASK_TIMEOUT_S` (15 s). A server that cannot be
+  reached or refuses the token counts as a failed round.
+- it has never synced.
+- its last round failed `RETRY_S` (5 min) ago or longer.
+
+The tick runs a due link of this server's workspace itself, one after
+another. It hands a remote link's round to a thread of its own
+(`run_in_background`), whose `running` mark keeps the next tick off that
+link, so a slow or silent server never holds up the rest. A round's own
+requests may wait two minutes each (`gamma_sync.Server.timeout`), long
+enough for a large PDF.
+
+A round marked running for over ten minutes counts as dead. One round runs
+per link at a time (`_locks`). The tick forgets a link whose workspace on
+this server is gone. Removing a link leaves the directory as it is. With
+`remove_files` it takes back what the rounds wrote and nothing else
+(`_remove_written`): the files as recorded and unchanged, the directories
+they made when empty, the state file, and the directory when that leaves
+it empty.
+
+`/api/folder-links` ([api.md](api.md)) is session-only and never a guest's.
+A link of this server's workspace takes the editor role to make, change,
+sync or remove; any member lists them. A link with a remote source is its
+account's alone. The desktop app is the only caller. It makes, syncs and
+stops links from its bar's chooser and from a folder's *Keep on this
+computer…* in Gamma's own menu ([desktop
+architecture](../../desktop/docs/architecture.md) "Folders on this
+computer"). Gamma's Settings has no section for them.
 
 ## The client
 
@@ -210,8 +257,11 @@ stops a round on Windows.
 - A link's text (`[[Title]]`) lags when the *other* page's title changes,
   until the linking page changes or a full round.
 - Chats, reading positions and the trash do not travel, as for the mirror.
-- On a PC the desktop app keeps a folder of a *local* workspace anywhere
-  on disk and, in background mode, keeps it syncing with the window closed;
-  a NAS folder gets there through a clone of its workspace. A computer
-  without the app runs the client, or takes the directory from the
-  server's share.
+- Only the desktop app keeps folders on disk. A local workspace's folder
+  is read in-process, and a NAS folder through a link with a remote source
+  on the app's local server, with no clone. In background mode the folders
+  keep syncing with the window closed. A computer without the app runs the
+  client.
+- A remote source's token lasts as long as its issuer set (a year from the
+  desktop app); then the round reports a refused token and the link is
+  made again.

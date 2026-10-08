@@ -261,7 +261,8 @@ def test_admin_guest_settings_round_trip(gadmin, monkeypatch):
     s = gadmin.get("/api/admin/settings").json()
     assert (s["guest_ttl_hours"], s["guest_ttl_source"]) == (24, "default")
     assert (s["demo_mode"], s["demo_mode_source"]) == (False, "default")
-    assert s["guest_ttl_hours_range"] == [1, 720] and s["guest_logins"] is True
+    assert (s["guest_logins"], s["guest_logins_source"]) == (True, "default")
+    assert s["guest_ttl_hours_range"] == [1, 720] and s["guest_logins_available"] is True
     monkeypatch.setenv("GAMMA_GUEST_MAX", "0")
     assert gadmin.get("/api/admin/settings").json()["guest_logins"] is False  # the pane leaves the Guests rows out
     monkeypatch.delenv("GAMMA_GUEST_MAX")
@@ -302,6 +303,34 @@ def test_admin_guest_settings_round_trip(gadmin, monkeypatch):
     # the demo landing promises a sample library only when guests get one
     monkeypatch.setenv("GAMMA_GUEST_SEED", "/srv/seed.zip")
     assert _new_client().get("/api/server-config").json()["guest_seeded"] is True
+
+
+def test_an_admin_can_turn_guest_sign_in_off(gadmin):
+    """The Guest sign-in switch: off, the login page shows no guest button
+    and a login is refused; the rows stay, so it can be turned back on."""
+    from gamma import server_settings
+
+    r = gadmin.put("/api/admin/settings", json={"guest_logins": False})
+    assert r.status_code == 200, r.text
+    assert (r.json()["guest_logins"], r.json()["guest_logins_source"]) == (False, "saved")
+    assert r.json()["guest_logins_available"] is True  # the pane keeps its Guests rows
+    assert _new_client().get("/api/server-config").json()["guest"] is False
+    assert _new_client().post("/api/login-guest").status_code == 403
+
+    r = gadmin.put("/api/admin/settings", json={"guest_logins": True})
+    assert (r.json()["guest_logins"], r.json()["guest_logins_source"]) == (True, "saved")
+    assert _new_client().get("/api/server-config").json()["guest"] is True
+    assert _new_client().post("/api/login-guest").status_code == 200
+    assert server_settings.guest_logins_enabled() is True
+
+
+def test_the_switch_cannot_open_a_server_that_takes_no_guests(gadmin, monkeypatch):
+    """GAMMA_GUEST_MAX=0 and a share host are not an admin's to undo: the
+    PUT is refused and the pane is told to leave the Guests rows out."""
+    monkeypatch.setenv("GAMMA_GUEST_MAX", "0")
+    s = gadmin.get("/api/admin/settings").json()
+    assert (s["guest_logins"], s["guest_logins_available"]) == (False, False)
+    assert gadmin.put("/api/admin/settings", json={"guest_logins": True}).status_code == 400
 
 
 def test_manage_sweep_guests(capsys):

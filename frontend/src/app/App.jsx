@@ -50,7 +50,7 @@ import { useWheelPan } from "../shared/ui/wheelPan";
 import {
   ActivityIcon, AlertCircleIcon, ArrowDownIcon, ArrowLeftIcon, ArrowUpDownIcon, ArrowUpIcon, BookIcon, BugIcon, CheckIcon, CopyIcon, DownloadIcon, ExportIcon,
   ExternalLinkIcon, EyeIcon, EyeOffIcon, FileGlyph, FileIcon, FileTextIcon, FitWidthIcon, FolderGlyph,
-  FilePlusIcon, PaperclipIcon, FolderIcon, FolderOpenIcon, FolderPlusIcon, HelpCircleIcon, HomeIcon, ImportIcon, InfoIcon, LabelGlyph, LabelIcon,
+  FilePlusIcon, PaperclipIcon, FolderIcon, FolderOpenIcon, FolderPlusIcon, HardDriveIcon, HelpCircleIcon, HomeIcon, ImportIcon, InfoIcon, LabelGlyph, LabelIcon,
   LanguagesIcon, LanguagesOffIcon, LinkIcon, LogOutIcon, MaximizeIcon, MenuIcon, MinimizeIcon, MoveVerticalIcon, PenIcon, PinIcon, PlusIcon,
   RectSelectIcon, RefreshIcon, SettingsIcon, SparklesIcon, TextCursorIcon, Trash2Icon, TrashIcon, TypeIcon, UploadIcon,
   ScissorsIcon, ShareIcon, UserIcon, UsersIcon, XIcon, ZoomInIcon, ZoomOutIcon, NotebookIcon, SheetIcon,
@@ -11151,6 +11151,16 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                     title={t("Download every page in this folder — Markdown, a Logseq graph, a Zotero library, or a Gamma export")}
                     onClick={() => { setHomeMenu(null); setExportFolder(id); setExportOpen(true); }}
                   >{t("Export…")}</MenuItem>,
+                  // In the desktop app: its page preload passes the message to the app,
+                  // which asks for a directory and keeps the folder there (desktop/docs/architecture.md).
+                  IS_DESKTOP && folders.length === 1 && (
+                    <MenuItem key="disk" icon={HardDriveIcon}
+                      title={t("Keep this folder in a directory on this computer: each paper's PDF beside a Markdown note, kept up to date by the desktop app")}
+                      onClick={() => {
+                        setHomeMenu(null);
+                        window.postMessage({ source: "gamma-app", type: "keep-folder-on-disk", ws: getCurrentWorkspace(), folder: id }, window.location.origin);
+                      }}>{t("Keep on this computer…")}</MenuItem>
+                  ),
                 ],
                 [
                   lib.organize && (

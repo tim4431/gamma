@@ -5,9 +5,7 @@
 // (shared), Make default (personal), Leave, Delete. Plus your account's
 // storage meter, New workspace (a personal one), Export all and, last, the
 // clones of workspaces on other Gamma servers (MirrorsSection in
-// SettingsMirrors.jsx) and the open workspace's folders kept on the
-// server's disk (FolderLinksSection in SettingsFolderLinks.jsx). GUI for
-// /api/workspaces* (docs/dev/workspaces.md).
+// SettingsMirrors.jsx). GUI for /api/workspaces* (docs/dev/workspaces.md).
 //
 // The dialog (ManageWorkspaceDialog) is shared with the admin's Server pane
 // (SettingsWorkspacesAdmin.jsx), which adds access, quota, ownership, kind
@@ -22,7 +20,6 @@ import { API, apiJson, fmtBytes } from "../shared/lib/utils";
 import { ActionMenu, MenuSelect } from "../shared/ui/Menus";
 import { PaneHead, Section, Row, SubDialog, Field, DialogButtons, Empty, QuotaMeter, UnitInput, AccountPicker, Segmented, WorkspaceFolder } from "./SettingsKit";
 import { MirrorsSection, useMirrors } from "./SettingsMirrors";
-import { FolderLinksSection, useFolderLinks } from "./SettingsFolderLinks";
 import {
   CheckIcon, DatabaseIcon, ExportIcon, FoldersIcon, GlobeIcon, HardDriveIcon, ImportIcon, LogOutIcon, PenIcon,
   PlusIcon, ShieldIcon, Trash2Icon, UserIcon, UsersIcon,
@@ -591,7 +588,6 @@ export function WorkspacesSettings({ value, onServer }) {
   const currentId = workspace?.id;
   const signedIn = !!me && me !== "guest";
   const [mirrors, refreshMirrors] = useMirrors(signedIn);
-  const [folderLinks, refreshFolderLinks] = useFolderLinks(signedIn, currentId);
 
   const refresh = React.useCallback(() => {
     apiJson(`${API}/workspaces/mine`).then(setData).catch((err) => setError(err.message));
@@ -721,9 +717,6 @@ export function WorkspacesSettings({ value, onServer }) {
           {signedIn ? (
             <MirrorsSection mirrors={mirrors} refresh={refreshClones} workspaces={all} currentId={currentId}
               switchWorkspace={switchWorkspace} closeSettings={closeSettings} confirm={confirm} setStatus={setStatus} />
-          ) : null}
-          {signedIn ? (
-            <FolderLinksSection data={folderLinks} refresh={refreshFolderLinks} confirm={confirm} setStatus={setStatus} />
           ) : null}
         </>
       ) : null}

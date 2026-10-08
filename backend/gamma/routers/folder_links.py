@@ -1,9 +1,13 @@
-"""Folders on disk (docs/dev/folder_sync.md "Links kept by the server"):
-the links of the request's workspace — a folder kept as a directory under
-the server's folders root (gamma/folder_links.py) — their status, a round
-now, and their removal. A signed-in account's session only: an integration
-token is refused as for backups, and so is the guest. Making, changing,
-syncing or removing a link takes the editor role; listing, any member's."""
+"""Folders on disk (docs/dev/folder_sync.md "Folders kept by the desktop
+app"): the folders of a workspace the desktop app's own server keeps as
+directories on this computer (gamma/folder_links.py), of its own
+workspaces or of another Gamma server read with a token of it. Only that
+server answers (``folder_links.enabled``); any other answers 404. The
+desktop app is the only caller. A signed-in account's session only: an
+integration token is refused as for backups, and so is the guest. Making,
+changing, syncing or removing a link of this server's workspace takes the
+editor role; listing, any member's. A link with a remote source is the
+account's own: it alone sees and changes it."""
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
@@ -13,31 +17,47 @@ from ..auth import require_personal_user_id, require_ws
 
 router = APIRouter(prefix="/api/folder-links", tags=["folder-links"])
 
+SIGN_IN = "Sign in with an account to keep folders on disk."
+ELSEWHERE = ("Folders on disk are kept by the Gamma desktop app: open this server in it and use a folder's "
+             "\u201cKeep on this computer\u201d or the \u201con disk\u201d chip in its workspace menu.")
+
 
 class LinkCreate(BaseModel):
     folder: str = Field(min_length=1, max_length=64)   # a folder block id, or "root"
-    path: str = Field(default="", max_length=240)      # below the folders root; the folder's own path when empty
+    path: str = Field(min_length=1, max_length=400)    # the directory's full path on this computer
     notes: bool = True
+    # A source on another Gamma server: its address, a token of it (read
+    # access is enough), that token's id for whoever revokes it later, and
+    # the token's workspace when the caller wants it checked.
+    remote_url: str = Field(default="", max_length=400)
+    token: str = Field(default="", max_length=400)
+    token_id: str = Field(default="", max_length=120)
+    workspace: str = Field(default="", max_length=64)
 
 
 class LinkPatch(BaseModel):
     notes: bool | None = None
 
 
-def _member(request: Request) -> str:
-    require_personal_user_id(request, "Sign in with an account to keep folders on disk.")
-    return require_ws(request)
-
-
-def _writer(request: Request) -> tuple[str, str]:
-    user_id = require_personal_user_id(request, "Sign in with an account to keep folders on disk.")
-    return require_ws(request, write=True), user_id
+def _account(request: Request) -> str:
+    """The signed-in account, on the one server that keeps folders on disk."""
+    if not folder_links.enabled():
+        raise HTTPException(status_code=404, detail=ELSEWHERE)
+    return require_personal_user_id(request, SIGN_IN)
 
 
 def _mine(request: Request, link_id: str, write: bool = True) -> dict:
-    ws = _writer(request)[0] if write else _member(request)
+    """The link, when the request may see it: a remote source's by the
+    account that made it, a local one by a member (editor, to change it)
+    of its workspace, which must be the request's."""
+    user_id = _account(request)
     link = folder_links.get_link(link_id)
-    if link is None or link["workspace_id"] != ws:
+    if link is None:
+        raise HTTPException(status_code=404, detail="no such link")
+    if link["remote_url"]:
+        if link["created_by"] != user_id:
+            raise HTTPException(status_code=404, detail="no such link")
+    elif link["workspace_id"] != require_ws(request, write=write):
         raise HTTPException(status_code=404, detail="no such link")
     return link
 
@@ -48,24 +68,33 @@ def _info(link: dict) -> dict:
 
 @router.get("")
 def list_links(request: Request):
-    """``{links: [{id, folder_id, path, notes, created_at, cursor, status,
-    dest}], root, anywhere}`` — the workspace's links, the folders root they
-    are written under, and whether a link may name any directory of the
-    machine instead (the desktop app's local server)."""
-    ws = _member(request)
-    return {"links": [_info(link) for link in folder_links.list_links(ws)], "root": str(folder_links.root_dir()),
-            "anywhere": folder_links.anywhere()}
+    """``{links: [{id, workspace_id, folder_id, path, notes, created_at,
+    cursor, status, dest, remote_url: "", token_id: ""}], remote_links:
+    [the same shape, remote_url the other server, workspace_id its
+    workspace there]}`` — the workspace's links and the account's links
+    with a remote source."""
+    user_id = _account(request)
+    ws = require_ws(request)
+    return {"links": [_info(link) for link in folder_links.list_links(ws)],
+            "remote_links": [_info(link) for link in folder_links.list_remote_links(user_id)]}
 
 
 @router.post("", status_code=201)
 def create_link(payload: LinkCreate, request: Request):
-    """``{folder, path?, notes?}`` → the link; its first round runs in the
-    background. 400 for a folder that does not exist, a path another link
-    writes, a directory holding another folder's files, or an unwritable
-    root."""
-    ws, user_id = _writer(request)
+    """``{folder, path, notes?}`` → the link; its first round runs in the
+    background. With ``remote_url`` and ``token`` the folder is one of
+    another Gamma server's, read there with the token (``workspace``, when
+    given, must be the token's). 400 for a folder that does not exist, a
+    path that is not a full one or another link's, a directory holding
+    another folder's files, or a server that refuses the token."""
+    user_id = _account(request)
     try:
-        link = folder_links.create_link(ws, payload.folder, payload.path, payload.notes, user_id)
+        if payload.remote_url:
+            link = folder_links.create_remote_link(payload.remote_url, payload.token, payload.token_id, payload.workspace,
+                                                   payload.folder, payload.path, payload.notes, user_id)
+        else:
+            ws = require_ws(request, write=True)
+            link = folder_links.create_link(ws, payload.folder, payload.path, payload.notes, user_id)
     except folder_links.LinkError as e:
         raise HTTPException(status_code=400, detail=str(e))
     folder_links.run_in_background(link["id"])

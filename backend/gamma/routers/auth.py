@@ -9,7 +9,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-from .. import cloud_auth, guests, ratelimit, version, workspaces
+from .. import cloud_auth, guests, ratelimit, server_settings, version, workspaces
 from ..auth import TOKEN_REFUSAL, is_token, require_user, set_session_cookie
 from ..ratelimit import client_ip
 from ..db import connect_users_db, page_now
@@ -123,8 +123,10 @@ def list_accounts(request: Request, q: str = ""):
 def login_guest(request: Request):
     """A fresh throwaway account for this visitor (gamma/guests.py): its own
     workspace, gone ``guest_ttl_hours`` after now."""
-    if cloud_auth.settings()["share_host"]:
-        # a public share host holds strangers' published pages: no guests there
+    if cloud_auth.settings()["share_host"] or not server_settings.guest_logins_enabled():
+        # a public share host holds strangers' published pages, and an admin
+        # may turn guests off (Settings → Server → Guests). The GAMMA_GUEST_MAX
+        # places are counted in new_guest, which answers 503 once they are gone.
         raise HTTPException(status_code=403, detail="This server has no guest access.")
 
     # Each call creates an account and a workspace directory: a tight rate per

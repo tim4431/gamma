@@ -6,10 +6,10 @@ It reads a Gamma server with an integration token (Settings → Integrations;
 read access is enough) and writes the folder's papers and notes to a
 directory of your choice, then keeps them up to date. Gamma to disk, one
 way: what you change on disk is never sent back, and never overwritten
-either (see the rules below). The same rounds run inside the server for
-the folders it keeps on its own disk (gamma/folder_links.py, Settings →
-Workspaces → Folders on disk), which is why this file lives in the gamma
-package; it imports nothing from it.
+either (see the rules below). The same rounds run inside the desktop
+app's own server for the folders it keeps on the PC (gamma/folder_links.py),
+which is why this file lives in the gamma package; it imports nothing from
+it.
 
     python gamma_sync.py folders --server https://gamma.example.com --token gamma_…
     python gamma_sync.py init  ~/Papers/Quantum --server https://gamma.example.com \\
@@ -64,9 +64,10 @@ class Server:
     """A thin reader of one Gamma server: JSON answers and file downloads,
     with the token as a bearer header."""
 
-    def __init__(self, url, token, open_=None):
+    def __init__(self, url, token, open_=None, timeout=120):
         self.url = url.rstrip("/")
         self.token = token
+        self.timeout = timeout   # seconds a request may wait on a silent server
         self.open_ = open_ or default_open or self._urllib_open
 
     def _headers(self):
@@ -78,7 +79,7 @@ class Server:
     def _urllib_open(self, method, path, headers):
         req = urllib.request.Request(self.url + path, method=method, headers=headers)
         try:
-            resp = urllib.request.urlopen(req, timeout=120)
+            resp = urllib.request.urlopen(req, timeout=self.timeout)
             return resp.status, resp.headers, resp
         except urllib.error.HTTPError as e:
             return e.code, e.headers, e
@@ -483,7 +484,10 @@ def _summary(counts) -> str:
     return ", ".join(parts) if parts else "up to date"
 
 
-def _changed_since(server: Server, cursor: str) -> bool:
+def changed_since(server: Server, cursor: str) -> bool:
+    """Whether the server's change feed moved past ``cursor`` (always, for
+    no cursor yet): one request, what ``--watch`` and a server's own links
+    with a remote source (gamma/folder_links.py) ask between rounds."""
     if not cursor:
         return True
     feed = server.get_json(f"/api/sync/changes?since={urllib.parse.quote(cursor)}&limit=1")
@@ -509,7 +513,7 @@ def cmd_sync(args):
         while True:
             time.sleep(args.watch)
             try:
-                if _changed_since(server, link.state.get("cursor", "")):
+                if changed_since(server, link.state.get("cursor", "")):
                     break
             except SyncError as e:
                 print(f"error: {e}", file=sys.stderr)

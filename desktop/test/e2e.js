@@ -165,6 +165,32 @@ async function waitLoggedIn(page, user = 'admin') {
   await waitFor(async () => (await sessionUser(page)) === user, `session=${user}`);
 }
 
+// Gamma's API on the open server in workspace `ws`, from the main process
+// (the shell's `api` test hook).
+const serverCall = (app, apiPath, opts) => hook(app, (s, [p, o]) => s.api(p, o), [apiPath, opts]);
+
+// A folder of workspace `ws` holding one new page: the page's id.
+async function makeFolderWithPage(app, ws, folderId, position, folder, title) {
+  await serverCall(app, '/api/pages/folders/ops', { ws, method: 'POST', body: { client: 'e2e', ops: [{ op: 'insert', id: folderId, parent: 'folders', position, content: folder }] } });
+  const page = await serverCall(app, '/api/blocks', { ws, method: 'POST', body: { parent_id: 'root', content: title } });
+  await serverCall(app, `/api/blocks/${page.id}`, { ws, method: 'PUT', body: { properties: { folders: [folderId] } } });
+  return page.id;
+}
+
+// The bar menu's folder chooser for workspace `ws`, at the row of `folder`.
+async function chooserRow(bar, ws, folder) {
+  await bar.click('#wsBtn');
+  const row = bar.locator(`#menu .wsItem[data-ws="${ws}"]`);
+  await row.waitFor({ timeout: 15_000 });
+  await row.hover();
+  await row.locator('.rowAct[data-act="disk"]').click();
+  const item = bar.locator('#menu .folderItem', { hasText: folder });
+  await item.waitFor({ timeout: 15_000 });
+  return item;
+}
+
+const menuClosed = (bar) => waitFor(() => bar.evaluate(() => document.getElementById('menu').hidden), 'menu closed');
+
 // ------------------------------------------------------------- steps -------
 
 async function main() {
@@ -391,6 +417,14 @@ async function main() {
       const cur = await hook(app, (s) => s.current());
       assert.equal(cur.type, 'remote');
       await waitFor(async () => (await bar.textContent('#wsName')).trim() === 'Alpha by URL', 'bar shows remote');
+      // A bare address gets http:// on the local network, and the address can be edited.
+      const port = new URL(urls.alpha).port;
+      const bareId = await hook(app, (s, u) => s.registry.addRemote('Bare', u).id, `localhost:${port}`);
+      assert.equal(await hook(app, (s, id) => s.registry.get(id).url, bareId), `http://localhost:${port}`, 'http:// assumed for a local address');
+      assert.equal(await hook(app, (s) => s.registry.withScheme('gamma.example.com')), 'https://gamma.example.com', 'https:// for a name out on the internet');
+      await hook(app, (s, id) => s.registry.setRemoteUrl(id, 'https://example.org:8443/'), bareId);
+      assert.equal(await hook(app, (s, id) => s.registry.get(id).url, bareId), 'https://example.org:8443');
+      await hook(app, (s, id) => s.registry.remove(id), bareId);
       return cur.url;
     });
 
@@ -449,48 +483,109 @@ async function main() {
     });
 
     await step('folder on this computer: the "on disk" chip on a local row writes the folder where the picker said', async () => {
-      // On the local server: a folder with a page, made through the API.
       await hook(app, (s, id) => s.openServer(id), ids.alpha);
       await waitLoggedIn(content);
-      const g = await waitFor(async () => hook(app, (s) => s.gamma()), 'workspaces read', 15_000);
-      const made = await content.evaluate(async (ws) => {
-        const h = { 'Content-Type': 'application/json', 'X-Gamma-Workspace': ws };
-        const post = (u, body, method = 'POST') => fetch(u, { method, credentials: 'same-origin', headers: h, body: JSON.stringify(body) }).then((r) => r.json());
-        await post('/api/pages/folders/ops', { client: 'e2e', ops: [{ op: 'insert', id: 'e2efolder1', parent: 'folders', position: 'a0', content: 'Kept lab' }] });
-        const page = await post('/api/blocks', { parent_id: 'root', content: 'Kept paper' });
-        await post(`/api/blocks/${page.id}`, { properties: { folders: ['e2efolder1'] } }, 'PUT');
-        return { ws, page: page.id };
-      }, g.current);
+      const ws = (await waitFor(async () => hook(app, (s) => s.gamma()), 'workspaces read', 15_000)).current;
+      const page = await makeFolderWithPage(app, ws, 'e2efolder1', 'a0', 'Kept lab', 'Kept paper');
       const kept = path.join(profile, 'kept');
       fs.mkdirSync(kept, { recursive: true });
-      await bar.click('#wsBtn');
-      const row = bar.locator(`#menu .wsItem[data-ws="${made.ws}"]`);
-      await row.waitFor({ timeout: 15_000 });
-      await row.hover();
-      await row.locator('.rowAct[data-act="disk"]').click();
-      const choice = bar.locator('#menu .folderItem', { hasText: 'Kept lab' });
-      await choice.waitFor({ timeout: 15_000 });
+      const choice = await chooserRow(bar, ws, 'Kept lab');
       assert((await choice.textContent()).includes('keep here'), 'not kept yet');
       await choice.click();
-      await waitFor(async () => (await bar.evaluate(() => document.getElementById('menu').hidden)), 'menu closed');
+      await menuClosed(bar);
       const md = path.join(kept, 'Kept paper.md');
       await waitFor(() => fs.existsSync(md), 'the note file is written', 30_000, 500);
-      assert(fs.readFileSync(md, 'utf8').includes(`gamma_id: ${made.page}`), 'the file names its page');
-      const { links } = await hook(app, (s, ws) => s.listFolders(ws), made.ws);
+      assert(fs.readFileSync(md, 'utf8').includes(`gamma_id: ${page}`), 'the file names its page');
+      const { links } = await hook(app, (s, w) => s.listFolders(w), ws);
       assert.equal(links.length, 1, 'one link');
       assert.equal(fs.realpathSync(links[0].dest).toLowerCase(), fs.realpathSync(kept).toLowerCase(), 'written where the picker said');
       await waitFor(async () => /is being written to/.test((await hook(app, (s) => s.notice())) || ''), 'the bar said so', 5_000);
-      // The chooser now shows the folder on disk.
-      await bar.click('#wsBtn');
-      await row.waitFor({ timeout: 15_000 });
-      await row.hover();
-      await row.locator('.rowAct[data-act="disk"]').click();
-      const again = bar.locator('#menu .folderItem', { hasText: 'Kept lab' });
-      await again.waitFor({ timeout: 15_000 });
+      // The chooser now shows the folder on disk with its last round, and "sync" runs one.
+      const again = await chooserRow(bar, ws, 'Kept lab');
       assert((await again.textContent()).includes('on disk'), 'shown as kept');
-      await bar.keyboard.press('Escape');
-      await waitFor(async () => (await bar.evaluate(() => document.getElementById('menu').hidden)), 'menu closed');
+      assert((await again.locator('.sub').textContent()).trim(), 'its last round beside the name');
+      await again.hover(); // the chips show on hover
+      await again.locator('[data-act="sync"]').click();
+      await menuClosed(bar);
+      await waitFor(async () => /is up to date/.test((await hook(app, (s) => s.notice())) || ''), 'the sync reported', 15_000);
       return `${links[0].dest}`;
+    });
+
+    await step('folder from the library: a folder\'s "Keep on this computer…" asks where and keeps it; asked again, it opens it', async () => {
+      await hook(app, (s, id) => s.openServer(id), ids.alpha);
+      await waitLoggedIn(content);
+      const ws = (await waitFor(async () => hook(app, (s) => s.gamma()), 'workspaces read', 15_000)).current;
+      await makeFolderWithPage(app, ws, 'e2efolder3', 'a2', 'Menu lab', 'Menu paper');
+      const dir = path.join(profile, 'kept-menu');
+      fs.mkdirSync(dir, { recursive: true });
+      await hook(app, (s, d) => { process.env.GAMMA_SHELL_PICK_DIR = d; }, dir); // the picker's answer, this time
+      await hook(app, (s, w) => s.openGammaWorkspace(w), ws);
+      await waitLoggedIn(content);
+      await content.locator('[data-guide="header.home"]').click();
+      const row = content.locator('.fileList .folderRow', { hasText: 'Menu lab' });
+      await row.waitFor({ timeout: 20_000 });
+      // Gamma's page speaks this computer's language: the entry in either catalog.
+      const keep = async () => {
+        await row.click({ button: 'right' });
+        await content.locator('.ctxMenuItem', { hasText: /Keep on this computer|保存到这台电脑/ }).click();
+      };
+      await keep();
+      const md = path.join(dir, 'Menu paper.md');
+      await waitFor(() => fs.existsSync(md), 'the note file is written', 30_000, 500);
+      await keep(); // kept already: its directory opens, no second copy
+      await waitFor(async () => /already on this computer/.test((await hook(app, (s) => s.notice())) || ''), 'the bar said so', 10_000);
+      const mine = (await hook(app, (s, w) => s.listFolders(w), ws)).links.filter((l) => l.folder_id === 'e2efolder3');
+      assert.equal(mine.length, 1, 'one link');
+      const opened = await hook(app, (s) => s.externalOpens[s.externalOpens.length - 1]);
+      assert.equal(fs.realpathSync(opened).toLowerCase(), fs.realpathSync(dir).toLowerCase(), 'its directory opened');
+      // Stopping with "remove the files" takes back what the sync wrote.
+      await hook(app, (s, [w, id]) => s.dropFolder(w, id, 'remove'), [ws, mine[0].id]);
+      await waitFor(() => !fs.existsSync(md), 'the files are taken back', 10_000);
+      return `${mine[0].dest}, then removed with its files`;
+    });
+
+    await step('folder from a remote: the "on disk" chip on a remote row keeps the folder on the host — no clone, a read token; "stop" drops it', async () => {
+      // On the remote (Alpha by URL: the same server, so the session is there).
+      await hook(app, (s, id) => s.openServer(id), ids.remote);
+      await waitFor(async () => (await hook(app, (s) => s.current())).id === ids.remote && new URL(content.url()).origin === urls.alpha, 'remote open', 15_000);
+      await waitLoggedIn(content);
+      const ws = (await waitFor(async () => hook(app, (s) => s.gamma()), 'workspaces read off the remote', 15_000)).current;
+      const page = await makeFolderWithPage(app, ws, 'e2efolder2', 'a1', 'Far lab', 'Far paper');
+      const tokensOf = async () => (await serverCall(app, '/api/integrations/tokens', { ws })).tokens;
+      const before = (await tokensOf()).length;
+      const far = path.join(profile, 'kept-far');
+      fs.mkdirSync(far, { recursive: true });
+      await hook(app, (s, dir) => { process.env.GAMMA_SHELL_PICK_DIR = dir; }, far); // the picker's answer, this time
+      const mirrorsBefore = (await hook(app, (s) => s.registry.load().mirrors)).length;
+      const choice = await chooserRow(bar, ws, 'Far lab');
+      assert((await choice.textContent()).includes('keep here'), 'not kept yet');
+      assert((await choice.getAttribute('title')).includes('local server on this computer'), 'the tooltip names who keeps it');
+      await choice.click();
+      await menuClosed(bar);
+      const md = path.join(far, 'Far paper.md');
+      await waitFor(() => fs.existsSync(md), 'the note file is written by the host', 30_000, 500);
+      assert(fs.readFileSync(md, 'utf8').includes(`gamma_id: ${page}`), 'the file names its page');
+      const { links } = await hook(app, (s, w) => s.listFolders(w), ws);
+      assert.equal(links.length, 1, 'one link for this remote workspace');
+      assert.equal(links[0].remote_url, urls.alpha, 'the link reads the remote');
+      assert(links[0].token_id && !links[0].token, 'with a token minted there, never shown');
+      assert.equal((await hook(app, (s) => s.registry.load().mirrors)).length, mirrorsBefore, 'no clone was made');
+      assert.equal(await hook(app, (s) => s.registry.getSettings().folderHost), ids.alpha, 'the host is remembered for launch');
+      const tokens = await tokensOf();
+      assert.equal(tokens.length, before + 1, 'one token minted');
+      assert(tokens.some((t) => t.id === links[0].token_id && t.scope === 'read' && /Far lab/.test(t.name)), 'read scope, named after the folder');
+      // The chooser shows it kept; "stop" drops the link and revokes the token; the files stay.
+      const kept = await chooserRow(bar, ws, 'Far lab');
+      assert((await kept.textContent()).includes('on disk'), 'shown as kept');
+      await kept.hover(); // the "stop" chip shows on hover
+      await kept.locator('[data-act="stop"]').click();
+      await menuClosed(bar);
+      await waitFor(async () => (await hook(app, (s, w) => s.listFolders(w), ws)).links.length === 0, 'the link is gone', 15_000);
+      assert(fs.existsSync(md), 'the files stay');
+      assert.equal((await tokensOf()).length, before, 'the token was revoked');
+      assert.equal(await hook(app, (s) => s.registry.getSettings().folderHost), '', 'the host no longer starts at launch for it');
+      await waitFor(async () => /no longer kept/.test((await hook(app, (s) => s.notice())) || ''), 'the bar said so', 5_000);
+      return `${links[0].dest} from ${links[0].remote_url}, then dropped`;
     });
 
     await step('background: with "keep running" on, closing the window leaves the servers up and the tray in place; the window comes back', async () => {
@@ -632,13 +727,19 @@ async function main() {
         if (t) { localStorage.setItem('gamma-theme', t); document.documentElement.setAttribute('data-theme', t); }
         else { localStorage.removeItem('gamma-theme'); document.documentElement.removeAttribute('data-theme'); }
       }, t);
+      // A page that reports no theme (and a fresh profile, which has none
+      // remembered) leaves the chrome on the OS scheme, never a dark window
+      // on a light machine. The OS is pinned here so the check holds anywhere.
+      await app.evaluate(({ nativeTheme }) => { nativeTheme.themeSource = 'light'; });
       const seen = [];
       for (const t of ['light', 'sepia', '']) {
         await set(t);
-        await waitFor(async () => (await hook(app, (s) => s.theme())) === t, `main theme=${t || 'dark'}`, 5_000);
-        await waitFor(async () => (await bar.getAttribute('html', 'data-theme')) === (t || 'dark'), `bar theme=${t || 'dark'}`, 5_000);
-        seen.push(t || 'dark');
+        const chrome = t || 'light'; // '' → the pinned OS scheme
+        await waitFor(async () => (await hook(app, (s) => s.theme())) === chrome, `main theme=${chrome}`, 5_000);
+        await waitFor(async () => (await bar.getAttribute('html', 'data-theme')) === chrome, `bar theme=${chrome}`, 5_000);
+        seen.push(chrome);
       }
+      await app.evaluate(({ nativeTheme }) => { nativeTheme.themeSource = 'system'; });
       await set('light');
       await waitFor(async () => (await hook(app, (s) => s.registry.getSettings().lastTheme)) === 'light', 'lastTheme persisted', 5_000);
       return seen.join(' → ') + ' → light (persisted)';

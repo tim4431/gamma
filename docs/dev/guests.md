@@ -27,17 +27,31 @@ Every guest login is a throwaway account of its own. `POST /api/login-guest`
 - a normal session row. The response is
   `{"ok": true, "username": ...}`.
 
-The endpoint is a sync `def` because it writes files. It is refused on a
-share host and answers 503 once the live guest accounts reach
-`GAMMA_GUEST_MAX` (default 500, `0` turns guest logins off; the count and
-the insert are one statement). A hosted container (`GAMMA_HOSTED=1`) reads
-as `0` whatever the variable says (`config.guest_max`). Where guest logins
-are off (`guests.logins_open`: the cap is 0, or the server is a share
-host), `GET /api/server-config` says `guest: false`, so the login page
-shows no guest button, and `GET /api/admin/settings` says `guest_logins:
-false`, so Settings → Server shows no Guests section
-([hosted.md](hosted.md)). Each login creates
-a workspace directory, so it is rate limited to 10 per IP per hour.
+The endpoint is a sync `def` because it writes files. It is refused (403)
+on a share host and while the admin's switch is off, and answers 503 once
+the live guest accounts reach `GAMMA_GUEST_MAX` (default 500, `0` turns
+guest logins off; the count and the insert are one statement). A hosted
+container (`GAMMA_HOSTED=1`) reads as `0` whatever the variable says
+(`config.guest_max`).
+
+Two predicates, because a server that *cannot* take guests is not the same
+as one whose admin turned them off:
+
+- `guests.logins_possible()` — the cap is above 0 and this is no share
+  host. False means no switch could bring guests back, so Settings → Server
+  leaves its Guests section out (`guest_logins_available: false` in
+  `GET /api/admin/settings`, [hosted.md](hosted.md));
+- `guests.logins_open()` — that, and the **Guest sign-in** switch admins
+  set in Settings → Server → Guests (`settings` KV `guest_logins`, on until
+  it is saved as off; `server_settings.guest_logins_enabled`). It is what
+  `GET /api/server-config`'s `guest` reports, so the login page shows no
+  guest button while guests are off, and what `/api/admin/settings` returns
+  as `guest_logins`. The switch stops new logins only: the guests already
+  here keep their workspace until it expires, and `manage.py sweep-guests
+  --all` is how an admin clears them at once.
+
+Each login creates a workspace directory, so it is rate limited to 10 per
+IP per hour.
 
 Everything keyed on `is_guest` applies: no exports, no workspace creation,
 no cloud link, no integrations, no notices, no provider editing, the
@@ -86,11 +100,13 @@ creates no guest; `manage.py sweep-guests` deletes the expired ones now
 
 `GET /api/session` adds `guest_expires_at` (UTC ISO) for a guest session,
 and `GET /api/server-config` adds `guest_ttl_hours`, `guest_seeded` and `demo`.
-`GET/PUT /api/admin/settings` carry `guest_ttl_hours` (1–720, with
-`guest_ttl_source` `environment` / `saved` / `default` and
+`GET/PUT /api/admin/settings` carry `guest_logins` (with
+`guest_logins_source` and `guest_logins_available`), `guest_ttl_hours`
+(1–720, with `guest_ttl_source` `environment` / `saved` / `default` and
 `guest_ttl_hours_range`) and `demo_mode` (with `demo_mode_source`). A PUT
-of either is 400 while its environment variable decides
-(`gamma/server_settings.py guest_settings`).
+of the lifetime or demo mode is 400 while its environment variable decides,
+and a PUT of `guest_logins` is 400 where the server takes no guests either
+way (`gamma/server_settings.py guest_settings`).
 
 ## The shared AI allowance
 

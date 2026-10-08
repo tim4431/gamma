@@ -3,10 +3,10 @@
 Thought through in October 2026, before the one-way sync was written. The
 question was how to keep files and folders in step between Gamma and
 people's own computers, and what to do about Gamma's folders not being a
-file tree. Status: **the one-way half, Gamma to disk, is built** — the
-server keeps folders on its own disk from Settings, and the same rounds run
-as a one-file client on a PC ([dev/folder_sync.md](../dev/folder_sync.md));
-the way back is the open item at the end.
+file tree. Status: **the one-way half, Gamma to disk, is built**. The
+desktop app keeps folders on the PC it runs on, and the same rounds run as
+a one-file client ([dev/folder_sync.md](../dev/folder_sync.md)). The way
+back is the open item at the end.
 
 ## Why not rsync, Syncthing or a mount
 
@@ -91,10 +91,14 @@ client only ever touches files it wrote.
   client did not write is never touched. A directory is removed only when
   empty.
 - **Where it runs.** The rounds are one module with two sources: the
-  server runs them in-process for the links it keeps on its own disk (a
-  NAS share then carries the directory to every machine), and the same file
-  runs alone on a PC over HTTP. The Settings section wraps the server's
-  links; a desktop flow would wrap the client's.
+  server runs them in-process for the links it keeps of its own
+  workspaces (a NAS share then carries the directory to every machine),
+  over HTTP for a link whose folder is on another Gamma server, and the
+  same file runs alone on a PC. Only the desktop app's own server keeps
+  links. A server writing folders to its own disk is not offered: the
+  folder is wanted on the PC, which the app reaches with a read token it
+  mints and no clone. A folder's right-click menu in Gamma and the bar's
+  chooser start it; the app asks for the directory.
 
 ## Still open
 
@@ -114,10 +118,10 @@ client only ever touches files it wrote.
 - **An annotated PDF on disk** instead of the original, for reading
   elsewhere, at the price of a rewrite on every highlight and an identity
   held only in the state file.
-- **Without a clone.** The desktop app keeps a folder of a *local*
-  workspace (its bar's *on disk* chip, the native picker, a tray so the
-  local server keeps syncing with the window closed); a NAS folder reaches
-  the PC through a clone of its workspace, which copies every PDF of the
-  workspace first. A link with a remote source — the client's
-  `RemoteSource` behind a token the shell mints, as it does for clones —
-  would skip the clone for people who want only the folder.
+- **A token's life.** A link with a remote source (the desktop app's way
+  of keeping a NAS folder on a PC without a clone: the local server runs
+  the client's `RemoteSource` behind a read token the shell mints) holds a
+  token that expires as the issuer set it, a year at most; the round then
+  reports a refused token and the link has to be made again. A token the
+  server could renew, or one without an expiry for a device the user
+  owns, would remove that chore.

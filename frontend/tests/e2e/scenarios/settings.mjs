@@ -1678,7 +1678,7 @@ export async function settingsScenarios(env) {
     } finally { await ctx.close(); }
   });
 
-  await step("settings: Server → Guests saves how long guest workspaces last and demo mode", async () => {
+  await step("settings: Server → Guests turns guest sign-in off, and saves the lifetime and demo mode", async () => {
     server.manage("set-admin", "settings-user", "on");
     const before = await user.api("/api/admin/settings");
     const { ctx, page } = await setup();
@@ -1705,10 +1705,22 @@ export async function settingsScenarios(env) {
       assert(await row(page, "Demo mode").locator("input").isChecked(), "demo mode reads back on");
       await page.getByRole("checkbox", { name: "Demo mode", exact: true }).uncheck();
       await until(() => user.api("/api/admin/settings").then((v) => v.demo_mode === false), { what: "demo mode off again" });
+      // Guest sign-in off: the login page loses its guest button, and the two
+      // rows that only describe guests go idle.
+      const guestSwitch = page.getByRole("checkbox", { name: "Guest sign-in", exact: true });
+      assert(await guestSwitch.isChecked(), "guest sign-in is on by default");
+      await guestSwitch.uncheck();
+      await until(() => user.api("/api/admin/settings").then((v) => v.guest_logins === false), { what: "guest sign-in saved off" });
+      assertEq((await (await fetch(`${server.base}/api/server-config`)).json()).guest, false, "no guest button on the login page");
+      await until(() => row(page, "Guest workspaces last").locator("input").isDisabled(), { what: "the lifetime row goes idle" });
+      await guestSwitch.check();
+      await until(() => user.api("/api/admin/settings").then((v) => v.guest_logins === true), { what: "guest sign-in back on" });
       assertNoProblems(page);
     } finally {
       await ctx.close();
-      await user.api("/api/admin/settings", { method: "PUT", body: { guest_ttl_hours: before.guest_ttl_hours, demo_mode: false } });
+      await user.api("/api/admin/settings", {
+        method: "PUT", body: { guest_ttl_hours: before.guest_ttl_hours, demo_mode: false, guest_logins: true },
+      });
     }
   });
 

@@ -427,11 +427,12 @@ edit-beats-delete, the conflict list — is [mirror.md](mirror.md).
 
 ## Folders on disk
 
-A folder of a workspace can be kept as a directory on the server's own disk,
-each paper's PDF beside a Markdown note of its highlights and notes, one way
-and kept up to date: Settings → Workspaces → Folders on disk. The layout,
-the rounds, the server's links and the client that does the same on a PC
-are [folder_sync.md](folder_sync.md).
+The desktop app keeps a folder of a workspace as a directory on the
+computer it runs on: each paper's PDF beside a Markdown note of its
+highlights and notes, one way, kept up to date. A folder's *Keep on this
+computer…* or the bar's *on disk* chip starts it. The layout, the rounds,
+the links and the client that does the same without the app are
+[folder_sync.md](folder_sync.md).
 
 ## Current limits
 

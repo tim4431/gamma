@@ -215,11 +215,12 @@
 </dialog>
 
 <dialog id="dlgRename">
-  <h3>Rename server</h3>
-  <input class="uiInput" id="renameName" />
+  <h3 id="dlgRenameTitle">Rename server</h3>
+  <input class="uiInput" id="renameName" aria-label="Name" />
+  <input class="uiInput mono" id="renameUrl" aria-label="Address" placeholder="http://192.168.1.10:9001" spellcheck="false" hidden />
   <div class="row">
     <button class="uiBtn" onclick="dlgRename.close()">Cancel</button>
-    <button class="uiBtn primary" id="btnRename">Rename</button>
+    <button class="uiBtn primary" id="btnRename">Save</button>
   </div>
 </dialog>
 
@@ -243,13 +244,15 @@
 <script>
   // Gamma's theme on the chrome: tokens.css derives each theme's colours
   // with its scheme's recipe, so the scheme goes beside it (DARK_THEMES in
-  // Gamma's app/prefDefs.js; none = dark, like Gamma's :root).
+  // Gamma's app/prefDefs.js). None reported yet — the first paint, before
+  // the shell's state arrives — follows the OS, as Gamma's index.html does.
   const DARK_THEMES = ['dark', 'gamma-dark'];
   function paintTheme(theme) {
-    const t = theme || 'dark';
+    const t = theme || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
     document.documentElement.setAttribute('data-scheme', DARK_THEMES.includes(t) ? 'dark' : 'light');
     document.documentElement.setAttribute('data-theme', t);
   }
+  paintTheme('');
   const ICONS = {
     local: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v6c0 1.66 3.58 3 8 3s8-1.34 8-3V5"/><path d="M4 11v6c0 1.66 3.58 3 8 3s8-1.34 8-3v-6"/></svg>',
     remote: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3a14 14 0 0 1 0 18a14 14 0 0 1 0-18"/></svg>',
@@ -335,9 +338,18 @@
       actions.appendChild(openBtn);
       actions.appendChild(iconBtn('pencil', 'Rename', () => {
         $('renameName').value = ws.name;
+        // A remote's card edits its address too (a typo, http versus https).
+        $('dlgRenameTitle').textContent = ws.type === 'remote' ? 'Edit server' : 'Rename server';
+        $('renameUrl').hidden = ws.type !== 'remote';
+        $('renameUrl').value = ws.url || '';
         $('btnRename').onclick = async () => {
-          try { await gammaShell.rename(ws.id, $('renameName').value); $('dlgRename').close(); refresh(); }
-          catch (e) { setStatus(cleanErr(e), true); }
+          try {
+            await gammaShell.rename(ws.id, $('renameName').value);
+            const url = $('renameUrl').value.trim();
+            if (ws.type === 'remote' && url && url !== ws.url) await gammaShell.setUrl(ws.id, url);
+            $('dlgRename').close();
+            refresh();
+          } catch (e) { setStatus(cleanErr(e), true); }
         };
         $('dlgRename').showModal();
         $('renameName').select();
@@ -502,6 +514,7 @@
   };
   $('remoteUrl').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('btnCreateRemote').click(); });
   $('renameName').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('btnRename').click(); });
+  $('renameUrl').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('btnRename').click(); });
   $('swOpenLast').onchange = async () => {
     await gammaShell.setSettings({ openLastOnLaunch: $('swOpenLast').checked });
     refresh();
@@ -551,6 +564,19 @@
       act('Check for updates', () => { gammaShell.updateCheck(); $('btnUpdate').scrollIntoView({ block: 'center', behavior: 'smooth' }); }, true);
     } else if (f.action === 'data' && f.server) {
       act('Open data folder', () => gammaShell.revealData(f.server), true);
+    }
+    if (f.action === 'http' && f.server && /^https:/i.test((server() || {}).url || '')) {
+      // A plain-HTTP server behind an https:// address: switch the address and open again.
+      act('Use http:// instead', async (b) => {
+        const ws = server();
+        if (!ws) return;
+        try {
+          await gammaShell.setUrl(ws.id, ws.url.replace(/^https:/i, 'http:'));
+          hideFailure();
+          const again = (await gammaShell.list()).servers.find((s) => s.id === ws.id);
+          if (again) openWs(again, b);
+        } catch (e) { setStatus(cleanErr(e), true); }
+      }, true);
     }
     if (f.server) act('Try again', (b) => { const ws = server(); if (ws) { hideFailure(); openWs(ws, b); } }, f.action === 'retry');
     if (f.server && f.log) act('Show log file', () => gammaShell.revealLog(f.server));

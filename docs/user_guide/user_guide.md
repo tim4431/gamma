@@ -237,7 +237,7 @@ Your library lives on your server. For the train or a lab without Wi-Fi, keep an
 - Pages, highlights, ink, files, folders and labels travel; chats and reading positions stay per device.
 - Edits made offline go with the next sync. Edits to the same words show a **merge chip**: pick local, remote or merged.
 - The **sync pill** in the page header shows the state and opens the log and settings.
-- **A folder on this computer** (desktop app): in the workspace menu, a local workspace's *on disk* chip lists its folders; pick one and a directory, and the server keeps the folder there as PDFs beside Markdown notes. For a folder of your NAS, clone the workspace first.
+- **A folder on this computer** (desktop app): right-click a folder in the library and choose *Keep on this computer…*, or use the *on disk* chip on a workspace in the workspace menu. Pick a directory, and the folder is kept there as PDFs beside Markdown notes. On your NAS's workspace this needs no clone: only that folder's files come down, read with a key the app makes for it. The workspace menu's chooser shows when each folder last synced; *sync* brings it up to date now and *stop* ends it, keeping or removing the files.
 - **Keep running in the background**: a switch in the launcher's settings and the tray. Gamma then stays in the tray when the window closes, so clones and folders on disk keep syncing; *Start at login* starts it there.
 
 ## Gamma Connector
@@ -294,7 +294,7 @@ Both are in the **View menu (≡)**, on a page or on the home library (with a fo
 - **Import**: a Zotero library (RDF with files), an Obsidian vault or Notion export, Markdown, Logseq, annotations embedded in a PDF, or a Gamma export from another Gamma.
 - **Export**: **Annotated PDF** (highlights, ink and text boxes as real annotations), **Notes as PDF** or **Markdown**, **BibTeX**, an **Obsidian vault**, a **Logseq graph**, a **Zotero library**, or a **Gamma zip**.
 - **Keep a bibliography up to date**: share a folder, then Export → BibTeX → *Keep this .bib up to date* gives a link Overleaf can refresh.
-- **Keep a folder on your disk**: Settings → Workspaces → *Folders on disk* makes the server write a folder's papers as PDFs beside Markdown notes into a directory on its own disk and keep it up to date; share that directory from your NAS and every computer has it, or use the desktop app's *on disk* chip for a directory on this computer. One way: what you change there is neither sent back nor overwritten. For a computer without the server, the same sync runs as one Python file, [gamma_sync.py](../../backend/gamma/gamma_sync.py), with a token from Settings → Integrations.
+- **Keep a folder on your disk**: in the desktop app, a folder's *Keep on this computer…* writes its papers as PDFs beside Markdown notes into a directory you pick and keeps it up to date. One way: what you change there is neither sent back nor overwritten.
 
 ## Backups and upgrades
 

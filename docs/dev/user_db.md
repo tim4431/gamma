@@ -84,11 +84,13 @@ All state is SQLite + files on disk under a data directory (env
     the remote's address and workspace, the write token (Fernet-encrypted
     with the data directory's key), the feed cursors, the last round's
     status and the `page_filter` of a publication ([mirror.md](mirror.md));
-  - `folder_links` — the folders kept as directories on the server's own
-    disk: workspace, folder (a block id, or `root`), the directory's path
-    below the folders root, whether notes files are written, the
-    change-log seq the last round saw and its status
-    ([folder_sync.md](folder_sync.md) "Links kept by the server");
+  - `folder_links` — the folders the desktop app's own server keeps as
+    directories on this computer: workspace, folder (a block id, or `root`), the directory's path
+    on this computer, whether notes files are written, the
+    change-log seq the last round saw and its status, and for a folder on
+    another Gamma server that server's address, a token of it
+    (Fernet-encrypted like the mirrors') and the token's id
+    ([folder_sync.md](folder_sync.md) "Folders kept by the desktop app");
   - `jobs` — background jobs (exports, backups, restores, imports, the
     search indexer): owner (an account id, `''` for a workspace's own
     work), workspace, kind, parameters, state, last progress, result, error, the produced

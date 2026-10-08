@@ -535,10 +535,6 @@ The scenarios live in `tests/e2e/scenarios/`:
   log and settings (cadence, detach, reattach), a same-block conflict
   resolved on its row chip, Remove origin ([mirror.md](mirror.md)).
   `--only mirror`.
-- `folderLinks.mjs`: Settings → Workspaces → Folders on disk — a folder is
-  linked from the dialog, the server writes it under its folders root, the
-  row reports the round, Sync runs one, Remove link and files takes the
-  directory back ([folder_sync.md](folder_sync.md)). `--group folder-links`.
 
 - `notes.mjs`: New page → title → first block (the seed-block insert),
   Shift+Enter / Tab / Shift+Tab / Backspace, Enter as a line break vs the

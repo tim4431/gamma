@@ -25,7 +25,7 @@ One module per API area. Mounted under `/api` in `gamma/app.py`.
 | `collab.py`   | `/api/pages/{id}/ops`, `/api/ws/page/{id}` | the op write path + the page websocket (pages, and the `folders` / `labels` trees) |
 | `sync.py`     | `/api/sync/whoami`, `/sync/changes`, `/sync/folders*` | the workspace change feed, for anything that keeps a copy in step (a desktop mirror, the iPad's replica), and the folder manifest and notes files the gamma-sync client reads (`gamma/folder_sync.py`) |
 | `mirrors.py`  | `/api/mirrors*`                     | mirrors of a workspace on another Gamma server (gamma/sync_engine.py): create, run a round, status, log, conflicts; the owner only |
-| `folder_links.py` | `/api/folder-links*`               | folders kept as directories on the server's own disk (gamma/folder_links.py): list, make, change, a round now, remove; session only, editors |
+| `folder_links.py` | `/api/folder-links*`               | folders kept as directories on this computer (gamma/folder_links.py) — of the server's workspaces, or of another Gamma server read with a token of it: list, make, change, a round now, remove; the desktop app's own server only (404 elsewhere), session only, editors (a remote source's link: its account) |
 | `publish.py`  | `/api/pages/{id}/publish`, `/publish/limit`, `/pages/resolve-public`, `/auth/cloud/exchange` | publishing a page to the free share host (gamma/publish.py): the publishing server's half and the share host's |
 | `folders.py`  | `/api/folders/{id}`, `/api/labels/{id}` (DELETE) | deleting a folder or a label: the subtree, the ids on the pages, the folder chats and shares |
 | `prefs.py`    | `/api/prefs/*`, `/api/page-snaps*`  | per-account (and per-workspace) synced prefs, cover snapshots |

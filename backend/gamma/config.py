@@ -26,18 +26,12 @@ BACKUPS_DIR = DATA_DIR / "backups"
 STATIC_DIR = os.environ.get("GAMMA_STATIC_DIR", "")
 
 
-def folders_dir() -> Path:
-    """Where folder links write (gamma/folder_links.py): GAMMA_FOLDERS_DIR,
-    else ``folders/`` in the data directory. Resolved when asked, so a test's
-    data directory and a container's variable both take."""
-    return Path(os.environ.get("GAMMA_FOLDERS_DIR", "").strip() or DATA_DIR / "folders")
-
-
-def folders_anywhere() -> bool:
-    """Whether a folder link may name any directory of this machine, not only
-    one below ``folders_dir()``: GAMMA_FOLDERS_ANYWHERE, which the desktop
-    app sets for the local server it runs as the user."""
-    return os.environ.get("GAMMA_FOLDERS_ANYWHERE", "").strip().lower() in ("1", "true", "yes", "on")
+def folder_links_enabled() -> bool:
+    """Whether this server keeps folders on disk (gamma/folder_links.py):
+    GAMMA_FOLDER_LINKS, which only the desktop app sets, for the local
+    server it runs as the user on the user's own computer. Read when asked,
+    so a test can turn it on."""
+    return os.environ.get("GAMMA_FOLDER_LINKS", "").strip().lower() in ("1", "true", "yes", "on")
 
 
 # Keep these reads lazy, as before: server settings and publisher sessions

@@ -377,15 +377,7 @@ AI:
 Library:
 
 - **Workspaces**: storage meter, personal and shared workspaces, New
-  workspace, Export all, the clones, and last the open workspace's
-  **Folders on disk** (`SettingsFolderLinks.jsx`, [folder_sync.md](folder_sync.md)
-  "Links kept by the server"): a row per folder the server keeps as a
-  directory on its own disk — the folder, the directory, the last round's
-  outcome and a tag for files it left alone — with Sync and a "more" menu
-  (write everything again, replace changed files, papers only or with
-  notes, remove the link with or without its files); "Keep a folder on
-  disk" picks the folder, names the directory (a full path too where the
-  server allows it, the desktop app's local server) and chooses the files. Each row has Open, a Data menu (export, import)
+  workspace, Export all, and last the clones. Each row has Open, a Data menu (export, import)
   and Manage. Manage opens an inline page under one breadcrumb head,
   "Workspaces › <name>", with Open workspace at its right end: General,
   Access, Members and the Danger zone, every row saving at once, no footer.
@@ -494,15 +486,19 @@ stays in whole tokens, so the row converts both ways and a figure out of
 range snaps back to the stored one.
 
 **Guests** (Server, [SettingsGuests.jsx](../../frontend/src/settings/SettingsGuests.jsx))
-has two rows over `/api/admin/settings`: **Guest workspaces last** (a
-`UnitInput` in hours, `guest_ttl_hours`, saved on Enter or blur) and the
-**Demo mode** switch (`demo_mode`: the login page leads with Try the demo
-and folds the password form behind Admin sign-in; the guide offers the
-first-paper tour on arrival). Each reports its source like the public URL;
-when it is `environment` (`GAMMA_GUEST_TTL_HOURS`, `GAMMA_DEMO`) the control
-is disabled and the hint names the variable ([guests.md](guests.md)). The
-section is left out where the server takes no guests (`guest_logins: false`
-in `GET /api/admin/settings`: a hosted container, a share host,
+has three rows over `/api/admin/settings`: the **Guest sign-in** switch
+(`guest_logins`, on unless an admin turns it off — off, the login page
+shows no guest button and `POST /api/login-guest` is a 403), **Guest
+workspaces last** (a `UnitInput` in hours, `guest_ttl_hours`, saved on Enter
+or blur) and the **Demo mode** switch (`demo_mode`: the login page leads
+with Try the demo and folds the password form behind Admin sign-in; the
+guide offers the first-paper tour on arrival). The last two describe guests
+only, so they are disabled while guest sign-in is off. Each reports its
+source like the public URL; when it is `environment`
+(`GAMMA_GUEST_TTL_HOURS`, `GAMMA_DEMO`) the control is disabled and the hint
+names the variable ([guests.md](guests.md)). The section is left out where
+no switch could bring guests back (`guest_logins_available: false` in
+`GET /api/admin/settings`: a hosted container, a share host,
 `GAMMA_GUEST_MAX=0`).
 
 Administrators confirm the **Public server URL** under Server: the row shows

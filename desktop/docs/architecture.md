@@ -33,6 +33,16 @@ Servers come in two kinds:
 Servers are fully independent; there is **no synchronization** (move data
 between them with Gamma's own per-workspace *Export* / *Import*).
 
+A remote server is its address. One typed without a scheme gets `http://`
+when it names the local network — `localhost`, a private range, a
+`.local`/`.lan`/`.home`/`.internal` name, or an explicit port, the
+self-hosted Gamma's shape — and `https://` otherwise (`registry.withScheme`).
+The pencil on a remote's card edits the address as well as the name
+(`shell:set-url` → `registry.setRemoteUrl`; the mirrors keyed by the old
+origin follow), and when an `https://` address is refused — a self-signed
+certificate, or a plain-HTTP server answering https — the launcher's
+failure card offers *Use http:// instead* (`lib/startup.js`, action `http`).
+
 ### Gamma's workspaces in the switcher
 
 While a server is open the main process reads `GET /api/session` through the
@@ -90,29 +100,73 @@ whichever server the window shows.
 
 ### Folders on this computer
 
-A folder of a **local** server's workspace can be kept as a directory
-anywhere on this computer — each paper's PDF beside a Markdown note of its
-highlights and notes, kept up to date by that server. The feature is the
-server's ([docs/dev/folder_sync.md](../../docs/dev/folder_sync.md) "Links
-kept by the server"); the shell adds the native directory picker and a way
-in. In the bar menu every workspace row of a local server carries an *on
-disk* chip on hover. It opens a second level of the menu: the workspace's
-folders (`shell:folders` → the server's `GET /api/sync/folders` and `GET
-/api/folder-links`, with the content session's cookies), each already kept
-— a click opens its directory (`shell:open-path`, only for a directory one
-of that server's links names) — or not, where a click asks for the
-directory (`shell:keep-folder` → `keepFolder`; `GAMMA_SHELL_PICK_DIR`
-answers the picker in tests). An empty directory is used as it is; any
-other gets a subdirectory named after the folder. The link is then made
-with `POST /api/folder-links` and the absolute path, which the local
-sidecar accepts because the shell starts it with `GAMMA_FOLDERS_ANYWHERE=1`.
-The shell keeps nothing about links: the rounds, the status and the removal
-are the server's, in its Settings → Workspaces → Folders on disk. A NAS
-folder reaches this computer through a clone of its workspace: clone
-first, then keep a folder of the clone on disk. The bar reports the result
-in its status line for a few seconds (`notice` in the shell state), and the
-first time a clone or a folder on disk is made the shell offers background
-mode (below), since both sync only while Gamma runs.
+A folder of any server's workspace can be kept as a directory anywhere on
+this computer: each paper's PDF beside a Markdown note of its highlights
+and notes, kept up to date by a local server. Only the app's own local
+servers keep folders on disk ([docs/dev/folder_sync.md](../../docs/dev/folder_sync.md)
+"Folders kept by the desktop app"); a NAS only answers the reads. The
+shell adds the native directory picker, the token, and two ways in.
+
+**A folder's menu in Gamma's page.** In the desktop app a library
+folder's right-click menu has *Keep on this computer…*
+(`frontend/src/app/App.jsx`, shown when `IS_DESKTOP`). The page posts
+`{source: "gamma-app", type: "keep-folder-on-disk", ws, folder}` to its
+own origin, the way it greets the Connector extension. The page preload
+passes that on (`shell:keep-folder-from-page`) and exposes nothing. The
+shell takes it only from the content view's page of the open server, with
+plain ids, and only when no other action runs. Then it runs `keepFolder`,
+whose native picker is the user's say. A folder already kept opens its
+directory instead.
+
+**The bar's chooser.** Every workspace row in the bar menu carries an
+*on disk* chip on hover. It opens a second level of the menu listing the
+workspace's folders (`shell:folders` → `listFolders`: the open server's
+`GET /api/sync/folders` with the content session's cookies, and the links
+from `listLinks`):
+
+- A folder already kept shows its last round beside the name (*synced
+  14:05*, *problem*, *n changed here*), and opens its directory on click
+  (`shell:open-path`, only for a directory one of those links names).
+- Its *sync* chip runs a round now and reports it in the bar
+  (`shell:sync-folder` → `syncFolder`). When files changed on disk were
+  left alone, the shell first asks whether to replace them.
+- Its *stop* chip ends it (`shell:drop-folder` → `dropFolder`). The shell
+  asks whether to keep the files or take back what the sync wrote.
+- Any other folder asks for a directory on click (`shell:keep-folder` →
+  `keepFolder`). An empty directory is used as it is; any other gets a
+  subdirectory named after the folder.
+
+Under the test harness `GAMMA_SHELL_PICK_DIR` answers the picker, the
+questions take their first answer, and a directory "opened" is only
+recorded (`openDirectory`, like `openExternal`).
+
+Where the link lives depends on the server:
+
+- On a **local** server it is that server's own link, made with `POST
+  /api/folder-links` and the full path. The sidecar keeps links because
+  the shell starts it with `GAMMA_FOLDER_LINKS=1`. The server reads the
+  workspace in-process.
+- On a **remote** server there is no clone. The shell mints a read-scope
+  integration token on the remote for that workspace (`POST
+  /api/integrations/tokens`, a year, named after the folder). It makes the
+  link on the **host**, the first local server, which `ensureHost` makes,
+  starts and signs into when needed (the clones' host too). The link names
+  the remote's origin, the workspace, the token and its id, and the host
+  reads the folder over HTTP with the client's own source. Only that
+  folder's files come down.
+
+The links of a remote row are the host's `remote_links` with that origin
+and workspace. *Stop* deletes the link on the host and revokes the token
+on the remote (`revokeToken`). `settings.folderHost` remembers the host so
+it starts at launch like the clones' hosts (`startBackgroundHosts`). *Stop*
+on the host's last remote folder clears it.
+
+The shell keeps nothing else about links. The rounds and the status are
+the server's, the host's for a remote folder; the chooser reads them on
+every open. The bar reports each action in its status line for a few
+seconds (`notice` in the shell state).
+The first time a clone or a folder on disk is made, the shell offers
+background mode (below), since both sync only while Gamma runs.
 
 ## Window
 
@@ -162,9 +216,13 @@ under the current root, *Move data*, which relocates them too.
 
 **Theme.** The chrome paints in Gamma's own theme: the preload on server
 pages mirrors the page's `data-theme` attribute (`dark`/`light`/`gamma-light`/
-`gamma-dark`/`sepia`/`solarized`/`gray`; none = dark) to the main process, which restyles the bar, the
+`gamma-dark`/`sepia`/`solarized`/`gray`) to the main process, which restyles the bar, the
 launcher, the window background and the Windows title-bar overlay. The last
-theme is persisted so the chrome is right before any page has loaded.
+theme is persisted so the chrome is right before any page has loaded, and
+with none of either — a first run, or the launcher, which reports no theme
+— it follows the OS scheme (`main.js` `currentTheme`, repainting on
+`nativeTheme`'s `updated`), since Gamma's own default theme is System: a
+light machine never opens a dark window.
 
 The tokens are Gamma's own. `ui/tokens.css` is a committed copy of
 `frontend/src/shared/styles/tokens.css`, and `ui/fonts/` holds the Latin
@@ -232,7 +290,8 @@ which the Store uninstall deletes — [release.md](release.md#microsoft-store)):
 
 - `servers.json` — the registry: server list, `lastOpened`, `windowBounds`,
   and `settings` (`openLastOnLaunch`, `lastTheme`, `dataRoot`, `background`
-  and `openAtLogin` (the tray, above), the dev-mode
+  and `openAtLogin` (the tray, above), `folderHost` (the local server that
+  keeps folders of remote servers), the dev-mode
   `pythonPath`/`backendDir`/`staticDir` overrides). Local admin credentials
   are stored in plaintext here — same trust level as the SQLite files next
   to it; acceptable for a per-OS-user desktop app. An older profile's
@@ -327,8 +386,8 @@ only); `GAMMA_SHELL_NO_UPDATE=1` disables the updater.
   `GAMMA_ADMIN_USER`, `GAMMA_ADMIN_PASSWORD`, `GAMMA_VERSION` = the shell's
   own version, so the server's admin dashboard names the app,
   `GAMMA_CLOUD_DEFAULT_ISSUER` = Gamma Cloud, the account server until the
-  admin saves another, `GAMMA_FOLDERS_ANYWHERE` = a folder on disk may go
-  anywhere the user picks, since the sidecar runs as the user), `/api/health` and
+  admin saves another, `GAMMA_FOLDER_LINKS` = this server keeps folders on
+  disk, anywhere the user picks, since the sidecar runs as the user), `/api/health` and
   `/api/session` (+ the `?ws=` URL parameter). No imports from `backend/`,
   no frontend patches. The one thing it reads off the page is the
   `data-theme` attribute (read-only, via the preload).

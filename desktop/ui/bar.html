@@ -132,13 +132,15 @@
 <script>
   // Gamma's theme on the chrome: tokens.css derives each theme's colours
   // with its scheme's recipe, so the scheme goes beside it (DARK_THEMES in
-  // Gamma's app/prefDefs.js; none = dark, like Gamma's :root).
+  // Gamma's app/prefDefs.js). None reported yet — the first paint, before
+  // the shell's state arrives — follows the OS, as Gamma's index.html does.
   const DARK_THEMES = ['dark', 'gamma-dark'];
   function paintTheme(theme) {
-    const t = theme || 'dark';
+    const t = theme || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
     document.documentElement.setAttribute('data-scheme', DARK_THEMES.includes(t) ? 'dark' : 'light');
     document.documentElement.setAttribute('data-theme', t);
   }
+  paintTheme('');
   const ICONS = {
     local: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v6c0 1.66 3.58 3 8 3s8-1.34 8-3V5"/><path d="M4 11v6c0 1.66 3.58 3 8 3s8-1.34 8-3v-6"/></svg>',
     remote: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3a14 14 0 0 1 0 18a14 14 0 0 1 0-18"/></svg>',
@@ -150,6 +152,8 @@
     folder: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg>',
     library: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m16 6 4 14"/><path d="M12 6v14"/><path d="M8 8v12"/><path d="M4 4v16"/></svg>',
     back: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>',
+    sync: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></svg>',
+    stop: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>',
     open: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></svg>',
   };
   const esc = (s) => String(s || '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
@@ -158,8 +162,8 @@
   document.body.dataset.platform = gammaShell.platform;
   let state = { servers: [], gamma: null, current: null, busy: null, theme: '' };
   let open = false;
-  // The menu's second level: the folders of a local workspace to keep on
-  // this computer ({ ws, folders, links }); null = the switcher itself.
+  // The menu's second level: the folders of the open server's workspace to
+  // keep on this computer ({ ws, folders, links }); null = the switcher itself.
   let chooser = null;
 
   // Gamma's workspace the content view shows (null when not signed in / unknown).
@@ -211,8 +215,11 @@
     return l;
   }
 
-  // "Keep a folder on this computer": the folders of a local workspace, each
-  // kept already (a click opens its directory) or not (a click asks where).
+  // "Keep a folder on this computer": the folders of the open workspace, each
+  // kept already (its last round beside the name; a click opens its
+  // directory, "sync" runs a round now, "stop" ends it, the shell asking
+  // about the files) or not (a click asks where). On a remote server the
+  // link lives on this computer's local server and reads the folder from there.
   function openChooser(w) {
     chooser = { ws: w, folders: null, links: [] };
     renderMenu();
@@ -223,6 +230,18 @@
     }).catch(() => { chooser = null; renderMenu(); });
   }
 
+  // A kept folder's last round: a few words beside the name, the whole line as its tooltip.
+  function roundLine(l) {
+    const s = l.status || {};
+    const changed = (s.kept || []).length;
+    if (s.running) return ['syncing…', 'Syncing now'];
+    if (s.last_error) return ['problem', `Problem: ${s.last_error}`];
+    if (!s.last_sync) return ['not written yet', 'Not written yet'];
+    const at = new Date(s.last_sync).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    const left = changed ? ` · ${changed} changed here` : '';
+    return [`synced ${at}${left}`, `Up to date at ${at}${changed ? `; ${changed} file${changed === 1 ? '' : 's'} you changed on this computer left alone` : ''}`];
+  }
+
   function renderChooser(menu) {
     const { ws, folders, links } = chooser;
     const back = document.createElement('button');
@@ -231,7 +250,7 @@
     back.innerHTML = `<span class="ico">${ICONS.back}</span><span class="label">Workspaces</span>`;
     back.onclick = () => { chooser = null; renderMenu(); };
     menu.appendChild(back);
-    menu.appendChild(label(`Keep a folder of ${ws.name} on this computer`));
+    menu.appendChild(label(`Keep a folder of ${ws.name} on this computer${state.current && state.current.type === 'remote' ? ' — PDFs and notes, no clone' : ''}`));
     if (folders === null) {
       const l = document.createElement('div'); l.className = 'menuEmpty'; l.textContent = 'reading the folders…';
       menu.appendChild(l);
@@ -243,15 +262,29 @@
       const b = document.createElement('button');
       b.className = 'item folderItem';
       b.dataset.folder = f.id;
-      b.title = link ? `On this computer at ${link.dest} — click to open it` : `Keep ${f.name} on this computer: PDFs beside Markdown notes, kept up to date by this server`;
+      const line = link ? roundLine(link) : null;
+      b.title = link ? `On this computer at ${link.dest}. ${line[1]}. Click to open it.`
+        : `Keep ${f.name} on this computer: PDFs beside Markdown notes, kept up to date ${state.current && state.current.type === 'remote' ? 'from this server by the local server on this computer, no clone' : 'by this server'}`;
       b.innerHTML = `<span class="ico">${f.icon}</span><span class="label"></span>` +
-        (link ? `<span class="rowAct on" title="${esc(link.dest)}">${ICONS.open}on disk</span>` : `<span class="rowAct">${ICONS.disk}keep here…</span>`);
+        (link
+          ? `<span class="sub"></span>` +
+            `<span class="rowAct on" title="${esc(link.dest)}">${ICONS.open}on disk</span>` +
+            `<span class="rowAct" role="button" tabindex="0" data-act="sync" title="Bring ${esc(f.name)} up to date now">${ICONS.sync}sync</span>` +
+            `<span class="rowAct" role="button" tabindex="0" data-act="stop" title="Stop keeping ${esc(f.name)} on this computer">${ICONS.stop}stop</span>`
+          : `<span class="rowAct">${ICONS.disk}keep here…</span>`);
       b.querySelector('.label').textContent = f.name;
+      if (line) b.querySelector('.sub').textContent = line[0];
       b.onclick = () => {
         closeMenu();
         if (link) gammaShell.openPath(ws.id, link.dest).catch(() => {});
         else gammaShell.keepFolder(ws.id, f.id).catch(() => {});
       };
+      for (const act of b.querySelectorAll('[data-act]')) {
+        const run = act.dataset.act === 'sync' ? gammaShell.syncFolder : gammaShell.dropFolder;
+        const go = (e) => { e.stopPropagation(); e.preventDefault(); closeMenu(); run(ws.id, link.id).catch(() => {}); };
+        act.onclick = go;
+        act.onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') go(e); };
+      }
       menu.appendChild(b);
     }
   }
@@ -276,7 +309,8 @@
           : w.personal ? 'Your personal workspace' : `Shared · ${w.members} member${w.members === 1 ? '' : 's'} · you ${ROLE[w.role] || w.role}`;
         if (w.copy) b.title += ` · has a clone on ${w.copy.serverName}`;
         // The trailing chips (see .rowAct): open the clone / open the origin /
-        // clone, and on a local server's row "on disk" (keep a folder on this computer).
+        // clone, and "on disk" (keep a folder on this computer — of a remote
+        // workspace too, read from there, no clone needed).
         const chip = w.copy
           ? `<span class="rowAct on" role="button" tabindex="0" data-act="copy" title="Open the clone on ${esc(w.copy.serverName)}${w.copy.running ? ' — syncing in the background' : ''}">${ICONS.local}open clone</span>`
           : w.original
@@ -284,9 +318,7 @@
           : state.current.type === 'remote' && !w.mirror_of
           ? `<span class="rowAct" role="button" tabindex="0" data-act="keep" title="Clone ${esc(w.name)} onto this computer — opens without a connection, pulls and pushes changes">${ICONS.download}clone</span>`
           : '';
-        const disk = state.current.type === 'local'
-          ? `<span class="rowAct" role="button" tabindex="0" data-act="disk" title="Keep a folder of ${esc(w.name)} on this computer — PDFs beside Markdown notes, kept up to date">${ICONS.disk}on disk</span>`
-          : '';
+        const disk = `<span class="rowAct" role="button" tabindex="0" data-act="disk" title="Keep a folder of ${esc(w.name)} on this computer — PDFs beside Markdown notes, kept up to date${state.current.type === 'remote' ? '; no clone needed' : ''}">${ICONS.disk}on disk</span>`;
         b.innerHTML = `<span class="badge"></span><span class="label"></span><span class="sub">${w.mirror_of ? 'clone' : w.personal ? 'personal' : (ROLE[w.role] || w.role)}</span>` +
           chip + disk + `<span class="check">${isCur ? ICONS.check : ''}</span>`;
         b.querySelector('.badge').textContent = (w.name || '?').charAt(0).toUpperCase();
