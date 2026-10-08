@@ -111,7 +111,7 @@ Browsers keep a few chords for themselves whatever the page does: Chrome's Ctrl+
 ## Adding a command
 
 1. Add the object to the catalog of its scope, with a default chord that no command of that scope uses (`tests/commands.test.mjs` checks) and, for a block command, whether it needs an editor.
-2. If it needs a new handler, add it to the `appCmdRef` context (app scope), or to the tree's `rowProps` in App.jsx and the `row` BlockRow hands the dispatcher in BlockTree.jsx (block scope); keep the mutation a pure `blockModel.js` helper. A `rowProps` handler may be an inline closure: the rows are memoized and get one stable wrapper per name that calls the latest one (`stableRowProps`), so a new handler never costs a row render, and a data value a row takes must keep its identity while it reads the same (the tree itself comes through `getTree` / `lookupBlock`, never as a prop).
+2. If it needs a new handler, add it to the `appCmdRef` context (app scope), or to the tree's `rowProps` in App.jsx and the `row` BlockRow hands the dispatcher in BlockTree.jsx (block scope); keep the mutation a pure `blockModel.js` helper. A `rowProps` handler may be an inline closure; `makeStableActions` (`shared/lib/stableActions.js`) gives each row a stable wrapper. A data prop must keep its identity while unchanged. Pass the tree through `getTree` / `lookupBlock`, never as a prop.
 3. Give it an icon in [app/commandIcons.jsx](../../frontend/src/app/commandIcons.jsx).
 4. Add the chord's label to the cheat sheet in [docs/user_guide/user_guide.md](../user_guide/user_guide.md).
 5. Cover the flow in the browser suite (`e2e/scenarios/notes.mjs` for note keys, `quickOpen.mjs` for the palette, `settings.mjs` for the pane).

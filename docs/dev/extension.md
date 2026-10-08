@@ -155,14 +155,13 @@ direct fetch is the only (and working) path.
 
 **The workspace** a save lands in is a choice per server (`workspaces`:
 origin → workspace id), sent as the `X-Gamma-Workspace` header the app's
-own fetch wrapper uses ([workspaces.md](workspaces.md)). `""` — the
-default, and what every Connector before this sent — names no workspace,
-so the server uses the account's default library. Both pickers (the
-popup's, above the folder; the options page's) list the workspaces
-`GET /api/session` returns, filtered to the ones this account may write to
-(a viewer's would refuse the clip) and with the account's default mapped to
-`""`, so it keeps following that account's default. The row is hidden when
-there is only one, which is every single-library account.
+own fetch wrapper uses ([workspaces.md](workspaces.md)). `""` names no
+workspace, so the server uses the account's default library. Both pickers
+(the popup's, above the folder; the options page's) list the workspaces
+`GET /api/session` returns that this account may write to (a viewer's
+would refuse the clip). The account's default is listed as `""`, so the
+choice follows a later change of default. The row is hidden when there is
+only one.
 
 Everything the Connector asks of the library — the folder and label
 pickers, "already in your library", the clip, the uploaded PDF bytes —
@@ -171,14 +170,15 @@ resolves against that workspace, and the link back into the app carries
 its uploads and its clip cannot be split across two libraries by a switch
 mid-save. Switching in the popup looks the tab up again: the ✓ badge and
 "Already in …" are one library's answer. A chosen workspace the account
-loses — deleted, left, demoted to viewer — is dropped at the next session
-check (`checkedWorkspace`), so saves fall back to the default instead of
-failing with a 403.
+can no longer write to is dropped at the next session check
+(`checkedWorkspace`). Saves then go to the default instead of failing with
+a 403.
 
 **The default folder** is a folder id per server and workspace
 (`defaultFolders`: origin, or `origin#workspace` for a named one → id,
-`""` the library root), since an id means nothing in another library. The popup sends the folder picked; the shortcut and the context
-menu send the default (`defaultFolder`). After a successful save the
+`""` the library root), since an id means nothing in another library. The
+popup sends the folder picked; the shortcut and the context menu send the
+default (`defaultFolder`). After a successful save the
 worker makes that save's folder the default (`rememberFolder`). A folder
 named by path (a typed "New folder…") is looked up in
 `GET /api/library/folders` for its id. An id the library no longer lists
@@ -187,7 +187,8 @@ for it (`checkedDefaultFolder`), forgets it and saves to the root.
 
 The setting `folder` is a path, the form a stored default had before
 folders had ids. It belongs to the account's default workspace. While no
-id is set for the server, that path is the default: the popup shows the folder of that path (else a "New folder…"
+workspace is chosen and the server has no folder id, that path is the
+default: the popup shows the folder of that path (else a "New folder…"
 prefilled with it), the options page the folder of that path, and the
 next save sends it as `folder_path` once, after which `rememberFolder`
 stores the id and clears `folder`.

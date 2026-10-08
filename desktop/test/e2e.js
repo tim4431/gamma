@@ -501,7 +501,7 @@ async function main() {
       return `${origWs} → copy ${copyWs} on Alpha`;
     });
 
-    await step('folder on this computer: the "on disk" chip on a local row writes the folder where the picker said', async () => {
+    await step('folder on this computer: the sync panel\'s chooser on a local server writes the folder where the picker said', async () => {
       await hook(app, (s, id) => s.openServer(id), ids.alpha);
       await waitLoggedIn(content);
       const ws = (await waitFor(async () => hook(app, (s) => s.gamma()), 'workspaces read', 15_000)).current;
@@ -568,7 +568,7 @@ async function main() {
       return `${mine[0].dest}, then removed with its files`;
     });
 
-    await step('folder from a remote: the "on disk" chip on a remote row keeps the folder on the host — no clone, a read token; "stop" drops it', async () => {
+    await step('folder from a remote: the sync panel\'s chooser on a remote server keeps the folder on the host — no clone, a read token; "stop" drops it', async () => {
       // On the remote (Alpha by URL: the same server, so the session is there).
       await hook(app, (s, id) => s.openServer(id), ids.remote);
       await waitFor(async () => (await hook(app, (s) => s.current())).id === ids.remote && new URL(content.url()).origin === urls.alpha, 'remote open', 15_000);

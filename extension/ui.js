@@ -47,13 +47,13 @@ export const NEW_FOLDER = "__new__";
 // .selectWrap). `set(items, value)` takes `[{value, label, icon}]` and the
 // one to show; a value no item carries falls back to the first, which is
 // each list's "everything" row (the library root, the default workspace).
-// A pick calls onPick(value).
-export function menuSelect(button, menu, onPick) {
+// A pick calls onPick(value). `toItems` maps what `set` is given to items.
+export function menuSelect(button, menu, onPick, toItems = (list) => list) {
   let items = [];
   const picker = {
     value: "",
     set(list, value) {
-      items = list;
+      items = toItems(list);
       picker.value = items.some((i) => i.value === value) ? value : items.length ? items[0].value : "";
       render();
     },
@@ -89,23 +89,17 @@ export function menuSelect(button, menu, onPick) {
 // "Library root" and over "New folder…" (NEW_FOLDER) with `newFolder`.
 // `value` is a folder id, "" for the root.
 export function folderPicker(button, menu, onPick, { newFolder = false } = {}) {
-  const picker = menuSelect(button, menu, onPick);
-  const setItems = picker.set;
-  picker.set = (folders, value) => setItems([
+  return menuSelect(button, menu, onPick, (folders) => [
     { value: "", label: "Library root", icon: "folder" },
     ...folders.map((f) => ({ value: f.id, label: f.path.join(" / "), icon: "folder" })),
     ...(newFolder ? [{ value: NEW_FOLDER, label: "New folder…", icon: "folderPlus" }] : []),
-  ], value);
-  return picker;
+  ]);
 }
 
 // The libraries GET /api/session lists, by name. `value` is a workspace id,
 // "" for the account's default one — which the server lists first, and
 // which saves name no workspace at all, as they always have.
 export function workspacePicker(button, menu, onPick) {
-  const picker = menuSelect(button, menu, onPick);
-  const setItems = picker.set;
-  picker.set = (workspaces, value) => setItems(
-    workspaces.map((w) => ({ value: w.default ? "" : w.id, label: w.name, icon: "folders" })), value);
-  return picker;
+  return menuSelect(button, menu, onPick,
+    (workspaces) => workspaces.map((w) => ({ value: w.default ? "" : w.id, label: w.name, icon: "folders" })));
 }

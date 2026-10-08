@@ -94,7 +94,7 @@ row with a clone shows *open clone* and opens it, `shell:open-copy`; a
 clone's row on the local server reads *clone* — `mirror_of` on the
 session's workspace list — and its *origin* chip opens the workspace it
 follows on the registered remote, `shell:open-original`) and tells the
-shell which local servers to start at launch (`startMirrorHosts`): a copy
+shell which local servers to start at launch (`startBackgroundHosts`): a copy
 syncs only while its server runs, so those run for as long as the app does,
 whichever server the window shows.
 
@@ -218,8 +218,8 @@ One `BaseWindow`, two `WebContentsView`s. The **shell bar** is the
 frameless window's title bar (OS controls overlaid on Windows/Linux, traffic
 lights inset on macOS). On Windows and Linux the bar keeps its right 146 px
 free for those controls: the `titlebar-area` env() values reach only a
-window's own page, never a view like the bar. The logo goes back to the launcher, every server
-(also `Ctrl/Cmd+Shift+L`). Then the switcher: click the name → dropdown of
+window's own page, never a view like the bar. The logo opens the launcher, which lists every
+server (also `Ctrl/Cmd+Shift+L`). Then the switcher: click the name → dropdown of
 the open server's Gamma workspaces (check on the current one, role or
 *personal* per row, the clone chips), then every server (running /
 reachable dot, check on the current one), then *All servers…* (the
@@ -275,21 +275,23 @@ stroke glyphs as `frontend/src/shared/ui/Icons.jsx`.
 ### Background and tray
 
 Closing the last window quits the app (macOS keeps the dock process, as
-any Mac app) unless **Keep running in the background** is on
-(`settings.background`: the launcher's switch, the *Server* menu, the tray
-menu, and `offerBackground`, the offer made when a clone or a folder on
-disk is first created). On, `window-all-closed` leaves the app running with
-a tray icon (`ensureTray`: *Open Gamma*, the two switches, *Quit Gamma*),
-and `startBackgroundHosts` starts every local server at launch instead of
-only the clones' hosts, so clones and folders on disk keep syncing with no
-window; the tray's click or *Open Gamma* brings the window back where the
-user left off (`showWindow`). Turning it off from the tray with no window
-quits. **Start at login** (`settings.openAtLogin`) registers the OS login
-item — `app.setLoginItemSettings` on Windows and macOS, an autostart entry
-under `~/.config/autostart` on Linux; packaged builds only, nothing under
-the test harness — with `--hidden`, so a login start makes no window and
-goes straight to the tray (`applyLoginItem`; macOS reports a hidden start
-itself through `wasOpenedAsHidden`).
+any Mac app) unless **Keep running in the background** is on. The setting
+is `settings.background`, turned on by the launcher's switch, the *Server*
+menu, the tray menu, or `offerBackground`, the offer made when a clone or a
+folder on disk is first created. On, `window-all-closed` leaves the app
+running with a tray icon (`ensureTray`: *Open Gamma*, the two switches,
+*Quit Gamma*). At launch `startBackgroundHosts` then starts every local
+server instead of only the clones' hosts, so clones and folders on disk
+keep syncing with no window. The tray's click or *Open Gamma* brings the
+window back where the user left off (`showWindow`). Turning the setting off
+from the tray with no window quits.
+
+**Start at login** (`settings.openAtLogin`) registers the OS login item
+with `--hidden`, so a login start makes no window and goes straight to the
+tray (`applyLoginItem`; macOS reports a hidden start itself through
+`wasOpenedAsHidden`). On Windows and macOS that is `app.setLoginItemSettings`;
+on Linux an autostart entry under `~/.config/autostart`. Packaged builds
+only, and nothing under the test harness.
 
 ## In-app updates
 

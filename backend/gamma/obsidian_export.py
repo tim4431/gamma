@@ -28,7 +28,8 @@ import json
 import re
 
 from . import bibtex as bibtex_mod
-from .blocks_store import page_attachment
+from .blocks_store import (FOLDERS, LABELS, PATH_SEP, filing, folder_paths, folder_subtree_ids, label_names,
+                           page_attachment)
 from .highlights import is_highlight, page_of
 from .markdown_export import _BLOCK_REF_RE, _link_label, resolve_block_links
 from .note_markup import obsidian_image_sizes
@@ -56,6 +57,39 @@ def vault_name(title: str) -> str:
     t = re.sub(r"\s+", " ", t).strip().lstrip(".").rstrip(". ")
     t = t[:80].rstrip(". ") or "Untitled"
     return t + "_" if _RESERVED_NAME.fullmatch(t) else t
+
+
+class Filing:
+    """The names an export writes for its pages' folders and labels, read
+    from the trees once. ``scope`` is the exported folder's id (None: a page
+    exported on its own): a page's folder paths are then the names below it,
+    and its folders outside it are left out; ``title`` is the exported
+    folder's path as people read it ("" for none)."""
+
+    def __init__(self, conn, scope):
+        paths = folder_paths(conn)
+        self.title = ""
+        if scope:
+            top = paths.get(scope, [])
+            self.title = PATH_SEP.join(top)
+            inside = folder_subtree_ids(conn, scope)
+            paths = {f: path[len(top):] for f, path in paths.items() if f in inside}
+        self.paths = paths
+        self.labels = label_names(conn)
+
+    def folders(self, props) -> list[list[str]]:
+        """The page's folder paths (names) below the exported folder — that
+        folder itself, the export's top, is none —, in the page's order."""
+        return [self.paths[f] for f in filing(props, FOLDERS) if self.paths.get(f)]
+
+    def folder(self, props) -> list[str]:
+        """The path a page's file goes under: its first folder below the
+        exported folder ([]: the export's top)."""
+        return next(iter(self.folders(props)), [])
+
+    def tags(self, props) -> list[str]:
+        """The names of the page's labels, in its order."""
+        return [self.labels[i] for i in filing(props, LABELS) if i in self.labels]
 
 
 def unique_name(used: set, directory: str, stem: str, ext: str) -> str:

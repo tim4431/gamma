@@ -12,6 +12,9 @@ import { t, tn } from "../shared/i18n/i18n.js";
 
 const CHANGE_KINDS = new Set(["rename", "move", "edit", "create", "delete", "save", "restore"]);
 const LIBRARY_TOOLS = new Set(["rename_page", "move_page", "save_paper", "restore_page"]);
+// The note-block mutators: their actions carry the page id(s) they touched,
+// so the open page's block tree can reload and show the change.
+export const BLOCK_TOOLS = ["edit_block", "create_block", "move_block", "delete_block"];
 
 // A call that changed something (listed in the reply, and ChatDock refreshes
 // the home feed after one). Actions saved before `noop` existed mark a

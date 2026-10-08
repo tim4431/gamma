@@ -57,6 +57,7 @@ jobs.py            background jobs: exports, backups, restores, imports, the sea
 notices.py         the notices behind the red dot on the account button
 logbuf.py          in-memory server log (Settings → Diagnostics → Server log)
 version.py         which build this server is, and whether a newer one exists
+json_response.py   OrjsonResponse: large JSON answers encoded in the handler's worker thread
 
 # AI: providers, the agent and its reach
 ai_protocols/      one adapter per AI wire protocol (request, stream, usage, models, quota)

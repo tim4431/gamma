@@ -60,7 +60,6 @@ STORED_MAX_BYTES = 25_000_000  # the most a stored picture is read back for the 
 GROUP_ORDER = ("user", "selection", "ink", "area")
 # Only a region on a page the user is pointing at: boxes are page fractions.
 REGION_KINDS = frozenset({"area", "view"})
-STORED_KINDS = frozenset({"pasted", "file", "clip"})
 
 _DATA_URL_RE = re.compile(r"^data:(image/(?:png|jpeg|jpg|gif|webp));base64,([A-Za-z0-9+/=]+)$")
 
@@ -182,7 +181,7 @@ def parts(pictures: list) -> list:
     return [p["part"] for p in pictures]
 
 
-def data_url_picture(value, label: str = "Pasted image") -> dict | None:
+def data_url_picture(value) -> dict | None:
     """A picture from a data URL (an older client's pasted figure, never
     stored), normalized; None for anything else."""
     match = _DATA_URL_RE.match(str(value or ""))
@@ -193,7 +192,7 @@ def data_url_picture(value, label: str = "Pasted image") -> dict | None:
     except (ValueError, TypeError):
         return None
     shown = normalize(data, match.group(1))
-    return picture(shown, f"{label}, {shown[2]}×{shown[3]} px", "user") if shown else None
+    return picture(shown, f"Pasted image, {shown[2]}×{shown[3]} px", "user") if shown else None
 
 
 def upload_name(url: str) -> str:
@@ -236,8 +235,6 @@ def stored_picture(ws: str, ref: dict, group: str = "user") -> dict | None:
         return None
     name = str(ref.get("name") or "").strip()
     what = ("Pasted image" if ref.get("kind") != "file" else f"Image file “{name[:80]}”" if name else "Image file")
-    if ref.get("kind") == "clip":
-        what = "A picture clipped from a page"
     return picture(shown, f"{what}, {shown[2]}×{shown[3]} px, {embed_hint(url)}", group, url=url)
 
 
@@ -253,33 +250,45 @@ def parse_box(value) -> tuple | None:
     return tuple(round(v, 4) for v in (x0, y0, x1, y1))
 
 
-def render_region(ws: str, conn, page_id: str, page_no: int, box=None, ink: bool = False,
-                  max_side: int = RENDER_MAX_SIDE):
-    """A PDF page of the page ``page_id`` (or its region ``box``) as a
-    picture, with the user's handwriting written on it when ``ink``:
-    ``(image, pages)`` as ``render_page`` gives them — ``(None, 0)`` for a
-    page without a PDF file here, ``(None, pages)`` for a page number past
-    the end."""
-    from .ai_context import pdf_path
-
+def page_doc_id(conn, page_id: str) -> str:
+    """The id of the PDF attached to the page ``page_id``, "" for a page
+    without one (or no such page)."""
     row = conn.execute("SELECT properties FROM unified_blocks WHERE id = ? AND parent_id = 'root'",
                        (page_id,)).fetchone()
     try:
         attachment = page_attachment(json.loads(row[0] or "{}")) if row else None
     except ValueError:
         attachment = None
-    path = pdf_path(ws, attachment["id"]) if attachment else None
+    return attachment["id"] if attachment else ""
+
+
+def page_pdf_path(ws: str, conn, page_id: str):
+    """The path of the PDF file attached to the page ``page_id`` on this
+    server (``ai_context.pdf_path``), None without one."""
+    from .ai_context import pdf_path
+
+    doc_id = page_doc_id(conn, page_id)
+    return pdf_path(ws, doc_id) if doc_id else None
+
+
+def render_region(ws: str, conn, page_id: str, page_no: int, box=None, ink: bool = False):
+    """A PDF page of the page ``page_id`` (or its region ``box``) as a
+    picture, with the user's handwriting written on it when ``ink``:
+    ``(image, pages)`` as ``render_page`` gives them — ``(None, 0)`` for a
+    page without a PDF file here, ``(None, pages)`` for a page number past
+    the end."""
+    path = page_pdf_path(ws, conn, page_id)
     if not path:
         return None, 0
     if ink:
         from .ink_view import page_with_handwriting
-        data, pages = page_with_handwriting(ws, conn, page_id, page_no)
+        data, pages = page_with_handwriting(ws, conn, page_id, page_no, path=path)
         if data:
-            image, _ = render_page(data, 1, max_side, box)
+            image, _ = render_page(data, 1, RENDER_MAX_SIDE, box)
             return image, pages
         if data == b"" and pages:
             return None, pages
-    return render_page(str(path), page_no, max_side, box)
+    return render_page(str(path), page_no, RENDER_MAX_SIDE, box)
 
 
 def region_picture(ws: str, conn, ref: dict, group: str = "user") -> dict | None:
@@ -321,6 +330,13 @@ def picture_url_of_page(page_id: str, page_no: int, box=None, ink: bool = False)
     return url
 
 
+def ink_picture_url(block_id: str, whole: bool = False) -> str:
+    """The ``GET /api/ai/ink-image`` URL that shows a handwriting block's
+    picture (with ``whole`` its page or sheet with all the handwriting):
+    what an ink chip expands to and what the model embeds."""
+    return f"/api/ai/ink-image/{block_id}" + ("?area=page" if whole else "")
+
+
 def resolve(ws: str, conn, value, group: str = "user") -> dict | None:
     """One ``images`` entry of a request or a saved message as a picture:
     a stored picture, a region, or an older client's data URL."""
@@ -353,14 +369,6 @@ def request_pictures(ws: str, conn, images: list, budget: int) -> list:
 
 # --- the budget -------------------------------------------------------------------------
 
-def budget_of(value) -> int:
-    try:
-        n = int(value)
-    except (TypeError, ValueError):
-        return DEFAULT_BUDGET
-    return max(1, min(MAX_BUDGET, n))
-
-
 def fit(groups: list, budget: int) -> tuple[list, dict]:
     """``(kept, left_out)``: the pictures of ``groups`` (``[(name,
     pictures)]`` in priority order) up to ``budget``, and how many of each
@@ -387,15 +395,13 @@ def _plural(n: int, word: str) -> str:
     return f"{n} {head}s" + (f" of {tail}" if tail else "")
 
 
-def label_lines(pictures: list, left_out: dict | None = None, budget: int = DEFAULT_BUDGET,
-                first: int = 1) -> str:
-    """The lines that name a turn's pictures for the model, numbered from
-    ``first`` in the order they are attached, and what was left out."""
+def label_lines(pictures: list, left_out: dict | None = None, budget: int = DEFAULT_BUDGET) -> str:
+    """The lines that name a turn's pictures for the model, numbered in the
+    order they are attached, and what was left out."""
     lines = []
     if pictures:
-        lines.append("Pictures attached to this message, in order:" if first == 1
-                     else "More pictures attached to this message, in order:")
-        lines += [f"{first + i}. {p['label']}." for i, p in enumerate(pictures)]
+        lines.append("Pictures attached to this message, in order:")
+        lines += [f"{i}. {p['label']}." for i, p in enumerate(pictures, start=1)]
     dropped = [(_plural(n, _LEFT_OUT_WORDS.get(name, "picture"))) for name, n in (left_out or {}).items() if n]
     if dropped:
         lines.append(f"Left out, over the budget of {budget} pictures per message: " + ", ".join(dropped) + ".")

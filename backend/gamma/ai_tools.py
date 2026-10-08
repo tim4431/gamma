@@ -60,8 +60,8 @@ from fractional_indexing import generate_key_between
 
 from . import bibtex as bibtex_mod
 from .ai_permissions import permission_state
-from .ai_pictures import (parts as _parts, picture_url_of_page, read_stored, render_region,
-                          store_picture, upload_name)
+from .ai_pictures import (parts as _parts, ink_picture_url, page_doc_id, parse_box, picture_url_of_page, read_stored,
+                          render_region, store_picture, upload_name)
 from .ai_context import (DEPRECATED_TOOLS, MAX_AREA_CROPS, area_highlight, canonical_tool,
                          handwriting_label, page_report_section, paths_text, pdf_path, quoted_paths,
                          render_area_crops, text_box_label, under_sheet)
@@ -690,15 +690,6 @@ def _run_read_page(conn, ws: str, scope: dict, args: dict):
     return text, chip
 
 
-def _page_doc_id(conn, page_id: str) -> str:
-    row = conn.execute("SELECT properties FROM unified_blocks WHERE id = ?", (page_id,)).fetchone()
-    try:
-        attachment = page_attachment(json.loads(row[0] or "{}")) if row else None
-    except ValueError:
-        attachment = None
-    return attachment["id"] if attachment else ""
-
-
 def _run_view_pdf_page(conn, ws: str, scope: dict, args: dict):
     """One page of the page's PDF as a picture for a vision model — the way
     to read a scan with no usable text layer, or a figure. The image rides on
@@ -767,7 +758,7 @@ def _run_view_ink(conn, ws: str, scope: dict, args: dict):
         what = (f"All the handwriting on {where}" if shown["whole"]
                 else f'Handwriting block [{block["id"]}] on {where} (cropped to it, with a margin)')
     caption = (block["content"] or "").strip()
-    picture_url = f'/api/ai/ink-image/{block["id"]}' + ("?area=page" if whole else "")
+    picture_url = ink_picture_url(block["id"], whole)
     text = (f"{what} is attached as a {width}×{height} px picture ({shown['strokes']} strokes). "
             + ("The PDF page could not be copied, so the strokes are drawn on blank paper. "
                if shown["bare"] else "")
@@ -867,7 +858,7 @@ def _plan_clip_region(conn, scope: dict, args: dict):
                           "block's or a page of paper's id, or a PDF page (page_id + pdf_page)")
         whole = str(args.get("area") or "").strip().lower() == "page"
         return {"page_id": page_id, "title": title, "block_id": block["id"], "whole": whole,
-                "preview": f'/api/ai/ink-image/{block["id"]}' + ("?area=page" if whole else ""),
+                "preview": ink_picture_url(block["id"], whole),
                 "what": ("the page of paper" if is_sheet(block["properties"])
                          else "all the handwriting on its page" if whole
                          else f'the handwriting block [{block["id"]}]')}, None
@@ -885,7 +876,6 @@ def _plan_clip_region(conn, scope: dict, args: dict):
         return None, "error: pdf_page (1-based) is required for a PDF page"
     box = None
     if args.get("box") is not None:
-        from .ai_pictures import parse_box
         box = parse_box(args.get("box"))
         if box is None:
             return None, "error: box must be [x0, y0, x1, y1] as fractions of the page (top-left origin), x0 < x1, y0 < y1"
@@ -1088,7 +1078,7 @@ def _run_read_block(conn, ws: str, scope: dict, args: dict):
     # the whole outline) the agent is reading.
     chip = {"kind": "read", "page_id": page_id, "block_id": block["id"],
             "summary": f"Read notes of {what}"}
-    images = render_area_crops(ws, _page_doc_id(conn, page_id), areas, page_title, page_id) if areas else []
+    images = render_area_crops(ws, page_doc_id(conn, page_id), areas, page_title, page_id) if areas else []
     if images:
         chip["images"] = _parts(images)
     return out, chip
@@ -1455,12 +1445,16 @@ def missing_uploads(scope: dict, content: str, before: str = "") -> str:
             "result, read_block's text); never invent an upload name")
 
 
+MAX_CARD_PICTURES = 6  # pictures an approval card shows of a written text
+
+
 def _preview_pictures(content: str, before: str = "") -> dict:
     """``{"pictures": [url, …]}`` for the pictures a written text embeds
-    that it did not before (the card shows them), else nothing."""
+    that it did not before (the card shows up to MAX_CARD_PICTURES), else
+    nothing."""
     had = {url for _, url in note_pictures(before or "")}
     urls = [url for _, url in note_pictures(content) if url not in had]
-    return {"pictures": urls[:6]} if urls else {}
+    return {"pictures": urls[:MAX_CARD_PICTURES]} if urls else {}
 
 
 # What an approval card shows of a text change. Words (and each CJK

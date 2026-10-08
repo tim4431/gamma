@@ -2,7 +2,7 @@
 app"): the folders of a workspace the desktop app's own server keeps as
 directories on this computer (gamma/folder_links.py), of its own
 workspaces or of another Gamma server read with a token of it. Only that
-server answers (``folder_links.enabled``); any other answers 404. The
+server answers (``config.folder_links_enabled``); any other answers 404. The
 desktop app is the only caller. A signed-in account's session only: an
 integration token is refused as for backups, and so is the guest. Making,
 changing, syncing or removing a link of this server's workspace takes the
@@ -12,14 +12,14 @@ account's own: it alone sees and changes it."""
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from .. import folder_links
+from .. import config, folder_links
 from ..auth import require_personal_user_id, require_ws
 
 router = APIRouter(prefix="/api/folder-links", tags=["folder-links"])
 
 SIGN_IN = "Sign in with an account to keep folders on disk."
 ELSEWHERE = ("Folders on disk are kept by the Gamma desktop app: open this server in it and use a folder's "
-             "\u201cKeep on this computer\u201d or the \u201con disk\u201d chip in its workspace menu.")
+             "\u201cKeep on this computer\u2026\u201d menu item or the sync button's \u201cKeep a folder\u2026\u201d.")
 
 
 class LinkCreate(BaseModel):
@@ -41,7 +41,7 @@ class LinkPatch(BaseModel):
 
 def _account(request: Request) -> str:
     """The signed-in account, on the one server that keeps folders on disk."""
-    if not folder_links.enabled():
+    if not config.folder_links_enabled():
         raise HTTPException(status_code=404, detail=ELSEWHERE)
     return require_personal_user_id(request, SIGN_IN)
 

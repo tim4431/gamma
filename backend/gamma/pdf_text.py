@@ -207,7 +207,7 @@ def _text_remember(key, total: int) -> _TextEntry:
         return entry
     with _text_cache_lock:
         existing = _text_cache.get(key)
-        if existing is not None and existing.total == total:
+        if existing is not None:
             _text_cache.move_to_end(key)
             return existing
         _text_cache[key] = entry

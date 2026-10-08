@@ -15,6 +15,10 @@ FAST_MODE_BETA = "fast-mode-2026-02-01"
 _CACHE = {"type": "ephemeral"}
 
 
+def _image_part(media_type: str, data: str) -> dict:
+    return {"type": "image", "source": {"type": "base64", "media_type": media_type, "data": data}}
+
+
 def is_anthropic_platform(base_url: str) -> bool:
     host = urllib.parse.urlparse(base_url or "").hostname or ""
     return host == "anthropic.com" or host.endswith(".anthropic.com")
@@ -60,8 +64,7 @@ def _messages(messages) -> list:
             block = {"type": "tool_result", "tool_use_id": m["call_id"], "content": m["content"]}
             if m.get("images"):
                 block["content"] = [{"type": "text", "text": m["content"]}] + [
-                    {"type": "image", "source": {"type": "base64", "media_type": media_type, "data": data}}
-                    for media_type, data in m["images"]]
+                    _image_part(media_type, data) for media_type, data in m["images"]]
             prev = out[-1] if out else None
             if (prev and prev["role"] == "user" and isinstance(prev["content"], list)
                     and prev["content"] and prev["content"][0].get("type") == "tool_result"):
@@ -79,8 +82,7 @@ def _messages(messages) -> list:
             if pictures and not isinstance(content, list):
                 # An earlier message's pictures, kept in the conversation:
                 # image blocks before the turn's text, as on the request's own.
-                content = [*[{"type": "image", "source": {"type": "base64", "media_type": media_type, "data": data}}
-                             for media_type, data in pictures],
+                content = [*[_image_part(media_type, data) for media_type, data in pictures],
                            {"type": "text", "text": content}]
             prev = out[-1] if out else None
             if (m["role"] == "user" and prev and prev["role"] == "user"
@@ -118,8 +120,7 @@ class Anthropic(Protocol):
                 *[{"type": "document",
                    "source": {"type": "base64", "media_type": "application/pdf", "data": data}}
                   for data in (pdf_b64s or [])],
-                *[{"type": "image", "source": {"type": "base64", "media_type": media_type, "data": data}}
-                  for media_type, data in (images or [])],
+                *[_image_part(media_type, data) for media_type, data in (images or [])],
                 {"type": "text", "text": last["content"]},
             ]
         body = {"model": model, "max_tokens": max_tokens, "system": system,

@@ -92,6 +92,7 @@ from ..logbuf import log
 from ..pdf_text import extract_text
 from ..textnorm import INDEX_VERSION
 from ..translate_engines import TRANSLATE_LANGS
+from .uploads import LINK_UPLOADS_PER_5_MIN
 
 router = APIRouter(prefix="/api", tags=["ai"])
 
@@ -311,6 +312,23 @@ def pdf_text_status(doc_id: str, request: Request, preview: int = 0):
         return {"found": True, "ok": False, "chars": 0, **index}
 
 
+# A picture with handwriting changes as the user writes: the browser keeps
+# it briefly; a page without is as stable as the PDF file (content-hash name).
+_PICTURE_CACHE = "private, max-age=86400"
+_INK_PICTURE_CACHE = "private, max-age=60"
+
+
+def _region_box(box: str):
+    """The ``box`` query of a picture route as page fractions, or None for
+    a whole page; 400 for anything else."""
+    if not box:
+        return None
+    parsed = ai_pictures.parse_box(box.split(","))
+    if parsed is None:
+        raise HTTPException(status_code=400, detail="invalid box")
+    return parsed
+
+
 # Sync def: pdfium renders in the threadpool.
 @router.get("/ai/selection-crop/{doc_id}")
 def selection_crop(doc_id: str, request: Request, page: int, box: str):
@@ -322,25 +340,14 @@ def selection_crop(doc_id: str, request: Request, page: int, box: str):
     ws = require_ws(request)
     if not doc_id or not all(c in "0123456789abcdef" for c in doc_id):
         raise HTTPException(status_code=400, detail="invalid document id")
-    try:
-        x0, y0, x1, y1 = (float(v) for v in box.split(","))
-    except ValueError:
-        raise HTTPException(status_code=400, detail="invalid box")
-    if not (0 <= x0 < x1 <= 1 and 0 <= y0 < y1 <= 1) or page < 1:
+    region = _region_box(box)
+    if region is None or page < 1:
         raise HTTPException(status_code=400, detail="invalid box")
     path = _pdf_path(ws, doc_id)
-    image = render_selection_crop(path, page, (x0, y0, x1, y1)) if path else None
+    image = render_selection_crop(path, page, region) if path else None
     if not image:
         raise HTTPException(status_code=404, detail="not found")
-    return Response(image[0], media_type=image[1], headers={"Cache-Control": "private, max-age=86400"})
-
-
-# Rate limit of POST /ai/pictures, like the editor's image uploads.
-PICTURE_UPLOADS_PER_5_MIN = 60
-# A picture with handwriting changes as the user writes: the browser keeps
-# it briefly; a page without is as stable as the PDF file (content-hash name).
-_PICTURE_CACHE = "private, max-age=86400"
-_INK_PICTURE_CACHE = "private, max-age=60"
+    return Response(image[0], media_type=image[1], headers={"Cache-Control": _PICTURE_CACHE})
 
 
 @router.post("/ai/pictures")
@@ -354,7 +361,7 @@ def ai_picture_upload(request: Request, file: UploadFile = File(...)):
     the chat's reference, gamma/upload_gc.py). Writers only: a picture
     counts against the workspace's storage."""
     ws = require_ws_writer(request)
-    link_ratelimit(request, "upload", PICTURE_UPLOADS_PER_5_MIN, 300)
+    link_ratelimit(request, "upload", LINK_UPLOADS_PER_5_MIN, 300)  # the editor's image uploads' bucket and rate
     data = file.file.read(ai_pictures.STORED_MAX_BYTES + 1)
     if len(data) > ai_pictures.STORED_MAX_BYTES:
         raise HTTPException(status_code=413, detail="picture too large")
@@ -362,17 +369,6 @@ def ai_picture_upload(request: Request, file: UploadFile = File(...)):
     if not stored:
         raise HTTPException(status_code=400, detail="not a picture this server can read")
     return stored
-
-
-def _region_box(box: str):
-    """The ``box`` query of a picture route as page fractions, or None for
-    a whole page; 400 for anything else."""
-    if not box:
-        return None
-    parsed = ai_pictures.parse_box(box.split(","))
-    if parsed is None:
-        raise HTTPException(status_code=400, detail="invalid box")
-    return parsed
 
 
 # Sync defs: pdfium renders in the threadpool.
@@ -1642,14 +1638,13 @@ def _chat_tools(payload, scope: dict) -> list | None:
     return specs or None
 
 
-def _request_pictures(ws: str, payload, scope: dict, pictures_ok: bool) -> list:
+def _request_pictures(ws: str, payload, scope: dict, pictures_ok: bool, budget: int) -> list:
     """The pictures the request's ``images`` carry, resolved once per
     request (kept on the scope: the prompt is built again for every trim
     of the window), and the earlier turns' pictures put back on their
-    history items (``ai_pictures.history_pictures``). Nothing for a model
-    that reads text only."""
+    history items (``ai_pictures.history_pictures``), both under the
+    request's ``budget``. Nothing for a model that reads text only."""
     if "pictures_resolved" not in scope:
-        budget = ai_pictures.budget_of(getattr(payload, "max_pictures", None))
         resolved = []
         if pictures_ok:
             with connect_pages_db(ws) as conn:
@@ -1678,8 +1673,8 @@ def _chat_prompt(ws: str, payload, scope: dict, tools, allow_native: bool, drop:
     # (read_page never repeats it; the prompt names the pages to read).
     scope["coverage"] = coverage
     located = next((c["selection"]["passages"] for c in coverage if c.get("selection")), None)
-    budget = ai_pictures.budget_of(getattr(payload, "max_pictures", None))
-    own = _request_pictures(ws, payload, scope, pictures_ok)
+    budget = payload.max_pictures  # the model's field clamps it (1 … MAX_BUDGET, default DEFAULT_BUDGET)
+    own = _request_pictures(ws, payload, scope, pictures_ok, budget)
     groups = [("user", own)] + [(g, [c for c in crops if c["group"] == g]) for g in ai_pictures.GROUP_ORDER[1:]]
     kept, left_out = ai_pictures.fit(groups, budget)
     if pictures_ok:

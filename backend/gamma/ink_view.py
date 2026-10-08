@@ -12,6 +12,7 @@ draws when it renders. ``pdf_text.render_page`` rasterizes either.
 """
 
 from . import ink as inkmod
+from .ai_pictures import page_pdf_path
 from .blocks_store import block_to_dict, fetch_subtree, page_attachment
 from .db import ws_uploads_dir
 from .logbuf import log
@@ -133,22 +134,20 @@ def _render(pdf: bytes, box):
     return image
 
 
-def page_with_handwriting(ws: str, conn, page_id: str, page_no: int):
+def page_with_handwriting(ws: str, conn, page_id: str, page_no: int, path=None):
     """PDF page ``page_no`` of the page ``page_id`` with every handwriting
     group written on it, as one-page PDF bytes (``pdf_export.page_with_ink``)
     — what a picture of "the page as the user sees it" is rendered from —
     or ``(b"", pages)`` when the page has no such PDF page; ``(None, 0)``
-    for a page without a PDF file on this server. Ink the PDF still embeds
-    is drawn by the file itself and never added twice."""
-    from .ai_context import pdf_path
+    for a page without a PDF file on this server (``path`` is that file
+    when the caller has it already). Ink the PDF still embeds is drawn by
+    the file itself and never added twice."""
     from .pdf_export import page_with_ink, still_embedded
 
-    blocks = [block_to_dict(row) for row in fetch_subtree(conn, page_id)]
-    page = next((b for b in blocks if b["id"] == page_id), None)
-    attachment = page_attachment(page["properties"]) if page else None
-    path = pdf_path(ws, attachment["id"]) if attachment else None
+    path = path or page_pdf_path(ws, conn, page_id)
     if not path:
         return None, 0
+    blocks = [block_to_dict(row) for row in fetch_subtree(conn, page_id)]
     uploads = ws_uploads_dir(ws)
     inks = []
     for b in blocks:

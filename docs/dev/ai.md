@@ -742,7 +742,7 @@ a press keeps an on-screen keyboard up.
   and are always there where none does.
 - **Pictures.** A paste, a drop or the [+] menu's "Add photos & files"
   stores the picture at once (`POST /api/ai/pictures`, sized for the
-  model) and attaches it by URL; "Attach what I see", offered with a paper
+  model) and attaches it by URL. "Attach what I see", offered with a paper
   open, attaches the visible part of each page in view, with the
   handwriting on it, as a region the server draws. Both show in the row
   under the chips with a remove button ("Pictures" below).
@@ -863,9 +863,9 @@ base prompt, default in `ai_tools.py`).
 
 ### Pictures
 
-Everything about the pictures a message carries is in one place,
-`gamma/ai_pictures.py` (the client's side: `chat/chatPictures.js`, the
-`src` an `<img>` shows them from in `chat/pictureSrc.js`; the reasoning in
+`gamma/ai_pictures.py` holds the picture record, its sizing, the budget and
+the label lines; the client side is `chat/chatPictures.js`, and the `src`
+an `<img>` shows a picture from is `chat/pictureSrc.js` (the reasoning in
 [research/ai-pictures.md](../research/ai-pictures.md)).
 
 **Where they come from.** The request's `images` are picture records: a
@@ -878,8 +878,8 @@ The composer stores a pasted, dropped or picked picture at once
 quota) and attaches it by URL. A Ctrl+drag rectangle, a click on an area
 highlight and the [+] menu's "Attach what I see" (the visible part of each
 page in view, with the handwriting on it; App's `attachViewToChat`) attach
-regions; nothing is captured off the screen any more (the viewer's
-`onAreaSelection` passes the page and box). An older client's data URL
+regions. The viewer's `onAreaSelection` passes the page and box; the
+server draws the region. An older client's data URL
 string is still read (`data_url_picture`), never stored, and a chat saved
 before the store still shows its data URLs. The context adds its own: the
 pictures of selected passages whose text is unreliable (`selection_crops`),
@@ -892,34 +892,34 @@ to the model and into the store: the longer side at most `RENDER_MAX_SIDE`
 (1568 px — past that every provider downscales anyway), JPEG at quality 85
 unless the picture is translucent somewhere or small (`PNG_MAX_PIXELS`),
 then PNG; an animation keeps its first frame. Without Pillow the bytes pass
-as they are under `RAW_MAX_BYTES`. So one picture costs about the same on a
-wire whatever it was — `Protocol.picture_tokens`, 1,600 on Anthropic's,
-800 on the OpenAI wires — and that is what the window estimate counts
+as they are under `RAW_MAX_BYTES`. So each picture costs about the same per
+wire: `Protocol.picture_tokens`, 1,600 on Anthropic and 800 on the OpenAI
+wires (`OPENAI_PICTURE_TOKENS`). The window estimate counts that
 (`prompt_tokens(picture_tokens=)`).
 
-**One budget.** `max_pictures` on the request (Settings → AI → Chat →
-"Pictures per message", `gamma-chat-pictures`, default `DEFAULT_BUDGET` 12,
-at most `MAX_BUDGET` 64) is one number for all of a message's pictures,
-filled in `GROUP_ORDER`: the user's own first, then the selection crops,
-then the attached handwriting, then the context pages' area highlights
-(`fit`; `MAX_AREA_CROPS`, 12 per page, is only a guard against a page
-covered in rectangles). The question ends in label lines naming each
-picture in order — "1. Pasted image, 800×600 px, stored at /api/uploads/…
-— to put it in a note, write `![…](…)`", "2. A region the user marked on PDF
-page 4 of “…”" — and what was left out over the budget (`label_lines`);
-the coverage's `area_pictures` counts what went after the budget. A model
-that reads text only gets none and one line saying how many were left out
-("Pictures" under "Other services").
+**One budget.** `max_pictures` is one budget for all of a message's
+pictures (Settings → AI → Chat → "Pictures per message",
+`gamma-chat-pictures`; default `DEFAULT_BUDGET` 12, at most `MAX_BUDGET`
+64). `fit` fills it in `GROUP_ORDER`: the user's pictures, then selection
+crops, then attached handwriting, then area highlights. `MAX_AREA_CROPS`
+(12 per page) only guards against a page covered in rectangles. The
+question ends in label lines naming each picture in order (`label_lines`):
+"1. Pasted image, 800×600 px, stored at /api/uploads/… — to put it in a
+note, write `![…](…)`", "2. A region the user marked on PDF page 4 of
+“…”". A last line says what was left out over the budget; the coverage's
+`area_pictures` counts what went after the budget. A model that reads text
+only gets none and one line saying how many were left out ("Pictures"
+under "Other services").
 
 **Pictures stay in the conversation.** The history the client sends carries
 each user message's `images` by URL (never a data URL). The newest ones,
-up to the same budget, are read back and ride on their own turns
-(`history_pictures` writes `pictures_sent` onto the history items;
-`build_messages` puts them on the turn as `images` with their label lines;
-each wire puts a user turn's `images` before its text — `turn_images` in
+up to the same budget, are read back and ride on their own turns.
+`history_pictures` writes `pictures_sent` onto the history items, and
+`build_messages` puts them on the turn as `images` with their label lines.
+Each wire puts a user turn's `images` before its text (`turn_images` in
 `ai_protocols/base.py`). Older ones are named in a line ("2 pictures
 attached to this message are not shown again"). The window fit drops whole
-turns as before.
+turns, pictures included.
 
 **Showing the user.** Two routes draw a picture again from its parameters,
 scoped to the workspace: `GET /api/ai/page-image/{page_id}?page=N[&box=…][&ink=1]`
@@ -929,9 +929,9 @@ minute with ink) and `GET /api/ai/ink-image/{block_id}[?area=page]` (the
 bubble comes from the first; `view_pdf_page`, `view_ink`, `view_image` and
 `clip_region` chips carry `picture`, the URL the expanded chip shows; and
 the view tools' results tell the model it may embed that URL in its reply
-as a markdown image, which `ChatMarkdown` renders. The older
-`GET /api/ai/selection-crop/{doc_id}` stays for the selection pill of saved
-replies.
+as a markdown image, which `ChatMarkdown` renders.
+`GET /api/ai/selection-crop/{doc_id}` draws the selection pill's picture in
+saved replies.
 
 **The store and the upload GC.** A chat's pictures are stored uploads like a
 note's, and the saved conversation points at them, so `upload_gc.referenced`
@@ -1053,9 +1053,9 @@ still `search`), Search papers online (`web_search` → `search_papers`,
 read-only and described in [ai_tools.md](ai_tools.md), the web engine in its
 "search_web" section), Save papers (`save` → `save_paper`, in every chat
 kind), Rename pages, Move pages, Restore deleted pages (`restore` →
-`restore_page`, folder chats only), and Edit
-note blocks (one permission for `edit_block`/`create_block`/`move_block`/`delete_block`, and for `clip_region`, which stores a picture the notes embed
-together). The "Read & search" preset (`chat/chatSettings.js` `READ_TOOLS`)
+`restore_page`, folder chats only), and Edit note blocks (one permission
+for `edit_block`, `create_block`, `move_block`, `delete_block` and
+`clip_region`, which stores a picture for the notes). The "Read & search" preset (`chat/chatSettings.js` `READ_TOOLS`)
 includes the web permissions and the page viewer. **Use journal sign-ins**
 (`publisher_cookies`, default Allow) controls whether `fetch_paper` may use the
 caller's connected publisher cookies; the browser handoff for a blocked fetch
@@ -1248,11 +1248,12 @@ the note-block tools' actions carry `page_id`/`src_page_id` so the frontend
 reloads the open page's block tree when the AI touched it (`onNotesChange`;
 with the page's live socket up the tools' ops already arrived through it and
 the reload is skipped — [collab.md](collab.md)). A `view_pdf_page`,
-`view_ink`, `view_image` or `read_page` result also carries its pictures:
-the loop lifts them off the action into the tool message's `images` before
-yielding the chip, so the model sees them and the saved chat never holds
-them; the chip keeps `picture`, the URL the chat draws them again from
-([ai_tools.md](ai_tools.md), "Pictures" above).
+`view_ink` or `view_image` result also carries its picture, and a
+`read_page` or `read_block` result the pictures of the area highlights it
+lists: the loop lifts them off the action into the tool message's `images`
+before yielding the chip, so the model sees them and the saved chat never
+holds them. A view chip keeps `picture`, the URL the chat draws it again
+from; a read chip has none ([ai_tools.md](ai_tools.md), "Pictures" above).
 A `fetch_paper` action that a sign-in, bot check or paywall stopped carries a
 `handoff`, and the reply stops on a card for it while the user's browser
 gets the PDF

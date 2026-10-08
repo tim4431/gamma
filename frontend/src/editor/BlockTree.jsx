@@ -11,8 +11,8 @@ import rehypeKatex from "rehype-katex";
 import rehypeRaw from "rehype-raw";
 import { isFolded, isHighlightBlock, withLegacyAccessors } from "../shared/model/blockModel";
 import { COLORS } from "../shared/model/highlightColors.js";
-import { citesSeveralPapers, gammaLinkId, gammaLinkIds, parseGammaLink, relativeGammaLink } from "../shared/model/gammaLinks.js";
-import { NO_LABELS } from "./refLabels.js";
+import { citesSeveralPapers, gammaLinkId, parseGammaLink, relativeGammaLink } from "../shared/model/gammaLinks.js";
+import { NO_LABELS, REF_RE, refIdsOf } from "./refLabels.js";
 import { InkCard } from "../ink/InkLayer";
 import { isTextBox } from "../markup/textBox.js";
 import { isSheet } from "../notebook/notebook";
@@ -123,7 +123,7 @@ function mdPreprocessProse(content, nested) {
     .replace(/!\[([^\]]*)\]\(([^)]+)\)\{:width\s+(\d+)\}/g, '<img src="$2" alt="$1" width="$3" />')
     .replace(/!\[([^\]|]*)\|(\d+)(?:x\d+)?\]\(([^)]+)\)/g, '<img src="$3" alt="$1" width="$2" />')
     .replace(/!\[\[([a-zA-Z0-9_-]+)\]\]/g, nested ? "[$1](blockref:$1)" : "[$1](blockembed:$1)")
-    .replace(/\[\[([a-zA-Z0-9_-]+)\]\]/g, "[$1](blockref:$1)")
+    .replace(REF_RE, "[$1](blockref:$1)")
     // A hand-typed [[title]] no page answered (the editor links one that
     // names exactly one page): a dashed "unlinked" chip.
     .replace(/!?\[\[([^[\]\n]+)\]\]/g, "[$1](unlinked:)")
@@ -1030,12 +1030,10 @@ const BlockRow = React.memo(function BlockRow({
   // Resolve cross-note refs and Gamma link targets found in content
   useEffect(() => {
     if (!block.content || !onFetchRefs) return;
-    const refIds = [...block.content.matchAll(/\[\[([a-zA-Z0-9_-]+)\]\]/g)].map((m) => m[1]);
-    const ids = refIds.concat(gammaLinkIds(block.content));
-    const unknown = ids.filter((id) => !lookupBlock?.(id) && !refCache?.[id]);
+    const unknown = refIdsOf(block).filter(([id]) => !lookupBlock?.(id) && !refCache?.[id]);
     // Only a [[ref]]'s id is asked about when the search misses it (a Gamma
     // link may name another server's page).
-    if (unknown.length > 0) onFetchRefs(unknown, unknown.filter((id) => refIds.includes(id)));
+    if (unknown.length > 0) onFetchRefs(unknown.map(([id]) => id), unknown.filter(([, ref]) => ref).map(([id]) => id));
   }, [block.content]);
 
   // A picked row: the typed "[[query" becomes [[id]] (a "!" before it
@@ -2096,7 +2094,7 @@ function AiGhostRow({ content, depth }) {
           <div className="blockBody">
             <div className="blockMeta">{t("note")}</div>
             <div className="blockRendered aiStreaming">
-              {content.trim() ? <BlockMarkdown content={content} blockId="ai-ghost" refLabels={{}} /> : null}
+              {content.trim() ? <BlockMarkdown content={content} blockId="ai-ghost" refLabels={NO_LABELS} /> : null}
             </div>
           </div>
         </div>
@@ -2133,7 +2131,7 @@ function BlockTree({ blocks, readOnly, rowProps, depth = 0, parentId, onSheet = 
     <>
       {ghostAt === 0 ? ghostRow : null}
       {list.map((rawBlock, idx) => { const block = legacy(rawBlock);
-        const refLabels = refLabelsById?.get(rawBlock.id) || NO_LABELS;
+        const refLabels = refLabelsById?.get(rawBlock.id); // undefined: the row's default, NO_LABELS
         const sheetNumber = rowProps.sheetNumbers ? rowProps.sheetNumbers.get(rawBlock.id) || 0
           : depth === 0 && isSheet(rawBlock) ? ++sheets : 0; return (
         <React.Fragment key={block.id}>

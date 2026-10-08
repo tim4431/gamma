@@ -5,9 +5,10 @@ Each note tool's action records what its change needs to be undone and
 redone (``revert`` on the action, gamma/ai_tools.py): an edit the block's
 text just before and just after the write, a new block the text it was
 made with and where it went, a move the parent and key it left and the
-ones it went to, a deletion every block of the subtree it took. The chat keeps the action with the reply, and its
-"Changed in your notes" row sends it back here (``POST /api/ai/revert``)
-when the user reverts the change, or redoes one they reverted.
+ones it went to, a deletion every block of the subtree it took. The chat
+keeps the action with the reply, and its "Changed in your notes" row sends
+it back here (``POST /api/ai/revert``) when the user reverts the change, or
+redoes one they reverted.
 
 Neither direction assumes the note still says what it last said. An edit
 goes as a patch: the change ``after → before`` (redo: ``before → after``)
@@ -21,6 +22,8 @@ notes since, and a block moved on from where the last write put it, stop
 the same way. Each write is the user's (client ``"revert"``), fanned out
 like any other.
 """
+
+import json
 
 from . import textmerge
 from .ai_tools import cross_page_refusal, text_diff
@@ -142,8 +145,6 @@ def _plan_delete(conn, block_id: str, revert: dict, force: bool, redo: bool):
     """A deleted subtree put back as it was (``revert["blocks"]``: every
     block, parent first, with its parent, key, text and properties); a redo
     deletes it again."""
-    import json
-
     rows = revert.get("blocks")
     if not isinstance(rows, list) or not rows or not all(isinstance(r, list) and len(r) == 5 for r in rows) \
             or rows[0][0] != block_id:

@@ -34,11 +34,11 @@ not add a period where the source continues.
 
 The link is plain Markdown, so it persists with the reply.
 `shared/model/gammaLinks.js` classifies one link into this library
-(`parseGammaLink` → `block` / `page` / `citation`). A citation is a compact
-pill wherever it is rendered — a chat answer, a note, a note's preview on the
-PDF (`CitationPill`, `shared/ui/Widgets.jsx`): "p. 2" on the text's
-baseline, sized from the surrounding text, and prefixed with the source
-("Vaswani · p. 2") when the reply or note cites more than one paper.
+(`parseGammaLink` → `block` / `page` / `citation`). A citation renders as a
+compact pill (`CitationPill`, `shared/ui/Widgets.jsx`) in chat answers, notes
+and a note's preview on the PDF. It shows "p. 2" on the text's baseline,
+sized from the surrounding text. When the reply or note cites several
+papers, the source comes first ("Vaswani · p. 2").
 Hovering, focusing or long-pressing it previews the paper title, the PDF page
 and the quote; App's `citeSource` (on `GammaNavContext`) names the paper. A
 page or block link is a card (`GammaLinkCard`). Clicking a citation calls

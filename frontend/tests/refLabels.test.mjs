@@ -37,10 +37,9 @@ test("an entry keeps its identity across a keystroke elsewhere, and changes with
 });
 
 test("a Gamma link that resolves gets a label, one whose block is missing does not", () => {
-  const tree = [block("a", "https://x.test/p/page1#block-b and https://x.test/p/page2#block-gone")];
+  const tree = [block("a", "https://x.test/?block=b and https://x.test/?block=gone")];
   const byId = new Map([["b", { id: "b", content: "target", page_title: "P" }]]);
   const labels = refLabelsByBlock(tree, byId, { gone: { missing: true } }, null);
-  const got = labels.get("a") || {};
-  assert.equal(got.gone, undefined, "a missing link target stays an ordinary URL");
-  if (got.b) assert.equal(got.b.content, "target");
+  const got = labels.get("a");
+  assert.deepEqual(got, { b: { content: "target", page_title: "P" } }, "a missing link target stays an ordinary URL");
 });

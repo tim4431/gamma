@@ -20,7 +20,8 @@ export const MAX_PICTURE_BYTES = 25 * 1024 * 1024;
 export const PICTURE_ROUTE = "/api/ai/page-image";
 export const INK_PICTURE_ROUTE = "/api/ai/ink-image";
 
-const round4 = (v) => Math.round(v * 10000) / 10000;
+// Four decimals of a page fraction: how the server rounds a box (`parse_box`).
+export const round4 = (v) => Math.round(v * 10000) / 10000;
 
 export function isPictureFile(file) {
   return !!file && typeof file.type === "string" && file.type.startsWith("image/") && file.size <= MAX_PICTURE_BYTES;
@@ -82,7 +83,6 @@ export function pictureAlt(p) {
     case "area": return t("Region of PDF page {page}", { page: p.page });
     case "view": return p.ink ? t("PDF page {page} as you see it, with your handwriting", { page: p.page })
       : t("PDF page {page} as you see it", { page: p.page });
-    case "clip": return t("Clipped picture");
     default: return t("Pasted image");
   }
 }
@@ -100,9 +100,8 @@ export function historyPictures(images) {
 export function chipPicture(action) {
   if (!action || action.error) return "";
   if (typeof action.picture === "string" && action.picture) return action.picture;
-  if (action.kind === "view" && action.page_id && action.pdf_page) return `${PICTURE_ROUTE}/${encodeURIComponent(action.page_id)}?page=${action.pdf_page}`;
+  if (action.kind === "view" && action.page_id && action.pdf_page) return pictureUrl(regionPicture("view", action.page_id, action.pdf_page));
   if (action.kind === "ink" && action.block_id) return `${INK_PICTURE_ROUTE}/${encodeURIComponent(action.block_id)}`;
-  if (action.kind === "clip" && action.url) return action.url;
   return "";
 }
 

@@ -37,9 +37,9 @@ function clone(server, info, servers) {
   const s = info.status || {};
   const p = s.progress || {};
   const item = {
-    kind: 'clone', key: `clone:${server.id}:${info.workspace_id}`, server: server.id, serverName: server.name,
+    kind: 'clone', key: `clone:${server.id}:${info.workspace_id}`, server: server.id,
     id: info.workspace_id, name: info.name || info.remote_name || 'Clone',
-    where: `Clone of ${info.remote_name || 'a workspace'} on ${nameOf(info.remote_url, servers)}`, at: s.last_sync || '',
+    where: `Clone of ${info.remote_name || 'a workspace'} on ${nameOf(info.remote_url, servers)}`,
   };
   if (info.detached || info.mode === 'off') {
     return { ...item, state: 'detached', text: 'Detached', title: 'Nothing is pulled or pushed until you reattach it, in the clone.' };
@@ -74,10 +74,10 @@ function folder(server, link, servers) {
   const names = s.folder_path || [];
   const changed = (s.kept || []).length;
   const item = {
-    kind: 'folder', key: `folder:${server.id}:${link.id}`, server: server.id, serverName: server.name, id: link.id,
+    kind: 'folder', key: `folder:${server.id}:${link.id}`, server: server.id, id: link.id,
     name: link.folder_id === 'root' ? 'Whole library' : names.length ? names[names.length - 1] : String(link.dest || '').split(/[\\/]/).pop(),
     where: link.dest, dest: link.dest, from: link.remote_url ? nameOf(link.remote_url, servers) : server.name,
-    remote: Boolean(link.remote_url), at: s.last_sync || '', changed,
+    changed,
   };
   if (s.running) return { ...item, state: 'busy', text: 'Syncing…', title: 'A round is running.' };
   if (s.last_error) return { ...item, state: 'error', text: 'Sync problem', title: s.last_error };
@@ -92,12 +92,12 @@ function itemsOf(server, { mirrors = [], links = [] } = {}, servers = []) {
 }
 
 // The sync button's reading of all of it: the worst state, a word or two,
-// and the counts for its tooltip.
+// and a tooltip with the counts.
 function summarize(items) {
   const clones = items.filter((i) => i.kind === 'clone').length;
   const folders = items.length - clones;
   const what = [clones && plural(clones, 'clone'), folders && plural(folders, 'folder on disk')].filter(Boolean).join(' and ');
-  if (!items.length) return { state: 'none', text: '', title: 'Nothing is kept on this computer yet', clones, folders };
+  if (!items.length) return { state: 'none', text: '', title: 'Nothing is kept on this computer yet' };
   const live = items.filter((i) => i.state !== 'detached');
   const state = live.reduce((worst, i) => (RANK[i.state] > RANK[worst] ? i.state : worst), 'ok');
   const n = live.filter((i) => i.state === state).length;
@@ -109,7 +109,7 @@ function summarize(items) {
     new: 'Starting…',
     ok: 'Synced',
   }[state];
-  return { state, text, title: `${what} on this computer: ${text.toLowerCase()}`, clones, folders };
+  return { state, text, title: `${what} on this computer: ${text.toLowerCase()}` };
 }
 
-module.exports = { RANK, clock, nameOf, clone, folder, itemsOf, summarize };
+module.exports = { clone, folder, itemsOf, summarize };

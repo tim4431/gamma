@@ -26,7 +26,7 @@ from fastapi import APIRouter, HTTPException, Request
 
 from .. import folder_sync, workspaces
 from ..auth import require_ws, ws_role
-from ..blocks_store import folder_paths
+from ..blocks_store import folder_paths, newest_change_seq
 from ..db import connect_pages_db
 
 router = APIRouter(prefix="/api", tags=["sync"])
@@ -38,7 +38,7 @@ def changes(conn, since: str, limit: int) -> dict:
     """The feed over an open pages.db: ``{since, cursor, more, pages: [{id,
     created_at, updated_at, seq}], deleted: [{id, deleted_at, actor}]}``,
     at most ``limit`` entries after the cursor ``since``."""
-    newest = conn.execute("SELECT COALESCE(MAX(seq), 0) FROM page_changes").fetchone()[0]
+    newest = newest_change_seq(conn)
     after = int(since) if since.isascii() and since.isdigit() and int(since) <= newest else 0
     rows = conn.execute(
         "SELECT c.page_id, c.seq, c.kind, c.at, c.actor, b.created_at, b.updated_at, "

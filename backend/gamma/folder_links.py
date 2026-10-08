@@ -2,7 +2,8 @@
 computer (docs/dev/folder_sync.md "Folders kept by the desktop app").
 
 Only the desktop app's own server keeps them: the local server it runs as
-the user, started with ``GAMMA_FOLDER_LINKS`` (``enabled``). Any other
+the user, started with ``GAMMA_FOLDER_LINKS``
+(``config.folder_links_enabled``). Any other
 server, a NAS among them, answers the API with 404 and its tick does
 nothing; it only serves the folder reads a link elsewhere asks for.
 
@@ -42,10 +43,10 @@ from pathlib import Path
 from cryptography.fernet import InvalidToken
 
 from . import config, folder_sync, gamma_sync, workspaces
-from .blocks_store import folder_paths
+from .blocks_store import folder_paths, newest_change_seq
 from .db import connect_pages_db, connect_users_db, page_now
 from .logbuf import log
-from .publisher_sessions import cipher
+from .publisher_sessions import seal, unseal
 from .storage import find_upload_file
 
 TICK_S = 30            # how often the loop looks for links whose source changed
@@ -55,7 +56,6 @@ MAX_LINKS = 10         # per workspace
 RETRY_S = 300          # a link whose last round failed waits this long for the next try
 STALE_RUN_S = 600      # a "running" older than this (the process died) is not running
 KEPT_SHOWN = 50        # kept files listed in the status
-RECENT_SHOWN = 50      # last actions listed in the status
 
 _COLS = "id, workspace_id, folder_id, path, notes, created_by, created_at, cursor, status, remote_url, token, token_id"
 _locks: dict[str, threading.Lock] = {}
@@ -65,10 +65,6 @@ _polled: dict[str, float] = {}   # link id -> when its remote server was last as
 
 class LinkError(ValueError):
     pass
-
-
-def enabled() -> bool:
-    return config.folder_links_enabled()
 
 
 def _absolute(text: str) -> bool:
@@ -93,17 +89,10 @@ def clean_path(text: str) -> str:
     return str(target)
 
 
-def _seal(token: str) -> str:
-    """The token as stored: Fernet-encrypted with the data directory's key
-    (the mirrors' tokens are kept the same way)."""
-    return cipher().encrypt(token.encode("utf-8")).decode("ascii") if token else ""
-
-
 def _unseal(sealed: str) -> str:
-    if not sealed:
-        return ""
+    """The stored token (``publisher_sessions.seal``, the mirrors' way)."""
     try:
-        return cipher().decrypt(sealed.encode("ascii")).decode("utf-8")
+        return unseal(sealed)
     except (InvalidToken, ValueError) as e:
         raise LinkError("the stored token cannot be read: the data directory's key changed") from e
 
@@ -200,7 +189,7 @@ def _insert(link: dict, token: str = "") -> dict:
         try:
             conn.execute(f"INSERT INTO folder_links ({_COLS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                          (link["id"], link["workspace_id"], link["folder_id"], link["path"], int(link["notes"]), link["created_by"],
-                          link["created_at"], "", "{}", link["remote_url"], _seal(token), link["token_id"]))
+                          link["created_at"], "", "{}", link["remote_url"], seal(token), link["token_id"]))
         except sqlite3.IntegrityError as e:   # the path, taken meanwhile (UNIQUE, ignoring case)
             raise LinkError(f"Another link already writes {link['path']}.") from e
     return link
@@ -375,9 +364,9 @@ def _failed(link: dict, error: str) -> dict:
 
 def run_link(link_id: str, *, full: bool = False, force: bool = False) -> dict | None:
     """One round of the link now, in this thread: its status afterwards
-    (``{running, last_sync, last_error, counts, kept, recent, dest,
-    folder_path}``), the current status when a round is already running,
-    None for no such link."""
+    (``{running, last_sync, last_error, counts, kept, folder_path}``), the
+    current status when a round is already running, None for no such
+    link."""
     link = get_link(link_id)
     if link is None:
         return None
@@ -385,17 +374,14 @@ def run_link(link_id: str, *, full: bool = False, force: bool = False) -> dict |
     if not lock.acquire(blocking=False):
         return link["status"]
     try:
-        actions: list[str] = []
         _write_status(link_id, {**link["status"], "running": True, "started_at": time.time()})
         try:
             link = get_link(link_id, with_token=True) or link
             state = _ensure_state(link)
-            rnd = gamma_sync.Round(state, source_of(link), full=full, force=force,
-                                   say=lambda verb, what: actions.append(f"{verb} {what}"))
+            rnd = gamma_sync.Round(state, source_of(link), full=full, force=force, say=lambda *_: None)
             counts = rnd.run()
             status = {"running": False, "last_sync": page_now(), "last_error": "", "counts": counts,
                       "kept": [{"path": p, "why": w} for p, w in rnd.kept[:KEPT_SHOWN]],
-                      "recent": actions[-RECENT_SHOWN:], "dest": str(state.dest),
                       "folder_path": state.state.get("folder_path") or []}
             _write_status(link_id, status, cursor=str(state.state.get("cursor", "")))
         except (gamma_sync.SyncError, LinkError, OSError) as e:
@@ -412,7 +398,7 @@ def run_in_background(link_id: str, **kw) -> None:
 
 def _newest_seq(ws: str) -> int:
     with connect_pages_db(ws) as conn:
-        return conn.execute("SELECT COALESCE(MAX(seq), 0) FROM page_changes").fetchone()[0]
+        return newest_change_seq(conn)
 
 
 def _age(stamp) -> float:
@@ -458,13 +444,13 @@ def tick() -> None:
     thread of its own (its ``running`` mark keeps the next tick off it), so
     a slow or silent server never holds up the rest. A link whose workspace
     on this server is gone is forgotten. Nothing runs where links are not
-    kept (``enabled``): a row left from before stays as it is."""
-    if not enabled():
+    kept (``config.folder_links_enabled``): a row left from before stays as
+    it is."""
+    if not config.folder_links_enabled():
         return
     for link in all_links():
         if not link["remote_url"] and not workspaces.get(link["workspace_id"]):
-            with connect_users_db() as conn:
-                conn.execute("DELETE FROM folder_links WHERE id = ?", (link["id"],))
+            delete_link(link["id"])
             continue
         if due(link):
             if link["remote_url"]:

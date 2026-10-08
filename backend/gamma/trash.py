@@ -80,13 +80,21 @@ def purge_expired(ws: str, *, now: datetime | None = None) -> list[str]:
     """Delete for good the pages trashed more than ``KEEP_DAYS`` ago; their
     ids. A stamp that cannot be read counts as expired (the page was deleted
     and cannot be dated)."""
-    now = now or datetime.now(timezone.utc)
-    gone = []
+    return _purge_expired(ws, now or datetime.now(timezone.utc))[0]
+
+
+def _purge_expired(ws: str, now: datetime) -> tuple[list[str], datetime | None]:
+    """``purge_expired`` with, from the same listing, when the earliest page
+    still in the trash expires: None with the trash left empty; a page that
+    could not be dated or purged is due at once (the next sweep tries again)."""
+    gone, expiries = [], []
     for page in _trashed(ws):
         at = parse_stamp(page["deleted_at"])
         if (at is None or now >= at + timedelta(days=KEEP_DAYS)) and purge(ws, page["id"]) is not None:
             gone.append(page["id"])
-    return gone
+        else:
+            expiries.append(at + timedelta(days=KEEP_DAYS) if at else datetime.min.replace(tzinfo=timezone.utc))
+    return gone, min(expiries, default=None)
 
 
 # What the last sweep learned per workspace: ``(the files' stamp, when its
@@ -111,16 +119,6 @@ def _stamp(ws: str) -> tuple | None:
         return (db.st_mtime_ns, 0, 0)
 
 
-def _next_expiry(ws: str) -> datetime | None:
-    """When the earliest page still in the workspace's trash expires; None
-    with the trash empty (or an undatable entry, which the next sweep purges)."""
-    stamps = [parse_stamp(page["deleted_at"]) for page in _trashed(ws)]
-    if not stamps:
-        return None
-    return min((at + timedelta(days=KEEP_DAYS) if at else datetime.min.replace(tzinfo=timezone.utc))
-               for at in stamps)
-
-
 def sweep(*, now: datetime | None = None) -> dict[str, list[str]]:
     """``purge_expired`` over every workspace: ``{workspace: [page ids]}``
     for the ones that lost pages. A workspace that cannot be read (deleted
@@ -137,8 +135,8 @@ def sweep(*, now: datetime | None = None) -> dict[str, list[str]]:
         if known and known[0] == stamp and (known[1] is None or now < known[1]):
             continue
         try:
-            gone = purge_expired(ws, now=now)
-            _due[ws] = (_stamp(ws) or stamp, _next_expiry(ws))
+            gone, next_expiry = _purge_expired(ws, now)
+            _due[ws] = (_stamp(ws) or stamp, next_expiry)
         except Exception as e:  # noqa: BLE001 — one workspace never stops the sweep
             _due.pop(ws, None)
             log.warning(f"[trash] workspace {ws}: {e}")

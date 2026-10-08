@@ -57,7 +57,7 @@ export function GuestSettings({ setStatus }) {
   return <Section title={t("Guests")}>
     <Toggle icon={UserIcon} label={t("Guest sign-in")} checked={guests}
       hint={guests ? t("The login page offers a throwaway account") : t("The login page shows no guest button")}
-      title={t("A guest login makes a throwaway account with a workspace of its own, which is deleted when it expires. Off, the server takes no new guest; the accounts you made sign in as before, and a guest already here keeps its workspace until it expires.")}
+      title={t("A guest login makes a throwaway account with a workspace of its own, which is deleted when it expires. Off, the server takes no new guest; the accounts you made still sign in, and a guest already here keeps its workspace until it expires.")}
       onChange={(on) => save({ guest_logins: on }, on ? t("Guest sign-in on.") : t("Guest sign-in off."))} />
     <Row icon={ClockIcon} label={t("Guest workspaces last")}
       hint={ttlManaged ? envHint("GAMMA_GUEST_TTL_HOURS") : t("Then the guest's account and workspace are deleted")}

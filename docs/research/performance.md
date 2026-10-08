@@ -92,7 +92,7 @@ Client ([dev/pdf_loading.md](../dev/pdf_loading.md),
 - `updateBlockTree` copies only the path to the edited block and hands
   back the same array on a miss (`tests/blockTree.test.mjs`), and the rows
   are memoized on it: App hands them one stable wrapper per callback name
-  (`stableRowProps`), the page's blocks through `lookupBlock` / `getTree`
+  (`makeStableActions`, `shared/lib/stableActions.js`), the page's blocks through `lookupBlock` / `getTree`
   rather than as props, each row's own `[[ref]]` labels resolved once per
   tree change (`editor/refLabels.js`, `tests/refLabels.test.mjs`), and the
   derived maps every row takes (sheet numbers, highlight colours) kept by

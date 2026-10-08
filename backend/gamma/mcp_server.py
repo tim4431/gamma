@@ -17,7 +17,7 @@ from starlette.concurrency import run_in_threadpool
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
-from .ai_tools import agent_tools, citation_prompt, mcp_tools, run_agent_tool
+from .ai_tools import agent_tools, citation_prompt, gamma_link, mcp_tools, run_agent_tool
 from .server_settings import mcp_allowed_hosts
 from .mcp_export import EXPORT_DESCRIPTION, EXPORT_SCHEMA, export_page
 from .mcp_links import LINK_SCHEMA, resolve_link
@@ -73,6 +73,12 @@ def _link_base(base: str, ws: str) -> str:
     return base + "/?" + urlencode({"ws": ws})
 
 
+def _scope(user_id: str, base: str, ws: str, **where) -> dict:
+    """A read-only tool scope for the integration's account: ``where`` is the
+    chat scope's ``type`` with its ``folder`` or ``page_id``."""
+    return {"actor": user_id, "can_write": False, "link_base": _link_base(base, ws), **where}
+
+
 def _link_templates(base: str, ws: str) -> str:
     """One line naming the link shapes, for results that list pages without
     linking each one; a located hit carries its own URL."""
@@ -120,8 +126,7 @@ class GammaMCP:
             # dispatch so they cannot bypass the SDK's input validation.
             if name not in READ_TOOLS:
                 return _error("Tool is not available through Gamma MCP.")
-            scope = {"type": "folder", "folder": "", "actor": user_id, "can_write": False,
-                     "link_base": _link_base(base, ws)}
+            scope = _scope(user_id, base, ws, type="folder", folder="")
             result, action = await run_in_threadpool(
                 run_agent_tool, ws, scope, name, arguments, allowed_tools=READ_TOOLS)
             if action.get("error"):
@@ -132,7 +137,7 @@ class GammaMCP:
             structured = {key: action[key] for key in ("page_id", "block_id", "pdf_page", "pdf_pages")
                           if action.get(key)}
             if structured.get("page_id"):
-                structured["url"] = _link_base(base, ws) + "&" + urlencode({"page": structured["page_id"]})
+                structured["url"] = gamma_link(scope, structured["page_id"])
                 if structured["url"] not in result:
                     result += "\n\nPage URL: " + structured["url"]
             # view_pdf_page's and view_ink's picture: an image the client shows the model.
@@ -147,16 +152,13 @@ class GammaMCP:
         except ValueError as exc:
             return _error(str(exc))
         content = []
-        link_base = _link_base(base, ws)
         if "page_id" in ref:
-            scope = {"type": "page", "page_id": ref["page_id"], "actor": user_id, "can_write": False,
-                     "link_base": link_base}
+            scope = _scope(user_id, base, ws, type="page", page_id=ref["page_id"])
             reads = [("read_page", {key: ref[key] for key in ("page_id", "pdf_page") if key in ref})]
             if ref.get("block_id"):
                 reads.append(("read_block", {"block_id": ref["block_id"]}))
         else:  # a folder share: the folder's listing, read like the folder chat's
-            scope = {"type": "folder", "folder": ref["folder"], "actor": user_id, "can_write": False,
-                     "link_base": link_base}
+            scope = _scope(user_id, base, ws, type="folder", folder=ref["folder"])
             reads = [("list_pages", {})]
             content.append(_link_templates(base, ws))
         for tool, args in reads:

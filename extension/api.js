@@ -68,14 +68,28 @@ export function writableWorkspaces(list) {
   return (list || []).filter((w) => w.role === "editor" || w.role === "owner");
 }
 
+// Remember `workspace` ("" = the account's default) as the connected
+// server's chosen one. Returns whether that is a change.
+export async function chooseWorkspace(settings, workspace) {
+  if (workspace === currentWorkspace(settings)) return false;
+  await setSettings({ workspaces: { ...settings.workspaces, [settings.server]: workspace } });
+  return true;
+}
+
 // Forget a chosen workspace this account can no longer write to (deleted,
 // left, or demoted to viewer) so saves fall back to the account's default
 // instead of failing. A server that lists no workspaces changes nothing.
 export async function checkedWorkspace(settings, list) {
   const workspace = currentWorkspace(settings);
   if (!workspace || !Array.isArray(list) || writableWorkspaces(list).some((w) => w.id === workspace)) return workspace;
-  await setSettings({ workspaces: { ...settings.workspaces, [settings.server]: "" } });
+  await chooseWorkspace(settings, "");
   return "";
+}
+
+// Whether a tab's stored look-up (`origin`, `ws`) is the connected server
+// and workspace's: a hit found in another library says nothing about this one.
+export function sameLibrary(st, settings) {
+  return st.origin === settings.server && (st.ws || "") === currentWorkspace(settings);
 }
 
 // Folders belong to one workspace, so the remembered default folder is keyed

@@ -21,11 +21,9 @@ export function canRevert(a) {
 }
 
 // A reverted change that can be put back. A new note needs the place it
-// was made in, which older actions did not record; a deletion the blocks
-// it took.
+// was made in, which older actions did not record.
 export function canRedo(a) {
-  return recorded(a) && !!a.reverted && (a.kind !== "create" || typeof a.revert.parent === "string")
-    && (a.kind !== "delete" || Array.isArray(a.revert.blocks));
+  return recorded(a) && !!a.reverted && (a.kind !== "create" || typeof a.revert.parent === "string");
 }
 
 // The actions as the request's history sends them for the replay: the

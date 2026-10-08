@@ -37,7 +37,6 @@ environment variable, or the link when ``init --save-token`` kept it there.
 
 import argparse
 import copy
-import hashlib
 import json
 import os
 import sys
@@ -64,11 +63,11 @@ class Server:
     """A thin reader of one Gamma server: JSON answers and file downloads,
     with the token as a bearer header."""
 
-    def __init__(self, url, token, open_=None, timeout=120):
+    def __init__(self, url, token, timeout=120):
         self.url = url.rstrip("/")
         self.token = token
         self.timeout = timeout   # seconds a request may wait on a silent server
-        self.open_ = open_ or default_open or self._urllib_open
+        self.open_ = default_open or self._urllib_open
 
     def _headers(self):
         headers = {"Accept": "application/json", "User-Agent": "gamma-sync/1"}
@@ -97,28 +96,26 @@ class Server:
             raise SyncError(_refusal(status, data, path))
         return json.loads(data.decode("utf-8"))
 
-    def download(self, path, target: Path) -> str:
+    def download(self, path, target: Path) -> None:
         """GET ``path`` into ``target``, written beside it and moved into
-        place once whole; the sha256 of the bytes. A body shorter than the
-        announced length is an error, never a file."""
+        place once whole. A body shorter than the announced length is an
+        error, never a file."""
         status, headers, body = self.open_("GET", path, self._headers())
         if status != 200:
             raise SyncError(_refusal(status, body.read(), path))
         length = headers.get("Content-Length")
         part = target.with_name(target.name + PART)
-        digest, size = hashlib.sha256(), 0
+        size = 0
         try:
             with open(part, "wb") as f:
                 while chunk := body.read(1 << 20):
                     f.write(chunk)
-                    digest.update(chunk)
                     size += len(chunk)
             if length is not None and size != int(length):
                 raise SyncError(f"{path}: received {size} of {length} bytes")
             os.replace(part, target)
         finally:
             part.unlink(missing_ok=True)
-        return digest.hexdigest()
 
 
 class RemoteSource:

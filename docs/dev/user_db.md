@@ -437,9 +437,10 @@ track of the ones nothing uses.
   `store_file` (hashed names, dedup, quota), `storage.store_pdf_stream` (an
   upload spooled to disk and hashed as it arrives, `storage.Spool`),
   `storage.store_pdf_path` (the
-  same for an upload in parts, below) and `storage.put_upload` (bytes under
-  a name chosen elsewhere: the proxy's cache, a clip, a mirror's pull, a
-  restore, a stripped PDF, the AI chat's re-download).
+  same for an upload in parts, below), `storage.put_upload` (bytes under
+  a name chosen elsewhere: a clip, a mirror's pull, a restore, a stripped
+  PDF, the AI chat's re-download) and `storage.put_path` (a file spooled
+  to `.partial/` under such a name: the proxy's cache, an off-site pull).
   `storage.find_upload_file` gives a stored file's path to read (pdfium,
   the zip writers, the PDF exporters); code written against a directory of
   files (the exporters, `ink.read_upload`, the PDF writers) gets

@@ -207,7 +207,6 @@ def test_fit_fills_the_budget_in_order_and_names_what_was_left_out():
                           "3 pictures of an area highlight.")
     assert ai_pictures.label_lines([], {}) == ""
     assert ai_pictures.fit([], 3) == ([], {})
-    assert ai_pictures.budget_of("x") == ai_pictures.DEFAULT_BUDGET and ai_pictures.budget_of(999) == ai_pictures.MAX_BUDGET
 
 
 def test_earlier_pictures_stay_in_the_conversation_newest_first(pictured):

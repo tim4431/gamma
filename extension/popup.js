@@ -1,6 +1,6 @@
 import {
-  api, currentWorkspace, defaultFolder, folderByPath, getSettings, login, normalizeServer, originPattern,
-  removeServer, setSettings,
+  api, chooseWorkspace, currentWorkspace, defaultFolder, folderByPath, getSettings, login, normalizeServer,
+  originPattern, removeServer, setSettings,
 } from "./api.js";
 import { renderServerList } from "./serverList.js";
 import { connectPublisher, describeSession, publisherHost, publisherRoot } from "./publisherSessions.js";
@@ -537,9 +537,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   $("login-btn").onclick = doLogin;
   $("offline-retry").onclick = () => refresh(true);
   workspaceSelect = workspacePicker($("workspace-btn"), $("workspace-menu"), async (value) => {
-    const settings = await getSettings();
-    if (value === currentWorkspace(settings)) return;
-    await setSettings({ workspaces: { ...settings.workspaces, [settings.server]: value } });
+    if (!await chooseWorkspace(await getSettings(), value)) return;
     // The other library has its own folders and labels, and its own answer
     // to "already saved?" — look this tab up again there.
     await refresh();

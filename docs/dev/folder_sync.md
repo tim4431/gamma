@@ -17,19 +17,23 @@ sent back and never overwritten either. Two hosts run the same rounds:
 The design, its reasons, and the way back that is not built are in
 [research/folder-sync.md](../research/folder-sync.md).
 
-Code: `gamma/folder_sync.py` (the layout, the manifest and the notes
-files), `gamma/routers/sync.py` (`GET /api/sync/folders*`, beside the
-change feed), `gamma/gamma_sync.py` (the rounds: the client that is also
-the engine, the standard library only), `gamma/folder_links.py` (the
-desktop server's links: their store, the in-process source, the remote
-source's token and poll, the loop's tick),
-`gamma/routers/folder_links.py` (`/api/folder-links*`), and the desktop
-app's flows in `desktop/main.js` with the bar's sync panel in
-`desktop/ui/bar.html` ([desktop
-architecture](../../desktop/docs/architecture.md) "Folders on this
-computer"). Tests: `backend/tests/test_folder_sync.py` (the reads and the
-client, driven over the TestClient), `backend/tests/test_folder_links.py`
-(the links), and the desktop suite's folder steps (`desktop/test/e2e.js`).
+Code:
+
+- `gamma/folder_sync.py` — the layout, the manifest and the notes files.
+- `gamma/routers/sync.py` — `GET /api/sync/folders*`, beside the change
+  feed.
+- `gamma/gamma_sync.py` — the rounds: the client that is also the engine,
+  the standard library only.
+- `gamma/folder_links.py` — the desktop server's links: their store, the
+  in-process source, the remote source's token and poll, the loop's tick.
+- `gamma/routers/folder_links.py` — `/api/folder-links*`.
+- `desktop/main.js` — the desktop app's flows, with the bar's sync panel in
+  `desktop/ui/bar.html` ([desktop
+  architecture](../../desktop/docs/architecture.md) "Folders on this
+  computer").
+- Tests: `backend/tests/test_folder_sync.py` (the reads and the client,
+  driven over the TestClient), `backend/tests/test_folder_links.py` (the
+  links), and the desktop suite's folder steps (`desktop/test/e2e.js`).
 
 ## What lands on disk
 
@@ -56,7 +60,7 @@ all on the server (`folder_sync.layout`):
   share a directory.
 - **A page appears once**, under its first folder below the linked one in
   the page's own filing order, the rule every folder export uses
-  (`_Filing.folder` in `routers/export.py`). Its other filings are not
+  (`obsidian_export.Filing.folder`). Its other filings are not
   shown. Linking `root` takes the whole library: pages at the library root
   go to the top directory.
 - **One stem per page**, `<dir>/<Title>`, unique in its directory ignoring
@@ -82,7 +86,8 @@ Members read them, by a session or an integration token of either scope
 All three are in `routers/sync.py`:
 
 - `GET /api/sync/folders` — the folder tree as `{folders: [{id, path}]}`,
-  for resolving a typed path and for the Settings dialog's choices.
+  for resolving a typed path (the client's `--folder`) and for the desktop
+  app's folder chooser.
 - `GET /api/sync/folders/{id}` — the **manifest** (`folder_sync.manifest`):
   `{folder: {id, path}, cursor, dirs: [{id, path}], pages: [{id, title,
   stem, doc_id, pdf, pdf_size, notes, version}]}`. `pdf` and `notes` are
@@ -108,41 +113,46 @@ any member ([user_db.md](user_db.md) "Stored files").
 through a **source** with three methods — `manifest()`, `notes(ids)` and
 `download(name, target)` — which `gamma_sync.RemoteSource` answers over
 HTTP (the three reads above and `/api/uploads/`) and
-`folder_links.LocalSource` answers in-process from the workspace. The
-directory's **state file**, `.gamma-sync.json` (`gamma_sync.Link`), holds
-the link (`server`, `workspace`, `folder`, `folder_path`, `notes`), the
-last round's `cursor` and `synced_at`, the `dirs` it made, and `files`: per
-relative path the page it belongs to, its identity (`doc` for a PDF,
-`version` plus its `attachments` for a notes file, `attachment: true` for
-a picture) and the `size` and `mtime` it had when written. That record is
-what makes a round safe: it only ever writes, renames or removes paths it
-has in `files`, and a file whose size or time no longer match counts as
-changed on disk.
+`folder_links.LocalSource` answers in-process from the workspace.
+
+The directory's **state file**, `.gamma-sync.json` (`gamma_sync.Link`),
+holds the link (`server`, `workspace`, `folder`, `folder_path`, `notes`),
+the last round's `cursor` and `synced_at`, and the `dirs` it made. Its
+`files` map records, per relative path, the page the file belongs to, its
+identity (`doc` for a PDF, `version` plus its `attachments` for a notes
+file, `attachment: true` for a picture) and the `size` and `mtime` it had
+when written. That record is what makes a round safe: it only ever writes,
+renames or removes paths it has in `files`, and a file whose size or time
+no longer match counts as changed on disk.
 
 A round fetches the manifest and works through it in a fixed order:
-renames first (a page's file at a new path, when the old file is still as
-written and nothing is in the way, is moved rather than fetched again);
-the directories; then each wanted file is compared with the state —
-missing: fetched; same identity and present: unchanged; different
-identity: fetched, unless the file changed on disk, which is *kept* and
-reported; a file in the way that the round never wrote is kept too. Notes
-are fetched in batches of 100, PDFs one by one into a `.part` beside the
-target and moved into place once whole (a body shorter than the announced
-length is an error, never a file). Then the attachments the notes name are
-fetched once and the ones no note names any more are removed; files of
-pages that left the folder are removed (a changed one is kept and
-forgotten); directories of folders that are gone are removed when empty.
-`full` writes every file again (the way to pick up a link text that lags
-because another page's title changed), `force` replaces the files changed
-on disk, `dry_run` reports and writes nothing. The round counts added,
-updated, renamed, removed and kept, and lists the kept files with the
-reason.
+
+1. Renames: a page's file at a new path is moved rather than fetched
+   again, when the old file is still as written and nothing is in the way.
+2. The directories.
+3. Each wanted file, against the state. Missing: fetched. Same identity
+   and present: unchanged. New identity: fetched, unless the file changed
+   on disk, which is *kept* and reported. A file in the way that the round
+   never wrote is kept too.
+4. The attachments the notes name, fetched once; the ones no note names
+   any more are removed.
+5. The files of pages that left the folder are removed; a changed one is
+   kept and forgotten.
+6. The directories of folders that are gone are removed when empty.
+
+Notes are fetched in batches of 100. PDFs come one by one into a `.part`
+beside the target and are moved into place once whole; a body shorter than
+the announced length is an error, never a file. `full` writes every file
+again (the way to pick up a link text that lags because another page's
+title changed), `force` replaces the files changed on disk, and `dry_run`
+reports and writes nothing. The round counts added, updated, renamed,
+removed and kept, and lists the kept files with the reason.
 
 ## Folders kept by the desktop app
 
 Only the desktop app's own local server keeps folder links. The shell
-starts it with `GAMMA_FOLDER_LINKS` (`config.folder_links_enabled`, read
-through `folder_links.enabled`). On any other server, a NAS among them,
+starts it with `GAMMA_FOLDER_LINKS` (`config.folder_links_enabled`). On
+any other server, a NAS among them,
 `/api/folder-links*` answers 404 with a pointer to the desktop app, and
 `tick` does nothing; a row left from an earlier build stays as it is.
 Such a server only answers the reads above, for a link kept elsewhere.
@@ -257,11 +267,6 @@ stops a round on Windows.
 - A link's text (`[[Title]]`) lags when the *other* page's title changes,
   until the linking page changes or a full round.
 - Chats, reading positions and the trash do not travel, as for the mirror.
-- Only the desktop app keeps folders on disk. A local workspace's folder
-  is read in-process, and a NAS folder through a link with a remote source
-  on the app's local server, with no clone. In background mode the folders
-  keep syncing with the window closed. A computer without the app runs the
-  client.
-- A remote source's token lasts as long as its issuer set (a year from the
-  desktop app); then the round reports a refused token and the link is
-  made again.
+- Only the desktop app keeps folders on disk ("Folders kept by the desktop
+  app" above); a computer without the app runs the client.
+- A remote source's token expires as its issuer set; see the same section.

@@ -48,7 +48,7 @@ test('the button shows the worst state; a detached clone never raises it', () =>
   const busy = folder({ id: 'f2', status: { running: true } });
   const bad = clone({ status: { last_error: 'x', last_sync: now } });
   const off = clone({ workspace_id: 'w2', mode: 'off' });
-  assert.deepEqual(keeping.summarize([ok, off]), { state: 'ok', text: 'Synced', title: '1 clone and 1 folder on disk on this computer: synced', clones: 1, folders: 1 });
+  assert.deepEqual(keeping.summarize([ok, off]), { state: 'ok', text: 'Synced', title: '1 clone and 1 folder on disk on this computer: synced' });
   assert.equal(keeping.summarize([ok, busy]).text, 'Syncing…');
   assert.equal(keeping.summarize([ok, busy, bad]).text, '1 problem');
   assert.equal(keeping.summarize([off]).state, 'ok');

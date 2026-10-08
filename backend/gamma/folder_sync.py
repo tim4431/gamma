@@ -27,11 +27,11 @@ top, by their content-hash name, linked relative to the note.
 import hashlib
 import json
 
-from .blocks_store import (FOLDERS, LABELS, fetch_subtree, filing, folder_paths, folder_subtree_ids, label_names,
-                           pages_in_folder)
+from .blocks_store import fetch_subtree, folder_paths, load_json, newest_change_seq, pages_in_folder
 from .db import safe_doc_id
 from .markdown_export import block_ref_resolver, build_tree, collect_and_rewrite
-from .obsidian_export import VaultContext, page_dir, referenced_blocks, render_vault_page, unique_name, vault_name
+from .obsidian_export import (Filing, VaultContext, page_dir, referenced_blocks, render_vault_page, unique_name,
+                              vault_name)
 from .storage import find_upload_file
 
 ID_KEY = "gamma_id"   # the front-matter property naming the page
@@ -41,7 +41,7 @@ MAX_NOTES = 200       # pages one notes request renders
 
 def _props(text) -> dict:
     try:
-        props = json.loads(text or "{}")
+        props = load_json(text or "{}")
     except (TypeError, ValueError):
         return {}
     return props if isinstance(props, dict) else {}
@@ -82,29 +82,23 @@ def layout(conn, ws: str, folder_id: str) -> dict | None:
     Every folder below becomes a directory (``dirs``, empty ones too), its
     path the sanitized names (``page_dir``). A page filed in the folder or
     below appears once, under its first folder below it — the export's
-    rule (``_Filing.folder``) — as ``<dir>/<Title>``: a stem unique in its
+    rule (``Filing.folder``) — as ``<dir>/<Title>``: a stem unique in its
     directory ignoring case (``unique_name``), shared by the page's PDF
     (``pdf``, only when the file is stored here) and its notes (``notes``).
     ``version`` changes whenever the notes file would: the page's latest op
     and stamp, and the names of its labels."""
-    paths = folder_paths(conn)
-    if folder_id == ROOT:
-        top, below = [], paths
-    else:
-        top = paths.get(folder_id)
-        if top is None:
-            return None
-        inside = folder_subtree_ids(conn, folder_id)
-        below = {f: names[len(top):] for f, names in paths.items() if f in inside}
-    labels = label_names(conn)
-    dirs = [{"id": f, "path": page_dir(names).rstrip("/")} for f, names in below.items() if names]
+    top = [] if folder_id == ROOT else folder_paths(conn).get(folder_id)
+    if top is None:
+        return None
+    fil = Filing(conn, None if folder_id == ROOT else folder_id)
+    dirs = [{"id": f, "path": page_dir(names).rstrip("/")} for f, names in fil.paths.items() if names]
 
     used, pages = set(), []
     for pid, content, props_text, updated_at, seq in _page_rows(conn, folder_id):
         props = _props(props_text)
-        names = next((below[f] for f in filing(props, FOLDERS) if below.get(f)), [])
+        names = fil.folder(props)
         stem = unique_name(used, page_dir(names), vault_name(content or ""), "")
-        tags = [labels[i] for i in filing(props, LABELS) if i in labels]
+        tags = fil.tags(props)
         doc_id = str(props.get("doc_id") or "")
         pdf = _stored_pdf(ws, doc_id)
         version = f"{seq}:{updated_at or ''}"
@@ -128,8 +122,7 @@ def manifest(conn, ws: str, folder_id: str) -> dict | None:
     lay = layout(conn, ws, folder_id)
     if lay is None:
         return None
-    newest = conn.execute("SELECT COALESCE(MAX(seq), 0) FROM page_changes").fetchone()[0]
-    return {"folder": {"id": folder_id, "path": lay["path"]}, "cursor": str(newest), "dirs": lay["dirs"],
+    return {"folder": {"id": folder_id, "path": lay["path"]}, "cursor": str(newest_change_seq(conn)), "dirs": lay["dirs"],
             "pages": [{k: p[k] for k in _PUBLIC} for p in lay["pages"]]}
 
 

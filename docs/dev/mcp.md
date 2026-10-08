@@ -174,11 +174,10 @@ Ask Codex to find a page, search a topic, or summarize notes. Tools available:
 
 The first ten are the Gamma chat's own tools (`gamma/ai_tools.py`, described
 in [ai_tools.md](ai_tools.md)), run through the same dispatcher with a
-workspace-wide, non-writable scope. The allowlist is derived from the registry
-(`ai_tools.mcp_tools`, `READ_TOOLS` in `mcp_server.py`): every reading tool
-that stays inside the library, so a new reading tool is offered without
-touching the adapter, and `test_mcp.py` pins the resulting names so growth is
-seen. The chat's other tools stay off: the web tools (`search_papers`,
+workspace-wide, non-writable scope. `READ_TOOLS` in `mcp_server.py` comes
+from `ai_tools.mcp_tools`: every reading tool that stays inside the library.
+A new reading tool is offered without touching the adapter; `test_mcp.py`
+pins the names. The chat's other tools stay off: the web tools (`search_papers`,
 `fetch_paper`, …), because the assistant has its own web access;
 `list_deleted`, because Recently deleted is out of the reading tools' reach
 and restoring is a change; and every write tool, because the connection is
@@ -191,14 +190,19 @@ which the client shows the model as images.
 ### Links in results
 
 Every result starts with one line naming this server and workspace's link
-shapes — page, PDF citation, note block — and each located hit carries its
-own absolute URL: a search hit links its PDF page (`…&page=<id>&pdf_page=N`)
-or its note block (`…&block=<id>`); `read_page` ends with a `[Links: …]` line
-naming the page and the citation form of the window's PDF pages; `read_block`
-and `cite` link in their head lines; `view_pdf_page` beside its page number.
+shapes: page, PDF citation, note block. Each located hit carries its own
+absolute URL:
+
+- a search hit links its PDF page (`…&page=<id>&pdf_page=N`) or its note
+  block (`…&block=<id>`);
+- `read_page` ends with a `[Links: …]` line naming the page and the
+  citation form of the window's PDF pages;
+- `read_block` and `cite` link in their head lines;
+- `view_pdf_page` links beside its page number.
+
 The executors add these only when the scope carries `link_base`
-(`ai_tools.gamma_link`), which the adapter sets to `<public URL>/?ws=<id>`;
-the chat's results are unchanged, its model writes the relative links the
+(`ai_tools.gamma_link`), which the adapter sets to `<public URL>/?ws=<id>`.
+The chat's results carry no URLs; its model writes the relative links the
 chat renders itself. A `Page URL:` footer follows a result that names a page
 without linking it (`read_chats`). The call's location goes out as
 `structuredContent` too: `page_id` and `url`, with `block_id`, `pdf_page` or
@@ -206,10 +210,10 @@ without linking it (`read_chats`). The call's location goes out as
 
 The server instructions carry the chat's citation instruction
 (`ai_tools.citation_prompt`, [pdf_citations.md](pdf_citations.md)) in its
-absolute form and ask for absolute `https://` Markdown links, never relative
-ones: Codex's terminal UI hyperlinks only absolute http(s) destinations
-(OSC 8, Codex CLI 0.150 and later; other terminals show the raw URL), and
-its IDE extension and desktop app open them in the browser. Such a link in a
+absolute form and ask for absolute Markdown links, never relative ones.
+Codex's terminal UI hyperlinks only absolute http(s) destinations (OSC 8,
+Codex CLI 0.150 and later; other terminals show the raw URL), and its IDE
+extension and desktop app open them in the browser. Such a link in a
 signed-in browser lands in the workspace and opens the page; with `pdf_page`
 and `quote` it highlights the passage. The desktop app's sidecar picks a
 free port per launch (`desktop/lib/sidecar.js`), so links minted against it

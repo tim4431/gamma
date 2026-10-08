@@ -31,7 +31,6 @@ PART_BYTES = 32 * MB      # what the open reply tells a client to send per part
 PART_BYTES_MAX = 64 * MB  # the most one part may hold (413 past it)
 IDLE_S = 3600             # a session nothing touched this long is dropped
 MAX_PER_WS = 8            # sessions open at once per workspace (429 past it)
-_CHUNK = 1 << 20
 
 
 class OffsetMismatch(Exception):
@@ -116,7 +115,7 @@ def append(session: Session, offset: int, stream) -> int:
         with open(session.path, "r+b") as f:
             f.seek(session.received)
             while True:
-                chunk = stream.read(_CHUNK)
+                chunk = stream.read(storage.SPOOL_CHUNK)
                 if not chunk:
                     break
                 if written + len(chunk) > room:
@@ -150,7 +149,7 @@ def finish(session: Session) -> tuple[str, bool]:
         if not storage.is_pdf(head):
             session.path.unlink(missing_ok=True)
             raise HTTPException(status_code=400, detail="not a valid PDF (missing %PDF header)")
-        doc_id = session.digest.hexdigest()[:storage.DIGEST_CHARS]
+        doc_id = storage.digest_id(session.digest)
         return storage.store_pdf_path(session.ws, session.path, session.size, doc_id)
 
 

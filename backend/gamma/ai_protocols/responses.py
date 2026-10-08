@@ -5,7 +5,12 @@ backend (chatgpt.py)."""
 import json
 from urllib.request import Request as URLRequest
 
-from .base import TOOL_IMAGES_NOTE, Protocol, as_int, note_speed, parse_tool_args, tool_image_turns, turn_images
+from .base import (OPENAI_PICTURE_TOKENS, TOOL_IMAGES_NOTE, Protocol, as_int, note_speed, parse_tool_args,
+                   tool_image_turns, turn_images)
+
+
+def _image_part(media_type: str, data: str) -> dict:
+    return {"type": "input_image", "image_url": f"data:{media_type};base64,{data}"}
 
 
 def responses_input(messages, pdf_b64s=None, images=None) -> list:
@@ -13,8 +18,7 @@ def responses_input(messages, pdf_b64s=None, images=None) -> list:
     items = []
     image_turn = lambda imgs: {"type": "message", "role": "user", "content": [  # noqa: E731
         {"type": "input_text", "text": TOOL_IMAGES_NOTE},
-        *[{"type": "input_image", "image_url": f"data:{media_type};base64,{data}"}
-          for media_type, data in imgs]]}
+        *[_image_part(media_type, data) for media_type, data in imgs]]}
     image_turns = []  # never the turn the user's own attachments ride on
     for message, is_image_turn in tool_image_turns(messages, image_turn):
         if is_image_turn:
@@ -33,8 +37,7 @@ def responses_input(messages, pdf_b64s=None, images=None) -> list:
         else:
             # An earlier message's pictures, kept in the conversation, go
             # before its text like the request's own attachments below.
-            content = [*[{"type": "input_image", "image_url": f"data:{media_type};base64,{data}"}
-                         for media_type, data in turn_images(message)],
+            content = [*[_image_part(media_type, data) for media_type, data in turn_images(message)],
                        {"type": "input_text", "text": message["content"]}]
             items.append({"type": "message", "role": "user", "content": content})
     if pdf_b64s or images:
@@ -45,8 +48,7 @@ def responses_input(messages, pdf_b64s=None, images=None) -> list:
             *[{"type": "input_file", "filename": f"document-{index + 1}.pdf",
                "file_data": f"data:application/pdf;base64,{data}"}
               for index, data in enumerate(pdf_b64s or [])],
-            *[{"type": "input_image", "image_url": f"data:{media_type};base64,{data}"}
-              for media_type, data in (images or [])],
+            *[_image_part(media_type, data) for media_type, data in (images or [])],
             *last["content"],
         ]
     return items
@@ -106,7 +108,7 @@ class ResponsesWire(Protocol):
     """The Responses stream and token report; a backend adds its request."""
 
     streams_only = True  # always SSE — read_reply joins the deltas
-    picture_tokens = 800  # as on chat completions: a 1568 px page is four tiles
+    picture_tokens = OPENAI_PICTURE_TOKENS
     # Both Responses backends route by service tier: "priority" is the fast
     # one (OpenAI's fast mode, Codex's own Fast), "flex" the cheaper, slower
     # one. The Codex backend's listing says which tiers each model has.

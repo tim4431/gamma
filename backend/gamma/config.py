@@ -26,12 +26,18 @@ BACKUPS_DIR = DATA_DIR / "backups"
 STATIC_DIR = os.environ.get("GAMMA_STATIC_DIR", "")
 
 
+def _env_on(name: str, default: str = "") -> bool:
+    """Whether the variable ``name`` is set to a truthy word (1/true/yes/on,
+    any case); ``default`` stands in when it is unset."""
+    return os.environ.get(name, default).strip().lower() in ("1", "true", "yes", "on")
+
+
 def folder_links_enabled() -> bool:
     """Whether this server keeps folders on disk (gamma/folder_links.py):
     GAMMA_FOLDER_LINKS, which only the desktop app sets, for the local
     server it runs as the user on the user's own computer. Read when asked,
     so a test can turn it on."""
-    return os.environ.get("GAMMA_FOLDER_LINKS", "").strip().lower() in ("1", "true", "yes", "on")
+    return _env_on("GAMMA_FOLDER_LINKS")
 
 
 # Keep these reads lazy, as before: server settings and publisher sessions
@@ -69,14 +75,14 @@ def cloud_env() -> dict:
             "client_secret": os.environ.get("GAMMA_CLOUD_CLIENT_SECRET", ""),
             "policy": os.environ.get("GAMMA_CLOUD_POLICY", "").strip().lower(),
             "admin_subject": os.environ.get("GAMMA_CLOUD_ADMIN_SUBJECT", "").strip(),
-            "share_host": os.environ.get("GAMMA_CLOUD_SHARE_HOST", "").strip().lower() in ("1", "true", "yes", "on")}
+            "share_host": _env_on("GAMMA_CLOUD_SHARE_HOST")}
 
 
 def hosted() -> bool:
     """``GAMMA_HOSTED=1``: this server is a paid hosted container. It learns
     its plan's limits from the account server ``GAMMA_CLOUD_ISSUER`` names,
     with the client id and secret of the cloud variables (gamma/hosted.py)."""
-    return os.environ.get("GAMMA_HOSTED", "").strip().lower() in ("1", "true", "yes", "on")
+    return _env_on("GAMMA_HOSTED")
 
 
 # The share host's published-page cap per Gamma Cloud plan (gamma/publish.py
@@ -137,7 +143,7 @@ def guest_ttl_override() -> str:
 
 def demo_override() -> bool:
     """``GAMMA_DEMO`` truthy: demo mode on, whatever the saved setting says."""
-    return os.environ.get("GAMMA_DEMO", "").strip().lower() in ("1", "true", "yes", "on")
+    return _env_on("GAMMA_DEMO")
 
 
 def sync_interval_s() -> int:

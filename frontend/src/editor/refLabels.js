@@ -4,8 +4,13 @@
 // own entry, which keeps its identity while its labels read the same, so a
 // keystroke in one block re-renders no other row.
 import { gammaLinkIds } from "../shared/model/gammaLinks.js";
+import { sameObject } from "../shared/lib/keepIfSame.js";
 
 export const NO_LABELS = Object.freeze({});
+
+// A [[ref]] in a block's content, its id as the group: the one spelling
+// every scan of a block's refs uses (the rows, the backlinks, the picker).
+export const REF_RE = /\[\[([a-zA-Z0-9_-]+)\]\]/g;
 
 // A cached ref as the chips and embed cards read it: the block's text and
 // its page's title, or, for a block no page holds (App's onFetchRefs), its
@@ -21,11 +26,11 @@ export function refLabelOf(rb) {
 // [[ref]] (shown even when its block is trashed or missing), false for a
 // Gamma link (an ordinary URL when it does not resolve).
 const REF_IDS = new WeakMap();
-function refIdsOf(block) {
+export function refIdsOf(block) {
   let ids = REF_IDS.get(block);
   if (ids) return ids;
   const content = block.content || "";
-  ids = [...content.matchAll(/\[\[([a-zA-Z0-9_-]+)\]\]/g)].map((m) => [m[1], true]);
+  ids = [...content.matchAll(REF_RE)].map((m) => [m[1], true]);
   for (const id of gammaLinkIds(content)) if (!ids.some(([x]) => x === id)) ids.push([id, false]);
   REF_IDS.set(block, ids);
   return ids;
@@ -36,11 +41,7 @@ function sameLabel(a, b) {
     && a.trashed === b.trashed && a.missing === b.missing);
 }
 
-function sameLabels(a, b) {
-  const keys = Object.keys(a);
-  if (keys.length !== Object.keys(b).length) return false;
-  return keys.every((k) => sameLabel(a[k], b[k]));
-}
+const sameLabels = (a, b) => sameObject(a, b, sameLabel);
 
 // Map block id → {refId: label} for every block of `tree` whose content
 // names a ref: `byId` resolves a page's own blocks, `refCache` the ones

@@ -914,7 +914,8 @@ until it follows.
 
 A third consumer keeps no copy of the workspace at all: the folder sync
 ([folder_sync.md](folder_sync.md)) writes one folder's pages to a directory
-on a PC as files, Gamma to disk, through two reads of its own beside the
+on a PC as files, one way from Gamma to disk, through
+`GET /api/sync/folders/{id}` (the manifest) and `…/notes` beside the change
 feed.
 
 ## Limits and next steps

@@ -91,10 +91,9 @@ client only ever touches files it wrote.
   client did not write is never touched. A directory is removed only when
   empty.
 - **Where it runs.** The rounds are one module with two sources: the
-  server runs them in-process for the links it keeps of its own
-  workspaces (a NAS share then carries the directory to every machine),
-  over HTTP for a link whose folder is on another Gamma server, and the
-  same file runs alone on a PC. Only the desktop app's own server keeps
+  desktop app's local server runs them in-process for its own workspaces,
+  and over HTTP for a folder on another Gamma server; the same file runs
+  alone on a PC. Only the desktop app's own server keeps
   links. A server writing folders to its own disk is not offered: the
   folder is wanted on the PC, which the app reaches with a read token it
   mints and no clone. A folder's right-click menu in Gamma and the bar's

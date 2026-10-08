@@ -55,7 +55,6 @@ test("a chip's picture is the server's, else derived from what the chip carries"
   assert.equal(chipPicture({ kind: "view", picture: "/api/ai/page-image/p?page=2", page_id: "p", pdf_page: 2 }), "/api/ai/page-image/p?page=2");
   assert.equal(chipPicture({ kind: "view", page_id: "p", pdf_page: 3 }), "/api/ai/page-image/p?page=3");
   assert.equal(chipPicture({ kind: "ink", block_id: "b" }), "/api/ai/ink-image/b");
-  assert.equal(chipPicture({ kind: "clip", url: "/api/uploads/c.jpg" }), "/api/uploads/c.jpg");
   assert.equal(chipPicture({ kind: "view", page_id: "p", pdf_page: 3, error: true }), "");
   assert.equal(chipPicture({ kind: "read", page_id: "p" }), "");
   assert.equal(chipPicture(null), "");

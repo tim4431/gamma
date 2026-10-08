@@ -420,7 +420,7 @@ function startBackgroundHosts() {
     sidecar
       .start(srv, state.settings, appInfo())
       .then(() => pushState())
-      .catch((e) => console.error(`[shell] could not start ${srv.name} for its offline copies: ${e.message || e}`));
+      .catch((e) => console.error(`[shell] could not start ${srv.name} for what it keeps in the background: ${e.message || e}`));
   }
 }
 
@@ -547,8 +547,8 @@ async function localServer(serverId) {
 // ------------------------------------------------- folders on this computer -----
 // "Keep a folder on this computer": a folder of the open server's workspace
 // written to a directory of the user's choice — PDFs beside Markdown notes —
-// and kept up to date by a local server (docs/dev/folder_sync.md "Links kept
-// by the server"). On a LOCAL server the link is that server's own; it reads
+// and kept up to date by a local server (docs/dev/folder_sync.md "Folders
+// kept by the desktop app"). On a LOCAL server the link is that server's own; it reads
 // the workspace in-process. On a REMOTE server the link lives on the host
 // local server (ensureHost) with a read-scope token minted on the remote,
 // and the host reads the folder over HTTP: no clone, only the folder's files
@@ -594,17 +594,21 @@ async function listFolders(wsId) {
   return { folders: tree.folders || [], links };
 }
 
-async function pickDirectory(name) {
+// The native directory picker: the path chosen, null when cancelled.
+async function chooseDirectory(opts) {
+  const r = win ? await dialog.showOpenDialog(win, opts) : await dialog.showOpenDialog(opts);
+  return r.canceled ? null : r.filePaths[0] || null;
+}
+
+function pickDirectory(name) {
   if (process.env.GAMMA_SHELL_PICK_DIR) return process.env.GAMMA_SHELL_PICK_DIR;
-  const opts = {
+  return chooseDirectory({
     title: `Keep “${name}” on this computer`,
     message: `Choose where “${name}” goes. An empty folder is used as it is; any other gets a folder named “${name}” inside.`,
     buttonLabel: 'Keep here',
     properties: ['openDirectory', 'createDirectory'],
     defaultPath: app.getPath('documents'),
-  };
-  const r = win ? await dialog.showOpenDialog(win, opts) : await dialog.showOpenDialog(opts);
-  return r.canceled ? null : r.filePaths[0] || null;
+  });
 }
 
 function isEmptyDir(p) {
@@ -844,9 +848,9 @@ function showNotice(text) {
 // ---------------------------------------------------------- background -----
 // "Keep running in the background": closing the window leaves the app in
 // the tray with every local server running, so clones and folders on disk
-// keep syncing (docs/architecture.md "Background and tray"). Off, the app
-// quits with its last window as before (macOS keeps the dock process either
-// way). "Start at login" launches it hidden, straight into the tray.
+// keep syncing (docs/architecture.md "Background and tray"). Off, closing
+// the last window quits (macOS keeps the dock process either way). "Start
+// at login" launches it hidden, straight into the tray.
 
 function trayIcon() {
   const img = nativeImage.createFromPath(path.join(__dirname, 'assets', 'icon.png'));
@@ -854,13 +858,20 @@ function trayIcon() {
   return img.resize({ width: size, height: size });
 }
 
-function trayMenu() {
+// The two switches as menu items, under the labels the menu's case wants.
+function backgroundItems(keepLabel, loginLabel) {
   const s = registry.getSettings();
+  return [
+    { label: keepLabel, type: 'checkbox', checked: Boolean(s.background), click: (item) => setBackground(item.checked) },
+    { label: loginLabel, type: 'checkbox', checked: Boolean(s.openAtLogin), click: (item) => setOpenAtLogin(item.checked) },
+  ];
+}
+
+function trayMenu() {
   return Menu.buildFromTemplate([
     { label: 'Open Gamma', click: () => showWindow() },
     { type: 'separator' },
-    { label: 'Keep running in the background', type: 'checkbox', checked: Boolean(s.background), click: (item) => setBackground(item.checked) },
-    { label: 'Start at login', type: 'checkbox', checked: Boolean(s.openAtLogin), click: (item) => setOpenAtLogin(item.checked) },
+    ...backgroundItems('Keep running in the background', 'Start at login'),
     { type: 'separator' },
     { label: 'Quit Gamma', click: () => app.quit() },
   ]);
@@ -948,16 +959,16 @@ function applyLoginItem() {
 // A clone or a folder on disk stays in sync only while Gamma runs: when one
 // is made and the app still quits with its window, offer the background.
 async function offerBackground(what) {
-  if (registry.getSettings().background || process.env.GAMMA_SHELL_TEST || !win) return;
-  const r = await dialog.showMessageBox(win, {
+  if (registry.getSettings().background || !win) return;
+  const answer = await ask({
     type: 'question',
     buttons: ['Keep running', 'Not now'],
     defaultId: 0,
     cancelId: 1,
     message: 'Keep Gamma running in the background?',
     detail: `${what} stays in sync only while Gamma runs. In the background Gamma keeps running after the window is closed, with an icon in the tray, and can start at login.`,
-  });
-  if (r.response === 0) setBackground(true);
+  }, 1);
+  if (answer === 0) setBackground(true);
 }
 
 // Navigate the open server to one of its Gamma workspaces.
@@ -1157,8 +1168,7 @@ function buildMenu() {
           click: () => openServer(ws.id).catch((e) => loadLauncher(e, ws.id)),
         })),
         { type: 'separator' },
-        { label: 'Keep Running in the Background', type: 'checkbox', checked: Boolean(registry.getSettings().background), click: (item) => setBackground(item.checked) },
-        { label: 'Start at Login', type: 'checkbox', checked: Boolean(registry.getSettings().openAtLogin), click: (item) => setOpenAtLogin(item.checked) },
+        ...backgroundItems('Keep Running in the Background', 'Start at Login'),
         { type: 'separator' },
         process.platform === 'darwin' ? { role: 'close' } : { role: 'quit' },
       ],
@@ -1296,11 +1306,8 @@ function registerIpc() {
     const { links } = await listFolders(wsId);
     if (links.some((l) => l.dest === p)) openDirectory(p);
   }));
-  ipcMain.handle('shell:pick-folder', shellOnly(async (defaultPath) => {
-    const opts = { properties: ['openDirectory', 'createDirectory'], defaultPath: defaultPath || undefined };
-    const r = win ? await dialog.showOpenDialog(win, opts) : await dialog.showOpenDialog(opts);
-    return r.canceled ? null : r.filePaths[0] || null;
-  }));
+  ipcMain.handle('shell:pick-folder', shellOnly((defaultPath) =>
+    chooseDirectory({ properties: ['openDirectory', 'createDirectory'], defaultPath: defaultPath || undefined })));
   // Storage root for local servers ('' = default). Moving needs the SQLite
   // files closed, so every sidecar under the old root is stopped first; they
   // restart on the next open. A local server that is open goes back to the

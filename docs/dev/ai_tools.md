@@ -64,12 +64,11 @@ before dispatching a mutation, so attachments do not grant editing access.
 The [MCP adapter](mcp.md) exposes a read-only subset of this same registry to
 external assistants. `agent_tools` filters definitions and `run_agent_tool`
 enforces the caller's allowlist at dispatch. Gamma chat passes its armed tool
-set; MCP passes an allowlist derived from the registry (`mcp_tools`: every
-reading tool that stays inside the library — not the web and write tools or
-`list_deleted`) and a non-writable workspace scope whose `link_base` makes
-the results carry absolute links to pages, PDF pages and blocks
-(`gamma_link`; the chat's results carry none, [mcp.md](mcp.md) "Links in
-results").
+set. MCP passes `mcp_tools`: every reading tool that stays inside the
+library, without the web tools, the change tools or `list_deleted`. Its
+scope is read-only, and its `link_base` makes results carry absolute links
+to pages, PDF pages and blocks (`gamma_link`; the chat's results carry none,
+[mcp.md](mcp.md) "Links in results").
 
 | Tool | Permission | Scope | What it does |
 |---|---|---|---|
@@ -1017,7 +1016,8 @@ cross-page moves (allowed when both pages are in scope) refuse subtrees
 containing highlight blocks, whose PDF anchors are tied to their own paper.
 They also refuse a text box, placed on its own page's PDF or sheet, unless
 the sheet it is on moves with it (`_loose_text_box`).
-All three go through the op path (`ops.apply_ops`, [collab.md](collab.md)):
+`delete_block` removes a block with its subtree (below).
+All four go through the op path (`ops.apply_ops`, [collab.md](collab.md)):
 logged, fanned out to anyone on the page, and the page root's `updated_at`
 stamped so the home feed reorders. Their UI actions carry `page_id` (moves across
 pages also `src_page_id`) and `block_id` (the edited/moved block, or the
@@ -1025,9 +1025,9 @@ created block's new id; `read_block` actions carry it too). The frontend
 reloads the open page's block tree when it was touched and lights the block
 up; edit/create calls are previewed in the block while the model is still
 writing them (see "Watching the agent work" in [ai.md](ai.md)). Each of
-the three records what undoing it needs, so the user can revert it from the
-reply ("Reverting a note change" below). No tool deletes under any
-permission: an unwanted block is emptied or left for the user.
+the four records what undoing it needs, so the user can revert it from the
+reply ("Reverting a note change" below). Pages are never deleted by a tool:
+an unwanted page is left for the user.
 
 Typical uses: *"rename these to AuthorYear style"*, *"file the readout papers
 into a subfolder"*, *"which of these papers measure T1? summarize the
@@ -1043,12 +1043,12 @@ back the page on Rydberg blockade I deleted last week"*.
 ### delete_block (both scopes)
 
 Removes a note block with everything nested under it, in the Edit note
-blocks permission. A page id is refused (the agent never deletes pages); a
-highlight block's deletion removes its mark from the PDF and a handwriting
-block's the handwriting, which the approval card says (`what`:
-`_deleted_kind` — note, highlight, handwriting, text box, page of paper —
-and `children`, how many blocks go with it, over a diff of the block's
-text struck out). The action (kind `delete`, with `page_id`, `block_id`,
+blocks permission. A page id is refused (the agent never deletes pages).
+Deleting a highlight removes its mark from the PDF; deleting a handwriting
+block removes the handwriting. The approval card names the kind (`what`,
+from `_deleted_kind`: note, highlight, handwriting, text box, page of
+paper), counts the nested blocks (`children`) and shows the text struck
+out. The action (kind `delete`, with `page_id`, `block_id`,
 `title`) records every block of the subtree, parent first, as `revert`
 (`{"blocks": [[id, parent, position, content, properties], …]}`), so the
 user's revert puts the subtree back where it was with the same ids and the
@@ -1088,13 +1088,16 @@ embed: the ones in a picture's label line, `clip_region`'s result, and
 
 Deliberately not offered under any permission:
 
-- Deleting anything — pages, blocks, folders, files.
+- Deleting pages, folders or files. A note block is deleted only by
+  `delete_block`, which the user can revert.
 - Editing highlight anchors or labels, creating or renaming folders on
   their own (a folder is made only as `move_page`'s or `save_paper`'s
   target), and refiling except through `move_page`.
 - Reading library pages outside the base scope and attached references, or
   editing pages outside the base scope. The server checks every call.
-- Reaching uploads, share links, settings, or other users' data.
+- Reaching uploads other than the pictures a note embeds (`view_image`)
+  and the ones `clip_region` stores, share links, settings, or other
+  users' data.
 - Adding a paper as a side effect of reading it: `fetch_paper` never
   creates a page. Only `save_paper` does, under its own permission and on
   the user's request.
@@ -1135,6 +1138,7 @@ The note tools record what undoing and redoing their change needs, as
 | `edit_block` | `before` and `after`: the block's text just before and just after the write, read under the write lock |
 | `create_block` | `after`: the text the block was made with; `parent` and `position`: where it went |
 | `move_block` | `parent` and `position`: where the block was; `to_parent` and `to_position`: where it went |
+| `delete_block` | `blocks`: every block of the subtree, parent first, as `[id, parent, position, content, properties]` |
 
 The chat saves the action with the reply. A revert sends it to
 `POST /api/ai/revert` (`gamma/ai_revert.py`), which plans and writes under
@@ -1145,6 +1149,7 @@ one write lock:
 | edit | merging the change `after → before` into the text stored now (`textmerge.merge` with word-level hunks, `semantic`) | `changed`: someone changed the agent's own text |
 | new block | deleting it | `filled`: it was typed in or has notes under it (`preview.children`) |
 | move | moving it back to the old parent at the old key, re-keyed if a sibling took it (across pages: `ops.move_across_pages`) | `moved`: it was moved on since |
+| deletion | inserting the subtree again with the same ids, parents and keys (a no-op when the block is back already); a redo deletes it again | `gone`: the parent it was under was deleted |
 
 Typing elsewhere in an edited block survives the merge. So two edits to
 different parts of one block revert independently. The merge works on

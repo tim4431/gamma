@@ -145,11 +145,11 @@ message, and it doesn't stop fabrication — the tools are the better lever.
   pdfium walk takes seconds on a long book, under the lock, in the way of
   the viewer's manifest walks and the indexer. A stored PDF never changes
   under its name (a content hash), so the text of a page, once extracted,
-  is kept in the process: per file the pages read so far (a head read
-  fills the head; the next window goes on from there), at most `TEXT_CACHE_FILES`
-  (64) files and `TEXT_CACHE_CHARS` (32 million characters) together,
-  least recently read dropped first. The key carries the file's size and
-  mtime, so a file rewritten in place (annotations stripped) is read
+  is kept in the process. Per file it holds the pages read so far: a head
+  read fills the head, and the next window goes on from there. It keeps at
+  most `TEXT_CACHE_FILES` (64) files and `TEXT_CACHE_CHARS` (32 million
+  characters) together, least recently read dropped first. The key carries
+  the file's size and mtime, so a file rewritten in place (annotations stripped) is read
   again; bytes sources (a PDF in a chat message) and the search indexer's
   walk (`cache=False`, so a library's worth of papers does not push out the
   ones being read) bypass it. `page_count` answers from it too. Tests:

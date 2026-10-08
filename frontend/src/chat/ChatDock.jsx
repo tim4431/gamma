@@ -30,7 +30,7 @@ import { menuPress } from "../shared/ui/press.js";
 import { touchTyping } from "../shared/lib/pointer.js";
 import { composing, sendsOnEnter } from "./enterKey.js";
 import { chatFailure, failureCopy, failureFields, fixLabel } from "./chatErrors";
-import { chipNote, helperStatus, isChange, runningLabel, splitActions, stepsSummary, withHelper } from "./agentSteps";
+import { BLOCK_TOOLS, chipNote, helperStatus, isChange, runningLabel, splitActions, stepsSummary, withHelper } from "./agentSteps";
 import { guideEvents } from "../guide/events.js";
 import { gammaLinksIn } from "../shared/model/gammaLinks.js";
 import { CharSlider, approxPages } from "../settings/SettingsKit";
@@ -273,9 +273,6 @@ function ContextRing({ fraction }) {
   );
 }
 
-// The note-block mutators: their actions carry the page id(s) they touched,
-// so the open page's block tree can reload and show the change.
-const BLOCK_TOOLS = new Set(["edit_block", "create_block", "move_block", "delete_block"]);
 const toolCallText = (a) => {
   const args = Object.entries(a.args || {}).map(([k, v]) => `${k}: ${v}`).join(", ");
   const head = `${a.tool || a.kind}(${args})`;
@@ -1042,10 +1039,11 @@ export default function ChatDock({
       // chat is never re-sent) — not the reports and counts saved with
       // them, nor the texts kept for reverting a change (failed replies
       // aren't answers).
-      history: prevMessages.filter((m) => !m.error).map(({ role, text: turnText, actions: turnActions, reasoning, images: turnImages }) => ({
-        role, text: turnText, ...(turnActions?.length ? { actions: forReplay(turnActions) } : {}),
-        ...(reasoning ? { reasoning } : {}),
-        ...(historyPictures(turnImages).length ? { images: historyPictures(turnImages) } : {}) })),
+      history: prevMessages.filter((m) => !m.error).map(({ role, text: turnText, actions: turnActions, reasoning, images: turnImages }) => {
+        const sent = historyPictures(turnImages);
+        return { role, text: turnText, ...(turnActions?.length ? { actions: forReplay(turnActions) } : {}),
+          ...(reasoning ? { reasoning } : {}), ...(sent.length ? { images: sent } : {}) };
+      }),
       chat_key: key, // the conversation, for the provider's prompt cache
       model: model || chatModel || "",
       selections: pdfSelections,
@@ -1306,7 +1304,7 @@ export default function ChatDock({
       // Note-block edits carry the page(s) they touched, so the open page's
       // block tree can reload and show the change.
       const notePages = [...new Set(actions
-        .filter((a) => !a.error && BLOCK_TOOLS.has(a.tool))
+        .filter((a) => !a.error && BLOCK_TOOLS.includes(a.tool))
         .flatMap((a) => [a.page_id, a.src_page_id].filter(Boolean)))];
       if (notePages.length) onNotesChange?.(notePages);
     }

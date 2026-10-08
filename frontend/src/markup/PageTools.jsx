@@ -3,7 +3,7 @@
 // take the same tools from here. App owns the state and the handlers and
 // provides PageToolsContext around the viewer and the notes
 // (docs/dev/handwriting.md).
-import { createContext, useContext, useMemo, useRef } from "react";
+import { createContext, useContext } from "react";
 
 // {readOnly, ink: {tool, penTool, penOnly, pressure, eraserMode, eraserSize,
 // lassoMode}, text: {armed, style}, actions}. ink.tool is the armed tool and
@@ -13,7 +13,10 @@ import { createContext, useContext, useMemo, useRef } from "react";
 // actions carries the handlers: the ink ones (onStroke, onErase,
 // onErasePartial, onSelect, onAction, onMoveSelection, onFingerScroll),
 // onJump (show a mark's block in the notes) and the text boxes'
-// (markup/useTextBoxes.js).
+// (markup/useTextBoxes.js) — one object for App's life whose functions call
+// the latest handlers (shared/lib/stableActions.js), so the context value
+// changes only with the tools and a memoized page never re-renders for a
+// new closure.
 export const PageToolsContext = createContext(null);
 export const usePageTools = () => useContext(PageToolsContext);
 
@@ -21,13 +24,3 @@ export const usePageTools = () => useContext(PageToolsContext);
 // markup.css): inkArmed, inkTouchDraw when a finger draws too, textArmed.
 export const armedClasses = ({ ink, text }) => (ink.tool ? " inkArmed" : "") + (ink.tool && !ink.penOnly ? " inkTouchDraw" : "")
   + (text.armed ? " textArmed" : "");
-
-// One object for the component's life whose functions call the latest
-// `handlers` (the same names every render): the context value then changes
-// only with the tools, and a memoized page never re-renders for a new closure.
-export function useStableActions(handlers) {
-  const ref = useRef(handlers);
-  ref.current = handlers;
-  return useMemo(() => Object.fromEntries(Object.keys(ref.current)
-    .map((name) => [name, (...args) => ref.current[name](...args)])), []);
-}

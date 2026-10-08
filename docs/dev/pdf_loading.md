@@ -19,7 +19,8 @@ is created with `CREATE TABLE IF NOT EXISTS` (no migration step), lives in
 backups harmlessly, and is purged with the index when no page carries the
 document any more (`pdf_index.purge_unused`).
 
-Who writes it: `storage.store_pdf` (uploads, imports, file chips) and
+Who writes it: `storage.store_pdf` (imports, a PDF the fetch handoff held),
+`storage.store_pdf_stream` (uploads, a file chip's PDF among them) and
 `storage.store_pdf_path` (an upload sent in parts, `upload_parts.finish`;
 [api.md](api.md) "/uploads/parts"), the `/api/pdf` proxy's save path and
 `/api/clip` schedule it on a background thread the moment the file lands, so
@@ -63,8 +64,8 @@ document). The viewer's load effect composes them:
    under pdf.js. The byte cache (`PDF_CACHE`) holds one entry, which pays
    for this one: re-reading bytes from IndexedDB costs tens of milliseconds,
    re-parsing them is the expensive half. The in-document search (Ctrl+F)
-   reads each page's text from pdf.js once per parsed document and keeps it
-   beside it (`SEARCH_TEXT`, a WeakMap by document, freed with it): the
+   reads each page's text from pdf.js once per parsed document and caches it
+   per parsed document (`SEARCH_TEXT`, a WeakMap freed with the document): the
    first query over a book extracts every page, the next is a regex over
    strings. A query the panel has moved past stops at its next page and
    answers `stale`, which the panel ignores.
@@ -207,7 +208,7 @@ and measurements behind it are in
   and `PdfPage` scales it with a CSS transform. After a zoom settles
   `TextLayer.update` re-measures the spans at the new size. A text selection
   and the citation marks survive a zoom. Only a page far from the view
-  drops it: a second observer with `FAR_MARGIN` (four viewport heights each
+  drops it. A second observer with `FAR_MARGIN` (four viewport heights each
   way; pdf.js's own viewer keeps about ten pages) empties the layer and
   forgets the paint, and the next paint builds it again. A book read
   through would otherwise leave every page's spans in the DOM.
@@ -227,10 +228,9 @@ twice.
 
 `PdfPage`'s intersection observer is rooted at the PDF scroller with 900 CSS
 pixels of look-ahead. A page outside it releases both backing stores
-(`show(null)`), and with them pdf.js's own copy of the page (`page.cleanup()`:
-the operator list and the decoded images, a scanned page's bitmap among
-them, which pdf.js otherwise keeps for every page ever drawn); the next
-render asks the worker again. Its ink and text-box layers are mounted only
+(`show(null)`) and calls `page.cleanup()`, which frees pdf.js's operator list
+and decoded images for the page. The next render asks the worker again. Its
+ink and text-box layers are mounted only
 inside the look-ahead unless the page carries marks (`MarkupLayers`'s
 `active`: each layer listens on the window and the document, and a book has
 hundreds of pages). The page keeps its geometry, text and overlays; it repaints on

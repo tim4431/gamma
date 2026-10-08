@@ -152,7 +152,7 @@ def test_who_may_read(owner, lab, token):
 
 # --- the client --------------------------------------------------------------
 
-def _tool():
+def _tool(monkeypatch):
     from gamma import gamma_sync as mod
     http = fresh_client()
 
@@ -160,7 +160,7 @@ def _tool():
         r = http.request(method, path, headers=headers)
         return r.status_code, r.headers, io.BytesIO(r.content)
 
-    mod.default_open = open_
+    monkeypatch.setattr(mod, "default_open", open_)
     return mod
 
 
@@ -173,8 +173,8 @@ def _state(dest):
     return json.loads((dest / ".gamma-sync.json").read_text(encoding="utf-8"))
 
 
-def test_client_mirrors_the_folder_and_follows_changes(owner, lab, token, tmp_path):
-    mod = _tool()
+def test_client_mirrors_the_folder_and_follows_changes(owner, lab, token, tmp_path, monkeypatch):
+    mod = _tool(monkeypatch)
     dest = tmp_path / "quantum"
     assert mod.main(["init", str(dest), "--server", SERVER, "--folder", "fs lab", "--token", token, "--save-token"]) == 0
     assert mod.main(["init", str(dest), "--server", SERVER, "--folder", "FS lab", "--token", token]) == 1  # linked already
@@ -252,8 +252,8 @@ def test_client_mirrors_the_folder_and_follows_changes(owner, lab, token, tmp_pa
     assert mod.main(["status", str(dest)]) == 0
 
 
-def test_client_can_take_the_pdfs_alone_and_lists_folders(owner, lab, token, tmp_path, capsys):
-    mod = _tool()
+def test_client_can_take_the_pdfs_alone_and_lists_folders(owner, lab, token, tmp_path, capsys, monkeypatch):
+    mod = _tool(monkeypatch)
     dest = tmp_path / "papers"
     assert mod.main(["init", str(dest), "--server", SERVER, "--folder", lab["folder"], "--token", token, "--no-notes"]) == 0
     assert mod.main(["sync", str(dest), "--token", token]) == 0

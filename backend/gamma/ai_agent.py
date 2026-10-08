@@ -71,7 +71,7 @@ PREVIEW_TOOLS = frozenset({"edit_block", "create_block"})
 # The short arguments a step event repeats, for the label the chat shows
 # while a call runs ("Searching library for …"). Never a note's content.
 STEP_ARGS = ("page_id", "block_id", "query", "title", "folder", "label", "source",
-             "pdf_page", "mode", "question", "index", "area")
+             "pdf_page", "mode", "question")
 
 # What the model hears for a call the user did not allow (with what they want
 # done instead, when they said it), or did not answer in time.

@@ -8,6 +8,7 @@ import {
   Stat, Empty, QuotaMeter, LogBox, NavAccountCard, SettingsDraftContext, SettingsSyncContext, useSettingsDraft,
 } from "./SettingsKit";
 import { SECTION_PREFS } from "./sectionPrefs.js";
+import { DEFAULT_PICTURE_BUDGET, MAX_PICTURE_BUDGET } from "../chat/chatPictures.js";
 import { EFFORT_ORDER, SPEED_ORDER } from "../chat/modelPrefs.js";
 import { AppearanceSettings } from "./SettingsAppearance";
 import { AgentToolMatrix } from "./AssistantTools";
@@ -709,7 +710,7 @@ function ContextSize({ value }) {
       <Row icon={ImageIcon} label={t("Pictures per message")}
         hint={t("Attached pictures, selection crops, handwriting and area highlights share it; the newest earlier pictures stay in the conversation under the same number")}
         title={t("Every picture is sized to the model's render size first, so each costs about the same: roughly 800 tokens on the OpenAI wires, 1,600 on Anthropic's.")}>
-        <Stepper value={value.chatPictures} onChange={value.setChatPictures} min={1} max={64} step={1} reset={12} />
+        <Stepper value={value.chatPictures} onChange={value.setChatPictures} min={1} max={MAX_PICTURE_BUDGET} step={1} reset={DEFAULT_PICTURE_BUDGET} />
       </Row>
     </Section>
   );

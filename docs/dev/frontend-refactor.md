@@ -51,6 +51,10 @@ screen downloads only what it paints.
   block in the editor), note rendering (react-markdown, rehype-raw and its
   parse5, KaTeX, highlight.js), the PDF viewer component, the ink and markup
   layers.
+- The `App` chunk itself is imported once the locale catalog is in
+  (`main.jsx`), a round trip after the entry; the build puts a `modulepreload`
+  for it and its stylesheet in the page's head (`preloadApp` in
+  `vite.config.js`), so its bytes start arriving with the entry's.
 
 Adding one: import the module only through `lazySurface` (one static import
 anywhere in the `App` chunk's graph puts it back), and move the small
@@ -70,17 +74,18 @@ what each first screen downloads: [the bundle note](../research/bundle.md).
 `frontend/src/app/App.jsx` still combines session checks,
 library mutations, account preference synchronization, page loading and saving,
 PDF state, AI provider state, dock geometry, and most workspace markup. So
-every keystroke in a note renders App, but not the other rows of the
-page. The outliner's rows are memoized (`BlockTree.jsx`):
-`updateBlockTree` copies only the edited block's path, App hands the rows
-one stable wrapper per callback name (`stableRowProps`) and the page's
-blocks through `lookupBlock` / `getTree`, each row's `[[ref]]` labels come
-resolved once per tree change (`editor/refLabels.js`), and the derived
-maps every row takes keep their identity while they read the same. A row
-renders again for its own block, its depth and its place among its
-siblings (`place`, `siblings`: what the editing bar's move and indent
-buttons read from the tree's order). A new row prop must follow that rule
-or every row renders again
+every keystroke in a note renders App. The outliner's rows are memoized
+(`BlockTree.jsx`). A keystroke is meant to re-render App and the edited row
+only: `updateBlockTree` copies just the edited path; row callbacks get one
+stable wrapper each (`makeStableActions`, `shared/lib/stableActions.js`);
+rows read the tree through `lookupBlock` / `getTree`; `[[ref]]` labels are
+resolved per tree change (`editor/refLabels.js`); the derived maps every
+row takes keep their identity while they read the same
+(`shared/lib/keepIfSame.js`). A row renders again for its own block, its
+depth and its place among its siblings (`place`, `siblings`: what the
+editing bar's move and indent buttons read from the tree's order). A new
+row prop must follow that rule or every row renders again. No browser
+profile has measured this yet
 ([research/performance.md](../research/performance.md)).
 
 The goal is a small composition root with explicit state owners and commands.

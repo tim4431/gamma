@@ -1,5 +1,5 @@
 import {
-  api, checkedWorkspace, currentWorkspace, defaultFolder, folderByPath, getSettings, login, logout, normalizeServer,
+  api, checkedWorkspace, chooseWorkspace, defaultFolder, folderByPath, getSettings, login, logout, normalizeServer,
   originPattern, rememberFolder, removeServer, setSettings, whoAmI, writableWorkspaces,
 } from "./api.js";
 import { renderServerList } from "./serverList.js";
@@ -79,8 +79,7 @@ async function refreshAccount() {
 // is forgotten here and the default workspace takes over.
 async function fillWorkspaces(list) {
   const workspaces = writableWorkspaces(list);
-  await checkedWorkspace(await getSettings(), list);
-  workspaceSelect.set(workspaces, currentWorkspace(await getSettings()));
+  workspaceSelect.set(workspaces, await checkedWorkspace(await getSettings(), list));
   $("workspace-btn").disabled = false;
   $("workspace-row").classList.toggle("hidden", workspaces.length <= 1);
 }
@@ -161,9 +160,7 @@ async function saveDefaults() {
 // Each library has its own folders, so the picker below is refilled — and
 // with it the default folder this server remembers for this workspace.
 async function saveWorkspace(workspace) {
-  const settings = await getSettings();
-  if (workspace === currentWorkspace(settings)) return;
-  await setSettings({ workspaces: { ...settings.workspaces, [settings.server]: workspace } });
+  if (!await chooseWorkspace(await getSettings(), workspace)) return;
   await fillFolders();
   saved();
 }

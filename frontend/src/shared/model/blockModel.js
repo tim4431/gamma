@@ -84,10 +84,6 @@ export function withLegacyAccessors(b) {
 
 // --- tree operations (same API as before) ---
 
-export function cloneBlocks(blocks) {
-  return JSON.parse(JSON.stringify(blocks || []));
-}
-
 export function findBlock(blocks, id) {
   for (const b of blocks) {
     if (b.id === id) return b;

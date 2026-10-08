@@ -28,7 +28,7 @@ import {
   useTextScale,
 } from "../shared/ui/Widgets";
 import { BlockTree, _dragState } from "../editor/BlockTree";
-import { refLabelsByBlock } from "../editor/refLabels.js";
+import { refIdsOf, refLabelsByBlock } from "../editor/refLabels.js";
 import { BacklinksPanel } from "../editor/BacklinksPanel";
 import { dropGapAtPoint, findObject } from "../editor/MdObject";
 import { cutObject, moveObjectInTree } from "../editor/mdObjects";
@@ -39,7 +39,10 @@ import { uploadPdf } from "../shared/lib/uploadParts";
 import { CardLabels, KindToggle, ListFindBox, ListSearchElsewhere, PageCard, SelectCheck, ViewToggle } from "../library/FileBrowser";
 import { createChatSession } from "../chat/chatSession";
 import { providerModels } from "../chat/modelPrefs";
-import { addPictures, isPdfPicture, pictureUrl, regionBox, regionPicture } from "../chat/chatPictures.js";
+import { addPictures, isPdfPicture, pictureUrl, regionBox, regionPicture, round4 } from "../chat/chatPictures.js";
+// Agent tools whose applied action changes the open page's block tree
+// (handleAgentEvent reloads it and lights the block up).
+import { BLOCK_TOOLS } from "../chat/agentSteps.js";
 import SearchPanel from "../search/SearchPanel";
 import LibraryEmpty from "../library/LibraryEmpty";
 import { ContextMenu, MenuButton, MenuDivider, MenuItem, MenuLabel, MenuScope, MenuSelect, SubMenuItem, menuGroups } from "../shared/ui/Menus";
@@ -106,7 +109,9 @@ import { dotTone, noticeAction, noticeText } from "./notices";
 import { useBlockHistory } from "../editor/blockHistory.js";
 import { useMarks } from "../markup/MarkupLayers";
 import { MarkupToolbar } from "../markup/MarkupToolbar";
-import { PageToolsContext, useStableActions } from "../markup/PageTools";
+import { PageToolsContext } from "../markup/PageTools";
+import { makeStableActions, useStableActions } from "../shared/lib/stableActions.js";
+import { keepIfSame, sameMap, sameObject } from "../shared/lib/keepIfSame.js";
 import { isTextBox, normalizeTextBox } from "../markup/textBox.js";
 import { useTextBoxes } from "../markup/useTextBoxes";
 import { MAX_STROKES, appendStroke, duplicateStrokes, eraseAt, inkBounds, inkProps, mergeInk, newCanvasInk, newInk, pdfPositionOf, removeStrokes, restyleStrokes, serializeInk, strokeBounds, toolStyle, transformStrokes, translateStrokes } from "../ink/ink";
@@ -348,9 +353,6 @@ const RECENTS_CAP = 24;
 // over half a window header, grip and close button included; 6 keeps the
 // splitter grabbable and leaves the header its own.
 const SASH_MARGINS = { coarse: 6, fine: 6 };
-// Agent tools whose applied action changes the open page's block tree
-// (handleAgentEvent reloads it and lights the block up).
-const AI_BLOCK_TOOLS = ["edit_block", "create_block", "move_block", "delete_block"];
 // The Settings panes of the AI group (old pane names resolve first): entering
 // one loads the masked key list and the prompt drafts.
 const AI_SETTINGS_PANES = ["ai", "assistant", "tools"];
@@ -2964,10 +2966,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // "Attach what I see": the visible part of each PDF page in view (at most
   // two), with the handwriting on it, as regions the server renders.
   function attachViewToChat() {
-    const scroller = document.querySelector(".pdfViewer");
+    const scroller = viewerWrapRef.current?.querySelector(".pdfViewer");
     if (!scroller || !focusedBlockId) return;
     const vr = scroller.getBoundingClientRect();
-    const round = (v) => Math.round(v * 10000) / 10000;
     const added = [];
     for (const wrap of scroller.querySelectorAll(".pdfPageWrap[data-page]")) {
       const r = wrap.getBoundingClientRect();
@@ -2975,7 +2976,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       const x0 = Math.max(vr.left, r.left), x1 = Math.min(vr.right, r.right);
       const y0 = Math.max(vr.top, r.top), y1 = Math.min(vr.bottom, r.bottom);
       if (x1 - x0 < 40 || y1 - y0 < 40) continue;
-      const box = [(x0 - r.left) / r.width, (y0 - r.top) / r.height, (x1 - r.left) / r.width, (y1 - r.top) / r.height].map(round);
+      const box = [(x0 - r.left) / r.width, (y0 - r.top) / r.height, (x1 - r.left) / r.width, (y1 - r.top) / r.height].map(round4);
       const whole = box[0] <= 0.001 && box[1] <= 0.001 && box[2] >= 0.999 && box[3] >= 0.999;
       added.push(regionPicture("view", focusedBlockId, Number(wrap.dataset.page), whole ? null : box, { ink: true }));
       if (added.length >= 2) break;
@@ -4176,7 +4177,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // link's, which may name another server). One the search doesn't return
   // is gone, and its 404 says whether it is in Recently deleted (`trashed`,
   // its page's trash entry): the chip and the card show it so
-  // (BlockTree's `refLabelOf`) rather than the bare id or a card that never
+  // (`refLabelOf`, editor/refLabels.js) rather than the bare id or a card that never
   // loads. A share view never asks: a share learns nothing beyond its pages.
   async function onFetchRefs(ids, probe = ids) {
     try {
@@ -4217,7 +4218,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     const ids = new Set();
     const walk = (list) => {
       for (const b of list || []) {
-        for (const m of (b.content || "").matchAll(/\[\[([a-zA-Z0-9_-]+)\]\]/g)) ids.add(m[1]);
+        for (const [id, ref] of refIdsOf(b)) if (ref) ids.add(id);
         walk(b.children);
       }
     };
@@ -4526,7 +4527,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       }
       return;
     }
-    if (!AI_BLOCK_TOOLS.includes(a.tool)) return;
+    if (!BLOCK_TOOLS.includes(a.tool)) return;
     // The edit landed: drop its preview, mark the block, and show the real
     // change. With the page socket up it arrives as ops like any other
     // client's; otherwise refetch (the open editor survives the swap).
@@ -6750,22 +6751,11 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     return next;
   }, [blocks, treeById, refCache]);
   // The row callbacks are made inline in the render below (rowProps). The
-  // rows get one stable wrapper per name that calls the latest one, so a
-  // memoized row re-renders only when one of its data props changed; a
-  // name that is null or undefined (a feature the row gates on) stays so.
-  const rowLatestRef = useRef(null);
-  const rowFnsRef = useRef({});
-  function stableRowProps(props) {
-    rowLatestRef.current = props;
-    const out = {};
-    for (const key of Object.keys(props)) {
-      const value = props[key];
-      if (typeof value !== "function") { out[key] = value; continue; }
-      if (!rowFnsRef.current[key]) rowFnsRef.current[key] = (...args) => rowLatestRef.current[key]?.(...args);
-      out[key] = rowFnsRef.current[key];
-    }
-    return out;
-  }
+  // rows get one stable wrapper per name that calls the latest one
+  // (shared/lib/stableActions.js), so a memoized row re-renders only when
+  // one of its data props changed; a name that is null or undefined (a
+  // feature the row gates on) stays so.
+  const stableRowProps = useMemo(makeStableActions, []);
   // What the open page carries — THE switch for layout and page-level
   // affordances (docs/dev/block_centric.md). pdfUrl is only the viewer's input.
   const pageAttach = useMemo(() => pageAttachment(focusedBlock), [focusedBlock]);
@@ -6797,12 +6787,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // Kept by identity while the numbering is the same (nbSheets is derived
   // from the tree on every edit): a row prop of every block.
   const sheetNumbersPrev = useRef(new Map());
-  const sheetNumbers = useMemo(() => {
-    const next = new Map(nbSheets.map((s) => [s.id, s.index + 1]));
-    const prev = sheetNumbersPrev.current;
-    const same = prev.size === next.size && [...next].every(([id, n]) => prev.get(id) === n);
-    return (sheetNumbersPrev.current = same ? prev : next);
-  }, [nbSheets]);
+  const sheetNumbers = useMemo(() => keepIfSame(sheetNumbersPrev, new Map(nbSheets.map((s) => [s.id, s.index + 1])), sameMap),
+    [nbSheets]);
   nbSheetsRef.current = nbSheets;
   // The page tools every surface's layers read (markup/PageTools.jsx), and
   // per surface its marks (markup/MarkupLayers.jsx): a PDF page's ink groups
@@ -7523,13 +7509,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // Kept by identity while the colours are the same (highlights are rebuilt
   // from the tree on every edit): a row prop of every block.
   const highlightColorsPrev = useRef({});
-  const highlightColors = useMemo(() => {
-    const next = Object.fromEntries(highlights.map((h) => [h.id, h.color]));
-    const prev = highlightColorsPrev.current;
-    const keys = Object.keys(next);
-    const same = keys.length === Object.keys(prev).length && keys.every((k) => prev[k] === next[k]);
-    return (highlightColorsPrev.current = same ? prev : next);
-  }, [highlights]);
+  const highlightColors = useMemo(() => keepIfSame(highlightColorsPrev, Object.fromEntries(highlights.map((h) => [h.id, h.color])), sameObject),
+    [highlights]);
   useEffect(() => {
     if (pdfHidden) return;
     const id = pendingJumpRef.current;
@@ -9031,8 +9012,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                   // The editing bar's Undo / Redo and the iPad keyboard's.
                   onUndo: readOnly ? undefined : undoBlocks,
                   // Area-highlight cards show their crop, re-rendered from the
-                  // loaded document each session (never stored, same as the
-                  // chat attach); docNonce retries crops once the PDF is up,
+                  // loaded document each session (never stored; the chat's
+                  // area selection is drawn by the server instead); docNonce
+                  // retries crops once the PDF is up,
                   // docKey keeps one paper's crops from serving another's.
                   captureArea: capturePdfArea,
                   docNonce: pdfDocNonce,

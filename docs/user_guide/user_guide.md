@@ -162,18 +162,18 @@ On the home page or in a folder, the chat can act on your library: list, read an
 | List pages | `list_pages`, `list_folders`, `list_deleted` | Browse page titles, folders, metadata and Recently deleted (folder chats) |
 | Read pages | `read_page`, `read_chats`, `cite` | Read PDF text, highlights, notes, earlier chats and citation records (metadata, BibTeX) |
 | Read note blocks | `read_block` | Read individual notes and their outline |
-| View pages and handwriting | `view_pdf_page`, `view_ink` | Look at figures, tables, scanned pages and your handwriting as pictures |
+| View pages and handwriting | `view_pdf_page`, `view_ink`, `view_image` | Look at figures, tables, scanned pages, your handwriting and the pictures in your notes |
 | Search library | `search_library` | Find text in your notes and PDFs |
 | **Web research** | | |
 | Search papers online | `search_papers`, `related_papers`, `search_web` | Find papers on Crossref, arXiv and OpenAlex, follow their citations, and search the web through your AI connection, Brave Search or SearXNG (Tool usage → Online search) |
-| Fetch documents | `fetch_paper` | Read a DOI, arXiv id or URL without saving it; a paywall or sign-in hands the fetch to your browser |
+| Fetch documents | `fetch_paper`, `read_paper` | Read a DOI, arXiv id or URL without saving it; a paywall or sign-in hands the fetch to your browser |
 | Use journal sign-ins | | Use the publisher sign-ins Gamma Connector saved when fetching |
 | **Make changes** | | |
 | Save papers | `save_paper` | Add a paper found online to the library |
 | Rename pages | `rename_page` | Change a page's title (folder chats) |
 | Move pages | `move_page` | File a page into a folder (folder chats) |
 | Restore deleted pages | `restore_page` | Bring a page back from Recently deleted (folder chats) |
-| Edit note blocks | `edit_block`, `create_block`, `move_block` | Create, edit and move notes, and transcribe handwriting |
+| Edit note blocks | `edit_block`, `create_block`, `move_block`, `delete_block`, `clip_region` | Create, edit, move and delete notes, transcribe handwriting, and clip a region of a PDF page into a note |
 
 The agent cannot delete pages, and an assistant connected from outside ([Assistants](#assistants)) gets the reading tools only.
 
@@ -237,7 +237,8 @@ Your library lives on your server. For the train or a lab without Wi-Fi, keep an
 - Pages, highlights, ink, files, folders and labels travel; chats and reading positions stay per device.
 - Edits made offline go with the next sync. Edits to the same words show a **merge chip**: pick local, remote or merged.
 - The **sync pill** in the page header shows the state and opens the log and settings.
-- **A folder on this computer** (desktop app): right-click a folder in the library and choose *Keep on this computer…*, or use *Keep a folder…* in the sync button's panel at the right of the title bar. Pick a directory, and the folder is kept there as PDFs beside Markdown notes. On your NAS's workspace this needs no clone: only that folder's files come down, read with a key the app makes for it. The sync button shows how your clones and folders stand; its panel lists each one, and *sync* or *stop* acts on it, stopping keeps or removes the files.
+- **A folder on this computer** (desktop app): right-click a folder in the library and choose *Keep on this computer…*, or use *Keep a folder…* in the sync button's panel at the right of the title bar. Pick a directory, and the folder is kept there as PDFs beside Markdown notes. On your NAS's workspace this needs no clone: only that folder's files come down, read with a key the app makes for it. The sync button shows how your clones and folders stand.
+- **The sync panel** lists each clone and kept folder with *sync* and *stop*. *Stop* asks whether to keep or remove the files.
 - **Keep running in the background**: a switch in the launcher's settings and the tray. Gamma then stays in the tray when the window closes, so clones and folders on disk keep syncing; *Start at login* starts it there.
 
 ## Gamma Connector
@@ -248,6 +249,7 @@ The browser extension saves the paper you are reading in one click: PDF, metadat
 
 - The badge lights up on a page with a paper. Click it, pick a folder and labels, **Save to Gamma**. **Ctrl+Shift+S** saves with the default folder.
 - Right-click to save a link, a page, or clip a selection as a quote.
+- With several libraries, pick which one saves go to in the popup's **Workspace** row.
 - **Publisher sign-ins**: the cookie button sends your browser's sign-in for that journal to your server, so it can fetch that publisher's PDFs by itself from then on.
 
 ## Assistants
@@ -280,10 +282,13 @@ Codex, Claude Code, DeepSeek Harness and any MCP client can search and read your
 | `read_block` | One note block or a page's note outline |
 | `read_chats` | The AI chat kept with a page or folder |
 | `view_pdf_page` | One PDF page as a picture: a scan, a figure, a table |
+| `view_ink` | Your handwriting as a picture |
+| `view_image` | The pictures a note embeds |
+| `cite` | The citation record kept with a page: metadata and BibTeX |
 | `read_gamma_link` | A pasted page, block or share link, read in place; a folder share lists its pages |
 | `export_page` | A page as Markdown, or as a PDF: the annotated paper or the notes typeset |
 
-The first seven are the chat's own reading tools. An assistant never gets the write tools or the web tools: the connection is read-only, and the assistant has web access of its own.
+The first ten are the chat's own reading tools. An assistant never gets the write tools or the web tools: the connection is read-only, and the assistant has web access of its own.
 
 ## Import and export
 

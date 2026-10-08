@@ -5,8 +5,8 @@
 // worker being put to sleep.
 
 import {
-  api, ApiError, checkedDefaultFolder, checkedWorkspace, currentWorkspace, getSettings, rememberFolder, serverOrigin,
-  whoAmI, writableWorkspaces,
+  api, ApiError, checkedDefaultFolder, checkedWorkspace, currentWorkspace, getSettings, rememberFolder, sameLibrary,
+  serverOrigin, whoAmI, writableWorkspaces,
 } from "./api.js";
 import {
   NEEDS_YOU, backgroundBusy, checkPage, handoffIdFrom, harvestUrls, needsSignIn, needsYouMessage, nextToOpen,
@@ -701,7 +701,7 @@ async function savePaper({ tabId, candidate, folder, folder_path, labels, title,
     // The folder saved into becomes the default; labels are per-paper, so they
     // are not remembered (each popup starts from the options-page defaults).
     await rememberFolder(settings, filing).catch((err) => console.warn(`[gamma] couldn't remember the folder: ${err.message}`));
-    if (tabId != null && await serverOrigin() === settings.server && currentWorkspace(await getSettings()) === pin.workspace) {
+    if (tabId != null && sameLibrary({ origin: settings.server, ws: pin.workspace }, await getSettings())) {
       await setTabState(tabId, { saving: "", hit: out, last: out, error: "", origin: settings.server, ws: pin.workspace });
     }
     return out;
@@ -714,12 +714,11 @@ async function savePaper({ tabId, candidate, folder, folder_path, labels, title,
 }
 
 async function clipSelection({ tabId, text, source_url, title }) {
-  const origin = await serverOrigin();
-  const workspace = currentWorkspace(await getSettings());
+  const settings = await getSettings();
   const st = tabId != null ? await getTabState(tabId) : {};
-  const here = st.origin === origin && (st.ws || "") === workspace;
-  const page_id = here && st.hit && st.hit.block_id || "";
-  return api("/clip/note", { json: { text, source_url, title, page_id }, expectedOrigin: origin });
+  const page_id = sameLibrary(st, settings) && st.hit && st.hit.block_id || "";
+  return api("/clip/note", { json: { text, source_url, title, page_id },
+    expectedOrigin: settings.server, workspace: currentWorkspace(settings) });
 }
 
 // ---------- notifications (context menu + shortcut results) ----------
@@ -764,8 +763,7 @@ async function ensureDetection(tabId) {
   const st = await getTabState(tabId);
   // "Already in your library" is one library's answer: a look-up made in
   // another workspace says nothing about the chosen one.
-  const fresh = st.origin === await serverOrigin() && (st.ws || "") === currentWorkspace(await getSettings());
-  if (st.candidate && st.looked && fresh) return st;
+  if (st.candidate && st.looked && sameLibrary(st, await getSettings())) return st;
   let tab = null;
   try { tab = await chrome.tabs.get(tabId); } catch { return st; }
   let fromPage = null;
@@ -978,10 +976,9 @@ chrome.storage.onChanged.addListener((changes, area) => {
   // Library hits and badges belong to the server and the workspace that
   // resolved them.
   (async () => {
-    const origin = await serverOrigin();
-    const workspace = currentWorkspace(await getSettings());
+    const settings = await getSettings();
     for (const [k, st] of Object.entries(await chrome.storage.session.get(null))) {
-      if (k.startsWith("tab:") && (st.origin !== origin || (st.ws || "") !== workspace)) {
+      if (k.startsWith("tab:") && !sameLibrary(st, settings)) {
         await setTabState(Number(k.slice(4)), { hit: null, last: null, looked: false, auth: null, saving: "", error: "" });
       }
     }

@@ -15,6 +15,7 @@
 // A codec clamps a stored string back into range (parse returns undefined
 // to fall back to the default), so a stale or hand-edited value never
 // breaks the app. Plain strings need no codec.
+import { DEFAULT_PICTURE_BUDGET, MAX_PICTURE_BUDGET } from "../chat/chatPictures.js";
 import { PERMISSION_KEYS, defaultPerm, normalizePerm } from "../chat/chatSettings.js";
 import { DEFAULT_TOOLS, normalizeTools } from "../ink/ink.js";
 import { textStyle } from "../markup/textBox.js";
@@ -303,7 +304,7 @@ export const PREFS = {
   // pictures, selection crops, handwriting and area highlights share it,
   // and the newest earlier pictures stay in the conversation under the same
   // number (gamma/ai_pictures.py; its DEFAULT_BUDGET and MAX_BUDGET).
-  chatPictures: pref("gamma-chat-pictures", ACCOUNT, 12, intIn(1, 64)),
+  chatPictures: pref("gamma-chat-pictures", ACCOUNT, DEFAULT_PICTURE_BUDGET, intIn(1, MAX_PICTURE_BUDGET)),
 
   // --- Prompts (Settings → AI → Chat; "" = built-in default from /api/ai/models) ---
   chatSystem: pref("gamma-chat-system", ACCOUNT, ""),

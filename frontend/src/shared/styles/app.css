@@ -3619,6 +3619,17 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
   font-size: calc(var(--fs-xs) * var(--text-scale, 1));
 }
 .chatApprovalDecline .chatApprovalActions { margin-top: 8px; }
+/* The pictures a change embeds, and the count of nested blocks a deletion takes. */
+.chatApprovalPictures { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.chatApprovalPictures img {
+  max-width: 100%;
+  max-height: 180px;
+  object-fit: contain;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--bg-surface);
+}
+.chatApprovalNote { margin-top: 6px; color: var(--text-secondary); font-size: calc(var(--fs-xs) * var(--text-scale, 1)); }
 /* "Allowed in this chat" in the composer's toolbar: click to ask again. */
 .chatGrantChip { padding: 2px 6px; cursor: pointer; }
 .chatGrantChip:hover { color: var(--text-primary); border-color: var(--border-light); }
@@ -4769,18 +4780,7 @@ a.shareBrand:hover { background: var(--bg-hover); }
   margin: 2px 0 4px;
   max-height: 240px;
   border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-sm);
 }
-.chatApprovalPictures { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
-.chatApprovalPictures img {
-  max-width: 100%;
-  max-height: 180px;
-  object-fit: contain;
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-md);
-  background: var(--bg-surface);
-}
-.chatApprovalNote { margin-top: 6px; color: var(--text-secondary); font-size: calc(var(--fs-xs) * var(--text-scale, 1)); }
 .chatMsgPdfs { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 4px; font-size: calc(var(--fs-2xs) * var(--text-scale, 1)); }
 .chatBubble.user .crumbBtn { color: inherit; }
 .chatPdfChip {

@@ -46,9 +46,11 @@ as one whose admin turned them off:
   it is saved as off; `server_settings.guest_logins_enabled`). It is what
   `GET /api/server-config`'s `guest` reports, so the login page shows no
   guest button while guests are off, and what `/api/admin/settings` returns
-  as `guest_logins`. The switch stops new logins only: the guests already
-  here keep their workspace until it expires, and `manage.py sweep-guests
-  --all` is how an admin clears them at once.
+  as `guest_logins`.
+
+The switch stops new logins only: the guests already here keep their
+workspace until it expires. `manage.py sweep-guests --all` clears them at
+once.
 
 Each login creates a workspace directory, so it is rate limited to 10 per
 IP per hour.

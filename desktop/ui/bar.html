@@ -273,7 +273,6 @@
     const b = document.createElement('button');
     b.className = 'item keepItem';
     b.dataset.kind = i.kind;
-    b.dataset.key = i.key;
     b.title = `${i.kind === 'folder' ? `${i.dest}, from ${i.from}` : i.where}\n${i.title}`;
     b.innerHTML = `<span class="ico">${i.kind === 'clone' ? ICONS.local : ICONS.folder}</span>` +
       `<span class="lines"><span class="label"></span><span class="state"></span></span>` +
@@ -347,7 +346,6 @@
     const { ws, folders, links } = chooser;
     const back = document.createElement('button');
     back.className = 'item';
-    back.id = 'chooserBack';
     back.innerHTML = `<span class="ico">${ICONS.back}</span><span class="label">Kept on this computer</span>`;
     back.onclick = () => { chooser = null; renderSync(); };
     panel.appendChild(back);

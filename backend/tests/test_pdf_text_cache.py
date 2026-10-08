@@ -56,8 +56,7 @@ def test_a_head_read_fills_the_head_and_a_later_window_reads_only_the_rest(tmp_p
     # The chat's next window starts at page 3: pages 3.. are read, 1 and 2 are not again.
     rest = list(pdf_text.iter_page_texts(str(path), start_page=3))
     assert len(rest) == 8 and opens["pages"] == 10
-    assert pdf_text.extract_pages(str(path)) == [f"book page {i}\r\n" for i in range(1, 11)] \
-        or len(pdf_text.extract_pages(str(path))) == 10
+    assert [t.strip() for t in pdf_text.extract_pages(str(path))] == [f"book page {i}" for i in range(1, 11)]
     assert opens["pages"] == 10
 
 

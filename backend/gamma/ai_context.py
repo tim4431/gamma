@@ -9,7 +9,7 @@ import sqlite3
 from urllib.request import Request as URLRequest
 
 from .ai_pictures import picture as _picture
-from .ai_protocols.base import reasoning_text
+from .ai_protocols.base import Protocol, reasoning_text
 from .blocks_store import (FOLDERS, LABELS, PATH_SEP, fetch_subtree, filing, folder_paths, label_names,
                            page_attachment, page_for_doc, page_root_id)
 from .db import connect_data_db, connect_pages_db, page_now, safe_doc_id
@@ -463,9 +463,6 @@ def estimate_tokens(text: str) -> int:
     return ascii_chars // 4 + (len(text) - ascii_chars)
 
 
-_IMAGE_TOKENS = 1600  # a picture at the render size, when the wire does not say (Protocol.picture_tokens)
-
-
 def prompt_tokens(messages: list, system: str = "", tools: list | None = None,
                   images: list | None = None, picture_tokens: int = 0) -> int:
     """estimate_tokens over everything a request carries but its native
@@ -473,8 +470,8 @@ def prompt_tokens(messages: list, system: str = "", tools: list | None = None,
     is already the user's explicit choice). ``picture_tokens`` is what one
     picture costs on the wire the request goes over (every picture is
     normalized to the render size first, gamma/ai_pictures.py), else the
-    default here."""
-    picture_tokens = picture_tokens or _IMAGE_TOKENS
+    protocols' default (``Protocol.picture_tokens``)."""
+    picture_tokens = picture_tokens or Protocol.picture_tokens
     total = estimate_tokens(system) + estimate_tokens(json.dumps(tools or [])) if (system or tools) else 0
     for message in messages:
         content = message.get("content")

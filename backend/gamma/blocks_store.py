@@ -437,6 +437,12 @@ def touch_page(conn, page_id: str, actor: str, kind: str = "live", *, now: str =
         (page_id, kind, now, actor))
 
 
+def newest_change_seq(conn) -> int:
+    """The change log's newest seq (0 for an empty log): the cursor a
+    consumer in step with the workspace holds."""
+    return conn.execute("SELECT COALESCE(MAX(seq), 0) FROM page_changes").fetchone()[0]
+
+
 # --- folders and labels ---------------------------------------------------------
 #
 # Membership is read live from the pages' ``properties.folders``: "filed in F

@@ -26,7 +26,7 @@ from .. import pdf_meta, storage
 from ..logbuf import log
 from ..net_guard import guarded_urlopen
 from ..server_settings import can_store
-from ..storage import DIGEST_CHARS, is_pdf
+from ..storage import is_pdf
 
 router = APIRouter(prefix="/api", tags=["pdf"])
 
@@ -397,7 +397,7 @@ def proxy_pdf(source_url: str, request: Request):
         raise HTTPException(status_code=403, detail="not accessible via this share link")
     # Proxy cache ids hash the URL (the bytes aren't known yet), same length
     # as the content-hash upload names.
-    pdf_doc_id = hashlib.sha256(source_url.encode()).hexdigest()[:DIGEST_CHARS]
+    pdf_doc_id = storage.digest_id(hashlib.sha256(source_url.encode()))
     stored_name = f"{pdf_doc_id}.pdf"
     want_save = request.query_params.get("save") == "1"
 
@@ -450,7 +450,7 @@ def proxy_pdf(source_url: str, request: Request):
                 spool = storage.Spool(ws)
             except OSError as e:
                 log.info(f"[pdf] not caching {pdf_doc_id}: {e}")
-        checked = complete = 0
+        complete = False
         try:
             while True:
                 chunk = resp.read(65536)
@@ -459,12 +459,10 @@ def proxy_pdf(source_url: str, request: Request):
                     break
                 if spool is not None:
                     spool.write(chunk)
-                    if spool.size - checked >= storage.SPOOL_CHECK_BYTES:
-                        checked = spool.size
-                        if not can_store(ws, spool.size):
-                            log.info(f"[pdf] not caching {pdf_doc_id} ({spool.size} bytes so far): over storage limits")
-                            spool.discard()
-                            spool = None
+                    if spool.due_check() and not can_store(ws, spool.size):
+                        log.info(f"[pdf] not caching {pdf_doc_id} ({spool.size} bytes so far): over storage limits")
+                        spool.discard()
+                        spool = None
                 yield chunk
         finally:
             resp.close()
