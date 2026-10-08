@@ -8009,16 +8009,6 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                 }}
               >{focusedBlockId ? (pageTitle || t("Untitled")) : t("Notes")}</h3>
             )}
-            {focusedBlockId && collab.peers.length ? (
-              <PresenceBar
-                peers={collab.peers}
-                onJump={(id) => {
-                  if (!id) return;
-                  scrollToBlock(id);
-                  reveal(id);
-                }}
-              />
-            ) : null}
             {focusedBlockId && !shareMode ? (
               <div className={labelEditing ? "categoryFrontmatter editing" : "categoryFrontmatter"}>
                 <span className="categoryIcon" title={t("Labels")}>
@@ -8143,6 +8133,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
               </div>
             ) : null}
             </div>
+            {/* The right of the header: the page's buttons, with who else is
+                here under them. */}
+            <div className="pageHeadSide">
             {!shareMode && focusedBlockId ? (
               <div className="pageActionCol">
                 {hasSheets && !notebook ? (
@@ -8485,7 +8478,17 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                 </button>
               </div>
             ) : null}
-
+            {focusedBlockId && collab.peers.length ? (
+              <PresenceBar
+                peers={collab.peers}
+                onJump={(id) => {
+                  if (!id) return;
+                  scrollToBlock(id);
+                  reveal(id);
+                }}
+              />
+            ) : null}
+            </div>
           </div>}
 
           <div className={`blockList${aiScan ? " aiPageRead" : ""}`} ref={notesTextScale.ref} style={notesTextScale.style}>

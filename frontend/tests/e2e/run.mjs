@@ -37,6 +37,7 @@ import { shareScenarios } from "./scenarios/share.mjs";
 import { settingsScenarios } from "./scenarios/settings.mjs";
 import { mcpScenarios } from "./scenarios/mcp.mjs";
 import { mirrorScenarios } from "./scenarios/mirror.mjs";
+import { folderLinkScenarios } from "./scenarios/folderLinks.mjs";
 import { mentionScenarios } from "./scenarios/mentions.mjs";
 import { chatNavigationScenarios } from "./scenarios/chatNavigation.mjs";
 import { transferScenarios } from "./scenarios/transfers.mjs";
@@ -82,6 +83,7 @@ const RUNNERS = {
   "mentions": mentionScenarios,
   "collab": collabScenarios,
   "mirror": mirrorScenarios,
+  "folder-links": folderLinkScenarios,
   "transfers": transferScenarios,
   "mcp": mcpScenarios,
   "files": fileScenarios,

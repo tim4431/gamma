@@ -292,7 +292,7 @@ Both are in the **View menu (≡)**, on a page or on the home library (with a fo
 - **Import**: a Zotero library (RDF with files), an Obsidian vault or Notion export, Markdown, Logseq, annotations embedded in a PDF, or a Gamma export from another Gamma.
 - **Export**: **Annotated PDF** (highlights, ink and text boxes as real annotations), **Notes as PDF** or **Markdown**, **BibTeX**, an **Obsidian vault**, a **Logseq graph**, a **Zotero library**, or a **Gamma zip**.
 - **Keep a bibliography up to date**: share a folder, then Export → BibTeX → *Keep this .bib up to date* gives a link Overleaf can refresh.
-- **Keep a folder on your disk**: [gamma-sync](../../tools/gamma-sync/README.md), a single Python file, writes a folder's papers as PDFs beside Markdown notes into a directory you choose and keeps it up to date from Gamma, with an integration token from Settings → Integrations. One way: what you change on disk is neither sent back nor overwritten.
+- **Keep a folder on your disk**: Settings → Workspaces → *Folders on disk* makes the server write a folder's papers as PDFs beside Markdown notes into a directory on its own disk and keep it up to date; share that directory from your NAS and every computer has it. One way: what you change there is neither sent back nor overwritten. For a computer without the server, the same sync runs as one Python file, [gamma_sync.py](../../backend/gamma/gamma_sync.py), with a token from Settings → Integrations.
 
 ## Backups and upgrades
 

@@ -82,6 +82,7 @@ const entries = [
   e("account", t("Publishing"), null, t("Pages you publish to Gamma Cloud"), "sync publish published pages Gamma Cloud share stop conflicts"),
   e("workspaces", t("Workspaces"), null, t("Personal and shared workspaces, export and import"), "library libraries default new personal shared"),
   e("workspaces", t("Clones"), null, t("Offline copies of workspaces on other Gamma servers"), "sync clone mirror offline copy remote workspace origin server pull push detach reattach conflicts"),
+  e("workspaces", t("Folders on disk"), null, t("Folders the server keeps as directories on its own disk"), "sync folder disk directory files NAS share export obsidian markdown pdf papers notes"),
   e("workspaces", t("Your storage"), t("Storage"), t("all personal workspaces"), "storage quota space used disk"),
   e("workspaces", t("Members"), t("Manage"), t("Invite people and set roles, in a shared workspace's Manage page"), "invite members roles sharing owner editor viewer people", t("Shared")),
   e("workspaces", t("Export workspace"), t("Data"), t("The Data menu on a workspace's row; Export all for every one"), "export download zip data import merge", t("Personal")),

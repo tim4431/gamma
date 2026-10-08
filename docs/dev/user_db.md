@@ -84,6 +84,11 @@ All state is SQLite + files on disk under a data directory (env
     the remote's address and workspace, the write token (Fernet-encrypted
     with the data directory's key), the feed cursors, the last round's
     status and the `page_filter` of a publication ([mirror.md](mirror.md));
+  - `folder_links` — the folders kept as directories on the server's own
+    disk: workspace, folder (a block id, or `root`), the directory's path
+    below the folders root, whether notes files are written, the
+    change-log seq the last round saw and its status
+    ([folder_sync.md](folder_sync.md) "Links kept by the server");
   - `jobs` — background jobs (exports, backups, restores, imports, the
     search indexer): owner (an account id, `''` for a workspace's own
     work), workspace, kind, parameters, state, last progress, result, error, the produced

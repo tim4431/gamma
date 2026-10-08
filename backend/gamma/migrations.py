@@ -1373,6 +1373,19 @@ def _v34_workspace_prefs(ws: str, pages: sqlite3.Connection, data) -> None:
         "WHERE excluded.updated_at > workspace_prefs.updated_at", rows)
 
 
+
+def _v35_folder_links(conn: sqlite3.Connection) -> None:
+    """users.db gains ``folder_links`` (gamma/folder_links.py): the folders
+    kept as directories on the server's own disk, with the change-log seq
+    and the status of their last round. Built from the live statement, as
+    the newest step; a step that changes the table freezes it. Re-runnable:
+    the statement is ``IF NOT EXISTS``. No workspace is touched."""
+    for stmt in USERS_SCHEMA:
+        if stmt.lstrip().startswith("CREATE TABLE IF NOT EXISTS folder_links "):
+            conn.execute(stmt)
+    conn.commit()
+
+
 STEPS = [
     (20, "guest_accounts", _v20_guest_accounts),
     (21, "folder_shares", _v21_folder_shares),
@@ -1388,6 +1401,7 @@ STEPS = [
     (31, "session_columns", _v31_session_columns),
     (32, "share_token_workspace", _v32_share_token_workspace),
     (33, "page_ops_batch_id", _v33_page_ops_batch_id),
+    (35, "folder_links", _v35_folder_links),
 ]
 
 # The workspace parts of the steps from version 34 on: (version, name,

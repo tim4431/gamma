@@ -622,6 +622,21 @@ Session only, the mirror's owner — the account recorded as its owner that
 also owns the copy's workspace (anyone else gets 404 and an empty list) —
 never a guest.
 
+### Folders on disk (`routers/folder_links.py`, prefix `/api/folder-links`) — see [folder_sync.md](folder_sync.md) "Links kept by the server"
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/folder-links` | the request's workspace's links and the folders root they are written under: `{links: [{id, workspace_id, folder_id, path, notes, created_by, created_at, cursor, status, dest}], root}` — `status` the last round's `{running, last_sync, last_error, counts: {added, updated, renamed, removed, kept, unchanged}, kept: [{path, why}], recent, dest}` |
+| POST | `/folder-links` | `{folder (a folder block id, or root), path?, notes?}` → 201 the link; the directory `<root>/<path>` (the folder's own path when empty, each name made a valid file name) gets its state file and the first round runs in the background. 400 for a folder that does not exist, a path another link writes (ignoring case), a directory holding another folder's files, an unwritable root, or an eleventh link of the workspace |
+| GET | `/folder-links/{id}` | one link |
+| PATCH | `/folder-links/{id}` | `{notes?}` — notes files on or off (turned off, they leave the directory at the next round) |
+| POST | `/folder-links/{id}/sync[?wait=1&full=1&force=1]` | a round now, in the background or inline with `wait` (the answer then carries the round's status); `full` writes every file again, `force` replaces files changed on disk |
+| DELETE | `/folder-links/{id}[?remove_files=1]` | forget the link; the directory stays, or with `remove_files` what the rounds wrote is taken back (changed files and files the rounds never wrote stay) |
+
+A signed-in account's session only: an integration token is refused as for
+backups, and so is the guest. Listing takes any member; the rest the editor
+role. A link of another workspace is 404.
+
 ### Publishing (`routers/publish.py`, `gamma/publish.py`) — see [mirror.md](mirror.md) "Publishing"
 
 | Method | Path | Purpose |

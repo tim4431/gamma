@@ -33,6 +33,7 @@ export const GROUPS = [
   { id: "mentions", files: ["mentions.mjs"] }, // ~11
   { id: "collab", files: ["collab.mjs"] }, // ~11
   { id: "mirror", files: ["mirror.mjs"] }, // ~9
+  { id: "folder-links", files: ["folderLinks.mjs"] }, // ~8
   { id: "transfers", files: ["transfers.mjs"] }, // ~9
   { id: "mcp", files: ["mcp.mjs"] }, // ~8
   { id: "files", files: ["files.mjs"] }, // ~7
@@ -86,7 +87,7 @@ export const RULES = [
   // (a text box's editor and read mode are the notes')
   ["frontend/src/editor/**", ["notes-pdf-share", "mermaid", "files", "collab", "transfers", "mcp", "guide", "triggered-guide", "textbox", "touch"]],
   ["frontend/src/chat/**", CHAT],
-  ["frontend/src/settings/**", ["settings", "i18n", "mirror", "cloud-sign-in", "mcp", "publish", "triggered-guide"]],
+  ["frontend/src/settings/**", ["settings", "i18n", "mirror", "folder-links", "cloud-sign-in", "mcp", "publish", "triggered-guide"]],
   ["frontend/src/collaboration/MirrorPopover.jsx", ["mirror", "publish"]],
   ["frontend/src/collaboration/MergeResolver.jsx", ["mirror"]],
   ["frontend/src/collaboration/**", ALL], // the page's live session carries every edit
@@ -114,9 +115,13 @@ export const RULES = [
   ["backend/gamma/mcp_*", ["mcp"]],
   ["backend/gamma/integrations.py", ["mcp", "mirror", "settings"]],
   ["backend/gamma/routers/integrations.py", ["mcp", "mirror", "settings"]],
+  ["backend/gamma/folder_links.py", ["folder-links"]],
+  ["backend/gamma/folder_sync.py", ["folder-links"]],
+  ["backend/gamma/gamma_sync.py", ["folder-links"]],
+  ["backend/gamma/routers/folder_links.py", ["folder-links"]],
   ["backend/gamma/sync_*.py", ["mirror", "publish", "replica"]],
   ["backend/gamma/textmerge.py", ["mirror", "replica"]],
-  ["backend/gamma/routers/sync.py", ["mirror", "publish", "replica"]],
+  ["backend/gamma/routers/sync.py", ["mirror", "publish", "replica", "folder-links"]],
   ["backend/gamma/routers/mirrors.py", ["mirror", "publish"]],
   ["backend/gamma/cloud_*.py", ["cloud-sign-in", "publish"]],
   ["backend/gamma/routers/cloud_auth.py", ["cloud-sign-in", "publish"]],

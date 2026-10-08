@@ -425,6 +425,14 @@ filtered mirror of the share host) is not a clone and is marked
 `publishing` instead. The whole design — the change feed, the three-way merge,
 edit-beats-delete, the conflict list — is [mirror.md](mirror.md).
 
+## Folders on disk
+
+A folder of a workspace can be kept as a directory on the server's own disk,
+each paper's PDF beside a Markdown note of its highlights and notes, one way
+and kept up to date: Settings → Workspaces → Folders on disk. The layout,
+the rounds, the server's links and the client that does the same on a PC
+are [folder_sync.md](folder_sync.md).
+
 ## Current limits
 
 - Some viewer screens still expose write controls; the server refuses those

@@ -3237,6 +3237,17 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
   background: color-mix(in srgb, #8ab4f8 12%, transparent);
 }
 /* --- sidebar docking --- */
+/* The right of the page header: the action buttons, and the presence stack
+   under them. */
+.pageHeadSide {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+  flex-shrink: 0;
+  margin-left: auto;
+}
+.pageHeadSide .presenceBar { margin-left: 0; margin-right: 4px; }
 /* page action buttons on the title line: AI title, metadata, delete */
 .pageActionCol {
   display: flex;

@@ -26,6 +26,13 @@ BACKUPS_DIR = DATA_DIR / "backups"
 STATIC_DIR = os.environ.get("GAMMA_STATIC_DIR", "")
 
 
+def folders_dir() -> Path:
+    """Where folder links write (gamma/folder_links.py): GAMMA_FOLDERS_DIR,
+    else ``folders/`` in the data directory. Resolved when asked, so a test's
+    data directory and a container's variable both take."""
+    return Path(os.environ.get("GAMMA_FOLDERS_DIR", "").strip() or DATA_DIR / "folders")
+
+
 # Keep these reads lazy, as before: server settings and publisher sessions
 # resolve their environment overrides when used, not at module import.
 def public_url_override() -> str:

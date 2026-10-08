@@ -3,9 +3,10 @@
 Thought through in October 2026, before the one-way sync was written. The
 question was how to keep files and folders in step between Gamma and
 people's own computers, and what to do about Gamma's folders not being a
-file tree. Status: **the one-way half, Gamma to disk, is built**
-([dev/folder_sync.md](../dev/folder_sync.md)); the way back is the open
-item at the end.
+file tree. Status: **the one-way half, Gamma to disk, is built** — the
+server keeps folders on its own disk from Settings, and the same rounds run
+as a one-file client on a PC ([dev/folder_sync.md](../dev/folder_sync.md));
+the way back is the open item at the end.
 
 ## Why not rsync, Syncthing or a mount
 
@@ -89,10 +90,11 @@ client only ever touches files it wrote.
   reported, not overwritten, until `--force`. A file in the way that the
   client did not write is never touched. A directory is removed only when
   empty.
-- **Where it runs.** The client is a standalone script, so it runs on a PC
-  without Gamma, on a NAS whose share then carries the folder to every
-  machine, or beside the desktop app's local server. A Settings pane and a
-  one-click desktop flow would wrap the same reads.
+- **Where it runs.** The rounds are one module with two sources: the
+  server runs them in-process for the links it keeps on its own disk (a
+  NAS share then carries the directory to every machine), and the same file
+  runs alone on a PC over HTTP. The Settings section wraps the server's
+  links; a desktop flow would wrap the client's.
 
 ## Still open
 
@@ -112,5 +114,6 @@ client only ever touches files it wrote.
 - **An annotated PDF on disk** instead of the original, for reading
   elsewhere, at the price of a rewrite on every highlight and an identity
   held only in the state file.
-- **Settings and the desktop app**: a pane beside Clones, and a
-  "Keep this folder on disk" that runs the client.
+- **The desktop app**: a tray icon and start-at-login, so the local
+  server keeps its links (and its clones) while the window is closed, and
+  a "Keep this folder on disk" on a folder's menu.

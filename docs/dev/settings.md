@@ -377,7 +377,14 @@ AI:
 Library:
 
 - **Workspaces**: storage meter, personal and shared workspaces, New
-  workspace, Export all. Each row has Open, a Data menu (export, import)
+  workspace, Export all, the clones, and last the open workspace's
+  **Folders on disk** (`SettingsFolderLinks.jsx`, [folder_sync.md](folder_sync.md)
+  "Links kept by the server"): a row per folder the server keeps as a
+  directory on its own disk — the folder, the directory, the last round's
+  outcome and a tag for files it left alone — with Sync and a "more" menu
+  (write everything again, replace changed files, papers only or with
+  notes, remove the link with or without its files); "Keep a folder on
+  disk" picks the folder, names the directory and chooses the files. Each row has Open, a Data menu (export, import)
   and Manage. Manage opens an inline page under one breadcrumb head,
   "Workspaces › <name>", with Open workspace at its right end: General,
   Access, Members and the Danger zone, every row saving at once, no footer.

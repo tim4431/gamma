@@ -1,14 +1,12 @@
 """A folder of the workspace as a folder on disk: the server's manifest and
 notes reads (gamma/folder_sync.py, routers/sync.py ``/sync/folders*``) and
-the gamma-sync client (tools/gamma-sync/gamma_sync.py) that writes them —
+the gamma-sync client (gamma/gamma_sync.py, run over HTTP) that writes them —
 the layout, the vault pages with the page's id, and the client's rounds:
 adds, updates, renames, removals, and the files it must leave alone."""
 
 import base64
-import importlib.util
 import io
 import json
-from pathlib import Path
 
 import pytest
 
@@ -16,7 +14,6 @@ from conftest import account_of, fresh_client, login, make_folder, make_label, m
 from gamma.integrations import create_token
 from test_pdf_export import _blank_pdf, _position
 
-TOOL = Path(__file__).resolve().parents[2] / "tools" / "gamma-sync" / "gamma_sync.py"
 PNG = base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==")
 SERVER = "http://testserver"
 
@@ -156,9 +153,7 @@ def test_who_may_read(owner, lab, token):
 # --- the client --------------------------------------------------------------
 
 def _tool():
-    spec = importlib.util.spec_from_file_location("gamma_sync", TOOL)
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
+    from gamma import gamma_sync as mod
     http = fresh_client()
 
     def open_(method, path, headers):
@@ -170,7 +165,8 @@ def _tool():
 
 
 def _round(mod, dest, token, **kw):
-    return mod.Round(mod.Link.load(dest), mod.Server(SERVER, token), **kw).run()
+    link = mod.Link.load(dest)
+    return mod.Round(link, mod.Server(SERVER, token).source(link.state["folder"]), **kw).run()
 
 
 def _state(dest):

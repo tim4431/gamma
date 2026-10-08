@@ -23,6 +23,10 @@ services:
       # proxy needs no compression of its own for the app's files: Gamma
       # sends the Brotli or gzip copies its build made.
       # FORWARDED_ALLOW_IPS: 10.203.0.0/24
+      # Folders kept on disk (Settings -> Workspaces -> Folders on disk) are
+      # written under /data/folders. To put them on a share instead, bind-mount
+      # it under volumes (e.g. - /volume1/Papers:/folders) and name it here:
+      # GAMMA_FOLDERS_DIR: /folders
       # Off-site copies of the databases and uploaded files to an S3-compatible
       # bucket are set up by an admin in Settings -> Backups; a container can
       # set them with GAMMA_S3_BUCKET and the other GAMMA_S3_* / GAMMA_OFFSITE*

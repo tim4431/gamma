@@ -6,7 +6,10 @@ It reads a Gamma server with an integration token (Settings → Integrations;
 read access is enough) and writes the folder's papers and notes to a
 directory of your choice, then keeps them up to date. Gamma to disk, one
 way: what you change on disk is never sent back, and never overwritten
-either (see the rules below).
+either (see the rules below). The same rounds run inside the server for
+the folders it keeps on its own disk (gamma/folder_links.py, Settings →
+Workspaces → Folders on disk), which is why this file lives in the gamma
+package; it imports nothing from it.
 
     python gamma_sync.py folders --server https://gamma.example.com --token gamma_…
     python gamma_sync.py init  ~/Papers/Quantum --server https://gamma.example.com \\
@@ -82,6 +85,10 @@ class Server:
         except (urllib.error.URLError, OSError, ValueError) as e:
             raise SyncError(f"cannot reach {self.url}: {e}") from e
 
+    def source(self, folder_id):
+        """The folder's reads for a ``Round``."""
+        return RemoteSource(self, folder_id)
+
     def get_json(self, path):
         status, _headers, body = self.open_("GET", path, self._headers())
         data = body.read()
@@ -111,6 +118,25 @@ class Server:
         finally:
             part.unlink(missing_ok=True)
         return digest.hexdigest()
+
+
+class RemoteSource:
+    """What a round reads of one folder, over HTTP: the manifest, the notes
+    files of some pages, a stored file. The server's own rounds read the
+    same three things in-process (gamma/folder_links.py ``LocalSource``)."""
+
+    def __init__(self, server: Server, folder_id: str):
+        self.server = server
+        self.folder = urllib.parse.quote(folder_id, safe="")
+
+    def manifest(self) -> dict:
+        return self.server.get_json(f"/api/sync/folders/{self.folder}")
+
+    def notes(self, page_ids) -> dict:
+        return self.server.get_json(f"/api/sync/folders/{self.folder}/notes?pages={','.join(page_ids)}")["pages"]
+
+    def download(self, name: str, target: Path) -> None:
+        self.server.download(f"/api/uploads/{name}", target)
 
 
 def _refusal(status, data, path):
@@ -205,8 +231,8 @@ class Round:
     difference written to disk — renames first, then new and changed files,
     then the attachments the notes need, then what is gone."""
 
-    def __init__(self, link: Link, server: Server, *, full=False, force=False, dry_run=False, say=print):
-        self.link, self.server = link, server
+    def __init__(self, link: Link, source, *, full=False, force=False, dry_run=False, say=print):
+        self.link, self.source = link, source
         self.full, self.force, self.dry_run, self.say = full, force, dry_run, say
         self.dest = link.dest
         self.state = copy.deepcopy(link.state) if dry_run else link.state
@@ -220,15 +246,14 @@ class Round:
 
     def run(self) -> dict:
         st = self.state
-        folder = urllib.parse.quote(st["folder"], safe="")
-        manifest = self.server.get_json(f"/api/sync/folders/{folder}")
+        manifest = self.source.manifest()
         files = st["files"]
         wanted = self._wanted(manifest)
         old_dirs = list(st["dirs"])
         self._rename(files, wanted)
         self._make_dirs(manifest)
         notes_todo, pdf_todo = self._compare(files, wanted)
-        self._fetch_notes(folder, notes_todo, files)
+        self._fetch_notes(notes_todo, files)
         self._fetch_pdfs(pdf_todo, files)
         self._attachments(files)
         self._remove(files, wanted)
@@ -300,13 +325,12 @@ class Round:
     def _count(self, verb):
         self.counts["added" if verb in ("added", "restored") else "updated"] += 1
 
-    def _fetch_notes(self, folder, todo, files):
+    def _fetch_notes(self, todo, files):
         for i in range(0, len(todo), NOTES_BATCH):
             batch = todo[i:i + NOTES_BATCH]
             got = {}
             if not self.dry_run:
-                ids = ",".join(w["page"] for _, w, _ in batch)
-                got = self.server.get_json(f"/api/sync/folders/{folder}/notes?pages={ids}")["pages"]
+                got = self.source.notes([w["page"] for _, w, _ in batch])
             for path, w, verb in batch:
                 if self.dry_run:
                     self.say(verb, path)
@@ -330,7 +354,7 @@ class Round:
             target = self.dest / path
             target.parent.mkdir(parents=True, exist_ok=True)
             try:
-                self.server.download(f"/api/uploads/{w['doc']}.pdf", target)
+                self.source.download(f"{w['doc']}.pdf", target)
             except SyncError as e:
                 self.keep(path, str(e))
                 continue
@@ -354,7 +378,7 @@ class Round:
                 continue
             (self.dest / "attachments").mkdir(exist_ok=True)
             try:
-                self.server.download(f"/api/uploads/{name}", self.dest / path)
+                self.source.download(name, self.dest / path)
             except SyncError as e:
                 self.keep(path, str(e))
                 continue
@@ -472,7 +496,8 @@ def cmd_sync(args):
     server = Server(link.state["server"], resolve_token(args, link.state))
     while True:
         try:
-            counts = Round(link, server, full=args.full, force=args.force, dry_run=args.dry_run).run()
+            counts = Round(link, server.source(link.state["folder"]), full=args.full, force=args.force,
+                           dry_run=args.dry_run).run()
             print(("would: " if args.dry_run else "") + _summary(counts)
                   + (f"; {counts['unchanged']} unchanged" if counts["unchanged"] else ""))
         except SyncError as e:
