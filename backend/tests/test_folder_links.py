@@ -56,7 +56,7 @@ def test_a_link_keeps_the_folder_where_it_was_asked_and_the_tick_follows_changes
     link = _create(owner, folder=folder, path=str(dest))
     assert link["path"] == str(dest.resolve()) and link["dest"] == str(dest.resolve()) and link["notes"] is True
     listed = owner.get("/api/folder-links").json()
-    assert set(listed) == {"links", "remote_links"} and [l["id"] for l in listed["links"]] == [link["id"]]
+    assert set(listed) == {"links"} and [(l["id"], l["remote_url"]) for l in listed["links"]] == [(link["id"], "")]
 
     status = _sync(owner, link["id"])
     assert status["last_error"] == "" and status["counts"]["added"] == 1 and status["running"] is False
@@ -169,9 +169,8 @@ def test_a_link_with_a_remote_source_reads_that_server_with_its_token(owner, dis
     link = _create(owner, **body, workspace=ws)
     assert link["remote_url"] == over_http and link["workspace_id"] == ws and link["token_id"] == token["id"]
     assert "token" not in link and link["dest"] == str(far.resolve())
-    listed = owner.get("/api/folder-links").json()
-    assert listed["links"] == [] and [l["id"] for l in listed["remote_links"]] == [link["id"]]
-    assert "token" not in listed["remote_links"][0]
+    listed = owner.get("/api/folder-links", headers={"X-Gamma-Workspace": ""}).json()["links"]
+    assert [(l["id"], l["remote_url"]) for l in listed] == [(link["id"], over_http)] and "token" not in listed[0]
     with folder_links.connect_users_db() as conn:          # stored sealed, read back whole
         sealed = conn.execute("SELECT token FROM folder_links WHERE id = ?", (link["id"],)).fetchone()[0]
     assert sealed and sealed != token["token"] and folder_links.get_link(link["id"], with_token=True)["token"] == token["token"]
@@ -217,7 +216,7 @@ def test_a_link_with_a_remote_source_reads_that_server_with_its_token(owner, dis
     # the account's own: another account sees nothing of it
     make_user("fl_far_other", "pw")
     other = login("fl_far_other", "pw")
-    assert other.get("/api/folder-links").json()["remote_links"] == []
+    assert other.get("/api/folder-links").json()["links"] == []
     assert other.get(f"/api/folder-links/{link['id']}").status_code == 404
     owner.delete(f"/api/folder-links/{link['id']}", params={"remove_files": 1}).raise_for_status()
     assert not far.exists()

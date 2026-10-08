@@ -24,7 +24,7 @@ the engine, the standard library only), `gamma/folder_links.py` (the
 desktop server's links: their store, the in-process source, the remote
 source's token and poll, the loop's tick),
 `gamma/routers/folder_links.py` (`/api/folder-links*`), and the desktop
-app's flows in `desktop/main.js` with the bar's chooser in
+app's flows in `desktop/main.js` with the bar's sync panel in
 `desktop/ui/bar.html` ([desktop
 architecture](../../desktop/docs/architecture.md) "Folders on this
 computer"). Tests: `backend/tests/test_folder_sync.py` (the reads and the
@@ -221,7 +221,7 @@ it empty.
 A link of this server's workspace takes the editor role to make, change,
 sync or remove; any member lists them. A link with a remote source is its
 account's alone. The desktop app is the only caller. It makes, syncs and
-stops links from its bar's chooser and from a folder's *Keep on this
+stops links from its bar's sync panel and from a folder's *Keep on this
 computer…* in Gamma's own menu ([desktop
 architecture](../../desktop/docs/architecture.md) "Folders on this
 computer"). Gamma's Settings has no section for them.

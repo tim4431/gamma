@@ -121,20 +121,15 @@ def _row(r, with_token: bool = False) -> dict:
     return link
 
 
-def list_links(ws: str) -> list[dict]:
-    """The links of one workspace of this server (a local source)."""
-    with connect_users_db() as conn:
-        rows = conn.execute(f"SELECT {_COLS} FROM folder_links WHERE workspace_id = ? AND remote_url = '' ORDER BY created_at",
-                            (ws,)).fetchall()
-    return [_row(r) for r in rows]
-
-
-def list_remote_links(user_id: str) -> list[dict]:
-    """The links with a remote source one account made."""
-    with connect_users_db() as conn:
-        rows = conn.execute(f"SELECT {_COLS} FROM folder_links WHERE created_by = ? AND remote_url != '' ORDER BY created_at",
-                            (user_id,)).fetchall()
-    return [_row(r) for r in rows]
+def visible_links(user_id: str) -> list[dict]:
+    """Every link one account may see: those of this server's workspaces it
+    has a role in, and those with a remote source it made."""
+    out = []
+    for link in all_links():
+        mine = link["created_by"] == user_id if link["remote_url"] else workspaces.role_of(link["workspace_id"], user_id)
+        if mine:
+            out.append(link)
+    return out
 
 
 def all_links() -> list[dict]:

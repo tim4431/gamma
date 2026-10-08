@@ -9,6 +9,7 @@
   "scripts": {
     "store-art": "node scripts/store-art.js",
     "start": "electron .",
+    "test": "node --test test/keeping.test.js",
     "smoke": "node test/smoke.js",
     "smoke:packaged": "node test/smoke.js --packaged",
     "e2e": "node test/e2e.js",

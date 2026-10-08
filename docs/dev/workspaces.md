@@ -430,7 +430,7 @@ edit-beats-delete, the conflict list — is [mirror.md](mirror.md).
 The desktop app keeps a folder of a workspace as a directory on the
 computer it runs on: each paper's PDF beside a Markdown note of its
 highlights and notes, one way, kept up to date. A folder's *Keep on this
-computer…* or the bar's *on disk* chip starts it. The layout, the rounds,
+computer…* or the desktop app's sync panel starts it. The layout, the rounds,
 the links and the client that does the same without the app are
 [folder_sync.md](folder_sync.md).
 

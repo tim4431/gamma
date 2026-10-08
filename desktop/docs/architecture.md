@@ -118,23 +118,17 @@ plain ids, and only when no other action runs. Then it runs `keepFolder`,
 whose native picker is the user's say. A folder already kept opens its
 directory instead.
 
-**The bar's chooser.** Every workspace row in the bar menu carries an
-*on disk* chip on hover. It opens a second level of the menu listing the
+**The sync panel's chooser.** The panel under the bar's sync button
+(below, "Kept on this computer") ends with *Keep a folder of <workspace>
+on this computer…*. It opens the panel's second level, listing the open
 workspace's folders (`shell:folders` → `listFolders`: the open server's
 `GET /api/sync/folders` with the content session's cookies, and the links
-from `listLinks`):
-
-- A folder already kept shows its last round beside the name (*synced
-  14:05*, *problem*, *n changed here*), and opens its directory on click
-  (`shell:open-path`, only for a directory one of those links names).
-- Its *sync* chip runs a round now and reports it in the bar
-  (`shell:sync-folder` → `syncFolder`). When files changed on disk were
-  left alone, the shell first asks whether to replace them.
-- Its *stop* chip ends it (`shell:drop-folder` → `dropFolder`). The shell
-  asks whether to keep the files or take back what the sync wrote.
-- Any other folder asks for a directory on click (`shell:keep-folder` →
-  `keepFolder`). An empty directory is used as it is; any other gets a
-  subdirectory named after the folder.
+from `listLinks`). A folder already kept reads *on disk* and opens its
+directory on click (`shell:open-path`, only for a directory one of those
+links names). Any other asks for a directory on click (`shell:keep-folder`
+→ `keepFolder`). An empty directory is used as it is; any other gets a
+subdirectory named after the folder. Syncing and stopping a kept folder
+are the panel's rows, below.
 
 Under the test harness `GAMMA_SHELL_PICK_DIR` answers the picker, the
 questions take their first answer, and a directory "opened" is only
@@ -155,24 +149,63 @@ Where the link lives depends on the server:
   reads the folder over HTTP with the client's own source. Only that
   folder's files come down.
 
-The links of a remote row are the host's `remote_links` with that origin
+The links of a remote workspace are the host's links with that origin
 and workspace. *Stop* deletes the link on the host and revokes the token
-on the remote (`revokeToken`). `settings.folderHost` remembers the host so
-it starts at launch like the clones' hosts (`startBackgroundHosts`). *Stop*
-on the host's last remote folder clears it.
+on the remote (`revokeToken`, with the window's session, which is signed
+into the remote). `settings.folderHost` remembers the host so it starts
+at launch like the clones' hosts (`startBackgroundHosts`). *Stop* on the
+host's last remote folder clears it.
 
-The shell keeps nothing else about links. The rounds and the status are
-the server's, the host's for a remote folder; the chooser reads them on
-every open. The bar reports each action in its status line for a few
-seconds (`notice` in the shell state).
-The first time a clone or a folder on disk is made, the shell offers
+The shell keeps nothing else about links; the rounds and the status are
+the server's, the host's for a remote folder. The bar reports each action
+in its status line for a few seconds (`notice` in the shell state). The
+first time a clone or a folder on disk is made, the shell offers
 background mode (below), since both sync only while Gamma runs.
+
+### Kept on this computer
+
+The **sync button** at the bar's right end sums up everything this
+computer keeps of Gamma: the clones and the folders on disk, of every
+running local server, whichever server the window shows. It reads
+*Synced*, *Syncing…*, *Conflicts*, *n problems* and the like, with a
+matching icon and colour, and shows once a server is open or anything is
+kept. Its **panel** lists the clones, then the folders on disk, each a row
+with its name over its state and where it is, and a state dot:
+
+- A click opens it: a clone in the window (`openServer`, then
+  `openGammaWorkspace`), a folder's directory (`openDirectory`).
+- *sync* runs a round now. For a clone that is `POST
+  /api/mirrors/<ws>/sync` on its local server. For a folder it is
+  `syncFolder`, which asks first whether to replace files changed on disk
+  when there are any, and reports the round in the bar.
+- *stop* (a folder) is `dropFolder`, which asks whether to keep the files
+  or take back what the sync wrote.
+
+The panel ends with the chooser above. Conflicts, detaching and a clone's
+cadence stay in Gamma's own sync pill, in the clone.
+
+`refreshKeeping` reads every running local server's `GET /api/mirrors` and
+`GET /api/folder-links` every 15 s, every 2 s while something syncs, when
+the panel opens and after each action. `lib/keeping.js` turns the rows into
+items and the button's summary, with no Electron in it
+(`test/keeping.test.js`, `npm test`). A clone reads as Gamma's sync pill
+reads it (`mirrorState` in `frontend/src/collaboration/MirrorPopover.jsx`):
+the same states in the same order, so the two never disagree. Change both
+together. The result is the shell state's `keeping` (`{items, summary}`).
+The panel's rows act through `shell:keeping-action` (kind, server, id,
+action), so they need no open server.
+
+Each local server is read in a cookie jar of its own
+(`session.fromPartition('keeping-<id>')`, in memory, signed in once per
+run by `signIn`). Every sidecar is `127.0.0.1` and a cookie does not tell
+ports apart, so signing into one server in the window's session would sign
+the window out of another.
 
 ## Window
 
 ```
 ┌────────────────────────────────────────────────────────────┐
-│ ⌈γ⌉ Alpha · Rydberg lab ▾   Starting Beta…   [↑ Restart to update] ⟳  – □ ✕ │  shell bar (38 px, is the title bar)
+│ ⌈γ⌉ Alpha · Rydberg lab ▾   Starting Beta…   ☁ Synced [↑ Restart to update] ⟳  – □ ✕ │  shell bar (38 px, is the title bar)
 ├────────────────────────────────────────────────────────────┤
 │                                                            │
 │   launcher (file://ui/launcher.html)                       │  content view
@@ -183,15 +216,19 @@ background mode (below), since both sync only while Gamma runs.
 
 One `BaseWindow`, two `WebContentsView`s. The **shell bar** is the
 frameless window's title bar (OS controls overlaid on Windows/Linux, traffic
-lights inset on macOS) and holds the switcher: click the name → dropdown of
+lights inset on macOS). On Windows and Linux the bar keeps its right 146 px
+free for those controls: the `titlebar-area` env() values reach only a
+window's own page, never a view like the bar. The logo goes back to the launcher, every server
+(also `Ctrl/Cmd+Shift+L`). Then the switcher: click the name → dropdown of
 the open server's Gamma workspaces (check on the current one, role or
-*personal* per row), then every server (running / reachable dot, check on
-the current one), then *All servers…* (the launcher, also
-`Ctrl/Cmd+Shift+L`). While
-the dropdown is open the bar view is temporarily enlarged over the content
-(its page is transparent outside the strip and the menu), which is how a
-38 px view can show a menu. At the right: the update pill (only while an
-update is ready, see below) and a reload button.
+*personal* per row, the clone chips), then every server (running /
+reachable dot, check on the current one), then *All servers…* (the
+launcher again). At the right: the sync button and its panel (above, "Kept
+on this computer"), the update pill (only while an update is ready, see
+below) and a reload button. One dropdown is open at a time. While one is,
+the bar view is temporarily enlarged over the content (its page is
+transparent outside the strip and the dropdown), which is how a 38 px view
+can show a menu.
 
 The **content view** shows the launcher or the server. The launcher lists
 servers as cards (kind, running / reachable dot, size on disk, data dir /
@@ -358,6 +395,9 @@ only); `GAMMA_SHELL_NO_UPDATE=1` disables the updater.
   server's last words into one sentence, the matched line, and the `action`
   the launcher offers as a button.
 - `lib/updater.js` — the electron-updater wrapper described above.
+- `lib/keeping.js` — what this computer keeps, read as items and one
+  summary for the sync button ("Kept on this computer"); no Electron, unit
+  tested by `test/keeping.test.js` (`npm test`).
 - `electron-builder.cjs` — the packaging config (targets, extra resources,
   secret-gated signing, the update feed's `publish` block).
   `scripts/adhoc-sign.cjs` — its `afterPack` hook: ad-hoc signs a macOS

@@ -69,14 +69,13 @@ def _info(link: dict) -> dict:
 @router.get("")
 def list_links(request: Request):
     """``{links: [{id, workspace_id, folder_id, path, notes, created_at,
-    cursor, status, dest, remote_url: "", token_id: ""}], remote_links:
-    [the same shape, remote_url the other server, workspace_id its
-    workspace there]}`` — the workspace's links and the account's links
-    with a remote source."""
+    cursor, status, dest, remote_url, token_id}]}`` — every link the
+    account may see, whatever workspace the request names: those of this
+    server's workspaces it has a role in (``remote_url`` empty), and its own
+    with a remote source (``remote_url`` the other server, ``workspace_id``
+    the workspace there). The desktop app's sync panel lists them all."""
     user_id = _account(request)
-    ws = require_ws(request)
-    return {"links": [_info(link) for link in folder_links.list_links(ws)],
-            "remote_links": [_info(link) for link in folder_links.list_remote_links(user_id)]}
+    return {"links": [_info(link) for link in folder_links.visible_links(user_id)]}
 
 
 @router.post("", status_code=201)

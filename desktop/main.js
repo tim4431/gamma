@@ -21,7 +21,7 @@
 // attribute the preload mirrors so the chrome paints in the same theme, and
 // `/api/session` (public HTTP API) for the workspace list.
 
-const { app, BaseWindow, WebContentsView, Menu, Tray, nativeImage, nativeTheme, shell, ipcMain, net, dialog } = require('electron');
+const { app, BaseWindow, WebContentsView, Menu, Tray, nativeImage, nativeTheme, session, shell, ipcMain, net, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
@@ -31,6 +31,7 @@ const registry = require('./lib/registry');
 const sidecar = require('./lib/sidecar');
 const updater = require('./lib/updater');
 const startup = require('./lib/startup');
+const keeping = require('./lib/keeping');
 
 const SMOKE = process.argv.includes('--smoke');
 const BAR_H = 38;
@@ -475,6 +476,7 @@ async function keepOffline(wsId) {
     await openGammaWorkspace(mirror.workspace_id);
     buildMenu();
     offerBackground(`The clone of ${ws.name}`).catch(() => {});
+    refreshKeeping().catch(() => {});
     return { workspace: mirror.workspace_id, server: local.id };
   } catch (e) {
     await dropToken(); // a token minted for a copy that was never made
@@ -512,15 +514,34 @@ async function ensureHost(api) {
   const entry = await sidecar.start(local, registry.getSettings(), appInfo());
   const origin = new URL(entry.url).origin;
   allowedOrigins.add(origin);
-  const session = await api(origin, '/api/session');
-  if (!session.user) {
-    await api(origin, '/api/login', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username: local.adminUser, password: local.adminPassword }),
-    });
-  }
+  await signIn(api, local, origin);
   return { local, origin };
+}
+
+// The session signed into a local server with the credentials the shell
+// seeded, unless it already is.
+async function signIn(api, local, origin) {
+  if ((await api(origin, '/api/session')).user) return;
+  await api(origin, '/api/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username: local.adminUser, password: local.adminPassword }),
+  });
+}
+
+// A running local server, signed into, for a call from the main process:
+// `{ srv, origin, api }`. What the sync panel reads and acts through. Each
+// local server gets a cookie jar of its own (an in-memory partition): every
+// sidecar is 127.0.0.1, and a cookie does not tell ports apart, so signing
+// into one in the window's session would sign the window out of another.
+async function localServer(serverId) {
+  const srv = registry.get(serverId);
+  const entry = srv && srv.type === 'local' ? sidecar.status(serverId) : null;
+  if (!entry) throw new Error('That server is not running');
+  const origin = new URL(entry.url).origin;
+  const api = serverApi(session.fromPartition(`keeping-${serverId}`));
+  await signIn(api, srv, origin);
+  return { srv, origin, api };
 }
 
 // ------------------------------------------------- folders on this computer -----
@@ -535,11 +556,12 @@ async function ensureHost(api) {
 // GAMMA_SHELL_PICK_DIR in tests), mints the token, and makes the link
 // through the servers' public API with the content session's cookies; only
 // local sidecars keep links (GAMMA_FOLDER_LINKS), and they take the full
-// path. Two ways in: the bar's "on disk" chooser, and a folder's "Keep on
+// path. Two ways in: the sync panel's chooser, and a folder's "Keep on
 // this computer…" in Gamma's own menu, which the page preload passes on
-// (shell:keep-folder-from-page). The rounds are the server's; the chooser
-// shows each kept folder's last round, syncs it (syncFolder) and stops it
-// (dropFolder, the files kept or taken back; the token it minted revoked).
+// (shell:keep-folder-from-page). The rounds are the server's; the sync
+// panel (below, "kept on this computer") shows each kept folder's state,
+// syncs it (syncFolder) and stops it (dropFolder, the files kept or taken
+// back; the token it minted revoked).
 // An empty directory is used as it is; one holding anything gets a
 // subdirectory named after the folder.
 
@@ -549,17 +571,18 @@ function openOrigin() {
 }
 
 // The links of the open server's workspace: a local server's own, or the
-// host's links that read this remote's workspace (`host` names the server
-// holding each). No local server yet: none.
+// host's links that read this remote's workspace. `server` names the local
+// server holding each. No local server yet: none.
 async function listLinks(api, wsId) {
   const origin = openOrigin();
   if (current.type === 'local') {
-    return (await api(origin, '/api/folder-links', { headers: { 'X-Gamma-Workspace': wsId } })).links || [];
+    const all = (await api(origin, '/api/folder-links')).links || [];
+    return all.filter((l) => !l.remote_url && l.workspace_id === wsId).map((l) => ({ ...l, server: current.id }));
   }
   if (!registry.load().servers.some((s) => s.type === 'local')) return [];
   const host = await ensureHost(api);
-  const all = (await api(host.origin, '/api/folder-links')).remote_links || [];
-  return all.filter((l) => l.remote_url === origin && l.workspace_id === wsId).map((l) => ({ ...l, host: host.origin }));
+  const all = (await api(host.origin, '/api/folder-links')).links || [];
+  return all.filter((l) => l.remote_url === origin && l.workspace_id === wsId).map((l) => ({ ...l, server: host.local.id }));
 }
 
 async function listFolders(wsId) {
@@ -641,6 +664,7 @@ async function keepFolder(wsId, folderId) {
     }
     showNotice(`${name} is being written to ${link.dest}`);
     offerBackground(`“${name}” on this computer`).catch(() => {});
+    refreshKeeping().catch(() => {});
     return link;
   } catch (e) {
     if (token) await revokeToken(api, origin, wsId, token.id); // minted for a link that was never made
@@ -666,19 +690,20 @@ async function ask(opts, testAnswer) {
   return r.response;
 }
 
-async function findLink(api, wsId, linkId) {
-  const link = (await listLinks(api, wsId)).find((l) => l.id === linkId);
+// A link of local server `serverId`, with what to call it through.
+async function linkOn(serverId, linkId) {
+  const at = await localServer(serverId);
+  const link = ((await at.api(at.origin, '/api/folder-links')).links || []).find((l) => l.id === linkId);
   if (!link) throw new Error('This folder is not kept on this computer');
-  return link;
+  // A link of the server's own workspace is changed in that workspace; one with a remote source is the account's.
+  return { ...at, link, headers: link.remote_url ? {} : { 'X-Gamma-Workspace': link.workspace_id } };
 }
 
 // A round of a kept folder now, waited for, its outcome in the bar. Files
 // changed on disk stay unless the user says to replace them, asked only
 // when there are some (`force` answers that in tests).
-async function syncFolder(wsId, linkId, force) {
-  const origin = openOrigin();
-  const api = serverApi(content.webContents.session);
-  const link = await findLink(api, wsId, linkId);
+async function syncFolder(serverId, linkId, force) {
+  const { origin, api, link, headers } = await linkOn(serverId, linkId);
   const changed = ((link.status && link.status.kept) || []).length;
   if (force === undefined && changed) {
     const r = await ask({
@@ -692,9 +717,7 @@ async function syncFolder(wsId, linkId, force) {
   busy = `Syncing ${linkName(link)}…`;
   pushState();
   try {
-    const where = link.host || origin;
-    const headers = link.host ? {} : { 'X-Gamma-Workspace': wsId };
-    const after = await api(where, `/api/folder-links/${link.id}/sync?wait=1${force ? '&force=1' : ''}`, { method: 'POST', headers });
+    const after = await api(origin, `/api/folder-links/${link.id}/sync?wait=1${force ? '&force=1' : ''}`, { method: 'POST', headers });
     const s = after.status || {};
     const moved = Object.entries(s.counts || {}).filter(([k, n]) => n && k !== 'unchanged' && k !== 'kept').map(([k, n]) => `${n} ${k}`);
     showNotice(s.last_error ? `${linkName(link)}: ${s.last_error}` : `${linkName(link)} is up to date${moved.length ? `: ${moved.join(', ')}` : ''}.`);
@@ -702,16 +725,15 @@ async function syncFolder(wsId, linkId, force) {
   } finally {
     busy = null;
     pushState();
+    refreshKeeping().catch(() => {});
   }
 }
 
-// Stop keeping a folder: the link goes and the token the shell minted on a
-// remote for it is revoked there. The files stay, or with `how` 'remove'
+// Stop keeping a folder: the link goes, and the token the shell minted on
+// a remote for it is revoked there. The files stay, or with `how` 'remove'
 // what the sync wrote is taken back; asked when not given.
-async function dropFolder(wsId, linkId, how) {
-  const origin = openOrigin();
-  const api = serverApi(content.webContents.session);
-  const link = await findLink(api, wsId, linkId);
+async function dropFolder(serverId, linkId, how) {
+  const { origin, api, link, headers } = await linkOn(serverId, linkId);
   if (!how) {
     const r = await ask({
       type: 'question', buttons: ['Stop, keep the files', 'Stop and remove the files', 'Cancel'], defaultId: 0, cancelId: 2,
@@ -721,18 +743,16 @@ async function dropFolder(wsId, linkId, how) {
     how = ['keep', 'remove', null][r];
     if (!how) return false;
   }
-  const query = how === 'remove' ? '?remove_files=1' : '';
   busy = 'Stopping…';
   pushState();
   try {
-    if (link.host) {
-      await api(link.host, `/api/folder-links/${link.id}${query}`, { method: 'DELETE' });
-      if (link.token_id) await revokeToken(api, origin, wsId, link.token_id);
-      // The last remote folder gone: the host need not start at launch for it any more.
-      const left = (await api(link.host, '/api/folder-links')).remote_links || [];
-      if (!left.length) registry.setSettings({ folderHost: '' });
-    } else {
-      await api(origin, `/api/folder-links/${link.id}${query}`, { method: 'DELETE', headers: { 'X-Gamma-Workspace': wsId } });
+    await api(origin, `/api/folder-links/${link.id}${how === 'remove' ? '?remove_files=1' : ''}`, { method: 'DELETE', headers });
+    if (link.remote_url) {
+      // The token was minted with the window's session, which is signed into the remote.
+      if (link.token_id) await revokeToken(serverApi(session.defaultSession), new URL(link.remote_url).origin, link.workspace_id, link.token_id);
+      // The host's last remote folder gone: it need not start at launch for it any more.
+      const left = ((await api(origin, '/api/folder-links')).links || []).filter((l) => l.remote_url);
+      if (!left.length && registry.getSettings().folderHost === serverId) registry.setSettings({ folderHost: '' });
     }
     showNotice(how === 'remove' ? `${linkName(link)} is no longer on this computer; the files the sync wrote are gone.`
       : `${link.dest} is no longer kept up to date; its files stay.`);
@@ -740,7 +760,78 @@ async function dropFolder(wsId, linkId, how) {
   } finally {
     busy = null;
     pushState();
+    refreshKeeping().catch(() => {});
   }
+}
+
+// ------------------------------------------------- kept on this computer -----
+// The bar's sync button and its panel (docs/architecture.md "Kept on this
+// computer"): every clone and folder on disk the running local servers
+// keep, read from each with the default session (signed in on first use),
+// turned into states and one summary by lib/keeping.js, and pushed in the
+// shell state as `keeping`. Read every KEEPING_MS, every KEEPING_BUSY_MS
+// while something syncs, on the panel's opening and after each action. A
+// row names its server, so the panel acts whichever server the window shows.
+
+const KEEPING_MS = 15_000;
+const KEEPING_BUSY_MS = 2_000;
+let keepingState = { items: [], summary: keeping.summarize([]) };
+let keepingTimer = null;
+let keepingRead = null;
+
+function scheduleKeeping(ms) {
+  clearTimeout(keepingTimer);
+  keepingTimer = setTimeout(() => refreshKeeping().catch(() => {}), ms);
+}
+
+function refreshKeeping() {
+  if (keepingRead) return keepingRead;
+  keepingRead = (async () => {
+    const { servers } = registry.load();
+    const items = [];
+    for (const srv of servers) {
+      if (srv.type !== 'local' || !sidecar.status(srv.id)) continue;
+      try {
+        const { origin, api } = await localServer(srv.id);
+        const [m, f] = await Promise.all([api(origin, '/api/mirrors'), api(origin, '/api/folder-links')]);
+        items.push(...keeping.itemsOf(srv, { mirrors: m.mirrors, links: f.links }, servers));
+      } catch {
+        // a server that does not answer now is left out of this reading
+      }
+    }
+    keepingState = { items, summary: keeping.summarize(items) };
+    pushState();
+  })().finally(() => {
+    keepingRead = null;
+    scheduleKeeping(keepingState.summary.state === 'busy' ? KEEPING_BUSY_MS : KEEPING_MS);
+  });
+  return keepingRead;
+}
+
+// What a panel row does: a clone opens or syncs; a folder opens its
+// directory, syncs, or stops.
+async function keepingAction(kind, serverId, id, action) {
+  const item = keepingState.items.find((i) => i.kind === kind && i.server === serverId && i.id === id);
+  if (!item) throw new Error('That is no longer kept on this computer');
+  if (kind === 'clone' && action === 'open') {
+    await openServer(serverId);
+    await openGammaWorkspace(id);
+    buildMenu();
+  } else if (kind === 'clone' && action === 'sync') {
+    const { origin, api } = await localServer(serverId);
+    await api(origin, `/api/mirrors/${encodeURIComponent(id)}/sync`, { method: 'POST' });
+    showNotice(`Syncing ${item.name}…`);
+  } else if (kind === 'folder' && action === 'open') {
+    openDirectory(item.dest);
+  } else if (kind === 'folder' && action === 'sync') {
+    return syncFolder(serverId, id);
+  } else if (kind === 'folder' && action === 'stop') {
+    return dropFolder(serverId, id);
+  } else {
+    throw new Error(`Unknown action: ${kind} ${action}`);
+  }
+  refreshKeeping().catch(() => {});
+  return true;
 }
 
 function showNotice(text) {
@@ -888,6 +979,8 @@ function barState() {
     current,
     busy,
     notice,
+    // what this computer keeps (the sync button and its panel)
+    keeping: keepingState,
     update: updater.state(),
     // Gamma's workspaces on the open server (null until known / signed in),
     // with the one the content view shows and the offline-copy cross-links.
@@ -1184,10 +1277,9 @@ function registerIpc() {
   ipcMain.handle('shell:folders', shellOnly((wsId) => listFolders(wsId)));
   ipcMain.handle('shell:keep-folder', shellOnly((wsId, folderId) =>
     withDialog('Could not keep the folder on this computer.', () => keepFolder(wsId, folderId))()));
-  ipcMain.handle('shell:drop-folder', shellOnly((wsId, linkId) =>
-    withDialog('Could not stop keeping the folder.', () => dropFolder(wsId, linkId))()));
-  ipcMain.handle('shell:sync-folder', shellOnly((wsId, linkId) =>
-    withDialog('Could not sync the folder.', () => syncFolder(wsId, linkId))()));
+  ipcMain.handle('shell:keeping', shellOnly(() => { refreshKeeping().catch(() => {}); return keepingState; }));
+  ipcMain.handle('shell:keeping-action', shellOnly((kind, serverId, id, action) =>
+    withDialog('Could not do that.', () => keepingAction(kind, serverId, id, action))()));
   // A folder's "Keep on this computer…" in Gamma's own menu, passed on by the
   // page preload: only from the content view's page of the open server, one
   // action at a time. The native directory picker is the user's say, so the
@@ -1307,6 +1399,7 @@ app.whenReady().then(async () => {
     (process.platform === 'darwin' && app.getLoginItemSettings().wasOpenedAsHidden));
   if (hidden) startBackgroundHosts();
   else showWindow().finally(startBackgroundHosts);
+  scheduleKeeping(3000); // what the servers keep, once they are up
 
   app.on('activate', () => {
     if (!win) showWindow();
@@ -1344,6 +1437,9 @@ if (process.env.GAMMA_SHELL_TEST) {
     dropFolder,
     syncFolder,
     listFolders,
+    refreshKeeping,
+    keepingAction,
+    keeping: () => keepingState,
     // Gamma's API on the open server in a named workspace, as the shell calls
     // it. A page's own fetch cannot do that: Gamma's wrapper stamps the
     // workspace the page has settled on, or none before it has.
