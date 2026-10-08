@@ -33,6 +33,13 @@ def folders_dir() -> Path:
     return Path(os.environ.get("GAMMA_FOLDERS_DIR", "").strip() or DATA_DIR / "folders")
 
 
+def folders_anywhere() -> bool:
+    """Whether a folder link may name any directory of this machine, not only
+    one below ``folders_dir()``: GAMMA_FOLDERS_ANYWHERE, which the desktop
+    app sets for the local server it runs as the user."""
+    return os.environ.get("GAMMA_FOLDERS_ANYWHERE", "").strip().lower() in ("1", "true", "yes", "on")
+
+
 # Keep these reads lazy, as before: server settings and publisher sessions
 # resolve their environment overrides when used, not at module import.
 def public_url_override() -> str:

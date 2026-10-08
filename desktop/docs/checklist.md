@@ -39,7 +39,9 @@ or says it is a manual look (**manual**).
 | 2.5 | `Ctrl/Cmd+Shift+L` and the *All servers…* item go to the launcher | auto: *launcher lists sizes …* uses the menu item; accelerator manual |
 | 2.6 | A server added while another is open shows up in the dropdown | auto (Beta is added mid-session) |
 | 2.7 | Clones: on a remote server a workspace row shows *clone* on hover; choosing it makes the clone on the local server and moves the window there; the clone's row reads *clone* with an *origin* chip back to the remote; the remote row now shows *open clone* and opens the clone; a second *clone* opens the existing clone instead of making another | auto: *clone: the "clone" chip on a remote row makes the clone; the rows then cross-link* |
-| 2.8 | At launch the local servers that hold clones start in the background (their dots turn on) even when a remote server is the one open | manual |
+| 2.8 | On a local server's workspace row the *on disk* chip lists the folders; picking one asks where and the server writes the folder there (PDFs beside notes); the chooser then reads *on disk* and opens the directory | auto: *folder on this computer: the "on disk" chip on a local row writes the folder where the picker said*; manual: the native picker, an empty folder used as it is versus a named subfolder |
+| 2.9 | *Keep running in the background* on: closing the window leaves the tray icon and every local server running; the tray's *Open Gamma* brings the window back; off, closing quits as before | auto: *background: with "keep running" on, closing the window leaves the servers up and the tray in place; the window comes back*; manual: *Start at login* on a packaged build launches hidden into the tray |
+| 2.10 | At launch the local servers that hold clones start in the background (their dots turn on) even when a remote server is the one open | manual |
 
 ## 3. Storage (per-server `GAMMA_DATA_DIR`)
 

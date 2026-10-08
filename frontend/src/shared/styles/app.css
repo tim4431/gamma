@@ -3247,7 +3247,8 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
   flex-shrink: 0;
   margin-left: auto;
 }
-.pageHeadSide .presenceBar { margin-left: 0; margin-right: 4px; }
+/* Line the stack up with the buttons' icons, not with their wider boxes. */
+.pageHeadSide .presenceBar { margin-left: 0; margin-right: calc((var(--ctl-icon-btn) - 16px) / 2); }
 /* page action buttons on the title line: AI title, metadata, delete */
 .pageActionCol {
   display: flex;

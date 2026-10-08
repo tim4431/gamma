@@ -109,6 +109,7 @@ async function launch(userData, downloadDir) {
     ...process.env,
     GAMMA_SHELL_USER_DATA: userData,
     GAMMA_SHELL_DOWNLOAD_DIR: downloadDir,
+    GAMMA_SHELL_PICK_DIR: path.join(userData, 'kept'), // the folder picker's answer (empty: used as it is)
     GAMMA_SHELL_TEST: '1',
   };
   delete env.ELECTRON_RUN_AS_NODE;
@@ -445,6 +446,70 @@ async function main() {
       assert.equal((await hook(app, (s) => s.registry.load().mirrors)).length, 1, 'still one copy');
       assert.equal(new URL(content.url()).searchParams.get('ws'), copyWs);
       return `${origWs} → copy ${copyWs} on Alpha`;
+    });
+
+    await step('folder on this computer: the "on disk" chip on a local row writes the folder where the picker said', async () => {
+      // On the local server: a folder with a page, made through the API.
+      await hook(app, (s, id) => s.openServer(id), ids.alpha);
+      await waitLoggedIn(content);
+      const g = await waitFor(async () => hook(app, (s) => s.gamma()), 'workspaces read', 15_000);
+      const made = await content.evaluate(async (ws) => {
+        const h = { 'Content-Type': 'application/json', 'X-Gamma-Workspace': ws };
+        const post = (u, body, method = 'POST') => fetch(u, { method, credentials: 'same-origin', headers: h, body: JSON.stringify(body) }).then((r) => r.json());
+        await post('/api/pages/folders/ops', { client: 'e2e', ops: [{ op: 'insert', id: 'e2efolder1', parent: 'folders', position: 'a0', content: 'Kept lab' }] });
+        const page = await post('/api/blocks', { parent_id: 'root', content: 'Kept paper' });
+        await post(`/api/blocks/${page.id}`, { properties: { folders: ['e2efolder1'] } }, 'PUT');
+        return { ws, page: page.id };
+      }, g.current);
+      const kept = path.join(profile, 'kept');
+      fs.mkdirSync(kept, { recursive: true });
+      await bar.click('#wsBtn');
+      const row = bar.locator(`#menu .wsItem[data-ws="${made.ws}"]`);
+      await row.waitFor({ timeout: 15_000 });
+      await row.hover();
+      await row.locator('.rowAct[data-act="disk"]').click();
+      const choice = bar.locator('#menu .folderItem', { hasText: 'Kept lab' });
+      await choice.waitFor({ timeout: 15_000 });
+      assert((await choice.textContent()).includes('keep here'), 'not kept yet');
+      await choice.click();
+      await waitFor(async () => (await bar.evaluate(() => document.getElementById('menu').hidden)), 'menu closed');
+      const md = path.join(kept, 'Kept paper.md');
+      await waitFor(() => fs.existsSync(md), 'the note file is written', 30_000, 500);
+      assert(fs.readFileSync(md, 'utf8').includes(`gamma_id: ${made.page}`), 'the file names its page');
+      const { links } = await hook(app, (s, ws) => s.listFolders(ws), made.ws);
+      assert.equal(links.length, 1, 'one link');
+      assert.equal(fs.realpathSync(links[0].dest).toLowerCase(), fs.realpathSync(kept).toLowerCase(), 'written where the picker said');
+      await waitFor(async () => /is being written to/.test((await hook(app, (s) => s.notice())) || ''), 'the bar said so', 5_000);
+      // The chooser now shows the folder on disk.
+      await bar.click('#wsBtn');
+      await row.waitFor({ timeout: 15_000 });
+      await row.hover();
+      await row.locator('.rowAct[data-act="disk"]').click();
+      const again = bar.locator('#menu .folderItem', { hasText: 'Kept lab' });
+      await again.waitFor({ timeout: 15_000 });
+      assert((await again.textContent()).includes('on disk'), 'shown as kept');
+      await bar.keyboard.press('Escape');
+      await waitFor(async () => (await bar.evaluate(() => document.getElementById('menu').hidden)), 'menu closed');
+      return `${links[0].dest}`;
+    });
+
+    await step('background: with "keep running" on, closing the window leaves the servers up and the tray in place; the window comes back', async () => {
+      const live = Object.values(pids).filter(Boolean);
+      assert(live.length, 'have sidecar pids');
+      await hook(app, (s) => s.setBackground(true));
+      assert(await hook(app, (s) => s.tray()), 'tray shown');
+      await hook(app, (s) => s.closeWindow());
+      await waitFor(async () => !(await hook(app, (s) => s.hasWindow())), 'window closed');
+      await sleep(1500);
+      assert(live.every((p) => pidAlive(p)), 'sidecars still running');
+      assert(await app.evaluate(({ app: a }) => a.isReady()), 'the app is still up');
+      await hook(app, (s) => s.showWindow());
+      bar = await findPage(app, isBar);
+      content = await findPage(app, (u) => u.startsWith('http://127.0.0.1'), 90_000);
+      await waitLoggedIn(content);
+      await hook(app, (s) => s.setBackground(false));
+      assert(!(await hook(app, (s) => s.tray())), 'tray gone when turned off with the window open');
+      return `window closed and back; sidecars ${live.join(', ')} kept running`;
     });
 
     await step('remote reachability dot: on for the live server, off for a dead URL', async () => {

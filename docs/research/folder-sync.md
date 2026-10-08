@@ -114,6 +114,10 @@ client only ever touches files it wrote.
 - **An annotated PDF on disk** instead of the original, for reading
   elsewhere, at the price of a rewrite on every highlight and an identity
   held only in the state file.
-- **The desktop app**: a tray icon and start-at-login, so the local
-  server keeps its links (and its clones) while the window is closed, and
-  a "Keep this folder on disk" on a folder's menu.
+- **Without a clone.** The desktop app keeps a folder of a *local*
+  workspace (its bar's *on disk* chip, the native picker, a tray so the
+  local server keeps syncing with the window closed); a NAS folder reaches
+  the PC through a clone of its workspace, which copies every PDF of the
+  workspace first. A link with a remote source — the client's
+  `RemoteSource` behind a token the shell mints, as it does for clones —
+  would skip the clone for people who want only the folder.

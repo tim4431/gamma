@@ -142,7 +142,15 @@ the data volume by default, and a bind mount plus the variable put it on a
 share (`docker-compose.yml.example`). The path is cleaned (`clean_path`:
 each name through `vault_name`, so nothing leaves the root), defaults to
 the folder's own path, and is unique among the server's links ignoring
-case. A workspace keeps at most ten links.
+case. A workspace keeps at most ten links. With `GAMMA_FOLDERS_ANYWHERE`
+set (`config.folders_anywhere`) a link may name any directory of the
+machine: `clean_path` keeps an absolute path as the machine resolves it,
+refusing a filesystem root and anything inside the data directory that is
+not below the folders root; the listing answers `anywhere: true` and the
+Settings dialog says a full path is taken. The desktop app sets it for the
+local server it runs as the user, and its bar menu adds the native
+directory picker to the flow ([desktop
+architecture](../../desktop/docs/architecture.md) "Folders on this computer").
 
 The directory is the round's: `_ensure_state` writes the state file on
 creation (`server: "local"`) and adopts one an earlier link to the same
@@ -202,6 +210,8 @@ stops a round on Windows.
 - A link's text (`[[Title]]`) lags when the *other* page's title changes,
   until the linking page changes or a full round.
 - Chats, reading positions and the trash do not travel, as for the mirror.
-- The desktop app has no surface for this yet; on a PC the client is run
-  by hand or by a scheduler, or the directory comes from the server's
-  share.
+- On a PC the desktop app keeps a folder of a *local* workspace anywhere
+  on disk and, in background mode, keeps it syncing with the window closed;
+  a NAS folder gets there through a clone of its workspace. A computer
+  without the app runs the client, or takes the directory from the
+  server's share.

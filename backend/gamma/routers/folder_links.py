@@ -49,10 +49,12 @@ def _info(link: dict) -> dict:
 @router.get("")
 def list_links(request: Request):
     """``{links: [{id, folder_id, path, notes, created_at, cursor, status,
-    dest}], root}`` — the workspace's links and the folders root they are
-    written under."""
+    dest}], root, anywhere}`` — the workspace's links, the folders root they
+    are written under, and whether a link may name any directory of the
+    machine instead (the desktop app's local server)."""
     ws = _member(request)
-    return {"links": [_info(link) for link in folder_links.list_links(ws)], "root": str(folder_links.root_dir())}
+    return {"links": [_info(link) for link in folder_links.list_links(ws)], "root": str(folder_links.root_dir()),
+            "anywhere": folder_links.anywhere()}
 
 
 @router.post("", status_code=201)

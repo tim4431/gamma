@@ -3841,5 +3841,6 @@
   "↑↓ choose · Enter run · Esc close": "↑↓ 选择 · Enter 执行 · Esc 关闭",
   "↑↓ choose · Tab or Enter insert · type “red” for colors": "↑↓ 选择 · Tab 或 Enter 插入 · 输入 “red” 查看颜色",
   "≈ {n} page": "≈ {n} 页",
-  "✓ Done": "✓ 完成"
+  "✓ Done": "✓ 完成",
+  "A full path on this computer, or a name under {root}. Empty: the folder's own name.": "这台电脑上的完整路径，或 {root} 下的一个名字；留空则用文件夹自己的名字。"
 }

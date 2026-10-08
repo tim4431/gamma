@@ -22,7 +22,9 @@ The only contract Gamma keeps for the shell: the env variables
 `GAMMA_ADMIN_PASSWORD`, `GAMMA_VERSION` (the shell's version, shown as the
 server's build), `GAMMA_CLOUD_DEFAULT_ISSUER` (Gamma Cloud, so sign-in with
 it is on until the admin saves another account server or none,
-[cloud_accounts.md](cloud_accounts.md)); `/api/health` (a 200, or the 503 with
+[cloud_accounts.md](cloud_accounts.md)), `GAMMA_FOLDERS_ANYWHERE` (a folder
+kept on disk may name any directory of the machine,
+[folder_sync.md](folder_sync.md) "Links kept by the server"); `/api/health` (a 200, or the 503 with
 `error: data_directory_not_upgradable` a server answers when it cannot
 upgrade its data directory — up either way, and the window then shows that
 server's guidance page, [migrations.md](migrations.md)); `/api/session` +

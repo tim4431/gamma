@@ -128,6 +128,20 @@
     </div>
     <div class="setRow">
       <div>
+        <div class="l">Keep running in the background</div>
+        <div class="d">Closing the window leaves Gamma in the tray; clones and folders on disk keep syncing.</div>
+      </div>
+      <label class="switch"><input type="checkbox" role="switch" id="swBackground" aria-label="Keep running in the background"><span class="switchTrack"></span></label>
+    </div>
+    <div class="setRow">
+      <div>
+        <div class="l">Start at login</div>
+        <div class="d">Starts hidden in the tray when you sign in to this computer (the installed app only).</div>
+      </div>
+      <label class="switch"><input type="checkbox" role="switch" id="swLogin" aria-label="Start at login"><span class="switchTrack"></span></label>
+    </div>
+    <div class="setRow">
+      <div>
         <div class="l">Local server storage</div>
         <div class="d path" id="dataRootText"></div>
       </div>
@@ -356,6 +370,8 @@
     }
 
     $('swOpenLast').checked = Boolean(state.settings.openLastOnLaunch);
+    $('swBackground').checked = Boolean(state.settings.background);
+    $('swLogin').checked = Boolean(state.settings.openAtLogin);
     renderUpdate(state.update || {});
     $('setPython').value = state.settings.pythonPath || '';
     $('setBackend').value = state.settings.backendDir || '';
@@ -488,6 +504,14 @@
   $('renameName').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('btnRename').click(); });
   $('swOpenLast').onchange = async () => {
     await gammaShell.setSettings({ openLastOnLaunch: $('swOpenLast').checked });
+    refresh();
+  };
+  $('swBackground').onchange = async () => {
+    await gammaShell.setSettings({ background: $('swBackground').checked });
+    refresh();
+  };
+  $('swLogin').onchange = async () => {
+    await gammaShell.setSettings({ openAtLogin: $('swLogin').checked });
     refresh();
   };
   $('btnSaveSettings').onclick = async () => {

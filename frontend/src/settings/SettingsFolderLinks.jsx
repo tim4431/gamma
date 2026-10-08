@@ -66,7 +66,7 @@ export function linkStatusLine(l) {
   return t("up to date {last_sync} · {changed}", { last_sync: clock(s.last_sync), changed: roundSummary(s) || t("nothing had changed") });
 }
 
-export function FolderLinkDialog({ folders, root, busy, error, onSubmit, onClose }) {
+export function FolderLinkDialog({ folders, root, anywhere, busy, error, onSubmit, onClose }) {
   const [folder, setFolder] = React.useState(folders[0]?.id || "root");
   const [path, setPath] = React.useState("");
   const [notes, setNotes] = React.useState(true);
@@ -79,7 +79,9 @@ export function FolderLinkDialog({ folders, root, busy, error, onSubmit, onClose
           <MenuSelect block label={t("Folder")} value={folder} onChange={setFolder}
             options={[["root", t("Whole library")], ...folders.map((f) => [f.id, pathText(f.path)])]} />
         </Field>
-        <Field label={t("Directory")} hint={t("Under {root}. Empty: the folder's own name.", { root })}>
+        <Field label={t("Directory")} hint={anywhere
+          ? t("A full path on this computer, or a name under {root}. Empty: the folder's own name.", { root })
+          : t("Under {root}. Empty: the folder's own name.", { root })}>
           <input className="aiKeyInput" value={path} placeholder={suggested} onChange={(e) => setPath(e.target.value)} />
         </Field>
         <Field label={t("Files")} hint={t("Each paper's PDF and, beside it, a Markdown note of its highlights and notes in Obsidian's dialect — or the PDFs alone")}>
@@ -226,7 +228,8 @@ export function FolderLinksSection({ data, refresh, confirm, setStatus }) {
             </Empty>}
       </Section>
       {creating ? (
-        <FolderLinkDialog folders={folders} root={root} busy={busy} error={createError} onSubmit={submit} onClose={() => setCreating(false)} />
+        <FolderLinkDialog folders={folders} root={root} anywhere={!!data?.anywhere} busy={busy} error={createError}
+          onSubmit={submit} onClose={() => setCreating(false)} />
       ) : null}
     </>
   );

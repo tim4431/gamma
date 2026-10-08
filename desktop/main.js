@@ -21,7 +21,7 @@
 // attribute the preload mirrors so the chrome paints in the same theme, and
 // `/api/session` (public HTTP API) for the workspace list.
 
-const { app, BaseWindow, WebContentsView, Menu, shell, ipcMain, net, dialog } = require('electron');
+const { app, BaseWindow, WebContentsView, Menu, Tray, nativeImage, shell, ipcMain, net, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
@@ -69,6 +69,9 @@ let barExpanded = false;
 const allowedOrigins = new Set();
 // Test hook: records what would have opened externally.
 const externalOpens = [];
+let tray = null; // the tray icon while the app keeps running in the background
+let notice = null; // a short line in the bar after a shell action ("Quantum is being written to …")
+let noticeTimer = null;
 
 // Remote reachability: a cached `/api/health` probe per remote server so
 // the launcher and the bar menu can show a dot like the local running one
@@ -234,9 +237,19 @@ function createWindow() {
     } catch {}
   });
   win.on('closed', () => {
+    // The views go with the window (they would otherwise live on, detached),
+    // and nothing is open any more: a window shown later loads afresh.
+    for (const v of [bar, content]) {
+      try {
+        if (v && !v.webContents.isDestroyed()) v.webContents.close();
+      } catch {}
+    }
     win = null;
     bar = null;
     content = null;
+    current = null;
+    gamma = null;
+    barExpanded = false;
   });
 }
 
@@ -373,11 +386,15 @@ async function openOriginal(wsId) {
 // a copy syncs only while its server runs, and it should keep up in the
 // background whichever server the window shows. Best effort, after the
 // window is up; a server already running (the one just opened) is left alone.
-function startMirrorHosts() {
+// Local servers to run for as long as the app does: the hosts of offline
+// copies (a copy syncs only while its server runs) and, in background mode,
+// every local server — a folder kept on this computer is its server's job too.
+function startBackgroundHosts() {
   const state = registry.load();
   const hosts = new Set(state.mirrors.map((m) => m.server));
+  const all = Boolean(state.settings.background);
   for (const srv of state.servers) {
-    if (srv.type !== 'local' || !hosts.has(srv.id) || sidecar.status(srv.id)) continue;
+    if (srv.type !== 'local' || (!all && !hosts.has(srv.id)) || sidecar.status(srv.id)) continue;
     sidecar
       .start(srv, state.settings, appInfo())
       .then(() => pushState())
@@ -402,12 +419,7 @@ async function keepOffline(wsId) {
   const known = registry.findMirror(remoteOrigin, wsId);
   if (known && registry.get(known.server)) return openCopy(wsId); // one copy per workspace: open it
   const ses = content.webContents.session;
-  const api = async (origin, path, init) => {
-    const r = await ses.fetch(origin + path, { credentials: 'include', cache: 'no-store', ...init });
-    const body = await r.json().catch(() => ({}));
-    if (!r.ok) throw new Error(body.detail || `${path}: HTTP ${r.status}`);
-    return body;
-  };
+  const api = serverApi(ses);
   busy = `Cloning ${ws.name}…`;
   pushState();
   let token = null;
@@ -453,6 +465,7 @@ async function keepOffline(wsId) {
     await openServer(local.id);
     await openGammaWorkspace(mirror.workspace_id);
     buildMenu();
+    offerBackground(`The clone of ${ws.name}`).catch(() => {});
     return { workspace: mirror.workspace_id, server: local.id };
   } catch (e) {
     await dropToken(); // a token minted for a copy that was never made
@@ -461,6 +474,217 @@ async function keepOffline(wsId) {
     busy = null;
     pushState();
   }
+}
+
+// Gamma's public API through the content session (its cookies), on the
+// local server or a remote: what keepOffline and the folders on disk use.
+function serverApi(ses) {
+  return async (origin, apiPath, init) => {
+    const r = await ses.fetch(origin + apiPath, { credentials: 'include', cache: 'no-store', ...init });
+    const body = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(body.detail || `${apiPath}: HTTP ${r.status}`);
+    return body;
+  };
+}
+
+// ------------------------------------------------- folders on this computer -----
+// "Keep a folder on this computer": a folder of a LOCAL server's workspace
+// written to a directory of the user's choice — PDFs beside Markdown notes —
+// and kept up to date by that server (docs/dev/folder_sync.md "Links kept by
+// the server"). The shell only asks for the directory (the native picker;
+// GAMMA_SHELL_PICK_DIR in tests) and makes the link through the server's
+// public API with the content session's cookies; local sidecars run with
+// GAMMA_FOLDERS_ANYWHERE, so the server takes the absolute path. The rounds,
+// the status and the removal are the server's: Settings → Workspaces →
+// Folders on disk there. An empty directory is used as it is; one holding
+// anything gets a subdirectory named after the folder.
+
+function localOrigin() {
+  if (!current || current.type !== 'local' || !content) throw new Error('Open a local server first');
+  return new URL(current.url).origin;
+}
+
+async function listFolders(wsId) {
+  const origin = localOrigin();
+  const api = serverApi(content.webContents.session);
+  const headers = { 'X-Gamma-Workspace': wsId };
+  const [tree, links] = await Promise.all([
+    api(origin, '/api/sync/folders', { headers }),
+    api(origin, '/api/folder-links', { headers }),
+  ]);
+  return { folders: tree.folders || [], links: links.links || [], root: links.root || '' };
+}
+
+async function pickDirectory(name) {
+  if (process.env.GAMMA_SHELL_PICK_DIR) return process.env.GAMMA_SHELL_PICK_DIR;
+  const opts = {
+    title: `Keep “${name}” on this computer`,
+    message: `Choose where “${name}” goes. An empty folder is used as it is; any other gets a folder named “${name}” inside.`,
+    buttonLabel: 'Keep here',
+    properties: ['openDirectory', 'createDirectory'],
+    defaultPath: app.getPath('documents'),
+  };
+  const r = win ? await dialog.showOpenDialog(win, opts) : await dialog.showOpenDialog(opts);
+  return r.canceled ? null : r.filePaths[0] || null;
+}
+
+function isEmptyDir(p) {
+  try {
+    return fs.readdirSync(p).length === 0;
+  } catch {
+    return true; // not there yet: the server makes it
+  }
+}
+
+async function keepFolder(wsId, folderId) {
+  const origin = localOrigin();
+  const api = serverApi(content.webContents.session);
+  const g = gamma;
+  const wsName = (g && (g.list.find((w) => w.id === wsId) || {}).name) || 'Library';
+  const tree = await api(origin, '/api/sync/folders', { headers: { 'X-Gamma-Workspace': wsId } });
+  const folder = folderId === 'root' ? { path: [] } : (tree.folders || []).find((f) => f.id === folderId);
+  if (!folder) throw new Error('Unknown folder');
+  const name = folder.path.length ? folder.path[folder.path.length - 1] : wsName;
+  const picked = await pickDirectory(name);
+  if (!picked) return null;
+  const target = isEmptyDir(picked) ? picked : path.join(picked, name);
+  busy = `Keeping ${name} on this computer…`;
+  pushState();
+  try {
+    const link = await api(origin, '/api/folder-links', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Gamma-Workspace': wsId },
+      body: JSON.stringify({ folder: folderId, path: target, notes: true }),
+    });
+    showNotice(`${name} is being written to ${link.dest}`);
+    offerBackground(`“${name}” on this computer`).catch(() => {});
+    return link;
+  } finally {
+    busy = null;
+    pushState();
+  }
+}
+
+function showNotice(text) {
+  notice = text;
+  clearTimeout(noticeTimer);
+  noticeTimer = setTimeout(() => { notice = null; pushState(); }, 8000);
+  pushState();
+}
+
+// ---------------------------------------------------------- background -----
+// "Keep running in the background": closing the window leaves the app in
+// the tray with every local server running, so clones and folders on disk
+// keep syncing (docs/architecture.md "Background and tray"). Off, the app
+// quits with its last window as before (macOS keeps the dock process either
+// way). "Start at login" launches it hidden, straight into the tray.
+
+function trayIcon() {
+  const img = nativeImage.createFromPath(path.join(__dirname, 'assets', 'icon.png'));
+  const size = process.platform === 'darwin' ? 18 : 16;
+  return img.resize({ width: size, height: size });
+}
+
+function trayMenu() {
+  const s = registry.getSettings();
+  return Menu.buildFromTemplate([
+    { label: 'Open Gamma', click: () => showWindow() },
+    { type: 'separator' },
+    { label: 'Keep running in the background', type: 'checkbox', checked: Boolean(s.background), click: (item) => setBackground(item.checked) },
+    { label: 'Start at login', type: 'checkbox', checked: Boolean(s.openAtLogin), click: (item) => setOpenAtLogin(item.checked) },
+    { type: 'separator' },
+    { label: 'Quit Gamma', click: () => app.quit() },
+  ]);
+}
+
+function ensureTray() {
+  if (tray) {
+    tray.setContextMenu(trayMenu());
+    return;
+  }
+  tray = new Tray(trayIcon());
+  tray.setToolTip('Gamma');
+  tray.setContextMenu(trayMenu());
+  tray.on('click', () => showWindow());
+}
+
+function dropTray() {
+  if (tray) {
+    tray.destroy();
+    tray = null;
+  }
+}
+
+// The window, back or new: where the user left off, or the launcher.
+function showWindow() {
+  if (win) {
+    if (win.isMinimized()) win.restore();
+    win.show();
+    win.focus();
+    return;
+  }
+  createWindow();
+  const last = registry.getSettings().openLastOnLaunch ? registry.getLastOpened() : null;
+  if (last) openServer(last.id).then(buildMenu).catch((e) => loadLauncher(e, last.id));
+  else loadLauncher();
+}
+
+function setBackground(on) {
+  registry.setSettings({ background: Boolean(on) });
+  if (on) ensureTray();
+  else {
+    dropTray();
+    if (!win) app.quit(); // turned off from the tray with no window: nothing is left to run for
+  }
+  buildMenu();
+  pushState();
+}
+
+function setOpenAtLogin(on) {
+  registry.setSettings({ openAtLogin: Boolean(on) });
+  applyLoginItem();
+  buildMenu();
+  pushState();
+}
+
+// The OS login item: Electron's on Windows and macOS, an autostart entry on
+// Linux — a packaged app only (in dev it would register the electron
+// binary; under the test harness nothing is touched). Started that way the
+// app opens hidden, into the tray (`--hidden`).
+function applyLoginItem() {
+  const on = Boolean(registry.getSettings().openAtLogin);
+  if (!app.isPackaged || process.env.GAMMA_SHELL_TEST) return;
+  if (process.platform === 'linux') {
+    const dir = path.join(app.getPath('home'), '.config', 'autostart');
+    const file = path.join(dir, 'gamma-desktop.desktop');
+    try {
+      if (on) {
+        fs.mkdirSync(dir, { recursive: true });
+        fs.writeFileSync(file, ['[Desktop Entry]', 'Type=Application', 'Name=Gamma', `Exec="${process.execPath}" --hidden`, 'X-GNOME-Autostart-enabled=true', ''].join('\n'));
+      } else {
+        fs.rmSync(file, { force: true });
+      }
+    } catch (e) {
+      console.error(`[shell] autostart entry: ${e.message || e}`);
+    }
+    return;
+  }
+  app.setLoginItemSettings({ openAtLogin: on, openAsHidden: true, args: ['--hidden'] });
+}
+
+// A clone or a folder on disk stays in sync only while Gamma runs: when one
+// is made and the app still quits with its window, offer the background.
+async function offerBackground(what) {
+  if (registry.getSettings().background || process.env.GAMMA_SHELL_TEST || !win) return;
+  const r = await dialog.showMessageBox(win, {
+    type: 'question',
+    buttons: ['Keep running', 'Not now'],
+    defaultId: 0,
+    cancelId: 1,
+    message: 'Keep Gamma running in the background?',
+    detail: `${what} stays in sync only while Gamma runs. In the background Gamma keeps running after the window is closed, with an icon in the tray, and can start at login.`,
+  });
+  if (r.response === 0) setBackground(true);
 }
 
 // Navigate the open server to one of its Gamma workspaces.
@@ -481,6 +705,7 @@ function barState() {
     theme: currentTheme(),
     current,
     busy,
+    notice,
     update: updater.state(),
     // Gamma's workspaces on the open server (null until known / signed in),
     // with the one the content view shows and the offline-copy cross-links.
@@ -657,6 +882,9 @@ function buildMenu() {
           click: () => openServer(ws.id).catch((e) => loadLauncher(e, ws.id)),
         })),
         { type: 'separator' },
+        { label: 'Keep Running in the Background', type: 'checkbox', checked: Boolean(registry.getSettings().background), click: (item) => setBackground(item.checked) },
+        { label: 'Start at Login', type: 'checkbox', checked: Boolean(registry.getSettings().openAtLogin), click: (item) => setOpenAtLogin(item.checked) },
+        { type: 'separator' },
         process.platform === 'darwin' ? { role: 'close' } : { role: 'quit' },
       ],
     },
@@ -757,7 +985,20 @@ function registerIpc() {
     const p = path.join(app.getPath('userData'), 'logs', `${id}.log`);
     if (fs.existsSync(p)) shell.showItemInFolder(p);
   }));
-  ipcMain.handle('shell:set-settings', shellOnly((patch) => registry.setSettings(patch)));
+  ipcMain.handle('shell:set-settings', shellOnly((patch) => {
+    const s = registry.setSettings(patch);
+    if ('background' in patch) setBackground(s.background);
+    if ('openAtLogin' in patch) setOpenAtLogin(s.openAtLogin);
+    return s;
+  }));
+  ipcMain.handle('shell:folders', shellOnly((wsId) => listFolders(wsId)));
+  ipcMain.handle('shell:keep-folder', shellOnly((wsId, folderId) =>
+    withDialog('Could not keep the folder on this computer.', () => keepFolder(wsId, folderId))()));
+  // Reveal a directory a link of the open local server writes — only such a one.
+  ipcMain.handle('shell:open-path', shellOnly(async (wsId, p) => {
+    const { links } = await listFolders(wsId);
+    if (links.some((l) => l.dest === p)) shell.openPath(p);
+  }));
   ipcMain.handle('shell:pick-folder', shellOnly(async (defaultPath) => {
     const opts = { properties: ['openDirectory', 'createDirectory'], defaultPath: defaultPath || undefined };
     const r = win ? await dialog.showOpenDialog(win, opts) : await dialog.showOpenDialog(opts);
@@ -852,29 +1093,45 @@ app.whenReady().then(async () => {
   registerIpc();
   updater.init({ onChange: () => pushState(), openExternal });
   buildMenu();
-  createWindow();
-  // Reopen where the user left off; the launcher is one click away in the bar.
-  const last = registry.getSettings().openLastOnLaunch ? registry.getLastOpened() : null;
-  if (last) {
-    openServer(last.id).then(buildMenu).catch((e) => loadLauncher(e, last.id)).finally(startMirrorHosts);
+  const settings = registry.getSettings();
+  if (settings.background) ensureTray();
+  applyLoginItem();
+  // Started at login (`--hidden`; macOS says so itself): no window, the
+  // servers run in the background for the clones and the folders on disk.
+  const hidden = Boolean(settings.background) && (process.argv.includes('--hidden') ||
+    (process.platform === 'darwin' && app.getLoginItemSettings().wasOpenedAsHidden));
+  if (hidden) {
+    startBackgroundHosts();
   } else {
-    loadLauncher();
-    startMirrorHosts();
+    createWindow();
+    // Reopen where the user left off; the launcher is one click away in the bar.
+    const last = settings.openLastOnLaunch ? registry.getLastOpened() : null;
+    if (last) {
+      openServer(last.id).then(buildMenu).catch((e) => loadLauncher(e, last.id)).finally(startBackgroundHosts);
+    } else {
+      loadLauncher();
+      startBackgroundHosts();
+    }
   }
 
   app.on('activate', () => {
-    if (!win) {
-      createWindow();
-      loadLauncher();
-    }
+    if (!win) showWindow();
   });
 });
 
 app.on('window-all-closed', () => {
+  // In the background the servers keep syncing and the tray brings the window back.
+  if (registry.getSettings().background) {
+    ensureTray();
+    return;
+  }
   if (process.platform !== 'darwin') app.quit();
 });
 
-app.on('before-quit', () => sidecar.stopAll());
+app.on('before-quit', () => {
+  dropTray();
+  sidecar.stopAll();
+});
 process.on('exit', () => sidecar.stopAll());
 
 // Test hook (only with GAMMA_SHELL_TEST): lets the e2e driver reach shell
@@ -889,6 +1146,14 @@ if (process.env.GAMMA_SHELL_TEST) {
     openCopy,
     openOriginal,
     keepOffline,
+    keepFolder,
+    listFolders,
+    showWindow,
+    setBackground,
+    tray: () => Boolean(tray),
+    hasWindow: () => Boolean(win),
+    closeWindow: () => win && win.close(),
+    notice: () => notice,
     loadLauncher,
     current: () => current,
     gamma: () => gamma,

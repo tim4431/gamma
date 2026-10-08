@@ -384,7 +384,8 @@ Library:
   outcome and a tag for files it left alone — with Sync and a "more" menu
   (write everything again, replace changed files, papers only or with
   notes, remove the link with or without its files); "Keep a folder on
-  disk" picks the folder, names the directory and chooses the files. Each row has Open, a Data menu (export, import)
+  disk" picks the folder, names the directory (a full path too where the
+  server allows it, the desktop app's local server) and chooses the files. Each row has Open, a Data menu (export, import)
   and Manage. Manage opens an inline page under one breadcrumb head,
   "Workspaces › <name>", with Open workspace at its right end: General,
   Access, Members and the Danger zone, every row saving at once, no footer.

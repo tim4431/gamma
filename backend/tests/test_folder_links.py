@@ -110,6 +110,27 @@ def test_paths_are_cleaned_unique_and_below_the_root(owner, root):
         owner.delete(f"/api/folder-links/{l['id']}", params={"remove_files": 1}).raise_for_status()
 
 
+def test_an_absolute_path_is_taken_only_where_links_may_go_anywhere(owner, root, tmp_path, monkeypatch):
+    folder = make_folder(owner, "FL anywhere")
+    make_page(owner, "FL a", {"folders": [folder]})
+    mine = tmp_path / "mine" / "Papers"
+    relative = _create(owner, folder=folder, path=str(mine))        # not allowed: made a name below the root
+    assert relative["path"] != str(mine) and relative["dest"].startswith(str(root))
+    owner.delete(f"/api/folder-links/{relative['id']}").raise_for_status()
+    monkeypatch.setenv("GAMMA_FOLDERS_ANYWHERE", "1")
+    assert owner.get("/api/folder-links").json()["anywhere"] is True
+    link = _create(owner, folder=folder, path=str(mine))
+    assert link["path"] == str(mine.resolve()) and link["dest"] == str(mine.resolve())
+    assert _sync(owner, link["id"])["last_error"] == "" and (mine / "FL a.md").is_file()
+    from gamma import config
+    inside = config.DATA_DIR / "workspaces" / "x"
+    r = owner.post("/api/folder-links", json={"folder": folder, "path": str(inside)})
+    assert r.status_code == 400 and "data directory" in r.json()["detail"]
+    assert owner.post("/api/folder-links", json={"folder": folder, "path": str(mine.anchor)}).status_code == 400
+    owner.delete(f"/api/folder-links/{link['id']}", params={"remove_files": 1}).raise_for_status()
+    assert not mine.exists()
+
+
 def test_root_links_the_whole_library(owner, root):
     make_page(owner, "FL loose")                   # at the library root: lands at the top
     link = _create(owner, folder="root", path="Everything")

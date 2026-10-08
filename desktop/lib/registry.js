@@ -47,6 +47,10 @@ const DEFAULTS = {
     lastTheme: '',
     // Folder new local servers are created in ('' = <userData>/workspaces).
     dataRoot: '',
+    // Keep running in the tray when the window closes, so clones and
+    // folders on disk keep syncing; and start hidden at login.
+    background: false,
+    openAtLogin: false,
   },
   servers: [],
   mirrors: [],

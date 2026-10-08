@@ -20,6 +20,7 @@ failed is tried again after ``RETRY_S``.
 
 import json
 import os
+import re
 import shutil
 import sqlite3
 import threading
@@ -54,11 +55,32 @@ def root_dir() -> Path:
     return config.folders_dir()
 
 
+def anywhere() -> bool:
+    return config.folders_anywhere()
+
+
+def _absolute(text: str) -> bool:
+    return os.path.isabs(text) or bool(re.match(r"^[A-Za-z]:[\/]", text))
+
+
 def clean_path(text: str) -> str:
-    """A directory path below the root as a link stores it: forward slashes
+    """A directory path as a link stores it. Below the root: forward slashes
     between names, each name a valid file name (``vault_name``, which also
-    drops what could leave the root), up to 200 characters."""
-    parts = [vault_name(p) for p in str(text or "").replace("\\", "/").split("/") if p.strip(". ")]
+    drops what could leave the root), up to 200 characters. Where links may
+    go anywhere (``anywhere``), an absolute path is kept as the machine
+    resolves it, except a filesystem root or anything inside the data
+    directory that is not below the folders root."""
+    text = str(text or "").strip()
+    if anywhere() and _absolute(text):
+        target = Path(text).expanduser().resolve()
+        data_dir = config.DATA_DIR.resolve()
+        inside_root = target == root_dir().resolve() or root_dir().resolve() in target.parents
+        if target.parent == target:
+            raise LinkError("Pick a directory, not the root of a drive.")
+        if (target == data_dir or data_dir in target.parents) and not inside_root:
+            raise LinkError("That directory is inside Gamma's data directory; pick another.")
+        return str(target)
+    parts = [vault_name(p) for p in text.replace("\\", "/").split("/") if p.strip(". ")]
     path = "/".join(parts)
     if not path or len(path) > 200:
         raise LinkError("Give the directory a name of up to 200 characters.")
@@ -101,7 +123,7 @@ def get_link(link_id: str) -> dict | None:
 
 
 def dest_of(link: dict) -> Path:
-    return root_dir() / link["path"]
+    return Path(link["path"]) if _absolute(link["path"]) else root_dir() / link["path"]
 
 
 def _lock(link_id: str) -> threading.Lock:
@@ -144,10 +166,11 @@ def create_link(ws: str, folder_id: str, path: str, notes: bool, user_id: str) -
         if folder_id != folder_sync.ROOT and folder_id not in folder_paths(conn):
             raise LinkError("That folder does not exist.")
         path = clean_path(path or default_path(conn, ws, folder_id))
-    try:
-        root_dir().mkdir(parents=True, exist_ok=True)
-    except OSError as e:
-        raise LinkError(f"The folders directory {root_dir()} cannot be written: {e}") from e
+    if not _absolute(path):
+        try:
+            root_dir().mkdir(parents=True, exist_ok=True)
+        except OSError as e:
+            raise LinkError(f"The folders directory {root_dir()} cannot be written: {e}") from e
     link = {"id": uuid.uuid4().hex, "workspace_id": ws, "folder_id": folder_id, "path": path, "notes": bool(notes),
             "created_by": user_id, "created_at": page_now(), "cursor": "", "status": {}}
     with connect_users_db() as conn:

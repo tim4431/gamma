@@ -88,6 +88,32 @@ shell which local servers to start at launch (`startMirrorHosts`): a copy
 syncs only while its server runs, so those run for as long as the app does,
 whichever server the window shows.
 
+### Folders on this computer
+
+A folder of a **local** server's workspace can be kept as a directory
+anywhere on this computer — each paper's PDF beside a Markdown note of its
+highlights and notes, kept up to date by that server. The feature is the
+server's ([docs/dev/folder_sync.md](../../docs/dev/folder_sync.md) "Links
+kept by the server"); the shell adds the native directory picker and a way
+in. In the bar menu every workspace row of a local server carries an *on
+disk* chip on hover. It opens a second level of the menu: the workspace's
+folders (`shell:folders` → the server's `GET /api/sync/folders` and `GET
+/api/folder-links`, with the content session's cookies), each already kept
+— a click opens its directory (`shell:open-path`, only for a directory one
+of that server's links names) — or not, where a click asks for the
+directory (`shell:keep-folder` → `keepFolder`; `GAMMA_SHELL_PICK_DIR`
+answers the picker in tests). An empty directory is used as it is; any
+other gets a subdirectory named after the folder. The link is then made
+with `POST /api/folder-links` and the absolute path, which the local
+sidecar accepts because the shell starts it with `GAMMA_FOLDERS_ANYWHERE=1`.
+The shell keeps nothing about links: the rounds, the status and the removal
+are the server's, in its Settings → Workspaces → Folders on disk. A NAS
+folder reaches this computer through a clone of its workspace: clone
+first, then keep a folder of the clone on disk. The bar reports the result
+in its status line for a few seconds (`notice` in the shell state), and the
+first time a clone or a folder on disk is made the shell offers background
+mode (below), since both sync only while Gamma runs.
+
 ## Window
 
 ```
@@ -151,6 +177,25 @@ as Gamma's topbar under it), and `main.js`'s title-bar palette repeats that
 colour per theme. The same test checks both copies. The icons are the same
 stroke glyphs as `frontend/src/shared/ui/Icons.jsx`.
 
+### Background and tray
+
+Closing the last window quits the app (macOS keeps the dock process, as
+any Mac app) unless **Keep running in the background** is on
+(`settings.background`: the launcher's switch, the *Server* menu, the tray
+menu, and `offerBackground`, the offer made when a clone or a folder on
+disk is first created). On, `window-all-closed` leaves the app running with
+a tray icon (`ensureTray`: *Open Gamma*, the two switches, *Quit Gamma*),
+and `startBackgroundHosts` starts every local server at launch instead of
+only the clones' hosts, so clones and folders on disk keep syncing with no
+window; the tray's click or *Open Gamma* brings the window back where the
+user left off (`showWindow`). Turning it off from the tray with no window
+quits. **Start at login** (`settings.openAtLogin`) registers the OS login
+item — `app.setLoginItemSettings` on Windows and macOS, an autostart entry
+under `~/.config/autostart` on Linux; packaged builds only, nothing under
+the test harness — with `--hidden`, so a login start makes no window and
+goes straight to the tray (`applyLoginItem`; macOS reports a hidden start
+itself through `wasOpenedAsHidden`).
+
 ## In-app updates
 
 `lib/updater.js` wraps `electron-updater`, VS Code style: a silent check
@@ -186,7 +231,8 @@ copy under `%LOCALAPPDATA%\Packages\xwtim.GammaPDF_<hash>\LocalCache\Roaming`,
 which the Store uninstall deletes — [release.md](release.md#microsoft-store)):
 
 - `servers.json` — the registry: server list, `lastOpened`, `windowBounds`,
-  and `settings` (`openLastOnLaunch`, `lastTheme`, `dataRoot`, the dev-mode
+  and `settings` (`openLastOnLaunch`, `lastTheme`, `dataRoot`, `background`
+  and `openAtLogin` (the tray, above), the dev-mode
   `pythonPath`/`backendDir`/`staticDir` overrides). Local admin credentials
   are stored in plaintext here — same trust level as the SQLite files next
   to it; acceptable for a per-OS-user desktop app. An older profile's
@@ -213,7 +259,8 @@ directories under the default or the configured root only.
 
 `GAMMA_SHELL_USER_DATA=<dir>` relocates all of it (the tests use a temp
 profile); `GAMMA_SHELL_DOWNLOAD_DIR=<dir>` saves downloads there without the
-dialog (tests only); `GAMMA_SHELL_NO_UPDATE=1` disables the updater.
+dialog and `GAMMA_SHELL_PICK_DIR=<dir>` answers the folder picker (tests
+only); `GAMMA_SHELL_NO_UPDATE=1` disables the updater.
 
 ## File map
 
@@ -223,8 +270,9 @@ dialog (tests only); `GAMMA_SHELL_NO_UPDATE=1` disables the updater.
   (only registered server origins may load in the content view; everything
   else — `target=_blank`, cross-origin redirects — opens in the system
   browser), the remote health probes, the `/api/session` read behind the
-  workspace switcher, `--smoke` self-test, sidecar cleanup on quit, the
-  `GAMMA_SHELL_TEST` hook the e2e suite drives.
+  workspace switcher, the clone and folder-on-this-computer flows over the
+  server's API, the tray and background mode, `--smoke` self-test, sidecar
+  cleanup on quit, the `GAMMA_SHELL_TEST` hook the e2e suite drives.
 - `preload.js` — exposes the `gammaShell` IPC bridge **only on `file:`
   URLs**; on server pages it exposes nothing and only reports `data-theme`
   changes.
@@ -279,7 +327,8 @@ dialog (tests only); `GAMMA_SHELL_NO_UPDATE=1` disables the updater.
   `GAMMA_ADMIN_USER`, `GAMMA_ADMIN_PASSWORD`, `GAMMA_VERSION` = the shell's
   own version, so the server's admin dashboard names the app,
   `GAMMA_CLOUD_DEFAULT_ISSUER` = Gamma Cloud, the account server until the
-  admin saves another), `/api/health` and
+  admin saves another, `GAMMA_FOLDERS_ANYWHERE` = a folder on disk may go
+  anywhere the user picks, since the sidecar runs as the user), `/api/health` and
   `/api/session` (+ the `?ws=` URL parameter). No imports from `backend/`,
   no frontend patches. The one thing it reads off the page is the
   `data-theme` attribute (read-only, via the preload).
