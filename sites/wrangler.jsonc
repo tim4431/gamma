@@ -2,9 +2,10 @@
 // Every request is answered from ./dist, which `npm run build` (build.mjs)
 // assembles from ./site plus the repository's brand artwork and demos.
 // `_redirects` and `_headers` inside ./site add the /download/* shortcuts and
-// the cache/security headers. The only script (src/index.js) sends www to
-// the apex, which `_redirects` cannot do (its sources must be relative), so
-// it runs first and hands everything else to the assets binding.
+// the cache/security headers. The only script (src/index.js) sends www and
+// plain http to https://gammapdf.com, which `_redirects` cannot do (its
+// sources must be relative), so it runs first and hands everything else to
+// the assets binding.
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "gammapdf-site",
@@ -17,6 +18,9 @@
     "html_handling": "auto-trailing-slash",
     "not_found_handling": "404-page"
   },
+  // `wrangler dev` serves http on localhost but hands the Worker the first
+  // route's URL; https keeps the http→https redirect from looping locally.
+  "dev": { "upstream_protocol": "https" },
   // Both hostnames are Custom Domains of the Worker; the zone gammapdf.com
   // must already be on the Cloudflare account, or comment these out for a
   // first deploy to the *.workers.dev preview URL (sites/README.md).
