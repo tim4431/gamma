@@ -457,7 +457,9 @@ positions must come from pdf.js, which renders the page.
 | POST | `/clip/note` | the explicit "clip into page" append: `> quote — [title](url)` as the last block of `page_id`, or of the "Web clips" page (created on first use) |
 
 All five are session-only, never share-token readable; the clip lands in
-the request's workspace — the extension names none, so its personal one.
+the request's workspace — the one the extension's workspace picker names
+(`X-Gamma-Workspace`), else the account's default
+([extension.md](extension.md)).
 
 ### Metadata (`metadata.py`)
 | Method | Path | Purpose |

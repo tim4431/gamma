@@ -106,7 +106,9 @@ workspace to read it. Personal workspaces cannot be joined.
 ## Defaults, conversion and storage
 
 Each account chooses one personal workspace as its **default**. Requests that
-name no workspace, including extension clips, use this library. Deleting the
+name no workspace use this library — the browser extension's saves unless a
+workspace is picked in it ([extension.md](extension.md)), an older client, a
+link without `ws`. Deleting the
 default selects the oldest remaining personal workspace. The last personal
 workspace cannot be deleted independently of the account.
 
@@ -432,7 +434,6 @@ edit-beats-delete, the conflict list — is [mirror.md](mirror.md).
   one merged conversation ([chat_history.md](chat_history.md)).
 - The account directory is visible to every signed-in non-guest account.
 - Cross-workspace page transfer uses export and merge, with no direct move.
-- The browser extension clips into the default workspace.
 - The desktop shell refreshes its workspace list on navigation or menu open.
 
 The historical reasoning is in [research/workspaces.md](../research/workspaces.md).

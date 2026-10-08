@@ -454,8 +454,8 @@ export function ManageWorkspaceDialog({ wsId, me, admin, accounts, confirm, setS
               </Row>
               <StorageRow quota={info.quota} me={me} />
               {mine && !info.default ? (
-                <Row icon={CheckIcon} label={t("Default workspace")} hint={t("where the extension and plain links land")}
-                  title={t("Requests that name no workspace — the browser extension's clips, older clients, a link without a workspace — land in your default workspace.")}>
+                <Row icon={CheckIcon} label={t("Default workspace")} hint={t("where requests that name no workspace land")}
+                  title={t("Requests that name no workspace — the browser extension unless its own picker names one, older clients, a link without a workspace — land in your default workspace.")}>
                   <button className="uiBtn sm" disabled={ws.busy} onClick={async () => { const d = await ws.update({ default: true }); if (d) done(t("{name} is now your default workspace.", { name: d.name })); }}>
                     {t("Make default")}
                   </button>

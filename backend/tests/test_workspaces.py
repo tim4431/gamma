@@ -71,6 +71,26 @@ def test_requests_land_in_the_personal_workspace_by_default(ann, lab):
     assert ann.get(f"/api/blocks/{page['id']}", params={"ws": workspace_of("ws_ann")}, headers=_in(lab)).status_code == 200
 
 
+def test_the_connector_names_the_library_it_saves_into(ann, ben, cid, lab):
+    """The browser extension picks a library with the same header
+    (docs/dev/extension.md): its clip lands there and nowhere else, another
+    member's clip joins it, and a viewer is refused the save."""
+    def clip(client, text, **kw):
+        return client.post("/api/clip/note", json={"text": text, "source_url": f"https://example.org/{text}"}, **kw)
+
+    first = clip(ann, "a", headers=_in(lab))
+    assert first.status_code == 200, first.text
+    page = first.json()["page_id"]
+    assert ann.get(f"/api/blocks/{page}", headers=_in(lab)).status_code == 200
+    assert ann.get(f"/api/blocks/{page}").status_code == 404  # not in her own library
+    assert clip(ann, "b").json()["page_id"] != page           # which has its own clips page
+    assert clip(ben, "c", headers=_in(lab)).json()["page_id"] == page  # an editor joins hers
+    assert clip(cid, "d", headers=_in(lab)).status_code == 403  # a viewer is no destination
+    # The popup's pickers read whatever library the save would go to.
+    assert ann.get("/api/library/folders", headers=_in(lab)).status_code == 200
+    assert cid.get("/api/library/folders", headers=_in(lab)).status_code == 200
+
+
 def test_non_members_and_viewers(ann, ben, cid, lab):
     other = make_user("ws_dan", "danpw12345")  # not a member
     dan = login("ws_dan", "danpw12345")

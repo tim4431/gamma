@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { api, checkedDefaultFolder, defaultFolder, folderByPath, getSettings, rememberFolder, removeServer, setSettings, whoAmI } from "../api.js";
+import {
+  api, checkedDefaultFolder, checkedWorkspace, defaultFolder, folderByPath, getSettings, rememberFolder, removeServer,
+  setSettings, whoAmI, writableWorkspaces,
+} from "../api.js";
 
 function settings(t, server) {
   const stored = { server };
@@ -211,4 +214,67 @@ test("a save without the popup forgets a default folder the library no longer ha
   stored.folder = "Reading/2026";
   assert.deepEqual(await checkedDefaultFolder(await getSettings()), { folder: "", folder_path: "Reading/2026" }, "a path is sent as it is");
   assert.equal(fetch.mock.callCount(), 2, "nothing to check");
+});
+
+test("the chosen workspace rides on every request, and a save pins the one it started in", async (t) => {
+  const { stored } = settings(t, "https://gamma.example");
+  const sent = [];
+  t.mock.method(globalThis, "fetch", async (url, init) => {
+    sent.push(init.headers["X-Gamma-Workspace"]);
+    return response(url.href, { folders: [], labels: [] });
+  });
+  await api("/library/folders");
+  stored.workspaces = { "https://gamma.example": "ws-lab" };
+  await api("/library/folders");
+  stored.workspaces = { "https://other.example": "ws-lab" };
+  await api("/library/folders");
+  // A save names its own workspace, so its uploads and its clip stay
+  // together even if the choice changes while it runs.
+  stored.workspaces = { "https://gamma.example": "ws-lab" };
+  await api("/clip", { json: {}, workspace: "ws-home" });
+  await api("/clip", { json: {}, workspace: "" });
+  assert.deepEqual(sent, [undefined, "ws-lab", undefined, "ws-home", undefined],
+    "no header for the account's default, the chosen one otherwise, another server's never");
+});
+
+test("each workspace keeps its own default folder on the same server", async (t) => {
+  const { stored } = settings(t, "https://gamma.example");
+  stored.folder = "Reading/2026";  // stored before a workspace could be chosen
+  assert.deepEqual(defaultFolder(await getSettings()), { folder: "", folder_path: "Reading/2026" });
+  stored.workspaces = { "https://gamma.example": "ws-lab" };
+  assert.deepEqual(defaultFolder(await getSettings()), { folder: "", folder_path: "" },
+    "the pre-ids path names a folder of the default workspace");
+  const fetch = t.mock.method(globalThis, "fetch", async (url, init) => {
+    assert.equal(init.headers["X-Gamma-Workspace"], "ws-lab");
+    return response(url.href, { folders: [{ id: "f-lab", path: ["Lab"] }], labels: [] });
+  });
+  await rememberFolder(await getSettings(), { folder: "", folder_path: "Lab" });
+  assert.deepEqual(stored.defaultFolders, { "https://gamma.example#ws-lab": "f-lab" });
+  assert.equal(stored.folder, "Reading/2026", "the default workspace's own default is untouched");
+  stored.workspaces = {};
+  assert.deepEqual(defaultFolder(await getSettings()), { folder: "", folder_path: "Reading/2026" });
+  assert.equal(fetch.mock.callCount(), 1);
+});
+
+test("a workspace this account can no longer write to is forgotten", async (t) => {
+  const { stored, writes } = settings(t, "https://gamma.example");
+  stored.workspaces = { "https://gamma.example": "ws-lab", "https://other.example": "ws-lab" };
+  const list = [
+    { id: "ws-home", name: "Home", role: "owner", default: true },
+    { id: "ws-lab", name: "Lab", role: "editor" },
+    { id: "ws-room", name: "Reading room", role: "viewer" },
+  ];
+  assert.deepEqual(writableWorkspaces(list).map((w) => w.id), ["ws-home", "ws-lab"], "a viewer cannot be saved into");
+  assert.equal(await checkedWorkspace(await getSettings(), list), "ws-lab");
+  assert.deepEqual(writes, []);
+  // Demoted to viewer: the account's default takes over, for this server only.
+  assert.equal(await checkedWorkspace(await getSettings(), [list[0], { ...list[1], role: "viewer" }]), "");
+  assert.deepEqual(stored.workspaces, { "https://gamma.example": "", "https://other.example": "ws-lab" });
+  // Gone from the list (deleted, or left).
+  stored.workspaces = { "https://gamma.example": "ws-lab" };
+  assert.equal(await checkedWorkspace(await getSettings(), [list[0]]), "");
+  // A server that lists no workspaces at all is left alone.
+  stored.workspaces = { "https://gamma.example": "ws-lab" };
+  assert.equal(await checkedWorkspace(await getSettings(), undefined), "ws-lab");
+  assert.deepEqual(stored.workspaces, { "https://gamma.example": "ws-lab" });
 });

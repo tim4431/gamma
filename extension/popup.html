@@ -60,6 +60,12 @@
 
     <div id="found" class="hidden">
       <div class="form">
+        <div class="row hidden" id="workspace-row"><label id="workspace-lbl">Workspace</label>
+          <div class="selectWrap">
+            <button id="workspace-btn" type="button" class="uiBtn sm uiSelectBtn block" aria-haspopup="menu" aria-labelledby="workspace-lbl"></button>
+            <div id="workspace-menu" class="ctxMenu hidden" role="menu"></div>
+          </div>
+        </div>
         <div class="row"><label id="folder-lbl">Folder</label>
           <div class="selectWrap">
             <button id="folder-btn" type="button" class="uiBtn sm uiSelectBtn block" aria-haspopup="menu"></button>
@@ -80,7 +86,7 @@
     </div>
 
     <div id="existing" class="hidden">
-      <div class="msg ok">Already in your library<span id="existing-as"></span>.</div>
+      <div class="msg ok"><span id="existing-where">Already in your library</span><span id="existing-as"></span>.</div>
       <div class="actions">
         <button id="open-existing" class="uiBtn primary block">Open in Gamma</button>
         <button id="refile" class="linkBtn">Add to another folder…</button>

@@ -1,13 +1,17 @@
-import { api, defaultFolder, folderByPath, getSettings, login, normalizeServer, originPattern, removeServer, setSettings } from "./api.js";
+import {
+  api, currentWorkspace, defaultFolder, folderByPath, getSettings, login, normalizeServer, originPattern,
+  removeServer, setSettings,
+} from "./api.js";
 import { renderServerList } from "./serverList.js";
 import { connectPublisher, describeSession, publisherHost, publisherRoot } from "./publisherSessions.js";
-import { folderPicker, icon, menuRow, NEW_FOLDER } from "./ui.js";
+import { folderPicker, icon, menuRow, NEW_FOLDER, workspacePicker } from "./ui.js";
 
 const $ = (id) => document.getElementById(id);
 const show = (id, on = true) => $(id).classList.toggle("hidden", !on);
 
 let tab = null;
 let state = null;
+let workspaceSelect = null;                // the workspace picker (ui.js); "" = the account's default
 let folderSelect = null;                   // the folder picker (ui.js); NEW_FOLDER = the new-folder input
 let labelNames = [];                       // the library's labels (GET /api/library/folders), suggested
 let labelTags = [];                        // committed label chips; #labels holds the fragment being typed
@@ -128,6 +132,11 @@ async function showMain(st) {
 
   renderHead(st);
 
+  // With one library there is nothing to name; with several, say which one
+  // holds the paper and offer the other ones under "Add to another…".
+  const several = (st.workspaces || []).length > 1;
+  $("existing-where").textContent = several ? `Already in ${workspaceName(st)}` : "Already in your library";
+  $("refile").textContent = several ? "Add to another folder or library…" : "Add to another folder…";
   $("dot").className = "dot " + (st.hit ? "ok" : c.kind === "none" ? "" : "on");
   show("existing", !!st.hit);
   show("found", !st.hit && c.kind !== "none");
@@ -137,9 +146,16 @@ async function showMain(st) {
   if (st.saving) { show("progress"); $("progress-text").textContent = st.saving; } else show("progress", false);
   if (st.error) { $("result").className = "msg err"; $("result").textContent = st.error; show("result"); }
 
-  await fillPickers(st.settings);
+  await fillPickers(st);
   $("pub-auto").checked = st.settings.autoRefreshSessions !== false;
   await loadPublisher(st);
+}
+
+// The library saves go to: the chosen workspace, else the account's default.
+function workspaceName(st) {
+  const chosen = currentWorkspace(st.settings);
+  const found = (st.workspaces || []).find((w) => (chosen ? w.id === chosen : w.default));
+  return found ? found.name : "your library";
 }
 
 // ---------- publisher sessions: the footer's cookie button + drawer ----------
@@ -316,7 +332,13 @@ function renderHead(st) {
 
 // ---------- folder + label pickers (MenuSelect / ctxMenu style, plain JS) ----------
 
-async function fillPickers(settings) {
+// The workspace saves go to, then that library's folders and labels. The
+// workspace row appears only for an account with a choice to make: the
+// worker already filtered the list to the ones this account can write to.
+async function fillPickers(st) {
+  const settings = st.settings;
+  show("workspace-row", (st.workspaces || []).length > 1);
+  workspaceSelect.set(st.workspaces || [], currentWorkspace(settings));
   let library = { folders: [], labels: [] };
   try { library = await api("/library/folders"); } catch {}
   labelNames = library.labels.map((l) => l.name);
@@ -514,6 +536,14 @@ document.addEventListener("DOMContentLoaded", async () => {
   $("login-form").addEventListener("submit", doLogin);
   $("login-btn").onclick = doLogin;
   $("offline-retry").onclick = () => refresh(true);
+  workspaceSelect = workspacePicker($("workspace-btn"), $("workspace-menu"), async (value) => {
+    const settings = await getSettings();
+    if (value === currentWorkspace(settings)) return;
+    await setSettings({ workspaces: { ...settings.workspaces, [settings.server]: value } });
+    // The other library has its own folders and labels, and its own answer
+    // to "already saved?" — look this tab up again there.
+    await refresh();
+  });
   folderSelect = folderPicker($("folder-btn"), $("folder-menu"), (value) => {
     show("folder-new-row", value === NEW_FOLDER);
     if (value === NEW_FOLDER) $("folder-new").focus();
