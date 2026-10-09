@@ -148,6 +148,33 @@ export async function noteScenarios({ server, browser, alice, step, until, sleep
     assertNoProblems(page);
   });
 
+  // The editor shows a numbered marker as text in tabular figures
+  // (BlockCmEditor's cmListNum): Inter's own "1" is narrower than "2", which
+  // set the first item's text left of the others'.
+  await step("notes: Enter continues a numbered list, and its items' text lines up in the editor", async () => {
+    const src = await alice2.api("/api/pages", { method: "POST", body: { title: "Numbered" } });
+    await alice2.api(`/api/pages/${src.id}/ops`, { method: "POST", body: { client: "e2e", ops: [
+      { op: "insert", id: "numblk01", parent: src.id, position: "a0", content: "1. one" }] } });
+    const p2 = await openPage(ctx, `${server.base}/?ws=${second.id}&page=${src.id}`);
+    try {
+      await editRow(p2, "one");
+      for (const word of ["two", "three", "four", "seven"]) { await p2.keyboard.press("Enter"); await p2.keyboard.type(word); }
+      await until(async () => (await tree(alice2, src.id))[0]?.content === "1. one\n2. two\n3. three\n4. four\n5. seven", { what: "the list saved" });
+      // Where each item's text starts: the first letter after "N. ".
+      const starts = await p2.evaluate(() => [...document.querySelectorAll(".blockEditorCm .cm-line")].map((line) => {
+        const walker = document.createTreeWalker(line, NodeFilter.SHOW_TEXT);
+        let at = line.textContent.indexOf(" ") + 1, node;
+        while ((node = walker.nextNode()) && at >= node.data.length) at -= node.data.length;
+        const range = document.createRange();
+        range.setStart(node, at); range.setEnd(node, at + 1);
+        return range.getBoundingClientRect().left;
+      }));
+      assertEq(starts.length, 5, "five lines");
+      assert(Math.max(...starts) - Math.min(...starts) < 0.5, `the items' text lines up: ${starts.join(", ")}`);
+      assertNoProblems(p2);
+    } finally { await p2.close(); }
+  });
+
   await step("notes: the handle menu duplicates and deletes a block", async () => {
     const wrap = page.locator(".sortableBlockWrap", { hasText: "third" }).first();
     await wrap.hover();

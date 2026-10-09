@@ -1,6 +1,6 @@
 // The Logseq-style outliner: block rows (markdown rendering, inline
 // editing, [[refs]], link chips, image drop/paste), drag handles, and the tree.
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useContext, useEffect, useMemo, useRef, useState } from "react";
 import { textOf } from "../shared/lib/textOf";
 import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
 import remarkBreaks from "remark-breaks";
@@ -40,6 +40,8 @@ import { fenceInnerAt } from "./fences.js";
 import { filterSlashCommands, SlashMenuPopup } from "./SlashMenu";
 import { RefPickerPopup } from "./RefPicker";
 import { pageByTitle, pickerCounts, rankRefPages, refBlockPath, refBlockText } from "./refLists.js";
+import { datePending, mentionMarkdown, mentionRows, mentionText, mentionTrigger } from "./mentions.js";
+import { MentionChip, MentionContext, MentionMenuPopup } from "./MentionMenu";
 import { remarkCallouts } from "./callouts";
 import { PeerChips, RenderedCarets } from "../collaboration/Presence";
 import { ContextMenu, MenuItem } from "../shared/ui/Menus";
@@ -73,7 +75,7 @@ const _embedWrites = new Map();
 
 // Source → markdown the renderer understands: sized images (Obsidian
 // ![alt|300] and legacy Logseq {:width}), ![[embeds]],
-// [[refs]] and ==highlights== rewritten OUTSIDE math and inline-code spans
+// [[refs]], ==highlights== and @mentions rewritten OUTSIDE math and inline-code spans
 // (a "==" inside $...$ must stay LaTeX). `nested` is the inside-an-embed
 // render: embeds degrade to ref chips so transclusion can't recurse.
 function applyOutsideSpans(text, spans, fn) {
@@ -118,7 +120,7 @@ function mdPreprocessProse(content, nested) {
   }
   // Outside math, ``` fences and inline code (where two overlap, the earlier
   // wins in applyOutsideSpans) — a [[ref]] or == inside code stays literal.
-  return applyOutsideSpans(content, protectedSpans(content), (seg) => seg
+  return applyOutsideSpans(content, protectedSpans(content), (seg) => mentionMarkdown(seg
     // Sized images: legacy Logseq {:width N} first, then Obsidian ![alt|300].
     .replace(/!\[([^\]]*)\]\(([^)]+)\)\{:width\s+(\d+)\}/g, '<img src="$2" alt="$1" width="$3" />')
     .replace(/!\[([^\]|]*)\|(\d+)(?:x\d+)?\]\(([^)]+)\)/g, '<img src="$3" alt="$1" width="$2" />')
@@ -127,7 +129,7 @@ function mdPreprocessProse(content, nested) {
     // A hand-typed [[title]] no page answered (the editor links one that
     // names exactly one page): a dashed "unlinked" chip.
     .replace(/!?\[\[([^[\]\n]+)\]\]/g, "[$1](unlinked:)")
-    .replace(/==([^=\n]+?)==/g, "<mark>$1</mark>"));
+    .replace(/==([^=\n]+?)==/g, "<mark>$1</mark>")));
 }
 
 // GitHub URLs get a readable label without any fetch: owner/repo, #issue/PR,
@@ -557,9 +559,12 @@ export const BlockMarkdown = React.memo(function BlockMarkdown({ content, blockI
       rehypePlugins={[rehypeRaw, rehypeKatex]}
       // Upload URLs get the workspace / share token here (assetUrl): the
       // browser fetches <img> src and link hrefs without the API header.
-      urlTransform={(url) => /^(blockref|blockembed|unlinked):/.test(url) ? url : assetUrl(defaultUrlTransform(url))}
+      urlTransform={(url) => /^(blockref|blockembed|unlinked|mention):/.test(url) ? url : assetUrl(defaultUrlTransform(url))}
       components={{
         a: ({ href, children }) => {
+          // An @ mention (mdPreprocess): its chip, which reads the people
+          // and the clock from App's contexts.
+          if (href?.startsWith("mention:")) return <MentionChip raw={decodeURIComponent(href.slice(8))} />;
           if (href?.startsWith("blockref:")) {
             const refId = href.slice(9);
             const ref = refLabels?.[refId];
@@ -796,10 +801,15 @@ const BlockRow = React.memo(function BlockRow({
   inlineSheets,
   onInsertSheet,
   onNewPage,
+  onInvite, // the @ menu's "Invite…": the page's Share popover (absent where one may not share)
+  onReminderSet, // a reminder was just written by the @ menu (App's useReminders)
   onUndo,
 }) {
   const ref = useRef(null);
   const clickPosRef = useRef(null);
+  // Who a note can mention (App's MentionContext): the @ menu's people and
+  // the editor's person chips.
+  const mentions = useContext(MentionContext);
   // The viewer's state for this row (blockModel's `view`): its editor open,
   // its children folded.
   const editing = view?.editingId === block.id;
@@ -979,6 +989,11 @@ const BlockRow = React.memo(function BlockRow({
   // the slash (caret moves just keep or close it), suppressed inside math.
   const [slashMenu, setSlashMenu] = useState(null);
   const [slashIdx, setSlashIdx] = useState(0);
+  // "@" mention menu (editor/mentions.js): { start, query, rows, anchor },
+  // opened by typing an "@" that starts a word; it stays open across
+  // spaces while something answers the query.
+  const [atMenu, setAtMenu] = useState(null);
+  const [atIdx, setAtIdx] = useState(0);
   // Notion-style "Paste as" chooser after pasting a URL: the URL text is
   // already inserted; { start, end, url, items, anchor }. Any further edit,
   // caret move or blur keeps the URL and dismisses the menu.
@@ -1015,7 +1030,7 @@ const BlockRow = React.memo(function BlockRow({
     return [
       ...pageHits.slice(0, np).map((p) => ({
         kind: "page", id: p.id, title: p.content, isPdf: !!p._attachment,
-        meta: [pageKindLabel(p._attachment), p._folders?.[0]].filter(Boolean).join(" · "),
+        meta: [pageKindLabel(p._attachment), p._folderChips?.[0]?.name].filter(Boolean).join(" · "),
       })),
       ...blockHits.slice(0, nb).map((b) => ({
         kind: "block", id: b.id, title: refBlockText(b.content, labelOf) || t("(empty)"), meta: refBlockPath(b), block: b,
@@ -1096,6 +1111,50 @@ const BlockRow = React.memo(function BlockRow({
       return { start, query: m[1], items, anchor };
     });
     if (typing) setSlashIdx(0);
+  }
+
+  // "@" trigger (editor/mentions.js mentionTrigger): recomputed like the
+  // slash menu's on edits (typing, may open) and caret moves (only keeps an
+  // open menu on its own "@"); closed by a selection, math, a code fence,
+  // a [[ being typed, or a query nothing answers — unless it is a date
+  // still being typed ("@next" before "fri"), which keeps the menu, hidden
+  // with no rows, until it means one.
+  function updateAtMenu(ta, typing) {
+    const cursor = ta.selectionStart, value = ta.value;
+    if (cursor !== ta.selectionEnd || findMathAtCursor(value, cursor) || fenceInnerAt(value, cursor)
+      || /\[\[[^\]\n]*$/.test(value.slice(0, cursor))) { setAtMenu(null); return; }
+    setAtMenu((prev) => {
+      const trigger = mentionTrigger(value, cursor, prev?.start ?? null);
+      if (!trigger || (!typing && prev?.start !== trigger.start)) return null;
+      const rows = mentionRows({
+        query: trigger.query, people: mentions.people, me: mentions.me, pages, rootId, canInvite: !!onInvite,
+      });
+      return rows.length || datePending(trigger.query) ? { ...trigger, rows, anchor: ta.caretCoords(trigger.start) } : null;
+    });
+    if (typing) setAtIdx(0);
+  }
+
+  // A picked row replaces the typed "@query" with its mention and a space
+  // (mentions.js mentionText); "Invite…" removes it and opens the Share
+  // popover. One editor transaction, change and caret together: a caret set
+  // a frame later would land behind the keys typed meanwhile.
+  function pickMention(row) {
+    const ta = ref.current;
+    if (!ta?.view || !atMenu) return;
+    const { start } = atMenu;
+    const cursor = ta.selectionStart;
+    setAtMenu(null);
+    const text = mentionText(row, mentions.me);
+    const insert = text && !/^\s/.test(ta.value.slice(cursor, cursor + 1)) ? `${text} ` : text;
+    if (row.kind === "page") onCacheRef?.(row.id, { content: row.title, page_title: row.title });
+    ta.view.dispatch({
+      changes: { from: start, to: cursor, insert },
+      selection: { anchor: start + insert.length },
+      userEvent: "input",
+    });
+    // Inside the key press or click: the gesture a notification prompt needs.
+    if (row.kind === "remind") onReminderSet?.();
+    if (row.kind === "invite") onInvite?.();
   }
 
   // What a block command runs with (blockCommands.js): the row's keydown
@@ -1627,6 +1686,7 @@ const BlockRow = React.memo(function BlockRow({
               dataBlockId={block.id}
               clickPos={clickPosRef.current}
               refLabels={refLabels}
+              mentions={mentions}
               remoteCursors={remoteCursors}
               onObjectDrag={stableObjectDrag}
               onObjectDragOver={stableObjectDragOver}
@@ -1649,16 +1709,19 @@ const BlockRow = React.memo(function BlockRow({
                 }
                 updateMathUi(e.target, true);
                 updateSlashMenu(e.target, true);
+                updateAtMenu(e.target, true);
                 setPasteMenu(null);
               }}
               onSelect={(e) => {
                 onCaret?.(block.id, e.target.selectionStart, e.target.selectionEnd);
-                updateMathUi(e.target, false); updateSlashMenu(e.target, false); setPasteMenu(null);
+                updateMathUi(e.target, false); updateSlashMenu(e.target, false); updateAtMenu(e.target, false);
+                setPasteMenu(null);
               }}
               onBlur={() => {
                 onStartEdit(block.id, false);
                 setMathUi(null);
                 setSlashMenu(null);
+                setAtMenu(null);
                 setPasteMenu(null);
                 setTimeout(() => setRefPopup(null), 120);
               }}
@@ -1684,6 +1747,17 @@ const BlockRow = React.memo(function BlockRow({
                   if (e.key === "ArrowUp") { e.preventDefault(); setSlashIdx((i) => Math.max(i - 1, 0)); return; }
                   if (e.key === "Enter" || e.key === "Tab") { e.preventDefault(); runSlashCommand(slashMenu.items[slashIdx]); return; }
                   if (e.key === "Escape") { e.preventDefault(); setSlashMenu(null); return; }
+                }
+                if (atMenu?.rows.length) {
+                  const n = atMenu.rows.length;
+                  if (e.key === "ArrowDown") { e.preventDefault(); setAtIdx((i) => Math.min(i + 1, n - 1)); return; }
+                  if (e.key === "ArrowUp") { e.preventDefault(); setAtIdx((i) => Math.max(i - 1, 0)); return; }
+                  if (e.key === "Enter" || (e.key === "Tab" && !e.shiftKey)) {
+                    e.preventDefault();
+                    pickMention(atMenu.rows[Math.min(atIdx, n - 1)]);
+                    return;
+                  }
+                  if (e.key === "Escape") { e.preventDefault(); setAtMenu(null); return; }
                 }
                 if (mathUi?.ac) {
                   const n = mathUi.ac.items.length;
@@ -1880,6 +1954,10 @@ const BlockRow = React.memo(function BlockRow({
       {!readOnly && editing && slashMenu ? (
         <SlashMenuPopup items={slashMenu.items} selected={slashIdx} anchor={slashMenu.anchor} onPick={runSlashCommand}
           grouped={!slashMenu.query} commands />
+      ) : null}
+      {!readOnly && editing && atMenu?.rows.length ? (
+        <MentionMenuPopup rows={atMenu.rows} selected={Math.min(atIdx, atMenu.rows.length - 1)} anchor={atMenu.anchor}
+          query={atMenu.query} onPick={pickMention} />
       ) : null}
       {!readOnly && editing && pasteMenu ? (
         <SlashMenuPopup title={t("Paste as")} items={pasteMenu.items} selected={pasteIdx} anchor={pasteMenu.anchor} onPick={applyPasteAs} />

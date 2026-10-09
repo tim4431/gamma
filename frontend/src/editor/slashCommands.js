@@ -140,7 +140,7 @@ function wordPrefixAt(s, q) {
 }
 
 // The typed letters as a subsequence of `text`, VS Code style, like the
-// \command completion's fuzzy tail (latexCompletion.js fuzzyScore):
+// \command completion's fuzzy tail (latexCompletion.js fuzzyMatch):
 // anchored on the first letter, every letter in order. A letter continues
 // the run, else jumps to the next word that starts with it ("hn" → the
 // H and the N of "Handwritten note", "cb" → "Code block"), else takes the

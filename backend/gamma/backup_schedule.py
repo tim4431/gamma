@@ -1,7 +1,10 @@
 """Named backup tasks with UTC cron, task-specific retention and OS locking.
 
 A task is a file under ``backups/tasks/``; its ``owner`` is the id of the
-account it belongs to (``users.id``), so a rename never touches it.
+account it belongs to (``users.id``), so a rename never touches it. Its run
+state: ``last_run`` (when the latest run started), ``state``, ``last_success``,
+``last_error``, and ``last_result`` (what the latest successful run made:
+``{snapshots, bytes, seconds}``; absent until a run succeeds).
 
 Every run is a full copy, so the limits below bound what an account can
 make the server keep: a task runs at most hourly, keeps at most
@@ -302,16 +305,20 @@ def run_due(at=None):
                     continue
                 task.update(state='running', last_run=at.isoformat())
                 _write(task)
+                started = time.monotonic()
                 try:
                     check_limits(task)  # a task saved before the limits
                     ids = targets(task)
                     # Publish all selected snapshots before retention removes anything.
-                    for ws in ids:
-                        ws_backup.create(ws, label='task-' + task['id'][:12], uploads=task['uploads'],
-                                         by=task['owner'], scheduled=True, task_id=task['id'])
+                    made = [ws_backup.create(ws, label='task-' + task['id'][:12], uploads=task['uploads'],
+                                             by=task['owner'], scheduled=True, task_id=task['id'])
+                            for ws in ids]
                     for ws in ids:
                         _prune(task, ws, max(at, now()))
-                    task.update(last_success=at.isoformat(), last_error=None, state='finished')
+                    # What the run made, for the Settings table's Last run cell.
+                    result = dict(snapshots=len(made), bytes=sum(m['size_bytes'] for m in made if m),
+                                  seconds=round(time.monotonic() - started, 1))
+                    task.update(last_success=at.isoformat(), last_error=None, state='finished', last_result=result)
                     if due:
                         task['next_run'] = next_run(task['cron'], max(at, now()))
                 except Exception as exc:

@@ -1108,8 +1108,10 @@ PROFILE_PREF_KEY = "profile"
 # on it, the base of the next three-way merge. Never served by /api/prefs.
 PROFILE_BASE_PREF_KEY = "profile-base"
 NOTICES_SEEN_PREF_KEY = "notices-seen"  # gamma/notices.py: {notice id: fingerprint seen}
+REMINDERS_DONE_PREF_KEY = "reminders-done"  # gamma/mentions.py: {reminder key: when it was done}
 USER_PREF_KEYS = frozenset({"ai-settings", "ai-provider", "translate-engines", "search-services",
-                            PROFILE_PREF_KEY, PROFILE_BASE_PREF_KEY, NOTICES_SEEN_PREF_KEY})
+                            PROFILE_PREF_KEY, PROFILE_BASE_PREF_KEY, NOTICES_SEEN_PREF_KEY,
+                            REMINDERS_DONE_PREF_KEY})
 
 
 def pref_scope(key: str, ws: str) -> str:

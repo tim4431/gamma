@@ -13,7 +13,7 @@ import { t } from "../shared/i18n/i18n.js";
 import { guideEvents } from "../guide/events.js";
 
 export {
-  latexCompletions, envCompletions, fuzzyScore, insertionFor,
+  latexCompletions, envCompletions, insertionFor,
   latexCompletionEdit, findMathAtCursor, mathTabJump,
 } from "./latexCompletion";
 
@@ -157,7 +157,28 @@ export function MathLivePreview({ tex, display, anchor, caret }) {
   );
 }
 
-// The \command completion popup: rendered glyph + command name per row.
+// `text` with the letters at `at` (ascending indices) marked in search's
+// look (mark.searchMark), a run of neighbours one mark: what the typed
+// letters matched in a caret popup's row (this one's, the "/" menu's).
+export function Matched({ text, at }) {
+  if (!at?.length) return text;
+  const parts = [];
+  let from = 0;
+  for (let k = 0; k < at.length;) {
+    let end = k;
+    while (end + 1 < at.length && at[end + 1] === at[end] + 1) end++;
+    if (at[k] > from) parts.push(text.slice(from, at[k]));
+    parts.push(<mark key={k} className="searchMark">{text.slice(at[k], at[end] + 1)}</mark>);
+    from = at[end] + 1;
+    k = end + 1;
+  }
+  parts.push(text.slice(from));
+  return parts.map((p, i) => <React.Fragment key={i}>{p}</React.Fragment>);
+}
+
+// The \command completion popup: rendered glyph + command name per row, the
+// letters the typed ones matched marked (latexCompletion.js `match.at`), so
+// "\rm" shows why it offers \mathrm.
 export function LatexAcPopup({ items, selected, anchor, onPick }) {
   const [listRef, style] = useCaretAnchored(anchor, false, [items]);
   useEffect(() => {
@@ -182,7 +203,8 @@ export function LatexAcPopup({ items, selected, anchor, onPick }) {
           >
             <span className="latexAcGlyph" dangerouslySetInnerHTML={{ __html: glyph || "" }} />
             <span className="latexAcName">
-              {c.env ? `\\begin{${c.name}}${c.arg}` : `\\${c.name}${"{}".repeat(c.args || 0)}`}
+              {c.env ? "\\begin{" : "\\"}<Matched text={c.name} at={c.match?.at} />
+              {c.env ? `}${c.arg}` : "{}".repeat(c.args || 0)}
             </span>
           </button>
         );

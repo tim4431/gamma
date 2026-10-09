@@ -104,7 +104,7 @@ try {
     await page.keyboard.press("Tab");
     assert.equal(await value(), "$\\" + name + "_{0}^{n}$");
   }
-  for (const [name, expected] of [["abs", "\\left| x \\right|"], ["norm", "\\left\\lVert x \\right\\rVert"], ["lim", "\\lim_{x}"]]) {
+  for (const [name, expected] of [["abs", "\\left| x \\right|"], ["norm", "\\left\\lVert x \\right\\rVert"], ["lim", "\\lim_{x}"], ["rm", "\\mathrm{x}"]]) {
     await reset();
     await page.keyboard.type("\\" + name);
     await page.keyboard.press("Tab");

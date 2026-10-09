@@ -38,6 +38,7 @@ import { settingsScenarios } from "./scenarios/settings.mjs";
 import { mcpScenarios } from "./scenarios/mcp.mjs";
 import { mirrorScenarios } from "./scenarios/mirror.mjs";
 import { mentionScenarios } from "./scenarios/mentions.mjs";
+import { noteMentionScenarios } from "./scenarios/noteMentions.mjs";
 import { chatNavigationScenarios } from "./scenarios/chatNavigation.mjs";
 import { transferScenarios } from "./scenarios/transfers.mjs";
 import { inkScenarios } from "./scenarios/ink.mjs";
@@ -80,6 +81,7 @@ const RUNNERS = {
   "publish": publishScenarios,
   "chat-navigation": chatNavigationScenarios,
   "mentions": mentionScenarios,
+  "note-mentions": noteMentionScenarios,
   "collab": collabScenarios,
   "mirror": mirrorScenarios,
   "transfers": transferScenarios,

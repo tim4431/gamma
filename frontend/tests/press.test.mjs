@@ -1,9 +1,9 @@
 // The gesture rules shared by mouse and finger (shared/ui/press.js): what
 // counts as a double tap, the stand-in event a held finger gives a menu
-// opener, and the props a call site spreads.
+// opener, the props a call site spreads, and when a dialog's backdrop closes it.
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { doublePress, isDoubleTap, menuPress, pressAt } from "../src/shared/ui/press.js";
+import { backdropPress, doublePress, isDoubleTap, menuPress, pressAt } from "../src/shared/ui/press.js";
 
 const el = {}, other = {};
 const tapAt = (t, x = 100, y = 100, on = el) => ({ el: on, t, x, y });
@@ -51,4 +51,22 @@ test("one release is counted once, by the innermost element it reaches", () => {
   };
   release(20000); release(20200);
   assert.deepEqual([inner, outer], [1, 0]);
+});
+
+test("a backdrop closes its dialog only for a press that starts and ends on it", () => {
+  // Settings' backdrop (outer) holds a sub-dialog's backdrop (sub); a press
+  // bubbles through the sub-dialog's handlers, then the outer ones.
+  const outerEl = {}, subEl = {}, field = {};
+  const closed = [];
+  const outer = backdropPress(() => closed.push("outer")), sub = backdropPress(() => closed.push("sub"));
+  const press = (down, up, clickAt, on = [outer, outerEl]) => {
+    for (const props of [sub, outer]) props.onPointerDown({ target: down });
+    for (const props of [sub, outer]) props.onPointerUp({ target: up });
+    on[0].onClick({ target: clickAt, currentTarget: on[1] });
+  };
+  press(outerEl, outerEl, outerEl); assert.deepEqual(closed, ["outer"], "a click on the backdrop");
+  press(field, outerEl, outerEl); assert.deepEqual(closed, ["outer"], "text selected in a field, let go past the dialog's edge");
+  press(outerEl, field, outerEl); assert.deepEqual(closed, ["outer"], "a press from the backdrop let go inside the dialog");
+  press(field, field, field); assert.deepEqual(closed, ["outer"], "a click inside the dialog");
+  press(subEl, subEl, subEl, [sub, subEl]); assert.deepEqual(closed, ["outer", "sub"], "the sub-dialog's own backdrop, through the outer handlers");
 });

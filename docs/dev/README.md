@@ -87,6 +87,7 @@ These describe the implementation unless explicitly marked as plans.
 | Preferences, Settings panes, notices, and backup tasks | [Settings](settings.md) |
 | Themes, controls, menus, dialogs, and editor interactions | [UI design](ui-design.md) |
 | Command catalogs, dispatch, and keybindings | [Hotkeys](hotkeys.md) |
+| The note editor's @ menu: dates, people and page links as chips, reminders and their delivery | [Mentions and reminders](mentions.md) |
 | LaTeX pairing, completion, caret behavior, and preview | [LaTeX editing](latex_editing.md) |
 | Mermaid rendering and editing | [Mermaid](mermaid.md) |
 | Interface translations and catalogs | [Internationalization](i18n.md) |

@@ -28,6 +28,7 @@ import {
   useTextScale,
 } from "../shared/ui/Widgets";
 import { BlockTree, _dragState } from "../editor/BlockTree";
+import { MentionClock, MentionContext } from "../editor/MentionMenu";
 import { refIdsOf, refLabelsByBlock } from "../editor/refLabels.js";
 import { BacklinksPanel } from "../editor/BacklinksPanel";
 import { dropGapAtPoint, findObject } from "../editor/MdObject";
@@ -105,6 +106,8 @@ import { guestExpiryLabel } from "../auth/guestExpiry";
 import { McpAuthorization } from "../auth/McpConsent";
 import { TRANSLATE_LANGS, themeScheme, translateModelFor, useAppPrefs, useProfileSync } from "./prefs";
 import { useNotices } from "./useNotices";
+import { useReminders } from "./useReminders";
+import { ReminderAlerts } from "./ReminderAlerts";
 import { dotTone, noticeAction, noticeText } from "./notices";
 import { useBlockHistory } from "../editor/blockHistory.js";
 import { useMarks } from "../markup/MarkupLayers";
@@ -7218,6 +7221,31 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       };
     });
   }, [homeBlocks, libTree]);
+  // Who a note can mention (editor/MentionMenu.jsx MentionContext,
+  // docs/dev/mentions.md): the workspace's members, read once per
+  // workspace, and the signed-in account. A share view mentions no one.
+  const [people, setPeople] = useState([]);
+  useEffect(() => {
+    if (shareMode || !wsId || !authUser?.user) { setPeople([]); return undefined; }
+    let live = true;
+    apiJson(`${API}/people`).then((d) => { if (live) setPeople(d.people || []); }).catch(() => {});
+    return () => { live = false; };
+  }, [shareMode, wsId, authUser?.user]);
+  const mentionPeople = useMemo(() => {
+    const me = shareMode ? "" : authUser?.user || "";
+    return { me, people, known: new Set([me, ...people.map((p) => p.username)].filter(Boolean)) };
+  }, [shareMode, authUser?.user, people]);
+  // The reminders written as "@… (remind @me)" (app/useReminders.js): the
+  // cards and notifications of the ones due, and the chips' clock. One in
+  // another workspace opens there (a workspace switch is a navigation).
+  const refText = (id) => pageBlocks.find((p) => p.id === id)?.content ?? refCache[id]?.content;
+  function openReminder(r) {
+    if (r.workspace_id === wsId) { openBlockLink(r.block_id, r.page_id); return; }
+    leaveCurrentPage();
+    const q = new URLSearchParams({ ws: r.workspace_id, page: r.page_id, block: r.block_id });
+    window.location.href = `${window.location.pathname}?${q}`;
+  }
+  const reminders = useReminders(!shareMode && !!authUser?.user, { labelOf: refText, onOpen: openReminder });
   // Folders shown at the current level: the open folder's subfolders (the
   // top level at the root), in their order.
   const levelFolders = useMemo(() => childFolders(libTree, folderFilter), [libTree, folderFilter]);
@@ -9002,6 +9030,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                   onInsertSheet: readOnly ? undefined : insertSheetAt,
                   // "/page": a share's editor makes no library page.
                   onNewPage: readOnly || shareMode ? undefined : createLinkedPage,
+                  // The @ menu's "Invite…" shares the page (Notion's invite to a
+                  // page); its "Remind me" wakes the reminders.
+                  onInvite: readOnly || shareMode || authUser?.is_guest ? undefined : () => openPageShare(focusedBlockId),
+                  onReminderSet: reminders.noteSet,
                   onAddSheetAfter: readOnly ? undefined : addSheetAfter,
                   onEnterAttachMode: readOnly ? null : setAttachModeBlockId,
                   onUnlinkHighlight: readOnly ? null : unlinkHighlightFromBlock,
@@ -9844,6 +9876,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   return (
     <GammaNavContext.Provider value={gammaNav}>
     <PageToolsContext.Provider value={pageTools}>
+    <MentionContext.Provider value={mentionPeople}>
+    <MentionClock.Provider value={reminders.now}>
     <div
       ref={appRef}
       className={`app layout-horizontal ${pseudoFullscreen ? "pseudoFullscreen" : ""} ${isPhone ? "phoneUI" : ""}`}
@@ -11233,7 +11267,11 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
             </button>
         </ContextMenu>
       ) : null}
+      <ReminderAlerts due={reminders.due} now={reminders.now} labelOf={refText} phone={isPhone}
+        onOpen={openReminder} onDismiss={reminders.dismiss} />
     </div>
+    </MentionClock.Provider>
+    </MentionContext.Provider>
     </PageToolsContext.Provider>
     </GammaNavContext.Provider>
   );

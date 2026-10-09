@@ -589,6 +589,13 @@ Starting a job answers 429 when the account already has 20 queued or running, 50
 | GET | `/notices` | `{notices: [{id, fingerprint, tone, pane, title}]}` the account has not looked at yet, strongest `tone` (`info` / `warn` / `error`) first; `pane` is the Settings pane that resolves it. The sources (`update`, `log-errors` and `db-damage` for admins; `backup-failed`, `mirror-conflicts`, `publish-conflicts`, `cloud-sync`, `cloud-sync-choice`, `hosted`, `free-translate`, `storage` for everyone) are the table in [settings.md](settings.md) "Notices". Guests and integration tokens get `[]`. Sync: the release check may hit the network when its cache is stale |
 | POST | `/notices/{id}/seen` | `{fingerprint}` — the account has seen this version of the notice (kept in the account-wide `notices-seen` pref); it stays quiet until the fingerprint changes. 403 for guests and tokens, 400 for a malformed id or fingerprint |
 
+### Mentions and reminders (`routers/mentions.py`, `gamma/mentions.py`) — see [mentions.md](mentions.md)
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/people` | `{people: [{username, role}]}`: the explicit members of the request's workspace, owners first, whom a note's @ menu offers (any member; 403 for a share link's visitor, who is no member) |
+| GET | `/reminders` | `{reminders: [{key, workspace_id, page_id, page_title, block_id, date, time, text}], done: [key]}`: the account's reminders (`@YYYY-MM-DD HH:MM (remind @username)` in note text) in every workspace it can open, soonest first, found through each workspace's notes index (`time` "" when the reminder has none; a page in Recently deleted reminds no one), and the keys it has dismissed (the account-wide `reminders-done` pref). Session only (tokens get 403). Sync: one notes-index query per workspace |
+| POST | `/reminders/done` | `{keys: [key], done: true}` (at most 100 keys): dismiss reminders, or with `done: false` bring them back; answers `{done: [key]}`, the latest 500 kept |
+
 ### Integrations and MCP (`routers/integrations.py`, `mcp_oauth.py`, `mcp_server.py`) — see [mcp.md](mcp.md)
 | Method | Path | Purpose |
 |---|---|---|

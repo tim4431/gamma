@@ -30,6 +30,7 @@ One module per API area. Mounted under `/api` in `gamma/app.py`.
 | `folders.py`  | `/api/folders/{id}`, `/api/labels/{id}` (DELETE) | deleting a folder or a label: the subtree, the ids on the pages, the folder chats and shares |
 | `prefs.py`    | `/api/prefs/*`, `/api/page-snaps*`  | per-account (and per-workspace) synced prefs, cover snapshots |
 | `notices.py`  | `/api/notices*`                     | the red dot's feed (gamma/notices.py) and the ack when a notice is seen |
+| `mentions.py` | `/api/people`, `/api/reminders*`    | the note editor's @ menu (gamma/mentions.py): a workspace's people, the account's reminders and the ones it dismissed |
 | `search.py`   | `/api/search`, `/pdf-search`, `/search-reindex` | FTS5 search over notes (`block_fts`) and PDF text (`pdf_fts`; pypdfium2, normalized via `gamma/textnorm.py`), the PDF index built by the workspace's indexing job |
 | `links.py`    | `/api/link-preview`                 | a web page's title for link chips (through the SSRF guard, cached in-process) |
 | `clip.py`     | `/api/clip`, `/clip/note`, `/library/*` | the Gamma Connector's endpoints: save a page or a selection, look the library up for the popup |

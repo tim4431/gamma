@@ -31,6 +31,7 @@ export const GROUPS = [
   { id: "publish", files: ["publish.mjs"] }, // ~15
   { id: "chat-navigation", files: ["chatNavigation.mjs"] }, // ~12
   { id: "mentions", files: ["mentions.mjs"] }, // ~11
+  { id: "note-mentions", files: ["noteMentions.mjs"] },
   { id: "collab", files: ["collab.mjs"] }, // ~11
   { id: "mirror", files: ["mirror.mjs"] }, // ~9
   { id: "transfers", files: ["transfers.mjs"] }, // ~9
@@ -84,6 +85,9 @@ export const RULES = [
   ["frontend/src/replica/**", ["replica"]],
   ["frontend/src/pdf/**", PDF_VIEW],
   // (a text box's editor and read mode are the notes')
+  // the @ menu and its chips (the reminders are App's, under app/**)
+  ["frontend/src/editor/mentions.js", ["note-mentions", "notes-pdf-share"]],
+  ["frontend/src/editor/MentionMenu.jsx", ["note-mentions", "notes-pdf-share"]],
   ["frontend/src/editor/**", ["notes-pdf-share", "mermaid", "files", "collab", "transfers", "mcp", "guide", "triggered-guide", "textbox", "touch"]],
   ["frontend/src/chat/**", CHAT],
   ["frontend/src/settings/**", ["settings", "i18n", "mirror", "cloud-sign-in", "mcp", "publish", "triggered-guide"]],

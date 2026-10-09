@@ -18,6 +18,14 @@ function describe(peer) {
   return `${peer.name || "Anonymous"}${peer.user ? "" : " (via link)"} · ${what}`;
 }
 
+// A stable colour index for a name (the --peer-0…7 palette), for an avatar
+// of someone who is not on the page: a share's owner, a person to mention.
+export function nameColor(name) {
+  let hash = 0;
+  for (const ch of name) hash = (hash * 31 + ch.codePointAt(0)) >>> 0;
+  return hash % 8;
+}
+
 export function PeerAvatar({ peer, onClick, title }) {
   return (
     <span

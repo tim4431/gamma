@@ -10,7 +10,7 @@ Read papers, keep what you learn. This guide shows each part of Gamma in a short
 | [Notebooks](#notebooks) | Sheets of paper to write on |
 | [Follow links and translate](#follow-links-and-translate) | Citations, Back, translation in place |
 | [Notes](#notes) | Markdown and math that render as you type |
-| [Outline and links between pages](#outline-and-links-between-pages) | Nesting, moving notes, `[[` links |
+| [Outline and links between pages](#outline-and-links-between-pages) | Nesting, moving notes, `[[` links, `@` mentions and reminders |
 | [AI chat](#ai-chat) | Ask about the paper, with clickable citations; every AI service you can connect |
 | [The library agent](#the-library-agent) | Let the AI organize and edit, with your approval; what each tool does |
 | [Library](#library) | Folders, labels, Recently deleted |
@@ -110,6 +110,7 @@ Notes are a nested outline. Highlights and free notes are the same kind of block
 <img alt="Two brackets are typed in a note, a picker lists pages, one becomes a chip in the line, and a Linked from row under the page lists the note" src="assets/page-links.svg" width="100%">
 
 - **`[[`** links to a page or a note; the link is a clickable chip, and **Linked from** under a page lists everything that links to it. `![[block]]` embeds a block you can edit in place.
+- **`@`** mentions a date, a person or a page, as in Notion: **Today**, **Remind me** (tomorrow at 9, or what you type, such as `@fri 3pm` or `@remind me next mon`), the people of the workspace, and pages by title. A reminder shows a card at its time, and a system notification if you allow them, while Gamma is open.
 - **/page** makes a new page from a note and links it where you typed.
 
 ## AI chat
@@ -353,7 +354,7 @@ Account menu → **Settings**, or **Ctrl+,**. The search box at the top finds an
 | Backspace | On an empty note: delete it |
 | Ctrl+B / Ctrl+I / Ctrl+E / Ctrl+Shift+X / Ctrl+Shift+H | Bold / italic / code / strike / highlight |
 | Ctrl+K | Link the selection (URL from the clipboard) |
-| `/` · `[[` · `@` | Command menu · page link · attach a paper in chat |
+| `/` · `[[` · `@` | Command menu · page link · in a note, mention a date, person or page; in chat, attach a paper |
 | Ctrl+wheel | Zoom the PDF at the cursor |
 | Ctrl+drag on the page | Capture a region for the chat, and an optional area highlight |
 | Ctrl+click a highlight | Quote it into the chat |

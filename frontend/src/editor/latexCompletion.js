@@ -1,9 +1,9 @@
 // The block editor's LaTeX command catalog and the pure helpers around it:
-// \command completion (prefix, alias, abbreviation and VS Code-style fuzzy
-// tiers), snippet insertion, the math span under the caret, and snippet-style
-// Tab navigation. No DOM, no React — editor/LatexEditor.jsx re-exports these
-// next to the preview and popup components; tests/latexCompletion.test.mjs
-// pins the matching rules.
+// \command completion (prefix, abbreviation, alias, inner-run and VS
+// Code-style fuzzy tiers), snippet insertion, the math span under the caret,
+// and snippet-style Tab navigation. No DOM, no React — editor/LatexEditor.jsx
+// re-exports these next to the preview and popup components;
+// tests/latexCompletion.test.mjs pins the matching rules.
 import { escapedAt, leftDelimiterEdit, rightDelimiterAt } from "./latexInput.js";
 
 // --- command catalog -------------------------------------------------------
@@ -118,8 +118,8 @@ for (const [name, args, sample] of [
   ["mathit", 1], ["mathsf", 1], ["mathtt", 1], ["mathscr", 1, "\\mathscr{A}"],
   ["mathnormal", 1], ["bm", 1, "\\bm{x}"],
   ["mathfrak", 1, "\\mathfrak{g}"], ["boldsymbol", 1, "\\boldsymbol{\\alpha}"],
-  ["text", 1, "\\text{a}"], ["textbf", 1, "\\textbf{a}"], ["textit", 1, "\\textit{a}"],
-  ["texttt", 1, "\\texttt{a}"], ["textsf", 1, "\\textsf{a}"],
+  ["text", 1, "\\text{a}"], ["textrm", 1, "\\textrm{a}"], ["textbf", 1, "\\textbf{a}"],
+  ["textit", 1, "\\textit{a}"], ["texttt", 1, "\\texttt{a}"], ["textsf", 1, "\\textsf{a}"],
   ["operatorname", 1, "\\operatorname{Tr}"],
 ]) CATALOG.push({ name, args, sample });
 for (const name of BIG_OPS) CATALOG.push({ name,
@@ -224,63 +224,92 @@ const ABBR = {
   ss: "subset", sse: "subseteq", cross: "times", ee: "exp", sq: "sqrt",
 };
 
-// Fuzzy score of a command name against the typed letters, VS Code style:
-// every query character must appear in order (case-insensitive), anchored
-// on the name's first letter so "mbb" finds mathbb and "lra"
-// leftrightarrow without every name that merely contains the letters. Lower
-// is better: a gap between matched letters costs more than a contiguous
+// Every match below is {at, cost}: the name's matched letter positions,
+// which the popup marks, and a cost within its tier (lower is better), like
+// the "/" menu's fuzzyIndices.
+const lead = (n, from = 0) => Array.from({ length: n }, (_, i) => from + i);
+
+// The typed letters as one run inside a name they don't begin. Most
+// commands are a base with a modifier in front of it — math|rm, wide|tilde,
+// left|arrow, p|matrix, d|frac, subset|eq — so the base finds the family:
+// "\rm" offers \mathrm and \textrm, "\tilde" \widetilde, "\eq" \leq,
+// \geq, \subseteq. A run that ends the name is such a base (cost 0) and
+// ranks before one in its middle (cost 1: "rm" in mathnormal). Two
+// letters at least: one would match half the catalog. Case-insensitive;
+// null when the letters aren't there.
+export function infixMatch(name, query) {
+  const n = name.toLowerCase(), q = query.toLowerCase();
+  if (q.length < 2) return null;
+  const end = n.length - q.length;
+  const from = end > 0 && n.endsWith(q) ? end : n.indexOf(q, 1);
+  return from < 1 ? null : { at: lead(q.length, from), cost: from === end ? 0 : 1 };
+}
+
+// The typed letters scattered through a name, VS Code style: every one in
+// order (case-insensitive), anchored on the name's first letter so "mbb"
+// finds mathbb and "lra" leftrightarrow without every name that merely
+// contains the letters. A gap between matched letters costs more than a
 // run, and shorter names win ties. null when it doesn't match.
-export function fuzzyScore(name, query) {
+export function fuzzyMatch(name, query) {
   const n = name.toLowerCase(), q = query.toLowerCase();
   if (q.length < 2 || n[0] !== q[0]) return null;
-  let score = 0, last = 0;
+  const at = [0];
+  let cost = 0;
   for (let i = 1; i < q.length; i++) {
-    const at = n.indexOf(q[i], last + 1);
-    if (at < 0) return null;
-    score += at === last + 1 ? 0 : 2 + (at - last - 1) * 0.1;
-    last = at;
+    const last = at[i - 1], next = n.indexOf(q[i], last + 1);
+    if (next < 0) return null;
+    cost += next === last + 1 ? 0 : 2 + (next - last - 1) * 0.1;
+    at.push(next);
   }
-  return score + (n.length - q.length) * 0.05;
+  return { at, cost: cost + (n.length - q.length) * 0.05 };
+}
+
+// How a command answers the typed letters: {tier, at, cost}, or null.
+// Tiers: exact → the query already spells the whole command and the name
+// only adds a delimiter ("left" → `left(` before `leftarrow`) → other
+// prefix matches → abbreviation (a deliberate table entry, so "Ra" means
+// \Rightarrow, not \rangle) → case-insensitive prefix → alias → the
+// letters as a run inside the name (infixMatch) → scattered through it
+// (fuzzyMatch).
+function commandMatch(c, query, abbr) {
+  const q = query.toLowerCase(), prefix = { at: lead(query.length), cost: 0 }, none = { at: [], cost: 0 };
+  if (c.name === query) return { tier: 0, ...prefix };
+  if (c.name.startsWith(query)) return { tier: /^[a-zA-Z]+/.exec(c.name)[0] === query ? 1 : 2, ...prefix };
+  if (abbr === c.name) return { tier: 3, ...none };
+  if (c.name.toLowerCase().startsWith(q)) return { tier: 4, ...prefix };
+  if (c.alias?.startsWith(q)) return { tier: 5, ...none };
+  const inner = infixMatch(c.name, query);
+  if (inner) return { tier: 6, ...inner };
+  const scattered = fuzzyMatch(c.name, query);
+  return scattered && { tier: 7, ...scattered };
+}
+
+// The entries that match, best first — by tier, then cost, then catalog
+// order — each a copy carrying its `match`.
+function ranked(entries, matchOf, limit) {
+  return entries.map((c, i) => [matchOf(c), i, c])
+    .filter(([m]) => m)
+    .sort(([a, i], [b, j]) => a.tier - b.tier || a.cost - b.cost || i - j)
+    .slice(0, limit)
+    .map(([match, , c]) => ({ ...c, match }));
 }
 
 export function latexCompletions(query, limit = 8) {
   if (!query) return [];
-  const q = query.toLowerCase();
-  const abbr = ABBR[query];
-  const out = [];
-  for (const c of CATALOG) {
-    // Tiers: exact → the query already spells the whole command and the
-    // name only adds a delimiter ("left" → `left(` before `leftarrow`) →
-    // other prefix matches → abbreviation (a deliberate table entry, so
-    // "Ra" means \Rightarrow, not \rangle) → case-insensitive prefix →
-    // alias → fuzzy subsequence (ranked by fuzzyScore). Ties keep catalog
-    // order.
-    const letters = (c.name.match(/^[a-zA-Z]+/) || [""])[0];
-    let tier = c.name === query ? 0
-      : c.name.startsWith(query) ? (letters === query ? 1 : 2)
-        : abbr === c.name ? 3
-          : c.name.toLowerCase().startsWith(q) ? 4
-            : c.alias && c.alias.startsWith(q) ? 5 : -1;
-    let score = 0;
-    if (tier < 0) {
-      const f = fuzzyScore(c.name, query);
-      if (f == null) continue;
-      tier = 6;
-      score = f;
-    }
-    out.push([tier, score, out.length, c]);
-  }
-  out.sort((a, b) => a[0] - b[0] || a[1] - b[1] || a[2] - b[2]);
-  return out.slice(0, limit).map((x) => x[3]);
+  return ranked(CATALOG, (c) => commandMatch(c, query, ABBR[query]), limit);
 }
 
 // Environment-name completions for the "\begin{prefix" trigger: every
-// environment when the prefix is empty (the popup doubles as a menu), prefix
-// matches otherwise.
+// environment when the prefix is empty (the popup doubles as a menu), else
+// the ones it begins, then the ones it runs inside ("cases" → rcases,
+// dcases; "matrix" → every matrix).
+const ENVS = CATALOG.filter((c) => c.env);
 export function envCompletions(prefix, limit = 12) {
-  const q = prefix.toLowerCase();
-  return CATALOG.filter((c) => c.env && c.name.toLowerCase().startsWith(q))
-    .slice(0, limit);
+  return ranked(ENVS, (c) => {
+    if (c.name.toLowerCase().startsWith(prefix.toLowerCase())) return { tier: 0, at: lead(prefix.length), cost: 0 };
+    const inner = infixMatch(c.name, prefix);
+    return inner && { tier: 1, ...inner };
+  }, limit);
 }
 
 // What accepting a completion types, and where the caret lands within it

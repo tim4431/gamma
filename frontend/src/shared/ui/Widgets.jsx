@@ -81,6 +81,8 @@ function fragmentToMarkdown(node, ctx = {}) {
   const el = node;
   if (el.hasAttribute("data-markdown-copy-ignore")) return "";
   if (el.hasAttribute("data-mermaid-source")) return `\n\n${mermaidFence(el.getAttribute("data-mermaid-source"))}\n\n`;
+  // An @ mention chip copies as its text ("@2026-10-09"), not its label ("@Today").
+  if (el.hasAttribute("data-mention")) return el.getAttribute("data-mention");
   if (el.classList.contains("katex-display")) {
     const tex = el.querySelector('annotation[encoding="application/x-tex"]')?.textContent;
     return tex != null ? `\n\n$$\n${tex.trim()}\n$$\n\n` : el.textContent;

@@ -139,6 +139,10 @@ def test_run_now_paused_and_regular_schedule_preserved(workspace, monkeypatch):
     state = tasks.read(task['id'])
     assert state['state'] == 'finished' and state['next_run'] is None
     assert len(ws_backup.list_backups(workspace)) == 1
+    # What the run made, for the table's Last run cell.
+    result = state['last_result']
+    assert result['snapshots'] == 1 and result['bytes'] == ws_backup.list_backups(workspace)[0]['size_bytes']
+    assert result['seconds'] >= 0
     enabled = create(workspace)
     tasks.mutate(account_of('scheduled_owner'), enabled['id'], 'run')
     tasks.run_due(at)
@@ -161,7 +165,7 @@ def test_failure_preserves_old_snapshots_and_retries(workspace, monkeypatch):
     state = tasks.read(task['id'])
     assert state['state'] == 'failed' and state['last_error'] == 'Disk is full'
     assert state['next_run'] == (at + timedelta(hours=1)).isoformat()
-    assert state['last_success'] is None
+    assert state['last_success'] is None and 'last_result' not in state
     assert ws_backup.info(workspace, existing['name'])
     monkeypatch.setattr(ws_backup, 'create', original)
     tasks.run_due(at + timedelta(hours=1))

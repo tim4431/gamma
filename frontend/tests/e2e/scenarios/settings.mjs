@@ -4,7 +4,7 @@ import http from "node:http";
 import path from "node:path";
 
 export async function settingsScenarios(env) {
-  const { server, browser, step, openPage, assert, assertEq, assertNoProblems, until, flags } = env;
+  const { server, browser, step, openPage, assert, assertEq, assertNoProblems, until, sleep, flags } = env;
   if (!wanted("settings")) return;
   server.manage("create-user", "settings-user", "settings-pw");
   const user = await new Account(server, "settings-user", "settings-pw").login();
@@ -847,6 +847,20 @@ export async function settingsScenarios(env) {
       await page.getByRole("button", { name: "Add task", exact: true }).click();
       const dialog = page.getByRole("dialog", { name: "Add backup task", exact: true });
       await dialog.getByPlaceholder("e.g. Nightly research backup").fill("Nightly");
+      // Text selected with a drag let go past the dialog's edge is no click
+      // on the backdrop (press.js backdropPress); a real click there asks.
+      const keep = await dialog.getByRole("spinbutton", { name: "Keep for", exact: true }).boundingBox();
+      const edge = await dialog.boundingBox();
+      await page.mouse.move(keep.x + keep.width / 2, keep.y + keep.height / 2);
+      await page.mouse.down();
+      await page.mouse.move(edge.x - 20, keep.y + keep.height / 2, { steps: 6 });
+      await page.mouse.up();
+      const unsaved = dialog.getByText("Discard your unsaved edits?", { exact: true });
+      await sleep(150);
+      assertEq(await unsaved.count(), 0, "a drag out of the dialog does not close it");
+      await page.mouse.click(edge.x - 20, edge.y + 40);
+      await unsaved.waitFor();
+      await dialog.getByRole("button", { name: "Keep editing", exact: true }).click();
       await dialog.getByRole("button", { name: "Frequency", exact: true }).click();
       await page.getByRole("button", { name: "Daily", exact: true }).click();
       await dialog.locator("ol li").first().waitFor(); // the schedule preview answered
@@ -860,6 +874,9 @@ export async function settingsScenarios(env) {
       // Run now wakes the scheduler at once; the table polls every 5 s
       await until(() => rowOf.innerText().then((t) => /finished|failed/i.test(t)), { timeout: 20000, what: "the queued run to finish" });
       assert(/finished/i.test(await rowOf.innerText()), "the run finished");
+      // The Last run cell: the state, when it ran, what it made.
+      await until(() => rowOf.innerText().then((t) => /Finished\s+\w{3} \d+, \d+:\d+.*\s+\d+ snapshots? · [\d.]+ [KMG]?B/.test(t)),
+        { what: "the Last run cell's time and result" });
       await rowOf.getByRole("button", { name: "Actions for Nightly", exact: true }).click();
       await page.getByRole("button", { name: "Delete task", exact: true }).click();
       await page.locator(".confirmHead").waitFor();

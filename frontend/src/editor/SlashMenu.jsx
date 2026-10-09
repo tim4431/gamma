@@ -3,7 +3,7 @@
 // re-exported here); editor/BlockTree.jsx owns the trigger detection,
 // keyboard handling and state.
 import React, { useEffect } from "react";
-import { useCaretAnchored } from "./LatexEditor";
+import { Matched, useCaretAnchored } from "./LatexEditor";
 import { SLASH_GROUPS } from "./slashCommands.js";
 import { t } from "../shared/i18n/i18n.js";
 import {
@@ -27,24 +27,6 @@ const MENU_ICONS = {
   url: GlobeIcon, citation: QuoteIcon, pageCard: FileTextIcon, title: TypeIcon, text: AlignLeftIcon,
   blocks: OutlineIcon,
 };
-
-// `text` with the letters at `at` (ascending indices) marked in search's
-// look (mark.searchMark), a run of neighbours one mark.
-function Matched({ text, at }) {
-  if (!at?.length) return text;
-  const parts = [];
-  let from = 0;
-  for (let k = 0; k < at.length;) {
-    let end = k;
-    while (end + 1 < at.length && at[end + 1] === at[end] + 1) end++;
-    if (at[k] > from) parts.push(text.slice(from, at[k]));
-    parts.push(<mark key={k} className="searchMark">{text.slice(at[k], at[end] + 1)}</mark>);
-    from = at[end] + 1;
-    k = end + 1;
-  }
-  parts.push(text.slice(from));
-  return parts.map((p, i) => <React.Fragment key={i}>{p}</React.Fragment>);
-}
 
 // Caret-anchored command popup. A row: the item's icon, its label over a
 // one-line description, and for a command the name to type ("/note"), with

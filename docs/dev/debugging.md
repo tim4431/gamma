@@ -513,6 +513,8 @@ The scenarios live in `tests/e2e/scenarios/`:
   implementation details in [mermaid.md](mermaid.md).
 - `mentions.mjs`: paper search, keyboard and touch selection, reference limits,
   persistence, PDF receipts and textarea shrink after clearing context. Run with `--only mentions`.
+- `noteMentions.mjs`: the note editor's @ menu, its chips, Invite… and a reminder's
+  card ([mentions.md](mentions.md)). Run with `--group note-mentions`.
 - `chatNavigation.mjs`: a library or PDF chat reply keeps streaming and is
   saved while the user navigates away and back, before or after it finishes;
   the model menu lists one connection's models.

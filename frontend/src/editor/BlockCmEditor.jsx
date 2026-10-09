@@ -20,7 +20,8 @@ import { calloutType } from "./callouts";
 import { highlightCode, makeCopyButton } from "./codeHighlight";
 import { fenceInnerAt, scanFences } from "./fences.js";
 import { scanColorSpans, scanImageSyntax, scanMarks } from "./mdMarks";
-import { parseTable, scanImages, scanMathSpans, scanTables } from "./mdScan";
+import { parseTable, protectedSpans, scanImages, scanMathSpans, scanTables } from "./mdScan";
+import { NO_MENTIONS, mentionChip, mentionChipClass, proseMentions } from "./mentions.js";
 import { assetUrl } from "../shared/lib/utils";
 import { commandById } from "../app/commands.js";
 import { menuPress } from "../shared/ui/press.js";
@@ -70,6 +71,27 @@ class RefChipWidget extends WidgetType {
     span.addEventListener("mousedown", (e) => {
       e.preventDefault();
       placeCaretInside(view, span, this.embed ? 3 : 2);
+    });
+    return span;
+  }
+}
+
+// An @ mention (MentionMenu.jsx mentionChip: the rendered view's chip); a
+// press drops the caret just after the "@", which shows the source.
+class MentionChipWidget extends WidgetType {
+  constructor(chip) {
+    super();
+    this.chip = chip;
+  }
+  eq(other) { return mentionChipClass(other.chip) === mentionChipClass(this.chip) && other.chip.text === this.chip.text; }
+  toDOM(view) {
+    const span = document.createElement("span");
+    span.className = `${mentionChipClass(this.chip)} cmMentionChip`;
+    span.title = this.chip.title;
+    span.textContent = this.chip.text;
+    span.addEventListener("mousedown", (e) => {
+      e.preventDefault();
+      placeCaretInside(view, span, 1);
     });
     return span;
   }
@@ -425,6 +447,22 @@ function buildInlineDecos(state, ctx) {
     }).range(from, to));
   }
 
+  // @ mentions (editor/mentions.js), outside inline code: a date or a
+  // reminder is a chip, a person one when someone here has that name
+  // (ctx.mentions, App's MentionContext) — any other "@name" stays text.
+  // Claimed before the marks, so a username's "_" never reads as emphasis.
+  if (text.includes("@")) {
+    const code = protectedSpans(text);
+    for (const m of proseMentions(text)) {
+      if (overlapsClaimed(m.from, m.to) || code.some((s) => m.from < s.to && m.to > s.from)) continue;
+      const chip = mentionChip(m, ctx.mentions || NO_MENTIONS);
+      if (!chip) continue;
+      claimed.push([m.from, m.to]);
+      if (touched(m.from, m.to)) continue;
+      ranges.push(Decoration.replace({ widget: new MentionChipWidget(chip) }).range(m.from, m.to));
+    }
+  }
+
   // ![alt](url): the picture itself, like the rendered view (same syntax
   // scan as mdTools' image editing). Claimed before the inline marks so a
   // `*` in the URL or alt never reads as emphasis, and skipped inside code
@@ -583,6 +621,15 @@ function buildInlineDecos(state, ctx) {
       if (!inside(bFrom, bFrom + 2) && !overlapsClaimed(bFrom, bFrom + 1)) {
         ranges.push(Decoration.replace({ widget: new BulletWidget() }).range(bFrom, bFrom + 1));
       }
+      continue;
+    }
+    // A numbered marker stays text, in tabular figures: Inter's own are
+    // proportional, so "1. " would be narrower than "2. " and the items'
+    // text would not line up (the rendered view hangs its markers outside).
+    const num = /^(\s*)\d+[.)] /.exec(line.text);
+    if (num) {
+      const nFrom = line.from + num[1].length, nTo = line.from + num[0].length - 1;
+      if (!overlapsClaimed(nFrom, nTo)) ranges.push(Decoration.mark({ class: "cmListNum" }).range(nFrom, nTo));
       continue;
     }
     if (/^(-{3,}|\*{3,}|_{3,})$/.test(line.text.trim()) && line.text.trim()
@@ -874,16 +921,17 @@ const typingAids = EditorView.contentAttributes.compute(["doc", "selection"], (s
 // drawn where its text was, in the same type (a text box's).
 const BlockCmEditor = React.forwardRef(function BlockCmEditor({
   value, onChange, onSelect, onKeyDown, onBlur, onPaste, onUndo,
-  placeholder, autoFocus, clickPos, pinScroll = false, dataBlockId, className, refLabels, remoteCursors, onObjectDrag,
-  onObjectDragOver, onObjectDrop,
+  placeholder, autoFocus, clickPos, pinScroll = false, dataBlockId, className, refLabels, mentions, remoteCursors,
+  onObjectDrag, onObjectDragOver, onObjectDrop,
 }, forwardedRef) {
   const hostRef = useRef(null);
   const viewRef = useRef(null);
   const cbRef = useRef({});
   cbRef.current = { onChange, onSelect, onKeyDown, onBlur, onPaste, onUndo, onObjectDragOver, onObjectDrop };
   // What the decoration pass reads lazily (see buildInlineDecos).
-  const decoCtx = useRef({ labels: refLabels, objectDrag: onObjectDrag }).current;
+  const decoCtx = useRef({ labels: refLabels, mentions, objectDrag: onObjectDrag }).current;
   decoCtx.labels = refLabels;
+  decoCtx.mentions = mentions;
   decoCtx.objectDrag = onObjectDrag;
   const chipCompartment = useRef(new Compartment()).current;
 
@@ -1098,10 +1146,12 @@ const BlockCmEditor = React.forwardRef(function BlockCmEditor({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cursorsKey]);
 
-  // Ref labels resolve asynchronously (onFetchRefs); refresh the chip
-  // decorations when their text actually changes, not on every render.
+  // Ref labels resolve asynchronously (onFetchRefs), and the people a note
+  // can mention arrive after it opens; refresh the chip decorations when
+  // either actually changes, not on every render.
   const labelsKey = Object.entries(refLabels || {})
-    .map(([id, r]) => `${id}:${r?.content}:${r?.trashed ? "trashed" : ""}`).join("\u0000");
+    .map(([id, r]) => `${id}:${r?.content}:${r?.trashed ? "trashed" : ""}`)
+    .concat(mentions ? [mentions.me, ...mentions.known] : []).join("\u0000");
   useEffect(() => {
     const view = viewRef.current;
     if (!view) return;
