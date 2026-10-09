@@ -15,6 +15,9 @@ export async function triggeredGuideScenarios(env) {
   server.manage("create-user", "tourist", "tourist-pw");
   const user = await new Account(server, "tourist", "tourist-pw").login();
   const open = async (query, { setup, seenWindows = false, seen = [], ...opts } = {}) => {
+    // Progress follows the account to every browser, so each case starts
+    // with the account's copy cleared as well as a fresh browser.
+    await user.api("/api/prefs/profile", { method: "PATCH", body: { set: { tourProgress: {} } } });
     const ctx = await user.context(browser, { suggestTours: true, ...opts });
     // A PDF's window-layout or viewer offer otherwise takes this load's only
     // offer slot and can cover the menu used to start a different tour;
@@ -101,6 +104,35 @@ export async function triggeredGuideScenarios(env) {
       await makeTable(page, "grid here");
       await page.waitForTimeout(1500);
       assertEq(await page.locator("[data-guide-offer]").count(), 0, "offered once per version");
+      assertNoProblems(page);
+    } finally { await ctx.close(); }
+  });
+
+  await step("triggered guide: Dismiss leaves a running tour, and the account's other browsers are not offered it again", async () => {
+    const pg = await user.api("/api/pages", { method: "POST", body: { title: "Dismissed grid" } });
+    await user.api("/api/blocks", { method: "POST", body: { parent_id: pg.id, content: "first grid" } });
+    await user.api("/api/blocks", { method: "POST", body: { parent_id: pg.id, content: "second grid" } });
+    const first = await open(`&page=${pg.id}`);
+    try {
+      await makeTable(first.page, "first grid");
+      await first.page.waitForSelector('[data-guide-offer="tables"] .guideCard');
+      await first.page.getByRole("button", { name: "Show me" }).click();
+      await first.page.waitForSelector('[data-guide-overlay="table-cell"] .guideCard');
+      await first.page.locator(".guideCard .guideDismiss", { hasText: "Dismiss" }).click();
+      await until(async () => await first.page.locator(".guideCard").count() === 0, { what: "Dismiss closes the tour" });
+      assertEq(await progress(first.page, "tables"), "dismissed");
+      await until(async () => (await user.api("/api/prefs/profile")).value?.tourProgress?.tables?.state === "dismissed",
+        { what: "the account holds the dismissal" });
+      assertNoProblems(first.page);
+    } finally { await first.ctx.close(); }
+    // A browser with nothing in its own storage: the account's copy decides.
+    const ctx = await user.context(browser, { suggestTours: true });
+    const page = await openPage(ctx, `${server.base}/?ws=${user.ws}&page=${pg.id}`);
+    try {
+      await makeTable(page, "second grid");
+      await page.waitForTimeout(1500);
+      assertEq(await page.locator('[data-guide-offer="tables"]').count(), 0, "a tour dismissed in another browser is not offered here");
+      assertEq(await progress(page, "tables"), undefined, "nothing came from this browser's storage");
       assertNoProblems(page);
     } finally { await ctx.close(); }
   });

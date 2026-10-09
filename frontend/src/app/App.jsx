@@ -2537,7 +2537,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     searchDetailsHome, setSearchDetailsHome, searchDetailsPaper, setSearchDetailsPaper,
     enterNewNote, setEnterNewNote, backlinksVisible, setBacklinksVisible,
     keybindings, setKeybindings,
-    statusBarVisible, setStatusBarVisible, suggestTours, setSuggestTours, syncPillScope, setSyncPillScope,
+    statusBarVisible, setStatusBarVisible, suggestTours, setSuggestTours, tourProgress, setTourProgress,
+    syncPillScope, setSyncPillScope,
     chatEffort, setChatEffort, chatSpeed, setChatSpeed, aiLoginCheck, setAiLoginCheck, metaModel, setMetaModel,
     dictationModel, setDictationModel, dictationLang, setDictationLang,
     chatSystem, setChatSystem, agentSystem, setAgentSystem,
@@ -6962,12 +6963,13 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // A setting of this account's own making, not the profile arriving: the
   // first push AFTER the sync has been quiet once (a profile the server
   // never held reads as every entry pending until its seeding push lands,
-  // app/prefs.js).
+  // app/prefs.js). The guide's own record of the tours is no setting.
   const [prefsChanged, setPrefsChanged] = useState(false);
   const syncQuiet = useRef(false);
   useEffect(() => {
-    if (!profileSync.pending.size && !profileSync.inflight.size) {
-      if (profileSync.state === "loaded") syncQuiet.current = true;
+    const changing = [...profileSync.pending, ...profileSync.inflight].some((name) => name !== "tourProgress");
+    if (!changing) {
+      if (!profileSync.pending.size && !profileSync.inflight.size && profileSync.state === "loaded") syncQuiet.current = true;
     } else if (syncQuiet.current) setPrefsChanged(true);
   }, [profileSync.pending, profileSync.inflight, profileSync.state]);
   const guide = useGuide({
@@ -7025,6 +7027,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     // Nothing is suggested before the account's synced profile says whether to.
     suggest: suggestTours && profileSync.state !== "loading",
     scope: authUser?.user || "",
+    // The tours this account has seen anywhere; a guest's stay in this browser.
+    synced: { value: tourProgress, set: setTourProgress,
+      ready: profileSync.state !== "loading" && profileSync.state !== "signed-out" },
     facts: {
       view: homeMode ? "home" : pageAttach ? "pdf" : "page", hasPdf: !!pageAttach,
       // unknown (undefined) until /api/ai/models answers, so the AI chat

@@ -2,8 +2,8 @@
 
 **Status: the engine, the two manual tours (first paper, AI chat), thirteen
 triggered tours, twelve hints and the welcome page with its sample PDF are
-built. The first paper tour is also offered to every new library.** A synced
-`onboarding` pref and a checklist are not built (see "Not built").
+built. The first paper tour is also offered to every new library.** A
+checklist is not built (see "Not built").
 What exists: `frontend/src/guide/` (anchor registry, event bus, trigger rules
 in `triggers.js`, `useGuide`, `GuideOverlay` and its positioner `place.js`,
 the scene player `scene.js`, the illustration registry `media.js` with its
@@ -53,7 +53,9 @@ Esc, the scrim, a tile) keeps it. Only a tour with a `finishCard` ends this
 way; the others close after their last step.
 
 Progress is a localStorage key per account (`gamma-guide:<account>:<tourId>`;
-the first tour keeps its older `gamma-guide:first-run`; see "Storage"). On a
+the first tour keeps its older `gamma-guide:first-run`) plus the account's
+synced copy, so a tour done in one browser is not offered in another (see
+"Storage"). On a
 demo server (`facts.demo`, from `GET /api/server-config`'s
 `demo`) the same keys live in sessionStorage (`guideStorage(demo)` in
 `triggers.js`), so every visit starts fresh ([guests.md](guests.md) "Demo
@@ -89,7 +91,8 @@ The scene or the demo shows the rest ("Showing, not telling", below). Its
 head says what kind of step it is: **▶ Watch** (a demo), **Your turn** (a
 step that waits, because later steps need its result), **✓ Done** (the
 acknowledgement) or nothing (a light step). "Step n of m" sits on the
-right, and a segmented bar shows the progress. A light step has Back and
+right, and a segmented bar shows the progress. Every step's footer starts
+with **Dismiss**, which leaves the tour as × and Esc do. A light step has Back and
 Next whether or not the user tries what it shows. A demo has **Skip this
 demo**; on a demo that then hands over, Skip stops the demo and leaves the
 user on the step to try it. A waiting step has Back and a quiet **Skip
@@ -795,14 +798,25 @@ included only when the PDF is visible. The share view shows none of it
 
 ## Storage
 
-Progress is per browser. Each tour has one localStorage key per account,
+Progress is kept in two places. Each tour has one localStorage key per account,
 `gamma-guide:<account>:<tourId>` (the first tour keeps its older
 `gamma-guide:first-run`), holding `{state, step?, version}`: `offered`,
 `running` (with the step), `dismissed` (with the step it was left on) or
-`done`. A tour whose stored `version` is its current one is not offered
-again. On a demo server the same keys live in sessionStorage
-(`guideStorage(demo)`), and when storage is unavailable a memory copy keeps
-the offers for the page load. `gamma-guide-vars` overrides a tour's `vars`
+`done`. The account keeps a copy without the step, the `tourProgress`
+preference (tour id → `{state, version}`). It travels in the profile to the
+account's other browsers and, through Gamma Cloud, to its other servers
+([settings.md](settings.md)). A read takes the newer of the two records
+(the higher version, and of one version a `done`), so a tour seen anywhere
+is not offered again. A write goes to both. Before the profile has loaded
+there is no copy, and once it has, `seed` copies up what only this
+browser knows (progress from before the copy existed, or written before the
+load), again whenever a sync replaces the copy. A tour write is not a setting
+change for the Cloud hint's `prefsChanged`. A tour
+whose stored `version` is its current one is not offered again. On a demo
+server the same keys live in sessionStorage (`guideStorage(demo)`) and nothing
+is synced, and when storage is unavailable a memory copy keeps the offers for
+the page load. Guests and signed-out visitors have no profile, so their
+progress stays in the browser. `gamma-guide-vars` overrides a tour's `vars`
 (the browser suite points the first tour's demo at its own PDF).
 
 Whether tours are suggested at all is the account's `suggestTours`
@@ -913,7 +927,9 @@ frontend/tests/e2e/scenarios/triggeredGuide.mjs   offers and hints: tables (made
   triggered step; the trigger rules (event, `count`, `doneOn`, state, the
   trigger's `requires`, `anyOf`, version) behave; progress survives a
   reload, separates accounts, tolerates broken storage and stays in
-  sessionStorage on a demo server; the AI chat and sharing tours pick their
+  sessionStorage on a demo server; the account's synced copy is read,
+  written without the step and seeded from the browser, and a first tour
+  done there is not offered to a new library; the AI chat and sharing tours pick their
   steps per situation; the viewer tours share their steps and drop them
   once the sibling is done; every `{key:…}` names a command or a key; offer copy
   is catalogued; the finish card lists only what the run made; a repeated
@@ -938,7 +954,9 @@ frontend/tests/e2e/scenarios/triggeredGuide.mjs   offers and hints: tables (made
   taken back when the tour ends unsent, and the setup card with no AI
   connected.
 - `triggeredGuide.mjs`: each offer appears after its event without dimming
-  the app; Show me runs the tour (inside the Share popover and the account
+  the app (each case clears the account's synced progress first); Dismiss
+  leaves a running tour, and a browser with empty storage is not offered it
+  again; Show me runs the tour (inside the Share popover and the account
   menu without closing them); the Add popover is the spotlight's surface,
   its other rows clickable, and its typing scene types nothing for real;
   the library's scene right-clicks a card; a hover-only control shows while pointed at;
@@ -979,11 +997,9 @@ frontend/tests/e2e/scenarios/triggeredGuide.mjs   offers and hints: tables (made
 
 ## Not built
 
-Two parts of the first design were never built, and the September 2026 UI
-review turned them down for now:
+One part of the first design was never built, and the September 2026 UI
+review turned it down for now:
 
-- **A synced `onboarding` preference.** Progress stays per browser (see
-  Storage), so a tour finished on one computer is offered again on another.
 - **A Getting-started checklist**: a few first tasks (add a paper,
   highlight, write a note, search, share) ticked from the event bus whether
   or not a tour ran, each with a way into the matching tour.

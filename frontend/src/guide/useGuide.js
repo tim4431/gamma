@@ -170,8 +170,10 @@ const CREATES_GRACE_MS = 1500; // what turns up this soon was there already
 // up a tour's `show` surface, restore(what) restores what a tour's `restore`
 // names once its last step is done, openSettings(pane) serves the finish
 // card's AI tile, plus the demo helpers. tidy: closes App's transient
-// popovers when a step needs none of them.
-export function useGuide({ enabled = true, suggest = true, scope = "", facts = {}, services = {}, tidy } = {}) {
+// popovers when a step needs none of them. synced: the account's copy of the
+// progress (App's `tourProgress` preference) as {value, set, ready}, ready
+// once the profile has loaded.
+export function useGuide({ enabled = true, suggest = true, scope = "", synced = null, facts = {}, services = {}, tidy } = {}) {
   const servicesRef = useRef(services);
   servicesRef.current = services;
   // done: acknowledge the user's action before automatically advancing.
@@ -180,15 +182,27 @@ export function useGuide({ enabled = true, suggest = true, scope = "", facts = {
   // What the running tour made, for its finish card (guide/finish.js).
   const log = useRef(null);
   const [offer, setOffer] = useState(null); // { tour, scope } | null
-  // Progress lives in localStorage, or in sessionStorage on a demo server
-  // (facts.demo): every visit there starts fresh.
+  // Progress lives in localStorage and the account's synced copy, or only in
+  // sessionStorage on a demo server (facts.demo): every visit there starts
+  // fresh. The copy is updated after the state change that wrote it.
   const demo = !!facts.demo;
+  const syncedRef = useRef(synced);
+  syncedRef.current = synced;
   const progress = useRef(null);
   const progressDemo = useRef(demo);
   if (!progress.current || progressDemo.current !== demo) {
-    progress.current = createGuideProgress(guideStorage(demo));
+    progress.current = createGuideProgress(guideStorage(demo), demo ? null : {
+      get: () => (syncedRef.current?.ready ? syncedRef.current.value : null),
+      set: (fn) => queueMicrotask(() => { if (syncedRef.current?.ready) syncedRef.current.set(fn); }),
+    });
     progressDemo.current = demo;
   }
+  // What only this browser knows goes up to the account's copy once it has
+  // loaded, and again if a sync replaced it without those entries.
+  const syncedReady = !!synced?.ready;
+  useEffect(() => {
+    if (enabled && scope && syncedReady && !demo) progress.current.seed(Object.values(TOURS), scope);
+  }, [enabled, scope, syncedReady, synced?.value, demo]);
   // Synchronously reserves the one guide surface: "running" | "offered" | null.
   const activity = useRef(null);
   // One automatic offer per page load, whatever becomes of it.
