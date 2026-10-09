@@ -569,6 +569,54 @@ function buildInlineDecos(state, ctx) {
     });
     quoteRun.length = 0;
   };
+  // A line's markdown after its quote marks (`off` characters): a heading,
+  // a task or bullet marker, a numbered marker or a rule, so a list in a
+  // quote or callout renders as it does outside one.
+  const lineBody = (line, off, lineTouched) => {
+    const text = line.text.slice(off), at = line.from + off;
+    const h = /^(#{1,6}) /.exec(text);
+    if (h) {
+      ranges.push(Decoration.line({ class: `cmHeadLine cmH${h[1].length}` }).range(line.from));
+      if (!lineTouched && !overlapsClaimed(at, at + h[0].length)) {
+        ranges.push(Decoration.replace({}).range(at, at + h[0].length));
+      }
+      return;
+    }
+    const task = /^(\s*)([-*+] \[)( |x|X)\] /.exec(text);
+    if (task) {
+      const mFrom = at + task[1].length;
+      const mTo = at + task[0].length;
+      const checked = task[3] !== " ";
+      if (checked) ranges.push(Decoration.line({ class: "cmTaskDone" }).range(line.from));
+      if (!inside(mFrom, mTo) && !overlapsClaimed(mFrom, mTo)) {
+        ranges.push(Decoration.replace({
+          widget: new TaskCheckboxWidget(checked, task[2].length),
+        }).range(mFrom, mTo));
+      }
+      return;
+    }
+    const bullet = /^(\s*)[-*+] (?!\[)\S/.exec(text);
+    if (bullet) {
+      const bFrom = at + bullet[1].length;
+      if (!inside(bFrom, bFrom + 2) && !overlapsClaimed(bFrom, bFrom + 1)) {
+        ranges.push(Decoration.replace({ widget: new BulletWidget() }).range(bFrom, bFrom + 1));
+      }
+      return;
+    }
+    // A numbered marker stays text, in tabular figures: Inter's own are
+    // proportional, so "1. " would be narrower than "2. " and the items'
+    // text would not line up (the rendered view hangs its markers outside).
+    const num = /^(\s*)\d+[.)] /.exec(text);
+    if (num) {
+      const nFrom = at + num[1].length, nTo = at + num[0].length - 1;
+      if (!overlapsClaimed(nFrom, nTo)) ranges.push(Decoration.mark({ class: "cmListNum" }).range(nFrom, nTo));
+      return;
+    }
+    if (/^(-{3,}|\*{3,}|_{3,})$/.test(text.trim()) && text.trim()
+      && !lineTouched && !overlapsClaimed(at, line.to)) {
+      ranges.push(Decoration.replace({ widget: new HrWidget() }).range(at, line.to));
+    }
+  };
   for (let i = 1; i <= doc.lines; i++) {
     const line = doc.line(i);
     // Lines inside a ``` fence are code, not markdown: no headings, bullets
@@ -591,51 +639,14 @@ function buildInlineDecos(state, ctx) {
     const q = /^> ?/.exec(line.text);
     if (q) {
       quoteRun.push({ line, prefixLen: q[0].length, lineTouched });
+      // A callout's marker line is its title, not a list item.
+      if (quoteRun.length > 1 || !/^> ?\[!\w+\]/.test(line.text)) {
+        lineBody(line, /^(?:> ?)+/.exec(line.text)[0].length, lineTouched);
+      }
       continue;
     }
     flushQuoteRun();
-    const h = /^(#{1,6}) /.exec(line.text);
-    if (h) {
-      ranges.push(Decoration.line({ class: `cmHeadLine cmH${h[1].length}` }).range(line.from));
-      if (!lineTouched && !overlapsClaimed(line.from, line.from + h[0].length)) {
-        ranges.push(Decoration.replace({}).range(line.from, line.from + h[0].length));
-      }
-      continue;
-    }
-    const task = /^(\s*)([-*+] \[)( |x|X)\] /.exec(line.text);
-    if (task) {
-      const mFrom = line.from + task[1].length;
-      const mTo = line.from + task[0].length;
-      const checked = task[3] !== " ";
-      if (checked) ranges.push(Decoration.line({ class: "cmTaskDone" }).range(line.from));
-      if (!inside(mFrom, mTo) && !overlapsClaimed(mFrom, mTo)) {
-        ranges.push(Decoration.replace({
-          widget: new TaskCheckboxWidget(checked, task[2].length),
-        }).range(mFrom, mTo));
-      }
-      continue;
-    }
-    const bullet = /^(\s*)[-*+] (?!\[)\S/.exec(line.text);
-    if (bullet) {
-      const bFrom = line.from + bullet[1].length;
-      if (!inside(bFrom, bFrom + 2) && !overlapsClaimed(bFrom, bFrom + 1)) {
-        ranges.push(Decoration.replace({ widget: new BulletWidget() }).range(bFrom, bFrom + 1));
-      }
-      continue;
-    }
-    // A numbered marker stays text, in tabular figures: Inter's own are
-    // proportional, so "1. " would be narrower than "2. " and the items'
-    // text would not line up (the rendered view hangs its markers outside).
-    const num = /^(\s*)\d+[.)] /.exec(line.text);
-    if (num) {
-      const nFrom = line.from + num[1].length, nTo = line.from + num[0].length - 1;
-      if (!overlapsClaimed(nFrom, nTo)) ranges.push(Decoration.mark({ class: "cmListNum" }).range(nFrom, nTo));
-      continue;
-    }
-    if (/^(-{3,}|\*{3,}|_{3,})$/.test(line.text.trim()) && line.text.trim()
-      && !lineTouched && !overlapsClaimed(line.from, line.to)) {
-      ranges.push(Decoration.replace({ widget: new HrWidget() }).range(line.from, line.to));
-    }
+    lineBody(line, 0, lineTouched);
   }
   flushQuoteRun();
 
