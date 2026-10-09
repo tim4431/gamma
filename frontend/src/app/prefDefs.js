@@ -17,6 +17,7 @@
 // breaks the app. Plain strings need no codec.
 import { DEFAULT_PICTURE_BUDGET, MAX_PICTURE_BUDGET } from "../chat/chatPictures.js";
 import { PERMISSION_KEYS, defaultPerm, normalizePerm } from "../chat/chatSettings.js";
+import { normalizeTourProgress } from "../guide/triggers.js";
 import { DEFAULT_TOOLS, normalizeTools } from "../ink/ink.js";
 import { textStyle } from "../markup/textBox.js";
 import { LANGUAGES } from "../shared/i18n/locales.js";
@@ -169,6 +170,11 @@ export const PREFS = {
   // Tours offered by themselves the first time a feature comes up
   // (guide/triggers.js); off leaves only Account › Tours.
   suggestTours: flag("gamma-suggest-tours", ACCOUNT, true),
+  // What the account has seen of each tour (guide/triggers.js): tour id →
+  // {state, version}. Written by the guide, never shown, so a tour finished
+  // or turned down in one browser is not offered again in another, nor on
+  // the account's other servers.
+  tourProgress: pref("gamma-tour-progress", ACCOUNT, {}, json(normalizeTourProgress)),
 
   // --- Library display (Settings → Appearance › Library) ---
   // Recently-viewed cards on the home page (only — library cards always use

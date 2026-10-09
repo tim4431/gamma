@@ -435,18 +435,17 @@ export default function GuideOverlay({ guide, keybindings }) {
               ) : null}
               {/* The primary button is the call to action only where the step
                   itself is the action (Next, Done); a demo can be skipped, and on
-                  the user's turn the task is the call, not skipping it. The row
-                  stays (empty) through the Done moment, so the card does not jump. */}
-              {showPrimary || showBack || link || done ? (
-                <div className="guideFoot">
-                  {inviting && !offer.hint ? <button className="uiBtn sm ghost" onClick={dismiss}>{t("Not now")}</button> : null}
-                  {showBack ? <button className="uiBtn" onClick={back}>{t("Back")}</button> : null}
-                  {link ? <button className="uiBtn sm ghost guideLink" onClick={busy ? guide.skipDemo : next}>{link}</button> : null}
-                  <span className="guideBtns">
-                    {showPrimary ? <button className="uiBtn primary" onClick={next}>{primaryLabel}</button> : null}
-                  </span>
-                </div>
-              ) : null}
+                  the user's turn the task is the call, not skipping it. Dismiss
+                  leaves the tour from any step, as × and Esc do. */}
+              <div className="guideFoot">
+                {!inviting ? <button className="uiBtn sm ghost guideDismiss" onClick={dismiss}>{t("Dismiss")}</button>
+                  : !offer.hint ? <button className="uiBtn sm ghost" onClick={dismiss}>{t("Not now")}</button> : null}
+                {showBack ? <button className="uiBtn" onClick={back}>{t("Back")}</button> : null}
+                {link ? <button className="uiBtn sm ghost guideLink" onClick={busy ? guide.skipDemo : next}>{link}</button> : null}
+                <span className="guideBtns">
+                  {showPrimary ? <button className="uiBtn primary" onClick={next}>{primaryLabel}</button> : null}
+                </span>
+              </div>
             </>
           )}
         </div>

@@ -63,24 +63,73 @@ export function guideProgressKey(tour, scope) {
 // (facts.demo), so every visit starts fresh.
 export const guideStorage = (demo) => (demo ? () => globalThis.sessionStorage : () => globalThis.localStorage);
 
+// The account's copy of the progress, as stored in its `tourProgress`
+// preference: tour id → {state, version}, without the step. Anything else
+// is dropped (app/prefDefs.js reads the preference through this).
+const STATES = ["offered", "running", "dismissed", "done"];
+export function normalizeTourProgress(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const out = {};
+  for (const [id, entry] of Object.entries(value)) {
+    if (STATES.includes(entry?.state) && Number.isInteger(entry.version) && entry.version >= 0) {
+      out[id] = { state: entry.state, version: entry.version };
+    }
+  }
+  return out;
+}
+
+// Of two records of one tour, the one to believe: the higher version, and
+// of one version a "done" (a sibling tour asks whether the other was finished).
+function newer(a, b) {
+  if (!a || !b) return a || b;
+  if (a.version !== b.version) return a.version > b.version ? a : b;
+  return b.state === "done" && a.state !== "done" ? b : a;
+}
+
 // Memory also remembers offers if browser storage is unavailable. A fresh
 // read observes dismissals from other tabs; progress never stores chat text.
-export function createGuideProgress(storage = () => globalThis.localStorage) {
+//
+// `synced` is the account's copy (the `tourProgress` preference, which
+// travels with the profile to the account's other browsers and, through
+// Gamma Cloud, to its other servers): `get()` returns it, or null until the
+// profile has loaded; `set(fn)` updates it. A read takes the newer of the
+// two, so a tour seen anywhere is not offered here again. `seed` copies up
+// what only this browser knows: progress from before the copy existed, or
+// written before the profile loaded.
+export function createGuideProgress(storage = () => globalThis.localStorage, synced = null) {
   const memory = new Map();
+  const local = (tour, scope) => {
+    const key = guideProgressKey(tour, scope);
+    try {
+      const value = JSON.parse(storage().getItem(key) || "null");
+      if (value && Number.isInteger(value.version) && value.version >= (memory.get(key)?.version ?? 0)) return value;
+    } catch { /* unavailable or malformed storage */ }
+    return memory.get(key) || null;
+  };
+  const shared = (tour) => normalizeTourProgress(synced?.get())?.[tour.id] || null;
+  const share = (records) => {
+    if (!synced?.get() || !records.length) return;
+    synced.set((all) => {
+      const changed = records.filter(([id, r]) => all?.[id]?.state !== r.state || all?.[id]?.version !== r.version);
+      return changed.length ? { ...all, ...Object.fromEntries(changed) } : all;
+    });
+  };
   return {
     read(tour, scope) {
-      const key = guideProgressKey(tour, scope);
-      try {
-        const value = JSON.parse(storage().getItem(key) || "null");
-        if (value && Number.isInteger(value.version) && value.version >= (memory.get(key)?.version ?? 0)) return value;
-      } catch { /* unavailable or malformed storage */ }
-      return memory.get(key) || null;
+      return newer(local(tour, scope), shared(tour));
     },
     write(tour, scope, value) {
       const key = guideProgressKey(tour, scope);
       const progress = { ...value, version: tour.version };
       memory.set(key, progress);
       try { storage().setItem(key, JSON.stringify(progress)); } catch { /* private mode */ }
+      share([[tour.id, { state: progress.state, version: progress.version }]]);
+    },
+    seed(tours, scope) {
+      share(tours.flatMap((tour) => {
+        const mine = local(tour, scope), theirs = shared(tour);
+        return mine && newer(theirs, mine) === mine ? [[tour.id, { state: mine.state, version: mine.version }]] : [];
+      }));
     },
   };
 }

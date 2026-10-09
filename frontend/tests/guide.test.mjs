@@ -8,7 +8,8 @@ import { join } from "node:path";
 import { ANCHORS, anchorElement } from "../src/guide/anchors.js";
 import { EVENTS, eventMatches } from "../src/guide/events.js";
 import { TOURS } from "../src/guide/tours/index.js";
-import { canOffer, createGuideProgress, factsMatch, guideProgressKey, guideStorage, retiresOffer, stepApplies } from "../src/guide/triggers.js";
+import { canOffer, createGuideProgress, factsMatch, guideProgressKey, guideStorage, normalizeTourProgress, retiresOffer, stepApplies } from "../src/guide/triggers.js";
+import { ACCOUNT_PREFS, readProfile } from "../src/app/prefDefs.js";
 import { keyNames, keyText, resolveKey } from "../src/guide/keys.js";
 import { createRunLog, madeItems, recordEvent } from "../src/guide/finish.js";
 import { CARD_W, placeCard } from "../src/guide/place.js";
@@ -119,6 +120,55 @@ test("progress survives reload, separates accounts, and tolerates broken browser
   blocked.write(aiTour, "alice", { state: "offered" });
   assert.equal(blocked.read(aiTour, "alice").state, "offered");
   assert.equal(blocked.read(aiTour, "bob"), null);
+});
+
+test("progress follows the account: its synced copy is read, written and seeded from this browser", () => {
+  const browser = () => { const values = new Map(); return () => ({ getItem: (k) => values.get(k) ?? null, setItem: (k, v) => values.set(k, v) }); };
+  let account = {};
+  const synced = { get: () => account, set: (fn) => { account = fn(account); } };
+  const first = TOURS["first-run"];
+  const here = createGuideProgress(browser(), synced);
+  here.write(aiTour, "alice", { state: "dismissed", step: 2 });
+  assert.deepEqual(account["ai-chat"], { state: "dismissed", version: aiTour.version }, "the step stays in the browser");
+  const unchanged = account;
+  here.write(aiTour, "alice", { state: "dismissed", step: 3 });
+  assert.equal(account, unchanged, "the same record again leaves the copy as it was");
+  // Another browser, or another server the profile reached, knows it too.
+  const elsewhere = createGuideProgress(browser(), synced);
+  assert.equal(elsewhere.read(aiTour, "alice").state, "dismissed");
+  assert.equal(canOffer(first, { facts: { view: "home", editable: true, emptyLibrary: true }, progress: elsewhere.read(first, "alice") }), true);
+  account = { ...account, "first-run": { state: "done", version: first.version } };
+  assert.equal(canOffer(first, { facts: { view: "home", editable: true, emptyLibrary: true }, progress: elsewhere.read(first, "alice") }), false,
+    "a first paper tour done elsewhere is not offered to a new library here");
+  // Of two records, the newer version wins, and of one version a "done".
+  const older = createGuideProgress(browser(), { get: () => ({ "ai-chat": { state: "offered", version: aiTour.version - 1 } }), set: () => {} });
+  older.write(aiTour, "alice", { state: "running", step: 0 });
+  assert.equal(older.read(aiTour, "alice").state, "running");
+  const finished = createGuideProgress(browser(), { get: () => ({ "ai-chat": { state: "done", version: aiTour.version } }), set: () => {} });
+  finished.write(aiTour, "alice", { state: "offered" });
+  assert.equal(finished.read(aiTour, "alice").state, "done");
+  // Until the profile loads there is no copy: reads and writes stay local.
+  let loaded = null;
+  const early = createGuideProgress(browser(), { get: () => loaded, set: (fn) => { loaded = fn(loaded); } });
+  early.write(aiTour, "alice", { state: "done" });
+  assert.equal(loaded, null);
+  assert.equal(early.read(aiTour, "alice").state, "done");
+  // Once it has, seeding copies up what only this browser knows, and nothing else.
+  loaded = { "first-run": { state: "dismissed", version: first.version } };
+  early.seed(Object.values(TOURS), "alice");
+  assert.deepEqual(loaded, { "first-run": { state: "dismissed", version: first.version }, "ai-chat": { state: "done", version: aiTour.version } });
+  const seeded = loaded;
+  early.seed(Object.values(TOURS), "alice");
+  assert.equal(loaded, seeded, "a second seed changes nothing");
+});
+
+test("the account's copy keeps well-formed records only, and travels in the profile", () => {
+  assert.deepEqual(normalizeTourProgress({ a: { state: "done", version: 2, step: 4 }, b: { state: "lost", version: 1 }, c: { state: "done", version: "2" }, d: null }),
+    { a: { state: "done", version: 2 } });
+  for (const bad of [null, "x", [], 3]) assert.equal(normalizeTourProgress(bad), undefined);
+  assert.ok(ACCOUNT_PREFS.includes("tourProgress"));
+  assert.deepEqual(readProfile({ tourProgress: { "ai-chat": { state: "done", version: 2 }, x: { state: 1 } } }).tourProgress,
+    { "ai-chat": { state: "done", version: 2 } });
 });
 
 test("every data-guide attribute in the source is registered", () => {

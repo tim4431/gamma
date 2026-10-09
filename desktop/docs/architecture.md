@@ -282,6 +282,36 @@ as Gamma's topbar under it), and `main.js`'s title-bar palette repeats that
 colour per theme. The same test checks both copies. The icons are the same
 stroke glyphs as `frontend/src/shared/ui/Icons.jsx`.
 
+### Gamma Cloud sign-in
+
+A server's *Sign in with Gamma Cloud* (its login page) and *Link* (Settings
+→ Account & sync) navigate to `/api/auth/cloud/start`. The navigation guard
+would send the account server's page to the system browser, and the
+session the server sets at the end would stay there. So the guard takes
+that navigation over on a registered origin (`signInWithCloud` in `main.js`,
+`lib/cloudSignIn.js`):
+
+1. It listens on a free `127.0.0.1` port, posts `/api/auth/cloud/app-start`
+   through the content session with the page's `next` and `link`, that
+   address and the S256 challenge of a verifier it keeps, and opens the
+   authorize URL it gets back in the system browser. The bar says to finish
+   there.
+2. After the sign-in, the server sends that browser to
+   `http://127.0.0.1:<port>/cloud-signin?result=…`. The tab says "Signed in
+   to Gamma", the listener closes, and the window comes to the front.
+3. The content view posts the result and the verifier to
+   `/api/auth/cloud/app-claim` (with `X-Gamma-Desktop: claim`), which sets
+   the session cookie in the window and goes on to `next`.
+
+A refusal comes back as `?error=` and is shown in the bar and in the tab. A
+sign-in waits ten minutes, and a new one replaces it. A server older than
+`app-start` (it answers 404 or 405) gets the old behaviour: the start
+opens in the system browser, which ends up signed in instead of the window. A result for a server
+that is no longer open is dropped with a notice. The server side, and why
+this is safe against someone else's sign-in link, is
+[cloud_accounts.md](../../docs/dev/cloud_accounts.md) "The desktop app's
+sign-in".
+
 ### Background and tray
 
 Closing the last window quits the app (macOS keeps the dock process, as
@@ -377,7 +407,8 @@ only); `GAMMA_SHELL_NO_UPDATE=1` disables the updater.
   Updates…*), IPC for the shell pages, auto-login script, navigation guard
   (only registered server origins may load in the content view; everything
   else — `target=_blank`, cross-origin redirects — opens in the system
-  browser), the remote health probes, the `/api/session` read behind the
+  browser; a server's Gamma Cloud sign-in start is taken over, "Gamma Cloud
+  sign-in"), the remote health probes, the `/api/session` read behind the
   workspace switcher, the clone and folder-on-this-computer flows over the
   server's API, the tray and background mode, `--smoke` self-test, sidecar
   cleanup on quit, the `GAMMA_SHELL_TEST` hook the e2e suite drives.
@@ -410,6 +441,10 @@ only); `GAMMA_SHELL_NO_UPDATE=1` disables the updater.
 - `lib/keeping.js` — what this computer keeps, read as items and one
   summary for the sync button ("Kept on this computer"); no Electron, unit
   tested by `test/keeping.test.js` (`npm test`).
+- `lib/cloudSignIn.js` — the loopback return of a Gamma Cloud sign-in: the
+  listener, the verifier and its challenge, the tab's last page, the claim
+  request ("Gamma Cloud sign-in"); no Electron, unit tested by
+  `test/cloudSignIn.test.js`.
 - `electron-builder.cjs` — the packaging config (targets, extra resources,
   secret-gated signing, the update feed's `publish` block).
   `scripts/adhoc-sign.cjs` — its `afterPack` hook: ad-hoc signs a macOS
@@ -449,6 +484,8 @@ only); `GAMMA_SHELL_NO_UPDATE=1` disables the updater.
   existing server/Docker deployment, not the desktop app).
 - Navigation allowlist: only registered server origins render in the
   content view; foreign URLs (including `window.open` and cross-origin
-  redirects) go to the system browser.
+  redirects) go to the system browser. A Gamma Cloud sign-in runs there
+  too, and its session comes back only through a loopback address and a
+  verifier the shell holds ("Gamma Cloud sign-in").
 - The updater never installs without the user's click (the pill / button /
   dialog); automatic work is limited to checking and downloading.

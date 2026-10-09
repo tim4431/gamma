@@ -12,7 +12,9 @@
 
 const { _electron: electron } = require('playwright-core');
 const assert = require('assert');
+const crypto = require('crypto');
 const fs = require('fs');
+const http = require('http');
 const os = require('os');
 const path = require('path');
 const net = require('net');
@@ -100,6 +102,57 @@ function pidAlive(pid) {
   } catch {
     return false;
   }
+}
+
+// A stand-in for the Gamma Cloud account server (cloud/), as much of it as a
+// sign-in uses: discovery, an authorize that signs `person` in at once, the
+// token endpoint (PKCE checked) with an Ed25519 ID token, the key set, and
+// the profile and server-list calls that follow a sign-in.
+function fakeAccountServer(person) {
+  const { privateKey, publicKey } = crypto.generateKeyPairSync('ed25519');
+  const jwk = { ...publicKey.export({ format: 'jwk' }), kid: 'e2e', alg: 'EdDSA', use: 'sig' };
+  const b64 = (o) => Buffer.from(JSON.stringify(o)).toString('base64url');
+  const codes = new Map();
+  let issuer = '';
+  const server = http.createServer((req, res) => {
+    let body = '';
+    req.on('data', (c) => { body += c; });
+    req.on('end', () => {
+      const url = new URL(req.url, issuer);
+      const json = (status, value) => res.writeHead(status, { 'Content-Type': 'application/json' }).end(JSON.stringify(value));
+      if (url.pathname === '/.well-known/openid-configuration') {
+        return json(200, { issuer, authorization_endpoint: `${issuer}/authorize`, token_endpoint: `${issuer}/token`,
+          jwks_uri: `${issuer}/jwks`, revocation_endpoint: `${issuer}/revoke` });
+      }
+      if (url.pathname === '/jwks') return json(200, { keys: [jwk] });
+      if (url.pathname === '/authorize') {
+        const q = url.searchParams;
+        const code = crypto.randomBytes(16).toString('hex');
+        codes.set(code, { nonce: q.get('nonce'), challenge: q.get('code_challenge'), redirect: q.get('redirect_uri'), client: q.get('client_id') });
+        return res.writeHead(302, { Location: `${q.get('redirect_uri')}?${new URLSearchParams({ code, state: q.get('state') })}` }).end();
+      }
+      if (url.pathname === '/token') {
+        const form = new URLSearchParams(body);
+        const held = codes.get(form.get('code'));
+        codes.delete(form.get('code'));
+        const challenge = crypto.createHash('sha256').update(form.get('code_verifier') || '').digest('base64url');
+        if (!held || held.challenge !== challenge || held.redirect !== form.get('redirect_uri')) return json(400, { error: 'invalid_grant' });
+        const now = Math.floor(Date.now() / 1000);
+        const signed = `${b64({ alg: 'EdDSA', typ: 'JWT', kid: 'e2e' })}.${b64({ iss: issuer, aud: held.client, iat: now, exp: now + 600, nonce: held.nonce, ...person })}`;
+        const idToken = `${signed}.${crypto.sign(null, Buffer.from(signed), privateKey).toString('base64url')}`;
+        return json(200, { access_token: 'at-e2e', token_type: 'Bearer', expires_in: 3600, refresh_token: 'rt-e2e', id_token: idToken });
+      }
+      if (url.pathname === '/revoke') return json(200, {});
+      if (url.pathname.startsWith('/api/')) {
+        return req.method === 'GET' ? json(404, { detail: 'not found' }) : json(200, { updated_at: new Date().toISOString(), server: {} });
+      }
+      return json(404, { detail: 'not found' });
+    });
+  });
+  return new Promise((resolve) => server.listen(0, '127.0.0.1', () => {
+    issuer = `http://127.0.0.1:${server.address().port}`;
+    resolve({ issuer, close: () => server.close() });
+  }));
 }
 
 // ------------------------------------------------------------ driver -------
@@ -206,6 +259,12 @@ async function main() {
   const downloads = path.join(profile, 'downloads');
   fs.mkdirSync(downloads);
   console.log(`e2e (${packaged ? 'packaged' : 'dev'}) profile: ${profile}`);
+  // Every sidecar signs in with Gamma Cloud at the stand-in, never the real one;
+  // a new identity gets an account of its own.
+  const cloud = await fakeAccountServer({ sub: 'sub-e2e-desk', preferred_username: 'desk', email: 'desk@example.org',
+    email_verified: true, name: 'Desk', plan: 'free' });
+  process.env.GAMMA_CLOUD_ISSUER = cloud.issuer;
+  process.env.GAMMA_CLOUD_POLICY = 'provision';
 
   let app = await launch(profile, downloads);
   let bar, content;
@@ -769,6 +828,36 @@ async function main() {
       return opened.join(', ');
     });
 
+    await step('Gamma Cloud sign-in: the system browser signs in, the window gets the session through the loopback return', async () => {
+      // A server of its own: the window ends up signed in as the cloud account.
+      ids.cloud = await hook(app, (s) => s.registry.addLocal('Cloudy').id);
+      await hook(app, (s, id) => s.openServer(id), ids.cloud);
+      await waitLoggedIn(content);
+      const origin = new URL(content.url()).origin;
+      const seen = await hook(app, (s) => s.externalOpens.length);
+      // What the login page's button and Settings' Link both do.
+      await content.evaluate(() => { location.href = '/api/auth/cloud/start?next=%2F'; });
+      const authorize = await waitFor(async () => (await hook(app, (s) => s.externalOpens.slice()))
+        .slice(seen).find((u) => u.startsWith(`${cloud.issuer}/authorize?`)), 'the sign-in opened in the system browser', 15_000);
+      assert.equal(new URL(content.url()).origin, origin, 'the window stays on its server');
+      assert(/Finish signing in/.test(await hook(app, (s) => s.notice())), 'the bar says where to go');
+      // The system browser: the account server sends it to the callback, the callback on to the app.
+      const callback = (await fetch(authorize, { redirect: 'manual' })).headers.get('location');
+      assert(callback.startsWith(`${origin}/api/auth/cloud/callback?`), callback);
+      const answered = await fetch(callback, { redirect: 'manual' });
+      assert.equal(answered.headers.get('set-cookie'), null, 'the browser gets no session');
+      const back = answered.headers.get('location');
+      assert(/^http:\/\/127\.0\.0\.1:\d+\/cloud-signin\?result=/.test(back), back);
+      assert(/Signed in to Gamma/.test(await (await fetch(back)).text()), 'the tab says it is done');
+      await waitLoggedIn(content, 'desk');
+      assert.equal(new URL(content.url()).origin, origin);
+      // Back to Alpha (auto-login signs the window back in), and the server goes.
+      await hook(app, (s, id) => s.openServer(id), ids.alpha);
+      await waitLoggedIn(content);
+      await hook(app, (s, id) => { s.sidecar.stop(id); s.registry.remove(id, { deleteData: true }); }, ids.cloud);
+      return back.split('?')[0];
+    });
+
     await step('theme mirror: the shell chrome follows the page theme', async () => {
       const set = (t) => content.evaluate((t) => {
         if (t) { localStorage.setItem('gamma-theme', t); document.documentElement.setAttribute('data-theme', t); }
@@ -873,6 +962,7 @@ async function main() {
     try {
       await app.close();
     } catch {}
+    cloud.close();
     await sleep(500);
     if (!keep) {
       try {
