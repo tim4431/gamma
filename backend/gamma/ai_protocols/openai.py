@@ -8,14 +8,18 @@ import json
 import re
 from urllib.request import Request as URLRequest
 
-from .base import (EMPTY_REPLY_HINT, TOOL_IMAGES_NOTE, Protocol, api_url, as_int, attach_index, multipart_body,
-                   note_speed, parse_tool_args, served_speed_name, tool_image_turns)
+from .base import (EMPTY_REPLY_HINT, OPENAI_PICTURE_TOKENS, TOOL_IMAGES_NOTE, Protocol, api_url, as_int, attach_index,
+                   multipart_body, note_speed, parse_tool_args, served_speed_name, tool_image_turns, turn_images)
 from .responses import OPENAI_RESPONSES
 from .services import service_of
 
 # Listings include models the chat endpoint can't use.
 _NOT_CHAT = re.compile(r"embed|whisper|tts|audio|image|dall-e|moderation|transcribe|realtime|search")
 _OPENAI_CHAT_FAMILIES = re.compile(r"^(gpt-|o\d|chatgpt-)")
+
+
+def _image_part(media_type: str, data: str) -> dict:
+    return {"type": "image_url", "image_url": {"url": f"data:{media_type};base64,{data}"}}
 
 
 # How compatible servers report a model's thinking beside the reply: as
@@ -55,6 +59,7 @@ def is_openai_platform(base_url: str) -> bool:
 
 class OpenAIChat(Protocol):
     id = "openai"
+    picture_tokens = OPENAI_PICTURE_TOKENS
     label = "OpenAI Chat Completions API"
     key_placeholder = "sk-proj-…"
     key_url = "https://platform.openai.com/api-keys"
@@ -82,8 +87,7 @@ class OpenAIChat(Protocol):
                 *[{"type": "file", "file": {"filename": f"document-{index + 1}.pdf",
                                             "file_data": f"data:application/pdf;base64,{data}"}}
                   for index, data in enumerate(pdf_b64s or [])],
-                *[{"type": "image_url", "image_url": {"url": f"data:{media_type};base64,{data}"}}
-                  for media_type, data in (images or [])],
+                *[_image_part(media_type, data) for media_type, data in (images or [])],
                 {"type": "text", "text": last["content"]},
             ]
         # The thinking each assistant turn echoes back (never to OpenAI
@@ -105,8 +109,7 @@ class OpenAIChat(Protocol):
         wire = [{"role": "system", "content": system}] if system else []
         image_turn = lambda imgs: {"role": "user", "content": [  # noqa: E731
             {"type": "text", "text": TOOL_IMAGES_NOTE},
-            *[{"type": "image_url", "image_url": {"url": f"data:{media_type};base64,{data}"}}
-              for media_type, data in imgs]]}
+            *[_image_part(media_type, data) for media_type, data in imgs]]}
         for m, is_image_turn in tool_image_turns(messages, image_turn):
             if is_image_turn:
                 wire.append(m)
@@ -120,6 +123,11 @@ class OpenAIChat(Protocol):
                                             for c in m["tool_calls"]], **thinking(m)})
             elif m["role"] == "assistant":
                 wire.append({"role": "assistant", "content": m["content"], **thinking(m)})
+            elif (pictures := turn_images(m)) and not isinstance(m["content"], list):
+                # An earlier message's pictures, kept in the conversation.
+                wire.append({"role": "user", "content": [
+                    *[_image_part(media_type, data) for media_type, data in pictures],
+                    {"type": "text", "text": m["content"]}]})
             else:
                 wire.append({"role": m["role"], "content": m["content"]})
         body = {

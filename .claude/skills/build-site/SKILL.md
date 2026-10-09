@@ -66,9 +66,11 @@ for `main`.
    curl -s -o /dev/null -w "%{http_code}\n" https://gammapdf.com/privacy/
    curl -s -o /dev/null -w "%{http_code}\n" https://gammapdf.com/docs/
    curl -s -o /dev/null -w "%{http_code} %{redirect_url}\n" https://www.gammapdf.com/
+   curl -s -o /dev/null -w "%{http_code} %{redirect_url}\n" http://gammapdf.com/privacy/
    ```
 
-   200, 200, 200 and a redirect to `https://gammapdf.com/`. Cloudflare may serve
+   200, 200, 200, then 301 to `https://gammapdf.com/` and to
+   `https://gammapdf.com/privacy/`. Cloudflare may serve
    `/media/*` from cache for up to a day (`_headers`); pages are fresh. When
    the change is a visible string, `curl -s https://gammapdf.com/ | grep -c
    "<the new text>"` confirms it is live.

@@ -12,15 +12,16 @@ import React, { useContext, useState } from "react";
 import { API, apiJson } from "../shared/lib/utils";
 import { GammaNavContext } from "../shared/ui/Widgets";
 import { t } from "../shared/i18n/i18n.js";
-import { BookIcon, BotIcon, CloudDownloadIcon, EyeIcon, FilePlusIcon, FolderIcon, GlobeIcon, HistoryIcon, ListIcon,
-  PenIcon, PencilIcon, PlusIcon, QuoteIcon, RedoIcon, SearchIcon, UndoIcon, XIcon } from "../shared/ui/Icons";
+import { BookIcon, BotIcon, CloudDownloadIcon, EyeIcon, FilePlusIcon, FolderIcon, GlobeIcon, HistoryIcon, ImageIcon,
+  ListIcon, PenIcon, PencilIcon, PlusIcon, QuoteIcon, RedoIcon, ScissorsIcon, SearchIcon, TrashIcon, UndoIcon,
+  XIcon } from "../shared/ui/Icons";
 import { changePlace, isChange, noteChangeText } from "./agentSteps";
 import { canRedo, canRevert, revertOrder, revertRefusal } from "./aiRevert.js";
 import { WordDiff } from "./ApprovalCard";
 
 // The icon of each action kind, in this list and on the tool chips under the
 // pill (ChatDock), each chip expanding to the raw call the server ran.
-export const ACTION_ICONS = { rename: PencilIcon, move: FolderIcon, search: SearchIcon, read: BookIcon, view: EyeIcon, ink: PenIcon, cite: QuoteIcon, list: ListIcon, edit: PencilIcon, create: PlusIcon, websearch: GlobeIcon, fetch: CloudDownloadIcon, helper: BotIcon, save: FilePlusIcon, restore: HistoryIcon, error: XIcon };
+export const ACTION_ICONS = { rename: PencilIcon, move: FolderIcon, search: SearchIcon, read: BookIcon, view: EyeIcon, ink: PenIcon, image: ImageIcon, cite: QuoteIcon, list: ListIcon, edit: PencilIcon, create: PlusIcon, delete: TrashIcon, clip: ScissorsIcon, websearch: GlobeIcon, fetch: CloudDownloadIcon, helper: BotIcon, save: FilePlusIcon, restore: HistoryIcon, error: XIcon };
 
 // What a row that stopped says, and the button that reverts (or redoes)
 // anyway — none when it can't be forced.

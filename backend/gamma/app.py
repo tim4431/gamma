@@ -52,6 +52,8 @@ from .routers import (
     uploads,
     workspaces as workspaces_router,
     ws_backups, cloud_auth as cloud_auth_router)
+from . import folder_links
+from .routers import folder_links as folder_links_api
 from .seed import ensure_admin_seed
 
 # Worker threads for sync endpoints, streamed replies and file responses
@@ -267,6 +269,7 @@ def create_app() -> FastAPI:
                 every(jobs.SWEEP_INTERVAL_S, jobs.sweep, "[jobs] sweep failed"), \
                 every(db_maintenance.EVERY_S, db_maintenance.tick, "[db] maintenance failed"), \
                 every(offsite.wait_s, offsite.tick, "[offsite] round failed"), \
+                every(folder_links.TICK_S, folder_links.tick, "[folders] round failed"), \
                 every(workspaces.LEFTOVERS_EVERY_S, workspaces.remove_leftovers,
                       "[workspaces] leftover sweep failed"):
             with migrations.warming():  # the workspaces still behind on their steps, one by one
@@ -326,6 +329,7 @@ def create_app() -> FastAPI:
     app.include_router(collab.router)
     app.include_router(sync.router)
     app.include_router(mirrors.router)
+    app.include_router(folder_links_api.router)
     app.include_router(publish.router)
 
     # Serve the built frontend (SPA) when GAMMA_STATIC_DIR is set.

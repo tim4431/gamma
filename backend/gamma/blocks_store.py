@@ -13,9 +13,12 @@ from .storage import display_filename, pdf_url, upload_refs, url_filename
 
 # What a copy of a block writes (``kind`` and ``doc_id`` are generated:
 # never written, db.BLOCK_HOT_COLUMNS) and what a read of one selects —
-# ``block_to_dict``'s row.
+# ``block_to_dict``'s row. The read leaves ``kind`` to Python
+# (``block_kind``): the generated column costs up to six JSON functions per
+# row, and the dict has the parsed properties anyway (a 5,000-block tree
+# read a third faster; docs/dev/api.md).
 STORED_COLUMNS = "id, parent_id, position, content, properties, created_at, updated_at, page_id"
-BLOCK_COLUMNS = f"{STORED_COLUMNS}, kind"
+BLOCK_COLUMNS = STORED_COLUMNS
 _UB_COLUMNS = ", ".join(f"ub.{c}" for c in BLOCK_COLUMNS.split(", "))
 
 # The parent of the pages in Recently deleted (ops.trash_page, gamma/trash.py):
@@ -69,19 +72,54 @@ def load_json(text: str):
         return json.loads(text)
 
 
+def block_kind(parent_id, page_id, props: dict) -> str | None:
+    """The block's ``kind``, by the rule of the generated column
+    (db.BLOCK_HOT_COLUMNS: the SQL and this must agree, which
+    tests/test_block_columns.py checks): NULL on the reserved rows,
+    ``page`` under root or the trash, ``folder`` / ``label`` in the trees,
+    else by the properties — ``ink`` (an ``ink_url`` key, whatever its
+    value), ``text_box`` / ``sheet`` (an object there), ``link`` (a
+    ``link_url`` or ``link_page_id`` that is neither missing, null nor
+    empty), ``highlight`` (a ``pdf_position`` object), ``note``."""
+    if parent_id is None:
+        return None
+    if parent_id in ("root", TRASH):
+        return "page"
+    if page_id == FOLDERS:
+        return "folder"
+    if page_id == LABELS:
+        return "label"
+    if not isinstance(props, dict):
+        return "note"
+    if "ink_url" in props:
+        return "ink"
+    if isinstance(props.get("text_box"), dict):
+        return "text_box"
+    if isinstance(props.get("sheet"), dict):
+        return "sheet"
+    for key in ("link_url", "link_page_id"):
+        value = props.get(key)
+        if value is not None and value != "":
+            return "link"
+    if isinstance(props.get("pdf_position"), dict):
+        return "highlight"
+    return "note"
+
+
 def block_to_dict(row) -> dict:
     """The API's block from a ``BLOCK_COLUMNS`` row. ``page_id`` and
     ``kind`` are read-only: no write takes them, the server derives both."""
+    props = load_json(row[4] or "{}")
     return {
         "id": row[0],
         "parent_id": row[1],
         "position": row[2],
         "content": row[3] or "",
-        "properties": load_json(row[4] or "{}"),
+        "properties": props,
         "created_at": row[5],
         "updated_at": row[6],
         "page_id": row[7],
-        "kind": row[8],
+        "kind": block_kind(row[1], row[7], props),
     }
 
 
@@ -113,7 +151,27 @@ def free_position(conn, parent_id: str, position: str | None, block_id: str = ""
 
 
 def fetch_subtree(conn, block_id: str):
-    """Fetch a block + all its descendants."""
+    """Fetch a block + all its descendants: the block first, every parent
+    before its children, siblings in no particular order. A page (or a
+    tree, ``TREES``) is read by its ``page_id`` — one indexed read, every
+    block of it carries the id — instead of the recursive walk down the
+    parents, which copies each row once per level (several times faster on
+    a page of thousands of highlights); the rows are then put in the walk's
+    order from the page, which also leaves out a row the page's id reaches
+    but no parent chain does. Other blocks walk."""
+    root = conn.execute(f"SELECT {BLOCK_COLUMNS} FROM unified_blocks WHERE id = ?", (block_id,)).fetchone()
+    if root is None:
+        return []
+    if root[1] in ("root", TRASH) or block_id in TREES:
+        under = {}
+        for row in conn.execute(f"SELECT {BLOCK_COLUMNS} FROM unified_blocks WHERE page_id = ? AND id != ?",
+                                (block_id, block_id)):
+            under.setdefault(row[1], []).append(row)
+        out, i = [root], 0
+        while i < len(out):
+            out.extend(under.pop(out[i][0], ()))
+            i += 1
+        return out
     return conn.execute(
         f"""
         WITH RECURSIVE subtree AS (
@@ -377,6 +435,12 @@ def touch_page(conn, page_id: str, actor: str, kind: str = "live", *, now: str =
         "ON CONFLICT (page_id) DO UPDATE SET seq = excluded.seq, kind = excluded.kind, "
         "at = excluded.at, actor = excluded.actor",
         (page_id, kind, now, actor))
+
+
+def newest_change_seq(conn) -> int:
+    """The change log's newest seq (0 for an empty log): the cursor a
+    consumer in step with the workspace holds."""
+    return conn.execute("SELECT COALESCE(MAX(seq), 0) FROM page_changes").fetchone()[0]
 
 
 # --- folders and labels ---------------------------------------------------------

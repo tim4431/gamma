@@ -77,18 +77,18 @@ helpers — never re-implement it in the extension.
 | File | Role |
 |---|---|
 | `manifest.json` | MV3: module service worker, `<all_urls>` content scripts (`ids.js`, `detect.js`, `bridge.js`), popup, options, `save-to-gamma` command. `host_permissions: ["<all_urls>"]` — the same install warning the content script already carries, and it makes cookie-carrying fetches to the (user-configured) server origin and the PDF-from-tab fetch work without runtime permission prompts |
-| `worker.js` | per-tab state in `chrome.storage.session` (`tab:<id>` → `{candidate, hit, preview, auth, saving, error}`), badge/icon, `lookup` + `preview`, the save pipeline, context menus, keyboard command, notifications, the publisher-session status cache + automatic refresh (`publisher:auto`, `publisher:attempts` in session storage), the tabs fetching for the chat (`handoffs`: tab id → request, `handoff:queue`), and the message API (`get-state`, `save`, `clip-selection`, `auth-changed`, `publisher-status`, `open`, and bridge.js's `connector-hello` / `connector-probe` / `connector-tab`) |
+| `worker.js` | per-tab state in `chrome.storage.session` (`tab:<id>` → `{candidate, hit, preview, auth, saving, error, origin, ws}`), badge/icon, `lookup` + `preview`, the save pipeline, context menus, keyboard command, notifications, the publisher-session status cache + automatic refresh (`publisher:auto`, `publisher:attempts` in session storage), the tabs fetching for the chat (`handoffs`: tab id → request, `handoff:queue`), and the message API (`get-state`, `save`, `clip-selection`, `auth-changed`, `publisher-status`, `open`, and bridge.js's `connector-hello` / `connector-probe` / `connector-tab`) |
 | `handoff.js` | the chat-fetch rules: a tab's `/go` address → the request id (`handoffIdFrom`), whether the tab's paper can be the requested one (`sameWork`), which URLs to try in it (`harvestUrls`), which one to open in the tab when downloads fail (`nextToOpen`, `needsSignIn`, `signInUrl`), whether the tab shows a bot check (`checkPage`), and whether every background turn is taken (`backgroundBusy`, `MAX_BACKGROUND`, `NEEDS_YOU`) — pure, tested in `tests/` |
 | `bridge.js` | content script between the Gamma app and the worker: a `connector-probe` window message gets the worker's verdict on one request (`ok` / `signed-out` / `other-account` / `unreachable`), a `connector-tab` one (`open`, `show`, `close`) the worker's answer (`opened` / `queued` / `shown` / `none` / `closed`), and a `connector-hello` (no request) answers `connector-here` to the Connector's own server's app only — how Gamma knows not to suggest the extension to a browser that has it (`shared/lib/connector.js`, [onboarding.md](onboarding.md)); nothing to a page the worker gives no answer for; a question a second per request and kind |
 | `ids.js` | the identifier rules — a DOI used as a URL path (`gammaDoiFromPath`) and the arXiv id (`gammaArxivId`) — one file loaded by the content script and imported by the worker, tested in `tests/` |
 | `detect.js` | content script (`document_idle`): identifier extraction, re-run on SPA URL changes; answers `get-detection` / `get-selection` / `fetch-pdf` (downloads a PDF from inside the page and relays it base64 — publisher bot checks that 403 the worker's fetch accept the page's own same-origin request) |
-| `api.js` | settings (`chrome.storage.sync`: `server, servers, defaultFolders, folder, labels, allowOa, saveCopy, autoRefreshSessions`), `api()` fetch wrapper (`credentials: "include"`, JSON `detail` → `ApiError{status}`), `login/logout/whoAmI`, and the default folder (below) |
+| `api.js` | settings (`chrome.storage.sync`: `server, servers, workspaces, defaultFolders, folder, labels, allowOa, saveCopy, autoRefreshSessions`), `api()` fetch wrapper (`credentials: "include"`, the chosen workspace as `X-Gamma-Workspace`, JSON `detail` → `ApiError{status}`), `login/logout/whoAmI`, and the workspace and default folder (below) |
 | `publisherSessions.js` | Publisher-host validation and the connection flow (checks the active tab and account, then sends a snapshot to Gamma with the browser's `navigator.userAgent`); the automatic-refresh rule (`shouldAutoRefresh`, `REFRESH_AFTER` / `RETRY_AFTER`) and the status text (`describeSession`) — pure, tested in `tests/` |
 | `popup.html/js/css` | setup (no server) → offline (server unreachable, with Retry) → sign-in → main view; the footer shows a connection dot (green signed in / amber signed out / red unreachable) beside `host · user`, the publisher-session **cookie button** and an options gear (the app's SettingsIcon). The folder picker and label suggestions are plain-JS menus mirroring the app's MenuSelect/ctxMenu recipes; labels are the app's `categoryTag` chip input (comma/Enter commits a chip, Backspace removes, arrow keys + Enter pick a suggestion). A save remembers its folder (the worker, once it succeeds) but not its labels — each popup prefills only the options-page default labels. `popup.css` reads the app's design tokens and repeats `shared/styles/app.css`'s control recipes (buttons, fields, the switch, the menu surface, the focus ring) — keep those in step when the app's recipes change. `?tab=<id>` targets a specific tab when opened as a page (tests) |
 | `tokens.css`, `fonts/` | committed copies of the app's `shared/styles/tokens.css` and the Latin subset of Inter, like the desktop shell's ([ui-design.md](ui-design.md#the-desktop-shell-and-the-extension)): `npm run copy-tokens` in `frontend/` refreshes them, and `frontend/tests/themes.test.mjs` fails while a copy differs from its source |
 | `theme.js` | a classic script in the head of both pages, before the stylesheets: the app's pinned theme isn't knowable here, so it sets `data-theme` / `data-scheme` to Light or Dark from `prefers-color-scheme`, live |
-| `options.html/js` | server + host permission, account, saving defaults (the folder picked from the signed-in library) |
-| `ui.js` | controls shared by the popup and options: the icons (mirroring `Icons.jsx`), ctxMenu rows (`menuRow`) and the folder picker (`folderPicker`, a MenuSelect: "Library root", every folder by its path, optionally "New folder…") |
+| `options.html/js` | server + host permission, account, saving defaults (the workspace and the folder picked from the signed-in account's libraries) |
+| `ui.js` | controls shared by the popup and options: the icons (mirroring `Icons.jsx`), ctxMenu rows (`menuRow`) and the pickers — `menuSelect` (the app's MenuSelect over `[{value, label, icon}]`, a value no item carries falling back to the first) with `folderPicker` ("Library root", every folder by its path, optionally "New folder…") and `workspacePicker` (the libraries by name) over it |
 | `serverList.js` | shared saved-server rows for options and the popup footer: active checkmark, switch action and remove button, using the existing menu/close-button styles |
 | `assets/icons/` | blue tile (paper detected) and grey tile (nothing) at 16/32/48/128, generated with Pillow |
 
@@ -153,10 +153,32 @@ context, indistinguishable from the reader loading the PDF, relayed back
 base64 (capped at 60 MB). Raw PDF tabs have no content script, so there the
 direct fetch is the only (and working) path.
 
-**The default folder** is a folder id per server (`defaultFolders`:
-origin → id, `""` the library root), since an id means nothing on another
-server. The popup sends the folder picked; the shortcut and the context
-menu send the default (`defaultFolder`). After a successful save the
+**The workspace** a save lands in is a choice per server (`workspaces`:
+origin → workspace id), sent as the `X-Gamma-Workspace` header the app's
+own fetch wrapper uses ([workspaces.md](workspaces.md)). `""` names no
+workspace, so the server uses the account's default library. Both pickers
+(the popup's, above the folder; the options page's) list the workspaces
+`GET /api/session` returns that this account may write to (a viewer's
+would refuse the clip). The account's default is listed as `""`, so the
+choice follows a later change of default. The row is hidden when there is
+only one.
+
+Everything the Connector asks of the library — the folder and label
+pickers, "already in your library", the clip, the uploaded PDF bytes —
+resolves against that workspace, and the link back into the app carries
+`?ws=`. A save pins the workspace it started in, as it pins the server, so
+its uploads and its clip cannot be split across two libraries by a switch
+mid-save. Switching in the popup looks the tab up again: the ✓ badge and
+"Already in …" are one library's answer. A chosen workspace the account
+can no longer write to is dropped at the next session check
+(`checkedWorkspace`). Saves then go to the default instead of failing with
+a 403.
+
+**The default folder** is a folder id per server and workspace
+(`defaultFolders`: origin, or `origin#workspace` for a named one → id,
+`""` the library root), since an id means nothing in another library. The
+popup sends the folder picked; the shortcut and the context menu send the
+default (`defaultFolder`). After a successful save the
 worker makes that save's folder the default (`rememberFolder`). A folder
 named by path (a typed "New folder…") is looked up in
 `GET /api/library/folders` for its id. An id the library no longer lists
@@ -164,7 +186,8 @@ shows as "Library root" in the pickers; a save without the popup checks
 for it (`checkedDefaultFolder`), forgets it and saves to the root.
 
 The setting `folder` is a path, the form a stored default had before
-folders had ids. While no id is set for the server, that path is the
+folders had ids. It belongs to the account's default workspace. While no
+workspace is chosen and the server has no folder id, that path is the
 default: the popup shows the folder of that path (else a "New folder…"
 prefilled with it), the options page the folder of that path, and the
 next save sends it as `folder_path` once, after which `rememberFolder`
@@ -248,8 +271,8 @@ Companions:
 page_id?}` — the explicit "clip selection INTO a page" append path (with
 `generate_key_between`; without `page_id` it uses/creates the root page
 flagged `properties.web_clips = 1`), as opposed to `/api/clip`'s "make a page
-of this tab". All session-only, and — since the extension names no
-workspace — they land in the account's personal workspace
+of this tab". All session-only, and all in the workspace the request
+names (`X-Gamma-Workspace`, above), else the account's default
 ([workspaces.md](workspaces.md)).
 
 ## Publisher sessions
@@ -448,6 +471,8 @@ signed in to the same server works the same way.
 
 ## Testing
 
+- `backend/tests/test_workspaces.py` — that the header the Connector sends
+  picks the library a clip lands in, and that a viewer is refused it.
 - `backend/tests/test_clip.py` — the endpoints with faked upstream fetches
   (dedup + folder refinement, no PDF / dead link → web-page path with
   selection + re-clip dedup, `doc_id` path, `save_copy`, lookup by arXiv
@@ -456,7 +481,9 @@ signed in to the same server works the same way.
   an arXiv HTML page saving its PDF, folders, clip notes, 401s).
 - `extension/tests/*.test.mjs` (`node --test extension/tests/*.test.mjs`) —
   the pure modules: `ids.js`, `publisherSessions.js` and `handoff.js`, plus
-  API settings, the default folder, folder paths and origin guards. The
+  API settings, the default folder, folder paths, origin guards, and the
+  chosen workspace (the header, a save's pin, a default folder per
+  workspace, forgetting one the account can no longer write to). The
   `check` workflow runs them on every PR ([github_actions.md](github_actions.md#checkyml));
   the `.e2e.mjs` files below are run by hand.
 - `node extension/tests/folders.e2e.mjs` — full Chromium against a fake
@@ -465,6 +492,15 @@ signed in to the same server works the same way.
   a typed new folder's path and label names, the default is remembered by
   id per server, and a path stored by an older version is sent once and
   replaced by its id.
+- `node extension/tests/workspaces.e2e.mjs` — full Chromium against a fake
+  server whose `/api/session` lists three libraries (one read-only): both
+  pickers offer the two writable ones, picking one stores it and refills
+  the folder picker from that library, saves carry `X-Gamma-Workspace` and
+  the folder remembered for that workspace, the popup names the library
+  holding an already-saved paper and looks it up again on a switch, the
+  link back into the app carries `?ws=`, a workspace the account is demoted
+  in is forgotten at the next session check, and a single-library account
+  sees no row.
 - `node extension/tests/servers.e2e.mjs` — full Chromium with the unpacked
   extension and two local test servers: remembered addresses, switching,
   account/offline states, denied permission, footer keyboard navigation,

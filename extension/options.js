@@ -1,12 +1,13 @@
 import {
-  api, defaultFolder, folderByPath, getSettings, login, logout, normalizeServer, originPattern, rememberFolder,
-  removeServer, setSettings, whoAmI,
+  api, checkedWorkspace, chooseWorkspace, defaultFolder, folderByPath, getSettings, login, logout, normalizeServer,
+  originPattern, rememberFolder, removeServer, setSettings, whoAmI, writableWorkspaces,
 } from "./api.js";
 import { renderServerList } from "./serverList.js";
-import { folderPicker } from "./ui.js";
+import { folderPicker, workspacePicker } from "./ui.js";
 
 const $ = (id) => document.getElementById(id);
 let busy = false;
+let workspaceSelect = null;  // the workspace picker (ui.js), filled from the signed-in account
 let folderSelect = null;  // the default folder's picker (ui.js), filled from the signed-in library
 
 function setBusy(value) {
@@ -49,6 +50,8 @@ async function refreshAccount() {
   status("account-status", "");
   folderSelect.set([], "");
   $("folder-btn").disabled = true;
+  $("workspace-btn").disabled = true;
+  $("workspace-row").classList.add("hidden");
   if (!settings.server) {
     status("server-status", "Not connected.");
     return;
@@ -62,12 +65,23 @@ async function refreshAccount() {
     $("signed-in").classList.toggle("hidden", !me.user);
     if (me.user) {
       $("who").textContent = me.user;
+      await fillWorkspaces(me.workspaces);
       await fillFolders();
     }
   } catch (err) {
     status("server-status", `Can't reach ${settings.server}: ${err.message}`, "err");
   }
   chrome.runtime.sendMessage({ type: "auth-changed" }).catch(() => {});
+}
+
+// The libraries this account can save into, the chosen one among them. One
+// library is no choice, so the row stays hidden; a choice the account lost
+// is forgotten here and the default workspace takes over.
+async function fillWorkspaces(list) {
+  const workspaces = writableWorkspaces(list);
+  workspaceSelect.set(workspaces, await checkedWorkspace(await getSettings(), list));
+  $("workspace-btn").disabled = false;
+  $("workspace-row").classList.toggle("hidden", workspaces.length <= 1);
 }
 
 // The connected server's folders, the default among them; a path stored
@@ -143,6 +157,14 @@ async function saveDefaults() {
   saved();
 }
 
+// Each library has its own folders, so the picker below is refilled — and
+// with it the default folder this server remembers for this workspace.
+async function saveWorkspace(workspace) {
+  if (!await chooseWorkspace(await getSettings(), workspace)) return;
+  await fillFolders();
+  saved();
+}
+
 async function saveFolder(folder) {
   await rememberFolder(await getSettings(), { folder, folder_path: "" });
   saved();
@@ -151,6 +173,7 @@ async function saveFolder(folder) {
 document.addEventListener("DOMContentLoaded", async () => {
   const s = await getSettings();
   $("server").value = s.server;
+  workspaceSelect = workspacePicker($("workspace-btn"), $("workspace-menu"), saveWorkspace);
   folderSelect = folderPicker($("folder-btn"), $("folder-menu"), saveFolder);
   $("labels").value = (s.labels || []).join(", ");
   $("allow-oa").checked = !!s.allowOa;

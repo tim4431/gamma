@@ -106,6 +106,9 @@ async function start(ws, settings, appInfo) {
     ...process.env,
     GAMMA_DATA_DIR: ws.dataDir,
     GAMMA_VERSION: appInfo?.version || '',
+    // This server keeps the folders on disk, anywhere the user picks: it
+    // runs as the user, on the user's own machine.
+    GAMMA_FOLDER_LINKS: '1',
   };
   // Fresh data dir: hand the server its first-admin credentials so the
   // one-time seed matches what the registry remembers.

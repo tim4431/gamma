@@ -387,7 +387,7 @@ text boxes; a text box is a Memo ([below](#text-boxes-in-the-exports)).
 The export job (`POST /api/jobs/export`, what the Export dialog starts),
 `/pages/{id}/export` and `/folders/{id}/export` share one driver (`_run_export`
 in `routers/export.py`). A folder export names its folder by id (the job's
-`folder`, the route's path); `_Filing` reads the folder and label trees
+`folder`, the route's path); `obsidian_export.Filing` reads the folder and label trees
 once per export — a page's folder paths below the exported folder (its
 folders outside it left out), its labels' names — for the builders that
 write directories, collections or tags. It walks the selected pages exactly once (subtree
@@ -413,7 +413,7 @@ highlights, handwriting and text boxes as standard annotations and, with
 the notes switch, its notes printed on the page (`annotated_page_pdf`, what
 `/pages/{id}/export-pdf` runs). For one page it is that PDF. For a folder it
 is a zip of them, `<subfolder>/<Title>.pdf`, the directories mirroring the
-page's first folder path below the exported folder (`_Filing`,
+page's first folder path below the exported folder (`Filing`,
 `obsidian_export.page_dir`). A
 page with sheets of paper and no PDF is exported as its sheets. A page with
 neither is left out, and the finished export lists it. A folder with no
@@ -717,6 +717,12 @@ one page.
   form Gamma stores, which Obsidian reads too), the PDF as
   `attachments/<Title>.pdf` (shared by pages of one document); the Bundle
   switch off leaves server links instead.
+
+The folder sync ([folder_sync.md](folder_sync.md)) writes the same dialect
+with the PDF beside the note. It shares `unique_name` and
+`VaultContext.place_pages`/`place_pdf` with this export and the
+annotated-PDF folder export. `vault_name` appends `_` to a Windows device
+name (`CON` → `CON_`).
 
 The vault importer above reads all of this back (titles from filenames,
 `^id` anchors and wikilinks into mentions and synced blocks, `tags` into

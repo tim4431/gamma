@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { changePlace, chipNote, helperStatus, isChange, runningLabel, splitActions, stepsSummary, withHelper } from "../src/chat/agentSteps.js";
+import { changePlace, chipNote, helperStatus, isChange, noteChangeText, runningLabel, splitActions, stepsSummary, withHelper } from "../src/chat/agentSteps.js";
 
 const actions = [
   { kind: "list", tool: "list_pages", summary: "Listed 12 pages" },
@@ -50,6 +50,25 @@ test("saved and restored pages are library changes; handwriting and citations ar
   const { library, notes } = splitActions(more);
   assert.deepEqual(library.map((a) => a.page_id), ["p", "q"]);
   assert.deepEqual(notes, []);
+});
+
+test("deletions are note changes; a note's pictures and clips are reading and clipping steps", () => {
+  const deleted = { kind: "delete", tool: "delete_block", summary: "Deleted a note in “N”", page_id: "n", block_id: "b2", title: "N",
+    revert: { blocks: [["b2", "n", "a0", "gone", "{}"]] } };
+  assert.equal(isChange(deleted), true);
+  assert.equal(changePlace(deleted), "notes");
+  assert.deepEqual(splitActions([deleted]).notes, [deleted]);
+  const steps = [
+    { kind: "image", tool: "view_image", summary: "Looked at 2 pictures in a note of “N”", page_id: "n", block_id: "b1" },
+    { kind: "clip", tool: "clip_region", summary: "Clipped a picture of PDF page 2 in “N”", page_id: "n", url: "/api/uploads/x.jpg" },
+    deleted,
+  ];
+  assert.equal(stepsSummary(steps), "3 steps · looked at a note's pictures, clipped 1 picture");
+  assert.equal(runningLabel({ tool: "view_image", args: { block_id: "b1" } }), "Looking at a note's pictures…");
+  assert.equal(runningLabel({ tool: "clip_region", args: { page_id: "n", pdf_page: 2 } }), "Clipping a picture of PDF page 2…");
+  assert.equal(runningLabel({ tool: "clip_region", args: { block_id: "b1" } }), "Clipping a picture…");
+  assert.equal(runningLabel({ tool: "delete_block", args: { block_id: "b2" } }), "Deleting a note…");
+  assert.equal(noteChangeText(deleted, "N"), "Deleted a note in N");
 });
 
 test("the running step reads as what the agent is doing", () => {

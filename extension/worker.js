@@ -4,7 +4,10 @@
 // blocked fetch to. State lives in chrome.storage.session so it survives the
 // worker being put to sleep.
 
-import { api, ApiError, checkedDefaultFolder, getSettings, rememberFolder, serverOrigin, whoAmI } from "./api.js";
+import {
+  api, ApiError, checkedDefaultFolder, checkedWorkspace, currentWorkspace, getSettings, rememberFolder, sameLibrary,
+  serverOrigin, whoAmI, writableWorkspaces,
+} from "./api.js";
 import {
   NEEDS_YOU, backgroundBusy, checkPage, handoffIdFrom, harvestUrls, needsSignIn, needsYouMessage, nextToOpen,
   sameWork, siteOf,
@@ -94,7 +97,11 @@ async function checkAuth(force = false) {
   else {
     try {
       const me = await whoAmI();
-      value = { configured: true, auth: !!me.user, user: me.user, origin: me.origin, is_guest: !!me.is_guest };
+      // A chosen workspace this account can no longer write to is dropped
+      // here, so the popup and the next save fall back to the default.
+      await checkedWorkspace(await getSettings(), me.workspaces);
+      value = { configured: true, auth: !!me.user, user: me.user, origin: me.origin, is_guest: !!me.is_guest,
+                workspaces: writableWorkspaces(me.workspaces) };
     } catch (err) {
       value = { configured: true, auth: null, user: null, origin, error: err.message };
     }
@@ -135,7 +142,8 @@ async function setDetection(tabId, candidate) {
   const res = await lookup(candidate, auth.origin);
   if (await serverOrigin() !== auth.origin) return getTabState(tabId);
   if (res.auth === false) { authCache.at = 0; return setTabState(tabId, { auth: false, looked: true }); }
-  const next = await setTabState(tabId, { hit: res.hit, auth: true, looked: true, origin: auth.origin });
+  const next = await setTabState(tabId, { hit: res.hit, auth: true, looked: true, origin: auth.origin,
+                                          ws: currentWorkspace(await getSettings()) });
   // Off the badge's critical path: doi.org can take a second or two. The
   // popup re-renders its head when the record lands (storage.onChanged).
   preview(candidate).then(async (pv) => {
@@ -607,33 +615,37 @@ async function bytesFromTab(url, tabId) {
 // web app's shared/lib/uploadParts.js speaks the same protocol.
 const PART_BYTES = 32 * 1024 * 1024;
 
-async function uploadBlob(tabId, blob, url, expectedOrigin) {
+async function uploadBlob(tabId, blob, url, pin) {
   const name = (decodeURIComponent(url.split("?")[0].split("/").pop() || "") || "paper.pdf").replace(/\.pdf$/i, "") + ".pdf";
   if (tabId != null) await progress(tabId, "uploading…");
   if (blob.size <= PART_BYTES) {
     const form = new FormData();
     form.append("file", blob, name);
-    return (await api("/uploads", { form, expectedOrigin })).doc_id;
+    return (await api("/uploads", { form, ...pin })).doc_id;
   }
-  const opened = await api("/uploads/parts", { json: { size: blob.size, name }, expectedOrigin });
+  const opened = await api("/uploads/parts", { json: { size: blob.size, name }, ...pin });
   const partBytes = Math.max(1, Math.min(PART_BYTES, opened.part_bytes || PART_BYTES));
   try {
     for (let offset = 0; offset < blob.size;) {
       const form = new FormData();
       form.append("offset", String(offset));
       form.append("part", blob.slice(offset, Math.min(offset + partBytes, blob.size)), "part");
-      offset = (await api(`/uploads/parts/${opened.token}`, { form, expectedOrigin })).received;
+      offset = (await api(`/uploads/parts/${opened.token}`, { form, ...pin })).received;
       if (tabId != null) await progress(tabId, `uploading… ${Math.round((offset / blob.size) * 100)}%`);
     }
-    return (await api(`/uploads/parts/${opened.token}/finish`, { method: "POST", expectedOrigin })).doc_id;
+    return (await api(`/uploads/parts/${opened.token}/finish`, { method: "POST", ...pin })).doc_id;
   } catch (err) {
-    api(`/uploads/parts/${opened.token}`, { method: "DELETE", expectedOrigin }).catch(() => {});
+    api(`/uploads/parts/${opened.token}`, { method: "DELETE", ...pin }).catch(() => {});
     throw err;
   }
 }
 
 async function savePaper({ tabId, candidate, folder, folder_path, labels, title, source_url }) {
   const settings = await getSettings();
+  // Where this save goes, start to end: its uploaded bytes and the clip
+  // that files them must land in the same library even if the choice
+  // changes under it, exactly as `expectedOrigin` pins the server.
+  const pin = { expectedOrigin: settings.server, workspace: currentWorkspace(settings) };
   const cand = candidate || { kind: "none", source_url: source_url || "" };
   // A PDF tab has no title of its own; the registry record previewed for the
   // popup names the page right away (auto_title — the metadata lookup may
@@ -667,13 +679,13 @@ async function savePaper({ tabId, candidate, folder, folder_path, labels, title,
       // Best-effort: on failure the server-side resolve below still runs.
       try {
         if (tabId != null) await progress(tabId, "downloading in your browser…");
-        payload.doc_id = await uploadBlob(tabId, await bytesFromTab(fetchUrl, tabId), fetchUrl, settings.server);
+        payload.doc_id = await uploadBlob(tabId, await bytesFromTab(fetchUrl, tabId), fetchUrl, pin);
       } catch (err) { console.warn(`[gamma] browser-first upload failed, server will try: ${err.message}`); }
     }
     if (tabId != null) await progress(tabId, "saving to your library…");
     let out;
     try {
-      out = await api("/clip", { json: payload, expectedOrigin: settings.server });
+      out = await api("/clip", { json: payload, ...pin });
     } catch (err) {
       // The server couldn't fetch the PDF (paywall, bot check) — this
       // browser's session often can. Download here, upload, save again.
@@ -682,15 +694,17 @@ async function savePaper({ tabId, candidate, folder, folder_path, labels, title,
       let blob;
       try { blob = await bytesFromTab(fetchUrl, tabId); }
       catch (bErr) { throw new Error(`${err.message} The browser-side download failed too: ${bErr.message}.`); }
-      payload.doc_id = await uploadBlob(tabId, blob, fetchUrl, settings.server);
+      payload.doc_id = await uploadBlob(tabId, blob, fetchUrl, pin);
       if (tabId != null) await progress(tabId, "saving to your library…");
-      out = await api("/clip", { json: payload, expectedOrigin: settings.server });
+      out = await api("/clip", { json: payload, ...pin });
     }
     // The folder saved into becomes the default; labels are per-paper, so they
     // are not remembered (each popup starts from the options-page defaults).
     await rememberFolder(settings, filing).catch((err) => console.warn(`[gamma] couldn't remember the folder: ${err.message}`));
-    if (tabId != null && await serverOrigin() === settings.server) await setTabState(tabId, { saving: "", hit: out, last: out, error: "", origin: settings.server });
-    return out;
+    if (tabId != null && sameLibrary({ origin: settings.server, ws: pin.workspace }, await getSettings())) {
+      await setTabState(tabId, { saving: "", hit: out, last: out, error: "", origin: settings.server, ws: pin.workspace });
+    }
+    return { ...out, ws: pin.workspace };
   } catch (err) {
     const message = err.message || "save failed";
     if (tabId != null) await setTabState(tabId, { saving: "", error: message, auth: err.status === 401 ? false : undefined });
@@ -700,10 +714,11 @@ async function savePaper({ tabId, candidate, folder, folder_path, labels, title,
 }
 
 async function clipSelection({ tabId, text, source_url, title }) {
-  const origin = await serverOrigin();
+  const settings = await getSettings();
   const st = tabId != null ? await getTabState(tabId) : {};
-  const page_id = st.origin === origin && st.hit && st.hit.block_id || "";
-  return api("/clip/note", { json: { text, source_url, title, page_id }, expectedOrigin: origin });
+  const page_id = sameLibrary(st, settings) && st.hit && st.hit.block_id || "";
+  return api("/clip/note", { json: { text, source_url, title, page_id },
+    expectedOrigin: settings.server, workspace: currentWorkspace(settings) });
 }
 
 // ---------- notifications (context menu + shortcut results) ----------
@@ -729,16 +744,28 @@ chrome.notifications && chrome.notifications.onClicked.addListener((id) => {
   chrome.notifications.clear(id);
 });
 
-async function openInGamma(out) {
-  const origin = await serverOrigin();
-  return origin + (out.open_url || "/");
+// A link into the app, in the library the page was saved to (`workspace`,
+// else the chosen one): a URL without `ws` opens the account's default one.
+async function appUrl(path, workspace) {
+  const url = new URL(path || "/", await serverOrigin());
+  const ws = workspace !== undefined ? workspace : currentWorkspace(await getSettings());
+  if (ws) url.searchParams.set("ws", ws);
+  return url.href;
+}
+
+// `out` is a save's answer (savePaper adds `ws`, the library it was pinned
+// to) or a tab's stored hit.
+async function openInGamma(out, workspace = out.ws) {
+  return appUrl(out.open_url || "/", workspace);
 }
 
 // ---------- tabs ----------
 
 async function ensureDetection(tabId) {
   const st = await getTabState(tabId);
-  if (st.candidate && st.looked && st.origin === await serverOrigin()) return st;
+  // "Already in your library" is one library's answer: a look-up made in
+  // another workspace says nothing about the chosen one.
+  if (st.candidate && st.looked && sameLibrary(st, await getSettings())) return st;
   let tab = null;
   try { tab = await chrome.tabs.get(tabId); } catch { return st; }
   let fromPage = null;
@@ -846,8 +873,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         return { ...status, auto };
       }
       case "open": {
-        const origin = await serverOrigin();
-        await chrome.tabs.create({ url: origin + (msg.path || "/") });
+        await chrome.tabs.create({ url: await appUrl(msg.path) });
         return true;
       }
       // The Gamma app asking (bridge.js) whether a Connector is here at
@@ -912,7 +938,7 @@ chrome.runtime.onInstalled.addListener(() => {
 
 async function savePageFromTab(tab) {
   const st = await ensureDetection(tab.id);
-  if (st.hit) { await notify(`Already in your library: ${st.hit.title}`, await openInGamma(st.hit)); return; }
+  if (st.hit) { await notify(`Already in your library: ${st.hit.title}`, await openInGamma(st.hit, st.ws || "")); return; }
   const cand = st.candidate || candidateFromUrl(tab.url, tab.title);
   if (cand.kind === "none") { await notify("No paper or PDF found on this page."); return; }
   try {
@@ -946,16 +972,17 @@ chrome.commands.onCommand.addListener(async (command, tab) => {
 });
 
 chrome.storage.onChanged.addListener((changes, area) => {
-  if (area === "sync" && changes.server) {
-    authCache.at = 0;
-    publisherCache = null;
-    // Library hits and badges belong to the server that resolved them.
-    chrome.storage.session.get(null).then(async (stored) => {
-      for (const [k, st] of Object.entries(stored)) {
-        if (k.startsWith("tab:") && st.origin !== changes.server.newValue) {
-          await setTabState(Number(k.slice(4)), { hit: null, last: null, looked: false, auth: null, saving: "", error: "" });
-        }
+  if (area !== "sync" || !(changes.server || changes.workspaces)) return;
+  authCache.at = 0;
+  if (changes.server) publisherCache = null;
+  // Library hits and badges belong to the server and the workspace that
+  // resolved them.
+  (async () => {
+    const settings = await getSettings();
+    for (const [k, st] of Object.entries(await chrome.storage.session.get(null))) {
+      if (k.startsWith("tab:") && !sameLibrary(st, settings)) {
+        await setTabState(Number(k.slice(4)), { hit: null, last: null, looked: false, auth: null, saving: "", error: "" });
       }
-    }).catch(() => {});
-  }
+    }
+  })().catch(() => {});
 });

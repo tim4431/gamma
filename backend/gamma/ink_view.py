@@ -12,6 +12,7 @@ draws when it renders. ``pdf_text.render_page`` rasterizes either.
 """
 
 from . import ink as inkmod
+from .ai_pictures import page_pdf_path
 from .blocks_store import block_to_dict, fetch_subtree, page_attachment
 from .db import ws_uploads_dir
 from .logbuf import log
@@ -131,6 +132,36 @@ def picture(ws: str, conn, block_id: str, page_id: str, whole: bool = False) -> 
 def _render(pdf: bytes, box):
     image, _ = render_page(pdf, 1, RENDER_MAX_SIDE, box)
     return image
+
+
+def page_with_handwriting(ws: str, conn, page_id: str, page_no: int, path=None):
+    """PDF page ``page_no`` of the page ``page_id`` with every handwriting
+    group written on it, as one-page PDF bytes (``pdf_export.page_with_ink``)
+    — what a picture of "the page as the user sees it" is rendered from —
+    or ``(b"", pages)`` when the page has no such PDF page; ``(None, 0)``
+    for a page without a PDF file on this server (``path`` is that file
+    when the caller has it already). Ink the PDF still embeds is drawn by
+    the file itself and never added twice."""
+    from .pdf_export import page_with_ink, still_embedded
+
+    path = path or page_pdf_path(ws, conn, page_id)
+    if not path:
+        return None, 0
+    blocks = [block_to_dict(row) for row in fetch_subtree(conn, page_id)]
+    uploads = ws_uploads_dir(ws)
+    inks = []
+    for b in blocks:
+        url = b["properties"].get("ink_url")
+        if not url or still_embedded(b["properties"]):
+            continue
+        ink = inkmod.read_upload(uploads, url)
+        if ink is not None and ink.space.kind == "pdf-page" and ink.space.page == page_no:
+            inks.append(ink)
+    try:
+        return page_with_ink(path, page_no, inks)
+    except Exception as e:  # an encrypted or broken file: no handwriting, the page itself still renders
+        log.warning(f"[ink-view] could not copy PDF page {page_no} of {page_id}: {e}")
+        return b"", 0
 
 
 def _done(image, inks, *, whole=False, pdf_page=0, bare=False) -> dict:

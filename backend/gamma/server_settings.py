@@ -26,7 +26,8 @@ where it is lower (``_plan_caps``; an admin may tighten, never loosen).
 The module also owns the admin-confirmed public server URL (`settings` key
 `public_url`, or the `GAMMA_PUBLIC_URL` override) and the MCP host allowlist
 derived from it ([mcp.md](../../docs/dev/mcp.md)), and the guest settings
-(`guest_ttl_hours`, how long a guest account lives, `GAMMA_GUEST_TTL_HOURS`
+(`guest_logins`, whether this server takes guest logins at all;
+`guest_ttl_hours`, how long a guest account lives, `GAMMA_GUEST_TTL_HOURS`
 overriding it; `demo_mode`, `GAMMA_DEMO` overriding it —
 docs/dev/guests.md). Other modules keep their
 server-wide values in the same KV through ``_get_raw``/``_set_raw``: the
@@ -201,6 +202,28 @@ def set_guest_ttl_hours(hours) -> None:
     _set_raw("guest_ttl_hours", str(hours))
 
 
+def guest_logins_settings() -> dict:
+    """``{guest_logins, guest_logins_source}``: the admin's switch for guest
+    sign-in (Settings → Server → Guests), on unless it was turned off
+    ("saved" once an admin has set it either way, else "default"). What a
+    server can do at all — ``GAMMA_GUEST_MAX``, a hosted container, a share
+    host — is ``guests.logins_possible()``, and no switch turns that on."""
+    saved = _get_raw("guest_logins")
+    return {"guest_logins": saved != "0", "guest_logins_source": "saved" if saved else "default"}
+
+
+def guest_logins_enabled() -> bool:
+    return guest_logins_settings()["guest_logins"]
+
+
+def set_guest_logins(on: bool) -> None:
+    from . import guests  # local: guests imports this module
+
+    if not guests.logins_possible():
+        raise ValueError("This server takes no guest logins.")
+    _set_raw("guest_logins", "1" if on else "0")
+
+
 def demo_settings() -> dict:
     """``{demo_mode, demo_mode_source}``: on when ``GAMMA_DEMO`` is truthy
     ("environment"), else the saved switch ("saved" / "default")."""
@@ -221,8 +244,9 @@ def set_demo_mode(on: bool) -> None:
 
 
 def guest_settings() -> dict:
-    """The admin Settings rows: guest lifetime and demo mode with sources."""
-    return {**guest_ttl_settings(), **demo_settings()}
+    """The admin Settings rows: the guest sign-in switch, the guest lifetime
+    and demo mode, each with its source."""
+    return {**guest_logins_settings(), **guest_ttl_settings(), **demo_settings()}
 
 
 def _plan_caps(conn) -> dict:

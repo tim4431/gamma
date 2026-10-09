@@ -145,7 +145,9 @@ def test_the_trends_and_the_metrics_endpoint(client, hosting):
     [s] = client.get("/api/admin/servers").json()["servers"]
     assert [sorted(p) for p in s["trend"]] == [["at", "memory_mb"], ["at", "cpu_pct", "data_mb", "memory_mb"]]
     [h] = client.get("/api/admin/hosts").json()["hosts"]
-    assert h["trend"] == [{"at": metrics.hour(), "memory_used_mb": 900, "disk_used_mb": 50}]
+    assert "trend" not in h   # a host's history is on the metrics endpoint only
+    r = client.get("/api/admin/metrics", params={"kind": "host", "ref": host_id}).json()
+    assert r["points"] == [{"at": metrics.hour(), "memory_used_mb": 900, "disk_used_mb": 50, "committed_mb": 768, "servers": 1}]
     r = client.get("/api/admin/metrics", params={"kind": "server", "ref": sid, "hours": 24}).json()
     assert r["hours"] == 24 and [p["memory_mb"] for p in r["points"]] == [200, 300] and r["points"][1]["errors"] == 1
     r = client.get("/api/admin/metrics", params={"kind": "server", "ref": sid, "hours": 5000}).json()

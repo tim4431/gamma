@@ -25,7 +25,7 @@ from ..storage import (
     is_pdf,
     pdf_url,
     store_file,
-    store_pdf,
+    store_pdf_stream,
     upload_extension,
     upload_media_type,
 )
@@ -53,14 +53,16 @@ def get_quota(request: Request):
 @router.post("/uploads")
 def upload_pdf(request: Request, file: UploadFile = File(...)):
     ws = require_ws(request, write=True)
-    contents = file.file.read()
-    if not is_pdf(contents):
-        raise HTTPException(status_code=400, detail="not a valid PDF (missing %PDF header)")
-    doc_id, already_existed = store_pdf(ws, contents)
+    try:
+        # Spooled to disk and hashed as it is read (storage.store_pdf_stream):
+        # the file is never held in memory, and the store is a rename.
+        doc_id, already_existed, size = store_pdf_stream(ws, file.file)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     return {
         "doc_id": doc_id,
         "source_url": pdf_url(doc_id),
-        "size": len(contents),
+        "size": size,
         "already_existed": already_existed,
     }
 

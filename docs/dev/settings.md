@@ -344,8 +344,9 @@ AI:
   ([ai.md](ai.md#reasoning-effort)). A speed reaches only models whose
   provider offers that service tier ([ai.md](ai.md#speed-service-tier)).
   **Prompts** is the accordion, with one Cancel / Save pair as its action.
-  **Context size** holds the three budgets, with the Standard / Larger /
-  Custom preset as its action. The old `ai-advanced`, `context` and `prompts` pane ids are
+  **Context size** holds the three text budgets and "Pictures per message"
+  (the chat's picture budget, [ai.md](ai.md#pictures)), with the Standard /
+  Larger / Custom preset as its action. The old `ai-advanced`, `context` and `prompts` pane ids are
   aliases of this pane, each jumping to its section.
 - **Tool usage** (pane id `tools`): **Tools**, the master switch and, per chat
   kind (folder / PDF / notes), a permission table (`AgentToolMatrix` in
@@ -376,7 +377,7 @@ AI:
 Library:
 
 - **Workspaces**: storage meter, personal and shared workspaces, New
-  workspace, Export all. Each row has Open, a Data menu (export, import)
+  workspace, Export all, and last the clones. Each row has Open, a Data menu (export, import)
   and Manage. Manage opens an inline page under one breadcrumb head,
   "Workspaces › <name>", with Open workspace at its right end: General,
   Access, Members and the Danger zone, every row saving at once, no footer.
@@ -485,15 +486,19 @@ stays in whole tokens, so the row converts both ways and a figure out of
 range snaps back to the stored one.
 
 **Guests** (Server, [SettingsGuests.jsx](../../frontend/src/settings/SettingsGuests.jsx))
-has two rows over `/api/admin/settings`: **Guest workspaces last** (a
-`UnitInput` in hours, `guest_ttl_hours`, saved on Enter or blur) and the
-**Demo mode** switch (`demo_mode`: the login page leads with Try the demo
-and folds the password form behind Admin sign-in; the guide offers the
-first-paper tour on arrival). Each reports its source like the public URL;
-when it is `environment` (`GAMMA_GUEST_TTL_HOURS`, `GAMMA_DEMO`) the control
-is disabled and the hint names the variable ([guests.md](guests.md)). The
-section is left out where the server takes no guests (`guest_logins: false`
-in `GET /api/admin/settings`: a hosted container, a share host,
+has three rows over `/api/admin/settings`: the **Guest sign-in** switch
+(`guest_logins`, on unless an admin turns it off — off, the login page
+shows no guest button and `POST /api/login-guest` is a 403), **Guest
+workspaces last** (a `UnitInput` in hours, `guest_ttl_hours`, saved on Enter
+or blur) and the **Demo mode** switch (`demo_mode`: the login page leads
+with Try the demo and folds the password form behind Admin sign-in; the
+guide offers the first-paper tour on arrival). The last two describe guests
+only, so they are disabled while guest sign-in is off. Each reports its
+source like the public URL; when it is `environment`
+(`GAMMA_GUEST_TTL_HOURS`, `GAMMA_DEMO`) the control is disabled and the hint
+names the variable ([guests.md](guests.md)). The section is left out where
+no switch could bring guests back (`guest_logins_available: false` in
+`GET /api/admin/settings`: a hosted container, a share host,
 `GAMMA_GUEST_MAX=0`).
 
 Administrators confirm the **Public server URL** under Server: the row shows

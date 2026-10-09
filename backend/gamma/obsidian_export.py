@@ -28,7 +28,8 @@ import json
 import re
 
 from . import bibtex as bibtex_mod
-from .blocks_store import page_attachment
+from .blocks_store import (FOLDERS, LABELS, PATH_SEP, filing, folder_paths, folder_subtree_ids, label_names,
+                           page_attachment)
 from .highlights import is_highlight, page_of
 from .markdown_export import _BLOCK_REF_RE, _link_label, resolve_block_links
 from .note_markup import obsidian_image_sizes
@@ -43,15 +44,66 @@ _HEADING_RE = re.compile(r"^#{1,6}\s+\S")
 # for lists, quotes, callouts, tables and fences).
 _COMPOUND_RE = re.compile(r"^(```|~~~|>|\||\$\$|[-*+] |\d+[.)] )")
 _MARKER_RE = re.compile(r"[^A-Za-z0-9-]")
+_RESERVED_NAME = re.compile(r"(?i)(con|prn|aux|nul|com[1-9]|lpt[1-9])")
 
 APP_JSON = json.dumps({"attachmentFolderPath": "attachments"}, indent=2) + "\n"
 
 
 def vault_name(title: str) -> str:
-    """A page title as an Obsidian-safe file/link name."""
+    """A page title as an Obsidian-safe file/link name: valid on every OS,
+    which also means no Windows device name (``CON``, ``NUL``, ``COM1``…
+    cannot be created there, whatever the extension)."""
     t = _INVALID_NAME.sub(" ", title or "")
     t = re.sub(r"\s+", " ", t).strip().lstrip(".").rstrip(". ")
-    return t[:80].rstrip(". ") or "Untitled"
+    t = t[:80].rstrip(". ") or "Untitled"
+    return t + "_" if _RESERVED_NAME.fullmatch(t) else t
+
+
+class Filing:
+    """The names an export writes for its pages' folders and labels, read
+    from the trees once. ``scope`` is the exported folder's id (None: a page
+    exported on its own): a page's folder paths are then the names below it,
+    and its folders outside it are left out; ``title`` is the exported
+    folder's path as people read it ("" for none)."""
+
+    def __init__(self, conn, scope):
+        paths = folder_paths(conn)
+        self.title = ""
+        if scope:
+            top = paths.get(scope, [])
+            self.title = PATH_SEP.join(top)
+            inside = folder_subtree_ids(conn, scope)
+            paths = {f: path[len(top):] for f, path in paths.items() if f in inside}
+        self.paths = paths
+        self.labels = label_names(conn)
+
+    def folders(self, props) -> list[list[str]]:
+        """The page's folder paths (names) below the exported folder — that
+        folder itself, the export's top, is none —, in the page's order."""
+        return [self.paths[f] for f in filing(props, FOLDERS) if self.paths.get(f)]
+
+    def folder(self, props) -> list[str]:
+        """The path a page's file goes under: its first folder below the
+        exported folder ([]: the export's top)."""
+        return next(iter(self.folders(props)), [])
+
+    def tags(self, props) -> list[str]:
+        """The names of the page's labels, in its order."""
+        return [self.labels[i] for i in filing(props, LABELS) if i in self.labels]
+
+
+def unique_name(used: set, directory: str, stem: str, ext: str) -> str:
+    """``<directory><stem><ext>`` made unique among ``used`` — a `` 2``,
+    `` 3``… after the stem while the path is taken, compared ignoring case
+    since the file may land on a case-insensitive disk — and added to it.
+    The one naming rule of the vault export, the annotated-PDF folder export
+    and the folder sync (gamma/folder_sync.py)."""
+    name, n = stem, 1
+    while f"{directory}{name}{ext}".lower() in used:
+        n += 1
+        name = f"{stem} {n}"
+    used.add(f"{directory}{name}{ext}".lower())
+    return f"{directory}{name}{ext}"
 
 
 def anchor_marker(block_id: str) -> str:
@@ -82,8 +134,9 @@ class VaultContext:
         self.include_pdf = include_pdf
         self.page_file = {}     # page id → arcname (dir/Title.md)
         self.link_text = {}     # page id → [[link text]] (Title or dir/Title)
-        self.pdf_name = {}      # page id → attachments/<Name>.pdf arcname
+        self.pdf_name = {}      # page id → (the PDF's arcname, doc_id)
         self.anchors = {}       # block id → ^marker (blocks linked from the export)
+        self.id_key = None      # a front-matter key to write the page's id under (the folder sync's)
 
     # --- naming (built once, before any page renders) ------------------------
 
@@ -91,18 +144,15 @@ class VaultContext:
         """``pages``: (page id, title, folder path — the names its directory
         is made of, ``page_dir``) in export order."""
         used = set()
-        for pid, title, folder in pages:
-            directory = page_dir(folder)
-            stem = vault_name(title)
-            name = stem
-            n = 1
-            while f"{directory}{name}.md".lower() in used:
-                n += 1
-                name = f"{stem} {n}"
-            used.add(f"{directory}{name}.md".lower())
-            self.page_file[pid] = f"{directory}{name}.md"
-        # Obsidian resolves a bare [[Name]] anywhere in the vault; when two
-        # exported pages share a name the folder path disambiguates.
+        self.place_pages({pid: unique_name(used, page_dir(folder), vault_name(title), ".md")
+                          for pid, title, folder in pages})
+
+    def place_pages(self, files: dict):
+        """The pages' files as decided elsewhere (``{page id: dir/Title.md}``,
+        the folder sync's layout), and the text each is linked by: Obsidian
+        resolves a bare [[Name]] anywhere in the vault, so when two pages
+        share a name the folder path disambiguates."""
+        self.page_file = dict(files)
         counts = {}
         for arc in self.page_file.values():
             counts[arc.rsplit("/", 1)[-1].lower()] = counts.get(arc.rsplit("/", 1)[-1].lower(), 0) + 1
@@ -117,14 +167,14 @@ class VaultContext:
             if arc[1] == doc_id:
                 self.pdf_name[page_id] = arc
                 return arc[0]
-        stem = vault_name(title)
-        name, n = stem, 1
         taken = {a[0].lower() for a in self.pdf_name.values()}
-        while f"attachments/{name}.pdf".lower() in taken:
-            n += 1
-            name = f"{stem} {n}"
-        self.pdf_name[page_id] = (f"attachments/{name}.pdf", doc_id)
-        return f"attachments/{name}.pdf"
+        return self.place_pdf(page_id, unique_name(taken, "attachments/", vault_name(title), ".pdf"), doc_id)
+
+    def place_pdf(self, page_id, arcname, doc_id):
+        """The page's PDF is the file ``arcname`` (the folder sync puts it
+        beside the note); its leaf is what the note links."""
+        self.pdf_name[page_id] = (arcname, doc_id)
+        return arcname
 
     def pdf_leaf(self, page_id):
         arc = self.pdf_name.get(page_id)
@@ -186,6 +236,8 @@ def render_vault_page(page, ctx: VaultContext, tags=(), highlights=True, notes=T
     page_id = page["id"]
 
     fm = []
+    if ctx.id_key:
+        fm.append(f"{ctx.id_key}: {page_id}")
     if vault_name(title) != title:
         fm.append(f"title: {_yaml_text(title)}")
     if tags:

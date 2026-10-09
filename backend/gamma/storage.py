@@ -192,8 +192,14 @@ def is_pdf(data: bytes) -> bool:
     return len(data) >= 4 and data[:4] == b"%PDF"
 
 
+def digest_id(digest) -> str:
+    """The stored name's stem of a SHA-256 ``digest`` (``hashlib``): its
+    first DIGEST_CHARS hex characters."""
+    return digest.hexdigest()[:DIGEST_CHARS]
+
+
 def content_digest(data: bytes) -> str:
-    return hashlib.sha256(data).hexdigest()[:DIGEST_CHARS]
+    return digest_id(hashlib.sha256(data))
 
 
 def matches_name(name: str, data: bytes) -> bool:
@@ -347,10 +353,10 @@ def _store_path(ws: str, filename: str, path: Path, size: int) -> bool:
 def put_upload(ws: str, name: str, data: bytes) -> None:
     """Store ``data`` as the workspace's file ``name`` as it is, written
     whole: no hashing, no dedup, no quota. For the writers that store bytes
-    under a name chosen elsewhere and check them themselves — the PDF
-    proxy's cache and a clip (``can_store``), a mirror's pull
-    (``matches_name``), a restore, a PDF stripped of its annotations, the
-    AI chat's re-download."""
+    under a name chosen elsewhere and check them themselves — a clip
+    (``can_store``), a mirror's pull (``matches_name``), a restore, a PDF
+    stripped of its annotations, the AI chat's re-download. The PDF proxy's
+    cache, spooled to disk, goes through :func:`put_path` instead."""
     put(ws, name, data)
 
 
@@ -381,6 +387,84 @@ def store_pdf_path(ws: str, path: Path, size: int, doc_id: str) -> tuple[str, bo
     already_existed = _store_path(ws, f"{doc_id}.pdf", path, size)
     pdf_meta.schedule(ws, doc_id)
     return doc_id, already_existed
+
+
+SPOOL_CHUNK = 1 << 20
+SPOOL_CHECK_BYTES = 8 << 20  # how often a spool asks the limits whether to go on
+
+
+class Spool:
+    """A file arriving in chunks, written into ``partial_dir(ws)`` and
+    hashed as it comes, so that storing it is ``put_path``'s rename and
+    the whole file is never in memory (a scanned book is hundreds of
+    MB). ``head`` is its first four bytes
+    (``is_pdf``), ``size`` the bytes so far, ``digest`` the running
+    SHA-256. ``due_check`` says when the storage limits are to be asked
+    again (every SPOOL_CHECK_BYTES); the caller refuses or stops caching.
+    ``discard`` removes the file; a spool that is not stored must be
+    discarded."""
+
+    def __init__(self, ws: str):
+        directory = partial_dir(ws)
+        directory.mkdir(parents=True, exist_ok=True)
+        self.path = directory / secrets.token_hex(8)
+        self._f = open(self.path, "xb")  # the umask's permissions, like every stored file
+        self.size = 0
+        self.digest = hashlib.sha256()
+        self.head = b""
+        self._checked = 0  # the size at the last due check
+
+    def write(self, chunk: bytes) -> None:
+        self._f.write(chunk)
+        self.digest.update(chunk)
+        self.size += len(chunk)
+        if len(self.head) < 4:
+            self.head += bytes(chunk[:4 - len(self.head)])
+
+    def due_check(self) -> bool:
+        """Whether SPOOL_CHECK_BYTES arrived since the last check."""
+        if self.size - self._checked < SPOOL_CHECK_BYTES:
+            return False
+        self._checked = self.size
+        return True
+
+    def close(self) -> None:
+        if not self._f.closed:
+            self._f.close()
+
+    def discard(self) -> None:
+        self.close()
+        self.path.unlink(missing_ok=True)
+
+    def doc_id(self) -> str:
+        return digest_id(self.digest)
+
+
+def store_pdf_stream(ws: str, stream) -> tuple[str, bool, int]:
+    """:func:`store_pdf` for a PDF read from ``stream`` (``.read(n)``: an
+    upload's spooled body): spooled to disk and hashed as it is read, then
+    stored by a rename. ``(doc_id, already_existed, size)``. The limits are
+    asked every SPOOL_CHECK_BYTES while the bytes arrive, so a file past
+    the per-file cap is refused (413 / 507, ``check_upload_allowed``) a few
+    MB in, not after it was written whole; a body that is no PDF is a
+    ValueError. Nothing is left on disk either way."""
+    spool = Spool(ws)
+    try:
+        while True:
+            chunk = stream.read(SPOOL_CHUNK)
+            if not chunk:
+                break
+            spool.write(chunk)
+            if spool.due_check():
+                check_upload_allowed(ws, spool.size)
+        spool.close()
+        if not is_pdf(spool.head):
+            raise ValueError("not a valid PDF (missing %PDF header)")
+    except BaseException:
+        spool.discard()
+        raise
+    doc_id, already_existed = store_pdf_path(ws, spool.path, spool.size, spool.doc_id())
+    return doc_id, already_existed, spool.size
 
 
 def store_file(ws: str, data: bytes, ext: str) -> tuple[str, bool]:

@@ -80,7 +80,7 @@ from .blocks_store import FOLDERS, LABELS, TREES, create_page, fetch_subtree, la
 from .db import connect_pages_db, connect_users_db, page_now
 from .logbuf import log
 from .ops import MAX_OPS, OpError, commit_ops, latest_seq, props_patch, trash_page
-from .publisher_sessions import cipher
+from .publisher_sessions import seal, unseal
 from .routers.sync import changes as local_changes
 from .storage import find_upload_file, matches_name, put_upload
 from .sync_tree import (ancestors, apply, children_of, diff, moved, snapshot_from_rows, snapshot_from_tree,
@@ -292,7 +292,7 @@ def _row_info(row, *, with_token=False) -> dict:
             "poll_s": int(row[11] if row[11] is not None else 30), "on_change": bool(row[12] if row[12] is not None else 1),
             "page_filter": _parse_filter(row[13])}
     if with_token:
-        info["token"] = cipher().decrypt(row[4].encode("ascii")).decode("utf-8")
+        info["token"] = unseal(row[4])
     return info
 
 
@@ -307,10 +307,6 @@ def list_mirrors(owner: str) -> list[dict]:
         rows = conn.execute(f"SELECT {_COLS} FROM mirrors WHERE owner = ? ORDER BY created_at", (owner,)).fetchall()
     return [_row_info(r) for r in rows]
 
-
-def _seal(token: str) -> str:
-    """The token as stored: Fernet-encrypted with the data directory's key."""
-    return cipher().encrypt(token.encode("utf-8")).decode("ascii")
 
 
 def _clear_bases(ws: str) -> None:
@@ -445,7 +441,7 @@ def create_mirror(owner: str, remote_url: str, token: str, *, name: str = "", mo
         conn.execute(
             "INSERT INTO mirrors (workspace_id, remote_url, remote_ws, remote_name, token, owner, mode, "
             "remote_cursor, local_cursor, status, created_at, page_filter) VALUES (?, ?, ?, ?, ?, ?, ?, '', '', ?, ?, ?)",
-            (info["id"], remote_url, remote_ws, remote_name, _seal(token), owner, mode, json.dumps(status), page_now(),
+            (info["id"], remote_url, remote_ws, remote_name, seal(token), owner, mode, json.dumps(status), page_now(),
              None if page_filter is None else json.dumps(list(dict.fromkeys(page_filter)))))
         conn.commit()
     _filters.pop(info["id"], None)
@@ -455,7 +451,7 @@ def create_mirror(owner: str, remote_url: str, token: str, *, name: str = "", mo
 def replace_token(ws: str, token: str) -> None:
     """Store a new token for the same remote workspace (the old one expired
     or was replaced there); the bases and cursors stay."""
-    _save(ws, token=_seal(token.strip()))
+    _save(ws, token=seal(token.strip()))
 
 
 def round_lock(ws: str) -> threading.Lock:
@@ -563,7 +559,7 @@ def relink_mirror(ws: str, *, token: str = "", remote_url: str = "", adopt: str 
     remote_ws, remote_name = me["workspace"]["id"], me["workspace"].get("name") or "Workspace"
     patch = {"remote_user": me.get("user"), "remote_role": me.get("role")}
     fields = {"mode": mode, "remote_url": remote_url, "remote_ws": remote_ws, "remote_name": remote_name,
-              "token": _seal(token)}
+              "token": seal(token)}
     if remote_url != mirror["remote_url"] or remote_ws != mirror["remote_ws"]:
         # a different original: the saved bases mean nothing, its pages are adopted
         _clear_bases(ws)

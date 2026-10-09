@@ -1373,6 +1373,37 @@ def _v34_workspace_prefs(ws: str, pages: sqlite3.Connection, data) -> None:
         "WHERE excluded.updated_at > workspace_prefs.updated_at", rows)
 
 
+
+# users.db ``folder_links`` as schema version 35 shaped it, frozen: step 35
+# creates it from this. ``workspace_id`` is a workspace of this server or,
+# with ``remote_url``, of the other server, so it is no foreign key.
+_V35_FOLDER_LINKS = """CREATE TABLE IF NOT EXISTS folder_links (
+        id TEXT PRIMARY KEY,
+        workspace_id TEXT NOT NULL,
+        folder_id TEXT NOT NULL,
+        path TEXT NOT NULL UNIQUE COLLATE NOCASE,
+        notes INTEGER NOT NULL DEFAULT 1,
+        created_by TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        cursor TEXT NOT NULL DEFAULT '',
+        status TEXT NOT NULL DEFAULT '{}',
+        remote_url TEXT NOT NULL DEFAULT '',
+        token TEXT NOT NULL DEFAULT '',
+        token_id TEXT NOT NULL DEFAULT ''
+    )"""
+
+
+def _v35_folder_links(conn: sqlite3.Connection) -> None:
+    """users.db gains ``folder_links`` (gamma/folder_links.py): the folders
+    kept as directories on disk, with the change-log seq and the status of
+    their last round, and for a folder of another Gamma server that
+    server's address and a token of it (``remote_url``, ``token``,
+    ``token_id``), in the frozen shape ``_V35_FOLDER_LINKS``. Re-runnable:
+    the statement is ``IF NOT EXISTS``. No workspace is touched."""
+    conn.execute(_V35_FOLDER_LINKS)
+    conn.commit()
+
+
 STEPS = [
     (20, "guest_accounts", _v20_guest_accounts),
     (21, "folder_shares", _v21_folder_shares),
@@ -1388,6 +1419,7 @@ STEPS = [
     (31, "session_columns", _v31_session_columns),
     (32, "share_token_workspace", _v32_share_token_workspace),
     (33, "page_ops_batch_id", _v33_page_ops_batch_id),
+    (35, "folder_links", _v35_folder_links),
 ]
 
 # The workspace parts of the steps from version 34 on: (version, name,

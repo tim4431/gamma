@@ -78,6 +78,18 @@ def cipher() -> Fernet:
     return Fernet(path.read_bytes())
 
 
+def seal(text: str) -> str:
+    """``text`` as stored: Fernet-encrypted with ``cipher``'s key (the
+    mirrors' and the folder links' tokens); "" stays ""."""
+    return cipher().encrypt(text.encode("utf-8")).decode("ascii") if text else ""
+
+
+def unseal(sealed: str) -> str:
+    """What ``seal`` stored; "" for "". ``InvalidToken`` (or ``ValueError``)
+    when the key changed since."""
+    return cipher().decrypt(sealed.encode("ascii")).decode("utf-8") if sealed else ""
+
+
 def normalize_cookies(host: str, cookies: list) -> list[dict]:
     if not isinstance(cookies, list) or not 1 <= len(cookies) <= 200:
         raise ValueError("Send between 1 and 200 publisher cookies")

@@ -84,10 +84,6 @@ export function withLegacyAccessors(b) {
 
 // --- tree operations (same API as before) ---
 
-export function cloneBlocks(blocks) {
-  return JSON.parse(JSON.stringify(blocks || []));
-}
-
 export function findBlock(blocks, id) {
   for (const b of blocks) {
     if (b.id === id) return b;
@@ -97,16 +93,29 @@ export function findBlock(blocks, id) {
   return null;
 }
 
+// The tree with block `id` replaced by `fn(block)`: only the path from the
+// root to that block is copied, every other subtree keeps its identity
+// (a memoized row on it does not re-render), and the same array comes back
+// when the id is not in the tree. `fn` gets the stored block itself: it
+// returns a new object and must not change the one it was given.
 export function updateBlockTree(blocks, id, fn) {
-  return (blocks || []).map((b) => {
+  const list = blocks || [];
+  for (let i = 0; i < list.length; i++) {
+    const b = list[i];
+    let next;
     if (b.id === id) {
-      return fn({ ...b, children: cloneBlocks(b.children || []) });
+      next = fn(b);
+    } else {
+      const kids = b.children || [];
+      const updated = updateBlockTree(kids, id, fn);
+      if (updated === kids) continue;
+      next = { ...b, children: updated };
     }
-    return {
-      ...b,
-      children: updateBlockTree(b.children || [], id, fn)
-    };
-  });
+    const out = list.slice();
+    out[i] = next;
+    return out;
+  }
+  return list;
 }
 
 export function removeBlockTree(blocks, id) {

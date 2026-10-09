@@ -47,6 +47,7 @@ from ..server_settings import (
     guest_settings,
     public_url_settings,
     set_demo_mode,
+    set_guest_logins,
     set_guest_ttl_hours,
     validate_guest_ttl_hours,
     set_public_url,
@@ -123,9 +124,10 @@ async def get_logs(request: Request, after: int = 0):
 def get_settings(request: Request):
     """Server-wide default storage limits (per-user overrides live on the
     users list), the public URL, the cloud sign-in and the guest settings
-    (lifetime, demo mode — each with its source — and ``guest_logins``) for the admin rows in the
-    Settings dialog; on a hosted container ``hosted`` (``hosted.pane``: the
-    plan's limits, the Plan rows), else null."""
+    (the sign-in switch, the lifetime and demo mode — each with its source —
+    and ``guest_logins_available``) for the admin rows in the Settings
+    dialog; on a hosted container ``hosted`` (``hosted.pane``: the plan's
+    limits, the Plan rows), else null."""
     require_admin(request)
     return {**get_defaults(), **public_url_settings(), **_guests(), "cloud": _cloud(),
             "hosted": hosted.pane(),
@@ -144,7 +146,9 @@ class SettingsUpdateRequest(BaseModel):
     cloud_client_secret: str | None = None
     cloud_policy: str | None = None
     cloud_share_host: bool | None = None   # accept published pages (gamma/publish.py)
-    # Guests (docs/dev/guests.md): refused (400) while the environment decides.
+    # Guests (docs/dev/guests.md): refused (400) while the environment decides,
+    # and the sign-in switch where the server takes no guests either way.
+    guest_logins: bool | None = None
     guest_ttl_hours: int | None = None     # 1-720
     demo_mode: bool | None = None
 
@@ -166,12 +170,16 @@ def update_settings(payload: SettingsUpdateRequest, request: Request):
             check_within_plan("quota_mb", validate_quota_mb(payload.quota_mb))
         if payload.guest_ttl_hours is not None:
             validate_guest_ttl_hours(payload.guest_ttl_hours)
+        if payload.guest_logins is not None and not guests.logins_possible():
+            raise ValueError("This server takes no guest logins.")
         if payload.public_url is not None:
             set_public_url(payload.public_url)
         if payload.max_upload_mb is not None:
             set_default_max_upload_mb(payload.max_upload_mb)
         if payload.quota_mb is not None:
             set_default_quota_mb(payload.quota_mb)
+        if payload.guest_logins is not None:
+            set_guest_logins(payload.guest_logins)
         if payload.guest_ttl_hours is not None:
             set_guest_ttl_hours(payload.guest_ttl_hours)
         if payload.demo_mode is not None:
@@ -202,10 +210,14 @@ def hosted_sync(request: Request):
 
 
 def _guests() -> dict:
-    """The guest rows (lifetime, demo mode, each with its source) and
-    ``guest_logins``: false where this server takes no guests, so the pane
-    leaves the rows out."""
-    return {**guest_settings(), "guest_logins": guests.logins_open()}
+    """The guest rows (the sign-in switch, the lifetime and demo mode, each
+    with its source). ``guest_logins`` is what the server does — the switch
+    held to what this server can do — and ``guest_logins_available`` is
+    false where it takes no guests whatever the switch says (a hosted
+    container, a share host, GAMMA_GUEST_MAX=0), so the pane leaves the
+    rows out."""
+    return {**guest_settings(), "guest_logins": guests.logins_open(),
+            "guest_logins_available": guests.logins_possible()}
 
 
 def _cloud() -> dict:

@@ -912,6 +912,12 @@ browser suite's `replica` group runs the port's rounds against a real
 server. A change to a rule here changes the fixture, so the port fails
 until it follows.
 
+A third consumer keeps no copy of the workspace at all: the folder sync
+([folder_sync.md](folder_sync.md)) writes one folder's pages to a directory
+on a PC as files, one way from Gamma to disk, through
+`GET /api/sync/folders/{id}` (the manifest) and `…/notes` beside the change
+feed.
+
 ## Limits and next steps
 
 - The op log is not replayed: a round works from trees, so a page that

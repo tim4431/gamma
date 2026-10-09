@@ -5,11 +5,10 @@
 // preference (backlinksCollapsed). App fetches the list (/blocks/{id}/backlinks)
 // and does the navigation.
 import React, { useEffect, useMemo } from "react";
-import { BlockMarkdown, refLabelOf } from "./BlockTree";
+import { BlockMarkdown } from "./BlockTree";
+import { REF_RE, refLabelOf } from "./refLabels.js";
 import { FileGlyph } from "../shared/ui/Icons";
 import { t, tn } from "../shared/i18n/i18n.js";
-
-const REF_RE = /\[\[([a-zA-Z0-9_-]+)\]\]/g;
 
 export function BacklinksPanel({ backlinks, pageId, pageTitle, pages, refCache, onFetchRefs, collapsed, onCollapsedChange, onOpen }) {
   // Grouped by page, in the server's order (most recently edited first).

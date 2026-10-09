@@ -1,5 +1,7 @@
 """The workspace change feed: what changed since a cursor, for anything that
-keeps a copy of a workspace in step (a desktop mirror, the iPad's replica).
+keeps a copy of a workspace in step (a desktop mirror, the iPad's replica),
+and the folder reads of the ``gamma-sync`` client, which keeps a folder of
+the workspace as a folder on disk (gamma/folder_sync.py).
 
 ``GET /api/sync/changes?since=&limit=`` reads the workspace's change log
 (``page_changes``, gamma/blocks_store.py ``touch_page``): every page whose
@@ -15,13 +17,16 @@ cannot have given out — not a count, or past its newest seq (a workspace
 put back from an older snapshot) — lists from the start again, which a
 consumer takes in its stride: it compares each page's ``seq`` with its own.
 
-Members read it (viewers too); share links do not.
+Members read it (viewers too); share links do not. The folder reads below
+are read the same way, by a session or an integration token of either
+scope.
 """
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, HTTPException, Request
 
-from .. import workspaces
+from .. import folder_sync, workspaces
 from ..auth import require_ws, ws_role
+from ..blocks_store import folder_paths, newest_change_seq
 from ..db import connect_pages_db
 
 router = APIRouter(prefix="/api", tags=["sync"])
@@ -33,7 +38,7 @@ def changes(conn, since: str, limit: int) -> dict:
     """The feed over an open pages.db: ``{since, cursor, more, pages: [{id,
     created_at, updated_at, seq}], deleted: [{id, deleted_at, actor}]}``,
     at most ``limit`` entries after the cursor ``since``."""
-    newest = conn.execute("SELECT COALESCE(MAX(seq), 0) FROM page_changes").fetchone()[0]
+    newest = newest_change_seq(conn)
     after = int(since) if since.isascii() and since.isdigit() and int(since) <= newest else 0
     rows = conn.execute(
         "SELECT c.page_id, c.seq, c.kind, c.at, c.actor, b.created_at, b.updated_at, "
@@ -73,3 +78,45 @@ def sync_changes(request: Request, since: str = "", limit: int = 500):
     limit = max(1, min(int(limit or 500), MAX_LIMIT))
     with connect_pages_db(ws) as conn:
         return changes(conn, since, limit)
+
+
+@router.get("/sync/folders")
+def sync_folders(request: Request):
+    """The folder tree, for a client resolving a typed path: ``{folders:
+    [{id, path: [names from the top]}]}`` in tree order."""
+    ws = require_ws(request)
+    with connect_pages_db(ws) as conn:
+        return {"folders": [{"id": f, "path": p} for f, p in folder_paths(conn).items()]}
+
+
+@router.get("/sync/folders/{folder_id}")
+def sync_folder(folder_id: str, request: Request):
+    """The folder as files (``folder_sync.manifest``): ``{folder: {id,
+    path}, cursor, dirs: [{id, path}], pages: [{id, title, stem, doc_id,
+    pdf, pdf_size, notes, version}]}`` — every folder below as a directory
+    path, every page filed in it or below once, under its first folder
+    below it, its PDF (``pdf``, when stored) and its notes (``notes``)
+    sharing the stem. ``root`` is the whole library. 404 for an id that is
+    no folder."""
+    ws = require_ws(request)
+    with connect_pages_db(ws) as conn:
+        out = folder_sync.manifest(conn, ws, folder_id)
+    if out is None:
+        raise HTTPException(status_code=404, detail="folder not found")
+    return out
+
+
+@router.get("/sync/folders/{folder_id}/notes")
+def sync_folder_notes(folder_id: str, request: Request, pages: str = ""):
+    """The notes files of the folder's pages ``pages`` (ids, comma-separated,
+    at most ``MAX_NOTES``; pages outside the folder are left out):
+    ``{pages: {id: {markdown, attachments, version}}}`` (``folder_sync.notes``)."""
+    ws = require_ws(request)
+    ids = [p for p in pages.split(",") if p]
+    if len(ids) > folder_sync.MAX_NOTES:
+        raise HTTPException(status_code=400, detail=f"at most {folder_sync.MAX_NOTES} pages per request")
+    with connect_pages_db(ws) as conn:
+        out = folder_sync.notes(conn, ws, folder_id, ids)
+    if out is None:
+        raise HTTPException(status_code=404, detail="folder not found")
+    return {"pages": out}

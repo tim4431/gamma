@@ -212,6 +212,9 @@ Tier 1 whole, Tier 2's steps 5–6 and 8, and step 10 from Tier 3:
   (`frontend/src/chat/ChatDock.jsx`).
 - Step 10: the stop reason surfaced as `truncated` (`truncated_stop` in
   `ai_protocols/base.py`).
+- Step 8: a message's pictures are stored once and sent by URL, and the
+  history carries `{role, text, actions, images}` (`gamma/ai_pictures.py`;
+  [ai-pictures.md](ai-pictures.md)).
 
 The coverage pill now folds in what the tools read and which pages
 nobody saw.

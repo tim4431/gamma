@@ -44,7 +44,7 @@ from .textnorm import normalize_text
 # The data-directory schema version this code expects (users.db
 # ``PRAGMA user_version``). Bump it together with a new step in
 # gamma/migrations.py — never without one, never without bumping.
-SCHEMA_VERSION = 34
+SCHEMA_VERSION = 35
 # A workspace's pages.db keeps a version of its own (its ``PRAGMA
 # user_version``): the newest step whose per-workspace part has run on it
 # (gamma/migrations.py WORKSPACE_STEPS). One stamped 0 is at this version:
@@ -160,6 +160,28 @@ USERS_SCHEMA = [
         poll_s INTEGER NOT NULL DEFAULT 30,
         on_change INTEGER NOT NULL DEFAULT 1,
         page_filter TEXT
+    )""",
+    # folder_links = folders the desktop app's own server keeps as
+    # directories on this computer (gamma/folder_links.py): the workspace, the folder (a folder block id,
+    # or 'root' for the whole library), the directory's full path on this computer,
+    # whether notes files are written, the change-log seq the last round
+    # saw, and that round's status as JSON. A link whose folder is on
+    # another Gamma server names it (remote_url; workspace_id is then its
+    # workspace there) with a token of it, Fernet-encrypted, and that
+    # token's id for whoever revokes it there.
+    """CREATE TABLE IF NOT EXISTS folder_links (
+        id TEXT PRIMARY KEY,
+        workspace_id TEXT NOT NULL,
+        folder_id TEXT NOT NULL,
+        path TEXT NOT NULL UNIQUE COLLATE NOCASE,
+        notes INTEGER NOT NULL DEFAULT 1,
+        created_by TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        cursor TEXT NOT NULL DEFAULT '',
+        status TEXT NOT NULL DEFAULT '{}',
+        remote_url TEXT NOT NULL DEFAULT '',
+        token TEXT NOT NULL DEFAULT '',
+        token_id TEXT NOT NULL DEFAULT ''
     )""",
     """CREATE TABLE IF NOT EXISTS publisher_sessions (
         user_id TEXT NOT NULL,
@@ -510,6 +532,10 @@ PAGES_SCHEMA = [
         {_HOT_COLUMNS_SQL}
     )""",
     "CREATE INDEX IF NOT EXISTS idx_ub_parent ON unified_blocks(parent_id, position)",
+    # The newest-first readers (block search, the [[ picker's suggestions,
+    # backlinks) walk this index and stop at their limit instead of sorting
+    # every candidate row.
+    "CREATE INDEX IF NOT EXISTS idx_ub_updated ON unified_blocks(updated_at)",
     *BLOCK_HOT_INDEXES,
     # page_changes = the workspace's change log (gamma/blocks_store.py
     # touch_page): one row per page that exists or ever existed, whose `seq`

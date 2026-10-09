@@ -5,7 +5,7 @@ import json
 import urllib.parse
 from urllib.request import Request as URLRequest
 
-from .base import Protocol, as_int, attach_index, note_speed, parse_tool_args, served_speed_name
+from .base import Protocol, as_int, attach_index, note_speed, parse_tool_args, served_speed_name, turn_images
 
 API_VERSION = "2023-06-01"
 # Fast mode is a beta: the flag rides with the ``speed`` parameter. Only some
@@ -13,6 +13,10 @@ API_VERSION = "2023-06-01"
 # unsupported one is refused upstream with the provider's own message.
 FAST_MODE_BETA = "fast-mode-2026-02-01"
 _CACHE = {"type": "ephemeral"}
+
+
+def _image_part(media_type: str, data: str) -> dict:
+    return {"type": "image", "source": {"type": "base64", "media_type": media_type, "data": data}}
 
 
 def is_anthropic_platform(base_url: str) -> bool:
@@ -60,8 +64,7 @@ def _messages(messages) -> list:
             block = {"type": "tool_result", "tool_use_id": m["call_id"], "content": m["content"]}
             if m.get("images"):
                 block["content"] = [{"type": "text", "text": m["content"]}] + [
-                    {"type": "image", "source": {"type": "base64", "media_type": media_type, "data": data}}
-                    for media_type, data in m["images"]]
+                    _image_part(media_type, data) for media_type, data in m["images"]]
             prev = out[-1] if out else None
             if (prev and prev["role"] == "user" and isinstance(prev["content"], list)
                     and prev["content"] and prev["content"][0].get("type") == "tool_result"):
@@ -74,6 +77,13 @@ def _messages(messages) -> list:
                         for c in m["tool_calls"]]
             out.append({"role": "assistant", "content": content})
         else:
+            content = m["content"]
+            pictures = turn_images(m)
+            if pictures and not isinstance(content, list):
+                # An earlier message's pictures, kept in the conversation:
+                # image blocks before the turn's text, as on the request's own.
+                content = [*[_image_part(media_type, data) for media_type, data in pictures],
+                           {"type": "text", "text": content}]
             prev = out[-1] if out else None
             if (m["role"] == "user" and prev and prev["role"] == "user"
                     and isinstance(prev["content"], list)
@@ -82,10 +92,10 @@ def _messages(messages) -> list:
                 # user turn; fold the next real user message into it so roles
                 # keep alternating. Attachment turns already carry block lists.
                 prev["content"].extend(
-                    m["content"] if isinstance(m["content"], list)
-                    else [{"type": "text", "text": m["content"]}])
+                    content if isinstance(content, list)
+                    else [{"type": "text", "text": content}])
             else:
-                out.append({"role": m["role"], "content": m["content"]})
+                out.append({"role": m["role"], "content": content})
     return out
 
 
@@ -110,8 +120,7 @@ class Anthropic(Protocol):
                 *[{"type": "document",
                    "source": {"type": "base64", "media_type": "application/pdf", "data": data}}
                   for data in (pdf_b64s or [])],
-                *[{"type": "image", "source": {"type": "base64", "media_type": media_type, "data": data}}
-                  for media_type, data in (images or [])],
+                *[_image_part(media_type, data) for media_type, data in (images or [])],
                 {"type": "text", "text": last["content"]},
             ]
         body = {"model": model, "max_tokens": max_tokens, "system": system,

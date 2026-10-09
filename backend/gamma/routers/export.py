@@ -28,8 +28,8 @@ from .. import ink as inkmod
 from .. import jobs, notebook
 from ..auth import require_user, require_ws, resolve_ws, share_scope
 from ..blocks_store import (
-    BLOCK_COLUMNS, FOLDERS, LABELS, PATH_SEP, STORED_COLUMNS, TRASH, TREES, assert_block_in_scope, block_to_dict,
-    fetch_subtree, filing, folder_path, folder_paths, folder_subtree_ids, label_names, page_root_id, pages_in_folder,
+    BLOCK_COLUMNS, PATH_SEP, STORED_COLUMNS, TREES, assert_block_in_scope, block_to_dict,
+    fetch_subtree, filing, folder_path, folder_subtree_ids, page_root_id, pages_in_folder,
     tree_rows)
 from ..db import connect_pages_db, ws_uploads_dir
 from ..db import (
@@ -48,6 +48,7 @@ from ..logseq_graph_export import (
     render_hls_md,
 )
 from ..markdown_export import (
+    block_ref_resolver,
     build_tree,
     collect_and_rewrite,
     render_readable,
@@ -57,7 +58,8 @@ from ..logbuf import log
 from ..highlights import is_highlight
 from ..storage import attachment_disposition, upload_refs
 from ..text_box import box_page, is_text_box, normalize_text_box
-from ..obsidian_export import APP_JSON, VaultContext, page_dir, referenced_blocks, render_vault_page, vault_name
+from ..obsidian_export import (APP_JSON, Filing, VaultContext, page_dir, referenced_blocks, render_vault_page,
+                               unique_name, vault_name)
 from ..pdf_document import render_document
 from ..pdf_export import annotate_pdf, highlight_note_text, still_embedded
 from ..pdf_notes import render_notes
@@ -223,43 +225,10 @@ def _image_resolver(uploads_dir):
 # download, and ``save`` writes it. Adding an export format = adding a
 # builder here; the endpoints, the job and the zip writer stay untouched.
 
-class _Filing:
-    """The names an export writes for its pages' folders and labels, read
-    from the trees once. ``scope`` is the exported folder's id (None: a page
-    exported on its own): a page's folder paths are then the names below it,
-    and its folders outside it are left out; ``title`` is the exported
-    folder's path as people read it ("" for none)."""
-
-    def __init__(self, conn, scope):
-        paths = folder_paths(conn)
-        self.title = ""
-        if scope:
-            top = paths.get(scope, [])
-            self.title = PATH_SEP.join(top)
-            inside = folder_subtree_ids(conn, scope)
-            paths = {f: path[len(top):] for f, path in paths.items() if f in inside}
-        self.paths = paths
-        self.labels = label_names(conn)
-
-    def folders(self, props) -> list[list[str]]:
-        """The page's folder paths (names) below the exported folder — that
-        folder itself, the export's top, is none —, in the page's order."""
-        return [self.paths[f] for f in filing(props, FOLDERS) if self.paths.get(f)]
-
-    def folder(self, props) -> list[str]:
-        """The path a page's file goes under: its first folder below the
-        exported folder ([]: the export's top)."""
-        return next(iter(self.folders(props)), [])
-
-    def tags(self, props) -> list[str]:
-        """The names of the page's labels, in its order."""
-        return [self.labels[i] for i in filing(props, LABELS) if i in self.labels]
-
-
 class _Builder:
     """opts: {"pdf": bool, "highlights": bool, "notes": bool,
     "folder_scope": the exported folder's id | None (None: one page is
-    exported), "author": the account exporting}. ``filing`` (``_Filing``)
+    exported), "author": the account exporting}. ``filing`` (``obsidian_export.Filing``)
     names the pages' folders and labels once ``begin`` has run."""
     suffix = ".zip"  # appended to the base slug for the download name
     roots_only = False  # True: the driver hands over the page's own row, not its subtree
@@ -278,7 +247,7 @@ class _Builder:
     def begin(self, conn, root_ids):
         """Sees the whole export set before any page is walked (the DB
         connection is only open during the walk, not in ``save``)."""
-        self.filing = _Filing(conn, self.opts.get("folder_scope"))
+        self.filing = Filing(conn, self.opts.get("folder_scope"))
 
     def add_page(self, n: int, rows, page):
         raise NotImplementedError
@@ -382,7 +351,7 @@ class _MarkdownBuilder(_Builder):
                 arcname = f"{slug}-{len(self.used)}.md"
             self.used.add(arcname)
             self.filenames[rid] = arcname
-        self.resolve_ref = _block_ref_resolver(conn)
+        self.resolve_ref = block_ref_resolver(conn)
 
     def add_page(self, n, rows, page):
         md, page_assets = collect_and_rewrite(
@@ -420,7 +389,7 @@ class _ObsidianBuilder(_Builder):
 
     def begin(self, conn, root_ids):
         super().begin(conn, root_ids)
-        self.ctx = VaultContext(_block_ref_resolver(conn), include_pdf=self.opts["pdf"])
+        self.ctx = VaultContext(block_ref_resolver(conn), include_pdf=self.opts["pdf"])
         pages = []
         for rid in root_ids:
             row = conn.execute("SELECT content, properties FROM unified_blocks WHERE id = ?",
@@ -631,10 +600,10 @@ class _GammaBuilder(_Builder):
         self.upload_names = set()
 
     def _put(self, row):
-        """Copy a block row, less its generated ``kind``; one met twice (a
-        shared subtree) is kept once."""
+        """Copy a block row (``BLOCK_COLUMNS``, the stored columns); one met
+        twice (a shared subtree) is kept once."""
         self.db.execute(f"INSERT OR IGNORE INTO unified_blocks ({STORED_COLUMNS}) "
-                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)", tuple(row[:-1]))
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)", tuple(row))
 
     def add_page(self, n, rows, page):
         self.page_ids.append(page["id"])
@@ -677,43 +646,6 @@ class _GammaBuilder(_Builder):
                        for name in sorted(self.upload_names)]
 
 
-def _block_ref_resolver(conn):
-    """id → {content, page_title, page_id} for [[refs]], ``![[embeds]]`` and
-    internal document links — walks the parent chain for the root page, with a
-    per-render cache (the same ref often appears many times). A block in
-    Recently deleted resolves to nothing, like a deleted one."""
-    cache = {}
-
-    def resolve(block_id):
-        if block_id in cache:
-            return cache[block_id]
-        row = conn.execute(
-            "SELECT content, parent_id FROM unified_blocks WHERE id = ?",
-            (block_id,)).fetchone()
-        result = None
-        if row is not None:
-            content, parent = row
-            page_id, title = block_id, ""
-            for _ in range(64):                  # parent chain → the page block
-                if not parent or parent in ("root", TRASH):
-                    break
-                up = conn.execute(
-                    "SELECT content, parent_id FROM unified_blocks WHERE id = ?",
-                    (parent,)).fetchone()
-                if up is None:
-                    break
-                page_id, title, parent = parent, (up[0] or ""), up[1]
-            if page_id == block_id:              # the ref IS a page block
-                title = content or ""
-            if parent != TRASH:
-                result = {"content": content or "", "page_title": title.strip(),
-                          "page_id": page_id}
-        cache[block_id] = result
-        return result
-
-    return resolve
-
-
 class _NotesPdfBuilder(_Builder):
     """The notes themselves as a PDF document (``pdf_document``): title,
     metadata, the block tree typeset as nested bullets with quotes, code,
@@ -737,7 +669,7 @@ class _NotesPdfBuilder(_Builder):
                 return render_document(
                     self.pages, uploads_dir=self.uploads_dir,
                     highlights=self.opts["highlights"], notes=self.opts["notes"],
-                    resolve_ref=_block_ref_resolver(conn))
+                    resolve_ref=block_ref_resolver(conn))
         except Exception as e:
             log(f"notes PDF export failed for '{self.base}': {e}")
             raise HTTPException(status_code=400, detail=f"could not build the PDF: {e}")
@@ -772,15 +704,9 @@ class _AnnotatedPdfBuilder(_Builder):
         except HTTPException as e:
             self.skip(page, str(e.detail))
             return
-        directory = page_dir(self.filing.folder(page["properties"]))
-        stem = vault_name(page.get("content") or "") or "Untitled"
-        name, count = stem, 1
-        while f"{directory}{name}.pdf".lower() in self.used:
-            count += 1
-            name = f"{stem} {count}"
-        self.used.add(f"{directory}{name}.pdf".lower())
         self.single_name = filename
-        self.spool(f"{directory}{name}.pdf", data)
+        self.spool(unique_name(self.used, page_dir(self.filing.folder(page["properties"])),
+                               vault_name(page.get("content") or ""), ".pdf"), data)
 
     def save(self, dest, progress=jobs.no_progress):
         if not self.files:
@@ -929,8 +855,8 @@ def page_markdown(ws: str, page_id: str, *, highlights=True, notes=True) -> tupl
         page = build_tree(fetch_subtree(conn, page_id), page_id) if page_root_id(conn, page_id) else None
         if page is None:
             raise HTTPException(status_code=404, detail="page not found")
-        md = render_readable(page, highlights=highlights, notes=notes, resolve_ref=_block_ref_resolver(conn),
-                             folder=_Filing(conn, None).folder(page["properties"]))
+        md = render_readable(page, highlights=highlights, notes=notes, resolve_ref=block_ref_resolver(conn),
+                             folder=Filing(conn, None).folder(page["properties"]))
     return md, f"{slugify(page.get('content'), page_id)}.md"
 
 
@@ -976,7 +902,7 @@ def annotated_page_pdf(ws: str, blocks: list[dict], block_id: str, *, highlights
             drawn += len(boxes) + len(inks)
             sheets.append((sheet["paper"], boxes, inks))
         with connect_pages_db(ws) as conn:
-            pdf_bytes = notebook.notebook_pdf(sheets, resolve_ref=_block_ref_resolver(conn))
+            pdf_bytes = notebook.notebook_pdf(sheets, resolve_ref=block_ref_resolver(conn))
         return pdf_bytes, f"{slugify(root.get('content'), block_id)}.pdf", drawn, 0
     if not doc_id:
         raise HTTPException(status_code=400, detail="page has no PDF")
@@ -1002,7 +928,7 @@ def annotated_page_pdf(ws: str, blocks: list[dict], block_id: str, *, highlights
                 pdf_bytes, written = annotate_pdf(
                     pdf_bytes, marks if highlights else [], author=author,
                     ink=_collect_ink(blocks, ws_uploads_dir(ws)) if highlights else (),
-                    text_boxes=boxes, replaced=replaced, resolve_ref=_block_ref_resolver(conn))
+                    text_boxes=boxes, replaced=replaced, resolve_ref=block_ref_resolver(conn))
         except Exception as e:
             raise HTTPException(status_code=400, detail=f"could not annotate PDF: {str(e) or type(e).__name__}") from e
 

@@ -103,8 +103,9 @@ const OPEN_FAILURES = [
   },
   {
     match: /ERR_CERT|ERR_SSL/,
-    summary: 'The server’s HTTPS certificate was rejected.',
-    hint: 'A self-signed certificate will not load here. Use the plain http:// address on a local network, or install a certificate the system trusts.',
+    summary: 'The server’s HTTPS certificate was rejected, or it does not speak HTTPS.',
+    hint: 'A self-signed certificate will not load here, and a plain-HTTP server answers https:// with an error. Use the http:// address on a local network, or install a certificate the system trusts.',
+    action: 'http',
   },
   {
     match: /ERR_CONNECTION_REFUSED|ERR_CONNECTION_TIMED_OUT|ERR_ADDRESS_UNREACHABLE|ERR_CONNECTION_RESET|ERR_EMPTY_RESPONSE/,

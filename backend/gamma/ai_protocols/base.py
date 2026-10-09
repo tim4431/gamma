@@ -33,6 +33,10 @@ from .services import service_of
 # The OpenAI-style wires only accept text in a tool result, so the pictures
 # follow the round's results as one user turn the model reads in call order.
 TOOL_IMAGES_NOTE = "Pictures returned by the tool calls above, in call order:"
+# What one picture costs on the OpenAI wires (chat completions and the
+# Responses API): a 1568 px page is four 512 px tiles on the high-detail
+# tariff. Protocol.picture_tokens below is Anthropic's.
+OPENAI_PICTURE_TOKENS = 800
 
 EMPTY_REPLY_HINT = ("a reasoning model may have spent the whole token budget thinking; "
                     "try effort: low or a shorter request")
@@ -84,6 +88,14 @@ def tool_image_turns(messages, make_turn):
             pending.extend(m.get("images") or [])
     if pending:
         yield make_turn(pending), True
+
+
+def turn_images(message) -> list:
+    """The pictures a common user turn carries (``images``,
+    ``[(media_type, base64)]``): an earlier message's pictures kept in the
+    conversation (ai_pictures.history_pictures). The request's own go on
+    the last user turn through ``request(images=)``."""
+    return list(message.get("images") or []) if message.get("role") == "user" else []
 
 
 def attach_index(messages) -> int:
@@ -269,6 +281,12 @@ class Protocol:
     # The speed tiers this wire can ask for: canonical name (SPEED_ORDER) ->
     # the value it sends. Empty = the wire has no speed control.
     speeds: dict = {}
+    # What one picture costs in prompt tokens on this wire, for the window
+    # estimate (ai_context.prompt_tokens). Every picture is normalized to
+    # RENDER_MAX_SIDE px first (gamma/ai_pictures.py), so one number per
+    # wire is a fair bound: Anthropic's pixels/750 caps near 1,600 at that
+    # size; the OpenAI wires' tiles come to about half (OPENAI_PICTURE_TOKENS).
+    picture_tokens = 1600
 
     @property
     def base_url(self) -> str:

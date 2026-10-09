@@ -8,7 +8,8 @@
 export const DEFAULTS = {
   server: "",          // e.g. "http://gamma.local:9001"
   servers: [],         // remembered origins for the options-page switcher
-  defaultFolders: {},  // default folder for saves, per server: {origin: folder id}
+  workspaces: {},      // the workspace saves go to, per server: {origin: workspace id}
+  defaultFolders: {},  // default folder for saves, per server and workspace (folderKey)
   folder: "",          // the default as a path, stored before folders had ids (defaultFolder)
   labels: [],          // default labels
   allowOa: true,       // open-access fallback behind paywalls
@@ -49,13 +50,65 @@ export async function removeServer(origin) {
   });
 }
 
+// ---------- the workspace saves go to ----------
+//
+// A Gamma account can open several libraries — workspaces. A request naming
+// none lands in the account's default one, which is what every Connector
+// before this did and what "" still means here; naming one sends it as
+// X-Gamma-Workspace, the header the app's own fetch wrapper uses. The choice
+// belongs to the server it was made on.
+
+export function currentWorkspace(settings) {
+  return settings.workspaces[settings.server] || "";
+}
+
+// The workspaces of GET /api/session a save could land in — a viewer's
+// would refuse it.
+export function writableWorkspaces(list) {
+  return (list || []).filter((w) => w.role === "editor" || w.role === "owner");
+}
+
+// Remember `workspace` ("" = the account's default) as the connected
+// server's chosen one. Returns whether that is a change.
+export async function chooseWorkspace(settings, workspace) {
+  if (workspace === currentWorkspace(settings)) return false;
+  await setSettings({ workspaces: { ...settings.workspaces, [settings.server]: workspace } });
+  return true;
+}
+
+// Forget a chosen workspace this account can no longer write to (deleted,
+// left, or demoted to viewer) so saves fall back to the account's default
+// instead of failing. A server that lists no workspaces changes nothing.
+export async function checkedWorkspace(settings, list) {
+  const workspace = currentWorkspace(settings);
+  if (!workspace || !Array.isArray(list) || writableWorkspaces(list).some((w) => w.id === workspace)) return workspace;
+  await chooseWorkspace(settings, "");
+  return "";
+}
+
+// Whether a tab's stored look-up (`origin`, `ws`) is the connected server
+// and workspace's: a hit found in another library says nothing about this one.
+export function sameLibrary(st, settings) {
+  return st.origin === settings.server && (st.ws || "") === currentWorkspace(settings);
+}
+
+// Folders belong to one workspace, so the remembered default folder is keyed
+// by server and workspace. The bare origin stays the key of the account's
+// default workspace — where a default stored before this choice existed is.
+function folderKey(settings) {
+  const workspace = currentWorkspace(settings);
+  return workspace ? `${settings.server}#${workspace}` : settings.server;
+}
+
 // The connected server's default folder, as POST /api/clip names it: `folder`
 // its id ("" = the library root), or — while the setting is still the path an
 // older version stored — that path as `folder_path`, which the next save sends
 // (made where missing) and rememberFolder replaces by the folder's id.
 export function defaultFolder(settings) {
-  const folder = settings.defaultFolders[settings.server] || "";
-  return { folder, folder_path: folder ? "" : settings.folder };
+  const folder = settings.defaultFolders[folderKey(settings)] || "";
+  // The pre-ids path named a folder of the account's default workspace.
+  const stored = currentWorkspace(settings) ? "" : settings.folder;
+  return { folder, folder_path: folder ? "" : stored };
 }
 
 // The default folder for a save made without the popup (the shortcut, the
@@ -65,9 +118,10 @@ export function defaultFolder(settings) {
 export async function checkedDefaultFolder(settings) {
   const filing = defaultFolder(settings);
   if (!filing.folder) return filing;
-  const { folders = [] } = await api("/library/folders", { expectedOrigin: settings.server });
+  const { folders = [] } = await api("/library/folders",
+    { expectedOrigin: settings.server, workspace: currentWorkspace(settings) });
   if (folders.some((f) => f.id === filing.folder)) return filing;
-  await setSettings({ defaultFolders: { ...settings.defaultFolders, [settings.server]: "" } });
+  await setSettings({ defaultFolders: { ...settings.defaultFolders, [folderKey(settings)]: "" } });
   return { folder: "", folder_path: "" };
 }
 
@@ -90,11 +144,15 @@ export function folderByPath(folders, path) {
 // typed new folder, or the stored old path) by the id the save filed it under.
 export async function rememberFolder(settings, { folder, folder_path }) {
   if (folder_path) {
-    const { folders = [] } = await api("/library/folders", { expectedOrigin: settings.server });
+    const { folders = [] } = await api("/library/folders",
+      { expectedOrigin: settings.server, workspace: currentWorkspace(settings) });
     folder = folderByPath(folders, folder_path);
   }
-  if (folder === defaultFolder(settings).folder && !settings.folder) return;
-  await setSettings({ defaultFolders: { ...settings.defaultFolders, [settings.server]: folder }, folder: "" });
+  const stored = defaultFolder(settings);
+  if (folder === stored.folder && !stored.folder_path) return;
+  const patch = { defaultFolders: { ...settings.defaultFolders, [folderKey(settings)]: folder } };
+  if (stored.folder_path) patch.folder = "";  // the pre-ids path, replaced by this id
+  await setSettings(patch);
 }
 
 // "gamma.local:9001" → "http://gamma.local:9001"; keeps an explicit scheme.
@@ -145,14 +203,22 @@ async function readError(res) {
   return new ApiError(res.status, message);
 }
 
-async function request(path, { method, json, form, params, expectedUser, expectedOrigin } = {}) {
-  const origin = await serverOrigin();
+async function request(path, { method, json, form, params, expectedUser, expectedOrigin, workspace } = {}) {
+  const settings = await getSettings();
+  const origin = normalizeServer(settings.server);
   if (expectedOrigin && origin !== expectedOrigin) throw new ApiError(409, "Gamma server changed. Reopen the Connector.");
   if (!origin) throw new ApiError(0, "No Gamma server configured — open the extension options.");
   const url = new URL(origin + "/api" + path);
   for (const [k, v] of Object.entries(params || {})) if (v) url.searchParams.set(k, v);
   const init = { method: method || (json || form ? "POST" : "GET"), credentials: "include", headers: {} };
   if (expectedUser != null) init.headers["X-Gamma-User"] = expectedUser;
+  // Every request carries the chosen workspace: the library endpoints and
+  // the uploads a save needs all resolve against it, and the account-level
+  // ones (the session, publisher sessions, chat handoffs) ignore it. A save
+  // passes `workspace` itself, so its uploads and its clip stay together
+  // even if the choice changes while it runs.
+  const chosen = workspace !== undefined ? workspace : currentWorkspace(settings);
+  if (chosen) init.headers["X-Gamma-Workspace"] = chosen;
   // A session snapshot must never be forwarded to a redirected server.
   if (expectedOrigin) init.redirect = "error";
   if (json) {

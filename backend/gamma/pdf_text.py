@@ -8,11 +8,13 @@ search indexer, so extraction fixes land once.
 """
 
 import base64
+import os
 import re
 import io
 import struct
 import threading
 import zlib
+from collections import OrderedDict
 
 from .logbuf import log
 
@@ -144,37 +146,163 @@ def _text(page) -> str:
         tp.close()
 
 
-def iter_page_texts(src, max_pages: int = MAX_PAGES, start_page: int = 1):
+# --- The page-text cache -----------------------------------------------------
+# The AI chat reads a paper's text on every turn — the head excerpt, a
+# selection's placement over the whole document, each read_page window —
+# and each read was a pdfium walk under the lock, seconds on a long book
+# and in the way of every other PDF read meanwhile. A stored PDF never
+# changes under its name (a content hash), so the text of a page, once
+# extracted, is kept here: per file, the pages read so far (a head read
+# fills the head only; the next window goes on from there), bounded by
+# characters across files and dropped least recently used. The key carries
+# the file's size and mtime, so a file rewritten in place is read again.
+# Bytes sources (an uploaded PDF in a chat message) are never cached.
+TEXT_CACHE_CHARS = 32_000_000   # about 32–128 MB of Python strings
+TEXT_CACHE_FILES = 64
+
+
+class _TextEntry:
+    __slots__ = ("total", "pages", "chars", "cached")
+
+    def __init__(self, total: int):
+        self.total = total
+        self.pages: list = [None] * total  # None = not read yet
+        self.chars = 0
+        self.cached = True
+
+
+_text_cache: "OrderedDict[tuple, _TextEntry]" = OrderedDict()
+_text_cache_chars = 0
+_text_cache_lock = threading.Lock()
+
+
+def _text_key(src):
+    """The cache key of a path source: ``(absolute path, size, mtime)``;
+    None for bytes or a path that cannot be read."""
+    if not isinstance(src, (str, os.PathLike)):
+        return None
+    try:
+        st = os.stat(src)
+    except OSError:
+        return None
+    return (os.path.abspath(os.fspath(src)), st.st_size, st.st_mtime_ns)
+
+
+def _text_entry(key):
+    """The cached entry of ``key``, made most recently used; None when there is none."""
+    if key is None:
+        return None
+    with _text_cache_lock:
+        entry = _text_cache.get(key)
+        if entry is not None:
+            _text_cache.move_to_end(key)
+        return entry
+
+
+def _text_remember(key, total: int) -> _TextEntry:
+    """A new entry for ``key`` (or the one another thread made meanwhile)."""
+    entry = _TextEntry(total)
+    if key is None:
+        entry.cached = False
+        return entry
+    with _text_cache_lock:
+        existing = _text_cache.get(key)
+        if existing is not None:
+            _text_cache.move_to_end(key)
+            return existing
+        _text_cache[key] = entry
+        _text_evict_locked()
+        return entry
+
+
+def _text_store(entry: _TextEntry, i: int, text: str) -> None:
+    global _text_cache_chars
+    with _text_cache_lock:
+        if entry.pages[i] is not None:
+            return
+        entry.pages[i] = text
+        entry.chars += len(text)
+        if entry.cached:
+            _text_cache_chars += len(text)
+            _text_evict_locked()
+
+
+def _text_evict_locked() -> None:
+    """Drop the least recently used entries past the bounds (the newest
+    one stays: it is the walk in progress). Under _text_cache_lock."""
+    global _text_cache_chars
+    while len(_text_cache) > 1 and (len(_text_cache) > TEXT_CACHE_FILES or _text_cache_chars > TEXT_CACHE_CHARS):
+        _, victim = _text_cache.popitem(last=False)
+        victim.cached = False
+        _text_cache_chars -= victim.chars
+
+
+def text_cache_clear() -> None:
+    """Forget every cached page text (tests)."""
+    global _text_cache_chars
+    with _text_cache_lock:
+        for entry in _text_cache.values():
+            entry.cached = False
+        _text_cache.clear()
+        _text_cache_chars = 0
+
+
+def _pypdf2_texts(pdf, max_pages: int, start_page: int):
+    _warn_truncated(len(pdf.pages), max_pages)
+    for i, pg in enumerate(pdf.pages):
+        if i >= max_pages:
+            return
+        if i + 1 < start_page:
+            continue
+        try:
+            yield pg.extract_text() or ""
+        except Exception:
+            yield ""
+
+
+def iter_page_texts(src, max_pages: int = MAX_PAGES, start_page: int = 1, cache: bool = True):
     """Yield per-page text for pages ``start_page``..``max_pages`` (1-based).
     src is a path str or PDF bytes. Takes the pdfium lock per page, never
-    across the walk (nor while the consumer holds a page's text)."""
-    kind, pdf = _open(src)
-    if kind == "pypdf2":
-        _warn_truncated(len(pdf.pages), max_pages)
-        for i, pg in enumerate(pdf.pages):
-            if i >= max_pages:
-                return
-            if i + 1 < start_page:
-                continue
-            try:
-                yield pg.extract_text() or ""
-            except Exception:
-                yield ""
-        return
+    across the walk (nor while the consumer holds a page's text). A page
+    read before comes from the page-text cache without opening the file;
+    the file is opened at the first page that is not there. ``cache=False``
+    reads past the cache and leaves nothing in it (the search indexer's
+    walk over a library would otherwise push out the papers being read)."""
+    key = _text_key(src) if cache else None
+    entry = _text_entry(key)
+    pdf = None  # the pdfium document, once opened (a PyPDF2 reader is never held here)
     try:
-        with _lock:
-            total = len(pdf)
-        _warn_truncated(total, max_pages)
-        for i in range(max(0, start_page - 1), min(total, max_pages)):
-            yield _read_page(pdf, i, _text)
+        if entry is None:
+            kind, opened = _open(src)
+            if kind == "pypdf2":
+                yield from _pypdf2_texts(opened, max_pages, start_page)
+                return
+            pdf = opened
+            with _lock:
+                total = len(pdf)
+            entry = _text_remember(key, total)
+        _warn_truncated(entry.total, max_pages)
+        for i in range(max(0, start_page - 1), min(entry.total, max_pages)):
+            text = entry.pages[i]
+            if text is None:
+                if pdf is None:
+                    kind, opened = _open(src)
+                    if kind == "pypdf2":  # the file is not what it was: no cache for it
+                        yield from _pypdf2_texts(opened, max_pages, i + 1)
+                        return
+                    pdf = opened
+                text = _read_page(pdf, i, _text)
+                _text_store(entry, i, text)
+            yield text
     finally:
-        with _lock:
-            pdf.close()
+        if pdf is not None:
+            with _lock:
+                pdf.close()
 
 
-def extract_pages(src, max_pages: int = MAX_PAGES) -> list[str]:
+def extract_pages(src, max_pages: int = MAX_PAGES, cache: bool = True) -> list[str]:
     """All page texts as a list (the search indexer's shape)."""
-    return list(iter_page_texts(src, max_pages))
+    return list(iter_page_texts(src, max_pages, cache=cache))
 
 
 def extract_text(src, char_limit: int, empty_page_cap: int = 50,
@@ -248,7 +376,11 @@ def page_sizes(src) -> list[tuple[float, float]]:
 
 
 def page_count(src) -> int:
-    """How many pages a PDF has (0 = unreadable). No text extraction."""
+    """How many pages a PDF has (0 = unreadable). No text extraction; a
+    file in the page-text cache answers without being opened."""
+    entry = _text_entry(_text_key(src))
+    if entry is not None:
+        return entry.total
     with _lock:
         try:
             kind, pdf = _open(src)
@@ -280,20 +412,33 @@ def _png(width: int, height: int, channels: int, rows) -> bytes:
             + chunk(b"IEND", b""))
 
 
-def _encode_bitmap(bitmap) -> tuple[bytes, str]:
-    """``(bytes, media type)`` of a rendered pdfium bitmap: JPEG through
-    Pillow when it is installed (a scan is a photo — several times smaller),
-    else a PNG written here."""
+class _Raster:
+    """A rendered pdfium bitmap's pixels copied out of pdfium — what
+    ``render_page`` takes outside the lock to encode (the encoding is pure
+    Python without Pillow, far longer than the render itself)."""
+    __slots__ = ("data", "width", "height", "stride", "channels", "mode")
+
+    def __init__(self, bitmap):
+        self.data = bytes(bitmap.buffer)
+        self.width, self.height, self.stride = bitmap.width, bitmap.height, bitmap.stride
+        self.channels, self.mode = bitmap.n_channels, bitmap.mode
+
+
+def _encode_raster(raster: _Raster) -> tuple[bytes, str]:
+    """``(bytes, media type)`` of a rendered page: JPEG through Pillow when
+    it is installed (a scan is a photo — several times smaller), else a PNG
+    written here."""
     try:
-        from PIL import Image  # noqa: F401 — optional
+        from PIL import Image
     except ImportError:
-        width, height, stride = bitmap.width, bitmap.height, bitmap.stride
-        channels = bitmap.n_channels
-        data = bytes(bitmap.buffer)
+        width, height, stride, channels = raster.width, raster.height, raster.stride, raster.channels
+        data = raster.data
         rows = (data[y * stride:y * stride + width * channels] for y in range(height))
         return _png(width, height, channels, rows), "image/png"
     buf = io.BytesIO()
-    bitmap.to_pil().convert("RGB").save(buf, "JPEG", quality=85)
+    image = Image.frombuffer(raster.mode, (raster.width, raster.height), raster.data, "raw",
+                             raster.mode, raster.stride, 1)
+    image.convert("RGB").save(buf, "JPEG", quality=85)
     return buf.getvalue(), "image/jpeg"
 
 
@@ -335,9 +480,10 @@ def render_page(src, page_no: int, max_side: int = RENDER_MAX_SIDE, box=None):
     or only PyPDF2 could open it). ``box`` = ``(x0, y0, x1, y1)`` as
     fractions of the page, top-left origin, renders just that region (its
     longer side at ``max_side`` px, zoom capped). Holds the pdfium lock
-    throughout, like the other short walks."""
-    with _lock:
-        try:
+    for the render, like the other short walks; the image is encoded
+    outside it (the pure-Python PNG takes longer than pdfium does)."""
+    try:
+        with _lock:
             kind, pdf = _open(src)
             if kind == "pypdf2":
                 return None, 0
@@ -359,17 +505,18 @@ def render_page(src, page_no: int, max_side: int = RENDER_MAX_SIDE, box=None):
                                     _CROP_MAX_SCALE)
                     bitmap = page.render(scale=scale, crop=crop, rev_byteorder=True)
                     try:
-                        data, media_type = _encode_bitmap(bitmap)
-                        return (data, media_type, bitmap.width, bitmap.height), total
+                        raster = _Raster(bitmap)
                     finally:
                         bitmap.close()
                 finally:
                     page.close()
             finally:
                 pdf.close()
-        except Exception as e:
-            log.warning(f"[pdf-text] page render failed: {e}")
-            return None, 0
+        data, media_type = _encode_raster(raster)
+        return (data, media_type, raster.width, raster.height), total
+    except Exception as e:
+        log.warning(f"[pdf-text] page render failed: {e}")
+        return None, 0
 
 
 def image_part(image) -> tuple[str, str]:

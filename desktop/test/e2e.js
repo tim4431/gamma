@@ -109,6 +109,7 @@ async function launch(userData, downloadDir) {
     ...process.env,
     GAMMA_SHELL_USER_DATA: userData,
     GAMMA_SHELL_DOWNLOAD_DIR: downloadDir,
+    GAMMA_SHELL_PICK_DIR: path.join(userData, 'kept'), // the folder picker's answer (empty: used as it is)
     GAMMA_SHELL_TEST: '1',
   };
   delete env.ELECTRON_RUN_AS_NODE;
@@ -163,6 +164,40 @@ async function waitLoggedIn(page, user = 'admin') {
   await page.waitForURL(/^http:\/\/127\.0\.0\.1:\d+/, { timeout: 90_000 });
   await waitFor(async () => (await sessionUser(page)) === user, `session=${user}`);
 }
+
+// Gamma's API on the open server in workspace `ws`, from the main process
+// (the shell's `api` test hook).
+const serverCall = (app, apiPath, opts) => hook(app, (s, [p, o]) => s.api(p, o), [apiPath, opts]);
+
+// A folder of workspace `ws` holding one new page: the page's id.
+async function makeFolderWithPage(app, ws, folderId, position, folder, title) {
+  await serverCall(app, '/api/pages/folders/ops', { ws, method: 'POST', body: { client: 'e2e', ops: [{ op: 'insert', id: folderId, parent: 'folders', position, content: folder }] } });
+  const page = await serverCall(app, '/api/blocks', { ws, method: 'POST', body: { parent_id: 'root', content: title } });
+  await serverCall(app, `/api/blocks/${page.id}`, { ws, method: 'PUT', body: { properties: { folders: [folderId] } } });
+  return page.id;
+}
+
+// The bar menu's folder chooser for workspace `ws`, at the row of `folder`.
+// The sync panel's folder chooser for the open workspace, at the row of `folder`.
+async function chooserRow(bar, folder) {
+  await bar.click('#syncBtn');
+  await bar.click('#keepFolderBtn');
+  const item = bar.locator('#syncPanel .folderItem', { hasText: folder });
+  await item.waitFor({ timeout: 15_000 });
+  return item;
+}
+
+// The sync panel's row of a kept clone or folder, read fresh.
+async function keptRow(app, bar, kind, name) {
+  await hook(app, (s) => s.refreshKeeping());
+  await bar.click('#syncBtn');
+  const row = bar.locator(`#syncPanel .keepItem[data-kind="${kind}"]`, { hasText: name });
+  await row.waitFor({ timeout: 15_000 });
+  return row;
+}
+
+// Both of the bar's dropdowns closed.
+const menuClosed = (bar) => waitFor(() => bar.evaluate(() => document.getElementById('menu').hidden && document.getElementById('syncPanel').hidden), 'menu closed');
 
 // ------------------------------------------------------------- steps -------
 
@@ -390,6 +425,14 @@ async function main() {
       const cur = await hook(app, (s) => s.current());
       assert.equal(cur.type, 'remote');
       await waitFor(async () => (await bar.textContent('#wsName')).trim() === 'Alpha by URL', 'bar shows remote');
+      // A bare address gets http:// on the local network, and the address can be edited.
+      const port = new URL(urls.alpha).port;
+      const bareId = await hook(app, (s, u) => s.registry.addRemote('Bare', u).id, `localhost:${port}`);
+      assert.equal(await hook(app, (s, id) => s.registry.get(id).url, bareId), `http://localhost:${port}`, 'http:// assumed for a local address');
+      assert.equal(await hook(app, (s) => s.registry.withScheme('gamma.example.com')), 'https://gamma.example.com', 'https:// for a name out on the internet');
+      await hook(app, (s, id) => s.registry.setRemoteUrl(id, 'https://example.org:8443/'), bareId);
+      assert.equal(await hook(app, (s, id) => s.registry.get(id).url, bareId), 'https://example.org:8443');
+      await hook(app, (s, id) => s.registry.remove(id), bareId);
       return cur.url;
     });
 
@@ -444,7 +487,171 @@ async function main() {
       await hook(app, (s, id) => s.keepOffline(id), origWs);
       assert.equal((await hook(app, (s) => s.registry.load().mirrors)).length, 1, 'still one copy');
       assert.equal(new URL(content.url()).searchParams.get('ws'), copyWs);
-      return `${origWs} → copy ${copyWs} on Alpha`;
+      // The sync panel lists the clone with its state, and the button sums it up.
+      const cloneRow = await keptRow(app, bar, 'clone', '(clone)');
+      assert((await cloneRow.locator('.state').textContent()).includes('Clone of'), 'the clone with its origin');
+      assert(['ok', 'busy', 'new', 'pending'].includes(await bar.locator('#syncBtn').getAttribute('data-state')), 'the button sums it up');
+      if (process.platform !== 'darwin') {
+        // The window's own controls are drawn over the bar's right end: nothing of the bar's may sit under them.
+        const free = await bar.evaluate(() => innerWidth - document.getElementById('btnReload').getBoundingClientRect().right);
+        assert(free >= 138, `the window controls' space stays free (${free} px)`);
+      }
+      // "pause" detaches the clone, the panel staying open, its sync shut; "resume" reattaches it.
+      await cloneRow.locator('[data-act="pause"]').click();
+      await waitFor(async () => (await cloneRow.locator('.state').textContent()).startsWith('Detached'), 'shown paused', 15_000);
+      assert.equal(await cloneRow.locator('[data-act="sync"]').getAttribute('aria-disabled'), 'true', 'no sync while detached');
+      await cloneRow.locator('[data-act="resume"]').click();
+      await waitFor(async () => (await cloneRow.locator('[data-act="pause"]').count()) === 1, 'shown resumed', 30_000);
+      await bar.keyboard.press('Escape');
+      await menuClosed(bar);
+      return `${origWs} → copy ${copyWs} on Alpha, paused and resumed`;
+    });
+
+    await step('folder on this computer: the sync panel\'s chooser on a local server writes the folder where the picker said', async () => {
+      await hook(app, (s, id) => s.openServer(id), ids.alpha);
+      await waitLoggedIn(content);
+      const ws = (await waitFor(async () => hook(app, (s) => s.gamma()), 'workspaces read', 15_000)).current;
+      const page = await makeFolderWithPage(app, ws, 'e2efolder1', 'a0', 'Kept lab', 'Kept paper');
+      await hook(app, (s, w) => s.openGammaWorkspace(w), ws); // the panel's chooser lists the open workspace's folders
+      await waitLoggedIn(content);
+      const kept = path.join(profile, 'kept');
+      fs.mkdirSync(kept, { recursive: true });
+      const choice = await chooserRow(bar, 'Kept lab');
+      assert((await choice.textContent()).includes('keep here'), 'not kept yet');
+      await choice.click();
+      await menuClosed(bar);
+      const md = path.join(kept, 'Kept paper.md');
+      await waitFor(() => fs.existsSync(md), 'the note file is written', 30_000, 500);
+      assert(fs.readFileSync(md, 'utf8').includes(`gamma_id: ${page}`), 'the file names its page');
+      const { links } = await hook(app, (s, w) => s.listFolders(w), ws);
+      assert.equal(links.length, 1, 'one link');
+      assert.equal(fs.realpathSync(links[0].dest).toLowerCase(), fs.realpathSync(kept).toLowerCase(), 'written where the picker said');
+      await waitFor(async () => /is being written to/.test((await hook(app, (s) => s.notice())) || ''), 'the bar said so', 5_000);
+      // The chooser now shows the folder on disk; the panel lists it with its state, and "sync" runs a round.
+      const again = await chooserRow(bar, 'Kept lab');
+      assert((await again.textContent()).includes('on disk'), 'shown as kept');
+      await bar.keyboard.press('Escape');
+      await menuClosed(bar);
+      const row = await keptRow(app, bar, 'folder', 'Kept lab');
+      assert((await row.locator('.state').textContent()).includes(fs.realpathSync(kept).split(path.sep).pop()), 'its state and where it is');
+      for (const act of ['pause', 'sync', 'stop']) assert(await row.locator(`[data-act="${act}"]`).isVisible(), `"${act}" shown without hovering`);
+      await row.locator('[data-act="sync"]').click();
+      await menuClosed(bar);
+      await waitFor(async () => /is up to date/.test((await hook(app, (s) => s.notice())) || ''), 'the sync reported', 15_000);
+      // "pause" leaves the panel open on the paused row, whose "resume" starts it again.
+      const toggled = await keptRow(app, bar, 'folder', 'Kept lab');
+      await toggled.locator('[data-act="pause"]').click();
+      await waitFor(async () => (await toggled.locator('.state').textContent()).startsWith('Paused'), 'shown paused', 15_000);
+      assert(!(await bar.evaluate(() => document.getElementById('syncPanel').hidden)), 'the panel stays open');
+      const linkOf = async () => (await hook(app, (s, w) => s.listFolders(w), ws)).links[0];
+      assert((await linkOf()).status.paused_at, 'paused on the server');
+      await toggled.locator('[data-act="resume"]').click();
+      await waitFor(async () => (await toggled.locator('[data-act="pause"]').count()) === 1, 'shown resumed', 15_000);
+      assert(!(await linkOf()).status.paused_at, 'resumed on the server');
+      await bar.keyboard.press('Escape');
+      await menuClosed(bar);
+      return `${links[0].dest}, paused and resumed`;
+    });
+
+    await step('folder from the library: a folder\'s "Keep on this computer…" asks where and keeps it; asked again, it opens it', async () => {
+      await hook(app, (s, id) => s.openServer(id), ids.alpha);
+      await waitLoggedIn(content);
+      const ws = (await waitFor(async () => hook(app, (s) => s.gamma()), 'workspaces read', 15_000)).current;
+      await makeFolderWithPage(app, ws, 'e2efolder3', 'a2', 'Menu lab', 'Menu paper');
+      const dir = path.join(profile, 'kept-menu');
+      fs.mkdirSync(dir, { recursive: true });
+      await hook(app, (s, d) => { process.env.GAMMA_SHELL_PICK_DIR = d; }, dir); // the picker's answer, this time
+      await hook(app, (s, w) => s.openGammaWorkspace(w), ws);
+      await waitLoggedIn(content);
+      await content.locator('[data-guide="header.home"]').click();
+      const row = content.locator('.fileList .folderRow', { hasText: 'Menu lab' });
+      await row.waitFor({ timeout: 20_000 });
+      // Gamma's page speaks this computer's language: the entry in either catalog.
+      const keep = async () => {
+        await row.click({ button: 'right' });
+        await content.locator('.ctxMenuItem', { hasText: /Keep on this computer|保存到这台电脑/ }).click();
+      };
+      await keep();
+      const md = path.join(dir, 'Menu paper.md');
+      await waitFor(() => fs.existsSync(md), 'the note file is written', 30_000, 500);
+      await keep(); // kept already: its directory opens, no second copy
+      await waitFor(async () => /already on this computer/.test((await hook(app, (s) => s.notice())) || ''), 'the bar said so', 10_000);
+      const mine = (await hook(app, (s, w) => s.listFolders(w), ws)).links.filter((l) => l.folder_id === 'e2efolder3');
+      assert.equal(mine.length, 1, 'one link');
+      const opened = await hook(app, (s) => s.externalOpens[s.externalOpens.length - 1]);
+      assert.equal(fs.realpathSync(opened).toLowerCase(), fs.realpathSync(dir).toLowerCase(), 'its directory opened');
+      // Stopping with "remove the files" takes back what the sync wrote.
+      await hook(app, (s, [server, id]) => s.dropFolder(server, id, 'remove'), [mine[0].server, mine[0].id]);
+      await waitFor(() => !fs.existsSync(md), 'the files are taken back', 10_000);
+      return `${mine[0].dest}, then removed with its files`;
+    });
+
+    await step('folder from a remote: the sync panel\'s chooser on a remote server keeps the folder on the host — no clone, a read token; "stop" drops it', async () => {
+      // On the remote (Alpha by URL: the same server, so the session is there).
+      await hook(app, (s, id) => s.openServer(id), ids.remote);
+      await waitFor(async () => (await hook(app, (s) => s.current())).id === ids.remote && new URL(content.url()).origin === urls.alpha, 'remote open', 15_000);
+      await waitLoggedIn(content);
+      const ws = (await waitFor(async () => hook(app, (s) => s.gamma()), 'workspaces read off the remote', 15_000)).current;
+      const page = await makeFolderWithPage(app, ws, 'e2efolder2', 'a1', 'Far lab', 'Far paper');
+      await hook(app, (s, w) => s.openGammaWorkspace(w), ws); // the panel's chooser lists the open workspace's folders
+      await waitLoggedIn(content);
+      const tokensOf = async () => (await serverCall(app, '/api/integrations/tokens', { ws })).tokens;
+      const before = (await tokensOf()).length;
+      const far = path.join(profile, 'kept-far');
+      fs.mkdirSync(far, { recursive: true });
+      await hook(app, (s, dir) => { process.env.GAMMA_SHELL_PICK_DIR = dir; }, far); // the picker's answer, this time
+      const mirrorsBefore = (await hook(app, (s) => s.registry.load().mirrors)).length;
+      const choice = await chooserRow(bar, 'Far lab');
+      assert((await choice.textContent()).includes('keep here'), 'not kept yet');
+      assert((await choice.getAttribute('title')).includes('local server on this computer'), 'the tooltip names who keeps it');
+      await choice.click();
+      await menuClosed(bar);
+      const md = path.join(far, 'Far paper.md');
+      await waitFor(() => fs.existsSync(md), 'the note file is written by the host', 30_000, 500);
+      assert(fs.readFileSync(md, 'utf8').includes(`gamma_id: ${page}`), 'the file names its page');
+      const { links } = await hook(app, (s, w) => s.listFolders(w), ws);
+      assert.equal(links.length, 1, 'one link for this remote workspace');
+      assert.equal(links[0].remote_url, urls.alpha, 'the link reads the remote');
+      assert(links[0].token_id && !links[0].token, 'with a token minted there, never shown');
+      assert.equal((await hook(app, (s) => s.registry.load().mirrors)).length, mirrorsBefore, 'no clone was made');
+      assert.equal(await hook(app, (s) => s.registry.getSettings().folderHost), ids.alpha, 'the host is remembered for launch');
+      const tokens = await tokensOf();
+      assert.equal(tokens.length, before + 1, 'one token minted');
+      assert(tokens.some((t) => t.id === links[0].token_id && t.scope === 'read' && /Far lab/.test(t.name)), 'read scope, named after the folder');
+      // The chooser shows it kept; the panel's "stop" drops the link and revokes the token; the files stay.
+      const shown = await chooserRow(bar, 'Far lab');
+      assert((await shown.textContent()).includes('on disk'), 'shown as kept');
+      await bar.keyboard.press('Escape');
+      await menuClosed(bar);
+      const kept = await keptRow(app, bar, 'folder', 'Far lab');
+      assert((await kept.getAttribute('title')).includes('from Alpha by URL'), 'from the remote, by its name');
+      await kept.locator('[data-act="stop"]').click();
+      await menuClosed(bar);
+      await waitFor(async () => (await hook(app, (s, w) => s.listFolders(w), ws)).links.length === 0, 'the link is gone', 15_000);
+      assert(fs.existsSync(md), 'the files stay');
+      assert.equal((await tokensOf()).length, before, 'the token was revoked');
+      assert.equal(await hook(app, (s) => s.registry.getSettings().folderHost), '', 'the host no longer starts at launch for it');
+      await waitFor(async () => /no longer kept/.test((await hook(app, (s) => s.notice())) || ''), 'the bar said so', 5_000);
+      return `${links[0].dest} from ${links[0].remote_url}, then dropped`;
+    });
+
+    await step('background: with "keep running" on, closing the window leaves the servers up and the tray in place; the window comes back', async () => {
+      const live = Object.values(pids).filter(Boolean);
+      assert(live.length, 'have sidecar pids');
+      await hook(app, (s) => s.setBackground(true));
+      assert(await hook(app, (s) => s.tray()), 'tray shown');
+      await hook(app, (s) => s.closeWindow());
+      await waitFor(async () => !(await hook(app, (s) => s.hasWindow())), 'window closed');
+      await sleep(1500);
+      assert(live.every((p) => pidAlive(p)), 'sidecars still running');
+      assert(await app.evaluate(({ app: a }) => a.isReady()), 'the app is still up');
+      await hook(app, (s) => s.showWindow());
+      bar = await findPage(app, isBar);
+      content = await findPage(app, (u) => u.startsWith('http://127.0.0.1'), 90_000);
+      await waitLoggedIn(content);
+      await hook(app, (s) => s.setBackground(false));
+      assert(!(await hook(app, (s) => s.tray())), 'tray gone when turned off with the window open');
+      return `window closed and back; sidecars ${live.join(', ')} kept running`;
     });
 
     await step('remote reachability dot: on for the live server, off for a dead URL', async () => {
@@ -567,21 +774,26 @@ async function main() {
         if (t) { localStorage.setItem('gamma-theme', t); document.documentElement.setAttribute('data-theme', t); }
         else { localStorage.removeItem('gamma-theme'); document.documentElement.removeAttribute('data-theme'); }
       }, t);
+      // A page that reports no theme (and a fresh profile, which has none
+      // remembered) leaves the chrome on the OS scheme, never a dark window
+      // on a light machine. The OS is pinned here so the check holds anywhere.
+      await app.evaluate(({ nativeTheme }) => { nativeTheme.themeSource = 'light'; });
       const seen = [];
       for (const t of ['light', 'sepia', '']) {
         await set(t);
-        await waitFor(async () => (await hook(app, (s) => s.theme())) === t, `main theme=${t || 'dark'}`, 5_000);
-        await waitFor(async () => (await bar.getAttribute('html', 'data-theme')) === (t || 'dark'), `bar theme=${t || 'dark'}`, 5_000);
-        seen.push(t || 'dark');
+        const chrome = t || 'light'; // '' → the pinned OS scheme
+        await waitFor(async () => (await hook(app, (s) => s.theme())) === chrome, `main theme=${chrome}`, 5_000);
+        await waitFor(async () => (await bar.getAttribute('html', 'data-theme')) === chrome, `bar theme=${chrome}`, 5_000);
+        seen.push(chrome);
       }
+      await app.evaluate(({ nativeTheme }) => { nativeTheme.themeSource = 'system'; });
       await set('light');
       await waitFor(async () => (await hook(app, (s) => s.registry.getSettings().lastTheme)) === 'light', 'lastTheme persisted', 5_000);
       return seen.join(' → ') + ' → light (persisted)';
     });
 
     await step('launcher lists sizes, last-opened badge, painted in the mirrored theme', async () => {
-      await bar.click('#wsBtn');
-      await bar.click('#menuLauncher');
+      await bar.click('#btnHome'); // the logo: back to every server
       await waitFor(() => isLauncher(content.url()), 'launcher shown');
       await content.waitForSelector('.card');
       const alpha = content.locator('.card', { hasText: 'Alpha' }).first();

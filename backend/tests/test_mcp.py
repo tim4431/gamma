@@ -5,7 +5,7 @@ import time
 import pytest
 
 from conftest import account_of, login, make_folder, make_page, make_user
-from gamma.ai_tools import agent_tools, run_agent_tool
+from gamma.ai_tools import agent_tools, mcp_tools, run_agent_tool
 from gamma.db import connect_users_db
 from gamma.integrations import resolve_token
 
@@ -44,8 +44,12 @@ def test_initialize_and_read_tools(client, connection):
     assert init.json()["result"]["serverInfo"]["icons"][0]["src"].startswith("data:image/png;base64,")
     assert rpc(client, item["token"], "notifications/initialized", notification=True).status_code == 202
     tools = rpc(client, item["token"], "tools/list").json()["result"]["tools"]
+    # The library's reading tools come from the registry by rule (ai_tools.mcp_tools:
+    # a new one is offered without touching the adapter); the literal makes growth visible.
+    assert {t["name"] for t in tools} == mcp_tools() | {"read_gamma_link", "export_page"}
     assert {t["name"] for t in tools} == {"list_pages", "list_folders", "read_page", "read_block", "read_chats",
-                                          "view_pdf_page", "search_library", "read_gamma_link", "export_page"}
+                                          "view_pdf_page", "view_ink", "view_image", "cite", "search_library",
+                                          "read_gamma_link", "export_page"}
     assert all(t["annotations"]["readOnlyHint"] for t in tools)
     assert all(t["icons"] == init.json()["result"]["serverInfo"]["icons"] for t in tools)
     for name, arguments, expected in [
@@ -116,6 +120,82 @@ def test_folders_chats_and_pdf_pictures(client, connection):
     assert not result["isError"] and "PDF page 2 of 2" in result["content"][0]["text"]
     (image,) = [part for part in result["content"] if part["type"] == "image"]
     assert image["mimeType"] in ("image/jpeg", "image/png") and len(image["data"]) > 100
+
+
+def test_results_carry_links_and_structured_content(client, connection, monkeypatch):
+    """Every located hit links to itself with an absolute URL — the page, the
+    PDF page, the note block — so an external assistant copies links out of
+    results instead of assembling them; the chat's results stay link-free."""
+    from gamma.db import connect_data_db
+    from gamma.pdf_index import store_doc
+    from gamma.pdf_text import extract_text
+    from gamma.textnorm import normalize_text
+
+    c, ws, item = connection
+    token = item["token"]
+    paper = make_page(c, "Linked paper", properties={"doc_id": "l" * 24})
+    note = c.post("/api/blocks", json={"parent_id": paper["id"], "content": "UniqueLinkedNote"}).json()
+    # The search index holds the hit; a read extracts the text from the PDF itself.
+    pages = ["(page 1) first-page-body " * 5, "(page 2) UniqueLinkedPassage on the second page " * 3]
+    with connect_data_db(ws) as db:
+        store_doc(db, "l" * 24, [(2, normalize_text(pages[1]))])
+    monkeypatch.setattr("gamma.pdf_text.iter_page_texts",
+                        lambda src, max_pages=None, start_page=1: iter(pages[start_page - 1:]))
+    monkeypatch.setattr("gamma.ai_context.extract_text", extract_text)
+    monkeypatch.setattr("gamma.ai_context.pdf_path", lambda u, d: "fake.pdf")
+    prefix = f"http://localhost/?ws={ws}"
+    page_url = f"{prefix}&page={paper['id']}"
+    # Search hits: the PDF page and the note block, each with its own URL.
+    text = call(client, token, "search_library", {"query": "UniqueLinkedPassage"})["content"][0]["text"]
+    assert f'p.2 (page_id {paper["id"]}; {page_url}&pdf_page=2):' in text
+    text = call(client, token, "search_library", {"query": "UniqueLinkedNote"})["content"][0]["text"]
+    assert f'(page_id {paper["id"]}; {prefix}&block={note["id"]}):' in text
+    # A read names its links once: the page, and the citation form of its PDF pages.
+    result = call(client, token, "read_page", {"page_id": paper["id"], "pdf_page": 2})
+    text = result["content"][0]["text"]
+    assert f"[Links: page {page_url}; PDF page 2: {page_url}&pdf_page=2, the other pages likewise" in text
+    assert "Page URL:" not in text  # not repeated under a result that already links the page
+    assert result["structuredContent"]["page_id"] == paper["id"]
+    assert result["structuredContent"]["url"] == page_url and result["structuredContent"]["pdf_pages"][0] == 2
+    # A note outline links its page; a block, itself.
+    text = call(client, token, "read_block", {"block_id": note["id"]})["content"][0]["text"]
+    assert text.split("\n\n", 1)[1].startswith(
+        f'Block [{note["id"]}] in page "Linked paper" (page_id {paper["id"]}; {prefix}&block={note["id"]}):')
+    # The chat's results carry no URLs: its model writes relative links itself.
+    text, _ = run_agent_tool(ws, {"type": "folder", "folder": "", "can_write": False},
+                             "search_library", {"query": "UniqueLinkedPassage"})
+    assert "http://" not in text and f"(page_id {paper['id']}):" in text
+
+
+def test_cite_and_view_ink(client, connection):
+    """The two reading tools the derived allowlist adds: a page's citation
+    record, and a handwriting picture through the same image path as a PDF page."""
+    from gamma.ink import encode_points
+
+    c, ws, item = connection
+    paper = _pdf_page(c, "Cited paper")
+    assert c.put(f"/api/blocks/{paper['id']}", json={"properties": {
+        "meta": {"title": "Cited paper", "authors": ["A. Author"], "year": "2021"}}}).status_code == 200
+    result = call(client, item["token"], "cite", {"page_ids": [paper["id"]]})
+    text = result["content"][0]["text"]
+    assert not result["isError"], result
+    assert f'## "Cited paper" (page_id {paper["id"]}; http://localhost/?ws={ws}&page={paper["id"]})' in text
+    assert "```bibtex" in text and "A. Author" in text
+    # Handwriting on PDF page 1, stored the way the pen uploads it.
+    ink = {"format": "gamma-ink", "version": 1,
+           "space": {"kind": "pdf-page", "width": 612, "height": 792, "page": 1},
+           "strokes": [{"id": "s1", "color": "#ff0000", "size": 6, "ch": "xy",
+                        "pts": encode_points([{"x": 40, "y": 60}, {"x": 260, "y": 340}], "xy")}]}
+    drawn = c.post("/api/upload-ink", json=ink)
+    assert drawn.status_code == 200, drawn.text
+    group = c.post("/api/blocks", json={"parent_id": paper["id"], "content": "circled the result", "properties": {
+        "ink_url": drawn.json()["url"], "pdf_position": drawn.json()["pdf_position"], "ink_strokes": 1}}).json()
+    result = call(client, item["token"], "view_ink", {"block_id": group["id"]})
+    assert not result["isError"], result
+    assert f'Handwriting block [{group["id"]}] on PDF page 1 of "Cited paper"' in result["content"][0]["text"]
+    (image,) = [part for part in result["content"] if part["type"] == "image"]
+    assert len(image["data"]) > 100
+    assert result["structuredContent"]["block_id"] == group["id"] and result["structuredContent"]["pdf_page"] == 1
 
 
 def test_export_page_formats(client, connection):

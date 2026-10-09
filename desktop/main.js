@@ -21,7 +21,7 @@
 // attribute the preload mirrors so the chrome paints in the same theme, and
 // `/api/session` (public HTTP API) for the workspace list.
 
-const { app, BaseWindow, WebContentsView, Menu, shell, ipcMain, net, dialog } = require('electron');
+const { app, BaseWindow, WebContentsView, Menu, Tray, nativeImage, nativeTheme, session, shell, ipcMain, net, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
@@ -31,6 +31,7 @@ const registry = require('./lib/registry');
 const sidecar = require('./lib/sidecar');
 const updater = require('./lib/updater');
 const startup = require('./lib/startup');
+const keeping = require('./lib/keeping');
 
 const SMOKE = process.argv.includes('--smoke');
 const BAR_H = 38;
@@ -41,8 +42,9 @@ if (process.env.GAMMA_SHELL_USER_DATA) app.setPath('userData', process.env.GAMMA
 
 // Title-bar palette per Gamma theme: the shell bar's chrome, Gamma's
 // --bg-page in ui/tokens.css (frontend/tests/themes.test.mjs checks it), and
-// a text colour for the window controls. '' = the page never reported a
-// theme → Gamma's default, dark.
+// a text colour for the window controls. '' is the fallback for a theme
+// name this build does not know; what the chrome paints before a page has
+// reported one is `currentTheme()`.
 const THEMES = {
   '': { bg: '#111111', symbol: '#dddddd' },
   dark: { bg: '#111111', symbol: '#dddddd' },
@@ -69,6 +71,9 @@ let barExpanded = false;
 const allowedOrigins = new Set();
 // Test hook: records what would have opened externally.
 const externalOpens = [];
+let tray = null; // the tray icon while the app keeps running in the background
+let notice = null; // a short line in the bar after a shell action ("Quantum is being written to …")
+let noticeTimer = null;
 
 // Remote reachability: a cached `/api/health` probe per remote server so
 // the launcher and the bar menu can show a dot like the local running one
@@ -119,8 +124,12 @@ function appInfo() {
   };
 }
 
+// What the chrome paints in: the theme the open page reports, else the one
+// it reported last run (no flash while the page loads), else the OS scheme —
+// Gamma's own default is System, and the launcher reports no theme at all,
+// so a light machine must never get a dark window.
 function currentTheme() {
-  return theme || registry.getSettings().lastTheme || '';
+  return theme || registry.getSettings().lastTheme || (nativeTheme.shouldUseDarkColors ? 'dark' : 'light');
 }
 
 function palette() {
@@ -139,6 +148,14 @@ function layout() {
   bar.setBounds({ x: 0, y: 0, width: w, height: barH });
   content.setBounds({ x: 0, y: BAR_H, width: w, height: Math.max(0, h - BAR_H) });
 }
+
+// The OS switched light/dark: only the chrome that follows it is repainted
+// (a reported or remembered theme stays put).
+nativeTheme.on('updated', () => {
+  if (theme || registry.getSettings().lastTheme) return;
+  applyTheme();
+  pushState();
+});
 
 function applyTheme() {
   if (!win) return;
@@ -186,6 +203,7 @@ function createWindow() {
   win.contentView.addChildView(content);
   win.contentView.addChildView(bar); // on top, so the expanded menu overlays
   layout();
+  applyTheme(); // BaseWindow does not keep the constructor's backgroundColor
   win.on('resize', layout);
   win.on('maximize', layout);
   win.on('unmaximize', layout);
@@ -234,15 +252,32 @@ function createWindow() {
     } catch {}
   });
   win.on('closed', () => {
+    // The views go with the window (they would otherwise live on, detached),
+    // and nothing is open any more: a window shown later loads afresh.
+    for (const v of [bar, content]) {
+      try {
+        if (v && !v.webContents.isDestroyed()) v.webContents.close();
+      } catch {}
+    }
     win = null;
     bar = null;
     content = null;
+    current = null;
+    gamma = null;
+    barExpanded = false;
   });
 }
 
 function openExternal(url) {
   externalOpens.push(url);
   if (!process.env.GAMMA_SHELL_TEST) shell.openExternal(url);
+}
+
+// A directory in the system's file manager; under the test harness only
+// recorded, like the external links.
+function openDirectory(p) {
+  externalOpens.push(p);
+  if (!process.env.GAMMA_SHELL_TEST) shell.openPath(p);
 }
 
 function setBarExpanded(on) {
@@ -369,19 +404,23 @@ async function openOriginal(wsId) {
   return { workspace: m.remoteWs, server: srv.id };
 }
 
-// Local servers that hold offline copies run for as long as the app does —
-// a copy syncs only while its server runs, and it should keep up in the
-// background whichever server the window shows. Best effort, after the
-// window is up; a server already running (the one just opened) is left alone.
-function startMirrorHosts() {
+// Local servers to run for as long as the app does, whichever server the
+// window shows: the hosts of offline copies and of folders kept of remote
+// servers (both sync only while their server runs) and, in background mode,
+// every local server, since a folder kept of a local workspace is its own
+// server's job. Best effort, after the window is up; a server already
+// running (the one just opened) is left alone.
+function startBackgroundHosts() {
   const state = registry.load();
   const hosts = new Set(state.mirrors.map((m) => m.server));
+  if (state.settings.folderHost) hosts.add(state.settings.folderHost);
+  const all = Boolean(state.settings.background);
   for (const srv of state.servers) {
-    if (srv.type !== 'local' || !hosts.has(srv.id) || sidecar.status(srv.id)) continue;
+    if (srv.type !== 'local' || (!all && !hosts.has(srv.id)) || sidecar.status(srv.id)) continue;
     sidecar
       .start(srv, state.settings, appInfo())
       .then(() => pushState())
-      .catch((e) => console.error(`[shell] could not start ${srv.name} for its offline copies: ${e.message || e}`));
+      .catch((e) => console.error(`[shell] could not start ${srv.name} for what it keeps in the background: ${e.message || e}`));
   }
 }
 
@@ -402,35 +441,18 @@ async function keepOffline(wsId) {
   const known = registry.findMirror(remoteOrigin, wsId);
   if (known && registry.get(known.server)) return openCopy(wsId); // one copy per workspace: open it
   const ses = content.webContents.session;
-  const api = async (origin, path, init) => {
-    const r = await ses.fetch(origin + path, { credentials: 'include', cache: 'no-store', ...init });
-    const body = await r.json().catch(() => ({}));
-    if (!r.ok) throw new Error(body.detail || `${path}: HTTP ${r.status}`);
-    return body;
-  };
+  const api = serverApi(ses);
   busy = `Cloning ${ws.name}…`;
   pushState();
   let token = null;
-  const dropToken = () => token && api(remoteOrigin, `/api/integrations/tokens/${token.id}`, { method: 'DELETE' }).catch(() => {});
+  const dropToken = () => token && revokeToken(api, remoteOrigin, wsId, token.id);
   try {
     token = await api(remoteOrigin, '/api/integrations/tokens', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'X-Gamma-Workspace': wsId },
       body: JSON.stringify({ name: 'Gamma desktop offline copy', scope: 'write', expires_in_days: 365 }),
     });
-    let local = registry.load().servers.find((s) => s.type === 'local');
-    if (!local) local = registry.addLocal('Local');
-    const entry = await sidecar.start(local, registry.getSettings(), appInfo());
-    const localOrigin = new URL(entry.url).origin;
-    allowedOrigins.add(localOrigin);
-    const session = await api(localOrigin, '/api/session');
-    if (!session.user) {
-      await api(localOrigin, '/api/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username: local.adminUser, password: local.adminPassword }),
-      });
-    }
+    const { local, origin: localOrigin } = await ensureHost(api);
     let mirror;
     try {
       mirror = await api(localOrigin, '/api/mirrors', {
@@ -453,6 +475,8 @@ async function keepOffline(wsId) {
     await openServer(local.id);
     await openGammaWorkspace(mirror.workspace_id);
     buildMenu();
+    offerBackground(`The clone of ${ws.name}`).catch(() => {});
+    refreshKeeping().catch(() => {});
     return { workspace: mirror.workspace_id, server: local.id };
   } catch (e) {
     await dropToken(); // a token minted for a copy that was never made
@@ -461,6 +485,513 @@ async function keepOffline(wsId) {
     busy = null;
     pushState();
   }
+}
+
+// Gamma's public API through the content session (its cookies), on the
+// local server or a remote: what keepOffline and the folders on disk use.
+function serverApi(ses) {
+  return async (origin, apiPath, init) => {
+    const r = await ses.fetch(origin + apiPath, { credentials: 'include', cache: 'no-store', ...init });
+    const body = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(body.detail || `${apiPath}: HTTP ${r.status}`);
+    return body;
+  };
+}
+
+// Revoke a token the shell minted on a server for workspace `wsId`. The
+// workspace header matters: a token is listed and deleted per workspace.
+// Best effort (the caller is already reporting something else).
+function revokeToken(api, origin, wsId, tokenId) {
+  return api(origin, `/api/integrations/tokens/${tokenId}`, { method: 'DELETE', headers: { 'X-Gamma-Workspace': wsId } }).catch(() => {});
+}
+
+// The local server that hosts what this computer keeps of remote servers —
+// the clones and the folders on disk: the first local server, made when
+// there is none, started, and signed into with its seeded credentials.
+async function ensureHost(api) {
+  let local = registry.load().servers.find((s) => s.type === 'local');
+  if (!local) local = registry.addLocal('Local');
+  const entry = await sidecar.start(local, registry.getSettings(), appInfo());
+  const origin = new URL(entry.url).origin;
+  allowedOrigins.add(origin);
+  await signIn(api, local, origin);
+  return { local, origin };
+}
+
+// The session signed into a local server with the credentials the shell
+// seeded, unless it already is.
+async function signIn(api, local, origin) {
+  if ((await api(origin, '/api/session')).user) return;
+  await api(origin, '/api/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username: local.adminUser, password: local.adminPassword }),
+  });
+}
+
+// A running local server, signed into, for a call from the main process:
+// `{ srv, origin, api }`. What the sync panel reads and acts through. Each
+// local server gets a cookie jar of its own (an in-memory partition): every
+// sidecar is 127.0.0.1, and a cookie does not tell ports apart, so signing
+// into one in the window's session would sign the window out of another.
+async function localServer(serverId) {
+  const srv = registry.get(serverId);
+  const entry = srv && srv.type === 'local' ? sidecar.status(serverId) : null;
+  if (!entry) throw new Error('That server is not running');
+  const origin = new URL(entry.url).origin;
+  const api = serverApi(session.fromPartition(`keeping-${serverId}`));
+  await signIn(api, srv, origin);
+  return { srv, origin, api };
+}
+
+// ------------------------------------------------- folders on this computer -----
+// "Keep a folder on this computer": a folder of the open server's workspace
+// written to a directory of the user's choice — PDFs beside Markdown notes —
+// and kept up to date by a local server (docs/dev/folder_sync.md "Folders
+// kept by the desktop app"). On a LOCAL server the link is that server's own; it reads
+// the workspace in-process. On a REMOTE server the link lives on the host
+// local server (ensureHost) with a read-scope token minted on the remote,
+// and the host reads the folder over HTTP: no clone, only the folder's files
+// come down. The shell asks for the directory (the native picker;
+// GAMMA_SHELL_PICK_DIR in tests), mints the token, and makes the link
+// through the servers' public API with the content session's cookies; only
+// local sidecars keep links (GAMMA_FOLDER_LINKS), and they take the full
+// path. Two ways in: the sync panel's chooser, and a folder's "Keep on
+// this computer…" in Gamma's own menu, which the page preload passes on
+// (shell:keep-folder-from-page). The rounds are the server's; the sync
+// panel (below, "kept on this computer") shows each kept folder's state,
+// pauses or resumes it (pauseFolder), syncs it (syncFolder) and stops it
+// (dropFolder, the files kept or taken back; the token it minted revoked).
+// An empty directory is used as it is; one holding anything gets a
+// subdirectory named after the folder.
+
+function openOrigin() {
+  if (!current || !content) throw new Error('Open a server first');
+  return new URL(current.url).origin;
+}
+
+// The links of the open server's workspace: a local server's own, or the
+// host's links that read this remote's workspace. `server` names the local
+// server holding each. No local server yet: none.
+async function listLinks(api, wsId) {
+  const origin = openOrigin();
+  if (current.type === 'local') {
+    const all = (await api(origin, '/api/folder-links')).links || [];
+    return all.filter((l) => !l.remote_url && l.workspace_id === wsId).map((l) => ({ ...l, server: current.id }));
+  }
+  if (!registry.load().servers.some((s) => s.type === 'local')) return [];
+  const host = await ensureHost(api);
+  const all = (await api(host.origin, '/api/folder-links')).links || [];
+  return all.filter((l) => l.remote_url === origin && l.workspace_id === wsId).map((l) => ({ ...l, server: host.local.id }));
+}
+
+async function listFolders(wsId) {
+  const api = serverApi(content.webContents.session);
+  const [tree, links] = await Promise.all([
+    api(openOrigin(), '/api/sync/folders', { headers: { 'X-Gamma-Workspace': wsId } }),
+    listLinks(api, wsId),
+  ]);
+  return { folders: tree.folders || [], links };
+}
+
+// The native directory picker: the path chosen, null when cancelled.
+async function chooseDirectory(opts) {
+  const r = win ? await dialog.showOpenDialog(win, opts) : await dialog.showOpenDialog(opts);
+  return r.canceled ? null : r.filePaths[0] || null;
+}
+
+function pickDirectory(name) {
+  if (process.env.GAMMA_SHELL_PICK_DIR) return process.env.GAMMA_SHELL_PICK_DIR;
+  return chooseDirectory({
+    title: `Keep “${name}” on this computer`,
+    message: `Choose where “${name}” goes. An empty folder is used as it is; any other gets a folder named “${name}” inside.`,
+    buttonLabel: 'Keep here',
+    properties: ['openDirectory', 'createDirectory'],
+    defaultPath: app.getPath('documents'),
+  });
+}
+
+function isEmptyDir(p) {
+  try {
+    return fs.readdirSync(p).length === 0;
+  } catch {
+    return true; // not there yet: the server makes it
+  }
+}
+
+async function keepFolder(wsId, folderId) {
+  const origin = openOrigin();
+  const remote = current.type === 'remote';
+  const api = serverApi(content.webContents.session);
+  const g = gamma;
+  const wsName = (g && (g.list.find((w) => w.id === wsId) || {}).name) || 'Library';
+  const tree = await api(origin, '/api/sync/folders', { headers: { 'X-Gamma-Workspace': wsId } });
+  const folder = folderId === 'root' ? { path: [] } : (tree.folders || []).find((f) => f.id === folderId);
+  if (!folder) throw new Error('Unknown folder');
+  const name = folder.path.length ? folder.path[folder.path.length - 1] : wsName;
+  // Kept already: open it rather than make a second copy.
+  const kept = (await listLinks(api, wsId)).find((l) => l.folder_id === folderId);
+  if (kept) {
+    openDirectory(kept.dest);
+    showNotice(`${name} is already on this computer at ${kept.dest}`);
+    return kept;
+  }
+  const picked = await pickDirectory(name);
+  if (!picked) return null;
+  const target = isEmptyDir(picked) ? picked : path.join(picked, name);
+  busy = `Keeping ${name} on this computer…`;
+  pushState();
+  let token = null;
+  try {
+    let link;
+    if (remote) {
+      // A read token on the remote, for the host to read the folder with; the link on the host.
+      token = await api(origin, '/api/integrations/tokens', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Gamma-Workspace': wsId },
+        body: JSON.stringify({ name: `Gamma desktop: ${name} on disk`.slice(0, 80), scope: 'read', expires_in_days: 365 }),
+      });
+      const host = await ensureHost(api);
+      link = await api(host.origin, '/api/folder-links', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ folder: folderId, path: target, notes: true, remote_url: origin, workspace: wsId, token: token.token, token_id: token.id }),
+      });
+      token = null; // the host holds it now
+      registry.setSettings({ folderHost: host.local.id }); // runs at launch with the clones' hosts
+    } else {
+      link = await api(origin, '/api/folder-links', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Gamma-Workspace': wsId },
+        body: JSON.stringify({ folder: folderId, path: target, notes: true }),
+      });
+    }
+    showNotice(`${name} is being written to ${link.dest}`);
+    offerBackground(`“${name}” on this computer`).catch(() => {});
+    refreshKeeping().catch(() => {});
+    return link;
+  } catch (e) {
+    if (token) await revokeToken(api, origin, wsId, token.id); // minted for a link that was never made
+    throw e;
+  } finally {
+    busy = null;
+    pushState();
+  }
+}
+
+// A kept folder in words: its name from the path its last round saw.
+function linkName(link) {
+  if (link.folder_id === 'root') return 'The whole library';
+  const names = (link.status && link.status.folder_path) || [];
+  return names.length ? `“${names[names.length - 1]}”` : 'The folder';
+}
+
+// The native question, or its answer under the test harness (the first
+// choice that writes nothing extra).
+async function ask(opts, testAnswer) {
+  if (process.env.GAMMA_SHELL_TEST) return testAnswer;
+  const r = win ? await dialog.showMessageBox(win, opts) : await dialog.showMessageBox(opts);
+  return r.response;
+}
+
+// A link of local server `serverId`, with what to call it through.
+async function linkOn(serverId, linkId) {
+  const at = await localServer(serverId);
+  const link = ((await at.api(at.origin, '/api/folder-links')).links || []).find((l) => l.id === linkId);
+  if (!link) throw new Error('This folder is not kept on this computer');
+  // A link of the server's own workspace is changed in that workspace; one with a remote source is the account's.
+  return { ...at, link, headers: link.remote_url ? {} : { 'X-Gamma-Workspace': link.workspace_id } };
+}
+
+// A round of a kept folder now, waited for, its outcome in the bar. Files
+// changed on disk stay unless the user says to replace them, asked only
+// when there are some (`force` answers that in tests).
+async function syncFolder(serverId, linkId, force) {
+  const { origin, api, link, headers } = await linkOn(serverId, linkId);
+  const changed = ((link.status && link.status.kept) || []).length;
+  if (force === undefined && changed) {
+    const r = await ask({
+      type: 'question', buttons: ['Keep my changes', 'Replace them', 'Cancel'], defaultId: 0, cancelId: 2,
+      message: `${changed} file${changed === 1 ? '' : 's'} of ${linkName(link)} changed on this computer.`,
+      detail: 'The sync leaves files you changed alone. Replace them with what Gamma holds?',
+    }, 0);
+    if (r === 2) return null;
+    force = r === 1;
+  }
+  busy = `Syncing ${linkName(link)}…`;
+  pushState();
+  try {
+    const after = await api(origin, `/api/folder-links/${link.id}/sync?wait=1${force ? '&force=1' : ''}`, { method: 'POST', headers });
+    const s = after.status || {};
+    const moved = Object.entries(s.counts || {}).filter(([k, n]) => n && k !== 'unchanged' && k !== 'kept').map(([k, n]) => `${n} ${k}`);
+    showNotice(s.last_error ? `${linkName(link)}: ${s.last_error}` : `${linkName(link)} is up to date${moved.length ? `: ${moved.join(', ')}` : ''}.`);
+    return after;
+  } finally {
+    busy = null;
+    pushState();
+    refreshKeeping().catch(() => {});
+  }
+}
+
+// Pause a kept folder or resume it (a round runs then). Paused, the server's
+// loop leaves it alone; a sync asked for still runs.
+async function pauseFolder(serverId, linkId, paused) {
+  const { origin, api, link, headers } = await linkOn(serverId, linkId);
+  await api(origin, `/api/folder-links/${link.id}`, {
+    method: 'PATCH', headers: { ...headers, 'Content-Type': 'application/json' }, body: JSON.stringify({ paused }),
+  });
+  showNotice(paused ? `${linkName(link)} is paused: ${link.dest} stays as it is until you resume or sync it.`
+    : `${linkName(link)} is kept up to date again.`);
+  refreshKeeping().catch(() => {});
+  return true;
+}
+
+// Stop keeping a folder: the link goes, and the token the shell minted on
+// a remote for it is revoked there. The files stay, or with `how` 'remove'
+// what the sync wrote is taken back; asked when not given.
+async function dropFolder(serverId, linkId, how) {
+  const { origin, api, link, headers } = await linkOn(serverId, linkId);
+  if (!how) {
+    const r = await ask({
+      type: 'question', buttons: ['Stop, keep the files', 'Stop and remove the files', 'Cancel'], defaultId: 0, cancelId: 2,
+      message: `Stop keeping ${linkName(link)} on this computer?`,
+      detail: `${link.dest} stops updating. Removing the files takes back only what the sync wrote there; files you added or changed stay.`,
+    }, 0);
+    how = ['keep', 'remove', null][r];
+    if (!how) return false;
+  }
+  busy = 'Stopping…';
+  pushState();
+  try {
+    await api(origin, `/api/folder-links/${link.id}${how === 'remove' ? '?remove_files=1' : ''}`, { method: 'DELETE', headers });
+    if (link.remote_url) {
+      // The token was minted with the window's session, which is signed into the remote.
+      if (link.token_id) await revokeToken(serverApi(session.defaultSession), new URL(link.remote_url).origin, link.workspace_id, link.token_id);
+      // The host's last remote folder gone: it need not start at launch for it any more.
+      const left = ((await api(origin, '/api/folder-links')).links || []).filter((l) => l.remote_url);
+      if (!left.length && registry.getSettings().folderHost === serverId) registry.setSettings({ folderHost: '' });
+    }
+    showNotice(how === 'remove' ? `${linkName(link)} is no longer on this computer; the files the sync wrote are gone.`
+      : `${link.dest} is no longer kept up to date; its files stay.`);
+    return true;
+  } finally {
+    busy = null;
+    pushState();
+    refreshKeeping().catch(() => {});
+  }
+}
+
+// ------------------------------------------------- kept on this computer -----
+// The bar's sync button and its panel (docs/architecture.md "Kept on this
+// computer"): every clone and folder on disk the running local servers
+// keep, read from each with the default session (signed in on first use),
+// turned into states and one summary by lib/keeping.js, and pushed in the
+// shell state as `keeping`. Read every KEEPING_MS, every KEEPING_BUSY_MS
+// while something syncs, on the panel's opening and after each action. A
+// row names its server, so the panel acts whichever server the window shows.
+
+const KEEPING_MS = 15_000;
+const KEEPING_BUSY_MS = 2_000;
+let keepingState = { items: [], summary: keeping.summarize([]) };
+let keepingTimer = null;
+let keepingRead = null;
+
+function scheduleKeeping(ms) {
+  clearTimeout(keepingTimer);
+  keepingTimer = setTimeout(() => refreshKeeping().catch(() => {}), ms);
+}
+
+function refreshKeeping() {
+  if (keepingRead) return keepingRead;
+  keepingRead = (async () => {
+    const { servers } = registry.load();
+    const items = [];
+    for (const srv of servers) {
+      if (srv.type !== 'local' || !sidecar.status(srv.id)) continue;
+      try {
+        const { origin, api } = await localServer(srv.id);
+        const [m, f] = await Promise.all([api(origin, '/api/mirrors'), api(origin, '/api/folder-links')]);
+        items.push(...keeping.itemsOf(srv, { mirrors: m.mirrors, links: f.links }, servers));
+      } catch {
+        // a server that does not answer now is left out of this reading
+      }
+    }
+    keepingState = { items, summary: keeping.summarize(items) };
+    pushState();
+  })().finally(() => {
+    keepingRead = null;
+    scheduleKeeping(keepingState.summary.state === 'busy' ? KEEPING_BUSY_MS : KEEPING_MS);
+  });
+  return keepingRead;
+}
+
+// What a panel row does: a clone opens, pauses (detaches) or resumes
+// (reattaches, what both sides did meanwhile merging), or syncs; a folder
+// opens its directory, pauses or resumes, syncs, or stops.
+async function keepingAction(kind, serverId, id, action) {
+  const item = keepingState.items.find((i) => i.kind === kind && i.server === serverId && i.id === id);
+  if (!item) throw new Error('That is no longer kept on this computer');
+  if (kind === 'clone' && action === 'open') {
+    await openServer(serverId);
+    await openGammaWorkspace(id);
+    buildMenu();
+  } else if (kind === 'clone' && (action === 'pause' || action === 'resume')) {
+    const { origin, api } = await localServer(serverId);
+    await api(origin, `/api/mirrors/${encodeURIComponent(id)}/${action === 'pause' ? 'detach' : 'relink'}`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
+    });
+    showNotice(action === 'pause' ? `${item.name} is paused: nothing is pulled or pushed until you resume it.`
+      : `${item.name} follows its origin again; what both sides did meanwhile merges.`);
+  } else if (kind === 'clone' && action === 'sync') {
+    const { origin, api } = await localServer(serverId);
+    await api(origin, `/api/mirrors/${encodeURIComponent(id)}/sync`, { method: 'POST' });
+    showNotice(`Syncing ${item.name}…`);
+  } else if (kind === 'folder' && action === 'open') {
+    openDirectory(item.dest);
+  } else if (kind === 'folder' && (action === 'pause' || action === 'resume')) {
+    return pauseFolder(serverId, id, action === 'pause');
+  } else if (kind === 'folder' && action === 'sync') {
+    return syncFolder(serverId, id);
+  } else if (kind === 'folder' && action === 'stop') {
+    return dropFolder(serverId, id);
+  } else {
+    throw new Error(`Unknown action: ${kind} ${action}`);
+  }
+  refreshKeeping().catch(() => {});
+  return true;
+}
+
+function showNotice(text) {
+  notice = text;
+  clearTimeout(noticeTimer);
+  noticeTimer = setTimeout(() => { notice = null; pushState(); }, 8000);
+  pushState();
+}
+
+// ---------------------------------------------------------- background -----
+// "Keep running in the background": closing the window leaves the app in
+// the tray with every local server running, so clones and folders on disk
+// keep syncing (docs/architecture.md "Background and tray"). Off, closing
+// the last window quits (macOS keeps the dock process either way). "Start
+// at login" launches it hidden, straight into the tray.
+
+function trayIcon() {
+  const img = nativeImage.createFromPath(path.join(__dirname, 'assets', 'icon.png'));
+  const size = process.platform === 'darwin' ? 18 : 16;
+  return img.resize({ width: size, height: size });
+}
+
+// The two switches as menu items, under the labels the menu's case wants.
+function backgroundItems(keepLabel, loginLabel) {
+  const s = registry.getSettings();
+  return [
+    { label: keepLabel, type: 'checkbox', checked: Boolean(s.background), click: (item) => setBackground(item.checked) },
+    { label: loginLabel, type: 'checkbox', checked: Boolean(s.openAtLogin), click: (item) => setOpenAtLogin(item.checked) },
+  ];
+}
+
+function trayMenu() {
+  return Menu.buildFromTemplate([
+    { label: 'Open Gamma', click: () => showWindow() },
+    { type: 'separator' },
+    ...backgroundItems('Keep running in the background', 'Start at login'),
+    { type: 'separator' },
+    { label: 'Quit Gamma', click: () => app.quit() },
+  ]);
+}
+
+function ensureTray() {
+  if (tray) {
+    tray.setContextMenu(trayMenu());
+    return;
+  }
+  tray = new Tray(trayIcon());
+  tray.setToolTip('Gamma');
+  tray.setContextMenu(trayMenu());
+  tray.on('click', () => showWindow());
+}
+
+function dropTray() {
+  if (tray) {
+    tray.destroy();
+    tray = null;
+  }
+}
+
+// The window, back or new: where the user left off (the launcher is one
+// click away in the bar), or the launcher. Resolves once that is showing.
+function showWindow() {
+  if (win) {
+    if (win.isMinimized()) win.restore();
+    win.show();
+    win.focus();
+    return Promise.resolve();
+  }
+  createWindow();
+  const last = registry.getSettings().openLastOnLaunch ? registry.getLastOpened() : null;
+  if (!last) {
+    loadLauncher();
+    return Promise.resolve();
+  }
+  return openServer(last.id).then(buildMenu).catch((e) => loadLauncher(e, last.id));
+}
+
+function setBackground(on) {
+  registry.setSettings({ background: Boolean(on) });
+  if (on) ensureTray();
+  else {
+    dropTray();
+    if (!win) app.quit(); // turned off from the tray with no window: nothing is left to run for
+  }
+  buildMenu();
+  pushState();
+}
+
+function setOpenAtLogin(on) {
+  registry.setSettings({ openAtLogin: Boolean(on) });
+  applyLoginItem();
+  buildMenu();
+  pushState();
+}
+
+// The OS login item: Electron's on Windows and macOS, an autostart entry on
+// Linux — a packaged app only (in dev it would register the electron
+// binary; under the test harness nothing is touched). Started that way the
+// app opens hidden, into the tray (`--hidden`).
+function applyLoginItem() {
+  const on = Boolean(registry.getSettings().openAtLogin);
+  if (!app.isPackaged || process.env.GAMMA_SHELL_TEST) return;
+  if (process.platform === 'linux') {
+    const dir = path.join(app.getPath('home'), '.config', 'autostart');
+    const file = path.join(dir, 'gamma-desktop.desktop');
+    try {
+      if (on) {
+        fs.mkdirSync(dir, { recursive: true });
+        fs.writeFileSync(file, ['[Desktop Entry]', 'Type=Application', 'Name=Gamma', `Exec="${process.execPath}" --hidden`, 'X-GNOME-Autostart-enabled=true', ''].join('\n'));
+      } else {
+        fs.rmSync(file, { force: true });
+      }
+    } catch (e) {
+      console.error(`[shell] autostart entry: ${e.message || e}`);
+    }
+    return;
+  }
+  app.setLoginItemSettings({ openAtLogin: on, openAsHidden: true, args: ['--hidden'] });
+}
+
+// A clone or a folder on disk stays in sync only while Gamma runs: when one
+// is made and the app still quits with its window, offer the background.
+async function offerBackground(what) {
+  if (registry.getSettings().background || !win) return;
+  const answer = await ask({
+    type: 'question',
+    buttons: ['Keep running', 'Not now'],
+    defaultId: 0,
+    cancelId: 1,
+    message: 'Keep Gamma running in the background?',
+    detail: `${what} stays in sync only while Gamma runs. In the background Gamma keeps running after the window is closed, with an icon in the tray, and can start at login.`,
+  }, 1);
+  if (answer === 0) setBackground(true);
 }
 
 // Navigate the open server to one of its Gamma workspaces.
@@ -481,6 +1012,9 @@ function barState() {
     theme: currentTheme(),
     current,
     busy,
+    notice,
+    // what this computer keeps (the sync button and its panel)
+    keeping: keepingState,
     update: updater.state(),
     // Gamma's workspaces on the open server (null until known / signed in),
     // with the one the content view shows and the offline-copy cross-links.
@@ -657,6 +1191,8 @@ function buildMenu() {
           click: () => openServer(ws.id).catch((e) => loadLauncher(e, ws.id)),
         })),
         { type: 'separator' },
+        ...backgroundItems('Keep Running in the Background', 'Start at Login'),
+        { type: 'separator' },
         process.platform === 'darwin' ? { role: 'close' } : { role: 'quit' },
       ],
     },
@@ -706,6 +1242,14 @@ function registerIpc() {
   ipcMain.handle('shell:update-install', shellOnly(() => updater.install()));
   ipcMain.handle('shell:add-local', shellOnly((name) => { const ws = registry.addLocal(name); buildMenu(); pushState(); return ws; }));
   ipcMain.handle('shell:add-remote', shellOnly((name, url) => { const ws = registry.addRemote(name, url); buildMenu(); pushState(); return ws; }));
+  ipcMain.handle('shell:set-url', shellOnly((id, url) => {
+    const srv = registry.setRemoteUrl(id, url);
+    allowedOrigins.add(srv.url);
+    if (current && current.id === id) current = null; // the next open loads the new address
+    buildMenu();
+    pushState();
+    return srv;
+  }));
   ipcMain.handle('shell:rename', shellOnly((id, name) => {
     const ws = registry.rename(id, name);
     if (current && current.id === id) current = { ...current, name: ws.name };
@@ -757,12 +1301,36 @@ function registerIpc() {
     const p = path.join(app.getPath('userData'), 'logs', `${id}.log`);
     if (fs.existsSync(p)) shell.showItemInFolder(p);
   }));
-  ipcMain.handle('shell:set-settings', shellOnly((patch) => registry.setSettings(patch)));
-  ipcMain.handle('shell:pick-folder', shellOnly(async (defaultPath) => {
-    const opts = { properties: ['openDirectory', 'createDirectory'], defaultPath: defaultPath || undefined };
-    const r = win ? await dialog.showOpenDialog(win, opts) : await dialog.showOpenDialog(opts);
-    return r.canceled ? null : r.filePaths[0] || null;
+  ipcMain.handle('shell:set-settings', shellOnly((patch) => {
+    const s = registry.setSettings(patch);
+    if ('background' in patch) setBackground(s.background);
+    if ('openAtLogin' in patch) setOpenAtLogin(s.openAtLogin);
+    return s;
   }));
+  ipcMain.handle('shell:folders', shellOnly((wsId) => listFolders(wsId)));
+  ipcMain.handle('shell:keep-folder', shellOnly((wsId, folderId) =>
+    withDialog('Could not keep the folder on this computer.', () => keepFolder(wsId, folderId))()));
+  ipcMain.handle('shell:keeping', shellOnly(() => { refreshKeeping().catch(() => {}); return keepingState; }));
+  ipcMain.handle('shell:keeping-action', shellOnly((kind, serverId, id, action) =>
+    withDialog('Could not do that.', () => keepingAction(kind, serverId, id, action))()));
+  // A folder's "Keep on this computer…" in Gamma's own menu, passed on by the
+  // page preload: only from the content view's page of the open server, one
+  // action at a time. The native directory picker is the user's say, so the
+  // page can start nothing on its own.
+  ipcMain.on('shell:keep-folder-from-page', (event, wsId, folderId) => {
+    if (!content || event.sender !== content.webContents || busy || !current) return;
+    let from = '';
+    try { from = new URL(event.senderFrame.url).origin; } catch {}
+    if (from !== openOrigin() || !/^[\w-]{1,64}$/.test(wsId) || !/^[\w-]{1,64}$/.test(folderId)) return;
+    withDialog('Could not keep the folder on this computer.', () => keepFolder(wsId, folderId))().catch(() => {});
+  });
+  // Reveal a directory a link of the open server's workspace writes — only such a one.
+  ipcMain.handle('shell:open-path', shellOnly(async (wsId, p) => {
+    const { links } = await listFolders(wsId);
+    if (links.some((l) => l.dest === p)) openDirectory(p);
+  }));
+  ipcMain.handle('shell:pick-folder', shellOnly((defaultPath) =>
+    chooseDirectory({ properties: ['openDirectory', 'createDirectory'], defaultPath: defaultPath || undefined })));
   // Storage root for local servers ('' = default). Moving needs the SQLite
   // files closed, so every sidecar under the old root is stopped first; they
   // restart on the next open. A local server that is open goes back to the
@@ -852,29 +1420,35 @@ app.whenReady().then(async () => {
   registerIpc();
   updater.init({ onChange: () => pushState(), openExternal });
   buildMenu();
-  createWindow();
-  // Reopen where the user left off; the launcher is one click away in the bar.
-  const last = registry.getSettings().openLastOnLaunch ? registry.getLastOpened() : null;
-  if (last) {
-    openServer(last.id).then(buildMenu).catch((e) => loadLauncher(e, last.id)).finally(startMirrorHosts);
-  } else {
-    loadLauncher();
-    startMirrorHosts();
-  }
+  const settings = registry.getSettings();
+  if (settings.background) ensureTray();
+  applyLoginItem();
+  // Started at login (`--hidden`; macOS says so itself): no window, the
+  // servers run in the background for the clones and the folders on disk.
+  const hidden = Boolean(settings.background) && (process.argv.includes('--hidden') ||
+    (process.platform === 'darwin' && app.getLoginItemSettings().wasOpenedAsHidden));
+  if (hidden) startBackgroundHosts();
+  else showWindow().finally(startBackgroundHosts);
+  scheduleKeeping(3000); // what the servers keep, once they are up
 
   app.on('activate', () => {
-    if (!win) {
-      createWindow();
-      loadLauncher();
-    }
+    if (!win) showWindow();
   });
 });
 
 app.on('window-all-closed', () => {
+  // In the background the servers keep syncing and the tray brings the window back.
+  if (registry.getSettings().background) {
+    ensureTray();
+    return;
+  }
   if (process.platform !== 'darwin') app.quit();
 });
 
-app.on('before-quit', () => sidecar.stopAll());
+app.on('before-quit', () => {
+  dropTray();
+  sidecar.stopAll();
+});
 process.on('exit', () => sidecar.stopAll());
 
 // Test hook (only with GAMMA_SHELL_TEST): lets the e2e driver reach shell
@@ -889,6 +1463,27 @@ if (process.env.GAMMA_SHELL_TEST) {
     openCopy,
     openOriginal,
     keepOffline,
+    keepFolder,
+    dropFolder,
+    syncFolder,
+    listFolders,
+    refreshKeeping,
+    keepingAction,
+    keeping: () => keepingState,
+    // Gamma's API on the open server in a named workspace, as the shell calls
+    // it. A page's own fetch cannot do that: Gamma's wrapper stamps the
+    // workspace the page has settled on, or none before it has.
+    api: (apiPath, { ws = '', method = 'GET', body } = {}) => serverApi(content.webContents.session)(openOrigin(), apiPath, {
+      method,
+      headers: { 'Content-Type': 'application/json', ...(ws ? { 'X-Gamma-Workspace': ws } : {}) },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    }),
+    showWindow,
+    setBackground,
+    tray: () => Boolean(tray),
+    hasWindow: () => Boolean(win),
+    closeWindow: () => win && win.close(),
+    notice: () => notice,
     loadLauncher,
     current: () => current,
     gamma: () => gamma,

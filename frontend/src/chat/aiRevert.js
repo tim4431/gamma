@@ -7,7 +7,7 @@
 // chat/AgentChanges.jsx.
 import { changePlace, isChange } from "./agentSteps.js";
 
-const REVERTIBLE = new Set(["edit", "create", "move"]);
+const REVERTIBLE = new Set(["edit", "create", "move", "delete"]);
 
 // A note change recorded for reverting (changes saved by an older version
 // have no `revert`).

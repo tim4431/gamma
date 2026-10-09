@@ -14,7 +14,7 @@ import re
 from urllib.parse import quote as urlquote
 
 from . import bibtex as bibtex_mod
-from .blocks_store import block_to_dict, page_attachment
+from .blocks_store import TRASH, block_to_dict, page_attachment
 from .highlights import is_highlight, page_of
 from .note_markup import obsidian_image_sizes
 from .notebook import is_sheet
@@ -57,6 +57,43 @@ def build_tree(rows, root_id):
     for node in by_id.values():
         node["children"].sort(key=lambda n: n["position"])
     return by_id.get(root_id)
+
+
+def block_ref_resolver(conn):
+    """id → {content, page_title, page_id} for [[refs]], ``![[embeds]]`` and
+    internal document links — walks the parent chain for the root page, with a
+    per-render cache (the same ref often appears many times). A block in
+    Recently deleted resolves to nothing, like a deleted one."""
+    cache = {}
+
+    def resolve(block_id):
+        if block_id in cache:
+            return cache[block_id]
+        row = conn.execute(
+            "SELECT content, parent_id FROM unified_blocks WHERE id = ?",
+            (block_id,)).fetchone()
+        result = None
+        if row is not None:
+            content, parent = row
+            page_id, title = block_id, ""
+            for _ in range(64):                  # parent chain → the page block
+                if not parent or parent in ("root", TRASH):
+                    break
+                up = conn.execute(
+                    "SELECT content, parent_id FROM unified_blocks WHERE id = ?",
+                    (parent,)).fetchone()
+                if up is None:
+                    break
+                page_id, title, parent = parent, (up[0] or ""), up[1]
+            if page_id == block_id:              # the ref IS a page block
+                title = content or ""
+            if parent != TRASH:
+                result = {"content": content or "", "page_title": title.strip(),
+                          "page_id": page_id}
+        cache[block_id] = result
+        return result
+
+    return resolve
 
 
 # --- readable rendering ------------------------------------------------------

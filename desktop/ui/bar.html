@@ -19,13 +19,21 @@
     background: var(--bg-page); /* chrome, like Gamma's own topbar under it */
     border-bottom: 1px solid var(--border);
     -webkit-app-region: drag;
-    /* Windows/Linux: stop where the overlaid window controls begin. */
-    width: env(titlebar-area-width, 100%);
+    /* Windows/Linux: the window's own controls are drawn over the bar's
+       right end (three 46 px buttons; Electron draws Linux's alike). The
+       titlebar-area env() values reach only a window's own page, never a
+       view like this one, so the space is kept free here. */
+    padding-right: 146px;
   }
-  body[data-platform="darwin"] .bar { padding-left: 80px; width: 100%; }
+  body[data-platform="darwin"] .bar { padding-left: 80px; padding-right: 8px; }
   .bar > * { -webkit-app-region: no-drag; }
   .bar .drag { -webkit-app-region: drag; flex: 1; height: 100%; }
-  .mark { display: flex; align-items: center; margin-right: 2px; }
+  /* The logo: back to the launcher, every server. */
+  .mark {
+    display: flex; align-items: center; margin-right: 2px; padding: 3px;
+    border: none; border-radius: var(--radius-sm); background: transparent; cursor: pointer;
+  }
+  .mark:hover { background: var(--bg-hover); }
   .mark svg { width: 20px; height: 20px; }
   .wsBtn {
     display: inline-flex; align-items: center; gap: 7px;
@@ -52,6 +60,18 @@
   }
   .updPill:hover { background: var(--accent-bg); }
   .updPill svg { width: 14px; height: 14px; stroke-width: 2.74; }
+  /* The sync button: what this computer keeps, summed up; its panel lists it. */
+  .syncBtn {
+    display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 8px; margin-right: 2px;
+    border: 1px solid transparent; border-radius: var(--radius-md); background: transparent; color: var(--text-tertiary);
+    font-family: inherit; font-size: var(--fs-xs); font-weight: 500; cursor: pointer; white-space: nowrap;
+  }
+  .syncBtn:hover, .syncBtn.open { background: var(--bg-hover); border-color: var(--border); color: var(--text-primary); }
+  .syncBtn .ico { display: inline-flex; }
+  .syncBtn svg { width: 16px; height: 16px; stroke-width: 2.4; }
+  .syncBtn .text:empty { display: none; }
+  .syncBtn[data-state="error"] { color: var(--danger); }
+  .syncBtn[data-state="conflicts"], .syncBtn[data-state="pending"] { color: var(--warn); }
 
   .menu {
     position: absolute; top: 36px; left: 34px; min-width: 280px; max-width: 380px;
@@ -61,6 +81,8 @@
   }
   body[data-platform="darwin"] .menu { left: 106px; }
   .menu[hidden] { display: none; }
+  /* The sync panel, under its button at the bar's right end (placed by placePanel). */
+  .menu.right, body[data-platform="darwin"] .menu.right { left: auto; min-width: 320px; max-width: 420px; max-height: 400px; overflow-y: auto; }
   .item {
     display: flex; align-items: center; gap: 9px; width: 100%;
     padding: 6px 9px; border: none; border-radius: var(--radius-sm); background: transparent;
@@ -78,6 +100,10 @@
   .item .label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .item .sub { color: var(--text-dim); font-size: var(--fs-2xs); margin-left: 6px; }
   .item .check { color: var(--accent); display: inline-flex; width: 14px; }
+  /* A kept row of the sync panel: the name over its state. */
+  .item .lines { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+  .item .lines .label { flex: none; }
+  .item .lines .state { color: var(--text-muted); font-size: var(--fs-2xs); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   /* A workspace row's trailing chip: on a remote server "clone" (on hover)
      or, once it has one, "open clone" (always shown — click opens the
      clone); on a local clone "origin" (opens the workspace it follows). */
@@ -90,6 +116,16 @@
   .item .rowAct.on { color: var(--accent); background: var(--accent-bg-light); border-color: transparent; }
   .item .rowAct:hover { background: var(--accent-bg-light); color: var(--accent); border-color: var(--accent); }
   .item .rowAct svg { width: 14px; height: 14px; stroke-width: 2.74; }
+  /* A kept row's actions (keptRow), always shown: pause or resume, sync, stop. */
+  .item .acts { display: inline-flex; gap: 3px; flex-shrink: 0; }
+  .item .keepAct {
+    display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px;
+    color: var(--text-muted); border: 1px solid var(--border); border-radius: var(--radius-full);
+  }
+  .item .keepAct:hover { background: var(--accent-bg-light); color: var(--accent); border-color: var(--accent); }
+  .item .keepAct[data-act="stop"]:hover { background: var(--danger-bg); color: var(--danger); border-color: var(--danger-border); }
+  .item .keepAct[aria-disabled="true"] { opacity: 0.4; cursor: default; background: transparent; color: var(--text-muted); border-color: var(--border); }
+  .item .keepAct svg { width: 13px; height: 13px; stroke-width: 2.74; }
   .item .check svg { width: 14px; height: 14px; stroke-width: 3.43; }
   .item.current { font-weight: 600; }
   .sep { height: 1px; background: var(--border); margin: 5px 4px; }
@@ -100,7 +136,7 @@
 </head>
 <body>
 <div class="bar" id="bar">
-  <div class="mark" title="Gamma">
+  <button class="mark" id="btnHome" title="All servers (Ctrl+Shift+L)">
     <svg viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
       <rect width="32" height="32" rx="7" fill="#1e1e1c"/>
       <path d="M 6 16 C 9 10.5 13 10.5 16 16 C 19 21.5 23 21.5 26 16" stroke="#e8a020" stroke-width="1.2" fill="none" opacity="0.6" stroke-linecap="round"/>
@@ -110,7 +146,7 @@
       <rect x="9" y="8" width="13" height="3" rx="0.8" fill="#eeebe4"/>
       <rect x="9" y="8" width="3" height="15" rx="0.8" fill="#eeebe4"/>
     </svg>
-  </div>
+  </button>
   <button class="wsBtn" id="wsBtn" title="Switch workspace or server">
     <span class="kind" id="wsKind"></span>
     <span class="name" id="wsName">Servers</span>
@@ -119,6 +155,7 @@
   </button>
   <span class="status" id="status"></span>
   <div class="drag"></div>
+  <button class="syncBtn" id="syncBtn" hidden><span class="ico" id="syncIco"></span><span class="text" id="syncText"></span></button>
   <button class="updPill" id="btnUpdate" hidden>
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5"/><path d="m5 12 7-7 7 7"/></svg>
     <span id="updText"></span>
@@ -128,17 +165,20 @@
   </button>
 </div>
 <div class="menu" id="menu" hidden></div>
+<div class="menu right" id="syncPanel" hidden></div>
 
 <script>
   // Gamma's theme on the chrome: tokens.css derives each theme's colours
   // with its scheme's recipe, so the scheme goes beside it (DARK_THEMES in
-  // Gamma's app/prefDefs.js; none = dark, like Gamma's :root).
+  // Gamma's app/prefDefs.js). None reported yet — the first paint, before
+  // the shell's state arrives — follows the OS, as Gamma's index.html does.
   const DARK_THEMES = ['dark', 'gamma-dark'];
   function paintTheme(theme) {
-    const t = theme || 'dark';
+    const t = theme || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
     document.documentElement.setAttribute('data-scheme', DARK_THEMES.includes(t) ? 'dark' : 'light');
     document.documentElement.setAttribute('data-theme', t);
   }
+  paintTheme('');
   const ICONS = {
     local: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v6c0 1.66 3.58 3 8 3s8-1.34 8-3V5"/><path d="M4 11v6c0 1.66 3.58 3 8 3s8-1.34 8-3v-6"/></svg>',
     remote: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3a14 14 0 0 1 0 18a14 14 0 0 1 0-18"/></svg>',
@@ -146,13 +186,31 @@
     check: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>',
     plus: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="M5 12h14"/></svg>',
     download: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 13v8"/><path d="m8 17 4 4 4-4"/><path d="M4.4 15.2A5 5 0 0 1 7 6a7 7 0 0 1 13.2 2.3A4.5 4.5 0 0 1 19.6 17"/></svg>',
+    disk: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12H2"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/><path d="M6 16h.01"/><path d="M10 16h.01"/></svg>',
+    folder: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg>',
+    library: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m16 6 4 14"/><path d="M12 6v14"/><path d="M8 8v12"/><path d="M4 4v16"/></svg>',
+    back: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>',
+    sync: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></svg>',
+    cloud: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z"/></svg>',
+    alert: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 8v4"/><path d="M12 16h.01"/></svg>',
+    stop: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>',
+    pause: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 5v14"/><path d="M15 5v14"/></svg>',
+    play: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 4.5v15a1 1 0 0 0 1.5.86l12-7.5a1 1 0 0 0 0-1.72l-12-7.5A1 1 0 0 0 7 4.5z"/></svg>',
+    open: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></svg>',
   };
   const esc = (s) => String(s || '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
   const ROLE = { owner: 'owner', editor: 'can edit', viewer: 'view only' };
   const $ = (id) => document.getElementById(id);
   document.body.dataset.platform = gammaShell.platform;
   let state = { servers: [], gamma: null, current: null, busy: null, theme: '' };
-  let open = false;
+  // The bar's two dropdowns, one open at a time: the workspace menu under its
+  // button and the sync panel under the sync button. While one is open the
+  // bar view covers the window (barExpand) and a click outside closes it.
+  const DROPS = { menu: { btn: 'wsBtn', panel: 'menu' }, sync: { btn: 'syncBtn', panel: 'syncPanel' } };
+  let openDrop = null;
+  // The sync panel's second level: the folders of the open workspace to keep
+  // on this computer ({ ws, folders, links }); null = the panel's list.
+  let chooser = null;
 
   // Gamma's workspace the content view shows (null when not signed in / unknown).
   function currentWorkspace() {
@@ -190,8 +248,12 @@
       const s = document.createElement('span'); s.className = 'spin';
       st.appendChild(s);
       st.appendChild(document.createTextNode(state.busy));
+    } else if (state.notice) {
+      st.appendChild(document.createTextNode(state.notice));
     }
+    renderSyncButton();
     renderMenu();
+    renderSync();
   }
 
   function label(text) {
@@ -199,6 +261,143 @@
     l.className = 'menuLabel';
     l.textContent = text;
     return l;
+  }
+
+  // The sync button: the worst state of everything kept, a word or two
+  // (lib/keeping.js summarize). Shown once a server is open or anything is kept.
+  function renderSyncButton() {
+    const sum = (state.keeping && state.keeping.summary) || { state: 'none', text: '', title: '' };
+    const b = $('syncBtn');
+    b.dataset.state = sum.state;
+    b.title = sum.state === 'none' ? 'Clones and folders kept on this computer: none yet' : sum.title;
+    $('syncIco').innerHTML = sum.state === 'busy' ? '<span class="spin"></span>'
+      : sum.state === 'error' || sum.state === 'conflicts' ? ICONS.alert : ICONS.cloud;
+    $('syncText').textContent = sum.text;
+    b.hidden = !state.current && sum.state === 'none';
+  }
+
+  // A kept clone or folder in the panel: its name over its state, a dot for
+  // the state, and its actions, always shown. A click opens it (the clone in
+  // the window, the folder's directory); "pause" stops its rounds (a clone
+  // detaches) and "resume" starts them again, the panel staying open on the
+  // new state; "sync" runs a round now (a detached clone has none); "stop"
+  // (a folder) ends it, the shell asking about the files.
+  const TONE = { ok: 'on', error: 'off', conflicts: 'warn', pending: 'warn', busy: 'busy' };
+  function keptRow(i) {
+    const b = document.createElement('button');
+    b.className = 'item keepItem';
+    b.dataset.kind = i.kind;
+    b.title = `${i.kind === 'folder' ? `${i.dest}, from ${i.from}` : i.where}\n${i.title}`;
+    const clone = i.kind === 'clone';
+    const acts = [ // [action, icon, title, disabled]
+      i.paused
+        ? ['resume', ICONS.play, clone ? 'Resume: follow the origin again; what both sides did meanwhile merges' : 'Resume: keep it up to date again']
+        : ['pause', ICONS.pause, clone ? 'Pause: nothing is pulled or pushed until you resume it; nothing is lost' : 'Pause: nothing here changes until you resume it'],
+      clone && i.paused ? ['sync', ICONS.sync, 'Paused: resume it to sync', true] : ['sync', ICONS.sync, 'Bring it up to date now'],
+      ...(clone ? [] : [['stop', ICONS.stop, 'Stop keeping it on this computer']]),
+    ];
+    b.innerHTML = `<span class="ico">${clone ? ICONS.local : ICONS.folder}</span>` +
+      `<span class="lines"><span class="label"></span><span class="state"></span></span>` +
+      `<span class="dot ${TONE[i.state] || ''}"></span>` +
+      `<span class="acts">${acts.map(([act, icon, title, off]) =>
+        `<span class="keepAct" role="button" tabindex="${off ? -1 : 0}" data-act="${act}" title="${esc(title)}" aria-label="${esc(title)}"${off ? ' aria-disabled="true"' : ''}>${icon}</span>`).join('')}</span>`;
+    b.querySelector('.label').textContent = i.name;
+    b.querySelector('.state').textContent = `${i.text} · ${i.kind === 'folder' ? i.dest : i.where}`;
+    const run = (action) => {
+      if (action !== 'pause' && action !== 'resume') closeMenu();
+      gammaShell.keepingAction(i.kind, i.server, i.id, action).catch(() => {});
+    };
+    b.onclick = () => run('open');
+    for (const act of b.querySelectorAll('[data-act]')) {
+      const go = (e) => { e.stopPropagation(); e.preventDefault(); if (act.getAttribute('aria-disabled') !== 'true') run(act.dataset.act); };
+      act.onclick = go;
+      act.onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') go(e); };
+    }
+    return b;
+  }
+
+  // The sync panel: the clones and the folders on disk, each with its state,
+  // then keeping a folder of the open workspace (the chooser, its second level).
+  function renderSync() {
+    const panel = $('syncPanel');
+    panel.innerHTML = '';
+    if (chooser) {
+      renderChooser(panel);
+      return;
+    }
+    const items = (state.keeping && state.keeping.items) || [];
+    const groups = [['clone', 'Clones'], ['folder', 'Folders on this computer']];
+    for (const [kind, title] of groups) {
+      const rows = items.filter((i) => i.kind === kind);
+      if (!rows.length) continue;
+      panel.appendChild(label(title));
+      for (const i of rows) panel.appendChild(keptRow(i));
+    }
+    if (!items.length) {
+      const none = document.createElement('div');
+      none.className = 'menuEmpty';
+      none.textContent = 'Nothing kept on this computer yet. Clone a workspace from the workspace menu, or right-click a folder in the library and choose Keep on this computer.';
+      panel.appendChild(none);
+    }
+    const ws = currentWorkspace();
+    if (ws && state.current) {
+      const sep = document.createElement('div'); sep.className = 'sep'; panel.appendChild(sep);
+      const b = document.createElement('button');
+      b.className = 'item';
+      b.id = 'keepFolderBtn';
+      b.innerHTML = `<span class="ico">${ICONS.disk}</span><span class="label"></span>`;
+      b.querySelector('.label').textContent = `Keep a folder of ${ws.name} on this computer…`;
+      b.title = `PDFs beside Markdown notes, kept up to date${state.current.type === 'remote' ? ' from this server, no clone' : ''}`;
+      b.onclick = () => openChooser(ws); // stays open: the folders come next
+      panel.appendChild(b);
+    }
+  }
+
+  // "Keep a folder on this computer": the folders of the open workspace, each
+  // kept already (a click opens its directory) or not (a click asks where).
+  // On a remote server the link lives on this computer's local server and
+  // reads the folder from there.
+  function openChooser(w) {
+    chooser = { ws: w, folders: null, links: [] };
+    renderSync();
+    gammaShell.folders(w.id).then((r) => {
+      if (!chooser || chooser.ws.id !== w.id) return;
+      chooser = { ws: w, folders: r.folders || [], links: r.links || [] };
+      renderSync();
+    }).catch(() => { chooser = null; renderSync(); });
+  }
+
+  function renderChooser(panel) {
+    const { ws, folders, links } = chooser;
+    const back = document.createElement('button');
+    back.className = 'item';
+    back.innerHTML = `<span class="ico">${ICONS.back}</span><span class="label">Kept on this computer</span>`;
+    back.onclick = () => { chooser = null; renderSync(); };
+    panel.appendChild(back);
+    panel.appendChild(label(`Keep a folder of ${ws.name} on this computer${state.current && state.current.type === 'remote' ? ' — PDFs and notes, no clone' : ''}`));
+    if (folders === null) {
+      const l = document.createElement('div'); l.className = 'menuEmpty'; l.textContent = 'reading the folders…';
+      panel.appendChild(l);
+      return;
+    }
+    const rows = [{ id: 'root', name: 'Whole library', icon: ICONS.library }, ...folders.map((f) => ({ id: f.id, name: f.path.join(' / '), icon: ICONS.folder }))];
+    for (const f of rows) {
+      const link = links.find((l) => l.folder_id === f.id);
+      const b = document.createElement('button');
+      b.className = 'item folderItem';
+      b.dataset.folder = f.id;
+      b.title = link ? `On this computer at ${link.dest}. Click to open it.`
+        : `Keep ${f.name} on this computer: PDFs beside Markdown notes, kept up to date ${state.current && state.current.type === 'remote' ? 'from this server by the local server on this computer, no clone' : 'by this server'}`;
+      b.innerHTML = `<span class="ico">${f.icon}</span><span class="label"></span>` +
+        (link ? `<span class="rowAct on" title="${esc(link.dest)}">${ICONS.open}on disk</span>` : `<span class="rowAct">${ICONS.disk}keep here…</span>`);
+      b.querySelector('.label').textContent = f.name;
+      b.onclick = () => {
+        closeMenu();
+        if (link) gammaShell.openPath(ws.id, link.dest).catch(() => {});
+        else gammaShell.keepFolder(ws.id, f.id).catch(() => {});
+      };
+      panel.appendChild(b);
+    }
   }
 
   function renderMenu() {
@@ -229,10 +428,14 @@
         b.querySelector('.badge').textContent = (w.name || '?').charAt(0).toUpperCase();
         b.querySelector('.label').textContent = w.name;
         b.onclick = () => { closeMenu(); if (!isCur) gammaShell.openWorkspace(w.id).catch(() => {}); };
-        const act = b.querySelector('.rowAct');
-        if (act) {
-          const run = act.dataset.act === 'copy' ? gammaShell.openCopy : act.dataset.act === 'original' ? gammaShell.openOriginal : gammaShell.keepOffline;
-          const go = (e) => { e.stopPropagation(); e.preventDefault(); closeMenu(); run(w.id).catch(() => {}); };
+        for (const act of b.querySelectorAll('.rowAct')) {
+          const kind = act.dataset.act;
+          const go = (e) => {
+            e.stopPropagation(); e.preventDefault();
+            closeMenu();
+            const run = kind === 'copy' ? gammaShell.openCopy : kind === 'original' ? gammaShell.openOriginal : gammaShell.keepOffline;
+            run(w.id).catch(() => {});
+          };
           act.onclick = go;
           act.onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') go(e); };
         }
@@ -270,23 +473,38 @@
     menu.appendChild(all);
   }
 
-  function openMenu() {
-    open = true;
-    $('wsBtn').classList.add('open');
-    $('menu').hidden = false;
-    gammaShell.barExpand(true);
-    // Fresh list on every open (servers added, workspaces joined since the last push).
-    gammaShell.state().then((s) => { state = s; render(); });
+  // The sync panel sits under its button, its right edge on the button's.
+  function placePanel() {
+    const r = $('syncBtn').getBoundingClientRect();
+    $('syncPanel').style.right = `${Math.max(8, window.innerWidth - r.right)}px`;
   }
+  function openDropdown(which) {
+    closeMenu();
+    openDrop = which;
+    $(DROPS[which].btn).classList.add('open');
+    $(DROPS[which].panel).hidden = false;
+    if (which === 'sync') placePanel();
+    gammaShell.barExpand(true);
+    // Fresh on every open: servers added and workspaces joined, or what is kept, since the last push.
+    if (which === 'menu') gammaShell.state().then((s) => { state = s; render(); });
+    else gammaShell.keeping().then((k) => { state = { ...state, keeping: k }; render(); });
+  }
+  // Closes whichever dropdown is open.
   function closeMenu() {
-    if (!open) return;
-    open = false;
-    $('wsBtn').classList.remove('open');
-    $('menu').hidden = true;
+    if (!openDrop) return;
+    const d = DROPS[openDrop];
+    openDrop = null;
+    chooser = null;
+    $(d.btn).classList.remove('open');
+    $(d.panel).hidden = true;
     gammaShell.barExpand(false);
   }
-  $('wsBtn').onclick = (e) => { e.stopPropagation(); open ? closeMenu() : openMenu(); };
+  const toggle = (which) => (e) => { e.stopPropagation(); openDrop === which ? closeMenu() : openDropdown(which); };
+  $('wsBtn').onclick = toggle('menu');
+  $('syncBtn').onclick = toggle('sync');
   $('menu').onclick = (e) => e.stopPropagation();
+  $('syncPanel').onclick = (e) => e.stopPropagation();
+  $('btnHome').onclick = () => { closeMenu(); gammaShell.launcher(); };
   document.addEventListener('click', closeMenu);
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeMenu(); });
   window.addEventListener('blur', closeMenu);

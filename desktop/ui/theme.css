@@ -3,8 +3,8 @@
    frontend/src/shared/styles/tokens.css (`npm run copy-tokens` in
    frontend/ refreshes it, frontend/tests/themes.test.mjs checks it), so the
    chrome paints every theme exactly as Gamma does. The theme is the
-   `data-theme` the Gamma page last reported (none = dark, like Gamma's
-   :root). */
+   `data-theme` the Gamma page last reported, and the OS scheme until one
+   has (main.js `currentTheme`). */
 
 /* Gamma's interface face, the Latin subset (fonts/, copied with the tokens;
    SIL Open Font License in fonts/OFL.txt). Other scripts fall through
@@ -133,6 +133,8 @@ body {
 .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--text-dim); opacity: 0.5; flex-shrink: 0; }
 .dot.on { background: var(--ok); opacity: 1; }
 .dot.off { background: var(--danger); opacity: 1; }
+.dot.warn { background: var(--warn); opacity: 1; }
+.dot.busy { background: var(--accent); opacity: 1; }
 
 .spin {
   width: 12px; height: 12px; border-radius: 50%;

@@ -84,6 +84,13 @@ All state is SQLite + files on disk under a data directory (env
     the remote's address and workspace, the write token (Fernet-encrypted
     with the data directory's key), the feed cursors, the last round's
     status and the `page_filter` of a publication ([mirror.md](mirror.md));
+  - `folder_links` — the folders the desktop app's own server keeps as
+    directories on this computer: workspace, folder (a block id, or `root`), the directory's path
+    on this computer, whether notes files are written, the
+    change-log seq the last round saw and its status, and for a folder on
+    another Gamma server that server's address, a token of it
+    (Fernet-encrypted like the mirrors') and the token's id
+    ([folder_sync.md](folder_sync.md) "Folders kept by the desktop app");
   - `jobs` — background jobs (exports, backups, restores, imports, the
     search indexer): owner (an account id, `''` for a workspace's own
     work), workspace, kind, parameters, state, last progress, result, error, the produced
@@ -134,8 +141,14 @@ All state is SQLite + files on disk under a data directory (env
     in the trees (from `page_id`), else `ink` (an
     `ink_url` key), `text_box`, `sheet` (an object there), `link` (a
     non-empty `link_url` or `link_page_id`), `highlight` (a
-    `pdf_position` object), `note`. The
-    block dict and block search report it.
+    `pdf_position` object), `note`. The filters read the column (its
+    index); the block dict computes the same rule in Python from the
+    properties it has parsed anyway (`blocks_store.block_kind`, checked
+    against the column by `tests/test_block_columns.py`), so a tree read
+    selects the stored columns only. Block search reports the column's.
+  - `idx_ub_updated` on `updated_at`: the newest-first readers (block
+    search, the `[[` picker's suggestions, backlinks) walk it and stop at
+    their limit instead of sorting every candidate.
   - `doc_id` — generated: `properties.doc_id`. "Which page carries this
     PDF" (`page_for_doc`) and "which files are still in use" read its
     partial index (`WHERE doc_id IS NOT NULL`).
@@ -421,10 +434,13 @@ track of the ones nothing uses.
   `.partial/`, stored by a rename) and `sweep_partial`; `check_name`
   refuses a name that is not one path segment. Every read and write of a
   stored file goes through them. The writers are `storage.store_pdf` /
-  `store_file` (hashed names, dedup, quota), `storage.store_pdf_path` (the
-  same for an upload in parts, below) and `storage.put_upload` (bytes under
-  a name chosen elsewhere: the proxy's cache, a clip, a mirror's pull, a
-  restore, a stripped PDF, the AI chat's re-download).
+  `store_file` (hashed names, dedup, quota), `storage.store_pdf_stream` (an
+  upload spooled to disk and hashed as it arrives, `storage.Spool`),
+  `storage.store_pdf_path` (the
+  same for an upload in parts, below), `storage.put_upload` (bytes under
+  a name chosen elsewhere: a clip, a mirror's pull, a restore, a stripped
+  PDF, the AI chat's re-download) and `storage.put_path` (a file spooled
+  to `.partial/` under such a name: the proxy's cache, an off-site pull).
   `storage.find_upload_file` gives a stored file's path to read (pdfium,
   the zip writers, the PDF exporters); code written against a directory of
   files (the exporters, `ink.read_upload`, the PDF writers) gets
@@ -469,7 +485,9 @@ track of the ones nothing uses.
   `/api/uploads/<name>` anywhere in a block's content or properties (images,
   file chips, `ink_url`, `source_url`) and a block's `doc_id` (its PDF,
   `<doc_id>.pdf`). A mirror's file transfer and a page export's file list
-  read references through it too.
+  read references through it too. A saved AI conversation's pictures count
+  as well: `/api/uploads/<name>` in the `chats` and `chat_history`
+  messages ([ai.md](ai.md#pictures)); `upload_gc.referenced` reads both.
 - **Unreferenced files are kept for 30 days.** When the last reference to a
   file goes, the file stays on disk and is served as before. Its name is
   recorded in `upload_orphans` with the time. An undo, a cut pasted in a
@@ -489,8 +507,8 @@ track of the ones nothing uses.
   on the module's own thread a couple of seconds later, never in the
   request. A batch that drops nothing (typing in a block that keeps its
   image, a folder change on a PDF page) costs nothing.
-- **The full pass.** `upload_gc.reconcile` is one scan of the blocks that
-  mention an upload, diffed against the directory's listing
+- **The full pass.** `upload_gc.reconcile` is one scan of the blocks and
+  the AI chats that mention an upload, diffed against the directory's listing
   (`storage.list`). It runs for every
   workspace a minute after startup and every six hours, and catches what
   writers outside the op path (imports, a restore, a mirror) left behind. It

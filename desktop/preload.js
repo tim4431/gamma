@@ -2,10 +2,13 @@
 //
 // - file: pages (the launcher + the shell bar — the shell's own chrome) get
 //   the `gammaShell` IPC bridge.
-// - http(s) pages (a server's Gamma frontend) get NOTHING exposed. The
-//   only thing that happens there is a read-only mirror: the page's
-//   `data-theme` attribute is reported to the main process so the shell
-//   chrome paints in the same theme. Gamma stays a black box.
+// - http(s) pages (a server's Gamma frontend) get NOTHING exposed. Two
+//   things happen there, both one way, page to shell: the page's
+//   `data-theme` attribute is reported so the shell chrome paints in the
+//   same theme, and a folder's "Keep on this computer…" request, which the
+//   page posts to itself (frontend/src/app/App.jsx), is passed on as it is.
+//   The shell checks it and asks the user for the directory. Gamma stays a
+//   black box.
 
 const { contextBridge, ipcRenderer } = require('electron');
 
@@ -17,10 +20,16 @@ if (window.location.protocol === 'file:') {
     addLocal: (name) => ipcRenderer.invoke('shell:add-local', name),
     addRemote: (name, url) => ipcRenderer.invoke('shell:add-remote', name, url),
     rename: (id, name) => ipcRenderer.invoke('shell:rename', id, name),
+    setUrl: (id, url) => ipcRenderer.invoke('shell:set-url', id, url),
     remove: (id, opts) => ipcRenderer.invoke('shell:remove', id, opts),
     open: (id) => ipcRenderer.invoke('shell:open', id),
     openWorkspace: (id) => ipcRenderer.invoke('shell:open-workspace', id),
     keepOffline: (id) => ipcRenderer.invoke('shell:keep-offline', id),
+    folders: (wsId) => ipcRenderer.invoke('shell:folders', wsId),
+    keepFolder: (wsId, folderId) => ipcRenderer.invoke('shell:keep-folder', wsId, folderId),
+    keeping: () => ipcRenderer.invoke('shell:keeping'),
+    keepingAction: (kind, serverId, id, action) => ipcRenderer.invoke('shell:keeping-action', kind, serverId, id, action),
+    openPath: (wsId, p) => ipcRenderer.invoke('shell:open-path', wsId, p),
     openCopy: (id) => ipcRenderer.invoke('shell:open-copy', id),
     openOriginal: (id) => ipcRenderer.invoke('shell:open-original', id),
     launcher: () => ipcRenderer.invoke('shell:launcher'),
@@ -53,4 +62,9 @@ if (window.location.protocol === 'file:') {
   };
   if (document.documentElement) start();
   else document.addEventListener('DOMContentLoaded', start, { once: true });
+  window.addEventListener('message', (e) => {
+    const d = e.data;
+    if (e.source !== window || e.origin !== window.location.origin || !d || d.source !== 'gamma-app' || d.type !== 'keep-folder-on-disk') return;
+    ipcRenderer.send('shell:keep-folder-from-page', String(d.ws || ''), String(d.folder || ''));
+  });
 }

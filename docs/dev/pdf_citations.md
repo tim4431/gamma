@@ -24,22 +24,25 @@ The PDF page is physical and 1-based. Context and `read_page` label pages
 `[PDF page N]` (blank pages counted, a mid-page continuation labelled
 `; continued`) and each context section carries its Gamma page ID
 ([ai_context.md](ai_context.md)); `routers/ai.py` appends the citation
-instruction whenever a document is in context, with tools off and under a
-custom prompt too. A quote should fit on one page and identify one passage.
-Copy it verbatim, including parenthetical references. A shorter distinctive
-substring is also valid; do not add a period where the source continues.
+instruction (`ai_tools.citation_prompt`) whenever a document is in context,
+with tools off and under a custom prompt too. The MCP server's instructions
+carry the same text in its absolute form, and its results link every located
+PDF page and block ([mcp.md](mcp.md) "Links in results"). A quote should fit
+on one page and identify one passage. Copy it verbatim, including
+parenthetical references. A shorter distinctive substring is also valid; do
+not add a period where the source continues.
 
 The link is plain Markdown, so it persists with the reply.
 `shared/model/gammaLinks.js` classifies one link into this library
-(`parseGammaLink` → `block` / `page` / `citation`), and `GammaLinkCard`
-(`shared/ui/Widgets.jsx`) draws it as a card in a note's rendered markdown
-and for page links in the chat. A citation inside a chat answer is a compact
-pill instead (`CitationPill`, only where the transcript provides
-`ChatCiteContext`): "p. 2" on the text's baseline, prefixed with the source
-("Vaswani · p. 2") when the reply cites more than one paper. Hovering,
-focusing or long-pressing it previews the paper title, the PDF page and the
-quote. Clicking either one calls `openPage(id,
-citation)` from `GammaNavContext`, which App provides once: the library page
+(`parseGammaLink` → `block` / `page` / `citation`). A citation renders as a
+compact pill (`CitationPill`, `shared/ui/Widgets.jsx`) in chat answers, notes
+and a note's preview on the PDF. It shows "p. 2" on the text's baseline,
+sized from the surrounding text. When the reply or note cites several
+papers, the source comes first ("Vaswani · p. 2").
+Hovering, focusing or long-pressing it previews the paper title, the PDF page
+and the quote; App's `citeSource` (on `GammaNavContext`) names the paper. A
+page or block link is a card (`GammaLinkCard`). Clicking a citation calls
+`openPage(id, citation)` from `GammaNavContext`, which App provides once: the library page
 opens in place, waits for that PDF and the cited page's text layer, then
 matches the quote in the browser. A pasted link on a cold load works the same
 way (the same classifier on the initial URL). Only the cited page is

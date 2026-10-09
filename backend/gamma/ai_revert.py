@@ -5,9 +5,10 @@ Each note tool's action records what its change needs to be undone and
 redone (``revert`` on the action, gamma/ai_tools.py): an edit the block's
 text just before and just after the write, a new block the text it was
 made with and where it went, a move the parent and key it left and the
-ones it went to. The chat keeps the action with the reply, and its
-"Changed in your notes" row sends it back here (``POST /api/ai/revert``)
-when the user reverts the change, or redoes one they reverted.
+ones it went to, a deletion every block of the subtree it took. The chat
+keeps the action with the reply, and its "Changed in your notes" row sends
+it back here (``POST /api/ai/revert``) when the user reverts the change, or
+redoes one they reverted.
 
 Neither direction assumes the note still says what it last said. An edit
 goes as a patch: the change ``after → before`` (redo: ``before → after``)
@@ -21,6 +22,8 @@ notes since, and a block moved on from where the last write put it, stop
 the same way. Each write is the user's (client ``"revert"``), fanned out
 like any other.
 """
+
+import json
 
 from . import textmerge
 from .ai_tools import cross_page_refusal, text_diff
@@ -138,7 +141,37 @@ def _plan_move(conn, block_id: str, revert: dict, force: bool, redo: bool):
     return dest, ("across", parent, free_position(conn, parent, position, block_id), src)
 
 
-_PLANS = {"edit": _plan_edit, "create": _plan_create, "move": _plan_move}
+def _plan_delete(conn, block_id: str, revert: dict, force: bool, redo: bool):
+    """A deleted subtree put back as it was (``revert["blocks"]``: every
+    block, parent first, with its parent, key, text and properties); a redo
+    deletes it again."""
+    rows = revert.get("blocks")
+    if not isinstance(rows, list) or not rows or not all(isinstance(r, list) and len(r) == 5 for r in rows) \
+            or rows[0][0] != block_id:
+        raise RevertError(400, MALFORMED)
+    row = _row(conn, block_id)
+    if redo:
+        if not row:
+            return "", None  # deleted already
+        return page_root_id(conn, block_id), [{"op": "delete", "id": block_id}]
+    if row:
+        return page_root_id(conn, block_id), None  # back already (another tab, or by hand)
+    parent = rows[0][1]
+    page_id = page_root_id(conn, parent)
+    if not page_id:
+        raise RevertError(409, "The note it was under was deleted.", "gone")
+    ops = []
+    for bid, par, position, content, props in rows:
+        try:
+            props = json.loads(props or "{}")
+        except ValueError:
+            props = {}
+        ops.append({"op": "insert", "id": bid, "parent": par, "content": content or "",
+                    "position": position if isinstance(position, str) else None, "props": props})
+    return page_id, ops
+
+
+_PLANS = {"edit": _plan_edit, "create": _plan_create, "move": _plan_move, "delete": _plan_delete}
 
 
 def revert_change(ws: str, kind: str, block_id: str, revert: dict, *, force: bool = False,

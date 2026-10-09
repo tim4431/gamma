@@ -33,6 +33,16 @@ Servers come in two kinds:
 Servers are fully independent; there is **no synchronization** (move data
 between them with Gamma's own per-workspace *Export* / *Import*).
 
+A remote server is its address. One typed without a scheme gets `http://`
+when it names the local network — `localhost`, a private range, a
+`.local`/`.lan`/`.home`/`.internal` name, or an explicit port, the
+self-hosted Gamma's shape — and `https://` otherwise (`registry.withScheme`).
+The pencil on a remote's card edits the address as well as the name
+(`shell:set-url` → `registry.setRemoteUrl`; the mirrors keyed by the old
+origin follow), and when an `https://` address is refused — a self-signed
+certificate, or a plain-HTTP server answering https — the launcher's
+failure card offers *Use http:// instead* (`lib/startup.js`, action `http`).
+
 ### Gamma's workspaces in the switcher
 
 While a server is open the main process reads `GET /api/session` through the
@@ -84,15 +94,128 @@ row with a clone shows *open clone* and opens it, `shell:open-copy`; a
 clone's row on the local server reads *clone* — `mirror_of` on the
 session's workspace list — and its *origin* chip opens the workspace it
 follows on the registered remote, `shell:open-original`) and tells the
-shell which local servers to start at launch (`startMirrorHosts`): a copy
+shell which local servers to start at launch (`startBackgroundHosts`): a copy
 syncs only while its server runs, so those run for as long as the app does,
 whichever server the window shows.
+
+### Folders on this computer
+
+A folder of any server's workspace can be kept as a directory anywhere on
+this computer: each paper's PDF beside a Markdown note of its highlights
+and notes, kept up to date by a local server. Only the app's own local
+servers keep folders on disk ([docs/dev/folder_sync.md](../../docs/dev/folder_sync.md)
+"Folders kept by the desktop app"); a NAS only answers the reads. The
+shell adds the native directory picker, the token, and two ways in.
+
+**A folder's menu in Gamma's page.** In the desktop app a library
+folder's right-click menu has *Keep on this computer…*
+(`frontend/src/app/App.jsx`, shown when `IS_DESKTOP`). The page posts
+`{source: "gamma-app", type: "keep-folder-on-disk", ws, folder}` to its
+own origin, the way it greets the Connector extension. The page preload
+passes that on (`shell:keep-folder-from-page`) and exposes nothing. The
+shell takes it only from the content view's page of the open server, with
+plain ids, and only when no other action runs. Then it runs `keepFolder`,
+whose native picker is the user's say. A folder already kept opens its
+directory instead.
+
+**The sync panel's chooser.** The panel under the bar's sync button
+(below, "Kept on this computer") ends with *Keep a folder of <workspace>
+on this computer…*. It opens the panel's second level, listing the open
+workspace's folders (`shell:folders` → `listFolders`: the open server's
+`GET /api/sync/folders` with the content session's cookies, and the links
+from `listLinks`). A folder already kept reads *on disk* and opens its
+directory on click (`shell:open-path`, only for a directory one of those
+links names). Any other asks for a directory on click (`shell:keep-folder`
+→ `keepFolder`). An empty directory is used as it is; any other gets a
+subdirectory named after the folder. Pausing, syncing and stopping a kept
+folder are the panel's rows, below.
+
+Under the test harness `GAMMA_SHELL_PICK_DIR` answers the picker, the
+questions take their first answer, and a directory "opened" is only
+recorded (`openDirectory`, like `openExternal`).
+
+Where the link lives depends on the server:
+
+- On a **local** server it is that server's own link, made with `POST
+  /api/folder-links` and the full path. The sidecar keeps links because
+  the shell starts it with `GAMMA_FOLDER_LINKS=1`. The server reads the
+  workspace in-process.
+- On a **remote** server there is no clone. The shell mints a read-scope
+  integration token on the remote for that workspace (`POST
+  /api/integrations/tokens`, a year, named after the folder). It makes the
+  link on the **host**, the first local server, which `ensureHost` makes,
+  starts and signs into when needed (the clones' host too). The link names
+  the remote's origin, the workspace, the token and its id, and the host
+  reads the folder over HTTP with the client's own source. Only that
+  folder's files come down.
+
+The links of a remote workspace are the host's links with that origin
+and workspace. *Stop* deletes the link on the host and revokes the token
+on the remote (`revokeToken`, with the window's session, which is signed
+into the remote). `settings.folderHost` remembers the host so it starts
+at launch like the clones' hosts (`startBackgroundHosts`). *Stop* on the
+host's last remote folder clears it.
+
+The shell keeps nothing else about links; the rounds and the status are
+the server's, the host's for a remote folder. The bar reports each action
+in its status line for a few seconds (`notice` in the shell state). The
+first time a clone or a folder on disk is made, the shell offers
+background mode (below), since both sync only while Gamma runs.
+
+### Kept on this computer
+
+The **sync button** at the bar's right end sums up everything this
+computer keeps of Gamma: the clones and the folders on disk, of every
+running local server, whichever server the window shows. It reads
+*Synced*, *Syncing…*, *Conflicts*, *n problems* and the like, with a
+matching icon and colour, and shows once a server is open or anything is
+kept. Its **panel** lists the clones, then the folders on disk, each a row
+with its name over its state and where it is, a state dot, and its round
+action buttons, always shown (each named by its tooltip):
+
+- A click on the row opens it: a clone in the window (`openServer`, then
+  `openGammaWorkspace`), a folder's directory (`openDirectory`).
+- *pause* and *resume* swap with the item's state, and the panel stays
+  open on the new one. For a clone they are `POST /api/mirrors/<ws>/detach`
+  and `/relink` (the stored token; what both sides did meanwhile merges),
+  so a paused clone reads *Detached*, as in Gamma's pill. For a folder they
+  are `pauseFolder`, `PATCH /api/folder-links/<id> {paused}`: the server's
+  tick leaves a paused folder alone, and resuming runs a round.
+- *sync* runs a round now. For a clone that is `POST
+  /api/mirrors/<ws>/sync` on its local server, shut while it is detached.
+  For a folder it is `syncFolder`, which asks first whether to replace
+  files changed on disk when there are any, and reports the round in the
+  bar. A paused folder syncs too and stays paused.
+- *stop* (a folder) is `dropFolder`, which asks whether to keep the files
+  or take back what the sync wrote.
+
+A detached clone or a paused folder never raises the button's summary;
+when everything is, it reads *Paused*. The panel ends with the chooser
+above. Conflicts and a clone's cadence stay in Gamma's own sync pill, in
+the clone.
+
+`refreshKeeping` reads every running local server's `GET /api/mirrors` and
+`GET /api/folder-links` every 15 s, every 2 s while something syncs, when
+the panel opens and after each action. `lib/keeping.js` turns the rows into
+items and the button's summary, with no Electron in it
+(`test/keeping.test.js`, `npm test`). A clone reads as Gamma's sync pill
+reads it (`mirrorState` in `frontend/src/collaboration/MirrorPopover.jsx`):
+the same states in the same order, so the two never disagree. Change both
+together. The result is the shell state's `keeping` (`{items, summary}`).
+The panel's rows act through `shell:keeping-action` (kind, server, id,
+action), so they need no open server.
+
+Each local server is read in a cookie jar of its own
+(`session.fromPartition('keeping-<id>')`, in memory, signed in once per
+run by `signIn`). Every sidecar is `127.0.0.1` and a cookie does not tell
+ports apart, so signing into one server in the window's session would sign
+the window out of another.
 
 ## Window
 
 ```
 ┌────────────────────────────────────────────────────────────┐
-│ ⌈γ⌉ Alpha · Rydberg lab ▾   Starting Beta…   [↑ Restart to update] ⟳  – □ ✕ │  shell bar (38 px, is the title bar)
+│ ⌈γ⌉ Alpha · Rydberg lab ▾   Starting Beta…   ☁ Synced [↑ Restart to update] ⟳  – □ ✕ │  shell bar (38 px, is the title bar)
 ├────────────────────────────────────────────────────────────┤
 │                                                            │
 │   launcher (file://ui/launcher.html)                       │  content view
@@ -103,15 +226,19 @@ whichever server the window shows.
 
 One `BaseWindow`, two `WebContentsView`s. The **shell bar** is the
 frameless window's title bar (OS controls overlaid on Windows/Linux, traffic
-lights inset on macOS) and holds the switcher: click the name → dropdown of
+lights inset on macOS). On Windows and Linux the bar keeps its right 146 px
+free for those controls: the `titlebar-area` env() values reach only a
+window's own page, never a view like the bar. The logo opens the launcher, which lists every
+server (also `Ctrl/Cmd+Shift+L`). Then the switcher: click the name → dropdown of
 the open server's Gamma workspaces (check on the current one, role or
-*personal* per row), then every server (running / reachable dot, check on
-the current one), then *All servers…* (the launcher, also
-`Ctrl/Cmd+Shift+L`). While
-the dropdown is open the bar view is temporarily enlarged over the content
-(its page is transparent outside the strip and the menu), which is how a
-38 px view can show a menu. At the right: the update pill (only while an
-update is ready, see below) and a reload button.
+*personal* per row, the clone chips), then every server (running /
+reachable dot, check on the current one), then *All servers…* (the
+launcher again). At the right: the sync button and its panel (above, "Kept
+on this computer"), the update pill (only while an update is ready, see
+below) and a reload button. One dropdown is open at a time. While one is,
+the bar view is temporarily enlarged over the content (its page is
+transparent outside the strip and the dropdown), which is how a 38 px view
+can show a menu.
 
 The **content view** shows the launcher or the server. The launcher lists
 servers as cards (kind, running / reachable dot, size on disk, data dir /
@@ -136,9 +263,13 @@ under the current root, *Move data*, which relocates them too.
 
 **Theme.** The chrome paints in Gamma's own theme: the preload on server
 pages mirrors the page's `data-theme` attribute (`dark`/`light`/`gamma-light`/
-`gamma-dark`/`sepia`/`solarized`/`gray`; none = dark) to the main process, which restyles the bar, the
+`gamma-dark`/`sepia`/`solarized`/`gray`) to the main process, which restyles the bar, the
 launcher, the window background and the Windows title-bar overlay. The last
-theme is persisted so the chrome is right before any page has loaded.
+theme is persisted so the chrome is right before any page has loaded, and
+with none of either — a first run, or the launcher, which reports no theme
+— it follows the OS scheme (`main.js` `currentTheme`, repainting on
+`nativeTheme`'s `updated`), since Gamma's own default theme is System: a
+light machine never opens a dark window.
 
 The tokens are Gamma's own. `ui/tokens.css` is a committed copy of
 `frontend/src/shared/styles/tokens.css`, and `ui/fonts/` holds the Latin
@@ -150,6 +281,27 @@ derive a theme's colours from its scheme, so the shell pages set
 as Gamma's topbar under it), and `main.js`'s title-bar palette repeats that
 colour per theme. The same test checks both copies. The icons are the same
 stroke glyphs as `frontend/src/shared/ui/Icons.jsx`.
+
+### Background and tray
+
+Closing the last window quits the app (macOS keeps the dock process, as
+any Mac app) unless **Keep running in the background** is on. The setting
+is `settings.background`, turned on by the launcher's switch, the *Server*
+menu, the tray menu, or `offerBackground`, the offer made when a clone or a
+folder on disk is first created. On, `window-all-closed` leaves the app
+running with a tray icon (`ensureTray`: *Open Gamma*, the two switches,
+*Quit Gamma*). At launch `startBackgroundHosts` then starts every local
+server instead of only the clones' hosts, so clones and folders on disk
+keep syncing with no window. The tray's click or *Open Gamma* brings the
+window back where the user left off (`showWindow`). Turning the setting off
+from the tray with no window quits.
+
+**Start at login** (`settings.openAtLogin`) registers the OS login item
+with `--hidden`, so a login start makes no window and goes straight to the
+tray (`applyLoginItem`; macOS reports a hidden start itself through
+`wasOpenedAsHidden`). On Windows and macOS that is `app.setLoginItemSettings`;
+on Linux an autostart entry under `~/.config/autostart`. Packaged builds
+only, and nothing under the test harness.
 
 ## In-app updates
 
@@ -186,7 +338,9 @@ copy under `%LOCALAPPDATA%\Packages\xwtim.GammaPDF_<hash>\LocalCache\Roaming`,
 which the Store uninstall deletes — [release.md](release.md#microsoft-store)):
 
 - `servers.json` — the registry: server list, `lastOpened`, `windowBounds`,
-  and `settings` (`openLastOnLaunch`, `lastTheme`, `dataRoot`, the dev-mode
+  and `settings` (`openLastOnLaunch`, `lastTheme`, `dataRoot`, `background`
+  and `openAtLogin` (the tray, above), `folderHost` (the local server that
+  keeps folders of remote servers), the dev-mode
   `pythonPath`/`backendDir`/`staticDir` overrides). Local admin credentials
   are stored in plaintext here — same trust level as the SQLite files next
   to it; acceptable for a per-OS-user desktop app. An older profile's
@@ -213,7 +367,8 @@ directories under the default or the configured root only.
 
 `GAMMA_SHELL_USER_DATA=<dir>` relocates all of it (the tests use a temp
 profile); `GAMMA_SHELL_DOWNLOAD_DIR=<dir>` saves downloads there without the
-dialog (tests only); `GAMMA_SHELL_NO_UPDATE=1` disables the updater.
+dialog and `GAMMA_SHELL_PICK_DIR=<dir>` answers the folder picker (tests
+only); `GAMMA_SHELL_NO_UPDATE=1` disables the updater.
 
 ## File map
 
@@ -223,8 +378,9 @@ dialog (tests only); `GAMMA_SHELL_NO_UPDATE=1` disables the updater.
   (only registered server origins may load in the content view; everything
   else — `target=_blank`, cross-origin redirects — opens in the system
   browser), the remote health probes, the `/api/session` read behind the
-  workspace switcher, `--smoke` self-test, sidecar cleanup on quit, the
-  `GAMMA_SHELL_TEST` hook the e2e suite drives.
+  workspace switcher, the clone and folder-on-this-computer flows over the
+  server's API, the tray and background mode, `--smoke` self-test, sidecar
+  cleanup on quit, the `GAMMA_SHELL_TEST` hook the e2e suite drives.
 - `preload.js` — exposes the `gammaShell` IPC bridge **only on `file:`
   URLs**; on server pages it exposes nothing and only reports `data-theme`
   changes.
@@ -251,6 +407,9 @@ dialog (tests only); `GAMMA_SHELL_NO_UPDATE=1` disables the updater.
   server's last words into one sentence, the matched line, and the `action`
   the launcher offers as a button.
 - `lib/updater.js` — the electron-updater wrapper described above.
+- `lib/keeping.js` — what this computer keeps, read as items and one
+  summary for the sync button ("Kept on this computer"); no Electron, unit
+  tested by `test/keeping.test.js` (`npm test`).
 - `electron-builder.cjs` — the packaging config (targets, extra resources,
   secret-gated signing, the update feed's `publish` block).
   `scripts/adhoc-sign.cjs` — its `afterPack` hook: ad-hoc signs a macOS
@@ -279,7 +438,8 @@ dialog (tests only); `GAMMA_SHELL_NO_UPDATE=1` disables the updater.
   `GAMMA_ADMIN_USER`, `GAMMA_ADMIN_PASSWORD`, `GAMMA_VERSION` = the shell's
   own version, so the server's admin dashboard names the app,
   `GAMMA_CLOUD_DEFAULT_ISSUER` = Gamma Cloud, the account server until the
-  admin saves another), `/api/health` and
+  admin saves another, `GAMMA_FOLDER_LINKS` = this server keeps folders on
+  disk, anywhere the user picks, since the sidecar runs as the user), `/api/health` and
   `/api/session` (+ the `?ws=` URL parameter). No imports from `backend/`,
   no frontend patches. The one thing it reads off the page is the
   `data-theme` attribute (read-only, via the preload).

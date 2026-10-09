@@ -114,6 +114,11 @@ export const RULES = [
   ["backend/gamma/mcp_*", ["mcp"]],
   ["backend/gamma/integrations.py", ["mcp", "mirror", "settings"]],
   ["backend/gamma/routers/integrations.py", ["mcp", "mirror", "settings"]],
+  // folders on disk: the desktop app's suite drives them (desktop/test/e2e.js)
+  ["backend/gamma/folder_links.py", []],
+  ["backend/gamma/folder_sync.py", []],
+  ["backend/gamma/gamma_sync.py", []],
+  ["backend/gamma/routers/folder_links.py", []],
   ["backend/gamma/sync_*.py", ["mirror", "publish", "replica"]],
   ["backend/gamma/textmerge.py", ["mirror", "replica"]],
   ["backend/gamma/routers/sync.py", ["mirror", "publish", "replica"]],

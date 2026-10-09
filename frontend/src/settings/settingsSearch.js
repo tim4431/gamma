@@ -101,6 +101,7 @@ const entries = [
   e("server", t("Shared AI provider"), null, t("AI keys every account on this server can use"), "administration API key everyone lab members guests connection models"),
   e("server", t("Allowance per account"), t("Shared AI provider"), t("Tokens a day on the shared keys; 0 = unlimited"), "administration shared AI tokens daily limit quota budget"),
   e("server", t("Allowance per guest"), t("Shared AI provider"), t("Tokens a day for each guest; 0 = unlimited"), "administration shared AI tokens daily limit quota budget guests"),
+  e("server", t("Guest sign-in"), t("Guests"), t("The login page offers a throwaway account"), "administration guests visitors anonymous turn off disable try it login button"),
   e("server", t("Guest workspaces last"), t("Guests"), t("Then the guest's account and workspace are deleted"), "administration guests temporary expiry hours delete throwaway"),
   e("server", t("Demo mode"), t("Guests"), t("The login page leads with Try the demo"), "administration guests try the demo public login page first-run tour"),
   e("server", t("Check databases"), t("Databases"), t("a quick check of every account and workspace database"), "administration integrity corruption damaged sqlite quick_check health"),

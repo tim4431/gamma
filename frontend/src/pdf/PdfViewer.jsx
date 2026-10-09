@@ -76,6 +76,9 @@ const EMPTY_MARKS = [];
 // page boxes stack with a fixed gap, and unmeasured pages assume page 1's
 // size (FALLBACK_* is the last resort before even that is known).
 const PAGE_GAP = 8;
+// How far past the view (each way, in viewport heights) a page keeps its
+// text layer; pdf.js's own viewer keeps about ten pages.
+const FAR_MARGIN = "400% 0px";
 const FALLBACK_H = 800, FALLBACK_W = 600;
 
 // Content-y of page idx's top edge at the given scale.
@@ -107,6 +110,23 @@ function cachePdf(url, buf) {
 // never the one being committed (it is set last).
 const DOC_CACHE = new Map(); // url -> {doc, heights, widths}, insertion order = LRU
 const DOC_CACHE_MAX = 2;
+// The in-document search's page texts, by parsed document (PdfViewer's
+// search effect): freed with the document when DOC_CACHE lets it go.
+const SEARCH_TEXT = new WeakMap();
+
+// Whether two per-page highlight slices read the same (hlsByPage): the
+// highlight objects are rebuilt on every edit, their positions are not.
+function sameHighlights(a, b) {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    const x = a[i], y = b[i];
+    if (x.id !== y.id || x.color !== y.color || x.hasNote !== y.hasNote || x.position !== y.position
+      || x.comment?.text !== y.comment?.text || x.content?.text !== y.content?.text
+      || x.linkTarget?.url !== y.linkTarget?.url || x.linkTarget?.pageId !== y.linkTarget?.pageId
+      || x.linkTarget?.blockId !== y.linkTarget?.blockId) return false;
+  }
+  return true;
+}
 function rememberDoc(url, entry) {
   DOC_CACHE.delete(url);
   DOC_CACHE.set(url, entry);
@@ -130,11 +150,22 @@ function rememberDoc(url, entry) {
 // once), so serving from disk is safe.
 const DISK_CACHE_TTL_MS = 30 * 24 * 3600 * 1000; // one month
 const DISK_CACHE_MAX = 30; // papers kept on disk
+// ... and at most this many bytes of them together: thirty scanned books
+// would otherwise be gigabytes. The sizes live in a store of their own
+// ("meta"), so the eviction walk never loads a buffer.
+const DISK_CACHE_MAX_BYTES = 512 * 1024 * 1024;
 
 function idbOpen() {
   return new Promise((resolve, reject) => {
-    const rq = indexedDB.open("gamma-pdf-cache", 1);
-    rq.onupgradeneeded = () => rq.result.createObjectStore("pdfs").createIndex("at", "at");
+    const rq = indexedDB.open("gamma-pdf-cache", 2);
+    rq.onupgradeneeded = (e) => {
+      const db = rq.result;
+      // Version 1 kept the date beside the buffer; its entries are dropped
+      // (a cache: the next open fetches again) rather than walked.
+      if (e.oldVersion >= 1 && db.objectStoreNames.contains("pdfs")) db.deleteObjectStore("pdfs");
+      db.createObjectStore("pdfs");
+      db.createObjectStore("meta").createIndex("at", "at");
+    };
     rq.onsuccess = () => resolve(rq.result);
     rq.onerror = () => reject(rq.error);
   });
@@ -150,13 +181,15 @@ async function diskCacheGet(url) {
   let db;
   try {
     db = await idbOpen();
-    const row = await idbReq(db.transaction("pdfs").objectStore("pdfs").get(url));
-    if (!row) return null;
-    if (Date.now() - row.at > DISK_CACHE_TTL_MS) {
-      await idbReq(db.transaction("pdfs", "readwrite").objectStore("pdfs").delete(url));
+    const meta = await idbReq(db.transaction("meta").objectStore("meta").get(url));
+    if (!meta) return null;
+    if (Date.now() - meta.at > DISK_CACHE_TTL_MS) {
+      const tx = db.transaction(["pdfs", "meta"], "readwrite");
+      tx.objectStore("pdfs").delete(url);
+      tx.objectStore("meta").delete(url);
       return null;
     }
-    return row.buf;
+    return (await idbReq(db.transaction("pdfs").objectStore("pdfs").get(url))) || null;
   } catch {
     return null;
   } finally {
@@ -164,28 +197,31 @@ async function diskCacheGet(url) {
   }
 }
 
-async function diskCachePut(url, buf) {
+// `owned`: the caller keeps no use for `buf` (the backfill's download), so
+// it is stored as it is; otherwise it is copied first, synchronously, before
+// the caller hands it to pdf.js (which transfers it to the worker).
+async function diskCachePut(url, buf, { owned = false } = {}) {
   let db;
   try {
-    const copy = buf.slice(0); // synchronously, before the caller hands buf to pdf.js
+    const copy = owned ? buf : buf.slice(0);
     db = await idbOpen();
-    const store = db.transaction("pdfs", "readwrite").objectStore("pdfs");
-    await idbReq(store.put({ buf: copy, at: Date.now() }, url));
-    // Evict the oldest entries beyond the cap. A key cursor on the "at" index
-    // walks oldest-first without loading the buffers themselves.
-    let excess = (await idbReq(store.count())) - DISK_CACHE_MAX;
-    if (excess > 0) {
-      await new Promise((resolve) => {
-        const cur = store.index("at").openKeyCursor();
-        cur.onsuccess = () => {
-          const c = cur.result;
-          if (!c || excess <= 0) return resolve();
-          store.delete(c.primaryKey);
-          excess--;
-          c.continue();
-        };
-        cur.onerror = () => resolve();
-      });
+    const tx = db.transaction(["pdfs", "meta"], "readwrite");
+    const pdfs = tx.objectStore("pdfs"), meta = tx.objectStore("meta");
+    pdfs.put(copy, url);
+    await idbReq(meta.put({ at: Date.now(), bytes: copy.byteLength }, url));
+    // Evict the oldest entries past the count and the byte caps. The "meta"
+    // rows are small: the walk reads every date and size, never a buffer.
+    const rows = await idbReq(meta.index("at").getAll());
+    let count = rows.length, bytes = rows.reduce((n, r) => n + (r.bytes || 0), 0);
+    if (count > DISK_CACHE_MAX || bytes > DISK_CACHE_MAX_BYTES) {
+      const keys = await idbReq(meta.index("at").getAllKeys());
+      for (let i = 0; i < keys.length && (count > DISK_CACHE_MAX || bytes > DISK_CACHE_MAX_BYTES); i++) {
+        if (keys[i] === url) continue; // what was just stored stays
+        pdfs.delete(keys[i]);
+        meta.delete(keys[i]);
+        count--;
+        bytes -= rows[i].bytes || 0;
+      }
     }
   } catch {} finally {
     db?.close();
@@ -196,7 +232,7 @@ async function diskCacheHas(url) {
   let db;
   try {
     db = await idbOpen();
-    return (await idbReq(db.transaction("pdfs").objectStore("pdfs").getKey(url))) !== undefined;
+    return (await idbReq(db.transaction("meta").objectStore("meta").getKey(url))) !== undefined;
   } catch {
     return false;
   } finally {
@@ -215,7 +251,7 @@ function backfillLocalCopy(url) {
     try {
       if (await diskCacheHas(url)) return;
       const resp = await fetch(withShare(url), { credentials: "include" });
-      if (resp.ok) diskCachePut(url, await resp.arrayBuffer());
+      if (resp.ok) diskCachePut(url, await resp.arrayBuffer(), { owned: true });
     } catch {} finally {
       backfilling.delete(url);
     }
@@ -507,17 +543,25 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
 
   // Highlights grouped per page — and only for the document actually on
   // screen: during a tab switch the incoming page's highlights arrive before
-  // its document does, and must not paint onto the outgoing one. Per-page
-  // slices also mean editing a note re-renders just that highlight's page.
+  // its document does, and must not paint onto the outgoing one. A page's
+  // slice keeps its identity while its highlights read the same (the
+  // highlights are rebuilt from the blocks on every edit), so typing a note
+  // re-renders just that highlight's page, not every page with one.
+  const hlsPrevRef = useRef(new Map());
   const hlsByPage = useMemo(() => {
     const map = new Map();
-    if (displayedUrl !== url) return map;
+    if (displayedUrl !== url) { hlsPrevRef.current = map; return map; }
     for (const h of highlights || []) {
       const p = h.position?.pageNumber;
       if (!p) continue;
       if (!map.has(p)) map.set(p, []);
       map.get(p).push(h);
     }
+    for (const [p, list] of map) {
+      const old = hlsPrevRef.current.get(p);
+      if (old && sameHighlights(old, list)) map.set(p, old);
+    }
+    hlsPrevRef.current = map;
     return map;
   }, [highlights, displayedUrl, url]);
 
@@ -528,20 +572,39 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
   // textnorm.normalizeChars, the mirror of the server index's rules). Every
   // normalized character remembers its source run, so a match maps back to
   // exact rects (at scale 1) even when normalization changed lengths.
+  // Each page's text is read from pdf.js once per parsed document and kept
+  // (SEARCH_TEXT, by the document, so it goes with it): a second query over
+  // a book is a regex over strings, not a worker round trip per page. A
+  // query the panel has moved past stops at its next page and answers
+  // `stale` (searchGen), which the panel ignores.
+  const searchGenRef = useRef(0);
   useEffect(() => {
     if (!searchRef) return;
     searchRef.current = pdfDoc ? async (re) => {
+      const gen = ++searchGenRef.current;
       const out = [];
+      let texts = SEARCH_TEXT.get(pdfDoc);
+      if (!texts) { texts = new Map(); SEARCH_TEXT.set(pdfDoc, texts); }
       for (let p = 1; p <= pdfDoc.numPages && out.length < 200; p++) {
-        const page = await pdfDoc.getPage(p);
-        const vp = page.getViewport({ scale: 1 });
-        const tc = await page.getTextContent();
-        const items = tc.items;
-        // Page string: runs joined by their PDF line break or a space,
-        // each char tagged with its source run (-1 = synthetic filler).
-        const chars = runChars(items.map((it) => ({ text: it.str, hasEOL: it.hasEOL })), { fillSpaces: true });
-        const { norm, src } = normalizeChars(chars);
-        const pageStr = norm.join("");
+        let text = texts.get(p);
+        if (!text) {
+          const page = await pdfDoc.getPage(p);
+          const vp = page.getViewport({ scale: 1 });
+          const tc = await page.getTextContent();
+          if (gen !== searchGenRef.current) return Object.assign([], { stale: true });
+          const items = tc.items;
+          // Page string: runs joined by their PDF line break or a space,
+          // each char tagged with its source run (-1 = synthetic filler).
+          const chars = runChars(items.map((it) => ({ text: it.str, hasEOL: it.hasEOL })), { fillSpaces: true });
+          const { norm, src } = normalizeChars(chars);
+          text = {
+            items, pageStr: norm.join(""), transform: vp.transform, width: vp.width, height: vp.height,
+            // The char tags as typed arrays: a book's worth stays small.
+            src: Int32Array.from(src), it: Int32Array.from(chars, (c) => c.it), off: Int32Array.from(chars, (c) => c.off),
+          };
+          texts.set(p, text);
+        }
+        const { items, pageStr } = text;
         const rx = new RegExp(re.source, re.flags.includes("g") ? re.flags : re.flags + "g");
         let m;
         while ((m = rx.exec(pageStr)) && out.length < 200) {
@@ -550,17 +613,19 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
           // proportionally by char position; runs are single-line).
           const spans = new Map(); // run index -> [minOff, maxOff]
           for (let n = m.index; n < m.index + m[0].length; n++) {
-            const c = chars[src[n]];
-            if (c.it < 0) continue;
-            const s = spans.get(c.it);
-            if (s) { s[0] = Math.min(s[0], c.off); s[1] = Math.max(s[1], c.off); }
-            else spans.set(c.it, [c.off, c.off]);
+            const c = text.src[n];
+            const it = text.it[c];
+            if (it < 0) continue;
+            const off = text.off[c];
+            const s = spans.get(it);
+            if (s) { s[0] = Math.min(s[0], off); s[1] = Math.max(s[1], off); }
+            else spans.set(it, [off, off]);
           }
           const rects = [];
           for (const [ii, [o1, o2]] of spans) {
             const it = items[ii];
             const str = it.str || "";
-            const tx = pdfjsLib.Util.transform(vp.transform, it.transform);
+            const tx = pdfjsLib.Util.transform(text.transform, it.transform);
             const fh = Math.hypot(tx[2], tx[3]) || 10;
             const w = it.width || fh;
             const x1 = tx[4] + w * (o1 / str.length);
@@ -573,8 +638,8 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
             page: p,
             snippet: pageStr.slice(ctxStart, m.index + m[0].length + 60).trim().slice(0, 140),
             rects,
-            pageW: vp.width,
-            pageH: vp.height,
+            pageW: text.width,
+            pageH: text.height,
           });
         }
       }
@@ -1342,13 +1407,15 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
 
   // A finished Ctrl+drag on a page: hold the rect (drawn by that page while
   // the popup is up) and offer the same color tip as a text selection. The
-  // drawn region also acts as a chat selection — its snapshot (`image`, a
-  // promise: the page crops it from the document) goes to the host as soon as
-  // it is drawn, like text selections attach on mouseup, whether or not a
+  // drawn region also acts as a chat selection — its page and box go to the
+  // host as soon as it is drawn (the server renders the region), like text
+  // selections attach on mouseup, whether or not a
   // note is then created.
-  const onAreaSelected = useCallback(({ image, ...sel }) => {
+  const onAreaSelected = useCallback((sel) => {
     setSelPopup({ kind: "area", ...sel });
-    image?.then((png) => { if (png) cbRef.current.onAreaSelection?.(png); });
+    // The region goes to the chat as its page and box (chat/chatPictures.js
+    // regionPicture); the server draws it from the document.
+    cbRef.current.onAreaSelection?.(sel);
   }, []);
 
   // Dismiss the color popup when the user mouses down anywhere outside it
@@ -1785,6 +1852,22 @@ const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, scal
     return () => obs.disconnect();
   }, [pageNumber]);
 
+  // Far from the view (FAR_MARGIN past it) a page gives up its text layer
+  // too; a long read would otherwise leave every visited page's spans in
+  // the DOM. It is rebuilt after the page's next paint. A page rendered on
+  // request (a jump, the cited page) is never far.
+  const [farAway, setFarAway] = useState(false);
+  useEffect(() => {
+    const el = wrapRef.current;
+    if (!el) return;
+    const obs = new IntersectionObserver((entries) => {
+      setFarAway(!entries[0].isIntersecting);
+    }, { root: el.closest(".pdfViewer"), rootMargin: FAR_MARGIN });
+    obs.observe(el);
+    return () => obs.disconnect();
+  }, [pageNumber]);
+  const far = farAway && !forceRender;
+
   // The page's canvases belong to the raster (pdf/pageRaster.js). This
   // component only tells it which page, at what zoom, and whether the page is
   // near enough to the view to hold pixels at all.
@@ -1822,8 +1905,14 @@ const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, scal
   useEffect(() => {
     // A page away from the view keeps its geometry, text and overlays but
     // releases its raster backing stores. Otherwise a long reading session
-    // retains every visited page.
-    if (!page || !renderVisible) { rasterRef.current.show(null); return; }
+    // retains every visited page. Its operator list and decoded images go
+    // too (page.cleanup: pdf.js keeps them per page, a scanned page's
+    // decoded bitmap among them); the next render asks the worker again.
+    if (!page || !renderVisible) {
+      rasterRef.current.show(null);
+      if (page) page.cleanup();
+      return;
+    }
     rasterRef.current.show(page, {
       scale,
       // DISABLE keeps embedded markup annotations (e.g. highlights burned in
@@ -1837,8 +1926,15 @@ const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, scal
   // The text layer and the link boxes: built once per page, after its first
   // pixels, and kept when the page scrolls away or the zoom changes. The
   // layer is laid out at scale 1 and scaled by CSS (its size and transform
-  // in the JSX below), so a zoom has nothing to rebuild.
+  // in the JSX below), so a zoom has nothing to rebuild. Only a page far
+  // from the view drops it (`far`), to be built again after its next paint.
   useEffect(() => {
+    if (far) {
+      if (textRef.current) textRef.current.innerHTML = "";
+      setTextReady(null);
+      setPaintedPage(null);
+      return;
+    }
     if (!page || paintedPage !== page) return;
     let cancelled = false;
     let layer = null;
@@ -1882,7 +1978,7 @@ const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, scal
       }
     })();
     return () => { cancelled = true; layer?.cancel(); };
-  }, [page, paintedPage]);
+  }, [page, paintedPage, far]);
 
   // Once a zoom settles the spans are re-measured at the new size, which is
   // what pdf.js's own viewer does in place of a rebuild: the selection, the
@@ -1972,15 +2068,12 @@ const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, scal
       const swallow = (ce) => { ce.stopPropagation(); ce.preventDefault(); };
       document.addEventListener("click", swallow, { capture: true, once: true });
       setTimeout(() => document.removeEventListener("click", swallow, { capture: true }), 0);
-      // The region's snapshot doubles as a chat attachment. It is cropped
-      // from the document, not off the canvases on screen, which at high zoom
-      // are a preview; a page that has not loaded yields none, and the note
-      // can still be created.
-      const annotationMode = hideEmbeddedAnnots ? pdfjsLib.AnnotationMode.DISABLE : pdfjsLib.AnnotationMode.ENABLE;
+      // The region doubles as a chat attachment: its page and box go along,
+      // and the server draws it from the document (with the handwriting on
+      // it when asked) — nothing is captured off the screen.
       onAreaSelected({
         pageNumber, rect: r, width: box.width, height: box.height,
         tip: { left: box.left + r.x1, top: box.top + r.y2 + 8 },
-        image: page ? cropPage(page, r, box, annotationMode).catch(() => null) : null,
       });
     }
     document.addEventListener("pointerdown", onOther, true);
@@ -2188,7 +2281,7 @@ const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, scal
         return elements;
       })}
       {/* Over the highlights, note badges and link boxes: text boxes, then ink (app.css). */}
-      <MarkupLayers surface={pageNumber} wrapRef={wrapRef} width={baseW} height={baseH} marks={marks} />
+      <MarkupLayers surface={pageNumber} wrapRef={wrapRef} width={baseW} height={baseH} marks={marks} active={renderVisible} />
       {marquee ? (
         <div className="pdfAreaMarquee" style={{
           left: marquee.x1, top: marquee.y1,

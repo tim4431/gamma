@@ -23,6 +23,15 @@ import { guideEvents } from "../guide/events.js";
 const FAST_MS = 1500;
 const SLOW_MS = 30000;
 
+// Whether two listings carry the same jobs in the same state (plain JSON rows).
+function sameListing(a, b) {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    if (a[i] !== b[i] && JSON.stringify(a[i]) !== JSON.stringify(b[i])) return false;
+  }
+  return true;
+}
+
 export function useTasks({ enabled, onFinished }) {
   const [jobs, setJobs] = useState([]);
   const [local, setLocal] = useState([]);
@@ -65,6 +74,9 @@ export function useTasks({ enabled, onFinished }) {
   // before the server saw the download.)
   const take = useCallback((incoming) => {
     const list = incoming.map((j) => (!j.downloaded && fetched.current.has(j.id) ? { ...j, downloaded: true } : j));
+    // A listing that reads like the last one changes nothing: the idle poll
+    // every half minute would otherwise re-render the app for no reason.
+    if (sameListing(jobsRef.current, list)) return;
     const ended = newlyFinished(jobsRef.current, list);
     jobsRef.current = list;
     setJobs(list);

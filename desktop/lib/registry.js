@@ -47,6 +47,13 @@ const DEFAULTS = {
     lastTheme: '',
     // Folder new local servers are created in ('' = <userData>/workspaces).
     dataRoot: '',
+    // Keep running in the tray when the window closes, so clones and
+    // folders on disk keep syncing; and start hidden at login.
+    background: false,
+    openAtLogin: false,
+    // The local server that keeps folders of remote servers on this disk
+    // (main.js keepFolder): started at launch like the clones' hosts.
+    folderHost: '',
   },
   servers: [],
   mirrors: [],
@@ -183,16 +190,52 @@ function addLocal(name) {
   return srv;
 }
 
-function addRemote(name, url) {
+// A typed address without a scheme: http:// when it names the local network
+// — localhost, a private range, a .local/.lan/.home/.internal name, or an
+// explicit port, the self-hosted Gamma's shape — and https:// for a name out
+// on the internet.
+function withScheme(text) {
+  const t = String(text || '').trim();
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(t)) return t;
+  const authority = t.split('/')[0];
+  const host = authority.replace(/:\d+$/, '').toLowerCase();
+  const local = host === 'localhost' || /^127\./.test(host) || /^10\./.test(host) || /^192\.168\./.test(host)
+    || /^172\.(1[6-9]|2\d|3[01])\./.test(host) || /\.(local|lan|home|internal)$/.test(host) || /:\d+$/.test(authority);
+  return (local ? 'http://' : 'https://') + t;
+}
+
+function parseServerUrl(url) {
   let parsed;
   try {
-    parsed = new URL(url);
+    parsed = new URL(withScheme(url));
   } catch {
     throw new Error('Invalid URL');
   }
   if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
     throw new Error('Server URL must be http:// or https://');
   }
+  return parsed;
+}
+
+// A remote server's address, changed: the mirrors of its workspaces follow
+// (they are keyed by the remote's origin).
+function setRemoteUrl(id, url) {
+  const state = load();
+  const srv = state.servers.find((s) => s.id === id && s.type === 'remote');
+  if (!srv) throw new Error('Unknown server');
+  const parsed = parseServerUrl(url);
+  if (state.servers.some((s) => s.id !== id && s.type === 'remote' && s.url === parsed.origin)) {
+    throw new Error(`${parsed.origin} is already listed`);
+  }
+  const before = srv.url;
+  srv.url = parsed.origin;
+  for (const m of state.mirrors) if (m.remoteUrl === before) m.remoteUrl = parsed.origin;
+  save(state);
+  return srv;
+}
+
+function addRemote(name, url) {
+  const parsed = parseServerUrl(url);
   const state = load();
   if (state.servers.some((s) => s.type === 'remote' && s.url === parsed.origin)) {
     throw new Error(`${parsed.origin} is already listed`);
@@ -343,7 +386,7 @@ function dirSize(dir) {
 }
 
 module.exports = {
-  init, load, get, addLocal, addRemote, rename, remove, markOpened, getLastOpened,
+  init, load, get, addLocal, addRemote, setRemoteUrl, withScheme, rename, remove, markOpened, getLastOpened,
   getSettings, setSettings, getWindowBounds, setWindowBounds, dirSize,
   defaultDataRoot, dataRoot, localsUnderRoot, setDataRoot,
   originOf, findMirror, mirrorOf, addMirror, setServerMirrors,

@@ -19,7 +19,8 @@ is created with `CREATE TABLE IF NOT EXISTS` (no migration step), lives in
 backups harmlessly, and is purged with the index when no page carries the
 document any more (`pdf_index.purge_unused`).
 
-Who writes it: `storage.store_pdf` (uploads, imports, file chips) and
+Who writes it: `storage.store_pdf` (imports, a PDF the fetch handoff held),
+`storage.store_pdf_stream` (uploads, a file chip's PDF among them) and
 `storage.store_pdf_path` (an upload sent in parts, `upload_parts.finish`;
 [api.md](api.md) "/uploads/parts"), the `/api/pdf` proxy's save path and
 `/api/clip` schedule it on a background thread the moment the file lands, so
@@ -62,7 +63,12 @@ document). The viewer's load effect composes them:
    eviction, a second after the commit so mounted pages are not torn out from
    under pdf.js. The byte cache (`PDF_CACHE`) holds one entry, which pays
    for this one: re-reading bytes from IndexedDB costs tens of milliseconds,
-   re-parsing them is the expensive half.
+   re-parsing them is the expensive half. The in-document search (Ctrl+F)
+   reads each page's text from pdf.js once per parsed document and caches it
+   per parsed document (`SEARCH_TEXT`, a WeakMap freed with the document): the
+   first query over a book extracts every page, the next is a regex over
+   strings. A query the panel has moved past stops at its next page and
+   answers `stale`, which the panel ignores.
 2. **Otherwise the manifest and the bytes are fetched in parallel.** On a
    cold open (nothing on screen yet) the manifest alone commits a
    **skeleton**: page boxes of exact size, no document. The host's `"layout"`
@@ -96,6 +102,12 @@ document). The viewer's load effect composes them:
    (`backfillLocalCopy`), and the second open is warm. The `/api/pdf` proxy
    streams from its upstream and cannot answer ranges: it always downloads
    whole, and it redirects to `/api/uploads` once a local copy exists.
+   The IndexedDB cache (`gamma-pdf-cache`, version 2) keeps the newest
+   `DISK_CACHE_MAX` papers (30) and at most `DISK_CACHE_MAX_BYTES` (512 MB)
+   of them: the buffers sit in one store and their dates and sizes in
+   another (`meta`), so the eviction walk reads sizes, never a buffer. A
+   buffer that is also handed to pdf.js is copied before it is stored (pdf.js
+   transfers it to the worker); the backfill's download is stored as it is.
 4. **Layout from the manifest, or measured.** When the manifest describes
    the opened file (same page count) its sizes are used and the eight-page
    measure loop and the 50-page background refinement are skipped, which also
@@ -195,7 +207,11 @@ and measurements behind it are in
   `--scale-factor: 1` on `.pdfViewer`, so the layer is laid out at scale 1
   and `PdfPage` scales it with a CSS transform. After a zoom settles
   `TextLayer.update` re-measures the spans at the new size. A text selection
-  and the citation marks survive a zoom.
+  and the citation marks survive a zoom. Only a page far from the view
+  drops it. A second observer with `FAR_MARGIN` (four viewport heights each
+  way; pdf.js's own viewer keeps about ten pages) empties the layer and
+  forgets the paint, and the next paint builds it again. A book read
+  through would otherwise leave every page's spans in the DOM.
 - **One renderer.** Every raster goes through `renderRegion`: the base, the
   detail canvas, the highlight capture (`captureRef`) and the area-note
   snapshot (`cropPage`). The last two are drawn from the document, not copied
@@ -212,7 +228,12 @@ twice.
 
 `PdfPage`'s intersection observer is rooted at the PDF scroller with 900 CSS
 pixels of look-ahead. A page outside it releases both backing stores
-(`show(null)`) and keeps its geometry, text and overlays; it repaints on
+(`show(null)`) and calls `page.cleanup()`, which frees pdf.js's operator list
+and decoded images for the page. The next render asks the worker again. Its
+ink and text-box layers are mounted only
+inside the look-ahead unless the page carries marks (`MarkupLayers`'s
+`active`: each layer listens on the window and the document, and a book has
+hundreds of pages). The page keeps its geometry, text and overlays; it repaints on
 return without waiting, and a forced render (jumps, the cited page) still
 works. A page inside the look-ahead but outside the render window holds only
 its base. Release and unmount cancel the pending pdf.js renders.
@@ -236,8 +257,10 @@ supersampled canvas again below the cap, and the text layer and its
 selection surviving a zoom. It also covers live ink, native Chromium touch
 swipes with no mid-gesture offset writes, and the paper and ink colour in a
 paper theme, which is what a doubled blend would change. The rendering cases
-are written to run in Playwright WebKit too (`GAMMA_E2E_BROWSER=webkit`).
-The detail-canvas assertions have only been run in Chromium.
+run in Playwright WebKit too (`GAMMA_E2E_BROWSER=webkit`, after
+`npx playwright install webkit`) and pass there; the swipe and pinch steps
+are Chromium-only, since they drive CDP touch events. A step sets the zoom
+it starts from, since the steps before it differ by browser.
 `tests/pageRaster.test.mjs` and `tests/canvasSize.test.mjs` pin the raster
 rules and the canvas bounds; other unit tests pin the snap timing,
 cancellation and older-Safari fallback. Physical iPad GPU limits, render

@@ -18,8 +18,8 @@ sites/
                    page.html wraps a Markdown page on its own (the privacy policy, the terms),
                    doc.html one with the documentation sidebar
   build.mjs        assembles dist/ (see below)
-  src/index.js     the Worker: sends www to the apex, serves everything else
-                   from the assets binding
+  src/index.js     the Worker: sends www and plain http to https://gammapdf.com,
+                   serves everything else from the assets binding
   wrangler.jsonc   the Worker config, custom domains gammapdf.com + www
   dist/            build output, ignored
 ```
@@ -81,9 +81,11 @@ itself has no accounts. The hero's **Try the demo** button, the header's
 throwaway guest workspace ([docs/dev/guests.md](../docs/dev/guests.md)).
 
 `_redirects` gives the short links (`/download`, `/download/windows`,
-`/guide`, `/github`, …); its sources must be relative paths, so the `www.`
-to apex redirect is the Worker script's job. `_headers` sets the security
-headers and a one-day cache on `/media/*`.
+`/guide`, `/github`, …); its sources must be relative paths, so the
+redirect from `www.` and plain `http://` to `https://gammapdf.com` is the
+Worker script's job. It is one 301 hop, so search engines index only the
+https apex. `_headers` sets the security headers and a one-day cache on
+`/media/*`.
 
 ## Run locally
 
@@ -132,7 +134,7 @@ needs two repository secrets:
 2. Deploy. Wrangler creates the Worker, uploads `dist/`, and attaches
    `gammapdf.com` and `www.gammapdf.com` as custom domains (DNS records and
    certificates are created automatically). The Worker script then sends
-   `www` to the apex.
+   `www` and plain http to `https://gammapdf.com`.
 3. Until the zone exists, comment the `routes` block out; the deploy then
    lands on the `*.workers.dev` preview URL only.
 

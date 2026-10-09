@@ -106,7 +106,9 @@ workspace to read it. Personal workspaces cannot be joined.
 ## Defaults, conversion and storage
 
 Each account chooses one personal workspace as its **default**. Requests that
-name no workspace, including extension clips, use this library. Deleting the
+name no workspace use this library — the browser extension's saves unless a
+workspace is picked in it ([extension.md](extension.md)), an older client, a
+link without `ws`. Deleting the
 default selects the oldest remaining personal workspace. The last personal
 workspace cannot be deleted independently of the account.
 
@@ -423,6 +425,15 @@ filtered mirror of the share host) is not a clone and is marked
 `publishing` instead. The whole design — the change feed, the three-way merge,
 edit-beats-delete, the conflict list — is [mirror.md](mirror.md).
 
+## Folders on disk
+
+The desktop app keeps a folder of a workspace as a directory on the
+computer it runs on: each paper's PDF beside a Markdown note of its
+highlights and notes, one way, kept up to date. A folder's *Keep on this
+computer…* or the desktop app's sync panel starts it. The layout, the rounds,
+the links and the client that does the same without the app are
+[folder_sync.md](folder_sync.md).
+
 ## Current limits
 
 - Some viewer screens still expose write controls; the server refuses those
@@ -432,7 +443,6 @@ edit-beats-delete, the conflict list — is [mirror.md](mirror.md).
   one merged conversation ([chat_history.md](chat_history.md)).
 - The account directory is visible to every signed-in non-guest account.
 - Cross-workspace page transfer uses export and merge, with no direct move.
-- The browser extension clips into the default workspace.
 - The desktop shell refreshes its workspace list on navigation or menu open.
 
 The historical reasoning is in [research/workspaces.md](../research/workspaces.md).

@@ -123,8 +123,12 @@ def list_accounts(request: Request, q: str = ""):
 def login_guest(request: Request):
     """A fresh throwaway account for this visitor (gamma/guests.py): its own
     workspace, gone ``guest_ttl_hours`` after now."""
-    if cloud_auth.settings()["share_host"]:
-        # a public share host holds strangers' published pages: no guests there
+    if not guests.logins_open():
+        # no guests at all (GAMMA_GUEST_MAX=0, a hosted container, a public
+        # share host holding strangers' published pages), or an admin turned
+        # them off (Settings → Server → Guests): what /api/server-config's
+        # `guest` says. The places are counted in new_guest, which answers
+        # 503 once they are gone.
         raise HTTPException(status_code=403, detail="This server has no guest access.")
 
     # Each call creates an account and a workspace directory: a tight rate per

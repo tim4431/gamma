@@ -70,6 +70,9 @@ jobs:
           npm ci
           npm test
           npm run build
+      # the desktop shell's pure module (desktop/lib/keeping.js): no
+      # dependencies, so no install; the Electron suite itself is run by hand
+      - run: node --test desktop/test/keeping.test.js
       # the iPad app's JavaScript (ipad/core/entry.js): bundled and run in a
       # bare context like its JavaScriptCore; the app itself is ipad.yml's
       - run: |

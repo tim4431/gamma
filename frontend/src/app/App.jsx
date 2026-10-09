@@ -28,6 +28,7 @@ import {
   useTextScale,
 } from "../shared/ui/Widgets";
 import { BlockTree, _dragState } from "../editor/BlockTree";
+import { refIdsOf, refLabelsByBlock } from "../editor/refLabels.js";
 import { BacklinksPanel } from "../editor/BacklinksPanel";
 import { dropGapAtPoint, findObject } from "../editor/MdObject";
 import { cutObject, moveObjectInTree } from "../editor/mdObjects";
@@ -38,6 +39,10 @@ import { uploadPdf } from "../shared/lib/uploadParts";
 import { CardLabels, KindToggle, ListFindBox, ListSearchElsewhere, PageCard, SelectCheck, ViewToggle } from "../library/FileBrowser";
 import { createChatSession } from "../chat/chatSession";
 import { providerModels } from "../chat/modelPrefs";
+import { addPictures, isPdfPicture, pictureUrl, regionBox, regionPicture, round4 } from "../chat/chatPictures.js";
+// Agent tools whose applied action changes the open page's block tree
+// (handleAgentEvent reloads it and lights the block up).
+import { BLOCK_TOOLS } from "../chat/agentSteps.js";
 import SearchPanel from "../search/SearchPanel";
 import LibraryEmpty from "../library/LibraryEmpty";
 import { ContextMenu, MenuButton, MenuDivider, MenuItem, MenuLabel, MenuScope, MenuSelect, SubMenuItem, menuGroups } from "../shared/ui/Menus";
@@ -48,7 +53,7 @@ import { useWheelPan } from "../shared/ui/wheelPan";
 import {
   ActivityIcon, AlertCircleIcon, ArrowDownIcon, ArrowLeftIcon, ArrowUpDownIcon, ArrowUpIcon, BookIcon, BugIcon, CheckIcon, CopyIcon, DownloadIcon, ExportIcon,
   ExternalLinkIcon, EyeIcon, EyeOffIcon, FileGlyph, FileIcon, FileTextIcon, FitWidthIcon, FolderGlyph,
-  FilePlusIcon, PaperclipIcon, FolderIcon, FolderOpenIcon, FolderPlusIcon, HelpCircleIcon, HomeIcon, ImportIcon, InfoIcon, LabelGlyph, LabelIcon,
+  FilePlusIcon, PaperclipIcon, FolderIcon, FolderOpenIcon, FolderPlusIcon, HardDriveIcon, HelpCircleIcon, HomeIcon, ImportIcon, InfoIcon, LabelGlyph, LabelIcon,
   LanguagesIcon, LanguagesOffIcon, LinkIcon, LogOutIcon, MaximizeIcon, MenuIcon, MinimizeIcon, MoveVerticalIcon, PenIcon, PinIcon, PlusIcon,
   RectSelectIcon, RefreshIcon, SettingsIcon, SparklesIcon, TextCursorIcon, Trash2Icon, TrashIcon, TypeIcon, UploadIcon,
   ScissorsIcon, ShareIcon, UserIcon, UsersIcon, XIcon, ZoomInIcon, ZoomOutIcon, NotebookIcon, SheetIcon,
@@ -104,7 +109,9 @@ import { dotTone, noticeAction, noticeText } from "./notices";
 import { useBlockHistory } from "../editor/blockHistory.js";
 import { useMarks } from "../markup/MarkupLayers";
 import { MarkupToolbar } from "../markup/MarkupToolbar";
-import { PageToolsContext, useStableActions } from "../markup/PageTools";
+import { PageToolsContext } from "../markup/PageTools";
+import { makeStableActions, useStableActions } from "../shared/lib/stableActions.js";
+import { keepIfSame, sameMap, sameObject } from "../shared/lib/keepIfSame.js";
 import { isTextBox, normalizeTextBox } from "../markup/textBox.js";
 import { useTextBoxes } from "../markup/useTextBoxes";
 import { MAX_STROKES, appendStroke, duplicateStrokes, eraseAt, inkBounds, inkProps, mergeInk, newCanvasInk, newInk, pdfPositionOf, removeStrokes, restyleStrokes, serializeInk, strokeBounds, toolStyle, transformStrokes, translateStrokes } from "../ink/ink";
@@ -346,9 +353,6 @@ const RECENTS_CAP = 24;
 // over half a window header, grip and close button included; 6 keeps the
 // splitter grabbable and leaves the header its own.
 const SASH_MARGINS = { coarse: 6, fine: 6 };
-// Agent tools whose applied action changes the open page's block tree
-// (handleAgentEvent reloads it and lights the block up).
-const AI_BLOCK_TOOLS = ["edit_block", "create_block", "move_block"];
 // The Settings panes of the AI group (old pane names resolve first): entering
 // one loads the masked key list and the prompt drafts.
 const AI_SETTINGS_PANES = ["ai", "assistant", "tools"];
@@ -2146,11 +2150,21 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   const snapPushTimerRef = useRef(null);
   const snapsWritableRef = useRef(canWriteWorkspace);
   snapsWritableRef.current = canWriteWorkspace;
+  // The localStorage copy is written once the captures rest: serializing
+  // every cover (hundreds of KB of JPEG) after each scroll-settle capture
+  // was a synchronous stall in the middle of reading. The ref and the state
+  // change at once; the cache lags by a moment and is what the next load
+  // paints first — the server holds the covers themselves.
+  const snapsWriteTimerRef = useRef(null);
   function setSnapsState(next) {
     pageSnapsRef.current = next;
     setPageSnaps(next);
-    const u = prefsUserRef.current;
-    if (u) { try { localStorage.setItem(`gamma-page-snaps:${u}`, JSON.stringify(next)); } catch {} }
+    clearTimeout(snapsWriteTimerRef.current);
+    snapsWriteTimerRef.current = setTimeout(() => {
+      snapsWriteTimerRef.current = null;
+      const u = prefsUserRef.current;
+      if (u) { try { localStorage.setItem(`gamma-page-snaps:${u}`, JSON.stringify(pageSnapsRef.current)); } catch {} }
+    }, 1500);
   }
   // Scroll-settle captures can fire every second or two while reading; batch
   // the uploads so steady reading costs one small PUT burst per 5s, always
@@ -2532,7 +2546,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     multiContextChars, setMultiContextChars,
     toolRounds, setToolRounds, agentReadChars, setAgentReadChars, agentPerms, setAgentPerms,
     agentEnabled, setAgentEnabled,
-    chatImgAutoClear, setChatImgAutoClear,
+    chatImgAutoClear, setChatImgAutoClear, chatPictures, setChatPictures,
     fetchInBackground, setFetchInBackground, delegateReads, setDelegateReads,
   } = appPrefs;
   const viewerWrapRef = useRef(null);
@@ -2930,19 +2944,44 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       : prev?.id === id && prev.from === from && prev.to === to ? prev : { id, from, to })), 120);
   }
   useEffect(() => { clearTimeout(noteSelTimerRef.current); setNoteSel(null); }, [focusedBlockId]);
-  // Figures pending send in the chat (data URLs) — pasted into the chat input
-  // or captured by a Ctrl+drag area selection on the PDF. Lives here (not in
-  // ChatDock) so the viewer can attach even while the chat window is closed.
+  // Pictures pending send in the chat (chat/chatPictures.js): the ones the
+  // dock stored (pasted, picked) and regions of PDF pages the server draws
+  // — a Ctrl+drag area selection, a rectangle highlight's click, "Attach
+  // what I see". Lives here (not in ChatDock) so the viewer can attach even
+  // while the chat window is closed.
   const [chatImages, setChatImages] = useState([]);
-  // Data URLs that came from the PDF (area drags / rect-highlight clicks), as
-  // opposed to images pasted into the chat input. The auto-clear preference
-  // below only ever drops these — a pasted figure must survive PDF clicks.
+  // The pictures that came from the PDF (by URL), as opposed to pictures
+  // pasted into the chat input. The auto-clear preference below only ever
+  // drops these — a pasted picture must survive PDF clicks.
   const pdfImagesRef = useRef(new Set());
-  function addChatImage(dataUrl) {
-    const seen = pdfImagesRef.current;
-    seen.add(dataUrl);
-    while (seen.size > 16) seen.delete(seen.values().next().value);
-    setChatImages((prev) => prev.length >= 4 || prev.includes(dataUrl) ? prev : [...prev, dataUrl]);
+  function addChatPicture(picture) {
+    if (!picture) return;
+    if (isPdfPicture(picture)) {
+      const seen = pdfImagesRef.current;
+      seen.add(pictureUrl(picture));
+      while (seen.size > 16) seen.delete(seen.values().next().value);
+    }
+    setChatImages((prev) => addPictures(prev, [picture], chatPictures));
+  }
+  // "Attach what I see": the visible part of each PDF page in view (at most
+  // two), with the handwriting on it, as regions the server renders.
+  function attachViewToChat() {
+    const scroller = viewerWrapRef.current?.querySelector(".pdfViewer");
+    if (!scroller || !focusedBlockId) return;
+    const vr = scroller.getBoundingClientRect();
+    const added = [];
+    for (const wrap of scroller.querySelectorAll(".pdfPageWrap[data-page]")) {
+      const r = wrap.getBoundingClientRect();
+      if (!r.width || !r.height) continue;
+      const x0 = Math.max(vr.left, r.left), x1 = Math.min(vr.right, r.right);
+      const y0 = Math.max(vr.top, r.top), y1 = Math.min(vr.bottom, r.bottom);
+      if (x1 - x0 < 40 || y1 - y0 < 40) continue;
+      const box = [(x0 - r.left) / r.width, (y0 - r.top) / r.height, (x1 - r.left) / r.width, (y1 - r.top) / r.height].map(round4);
+      const whole = box[0] <= 0.001 && box[1] <= 0.001 && box[2] >= 0.999 && box[3] >= 0.999;
+      added.push(regionPicture("view", focusedBlockId, Number(wrap.dataset.page), whole ? null : box, { ink: true }));
+      if (added.length >= 2) break;
+    }
+    added.forEach(addChatPicture);
   }
   // Ref-mirror of the snapshot auto-clear preference for the mouseup listener.
   const chatImgAutoClearRef = useRef(chatImgAutoClear);
@@ -2954,7 +2993,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   function addHighlightToChat(h, additive) {
     if (!h) return;
     if (h.position?.area) {
-      pdfCaptureRef.current?.(h).then((img) => { if (img) addChatImage(img); });
+      // Its region, as the server renders it from the document.
+      addChatPicture(regionPicture("area", focusedBlockId, h.position.pageNumber, regionBox(h.position)));
     } else {
       addPdfSelection(h.content?.text, additive, highlightSpot(h.position));
     }
@@ -3478,7 +3518,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
             // Optionally the same gesture drops PDF snapshots pending in the
             // chat (Settings → AI chat). Pasted images are never touched.
             if (chatImgAutoClearRef.current && pdfImagesRef.current.size) {
-              setChatImages((prev) => prev.filter((s) => !pdfImagesRef.current.has(s)));
+              setChatImages((prev) => prev.filter((p) => !pdfImagesRef.current.has(pictureUrl(p))));
             }
           }
           return;
@@ -4137,7 +4177,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // link's, which may name another server). One the search doesn't return
   // is gone, and its 404 says whether it is in Recently deleted (`trashed`,
   // its page's trash entry): the chip and the card show it so
-  // (BlockTree's `refLabelOf`) rather than the bare id or a card that never
+  // (`refLabelOf`, editor/refLabels.js) rather than the bare id or a card that never
   // loads. A share view never asks: a share learns nothing beyond its pages.
   async function onFetchRefs(ids, probe = ids) {
     try {
@@ -4178,7 +4218,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     const ids = new Set();
     const walk = (list) => {
       for (const b of list || []) {
-        for (const m of (b.content || "").matchAll(/\[\[([a-zA-Z0-9_-]+)\]\]/g)) ids.add(m[1]);
+        for (const [id, ref] of refIdsOf(b)) if (ref) ids.add(id);
         walk(b.children);
       }
     };
@@ -4487,7 +4527,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       }
       return;
     }
-    if (!AI_BLOCK_TOOLS.includes(a.tool)) return;
+    if (!BLOCK_TOOLS.includes(a.tool)) return;
     // The edit landed: drop its preview, mark the block, and show the real
     // change. With the page socket up it arrives as ops like any other
     // client's; otherwise refetch (the open editor survives the swap).
@@ -6699,6 +6739,23 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   }
 
   const treeBlocks = useMemo(() => flattenBlocks(blocks), [blocks]);
+  const treeById = useMemo(() => new Map(treeBlocks.map((b) => [b.id, b])), [treeBlocks]);
+  // Every row's [[ref]] and Gamma-link labels, resolved once per tree
+  // change (editor/refLabels.js); a row's entry keeps its identity while
+  // its labels read the same, so a memoized row (BlockTree.jsx) does not
+  // re-render for a keystroke elsewhere.
+  const refLabelsPrevRef = useRef(new Map());
+  const refLabelsById = useMemo(() => {
+    const next = refLabelsByBlock(blocks, treeById, refCache, refLabelsPrevRef.current);
+    refLabelsPrevRef.current = next;
+    return next;
+  }, [blocks, treeById, refCache]);
+  // The row callbacks are made inline in the render below (rowProps). The
+  // rows get one stable wrapper per name that calls the latest one
+  // (shared/lib/stableActions.js), so a memoized row re-renders only when
+  // one of its data props changed; a name that is null or undefined (a
+  // feature the row gates on) stays so.
+  const stableRowProps = useMemo(makeStableActions, []);
   // What the open page carries — THE switch for layout and page-level
   // affordances (docs/dev/block_centric.md). pdfUrl is only the viewer's input.
   const pageAttach = useMemo(() => pageAttachment(focusedBlock), [focusedBlock]);
@@ -6727,7 +6784,11 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     return () => cancelAnimationFrame(raf);
   }, [notebook, focusedBlockId]); // eslint-disable-line react-hooks/exhaustive-deps
   const nbInk = useMemo(() => (nbSheets.length ? inkBySheet(blocks) : new Map()), [nbSheets, blocks]);
-  const sheetNumbers = useMemo(() => new Map(nbSheets.map((s) => [s.id, s.index + 1])), [nbSheets]);
+  // Kept by identity while the numbering is the same (nbSheets is derived
+  // from the tree on every edit): a row prop of every block.
+  const sheetNumbersPrev = useRef(new Map());
+  const sheetNumbers = useMemo(() => keepIfSame(sheetNumbersPrev, new Map(nbSheets.map((s) => [s.id, s.index + 1])), sameMap),
+    [nbSheets]);
   nbSheetsRef.current = nbSheets;
   // The page tools every surface's layers read (markup/PageTools.jsx), and
   // per surface its marks (markup/MarkupLayers.jsx): a PDF page's ink groups
@@ -6942,8 +7003,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       // when the tour ends, the PDF snapshots added since go again (a sent
       // one is gone already, a pasted image is never touched).
       snapshotDemo: () => {
-        const before = new Set(chatImages);
-        return () => setChatImages((prev) => prev.filter((src) => before.has(src) || !pdfImagesRef.current.has(src)));
+        const before = new Set(chatImages.map(pictureUrl));
+        return () => setChatImages((prev) => prev.filter((p) => before.has(pictureUrl(p)) || !pdfImagesRef.current.has(pictureUrl(p))));
       },
       prepareNote: (text) => {
         const flat = flattenBlocks(blocks);
@@ -7445,10 +7506,11 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     prevHighlightsRef.current = { json, value: next };
     return next;
   }, [blocks, treeBlocks]);
-  const highlightColors = useMemo(
-    () => Object.fromEntries(highlights.map((h) => [h.id, h.color])),
-    [highlights]
-  );
+  // Kept by identity while the colours are the same (highlights are rebuilt
+  // from the tree on every edit): a row prop of every block.
+  const highlightColorsPrev = useRef({});
+  const highlightColors = useMemo(() => keepIfSame(highlightColorsPrev, Object.fromEntries(highlights.map((h) => [h.id, h.color])), sameObject),
+    [highlights]);
   useEffect(() => {
     if (pdfHidden) return;
     const id = pendingJumpRef.current;
@@ -7594,6 +7656,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   useEffect(() => {
     if (!pdfUrl || pdfHidden) return;
     let ticking = false;
+    let settle = 0;
     function onScroll(e) {
       // Fast bail without any DOM query: the notes/chat panes pass through
       // here too, but only the PDF scroller itself matters.
@@ -7608,18 +7671,29 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         if (pages.length === 0) return;
         const cr = target.getBoundingClientRect();
         const midY = cr.top + cr.height / 2;
-        for (const el of pages) {
-          const r = el.getBoundingClientRect();
-          if (r.top <= midY && r.bottom >= midY) {
-            const n = parseInt(el.dataset.page);
-            // Record via the tracker, not a pdfPageNumber effect: scrolling
-            // within a page (or back to a page the state already shows) fires
-            // no state change, but must still re-assert this window's
-            // position over one pulled from another window.
-            if (n) { setPdfPageNumber(n); recordScrollPageRef.current?.(n); }
-            break;
-          }
+        // The pages are stacked top to bottom: a binary search over their
+        // boxes finds the one under the middle of the view in a few layout
+        // reads instead of one per page above it.
+        let lo = 0, hi = pages.length - 1, found = null;
+        while (lo <= hi) {
+          const mid = (lo + hi) >> 1;
+          const r = pages[mid].getBoundingClientRect();
+          if (r.bottom < midY) lo = mid + 1;
+          else if (r.top > midY) hi = mid - 1;
+          else { found = pages[mid]; break; }
         }
+        const n = found ? parseInt(found.dataset.page) : 0;
+        if (!n) return;
+        // Record via the tracker, not a pdfPageNumber effect: scrolling
+        // within a page (or back to a page the state already shows) fires
+        // no state change, but must still re-assert this window's
+        // position over one pulled from another window.
+        recordScrollPageRef.current?.(n);
+        // The state (what the session restore saves) follows once the scroll
+        // rests: a flick through fifty pages is one render of the app, not
+        // fifty.
+        clearTimeout(settle);
+        settle = setTimeout(() => setPdfPageNumber(n), 300);
       });
     }
     // Capture-phase listener on the document: element scroll events don't
@@ -7630,8 +7704,20 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     // and a remount silently drops a per-element listener, ending position
     // tracking for the rest of the session.
     document.addEventListener('scroll', onScroll, { capture: true, passive: true });
-    return () => document.removeEventListener('scroll', onScroll, { capture: true });
+    return () => { clearTimeout(settle); document.removeEventListener('scroll', onScroll, { capture: true }); };
   }, [pdfUrl, pdfHidden]);
+
+  // Names the paper a citation pill points at, in the chat and in the notes:
+  // the page title for its preview, and a short form (first author's
+  // surname, else the title cut short) for text that cites several papers.
+  function citeSource(id) {
+    const page = homeBlocks.find((b) => b.id === id);
+    const title = page?.content || (id === focusedBlockId ? pageTitle : "") || refCache[id]?.content || "";
+    if (!title) return null;
+    const first = page?.properties?.meta?.authors?.[0];
+    const surname = first ? String(first).trim().split(/\s+/).pop() : "";
+    return { title, short: surname || (title.length > 24 ? `${title.slice(0, 24).replace(/\s+\S*$/, "")}…` : title) };
+  }
 
   // One navigation for every Gamma link card on screen (chat, notes, embeds).
   // Declared above every early return below — it is a hook, and the share
@@ -7639,8 +7725,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // Rebuilt when what the handlers close over changes; a click reads the
   // current value, so the cards themselves never re-render for navigation.
   const gammaNav = useMemo(
-    () => ({ openPage: openPageLink, openBlock: openBlockLink }),
-    [focusedBlockId, blocks, refCache, shareMode],
+    () => ({ openPage: openPageLink, openBlock: openBlockLink, citeSource }),
+    [focusedBlockId, blocks, refCache, shareMode, homeBlocks, pageTitle],
   );
 
   // A share link that can't open yet: sign in (signed-in / specific-people
@@ -7904,16 +7990,6 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                 }}
               >{focusedBlockId ? (pageTitle || t("Untitled")) : t("Notes")}</h3>
             )}
-            {focusedBlockId && collab.peers.length ? (
-              <PresenceBar
-                peers={collab.peers}
-                onJump={(id) => {
-                  if (!id) return;
-                  scrollToBlock(id);
-                  reveal(id);
-                }}
-              />
-            ) : null}
             {focusedBlockId && !shareMode ? (
               <div className={labelEditing ? "categoryFrontmatter editing" : "categoryFrontmatter"}>
                 <span className="categoryIcon" title={t("Labels")}>
@@ -8038,6 +8114,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
               </div>
             ) : null}
             </div>
+            {/* The right of the header: the page's buttons, with who else is
+                here under them. */}
+            <div className="pageHeadSide">
             {!shareMode && focusedBlockId ? (
               <div className="pageActionCol">
                 {hasSheets && !notebook ? (
@@ -8380,7 +8459,17 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                 </button>
               </div>
             ) : null}
-
+            {focusedBlockId && collab.peers.length ? (
+              <PresenceBar
+                peers={collab.peers}
+                onJump={(id) => {
+                  if (!id) return;
+                  scrollToBlock(id);
+                  reveal(id);
+                }}
+              />
+            ) : null}
+            </div>
           </div>}
 
           <div className={`blockList${aiScan ? " aiPageRead" : ""}`} ref={notesTextScale.ref} style={notesTextScale.style}>
@@ -8923,13 +9012,15 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                   // The editing bar's Undo / Redo and the iPad keyboard's.
                   onUndo: readOnly ? undefined : undoBlocks,
                   // Area-highlight cards show their crop, re-rendered from the
-                  // loaded document each session (never stored, same as the
-                  // chat attach); docNonce retries crops once the PDF is up,
+                  // loaded document each session (never stored; the chat's
+                  // area selection is drawn by the server instead); docNonce
+                  // retries crops once the PDF is up,
                   // docKey keeps one paper's crops from serving another's.
                   captureArea: capturePdfArea,
                   docNonce: pdfDocNonce,
                   docKey: pdfUrl,
-                  allBlocks: treeBlocks,
+                  lookupBlock: (id) => treeById.get(id),
+                  refLabelsById,
                   highlightColors,
                   refCache,
                   onFetchRefs,
@@ -9062,7 +9153,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                     setFocusedId(id);
                     return true;
                   },
-                  tree: blocks,
+                  getTree: () => blocks,
                   keybindings,
                   // Attach a block to the next chat message (chip with its id).
                   onAddToChat: shareMode ? null : addBlockToChat,
@@ -9229,7 +9320,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                     {notesInkStrip}
                     <FileChipContext.Provider value={fileChipCtx}>
                       <NoteSheetContext.Provider value={noteSheetCtx}>
-                        <BlockTree blocks={blocks} readOnly={readOnly} rowProps={rowProps} />
+                        <BlockTree blocks={blocks} readOnly={readOnly} rowProps={stableRowProps(rowProps)} />
                       </NoteSheetContext.Provider>
                     </FileChipContext.Provider>
                     {backlinksPanel}
@@ -9289,7 +9380,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           onOpenPage={openPageLink}
           pdfSelections={pdfSelections} setPdfSelections={setPdfSelections}
           chatNotes={chatNotes} setChatNotes={setChatNotes} focusedNote={focusedNote} onSelectionSent={() => setNoteSel(null)}
-          chatImages={chatImages} setChatImages={setChatImages}
+          chatImages={chatImages} setChatImages={setChatImages} chatPictureBudget={chatPictures}
+          onAttachView={!homeMode && pageAttach && pdfUrl && !pdfHidden ? attachViewToChat : undefined}
           chatModel={chatSendModel} setChatModel={setChatModel}
           chatEffort={chatEffort} setChatEffort={setChatEffort}
           chatSpeed={chatSpeed} setChatSpeed={setChatSpeed}
@@ -10211,7 +10303,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                 addHighlightToChat(highlights.find(h => h.id === hlId), additive);
               }}
               onHighlightContext={setHighlightMenu}
-              onAreaSelection={addChatImage}
+              onAreaSelection={(sel) => addChatPicture(regionPicture("area", focusedBlockId, sel.pageNumber,
+                regionBox({ boundingRect: sel.rect, width: sel.width, height: sel.height })))}
               onSelectionFinished={readOnly ? undefined : (position, content, hideTip, extras) => {
                 if (extras?.link) {
                   setLinkDialog({ position, content });
@@ -10729,6 +10822,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         context={{
           chatImgAutoClear,
           setChatImgAutoClear,
+          chatPictures,
+          setChatPictures,
           chatContextChars,
           setChatContextChars,
           metaContextChars,
@@ -11038,6 +11133,16 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                     title={t("Download every page in this folder — Markdown, a Logseq graph, a Zotero library, or a Gamma export")}
                     onClick={() => { setHomeMenu(null); setExportFolder(id); setExportOpen(true); }}
                   >{t("Export…")}</MenuItem>,
+                  // In the desktop app: its page preload passes the message to the app,
+                  // which asks for a directory and keeps the folder there (desktop/docs/architecture.md).
+                  IS_DESKTOP && folders.length === 1 && (
+                    <MenuItem key="disk" icon={HardDriveIcon}
+                      title={t("Keep this folder in a directory on this computer: each paper's PDF beside a Markdown note, kept up to date by the desktop app")}
+                      onClick={() => {
+                        setHomeMenu(null);
+                        window.postMessage({ source: "gamma-app", type: "keep-folder-on-disk", ws: getCurrentWorkspace(), folder: id }, window.location.origin);
+                      }}>{t("Keep on this computer…")}</MenuItem>
+                  ),
                 ],
                 [
                   lib.organize && (

@@ -7,6 +7,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from conftest import account_of, make_user
+from gamma.ai_tools import mcp_tools
 from gamma.db import connect_users_db
 from gamma.integrations import resolve_token
 
@@ -82,10 +83,7 @@ def test_discovery_and_browser_signin_roundtrip(browser):
     tools = c.post("/mcp", headers={"Authorization": f"Bearer {token}", "Accept": "application/json, text/event-stream"},
                    json={"jsonrpc": "2.0", "id": 1, "method": "tools/list"})
     assert tools.status_code == 200, tools.text
-    assert {tool["name"] for tool in tools.json()["result"]["tools"]} == {
-        "list_pages", "list_folders", "read_page", "read_block", "read_chats", "view_pdf_page",
-        "search_library", "read_gamma_link", "export_page",
-    }
+    assert {tool["name"] for tool in tools.json()["result"]["tools"]} == mcp_tools() | {"read_gamma_link", "export_page"}
     listing = c.get("/api/integrations/tokens").json()
     connection = next(t for t in listing["tokens"] if t["name"] == "Codex test (OAuth)")
     c.delete("/api/integrations/tokens/" + connection["id"])

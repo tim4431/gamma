@@ -43,6 +43,11 @@ Edge and other Chromium browsers load it the same way. Firefox needs a
   defaults remain shared across servers, except the default folder: each
   server remembers its own (picked in options, or the one you last saved
   into).
+- With more than one library (workspace) you can write to, a **Workspace**
+  row appears above the folder in the popup and in options. Saves, folders,
+  labels, the "already saved" check and *Open in Gamma* follow the library
+  picked there. Each server remembers its own choice, and each library its
+  own default folder.
 - On a paper's landing page or PDF tab the icon shows **PDF / arX / DOI**;
   click it, pick a folder and labels, **Save to Gamma**. The popup names the
   paper (title, authors, year, venue looked up from the DOI / arXiv id when

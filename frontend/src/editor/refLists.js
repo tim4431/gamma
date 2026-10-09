@@ -4,6 +4,7 @@
 // that title. Pure, so node tests it (tests/refLists.test.mjs).
 import { createLibraryMatcher } from "../library/librarySearch.js";
 import { plainSnippet } from "../search/snippets.js";
+import { REF_RE } from "./refLabels.js";
 
 const PICKER_ROWS = 8;
 const RECENT_PAGES = 4; // offered before anything is typed
@@ -36,7 +37,7 @@ export function pickerCounts(pageCount, blockCount) {
 // A block's markdown as the picker shows it: one plain line (search's
 // plainSnippet), its [[refs]] as their labels.
 export function refBlockText(content, labelOf) {
-  const src = String(content || "").replace(/\[\[([a-zA-Z0-9_-]+)\]\]/g, (m, id) => {
+  const src = String(content || "").replace(REF_RE, (m, id) => {
     const label = String(labelOf?.(id) || id).replace(/[[\]|\n]+/g, " ").trim();
     return `[[${label || id}]]`;
   });

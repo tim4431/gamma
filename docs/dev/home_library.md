@@ -401,7 +401,8 @@ strip included:
 - Share…, Export… and Ask AI act on the page itself, so they open it first
   and run once it is on screen (`openPageThen`).
 - A folder: Open | New page here · New subfolder | Move to ▸ · Move up ·
-  Move down | Rename · Pin · Share… · Export… | Delete.
+  Move down | Rename · Pin · Share… · Export… · Keep on this computer…
+  (desktop app only, a folder filed once) | Delete.
 - The folder's Move to ▸ lists the top level ("All files") and every
   folder the acted-on folders can go into: none of them, nor one below
   them (`folderTargets` in `library/libraryUtils.js`), checked where they
@@ -474,7 +475,10 @@ version comes back live under the same ids, its chats and op log kept
 
 `gamma/trash.py` deletes pages trashed more than `KEEP_DAYS` (30) days ago
 for good through `ops.delete_page`, the one path that drops a page's chats
-and index rows. The sweeper runs at startup and every hour (`lifespan`).
+and index rows. The sweeper runs at startup and every hour (`lifespan`). It
+skips a workspace whose `pages.db` and WAL are unchanged since the last
+sweep, until the next expiry that sweep found (`trash._due`), so a host with
+many workspaces does not open them all every hour.
 Delete permanently and Empty take the same path at once. On a share host,
 whose pages are published copies, `DELETE /api/blocks/{id}` deletes for good
 directly. Endpoints: [api.md](api.md) "Recently deleted". Editors and owners
@@ -504,5 +508,5 @@ there is none. The chip then shows the page's title struck through
 (`.trashedRef`, the dashed look of an unlinked chip) and the card says the
 page is in Recently deleted; a click opens the notice with Restore. An id
 nothing holds renders as the unlinked chip, its card as "Embedded note not
-found." (BlockTree's `refLabelOf`). The browser suite's `trash` group
+found." (`refLabelOf`, `editor/refLabels.js`). The browser suite's `trash` group
 (`frontend/tests/e2e/scenarios/trash.mjs`) covers the flow.

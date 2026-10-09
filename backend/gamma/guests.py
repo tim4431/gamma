@@ -1,6 +1,8 @@
 """Guest accounts: throwaway accounts that keep nothing (docs/dev/guests.md).
 
-``POST /api/login-guest`` mints a fresh account per visitor (``new_guest``):
+``POST /api/login-guest`` mints a fresh account per visitor (``new_guest``),
+while this server takes guests (``logins_open``: it can, and the admin's
+switch is on):
 ``guest-<8 url-safe chars>``, ``is_guest = 1``, an empty password hash, its
 own personal workspace with the welcome page, and — when
 ``GAMMA_GUEST_SEED`` names a workspace backup zip — that zip restored into
@@ -22,19 +24,27 @@ from fastapi import HTTPException
 from . import config, workspaces
 from .db import connect_users_db, format_stamp, new_account_id, page_now, parse_stamp
 from .logbuf import log
-from .server_settings import guest_ttl_hours
+from .server_settings import guest_logins_enabled, guest_ttl_hours
 
 SWEEP_INTERVAL_S = 600  # the app lifespan runs ``delete_expired`` at startup and this often
 NAME_PREFIX = "guest-"
 
 
-def logins_open() -> bool:
-    """Whether this server takes guest logins: not with ``GAMMA_GUEST_MAX=0``,
-    not on a hosted container (``config.guest_max``) and not on a share
-    host, which holds strangers' published pages."""
+def logins_possible() -> bool:
+    """Whether this server could take guest logins at all: not with
+    ``GAMMA_GUEST_MAX=0``, not on a hosted container (``config.guest_max``)
+    and not on a share host, which holds strangers' published pages. False
+    leaves Settings → Server without its Guests rows: there is nothing an
+    admin could turn on."""
     from . import cloud_auth  # local: cloud_auth imports auth, which imports this module
 
     return config.guest_max() > 0 and not cloud_auth.settings()["share_host"]
+
+
+def logins_open() -> bool:
+    """Whether this server takes guest logins now: ``logins_possible()`` and
+    the admin's switch (``server_settings.guest_logins_enabled``)."""
+    return logins_possible() and guest_logins_enabled()
 
 
 def expires_at(created_at: str, ttl_hours: int | None = None) -> str:

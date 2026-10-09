@@ -8,11 +8,11 @@ import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
 import "katex/dist/katex.min.css";
-import { CheckIcon, ChevronDownIcon, CopyIcon, ExternalLinkIcon, FileGlyph, FileTextIcon, PinIcon, QuoteIcon, XIcon } from "./Icons";
+import { CheckIcon, ChevronDownIcon, CopyIcon, ExternalLinkIcon, FileGlyph, FileTextIcon, PinIcon, XIcon } from "./Icons";
 import { useWheelPan } from "./wheelPan";
 import { doublePress, menuPress } from "./press.js";
 import { assetUrl, copyText } from "../lib/utils";
-import { gammaLinksIn, parseGammaLink } from "../model/gammaLinks.js";
+import { citesSeveralPapers, parseGammaLink } from "../model/gammaLinks.js";
 import { remarkPaperLinks } from "../lib/remarkPaperLinks.js";
 import { mermaidFence, normalizeChatMarkdown, remarkMermaid } from "../lib/mermaidMarkdown.js";
 import { MermaidDiagram, mermaidCodeProps } from "./MermaidDiagram";
@@ -208,31 +208,31 @@ const CHAT_COPY_COMPONENTS = {
 };
 
 // Navigation for Gamma's own links, provided once by App: the chat, the
-// rendered notes and anything else that renders a link card opens a page in
-// place instead of reloading the app. { openPage(id, citation) }.
+// rendered notes and anything else that renders a library link opens a page
+// in place instead of reloading the app. { openPage(id, citation),
+// openBlock(id), citeSource(pageId) → {title, short} | null }; citeSource
+// names the paper a citation pill points at.
 const GammaNavContext = createContext(null);
 
-// A link into a Gamma library rendered as a card — the same pill in the chat
-// and in a note. `link` comes from parseGammaLink, `label` is a resolved page
-// title when the caller has one (the note renderer resolves it through the
-// [[ref]] cache); `children` is the author's own link text.
+// A page or block link into a Gamma library rendered as a card, in the chat
+// and in a note (a citation is a CitationPill). `link` comes from
+// parseGammaLink, `label` is a resolved page title when the caller has one
+// (the note renderer resolves it through the [[ref]] cache); `children` is
+// the author's own link text.
 //
 // The card only claims the link once the id resolves locally: `link.foreign`
 // (a link written against another host, e.g. copied before the server moved,
 // or pointing at somebody else's Gamma) is handed to the card by a caller
 // that could resolve it, and falls back to a plain external link otherwise.
-function GammaLinkCard({ link, label, guide, children }) {
+function GammaLinkCard({ link, label, children }) {
   const nav = useContext(GammaNavContext);
-  const cited = link.kind === "citation";
   // A bare link (autolinked, or link text that is the URL itself) is not a
-  // label — the resolved title or the page number reads better.
+  // label — the resolved title reads better.
   const raw = textOf(children).trim();
   const text = /^(https?:\/\/|\/?\?)/i.test(raw) ? "" : raw;
-  const title = cited
-    ? (link.quote ? t("Show this passage in the PDF: “{quote}”", { quote: link.quote }) : t("Open this paper at page {page}", { page: link.page }))
-    : t("Open this page");
+  const title = t("Open this page");
   return (
-    <a href={link.href || "#"} className={`gammaLinkCard gammaLink-${link.kind}`} data-guide={guide}
+    <a href={link.href || "#"} className={`gammaLinkCard gammaLink-${link.kind}`}
       title={label && label !== text ? t("{label} — {title}", { label: label, title: title }) : title}
       onMouseDown={(e) => e.stopPropagation()}
       onClick={(e) => {
@@ -240,48 +240,38 @@ function GammaLinkCard({ link, label, guide, children }) {
         e.preventDefault();
         e.stopPropagation();
         if (link.kind === "block") nav.openBlock?.(link.blockId);
-        else nav.openPage?.(link.pageId, cited ? { pageId: link.pageId, page: link.page, quote: link.quote } : null);
+        else nav.openPage?.(link.pageId, null);
       }}>
-      {/* The quote mark promises a passage; a page or page-number link keeps
-          the document icon. */}
-      {link.quote ? <QuoteIcon size={14} aria-hidden="true" /> : <FileTextIcon size={14} aria-hidden="true" />}
+      <FileTextIcon size={14} aria-hidden="true" />
       {/* The author's own link text, markup and all; a bare link falls back
-          to the resolved title, then to the page number. */}
-      <span className="gammaLinkLabel">
-        {text ? children : label || (cited ? `p. ${link.page}` : "page")}
-        {!text && label && cited ? `, p. ${link.page}` : null}
-      </span>
-      {/* The source paper beside the author's own label ("p. 3 · Paper"). */}
+          to the resolved title. */}
+      <span className="gammaLinkLabel">{text ? children : label || "page"}</span>
+      {/* The page beside the author's own label ("see this · Paper"). */}
       {text && label && label !== text ? <span className="gammaLinkSrc">{label}</span> : null}
     </a>
   );
 }
 
-// The chat's citations are compact pills (CitationPill) — only inside the
-// chat transcript, which provides this context: { titleOf(pageId) →
-// {title, short} | null } names the cited paper. Other ChatMarkdown users (a
-// note's preview on the PDF, the slide citation) keep the card.
-const ChatCiteContext = createContext(null);
-// Whether the reply being rendered cites more than one paper: then every
-// page-number pill also names its source ("Vaswani · p. 2").
+// Whether the chat reply being rendered cites more than one paper (a note
+// passes its own `multi`).
 const CiteMultiContext = createContext(false);
 const PAGE_LABEL = /^pp?\.\s*\d/i;
 
-// A citation inside a reply: a small tinted pill on the text's baseline, so a
-// "p. 2" mid-sentence doesn't push the lines apart. Hovering, focusing or
-// long-pressing it previews the cited passage (paper, PDF page, the quote);
-// a click (or Enter) opens it in the PDF like the card does.
-function CitationPill({ link, children }) {
+// A citation, in a chat reply or a note: a small tinted pill on the text's
+// baseline, so a "p. 2" mid-sentence doesn't push the lines apart. Hovering,
+// focusing or long-pressing it previews the cited passage (paper, PDF page,
+// the quote); a click (or Enter) opens it in the PDF. `multi`: the text
+// cites several papers, so a page-number pill also names its source
+// ("Vaswani · p. 2"). `guide` marks the chat's citations for the tour.
+function CitationPill({ link, multi, guide, children }) {
   const nav = useContext(GammaNavContext);
-  const cite = useContext(ChatCiteContext);
-  const multi = useContext(CiteMultiContext);
   const ref = useRef(null);
   const timer = useRef(null);
   const longPressed = useRef(false); // a long-press opened the preview: its click doesn't navigate
   const [preview, setPreview] = useState(null); // {left, top | bottom}
   const raw = textOf(children).trim();
   const own = /^(https?:\/\/|\/?\?)/i.test(raw) ? "" : raw;
-  const source = cite?.titleOf?.(link.pageId) || null;
+  const source = nav?.citeSource?.(link.pageId) || null;
   const pageLabel = `p. ${link.page}`;
   const named = multi && source?.short && (!own || PAGE_LABEL.test(own));
   const show = () => {
@@ -305,7 +295,7 @@ function CitationPill({ link, children }) {
   const tipId = `cite-${link.pageId}-${link.page}`;
   return (
     <>
-      <a ref={ref} href={link.href || "#"} className="chatCite gammaLink-citation" data-guide="chat.citation"
+      <a ref={ref} href={link.href || "#"} className="citePill gammaLink-citation" data-guide={guide}
         aria-describedby={preview ? tipId : undefined}
         onMouseEnter={() => later(show, 250)}
         onMouseLeave={hide}
@@ -324,15 +314,15 @@ function CitationPill({ link, children }) {
           e.stopPropagation();
           nav.openPage?.(link.pageId, { pageId: link.pageId, page: link.page, quote: link.quote });
         }}>
-        {named ? <span className="chatCiteSrc" data-markdown-copy-ignore="">{source.short} · </span> : null}
+        {named ? <span className="citePillSrc" data-markdown-copy-ignore="">{source.short} · </span> : null}
         <span className="gammaLinkLabel">{own ? children : pageLabel}</span>
       </a>
       {preview ? createPortal(
-        <div id={tipId} role="tooltip" className="chatCitePreview" style={preview}>
-          <div className="chatCitePreviewTitle">{source?.title || t("This paper")}</div>
-          <div className="chatCitePreviewPage">{t("PDF page {page}", { page: link.page })}</div>
-          {link.quote ? <blockquote className="chatCitePreviewQuote">“{link.quote}”</blockquote> : null}
-          <div className="chatCitePreviewHint">{t("Open in PDF")} <kbd>↵</kbd></div>
+        <div id={tipId} role="tooltip" className="citePreview" style={preview}>
+          <div className="citePreviewTitle">{source?.title || t("This paper")}</div>
+          <div className="citePreviewPage">{t("PDF page {page}", { page: link.page })}</div>
+          {link.quote ? <blockquote className="citePreviewQuote">“{link.quote}”</blockquote> : null}
+          <div className="citePreviewHint">{t("Open in PDF")} <kbd>↵</kbd></div>
         </div>, document.body) : null}
     </>
   );
@@ -343,14 +333,13 @@ function CitationPill({ link, children }) {
 // Context supplies the latest navigation callback without replacing the link.
 function ChatMarkdownLink({ href, children, title }) {
   const nav = useContext(GammaNavContext);
-  const inChat = useContext(ChatCiteContext);
+  const multi = useContext(CiteMultiContext);
   const link = nav ? parseGammaLink(href, window.location.origin) : null;
   // The chat writes its own citations, so a link it produced is this
   // library's by construction; a foreign host in chat text is an ordinary
   // external link.
-  const cited = link?.kind === "citation";
-  if (link && !link.foreign && cited && inChat) return <CitationPill link={{ ...link, href }}>{children}</CitationPill>;
-  if (link && !link.foreign) return <GammaLinkCard link={{ ...link, href }} guide={cited ? "chat.citation" : undefined}>{children}</GammaLinkCard>;
+  if (link && !link.foreign && link.kind === "citation") return <CitationPill link={{ ...link, href }} multi={multi} guide="chat.citation">{children}</CitationPill>;
+  if (link && !link.foreign) return <GammaLinkCard link={{ ...link, href }}>{children}</GammaLinkCard>;
   return <a href={href} className="gammaLinkCard" target="_blank" rel="noreferrer" title={title || href}>
     <ExternalLinkIcon size={14} aria-hidden="true" /><span className="gammaLinkLabel">{children}</span>
   </a>;
@@ -363,8 +352,7 @@ const CHAT_MARKDOWN_COPY_COMPONENTS = { ...CHAT_MARKDOWN_COMPONENTS, ...CHAT_COP
 // GammaNavContext; Ctrl/Cmd-click still opens a new tab.
 const ChatMarkdown = React.memo(function ChatMarkdown({ text, copyBlocks = false }) {
   const normalized = useMemo(() => normalizeChatMarkdown(text), [text]);
-  const multiSource = useMemo(() => new Set(gammaLinksIn(normalized)
-    .filter((link) => link.kind === "citation").map((link) => link.pageId)).size > 1, [normalized]);
+  const multiSource = useMemo(() => citesSeveralPapers(normalized), [normalized]);
   return (
     <div onCopy={handleMarkdownCopy}>
       <CiteMultiContext.Provider value={multiSource}>
@@ -744,7 +732,7 @@ function useTextScale({ enabled } = {}) {
 
 export {
   AutoGrowTextarea,
-  ChatCiteContext,
+  CitationPill,
   CopyBox,
   GammaLinkCard,
   GammaNavContext,

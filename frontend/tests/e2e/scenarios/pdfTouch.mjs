@@ -387,6 +387,11 @@ export async function pdfTouchScenarios({ server, browser, alice, makePdf, step,
       }, [png.toString("base64"), darkest]);
     };
     const paperPixel = () => screenPixel(20, 150, 2, 2, false);
+    // From 200%, the last step before the cap bites (the second step above):
+    // twelve steps in are past the cap, twelve back out are under it. The
+    // zoom the steps before this one leave differs by browser (two of them
+    // run in Chromium only), so it is set here.
+    await zoomUntil((await boxWidth()) > 1224 ? "Zoom out" : "Zoom in", 1224);
     // One light theme and the flipped dark page: the two ways paper is composited.
     for (const [theme, flip, expected] of [["sepia", false, [253, 246, 227]], ["dark", true, [15, 15, 15]]]) {
       await page.evaluate(([theme, flip]) => {

@@ -8,7 +8,8 @@ import re
 import sqlite3
 from urllib.request import Request as URLRequest
 
-from .ai_protocols.base import reasoning_text
+from .ai_pictures import picture as _picture
+from .ai_protocols.base import Protocol, reasoning_text
 from .blocks_store import (FOLDERS, LABELS, PATH_SEP, fetch_subtree, filing, folder_paths, label_names,
                            page_attachment, page_for_doc, page_root_id)
 from .db import connect_data_db, connect_pages_db, page_now, safe_doc_id
@@ -18,7 +19,7 @@ from .net_guard import guarded_urlopen
 from .notebook import is_sheet
 from .pdf_index import doc_pages, pdf_missing
 from .pdf_text import (MAX_PAGES, PAGE_LABEL_RE, PDF_EXTRACT_FAILED, extract_pages, extract_text,
-                       extract_text_pages, image_part, outline, page_count, page_label, render_page)
+                       extract_text_pages, outline, page_count, page_label, render_page)
 from .server_settings import can_store
 from .storage import find_upload_file, put_upload
 from .text_box import box_page, is_text_box
@@ -63,23 +64,6 @@ SELECTION_WINDOW_CHARS = 10_000
 
 def canonical_tool(name: str) -> str:
     return DEPRECATED_TOOLS.get(name, name)
-
-
-def parse_images(images: list) -> list[tuple[str, str]]:
-    """Return validated ``(media_type, base64)`` pairs from image data URLs."""
-    parsed = []
-    for item in (images or [])[:4]:
-        match = re.match(
-            r"^data:(image/(?:png|jpeg|jpg|gif|webp));base64,([A-Za-z0-9+/=]+)$",
-            str(item),
-        )
-        if not match:
-            continue
-        media_type, data = match.group(1), match.group(2)
-        if len(data) > 8_000_000:
-            continue
-        parsed.append(("image/jpeg" if media_type == "image/jpg" else media_type, data))
-    return parsed
 
 
 def parse_files(files: list) -> list[str]:
@@ -200,9 +184,6 @@ MAX_CONTEXT_BLOCKS = 12
 MAX_NOTE_SELECTIONS = 6
 MAX_NOTE_PASSAGE_CHARS = 4000
 MAX_BLOCK_SECTION_CHARS = 12_000
-# Attached handwriting blocks whose picture (gamma/ink_view.py) rides with
-# one message, so "transcribe this" needs no tool call.
-MAX_INK_PICTURES = 2
 
 
 def request_note_selections(payload) -> list[dict]:
@@ -252,7 +233,8 @@ def notes_focus_section(ws: str, payload, notes_seen: dict | None = None,
     ``notes_seen`` receives ``{block_id: text}`` for every block shown in
     full — what an edit_block replace may start from (ai_tools.notes_seen).
     ``crops``, when given, receives the pictures of attached handwriting
-    blocks and pages of paper (up to ``MAX_INK_PICTURES``)."""
+    blocks and pages of paper (gamma/ai_pictures.py dicts, group "ink";
+    the request's picture budget decides how many go)."""
     focus = str(getattr(payload, "focus_block_id", "") or "").strip()
     chips = [str(b).strip() for b in (getattr(payload, "context_blocks", None) or [])
              if str(b).strip()][:MAX_CONTEXT_BLOCKS]
@@ -338,7 +320,7 @@ def notes_focus_section(ws: str, payload, notes_seen: dict | None = None,
                                "\"here\" mean it):\n" + text)
             def ink_picture(block_id: str):
                 """An attached handwriting block's (or page of paper's)
-                picture, as the wires take it; None for any other block."""
+                picture (an ai_pictures dict); None for any other block."""
                 row = conn.execute("SELECT properties FROM unified_blocks WHERE id = ?",
                                    (block_id,)).fetchone()
                 try:
@@ -353,21 +335,25 @@ def notes_focus_section(ws: str, payload, notes_seen: dict | None = None,
                 except Exception as error:  # a picture that fails never fails the message
                     log.warning(f"[ai_chat] handwriting picture of {block_id} failed: {error}")
                     return None
-                return image_part(shown["image"]) if shown.get("image") else None
+                if not shown.get("image"):
+                    return None
+                where = (f"PDF page {shown['pdf_page']}" if shown.get("pdf_page") else "a page of paper")
+                what = ("The attached page of paper" if is_sheet(props)
+                        else f"The attached handwriting block [{block_id}] on {where}")
+                return _picture(shown["image"], f"{what}, {shown['image'][2]}×{shown['image'][3]} px",
+                                "ink", block_id=block_id)
 
             if chips:
                 shown = []
                 budget = MAX_BLOCK_SECTION_CHARS
-                pictures = 0
                 for block_id in chips:
                     if block_id in pages:
                         continue
                     text = outline(block_id, max(500, budget // max(1, len(chips))))
-                    if text and crops is not None and pictures < MAX_INK_PICTURES:
+                    if text and crops is not None:
                         image = ink_picture(block_id)
                         if image:
                             crops.append(image)
-                            pictures += 1
                             text += "\n  (a picture of this handwriting is attached to the message)"
                     if text:
                         shown.append(text)
@@ -477,14 +463,15 @@ def estimate_tokens(text: str) -> int:
     return ascii_chars // 4 + (len(text) - ascii_chars)
 
 
-_IMAGE_TOKENS = 1600  # a picture at the viewer's render size
-
-
 def prompt_tokens(messages: list, system: str = "", tools: list | None = None,
-                  images: list | None = None) -> int:
+                  images: list | None = None, picture_tokens: int = 0) -> int:
     """estimate_tokens over everything a request carries but its native
     PDF files (their token cost is the provider's; a chat that attaches one
-    is already the user's explicit choice)."""
+    is already the user's explicit choice). ``picture_tokens`` is what one
+    picture costs on the wire the request goes over (every picture is
+    normalized to the render size first, gamma/ai_pictures.py), else the
+    protocols' default (``Protocol.picture_tokens``)."""
+    picture_tokens = picture_tokens or Protocol.picture_tokens
     total = estimate_tokens(system) + estimate_tokens(json.dumps(tools or [])) if (system or tools) else 0
     for message in messages:
         content = message.get("content")
@@ -494,13 +481,13 @@ def prompt_tokens(messages: list, system: str = "", tools: list | None = None,
             total += estimate_tokens(json.dumps(message["tool_calls"], ensure_ascii=False))
         for text in reasoning_text(message.get("reasoning")).values():
             total += estimate_tokens(text)
-        total += _IMAGE_TOKENS * len(message.get("images") or ())
-    return total + _IMAGE_TOKENS * len(images or ())
+        total += picture_tokens * len(message.get("images") or ())
+    return total + picture_tokens * len(images or ())
 
 
 def build_messages(payload, context: str, with_tools: bool = False,
                    located: list | None = None, message_context: str = "",
-                   drop_turns: int = 0) -> list[dict]:
+                   drop_turns: int = 0, picture_lines: str = "") -> list[dict]:
     """Build common chat messages, injecting context once before a user turn.
 
     With ``with_tools`` (an agent chat), each saved reply's tool calls are
@@ -516,7 +503,11 @@ def build_messages(payload, context: str, with_tools: bool = False,
     ``drop_turns`` leaves out that many of the oldest history items (a
     conversation the model's window can't hold any more). A saved reply's
     ``reasoning`` (the thinking its wire reported) rides on its first
-    replayed assistant turn, for the wire that echoes it back.
+    replayed assistant turn, for the wire that echoes it back. A history
+    item carrying ``pictures_sent`` (``ai_pictures.history_pictures``: the
+    pictures of an earlier message read back, and the lines naming them)
+    keeps them on its turn as ``images``; ``picture_lines`` names this
+    message's own pictures under the question (the wires attach them).
     """
     history = [h for h in (payload.history or []) if not h.get("error")]
     if drop_turns > 0:
@@ -551,6 +542,9 @@ def build_messages(payload, context: str, with_tools: bool = False,
                         result = _REVERTED_NOTE + result
                     messages.append({"role": "tool", "call_id": f"call_h{i}_{j}",
                                      "content": result})
+        sent = history_item.get("pictures_sent") if role == "user" else None
+        if sent and sent.get("lines"):
+            content = f"{content}\n\n{sent['lines']}" if content.strip() else sent["lines"]
         if not content.strip():
             # An organizer reply can be tool actions with no prose; providers
             # (Anthropic especially) reject empty content blocks.
@@ -558,13 +552,16 @@ def build_messages(payload, context: str, with_tools: bool = False,
         if role == "user" and context and not context_used:
             content = f"{CONTEXT_INTRO}\n\n{context}\n\nUser question: {content}"
             context_used = True
-        messages.append({"role": role, "content": content, **({"reasoning": thinking} if thinking else {})})
+        messages.append({"role": role, "content": content, **({"reasoning": thinking} if thinking else {}),
+                         **({"images": list(sent["images"])} if sent and sent.get("images") else {})})
     content = final_prompt(payload, located)
     head = f"{CONTEXT_INTRO}\n\n{context}" if context and not context_used else ""
     if message_context:
         head = (f"{head}\n\n---\n\n" if head else "") + f"{MESSAGE_CONTEXT_INTRO}\n\n{message_context}"
     if head:
         content = f"{head}\n\nUser question: {content}"
+    if picture_lines:
+        content = f"{content}\n\n{picture_lines}"
     messages.append({"role": "user", "content": content})
     return messages
 
@@ -866,10 +863,10 @@ _HEAD_GROUNDING_CHARS = 2000  # head slice (title/abstract) kept for grounding
 # How much of a passage's window goes BEFORE it: the set-up, definitions and
 # heading a passage leans on sit just ahead of it, not after.
 _WINDOW_BEFORE_CHARS = 2500
-# Pictures of selected regions whose text is unreliable: at most this many
-# per message, grown to at least this much of the page (a lone symbol
-# needs its line around it), plus a margin.
-_MAX_SELECTION_CROPS = 3
+# Pictures of selected regions whose text is unreliable (the request's
+# picture budget says how many go, gamma/ai_pictures.py): grown to at least
+# this much of the page (a lone symbol needs its line around it), plus a
+# margin.
 _CROP_MIN_W, _CROP_MIN_H = 0.3, 0.05
 _CROP_PAD = 0.01
 _CROP_MAX_SIDE = 1200
@@ -1154,20 +1151,19 @@ def render_selection_crop(path, page: int, box):
 
 
 def selection_crops(ws: str, doc_id: str, passages: list[dict],
-                    located: list[dict]) -> list[tuple[str, str]]:
+                    located: list[dict], title: str = "") -> list[dict]:
     """Pictures of the selected regions whose text can't be trusted — the
     passage wasn't found in the extracted text, or its text reads as a
     formula (``text_unreliable``) — rendered from the PDF by the page and
-    box the viewer reported, as ``(media_type, base64)`` image parts. Marks
-    ``crop`` on each passage's located entry so the question says a picture
-    is attached, with the ``box`` it was cut from so the chat can show it."""
+    box the viewer reported, as ai_pictures dicts (group "selection").
+    Marks ``crop`` on each passage's located entry so the question says a
+    picture is attached, with the ``box`` it was cut from so the chat can
+    show it."""
     images = []
     path = pdf_path(ws, doc_id)
     if not path:
         return images
-    for passage, where in zip(passages, located):
-        if len(images) >= _MAX_SELECTION_CROPS:
-            break
+    for n, (passage, where) in enumerate(zip(passages, located), start=1):
         if not (passage["page"] and passage["box"]):
             continue
         if where["found"] and not text_unreliable(passage["text"]):
@@ -1175,16 +1171,22 @@ def selection_crops(ws: str, doc_id: str, passages: list[dict],
         box = _crop_box(passage["box"])
         image = render_selection_crop(path, passage["page"], box)
         if image:
-            images.append(image_part(image))
+            label = (f"Selected passage {n} of {len(passages)}" if len(passages) > 1 else "The selected passage")
+            images.append(_picture(image, f"{label} on PDF page {passage['page']}"
+                                   + (f" of “{title[:80]}”" if title else "")
+                                   + (" (its text reads as a formula or table)" if where["found"]
+                                      else " (its text was not found in the extracted text)")
+                                   + f", {image[2]}×{image[3]} px", "selection"))
             where.update(crop=True, box=list(box))
     return images
 
 
 # Area highlights (Ctrl+drag rectangles: a highlight block whose
 # pdf_position carries area: true and no quote) have no text to show the
-# model; their region goes as a picture instead — at most this many per
-# page per read, the rest named by page number.
-MAX_AREA_CROPS = 4
+# model; their region goes as a picture instead. This is a guard against a
+# page covered in rectangles, not the budget: the request's picture budget
+# (gamma/ai_pictures.py) decides how many of a message's pictures go.
+MAX_AREA_CROPS = 12
 _AREA_PAD = 0.005
 
 
@@ -1249,20 +1251,23 @@ def under_sheet(conn, block_id: str) -> bool:
     return False
 
 
-def render_area_crops(ws: str, doc_id: str, areas: list) -> list[tuple[str, str]]:
-    """The pictures of area highlights, ``[(media_type, base64)]`` in the
-    order given — ``areas`` are ``(page, box)`` pairs, already capped by
-    the caller. A region that fails to render is skipped."""
+def render_area_crops(ws: str, doc_id: str, areas: list, title: str = "", page_id: str = "") -> list[dict]:
+    """The pictures of area highlights, ai_pictures dicts (group "area") in
+    the order given — ``areas`` are ``(page, box)`` pairs, already capped
+    by the caller. A region that fails to render is skipped."""
     images = []
     if not areas:
         return images
     path = pdf_path(ws, doc_id)
     if not path:
         return images
-    for page, box in areas:
+    for n, (page, box) in enumerate(areas, start=1):
         image = render_selection_crop(path, page, box)
         if image:
-            images.append(image_part(image))
+            images.append(_picture(image, f"Area highlight {n} (a rectangle the user drew) on PDF page {page}"
+                                   + (f" of “{title[:80]}”" if title else "")
+                                   + f", {image[2]}×{image[3]} px",
+                                   "area", page_id=page_id, page=page))
     return images
 
 
@@ -1489,8 +1494,10 @@ def gather_inputs(ws: str, payload, allow_native: bool,
     {"passages": [...]}`` when the message selected passages in it
     (``selection_context``'s located entries).
 
-    ``crops``, when given, receives pictures of selected regions whose text
-    is unreliable (``selection_crops``) for the caller to send as images.
+    ``crops``, when given, receives the pictures that go with the message
+    (gamma/ai_pictures.py dicts): of selected regions whose text is
+    unreliable (``selection_crops``), of area highlights in the notes and
+    of attached handwriting; the caller fits them to the picture budget.
     ``notes_seen``, when given, receives ``{block_id: text}`` for every note
     block the context shows in full (``page_report_section``,
     ``notes_focus_section``) — the texts an agent's edit_block replace may
@@ -1572,7 +1579,7 @@ def gather_inputs(ws: str, payload, allow_native: bool,
                         ws, doc_id, passages, min(text_budget, SELECTION_WINDOW_CHARS * len(passages)),
                         with_head=False)
                     if crops is not None:
-                        crops.extend(selection_crops(ws, doc_id, passages, located))
+                        crops.extend(selection_crops(ws, doc_id, passages, located, title))
                     selected = {"selection": {"passages": located}}
                     if windows and not whole:
                         message_sections.append(
@@ -1592,7 +1599,7 @@ def gather_inputs(ws: str, payload, allow_native: bool,
                 # the selection crops (the wires put images on the last
                 # user turn); the report says how many went.
                 if doc_id and shown.get("areas") and crops is not None:
-                    pictures = render_area_crops(ws, doc_id, shown["areas"])
+                    pictures = render_area_crops(ws, doc_id, shown["areas"], title, page_id)
                     crops.extend(pictures)
                     coverage[-1]["area_pictures"] = len(pictures)
             # Only for a chat with tools: the map is worth its tokens when
