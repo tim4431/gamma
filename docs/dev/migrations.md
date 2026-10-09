@@ -38,8 +38,15 @@ workspace's files), `db.SCHEMA_VERSION` and `db.WS_VERSION_BASE`,
    served: the server comes up with one page instead
    (`app._blocked_app`), the same guidance at every address and as a 503
    JSON under `/api`, built by `migrations.guidance()` and printed by
-   `manage.py migrate` too. It says that nothing was changed and what to
-   run (below, "Below the floor"). Serving a page rather than exiting
+   `manage.py migrate` too. The guidance is `{title, status, summary,
+   steps, fallback}`: `status` is the calm line that comes first (the
+   data is intact; the other workspaces are served), `steps` the way
+   forward, `fallback` the folded-away other way. For data a newer Gamma
+   wrote, the way forward is to update this one (`docker compose pull`,
+   the newer desktop release); restoring that Gamma's pre-upgrade
+   snapshot to stay on this release is the fallback. For data below the
+   floor it names the release to run once (below, "Below the floor").
+   Serving a page rather than exiting
    keeps a restarting container from looping on a log line nobody reads.
    `db.connect_users_db()` refuses an outdated file too (`SchemaOutdated`), so
    no code path can read old shapes with new assumptions. That refusal

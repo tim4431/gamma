@@ -3,6 +3,7 @@
 import asyncio
 import html
 import mimetypes
+import re
 import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -113,41 +114,79 @@ _BLOCKED_PAGE = """<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{title} · Gamma</title>
 <style>
-  :root {{ color-scheme: light dark; }}
+  :root {{ color-scheme: light dark; --fg: #1f2328; --muted: #59636e; --bg: #f6f8fa; --card: #ffffff;
+           --line: #d0d7de; --accent: #3a7bd5; --code: #eff2f5; --ok-bg: #dafbe1; --ok-fg: #1a7f37; }}
+  @media (prefers-color-scheme: dark) {{
+    :root {{ --fg: #e6edf3; --muted: #9198a1; --bg: #0f1115; --card: #16181d; --line: #2d333b;
+             --accent: #5b9bf0; --code: #22262d; --ok-bg: #12341f; --ok-fg: #56d364; }}
+  }}
   body {{ margin: 0; min-height: 100vh; display: grid; place-items: center; padding: 24px; box-sizing: border-box;
-         font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; background: Canvas; color: CanvasText; }}
-  main {{ max-width: 640px; }}
-  h1 {{ font-size: 1.35rem; margin: 0 0 12px; }}
-  ol {{ padding-left: 1.3em; }} li {{ margin: 8px 0; }}
-  code {{ font: 13px/1.4 ui-monospace, Consolas, monospace; padding: 1px 5px; border-radius: 4px;
-          background: color-mix(in srgb, CanvasText 10%, Canvas); overflow-wrap: anywhere; }}
-  p.meta {{ opacity: .7; font-size: .9rem; }}
+         font: 15px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif; background: var(--bg); color: var(--fg); }}
+  main {{ width: 100%; max-width: 600px; }}
+  .brand {{ margin: 0 4px 12px; color: var(--muted); font-size: .85rem; font-weight: 600; letter-spacing: .02em; }}
+  .card {{ background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 28px 28px 24px;
+          box-shadow: 0 1px 2px rgba(0,0,0,.04); }}
+  .status {{ display: inline-flex; align-items: center; gap: 7px; margin: 0 0 14px; padding: 3px 11px 3px 9px;
+            border-radius: 999px; background: var(--ok-bg); color: var(--ok-fg); font-size: .8rem; font-weight: 600; }}
+  .status::before {{ content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }}
+  h1 {{ font-size: 1.3rem; line-height: 1.3; margin: 0 0 10px; letter-spacing: -.01em; overflow-wrap: anywhere; }}
+  p {{ margin: 0 0 20px; color: var(--muted); }}
+  h2 {{ font-size: .78rem; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 0 0 10px; }}
+  ol {{ margin: 0; padding: 0; list-style: none; counter-reset: step; }}
+  ol li {{ position: relative; padding-left: 34px; margin: 0 0 12px; counter-increment: step; }}
+  ol li::before {{ content: counter(step); position: absolute; left: 0; top: 1px; width: 22px; height: 22px;
+                  border-radius: 50%; background: var(--accent); color: #fff; font-size: .75rem; font-weight: 700;
+                  display: grid; place-items: center; }}
+  details {{ margin-top: 18px; padding-top: 12px; border-top: 1px solid var(--line); }}
+  summary {{ cursor: pointer; color: var(--muted); font-weight: 600; font-size: .9rem; }}
+  details ul {{ margin: 10px 0 0; padding-left: 1.2em; color: var(--muted); }} details li {{ margin: 6px 0; }}
+  code {{ font: .88em/1.4 ui-monospace, Consolas, monospace; padding: 1px 5px; border-radius: 5px;
+          background: var(--code); overflow-wrap: anywhere; }}
+  a {{ color: var(--accent); }}
+  .meta {{ margin: 14px 4px 0; color: var(--muted); font-size: .8rem; overflow-wrap: anywhere; }}
 </style></head>
 <body><main>
+<div class="brand">Gamma</div>
+<div class="card">
+<div class="status">{status}</div>
 <h1>{title}</h1>
 <p>{summary}</p>
+<h2>What to do</h2>
 <ol>{steps}</ol>
+{fallback}
+</div>
 <p class="meta">Gamma {build} · data directory <code>{data_dir}</code> · snapshots in <code>{backups_dir}</code> ·
 <a href="https://github.com/tim4431/gamma/blob/main/docs/dev/migrations.md">how upgrades work</a></p>
 </main></body></html>
 """
+_FALLBACK = """<details><summary>{lead}</summary><ul>{steps}</ul></details>"""
+
+
+def _guide_html(text: str) -> str:
+    """Guidance text as HTML: escaped, `code` spans marked up, bare
+    https:// addresses made links."""
+    def plain(part: str) -> str:
+        return re.sub(r"https://[^\s<>\"']*[^\s<>\"'.,;:)]", lambda m: f'<a href="{m[0]}">{m[0]}</a>', part)
+    parts = html.escape(text).split("`")
+    return "".join(f"<code>{p}</code>" if i % 2 else plain(p) for i, p in enumerate(parts))
 
 
 def _blocked_app(guide: dict) -> FastAPI:
     """The app served while the data directory cannot be upgraded by this
     build: one page with the guidance at every address, and a 503 with the
     same text as JSON under /api, so a browser, a script and the desktop
-    shell all learn what to do. Nothing else runs: no routers, no
-    background rounds, nothing that would open the databases."""
+    shell all learn what to do. The page leads with the calm line (the
+    data is intact) and the way forward, and folds the other way away.
+    Nothing else runs: no routers, no background rounds, nothing that
+    would open the databases."""
     app = FastAPI(title="Gamma PDF Annotator", docs_url=None, redoc_url=None, openapi_url=None)
-
-    def step_html(text: str) -> str:
-        parts = html.escape(text).split("`")  # `code` spans in the guidance
-        return "".join(f"<code>{p}</code>" if i % 2 else p for i, p in enumerate(parts))
-
+    fallback = guide["fallback"]
     page = _BLOCKED_PAGE.format(
-        title=html.escape(guide["title"]), summary=step_html(guide["summary"]),
-        steps="".join(f"<li>{step_html(s)}</li>" for s in guide["steps"]),
+        title=html.escape(guide["title"]), status=html.escape(guide["status"]), summary=_guide_html(guide["summary"]),
+        steps="".join(f"<li>{_guide_html(s)}</li>" for s in guide["steps"]),
+        fallback=_FALLBACK.format(lead=html.escape(fallback["lead"]),
+                                  steps="".join(f"<li>{_guide_html(s)}</li>" for s in fallback["steps"]))
+        if fallback["steps"] else "",
         build=html.escape(version.label()), data_dir=html.escape(guide["data_dir"]),
         backups_dir=html.escape(guide["backups_dir"]))
     body = {"error": "data_directory_not_upgradable", "build": version.label(), **guide}

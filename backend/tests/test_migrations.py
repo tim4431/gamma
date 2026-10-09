@@ -888,7 +888,7 @@ def test_a_directory_below_the_floor_is_refused_with_guidance(data_dir):
     assert caught.value.version == migrations.MIN_UPGRADABLE - 1
     guide = migrations.guidance(caught.value)
     assert guide["title"].startswith("This Gamma needs an earlier release")
-    assert "Nothing has been changed" in guide["summary"]
+    assert "Nothing has been changed" in guide["status"] and guide["fallback"]["steps"] == []
     assert any(migrations.UPGRADE_VIA["image"] in step and "docker compose" in step for step in guide["steps"])
     assert any("Desktop app" in step for step in guide["steps"])
     assert guide["data_dir"] == str(config.DATA_DIR)
@@ -922,12 +922,19 @@ def test_newer_data_directory_is_refused(data_dir):
     with pytest.raises(migrations.NewerDataError) as caught:
         migrations.ensure_current()
     guide = migrations.guidance(caught.value)
-    assert guide["title"].startswith("This data directory was written by a newer Gamma")
-    assert any("--restore" in step for step in guide["steps"])
+    assert guide["title"] == "This data was last opened by a newer Gamma"
+    assert guide["status"].startswith("Your data is intact")
+    # the way forward is to update this Gamma; staying on it is the folded-away alternative
+    assert any("docker compose pull" in step for step in guide["steps"])
+    assert not any("--restore" in step for step in guide["steps"])
+    assert any("--restore" in step for step in guide["fallback"]["steps"])
     # ...and the app serves that instead of its routes
     from fastapi.testclient import TestClient
     with TestClient(app_mod.create_app()) as client:
-        assert client.get("/").status_code == 503 and guide["title"] in client.get("/").text
+        page = client.get("/")
+        assert page.status_code == 503 and guide["title"] in page.text and guide["fallback"]["lead"] in page.text
+        assert '<a href="https://github.com/tim4431/gamma/releases">' in page.text
+        assert client.get("/api/health").json()["fallback"] == guide["fallback"]
 
 
 def test_a_failed_step_is_explained_with_its_snapshot(data_dir, monkeypatch):
@@ -941,10 +948,10 @@ def test_a_failed_step_is_explained_with_its_snapshot(data_dir, monkeypatch):
         migrations.ensure_current()
     assert caught.value.step == "26 (block_columns)" and caught.value.version == 25
     guide = migrations.guidance(caught.value)
-    assert guide["title"].startswith("The upgrade of your data directory stopped")
+    assert guide["title"] == "The upgrade paused before it finished"
     assert "schema version 25" in guide["summary"] and "resumes" in guide["summary"]
     assert guide["snapshot"] == caught.value.snapshot and Path(guide["snapshot"]).is_dir()
-    assert any(Path(guide["snapshot"]).name in step for step in guide["steps"])
+    assert any(Path(guide["snapshot"]).name in step for step in guide["fallback"]["steps"])
 
 
 def test_backups_are_pruned_only_on_request(data_dir, monkeypatch):

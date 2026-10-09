@@ -212,8 +212,9 @@ def test_a_failing_step_refuses_that_workspace_only_until_a_retry_succeeds(step)
     assert "disk I/O error" in str(error) and Path(error.snapshot).is_dir()
     assert stamp_of(pages_db(ws)) == 0 and "lazy_step" not in tables_of(pages_db(ws))  # rolled back
     guide = migrations.guidance(error)
-    assert guide["title"] == "This workspace could not be upgraded"
-    assert ws in guide["summary"] and "Every other workspace is served" in guide["summary"]
+    assert guide["title"] == "One workspace could not be upgraded yet"
+    assert guide["status"] == "Every other workspace is served."
+    assert ws in guide["summary"] and "tried again" in guide["summary"]
     assert any(f"workspaces/{ws}/" in s for s in guide["steps"])
     with connect_pages_db("lzFine") as conn:  # every other workspace is served
         assert conn.execute("SELECT ws FROM lazy_step").fetchall() == [("lzFine",)]
