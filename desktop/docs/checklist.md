@@ -79,7 +79,8 @@ or says it is a manual look (**manual**).
 | 5.3 | Remote cards and bar-menu rows carry a reachability dot: green for a live server, red for a dead URL, dim until probed | auto: *remote reachability dot: on for the live server, off for a dead URL* |
 | 5.4 | Foreign URLs (`window.open`, `location` changes, `target=_blank` chips) open in the system browser; the window stays on the server | auto: *navigation guard: foreign URLs open outside, the window stays* |
 | 5.5 | ChatGPT-OAuth sign-in: the auth page opens in the system browser. On a local server Gamma connects by itself once the sign-in finishes (the tab says "Signed in to ChatGPT"); on a remote one the pasted callback URL, or the device code entered at auth.openai.com/codex/device, completes it | manual |
-| 5.6 | HTTPS remote with a self-signed cert shows Chromium's interstitial (expected: use a real cert) | manual |
+| 5.6 | Gamma Cloud sign-in (a server's login page, or Settings → Account & sync → Link): the sign-in page opens in the system browser, whose tab ends on "Signed in to Gamma" with no session of its own; the window comes forward signed in | auto (fake account server): *Gamma Cloud sign-in: the system browser signs in, the window gets the session through the loopback return*; against account.gammapdf.com, with Google too: manual |
+| 5.7 | HTTPS remote with a self-signed cert shows Chromium's interstitial (expected: use a real cert) | manual |
 
 ## 6. Look and feel
 
@@ -119,10 +120,10 @@ or says it is a manual look (**manual**).
 
 | Suite | Date | Result |
 |---|---|---|
-| `npm run e2e` (dev tree, Windows 11) | 2026-09-02 | 21/21 passed |
+| `npm run e2e` (dev tree, Windows 11) | 2026-10-08 | 30/30 passed |
 | `npm run e2e:packaged` (frozen bundle, Windows 11) | 2026-09-02 | 21/21 passed |
 
 Manual items last looked at 2026-09-01 on Windows 11: 1.6, 2.4, 2.5, 6.2,
 6.4, 6.5 (screenshots of the bar + launcher in dark and light). Not yet
-exercised: 5.5, 5.6, 4.7, 4.8, 7.2–7.6, everything macOS (6.3), everything
+exercised: 5.5, 5.6 against account.gammapdf.com, 5.7, 4.7, 4.8, 7.2–7.6, everything macOS (6.3), everything
 Linux beyond the CI smoke (6.7, 7.6), 8.4, 8.5.

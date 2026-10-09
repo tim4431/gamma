@@ -31,6 +31,19 @@ A signed-in account can also LINK its cloud identity (``start?link=1``),
 which is how a desktop user with a local account attaches the cloud
 account to it; the policy is not consulted for that.
 
+The desktop app signs in through the system browser (``begin``'s ``app``):
+its window cannot hold the account server's page (Google refuses embedded
+windows), and the cookie the callback would set lands in that browser. So
+for a sign-in the app started, the callback mints no session: it keeps a
+one-time result for the account (``app_result``) and sends the browser to
+the app's loopback address (``app_return``: ``http://127.0.0.1:<port>/
+cloud-signin``, which only the machine the browser runs on can reach, RFC
+8252 §7.3) with it. The app redeems the result in its own window with the
+verifier of the challenge it started with (``app_claim``), and that
+answer sets the cookie. A sign-in link someone else started delivers its
+result to this person's own machine, never to the one that holds the
+verifier.
+
 Configuration lives in the ``settings`` KV (issuer, client id, the secret
 Fernet-encrypted with the data directory's key, policy) with ``GAMMA_CLOUD_*``
 environment overrides for provisioned containers. The desktop app starts
@@ -72,8 +85,10 @@ server list) is gamma/cloud_sync.py.
 """
 
 import hashlib
+import hmac
 import json
 import platform
+import re
 import secrets
 import socket
 import sqlite3
@@ -106,6 +121,12 @@ INVITED_ONLY = "This server admits invited people only. Ask its admin for an inv
 NOT_CONNECTED = ("This server is not connected to Gamma Cloud yet. An admin connects it in "
                  "Settings → Server → Sign-in.")
 PENDING_TTL = 600
+# The desktop app's loopback return (``app_return``) and how long the result
+# the browser carries there stays redeemable.
+APP_RETURN_PATH = "/cloud-signin"
+APP_RESULT_TTL = 120
+_APP_KEY = "desktop-app"  # the results' namespace in the pending store; a result is its own secret
+_CHALLENGE = re.compile(r"[A-Za-z0-9_-]{43}")
 HTTP_TIMEOUT = 15
 ACCESS_MARGIN = 120   # seconds before its expiry a cached access token is no longer handed out
 _DISCOVERY_TTL = 3600
@@ -373,10 +394,36 @@ def needs_connect() -> bool:
             and urlsplit(public).hostname not in LOOPBACK_HOSTS)
 
 
-def begin(request, *, link_user: str | None, next_path: str) -> str:
+def app_return(raw: str) -> str:
+    """The desktop app's loopback return address, or CloudAuthError: plain
+    HTTP to this machine on any port, at ``APP_RETURN_PATH``, nothing else —
+    not a way to send a browser to any other local service."""
+    refused = CloudAuthError("The app's return address must be http://127.0.0.1:<port>" + APP_RETURN_PATH + ".")
+    try:
+        url = urlsplit(raw or "")
+        port = url.port
+    except ValueError:
+        raise refused from None
+    if (url.scheme != "http" or url.hostname not in LOOPBACK_HOSTS or not port or url.path != APP_RETURN_PATH
+            or url.query or url.fragment or url.username or url.password):
+        raise refused
+    return raw
+
+
+def app_params(return_to: str, challenge: str) -> dict:
+    """``begin``'s ``app`` for a sign-in the desktop app started, or
+    CloudAuthError: its loopback address and the S256 challenge of the
+    verifier it keeps."""
+    if not _CHALLENGE.fullmatch(challenge or ""):
+        raise CloudAuthError("The app's challenge is not an S256 code challenge.")
+    return {"return_to": app_return(return_to), "challenge": challenge}
+
+
+def begin(request, *, link_user: str | None, next_path: str, app: dict | None = None) -> str:
     """Store the pending sign-in and return the account server's authorize
     URL to send the browser to. ``link_user``: the id of the signed-in
-    account the identity is to be linked to."""
+    account the identity is to be linked to. ``app``: a sign-in the desktop
+    app started (``app_params``); the callback answers it at its address."""
     cfg = settings()
     if not cfg["enabled"]:
         raise CloudAuthError("Cloud sign-in is not set up on this server.")
@@ -389,7 +436,7 @@ def begin(request, *, link_user: str | None, next_path: str) -> str:
     nonce = secrets.token_urlsafe(16)
     mcp_oauth.store("cloud_login", base, state,
                     {"verifier": verifier, "nonce": nonce, "link_user": link_user or "", "next": next_path,
-                     "redirect_uri": base + CALLBACK_PATH}, PENDING_TTL)
+                     "redirect_uri": base + CALLBACK_PATH, **({"app": app} if app else {})}, PENDING_TTL)
     params = {"response_type": "code", "client_id": cfg["client_id"], "redirect_uri": base + CALLBACK_PATH,
               "scope": SCOPE, "state": state, "nonce": nonce,
               "code_challenge": _b64url(hashlib.sha256(verifier.encode()).digest()), "code_challenge_method": "S256"}
@@ -473,13 +520,19 @@ def user_agent() -> str:
     return _user_agent(server_url() or "no address")
 
 
-def exchange(request, *, code: str, state: str) -> tuple[dict, dict, str]:
+def take_pending(request, state: str) -> dict | None:
+    """The pending sign-in ``state`` names, used up, or None (expired,
+    already used, never made). Taken first, so a callback that fails still
+    knows whether the desktop app started it."""
+    return mcp_oauth.load("cloud_login", callback_base(request), state, consume=True) if state else None
+
+
+def exchange(request, *, code: str, pending: dict | None) -> tuple[dict, dict, str]:
     """The callback's first half: (claims, tokens, next path) for a valid
-    code + state, or CloudAuthError. A token set whose ID token fails the
-    checks has its refresh token revoked."""
+    code and its pending sign-in (``take_pending``), or CloudAuthError. A
+    token set whose ID token fails the checks has its refresh token revoked."""
     cfg = settings()
     base = callback_base(request)
-    pending = mcp_oauth.load("cloud_login", base, state or "", consume=True) if state else None
     if not pending:
         raise CloudAuthError("This sign-in expired or was already used. Start again.")
     doc = discovery(cfg["issuer"])
@@ -498,6 +551,32 @@ def exchange(request, *, code: str, state: str) -> tuple[dict, dict, str]:
         raise
     claims["_link_user"] = pending["link_user"]
     return claims, tokens, pending["next"] or "/"
+
+
+def app_result(user_id: str, next_path: str, challenge: str) -> str:
+    """A finished sign-in the desktop app started: a one-time result for the
+    browser to carry to the app's loopback address, redeemable for a session
+    with the verifier of ``challenge`` within ``APP_RESULT_TTL``."""
+    result = secrets.token_urlsafe(32)
+    mcp_oauth.store("cloud_app", _APP_KEY, result, {"user_id": user_id, "next": next_path, "challenge": challenge},
+                    APP_RESULT_TTL)
+    return result
+
+
+def app_claim(result: str, verifier: str) -> tuple[str, str]:
+    """Redeem an ``app_result``: (account id, next path), or CloudAuthError.
+    One try: a wrong verifier uses the result up too."""
+    held = mcp_oauth.load("cloud_app", _APP_KEY, result, consume=True) if result else None
+    if not held:
+        raise CloudAuthError("This sign-in expired or was already used. Start again.")
+    if not verifier or not hmac.compare_digest(_b64url(hashlib.sha256(verifier.encode()).digest()), held["challenge"]):
+        raise CloudAuthError("This sign-in was started somewhere else. Start it again from the app.")
+    return held["user_id"], held["next"] or "/"
+
+
+def app_redirect(return_to: str, **params: str) -> str:
+    """The app's loopback address with ``result`` or ``error`` on it."""
+    return return_to + "?" + urllib.parse.urlencode(params)
 
 
 # --- identities ---------------------------------------------------------------

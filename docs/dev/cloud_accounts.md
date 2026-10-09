@@ -953,6 +953,44 @@ JWKS refetched on an unknown key id): issuer, audience, expiry, nonce, and
 on the account server. A refusal is a message on the login page
 (`/?cloud_error=`), never a stack trace.
 
+**The desktop app's sign-in.** The desktop window cannot run this flow
+itself. Its navigation guard sends the account server's page to the system
+browser, and the cookie the callback sets would then land in that browser,
+not the app. The page cannot simply run inside the window either: Google
+refuses sign-in from embedded windows. So the shell takes over the page's
+navigation to `start` (`desktop/lib/cloudSignIn.js`) and does the loopback
+round trip native apps use (RFC 8252 §7.3):
+
+1. It listens on a free port of `127.0.0.1` and posts
+   `/api/auth/cloud/app-start` with the page's `next` and `link`, its
+   address (`http://127.0.0.1:<port>/cloud-signin`) and the S256 challenge
+   of a verifier it keeps (`cloud_auth.app_params`). The pending sign-in
+   remembers both (`app`), and the shell opens the authorize URL in the
+   system browser.
+2. The account server calls back as for any sign-in. The callback resolves
+   the account, pulls the profile and registers the server as usual, but
+   mints no session. It keeps a one-time result for the account
+   (`app_result`, two minutes, in `mcp_oauth`) and sends the browser to the
+   app's address with `?result=`, or with `?error=` when the sign-in was
+   refused or cancelled.
+3. The shell's listener shows "Signed in to Gamma" in that tab and closes.
+   The content view then posts the result and the verifier to
+   `/api/auth/cloud/app-claim` with `X-Gamma-Desktop: claim`. That answer
+   sets the session cookie in the window and redirects to `next`.
+
+Only the machine the browser runs on can reach the loopback address. So a
+sign-in link someone else started and sent to a victim delivers its result
+to the victim's machine, never to the machine holding the verifier. The
+verifier, a one-try check, also keeps any other program on the same
+machine from redeeming a result it intercepted. The header requirement stops
+another site from posting a claim and signing this browser into an account
+of its choosing. The account server sees nothing new: its redirect URI is
+still the server's own callback, so this works for a local sidecar and for
+a remote server alike, and the session lands on the origin the window has
+open, whatever the server's public URL. A share host's forward of a paying
+person to their own server (`entrance.py`, above) starts a browser sign-in
+there and still ends in the system browser.
+
 **Which local account** (`cloud_auth.resolve_account`):
 
 | the identity is… | policy `refuse` (default) | `claim` | `provision` | `invited` |
@@ -1212,7 +1250,9 @@ default quota is the storage setting, and per-IP limits belong to the
 edge.
 
 **Not built yet** (step 6 of the plan): the desktop shell's first-run
-sign-in and reading `/api/me` for the person's servers in the launcher. The
+sign-in (signing in from a server's own login page or Settings works, "The
+desktop app's sign-in" above) and reading `/api/me` for the person's
+servers in the launcher. The
 grant check refreshes every identity every hour, which is fine for a
 sidecar or a container but will need spreading out on a share host with
 many accounts (the exchange stores no refresh token, so an account that only

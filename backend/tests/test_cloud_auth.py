@@ -9,6 +9,7 @@ and the server list."""
 import base64
 import hashlib
 import json
+import secrets
 import time
 from datetime import datetime, timezone
 from urllib.parse import parse_qs, urlsplit
@@ -347,6 +348,101 @@ def test_link_signed_in_account(cloud):
     assert c.post("/api/auth/cloud/unlink").json()["ok"] is True
     # linking needs a session
     assert browser().get("/api/auth/cloud/start", params={"link": "1"}, follow_redirects=False).status_code == 401
+
+
+RETURN = "http://127.0.0.1:53123/cloud-signin"
+
+
+def app_start(c, return_to=RETURN, **body):
+    """The desktop app's start: (the authorize params, the verifier it keeps)."""
+    verifier = secrets.token_urlsafe(32)
+    challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b"=").decode()
+    r = c.post("/api/auth/cloud/app-start", json={"return_to": return_to, "challenge": challenge, **body})
+    assert r.status_code == 200, r.text
+    return {k: v[0] for k, v in parse_qs(urlsplit(r.json()["url"]).query).items()}, verifier
+
+
+def returned(r):
+    """Where a callback sent the browser: (the address, its query)."""
+    assert r.status_code == 302, r.text
+    url = urlsplit(r.headers["location"])
+    return f"{url.scheme}://{url.netloc}{url.path}", {k: v[0] for k, v in parse_qs(url.query).items()}
+
+
+def claim(c, result, verifier, header=True):
+    return c.post("/api/auth/cloud/app-claim", data={"result": result, "verifier": verifier},
+                  headers={"X-Gamma-Desktop": "claim"} if header else {}, follow_redirects=False)
+
+
+def test_the_desktop_app_signs_in_through_the_system_browser(cloud, monkeypatch):
+    monkeypatch.setenv("GAMMA_CLOUD_POLICY", "provision")
+    cloud.person.update({"sub": "sub-ca_app", "preferred_username": "ca_app", "email": "ca_app@example.org"})
+    window, system_browser = browser(), browser()
+    auth, verifier = app_start(window, next="/?page=abc")
+    assert auth["redirect_uri"] == "http://testserver/api/auth/cloud/callback", "the account server calls back as before"
+    # The browser finishes the sign-in, gets no session, and carries a result to the app's address.
+    r = callback(system_browser, auth)
+    assert "set-cookie" not in r.headers
+    where, query = returned(r)
+    assert where == RETURN and set(query) == {"result"}
+    assert system_browser.get("/api/session").json()["user"] is None
+    # The app's window redeems it, with its header and its verifier, once.
+    assert claim(window, query["result"], verifier, header=False).status_code == 403, "no site can post a claim"
+    r = claim(window, query["result"], verifier)
+    assert r.status_code == 303 and r.headers["location"] == "/?page=abc"
+    assert window.get("/api/session").json()["user"] == "ca_app"
+    assert "expired or was already used" in error_of(claim(browser(), query["result"], verifier))
+
+
+def test_a_desktop_sign_in_needs_the_verifier_it_started_with(cloud, monkeypatch):
+    monkeypatch.setenv("GAMMA_CLOUD_POLICY", "provision")
+    cloud.person.update({"sub": "sub-ca_vera", "preferred_username": "ca_vera", "email": "ca_vera@example.org"})
+    c = browser()
+    auth, verifier = app_start(c)
+    _, query = returned(callback(browser(), auth))
+    # A wrong guess uses the result up.
+    assert "started somewhere else" in error_of(claim(c, query["result"], "not-" + verifier))
+    assert "expired or was already used" in error_of(claim(c, query["result"], verifier))
+    assert c.get("/api/session").json()["user"] is None
+
+
+def test_a_desktop_sign_in_returns_only_to_this_machine(cloud):
+    c = browser()
+    for ok in (RETURN, "http://localhost:5000/cloud-signin", "http://[::1]:5000/cloud-signin"):
+        app_start(c, return_to=ok)
+    for bad in ("https://127.0.0.1:5000/cloud-signin", "http://example.org:5000/cloud-signin", "http://127.0.0.1/cloud-signin",
+                "http://127.0.0.1:631/admin", "http://127.0.0.1:5000/cloud-signin?x=1", "http://me@127.0.0.1:5000/cloud-signin",
+                "http://127.0.0.1:99999/cloud-signin", "gamma://cloud-signin", ""):
+        r = c.post("/api/auth/cloud/app-start", json={"return_to": bad, "challenge": "a" * 43})
+        assert r.status_code == 400, bad
+    assert c.post("/api/auth/cloud/app-start", json={"return_to": RETURN, "challenge": "short"}).status_code == 400
+
+
+def test_a_refused_desktop_sign_in_reports_to_the_app(cloud):
+    c = browser()
+    auth, _ = app_start(c)
+    r = callback(browser(), auth)  # the refuse policy: this identity is not linked
+    assert "set-cookie" not in r.headers
+    where, query = returned(r)
+    assert where == RETURN and "not linked" in query["error"]
+    assert cloud.revoked == ["rt-1"]
+    auth, _ = app_start(c)
+    assert returned(callback(browser(), auth, error="access_denied"))[1] == {"error": "Sign-in cancelled."}
+    # a callback whose sign-in is gone has no app to report to: the login page says so
+    assert "expired or was already used" in error_of(callback(browser(), auth))
+
+
+def test_the_desktop_app_links_a_signed_in_account(cloud):
+    make_user("ca_erin", "pw-ca_erin-123")
+    c = login("ca_erin", "pw-ca_erin-123")
+    cloud.person.update({"sub": "sub-ca_erin", "preferred_username": "ca_erin-cloud", "email": "ca_erin@example.org"})
+    assert browser().post("/api/auth/cloud/app-start",
+                          json={"link": True, "return_to": RETURN, "challenge": "a" * 43}).status_code == 401
+    auth, verifier = app_start(c, link=True, next="/?settings=account")
+    _, query = returned(callback(browser(), auth))
+    assert claim(c, query["result"], verifier).headers["location"] == "/?settings=account"
+    assert c.get("/api/session").json()["user"] == "ca_erin"
+    assert c.get("/api/auth/cloud/status").json()["identity"]["username"] == "ca_erin-cloud"
 
 
 def test_admin_subject_provisions_admin(cloud, monkeypatch):

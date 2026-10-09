@@ -16,7 +16,15 @@
 - ``GET /api/auth/cloud/callback?code=&state=`` → session cookie + redirect
   to ``next``, or back to the login page with ``?cloud_error=``; the
   preference profile is pulled before the redirect and this server put on
-  the person's server list (gamma/cloud_sync.py);
+  the person's server list (gamma/cloud_sync.py). A sign-in the desktop app
+  started instead sends the browser to the app's loopback address with
+  ``?result=`` or ``?error=``, and sets no cookie;
+- ``POST /api/auth/cloud/app-start`` ``{next, link, return_to, challenge}``
+  → ``{url}``: the desktop app's sign-in, which it opens in the system
+  browser; ``POST /api/auth/cloud/app-claim`` (a form: ``result``,
+  ``verifier``, from the app's window with ``X-Gamma-Desktop: claim``) →
+  session cookie + redirect to ``next``, or the login page with
+  ``?cloud_error=``;
 - ``GET /api/auth/cloud/connect/start?next=`` (admins) → the account
   server's page that connects this server; ``…/connect/callback`` saves the
   client it hands back and returns to ``next`` with ``?cloud_connect=ok``
@@ -34,9 +42,9 @@
 from typing import Literal
 from urllib.parse import parse_qsl, urlencode, urlsplit
 
-from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import RedirectResponse
-from pydantic import BaseModel
+from fastapi import APIRouter, Form, HTTPException, Request
+from fastapi.responses import JSONResponse, RedirectResponse
+from pydantic import BaseModel, Field
 
 from .. import cloud_auth, cloud_sync, config, guests, hosted, ratelimit, server_settings
 from ..auth import require_admin, require_personal_user_id, require_user_id, set_session_cookie
@@ -79,30 +87,96 @@ def cloud_start(request: Request, next: str = "/", link: str = ""):
     return RedirectResponse(url, status_code=302, headers={"Cache-Control": "no-store"})
 
 
+def _to_app(app: dict, **params: str) -> RedirectResponse:
+    """The browser on to the desktop app's loopback address with ``result``
+    or ``error``."""
+    return RedirectResponse(cloud_auth.app_redirect(app["return_to"], **params), status_code=302,
+                            headers={"Cache-Control": "no-store"})
+
+
 def _login_redirect(error: str, next_path: str = "/") -> RedirectResponse:
     query = urlencode({"cloud_error": error})
     return RedirectResponse(f"{next_path.split('?')[0] or '/'}?{query}", status_code=302,
                             headers={"Cache-Control": "no-store"})
 
 
+class AppStartRequest(BaseModel):
+    next: str = Field("/", max_length=2048)
+    link: bool = False
+    return_to: str = Field(max_length=256)  # the app's loopback address (cloud_auth.app_return)
+    challenge: str = Field(max_length=64)   # S256 of the verifier the app keeps
+
+
+@router.post("/api/auth/cloud/app-start")
+def cloud_app_start(payload: AppStartRequest, request: Request):
+    """A sign-in the desktop app started (gamma/cloud_auth.py, the app's
+    sign-in): the authorize URL for it to open in the system browser."""
+    ratelimit.check(f"cloud-start:ip:{ratelimit.client_ip(request)}", 30, 600)
+    link_user = None
+    if payload.link:
+        link_user = require_personal_user_id(request, "Sign in with a password first to link a Gamma Cloud account.")
+        if request.state.is_guest:
+            raise HTTPException(403, "The guest account cannot be linked.")
+    try:
+        app = cloud_auth.app_params(payload.return_to, payload.challenge)
+    except CloudAuthError as e:
+        raise HTTPException(400, str(e))
+    try:
+        url = cloud_auth.begin(request, link_user=link_user, next_path=cloud_auth.safe_next(payload.next), app=app)
+    except CloudAuthError as e:
+        raise HTTPException(503, str(e))
+    return JSONResponse({"url": url}, headers={"Cache-Control": "no-store"})
+
+
 @router.get("/api/auth/cloud/callback")
 def cloud_callback(request: Request, code: str = "", state: str = "", error: str = "",
                    error_description: str = ""):
     ratelimit.check(f"cloud-callback:ip:{ratelimit.client_ip(request)}", 30, 600)
+    pending = cloud_auth.take_pending(request, state)
+    app = (pending or {}).get("app")
+    # A sign-in the desktop app started reports back to the app, not this browser.
+    refuse = (lambda e: _to_app(app, error=e)) if app else _login_redirect
     if error:
-        return _login_redirect(error_description or ("Sign-in cancelled." if error == "access_denied" else error))
+        return refuse(error_description or ("Sign-in cancelled." if error == "access_denied" else error))
     refresh = ""
     try:
-        claims, tokens, next_path = cloud_auth.exchange(request, code=code, state=state)
+        claims, tokens, next_path = cloud_auth.exchange(request, code=code, pending=pending)
         refresh = claims["_refresh_token"] = tokens.get("refresh_token", "")
         user_id, _username = cloud_auth.resolve_account(claims)
     except CloudAuthError as e:
         log.info(f"cloud sign-in refused: {e}")
         cloud_auth.revoke_later([refresh])  # a refused sign-in leaves no device behind at the account server
-        return _login_redirect(str(e))
+        return refuse(str(e))
     cloud_sync.signed_in(request, user_id, claims["sub"], tokens)
+    if app:
+        # No session in this browser: the app redeems the result in its own window (app-claim).
+        return _to_app(app, result=cloud_auth.app_result(user_id, next_path, app["challenge"]))
     token = new_session(user_id, via="cloud")
     resp = RedirectResponse(next_path, status_code=302, headers={"Cache-Control": "no-store"})
+    set_session_cookie(resp, token, request)
+    return resp
+
+
+# What the desktop app's window sends with its claim. A page elsewhere cannot
+# (a cross-site form sets no headers, a fetch with one asks first and is
+# refused), so no site can sign this browser into an account of its choosing.
+APP_CLAIM_HEADER = "X-Gamma-Desktop"
+
+
+@router.post("/api/auth/cloud/app-claim")
+def cloud_app_claim(request: Request, result: str = Form("", max_length=128), verifier: str = Form("", max_length=128)):
+    """The desktop app's window redeems the result its loopback address was
+    given, with its verifier: the session cookie, and on to ``next``."""
+    ratelimit.check(f"cloud-claim:ip:{ratelimit.client_ip(request)}", 30, 600)
+    if request.headers.get(APP_CLAIM_HEADER) != "claim":
+        raise HTTPException(403, "Only the Gamma desktop app redeems a sign-in here.")
+    try:
+        user_id, next_path = cloud_auth.app_claim(result, verifier)
+    except CloudAuthError as e:
+        log.info(f"cloud sign-in: an app claim was refused: {e}")
+        return _login_redirect(str(e))
+    token = new_session(user_id, via="cloud")
+    resp = RedirectResponse(next_path, status_code=303, headers={"Cache-Control": "no-store"})
     set_session_cookie(resp, token, request)
     return resp
 

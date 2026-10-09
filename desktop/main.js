@@ -32,6 +32,7 @@ const sidecar = require('./lib/sidecar');
 const updater = require('./lib/updater');
 const startup = require('./lib/startup');
 const keeping = require('./lib/keeping');
+const cloudSignIn = require('./lib/cloudSignIn');
 
 const SMOKE = process.argv.includes('--smoke');
 const BAR_H = 38;
@@ -217,6 +218,13 @@ function createWindow() {
     try {
       origin = new URL(url).origin;
     } catch {}
+    // The page's Gamma Cloud sign-in runs in the system browser and comes
+    // back here (lib/cloudSignIn.js).
+    if (origin && allowedOrigins.has(origin) && cloudSignIn.isStart(url)) {
+      event.preventDefault();
+      signInWithCloud(url);
+      return;
+    }
     if (url.startsWith('file:') || (origin && allowedOrigins.has(origin))) return;
     event.preventDefault();
     if (origin) openExternal(url);
@@ -866,6 +874,53 @@ function showNotice(text) {
   clearTimeout(noticeTimer);
   noticeTimer = setTimeout(() => { notice = null; pushState(); }, 8000);
   pushState();
+}
+
+// Gamma Cloud sign-in, taken over from the page (lib/cloudSignIn.js): the
+// account server's page opens in the system browser, and the session it
+// ends in is redeemed in this window. The result is for the server that
+// started it, so it is dropped if another one is open by then.
+async function signInWithCloud(startUrl) {
+  const origin = new URL(startUrl).origin;
+  let flow = null;
+  try {
+    flow = await cloudSignIn.listen();
+    const r = await content.webContents.session.fetch(origin + cloudSignIn.APP_START_PATH, {
+      method: 'POST',
+      credentials: 'include',
+      cache: 'no-store',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...cloudSignIn.startParams(startUrl), return_to: flow.returnTo, challenge: flow.challenge }),
+    });
+    // A server older than the app's sign-in: the browser signs in as it always did.
+    if (r.status === 404 || r.status === 405) {
+      flow.end(null);
+      openExternal(startUrl);
+      showNotice('This server is older than the app: the Gamma Cloud sign-in finishes in your browser.');
+      return;
+    }
+    const body = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(body.detail || `HTTP ${r.status}`);
+    openExternal(body.url);
+    showNotice('Finish signing in to Gamma Cloud in your browser.');
+  } catch (e) {
+    if (flow) flow.end(null);
+    showNotice(`Gamma Cloud sign-in: ${e.message}`);
+    return;
+  }
+  const answer = await flow.answer;
+  if (!answer) return; // given up on, or a newer sign-in took over
+  await showWindow();
+  if (answer.error) {
+    showNotice(`Gamma Cloud sign-in did not finish: ${answer.error}`);
+    return;
+  }
+  if (!current || new URL(current.url).origin !== origin) {
+    showNotice('Gamma Cloud sign-in finished for a server that is no longer open. Open it and sign in again.');
+    return;
+  }
+  await content.webContents.loadURL(...cloudSignIn.claimRequest(origin, flow, answer.result)).catch(() => {});
+  refreshGamma();
 }
 
 // ---------------------------------------------------------- background -----
