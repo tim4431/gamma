@@ -97,6 +97,7 @@ Notes are a nested outline. Highlights and free notes are the same kind of block
 - **Pictures**: paste or drag an image in; drag its grip to resize.
 - **Tables** are edited in place; a table from Excel pastes as markdown.
 - **"/" menu**: type `/` for headings, callouts, code, colors, a notebook sheet, a new page.
+- **Quotes and callouts** keep going over several lines: Enter carries the `>` (and a list inside it) to the next line, a paste onto a quoted line stays in the quote, and **Ctrl+Shift+.** quotes or unquotes the selected lines. `/callout` on a quote's first line turns it into a callout.
 - **Formatting keys** are Obsidian's: Ctrl+B, Ctrl+I, Ctrl+K and so on. Rendered notes copy as rich text; math copies as LaTeX.
 
 ## Outline and links between pages
@@ -354,6 +355,7 @@ Account menu → **Settings**, or **Ctrl+,**. The search box at the top finds an
 | Backspace | On an empty note: delete it |
 | Ctrl+B / Ctrl+I / Ctrl+E / Ctrl+Shift+X / Ctrl+Shift+H | Bold / italic / code / strike / highlight |
 | Ctrl+K | Link the selection (URL from the clipboard) |
+| Ctrl+Shift+. | Quote or unquote the selected lines |
 | `/` · `[[` · `@` | Command menu · page link · in a note, mention a date, person or page; in chat, attach a paper |
 | Ctrl+wheel | Zoom the PDF at the cursor |
 | Ctrl+drag on the page | Capture a region for the chat, and an optional area highlight |
