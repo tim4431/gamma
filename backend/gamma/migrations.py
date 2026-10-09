@@ -1397,8 +1397,9 @@ def _v34_workspace_prefs(ws: str, pages: sqlite3.Connection, data) -> None:
 
 
 # users.db ``folder_links`` as schema version 35 shaped it, frozen: step 35
-# creates it from this. ``workspace_id`` is a workspace of this server or,
-# with ``remote_url``, of the other server, so it is no foreign key.
+# creates it from this, and step 36 brings a table release 0.2.16 shaped
+# otherwise to it. ``workspace_id`` is a workspace of this server or, with
+# ``remote_url``, of the other server, so it is no foreign key.
 _V35_FOLDER_LINKS = """CREATE TABLE IF NOT EXISTS folder_links (
         id TEXT PRIMARY KEY,
         workspace_id TEXT NOT NULL,
@@ -1426,6 +1427,40 @@ def _v35_folder_links(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
+# The remote source's columns, which release 0.2.16's folder_links lacked.
+_V36_COLUMNS = (("remote_url", "TEXT NOT NULL DEFAULT ''"), ("token", "TEXT NOT NULL DEFAULT ''"),
+                ("token_id", "TEXT NOT NULL DEFAULT ''"))
+
+
+def _v36_folder_links_remote(conn: sqlite3.Connection) -> None:
+    """``folder_links`` in the shape ``_V35_FOLDER_LINKS`` wherever an
+    earlier build shaped it otherwise. Release 0.2.16 created the table
+    with ``workspace_id`` a foreign key to ``workspaces`` and without the
+    remote source's columns, and added the columns as its own step 36, so
+    its data is stamped 36 already; the release after folded the columns
+    into step 35, dropped the foreign key (a link to another server's
+    workspace cannot satisfy it) and, by mistake, the version with it,
+    which made that data "newer" than the code. This step is what makes
+    36 current again: a 0.2.16 directory is simply current (its foreign
+    key stays, inert: no connection turns ``foreign_keys`` on), and a
+    directory at 35 gets the table created if missing, each missing
+    column added, and a table that has the foreign key rebuilt without
+    it, rows kept. Re-runnable. No workspace is touched."""
+    conn.execute(_V35_FOLDER_LINKS)
+    have = _columns(conn, "folder_links")
+    for name, decl in _V36_COLUMNS:
+        if name not in have:
+            conn.execute(f"ALTER TABLE folder_links ADD COLUMN {name} {decl}")
+    ddl = conn.execute("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'folder_links'").fetchone()[0]
+    if "REFERENCES" in ddl:
+        cols = ", ".join(_columns(conn, "folder_links"))
+        conn.execute("ALTER TABLE folder_links RENAME TO folder_links_v35")
+        conn.execute(_V35_FOLDER_LINKS)
+        conn.execute(f"INSERT INTO folder_links ({cols}) SELECT {cols} FROM folder_links_v35")
+        conn.execute("DROP TABLE folder_links_v35")
+    conn.commit()
+
+
 STEPS = [
     (20, "guest_accounts", _v20_guest_accounts),
     (21, "folder_shares", _v21_folder_shares),
@@ -1442,6 +1477,7 @@ STEPS = [
     (32, "share_token_workspace", _v32_share_token_workspace),
     (33, "page_ops_batch_id", _v33_page_ops_batch_id),
     (35, "folder_links", _v35_folder_links),
+    (36, "folder_links_remote", _v36_folder_links_remote),
 ]
 
 # The workspace parts of the steps from version 34 on: (version, name,
