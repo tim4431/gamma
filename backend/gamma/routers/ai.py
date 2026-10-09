@@ -1638,14 +1638,15 @@ def _chat_tools(payload, scope: dict) -> list | None:
     return specs or None
 
 
-def _request_pictures(ws: str, payload, scope: dict, pictures_ok: bool, budget: int) -> list:
-    """The pictures the request's ``images`` carry, resolved once per
+def _request_pictures(ws: str, payload, scope: dict, pictures_ok: bool, budget: int) -> tuple[list, int]:
+    """``(pictures, left_out)``: the request's ``images`` resolved once per
     request (kept on the scope: the prompt is built again for every trim
-    of the window), and the earlier turns' pictures put back on their
-    history items (``ai_pictures.history_pictures``), both under the
-    request's ``budget``. Nothing for a model that reads text only."""
+    of the window) and how many past the budget were not, and the earlier
+    turns' pictures put back on their history items
+    (``ai_pictures.history_pictures``), both under the request's
+    ``budget``. Nothing for a model that reads text only."""
     if "pictures_resolved" not in scope:
-        resolved = []
+        resolved = ([], 0)
         if pictures_ok:
             with connect_pages_db(ws) as conn:
                 resolved = ai_pictures.request_pictures(ws, conn, payload.images, budget)
@@ -1674,9 +1675,11 @@ def _chat_prompt(ws: str, payload, scope: dict, tools, allow_native: bool, drop:
     scope["coverage"] = coverage
     located = next((c["selection"]["passages"] for c in coverage if c.get("selection")), None)
     budget = payload.max_pictures  # the model's field clamps it (1 … MAX_BUDGET, default DEFAULT_BUDGET)
-    own = _request_pictures(ws, payload, scope, pictures_ok, budget)
+    own, own_left_out = _request_pictures(ws, payload, scope, pictures_ok, budget)
     groups = [("user", own)] + [(g, [c for c in crops if c["group"] == g]) for g in ai_pictures.GROUP_ORDER[1:]]
     kept, left_out = ai_pictures.fit(groups, budget)
+    if own_left_out:
+        left_out["user"] = left_out.get("user", 0) + own_left_out
     if pictures_ok:
         lines = ai_pictures.label_lines(kept, left_out, budget)
     else:

@@ -60,14 +60,17 @@ function withWorkspace(url) {
   return `${url}${url.includes("?") ? "&" : "?"}ws=${encodeURIComponent(currentWorkspace)}`;
 }
 
-// A same-origin upload URL (`/api/uploads/<hash>.ext`) for a browser-issued
-// request — an <img> src, a download link — which bypasses the fetch wrapper
-// and so carries neither the workspace header nor the share token. Block
-// content stores the bare URL; every RENDER site passes it through here so the
-// server looks in the right library (a non-default workspace's image would
-// otherwise 404) and a share viewer is admitted.
+// A same-origin picture URL — an upload (`/api/uploads/<hash>.ext`) or the
+// AI's page and handwriting pictures (`/api/ai/page-image/…`,
+// `/api/ai/ink-image/…`) — for a browser-issued request — an <img> src, a
+// download link — which bypasses the fetch wrapper and so carries neither the
+// workspace header nor the share token. Block content and the model's replies
+// hold the bare URL; every RENDER site passes it through here so the server
+// looks in the right library (a non-default workspace's picture would
+// otherwise 404 or show another workspace's page) and a share viewer is admitted.
+const ASSET_PREFIXES = [`${API}/uploads/`, `${API}/ai/page-image/`, `${API}/ai/ink-image/`];
 function assetUrl(url) {
-  if (typeof url !== "string" || !url.startsWith(`${API}/uploads/`)) return url;
+  if (typeof url !== "string" || !ASSET_PREFIXES.some((p) => url.startsWith(p))) return url;
   return withShare(withWorkspace(url));
 }
 

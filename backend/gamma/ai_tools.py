@@ -766,8 +766,9 @@ def _run_view_ink(conn, ws: str, scope: dict, args: dict):
                if caption else "It has no caption yet. ")
             + "Read the strokes visually and say when an answer comes from handwriting; a word "
             "you cannot read is [illegible], never a guess. The picture is not kept in the chat "
-            "history — call again to look at it later. To show the user this picture in your "
-            f"reply, embed it as a markdown image: ![handwriting]({picture_url})")
+            "history — call again to look at it later."
+            + ("" if scope.get("link_base") else  # the chat renders the same-origin URL; an MCP client cannot
+               f" To show the user this picture in your reply, embed it as a markdown image: ![handwriting]({picture_url})"))
     chip = {"kind": "ink", "page_id": page_id, "block_id": block["id"],
             "summary": f"Looked at handwriting in “{page_title[:60]}”" + (f" p. {page_no}" if page_no else ""),
             "picture": picture_url, "images": [image_part(shown["image"])]}

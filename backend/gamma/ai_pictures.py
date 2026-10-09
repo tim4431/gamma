@@ -26,8 +26,7 @@ Every picture goes through :func:`normalize` on its way in: its longer side
 at most ``RENDER_MAX_SIDE`` px (past that every provider downscales anyway),
 JPEG unless it is small or translucent. That is what makes a per-picture
 token cost (``Protocol.picture_tokens``) a fair bound, and what keeps a 6 MB
-pasted PNG from being refused upstream. Without Pillow the bytes pass as
-they are, under ``RAW_MAX_BYTES``.
+pasted PNG from being refused upstream.
 
 The budget (``max_pictures`` on the request, Settings → AI → Chat →
 "Pictures per message", default :data:`DEFAULT_BUDGET`) is one number for
@@ -42,7 +41,8 @@ import base64
 import io
 import json
 import re
-import struct
+
+from PIL import Image, ImageOps
 
 from .blocks_store import page_attachment
 from .logbuf import log
@@ -55,7 +55,6 @@ JPEG_QUALITY = 85
 # A picture that stays PNG when it has no translucent pixel: small crisp
 # things — icons, a formula, a little chart — where JPEG's blur shows.
 PNG_MAX_PIXELS = 600_000
-RAW_MAX_BYTES = 3_500_000   # without Pillow nothing is re-encoded: the providers' per-image limit
 STORED_MAX_BYTES = 25_000_000  # the most a stored picture is read back for the model
 GROUP_ORDER = ("user", "selection", "ink", "area")
 # Only a region on a page the user is pointing at: boxes are page fractions.
@@ -79,52 +78,14 @@ def sniff(data: bytes) -> str:
     return ""
 
 
-def dimensions(data: bytes) -> tuple[int, int]:
-    """``(width, height)`` read from a PNG, JPEG or GIF header, (0, 0) when
-    the file is none of those or too short to say."""
-    try:
-        if data[:8] == b"\x89PNG\r\n\x1a\n" and data[12:16] == b"IHDR":
-            return struct.unpack(">II", data[16:24])
-        if data[:6] in (b"GIF87a", b"GIF89a"):
-            return struct.unpack("<HH", data[6:10])
-        if data[:2] == b"\xff\xd8":
-            i = 2
-            while i + 4 <= len(data):
-                if data[i] != 0xFF:
-                    i += 1
-                    continue
-                marker = data[i + 1]
-                if marker in (0xD8, 0x01) or 0xD0 <= marker <= 0xD7:
-                    i += 2
-                    continue
-                length = struct.unpack(">H", data[i + 2:i + 4])[0]
-                if marker in (0xC0, 0xC1, 0xC2, 0xC3, 0xC5, 0xC6, 0xC7, 0xC9, 0xCA, 0xCB, 0xCD, 0xCE, 0xCF):
-                    if i + 9 > len(data):
-                        break
-                    height, width = struct.unpack(">HH", data[i + 5:i + 9])
-                    return width, height
-                i += 2 + length
-    except struct.error:
-        pass
-    return 0, 0
-
-
 def normalize(data: bytes, media_type: str = "") -> tuple[bytes, str, int, int] | None:
     """``(bytes, media_type, width, height)`` of ``data`` as the model gets
     it and as a chat picture is stored: the longer side at most
     ``RENDER_MAX_SIDE`` px, JPEG at :data:`JPEG_QUALITY` unless the picture
     is translucent somewhere or small (:data:`PNG_MAX_PIXELS`), then PNG.
     An animation keeps its first frame; EXIF orientation is applied. None
-    for bytes that are no picture. Without Pillow the bytes pass through
-    under :data:`RAW_MAX_BYTES` with the size their header says."""
+    for bytes that are no picture."""
     media_type = "image/jpeg" if media_type == "image/jpg" else (media_type or sniff(data))
-    try:
-        from PIL import Image, ImageOps
-    except ImportError:
-        if not media_type or len(data) > RAW_MAX_BYTES:
-            return None
-        width, height = dimensions(data)
-        return data, media_type, width, height
     try:
         with Image.open(io.BytesIO(data)) as opened:
             opened.load()
@@ -352,11 +313,15 @@ def resolve(ws: str, conn, value, group: str = "user") -> dict | None:
     return None
 
 
-def request_pictures(ws: str, conn, images: list, budget: int) -> list:
-    """The pictures the request's ``images`` carry, in order, at most
-    ``budget`` of them (the rest are counted as left out by :func:`fit`)."""
-    out = []
-    for value in (images or [])[:MAX_BUDGET]:
+def request_pictures(ws: str, conn, images: list, budget: int) -> tuple[list, int]:
+    """``(pictures, left_out)``: the request's ``images`` resolved in order
+    until ``budget`` of them are, and how many after that were not looked
+    at (:func:`fit` adds them to the user group's count)."""
+    out, left_out = [], 0
+    for value in images or []:
+        if len(out) >= budget:
+            left_out += 1
+            continue
         try:
             shown = resolve(ws, conn, value)
         except Exception as error:  # one picture that fails never fails the message
@@ -364,7 +329,7 @@ def request_pictures(ws: str, conn, images: list, budget: int) -> list:
             shown = None
         if shown:
             out.append(shown)
-    return out
+    return out, left_out
 
 
 # --- the budget -------------------------------------------------------------------------

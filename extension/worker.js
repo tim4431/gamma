@@ -704,7 +704,7 @@ async function savePaper({ tabId, candidate, folder, folder_path, labels, title,
     if (tabId != null && sameLibrary({ origin: settings.server, ws: pin.workspace }, await getSettings())) {
       await setTabState(tabId, { saving: "", hit: out, last: out, error: "", origin: settings.server, ws: pin.workspace });
     }
-    return out;
+    return { ...out, ws: pin.workspace };
   } catch (err) {
     const message = err.message || "save failed";
     if (tabId != null) await setTabState(tabId, { saving: "", error: message, auth: err.status === 401 ? false : undefined });
@@ -744,17 +744,19 @@ chrome.notifications && chrome.notifications.onClicked.addListener((id) => {
   chrome.notifications.clear(id);
 });
 
-// A link into the app, in the library the page was saved to: a URL without
-// `ws` opens the account's default one.
-async function appUrl(path) {
+// A link into the app, in the library the page was saved to (`workspace`,
+// else the chosen one): a URL without `ws` opens the account's default one.
+async function appUrl(path, workspace) {
   const url = new URL(path || "/", await serverOrigin());
-  const workspace = currentWorkspace(await getSettings());
-  if (workspace) url.searchParams.set("ws", workspace);
+  const ws = workspace !== undefined ? workspace : currentWorkspace(await getSettings());
+  if (ws) url.searchParams.set("ws", ws);
   return url.href;
 }
 
-async function openInGamma(out) {
-  return appUrl(out.open_url || "/");
+// `out` is a save's answer (savePaper adds `ws`, the library it was pinned
+// to) or a tab's stored hit.
+async function openInGamma(out, workspace = out.ws) {
+  return appUrl(out.open_url || "/", workspace);
 }
 
 // ---------- tabs ----------
@@ -936,7 +938,7 @@ chrome.runtime.onInstalled.addListener(() => {
 
 async function savePageFromTab(tab) {
   const st = await ensureDetection(tab.id);
-  if (st.hit) { await notify(`Already in your library: ${st.hit.title}`, await openInGamma(st.hit)); return; }
+  if (st.hit) { await notify(`Already in your library: ${st.hit.title}`, await openInGamma(st.hit, st.ws || "")); return; }
   const cand = st.candidate || candidateFromUrl(tab.url, tab.title);
   if (cand.kind === "none") { await notify("No paper or PDF found on this page."); return; }
   try {

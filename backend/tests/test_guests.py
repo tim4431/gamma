@@ -181,6 +181,7 @@ def test_logout_deletes_the_guest():
 
 def test_live_guest_cap(monkeypatch):
     from gamma.db import connect_users_db
+    assert _new_client().post("/api/login-guest").status_code == 200  # one live guest at least: a cap of 0 is "no guests" (403)
     with connect_users_db() as conn:
         live = conn.execute("SELECT COUNT(*) FROM users WHERE is_guest = 1").fetchone()[0]
     monkeypatch.setenv("GAMMA_GUEST_MAX", str(live))
@@ -196,7 +197,7 @@ def test_guest_logins_off_hide_the_button(monkeypatch):
     monkeypatch.setenv("GAMMA_GUEST_MAX", "0")
     client = _new_client()
     assert client.get("/api/server-config").json()["guest"] is False
-    assert client.post("/api/login-guest").status_code == 503
+    assert client.post("/api/login-guest").status_code == 403
     monkeypatch.delenv("GAMMA_GUEST_MAX")
     assert client.get("/api/server-config").json()["guest"] is True
 
@@ -212,7 +213,7 @@ def test_a_hosted_container_takes_no_guests(monkeypatch):
     assert config.guest_max() == 0 and guests.logins_open() is False
     client = _new_client()
     assert client.get("/api/server-config").json()["guest"] is False
-    assert client.post("/api/login-guest").status_code == 503
+    assert client.post("/api/login-guest").status_code == 403
 
 
 def test_guest_logins_are_rate_limited_per_ip(monkeypatch):

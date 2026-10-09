@@ -7,7 +7,7 @@ import io
 from gamma.bibtex import build_entry
 from gamma.routers.metadata import _find_doi_candidates
 from gamma.block_index import fts_query
-from gamma.ai_pictures import data_url_picture, dimensions, sniff
+from gamma.ai_pictures import data_url_picture, sniff
 
 
 def test_doi_candidates_handle_glued_suffix():
@@ -82,12 +82,12 @@ def test_data_url_pictures_are_validated_and_normalized():
 
 def test_picture_headers_are_read_without_pillow():
     png = bytes.fromhex("89504e470d0a1a0a0000000d49484452") + (300).to_bytes(4, "big") + (200).to_bytes(4, "big")
-    assert sniff(png) == "image/png" and dimensions(png) == (300, 200)
+    assert sniff(png) == "image/png"
     gif = b"GIF89a" + (64).to_bytes(2, "little") + (48).to_bytes(2, "little")
-    assert sniff(gif) == "image/gif" and dimensions(gif) == (64, 48)
+    assert sniff(gif) == "image/gif"
     jpeg = bytes.fromhex("ffd8ffe00002") + bytes.fromhex("ffc0001108") + (480).to_bytes(2, "big") + (640).to_bytes(2, "big")
-    assert sniff(jpeg) == "image/jpeg" and dimensions(jpeg) == (640, 480)
-    assert sniff(b"%PDF") == "" and dimensions(b"nope") == (0, 0)
+    assert sniff(jpeg) == "image/jpeg"
+    assert sniff(b"%PDF") == ""
 
 
 def test_parse_files_validates():

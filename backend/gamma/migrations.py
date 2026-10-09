@@ -1375,48 +1375,32 @@ def _v34_workspace_prefs(ws: str, pages: sqlite3.Connection, data) -> None:
 
 
 # users.db ``folder_links`` as schema version 35 shaped it, frozen: step 35
-# creates it from this; step 36 added the remote source's columns.
+# creates it from this. ``workspace_id`` is a workspace of this server or,
+# with ``remote_url``, of the other server, so it is no foreign key.
 _V35_FOLDER_LINKS = """CREATE TABLE IF NOT EXISTS folder_links (
         id TEXT PRIMARY KEY,
-        workspace_id TEXT NOT NULL REFERENCES workspaces(id),
+        workspace_id TEXT NOT NULL,
         folder_id TEXT NOT NULL,
         path TEXT NOT NULL UNIQUE COLLATE NOCASE,
         notes INTEGER NOT NULL DEFAULT 1,
         created_by TEXT NOT NULL,
         created_at TEXT NOT NULL,
         cursor TEXT NOT NULL DEFAULT '',
-        status TEXT NOT NULL DEFAULT '{}'
+        status TEXT NOT NULL DEFAULT '{}',
+        remote_url TEXT NOT NULL DEFAULT '',
+        token TEXT NOT NULL DEFAULT '',
+        token_id TEXT NOT NULL DEFAULT ''
     )"""
-
-_V36_COLUMNS = (("remote_url", "TEXT NOT NULL DEFAULT ''"), ("token", "TEXT NOT NULL DEFAULT ''"),
-                ("token_id", "TEXT NOT NULL DEFAULT ''"))
 
 
 def _v35_folder_links(conn: sqlite3.Connection) -> None:
     """users.db gains ``folder_links`` (gamma/folder_links.py): the folders
-    kept as directories on disk, with the change-log seq
-    and the status of their last round, in the frozen shape of its time
-    (``_V35_FOLDER_LINKS``; step 36 moves it on). Re-runnable: the
-    statement is ``IF NOT EXISTS``. No workspace is touched."""
+    kept as directories on disk, with the change-log seq and the status of
+    their last round, and for a folder of another Gamma server that
+    server's address and a token of it (``remote_url``, ``token``,
+    ``token_id``), in the frozen shape ``_V35_FOLDER_LINKS``. Re-runnable:
+    the statement is ``IF NOT EXISTS``. No workspace is touched."""
     conn.execute(_V35_FOLDER_LINKS)
-    conn.commit()
-
-
-def _v36_folder_links_remote(conn: sqlite3.Connection) -> None:
-    """A folder link may read its folder from another Gamma server
-    (gamma/folder_links.py ``create_remote_link``; the desktop app keeps a
-    NAS folder on a PC this way): ``folder_links`` gains ``remote_url``,
-    ``token`` and ``token_id`` (``''`` on the rows made before, which read
-    this server's own workspaces). A users.db without the table gets it
-    from the live statement, which has the columns. Re-runnable: a column
-    the table has is left as it is. No workspace is touched."""
-    for stmt in USERS_SCHEMA:
-        if stmt.lstrip().startswith("CREATE TABLE IF NOT EXISTS folder_links "):
-            conn.execute(stmt)
-    have = _columns(conn, "folder_links")
-    for name, decl in _V36_COLUMNS:
-        if name not in have:
-            conn.execute(f"ALTER TABLE folder_links ADD COLUMN {name} {decl}")
     conn.commit()
 
 
@@ -1436,7 +1420,6 @@ STEPS = [
     (32, "share_token_workspace", _v32_share_token_workspace),
     (33, "page_ops_batch_id", _v33_page_ops_batch_id),
     (35, "folder_links", _v35_folder_links),
-    (36, "folder_links_remote", _v36_folder_links_remote),
 ]
 
 # The workspace parts of the steps from version 34 on: (version, name,

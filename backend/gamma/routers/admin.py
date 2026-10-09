@@ -170,6 +170,8 @@ def update_settings(payload: SettingsUpdateRequest, request: Request):
             check_within_plan("quota_mb", validate_quota_mb(payload.quota_mb))
         if payload.guest_ttl_hours is not None:
             validate_guest_ttl_hours(payload.guest_ttl_hours)
+        if payload.guest_logins is not None and not guests.logins_possible():
+            raise ValueError("This server takes no guest logins.")
         if payload.public_url is not None:
             set_public_url(payload.public_url)
         if payload.max_upload_mb is not None:

@@ -121,7 +121,9 @@ function sameHighlights(a, b) {
   for (let i = 0; i < a.length; i++) {
     const x = a[i], y = b[i];
     if (x.id !== y.id || x.color !== y.color || x.hasNote !== y.hasNote || x.position !== y.position
-      || x.comment?.text !== y.comment?.text || x.content?.text !== y.content?.text) return false;
+      || x.comment?.text !== y.comment?.text || x.content?.text !== y.content?.text
+      || x.linkTarget?.url !== y.linkTarget?.url || x.linkTarget?.pageId !== y.linkTarget?.pageId
+      || x.linkTarget?.blockId !== y.linkTarget?.blockId) return false;
   }
   return true;
 }

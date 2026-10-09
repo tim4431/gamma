@@ -158,7 +158,7 @@ any other server, a NAS among them,
 Such a server only answers the reads above, for a link kept elsewhere.
 
 A **link** is a row of users.db `folder_links` ([user_db.md](user_db.md);
-migration steps 35 and 36). It holds the workspace, the folder (a folder
+migration step 35). It holds the workspace, the folder (a folder
 block id, or `root`), the directory's full `path`,
 whether notes files are written, the change-log seq the last round saw
 (`cursor`) and that round's `status`. A link whose folder is on another
@@ -269,4 +269,8 @@ stops a round on Windows.
 - Chats, reading positions and the trash do not travel, as for the mirror.
 - Only the desktop app keeps folders on disk ("Folders kept by the desktop
   app" above); a computer without the app runs the client.
+- A link to a folder of a local server's own workspace syncs while that
+  server runs: outside background mode, the app starts at launch only the
+  servers holding clones and the folder host, so such a link waits for its
+  server to be opened.
 - A remote source's token expires as its issuer set; see the same section.

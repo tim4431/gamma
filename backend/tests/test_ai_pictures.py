@@ -171,7 +171,7 @@ def test_request_pictures_are_resolved_and_labelled(with_pdf):
     c, ids = with_pdf
     url = ids["picture"]["url"]
     with connect_pages_db(ids["ws"]) as conn:
-        shown = ai_pictures.request_pictures(ids["ws"], conn, [
+        shown, left_out = ai_pictures.request_pictures(ids["ws"], conn, [
             {"kind": "pasted", "url": url, "width": 1, "height": 1},
             {"kind": "file", "url": url, "name": "setup.png"},
             {"kind": "area", "page_id": ids["paper"], "page": 1, "box": [0.1, 0.1, 0.6, 0.4]},
@@ -188,7 +188,10 @@ def test_request_pictures_are_resolved_and_labelled(with_pdf):
     assert labels[2].startswith("A region the user marked on PDF page 1 of “figures paper”")
     assert labels[3].startswith("What the user sees: PDF page 2 of “figures paper”, the visible part, with their handwriting on it")
     assert labels[4] == "Pasted image, 400×300 px"
-    assert len(shown) == 5 and all(p["group"] == "user" for p in shown)
+    assert len(shown) == 5 and left_out == 0 and all(p["group"] == "user" for p in shown)
+    with connect_pages_db(ids["ws"]) as conn:  # past the budget nothing is looked at, and it is counted
+        few, rest = ai_pictures.request_pictures(ids["ws"], conn, [{"kind": "pasted", "url": url}] * 5 + ["junk"], budget=2)
+    assert len(few) == 2 and rest == 4
     assert shown[0]["url"] == url and shown[2]["page_id"] == ids["paper"] and shown[2]["page"] == 1
 
 

@@ -891,8 +891,8 @@ dict with a label and a group.
 to the model and into the store: the longer side at most `RENDER_MAX_SIDE`
 (1568 px — past that every provider downscales anyway), JPEG at quality 85
 unless the picture is translucent somewhere or small (`PNG_MAX_PIXELS`),
-then PNG; an animation keeps its first frame. Without Pillow the bytes pass
-as they are under `RAW_MAX_BYTES`. So each picture costs about the same per
+then PNG; an animation keeps its first frame. Pillow is a shipped
+dependency (`requirements.txt`). So each picture costs about the same per
 wire: `Protocol.picture_tokens`, 1,600 on Anthropic and 800 on the OpenAI
 wires (`OPENAI_PICTURE_TOKENS`). The window estimate counts that
 (`prompt_tokens(picture_tokens=)`).

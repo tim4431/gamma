@@ -9381,7 +9381,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           pdfSelections={pdfSelections} setPdfSelections={setPdfSelections}
           chatNotes={chatNotes} setChatNotes={setChatNotes} focusedNote={focusedNote} onSelectionSent={() => setNoteSel(null)}
           chatImages={chatImages} setChatImages={setChatImages} chatPictureBudget={chatPictures}
-          onAttachView={!homeMode && pageAttach ? attachViewToChat : undefined}
+          onAttachView={!homeMode && pageAttach && pdfUrl && !pdfHidden ? attachViewToChat : undefined}
           chatModel={chatSendModel} setChatModel={setChatModel}
           chatEffort={chatEffort} setChatEffort={setChatEffort}
           chatSpeed={chatSpeed} setChatSpeed={setChatSpeed}

@@ -4767,8 +4767,9 @@ a.shareBrand:hover { background: var(--bg-hover); }
   background: var(--bg-surface);
 }
 /* A picture the reply shows: one the model embedded (a page it looked at,
-   a clipped region), or the one a tool chip expands to. */
-.chatBubble.ai img {
+   a clipped region), or the one a tool chip expands to. The coverage
+   line's crop (.chatCoverageCrop) keeps its own size and corners. */
+.chatBubble.ai img:not(.chatCoverageCrop) {
   display: block;
   max-width: 100%;
   max-height: 320px;
