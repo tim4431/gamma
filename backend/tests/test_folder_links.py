@@ -91,6 +91,49 @@ def test_a_link_keeps_the_folder_where_it_was_asked_and_the_tick_follows_changes
     assert (dest / "mine.txt").is_file() and not (dest / ".gamma-sync.json").exists()
 
 
+def test_a_paused_link_runs_only_when_asked_and_no_round_undoes_the_pause(owner, disk, monkeypatch):
+    folder = make_folder(owner, "FL paused")
+    paper = make_page(owner, "FL pp", {"folders": [folder]})
+    dest = disk / "Paused"
+    link = _create(owner, folder=folder, path=str(dest))
+    _sync(owner, link["id"])
+
+    r = owner.patch(f"/api/folder-links/{link['id']}", json={"paused": True})
+    assert r.status_code == 200
+    since = r.json()["status"]["paused_at"]
+    assert since and r.json()["status"]["last_sync"]                 # the round's status stays beside it
+    _note(owner, paper["id"], "while paused")
+    assert folder_links.due(folder_links.get_link(link["id"])) is False
+    folder_links.tick()
+    assert "while paused" not in (dest / "FL pp.md").read_text(encoding="utf-8")
+    assert owner.patch(f"/api/folder-links/{link['id']}", json={"paused": True}).json()["status"]["paused_at"] == since
+
+    # a sync asked for runs, and its round keeps the pause
+    status = _sync(owner, link["id"])
+    assert status["counts"]["updated"] == 1 and status["paused_at"] == since
+    assert "while paused" in (dest / "FL pp.md").read_text(encoding="utf-8")
+
+    # resumed: a round runs now and the tick follows changes again
+    started = []
+    monkeypatch.setattr(folder_links, "run_in_background", lambda link_id, **kw: started.append(link_id))
+    r = owner.patch(f"/api/folder-links/{link['id']}", json={"paused": False})
+    assert r.status_code == 200 and "paused_at" not in r.json()["status"] and started == [link["id"]]
+    _note(owner, paper["id"], "resumed")
+    assert folder_links.due(folder_links.get_link(link["id"])) is True
+
+    # paused while a round runs: the round's own status write leaves the pause in place
+    manifest = folder_links.LocalSource.manifest
+
+    def pausing(self):
+        folder_links.set_paused(link["id"], True)
+        return manifest(self)
+
+    monkeypatch.setattr(folder_links.LocalSource, "manifest", pausing)
+    assert _sync(owner, link["id"])["paused_at"]
+    assert folder_links.due(folder_links.get_link(link["id"])) is False
+    owner.delete(f"/api/folder-links/{link['id']}", params={"remove_files": 1}).raise_for_status()
+
+
 def test_a_path_must_be_a_full_one_of_its_own_outside_the_data_directory(owner, disk):
     folder = make_folder(owner, "FL paths")
     make_page(owner, "FL p", {"folders": [folder]})

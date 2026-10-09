@@ -37,6 +37,7 @@ class LinkCreate(BaseModel):
 
 class LinkPatch(BaseModel):
     notes: bool | None = None
+    paused: bool | None = None
 
 
 def _account(request: Request) -> str:
@@ -107,14 +108,20 @@ def get_link(link_id: str, request: Request):
 
 @router.patch("/{link_id}")
 def update_link(link_id: str, payload: LinkPatch, request: Request):
-    """``{notes?}`` — whether notes files are written (a turned-off link's
-    notes files leave the disk at the next round)."""
+    """``{notes?, paused?}`` — whether notes files are written (a turned-off
+    link's notes files leave the disk at the next round), and whether the
+    link is paused (only a sync asked for runs it; resuming runs a round
+    in the background)."""
     link = _mine(request, link_id)
     if payload.notes is not None:
         try:
             link = folder_links.set_notes(link_id, payload.notes) or link
         except folder_links.LinkError as e:
             raise HTTPException(status_code=400, detail=str(e))
+    if payload.paused is not None:
+        link = folder_links.set_paused(link_id, payload.paused) or link
+        if not payload.paused:
+            folder_links.run_in_background(link_id)
     return _info(link)
 
 

@@ -496,9 +496,15 @@ async function main() {
         const free = await bar.evaluate(() => innerWidth - document.getElementById('btnReload').getBoundingClientRect().right);
         assert(free >= 138, `the window controls' space stays free (${free} px)`);
       }
+      // "pause" detaches the clone, the panel staying open, its sync shut; "resume" reattaches it.
+      await cloneRow.locator('[data-act="pause"]').click();
+      await waitFor(async () => (await cloneRow.locator('.state').textContent()).startsWith('Detached'), 'shown paused', 15_000);
+      assert.equal(await cloneRow.locator('[data-act="sync"]').getAttribute('aria-disabled'), 'true', 'no sync while detached');
+      await cloneRow.locator('[data-act="resume"]').click();
+      await waitFor(async () => (await cloneRow.locator('[data-act="pause"]').count()) === 1, 'shown resumed', 30_000);
       await bar.keyboard.press('Escape');
       await menuClosed(bar);
-      return `${origWs} → copy ${copyWs} on Alpha`;
+      return `${origWs} → copy ${copyWs} on Alpha, paused and resumed`;
     });
 
     await step('folder on this computer: the sync panel\'s chooser on a local server writes the folder where the picker said', async () => {
@@ -528,11 +534,23 @@ async function main() {
       await menuClosed(bar);
       const row = await keptRow(app, bar, 'folder', 'Kept lab');
       assert((await row.locator('.state').textContent()).includes(fs.realpathSync(kept).split(path.sep).pop()), 'its state and where it is');
-      await row.hover(); // the chips show on hover
+      for (const act of ['pause', 'sync', 'stop']) assert(await row.locator(`[data-act="${act}"]`).isVisible(), `"${act}" shown without hovering`);
       await row.locator('[data-act="sync"]').click();
       await menuClosed(bar);
       await waitFor(async () => /is up to date/.test((await hook(app, (s) => s.notice())) || ''), 'the sync reported', 15_000);
-      return `${links[0].dest}`;
+      // "pause" leaves the panel open on the paused row, whose "resume" starts it again.
+      const toggled = await keptRow(app, bar, 'folder', 'Kept lab');
+      await toggled.locator('[data-act="pause"]').click();
+      await waitFor(async () => (await toggled.locator('.state').textContent()).startsWith('Paused'), 'shown paused', 15_000);
+      assert(!(await bar.evaluate(() => document.getElementById('syncPanel').hidden)), 'the panel stays open');
+      const linkOf = async () => (await hook(app, (s, w) => s.listFolders(w), ws)).links[0];
+      assert((await linkOf()).status.paused_at, 'paused on the server');
+      await toggled.locator('[data-act="resume"]').click();
+      await waitFor(async () => (await toggled.locator('[data-act="pause"]').count()) === 1, 'shown resumed', 15_000);
+      assert(!(await linkOf()).status.paused_at, 'resumed on the server');
+      await bar.keyboard.press('Escape');
+      await menuClosed(bar);
+      return `${links[0].dest}, paused and resumed`;
     });
 
     await step('folder from the library: a folder\'s "Keep on this computer…" asks where and keeps it; asked again, it opens it', async () => {
@@ -607,7 +625,6 @@ async function main() {
       await menuClosed(bar);
       const kept = await keptRow(app, bar, 'folder', 'Far lab');
       assert((await kept.getAttribute('title')).includes('from Alpha by URL'), 'from the remote, by its name');
-      await kept.hover(); // the "stop" chip shows on hover
       await kept.locator('[data-act="stop"]').click();
       await menuClosed(bar);
       await waitFor(async () => (await hook(app, (s, w) => s.listFolders(w), ws)).links.length === 0, 'the link is gone', 15_000);

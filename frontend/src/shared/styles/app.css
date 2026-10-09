@@ -3630,8 +3630,12 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
   background: var(--bg-surface);
 }
 .chatApprovalNote { margin-top: 6px; color: var(--text-secondary); font-size: calc(var(--fs-xs) * var(--text-scale, 1)); }
-/* "Allowed in this chat" in the composer's toolbar: click to ask again. */
-.chatGrantChip { padding: 2px 6px; cursor: pointer; }
+/* "Allowed in this chat" in the composer's toolbar: click to ask again. In a
+   narrow chat its words give way first (down to the shield and the ×), so
+   the send button keeps its place. */
+.chatGrantChip { padding: 2px 6px; cursor: pointer; min-width: 0; overflow: hidden; }
+.chatGrantChip svg { flex: none; }
+.chatGrantLabel { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .chatGrantChip:hover { color: var(--text-primary); border-color: var(--border-light); }
 /* A reply's papers (chat/ReplyPapers.jsx): one pill, opening to a checklist
    saved into the library together. */

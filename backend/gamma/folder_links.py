@@ -27,7 +27,8 @@ log, read directly; a remote server's change feed, asked at most every
 background when a link is made or asked to sync, and inline for a sync
 asked to wait. A remote link's round from the tick runs in a thread of its
 own. One round per link at a time (``_locks``); a round that failed is
-tried again after ``RETRY_S``.
+tried again after ``RETRY_S``. A paused link (``set_paused``) is left out
+of the tick and runs only when asked to sync.
 """
 
 import json
@@ -60,7 +61,9 @@ KEPT_SHOWN = 50        # kept files listed in the status
 _COLS = "id, workspace_id, folder_id, path, notes, created_by, created_at, cursor, status, remote_url, token, token_id"
 _locks: dict[str, threading.Lock] = {}
 _guard = threading.Lock()
+_status_guard = threading.Lock()  # one read-modify-write of a status at a time (_write_status, set_paused)
 _polled: dict[str, float] = {}   # link id -> when its remote server was last asked
+PAUSED = "paused_at"   # the status key of a pause: the user's, which no round writes
 
 
 class LinkError(ValueError):
@@ -97,13 +100,17 @@ def _unseal(sealed: str) -> str:
         raise LinkError("the stored token cannot be read: the data directory's key changed") from e
 
 
-def _row(r, with_token: bool = False) -> dict:
+def _status_of(text: str) -> dict:
     try:
-        status = json.loads(r[8] or "{}")
+        status = json.loads(text or "{}")
     except ValueError:
         status = {}
+    return status if isinstance(status, dict) else {}
+
+
+def _row(r, with_token: bool = False) -> dict:
     link = {"id": r[0], "workspace_id": r[1], "folder_id": r[2], "path": r[3], "notes": bool(r[4]),
-            "created_by": r[5], "created_at": r[6], "cursor": r[7] or "", "status": status if isinstance(status, dict) else {},
+            "created_by": r[5], "created_at": r[6], "cursor": r[7] or "", "status": _status_of(r[8]),
             "remote_url": r[9] or "", "token_id": r[11] or ""}
     if with_token:
         link["token"] = _unseal(r[10] or "")
@@ -256,6 +263,22 @@ def set_notes(link_id: str, notes: bool) -> dict | None:
     return link
 
 
+def set_paused(link_id: str, paused: bool) -> dict | None:
+    """Pause the link — the tick leaves it alone; a sync asked for still
+    runs, and a round already running finishes — or resume it. The pause
+    is ``status.paused_at``, when it began; None for no such link."""
+    with _status_guard, connect_users_db() as conn:
+        r = conn.execute("SELECT status FROM folder_links WHERE id = ?", (link_id,)).fetchone()
+        if r is None:
+            return None
+        status = _status_of(r[0])
+        since = status.pop(PAUSED, None)
+        if paused:
+            status[PAUSED] = since or page_now()
+        conn.execute("UPDATE folder_links SET status = ? WHERE id = ?", (json.dumps(status), link_id))
+    return get_link(link_id)
+
+
 def _remove_written(dest: Path) -> None:
     """What the rounds wrote and nothing else: the files as recorded and
     unchanged since, the directories they made when empty, the state file,
@@ -348,7 +371,14 @@ def source_of(link: dict):
 
 
 def _write_status(link_id: str, status: dict, cursor: str | None = None) -> None:
-    with connect_users_db() as conn:
+    """A round's status, written whole but for the pause: that stays as
+    stored, whatever the round read when it began (``set_paused``)."""
+    with _status_guard, connect_users_db() as conn:
+        r = conn.execute("SELECT status FROM folder_links WHERE id = ?", (link_id,)).fetchone()
+        since = _status_of(r[0]).get(PAUSED) if r else None
+        status = {k: v for k, v in status.items() if k != PAUSED}
+        if since:
+            status[PAUSED] = since
         if cursor is None:
             conn.execute("UPDATE folder_links SET status = ? WHERE id = ?", (json.dumps(status), link_id))
         else:
@@ -422,11 +452,13 @@ def _remote_moved(link: dict) -> bool:
 
 
 def due(link: dict) -> bool:
-    """Whether the loop runs the link now: not while a round runs (unless
-    that mark is stale), not for ``RETRY_S`` after a failure, and otherwise
-    only when its source moved past the cursor it holds — or it has never
-    synced."""
+    """Whether the loop runs the link now: never while it is paused, not
+    while a round runs (unless that mark is stale), not for ``RETRY_S``
+    after a failure, and otherwise only when its source moved past the
+    cursor it holds — or it has never synced."""
     st = link["status"]
+    if st.get(PAUSED):
+        return False
     if st.get("running") and _age(st.get("started_at")) < STALE_RUN_S:
         return False
     if st.get("last_error"):

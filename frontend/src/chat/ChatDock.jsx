@@ -2199,7 +2199,7 @@ export default function ChatDock({
               title={t("The assistant doesn't ask before these in this chat: {list}. Click to make it ask again.",
                 { list: grantedHere.map(permissionLabel).join(", ") })}
               aria-label={t("Allowed in this chat: {list}. Ask again", { list: grantedHere.map(permissionLabel).join(", ") })}>
-              <ShieldIcon size={14} />{t("Allowed in this chat")}<XIcon size={12} />
+              <ShieldIcon size={14} /><span className="chatGrantLabel">{t("Allowed in this chat")}</span><XIcon size={12} />
             </button>
           ) : null}
           {!aiOff && headerModels.length ? (

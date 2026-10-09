@@ -116,6 +116,16 @@
   .item .rowAct.on { color: var(--accent); background: var(--accent-bg-light); border-color: transparent; }
   .item .rowAct:hover { background: var(--accent-bg-light); color: var(--accent); border-color: var(--accent); }
   .item .rowAct svg { width: 14px; height: 14px; stroke-width: 2.74; }
+  /* A kept row's actions (keptRow), always shown: pause or resume, sync, stop. */
+  .item .acts { display: inline-flex; gap: 3px; flex-shrink: 0; }
+  .item .keepAct {
+    display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px;
+    color: var(--text-muted); border: 1px solid var(--border); border-radius: var(--radius-full);
+  }
+  .item .keepAct:hover { background: var(--accent-bg-light); color: var(--accent); border-color: var(--accent); }
+  .item .keepAct[data-act="stop"]:hover { background: var(--danger-bg); color: var(--danger); border-color: var(--danger-border); }
+  .item .keepAct[aria-disabled="true"] { opacity: 0.4; cursor: default; background: transparent; color: var(--text-muted); border-color: var(--border); }
+  .item .keepAct svg { width: 13px; height: 13px; stroke-width: 2.74; }
   .item .check svg { width: 14px; height: 14px; stroke-width: 3.43; }
   .item.current { font-weight: 600; }
   .sep { height: 1px; background: var(--border); margin: 5px 4px; }
@@ -184,6 +194,8 @@
     cloud: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z"/></svg>',
     alert: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 8v4"/><path d="M12 16h.01"/></svg>',
     stop: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>',
+    pause: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 5v14"/><path d="M15 5v14"/></svg>',
+    play: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 4.5v15a1 1 0 0 0 1.5.86l12-7.5a1 1 0 0 0 0-1.72l-12-7.5A1 1 0 0 0 7 4.5z"/></svg>',
     open: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></svg>',
   };
   const esc = (s) => String(s || '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
@@ -265,26 +277,39 @@
   }
 
   // A kept clone or folder in the panel: its name over its state, a dot for
-  // the state; a click opens it (the clone in the window, the folder's
-  // directory), "sync" runs a round now, "stop" (a folder) ends it, the shell
-  // asking about the files.
+  // the state, and its actions, always shown. A click opens it (the clone in
+  // the window, the folder's directory); "pause" stops its rounds (a clone
+  // detaches) and "resume" starts them again, the panel staying open on the
+  // new state; "sync" runs a round now (a detached clone has none); "stop"
+  // (a folder) ends it, the shell asking about the files.
   const TONE = { ok: 'on', error: 'off', conflicts: 'warn', pending: 'warn', busy: 'busy' };
   function keptRow(i) {
     const b = document.createElement('button');
     b.className = 'item keepItem';
     b.dataset.kind = i.kind;
     b.title = `${i.kind === 'folder' ? `${i.dest}, from ${i.from}` : i.where}\n${i.title}`;
-    b.innerHTML = `<span class="ico">${i.kind === 'clone' ? ICONS.local : ICONS.folder}</span>` +
+    const clone = i.kind === 'clone';
+    const acts = [ // [action, icon, title, disabled]
+      i.paused
+        ? ['resume', ICONS.play, clone ? 'Resume: follow the origin again; what both sides did meanwhile merges' : 'Resume: keep it up to date again']
+        : ['pause', ICONS.pause, clone ? 'Pause: nothing is pulled or pushed until you resume it; nothing is lost' : 'Pause: nothing here changes until you resume it'],
+      clone && i.paused ? ['sync', ICONS.sync, 'Paused: resume it to sync', true] : ['sync', ICONS.sync, 'Bring it up to date now'],
+      ...(clone ? [] : [['stop', ICONS.stop, 'Stop keeping it on this computer']]),
+    ];
+    b.innerHTML = `<span class="ico">${clone ? ICONS.local : ICONS.folder}</span>` +
       `<span class="lines"><span class="label"></span><span class="state"></span></span>` +
       `<span class="dot ${TONE[i.state] || ''}"></span>` +
-      `<span class="rowAct" role="button" tabindex="0" data-act="sync" title="Bring it up to date now">${ICONS.sync}sync</span>` +
-      (i.kind === 'folder' ? `<span class="rowAct" role="button" tabindex="0" data-act="stop" title="Stop keeping it on this computer">${ICONS.stop}stop</span>` : '');
+      `<span class="acts">${acts.map(([act, icon, title, off]) =>
+        `<span class="keepAct" role="button" tabindex="${off ? -1 : 0}" data-act="${act}" title="${esc(title)}" aria-label="${esc(title)}"${off ? ' aria-disabled="true"' : ''}>${icon}</span>`).join('')}</span>`;
     b.querySelector('.label').textContent = i.name;
     b.querySelector('.state').textContent = `${i.text} · ${i.kind === 'folder' ? i.dest : i.where}`;
-    const run = (action) => { closeMenu(); gammaShell.keepingAction(i.kind, i.server, i.id, action).catch(() => {}); };
+    const run = (action) => {
+      if (action !== 'pause' && action !== 'resume') closeMenu();
+      gammaShell.keepingAction(i.kind, i.server, i.id, action).catch(() => {});
+    };
     b.onclick = () => run('open');
     for (const act of b.querySelectorAll('[data-act]')) {
-      const go = (e) => { e.stopPropagation(); e.preventDefault(); run(act.dataset.act); };
+      const go = (e) => { e.stopPropagation(); e.preventDefault(); if (act.getAttribute('aria-disabled') !== 'true') run(act.dataset.act); };
       act.onclick = go;
       act.onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') go(e); };
     }

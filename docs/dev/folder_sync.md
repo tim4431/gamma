@@ -198,9 +198,10 @@ creation (`server: "local"`, or the remote's address). It adopts one that
 an earlier link to the same folder of the same server left behind, and
 refuses a directory holding another folder's files.
 
-Rounds run three ways: in the background when a link is made or asked to
-sync, inline for a sync asked to wait, and from `tick`. The app's periodic
-loop runs `tick` every `TICK_S` (30 s), and a link is *due* when:
+Rounds run three ways: in the background when a link is made, asked to
+sync or resumed, inline for a sync asked to wait, and from `tick`. The
+app's periodic loop runs `tick` every `TICK_S` (30 s), and a link that is
+not paused is *due* when:
 
 - its source moved past its cursor. For a local workspace that is its
   change log, read directly, so a quiet workspace costs one query per
@@ -219,6 +220,12 @@ link, so a slow or silent server never holds up the rest. A round's own
 requests may wait two minutes each (`gamma_sync.Server.timeout`), long
 enough for a large PDF.
 
+A paused link (`set_paused`, `PATCH {paused}`) is never due; a sync asked
+for still runs it, and a round already running finishes. The pause is
+`status.paused_at`, when it began. It is the user's, not a round's:
+`_write_status` keeps it as stored whatever the round read when it began,
+so a pause set mid-round holds.
+
 A round marked running for over ten minutes counts as dead. One round runs
 per link at a time (`_locks`). The tick forgets a link whose workspace on
 this server is gone. Removing a link leaves the directory as it is. With
@@ -230,8 +237,8 @@ it empty.
 `/api/folder-links` ([api.md](api.md)) is session-only and never a guest's.
 A link of this server's workspace takes the editor role to make, change,
 sync or remove; any member lists them. A link with a remote source is its
-account's alone. The desktop app is the only caller. It makes, syncs and
-stops links from its bar's sync panel and from a folder's *Keep on this
+account's alone. The desktop app is the only caller. It makes, pauses,
+syncs and stops links from its bar's sync panel and from a folder's *Keep on this
 computer…* in Gamma's own menu ([desktop
 architecture](../../desktop/docs/architecture.md) "Folders on this
 computer"). Gamma's Settings has no section for them.

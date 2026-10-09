@@ -42,7 +42,20 @@ test('a folder: syncing, a problem, not written yet, or up to date with files le
   assert.equal(folder({ remote_url: 'http://other.example:9001', status: {} }).from, 'other.example:9001');
 });
 
-test('the button shows the worst state; a detached clone never raises it', () => {
+test('a paused folder reads as paused unless a round asked for runs; a detached clone is paused', () => {
+  const paused = folder({ status: { last_sync: now, last_error: 'x', paused_at: now } });
+  assert.equal(paused.state, 'paused');
+  assert.equal(paused.paused, true);
+  assert.match(paused.text, /^Paused · /);
+  const running = folder({ status: { running: true, paused_at: now } });
+  assert.equal(running.state, 'busy');
+  assert.equal(running.paused, true, 'still paused once the round ends');
+  assert.equal(folder({ status: { last_sync: now } }).paused, false);
+  assert.equal(clone({ mode: 'off' }).paused, true);
+  assert.equal(clone({ status: { last_sync: now } }).paused, false);
+});
+
+test('the button shows the worst state; a detached clone or a paused folder never raises it', () => {
   assert.equal(keeping.summarize([]).state, 'none');
   const ok = folder({ status: { last_sync: now } });
   const busy = folder({ id: 'f2', status: { running: true } });
@@ -51,5 +64,7 @@ test('the button shows the worst state; a detached clone never raises it', () =>
   assert.deepEqual(keeping.summarize([ok, off]), { state: 'ok', text: 'Synced', title: '1 clone and 1 folder on disk on this computer: synced' });
   assert.equal(keeping.summarize([ok, busy]).text, 'Syncing…');
   assert.equal(keeping.summarize([ok, busy, bad]).text, '1 problem');
-  assert.equal(keeping.summarize([off]).state, 'ok');
+  const paused = folder({ id: 'f3', status: { last_error: 'x', paused_at: now } });
+  assert.equal(keeping.summarize([ok, paused]).text, 'Synced');
+  assert.deepEqual(keeping.summarize([off, paused]), { state: 'paused', text: 'Paused', title: '1 clone and 1 folder on disk on this computer: paused' });
 });

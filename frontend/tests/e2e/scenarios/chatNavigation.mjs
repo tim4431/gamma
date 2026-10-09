@@ -1090,6 +1090,19 @@ export async function chatNavigationScenarios(env) {
       const chip = page.getByRole("button", { name: "Allowed in this chat: Edit note blocks. Ask again", exact: true });
       await chip.waitFor();
       if (flags.keep) await page.locator(".chatComposer").screenshot({ path: `${server.dir}/approval-granted.png`, animations: "disabled" });
+      // A narrow chat: the chip's words give way and the send button stays inside the composer.
+      const composer = page.locator(".chatComposer");
+      await composer.evaluate((el) => { el.style.width = "200px"; });
+      const narrow = await page.evaluate(() => {
+        const box = document.querySelector(".chatComposer").getBoundingClientRect();
+        const sendBtn = document.querySelector('.chatComposer button[aria-label="Send"]').getBoundingClientRect();
+        const label = document.querySelector(".chatGrantLabel");
+        return { inside: sendBtn.right <= box.right, given: label.clientWidth < label.scrollWidth };
+      });
+      if (flags.keep) await composer.screenshot({ path: `${server.dir}/approval-granted-narrow.png`, animations: "disabled" });
+      await composer.evaluate((el) => { el.style.width = ""; });
+      assert(narrow.inside, "the send button stays inside a narrow composer");
+      assert(narrow.given, "the grant chip's words give way first");
 
       // 2. The conversation's grant rides along; a read set to ask is declined.
       await page.locator('[title^="Chat settings"]').click();

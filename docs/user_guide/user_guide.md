@@ -238,7 +238,7 @@ Your library lives on your server. For the train or a lab without Wi-Fi, keep an
 - Edits made offline go with the next sync. Edits to the same words show a **merge chip**: pick local, remote or merged.
 - The **sync pill** in the page header shows the state and opens the log and settings.
 - **A folder on this computer** (desktop app): right-click a folder in the library and choose *Keep on this computer…*, or use *Keep a folder…* in the sync button's panel at the right of the title bar. Pick a directory, and the folder is kept there as PDFs beside Markdown notes. On your NAS's workspace this needs no clone: only that folder's files come down, read with a key the app makes for it. The sync button shows how your clones and folders stand.
-- **The sync panel** lists each clone and kept folder with *sync* and *stop*. *Stop* asks whether to keep or remove the files.
+- **The sync panel** lists each clone and kept folder with *pause* (then *resume*), *sync* and, for a folder, *stop*. A paused folder isn't touched until you resume or sync it; pausing a clone detaches it, and resuming merges what both sides did meanwhile. *Stop* asks whether to keep or remove the files.
 - **Keep running in the background**: a switch in the launcher's settings and the tray. Gamma then stays in the tray when the window closes, so clones and folders on disk keep syncing; *Start at login* starts it there.
 
 ## Gamma Connector

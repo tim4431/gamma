@@ -10,8 +10,10 @@
 // in the same order, so the bar and the page never disagree. Change both.
 
 // How much a state asks of the user, least first; the button shows the
-// worst. A detached clone is the user's own choice and never raises it.
+// worst. A detached clone or a paused folder is the user's own choice and
+// never raises it.
 const RANK = { ok: 0, new: 1, pending: 2, busy: 3, conflicts: 4, error: 5 };
+const QUIET = ['detached', 'paused'];
 
 const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
@@ -33,6 +35,7 @@ function nameOf(url, servers) {
 }
 
 // A clone of local server `server`: one row of its `GET /api/mirrors`.
+// `paused`: detached, which the panel's pause and resume do.
 function clone(server, info, servers) {
   const s = info.status || {};
   const p = s.progress || {};
@@ -40,9 +43,10 @@ function clone(server, info, servers) {
     kind: 'clone', key: `clone:${server.id}:${info.workspace_id}`, server: server.id,
     id: info.workspace_id, name: info.name || info.remote_name || 'Clone',
     where: `Clone of ${info.remote_name || 'a workspace'} on ${nameOf(info.remote_url, servers)}`,
+    paused: Boolean(info.detached || info.mode === 'off'),
   };
-  if (info.detached || info.mode === 'off') {
-    return { ...item, state: 'detached', text: 'Detached', title: 'Nothing is pulled or pushed until you reattach it, in the clone.' };
+  if (item.paused) {
+    return { ...item, state: 'detached', text: 'Detached', title: 'Nothing is pulled or pushed until you resume it; what both sides did meanwhile merges then.' };
   }
   if (s.running) {
     return { ...item, state: 'busy', text: `${p.first ? 'Cloning' : 'Syncing'}${p.total ? ` ${p.done} / ${p.total}` : '…'}`, title: 'A round is running.' };
@@ -77,9 +81,12 @@ function folder(server, link, servers) {
     kind: 'folder', key: `folder:${server.id}:${link.id}`, server: server.id, id: link.id,
     name: link.folder_id === 'root' ? 'Whole library' : names.length ? names[names.length - 1] : String(link.dest || '').split(/[\\/]/).pop(),
     where: link.dest, dest: link.dest, from: link.remote_url ? nameOf(link.remote_url, servers) : server.name,
-    changed,
+    changed, paused: Boolean(s.paused_at),
   };
   if (s.running) return { ...item, state: 'busy', text: 'Syncing…', title: 'A round is running.' };
+  if (item.paused) {
+    return { ...item, state: 'paused', text: `Paused · ${clock(s.paused_at)}`, title: 'Nothing here is written until you resume it; Sync runs one round now.' };
+  }
   if (s.last_error) return { ...item, state: 'error', text: 'Sync problem', title: s.last_error };
   if (!s.last_sync) return { ...item, state: 'new', text: 'Not written yet', title: 'The first round runs in a moment.' };
   return { ...item, state: 'ok', text: `Up to date · ${clock(s.last_sync)}${changed ? ` · ${changed} changed here` : ''}`,
@@ -98,7 +105,8 @@ function summarize(items) {
   const folders = items.length - clones;
   const what = [clones && plural(clones, 'clone'), folders && plural(folders, 'folder on disk')].filter(Boolean).join(' and ');
   if (!items.length) return { state: 'none', text: '', title: 'Nothing is kept on this computer yet' };
-  const live = items.filter((i) => i.state !== 'detached');
+  const live = items.filter((i) => !QUIET.includes(i.state));
+  if (!live.length) return { state: 'paused', text: 'Paused', title: `${what} on this computer: paused` };
   const state = live.reduce((worst, i) => (RANK[i.state] > RANK[worst] ? i.state : worst), 'ok');
   const n = live.filter((i) => i.state === state).length;
   const text = {

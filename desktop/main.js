@@ -560,8 +560,8 @@ async function localServer(serverId) {
 // this computer…" in Gamma's own menu, which the page preload passes on
 // (shell:keep-folder-from-page). The rounds are the server's; the sync
 // panel (below, "kept on this computer") shows each kept folder's state,
-// syncs it (syncFolder) and stops it (dropFolder, the files kept or taken
-// back; the token it minted revoked).
+// pauses or resumes it (pauseFolder), syncs it (syncFolder) and stops it
+// (dropFolder, the files kept or taken back; the token it minted revoked).
 // An empty directory is used as it is; one holding anything gets a
 // subdirectory named after the folder.
 
@@ -733,6 +733,19 @@ async function syncFolder(serverId, linkId, force) {
   }
 }
 
+// Pause a kept folder or resume it (a round runs then). Paused, the server's
+// loop leaves it alone; a sync asked for still runs.
+async function pauseFolder(serverId, linkId, paused) {
+  const { origin, api, link, headers } = await linkOn(serverId, linkId);
+  await api(origin, `/api/folder-links/${link.id}`, {
+    method: 'PATCH', headers: { ...headers, 'Content-Type': 'application/json' }, body: JSON.stringify({ paused }),
+  });
+  showNotice(paused ? `${linkName(link)} is paused: ${link.dest} stays as it is until you resume or sync it.`
+    : `${linkName(link)} is kept up to date again.`);
+  refreshKeeping().catch(() => {});
+  return true;
+}
+
 // Stop keeping a folder: the link goes, and the token the shell minted on
 // a remote for it is revoked there. The files stay, or with `how` 'remove'
 // what the sync wrote is taken back; asked when not given.
@@ -812,8 +825,9 @@ function refreshKeeping() {
   return keepingRead;
 }
 
-// What a panel row does: a clone opens or syncs; a folder opens its
-// directory, syncs, or stops.
+// What a panel row does: a clone opens, pauses (detaches) or resumes
+// (reattaches, what both sides did meanwhile merging), or syncs; a folder
+// opens its directory, pauses or resumes, syncs, or stops.
 async function keepingAction(kind, serverId, id, action) {
   const item = keepingState.items.find((i) => i.kind === kind && i.server === serverId && i.id === id);
   if (!item) throw new Error('That is no longer kept on this computer');
@@ -821,12 +835,21 @@ async function keepingAction(kind, serverId, id, action) {
     await openServer(serverId);
     await openGammaWorkspace(id);
     buildMenu();
+  } else if (kind === 'clone' && (action === 'pause' || action === 'resume')) {
+    const { origin, api } = await localServer(serverId);
+    await api(origin, `/api/mirrors/${encodeURIComponent(id)}/${action === 'pause' ? 'detach' : 'relink'}`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
+    });
+    showNotice(action === 'pause' ? `${item.name} is paused: nothing is pulled or pushed until you resume it.`
+      : `${item.name} follows its origin again; what both sides did meanwhile merges.`);
   } else if (kind === 'clone' && action === 'sync') {
     const { origin, api } = await localServer(serverId);
     await api(origin, `/api/mirrors/${encodeURIComponent(id)}/sync`, { method: 'POST' });
     showNotice(`Syncing ${item.name}…`);
   } else if (kind === 'folder' && action === 'open') {
     openDirectory(item.dest);
+  } else if (kind === 'folder' && (action === 'pause' || action === 'resume')) {
+    return pauseFolder(serverId, id, action === 'pause');
   } else if (kind === 'folder' && action === 'sync') {
     return syncFolder(serverId, id);
   } else if (kind === 'folder' && action === 'stop') {

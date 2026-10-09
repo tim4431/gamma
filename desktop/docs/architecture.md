@@ -127,8 +127,8 @@ from `listLinks`). A folder already kept reads *on disk* and opens its
 directory on click (`shell:open-path`, only for a directory one of those
 links names). Any other asks for a directory on click (`shell:keep-folder`
 → `keepFolder`). An empty directory is used as it is; any other gets a
-subdirectory named after the folder. Syncing and stopping a kept folder
-are the panel's rows, below.
+subdirectory named after the folder. Pausing, syncing and stopping a kept
+folder are the panel's rows, below.
 
 Under the test harness `GAMMA_SHELL_PICK_DIR` answers the picker, the
 questions take their first answer, and a directory "opened" is only
@@ -170,19 +170,29 @@ running local server, whichever server the window shows. It reads
 *Synced*, *Syncing…*, *Conflicts*, *n problems* and the like, with a
 matching icon and colour, and shows once a server is open or anything is
 kept. Its **panel** lists the clones, then the folders on disk, each a row
-with its name over its state and where it is, and a state dot:
+with its name over its state and where it is, a state dot, and its round
+action buttons, always shown (each named by its tooltip):
 
-- A click opens it: a clone in the window (`openServer`, then
+- A click on the row opens it: a clone in the window (`openServer`, then
   `openGammaWorkspace`), a folder's directory (`openDirectory`).
+- *pause* and *resume* swap with the item's state, and the panel stays
+  open on the new one. For a clone they are `POST /api/mirrors/<ws>/detach`
+  and `/relink` (the stored token; what both sides did meanwhile merges),
+  so a paused clone reads *Detached*, as in Gamma's pill. For a folder they
+  are `pauseFolder`, `PATCH /api/folder-links/<id> {paused}`: the server's
+  tick leaves a paused folder alone, and resuming runs a round.
 - *sync* runs a round now. For a clone that is `POST
-  /api/mirrors/<ws>/sync` on its local server. For a folder it is
-  `syncFolder`, which asks first whether to replace files changed on disk
-  when there are any, and reports the round in the bar.
+  /api/mirrors/<ws>/sync` on its local server, shut while it is detached.
+  For a folder it is `syncFolder`, which asks first whether to replace
+  files changed on disk when there are any, and reports the round in the
+  bar. A paused folder syncs too and stays paused.
 - *stop* (a folder) is `dropFolder`, which asks whether to keep the files
   or take back what the sync wrote.
 
-The panel ends with the chooser above. Conflicts, detaching and a clone's
-cadence stay in Gamma's own sync pill, in the clone.
+A detached clone or a paused folder never raises the button's summary;
+when everything is, it reads *Paused*. The panel ends with the chooser
+above. Conflicts and a clone's cadence stay in Gamma's own sync pill, in
+the clone.
 
 `refreshKeeping` reads every running local server's `GET /api/mirrors` and
 `GET /api/folder-links` every 15 s, every 2 s while something syncs, when
