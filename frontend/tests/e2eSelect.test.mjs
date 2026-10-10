@@ -51,7 +51,7 @@ test("a change selects the groups that exercise it", () => {
   assert.deepEqual(pick(["backend/gamma/ink.py"]).sort(), ["ink", "ink-editing", "notebooks", "triggered-guide"]);
   // a scenario helper selects the scenarios importing it
   const notes = pick(["frontend/tests/e2e/scenarios/notes.mjs"]);
-  for (const id of ["notes-pdf-share", "collab", "files", "mermaid"]) assert.ok(notes.includes(id), id);
+  for (const id of ["notes-pdf-share", "collab", "files", "diagrams"]) assert.ok(notes.includes(id), id);
   // a guide anchor on a changed line brings the tours in, whatever the file
   const anchored = pick(["frontend/src/sharing/SharePopover.jsx"], () => ['+  <button data-guide="share.copy">']);
   for (const id of ["guide", "contextual-guide", "triggered-guide", "publish"]) assert.ok(anchored.includes(id), id);

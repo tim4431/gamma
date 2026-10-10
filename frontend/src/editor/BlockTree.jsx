@@ -18,8 +18,8 @@ import { isTextBox } from "../markup/textBox.js";
 import { isSheet } from "../notebook/notebook";
 import { NoteSheet } from "../notebook/NoteSheet";
 import { CitationPill, GammaLinkCard, handleMarkdownCopy } from "../shared/ui/Widgets";
-import { MermaidDiagram, mermaidCodeProps } from "../shared/ui/MermaidDiagram";
-import { mapOutsideCodeFences, remarkMermaid, scanMermaidFences, setMermaidWidth } from "../shared/lib/mermaidMarkdown.js";
+import { DiagramFigure, diagramCodeProps } from "../shared/ui/DiagramFigure";
+import { mapOutsideCodeFences, remarkDiagrams, scanDiagramFences, setDiagramWidth } from "../shared/lib/diagramMarkdown.js";
 import { MdObject, ObjectMenuButton, findObject } from "./MdObject";
 import { cutObject } from "./mdObjects";
 import { blockSpans, parseTable, protectedSpans, scanMathSpans, scanTables } from "./mdScan";
@@ -397,15 +397,15 @@ function BlockEmbedCard({ refId, refBlock, refLabels, onBlockRefClick, onEmbedEd
       const v = applyTableEdit(base, idx, op);
       if (v != null && v !== base) onEmbedEdit?.(refId, v, base);
     },
-    mermaid: (idx, width) => {
-      const v = setMermaidWidth(base, idx, width);
+    diagram: (idx, width) => {
+      const v = setDiagramWidth(base, idx, width);
       if (v != null && v !== base) onEmbedEdit?.(refId, v, base);
     },
   };
   const stableTask = useRef((i, c) => toolsRef.current.task(i, c)).current;
   const stableImg = useRef((i, a, p) => toolsRef.current.img(i, a, p)).current;
   const stableTbl = useRef((i, o) => toolsRef.current.tbl(i, o)).current;
-  const stableMermaid = useRef((i, w) => toolsRef.current.mermaid(i, w)).current;
+  const stableDiagram = useRef((i, w) => toolsRef.current.diagram(i, w)).current;
 
   return (
     <span
@@ -474,7 +474,7 @@ function BlockEmbedCard({ refId, refBlock, refLabels, onBlockRefClick, onEmbedEd
             onTaskToggle={editable ? stableTask : undefined}
             onImageEdit={editable ? stableImg : undefined}
             onTableEdit={editable ? stableTbl : undefined}
-            onMermaidEdit={editable ? stableMermaid : undefined} />
+            onDiagramEdit={editable ? stableDiagram : undefined} />
         ) : (
           // A source in Recently deleted names its page (the click opens the
           // notice that offers Restore); one that no page holds says so.
@@ -505,8 +505,9 @@ function BlockEmbedCard({ refId, refBlock, refLabels, onBlockRefClick, onEmbedEd
 
 // Fenced code in the rendered view: react-markdown hands us
 // <pre><code class="language-x">text</code></pre>; re-render it through
-// highlight.js with a small language badge (a ```mermaid fence becomes a
-// diagram instead — BlockMarkdown's `pre`). Inline `code` is untouched.
+// highlight.js with a small language badge (a ```mermaid or ```svg fence
+// becomes a diagram instead — BlockMarkdown's `pre`). Inline `code` is
+// untouched.
 // The copy button is the shared DOM one (makeCopyButton — same behavior as
 // the editor's code card), mounted once outside React's reconciliation.
 function HighlightedCodePre({ children }) {
@@ -537,26 +538,26 @@ function HighlightedCodePre({ children }) {
 // labels are resolved by the caller so the comparison here stays a string
 // check. onBlockRefClick/onTaskToggle are deliberately excluded from the
 // comparison — the caller passes identity-stable wrappers.
-export const BlockMarkdown = React.memo(function BlockMarkdown({ content, blockId, refLabels, onBlockRefClick, onTaskToggle, onEmbedEdit, onImageEdit, onTableEdit, onMermaidEdit, onObjectAction, nested }) {
+export const BlockMarkdown = React.memo(function BlockMarkdown({ content, blockId, refLabels, onBlockRefClick, onTaskToggle, onEmbedEdit, onImageEdit, onTableEdit, onDiagramEdit, onObjectAction, nested }) {
   // GFM task-list checkboxes render in document order; this counter maps the
   // nth rendered checkbox back to the nth `[ ]`/`[x]` marker in the source so
   // clicking one toggles the right marker. Reset per render — the whole
   // element tree is rebuilt whenever this component re-renders.
-  // imgIdx/tableIdx/mermaidIdx do the same for images, tables and diagrams
-  // (mdTools / mermaidMarkdown scan the source with matching rules, so the
+  // imgIdx/tableIdx/diagramIdx do the same for images, tables and diagrams
+  // (mdTools / diagramMarkdown scan the source with matching rules, so the
   // nth rendered one is the nth scanned).
-  let taskIdx = -1, imgIdx = -1, tableIdx = -1, mermaidIdx = -1;
+  let taskIdx = -1, imgIdx = -1, tableIdx = -1, diagramIdx = -1;
   // Source-order table list; entries inside blockquotes are editable:false
   // (they still consume an index so the mapping stays aligned).
   const tableInfo = useMemo(() => scanTables(content || ""), [content]);
-  const mermaidInfo = useMemo(() => scanMermaidFences(content || ""), [content]);
+  const diagramInfo = useMemo(() => scanDiagramFences(content || ""), [content]);
   const citesSeveral = useMemo(() => citesSeveralPapers(content), [content]);
   return (
     <ReactMarkdown
       // remark-breaks: a single Enter inside a note renders as a real line
       // break (the editor lets you type them), not markdown's soft-break space.
       // remarkCallouts must run before it (it eats the marker line's "\n").
-      remarkPlugins={[remarkGfm, remarkMath, remarkCallouts, remarkBreaks, remarkMermaid]}
+      remarkPlugins={[remarkGfm, remarkMath, remarkCallouts, remarkBreaks, remarkDiagrams]}
       rehypePlugins={[rehypeRaw, rehypeKatex]}
       // Upload URLs get the workspace / share token here (assetUrl): the
       // browser fetches <img> src and link hrefs without the API header.
@@ -638,13 +639,13 @@ export const BlockMarkdown = React.memo(function BlockMarkdown({ content, blockI
           <summary {...rest} onMouseDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()}>{children}</summary>
         ),
         pre: ({ children }) => {
-          const diagram = mermaidCodeProps(children);
+          const diagram = diagramCodeProps(children);
           if (!diagram) return <HighlightedCodePre>{children}</HighlightedCodePre>;
-          mermaidIdx += 1;
-          const f = mermaidInfo[mermaidIdx];
+          diagramIdx += 1;
+          const f = diagramInfo[diagramIdx];
           return (
-            <MdObject kind="mermaid" idx={mermaidIdx} editable={!!(f?.closed && !f.prefix.trim())} onAction={onObjectAction}>
-              <MermaidDiagram {...diagram} idx={mermaidIdx} onResize={onMermaidEdit} tools={<ObjectMenuButton />} />
+            <MdObject kind="diagram" idx={diagramIdx} editable={!!(f?.closed && !f.prefix.trim())} onAction={onObjectAction}>
+              <DiagramFigure {...diagram} idx={diagramIdx} onResize={onDiagramEdit} tools={<ObjectMenuButton />} />
             </MdObject>
           );
         },
@@ -900,12 +901,12 @@ const BlockRow = React.memo(function BlockRow({
     }
   };
   const stableImageEdit = useRef((i, a, p) => imageEditRef.current?.(i, a, p)).current;
-  const mermaidEditRef = useRef(null);
-  mermaidEditRef.current = (idx, width) => {
-    const newVal = setMermaidWidth(block.content || "", idx, width);
+  const diagramEditRef = useRef(null);
+  diagramEditRef.current = (idx, width) => {
+    const newVal = setDiagramWidth(block.content || "", idx, width);
     if (newVal != null && newVal !== block.content) onChangeText(block.id, newVal);
   };
-  const stableMermaidEdit = useRef((i, w) => mermaidEditRef.current?.(i, w)).current;
+  const stableDiagramEdit = useRef((i, w) => diagramEditRef.current?.(i, w)).current;
   const tableEditRef = useRef(null);
   tableEditRef.current = (idx, op) => {
     const newVal = applyTableEdit(block.content || "", idx, op);
@@ -1894,7 +1895,7 @@ const BlockRow = React.memo(function BlockRow({
                   onEmbedEdit={readOnly ? undefined : stableEmbedEdit}
                   onImageEdit={readOnly ? undefined : stableImageEdit}
                   onTableEdit={readOnly ? undefined : stableTableEdit}
-                  onMermaidEdit={readOnly ? undefined : stableMermaidEdit}
+                  onDiagramEdit={readOnly ? undefined : stableDiagramEdit}
                   onObjectAction={readOnly ? undefined : stableObjectAction} />
               ) : sheetNumber ? (
                 // an untitled notebook sheet reads as the page it stands for

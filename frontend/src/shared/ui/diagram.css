@@ -1,0 +1,28 @@
+.diagramCard { position: relative; margin: 8px 0; min-width: 0; max-width: 100%; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--bg-surface); overflow: hidden; }
+/* The toolbar: the note image's flat icon buttons, revealed on hover and
+   while the note's diagram is selected (always while the source is shown, so
+   the toggle stays reachable). */
+.diagramTools { position: absolute; top: 6px; right: 6px; z-index: 1; display: inline-flex; align-items: center; gap: 1px; padding: 3px; background: var(--bg-elevated); border: 1px solid var(--border); border-radius: var(--radius-md); box-shadow: var(--shadow-2); opacity: 0; pointer-events: none; transition: opacity var(--dur-fast); }
+.diagramCard:hover .diagramTools, .diagramCard.showingSource .diagramTools, .diagramTools:focus-within,
+.mdObjectSelected .diagramTools { opacity: 1; pointer-events: auto; }
+.diagramPreview { padding: 12px; overflow: auto; max-height: 600px; }
+/* A ```svg drawing (an image, .diagramImg) assumes a white page (black
+   strokes, no background of its own), like a picture: its preview is white
+   in every theme, with light scrollbars to match. Mermaid follows the
+   colour scheme. */
+.diagramCard[data-diagram-kind="svg"] .diagramPreview { background: #fff; color-scheme: light; } /* ds-allow: the drawing's own white page */
+/* The figure hugs the drawing (its width = the stored size, else the
+   drawing's natural width) and centres; the drawing (Mermaid's inline SVG,
+   an SVG fence's image) fills it so a dragged width scales the whole
+   drawing, like a sized note image. */
+.diagramFigure { position: relative; max-width: 100%; margin: 0 auto; }
+.diagramSvg > svg, .diagramImg { display: block; max-width: 100%; height: auto; margin: auto; }
+.diagramFigure.sized .diagramSvg > svg { width: 100% !important; max-width: none !important; }
+.diagramFigure.sized .diagramImg { width: 100%; }
+.diagramFigure:hover .mdResizeGrip, .mdObjectSelected .diagramFigure .mdResizeGrip { opacity: 0.55; pointer-events: auto; }
+.diagramFigure .mdResizeGrip:is(:hover, :active) { opacity: 0.9; pointer-events: auto; }
+.diagramStatus, .diagramError { padding: 8px 12px; color: var(--text-muted); font-size: var(--fs-xs); }
+.diagramError { color: var(--danger); }
+.diagramCard pre.diagramSource, .diagramError pre { margin: 0; padding: 12px; overflow: auto; max-height: 400px; white-space: pre; font-size: var(--fs-xs); }
+.diagramCard.showingSource pre.diagramSource { padding-right: 150px; }
+.diagramError pre { padding: 6px 0; white-space: pre-wrap; }

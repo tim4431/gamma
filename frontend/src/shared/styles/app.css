@@ -1027,7 +1027,7 @@ html, body { overscroll-behavior: none; }
 .mdObject-table { width: fit-content; }
 .mdObject[draggable="true"] { cursor: grab; }
 .mdObjectSelected { box-shadow: 0 0 0 2px var(--accent); }
-.mdObject.mdObject-mermaid.mdObjectSelected .mermaidDiagram { border-color: transparent; }
+.mdObject.mdObject-diagram.mdObjectSelected .diagramCard { border-color: transparent; }
 /* Dropping an object inside a block: the line in the gap it lands in. */
 .dropIndicatorInside { transform: translateY(-1px); border-radius: 1px; }
 /* The in-place cell editor: an input laid exactly over the clicked cell.
@@ -1083,8 +1083,8 @@ html, body { overscroll-behavior: none; }
 .mdObjectSelected .mdImgTools { opacity: 1; pointer-events: auto; }
 .mdImgTools a.ctlBtn { text-decoration: none; }
 .mdImgTools .ctlBtn.danger:hover { background: var(--danger-bg); color: var(--danger); }
-/* The edge drag grips shared by sized figures (note images, Mermaid
-   diagrams — shared/ui/ResizeGrip.jsx), one per side; each frame reveals
+/* The edge drag grips shared by sized figures (note images, Mermaid and
+   SVG diagrams — shared/ui/ResizeGrip.jsx), one per side; each frame reveals
    them on hover and while its object is selected, and out of sight they
    take no press. The bar is thin; its hit area (::before) is a finger's. */
 .mdResizeGrip {

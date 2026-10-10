@@ -432,6 +432,21 @@ _SYSTEM_PROMPT = (
     "Be concise; when you cite a specific value from a PDF, give its PDF page number, "
     "and say when something comes from the user's notes rather than the document.")
 
+# Appended to every chat request, built-in or custom prompt, document or
+# not: what the reply view draws, so the model knows a figure is an option.
+# Both fences render inline in the reply and in a note it is saved to
+# (docs/dev/diagrams.md); any other fence stays a code block.
+FIGURE_PROMPT = (
+    "Replies render as Markdown with $...$ and $$...$$ math. When a figure explains "
+    "something better than prose, include one as a fenced code block: ```mermaid for "
+    "a flowchart, sequence, state or class diagram; ```svg for any other drawing (an "
+    "energy-level scheme, a geometry, a free-form sketch), holding one complete <svg> "
+    "element with a viewBox, built from plain shapes, paths, markers and text with "
+    "explicit fill and stroke colors on a white background — no scripts, links, images, "
+    "foreignObject or external references, which are stripped. Keep a figure small and "
+    "say in the text what it shows. Do not draw when prose or a table says it as well."
+)
+
 # Default prompt for AI-based metadata extraction (used when neither an arXiv id
 # nor a DOI identifies the paper). Editable per-user in the frontend prompt editor.
 METADATA_PROMPT = (
@@ -1701,6 +1716,8 @@ def _chat_prompt(ws: str, payload, scope: dict, tools, allow_native: bool, drop:
     # the text the MCP adapter's instructions share.
     if context or pdf_b64s:
         system += "\n\n" + CITATION_PROMPT
+    # Always: the fences the reply view draws as figures (docs/dev/diagrams.md).
+    system = (system + "\n\n" if system else "") + FIGURE_PROMPT
     if tools:
         system = ((system + "\n\n" if system else "")
                   + agent_system(scope, scope["permissions"],
