@@ -426,6 +426,7 @@ def test_chat_context_from_text_only_page(org, monkeypatch):
     assert "Here is the PDF text" not in user_turn and "EXCERPT" not in user_turn
     assert user_turn.rstrip().endswith("User question: what should I read?")
     assert "knowledge base" in seen["system"]  # the built-in prompt applies to page context
+    assert seen["system"].endswith(ai_mod.FIGURE_PROMPT)  # the figure fences come last
     lines = [json.loads(l) for l in r.text.splitlines() if l.strip()]
     (cover,) = lines[0]["context"]
     assert cover["title"] == "Reading plan" and cover["doc_id"] == "" and cover["partial"] is False
@@ -517,6 +518,7 @@ def test_chat_without_agent_scope_gets_no_tools(org, monkeypatch):
 
     def fake_open(messages, system, entry, rt, pdf_b64s=None, **kw):
         seen["tools"] = kw.get("tools")
+        seen["system"] = system
         return FakeResp([{"type": "content_block_delta",
                            "delta": {"type": "text_delta", "text": "hi"}}])
 
@@ -524,6 +526,15 @@ def test_chat_without_agent_scope_gets_no_tools(org, monkeypatch):
     r = c.post("/api/ai/chat", json={"prompt": "hello", "stream": True})
     assert r.status_code == 200
     assert seen["tools"] is None
+    # No page in context: no knowledge-base prompt, but the reply view's
+    # figure fences are still announced, and nothing else precedes them.
+    assert seen["system"] == ai_mod.FIGURE_PROMPT
+    assert "```svg" in seen["system"] and "```mermaid" in seen["system"]
+    # A custom prompt keeps them too, after its own text.
+    seen.clear()
+    r = c.post("/api/ai/chat", json={"prompt": "hello", "system": "Answer in haiku.", "stream": True})
+    assert r.status_code == 200
+    assert seen["system"] == "Answer in haiku.\n\n" + ai_mod.FIGURE_PROMPT
     # A page scope without a page id is invalid → plain chat, not an error.
     seen.clear()
     r = c.post("/api/ai/chat", json={"prompt": "hello", "agent_scope": "page", "stream": True})

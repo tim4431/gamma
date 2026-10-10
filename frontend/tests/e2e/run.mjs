@@ -29,7 +29,7 @@ import {
   openPage, results, sleep, step, until,
 } from "./harness.mjs";
 import { noteScenarios } from "./scenarios/notes.mjs";
-import { mermaidScenarios } from "./scenarios/mermaid.mjs";
+import { diagramScenarios } from "./scenarios/diagrams.mjs";
 import { pdfScenarios } from "./scenarios/pdf.mjs";
 import { fileScenarios } from "./scenarios/files.mjs";
 import { collabScenarios } from "./scenarios/collab.mjs";
@@ -87,7 +87,7 @@ const RUNNERS = {
   "transfers": transferScenarios,
   "mcp": mcpScenarios,
   "files": fileScenarios,
-  "mermaid": mermaidScenarios,
+  "diagrams": diagramScenarios,
   "i18n": i18nScenarios,
   "cloud-sign-in": cloudSignInScenarios,
   "auth": authScenarios,

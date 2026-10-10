@@ -451,7 +451,13 @@ notes). With a document in context, `CITATION_PROMPT` (`ai_tools.citation_prompt
 the text the MCP server's instructions share) is appended, custom
 prompt or not. It asks for `[p. N](/?page=<id>&pdf_page=N&quote=…)` links
 built from the `[PDF page N]` labels and the `Gamma page ID` each context
-section carries ([pdf_citations.md](pdf_citations.md)).
+section carries ([pdf_citations.md](pdf_citations.md)). After it (and
+before the agent prompt when the chat has tools), on every chat request,
+with or without a document or a custom prompt, `FIGURE_PROMPT` tells the
+model what the reply view draws: a `mermaid` fence for flow, sequence,
+state and class diagrams, an `svg` fence holding one `<svg>` for any other
+drawing, with the restrictions the sanitizer enforces ([diagrams.md](diagrams.md)),
+and to prefer prose or a table when they say it as well.
 
 `gather_inputs` returns the context in two parts, and `build_messages`
 places them apart on purpose. The **document part** (the pages' sections:

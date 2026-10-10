@@ -508,9 +508,11 @@ fails with what was under the tap.
 
 The scenarios live in `tests/e2e/scenarios/`:
 
-- `mermaid.mjs`: note/chat diagrams, streaming fences, editing, source copying,
-  SVG downloads, theme changes and Markdown round trips. Run with `--only mermaid`;
-  implementation details in [mermaid.md](mermaid.md).
+- `diagrams.mjs`: Mermaid and SVG diagrams in notes and chat, streaming fences,
+  editing, source copying, SVG downloads, theme changes, sanitizing and the
+  SVG image's isolation, the width grips on a note mixing both kinds, and
+  Markdown round trips. Run with `--group diagrams`; implementation details in
+  [diagrams.md](diagrams.md).
 - `mentions.mjs`: paper search, keyboard and touch selection, reference limits,
   persistence, PDF receipts and textarea shrink after clearing context. Run with `--only mentions`.
 - `noteMentions.mjs`: the note editor's @ menu, its chips, Invite… and a reminder's

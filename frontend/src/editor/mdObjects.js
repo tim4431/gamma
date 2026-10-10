@@ -1,4 +1,4 @@
-// Moving a rendered object (an image, a table, a Mermaid diagram) around the
+// Moving a rendered object (an image, a table, a diagram) around the
 // notes as a piece of markdown source. An object is a source range
 // {from, to} in its block's content (scanObjects in MdObject.jsx finds
 // them); a move is "cut it here, insert it there", so the stored text stays

@@ -481,7 +481,7 @@ export async function noteScenarios({ server, browser, alice, step, until, sleep
     await page.getByRole("button", { name: /Red text/ }).click();
     // The command lands through a React round trip that sets the content
     // first and the caret a beat later; type once the caret sits inside the
-    // span (the mermaid step waits for its selection the same way).
+    // span (the diagrams step waits for its selection the same way).
     await page.waitForFunction(() => {
       const sel = document.getSelection();
       const ed = document.activeElement?.closest(".cm-content");

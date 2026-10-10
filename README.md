@@ -48,7 +48,7 @@ Open a paper by pasting any link — arXiv, DOI, or a publisher page; Gamma find
 Highlights and free notes are the same kind of block, so a paper's notes and a plain page are edited the same way:
 
 - **Outliner** — Enter for a new block, Tab / Shift+Tab to nest, drag to reorder, one undo history for the whole page.
-- **Live preview, Obsidian-style** — markdown, `$…$` / `$$…$$` math, code fences, callouts, tables and Mermaid diagrams render in place while the block you're on stays raw. Math gets bracket-pair coloring, `\command` autocomplete, and Tab hops between `{}` arguments.
+- **Live preview, Obsidian-style** — markdown, `$…$` / `$$…$$` math, code fences, callouts, tables, Mermaid diagrams and SVG figures render in place while the block you're on stays raw. Math gets bracket-pair coloring, `\command` autocomplete, and Tab hops between `{}` arguments.
 - **Pictures, tables and diagrams** — paste a screenshot and drag its edge to size it; tables are edited cell by cell, never as raw markdown; double-click a diagram to edit its source.
 - **Pages to write on** — type `/note` and a sheet of paper opens among your notes; write on it with a stylus or the mouse, or show a page's sheets large as a notebook.
 - **Link and embed** — `[[page]]` mentions, `/page` for a new page linked where you type, `![[block]]` embeds that edit the source in place, backlinks, and a "/" menu for everything else.
