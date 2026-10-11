@@ -248,7 +248,7 @@ Your library lives on your server. For the train or a lab without Wi-Fi, keep an
 
 <img alt="On a journal page the Gamma Connector badge lights up, its popup shows the paper with a folder and a label, Save to Gamma is clicked, and the card appears in that folder in Gamma" src="assets/connector.svg" width="100%">
 
-The browser extension saves the paper you are reading in one click: PDF, metadata, folder and labels. Get it from the [latest release](https://github.com/tim4431/Gamma/releases/latest), unzip, and load it unpacked at `chrome://extensions`.
+The browser extension saves the paper you are reading in one click: PDF, metadata, folder and labels. Add it from the [Chrome Web Store](https://chromewebstore.google.com/detail/gamma-connector/njpeklephhndnpakmlaancinpnabcomn) (Chrome, Edge and other Chromium browsers), then click its toolbar button and enter your Gamma's address. Each [release](https://github.com/tim4431/Gamma/releases/latest) also carries it as a zip to load unpacked at `chrome://extensions`.
 
 - The badge lights up on a page with a paper. Click it, pick a folder and labels, **Save to Gamma**. **Ctrl+Shift+S** saves with the default folder.
 - Right-click to save a link, a page, or clip a selection as a quote.

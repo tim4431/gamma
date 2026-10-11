@@ -1,6 +1,6 @@
 // Assemble ./dist for `wrangler deploy`:
 //   ./site/**            copied as-is, `<!--#include name -->` expanded from ./templates
-//   ./dist/media/**      brand artwork, demos, the screenshot and the favicon,
+//   ./dist/media/**      brand artwork, demos, the screenshot, the favicon and the store badge,
 //                        copied from the repository (the site keeps no copies),
 //                        plus any picture a rendered document shows
 //   ./dist/<page>/       the repository's Markdown rendered through ./templates:
@@ -44,6 +44,7 @@ const MEDIA = {
   'demo-metadata.webp': 'docs/assets/demos/demo-metadata.webp',
   'demo-connector.webp': 'docs/assets/demos/demo-connector.webp',
   'demo-collab.webp': 'docs/assets/demos/demo-collab.webp',
+  'chrome-web-store.png': 'docs/assets/badges/chrome-web-store.png',
 };
 
 // The Markdown pages. `source` is a .md file under the repository root; `at`

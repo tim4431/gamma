@@ -466,6 +466,7 @@ jobs:
           TAG: ${{ needs.meta.outputs.tag }}
           WIN_SIGNED: ${{ secrets.AZURE_CLIENT_ID != '' }}
           MAC_SIGNED: ${{ secrets.MAC_CERT_P12 != '' && secrets.APPLE_ID != '' }}
+          CWS_ITEM_ID: ${{ vars.CWS_ITEM_ID }}
         run: |
           ls -la assets
           base="https://github.com/$REPO/releases/download/$TAG"
@@ -566,10 +567,18 @@ jobs:
             echo
             echo "## Browser extension"
             echo
-            btn "Download Gamma Connector" 4285F4 googlechrome "$base/gamma-connector-$VERSION.zip"
-            echo
-            echo
-            echo "For Chrome, Edge and other Chromium browsers. Unzip the download into a permanent folder, open \`chrome://extensions\`, turn on *Developer mode*, click *Load unpacked* and choose the unzipped folder."
+            if [ -n "$CWS_ITEM_ID" ]; then
+              btn "Chrome Web Store" 4285F4 googlechrome "https://chromewebstore.google.com/detail/gamma-connector/$CWS_ITEM_ID"
+              btn "Download .zip" 555555 googlechrome "$base/gamma-connector-$VERSION.zip"
+              echo
+              echo
+              echo "For Chrome, Edge and other Chromium browsers. Install Gamma Connector from the Chrome Web Store and it updates itself; this release reaches it once Google has reviewed it (usually 1–3 days). Or load the zip by hand: unzip it into a permanent folder, open \`chrome://extensions\`, turn on *Developer mode*, click *Load unpacked* and choose the unzipped folder."
+            else
+              btn "Download Gamma Connector" 4285F4 googlechrome "$base/gamma-connector-$VERSION.zip"
+              echo
+              echo
+              echo "For Chrome, Edge and other Chromium browsers. Unzip the download into a permanent folder, open \`chrome://extensions\`, turn on *Developer mode*, click *Load unpacked* and choose the unzipped folder."
+            fi
             echo
           } > notes.md
           cat notes.md

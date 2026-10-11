@@ -49,4 +49,5 @@ its own: its zip rides on the same release with the same version.
    exist it also dispatches `chrome-store.yml`, which submits the Connector
    zip to the Chrome Web Store (`gh run list --workflow chrome-store.yml
    --limit 1` once the release is out; a notice says when an earlier
-   version is still in review and this one was skipped).
+   version is still in review and this one was skipped, and the
+   workflow's daily run submits it once that review is over).

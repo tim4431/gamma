@@ -17,7 +17,7 @@ the `:sha-<short>` tag a merge's `docker.yml` run pushes (the
 |---|---|---|---|
 | `check` | `check.yml` | every pull request to `main`, except one that only touches the account server or the website | pass/fail: brand asset consistency, backend pytest, frontend unit tests + build, the browser suite (3 parallel workers), extension unit tests + zip (~5 min) |
 | `desktop` | `desktop.yml` | manual dispatch only (`release` skill) | Windows installer, macOS dmg + zip, Debian/Ubuntu deb, the update-feed files, the browser extension's `gamma-connector-<version>.zip` → GitHub Release `v<version>`; the MSIX artifact + a Microsoft Store submission when the secrets exist; a Docker tag `<version>` |
-| `chrome-store` | `chrome-store.yml` | dispatched by the desktop release (not a pre-release) when the `CWS_*` variables exist; manual dispatch with a tag | the release's Connector zip uploaded to the Chrome Web Store and submitted for review (API V2) |
+| `chrome-store` | `chrome-store.yml` | dispatched by the desktop release (not a pre-release) when the `CWS_*` variables exist; daily at 09:17 UTC for a release the store skipped; manual dispatch with a tag | the release's Connector zip uploaded to the Chrome Web Store and submitted for review (API V2) |
 | `docker` | `docker.yml` | every push to `main` except one that only touches the account server or the website; dispatched by the desktop release with a version; manual dispatch from any branch (a `sha-<short>` image only) | `ghcr.io/tim4431/gamma:sha-<short>` on every run; `:latest` only from `main`; `:<version>` and `:<major.minor>` when dispatched with a version; linux/amd64 + arm64 |
 | `cloud` | `cloud.yml` | a pull request touching `cloud/`; manual dispatch from any branch (`update-account-server` skill) | pass/fail: the account server's pytest; when dispatched and green, `ghcr.io/tim4431/gamma-cloud:latest` + `:sha-<short>` (`cloud/Dockerfile`, amd64) |
 | `fleet` | `fleet.yml` | a pull request or a push to `main` touching `cloud/fleet/`; manual dispatch from any branch | pass/fail: the fleet agent's pytest; on a push to main or a dispatch, when green, `ghcr.io/tim4431/gamma-fleet:latest` + `:sha-<short>` (`cloud/fleet/Dockerfile`, amd64; [hosted.md](hosted.md)) |
@@ -171,8 +171,14 @@ already has that version. A review shows in `fetchStatus` as
 `PENDING_REVIEW`, except during an item's first one, when the status
 carries no revision at all; the upload is then refused with
 `NOT_UPDATEABLE`, which counts as the same skip. `publish=false` leaves the upload as a
-draft. Setup, including the store item that only the dashboard can create:
-[extension/STORE.md](../../extension/STORE.md).
+draft. A daily scheduled run (09:17 UTC, the latest release) catches up on
+a version skipped that way once the review is over; it makes no call
+beyond `fetchStatus` when there is nothing to do, and it does not submit
+again a version the store already took and did not publish (a rejected
+one waits for a manual run or the next release). Setup, including the
+store item that only the dashboard can create:
+[extension/STORE.md](../../extension/STORE.md). The public listing is
+<https://chromewebstore.google.com/detail/gamma-connector/njpeklephhndnpakmlaancinpnabcomn>.
 
 ## `check.yml`
 

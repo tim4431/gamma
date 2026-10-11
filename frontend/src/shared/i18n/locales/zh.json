@@ -32,7 +32,7 @@
   "(no text)": "（无文本）",
   "**+** under a page adds one anywhere.": "页面下方的 **+** 可以在任意位置插入一页。",
   "**Apply to all pages** sets every page at once.": "**应用到所有页面** 会一次设置好每一页。",
-  "**Gamma Connector** (`gammapdf.com/#download`) gets paywalled papers with your own journal sign-ins.": "**Gamma Connector**（`gammapdf.com/#download`）能借你自己的期刊登录，取回付费墙后的论文。",
+  "**Gamma Connector** (`gammapdf.com/connector`) gets paywalled papers with your own journal sign-ins.": "**Gamma Connector**（`gammapdf.com/connector`）能借你自己的期刊登录，取回付费墙后的论文。",
   "**Stop sharing**, beside the link, turns it off.": "链接旁的 **停止分享** 会让它失效。",
   "**Upload folder…** keeps its subfolders as folders.": "**上传文件夹…** 会把子目录保留为文件夹。",
   "+ Add provider": "+ 添加提供方",

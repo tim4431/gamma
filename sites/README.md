@@ -81,7 +81,7 @@ itself has no accounts. The hero's **Try the demo** button, the header's
 throwaway guest workspace ([docs/dev/guests.md](../docs/dev/guests.md)).
 
 `_redirects` gives the short links (`/download`, `/download/windows`,
-`/guide`, `/github`, …); its sources must be relative paths, so the
+`/connector` for the Chrome Web Store listing, `/guide`, `/github`, …); its sources must be relative paths, so the
 redirect from `www.` and plain `http://` to `https://gammapdf.com` is the
 Worker script's job. It is one 301 hop, so search engines index only the
 https apex. `_headers` sets the security headers and a one-day cache on

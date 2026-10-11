@@ -8,6 +8,9 @@
 # set. A manual dispatch re-runs it for any release (blank tag = the latest).
 # Pre-releases are refused: their zip carries the final version number
 # (1.2.0 for 1.2.0-rc1), and the store accepts each version only once.
+# A daily run catches up on the latest release when the store skipped it
+# because an earlier version was still in review; it never resubmits a
+# version the store already took (a rejected one waits for a manual run).
 #
 # Auth: no stored key. The job signs in through Workload Identity Federation
 # (GitHub's OIDC token) as a service account linked to the publisher in the
@@ -33,6 +36,8 @@ on:
         description: "Submit for review after the upload (off = leave it as a draft)"
         type: boolean
         default: true
+  schedule:
+    - cron: "17 9 * * *"
 
 concurrency:
   group: chrome-store
@@ -40,6 +45,8 @@ concurrency:
 
 jobs:
   upload:
+    # The daily run stays quiet where the store item is not set up (a fork).
+    if: github.event_name != 'schedule' || vars.CWS_ITEM_ID != ''
     runs-on: ubuntu-latest
     permissions:
       contents: read # gh release download
@@ -89,6 +96,7 @@ jobs:
           VERSION: ${{ steps.zip.outputs.version }}
           TAG: ${{ steps.zip.outputs.tag }}
           PUBLISH: ${{ inputs.publish }}
+          EVENT: ${{ github.event_name }}
         run: |
           # api <method> <path> [curl args]: prints the response; on an HTTP
           # error, puts the response in the error annotation and fails.
@@ -113,6 +121,13 @@ jobs:
           newest=$(printf '%s\n%s\n' "$published" "$VERSION" | sort -V | tail -1)
           if [ -n "$published" ] && { [ "$published" = "$VERSION" ] || [ "$newest" != "$VERSION" ]; }; then
             echo "::notice::The store already has $published; $VERSION is not newer, nothing to upload."
+            exit 0
+          fi
+          # The daily run submits each version once: one the store already
+          # took and did not publish (rejected, cancelled) waits for a
+          # manual run or the next release.
+          if [ "$EVENT" = schedule ] && [ "$(channel submittedItemRevisionStatus)" = "$VERSION" ]; then
+            echo "::notice::$VERSION was already submitted ($(jq -r '.submittedItemRevisionStatus.state // "unknown"' <<<"$status")); the daily run does not submit it again. A manual run does."
             exit 0
           fi
 
