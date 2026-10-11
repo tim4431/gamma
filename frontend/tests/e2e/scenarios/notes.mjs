@@ -176,9 +176,10 @@ export async function noteScenarios({ server, browser, alice, step, until, sleep
   });
 
   // A quote or callout spans lines (editor/mdLines.js): the line-break Enter
-  // carries its marks and a list inside them, a paste onto a quoted line
-  // quotes every pasted line (or not: Paste as → Plain text), and
-  // Ctrl+Shift+. quotes or unquotes the selected lines. It renders as one box.
+  // carries its marks and a list inside them, pasted lines land at the
+  // quote's level (or as copied: Paste as → As copied), lines copied out of
+  // a quote join it instead of nesting, and Ctrl+Shift+. quotes or unquotes
+  // the selected lines. It renders as one box.
   await step("notes: a callout keeps its lines together: Enter continues its list, a paste stays in it, Ctrl+Shift+. quotes lines", async () => {
     const src = await alice2.api("/api/pages", { method: "POST", body: { title: "Quotes" } });
     await alice2.api(`/api/pages/${src.id}/ops`, { method: "POST", body: { client: "e2e", ops: [
@@ -198,31 +199,40 @@ export async function noteScenarios({ server, browser, alice, step, until, sleep
       await until(async () => (await content(0)) === listed, { what: "the list in the callout saved" });
       assertEq(await p2.locator(".cm-line.cmCalloutLine .cmBulletDot").count(), 2, "the editor draws both items' bullets in the box");
 
-      await p2.keyboard.press("Enter");
-      await p2.evaluate((text) => {
+      const pasteText = (text) => p2.evaluate((text) => {
         const dt = new DataTransfer();
         dt.setData("text/plain", text);
         document.activeElement.closest(".cm-content")
           .dispatchEvent(new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true }));
-      }, "first\nsecond\n\nthird");
+      }, text);
+      await p2.keyboard.press("Enter");
+      await pasteText("first\nsecond\n\nthird");
       const quoted = `${listed}\n> first\n> second\n>\n> third`;
-      await until(async () => (await content(0)) === quoted, { what: "every pasted line quoted" });
+      await until(async () => (await content(0)) === quoted, { what: "every pasted line in the quote" });
       const items = p2.locator(".slashMenu .slashMenuItem");
-      await until(async () => /Quoted text.*Plain text.*Blocks/.test((await items.allTextContents()).join("|")), { what: "the chooser offers the paste with and without quote marks" });
-      await items.filter({ hasText: "Plain text" }).first().click();
-      await until(async () => (await content(0)) === `${listed}\n> first\nsecond\n\nthird`, { what: "Plain text drops the added marks" });
+      await until(async () => /At this level.*Nested.*As copied.*Blocks/.test((await items.allTextContents()).join("|")), { what: "the chooser offers the other placements and the text as copied" });
+      await items.filter({ hasText: "As copied" }).first().click();
+      await until(async () => (await content(0)) === `${listed}\n> first\nsecond\n\nthird`, { what: "As copied leaves the lines as they came" });
       // From the end of "third" up into "second": three lines selected.
       await p2.keyboard.press("Shift+ArrowUp");
       await p2.keyboard.press("Shift+ArrowUp");
       await p2.keyboard.press("Control+Shift+Period");
       await until(async () => (await content(0)) === quoted, { what: "Ctrl+Shift+. quoted the selected lines, the blank one with a bare >" });
+      // Lines copied out of a quote keep their marks; pasted into this one
+      // they join it rather than make a quote inside it.
+      await p2.keyboard.press("Control+End");
+      await p2.keyboard.press("Enter");
+      await pasteText("> 1. this\n> 2. second");
+      await until(async () => (await content(0)) === `${quoted}\n> 1. this\n> 2. second`, { what: "the copied quote's lines at the box's level" });
+      await p2.keyboard.press("Escape");
       await closeEditor(p2);
       const box = row(p2, "Steps").locator("blockquote.callout");
       assertEq(await box.count(), 1, "one callout box");
-      assertEq(await row(p2, "Steps").locator("blockquote").count(), 1, "and no second quote");
-      assertEq(await box.locator("li").count(), 2, "its list");
+      assertEq(await row(p2, "Steps").locator("blockquote").count(), 1, "and no quote inside it");
+      assertEq(await box.locator("ul > li").count(), 2, "its list");
+      assertEq(await box.locator("ol > li").count(), 2, "and the pasted numbered one");
       const boxText = await box.innerText();
-      for (const word of ["after the list", "first", "second", "third"]) assert(boxText.includes(word), `"${word}" is in the box`);
+      for (const word of ["after the list", "first", "second", "third", "this"]) assert(boxText.includes(word), `"${word}" is in the box`);
 
       await editRow(p2, "alpha");
       await p2.keyboard.press("Control+End");

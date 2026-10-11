@@ -97,7 +97,8 @@ Notes are a nested outline. Highlights and free notes are the same kind of block
 - **Pictures**: paste or drag an image in; drag its grip to resize.
 - **Tables** are edited in place; a table from Excel pastes as markdown.
 - **"/" menu**: type `/` for headings, callouts, code, colors, a notebook sheet, a new page.
-- **Quotes and callouts** keep going over several lines: Enter carries the `>` (and a list inside it) to the next line, a paste onto a quoted line stays in the quote, and **Ctrl+Shift+.** quotes or unquotes the selected lines. `/callout` on a quote's first line turns it into a callout.
+- **Quotes and callouts** keep going over several lines: Enter carries the `>` (and a list inside it) to the next line, and **Ctrl+Shift+.** quotes or unquotes the selected lines. `/callout` on a quote's first line turns it into a callout; on a line inside one it starts a box inside it.
+- **Pasting keeps the structure**: pasted lines land at the level of the line you paste onto, in its quote or beside its list item, and a pasted list keeps its sub-items. The **Paste as** menu offers **Nested** (one level in) and **As copied**. The `/` line commands (headings, lists, to-dos, quote, callout) keep a line's quote and indentation.
 - **Formatting keys** are Obsidian's: Ctrl+B, Ctrl+I, Ctrl+K and so on. Rendered notes copy as rich text; math copies as LaTeX.
 
 ## Outline and links between pages

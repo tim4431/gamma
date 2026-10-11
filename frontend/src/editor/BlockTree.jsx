@@ -37,7 +37,7 @@ import { dispatch as dispatchHotkey } from "../shared/lib/hotkeys.js";
 import { blockStartInSource, gapInSource, renderedGaps, sourceOffsetAtPoint } from "./clickToSource";
 import { highlightCode, makeCopyButton } from "./codeHighlight";
 import { fenceInnerAt } from "./fences.js";
-import { enterPlan, quoteMarksAt, quotePasted } from "./mdLines.js";
+import { enterPlan, pastePlacements, quoteMarksAt } from "./mdLines.js";
 import { filterSlashCommands, SlashMenuPopup } from "./SlashMenu";
 import { RefPickerPopup } from "./RefPicker";
 import { pageByTitle, pickerCounts, rankRefPages, refBlockPath, refBlockText } from "./refLists.js";
@@ -997,10 +997,10 @@ const BlockRow = React.memo(function BlockRow({
   const [atMenu, setAtMenu] = useState(null);
   const [atIdx, setAtIdx] = useState(0);
   // Notion-style "Paste as" chooser after pasting a URL: the URL text is
-  // already inserted; { start, end, url, items, anchor }, and for pasted
-  // text `text`, as copied (`url` is what went in, quote marks added on a
-  // quoted line). Any further edit, caret move or blur keeps the URL and
-  // dismisses the menu.
+  // already inserted; { start, end, url, items, anchor }. Pasted text also
+  // has `text`, as copied (`url` is what went in, placed at the line's
+  // level), and `restore`, what [start, end) held before the paste. Any
+  // further edit, caret move or blur keeps the URL and dismisses the menu.
   const [pasteMenu, setPasteMenu] = useState(null);
   const [pasteIdx, setPasteIdx] = useState(0);
   const [searchResults, setSearchResults] = useState([]);
@@ -1332,6 +1332,23 @@ const BlockRow = React.memo(function BlockRow({
     ];
   }
 
+  // The chooser's rows for a pasted text's placements
+  // (mdLines.pastePlacements), the one already in first, named by the
+  // container the paste landed in; each puts its text over the paste.
+  function placementItems(placed) {
+    const hints = {
+      here: { quote: T("in this quote"), list: T("next to this item") },
+      nested: { quote: T("in a quote inside it"), list: T("under this item") },
+    };
+    return placed.options.map((o) => {
+      const make = () => o.insert;
+      if (o.name === "copied") return { name: o.name, icon: "copy", label: T("As copied"), hint: T("exactly as on the clipboard"), make };
+      if (placed.kind === "none") return { name: o.name, icon: "text", label: T("Text"), hint: T("keep in this block"), make };
+      const icon = o.name === "nested" ? "indent" : placed.kind === "quote" ? "quote" : "bullet";
+      return { name: o.name, icon, label: o.name === "nested" ? T("Nested") : T("At this level"), hint: hints[o.name][placed.kind], make };
+    });
+  }
+
   function applyPasteAs(item) {
     const pm = pasteMenu;
     setPasteMenu(null);
@@ -1372,9 +1389,10 @@ const BlockRow = React.memo(function BlockRow({
         const nodes = d?.blocks || [];
         if (!nodes.length) return;
         if (ta.value.slice(pm.start, pm.end) !== pm.url) return; // edited since
+        const restore = pm.restore || "";
         ta.view?.dispatch({
-          changes: { from: pm.start, to: pm.end, insert: "" },
-          selection: { anchor: pm.start },
+          changes: { from: pm.start, to: pm.end, insert: restore },
+          selection: { anchor: pm.start + restore.length },
           userEvent: "input",
         });
         // Pasted into an empty line: the blocks take this block's place.
@@ -1463,33 +1481,51 @@ const BlockRow = React.memo(function BlockRow({
         return;
       }
       // Structured text — spreadsheet cells (strict TSV) or a multi-line
-      // outline — pastes as-is and offers the chooser, same pattern as URLs.
-      // On a quoted line every pasted line takes the line's quote marks
-      // (mdLines.quotePasted), so the text stays in the quote or callout;
-      // the chooser offers it without them too.
+      // outline — pastes and offers the chooser, same pattern as URLs.
+      // Outside code and $$ math its lines move to the level of the line
+      // they land on (mdLines.pastePlacements: in its quote, beside or
+      // under its list item), and the chooser offers the other placements
+      // and the text as copied. One line pasted onto an empty item takes
+      // the item's place, with no chooser.
       const tsvMd = ta ? tsvToMarkdown(text) : null;
       const multiline = text.split("\n").filter((l) => l.trim()).length >= 2;
-      const insert = ta && multiline ? quotePasted(ta.value || "", ta.selectionStart, text) : text;
-      const quoted = insert !== text;
-      if (ta && ta.view && (onPasteBlocks || quoted) && (tsvMd || multiline)) {
+      const val = ta?.value || "";
+      const from = ta?.selectionStart, to = ta?.selectionEnd;
+      // Placed, the lines keep their indentation: only the blank lines
+      // around them go.
+      const lines = (e.clipboardData?.getData("text/plain") || "").replace(/\r\n?/g, "\n").replace(/^\s*\n/, "").trimEnd();
+      const placed = ta?.view && !tsvMd && !fenceInnerAt(val, from) && !findMathAtCursor(val, from)?.display
+        ? pastePlacements(val, from, to, lines) : null;
+      if (placed && !multiline) {
         e.preventDefault();
-        const start = ta.selectionStart;
+        const insert = placed.options[0].insert;
         ta.view.dispatch({
-          changes: { from: start, to: ta.selectionEnd, insert },
+          changes: { from: placed.from, to: placed.to, insert },
+          selection: { anchor: placed.from + insert.length },
+          userEvent: "input",
+        });
+        return;
+      }
+      if (ta && ta.view && (onPasteBlocks || placed) && (tsvMd || multiline)) {
+        e.preventDefault();
+        const start = placed ? placed.from : from;
+        const end = placed ? placed.to : to;
+        const insert = placed ? placed.options[0].insert : text;
+        ta.view.dispatch({
+          changes: { from: start, to: end, insert },
           selection: { anchor: start + insert.length },
           userEvent: "input",
         });
         const items = [
           ...(tsvMd ? [{ name: "table", icon: "table", label: T("Table"), hint: T("markdown table"), block: true, make: () => tsvMd }] : []),
-          ...(quoted ? [
-            { name: "text", icon: "quote", label: T("Quoted text"), hint: T("keep in the quote") },
-            { name: "plain", icon: "text", label: T("Plain text"), hint: T("without the quote marks"), make: () => text },
-          ] : [{ name: "text", icon: "text", label: T("Text"), hint: T("keep in this block") }]),
+          ...(placed ? placementItems(placed) : [{ name: "text", icon: "text", label: T("Text"), hint: T("keep in this block") }]),
           ...(onPasteBlocks ? [{ name: "blocks", icon: "blocks", label: T("Blocks"), hint: T("split into nested blocks") }] : []),
         ];
-        const anchor = ta.caretCoords(start);
+        const anchor = ta.caretCoords(from);
+        // `restore`: the range as it was, without the paste (Blocks puts it back).
+        const restore = val.slice(start, from) + val.slice(to, end);
         requestAnimationFrame(() => {
-          setPasteMenu({ start, end: start + insert.length, url: insert, text, items, anchor });
+          setPasteMenu({ start, end: start + insert.length, url: insert, text, restore, items, anchor });
           setPasteIdx(0);
         });
       }

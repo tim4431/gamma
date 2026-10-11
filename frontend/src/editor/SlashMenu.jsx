@@ -7,8 +7,8 @@ import { Matched, useCaretAnchored } from "./LatexEditor";
 import { SLASH_GROUPS } from "./slashCommands.js";
 import { t } from "../shared/i18n/i18n.js";
 import {
-  AlignLeftIcon, CalendarIcon, CalloutIcon, DiagramIcon, DividerIcon, EmbedIcon, FilePlusIcon, FileTextIcon,
-  GlobeIcon, Heading1Icon, Heading2Icon, Heading3Icon, HighlightIcon, ImageIcon, LinkIcon, ListIcon,
+  AlignLeftIcon, CalendarIcon, CalloutIcon, CopyIcon, DiagramIcon, DividerIcon, EmbedIcon, FilePlusIcon, FileTextIcon,
+  GlobeIcon, Heading1Icon, Heading2Icon, Heading3Icon, HighlightIcon, ImageIcon, IndentIcon, LinkIcon, ListIcon,
   ListOrderedIcon, NotebookPenIcon, OutlineIcon, QuoteIcon, QuoteMarkIcon, SigmaIcon, SquareCheckIcon,
   SquareCodeIcon, SquareSigmaIcon, TableIcon, TypeIcon,
 } from "../shared/ui/Icons";
@@ -25,7 +25,7 @@ const MENU_ICONS = {
   code: SquareCodeIcon, mermaid: DiagramIcon, image: ImageIcon, date: CalendarIcon, link: LinkIcon,
   embed: EmbedIcon, highlight: HighlightIcon,
   url: GlobeIcon, citation: QuoteIcon, pageCard: FileTextIcon, title: TypeIcon, text: AlignLeftIcon,
-  blocks: OutlineIcon,
+  blocks: OutlineIcon, indent: IndentIcon, copy: CopyIcon,
 };
 
 // Caret-anchored command popup. A row: the item's icon, its label over a

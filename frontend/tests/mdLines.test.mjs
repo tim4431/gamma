@@ -1,9 +1,10 @@
-// Quote marks and list markers on a note's lines (editor/mdLines.js): what
-// the line-break Enter continues, what a paste onto a quoted line gives every
-// line, and Toggle quote.
+// The structure of a note's lines (editor/mdLines.js): what the line-break
+// Enter continues, where a paste's lines go, what the "/" menu's line
+// commands make of a line, and Toggle quote.
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { enterPlan, quoteMarksAt, quotePasted, toggleQuotePlan } from "../src/editor/mdLines.js";
+import { enterPlan, parseLine, pastePlacements, quoteMarksAt, retypeLine, toggleQuotePlan } from "../src/editor/mdLines.js";
+import { TEXT_INSERTS } from "../src/editor/slashInserts.js";
 
 // The text after a plan, with "|" for the caret (a selection "«…»").
 const apply = (text, changes) => {
@@ -71,13 +72,110 @@ test("quote marks at the caret", () => {
   assert.equal(quoteMarksAt("a", 1), "");
 });
 
-test("a paste onto a quoted line quotes every pasted line", () => {
-  assert.equal(quotePasted("> ", 2, "one\ntwo\n\nthree"), "one\n> two\n>\n> three");
-  assert.equal(quotePasted("> > x", 5, "a\nb"), "a\n> > b");
-  assert.equal(quotePasted("> > x", 5, "a\n\nb"), "a\n> >\n> > b");
-  assert.equal(quotePasted("plain", 5, "a\nb"), "a\nb", "not on a quote line");
-  assert.equal(quotePasted("> x", 0, "a\nb"), "a\nb", "the caret before the marks");
-  assert.equal(quotePasted("> x", 3, "one line"), "one line");
+// A paste at "|" (a selection "«…»"): the note after each placement, by name.
+const paste = (withSel, pasted) => {
+  const caret = withSel.indexOf("|");
+  const from = caret >= 0 ? caret : withSel.indexOf("«");
+  const text = withSel.replace(/[|«»]/g, "");
+  const to = caret >= 0 ? caret : withSel.indexOf("»") - 1;
+  const r = pastePlacements(text, from, to, pasted);
+  return r && Object.fromEntries(r.options.map((o) => [o.name, apply(text, [{ from: r.from, to: r.to, insert: o.insert }])]));
+};
+
+test("a line's parts: quote marks, indentation, marker, text", () => {
+  assert.deepEqual(parseLine("> >   - [ ] milk"),
+    { quote: "> > ", depth: 2, indent: "  ", marker: "- [ ] ", kind: "task", body: "milk" });
+  assert.equal(parseLine("> [!tip]- Title").kind, "callout");
+  assert.equal(parseLine("[!tip] not in a quote").kind, null);
+  assert.equal(parseLine("## Heading").kind, "heading");
+  assert.equal(parseLine("12) twelve").kind, "number");
+  assert.equal(parseLine("**bold**").kind, null);
+});
+
+test("lines copied out of a quote join the quote they land in", () => {
+  assert.deepEqual(paste("> [!tip] Steps\n> |", "> 1. this\n> 2. second"), {
+    here: "> [!tip] Steps\n> 1. this\n> 2. second",
+    nested: "> [!tip] Steps\n> > 1. this\n> > 2. second",
+    copied: "> [!tip] Steps\n> > 1. this\n> 2. second",
+  });
+  assert.deepEqual(paste("> |", "one\ntwo\n\nthree"), {
+    here: "> one\n> two\n>\n> three",
+    nested: "> > one\n> > two\n> >\n> > three",
+    copied: "> one\ntwo\n\nthree",
+  });
+});
+
+test("a callout pasted into a quote stays a box inside it", () => {
+  assert.deepEqual(paste("> Some quote\n> |", "> [!warning] Careful\n> hot plate"), {
+    here: "> Some quote\n> > [!warning] Careful\n> > hot plate",
+    copied: "> Some quote\n> > [!warning] Careful\n> hot plate",
+  });
+  assert.equal(paste("text|", "> [!tip] T\n> body").here, "text\n> [!tip] T\n> body", "after text, on its own line");
+});
+
+test("list items land beside the item or under it, keeping their sub-items", () => {
+  assert.deepEqual(paste("> [!note] Shop\n> - [ ] milk|", "- [ ] eggs\n- [ ] bread\n  - [ ] rye"), {
+    here: "> [!note] Shop\n> - [ ] milk\n> - [ ] eggs\n> - [ ] bread\n>   - [ ] rye",
+    nested: "> [!note] Shop\n> - [ ] milk\n>   - [ ] eggs\n>   - [ ] bread\n>     - [ ] rye",
+    copied: "> [!note] Shop\n> - [ ] milk- [ ] eggs\n- [ ] bread\n  - [ ] rye",
+  });
+  const d = paste("- groceries\n  - milk|", "- eggs\n  - free range\n- bread");
+  assert.equal(d.here, "- groceries\n  - milk\n  - eggs\n    - free range\n  - bread");
+  assert.equal(paste("1. one|", "- a\n- b").nested, "1. one\n   - a\n   - b", "under a number: its text column");
+  assert.equal(paste("- top|", "    - a\n      - b").here, "- top\n- a\n  - b", "the indentation they share goes");
+});
+
+test("an empty item takes the first pasted line's place", () => {
+  assert.deepEqual(paste("> - |", "- eggs\n- bread"), { here: "> - eggs\n> - bread", copied: "> - - eggs\n- bread" });
+  assert.equal(paste("> - «old»", "- a\n- b").here, "> - a\n> - b", "a selection goes with it");
+  assert.deepEqual(paste("> - |", "- eggs"), { here: "> - eggs", copied: "> - - eggs" }, "one line too");
+  assert.equal(paste("> |", "> quoted").here, "> quoted", "a quoted line merges");
+  assert.equal(paste("> text|", "- x"), null, "one line after text pastes as it is");
+});
+
+test("in a list, pasted lines of text become items", () => {
+  assert.equal(paste("> - |", "eggs\nbread").here, "> - eggs\n> - bread");
+  assert.deepEqual(paste("3. three|", "four\n\nfive"), {
+    here: "3. threefour\n\n4. five",
+    nested: "3. threefour\n\n   1. five",
+    copied: "3. threefour\n\nfive",
+  });
+  assert.equal(paste("- [x] done|", "> a\n> b").here, "- [x] done\n> a\n> b", "a quote stays a quote");
+});
+
+test("before a line's text a pasted list goes above it", () => {
+  assert.deepEqual(paste("- |milk", "- eggs\n- bread"), { here: "- eggs\n- bread\n- milk", copied: "- - eggs\n- breadmilk" });
+});
+
+test("plain text on a plain line, and one line inline, paste as they are", () => {
+  assert.equal(paste("plain|", "a\nb"), null);
+  assert.equal(paste("|", "a\nb"), null);
+  assert.equal(paste("> quote|", "more"), null);
+});
+
+test("the / menu's line commands change what a line is and keep where it sits", () => {
+  const retype = (line, kind, above = "") => retypeLine(line, line.length, kind, above).line;
+  assert.equal(retype("> - item", "todo"), "> - [ ] item");
+  assert.equal(retype("> text", "h2"), "> ## text");
+  assert.equal(retype("# heading", "h2"), "## heading", "a heading re-levels");
+  assert.equal(retype("  - sub", "number"), "  1. sub");
+  assert.equal(retype("> 1. one", "bullet"), "> - one");
+  assert.equal(retype("> text", "quote"), "> > text");
+  assert.equal(retype("# Title", "quote"), "> # Title");
+  assert.equal(retype("> text", "callout"), "> [!note] text", "the quote this line starts becomes a callout");
+  assert.equal(retype("> > ", "callout", "> outer"), "> > [!note] ", "so does an inner one");
+  assert.equal(retype("> body", "callout", "> [!tip] T"), "> > [!note] body", "mid-quote, a new box one level in");
+  assert.equal(retype("text", "callout"), "> [!note] text");
+  assert.deepEqual(retypeLine("- milk", 4, "todo"), { line: "- [ ] milk", caret: 8 }, "the caret stays in the text");
+});
+
+test("the / menu runs them on the line of the typed command", () => {
+  let out;
+  const ctx = (value, query) => ({ value, start: value.indexOf(query), cursor: value.indexOf(query) + query.length, setText: (v, a) => { out = [v, a]; } });
+  TEXT_INSERTS.todo(ctx("> a\n> - item/todo\n> b", "/todo"));
+  assert.deepEqual(out, ["> a\n> - [ ] item\n> b", 16]);
+  TEXT_INSERTS.callout(ctx("> a\n> > /callout", "/callout"));
+  assert.deepEqual(out, ["> a\n> > [!note] ", 16]);
 });
 
 test("Toggle quote marks every selected line, blank ones with a bare >", () => {

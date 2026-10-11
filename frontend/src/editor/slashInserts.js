@@ -1,8 +1,9 @@
 // What the "/" menu's insertions do to a note's text, by command name:
 // editor/slashCommands.js lists them with their labels, and the iPad app's
-// editing bar runs the same ones (ipad/core/entry.js `insert`). Pure, with
-// no imports: the iPad's JavaScriptCore loads it without the catalog's
-// i18n (and the React that brings).
+// editing bar runs the same ones (ipad/core/entry.js `insert`). Pure, and
+// importing only the pure mdLines.js: the iPad's JavaScriptCore loads it
+// without the catalog's i18n (and the React that brings).
+import { retypeLine } from "./mdLines.js";
 //
 // Each takes the menu's ctx, { value, start, cursor, setText(newVal,
 // selStart, selEnd) }: start is the index of the "/", cursor the caret (the
@@ -15,19 +16,18 @@ export function replaceRange(ctx, text, caretRel, selLen = 0) {
   ctx.setText(newVal, caret, caret + selLen);
 }
 
-// Turn the current line into `prefix` + its text (swapping out an existing
-// markdown line prefix, so /h2 on a "# heading" re-levels instead of stacking).
-const LINE_PREFIX_RE = /^(#{1,6} |> |[-*+] \[[ xX]\] |[-*+] |\d+\. )/;
-function applyLinePrefix(ctx, prefix) {
+// Give the current line another kind (mdLines.retypeLine): its marker is
+// swapped, not stacked (/h2 on a "# heading" re-levels it), and it keeps
+// its quote marks and indentation (/todo on "> - item" is "> - [ ] item").
+function retype(ctx, kind) {
   const { value, start, cursor } = ctx;
-  let v = value.slice(0, start) + value.slice(cursor);
-  const lineStart = v.lastIndexOf("\n", start - 1) + 1;
-  const rest = v.slice(lineStart);
-  const m = rest.match(LINE_PREFIX_RE);
-  const stripped = m ? rest.slice(m[0].length) : rest;
-  v = v.slice(0, lineStart) + prefix + stripped;
-  const caret = Math.max(lineStart + prefix.length, start - (m ? m[0].length : 0) + prefix.length);
-  ctx.setText(v, caret, caret);
+  const v = value.slice(0, start) + value.slice(cursor);
+  const from = v.lastIndexOf("\n", start - 1) + 1;
+  const nl = v.indexOf("\n", start);
+  const to = nl < 0 ? v.length : nl;
+  const above = from ? v.slice(v.lastIndexOf("\n", from - 2) + 1, from - 1) : "";
+  const r = retypeLine(v.slice(from, to), start - from, kind, above);
+  ctx.setText(v.slice(0, from) + r.line + v.slice(to), from + r.caret, from + r.caret);
 }
 
 // Insertions that want their own line (divider, code block, table) prepend a
@@ -54,14 +54,14 @@ export const TEXT_INSERTS = {
   highlight: (ctx) => replaceRange(ctx, "==x==", 2, 1),
   math: (ctx) => replaceRange(ctx, "$x$", 1, 1),
   equation: (ctx) => replaceRange(ctx, "$$x$$", 2, 1),
-  h1: (ctx) => applyLinePrefix(ctx, "# "),
-  h2: (ctx) => applyLinePrefix(ctx, "## "),
-  h3: (ctx) => applyLinePrefix(ctx, "### "),
-  todo: (ctx) => applyLinePrefix(ctx, "- [ ] "),
-  bullet: (ctx) => applyLinePrefix(ctx, "- "),
-  number: (ctx) => applyLinePrefix(ctx, "1. "),
-  quote: (ctx) => applyLinePrefix(ctx, "> "),
-  callout: (ctx) => applyLinePrefix(ctx, "> [!note] "),
+  h1: (ctx) => retype(ctx, "h1"),
+  h2: (ctx) => retype(ctx, "h2"),
+  h3: (ctx) => retype(ctx, "h3"),
+  todo: (ctx) => retype(ctx, "todo"),
+  bullet: (ctx) => retype(ctx, "bullet"),
+  number: (ctx) => retype(ctx, "number"),
+  quote: (ctx) => retype(ctx, "quote"),
+  callout: (ctx) => retype(ctx, "callout"),
   code: (ctx) => blockInsert(ctx, "```\n\n```", 4),
   mermaid: (ctx) => blockInsert(ctx, MERMAID_MD, MERMAID_MD.indexOf("Start"), 5),
   divider: (ctx) => blockInsert(ctx, "---\n"),
