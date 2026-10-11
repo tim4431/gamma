@@ -2,16 +2,9 @@
 // visitor may do — view or edit — and whose page it is, with the sentence
 // behind it as the hover title. On phones only the icon and the role show.
 import React from "react";
-import { PeerAvatar } from "../collaboration/Presence";
+import { PeerAvatar, nameColor } from "../collaboration/Presence";
 import { EyeIcon, PencilIcon } from "../shared/ui/Icons";
 import { t } from "../shared/i18n/i18n.js";
-
-// A stable colour per owner name, from the presence palette (--peer-0…7).
-function ownerColor(name) {
-  let hash = 0;
-  for (const ch of name) hash = (hash * 31 + ch.codePointAt(0)) >>> 0;
-  return hash % 8;
-}
 
 // `info`: the resolved share ({owner, canEdit}); `folder`: a folder share's
 // listing is showing rather than one of its pages.
@@ -33,7 +26,7 @@ export function ShareAccessPill({ info, folder = false }) {
       {owner ? (
         <span className="shareAccessOwner">
           {t(" · shared by {owner}", {
-            owner: <><PeerAvatar peer={{ name: owner, color: ownerColor(owner), anchor: 0 }} title={owner} />{owner}</>,
+            owner: <><PeerAvatar peer={{ name: owner, color: nameColor(owner), anchor: 0 }} title={owner} />{owner}</>,
           })}
         </span>
       ) : null}

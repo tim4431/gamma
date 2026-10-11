@@ -1,7 +1,7 @@
 // The commands a note block answers to while its editor is open — VSCode's
 // line shortcuts with the block as the line, plus Obsidian's formatting
 // keys — declared once (docs/dev/hotkeys.md). Only the long-standing keys,
-// the ↑ / ↓ hop and Ctrl+Shift+K have default chords; the rest are palette
+// the ↑ / ↓ hop, Ctrl+Shift+K and Ctrl+Shift+. have default chords; the rest are palette
 // entries (Ctrl+Shift+P) until the account binds them in Settings →
 // Keyboard. BlockRow's keydown dispatches this catalog
 // (shared/lib/hotkeys.js) after its popups and before the outliner's
@@ -21,6 +21,7 @@ import { t } from "../shared/i18n/i18n.js";
 import { getParentInfo } from "../shared/model/blockModel.js";
 import { fenceInnerAt } from "./fences.js";
 import { mathTabJump } from "./latexCompletion.js";
+import { toggleQuotePlan } from "./mdLines.js";
 import { toggleTodoLine } from "./mdMarks.js";
 import { runInsertLink, runInsertMath, runInsertSlash, runToggleMark } from "./markCommands.js";
 
@@ -153,6 +154,20 @@ export const BLOCK_COMMANDS = [
       const view = c.editor.view;
       const r = toggleTodoLine(view.state.doc.toString(), view.state.selection.main.head);
       view.dispatch({ changes: { from: r.from, to: r.to, insert: r.insert }, selection: { anchor: r.pos }, userEvent: "input" });
+      return true;
+    },
+  },
+  {
+    // The selected lines in or out of a quote, every line marked so they
+    // stay one box (mdLines.toggleQuotePlan); /callout on its first line
+    // makes it a callout. GitHub's chord: it works on the open editor's
+    // selection, so the palette cannot run it.
+    id: "block.quote", label: t("Toggle quote"), group: GROUP_NOTES, keys: "Mod-Shift-.", edits: true, needsEditor: true,
+    run: (c) => {
+      const view = c.editor.view;
+      const { from, to } = view.state.selection.main;
+      const r = toggleQuotePlan(view.state.doc.toString(), from, to);
+      view.dispatch({ changes: r.changes, selection: r.selection, userEvent: "input" });
       return true;
     },
   },

@@ -1,31 +1,41 @@
+// The diagram fences of notes and chat replies: ```mermaid (Mermaid source,
+// lib/mermaidRenderer.js) and ```svg (a whole <svg> document,
+// lib/svgSanitize.js). The two kinds share one index sequence in source
+// order: the nth diagram of a note, whatever its kind, is its nth rendered
+// one (docs/dev/diagrams.md).
+const DIAGRAM_LANG = /^(mermaid|svg)$/i;
+const diagramKind = (lang) => DIAGRAM_LANG.exec(lang || "")?.[1].toLowerCase() || null;
+
 // A diagram's display width lives in the fence's info string, after the
 // language: "```mermaid width=420". Other Markdown renderers ignore the
 // info string past the first word, so the source stays portable — the same
 // idea as the Obsidian `![alt|420]` image size. Absent = natural size.
 const WIDTH_TOKEN = /(^|\s)width=(\d+)(?=\s|$)/;
-export function mermaidWidth(meta) {
+export function diagramWidth(meta) {
   const m = WIDTH_TOKEN.exec(meta || "");
   return m ? Number(m[2]) : null;
 }
 
-// Mark incomplete Mermaid fences before mdast becomes HTML. A streaming reply
-// can contain valid diagram syntax before its closing fence has arrived.
-// The fence's width (see mermaidWidth) rides along as data-mermaid-width.
-export function remarkMermaid() {
+// Mark diagram fences before mdast becomes HTML: their kind, whether they
+// are still open (a streaming reply can contain valid diagram syntax before
+// its closing fence has arrived) and their width (see diagramWidth), as
+// data-diagram-kind / -pending / -width.
+export function remarkDiagrams() {
   return (tree, file) => {
     const source = String(file);
     function visit(node) {
-      if (node.type === "code" && node.lang?.toLowerCase() === "mermaid") {
+      const kind = node.type === "code" ? diagramKind(node.lang) : null;
+      if (kind) {
         const raw = source.slice(node.position.start.offset, node.position.end.offset);
         const lines = raw.split(/\r?\n/);
         const opener = /^(`{3,}|~{3,})/.exec(lines[0]);
         const closed = opener && lines.length > 1 && new RegExp(
           `^[ \\t>]*${opener[1][0]}{${opener[1].length},}[ \\t]*$`,
         ).test(lines.at(-1));
-        const width = mermaidWidth(node.meta);
+        const width = diagramWidth(node.meta);
         node.data = { ...node.data, hProperties: {
-          ...node.data?.hProperties, "data-mermaid-pending": closed ? "false" : "true",
-          ...(width ? { "data-mermaid-width": String(width) } : {}),
+          ...node.data?.hProperties, "data-diagram-kind": kind, "data-diagram-pending": closed ? "false" : "true",
+          ...(width ? { "data-diagram-width": String(width) } : {}),
         } };
       }
       node.children?.forEach(visit);
@@ -37,13 +47,14 @@ export function remarkMermaid() {
 // A fence's opening line, with the quote/list prefix Markdown allows in front.
 const FENCE_LINE = /^((?:[ \t]*>[ \t]?)*(?:[ \t]*(?:[-+*]|\d+[.)])[ \t]+)?[ \t]*)(`{3,}|~{3,})([^\r\n]*)$/;
 
-// The Mermaid fences of a note in source order — the same order the
+// The diagram fences of a note in source order — the same order the
 // rendered view shows them, so the nth diagram is the nth entry (quotes and
-// list items included, like mapOutsideCodeFences). Each: the opener line's
-// range {from, to} and its info string split into {lang, meta, width}, plus
-// `end`, where the whole fence ends (the closing line's end; the text's end
-// while it is still open, `closed: false`).
-export function scanMermaidFences(text) {
+// list items included, like mapOutsideCodeFences). Each: its `kind`
+// ("mermaid" | "svg"), the opener line's range {from, to} and its info
+// string split into {lang, meta, width}, plus `end`, where the whole fence
+// ends (the closing line's end; the text's end while it is still open,
+// `closed: false`).
+export function scanDiagramFences(text) {
   const out = [];
   let fence = null, open = null, pos = 0;
   for (const line of (text || "").split("\n")) {
@@ -59,9 +70,10 @@ export function scanMermaidFences(text) {
       fence = m[2];
       const info = m[3].trim();
       const lang = info.split(/\s+/)[0] || "";
-      if (/^mermaid$/i.test(lang)) {
+      const kind = diagramKind(lang);
+      if (kind) {
         const meta = info.slice(lang.length).trim();
-        open = { from: pos, to: end, prefix: m[1], ticks: m[2], lang, meta, width: mermaidWidth(meta),
+        open = { kind, from: pos, to: end, prefix: m[1], ticks: m[2], lang, meta, width: diagramWidth(meta),
           end: (text || "").length, closed: false };
         out.push(open);
       }
@@ -74,8 +86,8 @@ export function scanMermaidFences(text) {
 // The note with its nth diagram's width set (0 clears it) — a rewrite of
 // that fence's opening line only. null when there is no such diagram, so a
 // stale index never edits the wrong fence.
-export function setMermaidWidth(text, idx, width) {
-  const f = scanMermaidFences(text)[idx];
+export function setDiagramWidth(text, idx, width) {
+  const f = scanDiagramFences(text)[idx];
   if (!f) return null;
   const rest = f.meta.replace(WIDTH_TOKEN, "$1").trim();
   const meta = [rest, width ? `width=${Math.round(width)}` : ""].filter(Boolean).join(" ");
@@ -113,9 +125,11 @@ export function mapOutsideCodeFences(text, transform) {
 
 export const normalizeChatMarkdown = (text) => mapOutsideCodeFences(text, normalizeMath);
 
-export function mermaidFence(source) {
+// A diagram's source as a fence of its kind, with enough backticks that
+// none in the source can close it.
+export function diagramFence(kind, source) {
   const ticks = "`".repeat(Math.max(3, ...Array.from(source.matchAll(/`+/g), (m) => m[0].length + 1)));
-  return `${ticks}mermaid\n${source}\n${ticks}`;
+  return `${ticks}${kind}\n${source}\n${ticks}`;
 }
 
 // Mermaid typesets only `$$…$$` labels (its katexRegex), while notes write

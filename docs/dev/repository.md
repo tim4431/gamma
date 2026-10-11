@@ -75,6 +75,7 @@ generated illustrations uses `branding.typewriter()`; see the
 | Location | Contents and consumers |
 |---|---|
 | `docs/assets/branding/` | Generated Gamma PDF logo, hero SVG/PNG pairs and README illustrations; edit sources in `design/brand/` and `tools/branding/` |
+| `docs/assets/badges/` | Store badges kept as files: Google's *Available in the Chrome Web Store* badge (used unmodified, only resized, by the README and gammapdf.com; the Microsoft Store badge is linked from Microsoft) |
 | `docs/assets/demos/` | README demos as small animated WebP images |
 | `docs/assets/screenshots/` | Documentation stills |
 | `backend/gamma/onboarding/welcome.md` | The seeded Welcome page ([onboarding.md](onboarding.md)); Docker copies it with `gamma/`, the desktop freeze adds it with `--add-data` |

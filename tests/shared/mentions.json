@@ -1,0 +1,75 @@
+{
+  "_": "The @ mentions in note text (docs/dev/mentions.md), shared by backend/gamma/mentions.py (scan) and frontend/src/editor/mentions.js (scanMentions). Each case lists every token the text holds, in order: a date (with its time and the person a reminder is for) or a person. Read by backend/tests/test_shared_fixtures.py and frontend/tests/mentions.test.mjs.",
+  "scan": [
+    {
+      "note": "a date",
+      "text": "Due @2026-10-09.",
+      "tokens": [{ "kind": "date", "raw": "@2026-10-09", "date": "2026-10-09" }]
+    },
+    {
+      "note": "a date with a time",
+      "text": "Call @2026-10-10 14:30 sharp",
+      "tokens": [{ "kind": "date", "raw": "@2026-10-10 14:30", "date": "2026-10-10", "time": "14:30" }]
+    },
+    {
+      "note": "a reminder names who it is for",
+      "text": "Submit @2026-10-10 09:00 (remind @alice) today",
+      "tokens": [{ "kind": "date", "raw": "@2026-10-10 09:00 (remind @alice)", "date": "2026-10-10", "time": "09:00", "remind": "alice" }]
+    },
+    {
+      "note": "a reminder without a time",
+      "text": "@2026-10-10 (remind @bob.k)",
+      "tokens": [{ "kind": "date", "raw": "@2026-10-10 (remind @bob.k)", "date": "2026-10-10", "remind": "bob.k" }]
+    },
+    {
+      "note": "a person",
+      "text": "Ask @alice about it",
+      "tokens": [{ "kind": "person", "raw": "@alice", "user": "alice" }]
+    },
+    {
+      "note": "a sentence's full stop is not part of the name",
+      "text": "Thanks @bob.k. And @carol-x, too",
+      "tokens": [
+        { "kind": "person", "raw": "@bob.k", "user": "bob.k" },
+        { "kind": "person", "raw": "@carol-x", "user": "carol-x" }
+      ]
+    },
+    {
+      "note": "an e-mail address, a path and an escaped @ are no mentions",
+      "text": "mail a.b@example.com, see medium.com/@writer or \\@alice",
+      "tokens": []
+    },
+    {
+      "note": "a mention may follow punctuation or CJK text",
+      "text": "(@alice) 请@bob看一下",
+      "tokens": [
+        { "kind": "person", "raw": "@alice", "user": "alice" },
+        { "kind": "person", "raw": "@bob", "user": "bob" }
+      ]
+    },
+    {
+      "note": "an impossible date is no mention",
+      "text": "@2026-02-30 and @2026-13-01 and @2026-10-10 24:00",
+      "tokens": []
+    },
+    {
+      "note": "seconds are not a time: the date stands alone",
+      "text": "@2026-10-10 09:00:30",
+      "tokens": [{ "kind": "date", "raw": "@2026-10-10", "date": "2026-10-10" }]
+    },
+    {
+      "note": "a date run on into other characters is no mention",
+      "text": "@2026-10-101 @2026-10-10-x",
+      "tokens": []
+    },
+    {
+      "note": "several in a line",
+      "text": "@alice @2026-01-31 @2027-12-01 08:05 (remind @alice)",
+      "tokens": [
+        { "kind": "person", "raw": "@alice", "user": "alice" },
+        { "kind": "date", "raw": "@2026-01-31", "date": "2026-01-31" },
+        { "kind": "date", "raw": "@2027-12-01 08:05 (remind @alice)", "date": "2027-12-01", "time": "08:05", "remind": "alice" }
+      ]
+    }
+  ]
+}

@@ -69,7 +69,7 @@ SHARE AND MOVE YOUR DATA
   Markdown or Notion exports as notes.
 • Export a zip of all your data at any time and restore it on another
   computer or server.
-• The Gamma Connector browser extension (a separate download) saves the
+• The Gamma Connector browser extension (from the Chrome Web Store) saves the
   paper you are reading into Gamma from the arXiv, DOI, or publisher tab.
 
 Gamma is open source: https://github.com/tim4431/Gamma

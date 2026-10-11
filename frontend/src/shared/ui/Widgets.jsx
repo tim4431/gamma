@@ -14,8 +14,8 @@ import { doublePress, menuPress } from "./press.js";
 import { assetUrl, copyText } from "../lib/utils";
 import { citesSeveralPapers, parseGammaLink } from "../model/gammaLinks.js";
 import { remarkPaperLinks } from "../lib/remarkPaperLinks.js";
-import { mermaidFence, normalizeChatMarkdown, remarkMermaid } from "../lib/mermaidMarkdown.js";
-import { MermaidDiagram, mermaidCodeProps } from "./MermaidDiagram";
+import { diagramFence, normalizeChatMarkdown, remarkDiagrams } from "../lib/diagramMarkdown.js";
+import { DiagramFigure, diagramCodeProps } from "./DiagramFigure";
 import { highlightCode } from "../../editor/codeHighlight.js";
 import { t } from "../../shared/i18n/i18n.js";
 
@@ -80,7 +80,9 @@ function fragmentToMarkdown(node, ctx = {}) {
   if (node.nodeType !== Node.ELEMENT_NODE) return "";
   const el = node;
   if (el.hasAttribute("data-markdown-copy-ignore")) return "";
-  if (el.hasAttribute("data-mermaid-source")) return `\n\n${mermaidFence(el.getAttribute("data-mermaid-source"))}\n\n`;
+  if (el.hasAttribute("data-diagram-source")) return `\n\n${diagramFence(el.dataset.diagramKind, el.dataset.diagramSource)}\n\n`;
+  // An @ mention chip copies as its text ("@2026-10-09"), not its label ("@Today").
+  if (el.hasAttribute("data-mention")) return el.getAttribute("data-mention");
   if (el.classList.contains("katex-display")) {
     const tex = el.querySelector('annotation[encoding="application/x-tex"]')?.textContent;
     return tex != null ? `\n\n$$\n${tex.trim()}\n$$\n\n` : el.textContent;
@@ -196,8 +198,8 @@ function HighlightedCode({ children }) {
   return <code className="hljs" dangerouslySetInnerHTML={{ __html: html }} />;
 }
 function ChatPre({ children, copy = false }) {
-  const diagram = mermaidCodeProps(children);
-  if (diagram) return <MermaidDiagram {...diagram} />;
+  const diagram = diagramCodeProps(children);
+  if (diagram) return <DiagramFigure {...diagram} />;
   const code = <HighlightedCode>{children}</HighlightedCode>;
   return copy ? <ChatCopyBlock as="pre">{code}</ChatCopyBlock> : <pre>{code}</pre>;
 }
@@ -357,7 +359,7 @@ const ChatMarkdown = React.memo(function ChatMarkdown({ text, copyBlocks = false
     <div onCopy={handleMarkdownCopy}>
       <CiteMultiContext.Provider value={multiSource}>
         <ReactMarkdown
-          remarkPlugins={[remarkGfm, remarkMath, remarkPaperLinks, remarkMermaid]}
+          remarkPlugins={[remarkGfm, remarkMath, remarkPaperLinks, remarkDiagrams]}
           rehypePlugins={[rehypeKatex]}
           urlTransform={(url) => assetUrl(defaultUrlTransform(url))}
           components={copyBlocks ? CHAT_MARKDOWN_COPY_COMPONENTS : CHAT_MARKDOWN_COMPONENTS}

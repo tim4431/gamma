@@ -1,4 +1,4 @@
-// The object layer of the rendered notes: every image, table and Mermaid
+// The object layer of the rendered notes: every image, table and
 // diagram sits in an MdObject frame. A press on the object itself selects it
 // instead of opening the block's raw editor; a press on the frame's margin
 // is left to the row (click-to-source opens the editor there). A right-click
@@ -19,7 +19,7 @@ import {
 } from "../shared/ui/Icons";
 import { t } from "../shared/i18n/i18n.js";
 import { blockSpans, scanImages, scanTables } from "./mdScan";
-import { scanMermaidFences } from "../shared/lib/mermaidMarkdown.js";
+import { scanDiagramFences } from "../shared/lib/diagramMarkdown.js";
 import { blockStartInSource, gapInSource, renderedBlocks, renderedGaps } from "./clickToSource";
 import { isTextField } from "../shared/lib/hotkeys.js";
 
@@ -36,8 +36,8 @@ function scanObjects(content) {
     out.push({ kind: "image", idx, from: im.from, to: im.to, editable: true }));
   scanTables(content).forEach((tb, idx) =>
     out.push({ kind: "table", idx, from: tb.from, to: tb.to, editable: tb.editable }));
-  scanMermaidFences(content).forEach((f, idx) =>
-    out.push({ kind: "mermaid", idx, from: f.from, to: f.end, editable: f.closed && !f.prefix.trim() }));
+  scanDiagramFences(content).forEach((f, idx) =>
+    out.push({ kind: "diagram", idx, from: f.from, to: f.end, editable: f.closed && !f.prefix.trim() }));
   return out.sort((a, b) => a.from - b.from);
 }
 
@@ -150,7 +150,7 @@ export function MdObject({ as: Tag = "div", kind, idx, editable = true, onAction
       // figure stays a picture, since the editor only expands an object the
       // selection reaches inside.
       onMouseDown={(e) => {
-        const body = e.target.closest?.(".mdImgFrame, .mdTableWrap, .mermaidDiagram");
+        const body = e.target.closest?.(".mdImgFrame, .mdTableWrap, .diagramCard");
         if (!body || !ref.current?.contains(body)) return;
         e.stopPropagation();
         if (e.button === 0) setSelected(true);
@@ -160,9 +160,9 @@ export function MdObject({ as: Tag = "div", kind, idx, editable = true, onAction
       // double-click or double tap on one opens the block's editor on its
       // source: the menu's "Edit markdown source" without the menu. The
       // toolbar and the resize grips keep their own.
-      {...doublePress(kind === "mermaid" && editable ? (e) => {
-        const body = e.target.closest?.(".mermaidDiagram");
-        if (!body || !ref.current?.contains(body) || e.target.closest?.(".mermaidTools, .mdResizeGrip")) return;
+      {...doublePress(kind === "diagram" && editable ? (e) => {
+        const body = e.target.closest?.(".diagramCard");
+        if (!body || !ref.current?.contains(body) || e.target.closest?.(".diagramTools, .mdResizeGrip")) return;
         e.preventDefault();
         e.stopPropagation();
         act("editRaw", e);
@@ -185,7 +185,7 @@ export function MdObject({ as: Tag = "div", kind, idx, editable = true, onAction
       {menu ? (
         <ContextMenu x={menu.x} y={menu.y} onClose={() => setMenu(null)}>
           <MenuItem icon={CodeIcon} title={t("Open the block's editor with the caret on this object's markdown")}
-            keys={kind === "mermaid" && editable ? t("Double-click") : undefined}
+            keys={kind === "diagram" && editable ? t("Double-click") : undefined}
             onClick={(e) => act("editRaw", e)}>{t("Edit markdown source")}</MenuItem>
           {editable ? (
             <SubMenuItem id="move" icon={MoveVerticalIcon} label={t("Move to")}>

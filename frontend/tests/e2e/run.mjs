@@ -29,7 +29,7 @@ import {
   openPage, results, sleep, step, until,
 } from "./harness.mjs";
 import { noteScenarios } from "./scenarios/notes.mjs";
-import { mermaidScenarios } from "./scenarios/mermaid.mjs";
+import { diagramScenarios } from "./scenarios/diagrams.mjs";
 import { pdfScenarios } from "./scenarios/pdf.mjs";
 import { fileScenarios } from "./scenarios/files.mjs";
 import { collabScenarios } from "./scenarios/collab.mjs";
@@ -38,6 +38,7 @@ import { settingsScenarios } from "./scenarios/settings.mjs";
 import { mcpScenarios } from "./scenarios/mcp.mjs";
 import { mirrorScenarios } from "./scenarios/mirror.mjs";
 import { mentionScenarios } from "./scenarios/mentions.mjs";
+import { noteMentionScenarios } from "./scenarios/noteMentions.mjs";
 import { chatNavigationScenarios } from "./scenarios/chatNavigation.mjs";
 import { transferScenarios } from "./scenarios/transfers.mjs";
 import { inkScenarios } from "./scenarios/ink.mjs";
@@ -80,12 +81,13 @@ const RUNNERS = {
   "publish": publishScenarios,
   "chat-navigation": chatNavigationScenarios,
   "mentions": mentionScenarios,
+  "note-mentions": noteMentionScenarios,
   "collab": collabScenarios,
   "mirror": mirrorScenarios,
   "transfers": transferScenarios,
   "mcp": mcpScenarios,
   "files": fileScenarios,
-  "mermaid": mermaidScenarios,
+  "diagrams": diagramScenarios,
   "i18n": i18nScenarios,
   "cloud-sign-in": cloudSignInScenarios,
   "auth": authScenarios,

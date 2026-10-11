@@ -228,21 +228,28 @@ def _refusal(kind, version: int, message: str) -> MigrationError:
 
 def guidance(error: MigrationError) -> dict:
     """What the person running this server should do about ``error``, as
-    ``{"title", "summary", "steps": [str], "data_dir", "backups_dir",
-    "snapshot"}`` — the one text the startup page, the API's 503, the
-    CLI and the log share (gamma/app.py ``_blocked_app``, ``manage.py
-    migrate``). Nothing below changes the data directory; every path tells
-    the person their data is intact before it tells them what to run."""
+    ``{"title", "status", "summary", "steps": [str], "fallback": {"lead",
+    "steps": [str]}, "data_dir", "backups_dir", "snapshot"}`` — the one
+    text the startup page, the API's 503, the CLI and the log share
+    (gamma/app.py ``_blocked_app``, ``manage.py migrate``). ``status`` is
+    the one calm line that comes first (the data is intact, the other
+    workspaces are served); ``steps`` is the way forward, which for data a
+    newer Gamma wrote is to update this one; ``fallback`` is the other way
+    (staying on this release, going back), folded away on the page and
+    empty when there is none. Nothing below changes the data directory."""
     data_dir, backups_dir = str(config.DATA_DIR), str(config.BACKUPS_DIR)
+    intact = "Your data is intact. Nothing has been changed."
+    none = {"lead": "", "steps": []}
     if isinstance(error, TooOldDataError):
         via = UPGRADE_VIA
         return {
             "title": "This Gamma needs an earlier release to upgrade your data first",
+            "status": intact,
             "summary": (f"Your data directory is at schema version {error.version}; this Gamma (schema "
-                        f"{SCHEMA_VERSION}) upgrades from version {MIN_UPGRADABLE} on. Nothing has been "
-                        f"changed. Run {via['release']} once on the same data directory: it upgrades it to "
-                        f"schema version {via['schema']}, taking a snapshot of the databases first; then "
-                        f"start this version again and it finishes the upgrade."),
+                        f"{SCHEMA_VERSION}) upgrades from version {MIN_UPGRADABLE} on, and {via['release']} "
+                        f"carries the earlier steps. Run it once on the same data directory: it upgrades it to "
+                        f"schema version {via['schema']}, taking a snapshot of the databases first; then start "
+                        f"this version again and it finishes the upgrade."),
             "steps": [
                 f"Back up the data directory ({data_dir}): a plain copy of the folder or volume is enough.",
                 f"Docker Compose: in docker-compose.yml set `image: {via['image']}`, run `docker compose up -d`, "
@@ -253,18 +260,31 @@ def guidance(error: MigrationError) -> dict:
                 "Desktop app: install that release from the GitHub releases page, open it once with this data "
                 "directory, then install the current version again.",
             ],
+            "fallback": none,
             "data_dir": data_dir, "backups_dir": backups_dir, "snapshot": "",
         }
     if isinstance(error, NewerDataError):
         return {
-            "title": "This data directory was written by a newer Gamma",
-            "summary": (f"Your data directory is at schema version {error.version}; this Gamma expects "
-                        f"{SCHEMA_VERSION} and will not touch it. Nothing has been changed."),
+            "title": "This data was last opened by a newer Gamma",
+            "status": intact,
+            "summary": (f"Your data directory is at schema version {error.version} and this Gamma reads version "
+                        f"{SCHEMA_VERSION}, so it is standing aside rather than guessing at the newer layout. "
+                        f"Updating this Gamma is all it takes: the newer release opens the data as it is."),
             "steps": [
-                "Run the Gamma release that wrote it (the newer one), or",
-                f"restore the snapshot that release took before upgrading, from {backups_dir}: with the server "
-                f"stopped, `manage.py backups` lists them and `manage.py backups --restore <name>` puts one back.",
+                "Docker: `docker compose pull && docker compose up -d` (or the image tag that wrote the data), "
+                "then reload this page.",
+                "Desktop app: install the latest release from https://github.com/tim4431/gamma/releases and "
+                "open it again.",
+                "Several Gammas sharing one data directory: update them all, or give each its own directory.",
             ],
+            "fallback": {
+                "lead": "Would you rather stay on this release?",
+                "steps": [
+                    f"The newer Gamma took a snapshot before it upgraded, in {backups_dir}. With the server "
+                    f"stopped, `manage.py backups` lists them and `manage.py backups --restore <name>` puts "
+                    f"one back; anything saved after that snapshot is not in it.",
+                ],
+            },
             "data_dir": data_dir, "backups_dir": backups_dir, "snapshot": "",
         }
     if error.workspace:
@@ -272,33 +292,35 @@ def guidance(error: MigrationError) -> dict:
                 f"workspaces/{error.workspace}/." if error.snapshot else
                 "No copy of its databases could be taken, so nothing in it was changed.")
         return {
-            "title": "This workspace could not be upgraded",
-            "summary": (f"The upgrade of workspace {error.workspace} stopped at migration step {error.step}; it "
-                        f"is at schema version {error.version}, the last step that completed, and is not served "
-                        f"until the step succeeds. Every other workspace is served. The upgrade is tried again "
-                        f"the next time the workspace is opened."),
+            "title": "One workspace could not be upgraded yet",
+            "status": "Every other workspace is served.",
+            "summary": (f"Workspace {error.workspace} stopped at migration step {error.step}; it stays at schema "
+                        f"version {error.version}, the last step that completed, and is not served until the "
+                        f"step succeeds. The upgrade is tried again the next time the workspace is opened."),
             "steps": [
                 f"Read the cause in the server log: {error}",
                 "Fix it (disk space, file permissions, a damaged database) and open the workspace again, or run "
                 "`manage.py migrate` with the server stopped: the upgrade continues where it stopped.",
                 kept,
             ],
+            "fallback": none,
             "data_dir": data_dir, "backups_dir": backups_dir, "snapshot": error.snapshot,
         }
-    back = (f"Or go back: with the server stopped, `manage.py backups --restore {Path(error.snapshot).name}` "
-            f"restores the snapshot, then run the previous release." if error.snapshot else
-            "Or go back to the previous release with the snapshot `manage.py backups` lists.")
+    back = (f"With the server stopped, `manage.py backups --restore {Path(error.snapshot).name}` restores the "
+            f"snapshot from before the upgrade; then run the previous release." if error.snapshot else
+            "Go back to the previous release with the snapshot `manage.py backups` lists.")
     return {
-        "title": "The upgrade of your data directory stopped",
+        "title": "The upgrade paused before it finished",
+        "status": "A snapshot from before the upgrade is kept.",
         "summary": (f"Migration step {error.step} failed; the data directory is at schema version "
-                    f"{error.version}, the last step that completed. A snapshot of every database from before "
-                    f"the upgrade is kept, and the upgrade resumes from this step at the next start."),
+                    f"{error.version}, the last step that completed. The upgrade resumes from this step at "
+                    f"the next start, with the same snapshot."),
         "steps": [
             f"Read the cause in the server log: {error}",
             "Fix it (disk space, file permissions, a damaged database) and start the server again: the "
-            "upgrade continues where it stopped, with the same snapshot.",
-            back,
+            "upgrade continues where it stopped.",
         ],
+        "fallback": {"lead": "Would you rather go back?", "steps": [back]},
         "data_dir": data_dir, "backups_dir": backups_dir, "snapshot": error.snapshot,
     }
 
@@ -1375,8 +1397,9 @@ def _v34_workspace_prefs(ws: str, pages: sqlite3.Connection, data) -> None:
 
 
 # users.db ``folder_links`` as schema version 35 shaped it, frozen: step 35
-# creates it from this. ``workspace_id`` is a workspace of this server or,
-# with ``remote_url``, of the other server, so it is no foreign key.
+# creates it from this, and step 36 brings a table release 0.2.16 shaped
+# otherwise to it. ``workspace_id`` is a workspace of this server or, with
+# ``remote_url``, of the other server, so it is no foreign key.
 _V35_FOLDER_LINKS = """CREATE TABLE IF NOT EXISTS folder_links (
         id TEXT PRIMARY KEY,
         workspace_id TEXT NOT NULL,
@@ -1404,6 +1427,40 @@ def _v35_folder_links(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
+# The remote source's columns, which release 0.2.16's folder_links lacked.
+_V36_COLUMNS = (("remote_url", "TEXT NOT NULL DEFAULT ''"), ("token", "TEXT NOT NULL DEFAULT ''"),
+                ("token_id", "TEXT NOT NULL DEFAULT ''"))
+
+
+def _v36_folder_links_remote(conn: sqlite3.Connection) -> None:
+    """``folder_links`` in the shape ``_V35_FOLDER_LINKS`` wherever an
+    earlier build shaped it otherwise. Release 0.2.16 created the table
+    with ``workspace_id`` a foreign key to ``workspaces`` and without the
+    remote source's columns, and added the columns as its own step 36, so
+    its data is stamped 36 already; the release after folded the columns
+    into step 35, dropped the foreign key (a link to another server's
+    workspace cannot satisfy it) and, by mistake, the version with it,
+    which made that data "newer" than the code. This step is what makes
+    36 current again: a 0.2.16 directory is simply current (its foreign
+    key stays, inert: no connection turns ``foreign_keys`` on), and a
+    directory at 35 gets the table created if missing, each missing
+    column added, and a table that has the foreign key rebuilt without
+    it, rows kept. Re-runnable. No workspace is touched."""
+    conn.execute(_V35_FOLDER_LINKS)
+    have = _columns(conn, "folder_links")
+    for name, decl in _V36_COLUMNS:
+        if name not in have:
+            conn.execute(f"ALTER TABLE folder_links ADD COLUMN {name} {decl}")
+    ddl = conn.execute("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'folder_links'").fetchone()[0]
+    if "REFERENCES" in ddl:
+        cols = ", ".join(_columns(conn, "folder_links"))
+        conn.execute("ALTER TABLE folder_links RENAME TO folder_links_v35")
+        conn.execute(_V35_FOLDER_LINKS)
+        conn.execute(f"INSERT INTO folder_links ({cols}) SELECT {cols} FROM folder_links_v35")
+        conn.execute("DROP TABLE folder_links_v35")
+    conn.commit()
+
+
 STEPS = [
     (20, "guest_accounts", _v20_guest_accounts),
     (21, "folder_shares", _v21_folder_shares),
@@ -1420,6 +1477,7 @@ STEPS = [
     (32, "share_token_workspace", _v32_share_token_workspace),
     (33, "page_ops_batch_id", _v33_page_ops_batch_id),
     (35, "folder_links", _v35_folder_links),
+    (36, "folder_links_remote", _v36_folder_links_remote),
 ]
 
 # The workspace parts of the steps from version 34 on: (version, name,

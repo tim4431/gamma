@@ -148,6 +148,104 @@ export async function noteScenarios({ server, browser, alice, step, until, sleep
     assertNoProblems(page);
   });
 
+  // The editor shows a numbered marker as text in tabular figures
+  // (BlockCmEditor's cmListNum): Inter's own "1" is narrower than "2", which
+  // set the first item's text left of the others'.
+  await step("notes: Enter continues a numbered list, and its items' text lines up in the editor", async () => {
+    const src = await alice2.api("/api/pages", { method: "POST", body: { title: "Numbered" } });
+    await alice2.api(`/api/pages/${src.id}/ops`, { method: "POST", body: { client: "e2e", ops: [
+      { op: "insert", id: "numblk01", parent: src.id, position: "a0", content: "1. one" }] } });
+    const p2 = await openPage(ctx, `${server.base}/?ws=${second.id}&page=${src.id}`);
+    try {
+      await editRow(p2, "one");
+      for (const word of ["two", "three", "four", "seven"]) { await p2.keyboard.press("Enter"); await p2.keyboard.type(word); }
+      await until(async () => (await tree(alice2, src.id))[0]?.content === "1. one\n2. two\n3. three\n4. four\n5. seven", { what: "the list saved" });
+      // Where each item's text starts: the first letter after "N. ".
+      const starts = await p2.evaluate(() => [...document.querySelectorAll(".blockEditorCm .cm-line")].map((line) => {
+        const walker = document.createTreeWalker(line, NodeFilter.SHOW_TEXT);
+        let at = line.textContent.indexOf(" ") + 1, node;
+        while ((node = walker.nextNode()) && at >= node.data.length) at -= node.data.length;
+        const range = document.createRange();
+        range.setStart(node, at); range.setEnd(node, at + 1);
+        return range.getBoundingClientRect().left;
+      }));
+      assertEq(starts.length, 5, "five lines");
+      assert(Math.max(...starts) - Math.min(...starts) < 0.5, `the items' text lines up: ${starts.join(", ")}`);
+      assertNoProblems(p2);
+    } finally { await p2.close(); }
+  });
+
+  // A quote or callout spans lines (editor/mdLines.js): the line-break Enter
+  // carries its marks and a list inside them, pasted lines land at the
+  // quote's level (or as copied: Paste as → As copied), lines copied out of
+  // a quote join it instead of nesting, and Ctrl+Shift+. quotes or unquotes
+  // the selected lines. It renders as one box.
+  await step("notes: a callout keeps its lines together: Enter continues its list, a paste stays in it, Ctrl+Shift+. quotes lines", async () => {
+    const src = await alice2.api("/api/pages", { method: "POST", body: { title: "Quotes" } });
+    await alice2.api(`/api/pages/${src.id}/ops`, { method: "POST", body: { client: "e2e", ops: [
+      { op: "insert", id: "quoteblk1", parent: src.id, position: "a0", content: "> [!tip] Steps\n> - one" },
+      { op: "insert", id: "quoteblk2", parent: src.id, position: "a1", content: "alpha\n\nbeta" }] } });
+    const content = async (i) => (await tree(alice2, src.id))[i]?.content;
+    const p2 = await openPage(ctx, `${server.base}/?ws=${second.id}&page=${src.id}`);
+    try {
+      await editRow(p2, "Steps");
+      await p2.keyboard.press("Control+End");
+      await p2.keyboard.press("Enter");
+      await p2.keyboard.type("two");
+      await p2.keyboard.press("Enter");
+      await p2.keyboard.press("Enter");
+      await p2.keyboard.type("after the list");
+      const listed = "> [!tip] Steps\n> - one\n> - two\n> after the list";
+      await until(async () => (await content(0)) === listed, { what: "the list in the callout saved" });
+      assertEq(await p2.locator(".cm-line.cmCalloutLine .cmBulletDot").count(), 2, "the editor draws both items' bullets in the box");
+
+      const pasteText = (text) => p2.evaluate((text) => {
+        const dt = new DataTransfer();
+        dt.setData("text/plain", text);
+        document.activeElement.closest(".cm-content")
+          .dispatchEvent(new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true }));
+      }, text);
+      await p2.keyboard.press("Enter");
+      await pasteText("first\nsecond\n\nthird");
+      const quoted = `${listed}\n> first\n> second\n>\n> third`;
+      await until(async () => (await content(0)) === quoted, { what: "every pasted line in the quote" });
+      const items = p2.locator(".slashMenu .slashMenuItem");
+      await until(async () => /At this level.*Nested.*As copied.*Blocks/.test((await items.allTextContents()).join("|")), { what: "the chooser offers the other placements and the text as copied" });
+      await items.filter({ hasText: "As copied" }).first().click();
+      await until(async () => (await content(0)) === `${listed}\n> first\nsecond\n\nthird`, { what: "As copied leaves the lines as they came" });
+      // From the end of "third" up into "second": three lines selected.
+      await p2.keyboard.press("Shift+ArrowUp");
+      await p2.keyboard.press("Shift+ArrowUp");
+      await p2.keyboard.press("Control+Shift+Period");
+      await until(async () => (await content(0)) === quoted, { what: "Ctrl+Shift+. quoted the selected lines, the blank one with a bare >" });
+      // Lines copied out of a quote keep their marks; pasted into this one
+      // they join it rather than make a quote inside it.
+      await p2.keyboard.press("Control+End");
+      await p2.keyboard.press("Enter");
+      await pasteText("> 1. this\n> 2. second");
+      await until(async () => (await content(0)) === `${quoted}\n> 1. this\n> 2. second`, { what: "the copied quote's lines at the box's level" });
+      await p2.keyboard.press("Escape");
+      await closeEditor(p2);
+      const box = row(p2, "Steps").locator("blockquote.callout");
+      assertEq(await box.count(), 1, "one callout box");
+      assertEq(await row(p2, "Steps").locator("blockquote").count(), 1, "and no quote inside it");
+      assertEq(await box.locator("ul > li").count(), 2, "its list");
+      assertEq(await box.locator("ol > li").count(), 2, "and the pasted numbered one");
+      const boxText = await box.innerText();
+      for (const word of ["after the list", "first", "second", "third", "this"]) assert(boxText.includes(word), `"${word}" is in the box`);
+
+      await editRow(p2, "alpha");
+      await p2.keyboard.press("Control+End");
+      await p2.keyboard.press("Control+Shift+Home");
+      await p2.keyboard.press("Control+Shift+Period");
+      await until(async () => (await content(1)) === "> alpha\n>\n> beta", { what: "the whole block quoted" });
+      await p2.keyboard.press("Control+Shift+Period");
+      await until(async () => (await content(1)) === "alpha\n\nbeta", { what: "and unquoted again" });
+      await closeEditor(p2);
+      assertNoProblems(p2);
+    } finally { await p2.close(); }
+  });
+
   await step("notes: the handle menu duplicates and deletes a block", async () => {
     const wrap = page.locator(".sortableBlockWrap", { hasText: "third" }).first();
     await wrap.hover();
@@ -393,7 +491,7 @@ export async function noteScenarios({ server, browser, alice, step, until, sleep
     await page.getByRole("button", { name: /Red text/ }).click();
     // The command lands through a React round trip that sets the content
     // first and the caret a beat later; type once the caret sits inside the
-    // span (the mermaid step waits for its selection the same way).
+    // span (the diagrams step waits for its selection the same way).
     await page.waitForFunction(() => {
       const sel = document.getSelection();
       const ed = document.activeElement?.closest(".cm-content");

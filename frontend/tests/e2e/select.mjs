@@ -31,12 +31,13 @@ export const GROUPS = [
   { id: "publish", files: ["publish.mjs"] }, // ~15
   { id: "chat-navigation", files: ["chatNavigation.mjs"] }, // ~12
   { id: "mentions", files: ["mentions.mjs"] }, // ~11
+  { id: "note-mentions", files: ["noteMentions.mjs"] },
   { id: "collab", files: ["collab.mjs"] }, // ~11
   { id: "mirror", files: ["mirror.mjs"] }, // ~9
   { id: "transfers", files: ["transfers.mjs"] }, // ~9
+  { id: "diagrams", files: ["diagrams.mjs"] }, // ~9
   { id: "mcp", files: ["mcp.mjs"] }, // ~8
   { id: "files", files: ["files.mjs"] }, // ~7
-  { id: "mermaid", files: ["mermaid.mjs"] }, // ~6
   { id: "i18n", files: ["i18n.mjs"] }, // ~6
   { id: "cloud-sign-in", files: ["cloudSignIn.mjs"] },
   { id: "auth", files: ["auth.mjs"] },
@@ -52,7 +53,7 @@ const GUIDES = ["guide", "contextual-guide", "triggered-guide"];
 const CHAT = ["chat-navigation", "mentions", "contextual-guide", "triggered-guide", "notes-pdf-share", "touch"];
 // every group that opens a PDF in the viewer
 const PDF_VIEW = ["notes-pdf-share", "pdf-load", "pdf-touch", "ink", "ink-editing", "textbox", "collab", "files", "transfers", "touch", ...GUIDES];
-const EXPORTS = ["transfers", "files", "ink", "mermaid"];
+const EXPORTS = ["transfers", "files", "ink", "diagrams"];
 
 // [glob, groups], first match wins. `**` spans folders, `*` stays in one.
 // ALL is for what every scenario goes through (the app shell, shared UI,
@@ -84,7 +85,10 @@ export const RULES = [
   ["frontend/src/replica/**", ["replica"]],
   ["frontend/src/pdf/**", PDF_VIEW],
   // (a text box's editor and read mode are the notes')
-  ["frontend/src/editor/**", ["notes-pdf-share", "mermaid", "files", "collab", "transfers", "mcp", "guide", "triggered-guide", "textbox", "touch"]],
+  // the @ menu and its chips (the reminders are App's, under app/**)
+  ["frontend/src/editor/mentions.js", ["note-mentions", "notes-pdf-share"]],
+  ["frontend/src/editor/MentionMenu.jsx", ["note-mentions", "notes-pdf-share"]],
+  ["frontend/src/editor/**", ["notes-pdf-share", "diagrams", "files", "collab", "transfers", "mcp", "guide", "triggered-guide", "textbox", "touch"]],
   ["frontend/src/chat/**", CHAT],
   ["frontend/src/settings/**", ["settings", "i18n", "mirror", "cloud-sign-in", "mcp", "publish", "triggered-guide"]],
   ["frontend/src/collaboration/MirrorPopover.jsx", ["mirror", "publish"]],

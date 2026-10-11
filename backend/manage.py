@@ -341,9 +341,13 @@ def migrate(status_only: bool = False, dry_run: bool = False, global_only: bool 
             result = migrations.ensure_current(dry_run=dry_run)
         except migrations.MigrationError as e:
             guide = migrations.guidance(e)
-            print(f"{guide['title']}.\n{guide['summary']}")
+            print(f"{guide['title']}.\n{guide['status']} {guide['summary']}")
             for n, step in enumerate(guide["steps"], 1):
                 print(f"  {n}. {step}")
+            if guide["fallback"]["steps"]:
+                print(guide["fallback"]["lead"])
+                for step in guide["fallback"]["steps"]:
+                    print(f"  - {step}")
             sys.exit(2)
         if not dry_run:
             print(f"Snapshot of the databases before the upgrade: {result['backup']}")

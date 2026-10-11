@@ -1,4 +1,4 @@
-// The edge drag grips that size a rendered figure (a note image, a Mermaid
+// The edge drag grips that size a rendered figure (a note image, a
 // diagram) — one behavior for every resizable thing in the notes, Notion's:
 // a grip on each side, and since figures are centred both edges move
 // together, so the width changes by twice the pointer's travel and the

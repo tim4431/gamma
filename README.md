@@ -8,9 +8,8 @@
 [![GitHub stars](https://img.shields.io/github/stars/tim4431/Gamma?style=flat&logo=github&color=eab308)](https://github.com/tim4431/Gamma/stargazers)
 [![GitHub forks](https://img.shields.io/github/forks/tim4431/Gamma?style=flat&logo=github&color=8b5cf6)](https://github.com/tim4431/Gamma/forks)
 
-<a href="https://apps.microsoft.com/detail/9N8WGWR2J2MV">
-  <img src="https://get.microsoft.com/images/en-us%20dark.svg" alt="Download Gamma from the Microsoft Store" width="240">
-</a>
+<a href="https://apps.microsoft.com/detail/9N8WGWR2J2MV"><img src="https://get.microsoft.com/images/en-us%20dark.svg" alt="Download Gamma from the Microsoft Store" width="240"></a>
+<a href="https://chromewebstore.google.com/detail/gamma-connector/njpeklephhndnpakmlaancinpnabcomn"><img src="./docs/assets/badges/chrome-web-store.png" alt="Get the Gamma Connector browser extension from the Chrome Web Store" width="218"></a>
 
 **[Install](#install)** · **[User guide](./docs/user_guide/user_guide.md)** · [Try the demo](https://demo.gammapdf.com) · [Website](https://gammapdf.com) · [Releases](https://github.com/tim4431/Gamma/releases)
 
@@ -48,7 +47,7 @@ Open a paper by pasting any link — arXiv, DOI, or a publisher page; Gamma find
 Highlights and free notes are the same kind of block, so a paper's notes and a plain page are edited the same way:
 
 - **Outliner** — Enter for a new block, Tab / Shift+Tab to nest, drag to reorder, one undo history for the whole page.
-- **Live preview, Obsidian-style** — markdown, `$…$` / `$$…$$` math, code fences, callouts, tables and Mermaid diagrams render in place while the block you're on stays raw. Math gets bracket-pair coloring, `\command` autocomplete, and Tab hops between `{}` arguments.
+- **Live preview, Obsidian-style** — markdown, `$…$` / `$$…$$` math, code fences, callouts, tables, Mermaid diagrams and SVG figures render in place while the block you're on stays raw. Math gets bracket-pair coloring, `\command` autocomplete, and Tab hops between `{}` arguments.
 - **Pictures, tables and diagrams** — paste a screenshot and drag its edge to size it; tables are edited cell by cell, never as raw markdown; double-click a diagram to edit its source.
 - **Pages to write on** — type `/note` and a sheet of paper opens among your notes; write on it with a stylus or the mouse, or show a page's sheets large as a notebook.
 - **Link and embed** — `[[page]]` mentions, `/page` for a new page linked where you type, `![[block]]` embeds that edit the source in place, backlinks, and a "/" menu for everything else.
@@ -106,7 +105,7 @@ Highlights and free notes are the same kind of block, so a paper's notes and a p
 
 <a href="./docs/user_guide/user_guide.md#gamma-connector"><img alt="On a Physical Review Letters article page, the Gamma Connector's toolbar badge has found the paper; its popup shows the title and authors, files it under Quantum/Neutral atoms with a label, saves it, and the PDF opens in Gamma with its folder and label" src="./docs/assets/demos/demo-connector.webp" width="100%"></a>
 
-- **Gamma Connector** — the browser extension ([extension/](./extension/)) saves the paper you're reading in one click — PDF, metadata, folder, labels — from the arXiv / DOI / publisher tab, and clips links or selections into your notes. Its cookie button saves your **publisher sign-in per journal**, so the server can fetch that journal's PDFs on its own from then on.
+- **Gamma Connector** — the browser extension ([Chrome Web Store](https://chromewebstore.google.com/detail/gamma-connector/njpeklephhndnpakmlaancinpnabcomn) · [source](./extension/)) saves the paper you're reading in one click — PDF, metadata, folder, labels — from the arXiv / DOI / publisher tab, and clips links or selections into your notes. Its cookie button saves your **publisher sign-in per journal**, so the server can fetch that journal's PDFs on its own from then on.
 - **Import** — Zotero libraries and Logseq exports with their annotations; Obsidian vaults, Notion exports and Markdown folders as notes. **Export** — annotated PDF, Markdown, an Obsidian vault, a Logseq graph, a Zotero library, or a Gamma zip another Gamma can merge.
 
 → Guide: [Assistants](./docs/user_guide/user_guide.md#assistants) · [Gamma Connector](./docs/user_guide/user_guide.md#gamma-connector) · [Import and export](./docs/user_guide/user_guide.md#import-and-export) · [Backups and upgrades](./docs/user_guide/user_guide.md#backups-and-upgrades)
@@ -121,7 +120,7 @@ Get the Windows app from the [**Microsoft Store**](https://apps.microsoft.com/de
 
 - **Desktop app** (Windows installer, macOS dmg, Debian/Ubuntu deb) — a self-contained Gamma with local libraries on your disk, no Docker, Python or Node. It also opens any Gamma server you host (the NAS, a VPS) and keeps [offline copies](./docs/user_guide/user_guide.md#offline-copies) of its workspaces. Details: [desktop/](./desktop/). Builds are not notarized: Windows SmartScreen → *More info → Run anyway*; macOS says *Apple could not verify Gamma* on first launch → *System Settings → Privacy & Security → Open Anyway* (once); Linux: `sudo apt install ./Gamma-<version>-linux-amd64.deb`. Windows and Linux apps update themselves.
 - **iPad, phone, any browser** — open your server and install it from the browser; see [Install as an app](./docs/user_guide/user_guide.md#install-as-an-app).
-- **Gamma Connector** browser extension (`gamma-connector-<version>.zip` on the [GitHub release](https://github.com/tim4431/Gamma/releases/latest), next to the desktop installers) — unzip, then `chrome://extensions` → *Developer mode* → *Load unpacked*.
+- **Gamma Connector** browser extension — from the [**Chrome Web Store**](https://chromewebstore.google.com/detail/gamma-connector/njpeklephhndnpakmlaancinpnabcomn) for Chrome, Edge and other Chromium browsers; it updates itself. Or take `gamma-connector-<version>.zip` from the [GitHub release](https://github.com/tim4431/Gamma/releases/latest), unzip it, then `chrome://extensions` → *Developer mode* → *Load unpacked*.
 - **Server** — the Docker image below, built from `main` on every merge.
 
 ### Quickstart

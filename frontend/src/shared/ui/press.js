@@ -119,3 +119,23 @@ export function doublePress(run) {
     },
   };
 }
+
+// --- a dialog's backdrop -------------------------------------------------------
+
+// `dismiss(event)` closes the dialog for a press that went down and came up
+// on the backdrop itself. The click alone cannot say so: it lands on the
+// nearest element both ends share, so a drag that starts in the dialog (a
+// field's text being selected) and is let go past its edge "clicks" the
+// backdrop. Every backdrop reads the same two targets, so nested ones agree.
+let downAt = null;
+let upAt = null;
+
+export function backdropPress(dismiss) {
+  return {
+    onPointerDown(e) { downAt = e.target; },
+    onPointerUp(e) { upAt = e.target; },
+    onClick(e) {
+      if (e.target === e.currentTarget && downAt === e.currentTarget && upAt === e.currentTarget) dismiss(e);
+    },
+  };
+}

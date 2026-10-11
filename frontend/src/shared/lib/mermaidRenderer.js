@@ -1,4 +1,4 @@
-import { mermaidMath } from "./mermaidMarkdown.js";
+import { mermaidMath } from "./diagramMarkdown.js";
 
 let library;
 let queue = Promise.resolve();

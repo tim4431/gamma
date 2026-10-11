@@ -6,16 +6,18 @@ with one click — like the Zotero Connector. Design and server contract:
 
 ## Install
 
-Chrome only installs extensions from the Web Store or as an unpacked folder
-(zips and .crx files can't be double-click installed), so either way it's
-**Load unpacked**:
-
-1. Get the folder: clone the repo, or download
-   `gamma-connector-<version>.zip` from the
-   [latest release](https://github.com/tim4431/Gamma/releases/latest) and unzip it
-   somewhere permanent (Chrome loads it from that path).
-2. `chrome://extensions` → enable **Developer mode** → **Load unpacked** →
-   pick the folder.
+1. Add it from the
+   [Chrome Web Store](https://chromewebstore.google.com/detail/gamma-connector/njpeklephhndnpakmlaancinpnabcomn);
+   it updates itself. Edge installs it from the same page once
+   *Allow extensions from other stores* is on.
+2. Or load it unpacked (zips and .crx files can't be double-click
+   installed): clone the repo, or download `gamma-connector-<version>.zip`
+   from the [latest release](https://github.com/tim4431/Gamma/releases/latest)
+   and unzip it somewhere permanent (Chrome loads it from that path); then
+   `chrome://extensions` → enable **Developer mode** → **Load unpacked** →
+   pick the folder. An unpacked copy does not update itself, and it has a
+   different extension ID from the store copy, so a browser with both runs
+   two Connectors until one is removed.
 3. Click the γ icon → enter your server address **with its scheme** (e.g.
    `https://gamma.example.com` or `http://192.168.1.20:9001`) → **Connect** →
    sign in. Signing in from Gamma's own tab also works: the session cookie is

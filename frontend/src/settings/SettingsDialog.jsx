@@ -1,5 +1,6 @@
 import React from "react";
 import { stepList } from "../shared/ui/listKeys.js";
+import { backdropPress } from "../shared/ui/press.js";
 import { API, apiJson, fmtBytes, isUnverifiedPaperMeta, metaSourceInfo, getCurrentWorkspace } from "../shared/lib/utils";
 import { MenuSelect } from "../shared/ui/Menus";
 import { T, t, tn } from "../shared/i18n/i18n.js";
@@ -979,7 +980,7 @@ export default function SettingsDialog({
   return (
     <SettingsDraftContext.Provider value={drafts}>
       <SettingsSyncContext.Provider value={syncState}>
-      <div className="reportOverlay" onClick={() => guard(onClose)}>
+      <div className="reportOverlay" {...backdropPress(() => guard(onClose))}>
         <div className={`settingsModal ${mobileIndex ? "settingsIndexOpen" : ""}`}
           role="dialog" aria-modal="true" aria-label={t("Settings")}
           tabIndex={-1} ref={modalRef} onClick={(event) => event.stopPropagation()}

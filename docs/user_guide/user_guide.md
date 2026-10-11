@@ -10,7 +10,7 @@ Read papers, keep what you learn. This guide shows each part of Gamma in a short
 | [Notebooks](#notebooks) | Sheets of paper to write on |
 | [Follow links and translate](#follow-links-and-translate) | Citations, Back, translation in place |
 | [Notes](#notes) | Markdown and math that render as you type |
-| [Outline and links between pages](#outline-and-links-between-pages) | Nesting, moving notes, `[[` links |
+| [Outline and links between pages](#outline-and-links-between-pages) | Nesting, moving notes, `[[` links, `@` mentions and reminders |
 | [AI chat](#ai-chat) | Ask about the paper, with clickable citations; every AI service you can connect |
 | [The library agent](#the-library-agent) | Let the AI organize and edit, with your approval; what each tool does |
 | [Library](#library) | Folders, labels, Recently deleted |
@@ -97,6 +97,8 @@ Notes are a nested outline. Highlights and free notes are the same kind of block
 - **Pictures**: paste or drag an image in; drag its grip to resize.
 - **Tables** are edited in place; a table from Excel pastes as markdown.
 - **"/" menu**: type `/` for headings, callouts, code, colors, a notebook sheet, a new page.
+- **Quotes and callouts** keep going over several lines: Enter carries the `>` (and a list inside it) to the next line, and **Ctrl+Shift+.** quotes or unquotes the selected lines. `/callout` on a quote's first line turns it into a callout; on a line inside one it starts a box inside it.
+- **Pasting keeps the structure**: pasted lines land at the level of the line you paste onto, in its quote or beside its list item, and a pasted list keeps its sub-items. The **Paste as** menu offers **Nested** (one level in) and **As copied**. The `/` line commands (headings, lists, to-dos, quote, callout) keep a line's quote and indentation.
 - **Formatting keys** are Obsidian's: Ctrl+B, Ctrl+I, Ctrl+K and so on. Rendered notes copy as rich text; math copies as LaTeX.
 
 ## Outline and links between pages
@@ -110,6 +112,7 @@ Notes are a nested outline. Highlights and free notes are the same kind of block
 <img alt="Two brackets are typed in a note, a picker lists pages, one becomes a chip in the line, and a Linked from row under the page lists the note" src="assets/page-links.svg" width="100%">
 
 - **`[[`** links to a page or a note; the link is a clickable chip, and **Linked from** under a page lists everything that links to it. `![[block]]` embeds a block you can edit in place.
+- **`@`** mentions a date, a person or a page, as in Notion: **Today**, **Remind me** (tomorrow at 9, or what you type, such as `@fri 3pm` or `@remind me next mon`), the people of the workspace, and pages by title. A reminder shows a card at its time, and a system notification if you allow them, while Gamma is open.
 - **/page** makes a new page from a note and links it where you typed.
 
 ## AI chat
@@ -245,7 +248,7 @@ Your library lives on your server. For the train or a lab without Wi-Fi, keep an
 
 <img alt="On a journal page the Gamma Connector badge lights up, its popup shows the paper with a folder and a label, Save to Gamma is clicked, and the card appears in that folder in Gamma" src="assets/connector.svg" width="100%">
 
-The browser extension saves the paper you are reading in one click: PDF, metadata, folder and labels. Get it from the [latest release](https://github.com/tim4431/Gamma/releases/latest), unzip, and load it unpacked at `chrome://extensions`.
+The browser extension saves the paper you are reading in one click: PDF, metadata, folder and labels. Add it from the [Chrome Web Store](https://chromewebstore.google.com/detail/gamma-connector/njpeklephhndnpakmlaancinpnabcomn) (Chrome, Edge and other Chromium browsers), then click its toolbar button and enter your Gamma's address. Each [release](https://github.com/tim4431/Gamma/releases/latest) also carries it as a zip to load unpacked at `chrome://extensions`.
 
 - The badge lights up on a page with a paper. Click it, pick a folder and labels, **Save to Gamma**. **Ctrl+Shift+S** saves with the default folder.
 - Right-click to save a link, a page, or clip a selection as a quote.
@@ -305,7 +308,7 @@ Both are in the **View menu (≡)**, on a page or on the home library (with a fo
 
 - **A workspace** exports as one zip from Settings → Workspaces; **Import** there restores or merges it.
 - **Snapshots** in Settings → Backups roll back a workspace; **Add task** schedules them. Administrators snapshot the whole server and can keep **off-site copies** in an S3 bucket.
-- **A new version** upgrades your data by itself after taking a snapshot. If the data is too old for one step, Gamma changes nothing and shows a page naming the release to run once first.
+- **A new version** upgrades your data by itself after taking a snapshot. If the data is too old for one step, Gamma changes nothing and shows a page naming the release to run once first. If an older Gamma opens data a newer one already upgraded, it shows a page too, changes nothing, and the fix is to update that Gamma.
 
 ## Install as an app
 
@@ -353,7 +356,8 @@ Account menu → **Settings**, or **Ctrl+,**. The search box at the top finds an
 | Backspace | On an empty note: delete it |
 | Ctrl+B / Ctrl+I / Ctrl+E / Ctrl+Shift+X / Ctrl+Shift+H | Bold / italic / code / strike / highlight |
 | Ctrl+K | Link the selection (URL from the clipboard) |
-| `/` · `[[` · `@` | Command menu · page link · attach a paper in chat |
+| Ctrl+Shift+. | Quote or unquote the selected lines |
+| `/` · `[[` · `@` | Command menu · page link · in a note, mention a date, person or page; in chat, attach a paper |
 | Ctrl+wheel | Zoom the PDF at the cursor |
 | Ctrl+drag on the page | Capture a region for the chat, and an optional area highlight |
 | Ctrl+click a highlight | Quote it into the chat |

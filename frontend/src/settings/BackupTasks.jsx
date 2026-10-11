@@ -1,5 +1,5 @@
 import React from "react";
-import { API, apiJson } from "../shared/lib/utils";
+import { API, apiJson, fmtBytes } from "../shared/lib/utils";
 import { ActionMenu, MenuSelect } from "../shared/ui/Menus";
 import { ClockIcon, DatabaseIcon, HardDriveIcon, MoreIcon, PlusIcon, Trash2Icon } from "../shared/ui/Icons";
 import { DialogButtons, Empty, Field, Section, Segmented, SubDialog, Toggle, ToggleGroup } from "./SettingsKit";
@@ -51,6 +51,24 @@ const STATES = {
   pending: ["muted", T("Not run yet")], queued: ["busy", T("Queued")], running: ["busy", T("Running")],
   finished: ["ok", T("Finished")], failed: ["bad", T("Failed")],
 };
+const took = (s) => (s < 60 ? t("{n}s", { n: s < 10 ? s.toFixed(1) : Math.round(s) }) : t("{n} min", { n: Math.round(s / 60) }));
+
+// The table's Last run cell: the state, when that run started (a queued
+// run has not yet), and what a finished one made (last_result,
+// backup_schedule.py) — "2 snapshots · 14.2 MB · 3.1s", a run under a
+// second without its time.
+function LastRun({ task }) {
+  const [tone, word] = STATES[task.state] || ["muted", task.state];
+  const result = task.state === "finished" ? task.last_result : null;
+  return <>
+    <span className={`metaCell ${tone}`} title={task.last_error || (task.last_success ? t("Last successful: {last_success}", { last_success: date(task.last_success) }) : t("No runs yet"))}>
+      <i className="setDot" />{t(word)}</span>
+    {task.last_run && task.state !== "queued" ? <span className="settingDesc">{date(task.last_run)}</span> : null}
+    {result ? <span className="settingDesc">
+      {[tn("{n} snapshot", "{n} snapshots", result.snapshots), fmtBytes(result.bytes), result.seconds >= 1 ? took(result.seconds) : ""].filter(Boolean).join(" · ")}
+    </span> : null}
+  </>;
+}
 
 function TaskEditor({ initial, workspaces, onClose, onSaved }) {
   const [draft, setDraft] = React.useState(() => initial || ({
@@ -228,12 +246,11 @@ export function BackupTasks({ workspaces, confirm, onRefresh }) {
     {tasks === null && !error ? <Empty icon={ClockIcon}>{t("Loading tasks…")}</Empty> : null}
     {tasks?.length === 0 ? <Empty icon={ClockIcon}>{t("No tasks yet. Add one for a nightly backup, or a schedule of your own.")}</Empty> : null}
     {!!tasks?.length && <div className="backupTaskTableWrap" role="region" aria-label={t("Periodic backup tasks")} tabIndex={0}>
-      <table className="backupTaskTable"><thead><tr><th>{t("Task / Workspaces")}</th><th>{t("Frequency")}</th><th>{t("Next run")}</th><th>{t("Last run")}</th><th>{t("Enabled")}</th><th>{t("State")}</th><th><span className="srOnly">{t("Actions")}</span></th></tr></thead>
+      <table className="backupTaskTable"><thead><tr><th>{t("Task / Workspaces")}</th><th>{t("Frequency")}</th><th>{t("Next run")}</th><th>{t("Last run")}</th><th>{t("Enabled")}</th><th><span className="srOnly">{t("Actions")}</span></th></tr></thead>
         <tbody>{tasks.map((task) => {
           const names = task.scope === "all_owned" ? t("All workspaces I own") : task.workspaces.map((id) => workspaces.find((w) => w.id === id)?.name || t("Unavailable workspace")).join(", ");
           const running = task.state === "running" || task.state === "queued";
           const [when, whenUtc] = frequency(task.cron);
-          const [tone, word] = STATES[task.state] || ["muted", task.state];
           const keeps = task.retention_mode === "count"
             ? tn("keeps {n} snapshot", "keeps {n} snapshots", task.retention_value)
             : tn("keeps {n} day", "keeps {n} days", task.retention_value);
@@ -242,11 +259,9 @@ export function BackupTasks({ workspaces, confirm, onRefresh }) {
               {[names, keeps, task.uploads ? t("includes files") : t("databases only")].join(" · ")}</span></td>
             <td><span>{when}</span>{whenUtc ? <span className="settingDesc">{whenUtc}</span> : null}</td>
             <td>{task.requested ? t("Queued") : task.enabled ? date(task.next_run) : t("Paused")}</td>
-            <td>{date(task.last_run)}</td>
+            <td><LastRun task={task} /></td>
             <td><label className="switch"><input type="checkbox" aria-label={t("Enable {name}", { name: task.name })} checked={task.enabled}
               disabled={running || busy === task.id} onChange={() => action(task, "toggle")} /><span className="switchTrack" /></label></td>
-            <td><span className={`metaCell ${tone}`} title={task.last_error || (task.last_success ? t("Last successful: {last_success}", { last_success: date(task.last_success) }) : t("No runs yet"))}>
-              <i className="setDot" />{t(word)}</span></td>
             <td><ActionMenu label={t("Actions for {name}", { name: task.name })} icon={MoreIcon} iconOnly disabled={running || busy === task.id} items={[
               { label: T("Run now"), icon: ClockIcon, onClick: () => action(task, "run") },
               { label: T("Edit task"), icon: DatabaseIcon, onClick: () => setEditor(task) },

@@ -11,7 +11,7 @@ import {
   ChevronUpIcon, CodeIcon, CollapseIcon, CopyIcon, CornerDownLeftIcon, DatabaseIcon, DeleteLineIcon,
   DownloadIcon, ExpandIcon, ExportIcon, FilePlusIcon, FileTextIcon, FolderFilesIcon, HighlightIcon,
   ImportIcon, IndentIcon, InfoIcon, InsertAboveIcon, InsertBelowIcon, ItalicIcon, KeyboardIcon, LinkIcon,
-  MarkdownIcon, MessageSquareIcon, OutdentIcon, OutlineIcon, PaperclipIcon, PaperIcon, PencilIcon, PlusIcon,
+  MarkdownIcon, MessageSquareIcon, OutdentIcon, OutlineIcon, PaperclipIcon, PaperIcon, PencilIcon, PlusIcon, QuoteMarkIcon,
   RedoIcon, SearchIcon, SettingsIcon, SigmaIcon, SlashIcon, SquareCheckIcon, StrikethroughIcon, TerminalIcon,
   TextCursorIcon, TextSearchIcon, Trash2Icon, UndoIcon, UsersIcon, XIcon,
 } from "../shared/ui/Icons";
@@ -59,6 +59,7 @@ const COMMAND_ICONS = {
   "block.fold": CollapseIcon,
   "block.unfold": ExpandIcon,
   "block.todo": SquareCheckIcon,
+  "block.quote": QuoteMarkIcon,
   "block.selectAll": TextCursorIcon,
   "block.bold": BoldIcon,
   "block.italic": ItalicIcon,

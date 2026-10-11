@@ -1,6 +1,6 @@
 """Rules the frontend mirrors, pinned by one set of cases both sides read:
 tests/shared/*.json at the repository root. The node half is
-frontend/tests/textnorm.test.mjs, ink.test.mjs, replica.test.mjs and
+frontend/tests/textnorm.test.mjs, ink.test.mjs, replica.test.mjs, mentions.test.mjs and
 textBox.test.mjs; a case added here fails whichever side drifts."""
 
 import json
@@ -139,3 +139,12 @@ def test_sync_unlanded(case):
     """What a push whose answer was lost sends again (frontend/src/replica/reconcile.js unlanded)."""
     from gamma import sync_engine
     assert list(sync_engine._unlanded(case["op"], case["base"], case["remote"])) == case["result"]
+
+
+MENTIONS = _load("mentions.json")
+
+
+@pytest.mark.parametrize("case", MENTIONS["scan"], ids=[c["note"] for c in MENTIONS["scan"]])
+def test_mention_scan(case):
+    from gamma import mentions
+    assert mentions.scan(case["text"]) == case["tokens"]

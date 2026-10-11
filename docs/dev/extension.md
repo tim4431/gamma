@@ -5,7 +5,9 @@ click on a paper's landing page or PDF tab saves it into the user's library —
 PDF stored, page created, folder/labels applied, metadata resolved — with
 "already in your library → open" detection and a right-click clipper for links
 and text selections. Server side: `gamma/routers/clip.py`. No build step
-(plain ES modules, load unpacked); install steps in
+(plain ES modules, load unpacked). Users install it from the
+[Chrome Web Store](https://chromewebstore.google.com/detail/gamma-connector/njpeklephhndnpakmlaancinpnabcomn);
+install steps, unpacked included, in
 [extension/README.md](../../extension/README.md).
 
 ## What it does

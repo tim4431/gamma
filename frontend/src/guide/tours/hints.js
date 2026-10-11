@@ -125,7 +125,7 @@ export const connector = {
   requires: { connectorHere: false, editable: true },
   trigger: { event: "paper.fetched" },
   steps: [{ id: "connector", anchor: "header.add", placement: "bottom",
-    title: T("**Gamma Connector** (`gammapdf.com/#download`) gets paywalled papers with your own journal sign-ins.") }],
+    title: T("**Gamma Connector** (`gammapdf.com/connector`) gets paywalled papers with your own journal sign-ins.") }],
 };
 
 // A setting that travels with the account was just changed, on a server

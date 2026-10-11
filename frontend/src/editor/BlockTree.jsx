@@ -1,6 +1,6 @@
 // The Logseq-style outliner: block rows (markdown rendering, inline
 // editing, [[refs]], link chips, image drop/paste), drag handles, and the tree.
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useContext, useEffect, useMemo, useRef, useState } from "react";
 import { textOf } from "../shared/lib/textOf";
 import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
 import remarkBreaks from "remark-breaks";
@@ -18,8 +18,8 @@ import { isTextBox } from "../markup/textBox.js";
 import { isSheet } from "../notebook/notebook";
 import { NoteSheet } from "../notebook/NoteSheet";
 import { CitationPill, GammaLinkCard, handleMarkdownCopy } from "../shared/ui/Widgets";
-import { MermaidDiagram, mermaidCodeProps } from "../shared/ui/MermaidDiagram";
-import { mapOutsideCodeFences, remarkMermaid, scanMermaidFences, setMermaidWidth } from "../shared/lib/mermaidMarkdown.js";
+import { DiagramFigure, diagramCodeProps } from "../shared/ui/DiagramFigure";
+import { mapOutsideCodeFences, remarkDiagrams, scanDiagramFences, setDiagramWidth } from "../shared/lib/diagramMarkdown.js";
 import { MdObject, ObjectMenuButton, findObject } from "./MdObject";
 import { cutObject } from "./mdObjects";
 import { blockSpans, parseTable, protectedSpans, scanMathSpans, scanTables } from "./mdScan";
@@ -37,9 +37,12 @@ import { dispatch as dispatchHotkey } from "../shared/lib/hotkeys.js";
 import { blockStartInSource, gapInSource, renderedGaps, sourceOffsetAtPoint } from "./clickToSource";
 import { highlightCode, makeCopyButton } from "./codeHighlight";
 import { fenceInnerAt } from "./fences.js";
+import { enterPlan, pastePlacements, quoteMarksAt } from "./mdLines.js";
 import { filterSlashCommands, SlashMenuPopup } from "./SlashMenu";
 import { RefPickerPopup } from "./RefPicker";
 import { pageByTitle, pickerCounts, rankRefPages, refBlockPath, refBlockText } from "./refLists.js";
+import { datePending, mentionMarkdown, mentionRows, mentionText, mentionTrigger } from "./mentions.js";
+import { MentionChip, MentionContext, MentionMenuPopup } from "./MentionMenu";
 import { remarkCallouts } from "./callouts";
 import { PeerChips, RenderedCarets } from "../collaboration/Presence";
 import { ContextMenu, MenuItem } from "../shared/ui/Menus";
@@ -73,7 +76,7 @@ const _embedWrites = new Map();
 
 // Source → markdown the renderer understands: sized images (Obsidian
 // ![alt|300] and legacy Logseq {:width}), ![[embeds]],
-// [[refs]] and ==highlights== rewritten OUTSIDE math and inline-code spans
+// [[refs]], ==highlights== and @mentions rewritten OUTSIDE math and inline-code spans
 // (a "==" inside $...$ must stay LaTeX). `nested` is the inside-an-embed
 // render: embeds degrade to ref chips so transclusion can't recurse.
 function applyOutsideSpans(text, spans, fn) {
@@ -118,7 +121,7 @@ function mdPreprocessProse(content, nested) {
   }
   // Outside math, ``` fences and inline code (where two overlap, the earlier
   // wins in applyOutsideSpans) — a [[ref]] or == inside code stays literal.
-  return applyOutsideSpans(content, protectedSpans(content), (seg) => seg
+  return applyOutsideSpans(content, protectedSpans(content), (seg) => mentionMarkdown(seg
     // Sized images: legacy Logseq {:width N} first, then Obsidian ![alt|300].
     .replace(/!\[([^\]]*)\]\(([^)]+)\)\{:width\s+(\d+)\}/g, '<img src="$2" alt="$1" width="$3" />')
     .replace(/!\[([^\]|]*)\|(\d+)(?:x\d+)?\]\(([^)]+)\)/g, '<img src="$3" alt="$1" width="$2" />')
@@ -127,7 +130,7 @@ function mdPreprocessProse(content, nested) {
     // A hand-typed [[title]] no page answered (the editor links one that
     // names exactly one page): a dashed "unlinked" chip.
     .replace(/!?\[\[([^[\]\n]+)\]\]/g, "[$1](unlinked:)")
-    .replace(/==([^=\n]+?)==/g, "<mark>$1</mark>"));
+    .replace(/==([^=\n]+?)==/g, "<mark>$1</mark>")));
 }
 
 // GitHub URLs get a readable label without any fetch: owner/repo, #issue/PR,
@@ -394,15 +397,15 @@ function BlockEmbedCard({ refId, refBlock, refLabels, onBlockRefClick, onEmbedEd
       const v = applyTableEdit(base, idx, op);
       if (v != null && v !== base) onEmbedEdit?.(refId, v, base);
     },
-    mermaid: (idx, width) => {
-      const v = setMermaidWidth(base, idx, width);
+    diagram: (idx, width) => {
+      const v = setDiagramWidth(base, idx, width);
       if (v != null && v !== base) onEmbedEdit?.(refId, v, base);
     },
   };
   const stableTask = useRef((i, c) => toolsRef.current.task(i, c)).current;
   const stableImg = useRef((i, a, p) => toolsRef.current.img(i, a, p)).current;
   const stableTbl = useRef((i, o) => toolsRef.current.tbl(i, o)).current;
-  const stableMermaid = useRef((i, w) => toolsRef.current.mermaid(i, w)).current;
+  const stableDiagram = useRef((i, w) => toolsRef.current.diagram(i, w)).current;
 
   return (
     <span
@@ -471,7 +474,7 @@ function BlockEmbedCard({ refId, refBlock, refLabels, onBlockRefClick, onEmbedEd
             onTaskToggle={editable ? stableTask : undefined}
             onImageEdit={editable ? stableImg : undefined}
             onTableEdit={editable ? stableTbl : undefined}
-            onMermaidEdit={editable ? stableMermaid : undefined} />
+            onDiagramEdit={editable ? stableDiagram : undefined} />
         ) : (
           // A source in Recently deleted names its page (the click opens the
           // notice that offers Restore); one that no page holds says so.
@@ -502,8 +505,9 @@ function BlockEmbedCard({ refId, refBlock, refLabels, onBlockRefClick, onEmbedEd
 
 // Fenced code in the rendered view: react-markdown hands us
 // <pre><code class="language-x">text</code></pre>; re-render it through
-// highlight.js with a small language badge (a ```mermaid fence becomes a
-// diagram instead — BlockMarkdown's `pre`). Inline `code` is untouched.
+// highlight.js with a small language badge (a ```mermaid or ```svg fence
+// becomes a diagram instead — BlockMarkdown's `pre`). Inline `code` is
+// untouched.
 // The copy button is the shared DOM one (makeCopyButton — same behavior as
 // the editor's code card), mounted once outside React's reconciliation.
 function HighlightedCodePre({ children }) {
@@ -534,32 +538,35 @@ function HighlightedCodePre({ children }) {
 // labels are resolved by the caller so the comparison here stays a string
 // check. onBlockRefClick/onTaskToggle are deliberately excluded from the
 // comparison — the caller passes identity-stable wrappers.
-export const BlockMarkdown = React.memo(function BlockMarkdown({ content, blockId, refLabels, onBlockRefClick, onTaskToggle, onEmbedEdit, onImageEdit, onTableEdit, onMermaidEdit, onObjectAction, nested }) {
+export const BlockMarkdown = React.memo(function BlockMarkdown({ content, blockId, refLabels, onBlockRefClick, onTaskToggle, onEmbedEdit, onImageEdit, onTableEdit, onDiagramEdit, onObjectAction, nested }) {
   // GFM task-list checkboxes render in document order; this counter maps the
   // nth rendered checkbox back to the nth `[ ]`/`[x]` marker in the source so
   // clicking one toggles the right marker. Reset per render — the whole
   // element tree is rebuilt whenever this component re-renders.
-  // imgIdx/tableIdx/mermaidIdx do the same for images, tables and diagrams
-  // (mdTools / mermaidMarkdown scan the source with matching rules, so the
+  // imgIdx/tableIdx/diagramIdx do the same for images, tables and diagrams
+  // (mdTools / diagramMarkdown scan the source with matching rules, so the
   // nth rendered one is the nth scanned).
-  let taskIdx = -1, imgIdx = -1, tableIdx = -1, mermaidIdx = -1;
+  let taskIdx = -1, imgIdx = -1, tableIdx = -1, diagramIdx = -1;
   // Source-order table list; entries inside blockquotes are editable:false
   // (they still consume an index so the mapping stays aligned).
   const tableInfo = useMemo(() => scanTables(content || ""), [content]);
-  const mermaidInfo = useMemo(() => scanMermaidFences(content || ""), [content]);
+  const diagramInfo = useMemo(() => scanDiagramFences(content || ""), [content]);
   const citesSeveral = useMemo(() => citesSeveralPapers(content), [content]);
   return (
     <ReactMarkdown
       // remark-breaks: a single Enter inside a note renders as a real line
       // break (the editor lets you type them), not markdown's soft-break space.
       // remarkCallouts must run before it (it eats the marker line's "\n").
-      remarkPlugins={[remarkGfm, remarkMath, remarkCallouts, remarkBreaks, remarkMermaid]}
+      remarkPlugins={[remarkGfm, remarkMath, remarkCallouts, remarkBreaks, remarkDiagrams]}
       rehypePlugins={[rehypeRaw, rehypeKatex]}
       // Upload URLs get the workspace / share token here (assetUrl): the
       // browser fetches <img> src and link hrefs without the API header.
-      urlTransform={(url) => /^(blockref|blockembed|unlinked):/.test(url) ? url : assetUrl(defaultUrlTransform(url))}
+      urlTransform={(url) => /^(blockref|blockembed|unlinked|mention):/.test(url) ? url : assetUrl(defaultUrlTransform(url))}
       components={{
         a: ({ href, children }) => {
+          // An @ mention (mdPreprocess): its chip, which reads the people
+          // and the clock from App's contexts.
+          if (href?.startsWith("mention:")) return <MentionChip raw={decodeURIComponent(href.slice(8))} />;
           if (href?.startsWith("blockref:")) {
             const refId = href.slice(9);
             const ref = refLabels?.[refId];
@@ -632,13 +639,13 @@ export const BlockMarkdown = React.memo(function BlockMarkdown({ content, blockI
           <summary {...rest} onMouseDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()}>{children}</summary>
         ),
         pre: ({ children }) => {
-          const diagram = mermaidCodeProps(children);
+          const diagram = diagramCodeProps(children);
           if (!diagram) return <HighlightedCodePre>{children}</HighlightedCodePre>;
-          mermaidIdx += 1;
-          const f = mermaidInfo[mermaidIdx];
+          diagramIdx += 1;
+          const f = diagramInfo[diagramIdx];
           return (
-            <MdObject kind="mermaid" idx={mermaidIdx} editable={!!(f?.closed && !f.prefix.trim())} onAction={onObjectAction}>
-              <MermaidDiagram {...diagram} idx={mermaidIdx} onResize={onMermaidEdit} tools={<ObjectMenuButton />} />
+            <MdObject kind="diagram" idx={diagramIdx} editable={!!(f?.closed && !f.prefix.trim())} onAction={onObjectAction}>
+              <DiagramFigure {...diagram} idx={diagramIdx} onResize={onDiagramEdit} tools={<ObjectMenuButton />} />
             </MdObject>
           );
         },
@@ -796,10 +803,15 @@ const BlockRow = React.memo(function BlockRow({
   inlineSheets,
   onInsertSheet,
   onNewPage,
+  onInvite, // the @ menu's "Invite…": the page's Share popover (absent where one may not share)
+  onReminderSet, // a reminder was just written by the @ menu (App's useReminders)
   onUndo,
 }) {
   const ref = useRef(null);
   const clickPosRef = useRef(null);
+  // Who a note can mention (App's MentionContext): the @ menu's people and
+  // the editor's person chips.
+  const mentions = useContext(MentionContext);
   // The viewer's state for this row (blockModel's `view`): its editor open,
   // its children folded.
   const editing = view?.editingId === block.id;
@@ -889,12 +901,12 @@ const BlockRow = React.memo(function BlockRow({
     }
   };
   const stableImageEdit = useRef((i, a, p) => imageEditRef.current?.(i, a, p)).current;
-  const mermaidEditRef = useRef(null);
-  mermaidEditRef.current = (idx, width) => {
-    const newVal = setMermaidWidth(block.content || "", idx, width);
+  const diagramEditRef = useRef(null);
+  diagramEditRef.current = (idx, width) => {
+    const newVal = setDiagramWidth(block.content || "", idx, width);
     if (newVal != null && newVal !== block.content) onChangeText(block.id, newVal);
   };
-  const stableMermaidEdit = useRef((i, w) => mermaidEditRef.current?.(i, w)).current;
+  const stableDiagramEdit = useRef((i, w) => diagramEditRef.current?.(i, w)).current;
   const tableEditRef = useRef(null);
   tableEditRef.current = (idx, op) => {
     const newVal = applyTableEdit(block.content || "", idx, op);
@@ -979,9 +991,16 @@ const BlockRow = React.memo(function BlockRow({
   // the slash (caret moves just keep or close it), suppressed inside math.
   const [slashMenu, setSlashMenu] = useState(null);
   const [slashIdx, setSlashIdx] = useState(0);
+  // "@" mention menu (editor/mentions.js): { start, query, rows, anchor },
+  // opened by typing an "@" that starts a word; it stays open across
+  // spaces while something answers the query.
+  const [atMenu, setAtMenu] = useState(null);
+  const [atIdx, setAtIdx] = useState(0);
   // Notion-style "Paste as" chooser after pasting a URL: the URL text is
-  // already inserted; { start, end, url, items, anchor }. Any further edit,
-  // caret move or blur keeps the URL and dismisses the menu.
+  // already inserted; { start, end, url, items, anchor }. Pasted text also
+  // has `text`, as copied (`url` is what went in, placed at the line's
+  // level), and `restore`, what [start, end) held before the paste. Any
+  // further edit, caret move or blur keeps the URL and dismisses the menu.
   const [pasteMenu, setPasteMenu] = useState(null);
   const [pasteIdx, setPasteIdx] = useState(0);
   const [searchResults, setSearchResults] = useState([]);
@@ -1015,7 +1034,7 @@ const BlockRow = React.memo(function BlockRow({
     return [
       ...pageHits.slice(0, np).map((p) => ({
         kind: "page", id: p.id, title: p.content, isPdf: !!p._attachment,
-        meta: [pageKindLabel(p._attachment), p._folders?.[0]].filter(Boolean).join(" · "),
+        meta: [pageKindLabel(p._attachment), p._folderChips?.[0]?.name].filter(Boolean).join(" · "),
       })),
       ...blockHits.slice(0, nb).map((b) => ({
         kind: "block", id: b.id, title: refBlockText(b.content, labelOf) || t("(empty)"), meta: refBlockPath(b), block: b,
@@ -1096,6 +1115,50 @@ const BlockRow = React.memo(function BlockRow({
       return { start, query: m[1], items, anchor };
     });
     if (typing) setSlashIdx(0);
+  }
+
+  // "@" trigger (editor/mentions.js mentionTrigger): recomputed like the
+  // slash menu's on edits (typing, may open) and caret moves (only keeps an
+  // open menu on its own "@"); closed by a selection, math, a code fence,
+  // a [[ being typed, or a query nothing answers — unless it is a date
+  // still being typed ("@next" before "fri"), which keeps the menu, hidden
+  // with no rows, until it means one.
+  function updateAtMenu(ta, typing) {
+    const cursor = ta.selectionStart, value = ta.value;
+    if (cursor !== ta.selectionEnd || findMathAtCursor(value, cursor) || fenceInnerAt(value, cursor)
+      || /\[\[[^\]\n]*$/.test(value.slice(0, cursor))) { setAtMenu(null); return; }
+    setAtMenu((prev) => {
+      const trigger = mentionTrigger(value, cursor, prev?.start ?? null);
+      if (!trigger || (!typing && prev?.start !== trigger.start)) return null;
+      const rows = mentionRows({
+        query: trigger.query, people: mentions.people, me: mentions.me, pages, rootId, canInvite: !!onInvite,
+      });
+      return rows.length || datePending(trigger.query) ? { ...trigger, rows, anchor: ta.caretCoords(trigger.start) } : null;
+    });
+    if (typing) setAtIdx(0);
+  }
+
+  // A picked row replaces the typed "@query" with its mention and a space
+  // (mentions.js mentionText); "Invite…" removes it and opens the Share
+  // popover. One editor transaction, change and caret together: a caret set
+  // a frame later would land behind the keys typed meanwhile.
+  function pickMention(row) {
+    const ta = ref.current;
+    if (!ta?.view || !atMenu) return;
+    const { start } = atMenu;
+    const cursor = ta.selectionStart;
+    setAtMenu(null);
+    const text = mentionText(row, mentions.me);
+    const insert = text && !/^\s/.test(ta.value.slice(cursor, cursor + 1)) ? `${text} ` : text;
+    if (row.kind === "page") onCacheRef?.(row.id, { content: row.title, page_title: row.title });
+    ta.view.dispatch({
+      changes: { from: start, to: cursor, insert },
+      selection: { anchor: start + insert.length },
+      userEvent: "input",
+    });
+    // Inside the key press or click: the gesture a notification prompt needs.
+    if (row.kind === "remind") onReminderSet?.();
+    if (row.kind === "invite") onInvite?.();
   }
 
   // What a block command runs with (blockCommands.js): the row's keydown
@@ -1269,6 +1332,23 @@ const BlockRow = React.memo(function BlockRow({
     ];
   }
 
+  // The chooser's rows for a pasted text's placements
+  // (mdLines.pastePlacements), the one already in first, named by the
+  // container the paste landed in; each puts its text over the paste.
+  function placementItems(placed) {
+    const hints = {
+      here: { quote: T("in this quote"), list: T("next to this item") },
+      nested: { quote: T("in a quote inside it"), list: T("under this item") },
+    };
+    return placed.options.map((o) => {
+      const make = () => o.insert;
+      if (o.name === "copied") return { name: o.name, icon: "copy", label: T("As copied"), hint: T("exactly as on the clipboard"), make };
+      if (placed.kind === "none") return { name: o.name, icon: "text", label: T("Text"), hint: T("keep in this block"), make };
+      const icon = o.name === "nested" ? "indent" : placed.kind === "quote" ? "quote" : "bullet";
+      return { name: o.name, icon, label: o.name === "nested" ? T("Nested") : T("At this level"), hint: hints[o.name][placed.kind], make };
+    });
+  }
+
   function applyPasteAs(item) {
     const pm = pasteMenu;
     setPasteMenu(null);
@@ -1304,14 +1384,15 @@ const BlockRow = React.memo(function BlockRow({
       apiJson(`${API}/markdown-blocks`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: pm.url }),
+        body: JSON.stringify({ text: pm.text ?? pm.url }),
       }).then((d) => {
         const nodes = d?.blocks || [];
         if (!nodes.length) return;
         if (ta.value.slice(pm.start, pm.end) !== pm.url) return; // edited since
+        const restore = pm.restore || "";
         ta.view?.dispatch({
-          changes: { from: pm.start, to: pm.end, insert: "" },
-          selection: { anchor: pm.start },
+          changes: { from: pm.start, to: pm.end, insert: restore },
+          selection: { anchor: pm.start + restore.length },
           userEvent: "input",
         });
         // Pasted into an empty line: the blocks take this block's place.
@@ -1400,25 +1481,51 @@ const BlockRow = React.memo(function BlockRow({
         return;
       }
       // Structured text — spreadsheet cells (strict TSV) or a multi-line
-      // outline — pastes as-is and offers the chooser, same pattern as URLs.
+      // outline — pastes and offers the chooser, same pattern as URLs.
+      // Outside code and $$ math its lines move to the level of the line
+      // they land on (mdLines.pastePlacements: in its quote, beside or
+      // under its list item), and the chooser offers the other placements
+      // and the text as copied. One line pasted onto an empty item takes
+      // the item's place, with no chooser.
       const tsvMd = ta ? tsvToMarkdown(text) : null;
       const multiline = text.split("\n").filter((l) => l.trim()).length >= 2;
-      if (ta && ta.view && onPasteBlocks && (tsvMd || multiline)) {
+      const val = ta?.value || "";
+      const from = ta?.selectionStart, to = ta?.selectionEnd;
+      // Placed, the lines keep their indentation: only the blank lines
+      // around them go.
+      const lines = (e.clipboardData?.getData("text/plain") || "").replace(/\r\n?/g, "\n").replace(/^\s*\n/, "").trimEnd();
+      const placed = ta?.view && !tsvMd && !fenceInnerAt(val, from) && !findMathAtCursor(val, from)?.display
+        ? pastePlacements(val, from, to, lines) : null;
+      if (placed && !multiline) {
         e.preventDefault();
-        const start = ta.selectionStart;
-        ta.view?.dispatch({
-          changes: { from: start, to: ta.selectionEnd, insert: text },
-          selection: { anchor: start + text.length },
+        const insert = placed.options[0].insert;
+        ta.view.dispatch({
+          changes: { from: placed.from, to: placed.to, insert },
+          selection: { anchor: placed.from + insert.length },
+          userEvent: "input",
+        });
+        return;
+      }
+      if (ta && ta.view && (onPasteBlocks || placed) && (tsvMd || multiline)) {
+        e.preventDefault();
+        const start = placed ? placed.from : from;
+        const end = placed ? placed.to : to;
+        const insert = placed ? placed.options[0].insert : text;
+        ta.view.dispatch({
+          changes: { from: start, to: end, insert },
+          selection: { anchor: start + insert.length },
           userEvent: "input",
         });
         const items = [
           ...(tsvMd ? [{ name: "table", icon: "table", label: T("Table"), hint: T("markdown table"), block: true, make: () => tsvMd }] : []),
-          { name: "text", icon: "text", label: T("Text"), hint: T("keep in this block") },
-          { name: "blocks", icon: "blocks", label: T("Blocks"), hint: T("split into nested blocks") },
+          ...(placed ? placementItems(placed) : [{ name: "text", icon: "text", label: T("Text"), hint: T("keep in this block") }]),
+          ...(onPasteBlocks ? [{ name: "blocks", icon: "blocks", label: T("Blocks"), hint: T("split into nested blocks") }] : []),
         ];
-        const anchor = ta.caretCoords(start);
+        const anchor = ta.caretCoords(from);
+        // `restore`: the range as it was, without the paste (Blocks puts it back).
+        const restore = val.slice(start, from) + val.slice(to, end);
         requestAnimationFrame(() => {
-          setPasteMenu({ start, end: start + text.length, url: text, items, anchor });
+          setPasteMenu({ start, end: start + insert.length, url: insert, text, restore, items, anchor });
           setPasteIdx(0);
         });
       }
@@ -1627,6 +1734,7 @@ const BlockRow = React.memo(function BlockRow({
               dataBlockId={block.id}
               clickPos={clickPosRef.current}
               refLabels={refLabels}
+              mentions={mentions}
               remoteCursors={remoteCursors}
               onObjectDrag={stableObjectDrag}
               onObjectDragOver={stableObjectDragOver}
@@ -1649,16 +1757,19 @@ const BlockRow = React.memo(function BlockRow({
                 }
                 updateMathUi(e.target, true);
                 updateSlashMenu(e.target, true);
+                updateAtMenu(e.target, true);
                 setPasteMenu(null);
               }}
               onSelect={(e) => {
                 onCaret?.(block.id, e.target.selectionStart, e.target.selectionEnd);
-                updateMathUi(e.target, false); updateSlashMenu(e.target, false); setPasteMenu(null);
+                updateMathUi(e.target, false); updateSlashMenu(e.target, false); updateAtMenu(e.target, false);
+                setPasteMenu(null);
               }}
               onBlur={() => {
                 onStartEdit(block.id, false);
                 setMathUi(null);
                 setSlashMenu(null);
+                setAtMenu(null);
                 setPasteMenu(null);
                 setTimeout(() => setRefPopup(null), 120);
               }}
@@ -1684,6 +1795,17 @@ const BlockRow = React.memo(function BlockRow({
                   if (e.key === "ArrowUp") { e.preventDefault(); setSlashIdx((i) => Math.max(i - 1, 0)); return; }
                   if (e.key === "Enter" || e.key === "Tab") { e.preventDefault(); runSlashCommand(slashMenu.items[slashIdx]); return; }
                   if (e.key === "Escape") { e.preventDefault(); setSlashMenu(null); return; }
+                }
+                if (atMenu?.rows.length) {
+                  const n = atMenu.rows.length;
+                  if (e.key === "ArrowDown") { e.preventDefault(); setAtIdx((i) => Math.min(i + 1, n - 1)); return; }
+                  if (e.key === "ArrowUp") { e.preventDefault(); setAtIdx((i) => Math.max(i - 1, 0)); return; }
+                  if (e.key === "Enter" || (e.key === "Tab" && !e.shiftKey)) {
+                    e.preventDefault();
+                    pickMention(atMenu.rows[Math.min(atIdx, n - 1)]);
+                    return;
+                  }
+                  if (e.key === "Escape") { e.preventDefault(); setAtMenu(null); return; }
                 }
                 if (mathUi?.ac) {
                   const n = mathUi.ac.items.length;
@@ -1722,7 +1844,8 @@ const BlockRow = React.memo(function BlockRow({
                 // indents with spaces instead of nesting the block. Enter
                 // inside $$ display math (closed, or still open while being
                 // typed) is a line break too — a multi-line \begin{array}
-                // would otherwise split into a new note on every row.
+                // would otherwise split into a new note on every row — and
+                // in a quote or callout the new line keeps its quote marks.
                 const inFence = (e.key === "Enter" || (e.key === "Tab" && !e.shiftKey))
                   && ref.current && fenceInnerAt(ref.current.value, ref.current.selectionStart);
                 const inDisplayMath = !inFence && e.key === "Enter" && ref.current
@@ -1731,7 +1854,7 @@ const BlockRow = React.memo(function BlockRow({
                   const ta = ref.current;
                   const selStart = ta.selectionStart, selEnd = ta.selectionEnd;
                   e.preventDefault();
-                  const ins = e.key === "Enter" ? "\n" : "  ";
+                  const ins = e.key !== "Enter" ? "  " : inDisplayMath ? "\n" + quoteMarksAt(ta.value, selStart) : "\n";
                   ta.view?.dispatch({
                     changes: { from: selStart, to: selEnd, insert: ins },
                     selection: { anchor: selStart + ins.length },
@@ -1746,39 +1869,24 @@ const BlockRow = React.memo(function BlockRow({
                   e.preventDefault();
                   onEnterSibling(block.id);
                 } else if (e.key === "Enter") {
-                  // The line-break Enter continues markdown lists/quotes
-                  // (Obsidian-style): "- [ ] foo⏎" starts the next line with
-                  // "- [ ] "; Enter on an empty marker line removes the
-                  // marker (ends the list). No marker → plain newline.
+                  // The line-break Enter continues markdown lists and quotes
+                  // (Obsidian-style, mdLines.enterPlan): "> - [ ] foo⏎"
+                  // starts the next line with "> - [ ] "; on an empty item
+                  // the innermost marker goes (the list, then the quote).
+                  // No marker → plain newline.
                   const ta = ref.current;
                   const cursor = ta?.selectionStart;
-                  if (ta && cursor === ta.selectionEnd) {
-                    const val = ta.value;
-                    const lineStart = val.lastIndexOf("\n", cursor - 1) + 1;
-                    const lineText = val.slice(lineStart, cursor);
-                    const m = lineText.match(/^(\s*)([-*+] \[[ xX]\] |[-*+] |\d+\. |> )/);
-                    if (m) {
-                      e.preventDefault();
-                      // Atomic CM dispatch (change + caret together) — the
-                      // onChangeText round-trip with a deferred caret would
-                      // race with the next keystrokes.
-                      if (lineText.length === m[0].length) {
-                        ta.view?.dispatch({
-                          changes: { from: lineStart, to: cursor, insert: "" },
-                          selection: { anchor: lineStart },
-                          userEvent: "delete",
-                        });
-                      } else {
-                        let marker = m[0].replace(/\[[xX]\]/, "[ ]");
-                        const num = marker.match(/^(\s*)(\d+)\. $/);
-                        if (num) marker = `${num[1]}${Number(num[2]) + 1}. `;
-                        ta.view?.dispatch({
-                          changes: { from: cursor, to: cursor, insert: "\n" + marker },
-                          selection: { anchor: cursor + 1 + marker.length },
-                          userEvent: "input",
-                        });
-                      }
-                    }
+                  const plan = ta && cursor === ta.selectionEnd ? enterPlan(ta.value, cursor) : null;
+                  if (plan) {
+                    e.preventDefault();
+                    // Atomic CM dispatch (change + caret together) — the
+                    // onChangeText round-trip with a deferred caret would
+                    // race with the next keystrokes.
+                    ta.view?.dispatch({
+                      changes: { from: plan.from, to: plan.to, insert: plan.insert },
+                      selection: { anchor: plan.pos },
+                      userEvent: plan.insert.startsWith("\n") ? "input" : "delete",
+                    });
                   }
                 } else if (e.key === "Tab" && !e.shiftKey) {
                   e.preventDefault();
@@ -1823,7 +1931,7 @@ const BlockRow = React.memo(function BlockRow({
                   onEmbedEdit={readOnly ? undefined : stableEmbedEdit}
                   onImageEdit={readOnly ? undefined : stableImageEdit}
                   onTableEdit={readOnly ? undefined : stableTableEdit}
-                  onMermaidEdit={readOnly ? undefined : stableMermaidEdit}
+                  onDiagramEdit={readOnly ? undefined : stableDiagramEdit}
                   onObjectAction={readOnly ? undefined : stableObjectAction} />
               ) : sheetNumber ? (
                 // an untitled notebook sheet reads as the page it stands for
@@ -1880,6 +1988,10 @@ const BlockRow = React.memo(function BlockRow({
       {!readOnly && editing && slashMenu ? (
         <SlashMenuPopup items={slashMenu.items} selected={slashIdx} anchor={slashMenu.anchor} onPick={runSlashCommand}
           grouped={!slashMenu.query} commands />
+      ) : null}
+      {!readOnly && editing && atMenu?.rows.length ? (
+        <MentionMenuPopup rows={atMenu.rows} selected={Math.min(atIdx, atMenu.rows.length - 1)} anchor={atMenu.anchor}
+          query={atMenu.query} onPick={pickMention} />
       ) : null}
       {!readOnly && editing && pasteMenu ? (
         <SlashMenuPopup title={t("Paste as")} items={pasteMenu.items} selected={pasteIdx} anchor={pasteMenu.anchor} onPick={applyPasteAs} />

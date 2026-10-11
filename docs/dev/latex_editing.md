@@ -38,6 +38,7 @@ snippets below build on this.
 | `\sqrt[n]`, `\underbrace`, `\overbrace`, `\textcolor`, `\argmax` + Tab | Snippets with several slots: index then radicand, brace then label, color then text |
 | `\big(` … `\Bigg\{`, `\middle|`, `\left.` + Tab | Fixed-size delimiter pairs, a growing divider, an invisible left delimiter |
 | `\mbb`, `\lra`, `\Ra`, `\ooo`, `\xx`, `\del` + Tab | Fuzzy and abbreviation matches: `\mathbb{}`, `\leftrightarrow`, `\Rightarrow`, `\infty`, `\times`, `\partial` |
+| `\rm`, `\bf`, `\tilde`, `\matrix`, `\eq` + Tab | The base a command is built on: `\mathrm{}` and `\textrm{}`, `\mathbf{}` and `\textbf{}`, `\widetilde{}`, every matrix, `\leq` / `\geq` / `\subseteq` |
 | Tab / Shift+Tab | Moves forward / backward between argument slots; Tab also skips a `\right` delimiter or leaves the math span |
 | Backspace inside an empty `\left...\right` pair | Removes the whole pair |
 | A `\command` KaTeX doesn't know, a mismatched `\end`, a stray closer | A wavy underline under it; hovering shows KaTeX's message |
@@ -48,10 +49,20 @@ outliner's Enter). The list ranks an exact name first,
 then names the typed letters prefix (a bare `\left` puts `\left(` before
 `\leftarrow`), then the abbreviation table (`\Ra` is `\Rightarrow`, not
 `\rangle`), then case-insensitive prefixes and the `begin`/`big`/`left`
-aliases, and last a VS Code-style fuzzy tail: every typed letter must appear
-in order in the name, starting with its first letter, ranked by the gaps the
+aliases. Then come the typed letters as one run inside a name
+(`infixMatch`). Most commands are a base with a modifier in front of it
+(math|rm, wide|tilde, left|arrow, p|matrix, d|frac, subset|eq), so typing
+the base lists the family: `\rm` offers `\mathrm` and `\textrm`, `\frac`
+also `\dfrac`, `\cases` (after `\begin{`) also `rcases` and `dcases`. A
+run that ends the name ranks before one in its middle (`\rm` lists
+`\mathnormal` after them), and it takes two letters. Last is a VS
+Code-style fuzzy tail (`fuzzyMatch`): every typed letter must appear in
+order in the name, starting with its first letter, ranked by the gaps the
 match needed and then by name length (`\mcal` → `\mathcal`, `\bsym` →
-`\boldsymbol`, `\sbeq` → `\subseteq`). Typed text is never rewritten on its
+`\boldsymbol`, `\sbeq` → `\subseteq`). Ties keep catalog order. Each row
+marks the letters the typed ones matched (the "/" menu's `Matched`
+marks), so a row reached through a run or the fuzzy tail shows why it
+is there. Typed text is never rewritten on its
 own — a snippet only lands through an accepted completion. Every catalog entry
 renders in KaTeX (`tests/latexCompletion.test.mjs` pins the ranking and the
 snippet shapes). Typing a closing `)`, `]`, `}`, or `|`

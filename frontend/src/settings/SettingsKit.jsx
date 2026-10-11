@@ -11,6 +11,7 @@ import { API, apiJson, copyText, fmtBytes } from "../shared/lib/utils";
 import { AlertCircleIcon, CheckIcon, CloudCheckIcon, CopyIcon, EyeIcon, EyeOffIcon, MonitorIcon, RefreshIcon, ShieldIcon, UndoIcon, UserIcon, XIcon } from "../shared/ui/Icons";
 import { bindable, chordFromEvent } from "../shared/lib/hotkeys.js";
 import { KeyCaps } from "../shared/ui/KeyCaps.jsx";
+import { backdropPress } from "../shared/ui/press.js";
 import { BROWSER_TAG, profileSyncState } from "./syncState.js";
 import { t, tn } from "../shared/i18n/i18n.js";
 import { fmtTokens } from "../chat/tokenUsage";
@@ -234,13 +235,14 @@ export function SubDialog({ title, onClose, children, draft, className = "", clo
   const ref = React.useRef(null);
   useSettingsDraft(key, dirty, onClose);
   const close = () => dirty ? setConfirmClose(true) : onClose();
+  const backdrop = backdropPress(close);
   React.useEffect(() => {
     const previous = document.activeElement;
     if (!ref.current?.contains(document.activeElement)) ref.current?.focus();
     return () => previous?.focus?.();
   }, []);
   return (
-    <div className="reportOverlay subDialog" onClick={(event) => { event.stopPropagation(); close(); }}>
+    <div className="reportOverlay subDialog" {...backdrop} onClick={(event) => { event.stopPropagation(); backdrop.onClick(event); }}>
       <div className={`reportModal ${className}`} role="dialog" aria-modal="true" aria-label={title}
         ref={ref} tabIndex={-1} onClick={(event) => event.stopPropagation()}
         onClickCapture={(event) => {

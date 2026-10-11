@@ -44,7 +44,7 @@ from .textnorm import normalize_text
 # The data-directory schema version this code expects (users.db
 # ``PRAGMA user_version``). Bump it together with a new step in
 # gamma/migrations.py — never without one, never without bumping.
-SCHEMA_VERSION = 35
+SCHEMA_VERSION = 36
 # A workspace's pages.db keeps a version of its own (its ``PRAGMA
 # user_version``): the newest step whose per-workspace part has run on it
 # (gamma/migrations.py WORKSPACE_STEPS). One stamped 0 is at this version:
@@ -1108,8 +1108,10 @@ PROFILE_PREF_KEY = "profile"
 # on it, the base of the next three-way merge. Never served by /api/prefs.
 PROFILE_BASE_PREF_KEY = "profile-base"
 NOTICES_SEEN_PREF_KEY = "notices-seen"  # gamma/notices.py: {notice id: fingerprint seen}
+REMINDERS_DONE_PREF_KEY = "reminders-done"  # gamma/mentions.py: {reminder key: when it was done}
 USER_PREF_KEYS = frozenset({"ai-settings", "ai-provider", "translate-engines", "search-services",
-                            PROFILE_PREF_KEY, PROFILE_BASE_PREF_KEY, NOTICES_SEEN_PREF_KEY})
+                            PROFILE_PREF_KEY, PROFILE_BASE_PREF_KEY, NOTICES_SEEN_PREF_KEY,
+                            REMINDERS_DONE_PREF_KEY})
 
 
 def pref_scope(key: str, ws: str) -> str:

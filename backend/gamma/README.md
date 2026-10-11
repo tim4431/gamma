@@ -55,6 +55,7 @@ textnorm.py        search text normalization and fuzzy matching (both indexes, b
 # Jobs, notices and diagnostics
 jobs.py            background jobs: exports, backups, restores, imports, the search indexer (docs/dev/tasks.md)
 notices.py         the notices behind the red dot on the account button
+mentions.py        @ mentions in note text, and each account's reminders found through the notes index (docs/dev/mentions.md)
 logbuf.py          in-memory server log (Settings → Diagnostics → Server log)
 version.py         which build this server is, and whether a newer one exists
 json_response.py   OrjsonResponse: large JSON answers encoded in the handler's worker thread

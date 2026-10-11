@@ -1,5 +1,10 @@
 # Publishing to the Chrome Web Store
 
+The listing: <https://chromewebstore.google.com/detail/gamma-connector/njpeklephhndnpakmlaancinpnabcomn>
+(item ID `njpeklephhndnpakmlaancinpnabcomn`, public). The README, the
+user guide, gammapdf.com (the download card and the `/connector` short
+link) and the release notes link there.
+
 Each release's `gamma-connector-<version>.zip` (built by `desktop.yml`)
 goes to the store on its own through `.github/workflows/chrome-store.yml`
 (Chrome Web Store API V2). Two things stay manual and happen once: creating
@@ -116,10 +121,13 @@ Then:
 process it, and submits it for review; the run's summary shows the
 resulting state (`PENDING_REVIEW`, usually). While an earlier version is
 still in review the store accepts no new package: the run skips with a
-notice and never cancels the review; the next release, or
-`gh workflow run chrome-store.yml --repo tim4431/gamma --ref main` (latest release) once the
-review is over, carries the changes. Each release's zip has a new version,
-so the store never sees a re-used one.
+notice and never cancels the review. The workflow's daily run (09:17 UTC)
+then submits the latest release once the review is over, so nothing waits
+for the next release; `gh workflow run chrome-store.yml --repo tim4431/gamma --ref main`
+(latest release) does the same by hand. The daily run never submits a
+version twice: after a rejection, fix the cause and run it by hand or
+release again. Each release's zip has a new version, so the store never
+sees a re-used one.
 
 Store installs get a store-assigned extension ID, so a browser that had
 the unpacked Connector loaded keeps both until the unpacked one is
@@ -132,7 +140,9 @@ removed; settings are per install (enter the server address again).
 **Summary (132 chars max):**
 Save papers and PDFs into your self-hosted Gamma library with one click — like the Zotero Connector, for Gamma.
 
-**Description:**
+**Description** (the dashboard's *Store listing → Description* field: the
+full text below, not a one-liner; the API does not set it, so a change
+here is pasted by hand):
 
 Gamma Connector is the browser companion for Gamma, the self-hosted PDF
 annotation and note server. On a paper's landing page (arXiv, a journal, a
