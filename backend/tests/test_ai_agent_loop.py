@@ -281,6 +281,54 @@ def test_chat_reports_context_coverage(org, monkeypatch):
     assert r.status_code == 200 and r.json()["context"][0]["partial"] is True
 
 
+def test_full_pdf_rides_on_the_oldest_turn_of_every_message(org, monkeypatch):
+    """With attach_pdf on every message, the page's PDF goes with the
+    document context on the oldest user turn, so the second request opens
+    exactly like the first (the provider's prompt cache serves it). A
+    provider that refuses file parts gets the head excerpt instead."""
+    c, ids = org
+    import gamma.routers.ai as ai_mod
+    import gamma.routers.search as search_mod
+    monkeypatch.setattr(search_mod, "_index_missing_async", lambda user, doc_ids: True)
+    monkeypatch.setattr("gamma.ai_context.pdf_path", lambda u, d: "fake.pdf")
+    monkeypatch.setattr("gamma.ai_context.extract_text_pages",
+                        lambda src, limit, empty_page_cap=50, start_page=1, label_pages=False:
+                        ("[PDF page 1]\nexcerpt text", 1))
+    monkeypatch.setattr("gamma.ai_context.page_count", lambda src: 1)
+    monkeypatch.setattr("gamma.ai_context.load_pdf_b64", lambda u, d: "UERG")
+    monkeypatch.setattr(ai_mod, "_NATIVE_PDF_REJECTED", set())
+    calls = []
+
+    def fake_open(messages, system, entry, rt, pdf_b64s=None, **kw):
+        calls.append((messages, pdf_b64s))
+        return FakeResp([{"type": "content_block_delta", "delta": {"type": "text_delta", "text": "a1"}}])
+
+    monkeypatch.setattr(ai_mod, "_open_ai", fake_open)
+    base = {"page_id": ids["a"], "stream": True, "attach_pdf": True,
+            "agent_scope": "page", "permissions": ALLOW_ALL}
+    assert c.post("/api/ai/chat", json={**base, "prompt": "q1"}).status_code == 200
+    assert c.post("/api/ai/chat", json={**base, "prompt": "q2", "history": [
+        {"role": "user", "text": "q1"}, {"role": "ai", "text": "a1"}]}).status_code == 200
+    (first, uploads1), (second, uploads2) = calls
+    assert first[0]["files"] == ["UERG"] and not uploads1 and not uploads2
+    assert second[0] == first[0] and "excerpt text" not in first[0]["content"]
+    assert second[-1] == {"role": "user", "content": "q2"}
+
+    def refuse_files(messages, system, entry, rt, pdf_b64s=None, **kw):
+        calls.append((messages, pdf_b64s))
+        if any(m.get("files") for m in messages):
+            raise ai_mod.UpstreamError(400, "upstream 400: file parts are not supported")
+        return FakeResp([{"type": "content_block_delta", "delta": {"type": "text_delta", "text": "ok"}}])
+
+    calls.clear()
+    monkeypatch.setattr(ai_mod, "_open_ai", refuse_files)
+    r = c.post("/api/ai/chat", json={**base, "prompt": "q1"})
+    assert r.status_code == 200 and '"delta": "ok"' in r.text
+    (refused, _), (as_text, _) = calls
+    assert refused[0]["files"] == ["UERG"]
+    assert "files" not in as_text[0] and "excerpt text" in as_text[0]["content"]
+
+
 def test_chat_fits_the_conversation_to_the_window_and_says_so(org, monkeypatch):
     """A conversation the model's window can't hold loses its oldest turns
     before the call (the estimate against the catalog's window), the stream
@@ -444,10 +492,12 @@ def test_chat_context_from_text_only_page(org, monkeypatch):
     c.delete(f"/api/blocks/{page['id']}")
 
 
-def test_models_flag_native_pdf_capability(org):
-    """The chat UI keys the PDF button's default on native_pdf: API-key
-    providers take the file, the ChatGPT sign-in (Codex backend) does not."""
+def test_models_flag_native_pdf_capability(org, monkeypatch):
+    """The chat UI keys the PDF button's default on native_pdf, the
+    protocol's flag: API-key providers and the ChatGPT sign-in (Codex
+    backend) take the file, a protocol that sets it False does not."""
     c, ids = org
+    from gamma.ai_protocols.chatgpt import ChatGPT
     from gamma.ai_settings import ai_runtime
     rt = ai_runtime(ids["user_id"])
     assert rt["models"] and all(m["native_pdf"] is True for m in rt["models"])
@@ -457,6 +507,9 @@ def test_models_flag_native_pdf_capability(org):
                     "oauth": {"access_token": "tok", "expires_at": 9_999_999_999}})
     st.save_provider_entries(ids["user_id"], entries)
     try:
+        flags = {m["id"]: m["native_pdf"] for m in ai_runtime(ids["user_id"])["models"]}
+        assert flags["oauth1:gpt-x"] is True
+        monkeypatch.setattr(ChatGPT, "native_pdf", False)
         flags = {m["id"]: m["native_pdf"] for m in ai_runtime(ids["user_id"])["models"]}
         assert flags["oauth1:gpt-x"] is False
         r = c.get("/api/ai/models")

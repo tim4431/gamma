@@ -24,7 +24,8 @@ placed on a page)" (`text_box_label`). The nearest sheet above a box wins,
 and an outline that starts at a block asks `under_sheet` once.
 
 The head excerpt is the *document part* of the context: it goes on the
-oldest user turn and reads the same on every turn of a conversation,
+oldest user turn and reads the same on every turn of a conversation
+(with the PDF switch on, the file takes its place, below),
 which is what the providers' prompt caches key on ("Prompt caching" in
 [ai.md](ai.md)). What a message selects is the *message part*: windows
 around the selected passages (placed by page and section, with a picture
@@ -36,6 +37,66 @@ holds the whole document. Before, a selection swapped the head excerpt for
 its windows, so the conversation's opening changed with every selection
 and nothing could cache. Everything below is about the PDF part of a page
 and applies unchanged.
+
+### With the PDF switch on
+
+The composer's PDF switch (`attach_pdf`) sends the page's PDF file
+with every message while it is on. The file always goes in the same place:
+`gather_inputs` returns it as `document_pdfs` beside the document part, and
+`build_messages(files=)` puts it on the turn that carries that part, as the
+turn's `files` (`ai_protocols.base.turn_files`). That is the oldest kept
+user turn, or the only turn of a first message. Each wire writes a turn's
+files first, then its pictures, then the text. So a request opens the same
+way as the one before it: system prompt, tools, then that turn with its
+file and text. The provider's prompt cache serves this head from the
+second message on. The history the client sends never holds a file, so the
+server adds it again on each request.
+
+What each message carries for that page:
+
+- **The page section:** the title, the properties line and, with
+  `include_notes`, the notes. There is no document text, because the
+  provider reads the file.
+- **Coverage:** `native`, with no pages counted. The agent prompt says the
+  PDF is attached as a file to the conversation's first message, and that
+  `read_page` still gives its extracted text page by page
+  (`ai_tools.coverage_lines`).
+- **Document map (tools on):** from page 1.
+- **A selected passage:** labelled with the viewer's page only, with no
+  text window and no crop.
+
+The file can't go natively in three cases, and the page then gets the head
+excerpt instead, at the same place on the oldest turn:
+
+- **The switch is off.** Turning it on or off mid-conversation changes the
+  oldest turn, so the next request misses the cache past the system prompt
+  and the tools once.
+- **The provider rejects the file** with a 4xx (other than 401, 403 or
+  429). That same message is retried as text, and its coverage says
+  `native_requested` without `native`.
+- **The library PDFs pass 20 MB of base64** together. A document that
+  doesn't fit goes as the excerpt.
+
+Two other rules cover the switch:
+
+- **When it is on.** It starts on in a new conversation and stays as the
+  user leaves it. Each message records the documents it carried
+  (`pdfDocs`). When a conversation is loaded, `showLoaded` turns the switch
+  on only if the latest message carried this document. It defaults on only
+  for a model marked `native_pdf`.
+- **Uploaded PDFs** (the composer's [+]) go with their own message only, on
+  the newest turn after that turn's own files. They are not library pages,
+  so later messages carry neither the file nor an excerpt of it.
+
+On OpenAI's side ([File inputs](https://developers.openai.com/api/docs/guides/file-inputs)),
+a PDF file part is read twice: the text is extracted, and on a vision
+model every page is also rendered as a picture. Both go into the context
+and both are billed. Gamma leaves `detail` out. The default `auto` reads
+pages at `high` on GPT-5.6 and later, and at `low` on earlier models. The
+limits are under 50 MB per file and 50 MB per request. OpenAI's prompt
+cache covers documents like any other part of the prefix
+([Prompt caching](https://developers.openai.com/api/docs/guides/prompt-caching)),
+so a cached head bills the file at the cached-input rate.
 
 ## The problem
 
@@ -169,8 +230,8 @@ message, and it doesn't stop fabrication — the tools are the better lever.
   it — a chat that only ever used `read_page`, or ran with tools off, never
   got its paper indexed.)
 - With tools off the model sees only the labelled head excerpt; nothing else
-  in a plain chat can reach the rest of the paper (native PDF attachment is
-  refused by the ChatGPT-OAuth backend and falls back to that same excerpt).
+  in a plain chat can reach the rest of the paper (unless the PDF switch
+  sends the file; a provider that refuses it gets that same excerpt).
   Tools are on by default in every chat kind (`gamma-ai-agent-enabled`,
   reading allowed — [ai.md](ai.md) "Permissions and knobs"), but a chat
   with them switched off, or a reply that never calls one, lives on the head

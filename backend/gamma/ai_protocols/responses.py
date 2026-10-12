@@ -5,12 +5,27 @@ backend (chatgpt.py)."""
 import json
 from urllib.request import Request as URLRequest
 
-from .base import (OPENAI_PICTURE_TOKENS, TOOL_IMAGES_NOTE, Protocol, as_int, note_speed, parse_tool_args,
-                   tool_image_turns, turn_images)
+from .base import (OPENAI_PICTURE_TOKENS, TOOL_IMAGES_NOTE, Protocol, as_int, attach_index, note_speed,
+                   parse_tool_args, tool_image_turns, turn_files, turn_images)
 
 
 def _image_part(media_type: str, data: str) -> dict:
     return {"type": "input_image", "image_url": f"data:{media_type};base64,{data}"}
+
+
+def _user_content(message, pdf_b64s=(), images=()) -> list:
+    """A user turn's parts: its own PDFs, then the request's, its pictures,
+    then the request's, and the text last."""
+    files = [*turn_files(message), *(pdf_b64s or [])]
+    return [
+        # The Codex backend answers a part without its filename with a
+        # 400 ("Missing required parameter: 'input[0].content[0]'").
+        *[{"type": "input_file", "filename": f"document-{index + 1}.pdf",
+           "file_data": f"data:application/pdf;base64,{data}"}
+          for index, data in enumerate(files)],
+        *[_image_part(media_type, data) for media_type, data in [*turn_images(message), *(images or [])]],
+        {"type": "input_text", "text": message["content"]},
+    ]
 
 
 def responses_input(messages, pdf_b64s=None, images=None) -> list:
@@ -19,11 +34,10 @@ def responses_input(messages, pdf_b64s=None, images=None) -> list:
     image_turn = lambda imgs: {"type": "message", "role": "user", "content": [  # noqa: E731
         {"type": "input_text", "text": TOOL_IMAGES_NOTE},
         *[_image_part(media_type, data) for media_type, data in imgs]]}
-    image_turns = []  # never the turn the user's own attachments ride on
+    target = messages[attach_index(messages)] if (pdf_b64s or images) and messages else None
     for message, is_image_turn in tool_image_turns(messages, image_turn):
         if is_image_turn:
             items.append(message)
-            image_turns.append(message)
         elif message["role"] == "tool":
             items.append({"type": "function_call_output", "call_id": message["call_id"],
                           "output": message["content"]})
@@ -35,22 +49,9 @@ def responses_input(messages, pdf_b64s=None, images=None) -> list:
                 items.append({"type": "function_call", "call_id": call["id"],
                               "name": call["name"], "arguments": json.dumps(call["arguments"])})
         else:
-            # An earlier message's pictures, kept in the conversation, go
-            # before its text like the request's own attachments below.
-            content = [*[_image_part(media_type, data) for media_type, data in turn_images(message)],
-                       {"type": "input_text", "text": message["content"]}]
+            content = (_user_content(message, pdf_b64s, images) if message is target
+                       else _user_content(message))
             items.append({"type": "message", "role": "user", "content": content})
-    if pdf_b64s or images:
-        last = next((item for item in reversed(items)
-                     if item.get("type") == "message" and item.get("role") == "user"
-                     and not any(item is turn for turn in image_turns)), items[-1])
-        last["content"] = [
-            *[{"type": "input_file", "filename": f"document-{index + 1}.pdf",
-               "file_data": f"data:application/pdf;base64,{data}"}
-              for index, data in enumerate(pdf_b64s or [])],
-            *[_image_part(media_type, data) for media_type, data in (images or [])],
-            *last["content"],
-        ]
     return items
 
 

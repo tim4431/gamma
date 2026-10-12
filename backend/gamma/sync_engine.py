@@ -53,6 +53,12 @@ the feeds say, which is how a page added to the filter goes over at the
 next round. Publishing a page to the share host is such a filtered mirror
 (gamma/publish.py).
 
+Both servers must keep a workspace's data in the same shape: the remote's
+feed names its ``format`` (``migrations.workspace_format``), and a round
+whose remote names another one stops before it writes anything
+(``FormatMismatch``, kept on the status as ``version_gap``) until one of
+the two is updated.
+
 Writes on the remote carry the mirror's write-scope integration token
 (``Authorization: Bearer``), so they land under the account that made the
 mirror. Local writes go through ``commit_ops`` with client ``"sync"``, which
@@ -72,7 +78,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-from . import config, ops, pdf_meta, storage, textmerge, workspaces
+from . import config, migrations, ops, pdf_meta, storage, textmerge, workspaces
 from fractional_indexing import FIError, generate_key_between, validate_order_key
 
 from .auth import MIRROR_ACTOR
@@ -107,6 +113,21 @@ class RemoteError(Exception):
     def __init__(self, status: int, detail: str = ""):
         super().__init__(f"{status}: {detail}" if detail else str(status))
         self.status, self.detail = status, detail
+
+
+class FormatMismatch(Exception):
+    """The remote keeps its workspaces in another shape than this server
+    (``migrations.workspace_format``, named by its change feed): one of the
+    two runs a release with a workspace migration step the other lacks.
+    Neither could read what the other would write, so the round stops
+    before it writes anything, until both run releases that agree."""
+
+    def __init__(self, here: int, remote: int):
+        newer = remote > here
+        super().__init__(
+            f"the remote runs {'a newer' if newer else 'an older'} Gamma (workspace data format {remote}; "
+            f"this server has {here}): sync is paused until {'this server' if newer else 'the remote'} is updated")
+        self.here, self.remote = here, remote
 
 
 class PageDeferred(Exception):
@@ -1841,10 +1862,15 @@ def _feed_all(remote: Remote, cursor: str) -> tuple[dict, dict, str]:
     """Walk the remote feed to the end: ``({page_id: seq}, {page_id:
     deleted_at}, cursor)``. The feed lists in the order of the change log,
     so a page listed again (written again while the walk went on) is what
-    its last entry says."""
+    its last entry says. A remote whose pages have another shape than this
+    server's raises ``FormatMismatch``; one that names none (a release from
+    before the check) is taken as it is."""
     pages, deleted = {}, {}
     for _ in range(200):
         out = remote.get(f"/api/sync/changes?since={urllib.parse.quote(cursor)}&limit=1000")
+        there, here = out.get("format"), migrations.workspace_format()
+        if isinstance(there, int) and there != here:
+            raise FormatMismatch(here, there)
         for p in out["pages"]:
             deleted.pop(p["id"], None)
             pages[p["id"]] = p["seq"]
@@ -2001,12 +2027,14 @@ def _round(ws: str, mirror: dict, fetch) -> dict:
                         current.pop(key, None)
             return current
 
-        status = _patch_status(ws, finish, drop=("progress",))
+        status = _patch_status(ws, finish, drop=("progress", "version_gap"))
         if not errors and _dirty.get(ws, float("inf")) <= started:
             _dirty.pop(ws, None)  # everything written before the round started went out with it
     except Exception as e:  # noqa: BLE001 — whatever happens, the running flag comes down
-        status = _patch_status(ws, {"running": False, "last_error": str(e), "last_attempt": page_now()},
-                               drop=("progress",))
+        # a format mismatch is kept apart from the error's words: the pill and Settings say which side to update
+        gap = {"version_gap": {"here": e.here, "remote": e.remote}} if isinstance(e, FormatMismatch) else {}
+        status = _patch_status(ws, {"running": False, "last_error": str(e), "last_attempt": page_now(), **gap},
+                               drop=("progress", "version_gap"))
         log.warning(f"[mirror] {ws}: {e}")
     if status.get("last_error"):
         _whoami_seen.pop(ws, None)

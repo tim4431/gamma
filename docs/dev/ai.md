@@ -307,8 +307,9 @@ PKCE flow in `gamma/chatgpt_oauth.py`; entries created only via
 `POST /api/ai/oauth/chatgpt/start`, `status` and `complete`; access tokens
 refresh lazily in `ai_runtime`). Its wire is the Responses API on
 `chatgpt.com/backend-api/codex` (stream-only SSE; non-stream callers join
-deltas), and PDF attachments go as native `input_file` parts with an automatic
-retry as extracted text if the backend rejects them. That retry applies to
+deltas), and PDF attachments go as native `input_file` parts, which the
+backend reads as long as each part names its `filename`. They are retried as
+extracted text if the backend rejects them. That retry applies to
 any provider that answers a native-PDF request with a 4xx other than
 401/403/429 (compatible servers may refuse `file` parts too). Anthropic has
 no `minimal` or `none` effort; its adapter sends `low` for `minimal` and
@@ -494,10 +495,13 @@ line, see "Fitting the window") and "Reply cut off at the output limit"
 (`ai_protocols.base.TRUNCATED_STOPS`) — `Protocol.events` ends every
 stream with `("stop", reason)`, `ai_protocols.base.truncated_stop` reads
 it; the agent loop stops there rather than run a half-written tool call).
-`/api/ai/models` marks each model `native_pdf` (false for
-ChatGPT sign-in entries: their wire is the Codex backend, which refuses
-`input_file` parts). The composer's Full PDF switch, shown only while a PDF
-is in context, doesn't default on for such a model. Switching it on by hand
+`/api/ai/models` marks each model `native_pdf`, its protocol's flag. Every
+protocol takes PDFs today, the ChatGPT sign-in included
+([research note](../research/chatgpt-pdf-input.md)). The composer's
+PDF switch, shown only while a PDF is in context, sends the file with every
+message while it is on. The file is kept on the oldest turn, so the prompt
+cache serves it ([ai_context.md](ai_context.md#with-the-pdf-switch-on)). The
+switch doesn't default on for a model marked false. Switching it on by hand
 shows a warning pill, and pending uploaded PDFs get the same warning on
 their chips. `/api/ai/models` also says `transcribe`: whether some
 connection takes dictation (`Protocol.transcription` > 0, an OpenAI-protocol
@@ -527,11 +531,20 @@ window, and no provider is called.
 
 ### Prompt caching
 
-Every request re-sends the whole conversation (no wire keeps state:
+Every request re-sends the whole conversation, because no wire keeps state.
 `store` stays off on the Responses API, and there is no
-`previous_response_id` — the conversation is Gamma's to keep). What makes
-that cheap is the providers' prefix caches, which every adapter now asks
-for. The chat sends `chat_key` (the bucket: a page id, a folder id,
+`previous_response_id`. There are three reasons:
+
+- The Codex backend refuses a request without `store: false` (400 "Store
+  must be set to false").
+- The conversation is Gamma's to keep. It can switch the model or provider
+  mid-chat, edit an earlier message, leave the oldest turns out, and elide
+  old tool results, none of which a chain of stored responses allows.
+- Prompt caching doesn't depend on it. The caches match the prompt's
+  prefix, however the conversation is kept.
+
+What makes the re-sending cheap is the providers' prefix caches, which
+every adapter asks for. The chat sends `chat_key` (the bucket: a page id, a folder id,
 `home`); `_cache_key` in `routers/ai.py` hashes it with the
 account and workspace into one opaque id per conversation that
 `ai_client.open_ai` passes to `Protocol.request(cache_key=)`:
@@ -549,12 +562,18 @@ account and workspace into one opaque id per conversation that
   compatible server.
 - The Codex backend: the same `prompt_cache_key` in the body and the
   `session_id` header, one per conversation like Codex CLI's (a fresh
-  uuid per request, as before, missed every time).
+  uuid per request, as before, missed every time). It caches at the
+  provider's own breakpoint, the end of the latest user message. Explicit
+  `prompt_cache_breakpoint` parts are refused there (400 "not supported on
+  this model", `gpt-6-astra`).
 
 The usage line's `cache_read` / `cache_write` counts (and "% cached" under
 a reply) show whether it works. The document context glued to the oldest
-user turn is the cached head; it changes only when the pages, the notes,
-the map or the context settings change.
+user turn is the cached head. With the PDF switch on, the PDF files go there too,
+ahead of the turn's text, on every message
+([ai_context.md](ai_context.md#with-the-pdf-switch-on)). The head changes only when
+the pages, the notes, the map, the PDF switch or the context settings
+change.
 
 ### Fitting the window
 
@@ -724,7 +743,7 @@ picture, and the passages carry the viewer's page only.
 ### The composer
 
 The composer is one rounded box: the context chips on top, the message at
-full width, then a toolbar of [+], the Full PDF switch, the model chip, the
+full width, then a toolbar of [+], the PDF switch, the model chip, the
 mic, and Send (or Stop while this bucket's reply streams). The box's
 buttons never take the focus (the form cancels a button's `mousedown`), so
 a press keeps an on-screen keyboard up.

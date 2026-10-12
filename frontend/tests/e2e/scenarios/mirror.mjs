@@ -2,8 +2,9 @@
 // clones one of its own workspaces over its real HTTP API with a write
 // token made through the API: the dialog, the row and its status, Sync,
 // the (empty) conflicts list, opening the clone, the sync pill with
-// its settings (cadence, detach, reattach), a merge conflict resolved on its
-// block, removing the origin.
+// its settings (cadence, detach, reattach), the pause a remote on another
+// data format causes, a merge conflict resolved on its block, removing the
+// origin.
 import { Account, wanted } from "../harness.mjs";
 
 export async function mirrorScenarios(env) {
@@ -93,6 +94,25 @@ export async function mirrorScenarios(env) {
       await logRow.getByRole("button", { name: "Open the page", exact: true }).click();
       await page.getByRole("paragraph").filter({ hasText: "a note to copy" }).first().waitFor();
       assertNoProblems(page);
+      // a remote whose workspace data format differs pauses the clone, its status naming both formats
+      // (the backend suite pins the rule): the pill, its popover and the Settings row say which side to
+      // update — the mirror answers rewritten here as such a round leaves them
+      const gapped = async (route) => {
+        const res = await route.fetch();
+        const body = await res.json();
+        const paused = (m) => ({ ...m, status: { ...m.status, last_error: "the remote runs a newer Gamma", version_gap: { here: 34, remote: 35 } } });
+        await route.fulfill({ response: res, json: body.mirrors ? { ...body, mirrors: body.mirrors.map(paused) } : paused(body) });
+      };
+      await page.route(`**/api/mirrors/${copy.workspace_id}`, gapped);
+      await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
+      await until(() => pill.getAttribute("data-state").then((t) => t === "outdated"), { what: "the pill reads paused" });
+      assertEq(await pill.locator(".mirrorPillDot.warn").count(), 1, "an amber dot: waiting for an update");
+      await pill.click();
+      await pop.getByText("Paused · update Gamma", { exact: true }).waitFor();
+      await pop.getByText(/Sync is paused until you update this one/).waitFor();      await pill.click();
+      await page.unroute(`**/api/mirrors/${copy.workspace_id}`, gapped);
+      await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
+      await until(() => pill.getAttribute("data-state").then((t) => t === "ok"), { what: "the pill reads up to date again" });
       // a same-block edit on both sides: the conflict chip on the row resolves it in place
       await user.api(`/api/pages/${paper.id}/ops`, { method: "POST", body: { client: "e2e", ops: [
         { op: "set", id: "mirrorblk1", content: "a note to copy (original)" }] } });
@@ -123,10 +143,15 @@ export async function mirrorScenarios(env) {
       assertNoProblems(page);
 
       // Remove origin (the row's "more" menu, then the confirm) keeps the workspace, drops the mirror.
+      // The row of a paused clone first: tagged, its status line saying which side to update.
+      await page.route("**/api/mirrors", gapped);
       await page.getByRole("button", { name: "Account & settings", exact: true }).click();
       await page.getByRole("button", { name: "Settings…", exact: true }).click();
       await page.getByRole("dialog", { name: "Settings", exact: true }).waitFor();
       await page.getByRole("navigation", { name: "Settings categories" }).getByRole("button", { name: "Workspaces", exact: true }).click();
+      const pausedRow = page.locator(".aiProvRow", { hasText: "clone of" });
+      await pausedRow.getByText("update needed", { exact: true }).waitFor();
+      await pausedRow.getByText("paused · update this Gamma to sync again", { exact: true }).waitFor();      await page.unroute("**/api/mirrors", gapped);
       await page.locator(".aiProvRow", { hasText: "clone of" }).getByRole("button", { name: "More", exact: true }).click();
       await page.getByRole("button", { name: "Remove origin", exact: true }).click(); // the menu row
       await page.getByRole("button", { name: "Remove origin", exact: true }).click(); // the confirm

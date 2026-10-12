@@ -9,7 +9,8 @@ import re
 from urllib.request import Request as URLRequest
 
 from .base import (EMPTY_REPLY_HINT, OPENAI_PICTURE_TOKENS, TOOL_IMAGES_NOTE, Protocol, api_url, as_int, attach_index,
-                   multipart_body, note_speed, parse_tool_args, served_speed_name, tool_image_turns, turn_images)
+                   multipart_body, note_speed, parse_tool_args, served_speed_name, tool_image_turns, turn_files,
+                   turn_images)
 from .responses import OPENAI_RESPONSES
 from .services import service_of
 
@@ -20,6 +21,23 @@ _OPENAI_CHAT_FAMILIES = re.compile(r"^(gpt-|o\d|chatgpt-)")
 
 def _image_part(media_type: str, data: str) -> dict:
     return {"type": "image_url", "image_url": {"url": f"data:{media_type};base64,{data}"}}
+
+
+def _user_content(message, pdf_b64s=(), images=()):
+    """A user turn's content: its own PDFs, then the request's, its
+    pictures, then the request's, and the text last — the plain text when
+    there is nothing else."""
+    files = [*turn_files(message), *(pdf_b64s or [])]
+    pictures = [*turn_images(message), *(images or [])]
+    if not files and not pictures:
+        return message["content"]
+    return [
+        *[{"type": "file", "file": {"filename": f"document-{index + 1}.pdf",
+                                    "file_data": f"data:application/pdf;base64,{data}"}}
+          for index, data in enumerate(files)],
+        *[_image_part(media_type, data) for media_type, data in pictures],
+        {"type": "text", "text": message["content"]},
+    ]
 
 
 # How compatible servers report a model's thinking beside the reply: as
@@ -80,16 +98,7 @@ class OpenAIChat(Protocol):
 
     def request(self, conf, messages, system, model, pdf_b64s=None, effort="",
                 max_tokens=8192, images=None, stream=False, tools=None, cache_key="", speed=""):
-        messages = [dict(m) for m in messages]
-        if pdf_b64s or images:
-            last = messages[attach_index(messages)]
-            last["content"] = [
-                *[{"type": "file", "file": {"filename": f"document-{index + 1}.pdf",
-                                            "file_data": f"data:application/pdf;base64,{data}"}}
-                  for index, data in enumerate(pdf_b64s or [])],
-                *[_image_part(media_type, data) for media_type, data in (images or [])],
-                {"type": "text", "text": last["content"]},
-            ]
+        target = messages[attach_index(messages)] if (pdf_b64s or images) and messages else None
         # The thinking each assistant turn echoes back (never to OpenAI
         # itself, which reports none this way). A field one turn carries is
         # sent on every assistant turn, empty where none was kept, so a
@@ -123,11 +132,9 @@ class OpenAIChat(Protocol):
                                             for c in m["tool_calls"]], **thinking(m)})
             elif m["role"] == "assistant":
                 wire.append({"role": "assistant", "content": m["content"], **thinking(m)})
-            elif (pictures := turn_images(m)) and not isinstance(m["content"], list):
-                # An earlier message's pictures, kept in the conversation.
-                wire.append({"role": "user", "content": [
-                    *[_image_part(media_type, data) for media_type, data in pictures],
-                    {"type": "text", "text": m["content"]}]})
+            elif m["role"] == "user":
+                wire.append({"role": "user", "content": (_user_content(m, pdf_b64s, images) if m is target
+                                                         else _user_content(m))})
             else:
                 wire.append({"role": m["role"], "content": m["content"]})
         body = {

@@ -177,6 +177,42 @@ The local server has the same feed, read in-process, so local edits are
 found the same way; the engine's own writes are tagged client `sync` and
 diff to nothing on the next round.
 
+## The data format
+
+Both servers must keep the workspace's data in one shape. A release's shape
+is `migrations.workspace_format()`: the newest migration step with a
+workspace part ([migrations.md](migrations.md) rule 2), or the base when no
+step is above it. A step with a global part only (users.db) leaves it as it
+is. Every answer of the change feed names it (`format`), and the engine
+compares it with its own on each answer it reads (`_feed_all`). The feed is
+read every round before anything is written on either side, so a remote
+upgraded since the last round is caught by the next one; the whoami cache
+does not hide it. When the two differ the round stops (`FormatMismatch`):
+
+- **Either direction.** A copy older than its remote would store shapes its
+  code cannot read, and push old shapes the remote's step has already
+  rewritten. A copy newer than its remote would take in old shapes that its
+  own step, already run, never rewrites. The message names the older side
+  as the one to update.
+- **Nothing moves.** No cursor, base or file changes. Local edits stay
+  `pending_local` and go with the first round after the update, an
+  ordinary three-way merge. The upgrade itself sends nothing: a workspace
+  step rewrites both copies alike without touching their pages
+  ([migrations.md](migrations.md) steps 29 and 30).
+- **The status** keeps `version_gap: {here, remote}` beside `last_error`
+  until a round gets past the check. Every surface reads it through
+  `versionGap` (state `outdated`, an amber dot): *Paused · update Gamma*
+  with the download glyph when this server is the older one, *Paused · the
+  remote needs an update* with the clock when the remote is. The popover
+  and the publish section show the sentence under the state line, and the
+  Settings row has an *update needed* tag and the status line.
+- **While paused** rounds keep their cadence, each costing a whoami and
+  the feed's first answer, as for a remote that is down. A publication is a
+  mirror: a publish whose round stops answers 502 with the message.
+- **A remote from before the check** names no `format`, and its rounds run
+  as before. The check runs in the copy's engine, so it protects copies
+  that run this release or a later one.
+
 ## One round, one page (`sync_engine._sync_page`)
 
 | the page is… | what happens |
@@ -448,8 +484,8 @@ Shown while a clone is open, in the desktop app and in a browser alike.
   fill has not run. With *Sync after an edit* on, the icon spins instead of
   showing the accent dot, until the round is confirmed done.
 - No words on it: the state's sentence and the last sync time are the
-  tooltip. `data-state` (`busy`, `conflicts`, `error`, `pending`, `ok`,
-  `detached`, `new`) is what the browser test reads.
+  tooltip. `data-state` (`busy`, `outdated`, `conflicts`, `error`,
+  `pending`, `ok`, `detached`, `new`) is what the browser test reads.
 - The pending state is known before the server says so: the page's collab
   session raises `gamma:local-edit` when it queues ops. The pill shows the
   dot at once and polls every 2 s until a poll after a short grace reports
@@ -529,8 +565,8 @@ Settings jump to the block (`gamma:jump`).
 - One row per clone. Its avatar is its state (the same reading as the pill:
   a spinning refresh while a round runs, a check when up to date, a warning
   on a problem, an unlink glyph when detached), then the name with its tags
-  (*open*, *receive only*, *detached*, *problem*, *unpushed edits*, *N
-  conflicts*), *clone of X · origin host* and one short status line
+  (*open*, *receive only*, *detached*, *problem* or *update needed*,
+  *unpushed edits*, *N conflicts*), *clone of X · origin host* and one short status line
   (progress and the file in flight while a round runs; *up to date 14:37 ·
   2 pages pulled* after; *local edits not pushed yet* while `pending_local`).
   The list is read again every 2 s while any row's round runs
@@ -856,7 +892,9 @@ after more typing, a block moved to another page while edited here, edits
 made while the remote is unreachable — each ending with both sides equal. The progress reports, the interrupted-flag
 reset, the retry of a page that failed, detach + re-link, linking an
 existing workspace, the force in both directions, the cadence and the
-sync-on-change trigger, a detach and a force asked for while a round runs,
+sync-on-change trigger, a remote on another data format pausing the round
+(either side older, then a remote that names none), a detach and a force
+asked for while a round runs,
 edits made while the remote had demoted the account, a force pull on a
 receive-only clone, and a conflict resolved after its block moved to
 another page are in `test_mirror.py` too. `test_mirror_interrupted.py` is
@@ -943,3 +981,6 @@ feed.
 - Every automated test runs both sides in one process (the backend suite's
   TestClient transport; the browser scenario clones a workspace of the same
   server). Two real servers are not exercised.
+- The data format is checked by the server engine only. The iPad's replica
+  (`frontend/src/replica/`) reads the same feed but does not compare its
+  `format` yet.

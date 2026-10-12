@@ -210,8 +210,22 @@ export async function mentionScenarios(env) {
       await input.fill("A follow-up");
       await input.press("Enter");
       await until(() => requests.length === 2);
-      assertEq(requests[1].attach_pdf, false, "reload does not silently resend PDF files");
+      assertEq(requests[1].attach_pdf, true, "after a reload the PDFs keep going, as the last message sent them");
       assert(requests[1].pages.includes(pdfs[1].id));
+      // Switched off, a message goes without them, and a reload keeps it so.
+      await until(async () => (await user.api(`/api/chats/${pdfs[0].id}`)).messages?.length === 4);
+      await page.getByRole("button", { name: "PDF", exact: true }).click();
+      await input.fill("Text only now");
+      await input.press("Enter");
+      await until(() => requests.length === 3);
+      assertEq(requests[2].attach_pdf, false);
+      await until(async () => (await user.api(`/api/chats/${pdfs[0].id}`)).messages?.length === 6);
+      await page.reload();
+      await page.getByRole("button", { name: "Remove Reference PDF from context" }).waitFor();
+      await input.fill("Still text");
+      await input.press("Enter");
+      await until(() => requests.length === 4);
+      assertEq(requests[3].attach_pdf, false, "a reload keeps the switch as the last message left it");
       assertNoProblems(page);
     } finally { await ctx.close(); }
   });

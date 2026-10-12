@@ -487,7 +487,8 @@ def prompt_tokens(messages: list, system: str = "", tools: list | None = None,
 
 def build_messages(payload, context: str, with_tools: bool = False,
                    located: list | None = None, message_context: str = "",
-                   drop_turns: int = 0, picture_lines: str = "") -> list[dict]:
+                   drop_turns: int = 0, picture_lines: str = "",
+                   files: list | None = None) -> list[dict]:
     """Build common chat messages, injecting context once before a user turn.
 
     With ``with_tools`` (an agent chat), each saved reply's tool calls are
@@ -508,6 +509,9 @@ def build_messages(payload, context: str, with_tools: bool = False,
     pictures of an earlier message read back, and the lines naming them)
     keeps them on its turn as ``images``; ``picture_lines`` names this
     message's own pictures under the question (the wires attach them).
+    ``files`` (the library PDFs a Full PDF chat sends, base64) ride with
+    the document ``context`` as that turn's ``files``, so on every request
+    of the conversation they sit at the same place in its head.
     """
     history = [h for h in (payload.history or []) if not h.get("error")]
     if drop_turns > 0:
@@ -549,10 +553,12 @@ def build_messages(payload, context: str, with_tools: bool = False,
             # An organizer reply can be tool actions with no prose; providers
             # (Anthropic especially) reject empty content blocks.
             continue
-        if role == "user" and context and not context_used:
+        head_turn = role == "user" and context and not context_used
+        if head_turn:
             content = f"{CONTEXT_INTRO}\n\n{context}\n\nUser question: {content}"
             context_used = True
         messages.append({"role": role, "content": content, **({"reasoning": thinking} if thinking else {}),
+                         **({"files": list(files)} if head_turn and files else {}),
                          **({"images": list(sent["images"])} if sent and sent.get("images") else {})})
     content = final_prompt(payload, located)
     head = f"{CONTEXT_INTRO}\n\n{context}" if context and not context_used else ""
@@ -562,7 +568,8 @@ def build_messages(payload, context: str, with_tools: bool = False,
         content = f"{head}\n\nUser question: {content}"
     if picture_lines:
         content = f"{content}\n\n{picture_lines}"
-    messages.append({"role": "user", "content": content})
+    messages.append({"role": "user", "content": content,
+                     **({"files": list(files)} if files and not context_used else {})})
     return messages
 
 
@@ -1460,7 +1467,7 @@ def page_report_section(connection, ws: str, page_id: str, pdf_budget: int,
 
 def gather_inputs(ws: str, payload, allow_native: bool,
                   crops: list | None = None,
-                  notes_seen: dict | None = None) -> tuple[list[str], str, list[dict], str]:
+                  notes_seen: dict | None = None) -> tuple[list[str], str, list[dict], str, list[str]]:
     """Collect the chat's context: native PDF attachments and the text
     sections for the request's pages.
 
@@ -1475,12 +1482,15 @@ def gather_inputs(ws: str, payload, allow_native: bool,
     takes it) and hides the notes unless ``include_notes`` — a page without
     one IS its notes, so they always go.
 
-    Returns ``(pdf_b64s, context, coverage, message_context)``. ``context``
-    is the document part — the same text on every turn of a conversation
-    while its pages and settings stand (the head excerpt, the notes, the
-    map); ``message_context`` is what belongs to this message alone: the
-    text around the passages it selected and the notes the user is
-    pointing at (build_messages puts it in front of the question).
+    Returns ``(pdf_b64s, context, coverage, message_context, document_pdfs)``.
+    ``context`` is the document part — the same text on every turn of a
+    conversation while its pages and settings stand (the head excerpt, the
+    notes, the map) — and ``document_pdfs`` its files: the pages' PDFs when
+    ``attach_pdf`` sends them, which build_messages keeps with it.
+    ``pdf_b64s`` and ``message_context`` belong to this message alone: the
+    PDFs uploaded with it, the text around the passages it selected and the
+    notes the user is pointing at (build_messages puts the text in front of
+    the question).
 
     ``coverage`` is the report the chat streams back as its first
     `{"context": [...]}` line — one entry per page: ``{"title", "page_id",
@@ -1503,6 +1513,7 @@ def gather_inputs(ws: str, payload, allow_native: bool,
     ``notes_focus_section``) — the texts an agent's edit_block replace may
     start from this turn."""
     pdf_b64s = []
+    document_pdfs = []
     context_sections = []
     message_sections = []
     coverage = []
@@ -1547,7 +1558,7 @@ def gather_inputs(ws: str, payload, allow_native: bool,
             if doc_id and attach:
                 data = load_pdf_b64(ws, doc_id)
                 if data and total_b64 + len(data) < 20_000_000:
-                    pdf_b64s.append(data)
+                    document_pdfs.append(data)
                     total_b64 += len(data)
                     attached = True
             if doc_id:
@@ -1634,4 +1645,4 @@ def gather_inputs(ws: str, payload, allow_native: bool,
         message_sections.append(focus_section)
 
     return (pdf_b64s, "\n\n---\n\n".join(context_sections), coverage,
-            "\n\n---\n\n".join(message_sections))
+            "\n\n---\n\n".join(message_sections), document_pdfs)

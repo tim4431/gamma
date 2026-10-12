@@ -83,7 +83,6 @@ class ChatGPT(ResponsesWire):
     label = "ChatGPT (subscription sign-in)"
     auth = "oauth"
     oauth = chatgpt_oauth
-    native_pdf = False  # the Codex backend refuses input_file parts; the PDF goes as text
     has_account_usage = True
 
     def request(self, conf, messages, system, model, pdf_b64s=None, effort="",

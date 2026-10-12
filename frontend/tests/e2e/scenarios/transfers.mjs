@@ -417,9 +417,9 @@ with zipfile.ZipFile(sys.argv[1], 'w') as z:
       const names = JSON.parse(execFileSync(python, ["-c", "import json, sys, zipfile; print(json.dumps(sorted(zipfile.ZipFile(sys.argv[1]).namelist())))",
         await file.path()]).toString());
       assertEq(names.join(","), "Folder paper one.pdf,Sub/Folder paper two.pdf");
-      const text = await again.innerText();
-      assert(text.includes("2 pages exported.") && text.includes("1 page left out") && text.includes("Folder note page"),
-        `the finished step lists the page without a PDF: ${text}`);
+      // the heading turns as the job ends; what was exported and left out comes with a read of the ended job after it
+      await until(() => again.innerText().then((text) => text.includes("2 pages exported.") && text.includes("1 page left out") && text.includes("Folder note page")),
+        { what: "the finished step listing the page without a PDF" });
       if (flags.keep) await page.screenshot({ path: `${server.dir}/export-ready.png` });
       await choice(again, "Done").click();
       // The tray keeps the finished export with its file, and removes it on request.

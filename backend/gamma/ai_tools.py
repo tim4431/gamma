@@ -3248,14 +3248,20 @@ def coverage_lines(coverage: list, can_read: bool) -> str:
     """The prompt lines naming what the conversation context already holds
     of each page's PDF (the chat's coverage report), so the model reads the
     pages that are missing instead of the ones it has: "pages 1–5 of 19 are
-    in context; read pages 5–19 with read_page(pdf_page=N)"."""
+    in context; read pages 5–19 with read_page(pdf_page=N)". A PDF that went
+    as a file is named as attached; read_page still reads its text."""
     lines = []
     for entry in coverage:
-        if not entry.get("doc_id") or entry.get("native"):
+        if not entry.get("doc_id"):
             continue
         title, page_id = entry.get("title") or "Untitled", entry.get("page_id") or ""
         shown, total = entry.get("pages_shown") or 0, entry.get("pages") or 0
-        if not entry.get("partial"):
+        if entry.get("native"):
+            lines.append(f'The PDF of "{title}" (page_id "{page_id}") is attached as a file to the '
+                         "conversation's first message."
+                         + (" read_page(page_id, pdf_page=N) still gives its extracted text, page by page."
+                            if can_read else ""))
+        elif not entry.get("partial"):
             lines.append(f'The context holds the whole PDF text of "{title}" (page_id "{page_id}"'
                          f"{f', {total} pages' if total else ''}); no read_page is needed for it.")
         elif shown:

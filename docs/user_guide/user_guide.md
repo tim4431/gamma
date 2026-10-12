@@ -121,7 +121,7 @@ Notes are a nested outline. Highlights and free notes are the same kind of block
 
 Open the chat from the **View menu (≡) → AI Chat**. Gamma has no AI of its own: connect a service in Settings → AI → Connections and the chat uses your account with it. Keys stay on the server and are never sent back to the browser; a server administrator can also add connections everyone on the server shares.
 
-- The chat reads the open paper by itself. **Full PDF** sends the file, so the model sees figures and tables.
+- The chat reads the open paper by itself. The **PDF** button sends the file with every message while it is on, so the model sees figures and tables. The file stays at the start of the conversation, so after the first message the provider can serve it from its prompt cache.
 - **Add more**: paste images, Ctrl+drag a region of the page, click highlights to quote them, type **@** to attach another paper.
 - **Citations are clickable**: `p. 12` jumps the PDF to the passage and highlights it.
 - The **model chip** switches the model, reasoning effort and speed. Each reply says what wrote it and what it cost in tokens.
@@ -240,6 +240,7 @@ Your library lives on your server. For the train or a lab without Wi-Fi, keep an
 - Pages, highlights, ink, files, folders and labels travel; chats and reading positions stay per device.
 - Edits made offline go with the next sync. Edits to the same words show a **merge chip**: pick local, remote or merged.
 - The **sync pill** in the page header shows the state and opens the log and settings.
+- **Update both sides.** When an update changes how Gamma stores a library, a copy and its server on different versions pause, and the sync pill says which one to update. Edits made meanwhile wait and go once both are updated.
 - **A folder on this computer** (desktop app): right-click a folder in the library and choose *Keep on this computer…*, or use *Keep a folder…* in the sync button's panel at the right of the title bar. Pick a directory, and the folder is kept there as PDFs beside Markdown notes. On your NAS's workspace this needs no clone: only that folder's files come down, read with a key the app makes for it. The sync button shows how your clones and folders stand.
 - **The sync panel** lists each clone and kept folder with *pause* (then *resume*), *sync* and, for a folder, *stop*. A paused folder isn't touched until you resume or sync it; pausing a clone detaches it, and resuming merges what both sides did meanwhile. *Stop* asks whether to keep or remove the files.
 - **Keep running in the background**: a switch in the launcher's settings and the tray. Gamma then stays in the tray when the window closes, so clones and folders on disk keep syncing; *Start at login* starts it there.

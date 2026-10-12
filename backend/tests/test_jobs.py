@@ -102,7 +102,7 @@ def test_a_job_reports_while_it_runs_and_keeps_its_result(alice):
     assert alice.get(f"/api/jobs/{job['id']}").json()["result"] == {"made": 3}
 
 
-def test_a_new_phase_or_unit_starts_its_own_counts():
+def test_a_new_phase_or_unit_starts_its_own_counts(alice):
     seen = []
 
     def run(job):
@@ -126,7 +126,7 @@ def test_a_new_phase_or_unit_starts_its_own_counts():
     (ValueError("the backup is damaged"), "the backup is damaged"),
     (RuntimeError("boom"), "unexpected error (RuntimeError: boom)"),
 ])
-def test_a_failing_run_fails_the_job_with_its_message(raised, message):
+def test_a_failing_run_fails_the_job_with_its_message(alice, raised, message):
     def run(job):
         raise raised
 
@@ -159,7 +159,7 @@ def test_a_file_the_job_wrote_is_its_download(alice, bob):
     assert not (jobs.root() / missing["id"]).exists()
 
 
-def test_a_job_never_reads_as_ended_before_its_row_says_how(monkeypatch):
+def test_a_job_never_reads_as_ended_before_its_row_says_how(alice, monkeypatch):
     """Between the worker's last write and its leaving the live set, a
     reader sees the job still running — never done without its file."""
     from gamma import jobs
@@ -238,7 +238,7 @@ def test_the_workspaces_own_jobs_are_outside_the_account_limits():
     assert all(_finished(j["id"])["state"] == "done" for j in started)
 
 
-def test_too_many_jobs_of_one_account_are_refused(monkeypatch):
+def test_too_many_jobs_of_one_account_are_refused(alice, monkeypatch):
     from gamma import jobs
 
     monkeypatch.setattr(jobs, "MAX_ACTIVE_PER_ACCOUNT", 2)
@@ -253,7 +253,7 @@ def test_too_many_jobs_of_one_account_are_refused(monkeypatch):
         _finished(job["id"])
 
 
-def test_the_same_work_twice_is_busy():
+def test_the_same_work_twice_is_busy(alice, bob):
     from gamma import jobs
 
     gate = Gate()
@@ -323,7 +323,7 @@ def test_removing_a_job_and_clearing_the_finished_ones(alice):
     _finished(running["id"])
 
 
-def test_a_job_that_writes_files_needs_room(monkeypatch):
+def test_a_job_that_writes_files_needs_room(alice, monkeypatch):
     from gamma import jobs
 
     def run(job):
@@ -421,7 +421,7 @@ def test_an_account_takes_its_jobs_along(client):
     assert jobs.get(job["id"]) is None and not (jobs.root() / job["id"]).exists()
 
 
-def test_a_listing_is_the_newest_jobs_first(alice):
+def test_a_listing_is_the_newest_jobs_first(alice, cara):
     ids = [_finished(_start("jb_cara", lambda job, n=n: n)["id"])["id"] for n in range(3)]
     from gamma import jobs
     listed = [j["id"] for j in jobs.for_account(account_of("jb_cara")) if j["id"] in ids]

@@ -321,7 +321,10 @@ def test_read_page_never_repeats_what_the_context_holds(org, monkeypatch):
     assert "read_page(page_id, pdf_page=N)" in lines
     assert "read_page" not in coverage_lines([cover], False)
     assert "whole PDF text" in coverage_lines([{**cover, "partial": False}], True)
-    assert coverage_lines([{**cover, "native": True}], True) == ""
+    attached = coverage_lines([{**cover, "native": True}], True)
+    assert 'The PDF of "cavity paper"' in attached and "attached as a file" in attached
+    assert "read_page(page_id, pdf_page=N)" in attached and "cut short" not in attached
+    assert "read_page" not in coverage_lines([{**cover, "native": True}], False)
     system = agent_system({"type": "page", "page_id": ids["a"], "coverage": [cover]})
     assert "page 3 cut short" in system and "answer from the text in the context when it is there" in system
     assert "even if you think you know it" not in system
@@ -382,13 +385,13 @@ def test_area_highlights_reach_the_model_as_pictures(org, monkeypatch):
     rendered.clear()
     crops = []
     payload = AIChatRequest(prompt="what is in the boxes?", page_id=page, include_notes=True)
-    _, context, coverage, _ = ai_context.gather_inputs(ids["ws"], payload, False, crops=crops)
+    _, context, coverage, _, _ = ai_context.gather_inputs(ids["ws"], payload, False, crops=crops)
     assert "Area highlight (a rectangle on PDF page 2; picture 1 attached)" in context
     assert len(crops) == MAX_AREA_CROPS and coverage[0]["area_pictures"] == MAX_AREA_CROPS
     # Notes left out of the context: no pictures either.
     crops = []
     payload = AIChatRequest(prompt="hi", page_id=page, include_notes=False)
-    _, context, coverage, _ = ai_context.gather_inputs(ids["ws"], payload, False, crops=crops)
+    _, context, coverage, _, _ = ai_context.gather_inputs(ids["ws"], payload, False, crops=crops)
     assert "Area highlight" not in context and not crops and "area_pictures" not in coverage[0]
     c.delete(f"/api/blocks/{page}")
 
@@ -431,7 +434,7 @@ def test_text_boxes_are_notes_never_area_highlights(org, monkeypatch):
 
     payload = AIChatRequest(prompt="what did I write?", page_id=page, include_notes=True)
     crops = []
-    _, context, coverage, _ = ai_context.gather_inputs(ids["ws"], payload, False, crops=crops)
+    _, context, coverage, _, _ = ai_context.gather_inputs(ids["ws"], payload, False, crops=crops)
     assert "- (text box on p. 2) typed on the figure" in context
     assert "Area highlight" not in context and not crops and "area_pictures" not in coverage[0]
     c.delete(f"/api/blocks/{page}")

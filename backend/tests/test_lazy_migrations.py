@@ -97,6 +97,15 @@ def test_new_workspaces_are_stamped_current_and_run_nothing(step):
     assert step.ran == [] and not migrations.workspaces_behind()
 
 
+def test_the_workspace_format_is_the_newest_workspace_step(step, monkeypatch):
+    """What two syncing servers compare (``workspace_format``): a workspace
+    step moves it, a step with a global part only does not."""
+    assert migrations.workspace_format() == V
+    monkeypatch.setattr(migrations, "WORKSPACE_STEPS", [])
+    monkeypatch.setattr(migrations, "STEPS", [*migrations.STEPS, (V, "global_only", lambda conn: None)])
+    assert migrations.workspace_format() == BASE
+
+
 def test_the_startup_snapshot_leaves_the_workspaces_to_their_steps(step):
     # With only a workspace step pending, the upgrade copies users.db alone
     # and stamps it; no workspace is touched. With a step that walks them

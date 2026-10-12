@@ -2412,6 +2412,7 @@ button.pdfOutlineChevron:hover { background: rgba(128, 128, 128, 0.28); color: v
 .mirrorStateBody { display: flex; flex-direction: column; gap: 4px; min-width: 0; flex: 1; }
 .mirrorStateLine { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
 .mirrorStateLine .popoverHint { padding: 0; flex: 1; }
+.mirrorStateBody > .popoverHint { padding: 0; }
 .mirrorBar { height: 5px; border-radius: var(--radius-xs); background: var(--bg-hover); overflow: hidden; }
 .mirrorBar.thin { height: 3px; flex-basis: 100%; }
 .mirrorBar span { display: block; height: 100%; background: var(--accent); transition: width var(--dur-slow) ease; }
