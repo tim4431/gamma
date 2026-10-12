@@ -5,7 +5,8 @@ import json
 import urllib.parse
 from urllib.request import Request as URLRequest
 
-from .base import Protocol, as_int, attach_index, note_speed, parse_tool_args, served_speed_name, turn_images
+from .base import (Protocol, as_int, attach_index, note_speed, parse_tool_args, served_speed_name, turn_files,
+                   turn_images)
 
 API_VERSION = "2023-06-01"
 # Fast mode is a beta: the flag rides with the ``speed`` parameter. Only some
@@ -53,11 +54,28 @@ def _with_breakpoints(body: dict) -> dict:
     return body
 
 
-def _messages(messages) -> list:
+def _user_content(message, pdf_b64s=(), images=()):
+    """A user turn's content: its own PDFs, then the request's, its
+    pictures, then the request's, and the text last — the plain text when
+    there is nothing else."""
+    files = [*turn_files(message), *(pdf_b64s or [])]
+    pictures = [*turn_images(message), *(images or [])]
+    if not files and not pictures:
+        return message["content"]
+    return [
+        *[{"type": "document", "source": {"type": "base64", "media_type": "application/pdf", "data": data}}
+          for data in files],
+        *[_image_part(media_type, data) for media_type, data in pictures],
+        {"type": "text", "text": message["content"]},
+    ]
+
+
+def _messages(messages, target=None, pdf_b64s=None, images=None) -> list:
     """Map the common turn list to Anthropic content blocks: tool results are
     tool_result blocks in a user turn (consecutive ones coalesced — they must
     directly follow the assistant's tool_use turn), tool calls become tool_use
-    blocks after the assistant's text."""
+    blocks after the assistant's text. The request's own attachments go on
+    ``target``, the turn attach_index names."""
     out = []
     for m in messages:
         if m["role"] == "tool":
@@ -78,12 +96,8 @@ def _messages(messages) -> list:
             out.append({"role": "assistant", "content": content})
         else:
             content = m["content"]
-            pictures = turn_images(m)
-            if pictures and not isinstance(content, list):
-                # An earlier message's pictures, kept in the conversation:
-                # image blocks before the turn's text, as on the request's own.
-                content = [*[_image_part(media_type, data) for media_type, data in pictures],
-                           {"type": "text", "text": content}]
+            if m["role"] == "user":
+                content = _user_content(m, pdf_b64s, images) if m is target else _user_content(m)
             prev = out[-1] if out else None
             if (m["role"] == "user" and prev and prev["role"] == "user"
                     and isinstance(prev["content"], list)
@@ -113,18 +127,9 @@ class Anthropic(Protocol):
 
     def request(self, conf, messages, system, model, pdf_b64s=None, effort="",
                 max_tokens=8192, images=None, stream=False, tools=None, cache_key="", speed=""):
-        messages = [dict(m) for m in messages]  # attachment injection must not mutate the caller's turn list
-        if pdf_b64s or images:
-            last = messages[attach_index(messages)]
-            last["content"] = [
-                *[{"type": "document",
-                   "source": {"type": "base64", "media_type": "application/pdf", "data": data}}
-                  for data in (pdf_b64s or [])],
-                *[_image_part(media_type, data) for media_type, data in (images or [])],
-                {"type": "text", "text": last["content"]},
-            ]
+        target = messages[attach_index(messages)] if (pdf_b64s or images) and messages else None
         body = {"model": model, "max_tokens": max_tokens, "system": system,
-                "messages": _messages(messages)}
+                "messages": _messages(messages, target, pdf_b64s, images)}
         if tools:
             body["tools"] = [t["hosted"] if t.get("hosted") else
                              {"name": t["name"], "description": t["description"],

@@ -421,7 +421,8 @@ _SYSTEM_PROMPT = (
     "pages of nested notes, some of which carry a PDF attachment (a paper, a book, "
     "lecture notes). The context you are given is one or more of those pages — each "
     "with its title, properties, the user's own notes and highlights, and, for a page "
-    "with a PDF, the document's extracted text, which is usually an EXCERPT, not the "
+    "with a PDF, either the PDF file itself (attached to the conversation's first "
+    "message) or the document's extracted text, which is usually an EXCERPT, not the "
     "whole document. Anything you state as being in THESE pages or their documents — "
     "a number, a parameter, a method, a result — must come from text you have actually "
     "read here. Never fill such a gap from your knowledge of similar papers: a value "
@@ -1682,9 +1683,8 @@ def _chat_prompt(ws: str, payload, scope: dict, tools, allow_native: bool, drop:
     the turn's text names each one. ``pictures_ok`` false (a model that
     reads text only) sends none and says how many were left out."""
     crops = []
-    pdf_b64s, context, coverage, message_context = _gather_inputs(ws, payload, allow_native,
-                                                                  crops=crops if pictures_ok else None,
-                                                                  notes_seen=scope.get("read_texts"))
+    pdf_b64s, context, coverage, message_context, document_pdfs = _gather_inputs(
+        ws, payload, allow_native, crops=crops if pictures_ok else None, notes_seen=scope.get("read_texts"))
     # The tools and the agent prompt know what the context already holds
     # (read_page never repeats it; the prompt names the pages to read).
     scope["coverage"] = coverage
@@ -1707,14 +1707,18 @@ def _chat_prompt(ws: str, payload, scope: dict, tools, allow_native: bool, drop:
                                           and k.get("page_id") == entry.get("page_id")])
     # Agent chats replay each saved reply's tool calls/results so the
     # model keeps what it already listed/read/changed across turns.
+    # The pages' PDFs ride with the document context on the oldest kept turn,
+    # the uploaded ones with this message (the wires' pdf_b64s).
     messages = _build_messages(payload, context, with_tools=bool(tools), located=located,
-                               message_context=message_context, drop_turns=drop, picture_lines=lines)
+                               message_context=message_context, drop_turns=drop, picture_lines=lines,
+                               files=document_pdfs)
     # A custom prompt always applies; the built-in one only when there's a document
-    system = (payload.system or "").strip()[:8000] or (_SYSTEM_PROMPT if (context or pdf_b64s) else "")
+    documents = context or pdf_b64s or document_pdfs
+    system = (payload.system or "").strip()[:8000] or (_SYSTEM_PROMPT if documents else "")
     # Appended whenever a document is in context, custom system prompt or
     # not: the clickable-citation link shape (docs/dev/pdf_citations.md),
     # the text the MCP adapter's instructions share.
-    if context or pdf_b64s:
+    if documents:
         system += "\n\n" + CITATION_PROMPT
     # Always: the fences the reply view draws as figures (docs/dev/diagrams.md).
     system = (system + "\n\n" if system else "") + FIGURE_PROMPT
@@ -1905,8 +1909,8 @@ def ai_chat(payload: AIChatRequest, request: Request):
 
     def open_with_fallback(stream):
         """Open the upstream call; if the provider refuses native PDF parts
-        (a 4xx before any bytes — the ChatGPT backend always does, compatible
-        servers may), retry with extracted text. Auth and rate-limit failures
+        (a 4xx before any bytes — compatible servers may), retry with
+        extracted text. Auth and rate-limit failures
         aren't about the PDF and are raised as they are. A provider that
         rejected native parts and then succeeded as text is remembered, so
         later requests skip the wasted multi-MB upload. A prompt the
@@ -1930,7 +1934,8 @@ def ai_chat(payload: AIChatRequest, request: Request):
                         log.info(f"[ai_chat] prompt too long for the provider, retrying with "
                                  f"{state['drop']} oldest turns left out")
                         continue
-                    if not (native and pdf_b64s and 400 <= e.status < 500
+                    sent_files = pdf_b64s or any(m.get("files") for m in messages)
+                    if not (native and sent_files and 400 <= e.status < 500
                             and e.status not in (401, 403, 429)):
                         raise
                     too_long = failure_kind(e) == "too_long"

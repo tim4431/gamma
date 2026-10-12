@@ -1162,7 +1162,6 @@
   "Fri": "周五",
   "From Zotero, Obsidian, Logseq, Notion or a Markdown folder.": "从 Zotero、Obsidian、Logseq、Notion 或 Markdown 文件夹导入。",
   "From: {page_title}": "来自：{page_title}",
-  "Full PDF": "完整 PDF",
   "Full PDF file is sent with each message (model sees figures & tables). Click to switch to extracted text only.": "每条消息都会发送完整的 PDF 文件（模型能看到图和表）。点击切换为仅发送提取的文本。",
   "Full panel": "完整面板",
   "Full panel: grouped result lists": "完整面板：分组的结果列表",

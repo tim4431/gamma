@@ -1446,14 +1446,14 @@ export async function settingsScenarios(env) {
     }
   });
 
-  await step("settings: the composer's mic shows only when a connection can transcribe; Full PDF only with a PDF in context", async () => {
+  await step("settings: the composer's mic shows only when a connection can transcribe; the PDF switch only with a PDF in context", async () => {
     for (const transcribe of [false, true]) {
       const { ctx, page } = await setup(undefined, (c) => fakeAiModels(c, { ...FAKE_AI_MODELS, transcribe }));
       try {
         const chip = page.getByRole("button", { name: "Model, reasoning effort and speed", exact: true });
         await chip.waitFor();
         assertEq(await page.getByRole("button", { name: "Start dictation" }).count(), transcribe ? 1 : 0, `mic with transcribe=${transcribe}`);
-        assertEq(await page.getByRole("button", { name: "Full PDF" }).count(), 0, "no PDF in the library's context");
+        assertEq(await page.getByRole("button", { name: "PDF", exact: true }).count(), 0, "no PDF in the library's context");
         await chip.click();
         await page.locator(".uiSelectMenu").getByRole("button", { name: "high", exact: true }).click();
         await until(async () => (await chip.innerText()).includes("model · high"), { what: "the chip names the effort" });

@@ -562,14 +562,14 @@ export default function ChatDock({
   const [chatFindOpen, setChatFindOpen] = useState(false);
   const [chatFind, setChatFind] = useState("");
   const [chatFindIdx, setChatFindIdx] = useState(0);
-  // On by default for a conversation that hasn't seen this document yet;
-  // derived from the loaded history below, so a refresh can't re-enable it
-  // after the PDF was already sent (re-sending re-bills the whole file).
+  // On by default: every message then carries the PDF, which the server
+  // keeps at the head of the conversation so the provider's prompt cache
+  // serves it after the first message. Derived from the loaded history
+  // below: on while the latest message carried this document.
   const [attachPdf, setAttachPdf] = useState(false);
-  // Whether the active model's provider takes the PDF file itself. The
-  // ChatGPT sign-in wire (Codex backend) refuses file parts — the server
-  // falls back to extracted text — so there the PDF button must not
-  // default on, and turning it on by hand gets a warning, not silence.
+  // Whether the active model's provider takes the PDF file itself. Where it
+  // doesn't, the server falls back to extracted text, so the PDF button
+  // must not default on, and turning it on by hand gets a warning, not silence.
   const activeModel = (aiInfo?.models || []).find((m) => m.id === chatModel) || null;
   // The header's model list is scoped to the active key (Settings → AI ›
   // Connections); the first key's when none is selected or the selected one is gone.
@@ -603,7 +603,7 @@ export default function ChatDock({
   }, [nativePdf]);
   // Extra chat context: selected PDF pages + whether to include notes/highlights.
   const [chatDocs, setChatDocs] = useState([]);
-  // The Full PDF switch shows only while a PDF is in context: the open
+  // The PDF switch shows only while a PDF is in context: the open
   // page's, or an attached page's.
   const pdfInContext = !!pageAttach || chatDocs.some((id) => pageAttachment(homeBlocks.find((b) => b.id === id)));
   const [chatIncludeNotes, setChatIncludeNotes] = useState(false);
@@ -655,11 +655,12 @@ export default function ChatDock({
   };
 
   // Show a conversation that came from the server (bucket switch, or a
-  // history entry opened). PDF button: on until this document has been sent
-  // in THIS conversation, then off. Messages record the doc ids they carried
-  // (pdfDocs); older saves only have display names — treat any sent PDF as
-  // covering the current one. The composer is left alone: a bucket switch
-  // empties it up front, so a draft typed while the stored copy loads stays.
+  // history entry opened). PDF button: on for a conversation without
+  // messages, else as the latest message left it — on when it carried this
+  // document. Messages record the doc ids they carried (pdfDocs); older
+  // saves only have display names — treat any sent PDF as covering the
+  // current one. The composer is left alone: a bucket switch empties it up
+  // front, so a draft typed while the stored copy loads stays.
   function showLoaded(msgs, title) {
     setChatMessages(msgs);
     const lastUser = [...msgs].reverse().find((m) => m.role === "user");
@@ -667,13 +668,13 @@ export default function ChatDock({
     setChatDocs(references);
     setChatIncludeNotes(!!lastUser?.includeNotes);
     setChatTitle(title || "");
-    const sent = msgs.some((m) => m.pdfDocs
-      ? (docId && m.pdfDocs.includes(docId)) || m.pdfDocs.includes(focusedBlockId)
-        || (!docId && references.some((id) => m.pdfDocs.includes(id)
-          || m.pdfDocs.includes(pageAttachment(homeBlocks.find((b) => b.id === id))?.id)))
-      : m.pdfs?.length);
+    const carried = !lastUser || (lastUser.pdfDocs
+      ? (docId && lastUser.pdfDocs.includes(docId)) || lastUser.pdfDocs.includes(focusedBlockId)
+        || (!docId && references.some((id) => lastUser.pdfDocs.includes(id)
+          || lastUser.pdfDocs.includes(pageAttachment(homeBlocks.find((b) => b.id === id))?.id)))
+      : !!lastUser.pdfs?.length);
     attachPdfManualRef.current = false;
-    setAttachPdf(!sent && nativePdf);
+    setAttachPdf(carried && nativePdf);
   }
 
   // The bucket whose stored conversation has been read (or failed to): an
@@ -816,7 +817,7 @@ export default function ChatDock({
     setChatIncludeNotes(false);
     setChatTitle("");
     attachPdfManualRef.current = false;
-    setAttachPdf(nativePdf); // new chat: first question carries the full PDF again (where the provider takes it)
+    setAttachPdf(nativePdf); // new chat: the full PDF goes again (where the provider takes it)
     setHistory(null);
   }
 
@@ -927,7 +928,8 @@ export default function ChatDock({
   // Attach picked/pasted files: pictures are stored at once, sized for the
   // model (POST /api/ai/pictures — the message keeps the URL, so the
   // picture outlives this tab and stays in the conversation), PDFs become
-  // one-shot native attachments (same as the library PDF button).
+  // native attachments of the next message only (the library PDF button's
+  // files go with every message instead).
   function addChatFiles(files, { pasted = false } = {}) {
     for (const f of files) {
       if (isPdfFile(f)) {
@@ -1168,9 +1170,6 @@ export default function ChatDock({
     chatStickRef.current = true; // sending always snaps back to the bottom
     const ctrl = new AbortController();
     if (!session.start(sendKey, [...prevMessages, userMsg], chatTitle, ctrl)) return;
-    // One-shot semantics: the PDF went with this message; don't silently
-    // re-upload (and re-bill) it on every follow-up.
-    if (sendingPdf) setAttachPdf(false);
     let acc = ""; // streamed reply so far — kept on Stop
     const actions = []; // organizer mutations streamed for this reply
     let coverage = null; // {"context": [...]} — what the model was given, per document
@@ -2000,7 +1999,7 @@ export default function ChatDock({
       </div>
       {!readOnly ? (
       // One box: the context chips on top, the message at full
-      // width, then a toolbar — [+], the Full PDF switch while a PDF is in
+      // width, then a toolbar — [+], the PDF switch while a PDF is in
       // context, the model chip (with reasoning effort), the mic when a
       // connection can transcribe, send / stop. While recording the text
       // and the toolbar give way to the waveform row. Its buttons never
@@ -2183,7 +2182,7 @@ export default function ChatDock({
                 ? t("Full PDF file is sent with each message (model sees figures & tables). Click to switch to extracted text only.") : t("Send the full PDF file with your messages so the model sees figures & tables (uses more tokens). Click to enable.")}
           >
             <FileIcon size={14} />
-            {t("Full PDF")}
+            {t("PDF")}
           </button> : null}
           {attachPdf && pdfInContext && !nativePdf && !aiOff ? (
             <button type="button" className="chatAttachToggle chatPdfToggle chatPdfWarn"

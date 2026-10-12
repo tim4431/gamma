@@ -122,7 +122,7 @@ def test_context_deduplicates_and_rejects_non_pages(org):
     c, ids = org
     child = c.post("/api/blocks", json={"parent_id": ids["note"], "content": "not a page"}).json()["id"]
     payload = AIChatRequest(prompt="read", pages=[ids["note"], ids["note"], child, "missing"])
-    _, context, coverage, _ = gather_inputs(ids["ws"], payload, False)
+    _, context, coverage, _, _ = gather_inputs(ids["ws"], payload, False)
     assert context.count(f"Gamma page ID: {ids['note']}") == 1
     assert f"Gamma page ID: {child}" not in context
     assert len(coverage) == 1
@@ -145,7 +145,7 @@ def test_pdf_references_preserve_selection_metadata_and_budget(org, monkeypatch)
     payload = AIChatRequest(prompt="Compare", page_id=ids["a"],
         pages=[ids["a"], ids["note"], "missing"], selection="cavity results",
         multi_context_char_limit=6000, agent_scope="page")
-    _, context, coverage, message_context = ai_context.gather_inputs(ids["ws"], payload, False)
+    _, context, coverage, message_context, _ = ai_context.gather_inputs(ids["ws"], payload, False)
     # The windows around the selection skip the head slice (the document
     # context carries the head) and ride with the message, not the pages.
     assert calls == [(["cavity results"], 3000, False)]
@@ -157,7 +157,7 @@ def test_pdf_references_preserve_selection_metadata_and_budget(org, monkeypatch)
     assert coverage[0]["page_id"] == ids["a"] and coverage[1]["page_id"] == ids["note"]
     assert not coverage[0]["notes"] and coverage[1]["notes"]
     payload.include_notes = True
-    _, context, coverage, _ = ai_context.gather_inputs(ids["ws"], payload, False)
+    _, context, coverage, _, _ = ai_context.gather_inputs(ids["ws"], payload, False)
     assert "private annotation" in context and coverage[0]["notes"]
 
 

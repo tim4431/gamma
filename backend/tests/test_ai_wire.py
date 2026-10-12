@@ -397,6 +397,51 @@ def test_build_messages_leaves_out_the_oldest_turns():
     assert [m["content"] for m in build_messages(payload(history), "", drop_turns=9)] == ["now do it"]
 
 
+def test_build_messages_keeps_the_pdfs_with_the_document_context():
+    """A Full PDF chat's files ride with the document part: on the oldest
+    user turn on every request, on the one turn without history, and with
+    the document part to the oldest kept question when old turns go."""
+    history = [{"role": "user", "text": "q1"}, {"role": "ai", "text": "a1"},
+               {"role": "user", "text": "q2"}, {"role": "ai", "text": "a2"}]
+    messages = build_messages(payload(history), "DOC", files=["PDF"])
+    assert messages[0]["files"] == ["PDF"] and "DOC" in messages[0]["content"]
+    assert not any(m.get("files") for m in messages[1:])
+    (only,) = build_messages(payload([]), "DOC", files=["PDF"])
+    assert only["files"] == ["PDF"]
+    messages = build_messages(payload(history), "DOC", drop_turns=2, files=["PDF"])
+    assert messages[0]["files"] == ["PDF"] and messages[0]["content"].endswith("User question: q2")
+
+
+def test_document_pdfs_keep_the_conversation_head_identical_on_every_wire():
+    """The head of a Full PDF chat (the oldest turn and its files) goes out
+    the same on the second message as on the first, on every wire, which is
+    what the providers' prompt caches match; the request's own uploads and
+    pictures ride on the newest turn, and on a turn that has files of its
+    own they come after them."""
+    head = {"role": "user", "content": "DOC\n\nUser question: q1", "files": ["UERG"]}
+    later = [{"role": "assistant", "content": "a1"}, {"role": "user", "content": "q2"}]
+    wires = {
+        "anthropic": (anthropic_request, lambda b: b["messages"][0], lambda b: b["messages"][-1],
+                      ["document", "image", "text"]),
+        "openai": (openai_request, lambda b: b["messages"][1], lambda b: b["messages"][-1],
+                   ["file", "image_url", "text"]),
+        "openai-responses": (openai_responses_request, lambda b: b["input"][0], lambda b: b["input"][-1],
+                             ["input_file", "input_image", "input_text"]),
+        "chatgpt": (chatgpt_request, lambda b: b["input"][0], lambda b: b["input"][-1],
+                    ["input_file", "input_image", "input_text"]),
+    }
+    for name, (build, oldest, newest, kinds) in wires.items():
+        one = json.loads(build(CONF, [dict(head)], "sys", "m").data)
+        two = json.loads(build(CONF, [dict(head), *later], "sys", "m",
+                               pdf_b64s=["QUJD"], images=[("image/png", "SU1H")]).data)
+        assert oldest(one) == oldest(two), name
+        assert [p["type"] for p in oldest(one)["content"]] == kinds[0::2], name
+        assert [p["type"] for p in newest(two)["content"]] == kinds, name
+    body = json.loads(chatgpt_request(CONF, [dict(head)], "sys", "m", pdf_b64s=["QUJD"]).data)
+    assert [(p["type"], p.get("filename")) for p in body["input"][0]["content"]] == [
+        ("input_file", "document-1.pdf"), ("input_file", "document-2.pdf"), ("input_text", None)]
+
+
 def test_elide_live_results_is_a_valve_that_keeps_the_last_rounds():
     """Within one reply the rounds' results stay whole until they outgrow
     the budget; then the oldest become the replay's stub (pictures dropped),

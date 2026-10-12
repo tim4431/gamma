@@ -98,9 +98,20 @@ def turn_images(message) -> list:
     return list(message.get("images") or []) if message.get("role") == "user" else []
 
 
+def turn_files(message) -> list:
+    """The PDFs a common user turn carries (``files``, base64): the library
+    PDFs of a Full PDF chat, on the turn that holds the document context
+    (ai_context.build_messages). They stay there on every request, so the
+    conversation's head reads the same and the provider's prompt cache keeps
+    it. A wire puts them first in the turn, before its pictures and the
+    request's own attachments (``request(pdf_b64s=, images=)``)."""
+    return list(message.get("files") or []) if message.get("role") == "user" else []
+
+
 def attach_index(messages) -> int:
-    """Index of the message attachments ride on: the last plain user turn
-    (tool-result entries can follow it in agent rounds)."""
+    """Index of the message the request's own attachments ride on: the last
+    plain user turn (tool-result entries can follow it in agent rounds). They
+    go after the turn's own files and pictures, right before its text."""
     for index in range(len(messages) - 1, -1, -1):
         if messages[index]["role"] == "user":
             return index
