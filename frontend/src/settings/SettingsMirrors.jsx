@@ -22,7 +22,7 @@ import {
   AlertCircleIcon, ArrowDownIcon, ArrowUpDownIcon, CheckIcon, CloudDownloadIcon, CloudIcon, CloudOffIcon, HardDriveIcon, LinkIcon,
   MoreIcon, PlusIcon, RefreshIcon, TrashIcon, UnlinkIcon, UploadIcon,
 } from "../shared/ui/Icons";
-import { clock, hostOf, isPublication, isPullOnly, mirrorState, n, roundSummary } from "../collaboration/MirrorPopover";
+import { clock, hostOf, isPublication, isPullOnly, mirrorState, n, roundSummary, versionGap } from "../collaboration/MirrorPopover";
 import { ConflictCard, useConflicts } from "../collaboration/MergeResolver";
 import { T, t } from "../shared/i18n/i18n.js";
 
@@ -59,6 +59,8 @@ export function mirrorStatusLine(m) {
       : t("syncing…");
     return `${pages}${file}`;
   }
+  const gap = versionGap(m);
+  if (gap) return gap === "here" ? t("paused · update this Gamma to sync again") : t("paused · sync resumes once the remote is updated");
   if (s.last_error) return t("problem: {error}", { error: s.last_error });
   if (!s.last_sync) return s.interrupted ? t("interrupted · continues at the next round") : t("not cloned yet");
   if (m.pending_local) return t("local edits not pushed yet · up to date {last_sync}", { last_sync: clock(s.last_sync) });
@@ -74,7 +76,8 @@ function useSyncNow(refresh, setStatus) {
     try {
       const d = await apiJson(`${API}/mirrors/${encodeURIComponent(m.workspace_id)}/sync?wait=1`, { method: "POST" });
       const s = d.status || {};
-      setStatus?.(s.last_error ? t("Sync problem: {last_error}", { last_error: s.last_error })
+      setStatus?.(versionGap(d) ? mirrorState(d).title
+        : s.last_error ? t("Sync problem: {last_error}", { last_error: s.last_error })
         : t("Up to date — {side}.", { side: roundSummary(s) || t("nothing had changed on either side") }));
     } catch (err) {
       setStatus?.(t("Sync failed: {message}", { message: err.message }));
@@ -249,7 +252,7 @@ export function MirrorsSection({ mirrors, refresh, workspaces, currentId, switch
             {current ? <span className="uiTag">{t("open")}</span> : null}
             {pullOnly ? <span className="uiTag" title={t("The remote's changes arrive here; yours stay here until you switch to two-way")}>{t("receive only")}</span> : null}
             {detached ? <span className="uiTag">{t("detached")}</span> : null}
-            {!detached && s.last_error ? <span className="uiTag warn">{t("problem")}</span> : null}
+            {!detached && s.last_error ? <span className="uiTag warn">{versionGap(m) ? t("update needed") : t("problem")}</span> : null}
             {!detached && !s.last_error && m.pending_local ? <span className="uiTag pending" title={t("Local edits the next round pushes")}>{t("unpushed edits")}</span> : null}
             {m.conflicts_open ? <span className="uiTag warn">{n(m.conflicts_open, "conflict")}</span> : null}
           </span>
@@ -369,7 +372,7 @@ export function PublishingSection({ mirrors, refresh, currentId, closeSettings, 
           <span className="aiProvName">
             {nameOf(m)}
             {current ? <span className="uiTag">{t("open")}</span> : null}
-            {s.last_error ? <span className="uiTag warn">{t("problem")}</span> : null}
+            {s.last_error ? <span className="uiTag warn">{versionGap(m) ? t("update needed") : t("problem")}</span> : null}
             {!s.last_error && m.pending_local ? <span className="uiTag pending" title={t("Local edits the next round sends")}>{t("unsynced edits")}</span> : null}
             {m.conflicts_open ? <span className="uiTag warn">{n(m.conflicts_open, "conflict")}</span> : null}
           </span>

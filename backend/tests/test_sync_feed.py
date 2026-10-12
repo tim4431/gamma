@@ -7,7 +7,7 @@ again comes again at its new place."""
 from fractional_indexing import generate_key_between
 
 from conftest import account_of, guest_name, login, make_page, make_user, workspace_of
-from gamma import ops
+from gamma import migrations, ops
 from gamma.db import connect_pages_db
 
 
@@ -61,7 +61,8 @@ def test_feed_lists_changed_and_deleted_pages_with_their_seq(guest):
 def test_a_change_is_listed_once(guest):
     a, b = make_page(guest, "Once A"), make_page(guest, "Once B")
     cursor = _caught_up(guest)
-    assert _feed(guest, cursor) == {"since": cursor, "cursor": cursor, "more": False, "pages": [], "deleted": []}
+    assert _feed(guest, cursor) == {"since": cursor, "cursor": cursor, "more": False, "pages": [], "deleted": [],
+                                    "format": migrations.workspace_format()}
     _insert(guest, a["id"], "sfOnce1")
     once = _feed(guest, cursor)
     assert _ids(once) == [a["id"]]

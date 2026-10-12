@@ -32,7 +32,7 @@ import { MenuItem } from "../shared/ui/Menus";
 import { T, t } from "../shared/i18n/i18n.js";
 import {
   ActivityIcon, AlertCircleIcon, ArrowDownIcon, ArrowLeftIcon, ArrowUpDownIcon, ArrowUpIcon, CheckIcon,
-  ClockIcon, CloudDownloadIcon, ExternalLinkIcon, HandIcon, HistoryIcon, LinkIcon, PenIcon, RefreshIcon,
+  ClockIcon, CloudDownloadIcon, DownloadIcon, ExternalLinkIcon, HandIcon, HistoryIcon, LinkIcon, PenIcon, RefreshIcon,
   SettingsIcon, TrashIcon, UnlinkIcon, UploadIcon,
 } from "../shared/ui/Icons";
 
@@ -128,9 +128,19 @@ export function hostOf(url) {
   try { return new URL(url).host; } catch { return url || ""; }
 }
 
+// Which side must be updated before a paused clone syncs again: "here" or
+// "remote" when the last round stopped because the two servers keep the
+// workspace's data in different shapes (the status's `version_gap`, one of
+// them runs a release with a migration the other lacks), else null.
+export function versionGap(info) {
+  const g = info?.status?.version_gap;
+  if (!g) return null;
+  return g.here < g.remote ? "here" : "remote";
+}
+
 // The clone's state, one reading for the pill, its popover and the
-// Settings row: `state` (detached | busy | conflicts | error | new |
-// pending | ok), `tone` (the colour), `Icon`, a short `text`, the longer
+// Settings row: `state` (detached | busy | outdated | conflicts | error |
+// new | pending | ok), `tone` (the colour), `Icon`, a short `text`, the longer
 // `title`; `badge` (a count) or `dot` for the pill; `stats` when up to
 // date; `detail` (the page being worked) while a round runs. `pending`
 // adds local edits the client knows about before the server does.
@@ -145,6 +155,15 @@ export function mirrorState(info, { busy = false, pending = false } = {}) {
     return { state: "busy", tone: "busy", Icon: RefreshIcon,
       text: `${p?.first ? t("Cloning") : t("Syncing")}${p?.total ? ` ${p.done} / ${p.total}` : "…"}`,
       detail: p?.page || "", title: T("A round is running") };
+  }
+  const gap = versionGap(info);
+  if (gap === "here") {
+    return { state: "outdated", tone: "warn", Icon: DownloadIcon, dot: true, text: t("Paused · update Gamma"),
+      title: t("The remote runs a newer version of Gamma. Sync is paused until you update this one; your edits stay here and go out then.") };
+  }
+  if (gap === "remote") {
+    return { state: "outdated", tone: "warn", Icon: ClockIcon, dot: true, text: t("Paused · the remote needs an update"),
+      title: t("The remote runs an older version of Gamma. Sync is paused until it is updated; your edits stay here and go out then.") };
   }
   if (info?.conflicts_open) {
     return { state: "conflicts", tone: "warn", Icon: RefreshIcon, badge: info.conflicts_open,
@@ -229,6 +248,7 @@ function StateBlock({ info, busy, pending, onConflicts }) {
           ) : null}
         </div>
         {st.tone === "busy" ? <Progress progress={p} /> : null}
+        {st.state === "outdated" ? <div className="popoverHint">{st.title}</div> : null}
       </div>
     </div>
   );

@@ -358,6 +358,7 @@ function PublishSection({ state, busy, error, copied, onCopy, canEdit, onPublish
                 <RefreshIcon size={14} />
               </button>
             </div>
+            {st.state === "outdated" ? <div className="popoverHint">{st.title}</div> : null}
           </div>
         </div>
       ) : null}

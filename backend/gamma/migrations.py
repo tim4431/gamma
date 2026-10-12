@@ -135,6 +135,14 @@ def _newest_step() -> int:
     return max(v for v, _, _ in STEPS + WORKSPACE_STEPS)
 
 
+def workspace_format() -> int:
+    """The shape of what a workspace's files hold: the newest step with a
+    workspace part (WS_VERSION_BASE below them). Two servers keeping copies
+    of one workspace in step must agree on it (gamma/sync_engine.py); a step
+    with a global part only leaves it as it is."""
+    return max([WS_VERSION_BASE, *(v for v, _, _ in WORKSPACE_STEPS)])
+
+
 def status() -> dict:
     """``{"version", "target", "fresh", "pending": [{"version", "name"}],
     "workspace_steps": [{"version", "name"}], "backups": [...]}`` for the

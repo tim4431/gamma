@@ -4,6 +4,7 @@ account follows it through the real HTTP API — the engine's transport is
 an in-process TestClient carrying the write token."""
 
 import io
+import json
 import time
 
 import pytest
@@ -11,7 +12,7 @@ from fastapi.testclient import TestClient
 from fractional_indexing import generate_key_between
 
 from conftest import account_of, login, make_user
-from gamma import sync_engine
+from gamma import migrations, sync_engine
 from gamma.db import connect_pages_db, ws_uploads_dir
 from gamma.integrations import create_token
 
@@ -343,6 +344,46 @@ def test_rounds_reuse_whoami_until_one_fails(monkeypatch):
     # the pill's conflict fingerprint rides on the mirror's answer
     info = local.client.get(f"/api/mirrors/{local.ws}").json()
     assert info["conflicts_open"] == 0 and info["conflicts_newest"] == 0
+
+
+def test_a_remote_with_another_data_format_pauses_the_round(monkeypatch):
+    """A remote whose feed names another workspace data format than this
+    server's (one of the two runs a release with a workspace migration step
+    the other lacks) neither gives nor gets anything: the round stops before
+    any write, its status says which side to update, local edits wait, and
+    the next round once the two agree carries both sides' changes."""
+    remote, local, _ = _pair()
+    page = remote.page("Formats")
+    remote.insert(page["id"], "fm1", "text")
+    _sync(local)
+    here = migrations.workspace_format()
+    assert remote.client.get("/api/sync/changes").json()["format"] == here
+    told = ["unset"]  # the format the remote's feed names: an int, None for none (a release before the check), "unset" as it is
+    inner = sync_engine.default_fetch
+
+    def fetch(method, path, body, headers):
+        code, content = inner(method, path, body, headers)
+        if path.startswith("/api/sync/changes") and told[0] != "unset":
+            out = {k: v for k, v in json.loads(content).items() if k != "format"}
+            content = json.dumps(out if told[0] is None else {**out, "format": told[0]}).encode()
+        return code, content
+
+    monkeypatch.setattr(sync_engine, "default_fetch", fetch)
+    remote.ops(page["id"], [{"op": "set", "id": "fm1", "content": "text (remote)"}])
+    local.insert(page["id"], "fm2", "made here")
+    for there, update in ((here + 1, "this server is updated"), (here - 1, "the remote is updated")):
+        told[0] = there
+        status = local.client.post(f"/api/mirrors/{local.ws}/sync?wait=1").json()["status"]
+        assert status["version_gap"] == {"here": here, "remote": there}
+        assert update in status["last_error"] and not status["running"]
+        assert local.texts(page["id"]) == {"fm1": "text", "fm2": "made here"}
+        assert remote.texts(page["id"]) == {"fm1": "text (remote)"}
+        info = local.client.get(f"/api/mirrors/{local.ws}").json()
+        assert info["pending_local"] is True and info["status"]["version_gap"]["remote"] == there
+    told[0] = None  # a remote from before the check names no format: synced as before
+    status = _sync(local)
+    assert "version_gap" not in status
+    assert local.texts(page["id"]) == remote.texts(page["id"]) == {"fm1": "text (remote)", "fm2": "made here"}
 
 
 def test_pull_only_with_a_read_token():

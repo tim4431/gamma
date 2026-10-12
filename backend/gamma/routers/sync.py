@@ -16,6 +16,9 @@ string the consumer keeps as it is (``""`` = from the start); one this log
 cannot have given out — not a count, or past its newest seq (a workspace
 put back from an older snapshot) — lists from the start again, which a
 consumer takes in its stride: it compares each page's ``seq`` with its own.
+Every answer names ``format``, the shape of the pages it lists
+(``migrations.workspace_format``): a copy kept by a server whose own differs
+must not take them (a mirror pauses, gamma/sync_engine.py).
 
 Members read it (viewers too); share links do not. The folder reads below
 are read the same way, by a session or an integration token of either
@@ -24,7 +27,7 @@ scope.
 
 from fastapi import APIRouter, HTTPException, Request
 
-from .. import folder_sync, workspaces
+from .. import folder_sync, migrations, workspaces
 from ..auth import require_ws, ws_role
 from ..blocks_store import folder_paths, newest_change_seq
 from ..db import connect_pages_db
@@ -35,8 +38,8 @@ MAX_LIMIT = 2000
 
 
 def changes(conn, since: str, limit: int) -> dict:
-    """The feed over an open pages.db: ``{since, cursor, more, pages: [{id,
-    created_at, updated_at, seq}], deleted: [{id, deleted_at, actor}]}``,
+    """The feed over an open pages.db: ``{since, cursor, more, format, pages:
+    [{id, created_at, updated_at, seq}], deleted: [{id, deleted_at, actor}]}``,
     at most ``limit`` entries after the cursor ``since``."""
     newest = newest_change_seq(conn)
     after = int(since) if since.isascii() and since.isdigit() and int(since) <= newest else 0
@@ -48,7 +51,7 @@ def changes(conn, since: str, limit: int) -> dict:
     more = len(rows) > limit
     rows = rows[:limit]
     out = {"since": since, "pages": [], "deleted": [], "more": more,
-           "cursor": str(rows[-1][1] if rows else after)}
+           "cursor": str(rows[-1][1] if rows else after), "format": migrations.workspace_format()}
     for page_id, _, kind, at, actor, created_at, updated_at, seq in rows:
         if kind == "deleted":
             out["deleted"].append({"id": page_id, "deleted_at": at, "actor": actor})
