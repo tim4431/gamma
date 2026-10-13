@@ -17,6 +17,7 @@ on:
       - ".github/workflows/cloud.yml"
       - ".claude/skills/update-account-server/**"
       - ".claude/skills/update-demo-server/**"
+      - ".claude/skills/update-share-host/**"
       - "docs/dev/cloud_accounts.md"
       - "sites/**"
       - ".github/workflows/site.yml"
