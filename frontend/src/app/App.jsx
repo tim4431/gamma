@@ -15,6 +15,7 @@ import { isActive } from "../tasks/taskModel.js";
 import { parseGammaLink } from "../shared/model/gammaLinks.js";
 import { pageHostUser, publicPath } from "../shared/lib/slug.js";
 import { API, apiJson, getShareToken, setShareView, withShare, withWorkspace, setCurrentWorkspace, getCurrentWorkspace, setLinkName, makeId, fmtBytes, getDocIdForUrl, isPdfFile, isMarkdownFile, PAGE_FILE_ACCEPT, metaSourceInfo, resolvePdfUrl, pdfProxyUrl, probePdfUrl, setExpectedUser, getExpectedUser, usePersistedState, usePersistedFlag, copyText, copyRich, readNdjson } from "../shared/lib/utils";
+import { ITEM_TYPES, itemTypeFields, itemTypeOf } from "../shared/lib/itemTypes.js";
 import {
   AutoGrowTextarea,
   BlockDropIndicator,
@@ -51,6 +52,7 @@ import { backdropPress, menuPress } from "../shared/ui/press.js";
 import { lastPointer, touchScreen } from "../shared/lib/pointer.js";
 import { pickFiles } from "../shared/lib/pickFiles.js";
 import { folderPick } from "../transfers/folderZip.js";
+import { bibliographyPreview } from "../transfers/exportApi";
 import { collectEntryFiles } from "../shared/lib/dropEntries.js";
 import { useWheelPan } from "../shared/ui/wheelPan";
 import {
@@ -281,8 +283,9 @@ function startFolderDrag(e, id) {
 }
 
 // Home sort and kind filter are per-view choices: {"": "updated", "<folder
-// id>": "title", "#<label id>": …} — a view without an entry inherits from
-// its nearest ancestor folder (root = "").
+// id>": "title", "#<label id>": …} (root = ""). A view without a sort of its
+// own inherits its nearest ancestor folder's; the kind filter falls back to
+// "all".
 const HOME_MAP_CODEC = {
   parse: (raw) => { try { const v = JSON.parse(raw); return v && typeof v === "object" ? v : undefined; } catch { return undefined; } },
   serialize: JSON.stringify,
@@ -825,7 +828,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // on scroll). Changing the sort only pins it for the folder being viewed;
   // folders without an explicit choice inherit from their nearest ancestor.
   // Sort and kind are per-VIEW: the key is the folder's id, or "#<label id>"
-  // in a label view. A view with no entry of its own inherits from its
+  // in a label view. A view with no sort of its own inherits from its
   // nearest ancestor folder ("" = library root); labels are flat, so they
   // inherit the root's choice.
   const homeScope = labelFilter ? `#${labelFilter}` : folderFilter;
@@ -840,10 +843,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // Home layout: "list" (block-style rows) or "grid" (icon tiles).
   const [homeView, changeHomeView] = usePersistedState("gamma-home-view", "list");
   // Kind filter: "all" (folders + files), "folders", "files", or "labels" (the
-  // labels used in this view, browsable like folders) — same per-view keying
-  // and inheritance as the sort above.
+  // labels used in this view, browsable like folders) — keyed per view like
+  // the sort, but not inherited: a view with no entry of its own shows "all".
   const [homeKindsMap, setHomeKindsMap] = usePersistedState("gamma-home-kinds-map", NO_VIEW_CHOICES, HOME_MAP_CODEC);
-  const homeKinds = useMemo(() => scopedPref(homeKindsMap, "all"), [homeKindsMap, homeScope, libTree]);
+  const homeKinds = homeKindsMap[homeScope] || "all";
   function changeHomeKinds(v) { setHomeKindsMap((m) => ({ ...m, [homeScope]: v })); }
   // Listing search box (left of the sort pill): live, per-view, not persisted —
   // matches float to the top of the current sort, the rest dim in place.
@@ -2507,7 +2510,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     language, setLanguage,
     fileLabels, setFileLabels,
     oaFallback, setOaFallback, metaAutoFetch, setMetaAutoFetch, pdfSaveLocal, setPdfSaveLocal,
-    embAnnots, setEmbAnnots,
+    embAnnots, setEmbAnnots, smoothWheel, setSmoothWheel,
     inkPenOnly, setInkPenOnly, inkAutoPen, setInkAutoPen, inkPressure, setInkPressure,
     inkTools, setInkTools, inkEraserMode, setInkEraserMode, inkEraserSize, setInkEraserSize,
     inkLassoMode, setInkLassoMode, textBoxStyle, setTextBoxStyle,
@@ -2994,6 +2997,21 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // --- Paper metadata (arXiv / DOI / AI) and citation export -----------------
   const [pageMeta, setPageMeta] = useState(null);   // properties.meta of the open page
   const [pageBibtex, setPageBibtex] = useState("");
+  // What the share popover's Copy BibTeX gives: the entry the .bib export
+  // prints (GET /api/bibliography, bibtex.page_entry), valid BibTeX however
+  // the stored entry (pageBibtex) was written. Asked for when the popover
+  // opens and again after an edit changes the stored entry.
+  const [printedBibtex, setPrintedBibtex] = useState("");
+  const sharedPageId = openPopover === "share" && shareTarget?.kind === "page" && pageMeta ? shareTarget.id : "";
+  useEffect(() => {
+    setPrintedBibtex("");
+    if (!sharedPageId) return undefined;
+    let live = true;
+    bibliographyPreview({ pageId: sharedPageId })
+      .then((data) => { if (live) setPrintedBibtex(data?.entries?.[0]?.text || ""); })
+      .catch(() => {});  // the stored entry stays on show
+    return () => { live = false; };
+  }, [sharedPageId, pageBibtex]);
   // Block ids with a metadata fetch in flight. Tracked per page (not one
   // boolean) so the button's spinner also covers the upload queue's fetches
   // and doesn't spin for a fetch that belongs to a different page.
@@ -5555,7 +5573,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     guideEvents.emit("home.opened");
   }
 
-  function closeTab(id) {
+  // Closing the open tab goes back to where you were: the latest page still
+  // open or library view in the tab history (a promise while a page opens).
+  // `refresh: false` leaves the library's refetch to the caller.
+  function closeTab(id, { refresh = true } = {}) {
     const next = openTabs.filter((t) => t.id !== id);
     updateTabs(next);
     // Closed tabs must never become a later close's return destination.
@@ -5564,13 +5585,13 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     const entry = [...tabHistoryRef.current].reverse().find((entry) =>
       !entry.blockId || next.some((tab) => tab.id === entry.blockId));
     if (entry?.blockId) {
-      openBlock(entry.blockId, { restoreScroll: true });
+      return openBlock(entry.blockId, { restoreScroll: true });
     } else if (entry) {
-      goHome();
+      goHome(refresh);
       openFolder(entry.folder);
       if (entry.label) openLabel(entry.label, entry.folder);
     } else {
-      goHome(true, true);
+      goHome(refresh, true);
     }
   }
 
@@ -7879,10 +7900,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
             <>
               <div className="citeHead"><span className="citeLabel">{t("BibTeX")}</span></div>
               <CopyBox
-                copied={copiedKey === "bibtex"} onCopy={() => copyFlash("bibtex", pageBibtex)}
+                copied={copiedKey === "bibtex"} onCopy={() => copyFlash("bibtex", printedBibtex || pageBibtex)}
                 title={t("Copy the BibTeX entry")} label={t("Copy BibTeX")}
               >
-                <pre className="bibtexPre">{pageBibtex}</pre>
+                <pre className="bibtexPre">{printedBibtex || pageBibtex}</pre>
               </CopyBox>
             </>
           ) : null}
@@ -8243,25 +8264,30 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                           >{metaBusy ? "…" : "↻"}</button>
                         </div>
                         <div className="metaTable">
-                          {/* Books swap the journal fields for publisher +
-                              ISBN; a journal field that does carry a value
-                              stays visible either way. */}
-                          {(() => {
-                            const isBook = pageMeta?.kind === "book" || !!(metaDraft?.publisher || metaDraft?.isbn);
-                            const journal = [[t("Venue"), "venue"], [t("Volume"), "volume"], [t("Pages"), "pages"]];
-                            return [
-                              [t("Title"), "title"],
-                              [t("Authors"), "authors"],
-                              ...(isBook
-                                ? [[t("Publisher"), "publisher"], [t("Year"), "year"], ["ISBN", "isbn"],
-                                   ...journal.filter(([, k]) => metaDraft?.[k])]
-                                : [journal[0], [t("Year"), "year"], journal[1], journal[2]]),
-                              ["DOI", "doi"],
-                              ["arXiv", "arxiv_id"],
-                            ];
-                          })().map(([label, key]) => (
+                          {/* The item type (Zotero's names) picks the BibTeX
+                              entry type and the rows below it: a chapter's
+                              venue is its book, a thesis's publisher its
+                              university. */}
+                          <div className="metaRow metaTypeRow">
+                            <span className="metaKey">{t("Type")}</span>
+                            <span className="metaVal metaValEdit">
+                              <MenuSelect
+                                value={metaDraft?.kind || itemTypeOf(pageMeta)}
+                                options={ITEM_TYPES}
+                                label={t("Item type")}
+                                onChange={(kind) => setMetaDraft((d) => ({ ...(d || metadataToDraft(pageMeta)), kind }))}
+                              />
+                            </span>
+                          </div>
+                          {[
+                            [T("Title"), "title"],
+                            [T("Authors"), "authors"],
+                            ...itemTypeFields(metaDraft?.kind || itemTypeOf(pageMeta), metaDraft),
+                            ["DOI", "doi"],
+                            ["arXiv", "arxiv_id"],
+                          ].map(([label, key]) => (
                             <div className="metaRow" key={key}>
-                              <span className="metaKey">{label}</span>
+                              <span className="metaKey">{t(label)}</span>
                               <span className="metaVal metaValEdit">
                                 <input
                                   className="metaInput"
@@ -8447,25 +8473,21 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                     confirmLabel: t("Delete"),
                     danger: true,
                     onConfirm: async () => {
+                      // Close the tab first, back to where you were, in place:
+                      // the server's `trashed` reaches the page socket with the
+                      // DELETE's answer, and on the page still open it would
+                      // put up the Recently deleted notice. The library drops
+                      // the page at once and refetches once it is gone.
+                      const id = focusedBlockId;
+                      setHomeBlocks((prev) => prev.filter((b) => b.id !== id));
+                      await closeTab(id, { refresh: false });
                       try {
-                        await apiJson(`${API}/blocks/${focusedBlockId}`, { method: "DELETE" });
-                      } catch {}
-                      // Close the page's tab too (write straight to storage +
-                      // server — we reload right after, so state updates and
-                      // debounced pushes wouldn't stick).
-                      try {
-                        if (prefsUserRef.current) {
-                          const nextTabs = openTabs.filter((t) => t.id !== focusedBlockId);
-                          localStorage.setItem(`gamma-tabs:${prefsUserRef.current}`, JSON.stringify(nextTabs));
-                          await apiJson(`${API}/prefs/open-tabs`, {
-                            method: "PUT",
-                            headers: { "Content-Type": "application/json" },
-                            body: JSON.stringify({ value: nextTabs }),
-                          });
-                        }
-                      } catch {}
-                      clearSession();
-                      window.location.href = "/";
+                        await apiJson(`${API}/blocks/${id}`, { method: "DELETE" });
+                        setStatus(t("Moved {n} page{_s} to Recently deleted.", { n: 1, _s: "" }));
+                      } catch (err) {
+                        setStatus(t("Delete failed: {message}", { message: err.message }));
+                      }
+                      fetchHomeBlocks();
                     },
                   })}
                 >
@@ -8656,7 +8678,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                   <KindToggle
                     value={homeKinds}
                     onChange={changeHomeKinds}
-                    scopeLabel={folderFilter ? t("Shown in this folder — subfolders inherit it") : t("Shown in the library — folders inherit it")}
+                    scopeLabel={folderFilter ? t("Shown in this folder") : t("Shown in the library")}
                   />
                 )}
                 <ViewToggle view={homeView} onChange={changeHomeView} />
@@ -10287,6 +10309,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
             <PdfViewer url={pdfUrl} highlights={highlights}
               citation={pdfCitation?.pageId === focusedBlockId ? pdfCitation : null}
               hideEmbeddedAnnots={embAnnots === "hide"}
+              smoothWheel={smoothWheel}
               darkPage={pdfDarkPage}
               translateKey={`${translateLang}|${translateSendModel}`}
               translateParallel={translateParallel}
@@ -10736,6 +10759,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           setPdfSaveLocal,
           embAnnots,
           setEmbAnnots,
+          smoothWheel,
+          setSmoothWheel,
           inkPenOnly,
           setInkPenOnly,
           inkAutoPen,

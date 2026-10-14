@@ -138,7 +138,7 @@ def seed_welcome(ws: str, *, actor: str, guest: bool = False) -> str | None:
                 attachment, _auto = attachment_props(doc_id, original_filename=_WELCOME_PDF_NAME)
                 # A record of its own, so opening the page looks nothing up
                 # (the tour works offline) and asks no AI for a citation.
-                props.update(attachment, meta={"title": document, "kind": "notes", "source": "manual"},
+                props.update(attachment, meta={"title": document, "kind": "document", "source": "manual"},
                              ppt_cite=f"Gamma, *{document}*")
             except Exception as e:  # noqa: BLE001 — the notes still make a Welcome page
                 log.warning(f"[seed] welcome PDF skipped: {e}")

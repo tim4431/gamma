@@ -28,7 +28,7 @@ from difflib import SequenceMatcher
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from .. import ai_usage, storage
+from .. import ai_usage, item_types, storage
 from .. import bibtex as bibtex_mod
 from ..ai_client import CallRefused, call_ai as _call_ai
 from ..ai_context import ensure_indexed as _ensure_indexed
@@ -402,6 +402,9 @@ def _arxiv_entry_meta(entry, arxiv_id: str = "", detail: bool = False) -> dict |
         "pages": "",
         "doi": (entry.findtext(f"{_ARXIV_NS}doi") or "").strip(),
         "arxiv_id": arxiv_id,
+        # A journal reference says the paper was published; without a DOI
+        # to follow (_published_record) it is all the record has.
+        "kind": "journalArticle" if journal_ref else "preprint",
         "source": "arxiv",
     }
     if detail:
@@ -460,6 +463,12 @@ def _arxiv_search(query: str, rows: int = 5, detail: bool = False) -> list[dict]
     return _arxiv_query(" AND ".join(f"all:{w}" for w in longest), rows, detail)
 
 
+# The item types whose citation names a publisher (a book's, a conference
+# proceedings', a thesis's university, a report's institution); doi.org's
+# publisher is kept on these and dropped on an article, which cites a journal.
+_PUBLISHED_BY = ("book", "bookSection", "conferencePaper", "thesis", "report")
+
+
 def _csl_authors(entries) -> list[str]:
     """Author names from a CSL JSON author list: "given family", or the name
     an organisation goes by (Crossref's ``name``, CSL's ``literal`` — the
@@ -483,6 +492,13 @@ def _csl_year(obj: dict) -> str:
     return str(first[0]) if first and first[0] else ""
 
 
+def _csl_pages(obj: dict) -> str:
+    """The pages of a CSL record, or its article number: APS, IOP and other
+    journals that number articles instead of paging them (Phys. Rev. A 78,
+    052101) carry the number as ``article-number`` and no ``page``."""
+    return str(obj.get("page") or obj.get("article-number") or "")
+
+
 def _csl_text(value) -> str:
     """A CSL title/container-title (a string, or a one-element list in the
     REST API) as plain text — Crossref keeps the publisher's markup and
@@ -497,9 +513,8 @@ def _fetch_doi(doi: str, with_bibtex: bool = True) -> tuple[dict | None, str]:
     """Metadata via doi.org content negotiation (works for Crossref and DataCite),
     plus the registrar's own BibTeX rendering (a second round trip — skipped
     by callers that only want the record, e.g. the extension's preview). The
-    record also carries the registry's ``work_type`` (the CSL/Crossref type:
-    ``journal-article``, ``proceedings-article``, ``book-chapter``, …),
-    which decides the BibTeX entry type a built entry gets."""
+    registry's work type becomes the record's ``kind`` (``item_types``), and
+    the publisher is kept for the kinds whose citation names one."""
     url = f"https://doi.org/{urllib.parse.quote(doi)}"
     try:
         data = json.loads(_http_get(url, accept="application/vnd.citationstyles.csl+json"))
@@ -521,38 +536,36 @@ def _fetch_doi(doi: str, with_bibtex: bool = True) -> tuple[dict | None, str]:
     subtitle = _csl_text(data.get("subtitle"))
     if subtitle and subtitle.lower() not in title.lower():
         title = f"{title}: {subtitle}"
-    work_type = str(data.get("type") or "").strip()
     meta = {
         "title": title,
         "authors": _csl_authors(data.get("author")),
         "year": _csl_year(data),
         "venue": _csl_text(data.get("container-title")),
         "volume": str(data.get("volume") or ""),
-        "pages": str(data.get("page") or ""),
+        "pages": _csl_pages(data),
         "doi": doi,
         "arxiv_id": "",
         "source": "doi",
     }
-    if work_type:
-        meta["work_type"] = work_type
-    if work_type in ("book", "monograph"):
-        # A DOI-registered book: keep it a book so BibTeX says @book.
-        isbns = data.get("ISBN") or []
-        meta.update({"kind": "book", "publisher": plain_text(data.get("publisher")),
-                     "isbn": str(isbns[0] if isinstance(isbns, list) and isbns else "")})
-    elif work_type in ("proceedings-article", "book-chapter", "dissertation", "report") and data.get("publisher"):
-        # The entry types built from these carry the publisher/institution.
+    kind = item_types.from_registry(data.get("type"))
+    if kind:
+        meta["kind"] = kind
+    if kind in _PUBLISHED_BY and data.get("publisher"):
         meta["publisher"] = plain_text(data.get("publisher"))
+    if kind in ("book", "bookSection"):
+        isbns = data.get("ISBN") or []
+        meta["isbn"] = str(isbns[0] if isinstance(isbns, list) and isbns else "")
     bibtex = ""
     if with_bibtex:
         try:
             bibtex = _http_get(url, accept="application/x-bibtex").decode("utf-8", "replace").strip()
         except Exception:
             pass
-    # Crossref prints its markup and entities into the BibTeX as they are
-    # ("Astronomy &amp; Astrophysics", "CsPbCl<sub>3</sub>"); as LaTeX they
-    # typeset, as printed they break the run.
-    return meta, bibtex_mod.clean_entry(bibtex)
+    # doi.org prints Crossref's markup, entities and MathML into its BibTeX as
+    # they are ("Astronomy &amp; Astrophysics", "CsPbCl<sub>3</sub>"), writes
+    # months no style defines (Sept, July) and leaves out an APS article
+    # number: stored as valid BibTeX, the number taken from the record.
+    return meta, bibtex_mod.normalize_entry(bibtex, meta)
 
 
 def _published_record(meta: dict) -> tuple[dict, str]:
@@ -590,7 +603,7 @@ def _crossref_search(query: str, rows: int = 5, detail: bool = False, from_year:
     (a Crossref type such as ``journal-article``) keeps that kind only."""
     if not (query or "").strip():
         return []
-    fields = "DOI,type,title,author,container-title,volume,page,issued" + (
+    fields = "DOI,type,title,author,container-title,volume,page,article-number,issued" + (
         ",abstract,is-referenced-by-count" if detail else "")
     narrow = ([f"from-pub-date:{int(from_year)}"] if from_year else []) + (
         [f"type:{work_type}"] if work_type else [])
@@ -615,13 +628,14 @@ def _crossref_search(query: str, rows: int = 5, detail: bool = False, from_year:
             "year": _csl_year(it),
             "venue": _csl_text(it.get("container-title")),
             "volume": str(it.get("volume") or ""),
-            "pages": str(it.get("page") or ""),
+            "pages": _csl_pages(it),
             "doi": str(it.get("DOI") or ""),
             "arxiv_id": "",
             "source": "crossref",
         })
-        if it.get("type"):
-            out[-1]["work_type"] = str(it["type"])
+        kind = item_types.from_registry(it.get("type"))
+        if kind:
+            out[-1]["kind"] = kind
         if detail:
             out[-1].update(abstract=plain_abstract(it.get("abstract")),
                            cited_by=it.get("is-referenced-by-count"))
@@ -677,21 +691,18 @@ def _verify_ai_meta(meta: dict, text: str, hints: str = "") -> tuple[dict, str]:
     if cand:
         better, bib = _fetch_doi(cand["doi"])
         return (better or cand), bib
-    if meta.get("kind") in ("book", "other"):
+    if item_types.item_type(meta) in ("book", "document"):
         # Crossref doesn't know most books. The AI read a title and an author
         # off the title page — let the book registries confirm they name a
-        # real book (and supply publisher, canonical title, ISBN).
+        # real book (and supply publisher, canonical title, ISBN). A
+        # "document" is asked too: the AI files a book it is unsure of there,
+        # and _pick_book_match accepts nothing short of a title-and-author
+        # match.
         first_author = (meta.get("authors") or [""])[0]
         cand = _pick_book_match(_book_search(meta.get("title", ""), first_author), text, ai_meta=meta)
         if cand:
             return cand, ""
     return meta, ""
-
-
-# Document kinds the AI classifier may report. Anything else (or a missing
-# kind, e.g. records cached before the field existed) is treated as "paper" —
-# the safe default, since only papers get the unverified-metadata warning.
-_DOC_KINDS = ("paper", "notes", "slides", "thesis", "book", "report", "other")
 
 
 def _ai_extract_meta(text: str, prompt: str, model: str, rt: dict) -> dict | None:
@@ -721,8 +732,7 @@ def _ai_extract_meta(text: str, prompt: str, model: str, rt: dict) -> dict | Non
     authors = data.get("authors") or []
     if isinstance(authors, str):
         authors = [a.strip() for a in re.split(r",| and ", authors) if a.strip()]
-    kind = str(data.get("kind") or "").strip().lower()
-    return {
+    meta = {
         "title": str(data.get("title") or "").strip(),
         "authors": [str(a).strip() for a in authors if str(a).strip()],
         "year": str(data.get("year") or "").strip(),
@@ -733,9 +743,12 @@ def _ai_extract_meta(text: str, prompt: str, model: str, rt: dict) -> dict | Non
         "arxiv_id": str(data.get("arxiv_id") or "").strip(),
         "publisher": str(data.get("publisher") or "").strip(),
         "isbn": re.sub(r"[^0-9Xx]", "", str(data.get("isbn") or "")).upper(),
-        "kind": kind if kind in _DOC_KINDS else "paper",
         "source": "ai",
     }
+    # A customised prompt may still answer the old kinds ("paper", "notes");
+    # an answer naming no type is read from the record's shape.
+    meta["kind"] = item_types.normalize(data.get("kind")) or item_types.infer(meta)
+    return meta
 
 
 def _make_ppt_cite(rt: dict, meta: dict | None, bibtex: str, prompt: str = "", model: str = "") -> str:
@@ -1028,10 +1041,11 @@ def fetch_page_metadata(ws: str, block_id: str, actor: str, prompt: str = "", mo
     # Stored with the record so every surface can warn before it is cited:
     # nothing tied the record to THIS document (an unconfirmed DOI/ISBN may
     # belong to a cited work; AI output may be a plausible hallucination).
-    # AI-read non-papers (notes, slides…) have no registry to verify against,
-    # so they are not flagged — there's nothing a warning could ask for.
+    # AI-read works no registry holds (theses, reports, slides, notes) are
+    # not flagged — there's nothing a warning could ask the user to check.
     meta["unverified"] = (not confirmed
-                          and not (meta.get("source") == "ai" and (meta.get("kind") or "paper") != "paper"))
+                          and not (meta.get("source") == "ai"
+                                   and item_types.item_type(meta) not in item_types.CHECKABLE))
     # The slide citation rides along: one AI call now, instead of on first
     # share. A failure here never fails the fetch — /metadata/cite retries.
     ppt_cite = ""
@@ -1068,8 +1082,10 @@ class MetaUpdateRequest(StorableBody):
 def metadata_update(payload: MetaUpdateRequest, request: Request):
     """Save hand-edited metadata. BibTeX is rebuilt from the edited fields
     (under the pinned citation key, if any) and the cached slide citation is
-    invalidated. All-blank fields clear the cached metadata entirely, the
-    pinned key with it."""
+    invalidated. ``meta.kind`` is the item type the popover's Type row
+    chose; one not sent (or not an item type) keeps the stored one. All-blank
+    fields clear the cached metadata entirely, the pinned key with it — the
+    type alone is not a record."""
     ws = require_ws(request, write=True)
     _, props = _load_page(ws, payload.block_id)  # 404 before validating the edit
     m = payload.meta or {}
@@ -1089,16 +1105,6 @@ def metadata_update(payload: MetaUpdateRequest, request: Request):
         "isbn": re.sub(r"[^0-9Xx]", "", str(m.get("isbn") or ""))[:13].upper(),
         "source": "manual",
     }
-    # The document kind survives a hand edit (a book stays @book); a hand
-    # edit is the user vouching for the record, so it is not "unverified".
-    kind = (props.get("meta") or {}).get("kind")
-    if kind in _DOC_KINDS:
-        meta["kind"] = kind
-    # So does the registry's work type: a conference paper stays an
-    # @inproceedings after its title is corrected.
-    work_type = str((props.get("meta") or {}).get("work_type") or "").strip()
-    if work_type:
-        meta["work_type"] = work_type
     # ppt_cite is stale (the metadata changed); meta_error is settled (or
     # reset) by the hand-edit either way
     stale = ("ppt_cite", "meta_error")
@@ -1106,6 +1112,12 @@ def metadata_update(payload: MetaUpdateRequest, request: Request):
         _save_props(ws, payload.block_id, remove=stale + ("meta", "bibtex", "cite_key"),
                     actor=request.state.user_id)
         return {"meta": None, "bibtex": "", "cite_key": "", "source": "", "cached": False}
+    # The item type survives an edit that leaves it alone (a book stays
+    # @book). A hand edit is the user vouching for the record, so it is not
+    # "unverified".
+    kind = item_types.normalize(m.get("kind")) or item_types.normalize((props.get("meta") or {}).get("kind"))
+    if kind:
+        meta["kind"] = kind
     # An unsent cite_key leaves the page's pin as it is; "" unpins.
     cite_key = (bibtex_mod.clean_key(payload.cite_key) if payload.cite_key is not None
                 else bibtex_mod.clean_key(props.get("cite_key") or ""))

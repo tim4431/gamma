@@ -30,6 +30,7 @@ import { t } from "../shared/i18n/i18n.js";
 import { TRANSLATE_PARALLEL_MAX } from "../app/prefDefs.js";
 import { ZOOM_MIN, clampZoom } from "../shared/model/zoom.js";
 import { installViewerZoom } from "../shared/lib/viewerZoom.js";
+import { installSmoothWheel } from "../shared/lib/smoothWheel.js";
 // The engine: pdf.js (the legacy build, not the default one: it ships the
 // core-js polyfills the modern build assumes — Promise.withResolvers is
 // Safari 17.4+, and pdf.js calls it the moment a loading task is created) and
@@ -412,7 +413,7 @@ async function fetchPdfData(url, onLoadState, isCancelled) {
 // that box on position.pageNumber.
 // flashHighlightId: the highlight a jump just landed on, which pulses once
 // (.pdfHlFlash; App's triggerFlash sets it for about a second).
-function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef, onJump, onHighlightJump, onLinkHighlight, onSelectionFinished, onAreaSelection, onHighlightContext, searchRef, captureRef, onEffectiveScale, onZoomTo, findMarks, onExternalLink, onLinkContext, onBeforeLinkJump, onLoadState, retryRef, areaMode, hideEmbeddedAnnots, darkPage = false, translateKey = "", translateParallel = 3, onTranslate, translateCtlRef, onTranslateState, selTranslate = "", translateLangLabel = "", marks, flashHighlightId = null }) {
+function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef, onJump, onHighlightJump, onLinkHighlight, onSelectionFinished, onAreaSelection, onHighlightContext, searchRef, captureRef, onEffectiveScale, onZoomTo, findMarks, onExternalLink, onLinkContext, onBeforeLinkJump, onLoadState, retryRef, areaMode, hideEmbeddedAnnots, darkPage = false, translateKey = "", translateParallel = 3, onTranslate, translateCtlRef, onTranslateState, selTranslate = "", translateLangLabel = "", marks, flashHighlightId = null, smoothWheel = false }) {
   const tools = usePageTools(), { ink, text } = tools;
   const viewerRef = useRef(null);
   const [pdfDoc, setPdfDoc] = useState(null);
@@ -522,6 +523,13 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
     viewerZoomRef.current = zoom;
     return () => { viewerZoomRef.current = null; zoom.dispose(); };
   }, []);
+
+  // A notched mouse wheel glides instead of jumping while the setting is on
+  // (shared/lib/smoothWheel.js; Settings → Reading › PDFs).
+  useEffect(() => {
+    const el = viewerRef.current;
+    if (el && smoothWheel) return installSmoothWheel(el);
+  }, [smoothWheel]);
 
   // Reset pending touch alignment on zoom/document changes. The helper never
   // writes scroll offsets while a finger or native momentum is moving.
@@ -1833,6 +1841,12 @@ const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, scal
   const [textReady, setTextReady] = useState(null); // {page, layer, runs}: the built pdf.js text layer
   const [visible, setVisible] = useState(false);
   const renderVisible = visible || forceRender;
+  // Highlights, find marks and link boxes are drawn only inside the
+  // look-ahead too. Each is a positioned element, which Blink gives its own
+  // paint layer, and every hit test, layout and pre-paint walks all of them:
+  // a book with highlights on every page paid that on each wheel notch
+  // (docs/dev/pdf_loading.md, "High zoom and touch scrolling").
+  const overlays = renderVisible;
   const [links, setLinks] = useState([]); // link annotations, rects at scale 1
   const scaleRef = useRef(scale);
   scaleRef.current = scale;
@@ -2174,7 +2188,7 @@ const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, scal
       }} />
       <PdfCitationOverlay citation={citation} wrapRef={wrapRef}
         ready={textReady?.page === page ? textReady : null} />
-      {links.map((l, i) => (
+      {overlays && links.map((l, i) => (
         <div
           key={`lnk-${i}`}
           className="pdfLinkBox"
@@ -2197,7 +2211,7 @@ const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, scal
           } : null)}
         />
       ))}
-      {(findMarks || []).map((m, i) => (
+      {overlays && (findMarks || []).map((m, i) => (
         <div
           key={`find-${i}`}
           className="pdfFindMark"
@@ -2216,7 +2230,7 @@ const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, scal
           }}
         />
       ))}
-      {highlights.map(h => {
+      {overlays && highlights.map(h => {
         const rects = h.position.rects;
         const storedW = h.position.width || 1;
         const storedH = h.position.height || 1;

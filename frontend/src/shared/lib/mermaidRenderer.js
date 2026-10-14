@@ -1,4 +1,5 @@
 import { mermaidMath } from "./diagramMarkdown.js";
+import { staleSvgGeometry, withComputedBBox } from "./svgGeometry.js";
 
 let library;
 let queue = Promise.resolve();
@@ -29,7 +30,10 @@ export function renderMermaid(source, theme, cancelled = () => false) {
     host.setAttribute("aria-hidden", "true");
     document.body.appendChild(host);
     try {
-      const { svg } = await mermaid.render(`gamma-mermaid-${++nextId}`, mermaidMath(source), host);
+      // Where the browser's getBBox() keeps stale label geometry, Mermaid
+      // would lay every node out as large as its measuring box.
+      const render = () => mermaid.render(`gamma-mermaid-${++nextId}`, mermaidMath(source), host);
+      const { svg } = await (staleSvgGeometry() ? withComputedBBox(host, render) : render());
       if (cancelled()) return null;
       // Strict mode disables callbacks, but Mermaid still emits URL anchors.
       // Keep previews and downloads inert, including diagrams from AI replies.

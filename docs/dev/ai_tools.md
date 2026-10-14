@@ -328,9 +328,11 @@ from the records and not from the model's memory. `page_ids` takes up to
 50 pages; in a page chat the default is the open page. For each page the
 result gives:
 
-- the record from `properties.meta` (authors, year, venue, volume, pages,
-  publisher, ISBN, DOI, arXiv id; [paper_metadata.md](paper_metadata.md)),
-  and the paper's own title when it differs from the page's;
+- the record from `properties.meta` (its item type as a `Type:` line, in
+  Zotero's names, so a reference style knows a chapter from an article;
+  authors, year, venue, volume, pages, publisher, ISBN, DOI, arXiv id;
+  [paper_metadata.md](paper_metadata.md)), and the paper's own title when it
+  differs from the page's;
 - the stored BibTeX, else one built from the record the way a hand edit
   builds it (`bibtex.build_entry`), under the citation key pinned on the page
   when there is one — so what the model cites matches the `.bib` export

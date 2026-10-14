@@ -195,7 +195,6 @@ the account project's Caddy over the shared Docker network `gamma-edge`,
 whose subnet (`EDGE_SUBNET` in the folder's `.env`) is the one range whose
 `X-Forwarded-For` it believes — the image trusts loopback only, and without
 it every visitor would share Caddy's ten guest logins an hour. It
-runs `main`'s image, pinned by the `sha-<short>` tag a merge's `docker.yml`
-run pushes, named by `GAMMA_TAG` in the folder's `.env`: setup in [cloud/deploy/demo/README.md](../../cloud/deploy/demo/README.md),
+runs `main`'s `:latest`, which the project's Watchtower pulls within an hour of a merge: setup in [cloud/deploy/demo/README.md](../../cloud/deploy/demo/README.md),
 updates through the `update-demo-server` skill
 (`.claude/skills/update-demo-server/SKILL.md`).

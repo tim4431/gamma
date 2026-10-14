@@ -244,6 +244,16 @@ Built as recommended, with these differences:
   are percentages of the page box.
 - The raster is a controller in the style of `installViewerZoom`
   (`installPageRaster`), not a React hook.
+- Later, the base kept its capped resolution instead of half of it. On a 4K
+  screen at 200% fit-width is past the cap, the render window's margin is
+  about 111 px, and a 200 px wheel notch showed a blurry strip of base that
+  flashed sharp a frame later ([pdf-scroll-flash.md](pdf-scroll-flash.md)).
+  Canvas memory is back to the "today" figure above, plus the detail.
+- Later still, the cap became per engine: WebKit and touch-first devices
+  keep 8 Mi and 4096 per edge, desktop Chromium and Firefox get 16 Mi and
+  8192. "Raise the cap" was declined above for every browser, with the iPad
+  as the deciding reason; on a 1920 × 1030 pane at DPR 2 the viewport alone
+  filled the 8 Mi window, and every notch past 205% showed the base.
 - `cropPage` passes its canvas through the canvas limits, which the highlight
   capture did not do before.
 

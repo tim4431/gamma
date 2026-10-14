@@ -4,10 +4,10 @@
 //
 // A page is one canvas over the whole page for as long as that canvas can
 // match the screen. shared/lib/canvasSize.js caps every canvas, so past some
-// zoom it cannot. From there the whole-page canvas is only a preview (the
-// base, at half its capped resolution) and a second canvas (the detail)
-// covers just the part of the page near the view, at the screen's own
-// resolution. The page box carries the zoom; the bitmaps only ever cover
+// zoom it cannot. From there the whole-page canvas (the base, still at its
+// capped resolution) is what shows past the view, and a second canvas (the
+// detail) covers just the part of the page near the view, at the screen's
+// own resolution. The page box carries the zoom; the bitmaps only ever cover
 // what the screen can show.
 //
 // The rules come first, pure and unit-tested (tests/pageRaster.test.mjs);
@@ -35,13 +35,15 @@ const screenRatio = (dpr) => Math.min(3, dpr > 0 ? dpr : 1);
 
 // The whole-page canvas of a cssW × cssH page box. While the limits leave it
 // at the screen's resolution it is supersampled as far as they allow and is
-// all the page needs. Once they do not, `detail` is set and it drops to half
-// what the limits allow, a quarter of the pixels.
+// all the page needs. Once they do not, `detail` is set. The base keeps all
+// the limits allow either way: a wheel notch can carry the view past the
+// detail canvas, and until the detail redraw lands that strip shows the base.
+// At half resolution the strip was visibly blurry and flashed sharp a frame
+// later on every notch.
 export function basePlan(cssW, cssH, dpr) {
   const sharp = screenRatio(dpr);
   const ratio = canvasRatio(cssW, cssH, Math.max(2, sharp));
-  const detail = ratio > 0 && ratio < sharp;
-  return { ...canvasSize(cssW, cssH, detail ? ratio / 2 : ratio), detail };
+  return { ...canvasSize(cssW, cssH, ratio), detail: ratio > 0 && ratio < sharp };
 }
 
 // How far past the viewport the detail canvases reach, as a share of the

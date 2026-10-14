@@ -29,7 +29,7 @@ export async function waitForPdf(page, pageNo = 1) {
   await page.waitForSelector(`[data-page="${pageNo}"] .textLayer span`, { timeout: 30000 });
 }
 
-export async function pdfScenarios({ server, browser, alice, makePdf, step, until, sleep, assert, assertEq, assertNoProblems, openPage }, { alice2, second }) {
+export async function pdfScenarios({ server, browser, alice, makePdf, step, until, sleep, assert, assertEq, assertNoProblems, openPage, flags }, { alice2, second }) {
   let ctx, page, pageId, docId;
   const account = alice2;
 
@@ -71,6 +71,61 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
     assertEq(await row("Source").getByRole("button").count(), 0, "nothing left to verify");
     await page.click("button[aria-label='Paper metadata']");
     // The later steps expect a page without metadata.
+    await account.api("/api/metadata/update", { method: "POST", body: { block_id: pageId, meta: {} } });
+    assertNoProblems(page);
+  });
+
+  // The item type (meta.kind, Zotero's names) is the popover's first row: a
+  // record naming none shows the type its fields imply, another choice
+  // swaps the rows (a conference paper's venue is its proceedings), and
+  // saving stores the type and rebuilds the entry as an @inproceedings.
+  await step("pdf: the Type row picks the item type, the rows that go with it and the BibTeX entry type", async () => {
+    // The page's own title: saving renames a page still under its automatic title.
+    const meta = { title: "Rydberg paper", authors: ["Kaiming He"], year: "2016", venue: "2016 IEEE CVPR", source: "manual" };
+    await account.api(`/api/blocks/${pageId}`, { method: "PUT", body: { properties: { meta } } });
+    await page.reload();
+    await waitForPdf(page, 1);
+    await page.click("button[aria-label='Paper metadata']");
+    const pop = page.locator(".metaPopover");
+    const keys = async () => (await pop.locator(".metaKey").allInnerTexts()).map((s) => s.trim());
+    const typeSelect = pop.getByRole("button", { name: "Item type", exact: true });
+    assertEq((await typeSelect.innerText()).trim(), "Journal article", "a venue and no type read as a journal article");
+    assert((await keys()).includes("Journal"), `rows: ${await keys()}`);
+    await typeSelect.click();
+    await page.locator(".uiSelectMenu .ctxMenuItem").getByText("Conference paper", { exact: true }).click();
+    await until(async () => (await keys()).includes("Proceedings"), { what: "the venue row reads Proceedings" });
+    assert((await keys()).includes("Publisher") && !(await keys()).includes("Volume"), `conference rows: ${await keys()}`);
+    if (flags.keep) await page.screenshot({ animations: "disabled", path: `${server.dir}/meta-type-row.png` });
+    await pop.getByRole("button", { name: "Save metadata", exact: true }).click();
+    const saved = await until(async () => {
+      const props = (await account.api(`/api/blocks/${pageId}`)).properties;
+      return props.meta?.kind === "conferencePaper" ? props : null;
+    }, { what: "the item type saved" });
+    assert(saved.bibtex.startsWith("@inproceedings{he2016,") && saved.bibtex.includes("booktitle = {2016 IEEE CVPR}"),
+      `entry: ${saved.bibtex}`);
+    await page.click("button[aria-label='Paper metadata']");
+    await account.api("/api/metadata/update", { method: "POST", body: { block_id: pageId, meta: {} } });
+    assertNoProblems(page);
+  });
+
+  // A stored entry may be invalid BibTeX (doi.org's one-line rendering with
+  // a month no style defines, cached before the export normalized it). The
+  // share popover copies the entry the .bib export prints, not the stored
+  // text (docs/dev/import_export.md "BibTeX bibliography").
+  await step("pdf: the share popover's Copy BibTeX is the entry the .bib export prints", async () => {
+    const meta = { title: "Rydberg paper", authors: ["A. Writer"], year: "2026", source: "manual" };
+    const bibtex = "@article{Writer_2026, title={Rydberg & arrays}, author={Writer, A.}, year={2026}, month=Sept }";
+    await account.api(`/api/blocks/${pageId}`, { method: "PUT", body: { properties: { meta, bibtex } } });
+    await page.reload();
+    await waitForPdf(page, 1);
+    await page.click("button[aria-label='Share']");
+    const entry = page.locator(".sharePopover .bibtexPre");
+    const printed = await until(async () => {
+      const text = await entry.innerText().catch(() => "");
+      return text.startsWith("@misc{Writer_2026,") ? text : null;
+    }, { what: "the printed entry in the share popover" });
+    assert(printed.includes("title = {Rydberg \\& arrays}") && printed.includes("month = sep"), `entry: ${printed}`);
+    await page.click("button[aria-label='Share']");
     await account.api("/api/metadata/update", { method: "POST", body: { block_id: pageId, meta: {} } });
     assertNoProblems(page);
   });
@@ -811,6 +866,44 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
     } finally { await c.close(); }
     await account.api(`/api/blocks/${target.id}`, { method: "DELETE" });
     await account.api(`/api/blocks/${citing.id}`, { method: "DELETE" });
+  });
+
+  // Settings → Reading › PDFs › Smooth wheel scrolling (shared/lib/smoothWheel.js).
+  await step("pdf: smooth wheel scrolling glides one notch over several frames; off, it is the browser's jump", async () => {
+    const lines = Array.from({ length: 30 }, (_, n) => `Wheel line ${n + 1}`);
+    const up = await account.upload("/api/uploads", makePdf(Array.from({ length: 6 }, () => lines)), "wheel.pdf", "application/pdf");
+    const doc = await account.api(`/api/blocks/by-doc/${up.doc_id}`, { method: "POST", body: { default_title: "Wheel paper" } });
+    try {
+      for (const on of [true, false]) {
+        await account.api("/api/prefs/profile", { method: "PATCH", body: { set: { smoothWheel: on } } });
+        const c = await account.context(browser);
+        await c.addInitScript((v) => localStorage.setItem("gamma-smooth-wheel", v), on ? "1" : "0");
+        try {
+          const p = await openPage(c, `${server.base}/?page=${doc.id}&ws=${account.ws}`);
+          await waitForPdf(p, 1);
+          const box = await p.locator(".pdfViewer").boundingBox();
+          await p.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+          // The positions one notch passes through, one sample per frame.
+          await p.evaluate(() => {
+            const v = document.querySelector(".pdfViewer");
+            window.wheelTrail = [v.scrollTop];
+            const tick = () => { window.wheelTrail.push(v.scrollTop); if (window.wheelTrail.length < 40) requestAnimationFrame(tick); };
+            requestAnimationFrame(tick);
+          });
+          await p.mouse.wheel(0, 200);
+          await until(() => p.evaluate(() => window.wheelTrail.length >= 40), { what: "40 frames sampled" });
+          const trail = await p.evaluate(() => [...new Set(window.wheelTrail)]);
+          assertEq(trail.at(-1) - trail[0], 200, `one notch scrolls its 200 px (${on ? "on" : "off"})`);
+          if (on) assert(trail.length >= 5, `on: several positions on the way, ${trail.join(" ")}`);
+          else assertEq(trail.length, 2, `off: one jump, ${trail.join(" ")}`);
+          assertNoProblems(p);
+          await p.close();
+        } finally { await c.close(); }
+      }
+    } finally {
+      await account.api("/api/prefs/profile", { method: "PATCH", body: { set: { smoothWheel: false } } });
+      await account.api(`/api/blocks/${doc.id}`, { method: "DELETE" });
+    }
   });
 
   if (ctx) await ctx.close();

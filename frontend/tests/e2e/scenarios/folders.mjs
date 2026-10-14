@@ -126,6 +126,29 @@ export async function folderScenarios(env) {
     } finally { await ctx.close(); }
   });
 
+  await step("folders: the kind filter is per folder — a subfolder without a choice of its own shows folders and files", async () => {
+    const alpha = await user.folder("Alpha");
+    const ctx = await user.context(browser);
+    const page = await openPage(ctx, `${server.base}/?ws=${user.ws}`);
+    const kind = (name) => page.locator(".homeListBar .homeViewBtn[title='" + name + "']");
+    try {
+      await row(page, "Alpha").waitFor();
+      await kind("Files only").click();
+      await row(page, "Alpha").waitFor({ state: "detached" });
+      await page.goto(`${server.base}/?ws=${user.ws}&folder=${alpha}`);
+      await row(page, "Gamma").waitFor();
+      assertEq(await kind("Folders & files").getAttribute("aria-pressed"), "true", "the subfolder shows folders and files");
+      await kind("Folders only").click();
+      await page.goto(`${server.base}/?ws=${user.ws}`);
+      await page.locator(".fileRow").first().waitFor();
+      assertEq(await kind("Files only").getAttribute("aria-pressed"), "true", "the library keeps its own choice");
+      await page.goto(`${server.base}/?ws=${user.ws}&folder=${alpha}`);
+      await row(page, "Gamma").waitFor();
+      assertEq(await kind("Folders only").getAttribute("aria-pressed"), "true", "and the subfolder its own");
+      assertNoProblems(page);
+    } finally { await ctx.close(); }
+  });
+
   await step("folders: a pin is stored on the folder block, and the Pinned strip reads it", async () => {
     const ctx = await user.context(browser);
     const page = await openPage(ctx, `${server.base}/?ws=${user.ws}`);

@@ -197,7 +197,8 @@ def test_unconfirmed_ai_paper_is_flagged_but_notes_are_not(guest, monkeypatch):
     monkeypatch.setattr(metadata, "_call_ai",
                         lambda *a, **kw: '{"title": "Lecture 5: Lasers", "authors": ["Q"], "kind": "notes"}')
     r = guest.post("/api/metadata/fetch", json={"block_id": page["id"], "force": True})
-    assert r.json()["meta"]["kind"] == "notes" and r.json()["meta"]["unverified"] is False
+    # A prompt answering the old "notes" lands on "document".
+    assert r.json()["meta"]["kind"] == "document" and r.json()["meta"]["unverified"] is False
 
 
 def test_unconfirmed_doi_fallback_is_flagged(guest, monkeypatch):

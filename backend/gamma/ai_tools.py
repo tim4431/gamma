@@ -59,6 +59,7 @@ from urllib.parse import urlencode, urlsplit
 from fractional_indexing import generate_key_between
 
 from . import bibtex as bibtex_mod
+from . import item_types
 from .ai_permissions import permission_state
 from .ai_pictures import (parts as _parts, ink_picture_url, page_doc_id, parse_box, picture_url_of_page, read_stored,
                           render_region, store_picture, upload_name)
@@ -1239,14 +1240,15 @@ def _run_cite(conn, ws: str, scope: dict, args: dict):
                                   "button in the Notes panel; do not make a record up.")
             continue
         cited.append(title)
-        record = []
+        # The item type (Zotero's name) tells a reference style what to print.
+        record = [f"Type: {item_types.item_type(meta)}"]
         for key, label in _RECORD_FIELDS:
             value = meta.get(key)
             if isinstance(value, list):
                 value = ", ".join(str(v) for v in value if str(v).strip())
             if str(value or "").strip():
                 record.append(f"{label}: {value}")
-        lines = [head, " · ".join(record) or "(the record is empty)"]
+        lines = [head, " · ".join(record)]
         if meta.get("title") and meta["title"] != title:
             lines.append(f"Paper title: {meta['title']}")
         if meta.get("unverified"):

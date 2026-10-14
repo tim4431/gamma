@@ -23,6 +23,7 @@ import unicodedata
 import urllib.parse
 import xml.etree.ElementTree as ET
 
+from . import item_types
 from .bibtex import clean_key
 
 _RDF = "{http://www.w3.org/1999/02/22-rdf-syntax-ns#}"
@@ -80,8 +81,20 @@ def _container_fields(el) -> dict:
     }
 
 
-def _doi_from(idents: list[str]) -> str:
-    return next((i[4:].strip() for i in idents if i.upper().startswith("DOI ")), "")
+def _labelled(idents: list[str], label: str) -> str:
+    """The value of a labelled identifier ("DOI 10.…", "ISBN 978…")."""
+    head = label.upper() + " "
+    return next((i[len(head):].strip() for i in idents if i.upper().startswith(head)), "")
+
+
+def _publisher(el) -> str:
+    """The publisher (a thesis's university, a report's institution): Zotero
+    writes ``dc:publisher`` as a ``foaf:Organization`` with a ``foaf:name``;
+    a plain-text one is read too."""
+    pub = el.find(f"{_DC}publisher")
+    if pub is None:
+        return ""
+    return re.sub(r"\s+", " ", pub.findtext(f".//{_FOAF}name") or pub.text or "").strip()
 
 
 def parse_zotero_rdf(text: str) -> list[dict]:
@@ -170,11 +183,10 @@ def parse_zotero_rdf(text: str) -> list[dict]:
         url = next((i for i in idents if i.lower().startswith("http")), "")
         if not url and about.lower().startswith("http"):
             url = about
-        doi = _doi_from(idents)
-
-        # venue/volume come from the journal record — inline child or a
-        # standalone element referenced by rdf:resource. Zotero puts the
-        # article's DOI on that journal record, not on the item itself.
+        # venue/volume come from the container record (a journal, the book a
+        # chapter is in) — inline child or a standalone element referenced by
+        # rdf:resource. Zotero puts the item's DOI and ISBN on that record,
+        # not on the item itself.
         container = {}
         part_el = el.find(f"{_DCT}isPartOf")
         if part_el is not None:
@@ -183,8 +195,9 @@ def parse_zotero_rdf(text: str) -> list[dict]:
                 container = containers.get(ref, {})
             elif len(part_el):
                 container = _container_fields(part_el[0])
-        if not doi:
-            doi = _doi_from(container.get("idents", []))
+        idents_all = idents + container.get("idents", [])
+        doi = _labelled(idents_all, "DOI")
+        isbn = re.sub(r"[^0-9X]", "", _labelled(idents_all, "ISBN").upper())
 
         year_match = re.search(r"\d{4}", el.findtext(f"{_DC}date") or "")
         arxiv_id = ""
@@ -206,8 +219,13 @@ def parse_zotero_rdf(text: str) -> list[dict]:
             "pages": (el.findtext(f"{_BIB}pages") or "").strip(),
             "doi": doi,
             "arxiv_id": arxiv_id,
+            "publisher": _publisher(el),
+            "isbn": isbn,
             "source": "zotero",
         }
+        kind = item_types.from_zotero(el.findtext(f"{_Z}itemType"))
+        if kind:
+            meta["kind"] = kind
 
         tags = []
         for s in el.findall(f"{_DC}subject"):

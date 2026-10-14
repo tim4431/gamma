@@ -8,6 +8,13 @@ const sequence = "sequenceDiagram\n  Alice->>Bob: Hello\n  Bob-->>Alice: Hi";
 const quantum = String.raw`flowchart LR
   S(("$S_z$")) -. "$\chi$" .- A(("$$a_1$$"))
   A <-->|"$J$"| B(("$$a_2: |\alpha\rangle$$"))`;
+// A subgraph around math labels: the layout that broke where getBBox()
+// kept a label's measuring box.
+const nested = String.raw`flowchart TD
+  H["$$H = \chi S_z n_1$$"] --> C
+  subgraph LIN["Linear fields"]
+    C["$$\dot\alpha = -i M \alpha$$"] --> R["$$\rho_s$$"]
+  end`;
 const fence = (source) => "```mermaid\n" + source + "\n```";
 // A figure Mermaid cannot draw (two energy levels and a transition), with
 // the script, handler and page-wide style a drawing must not get through.
@@ -237,6 +244,38 @@ export async function diagramScenarios(env) {
       if (process.env.GAMMA_DIAGRAM_SCREENSHOT) await diagram.screenshot({ path: process.env.GAMMA_DIAGRAM_SCREENSHOT });
       assertNoProblems(page);
     } finally { await ctx.close(); }
+  });
+
+  await step("diagrams: Mermaid lays out where getBBox() keeps a label's measuring box", async () => {
+    const imported = await alice.upload("/api/import/markdown", Buffer.from(fence(nested)), "Stale geometry.md", "text/markdown");
+    // The geometry some Chrome installations report: a foreignObject, and
+    // every group around one, still covers the 1200px box Mermaid measured
+    // the label in (lib/svgGeometry.js).
+    const staleGeometry = () => {
+      const native = SVGGraphicsElement.prototype.getBBox;
+      SVGGraphicsElement.prototype.getBBox = function (...args) {
+        const box = native.apply(this, args);
+        if (this.localName !== "foreignObject" && !this.querySelector("foreignObject")) return box;
+        const x = Math.min(box.x, 0), y = Math.min(box.y, 0);
+        return new DOMRect(x, y, Math.max(box.x + box.width, 1200) - x, Math.max(box.y + box.height, 1200) - y);
+      };
+    };
+    const viewBox = async (ctx) => {
+      const page = await openPage(ctx, `${server.base}/?ws=${alice.ws}&block=${imported.block_id}`);
+      const svg = page.locator(".diagramSvg > svg");
+      await svg.waitFor();
+      const box = (await svg.getAttribute("viewBox")).split(" ").map(Number);
+      assertNoProblems(page);
+      return box;
+    };
+    const healthy = await alice.context(browser);
+    const stale = await alice.context(browser);
+    await stale.addInitScript(staleGeometry);
+    try {
+      const expected = await viewBox(healthy);
+      const got = await viewBox(stale);
+      assert(got.every((v, i) => Math.abs(v - expected[i]) < 1), `the layout matches a healthy browser's: ${got} vs ${expected}`);
+    } finally { await healthy.close(); await stale.close(); }
   });
 
   await step("diagrams: an svg figure in a note is a sanitized image, white, sized and shares the index", async () => {

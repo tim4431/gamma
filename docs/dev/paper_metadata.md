@@ -10,7 +10,8 @@ the slide citation on the page block (`properties.meta` / `properties.bibtex`
 / `properties.ppt_cite`). The lookup chain, in order:
 
 1. **arXiv API** — id from the source URL or the PDF text (new- and old-style
-   ids). When the arXiv record names the DOI of the published version, the
+   ids). The record is a `preprint`, or a `journalArticle` when arXiv gives a
+   journal reference. When the arXiv record names the DOI of the published version, the
    registrar's record replaces the preprint's (`_published_record`: venue,
    volume, pages and doi.org's own BibTeX; the arXiv id stays on the record,
    so the entry keeps its `eprint` and the popover its arXiv row) — arXiv's
@@ -19,8 +20,10 @@ the slide citation on the page block (`properties.meta` / `properties.bibtex`
    only when the registrar's title is the preprint's, never for arXiv's own
    `10.48550/` DOIs; the preprint record stands when doi.org has nothing.
 2. **DOI content negotiation** (doi.org) — every DOI in the source URL and
-   scan window, each with a glued-suffix trimmed variant. A CSL `type` of
-   `book`/`monograph` keeps `kind: book` + publisher/ISBN.
+   scan window, each with a glued-suffix trimmed variant. The CSL `type`
+   becomes the record's item type (below); a book, a chapter, a conference
+   paper, a thesis or a report keeps its publisher, a book or a chapter its
+   ISBN.
 3. **ISBN lookup** (books) — checksum-valid ISBNs *labelled* "ISBN" in the
    scan window or on the last page (copyright page, back cover), resolved via
    Open Library's books API, then Google Books. Both keyless.
@@ -48,19 +51,64 @@ the end-of-article trailer. Only the AI call is capped at the pref
 
 **What a registry record becomes.** Crossref keeps the publisher's markup
 and entities in titles and venues (`<i>Planck</i> 2018 results`,
-`CsPbCl<sub>3</sub>`, `Astronomy &amp; Astrophysics`), names an organisation
-author by `name` rather than `given`/`family`, and keeps a subtitle apart
-from the title. `_fetch_doi` and `_crossref_search` store plain text
-(`textnorm.plain_text`: tags dropped, entities decoded — the title then
-reads as the PDF prints it, which is what the title match and the popover
-need), join `title: subtitle`, keep organisation authors, and record the
-registry's `work_type` (the CSL type: `journal-article`,
-`proceedings-article`, `book-chapter`, `dissertation`, `report`, …), which
-picks the BibTeX entry type a built entry gets
-([import_export.md](import_export.md#bibtex-bibliography)). doi.org's own
-BibTeX carries the same markup; `bibtex.clean_entry` turns it into LaTeX
-(`\emph{}`, `\textsubscript{}`, `\&`) before it is cached. The quirks as
-observed live: [research/registry-records.md](../research/registry-records.md).
+`CsPbCl<sub>3</sub>`, `Astronomy &amp; Astrophysics`) and inline MathML
+(`spin-<mml:math>…1∕2…</mml:math>`), names an organisation author by `name`
+rather than `given`/`family`, and keeps a subtitle apart from the title. A
+journal that numbers its articles instead of paging them (APS, IOP) gives
+the number as `article-number` and no `page`. `_fetch_doi` and
+`_crossref_search` store plain text (`textnorm.plain_text`: tags dropped, a
+formula read as its text through `gamma/mathml.py`, entities decoded; the
+title then reads as the PDF prints it, `spin-1/2`, which is what the title
+match and the popover need), join `title: subtitle`, keep organisation
+authors, take the article number as `pages` (`_csl_pages`), and turn the
+registry's work type into the record's item type. doi.org's own BibTeX
+carries the same markup, writes months no style defines (`Sept`, `July`)
+and leaves the article number out; `bibtex.normalize_entry` writes it as
+valid BibTeX, the record's pages added, before it is cached
+([import_export.md](import_export.md#bibtex-bibliography) lists the
+rules). The quirks as observed live:
+[research/registry-records.md](../research/registry-records.md).
+
+**Item type.** `meta.kind` names what the record describes, under the names
+Zotero gives its item types (`gamma/item_types.py`, mirrored for the
+interface in `frontend/src/shared/lib/itemTypes.js`): `journalArticle`,
+`conferencePaper`, `preprint`, `bookSection`, `book`, `thesis`, `report`,
+`presentation`, `document`. Zotero's item types are CSL's types under
+another spelling, the vocabulary reference managers and citation styles
+share, and with Zotero's names a Zotero round trip is the identity. Only the
+types a paper library holds are kept. Every source lands on one of them:
+
+- doi.org's and Crossref's work type, through `item_types.from_registry`
+  (Crossref's `proceedings-article` and CSL's `paper-conference` alike; a
+  DataCite DOI answers in CSL's types, where `article` is a preprint).
+  Containers (`journal-issue`, `proceedings`) and types a paper library does
+  not cite are left out, and the record's fields decide.
+- An arXiv record is a `preprint`, or a `journalArticle` with a journal
+  reference; the book registries say `book`.
+- The AI classifier picks from the list (its default prompt names it); the
+  popover's **Type** row picks from the same list.
+- A Zotero import reads `z:itemType`; any Zotero type outside the list
+  becomes `document`, and an attachment-only item names none.
+
+A record naming no type, or one of the kinds stored before these names, is
+read through `item_types.item_type`, and nothing in storage is rewritten:
+`notes` and `other` are `document`, `slides` is `presentation`, and `paper`
+or nothing is decided by the fields. A publisher without a venue is a
+`book`, an arXiv id without a published venue a `preprint`, anything else a
+`journalArticle`, so a record of unknown type keeps the warning a paper gets.
+An AI reply to a customised prompt that still answers the old kinds is read
+the same way.
+
+The type picks the BibTeX entry type
+([import_export.md](import_export.md#bibtex-bibliography)), the Zotero RDF
+item ([import_export.md](import_export.md#zotero-rdf-export)), the popover's
+rows (a chapter's venue reads "Book title", a thesis's publisher
+"University", a report's "Institution"; a field outside the type's rows
+stays visible while it holds a value), whether AI metadata is flagged
+(below) and the `Type:` line the AI `cite` tool prints. A thesis or a
+report that names no publisher takes its venue as one
+(`item_types.publisher`): the AI was asked for a publisher on books only
+before, so an older thesis record holds the university as its venue.
 
 **Trust rules** (the first DOI on page 1 can belong to a *cited* paper, and
 AI output can be a plausible hallucination):
@@ -85,8 +133,9 @@ AI output can be a plausible hallucination):
   resolves nowhere and doesn't occur in the PDF is dropped as fabricated; the
   AI title is cross-checked against Crossref (≥0.92 title similarity +
   compatible year upgrades it).
-- **Book search.** When the AI classified the document as a `book` (or
-  `other`) and Crossref has nothing, the AI title + first author go to
+- **Book search.** When the AI classified the document as a `book` (or a
+  `document`, where it files a book it is unsure of) and Crossref has
+  nothing, the AI title + first author go to
   `_book_search` (Open Library `search.json`, then Google Books
   `intitle:/inauthor:`). `_pick_book_match` accepts a hit only when the
   titles are alike (≥0.9, or one is the other plus a subtitle) *and* an
@@ -101,24 +150,20 @@ AI output can be a plausible hallucination):
 `isbn` / `crossref` (search hit whose doi.org fetch failed) / `openlibrary`
 / `googlebooks` / `ai` / `manual`. Every fetched record also stores
 `meta.unverified`: true when nothing tied it to *this* document — an AI
-record claiming to be a paper, or a DOI/ISBN fallback whose registry title
+record of a type a registry could confirm, or a DOI/ISBN fallback whose registry title
 isn't in the text (it may belong to a work the document cites). Unverified
 records get a red "!" badge on the metadata button, a red Source row in the
 popover, a red "!" + source tag beside the slide citation in the share
 popover, and a red cell in the Settings → Maintenance table. The wording lives
 in one place, `metaSourceInfo` in `frontend/src/shared/lib/utils.js`; the predicate
-`isUnverifiedPaperMeta(source, kind, unverified)` falls back to the old
-"AI-extracted paper" rule for records stored before the flag existed. The
-AI extractor also classifies the document (`meta.kind`: `paper` / `notes` /
-`slides` / `thesis` / `book` / `report` / `other`, unknown → `paper`); the
-warning only fires for kind `paper` — course notes and the like have no
-registry record to verify against, so they get a quiet "AI-extracted (notes)"
-instead. Registry-sourced records carry no kind except books (their
-`work_type` says what they are); a book record
-(`kind: book`, or a publisher without a venue) renders as BibTeX `@book`
-with `publisher`/`isbn`, and the metadata popover swaps the journal rows
-for Publisher/ISBN. A hand edit keeps the kind and clears the flag (the user
-vouched for the record). So does **Verify** on a flagged Source row, without
+`isUnverifiedPaperMeta(source, kind, unverified)` falls back to the
+same type rule for records stored before the flag existed. For AI records
+the warning fires only for the types a registry holds
+(`item_types.CHECKABLE`: journal article, conference paper, preprint,
+chapter, book). A thesis, a report, slides and course notes have no registry
+record to verify against, so they get a quiet "AI-extracted (document)"
+instead. A hand edit keeps the item type unless the Type row changed it, and
+clears the flag (the user vouched for the record). So does **Verify** on a flagged Source row, without
 an edit: `/api/metadata/verify` sets `meta.user_verified` and clears
 `meta.unverified`, keeping the source, so the row reads "AI-extracted —
 verified by hand" (Settings: "AI ✓"). With unsaved edits in the popover,
@@ -129,9 +174,10 @@ The fetch also kicks background search indexing for the paper
 document map and library-wide Ctrl+F shouldn't wait for the first search to
 discover it. `/api/metadata/update` saves hand-edited fields from the
 metadata popover (rebuilds BibTeX, source `manual`, invalidates the cached
-citation; the document kind and the registry's `work_type` survive the
-edit, so a conference paper stays an `@inproceedings` after its title is
-corrected). In the popover, the DOI and arXiv rows carry an open-on-registry
+citation). The popover sends the Type row's choice as `meta.kind`; one not
+sent, or not an item type, keeps the stored type, so a conference paper
+stays an `@inproceedings` after its title is corrected. The type alone is not
+a record: blanking every field clears the metadata. In the popover, the DOI and arXiv rows carry an open-on-registry
 link and a copy button for that URL beside the field. A page with a PDF
 also gets a read-only Source file row (the attachment's path, with a copy
 button); replacing the PDF goes through the paperclip (detach, attach).

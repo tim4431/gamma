@@ -5618,8 +5618,9 @@ a.shareBrand:hover { background: var(--bg-hover); }
 .metaPopover { min-width: 340px; max-width: 420px; }
 .metaTable { display: flex; flex-direction: column; gap: 4px; padding: 2px 4px; }
 .metaRow { display: flex; gap: 8px; font-size: var(--fs-xs); line-height: 1.45; }
-/* Wide enough for the longest key, "Source file", on one line. */
-.metaKey { color: var(--text-dim); flex: 0 0 64px; }
+/* Wide enough for the longest key, a conference paper's "Proceedings", on
+   one line. */
+.metaKey { color: var(--text-dim); flex: 0 0 74px; }
 .metaVal { color: var(--text-secondary); min-width: 0; word-break: break-word; }
 .metaVal a { color: var(--accent); text-decoration: none; }
 .metaVal a:hover { text-decoration: underline; }
@@ -5655,6 +5656,19 @@ a.shareBrand:hover { background: var(--bg-hover); }
 /* The Source row's Verify, at the row's end: a compact uiBtn whose negative
    margins keep the row's height, like the icon buttons above. */
 .metaTable .uiBtn.metaVerifyBtn { gap: 4px; min-height: var(--ctl-icon-btn-xs); margin-block: calc((16px - var(--ctl-icon-btn-xs)) / 2); margin-left: auto; padding: 0 var(--space-3); }
+/* The Type row's select: quiet like the inputs (a border on hover), its
+   text flush at the value column, the same negative margins as Verify. */
+.metaTable .metaTypeRow .uiSelectBtn {
+  min-height: var(--ctl-icon-btn-xs);
+  margin-block: calc((16px - var(--ctl-icon-btn-xs)) / 2);
+  margin-left: -5px;
+  padding: 0 4px;
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
+  color: var(--text-secondary);
+}
+.metaTable .metaTypeRow .uiSelectBtn:hover { border-color: var(--border); }
 /* The source file's path: one line, the whole path in the tooltip. */
 .metaPath { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 

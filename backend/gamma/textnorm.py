@@ -14,6 +14,8 @@ import html
 import re
 import unicodedata
 
+from . import mathml
+
 # One bump has every workspace's PDF index rebuilt lazily (extraction or
 # normalization changes make old rows stale). The notes index has no
 # version: its triggers' deletes must see the text the index was built
@@ -115,8 +117,10 @@ def plain_text(s) -> str:
     """A registry field as plain text: the markup Crossref keeps from the
     publisher dropped (an inline tag leaves nothing behind, so
     ``CsPbCl<sub>3</sub>`` reads ``CsPbCl3`` as the PDF prints it; a block
-    tag becomes a space), HTML entities decoded (``&amp;``), whitespace
+    tag becomes a space), a MathML formula read as its text (``spin-1/2``,
+    ``mathml.to_text``), HTML entities decoded (``&amp;``), whitespace
     collapsed."""
     def tag(m):
         return " " if m.group(2).lower().split(":")[-1] in _BLOCK_TAGS else ""
-    return _WS_RE.sub(" ", html.unescape(_MARKUP_RE.sub(tag, str(s or "")))).strip()
+    text = mathml.replace(s, mathml.to_text)
+    return _WS_RE.sub(" ", html.unescape(_MARKUP_RE.sub(tag, text))).strip()
