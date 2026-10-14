@@ -52,23 +52,28 @@ def test_build_entry_escapes_values_and_writes_page_ranges():
     assert "pages = {e12345}" in build_entry({"title": "T", "venue": "J", "pages": "e12345"})
 
 
-def test_build_entry_type_follows_the_work_type():
+def test_build_entry_type_follows_the_item_type():
     base = {"title": "A Title", "authors": ["Kaiming He"], "year": "2016", "doi": "10.1/x"}
     conf = build_entry({**base, "venue": "2016 IEEE CVPR", "pages": "770-778", "publisher": "IEEE",
-                        "work_type": "proceedings-article"})
+                        "kind": "conferencePaper"})
     assert conf.startswith("@inproceedings{he2016,")
     assert "booktitle = {2016 IEEE CVPR}" in conf and "publisher = {IEEE}" in conf and "journal" not in conf
-    chapter = build_entry({**base, "venue": "Handbook of X", "work_type": "book-chapter"})
+    chapter = build_entry({**base, "venue": "Handbook of X", "isbn": "9780000000002", "kind": "bookSection"})
     assert chapter.startswith("@incollection{") and "booktitle = {Handbook of X}" in chapter
-    thesis = build_entry({**base, "venue": "", "publisher": "MIT", "work_type": "dissertation"})
+    assert "isbn = {9780000000002}" in chapter
+    thesis = build_entry({**base, "publisher": "MIT", "kind": "thesis"})
     assert thesis.startswith("@phdthesis{") and "school = {MIT}" in thesis
-    assert build_entry({**base, "kind": "thesis", "venue": "Stanford University"}).startswith("@phdthesis{")
-    report = build_entry({**base, "venue": "", "publisher": "NIST", "work_type": "report"})
+    # An older thesis record holds its university as the venue.
+    assert "school = {Stanford University}" in build_entry({**base, "kind": "thesis", "venue": "Stanford University"})
+    report = build_entry({**base, "publisher": "NIST", "kind": "report"})
     assert report.startswith("@techreport{") and "institution = {NIST}" in report
-    assert build_entry({**base, "work_type": "monograph", "publisher": "Wiley", "isbn": "1"}).startswith("@book{")
-    assert build_entry({**base, "venue": "Nature", "work_type": "journal-article"}).startswith("@article{")
+    assert build_entry({**base, "kind": "book", "publisher": "Wiley", "isbn": "1"}).startswith("@book{")
+    assert build_entry({**base, "venue": "Nature", "kind": "journalArticle"}).startswith("@article{")
+    slides = build_entry({**base, "venue": "APS March Meeting", "kind": "presentation"})
+    assert slides.startswith("@misc{") and "howpublished = {APS March Meeting}" in slides
     # Neither a venue nor an arXiv id: @misc, never an @article without a journal.
     assert build_entry(base).startswith("@misc{he2016,")
+    assert build_entry({**base, "kind": "journalArticle"}).startswith("@misc{he2016,")
 
 
 def test_a_published_arxiv_paper_keeps_its_eprint():
@@ -126,7 +131,7 @@ def test_fetch_doi_cleans_the_registry_record(monkeypatch):
     assert meta["title"] == "Planck 2018 results: VI. Cosmological parameters"
     assert meta["authors"] == ["Planck Collaboration", "N. Aghanim"]
     assert meta["venue"] == "Astronomy & Astrophysics"
-    assert meta["year"] == "2020" and meta["work_type"] == "journal-article"
+    assert meta["year"] == "2020" and meta["kind"] == "journalArticle"
     assert "journal={Astronomy \\& Astrophysics}" in bib and "title={\\emph{Planck}" in bib
     assert build_entry(meta).startswith("@article{collaboration2020,")
 
@@ -137,6 +142,8 @@ def test_fetch_doi_survives_a_missing_date_and_a_list_title(monkeypatch):
                                 "issued": {"date-parts": [[]]}}, "")
     meta, bib = metadata._fetch_doi("10.48550/arXiv.1706.03762")
     assert meta["title"] == "Attention Is All You Need" and meta["year"] == "" and bib == ""
+    # DataCite answers in CSL's types: "article" is a preprint.
+    assert meta["kind"] == "preprint"
     assert build_entry(meta).startswith("@misc{vaswani,")
 
 
@@ -147,7 +154,7 @@ def test_fetch_doi_keeps_the_publisher_of_a_conference_paper(monkeypatch):
            "publisher": "IEEE", "page": "770-778", "issued": {"date-parts": [[2016, 6]]}}
     _fake_doi_org(monkeypatch, csl, "")
     meta, _ = metadata._fetch_doi("10.1109/CVPR.2016.90")
-    assert meta["work_type"] == "proceedings-article" and meta["publisher"] == "IEEE"
+    assert meta["kind"] == "conferencePaper" and meta["publisher"] == "IEEE"
     bib = build_entry(meta)
     assert bib.startswith("@inproceedings{he2016,")
     assert "booktitle = {2016 IEEE Conference" in bib and "pages = {770--778}" in bib
@@ -164,7 +171,7 @@ def test_crossref_search_cleans_titles_and_carries_the_type(monkeypatch):
     cands = metadata._crossref_search("anything")
     assert "select=DOI,type,title" in asked[0]
     assert cands[0]["title"] == "CsPbCl3 & friends" and cands[0]["authors"] == ["Some Consortium"]
-    assert cands[0]["work_type"] == "proceedings-article" and cands[0]["year"] == "2019"
+    assert cands[0]["kind"] == "conferencePaper" and cands[0]["year"] == "2019"
 
 
 def test_title_in_text_matches_a_cleaned_title_and_a_split_subtitle():
@@ -182,13 +189,14 @@ ARXIV_LIGO = {
     "title": "Observation of Gravitational Waves from a Binary Black Hole Merger",
     "authors": ["The LIGO Scientific Collaboration"], "year": "2016",
     "venue": "Phys. Rev. Lett. 116, 061102 (2016)", "volume": "", "pages": "",
-    "doi": "10.1103/PhysRevLett.116.061102", "arxiv_id": "1602.03837", "source": "arxiv",
+    "doi": "10.1103/PhysRevLett.116.061102", "arxiv_id": "1602.03837", "kind": "journalArticle",
+    "source": "arxiv",
 }
 PRL = {
     "title": "Observation of Gravitational Waves from a Binary Black Hole Merger",
     "authors": ["B. P. Abbott", "R. Abbott"], "year": "2016",
     "venue": "Physical Review Letters", "volume": "116", "pages": "",
-    "doi": "10.1103/PhysRevLett.116.061102", "arxiv_id": "", "source": "doi", "work_type": "journal-article",
+    "doi": "10.1103/PhysRevLett.116.061102", "arxiv_id": "", "source": "doi", "kind": "journalArticle",
 }
 PRL_BIB = "@article{Abbott_2016, journal={Physical Review Letters} }"
 
@@ -236,17 +244,31 @@ def test_fetch_cites_the_published_version_of_an_arxiv_paper(guest, monkeypatch)
 
 # --- what the rest of the app prints --------------------------------------------------
 
-def test_a_hand_edit_keeps_a_conference_paper_an_inproceedings(guest):
+def test_a_hand_edit_keeps_or_changes_the_item_type(guest):
     page = make_page(guest, "CVPR page", properties={"meta": {
         "title": "Old", "authors": ["Kaiming He"], "year": "2016", "venue": "2016 IEEE CVPR",
-        "work_type": "proceedings-article", "publisher": "IEEE", "source": "doi"}})
-    r = guest.post("/api/metadata/update", json={"block_id": page["id"], "meta": {
-        "title": "Deep Residual Learning", "authors": ["Kaiming He"], "year": "2016",
-        "venue": "2016 IEEE CVPR", "publisher": "IEEE"}})
+        "kind": "conferencePaper", "publisher": "IEEE", "source": "doi"}})
+    edit = {"title": "Deep Residual Learning", "authors": ["Kaiming He"], "year": "2016",
+            "venue": "2016 IEEE CVPR", "publisher": "IEEE"}
+    # An edit that sends no type keeps the stored one…
+    r = guest.post("/api/metadata/update", json={"block_id": page["id"], "meta": edit})
     assert r.status_code == 200, r.text
-    assert r.json()["meta"]["work_type"] == "proceedings-article"
+    assert r.json()["meta"]["kind"] == "conferencePaper"
     assert r.json()["bibtex"].startswith("@inproceedings{he2016,")
     assert "booktitle = {2016 IEEE CVPR}" in r.json()["bibtex"]
+    # …the Type row's choice replaces it, and a name that is no type is ignored.
+    r = guest.post("/api/metadata/update", json={"block_id": page["id"], "meta": {**edit, "kind": "journalArticle"}})
+    assert r.json()["meta"]["kind"] == "journalArticle" and r.json()["bibtex"].startswith("@article{he2016,")
+    r = guest.post("/api/metadata/update", json={"block_id": page["id"], "meta": {**edit, "kind": "podcast"}})
+    assert r.json()["meta"]["kind"] == "journalArticle"
+
+
+def test_a_type_alone_is_not_a_record(guest):
+    page = make_page(guest, "Typed only", properties={"meta": {"title": "T", "kind": "book"}, "bibtex": "@book{x}"})
+    r = guest.post("/api/metadata/update", json={"block_id": page["id"], "meta": {"kind": "book"}})
+    assert r.status_code == 200, r.text
+    assert r.json()["meta"] is None
+    assert "meta" not in guest.get(f"/api/blocks/{page['id']}").json()["properties"]
 
 
 def test_a_cached_fetch_answers_the_entry_the_export_prints(guest):

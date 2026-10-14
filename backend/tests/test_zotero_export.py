@@ -241,3 +241,41 @@ def test_zotero_export_reimports_via_the_real_endpoint(guest):
     two = guest.get(f"/api/blocks/{by_title['Paper two']['id']}").json()["properties"]
     assert [paths[f] for f in two["folders"]] == [["zimported", "deep"]]
     assert by_title["Paper two"]["folders"] == [["zimported", "deep"]]
+
+
+def test_each_item_type_goes_out_as_zotero_writes_it_and_comes_back():
+    """Zotero's own "Zotero RDF" translator decides the shapes: the item
+    carries z:itemType, a journal article's and a conference paper's venue
+    sit on a bib:Journal, a chapter's book title and ISBN on a bib:Book, and
+    a publisher is a dc:publisher foaf:Organization."""
+    from gamma.zotero_export import build_rdf
+
+    base = {"authors": ["Kaiming He"], "year": "2016", "doi": "10.1/x"}
+    metas = {
+        "journalArticle": {**base, "kind": "journalArticle", "venue": "Nature", "volume": "521"},
+        "conferencePaper": {**base, "kind": "conferencePaper", "venue": "CVPR", "publisher": "IEEE"},
+        "bookSection": {**base, "kind": "bookSection", "venue": "Handbook of X", "isbn": "9780000000002",
+                        "publisher": "Springer"},
+        "book": {**base, "kind": "book", "publisher": "Wiley", "isbn": "9780471878766"},
+        "thesis": {**base, "kind": "thesis", "publisher": "MIT"},
+        "report": {**base, "kind": "report", "publisher": "NIST"},
+        "preprint": {**base, "kind": "preprint", "arxiv_id": "1706.03762", "venue": "arXiv:1706.03762"},
+        "presentation": {**base, "kind": "presentation"},
+        "document": {**base, "kind": "document"},
+    }
+    items = [{"key": f"#item_{kind}", "title": f"A {kind}", "meta": meta} for kind, meta in metas.items()]
+    items.append({"key": "#item_bare", "title": "No record", "meta": {}})
+    text = build_rdf(items)
+    assert '<bib:BookSection rdf:about="#item_bookSection">' in text
+    assert '<bib:Book rdf:about="#book_3">' in text and "<dc:identifier>ISBN 9780000000002</dc:identifier>" in text
+    assert "<foaf:Organization>" in text and "<foaf:name>IEEE</foaf:name>" in text
+
+    back = {it["key"]: it["meta"] for it in parse_zotero_rdf(text)}
+    for kind, meta in metas.items():
+        got = back[f"#item_{kind}"]
+        assert got["kind"] == kind
+        for field in ("venue", "volume", "publisher", "isbn", "doi"):
+            if kind == "preprint" and field == "venue":
+                continue  # an arXiv id travels as its URL; the "arXiv:<id>" venue is the default
+            assert got.get(field, "") == meta.get(field, ""), (kind, field)
+    assert back["#item_bare"]["kind"] == "document"

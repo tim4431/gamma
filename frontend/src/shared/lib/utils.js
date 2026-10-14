@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { makeBlockId } from "../model/blockModel";
 import { t, T } from "../../shared/i18n/i18n.js";
 import { fmtBytes } from "./format.js";
+import { isCheckableType, itemTypeLabel, itemTypeOf } from "./itemTypes.js";
 
 const API = "/api";
 
@@ -263,11 +264,11 @@ async function copyRich(html, plain) {
 // Settings → Library maintenance table) so nobody cites it unchecked. The server stores
 // `meta.unverified` (AI paper records; DOIs/ISBNs printed in the text whose
 // registry title isn't); records from before the flag existed fall back to
-// the old rule: AI-extracted and claiming to be a paper (non-paper kinds have
-// no registry to verify against; a missing kind counts as paper, the safe
-// default).
+// the old rule: AI-extracted and of a type a registry could confirm (a
+// thesis, slides or notes have none to verify against; a missing kind
+// counts as a journal article, the safe default).
 const isUnverifiedPaperMeta = (source, kind, unverified = null) =>
-  unverified == null ? source === "ai" && (kind || "paper") === "paper" : !!unverified;
+  unverified == null ? source === "ai" && isCheckableType(itemTypeOf({ kind })) : !!unverified;
 
 // Where a page's metadata came from, worded once for every surface that
 // shows it: the metadata popover's Source row, the share popover's citation
@@ -286,9 +287,9 @@ function metaSourceInfo(meta) {
     return { label: t("{name} — verified by hand", { name: name }), short: t("{name} ✓", { name: ai ? "AI" : name }), warn: false,
              hint: T("Checked against the paper by hand") };
   }
-  const kind = meta.kind || "paper";
-  const unverified = isUnverifiedPaperMeta(meta.source, kind, meta.unverified);
+  const unverified = isUnverifiedPaperMeta(meta.source, meta.kind, meta.unverified);
   if (meta.source === "ai") {
+    const kind = t(itemTypeLabel(itemTypeOf(meta))).toLowerCase();
     return unverified
       ? { label: T("AI-extracted — unverified"), short: "AI", warn: true,
           hint: T("Read by AI from the PDF text and not confirmed by any registry (arXiv, Crossref, Open Library) — fields may be wrong, verify before citing") }

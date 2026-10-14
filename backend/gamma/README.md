@@ -92,6 +92,7 @@ zotero_*.py        Zotero RDF library import and export
 obsidian_export.py an Obsidian vault export
 import_*.py        the reviewed library imports: staged uploads, preview and selection
 bibtex.py          BibTeX entries and bibliographies
+item_types.py      what a paper record describes (meta.kind), in Zotero's item-type names
 
 # PDF writers
 pdf_export.py      highlights burned into a PDF as standard annotations

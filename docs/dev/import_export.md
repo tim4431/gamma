@@ -296,8 +296,9 @@ destination's id.
 
 `POST /api/import/zotero` (View menu ≡ → Import… → Zotero library): a zip of
 Zotero's File → Export Library → "Zotero RDF" (with Export Files/Notes).
-`gamma/zotero_import.py` parses the RDF (items, journal records carrying the
-DOI, collections, tags, HTML notes) and tolerant zip-name lookup
+`gamma/zotero_import.py` parses the RDF (items with their item type,
+publisher and ISBN, journal and book records carrying the DOI, collections,
+tags, HTML notes) and tolerant zip-name lookup
 (cp437-mojibake, NFC/NFD, backslashes); the endpoint in `routers/imports.py`
 uploads PDFs (dedup + quota per file, over-quota items are skipped not fatal),
 upserts pages keyed by file hash then `properties.zotero_key` (re-exports
@@ -381,8 +382,19 @@ The import's exact inverse (`gamma/zotero_export.py`, endpoint branches in
 `/folders/{id}/export` builds a `<slug>/<slug>.rdf` + `<slug>/files/<n>/<name>.pdf`
 zip that Zotero's File → Import reads (unzipped) and Gamma's own
 `/api/import/zotero` accepts as-is. Element shapes mirror what Zotero itself
-writes and `parse_zotero_rdf` reads: venue/volume/DOI on a standalone
-`bib:Journal` referenced by `dcterms:isPartOf`, notes as `bib:Memo` HTML
+writes (its "Zotero RDF" translator's `generateItem`) and `parse_zotero_rdf`
+reads. The item carries the page's item type as `z:itemType`, which is what
+Zotero's importer goes by, under the RDF class Zotero gives it
+(`bib:Article`, `bib:BookSection`, `bib:Book`, `bib:Thesis`, `bib:Report`;
+a conference paper and a preprint get none). A page with no record is a
+`document`. A journal article's or a conference paper's venue, volume and
+DOI sit on a standalone `bib:Journal` referenced by `dcterms:isPartOf`, a
+chapter's book title, DOI and ISBN on a `bib:Book`, and a type without a
+container carries its DOI and ISBN itself. A publisher (a thesis's
+university, a report's institution) is a `dc:publisher` `foaf:Organization`
+with a `foaf:name`. The import reads all of these back: `z:itemType` through
+`item_types.from_zotero`, the publisher, and the ISBN from the item's or its
+container's identifiers. Notes go as `bib:Memo` HTML
 (top-level non-highlight subtrees, one note each — the inverse of the import's
 notes→child-blocks mapping), the page's folders as the `z:Collection` tree
 (paths below the exported folder on a folder export — a page filed in the
@@ -393,7 +405,10 @@ Attachment paths live in `z:path` like Zotero's own export — never an
 `rdf:resource` *element*, an RDF/XML syntax term that Zotero tolerates but
 strict parsers (rdflib) reject. The pipeline is verified against a live Zotero
 via its connector server's `/connector/import` (same translator code path as
-the wizard). Zotero cannot read the .zip itself — its wizard reports
+the wizard). The per-type shapes (conference paper, chapter, book, thesis,
+report, publisher, ISBN) were taken from the translator's source and
+round-trip through `parse_zotero_rdf`; they have not yet been imported into a
+live Zotero. Zotero cannot read the .zip itself — its wizard reports
 "unsupported format" for one, so the zip ships a README.txt telling people to
 extract and pick the .rdf, and the export dialog shows a numbered step guide
 for the format. Pasted note images: embedded in the Memo HTML as data URIs
@@ -623,14 +638,25 @@ document cites, so the export has no switches and no bundling.
   metadata" and named in the finished export; a set where no page has any
   fails with "none of these pages has paper metadata to cite".
 - **What an entry looks like** (`bibtex.build_entry`): the entry type
-  follows the record — the registry's `work_type` when the lookup stored
-  one (`proceedings-article` → `@inproceedings` with `booktitle`,
-  `book-chapter` → `@incollection`, `dissertation` → `@phdthesis`,
-  `report` → `@techreport`, a book → `@book` with publisher and ISBN), else
-  the document kind (`thesis`, `report`, `book`), else the record's shape:
-  an arXiv id without a venue is the preprint `@article`, a venue an
-  `@article`, neither `@misc` (an `@article` without a journal is a BibTeX
-  warning). An arXiv id always adds `eprint`/`archivePrefix`, so a published
+  follows the record's item type
+  ([paper_metadata.md](paper_metadata.md#metadata-fetch--edit--cite)), as
+  Zotero's own BibTeX export maps it:
+
+  | Item type | Entry | Venue and publisher as |
+  |---|---|---|
+  | `journalArticle`, `preprint` | `@article` | `journal` |
+  | `conferencePaper` | `@inproceedings` | `booktitle`, `publisher` |
+  | `bookSection` | `@incollection` | `booktitle`, `publisher`, `isbn` |
+  | `book` | `@book` | `publisher`, `isbn` |
+  | `thesis` | `@phdthesis` | `school` |
+  | `report` | `@techreport` | `institution` |
+  | `presentation`, `document` | `@misc` | `howpublished` |
+
+  An article or preprint whose venue is only arXiv's is
+  `journal = {arXiv preprint arXiv:<id>}`. Zotero writes a preprint as
+  `@misc`; Gamma keeps this form because every cached arXiv entry already
+  has it. An article with neither a venue nor an arXiv id is `@misc` too (an
+  `@article` without a journal is a BibTeX warning). An arXiv id always adds `eprint`/`archivePrefix`, so a published
   paper read from arXiv cites the journal and keeps the preprint. Values go
   through `bibtex.latex_text` — registry markup as macros (`<i>` →
   `\emph{}`, `<sub>` → `\textsubscript{}`), entities decoded, a bare `& % #`

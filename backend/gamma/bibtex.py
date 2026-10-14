@@ -25,6 +25,8 @@ bibliography. `unique_keys` resolves that at export time by suffixing `a`,
 import html
 import re
 
+from . import item_types
+
 # What a citation key may not contain: BibTeX breaks on whitespace, commas,
 # braces and `=`, and `( ) \ " # % ~` trip up BibTeX or LaTeX. The rest of
 # printable ASCII is in wide use (`smith:2020-attention`, `10.1234/foo`).
@@ -46,11 +48,6 @@ _TAG_RE = re.compile(r"<(/?)([A-Za-z][\w:.-]*)(?:\s[^<>]*)?/?>")
 _ESCAPE_RE = re.compile(r"(?<!\\)([&%#])")
 # "436-444" / "436–444" → "436--444", the range BibTeX styles expect.
 _PAGE_RANGE_RE = re.compile(r"^(\w+)\s*[-‐‑–—]\s*(\w+)$")
-
-# Crossref/CSL work types and the BibTeX entry each becomes. Anything else
-# with a venue is an @article; without one, @misc.
-_BOOK_TYPES = ("book", "monograph", "edited-book", "reference-book")
-_CHAPTER_TYPES = ("book-chapter", "book-section", "book-part")
 
 
 def latex_text(text: str) -> str:
@@ -142,57 +139,54 @@ def build_entry(meta: dict, key: str = "") -> str:
     """The BibTeX entry for a metadata record (`properties.meta`), keyed by
     ``key`` when one is pinned and by ``default_key`` otherwise.
 
-    The entry type follows the record: the registry's work type when the
-    lookup stored one (`meta.work_type`, a Crossref type — a
-    `proceedings-article` is an `@inproceedings` with a `booktitle`, a
-    `book-chapter` an `@incollection`, a `dissertation` a `@phdthesis`, a
-    `report` a `@techreport`), else the document kind (a `book` has its
-    publisher and ISBN), else the shape of the record: an arXiv id without
-    a venue is the preprint `@article`, a venue makes an `@article`, and a
-    record with neither is `@misc` (an `@article` without a journal is a
-    BibTeX warning). An arXiv id always adds `eprint`/`archivePrefix`.
-    Values go through `latex_text`; a page range is written `--`."""
-    authors = _authors(meta)
+    The entry type follows the record's item type (``item_types``), as
+    Zotero's BibTeX export maps it: a conference paper is an
+    `@inproceedings` and a chapter an `@incollection`, both with the venue as
+    `booktitle`; a book is a `@book` with publisher and ISBN; a thesis a
+    `@phdthesis` with its `school`; a report a `@techreport` with its
+    `institution`. A journal article or a preprint is an `@article`: the
+    venue is the journal, or a bare arXiv id makes it
+    `arXiv preprint arXiv:<id>` (Zotero writes a preprint as `@misc`; this
+    form is kept because every cached arXiv entry already has it). An
+    article with neither, slides and other documents are `@misc`, the venue
+    as `howpublished`; an `@article` without a journal is a BibTeX warning.
+    An arXiv id always adds `eprint`/`archivePrefix`, so a published paper
+    read from arXiv cites the journal and keeps the preprint. Values go
+    through `latex_text`; a page range is written `--`."""
+    kind = item_types.item_type(meta)
     venue = str(meta.get("venue") or "").strip()
     arxiv_id = str(meta.get("arxiv_id") or "").strip()
-    publisher = str(meta.get("publisher") or "").strip()
+    publisher = item_types.publisher(meta)
     pages = str(meta.get("pages") or "").strip()
-    work = str(meta.get("work_type") or "").strip().lower()
-    kind = meta.get("kind")
+    isbn = meta.get("isbn", "")
     fields: dict[str, str] = {
         "title": meta.get("title", ""),
-        "author": " and ".join(authors),
+        "author": " and ".join(_authors(meta)),
     }
-    if work in _BOOK_TYPES or kind == "book":
+    if kind == "book":
         entry = "book"
-        fields["publisher"] = publisher
-        fields["isbn"] = meta.get("isbn", "")
-    elif work == "proceedings-article":
+        fields.update(publisher=publisher, isbn=isbn)
+    elif kind == "conferencePaper":
         entry = "inproceedings"
         fields.update(booktitle=venue, pages=pages, publisher=publisher)
-    elif work in _CHAPTER_TYPES:
+    elif kind == "bookSection":
         entry = "incollection"
-        fields.update(booktitle=venue, pages=pages, publisher=publisher)
-    elif work == "dissertation" or kind == "thesis":
+        fields.update(booktitle=venue, pages=pages, publisher=publisher, isbn=isbn)
+    elif kind == "thesis":
         entry = "phdthesis"
-        fields["school"] = publisher or venue
-    elif work == "report" or kind == "report":
+        fields["school"] = publisher
+    elif kind == "report":
         entry = "techreport"
-        fields["institution"] = publisher or venue
-    elif publisher and not venue and not arxiv_id:
-        # A publisher and no venue, from a registry that names no type (the
-        # book registries): a book.
-        entry = "book"
-        fields["publisher"] = publisher
-        fields["isbn"] = meta.get("isbn", "")
-    elif arxiv_id and (not venue or venue.lower().startswith("arxiv")):
-        entry = "article"
-        fields["journal"] = f"arXiv preprint arXiv:{arxiv_id}"
-    elif venue:
+        fields.update(institution=publisher, pages=pages)
+    elif kind in ("journalArticle", "preprint") and venue and not venue.lower().startswith("arxiv"):
         entry = "article"
         fields.update(journal=venue, volume=meta.get("volume", ""), pages=pages)
+    elif kind in ("journalArticle", "preprint") and arxiv_id:
+        entry = "article"
+        fields["journal"] = f"arXiv preprint arXiv:{arxiv_id}"
     else:
         entry = "misc"
+        fields["howpublished"] = venue
     if arxiv_id:
         fields["eprint"] = arxiv_id
         fields["archivePrefix"] = "arXiv"

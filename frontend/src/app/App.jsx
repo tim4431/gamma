@@ -15,6 +15,7 @@ import { isActive } from "../tasks/taskModel.js";
 import { parseGammaLink } from "../shared/model/gammaLinks.js";
 import { pageHostUser, publicPath } from "../shared/lib/slug.js";
 import { API, apiJson, getShareToken, setShareView, withShare, withWorkspace, setCurrentWorkspace, getCurrentWorkspace, setLinkName, makeId, fmtBytes, getDocIdForUrl, isPdfFile, isMarkdownFile, PAGE_FILE_ACCEPT, metaSourceInfo, resolvePdfUrl, pdfProxyUrl, probePdfUrl, setExpectedUser, getExpectedUser, usePersistedState, usePersistedFlag, copyText, copyRich, readNdjson } from "../shared/lib/utils";
+import { ITEM_TYPES, itemTypeFields, itemTypeOf } from "../shared/lib/itemTypes.js";
 import {
   AutoGrowTextarea,
   BlockDropIndicator,
@@ -8243,25 +8244,30 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                           >{metaBusy ? "…" : "↻"}</button>
                         </div>
                         <div className="metaTable">
-                          {/* Books swap the journal fields for publisher +
-                              ISBN; a journal field that does carry a value
-                              stays visible either way. */}
-                          {(() => {
-                            const isBook = pageMeta?.kind === "book" || !!(metaDraft?.publisher || metaDraft?.isbn);
-                            const journal = [[t("Venue"), "venue"], [t("Volume"), "volume"], [t("Pages"), "pages"]];
-                            return [
-                              [t("Title"), "title"],
-                              [t("Authors"), "authors"],
-                              ...(isBook
-                                ? [[t("Publisher"), "publisher"], [t("Year"), "year"], ["ISBN", "isbn"],
-                                   ...journal.filter(([, k]) => metaDraft?.[k])]
-                                : [journal[0], [t("Year"), "year"], journal[1], journal[2]]),
-                              ["DOI", "doi"],
-                              ["arXiv", "arxiv_id"],
-                            ];
-                          })().map(([label, key]) => (
+                          {/* The item type (Zotero's names) picks the BibTeX
+                              entry type and the rows below it: a chapter's
+                              venue is its book, a thesis's publisher its
+                              university. */}
+                          <div className="metaRow metaTypeRow">
+                            <span className="metaKey">{t("Type")}</span>
+                            <span className="metaVal metaValEdit">
+                              <MenuSelect
+                                value={metaDraft?.kind || itemTypeOf(pageMeta)}
+                                options={ITEM_TYPES}
+                                label={t("Item type")}
+                                onChange={(kind) => setMetaDraft((d) => ({ ...(d || metadataToDraft(pageMeta)), kind }))}
+                              />
+                            </span>
+                          </div>
+                          {[
+                            [T("Title"), "title"],
+                            [T("Authors"), "authors"],
+                            ...itemTypeFields(metaDraft?.kind || itemTypeOf(pageMeta), metaDraft),
+                            ["DOI", "doi"],
+                            ["arXiv", "arxiv_id"],
+                          ].map(([label, key]) => (
                             <div className="metaRow" key={key}>
-                              <span className="metaKey">{label}</span>
+                              <span className="metaKey">{t(label)}</span>
                               <span className="metaVal metaValEdit">
                                 <input
                                   className="metaInput"

@@ -3,6 +3,7 @@
 
 import { generateNKeysBetween } from "fractional-indexing";
 import { fmtDate, t } from "../shared/i18n/i18n.js";
+import { itemTypeOf } from "../shared/lib/itemTypes.js";
 
 // How a folder's path reads: its names from the top, joined (the server's
 // blocks_store.PATH_SEP). A name may hold any character, "/" and ","
@@ -206,8 +207,11 @@ export function defaultPageTitle(attachment) {
   return cleaned.trim() || "Untitled";
 }
 
+// The metadata popover's editable copy of a record. `kind` is the item type
+// the Type row shows: the record's own, or the one its fields imply.
 export function metadataToDraft(metadata) {
   return {
+    kind: itemTypeOf(metadata),
     title: metadata?.title || "",
     authors: (metadata?.authors || []).join(", "),
     venue: metadata?.venue || "",

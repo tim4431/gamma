@@ -4,10 +4,14 @@ Zotero's File → Import reads the ``.rdf`` directly (after unzipping), and
 Gamma's own ``/api/import/zotero`` accepts the zip as-is, so a library
 round-trips.
 
-The element shapes mirror what Zotero itself writes (and what
-``zotero_import.parse_zotero_rdf`` reads): items are bib classes carrying
-``z:itemType``, the journal name/volume/DOI live on a standalone
-``bib:Journal`` record referenced via ``dcterms:isPartOf``, attachments are
+The element shapes mirror what Zotero itself writes (its "Zotero RDF"
+translator's ``generateItem``, and what ``zotero_import.parse_zotero_rdf``
+reads): items are bib classes carrying ``z:itemType``, the page's item type
+(``item_types``) under its own name. A journal article's or a conference
+paper's venue, volume and DOI live on a standalone ``bib:Journal`` record
+referenced via ``dcterms:isPartOf``, a chapter's book title and ISBN on a
+``bib:Book``; a publisher (a thesis's university, a report's institution) is
+a ``dc:publisher`` ``foaf:Organization``. Attachments are
 ``z:Attachment`` elements linked by ``link:link`` with the file path in
 ``z:path`` (exactly what Zotero's own export writes; an ``rdf:resource``
 *element* is an RDF/XML syntax term — Zotero's parser happens to tolerate one,
@@ -32,6 +36,7 @@ import html as html_mod
 import re
 import xml.etree.ElementTree as ET
 
+from . import item_types
 from .highlights import page_of
 from .text_box import box_page
 
@@ -172,6 +177,19 @@ def _person(seq, name: str):
         _sub(person, "foaf", "givenName", " ".join(parts[:-1]))
 
 
+# The RDF class Zotero's translator gives each item type (the item itself);
+# a type it gives none is a plain rdf:Description — z:itemType is what any
+# reader goes by. Zotero files a presentation as bib:ConferenceProceedings.
+_ITEM_CLASS = {
+    "journalArticle": ("bib", "Article"), "bookSection": ("bib", "BookSection"), "book": ("bib", "Book"),
+    "thesis": ("bib", "Thesis"), "report": ("bib", "Report"), "presentation": ("bib", "ConferenceProceedings"),
+}
+# The record a venue lives on, by item type: a journal (Zotero's choice for
+# conference proceedings too) or the book a chapter is in. The item's DOI
+# and ISBN go with it, as Zotero writes them.
+_CONTAINER_CLASS = {"journalArticle": "Journal", "conferencePaper": "Journal", "bookSection": "Book"}
+
+
 def build_rdf(items: list[dict]) -> str:
     """items: one dict per page —
     ``{key, title, meta, cite_key, tags, folders, pdf_path, notes}`` where
@@ -186,29 +204,29 @@ def build_rdf(items: list[dict]) -> str:
         meta = item.get("meta") or {}
         arxiv = (meta.get("arxiv_id") or "").strip()
         venue = (meta.get("venue") or "").strip()
-        doi = (meta.get("doi") or "").strip()
-        # Published venue → journalArticle with a journal record; bare arXiv id
-        # → preprint; neither → generic document. All three re-import cleanly.
-        if venue:
-            tag, item_type = ("bib", "Article"), "journalArticle"
-        elif arxiv:
-            tag, item_type = ("rdf", "Description"), "preprint"
-        else:
-            tag, item_type = ("rdf", "Description"), "document"
+        # A page with no record is no known work: a plain document.
+        kind = item_types.item_type(meta) if meta else "document"
 
-        el = _sub(root, *tag, rdf_about=item["key"])
-        _sub(el, "z", "itemType", item_type)
-        if venue:
-            journal_key = f"#journal_{n}"
-            _sub(el, "dcterms", "isPartOf", rdf_resource=journal_key)
-            journal = _sub(root, "bib", "Journal", rdf_about=journal_key)
-            _sub(journal, "dc", "title", venue)
+        el = _sub(root, *_ITEM_CLASS.get(kind, ("rdf", "Description")), rdf_about=item["key"])
+        _sub(el, "z", "itemType", kind)
+        # Identifiers sit on the container when there is one, as Zotero's do.
+        holder = el
+        container = _CONTAINER_CLASS.get(kind)
+        if container and venue:
+            container_key = f"#{container.lower()}_{n}"
+            _sub(el, "dcterms", "isPartOf", rdf_resource=container_key)
+            holder = _sub(root, "bib", container, rdf_about=container_key)
+            _sub(holder, "dc", "title", venue)
             if meta.get("volume"):
-                _sub(journal, "prism", "volume", str(meta["volume"]))
-            if doi:
-                _sub(journal, "dc", "identifier", f"DOI {doi}")
-        elif doi:
-            _sub(el, "dc", "identifier", f"DOI {doi}")
+                _sub(holder, "prism", "volume", str(meta["volume"]))
+        for label, field in (("DOI", "doi"), ("ISBN", "isbn")):
+            value = str(meta.get(field) or "").strip()
+            if value:
+                _sub(holder, "dc", "identifier", f"{label} {value}")
+        publisher = item_types.publisher(meta)
+        if publisher:
+            org = _sub(_sub(el, "dc", "publisher"), "foaf", "Organization")
+            _sub(org, "foaf", "name", publisher)
 
         authors = meta.get("authors")
         if isinstance(authors, list) and authors:

@@ -29,7 +29,7 @@ export async function waitForPdf(page, pageNo = 1) {
   await page.waitForSelector(`[data-page="${pageNo}"] .textLayer span`, { timeout: 30000 });
 }
 
-export async function pdfScenarios({ server, browser, alice, makePdf, step, until, sleep, assert, assertEq, assertNoProblems, openPage }, { alice2, second }) {
+export async function pdfScenarios({ server, browser, alice, makePdf, step, until, sleep, assert, assertEq, assertNoProblems, openPage, flags }, { alice2, second }) {
   let ctx, page, pageId, docId;
   const account = alice2;
 
@@ -71,6 +71,39 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
     assertEq(await row("Source").getByRole("button").count(), 0, "nothing left to verify");
     await page.click("button[aria-label='Paper metadata']");
     // The later steps expect a page without metadata.
+    await account.api("/api/metadata/update", { method: "POST", body: { block_id: pageId, meta: {} } });
+    assertNoProblems(page);
+  });
+
+  // The item type (meta.kind, Zotero's names) is the popover's first row: a
+  // record naming none shows the type its fields imply, another choice
+  // swaps the rows (a conference paper's venue is its proceedings), and
+  // saving stores the type and rebuilds the entry as an @inproceedings.
+  await step("pdf: the Type row picks the item type, the rows that go with it and the BibTeX entry type", async () => {
+    // The page's own title: saving renames a page still under its automatic title.
+    const meta = { title: "Rydberg paper", authors: ["Kaiming He"], year: "2016", venue: "2016 IEEE CVPR", source: "manual" };
+    await account.api(`/api/blocks/${pageId}`, { method: "PUT", body: { properties: { meta } } });
+    await page.reload();
+    await waitForPdf(page, 1);
+    await page.click("button[aria-label='Paper metadata']");
+    const pop = page.locator(".metaPopover");
+    const keys = async () => (await pop.locator(".metaKey").allInnerTexts()).map((s) => s.trim());
+    const typeSelect = pop.getByRole("button", { name: "Item type", exact: true });
+    assertEq((await typeSelect.innerText()).trim(), "Journal article", "a venue and no type read as a journal article");
+    assert((await keys()).includes("Journal"), `rows: ${await keys()}`);
+    await typeSelect.click();
+    await page.locator(".uiSelectMenu .ctxMenuItem").getByText("Conference paper", { exact: true }).click();
+    await until(async () => (await keys()).includes("Proceedings"), { what: "the venue row reads Proceedings" });
+    assert((await keys()).includes("Publisher") && !(await keys()).includes("Volume"), `conference rows: ${await keys()}`);
+    if (flags.keep) await page.screenshot({ animations: "disabled", path: `${server.dir}/meta-type-row.png` });
+    await pop.getByRole("button", { name: "Save metadata", exact: true }).click();
+    const saved = await until(async () => {
+      const props = (await account.api(`/api/blocks/${pageId}`)).properties;
+      return props.meta?.kind === "conferencePaper" ? props : null;
+    }, { what: "the item type saved" });
+    assert(saved.bibtex.startsWith("@inproceedings{he2016,") && saved.bibtex.includes("booktitle = {2016 IEEE CVPR}"),
+      `entry: ${saved.bibtex}`);
+    await page.click("button[aria-label='Paper metadata']");
     await account.api("/api/metadata/update", { method: "POST", body: { block_id: pageId, meta: {} } });
     assertNoProblems(page);
   });

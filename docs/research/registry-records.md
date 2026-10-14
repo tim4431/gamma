@@ -45,11 +45,17 @@ entities, and `type`, which was not being selected.
   resolves to the registrar's record and BibTeX. The arXiv id stays on the
   record, so the entry keeps `eprint`/`archivePrefix` and the popover its
   arXiv row. Guarded by a 0.9 title similarity against mistyped DOIs.
-- **`work_type` instead of a second `kind`.** `kind` carries UI meaning
-  (the unverified warning fires only for `paper`); the registry's CSL type
-  is kept as its own field, survives a hand edit like `kind`, and picks the
-  entry type. Hand edits do not offer it; a record from AI or a hand entry
-  falls back to `kind` and then to the record's shape.
+- **One item type, under Zotero's names.** A first pass kept the
+  registry's CSL type as a `work_type` field beside `kind`; it was replaced
+  the same day by one vocabulary for `kind` itself, Zotero's item-type names
+  (`gamma/item_types.py`), which every source maps onto and every output
+  translates from. Zotero's names because they are CSL's types under another
+  spelling and make a Zotero round trip the identity; only the nine types a
+  paper library holds are kept. A Crossref type is a registration label,
+  missing for every source but doi.org and Crossref, so it is an input, not
+  the model. BibTeX's 14 types are an output with print-only distinctions
+  (`@phdthesis`/`@mastersthesis`) and no preprint. The mechanics:
+  [dev/paper_metadata.md](../dev/paper_metadata.md#metadata-fetch--edit--cite).
 - **`@misc` for a record with neither venue nor arXiv id.** An `@article`
   without a journal is a BibTeX warning in every style.
 - **Case-insensitive key uniqueness**, because classic BibTeX compares
@@ -58,6 +64,6 @@ entities, and `type`, which was not being selected.
   when doi.org served one (its key style included); `@article` with
   `journal = {arXiv preprint arXiv:…}` for bare preprints, since cached
   entries carry it; no case-protecting braces around titles; no `number`
-  or `month` in built entries; the Zotero RDF export still writes every
-  venue-bearing record as a `journalArticle` (conference papers and
-  theses round-trip as articles).
+  or `month` in built entries. The Zotero RDF export now writes each item
+  type as Zotero does, with publisher and ISBN; those shapes are taken from
+  Zotero's translator source and have not been imported into a live Zotero.

@@ -125,33 +125,35 @@ def test_verify_upgrades_via_crossref_title_search(monkeypatch):
 def test_ai_extract_reports_document_kind(monkeypatch):
     monkeypatch.setattr(metadata, "_resolve_model", lambda rt, m: "m")
     monkeypatch.setattr(metadata, "_call_ai",
-                        lambda *a, **kw: '{"title": "QM Lecture 5", "kind": "notes"}')
-    assert metadata._ai_extract_meta("text", "", "", {"enabled": True})["kind"] == "notes"
-    # Unknown kinds fall back to "paper" — the safe (warned) default
+                        lambda *a, **kw: '{"title": "QM Lecture 5", "kind": "document"}')
+    assert metadata._ai_extract_meta("text", "", "", {"enabled": True})["kind"] == "document"
+    # Unknown kinds are read from the record's shape: a journal article, the
+    # safe (warned) default
     monkeypatch.setattr(metadata, "_call_ai",
                         lambda *a, **kw: '{"title": "T", "kind": "mixtape"}')
-    assert metadata._ai_extract_meta("text", "", "", {"enabled": True})["kind"] == "paper"
+    assert metadata._ai_extract_meta("text", "", "", {"enabled": True})["kind"] == "journalArticle"
 
 
 def test_course_notes_keep_their_kind(guest, monkeypatch):
-    """A DOI-less lecture-notes PDF: the AI classifies it as notes; the record
-    stays source "ai" with kind "notes" (the UI shows no red warning for it)
-    and the status endpoint reports the kind."""
+    """A DOI-less lecture-notes PDF: the AI classifies it as a document; the
+    record stays source "ai" with kind "document" (the UI shows no red warning
+    for it) and the status endpoint reports the kind."""
     page = _paper_page(guest, "Lecture 5: perturbation theory. Problem set due Friday.",
                        monkeypatch, ai_enabled=True)
     monkeypatch.setattr(metadata, "_resolve_model", lambda rt, m: "m")
     monkeypatch.setattr(metadata, "_call_ai",
                         lambda *a, **kw: '{"title": "Lecture 5: perturbation theory", '
-                                         '"authors": ["Prof X"], "kind": "notes"}')
+                                         '"authors": ["Prof X"], "kind": "document"}')
     monkeypatch.setattr(metadata, "_crossref_search", lambda q, rows=5: [])
+    monkeypatch.setattr(metadata, "_book_search", lambda t, a="": [])
     monkeypatch.setattr(metadata, "_fetch_doi", lambda d: (None, ""))
     r = guest.post("/api/metadata/fetch", json={"block_id": page["id"]})
     assert r.status_code == 200, r.text
     assert r.json()["source"] == "ai"
-    assert r.json()["meta"]["kind"] == "notes"
+    assert r.json()["meta"]["kind"] == "document" and r.json()["meta"]["unverified"] is False
     st = guest.get("/api/metadata/status").json()["papers"]
     entry = next(p for p in st if p["id"] == page["id"])
-    assert entry["meta_source"] == "ai" and entry["meta_kind"] == "notes"
+    assert entry["meta_source"] == "ai" and entry["meta_kind"] == "document"
 
 
 # --- the full fetch chain ----------------------------------------------------
