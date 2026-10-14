@@ -657,15 +657,54 @@ document cites, so the export has no switches and no bundling.
   `@misc`; Gamma keeps this form because every cached arXiv entry already
   has it. An article with neither a venue nor an arXiv id is `@misc` too (an
   `@article` without a journal is a BibTeX warning). An arXiv id always adds `eprint`/`archivePrefix`, so a published
-  paper read from arXiv cites the journal and keeps the preprint. Values go
-  through `bibtex.latex_text` — registry markup as macros (`<i>` →
-  `\emph{}`, `<sub>` → `\textsubscript{}`), entities decoded, a bare `& % #`
-  escaped, one already escaped left alone — and a page range is written
-  `436--444`; identifiers (DOI, eprint, ISBN) are verbatim. A registrar's
-  own rendering gets the same treatment on the way in
-  (`bibtex.clean_entry`): Crossref prints `&amp;` and `<sub>3</sub>` as they
-  are, which breaks the LaTeX run. What the registries really return:
-  [research/registry-records.md](../research/registry-records.md).
+  paper read from arXiv cites the journal and keeps the preprint.
+- **Every printed entry is valid BibTeX.** Every entry leaves through
+  `bibtex._format`: `build_entry` writes through it, and `page_entry` reads
+  a stored entry back (`normalize_entry`, a small parser for any layout:
+  doi.org's one-line rendering, an entry an older Gamma cached, one restored
+  from a Markdown export) and writes it again. So the export, its review,
+  the share popover's Copy BibTeX, `cite` and the Markdown and Obsidian
+  exports all print the same text, whatever was stored. The rules:
+  - Text values are ASCII LaTeX (`bibtex.latex_text`). An accented letter
+    becomes BibTeX's special character (`F{\"o}sel`, which classic BibTeX
+    sorts and abbreviates right), a Greek letter or math symbol `$\alpha$`,
+    registry markup a macro (`<i>` → `\emph{}`, `<sub>` →
+    `\textsubscript{}`), and a MathML formula math (`spin-$1/2$`, through
+    `gamma/mathml.py`). Entities are decoded and `& % # _ $ ^` escaped
+    outside math. What is already LaTeX stays as it is, so a second pass
+    changes nothing. A character with no LaTeX form (CJK) stays UTF-8 for
+    a Unicode engine.
+  - Braces balance in every value; an unmatched one is dropped, since
+    BibTeX counts every brace and one stray brace breaks the file.
+  - The month is a standard macro (`month = sep`); doi.org writes `Sept`,
+    `June` and `July`, which no style defines. A page range takes `--`.
+  - The entry type is one every style defines, and a type whose venue
+    field is missing (`@article` without `journal`, `@inproceedings`
+    without `booktitle`, a thesis without `school`, a report without
+    `institution`) is written as `@misc`: apsrev4-2 fails on an `@article`
+    with no journal.
+  - The key is ASCII (`bibtex.clean_key` spells `Fösel` as `Fosel`):
+    pdflatex cannot `\cite` a key holding a UTF-8 letter.
+  - Identifiers and links (`doi`, `url`, `eprint`, `isbn`, `issn`) are
+    written raw, since `\url` and `\doi` read their argument verbatim. A
+    `%` or `#` in a URL prints as it is under the url package or hyperref
+    and under biber; escaped it would print its backslash. doi.org's
+    resolver link for the entry's own DOI is dropped, since styles print it
+    beside the DOI. A bare macro other than a month (`journal = prl`) is
+    written as its text: the file carries no `@string` to define it.
+  - A field the stored entry lacks but the metadata record has is added:
+    the `pages`, because doi.org's rendering leaves out an APS or IOP
+    article number. Records fetched before the lookup read article numbers
+    have none; a refetch adds them.
+
+  Checked against TeX Live 2024 (pdflatex with plainnat and apsrev4-2
+  through BibTeX, and biblatex through biber): a 22-entry export and a
+  corpus of awkward records compile with no errors, and
+  `tests/test_bibtex_entries.py` pins the rules. Two limits are pdflatex's,
+  not the file's: a letter with two accents (Vietnamese "ễ", written
+  `{\~{\^e}}`) typesets through BibTeX but not through biber under
+  pdflatex, and CJK needs XeLaTeX or LuaLaTeX. What the registries really
+  return: [research/registry-records.md](../research/registry-records.md).
 - **Citation keys**: generated as first author's surname + year
   (`bibtex.default_key`; it must not change, because cached entries carry
   it). Two papers by one author in one year would collide in a
@@ -712,7 +751,9 @@ pages left out, with the reason) and `text` (the file). It runs the same
 builder as the download — `keyed_records()` and `text()` serve both — so the
 review cannot disagree with the file, and `preview()` returns an empty
 bibliography as data where `save` would refuse, so the dialog can show the
-pages it could not cite instead of an error.
+pages it could not cite instead of an error. The share popover's Copy
+BibTeX asks it too (`?page_id=`) when it opens, so the entry it copies is
+the one the file carries, not the stored text.
 
 The dialog's BibTeX step is the two panes the Zotero import review uses
 (`.bibColumns`, the same shape as `.importReviewColumns` with its own

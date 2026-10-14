@@ -51,16 +51,23 @@ the end-of-article trailer. Only the AI call is capped at the pref
 
 **What a registry record becomes.** Crossref keeps the publisher's markup
 and entities in titles and venues (`<i>Planck</i> 2018 results`,
-`CsPbCl<sub>3</sub>`, `Astronomy &amp; Astrophysics`), names an organisation
-author by `name` rather than `given`/`family`, and keeps a subtitle apart
-from the title. `_fetch_doi` and `_crossref_search` store plain text
-(`textnorm.plain_text`: tags dropped, entities decoded — the title then
-reads as the PDF prints it, which is what the title match and the popover
-need), join `title: subtitle`, keep organisation authors, and turn the
-registry's work type into the record's item type. doi.org's own
-BibTeX carries the same markup; `bibtex.clean_entry` turns it into LaTeX
-(`\emph{}`, `\textsubscript{}`, `\&`) before it is cached. The quirks as
-observed live: [research/registry-records.md](../research/registry-records.md).
+`CsPbCl<sub>3</sub>`, `Astronomy &amp; Astrophysics`) and inline MathML
+(`spin-<mml:math>…1∕2…</mml:math>`), names an organisation author by `name`
+rather than `given`/`family`, and keeps a subtitle apart from the title. A
+journal that numbers its articles instead of paging them (APS, IOP) gives
+the number as `article-number` and no `page`. `_fetch_doi` and
+`_crossref_search` store plain text (`textnorm.plain_text`: tags dropped, a
+formula read as its text through `gamma/mathml.py`, entities decoded; the
+title then reads as the PDF prints it, `spin-1/2`, which is what the title
+match and the popover need), join `title: subtitle`, keep organisation
+authors, take the article number as `pages` (`_csl_pages`), and turn the
+registry's work type into the record's item type. doi.org's own BibTeX
+carries the same markup, writes months no style defines (`Sept`, `July`)
+and leaves the article number out; `bibtex.normalize_entry` writes it as
+valid BibTeX, the record's pages added, before it is cached
+([import_export.md](import_export.md#bibtex-bibliography) lists the
+rules). The quirks as observed live:
+[research/registry-records.md](../research/registry-records.md).
 
 **Item type.** `meta.kind` names what the record describes, under the names
 Zotero gives its item types (`gamma/item_types.py`, mirrored for the

@@ -492,6 +492,13 @@ def _csl_year(obj: dict) -> str:
     return str(first[0]) if first and first[0] else ""
 
 
+def _csl_pages(obj: dict) -> str:
+    """The pages of a CSL record, or its article number: APS, IOP and other
+    journals that number articles instead of paging them (Phys. Rev. A 78,
+    052101) carry the number as ``article-number`` and no ``page``."""
+    return str(obj.get("page") or obj.get("article-number") or "")
+
+
 def _csl_text(value) -> str:
     """A CSL title/container-title (a string, or a one-element list in the
     REST API) as plain text — Crossref keeps the publisher's markup and
@@ -535,7 +542,7 @@ def _fetch_doi(doi: str, with_bibtex: bool = True) -> tuple[dict | None, str]:
         "year": _csl_year(data),
         "venue": _csl_text(data.get("container-title")),
         "volume": str(data.get("volume") or ""),
-        "pages": str(data.get("page") or ""),
+        "pages": _csl_pages(data),
         "doi": doi,
         "arxiv_id": "",
         "source": "doi",
@@ -554,10 +561,11 @@ def _fetch_doi(doi: str, with_bibtex: bool = True) -> tuple[dict | None, str]:
             bibtex = _http_get(url, accept="application/x-bibtex").decode("utf-8", "replace").strip()
         except Exception:
             pass
-    # Crossref prints its markup and entities into the BibTeX as they are
-    # ("Astronomy &amp; Astrophysics", "CsPbCl<sub>3</sub>"); as LaTeX they
-    # typeset, as printed they break the run.
-    return meta, bibtex_mod.clean_entry(bibtex)
+    # doi.org prints Crossref's markup, entities and MathML into its BibTeX as
+    # they are ("Astronomy &amp; Astrophysics", "CsPbCl<sub>3</sub>"), writes
+    # months no style defines (Sept, July) and leaves out an APS article
+    # number: stored as valid BibTeX, the number taken from the record.
+    return meta, bibtex_mod.normalize_entry(bibtex, meta)
 
 
 def _published_record(meta: dict) -> tuple[dict, str]:
@@ -595,7 +603,7 @@ def _crossref_search(query: str, rows: int = 5, detail: bool = False, from_year:
     (a Crossref type such as ``journal-article``) keeps that kind only."""
     if not (query or "").strip():
         return []
-    fields = "DOI,type,title,author,container-title,volume,page,issued" + (
+    fields = "DOI,type,title,author,container-title,volume,page,article-number,issued" + (
         ",abstract,is-referenced-by-count" if detail else "")
     narrow = ([f"from-pub-date:{int(from_year)}"] if from_year else []) + (
         [f"type:{work_type}"] if work_type else [])
@@ -620,7 +628,7 @@ def _crossref_search(query: str, rows: int = 5, detail: bool = False, from_year:
             "year": _csl_year(it),
             "venue": _csl_text(it.get("container-title")),
             "volume": str(it.get("volume") or ""),
-            "pages": str(it.get("page") or ""),
+            "pages": _csl_pages(it),
             "doi": str(it.get("DOI") or ""),
             "arxiv_id": "",
             "source": "crossref",

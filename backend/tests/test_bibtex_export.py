@@ -139,7 +139,7 @@ def test_a_cached_entry_is_rekeyed_to_the_pin(user):
     record = {"title": "From doi.org", "authors": ["Ada Lovelace"], "year": "1843", "source": "doi"}
     page = make_page(user, "From doi.org", {
         "folders": [make_folder(user, "Bib rekey")], "meta": record, "cite_key": "mine:2026",
-        "bibtex": "@article{10.1234/abc,\n  title = {From doi.org},\n  year = {1843}\n}"})
+        "bibtex": "@article{10.1234/abc,\n  title = {From doi.org},\n  journal = {Notes},\n  year = {1843}\n}"})
     r = user.get(f"/api/pages/{page['id']}/export", params={"mode": "bibtex"})
     assert r.status_code == 200, r.text
     assert "@article{mine:2026," in r.text

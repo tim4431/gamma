@@ -7,11 +7,14 @@ has to follow the work (a conference paper is an ``@inproceedings``).
 """
 
 import json
+import re
 
 from conftest import make_page
 from test_metadata_verify import _paper_page
 
-from gamma.bibtex import build_entry, clean_entry, default_key, latex_text, unique_keys
+from gamma import mathml
+from gamma.bibtex import (build_entry, clean_key, default_key, latex_text, normalize_entry, page_entry,
+                          unique_keys)
 from gamma.routers import metadata
 from gamma.routers.metadata import _title_in_text
 from gamma.textnorm import plain_text
@@ -24,8 +27,34 @@ def test_latex_text_turns_registry_markup_into_latex():
     assert latex_text("CsPbCl<sub>3</sub> and H<sup>+</sup>") == "CsPbCl\\textsubscript{3} and H\\textsuperscript{+}"
     assert latex_text("Astronomy &amp; Astrophysics") == "Astronomy \\& Astrophysics"
     assert latex_text("A \\& B, 5% of #1") == "A \\& B, 5\\% of \\#1"   # already escaped stays escaped
-    assert latex_text("<mml:math>x</mml:math> <span class=\"a\">y</span>") == "x y"
+    assert latex_text("<mml:math>x</mml:math> <span class=\"a\">y</span>") == "$x$ y"
     assert latex_text("<i>unclosed") == "unclosed"   # never an unmatched brace
+
+
+def test_latex_text_writes_unicode_as_ascii_latex():
+    assert latex_text("Fösel, Cortiñas, Vuletić, Mølmer, Ł. Wójcik") == \
+        'F{\\"o}sel, Corti{\\~n}as, Vuleti{\\\'c}, M{\\o}lmer, {\\L}. W{\\\'o}jcik'
+    assert latex_text("Rb–Cs at 87 µK, α ≈ 0.1, T² ≥ 2 K") == \
+        "Rb--Cs at 87 $\\mu$K, $\\alpha$ $\\approx$ 0.1, T\\textsuperscript{2} $\\geq$ 2 K"
+    assert latex_text("“quoted” and ‘single’ …") == "``quoted'' and `single' \\ldots{}"
+    assert latex_text("x_1 costs $5^2 and T<1") == "x\\_1 costs \\$5\\^{}2 and T$<$1"
+    assert latex_text("量子") == "量子"  # no LaTeX form: left for a Unicode engine
+    # Already LaTeX stays as it is, so converting twice changes nothing.
+    for value in ("F{\\\"o}sel $\\alpha$ \\& \\textsubscript{3} spin-$1/2$", "a {b} c"):
+        assert latex_text(value) == value
+    assert latex_text("a {b c") == "a b c" and latex_text("a } b") == "a b"
+
+
+def test_mathml_becomes_latex_math_and_plain_text():
+    crossref = ("spin-\n   <mml:math xmlns:mml=“http://www.w3.org/1998/Math/MathML” display=“inline”>\n"
+                "     <mml:mrow><mml:mn>1</mml:mn><mml:mo>∕</mml:mo><mml:mn>2</mml:mn></mml:mrow>\n"
+                "   </mml:math>\n   particles")
+    assert latex_text(crossref) == "spin-$1/2$ particles"
+    assert plain_text(crossref) == "spin-1/2 particles"
+    assert mathml.to_latex("<math><msup><mi/><mn>87</mn></msup><mi>Rb</mi></math>") == "{}^{87}\\mathrm{Rb}"
+    assert mathml.to_latex("<math><msub><mi>α</mi><mi>c</mi></msub><mo>×</mo>"
+                           "<mfrac><mn>1</mn><mn>2</mn></mfrac></math>") == "\\alpha_c\\times\\frac{1}{2}"
+    assert mathml.to_text("<math><msup><mi/><mn>87</mn></msup><mi>Rb</mi></math>") == "87Rb"
 
 
 def test_plain_text_reads_like_the_pdf():
@@ -35,11 +64,75 @@ def test_plain_text_reads_like_the_pdf():
     assert plain_text("line<br>break") == "line break"
 
 
-def test_clean_entry_fixes_a_registrar_rendering():
-    raw = "@article{Yan_2013, title={CsPbCl<sub>3</sub>}, journal={Nature Structural &amp; Molecular Biology} }"
-    assert clean_entry(raw) == ("@article{Yan_2013, title={CsPbCl\\textsubscript{3}}, "
-                                "journal={Nature Structural \\& Molecular Biology} }")
-    assert clean_entry("") == ""
+# doi.org's own rendering of Chase & Geremia (2008), as it really arrives:
+# one line, Crossref's MathML with curly-quoted attributes, a month no style
+# defines, the resolver link beside the DOI and no article number.
+DOI_ORG_CHASE = (
+    "@article{Chase_2008, title={Collective processes of an ensemble of spin-\n"
+    "                    <mml:math xmlns:mml=“http://www.w3.org/1998/Math/MathML” display=“inline”>\n"
+    "                      <mml:mrow><mml:mn>1</mml:mn><mml:mo>∕</mml:mo><mml:mn>2</mml:mn></mml:mrow>\n"
+    "                    </mml:math>\n                    particles}, volume={78}, ISSN={1094-1622}, "
+    "url={http://dx.doi.org/10.1103/PhysRevA.78.052101}, DOI={10.1103/physreva.78.052101}, number={5}, "
+    "journal={Physical Review A}, publisher={American Physical Society (APS)}, "
+    "author={Chase, Bradley A. and Geremia, J. M.}, year={2008}, month=Sept }")
+
+
+def test_normalize_entry_writes_a_registrar_rendering_as_valid_bibtex():
+    out = normalize_entry(DOI_ORG_CHASE, {"pages": "052101"})
+    assert out == (
+        "@article{Chase_2008,\n"
+        "  title = {Collective processes of an ensemble of spin-$1/2$ particles},\n"
+        "  author = {Chase, Bradley A. and Geremia, J. M.},\n"
+        "  journal = {Physical Review A},\n"
+        "  volume = {78},\n"
+        "  number = {5},\n"
+        "  pages = {052101},\n"
+        "  publisher = {American Physical Society (APS)},\n"
+        "  issn = {1094-1622},\n"
+        "  year = {2008},\n"
+        "  month = sep,\n"
+        "  doi = {10.1103/physreva.78.052101}\n"
+        "}")
+    assert normalize_entry(out) == out  # a second pass changes nothing
+    assert out.isascii()
+
+
+def test_normalize_entry_fixes_months_pages_types_and_keys():
+    def norm(fields, kind="article", key="k"):
+        return normalize_entry(f"@{kind}{{{key}, " + ", ".join(fields) + "}")
+    assert "month = jul" in norm(["title={T}", "journal={J}", "month=July"])
+    assert "month = feb" in norm(["title={T}", "journal={J}", "month={2}"])
+    assert "month = {Spring}" in norm(["title={T}", "journal={J}", "month={Spring}"])
+    assert "pages = {614--619}" in norm(["title={T}", "journal={J}", "pages={614–619}"])
+    # An @article without a journal fails apsrev4-2; a type no style defines.
+    assert norm(["title={T}", "year={2026}"]).startswith("@misc{k,")
+    assert norm(["title={T}"], kind="online").startswith("@misc{k,")
+    assert norm(["title={T}"], kind="inproceedings").startswith("@misc{k,")
+    assert norm(["title={T}", "journal={J}"], key="Müller_2020").startswith("@article{Muller_2020,")
+    # Repeated fields keep the first; quoted values and concatenation are read.
+    out = norm(['title = "A {B} c"', "title={again}", 'note = "x" # "y"', "journal={J}"])
+    assert "title = {A {B} c}" in out and "again" not in out and "note = {xy}" in out
+    # A resolver link for another DOI is not the entry's own: it stays.
+    assert "url = {https://doi.org/10.1/other}" in norm(["title={T}", "journal={J}", "doi={10.1/x}",
+                                                       "url={https://doi.org/10.1/other}"])
+    assert normalize_entry("not an entry") == "" and normalize_entry("@article{k, title={open") == ""
+
+
+def test_page_entry_prints_valid_bibtex_for_any_stored_text():
+    meta = {"title": "Collective processes", "authors": ["Bradley A. Chase"], "year": "2008",
+            "venue": "Physical Review A", "pages": "052101"}
+    assert page_entry({"bibtex": DOI_ORG_CHASE, "meta": meta}).startswith("@article{Chase_2008,\n")
+    assert "pages = {052101}" in page_entry({"bibtex": DOI_ORG_CHASE, "meta": meta})
+    # A stored text that is no entry: built from the record instead.
+    assert page_entry({"bibtex": "@article{broken, title={", "meta": meta}).startswith("@article{chase2008,")
+    assert page_entry({"bibtex": DOI_ORG_CHASE, "meta": meta, "cite_key": "chase:spin"}).startswith(
+        "@article{chase:spin,")
+
+
+def test_clean_key_spells_a_key_in_ascii():
+    assert clean_key("Fösel_2020") == "Fosel_2020"
+    assert clean_key("Mølmer-Sørensen") == "Molmer-Sorensen"
+    assert clean_key("量子2020") == "2020"
 
 
 def test_build_entry_escapes_values_and_writes_page_ranges():
@@ -132,7 +225,8 @@ def test_fetch_doi_cleans_the_registry_record(monkeypatch):
     assert meta["authors"] == ["Planck Collaboration", "N. Aghanim"]
     assert meta["venue"] == "Astronomy & Astrophysics"
     assert meta["year"] == "2020" and meta["kind"] == "journalArticle"
-    assert "journal={Astronomy \\& Astrophysics}" in bib and "title={\\emph{Planck}" in bib
+    assert "journal = {Astronomy \\& Astrophysics}" in bib and "title = {\\emph{Planck} 2018 results" in bib
+    assert "pages = {A6}" in bib  # the record's page, which doi.org's rendering left out
     assert build_entry(meta).startswith("@article{collaboration2020,")
 
 
@@ -274,7 +368,7 @@ def test_a_type_alone_is_not_a_record(guest):
 def test_a_cached_fetch_answers_the_entry_the_export_prints(guest):
     page = make_page(guest, "Pinned", properties={
         "meta": {"title": "T", "authors": ["Ada Lovelace"], "year": "1843"},
-        "bibtex": "@article{Lovelace_1843, title={T} }", "cite_key": "ada43"})
+        "bibtex": "@article{Lovelace_1843, title={T}, journal={Notes} }", "cite_key": "ada43"})
     r = guest.post("/api/metadata/fetch", json={"block_id": page["id"]})
     assert r.status_code == 200, r.text
     assert r.json()["cached"] is True and r.json()["bibtex"].startswith("@article{ada43,")
@@ -286,3 +380,61 @@ def test_markdown_export_renders_an_entry_for_a_record_without_one(guest):
     r = guest.get(f"/api/pages/{page['id']}/export", params={"mode": "readable"})
     assert r.status_code == 200, r.text
     assert "```bibtex\n@article{hopper1952," in r.text
+
+
+# --- every printed entry is valid BibTeX --------------------------------------
+#
+# The rules checked here are the ones a real toolchain enforces: this corpus
+# (and a real 22-entry export) compiled with zero errors under pdflatex with
+# plainnat and apsrev4-2 (BibTeX) and with biblatex (biber), TeX Live 2024.
+
+AWKWARD_RECORDS = [
+    {"title": "Salt & Pepper: 100% of #1 cases_x with $5 ^ 2 {unbalanced", "authors": ["Ana Ferrández"],
+     "year": "2020", "venue": "J. Phys. A: Math. & Theor.", "pages": "436–444", "doi": "10.1/a_b&c"},
+    {"title": "<i>Planck</i>: CsPbCl<sub>3</sub> &amp; H<sup>+</sup> at 87 µK, α ≈ 0.1 → ∞",
+     "authors": ["Søren Kierkegaard", "Þóra Ægisdóttir", "Nguyễn Thị B"], "year": "2020", "venue": "A&amp;A"},
+    {"title": "“Quoted” — dashes – … ﬁne ², 量子", "authors": ["Émilie du Châtelet"], "kind": "book"},
+    {"title": "No venue thesis", "authors": ["A Student"], "kind": "thesis"},
+    {"title": "Only a title"},
+]
+AWKWARD_STORED = [
+    DOI_ORG_CHASE,
+    "@ARTICLE{Weird_Key ü, TITLE = \"A {B} c\", Journal = jpa, month = \"Sept.\", Year = 2001, "
+    "url = {https://doi.org/10.1/x}, doi = {10.1/X}, author = {Doe, J. and Roe, R.}, }",
+    "@online{web2020, title={A web page}, url={https://example.org/a?b=1&c=%20#frag}, year={2020}}",
+    "@inproceedings{conf, title={No booktitle}, author={X, Y}, year={2000}, month=13}",
+    "@book(parens, title={Paren delimited}, author={Z}, publisher={P}, year={1999})",
+]
+
+
+def _assert_valid_bibtex(entry):
+    from gamma.bibtex import _TYPES, _VENUE, _parse
+    parsed = _parse(entry)
+    assert parsed, entry
+    entry_type, key, fields = parsed
+    assert entry_type in _TYPES, entry
+    assert key and key.isascii() and clean_key(key) == key, key
+    names = dict(fields)
+    assert entry_type not in _VENUE or names.get(_VENUE[entry_type]), entry
+    for name, value in fields:
+        depth = 0
+        for c in value:
+            depth += {"{": 1, "}": -1}.get(c, 0)
+            assert depth >= 0, (name, value)
+        assert depth == 0, (name, value)
+        if name == "month":
+            assert value in {"jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"} \
+                or not value.isalpha(), value
+        if name not in ("doi", "url", "eprint", "isbn"):
+            outside_math = re.sub(r"(?<!\\)\$.*?(?<!\\)\$", "", value)
+            assert not re.search(r"(?<!\\)[&%#_]", outside_math), (name, value)
+            assert "<" not in outside_math and "&amp;" not in value, (name, value)
+    assert normalize_entry(entry) == entry, entry  # stable: a second pass changes nothing
+
+
+def test_every_built_and_stored_entry_is_valid_bibtex():
+    entries = [build_entry(r) for r in AWKWARD_RECORDS] + [normalize_entry(s) for s in AWKWARD_STORED]
+    for entry in entries:
+        _assert_valid_bibtex(entry)
+    # Only what has no LaTeX form at all is left outside ASCII.
+    assert all(c.isascii() or "一" <= c <= "鿿" for e in entries for c in e)

@@ -93,7 +93,7 @@ def test_cite_prints_the_stored_entry_under_the_pinned_key(org):
     c, ids = org
     page = _page(c, "pinned cite", {"folders": [ids["readout"]], "cite_key": "smithAttention",
                                     "meta": {"title": "Pinned", "authors": ["S. Smith"], "year": "2020"},
-                                    "bibtex": "@article{smith2020,\n  title = {Pinned}\n}"})
+                                    "bibtex": "@article{smith2020,\n  title = {Pinned},\n  journal = {J}\n}"})
     text, _ = run_agent_tool(ids["ws"], folder(ids["readout"]), "cite", {"page_ids": [page]})
     assert "@article{smithAttention," in text and "smith2020" not in text
 

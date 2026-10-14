@@ -108,6 +108,28 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
     assertNoProblems(page);
   });
 
+  // A stored entry may be invalid BibTeX (doi.org's one-line rendering with
+  // a month no style defines, cached before the export normalized it). The
+  // share popover copies the entry the .bib export prints, not the stored
+  // text (docs/dev/import_export.md "BibTeX bibliography").
+  await step("pdf: the share popover's Copy BibTeX is the entry the .bib export prints", async () => {
+    const meta = { title: "Rydberg paper", authors: ["A. Writer"], year: "2026", source: "manual" };
+    const bibtex = "@article{Writer_2026, title={Rydberg & arrays}, author={Writer, A.}, year={2026}, month=Sept }";
+    await account.api(`/api/blocks/${pageId}`, { method: "PUT", body: { properties: { meta, bibtex } } });
+    await page.reload();
+    await waitForPdf(page, 1);
+    await page.click("button[aria-label='Share']");
+    const entry = page.locator(".sharePopover .bibtexPre");
+    const printed = await until(async () => {
+      const text = await entry.innerText().catch(() => "");
+      return text.startsWith("@misc{Writer_2026,") ? text : null;
+    }, { what: "the printed entry in the share popover" });
+    assert(printed.includes("title = {Rydberg \\& arrays}") && printed.includes("month = sep"), `entry: ${printed}`);
+    await page.click("button[aria-label='Share']");
+    await account.api("/api/metadata/update", { method: "POST", body: { block_id: pageId, meta: {} } });
+    assertNoProblems(page);
+  });
+
   // The spans must not inherit the interface language: pdf.js measures them
   // in the PDF's language, and a Chinese <html lang> resolves the generic
   // font families to CJK fonts — spans (and every highlight made from a

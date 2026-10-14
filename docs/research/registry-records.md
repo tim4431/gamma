@@ -22,7 +22,7 @@ and [dev/import_export.md](../dev/import_export.md#bibtex-bibliography).
 | arXiv `1602.03837` (LIGO) | authors `The LIGO Scientific Collaboration`, `the Virgo Collaboration`; `journal_ref` `Phys. Rev. Lett. 116, 061102 (2016)`; `doi` of the PRL article. | `@article{collaboration2016, journal = {Phys. Rev. Lett. 116, 061102 (2016)}}` — the reference line typeset as a journal name, volume and pages missing. |
 | arXiv `hep-th/9711200` (Maldacena) | `journal_ref` `Adv.Theor.Math.Phys.2:231-252,1998`, `doi` `10.1023/A:1026654312961`, whose registrar record is the IJTP reprint (1999, vol. 38). | Same shape; the published DOI was never followed. |
 | arXiv `2301.00001` | no `doi`: arXiv's API does not report the DataCite DOIs it registers for every preprint, only an author-supplied journal DOI. | — (so following the `doi` field never lands on arXiv's own `10.48550/` DOI; the guard against it is belt and braces). |
-| Every doi.org entry | pages as an en dash (`436–444`), `month=May` as a bare macro, `url=http://dx.doi.org/…`, DOI lowercased; the key is `Surname_Year`, with underscores inside a multi-word surname (`Das_Adhikari_2019`). | All legal BibTeX. The key style differs from the generated `surname2019`, which is why the pin and the case-insensitive uniqueness exist. |
+| Every doi.org entry | pages as an en dash (`436–444`), the month as a bare macro, `url=http://dx.doi.org/…`, DOI lowercased; the key is `Surname_Year`, with underscores inside a multi-word surname (`Das_Adhikari_2019`). | Legal BibTeX except the month: `May`, `Mar` or `Nov` resolve to the standard macros, but `Sept`, `June` and `July` are defined by no style (found later, below). The key style differs from the generated `surname2019`, which is why the pin and the case-insensitive uniqueness exist. |
 
 Crossref's REST API (`_crossref_search`) returns the same markup and
 entities, and `type`, which was not being selected.
@@ -33,7 +33,7 @@ entities, and `type`, which was not being selected.
   venue read as the PDF prints them (`CsPbCl3`), because that is what the
   title match compares and what the popover shows; markup is turned into
   macros only where it is typeset (`bibtex.latex_text` for built values,
-  `bibtex.clean_entry` for doi.org's rendering). An inline tag leaves
+  `bibtex.normalize_entry` for doi.org's rendering). An inline tag leaves
   nothing behind, a block tag a space — OpenAlex's cleaning used to insert a
   space for every tag, which split `CsPbCl3`; both now share
   `textnorm.plain_text`.
@@ -67,3 +67,63 @@ entities, and `type`, which was not being selected.
   or `month` in built entries. The Zotero RDF export now writes each item
   type as Zotero does, with publisher and ISBN; those shapes are taken from
   Zotero's translator source and have not been imported into a live Zotero.
+
+## A real export, compiled (2026-10-14)
+
+A user's 22-entry `.bib` export (a folder of quantum-optics papers, most
+cached before the pass above) was compiled with TeX Live 2024: pdflatex with
+plainnat and with REVTeX's apsrev4-2 (BibTeX), and biblatex (biber).
+
+| Run | Result before |
+|---|---|
+| plainnat | pdflatex stopped: `Unicode character ∕ (U+2215) not set up for use with LaTeX`. 8 BibTeX warnings. |
+| apsrev4-2 | 13 BibTeX errors (an `@article` with no journal), 6 warnings. |
+| biber | 5 warnings (`undefined macro "Sept"`, `"July"`). |
+
+What it showed:
+
+- **doi.org's BibTeX carries Crossref's MathML raw**, with curly quotes
+  around the attribute values (`xmlns:mml=“http://…”`): the CSL JSON has
+  straight ones, the BibTeX renderer changes them. So the fragment cannot be
+  parsed as XML; `gamma/mathml.py` reads it as a sequence of tags.
+  Stripping the tags alone (the pass above) still left `1 ∕ 2`, and U+2215
+  stops pdflatex.
+- **Months**: doi.org writes `month=Sept`, `June`, `July`. BibTeX and biber
+  both warn and drop the month.
+- **Article numbers**: for APS journals (and IOP's) the CSL record has
+  `article-number` (`052101`) and no `page`, and doi.org's BibTeX leaves the
+  number out. REVTeX printed "PRX Quantum **5** (2024)" with no number:
+  every APS entry of the export lacked it. Crossref's REST API returns it
+  when `select` names `article-number`.
+- **Entries cached before a fix keep their faults** until refetched, so a
+  rule applied only at fetch time cannot make an export valid. The export
+  path itself has to normalize what it prints.
+
+What was decided:
+
+- **Normalize every printed entry.** `bibtex.page_entry` parses the stored
+  text and writes it through the same formatter as a built entry. Rewriting
+  stored entries through a data migration was rejected: a workspace step
+  pauses every clone and the iPad replica until both sides upgrade, which is
+  too much for a text fix the printer can make on the way out.
+- **ASCII LaTeX for text, as Better BibTeX's BibTeX export does.** Classic
+  BibTeX sorts and abbreviates `{\"o}` right and raw UTF-8 wrong (an
+  initial of a multi-byte letter splits it), and biber decodes the macros
+  back to UTF-8. CJK, with no LaTeX form, stays UTF-8.
+- **Links stay raw.** An escaped `\%` in a URL was tried: under the url
+  package it printed its backslash and under biber it became `%5C`. A raw
+  `%` and `#` print correctly with url or hyperref loaded, which every style
+  that prints URLs expects; only natbib's fallback `\url` (no url package)
+  breaks on them.
+- **A missing venue makes the entry `@misc`**, for stored entries too:
+  apsrev4-2's journal-abbreviation code fails on an `@article` with none.
+- **Known limit**: biber decodes the inner accent of `{\~{\^e}}`
+  (Vietnamese "ễ") but not the outer one, leaving `\~{ê}`, which pdflatex
+  reports as an invalid UTF-8 byte sequence. pdflatex has no "ễ" in its
+  standard fonts in any spelling; the form typesets through BibTeX and
+  under XeLaTeX or LuaLaTeX.
+
+After: the same export, normalized, and a corpus of awkward records (every
+special character, markup, MathML, accents, broken braces, unknown types,
+`%` in a URL) compile with no errors in all three runs. The one BibTeX
+warning left is an export entry with no author, a gap in its record.

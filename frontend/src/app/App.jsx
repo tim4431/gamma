@@ -52,6 +52,7 @@ import { backdropPress, menuPress } from "../shared/ui/press.js";
 import { lastPointer, touchScreen } from "../shared/lib/pointer.js";
 import { pickFiles } from "../shared/lib/pickFiles.js";
 import { folderPick } from "../transfers/folderZip.js";
+import { bibliographyPreview } from "../transfers/exportApi";
 import { collectEntryFiles } from "../shared/lib/dropEntries.js";
 import { useWheelPan } from "../shared/ui/wheelPan";
 import {
@@ -2995,6 +2996,21 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // --- Paper metadata (arXiv / DOI / AI) and citation export -----------------
   const [pageMeta, setPageMeta] = useState(null);   // properties.meta of the open page
   const [pageBibtex, setPageBibtex] = useState("");
+  // What the share popover's Copy BibTeX gives: the entry the .bib export
+  // prints (GET /api/bibliography, bibtex.page_entry), valid BibTeX however
+  // the stored entry (pageBibtex) was written. Asked for when the popover
+  // opens and again after an edit changes the stored entry.
+  const [printedBibtex, setPrintedBibtex] = useState("");
+  const sharedPageId = openPopover === "share" && shareTarget?.kind === "page" && pageMeta ? shareTarget.id : "";
+  useEffect(() => {
+    setPrintedBibtex("");
+    if (!sharedPageId) return undefined;
+    let live = true;
+    bibliographyPreview({ pageId: sharedPageId })
+      .then((data) => { if (live) setPrintedBibtex(data?.entries?.[0]?.text || ""); })
+      .catch(() => {});  // the stored entry stays on show
+    return () => { live = false; };
+  }, [sharedPageId, pageBibtex]);
   // Block ids with a metadata fetch in flight. Tracked per page (not one
   // boolean) so the button's spinner also covers the upload queue's fetches
   // and doesn't spin for a fetch that belongs to a different page.
@@ -7880,10 +7896,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
             <>
               <div className="citeHead"><span className="citeLabel">{t("BibTeX")}</span></div>
               <CopyBox
-                copied={copiedKey === "bibtex"} onCopy={() => copyFlash("bibtex", pageBibtex)}
+                copied={copiedKey === "bibtex"} onCopy={() => copyFlash("bibtex", printedBibtex || pageBibtex)}
                 title={t("Copy the BibTeX entry")} label={t("Copy BibTeX")}
               >
-                <pre className="bibtexPre">{pageBibtex}</pre>
+                <pre className="bibtexPre">{printedBibtex || pageBibtex}</pre>
               </CopyBox>
             </>
           ) : null}

@@ -91,8 +91,9 @@ markdown_*.py      Markdown import (one document, or a zip: Notion, Obsidian, Ga
 zotero_*.py        Zotero RDF library import and export
 obsidian_export.py an Obsidian vault export
 import_*.py        the reviewed library imports: staged uploads, preview and selection
-bibtex.py          BibTeX entries and bibliographies
+bibtex.py          BibTeX entries and bibliographies, every printed entry valid BibTeX
 item_types.py      what a paper record describes (meta.kind), in Zotero's item-type names
+mathml.py          MathML in registry titles, as LaTeX math or as plain text
 
 # PDF writers
 pdf_export.py      highlights burned into a PDF as standard annotations
