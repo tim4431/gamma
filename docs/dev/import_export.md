@@ -617,16 +617,38 @@ document cites, so the export has no switches and no bundling.
   metadata lookup cached (a registrar's own BibTeX when doi.org served one,
   else `bibtex.build_entry` over `properties.meta`). A page that has a record
   but no rendering — an older page, a hand-made one — is rendered on the
-  spot. A page with no metadata at all is skipped with "page has no paper
+  spot (here, in the Markdown and Obsidian exports, in a cached
+  `/metadata/fetch` answer and in the AI `cite` tool alike).
+  A page with no metadata at all is skipped with "page has no paper
   metadata" and named in the finished export; a set where no page has any
   fails with "none of these pages has paper metadata to cite".
+- **What an entry looks like** (`bibtex.build_entry`): the entry type
+  follows the record — the registry's `work_type` when the lookup stored
+  one (`proceedings-article` → `@inproceedings` with `booktitle`,
+  `book-chapter` → `@incollection`, `dissertation` → `@phdthesis`,
+  `report` → `@techreport`, a book → `@book` with publisher and ISBN), else
+  the document kind (`thesis`, `report`, `book`), else the record's shape:
+  an arXiv id without a venue is the preprint `@article`, a venue an
+  `@article`, neither `@misc` (an `@article` without a journal is a BibTeX
+  warning). An arXiv id always adds `eprint`/`archivePrefix`, so a published
+  paper read from arXiv cites the journal and keeps the preprint. Values go
+  through `bibtex.latex_text` — registry markup as macros (`<i>` →
+  `\emph{}`, `<sub>` → `\textsubscript{}`), entities decoded, a bare `& % #`
+  escaped, one already escaped left alone — and a page range is written
+  `436--444`; identifiers (DOI, eprint, ISBN) are verbatim. A registrar's
+  own rendering gets the same treatment on the way in
+  (`bibtex.clean_entry`): Crossref prints `&amp;` and `<sub>3</sub>` as they
+  are, which breaks the LaTeX run. What the registries really return:
+  [research/registry-records.md](../research/registry-records.md).
 - **Citation keys**: generated as first author's surname + year
   (`bibtex.default_key`; it must not change, because cached entries carry
   it). Two papers by one author in one year would collide in a
   bibliography, so `bibtex.unique_keys` suffixes clashes `a`, `b`, … `z`,
-  `aa` — Better BibTeX's convention. Pinned keys are assigned first, so the
-  key a user chose is never the one that moves; two pins that collide are
-  still made distinct rather than writing a broken file.
+  `aa` — Better BibTeX's convention. Clashes are found case-insensitively
+  (classic BibTeX treats `Smith2020` and `smith2020` as one entry). Pinned
+  keys are assigned first, so the key a user chose is never the one that
+  moves; two pins that collide are still made distinct rather than writing
+  a broken file.
 - **A pinned key** is `properties.cite_key`, set in the metadata popover's
   Cite key row (empty shows the generated key as its placeholder). It lives
   *beside* `meta`, not inside it, because a refetch replaces the record and

@@ -11,7 +11,7 @@ import { encodeStroke, newCanvasInk, newInk } from "../src/ink/ink.js";
 import { firstSheetId, newSheet } from "../src/notebook/notebook.js";
 import { editPage } from "../src/replica/edits.js";
 import { ownEdits, reconcileRemoteOps, split, unlanded } from "../src/replica/reconcile.js";
-import { syncRound } from "../src/replica/round.js";
+import { FormatMismatch, WORKSPACE_FORMAT, syncRound } from "../src/replica/round.js";
 import { TREES, apply, applyLocal, childrenOf, diff, moved, snapshotFromTree, treeOf, uploadRefs } from "../src/replica/tree.js";
 import { libraryRows, pageView } from "../src/replica/views.js";
 import { MemoryHost } from "./replica/memoryHost.mjs";
@@ -151,7 +151,7 @@ function memoryRemote(pages) {
     if (at === "/api/sync/changes") {
       const since = Number(url.searchParams.get("since") || 0);
       const listed = [...changes].filter(([, c]) => c.seq > since).sort((x, y) => x[1].seq - y[1].seq);
-      return [200, { more: false, cursor: String(seq),
+      return [200, { more: false, cursor: String(seq), ...(remote.format == null ? {} : { format: remote.format }),
         pages: listed.filter(([, c]) => !c.deleted).map(([id, c]) => ({ id, seq: c.seq })),
         deleted: listed.filter(([, c]) => c.deleted).map(([id]) => ({ id, deleted_at: "2026-10-02T00:00:00Z" })) }];
     }
@@ -179,8 +179,9 @@ function memoryRemote(pages) {
     }
     return [404, { detail: `no route ${method} ${at}` }];
   };
-  return {
+  const remote = {
     store, calls,
+    format: null, // what the feed names as its data format; null for a release from before it
     ops: (id, ops) => answer("POST", `/api/pages/${id}/ops`, { ops }),
     // a tombstone in the feed for a page it still has (a tree: never, on a real server)
     tombstone: (id) => touch(id, true),
@@ -190,6 +191,7 @@ function memoryRemote(pages) {
       return { status, body: JSON.parse(JSON.stringify(out)) };
     },
   };
+  return remote;
 }
 
 // A replica host in memory (tests/replica/memoryHost.mjs) whose requests go
@@ -264,4 +266,29 @@ test("a tree the remote lacks is left alone: never created there", async () => {
   assert.ok(!remote.store.has("labels"));
   assert.deepEqual(host.pages.get("labels"), labels, "the tree here stays as it is");
   assert.ok(host.pages.has("folders") && host.pages.has("page"), "the rest of the round went on");
+});
+
+test("the data format: pinned to the server's newest workspace step; a remote on another one stops the round before any write", async () => {
+  const migrations = readFileSync(new URL("../../backend/gamma/migrations.py", import.meta.url), "utf8");
+  const db = readFileSync(new URL("../../backend/gamma/db.py", import.meta.url), "utf8");
+  const steps = [...migrations.match(/^WORKSPACE_STEPS = \[[\s\S]*?^\]/m)[0].matchAll(/^\s*\((\d+),/gm)].map((m) => Number(m[1]));
+  const base = Number(/^WS_VERSION_BASE = (\d+)/m.exec(db)[1]);
+  assert.equal(WORKSPACE_FORMAT, Math.max(base, ...steps), "replica/round.js WORKSPACE_FORMAT follows migrations.workspace_format()");
+
+  for (const [format, side] of [[WORKSPACE_FORMAT + 1, "this app"], [WORKSPACE_FORMAT - 1, "the remote"]]) {
+    const remote = memoryRemote({ apage: { apage: b("root", "a0", "Filed") }, ...trees() });
+    remote.format = format;
+    const host = hostOf(remote);
+    const error = await syncRound(host).catch((e) => e);
+    assert.ok(error instanceof FormatMismatch, `${format}: the round stops`);
+    assert.match(error.message, new RegExp(`sync is paused until ${side} is updated`));
+    assert.deepEqual(remote.calls, ["GET /api/sync/whoami", "GET /api/sync/changes"], "nothing read or written past the feed");
+    assert.equal(host.pages.has("apage"), false);
+    assert.equal((await host.getMeta()) == null || !(await host.getMeta()).remote_cursor, true, "the cursor stays");
+  }
+  const same = memoryRemote({ apage: { apage: b("root", "a0", "Filed") }, ...trees() });
+  same.format = WORKSPACE_FORMAT;
+  assert.equal((await syncRound(hostOf(same))).last_error, "", "the same format: the round runs");
+  const older = memoryRemote({ apage: { apage: b("root", "a0", "Filed") }, ...trees() });
+  assert.equal((await syncRound(hostOf(older))).last_error, "", "a remote from before the check names none and runs");
 });

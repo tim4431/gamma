@@ -16,7 +16,6 @@ in a URL. Records come back in the shape the other registries use
 The registry switch (``GAMMA_METADATA_LOOKUP``) applies.
 """
 
-import html
 import json
 import os
 import re
@@ -24,6 +23,7 @@ import urllib.parse
 from urllib.error import HTTPError
 
 from .paper_links import title_key
+from .textnorm import plain_text
 
 API = "https://api.openalex.org"
 SERVER_KEY = os.environ.get("GAMMA_OPENALEX_API_KEY", "").strip()
@@ -71,7 +71,7 @@ def _get(path: str, params: dict, key: str = "") -> dict:
 
 
 def _plain(text) -> str:
-    return re.sub(r"\s+", " ", html.unescape(re.sub(r"<[^>]+>", " ", str(text or "")))).strip()
+    return plain_text(text)
 
 
 def _abstract(inverted) -> str:

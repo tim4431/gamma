@@ -26,7 +26,7 @@ import { recencySections } from "../library/PageOption";
 import { rankLibraryPages } from "../library/librarySearch";
 import { filedIn, pageAttachment } from "../library/libraryUtils";
 import { ActionMenu, ContextMenu, MenuButton, MenuItem, MenuSelect } from "../shared/ui/Menus";
-import { menuPress } from "../shared/ui/press.js";
+import { backdropPress, menuPress } from "../shared/ui/press.js";
 import { touchTyping } from "../shared/lib/pointer.js";
 import { composing, sendsOnEnter } from "./enterKey.js";
 import { chatFailure, failureCopy, failureFields, fixLabel } from "./chatErrors";
@@ -2258,7 +2258,7 @@ export default function ChatDock({
       </form>
       ) : null}
       {docPicker ? (
-        <div className="reportOverlay" onClick={() => setDocPicker(false)}>
+        <div className="reportOverlay" {...backdropPress(() => setDocPicker(false))}>
           <div className="reportModal docPickerModal" onClick={(e) => e.stopPropagation()}
             onKeyDown={(e) => {
               // ↑/↓ walk the search box and the pages' checkboxes; Enter on a

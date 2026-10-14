@@ -5,8 +5,8 @@ backend (chatgpt.py)."""
 import json
 from urllib.request import Request as URLRequest
 
-from .base import (OPENAI_PICTURE_TOKENS, TOOL_IMAGES_NOTE, Protocol, as_int, attach_index, note_speed,
-                   parse_tool_args, tool_image_turns, turn_files, turn_images)
+from .base import (OPENAI_PICTURE_TOKENS, TOOL_IMAGES_NOTE, Protocol, as_int, attach_target, note_speed,
+                   parse_tool_args, tool_image_turns, turn_attachments)
 
 
 def _image_part(media_type: str, data: str) -> dict:
@@ -16,14 +16,14 @@ def _image_part(media_type: str, data: str) -> dict:
 def _user_content(message, pdf_b64s=(), images=()) -> list:
     """A user turn's parts: its own PDFs, then the request's, its pictures,
     then the request's, and the text last."""
-    files = [*turn_files(message), *(pdf_b64s or [])]
+    files, pictures = turn_attachments(message, pdf_b64s, images)
     return [
         # The Codex backend answers a part without its filename with a
         # 400 ("Missing required parameter: 'input[0].content[0]'").
         *[{"type": "input_file", "filename": f"document-{index + 1}.pdf",
            "file_data": f"data:application/pdf;base64,{data}"}
           for index, data in enumerate(files)],
-        *[_image_part(media_type, data) for media_type, data in [*turn_images(message), *(images or [])]],
+        *[_image_part(media_type, data) for media_type, data in pictures],
         {"type": "input_text", "text": message["content"]},
     ]
 
@@ -34,7 +34,7 @@ def responses_input(messages, pdf_b64s=None, images=None) -> list:
     image_turn = lambda imgs: {"type": "message", "role": "user", "content": [  # noqa: E731
         {"type": "input_text", "text": TOOL_IMAGES_NOTE},
         *[_image_part(media_type, data) for media_type, data in imgs]]}
-    target = messages[attach_index(messages)] if (pdf_b64s or images) and messages else None
+    target = attach_target(messages, pdf_b64s, images)
     for message, is_image_turn in tool_image_turns(messages, image_turn):
         if is_image_turn:
             items.append(message)

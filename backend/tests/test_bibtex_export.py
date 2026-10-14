@@ -151,7 +151,7 @@ def test_a_page_with_a_record_but_no_rendering_still_exports(user):
     page = make_page(user, "Record only", {"meta": record})
     r = user.get(f"/api/pages/{page['id']}/export", params={"mode": "bibtex"})
     assert r.status_code == 200, r.text
-    assert "@article{hopper1952," in r.text
+    assert "@misc{hopper1952," in r.text
 
 
 def test_a_page_without_metadata_cannot_be_cited(user):

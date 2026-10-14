@@ -1,7 +1,8 @@
 """BibTeX entries and bibliographies.
 
 One place for everything about the `@article{key, …}` text: building an entry
-from a stored metadata record, reading and rewriting its citation key, and
+from a stored metadata record, reading and rewriting its citation key,
+turning the markup registries leave in field values into LaTeX, and
 assembling many entries into one `.bib` file whose keys are unique.
 
 `routers/metadata.py` builds the single entry cached on a page block
@@ -21,6 +22,7 @@ bibliography. `unique_keys` resolves that at export time by suffixing `a`,
 (`properties.cite_key`) is never the one that moves.
 """
 
+import html
 import re
 
 # What a citation key may not contain: BibTeX breaks on whitespace, commas,
@@ -32,6 +34,52 @@ KEY_MAX = 120
 # `@article{key,` at the head of an entry — the key is group 2.
 _HEAD = re.compile(r"(@\s*[A-Za-z]+\s*\{\s*)([^,\s]*)")
 
+# The markup registries leave in titles and venues — Crossref keeps the
+# publisher's JATS/HTML: "<i>Planck</i> 2018 results", "CsPbCl<sub>3</sub>
+# Nanocrystals", "Astronomy &amp; Astrophysics" — and the LaTeX macro each
+# tag becomes in an entry. A tag not listed here is dropped.
+_TAG_MACRO = {"i": "emph", "em": "emph", "b": "textbf", "strong": "textbf",
+              "sub": "textsubscript", "sup": "textsuperscript", "scp": "textsc", "sc": "textsc"}
+_TAG_RE = re.compile(r"<(/?)([A-Za-z][\w:.-]*)(?:\s[^<>]*)?/?>")
+# A bare & % # breaks LaTeX; one already escaped (a hand edit typed `\&`) is
+# left alone.
+_ESCAPE_RE = re.compile(r"(?<!\\)([&%#])")
+# "436-444" / "436–444" → "436--444", the range BibTeX styles expect.
+_PAGE_RANGE_RE = re.compile(r"^(\w+)\s*[-‐‑–—]\s*(\w+)$")
+
+# Crossref/CSL work types and the BibTeX entry each becomes. Anything else
+# with a venue is an @article; without one, @misc.
+_BOOK_TYPES = ("book", "monograph", "edited-book", "reference-book")
+_CHAPTER_TYPES = ("book-chapter", "book-section", "book-part")
+
+
+def latex_text(text: str) -> str:
+    """A field value as LaTeX: registry markup becomes macros (`<i>` →
+    `\\emph{}`, `<sub>`/`<sup>` → `\\textsubscript{}`/`\\textsuperscript{}`,
+    `<b>` → `\\textbf{}`, `<scp>` → `\\textsc{}`; other tags are dropped),
+    HTML entities are decoded (`&amp;`), and a bare `& % #` is escaped.
+    Unbalanced markup falls back to dropping the tags, so an entry never
+    gains an unmatched brace."""
+    raw = str(text or "")
+
+    def macro(m):
+        name = _TAG_MACRO.get(m.group(2).lower().split(":")[-1])
+        if not name:
+            return ""
+        return "}" if m.group(1) else f"\\{name}{{"
+    stripped = _TAG_RE.sub("", raw)
+    converted = _TAG_RE.sub(macro, raw)
+    if converted.count("{") - converted.count("}") != stripped.count("{") - stripped.count("}"):
+        converted = stripped
+    return _ESCAPE_RE.sub(r"\\\1", html.unescape(converted))
+
+
+def clean_entry(text: str) -> str:
+    """A registrar's own BibTeX (doi.org's rendering) made typesettable: the
+    markup and entities Crossref prints as they are (`&amp;`, `<sub>3</sub>`)
+    become LaTeX, as `latex_text` does for a built entry's values."""
+    return latex_text(text) if text else text
+
 
 def clean_key(raw: str) -> str:
     """A user-typed citation key reduced to one BibTeX can carry (the
@@ -39,13 +87,18 @@ def clean_key(raw: str) -> str:
     return _KEY_BAD.sub("", str(raw or "").strip())[:KEY_MAX]
 
 
+def _authors(meta: dict) -> list[str]:
+    return [str(a).strip() for a in (meta.get("authors") or []) if str(a or "").strip()]
+
+
 def default_key(meta: dict) -> str:
     """The generated key: first author's surname, lowercase letters only,
     plus the year. Unchanged since the first release — entries cached on
-    pages carry it, so it must stay stable."""
-    authors = meta.get("authors") or []
-    surname = re.sub(r"[^a-z]", "", (authors[0].split()[-1] if authors else "paper").lower()) or "paper"
-    return f"{surname}{meta.get('year', '')}"
+    pages carry it, so it must stay stable. A record without a usable
+    author is keyed `paper<year>`."""
+    authors = _authors(meta)
+    surname = re.sub(r"[^a-z]", "", authors[0].split()[-1].lower()) if authors else ""
+    return f"{surname or 'paper'}{meta.get('year', '')}"
 
 
 def entry_key(text: str) -> str:
@@ -87,32 +140,76 @@ def page_entry(props: dict) -> str:
 
 def build_entry(meta: dict, key: str = "") -> str:
     """The BibTeX entry for a metadata record (`properties.meta`), keyed by
-    ``key`` when one is pinned and by ``default_key`` otherwise. An arXiv
-    preprint carries `eprint`/`archivePrefix`, a book becomes `@book` with
-    its publisher and ISBN, and anything with a venue is an `@article`."""
-    authors = meta.get("authors") or []
+    ``key`` when one is pinned and by ``default_key`` otherwise.
+
+    The entry type follows the record: the registry's work type when the
+    lookup stored one (`meta.work_type`, a Crossref type — a
+    `proceedings-article` is an `@inproceedings` with a `booktitle`, a
+    `book-chapter` an `@incollection`, a `dissertation` a `@phdthesis`, a
+    `report` a `@techreport`), else the document kind (a `book` has its
+    publisher and ISBN), else the shape of the record: an arXiv id without
+    a venue is the preprint `@article`, a venue makes an `@article`, and a
+    record with neither is `@misc` (an `@article` without a journal is a
+    BibTeX warning). An arXiv id always adds `eprint`/`archivePrefix`.
+    Values go through `latex_text`; a page range is written `--`."""
+    authors = _authors(meta)
+    venue = str(meta.get("venue") or "").strip()
+    arxiv_id = str(meta.get("arxiv_id") or "").strip()
+    publisher = str(meta.get("publisher") or "").strip()
+    pages = str(meta.get("pages") or "").strip()
+    work = str(meta.get("work_type") or "").strip().lower()
+    kind = meta.get("kind")
     fields: dict[str, str] = {
         "title": meta.get("title", ""),
         "author": " and ".join(authors),
     }
-    venue = meta.get("venue", "")
-    entry = "article"
-    if meta.get("arxiv_id") and (not venue or venue.lower().startswith("arxiv")):
-        fields["journal"] = f"arXiv preprint arXiv:{meta['arxiv_id']}"
-        fields["eprint"] = meta["arxiv_id"]
-        fields["archivePrefix"] = "arXiv"
-    elif meta.get("kind") == "book" or (meta.get("publisher") and not venue):
+    if work in _BOOK_TYPES or kind == "book":
         entry = "book"
-        fields["publisher"] = meta.get("publisher", "")
+        fields["publisher"] = publisher
         fields["isbn"] = meta.get("isbn", "")
+    elif work == "proceedings-article":
+        entry = "inproceedings"
+        fields.update(booktitle=venue, pages=pages, publisher=publisher)
+    elif work in _CHAPTER_TYPES:
+        entry = "incollection"
+        fields.update(booktitle=venue, pages=pages, publisher=publisher)
+    elif work == "dissertation" or kind == "thesis":
+        entry = "phdthesis"
+        fields["school"] = publisher or venue
+    elif work == "report" or kind == "report":
+        entry = "techreport"
+        fields["institution"] = publisher or venue
+    elif publisher and not venue and not arxiv_id:
+        # A publisher and no venue, from a registry that names no type (the
+        # book registries): a book.
+        entry = "book"
+        fields["publisher"] = publisher
+        fields["isbn"] = meta.get("isbn", "")
+    elif arxiv_id and (not venue or venue.lower().startswith("arxiv")):
+        entry = "article"
+        fields["journal"] = f"arXiv preprint arXiv:{arxiv_id}"
     elif venue:
-        fields["journal"] = venue
-        fields["volume"] = meta.get("volume", "")
-        fields["pages"] = meta.get("pages", "")
+        entry = "article"
+        fields.update(journal=venue, volume=meta.get("volume", ""), pages=pages)
+    else:
+        entry = "misc"
+    if arxiv_id:
+        fields["eprint"] = arxiv_id
+        fields["archivePrefix"] = "arXiv"
     fields["year"] = meta.get("year", "")
     fields["doi"] = meta.get("doi", "")
-    body = ",\n".join(f"  {k} = {{{v}}}" for k, v in fields.items() if v)
-    return f"@{entry}{{{clean_key(key) or default_key(meta)},\n{body}\n}}"
+    verbatim = ("doi", "eprint", "archivePrefix", "isbn")
+    lines = []
+    for k, v in fields.items():
+        v = str(v or "").strip()
+        if not v:
+            continue
+        if k == "pages":
+            v = _PAGE_RANGE_RE.sub(r"\1--\2", v)
+        if k not in verbatim:
+            v = latex_text(v)
+        lines.append(f"  {k} = {{{v}}}")
+    return f"@{entry}{{{clean_key(key) or default_key(meta)},\n" + ",\n".join(lines) + "\n}"
 
 
 def _suffixes():
@@ -134,7 +231,9 @@ def unique_keys(records: list[dict]) -> list[dict]:
     one that survives and a generated clash is what gets suffixed. Within
     each group the input order decides who keeps the bare key, so the result
     only depends on the sort the caller already made: re-exporting an
-    unchanged library produces a byte-identical file.
+    unchanged library produces a byte-identical file. Keys are compared
+    case-insensitively — classic BibTeX treats `Smith2020` and `smith2020`
+    as one entry (biber does not, but a file both can read is the point).
     """
     taken: set[str] = set()
     out = [None] * len(records)
@@ -143,12 +242,12 @@ def unique_keys(records: list[dict]) -> list[dict]:
             if bool(record.get("pinned")) is not pinned:
                 continue
             key = record.get("key") or entry_key(record.get("text", "")) or "paper"
-            if key in taken:
+            if key.lower() in taken:
                 for suffix in _suffixes():
-                    if f"{key}{suffix}" not in taken:
+                    if f"{key}{suffix}".lower() not in taken:
                         key = f"{key}{suffix}"
                         break
-            taken.add(key)
+            taken.add(key.lower())
             out[i] = {**record, "key": key, "text": with_key(record.get("text", ""), key)}
     return out
 

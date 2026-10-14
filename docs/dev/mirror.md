@@ -981,6 +981,8 @@ feed.
 - Every automated test runs both sides in one process (the backend suite's
   TestClient transport; the browser scenario clones a workspace of the same
   server). Two real servers are not exercised.
-- The data format is checked by the server engine only. The iPad's replica
-  (`frontend/src/replica/`) reads the same feed but does not compare its
-  `format` yet.
+- The iPad's replica compares the feed's `format` with the one its build
+  keeps (`WORKSPACE_FORMAT` in `frontend/src/replica/round.js`, pinned to
+  `migrations.py` by `tests/replica.test.mjs`) and stops the round the
+  same way (`FormatMismatch`, the message as the round's error). The app
+  shows the message; it has no amber state of its own.

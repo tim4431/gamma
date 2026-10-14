@@ -214,6 +214,12 @@ the launcher with no server configured.
   A Store install and an NSIS install never see each other's servers, and
   **uninstalling the Store app deletes that folder**, including local
   servers' PDFs and databases.
+- That merge exists only inside the package: Explorer, and anything else
+  the app hands a path to, sees the plain `%APPDATA%\gamma-desktop`, which
+  is not there (*Location is not available*). `lib/hostPath.js` turns such a
+  path into the private copy's (package family name from the install dir in
+  `process.execPath`), so the launcher shows that one and *Open data
+  folder*, *Show server log* and the kept-folder links open it.
 - The launcher's *Local server storage* setting is the way out of that
   folder: pick one outside the package (e.g. under *Documents*) and *Move
   data* relocates the existing servers there

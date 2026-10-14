@@ -113,4 +113,4 @@ function claimRequest(origin, flow, result) {
   }];
 }
 
-module.exports = { APP_START_PATH, RETURN_PATH, isStart, startParams, listen, claimRequest, page };
+module.exports = { APP_START_PATH, RETURN_PATH, isStart, startParams, listen, claimRequest };

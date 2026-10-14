@@ -274,10 +274,31 @@ function personRank(user, q) {
   return fuzzy ? 2 + fuzzy.cost : null;
 }
 
+// Whom "remind …" is for: `me` ("remind", "remind me fri"), the members a
+// "@name" starts ("remind @bo fri": bob and bob.k) or the one a word names
+// in full ("remind bob fri"); the rest of the query is the date. → {users,
+// dateQuery}; no user when the name matches no one.
+function remindTargets(rest, people, me) {
+  const everyone = [...new Set([me, ...people.map((p) => p.username)])].filter(Boolean);
+  const m = /^(@?)([^\s@]+)(?: |$)/.exec(rest);
+  const word = m ? m[2] : "";
+  const after = m ? rest.slice(m[0].length) : rest;
+  if (m && m[1]) {
+    const users = everyone.map((u, i) => [u, i, personRank(u, word)]).filter(([, , r]) => r != null)
+      .sort((a, b) => a[2] - b[2] || a[1] - b[1]).map(([u]) => u);
+    return { users: users.slice(0, PEOPLE_ROWS), dateQuery: after };
+  }
+  if (word === "me") return { users: me ? [me] : [], dateQuery: after };
+  const named = everyone.find((u) => u.toLowerCase() === word);
+  if (named) return { users: [named], dateQuery: after };
+  return { users: me ? [me] : [], dateQuery: rest };
+}
+
 // The "@" menu for `query`: rows under the MENTION_SECTIONS, in that order.
 //   date    {kind: "date", date, time?} — "Today", or the dates the query
-//           names; {kind: "remind", date, time} — "Remind me", tomorrow at
-//           9 by default
+//           names; {kind: "remind", user, you, date, time} — "Remind me",
+//           tomorrow at 9 by default, or "Remind @bob" after "remind @bo"
+//           (remindTargets)
 //   people  {kind: "person", user, you} — `people` ([{username}], the
 //           workspace's; `me` first, "(You)"), then {kind: "invite"} when
 //           `canInvite`
@@ -293,11 +314,11 @@ export function mentionRows({ query = "", people = [], me = "", pages = [], root
 
   // Date: a bare "@" offers today and a reminder for tomorrow morning; a
   // query, the dates it names and a reminder at the first of them;
-  // "remind me <when>" only the reminder.
+  // "remind [me | @name | name] <when>" only the reminder(s).
   const tomorrow = { date: isoDay(addDays(now, 1)), time: REMIND_TIME };
-  let remindOnly = false, dateQuery = q;
+  let remindOnly = false, dateQuery = q, users = me ? [me] : [];
   if (q.length >= 2 && REMIND_WORDS.startsWith(q)) { remindOnly = true; dateQuery = ""; }
-  else if (q.startsWith("remind ")) { remindOnly = true; dateQuery = q.slice(7).replace(/^me\b ?/, ""); }
+  else if (q.startsWith("remind ")) { remindOnly = true; ({ users, dateQuery } = remindTargets(q.slice(7), people, me)); }
   const dates = q && dateQuery ? parseDateQuery(dateQuery, now) : [];
   if (!q) add("date", { kind: "date", key: "date", date: isoDay(now) });
   else if (!remindOnly) dates.forEach((d, i) => add("date", { kind: "date", key: `date${i}`, ...d }));
@@ -306,7 +327,7 @@ export function mentionRows({ query = "", people = [], me = "", pages = [], root
   // gone by reminds no one.
   if (remind && remindAt(remind) <= now && !splitTime(dateQuery)[0]) remind = { ...remind, date: tomorrow.date };
   if (remind && remindAt(remind) <= now) remind = null;
-  if (remind && me) add("date", { kind: "remind", key: "remind", date: remind.date, time: remind.time });
+  if (remind) users.forEach((user) => add("date", { kind: "remind", key: `remind:${user}`, user, you: user === me, date: remind.date, time: remind.time }));
 
   // People.
   const everyone = [...new Set([me, ...people.map((p) => p.username)])].filter(Boolean);
@@ -328,7 +349,7 @@ export function mentionRows({ query = "", people = [], me = "", pages = [], root
 // writes nothing: it opens the Share popover).
 export function mentionText(row, me) {
   if (row.kind === "date") return dateToken(row);
-  if (row.kind === "remind") return dateToken({ date: row.date, time: row.time, remind: me });
+  if (row.kind === "remind") return dateToken({ date: row.date, time: row.time, remind: row.user || me });
   if (row.kind === "person") return personToken(row.user);
   if (row.kind === "page") return `[[${row.id}]]`;
   return "";

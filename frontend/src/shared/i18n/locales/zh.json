@@ -2291,6 +2291,7 @@
   "Reload": "重新加载",
   "Reload this table": "重新加载此表",
   "Remind me": "提醒我",
+  "Remind {name}": "提醒 {name}",
   "Reminder: {page}": "提醒：{page}",
   "Reminders": "提醒",
   "Reminds you: {when}": "提醒你：{when}",

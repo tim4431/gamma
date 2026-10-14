@@ -1,11 +1,11 @@
 // A picked or dropped folder as one .zip File, for the imports that read an
-// archive: the server's review takes the same upload
-// either way (docs/dev/import_export.md). Entries are stored, not
-// compressed — PDFs barely shrink, so packing is one CRC pass and the zip
-// is a Blob over the picked files rather than a copy of them — under the
-// folder's own name with UTF-8 names, as Explorer's or Finder's Compress
-// writes it. Neither a pick nor a drop here lists empty folders. No ZIP64: past 4 GB or
-// 65,535 files it refuses, far above the server's staging cap anyway.
+// archive: the server's review takes the same upload either way
+// (docs/dev/import_export.md). Entries are stored, not compressed — PDFs
+// barely shrink, so packing is one CRC pass and the zip is a Blob over the
+// picked files rather than a copy of them — under the folder's own name
+// with UTF-8 names, as Explorer's or Finder's Compress writes it. Neither a
+// pick nor a drop here lists empty folders. No ZIP64: past 4 GB or 65,535
+// files it refuses, far above the server's staging cap anyway.
 import { t } from "../shared/i18n/i18n.js";
 
 const CRC_TABLE = (() => {

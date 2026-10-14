@@ -263,8 +263,9 @@ def render_vault_page(page, ctx: VaultContext, tags=(), highlights=True, notes=T
             fm.append(f"year: {meta['year']}")
 
     lines = ["---", *fm, "---", ""] if fm else []
-    if props.get("bibtex"):
-        lines += ["```bibtex", bibtex_mod.page_entry(props), "```", ""]
+    entry = bibtex_mod.page_entry(props)
+    if entry:
+        lines += ["```bibtex", entry, "```", ""]
 
     r = _Renderer(ctx, page_id, pdf_leaf, highlights, notes)
     for child in page["children"]:

@@ -62,6 +62,13 @@ device with no server of its own.
   Files travel by name with `HEAD`/`GET`
   `/api/uploads/<name>` and `POST /api/upload-file`, or `/api/uploads`
   for a PDF. The server needs nothing new.
+- **The data format is checked.** Every feed answer names the shape the
+  remote keeps its pages in (`format`), and the round stops before any
+  write when it differs from this build's `WORKSPACE_FORMAT`
+  (`replica/round.js`, pinned to the server's newest workspace migration
+  step by `tests/replica.test.mjs`; [mirror.md](mirror.md) "The data
+  format"). The message names the side to update, and the app shows it as
+  the round's error until both run releases that agree.
 - **The cursor is the feed's.** Each round walks the change feed to the
   end from the cursor the last one kept (`remote_cursor` in the host's
   meta) and keeps the new one. It is a string the replica stores as it is

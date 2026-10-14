@@ -255,8 +255,8 @@ window's own page, never a view like the bar. The logo opens the launcher, which
 server (also `Ctrl/Cmd+Shift+L`). Then the switcher: click the name → dropdown of
 the open server's Gamma workspaces (check on the current one, role or
 *personal* per row, the clone chips), then every server (running /
-reachable dot, a running local one's address, check on the current one), then *All servers…* (the
-launcher again). At the right: the sync button and its panel (above, "Kept
+reachable dot, a running local one's address, check on the current one),
+then *All servers…* (the launcher again). At the right: the sync button and its panel (above, "Kept
 on this computer"), the update pill (only while an update is ready, see
 below) and a reload button. One dropdown is open at a time. While one is,
 the bar view is temporarily enlarged over the content (its page is
@@ -330,8 +330,9 @@ that navigation over on a registered origin (`signInWithCloud` in `main.js`,
 A refusal comes back as `?error=` and is shown in the bar and in the tab. A
 sign-in waits ten minutes, and a new one replaces it. A server older than
 `app-start` (it answers 404 or 405) gets the old behaviour: the start
-opens in the system browser, which ends up signed in instead of the window. A result for a server
-that is no longer open is dropped with a notice. The server side, and why
+opens in the system browser, which ends up signed in instead of the
+window. A result for a server that is no longer open is dropped with a
+notice. The server side, and why
 this is safe against someone else's sign-in link, is
 [cloud_accounts.md](../../docs/dev/cloud_accounts.md) "The desktop app's
 sign-in".
@@ -455,7 +456,8 @@ Electron's userData dir (`%APPDATA%/gamma-desktop` /
 the app shows the path at the
 bottom of the launcher; a Microsoft Store install gets the MSIX-virtualized
 copy under `%LOCALAPPDATA%\Packages\xwtim.GammaPDF_<hash>\LocalCache\Roaming`,
-which the Store uninstall deletes — [release.md](release.md#microsoft-store)):
+which the Store uninstall deletes — [release.md](release.md#microsoft-store);
+the launcher shows that real location, and opens it, through `lib/hostPath.js`):
 
 - `servers.json` — the registry: server list (a local server with its
   admin credentials and last `port`), `lastOpened`, `windowBounds`,
@@ -541,6 +543,9 @@ only); `GAMMA_SHELL_NO_UPDATE=1` disables the updater.
 - `lib/openFiles.js` — the PDFs a command line names and the workspace a
   file goes into ("Opening PDF files"); no Electron, unit tested by
   `test/openFiles.test.js`.
+- `lib/hostPath.js` — a path as programs outside a Store package find it:
+  the package's private copy of AppData ("Shell state"); no Electron, unit
+  tested by `test/hostPath.test.js`.
 - `electron-builder.cjs` — the packaging config (targets, extra resources,
   secret-gated signing, the update feed's `publish` block, the PDF
   registration per target). `assets/installer.nsh` — the NSIS installer's

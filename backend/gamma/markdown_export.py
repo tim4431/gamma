@@ -142,8 +142,9 @@ def render_readable(page, highlights=True, notes=True, resolve_ref=None, page_fi
             fm.append(f"year: {meta['year']}")
 
     lines = ["---", *fm, "---", "", f"# {title}", ""]
-    if props.get("bibtex"):
-        lines += ["```bibtex", bibtex_mod.page_entry(props), "```", ""]
+    entry = bibtex_mod.page_entry(props)
+    if entry:
+        lines += ["```bibtex", entry, "```", ""]
 
     for child in page["children"]:
         _render_readable_block(child, 0, lines, highlights, notes,

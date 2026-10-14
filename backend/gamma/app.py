@@ -110,6 +110,9 @@ def _upgrade_data_directory() -> dict | None:
     return None
 
 
+# A page of its own: it is served when the app cannot start, before the
+# frontend build and its theme tokens are involved, so its light and dark
+# palettes are spelled out here rather than taken from the design system.
 _BLOCKED_PAGE = """<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{title} · Gamma</title>

@@ -33,7 +33,9 @@ workspace's files), `db.SCHEMA_VERSION` and `db.WS_VERSION_BASE`,
    which stamps each `pages.db` it changed with the step's version).
    A workspace part also moves `migrations.workspace_format()`, the shape
    two servers syncing a workspace compare: a clone and its origin pause
-   until both run the step ([mirror.md](mirror.md) "The data format").
+   until both run the step ([mirror.md](mirror.md) "The data format"), and
+   so does the iPad's replica, whose `WORKSPACE_FORMAT`
+   (`frontend/src/replica/round.js`) a test pins to this list.
 3. **The runner goes first.** `migrations.ensure_current()` is the first
    thing `app.create_app` does, before any table is opened. A data
    directory that is *ahead* of the binary (`NewerDataError`), older than

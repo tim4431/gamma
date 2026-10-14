@@ -34,6 +34,7 @@ const startup = require('./lib/startup');
 const keeping = require('./lib/keeping');
 const cloudSignIn = require('./lib/cloudSignIn');
 const openFiles = require('./lib/openFiles');
+const { hostPath } = require('./lib/hostPath');
 
 const SMOKE = process.argv.includes('--smoke');
 const BAR_H = 38;
@@ -290,10 +291,11 @@ function openExternal(url) {
 }
 
 // A directory in the system's file manager; under the test harness only
-// recorded, like the external links.
+// recorded, like the external links. hostPath: where a Store install's
+// virtualized AppData really is, for the file manager outside the package.
 function openDirectory(p) {
   externalOpens.push(p);
-  if (!process.env.GAMMA_SHELL_TEST) shell.openPath(p);
+  if (!process.env.GAMMA_SHELL_TEST) shell.openPath(hostPath(p));
 }
 
 // Text on the clipboard; under the test harness only recorded, so a run
@@ -1270,15 +1272,17 @@ function fullState() {
       url: ws.type === 'remote' ? ws.url : (sidecar.status(ws.id) || {}).url,
       running: ws.type === 'local' ? Boolean(sidecar.status(ws.id)) : undefined,
       reachable: remoteReachable(ws),
+      // Paths as the file manager can find them (hostPath, a Store install).
+      dataDir: hostPath(ws.dataDir),
       sizeBytes: ws.type === 'local' ? registry.dirSize(ws.dataDir) : undefined,
-      logPath: ws.type === 'local' ? path.join(app.getPath('userData'), 'logs', `${ws.id}.log`) : undefined,
+      logPath: ws.type === 'local' ? hostPath(path.join(app.getPath('userData'), 'logs', `${ws.id}.log`)) : undefined,
     })),
     settings: state.settings,
     lastOpened: state.lastOpened,
     detected: sidecar.detectDev(state.settings),
-    userDataDir: app.getPath('userData'),
-    dataRoot: registry.dataRoot(state),
-    defaultDataRoot: registry.defaultDataRoot(),
+    userDataDir: hostPath(app.getPath('userData')),
+    dataRoot: hostPath(registry.dataRoot(state)),
+    defaultDataRoot: hostPath(registry.defaultDataRoot()),
     // Names of the local servers a root change would move.
     movable: registry.localsUnderRoot(state).map((w) => w.name),
   };
@@ -1526,11 +1530,11 @@ function registerIpc() {
   ipcMain.handle('shell:reload', shellOnly(() => content && content.webContents.reload()));
   ipcMain.handle('shell:reveal-data', shellOnly((id) => {
     const ws = registry.get(id);
-    if (ws && ws.type === 'local') shell.openPath(ws.dataDir);
+    if (ws && ws.type === 'local') shell.openPath(hostPath(ws.dataDir));
   }));
   ipcMain.handle('shell:reveal-log', shellOnly((id) => {
     const p = path.join(app.getPath('userData'), 'logs', `${id}.log`);
-    if (fs.existsSync(p)) shell.showItemInFolder(p);
+    if (fs.existsSync(p)) shell.showItemInFolder(hostPath(p));
   }));
   // A running local server's address, for the Gamma Connector's options.
   ipcMain.handle('shell:copy-address', shellOnly((id) => {

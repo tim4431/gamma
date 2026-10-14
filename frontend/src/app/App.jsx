@@ -47,7 +47,7 @@ import { BLOCK_TOOLS } from "../chat/agentSteps.js";
 import SearchPanel from "../search/SearchPanel";
 import LibraryEmpty from "../library/LibraryEmpty";
 import { ContextMenu, MenuButton, MenuDivider, MenuItem, MenuLabel, MenuScope, MenuSelect, SubMenuItem, menuGroups } from "../shared/ui/Menus";
-import { menuPress } from "../shared/ui/press.js";
+import { backdropPress, menuPress } from "../shared/ui/press.js";
 import { lastPointer, touchScreen } from "../shared/lib/pointer.js";
 import { pickFiles } from "../shared/lib/pickFiles.js";
 import { folderPick } from "../transfers/folderZip.js";
@@ -8407,7 +8407,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                             </div>
                           ) : null}
                           {pdfTextPreview ? (
-                            <div className="reportOverlay" onClick={() => setPdfTextPreview(null)}>
+                            <div className="reportOverlay" {...backdropPress(() => setPdfTextPreview(null))}>
                               <div className="reportModal" style={{ width: "min(640px, calc(100vw - 32px))" }} onClick={(e) => e.stopPropagation()}>
                                 <div className="reportModalTitle">{t("Extracted PDF text")}</div>
                                 <div className="reportPageList" style={{ maxHeight: "60vh", whiteSpace: "pre-wrap", fontSize: "calc(12px * var(--ui-font-scale, 1))", color: "var(--text-secondary)", padding: 10 }}>
@@ -10498,7 +10498,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       ) : null}
       {confirmBox ? (
         // data-popover keeps an open popover (e.g. search) alive while the dialog is up
-        <div className="reportOverlay" data-popover="confirm" onClick={() => setConfirmBox(null)}>
+        <div className="reportOverlay" data-popover="confirm" {...backdropPress(() => setConfirmBox(null))}>
           <div
             className="reportModal confirmModal"
             onClick={(e) => e.stopPropagation()}
@@ -10530,7 +10530,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         </div>
       ) : null}
       {labelRenaming ? (
-        <div className="reportOverlay" onClick={() => setLabelRenaming(null)}>
+        <div className="reportOverlay" {...backdropPress(() => setLabelRenaming(null))}>
           <div className="reportModal confirmModal" onClick={(e) => e.stopPropagation()}>
             <div className="reportModalTitle">{t("Rename label")}</div>
             <div className="reportModalHint confirmMessage">{t("Renames “{name}” on every page that carries it.", { name: labelName(libTree, labelRenaming.id) })}</div>
@@ -10555,7 +10555,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         </div>
       ) : null}
       {moveBlockDialog ? (
-        <div className="reportOverlay" onClick={() => setMoveBlockDialog(null)}>
+        <div className="reportOverlay" {...backdropPress(() => setMoveBlockDialog(null))}>
           <div className="reportModal confirmModal" onClick={(e) => e.stopPropagation()}
             onKeyDown={(e) => stepList(e, e.currentTarget.querySelector("[data-find]"), [...e.currentTarget.querySelectorAll(".moveBlockList .ctxMenuItem")])}>
             <div className="reportModalTitle">{moveBlockDialog.fragment ? t("Move to page") : t("Move block to page")}</div>
@@ -10591,7 +10591,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         </div>
       ) : null}
       {linkPrompt ? (
-        <div className="reportOverlay" onClick={() => setLinkPrompt(null)}>
+        <div className="reportOverlay" {...backdropPress(() => setLinkPrompt(null))}>
           <div className="reportModal confirmModal linkPromptModal" onClick={(e) => e.stopPropagation()}>
             <div className="confirmHead">
               <span className="confirmIcon"><LinkIcon size={16} /></span>
@@ -10630,7 +10630,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         </div>
       ) : null}
       {linkDialog ? (
-        <div className="reportOverlay" onClick={() => setLinkDialog(null)}>
+        <div className="reportOverlay" {...backdropPress(() => setLinkDialog(null))}>
           <div className="reportModal confirmModal" onClick={(e) => e.stopPropagation()}>
             <div className="reportModalTitle">{linkDialog.editBlockId ? t("Change reference link") : t("Link reference to a page")}</div>
             {linkDialog.content?.text ? (

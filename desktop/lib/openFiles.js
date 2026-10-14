@@ -68,4 +68,4 @@ function placeFor(info, shown) {
   };
 }
 
-module.exports = { pdfPaths, audience, placeFor };
+module.exports = { pdfPaths, placeFor };
