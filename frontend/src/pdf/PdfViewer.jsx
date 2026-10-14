@@ -1833,6 +1833,12 @@ const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, scal
   const [textReady, setTextReady] = useState(null); // {page, layer, runs}: the built pdf.js text layer
   const [visible, setVisible] = useState(false);
   const renderVisible = visible || forceRender;
+  // Highlights, find marks and link boxes are drawn only inside the
+  // look-ahead too. Each is a positioned element, which Blink gives its own
+  // paint layer, and every hit test, layout and pre-paint walks all of them:
+  // a book with highlights on every page paid that on each wheel notch
+  // (docs/dev/pdf_loading.md, "High zoom and touch scrolling").
+  const overlays = renderVisible;
   const [links, setLinks] = useState([]); // link annotations, rects at scale 1
   const scaleRef = useRef(scale);
   scaleRef.current = scale;
@@ -2174,7 +2180,7 @@ const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, scal
       }} />
       <PdfCitationOverlay citation={citation} wrapRef={wrapRef}
         ready={textReady?.page === page ? textReady : null} />
-      {links.map((l, i) => (
+      {overlays && links.map((l, i) => (
         <div
           key={`lnk-${i}`}
           className="pdfLinkBox"
@@ -2197,7 +2203,7 @@ const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, scal
           } : null)}
         />
       ))}
-      {(findMarks || []).map((m, i) => (
+      {overlays && (findMarks || []).map((m, i) => (
         <div
           key={`find-${i}`}
           className="pdfFindMark"
@@ -2216,7 +2222,7 @@ const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, scal
           }}
         />
       ))}
-      {highlights.map(h => {
+      {overlays && highlights.map(h => {
         const rects = h.position.rects;
         const storedW = h.position.width || 1;
         const storedH = h.position.height || 1;

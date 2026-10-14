@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { canvasRatio, canvasSize, CANVAS_MAX_PIXELS, CANVAS_MAX_EDGE } from "../src/shared/lib/canvasSize.js";
+import { canvasLimits, canvasRatio, canvasSize, CANVAS_MAX_PIXELS, CANVAS_MAX_EDGE } from "../src/shared/lib/canvasSize.js";
 
 test("normal pages retain high-DPI resolution", () => {
   assert.deepEqual(canvasSize(612, 792, 2), { width: 1224, height: 1584 });
@@ -36,4 +36,13 @@ test("canvasSize is the box at canvasRatio, rounded down", () => {
       assert.equal(size.height, Math.floor(h * r));
     }
   }
+});
+test("the limits stay iPad-sized on WebKit and touch-first devices, and grow on a desktop", () => {
+  const desktop = { matchMedia: () => ({ matches: false }) };
+  const small = { pixels: 8 * 1024 * 1024, edge: 4096 };
+  assert.deepEqual(canvasLimits(desktop), { pixels: 16 * 1024 * 1024, edge: 8192 });
+  assert.deepEqual(canvasLimits({ ...desktop, GestureEvent: class {} }), small, "Safari, and every iPad browser");
+  assert.deepEqual(canvasLimits({ matchMedia: (q) => ({ matches: q === "(pointer: coarse)" }) }), small, "a phone or tablet");
+  assert.deepEqual(canvasLimits(null), small, "no window");
+  assert.deepEqual([CANVAS_MAX_PIXELS, CANVAS_MAX_EDGE], [small.pixels, small.edge], "node has no window");
 });

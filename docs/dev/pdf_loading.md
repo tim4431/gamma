@@ -159,11 +159,17 @@ then restores the response and verifies a reload paints the document.
 
 ## High zoom and touch scrolling
 
-`shared/lib/canvasSize.js` bounds every PDF and live-ink backing store to 8 Mi pixels
-and 4096 pixels per edge. WebKit documents both a
+`shared/lib/canvasSize.js` bounds every PDF and live-ink backing store
+(`canvasLimits`). WebKit documents both a
 [canvas area limit](https://bugs.webkit.org/show_bug.cgi?id=171238) and
 [total canvas allocation failures](https://bugs.webkit.org/show_bug.cgi?id=195325),
-and an iPad may report a Mac user agent, so the cap applies everywhere.
+and an iPad may report a Mac user agent, so on WebKit (`GestureEvent` exists:
+Safari and every iPad browser) and on a touch-first device (`pointer:
+coarse`) a canvas stays at 8 Mi pixels and 4096 per edge. Desktop Chromium
+and Firefox get 16 Mi, WebKit's own per-canvas maximum, and 8192 per edge.
+They need it: at DPR 2 a 1920 × 1030 viewer alone is 7.9 Mi, and under 8 Mi
+the detail canvas could reach only about 16 px past it
+([research/pdf-scroll-flash.md](../research/pdf-scroll-flash.md)).
 Layout, text, links and SVG annotations are DOM and keep the exact zoom
 whatever the canvases do.
 
@@ -176,14 +182,19 @@ and measurements behind it are in
 - **One canvas while it can be sharp.** A page is a single whole-page canvas,
   supersampled to at least 2 backing pixels per CSS pixel, for as long as
   the cap leaves it at the screen's pixel ratio or better (`basePlan`).
-- **Detail mode past that.** For A4 the cap leaves about 4.09 / zoom backing
-  pixels per CSS pixel. On a DPR 2 screen detail mode starts near 205%, on a
-  DPR 1 screen just past 400%. The zoom limit is 800%
+- **Detail mode past that.** For A4 the 8 Mi cap leaves about 4.09 / zoom
+  backing pixels per CSS pixel: on a DPR 2 screen detail mode starts near
+  205%, on a DPR 1 screen just past 400%. The desktop limits leave about
+  5.78 / zoom: near 290% at DPR 2, 580% at DPR 1. The zoom limit is 800%
   (`shared/model/zoom.js`). The detail canvas costs the same there as at
   400%, since it is sized by the viewport. The whole-page canvas
-  (the base) drops to half its capped linear resolution and becomes a
-  preview. A second canvas (the detail) covers the page's part of one render
-  window, at the device pixel ratio.
+  (the base) keeps its capped resolution. A second canvas (the detail)
+  covers the page's part of one render window, at the device pixel ratio.
+  The base is what a strip of the view shows until the detail redraw lands.
+  It used to drop to half resolution, which on a 4K screen at 200% made
+  every wheel notch past 205% flash a blurry strip. A page in the look-ahead
+  holds what it held just below the cap, plus its share of one detail
+  budget.
 - **The render window** is the viewport grown on each side by a margin: what
   the area and edge limits leave once the viewport itself is covered, at
   most half the viewport's size (`windowMargin`). Each page's detail canvas is
@@ -197,7 +208,11 @@ and measurements behind it are in
   the margin is left ahead of the view: at once if no render is in flight.
   A render the view has moved past is cancelled, and after one has been
   outrun the next waits for 120 ms without scrolling, so a fast scroll shows
-  the base and sharpens on rest.
+  the base and sharpens on rest. The margin depends on the pane, not the
+  zoom. At DPR 2 it is about 370 px each way for a 1379 × 1030 view and
+  235 px for 1920 × 1030 under the desktop limits (111 and 16 px under the
+  iPad ones). A Windows wheel notch set to 6 lines jumps 200 px, so on a
+  desktop a single notch stays inside the detail canvas.
 - **Zooming.** Both canvases are sized in percent of the page box, so they
   stretch with it in the same commit. The redraw starts 150 ms after the
   last zoom step (`ZOOM_SETTLE_MS`), the part in view first, then the base.
@@ -215,7 +230,7 @@ and measurements behind it are in
 - **One renderer.** Every raster goes through `renderRegion`: the base, the
   detail canvas, the highlight capture (`captureRef`) and the area-note
   snapshot (`cropPage`). The last two are drawn from the document, not copied
-  off the screen, where the bitmap may be a preview. The transform is passed
+  off the screen, where the bitmap may be capped below the screen's resolution. The transform is passed
   to pdf.js as its `transform` parameter. pdf.js paints the paper before
   applying its own transform, so a context translated beforehand leaves the
   crop without paper.
@@ -233,9 +248,14 @@ and decoded images for the page. The next render asks the worker again. Its
 ink and text-box layers are mounted only
 inside the look-ahead unless the page carries marks (`MarkupLayers`'s
 `active`: each layer listens on the window and the document, and a book has
-hundreds of pages). The page keeps its geometry, text and overlays; it repaints on
-return without waiting, and a forced render (jumps, the cited page) still
-works. A page inside the look-ahead but outside the render window holds only
+hundreds of pages). Its highlights, find marks and link boxes are drawn only
+inside the look-ahead, whatever the page carries: each is a positioned
+element, Blink gives each its own paint layer, and every hit test, layout and
+pre-paint walks them all. 3,200 highlights over 160 pages cost 28.6 ms per
+hit test, about six of which run per wheel notch (the hover update after a
+scroll, and Chromium's ad checks at each commit). The page keeps its
+geometry, text and overlay data; it repaints on return without waiting, and
+a forced render (jumps, the cited page) still works. A page inside the look-ahead but outside the render window holds only
 its base. Release and unmount cancel the pending pdf.js renders.
 
 `pdf/verticalScrollSnap.js` is the always-on one-finger vertical alignment

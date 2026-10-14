@@ -94,12 +94,12 @@ export async function pdfTouchScenarios({ server, browser, alice, makePdf, step,
     })), "every text layer, built or not, stays inside its page box");
     await toTop();
     await until(() => painted(1), { what: "400% bitmap contains PDF text" });
-    // Past the cap: the base is a quarter-size preview and a detail canvas at
-    // the screen's own resolution covers the part of the page in view.
+    // Past the cap: the base keeps the capped resolution and a detail canvas
+    // at the screen's own resolution covers the part of the page in view.
     await until(async () => (await raster(1)).covers && painted(1, "detail"), { what: "detail canvas covers the view with PDF text" });
     let r = await raster(1);
     assert(r.shown && r.detailRatio >= 1.95, `detail is sharp at DPR 2: ${r.detail} for ${r.detailRatio.toFixed(3)} px/px`);
-    assert(pixels(r.base) <= CAP / 4 * 1.01, `base is a preview in detail mode: ${r.base}`);
+    assert(pixels(r.base) > CAP * 0.95, `base keeps the capped resolution in detail mode: ${r.base}`);
     assert(withinCap(await holdings()), "bounded backing size");
     assertEq(await page.evaluate(() => oversizedCanvases.length), 0);
     const note = `base ${r.base.join("x")}, detail ${r.detail.join("x")}`;
@@ -175,7 +175,7 @@ export async function pdfTouchScenarios({ server, browser, alice, makePdf, step,
     await until(async () => { const r = await raster(1); return r.shown && r.covers && r.detailRatio >= 1.95; }, { what: "800% redrawn in detail mode" });
     await until(() => painted(1, "detail"), { what: "the 800% detail canvas contains PDF text" });
     const r = await raster(1);
-    assert(pixels(r.base) <= CAP / 4 * 1.01, `base is a preview: ${r.base}`);
+    assert(pixels(r.base) > CAP * 0.95, `base keeps the capped resolution: ${r.base}`);
     assert(withinCap(await holdings()), "bounded backing size");
     assertEq(await page.evaluate(() => oversizedCanvases.length), 0);
     await page.getByRole("button", { name: "Zoom in", exact: true }).click();

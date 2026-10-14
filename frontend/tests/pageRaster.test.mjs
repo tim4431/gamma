@@ -21,11 +21,15 @@ test("detail mode starts exactly when the capped canvas falls below the screen's
   assert.equal(basePlan(765, 990, 3.5).detail, false, "a DPR above 3 asks for no more than 3");
 });
 
-test("in detail mode the base has a quarter of the pixels the limits allow", () => {
+test("in detail mode the base keeps all the pixels the limits allow", () => {
   const cap = canvasSize(2448, 3168, 2), base = basePlan(2448, 3168, 2);
   assert(base.detail);
-  assert(Math.abs(base.width - cap.width / 2) <= 1 && Math.abs(base.height - cap.height / 2) <= 1);
+  assert.deepEqual([base.width, base.height], [cap.width, cap.height]);
   assert.deepEqual(basePlan(2448, 3168, 3), base, "the screen ratio does not change the base once in detail");
+  // Fit-width on a 4K screen at 200% (a 1369 px wide Nature page): just past
+  // the cap, the base still has 1.8 backing pixels per CSS pixel.
+  const wide = basePlan(1369, 1820, 2);
+  assert(wide.detail && wide.width / 1369 > 1.8, `${wide.width / 1369}`);
 });
 
 test("the base stays inside both canvas limits and degenerate boxes never ask for detail", () => {
