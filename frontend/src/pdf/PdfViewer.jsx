@@ -97,6 +97,23 @@ function afterScrollRest(el, ms, fn) {
   return off;
 }
 
+// Whether the page box in `wrapRef` lies within `margin` (an
+// IntersectionObserver rootMargin) of its scroller's viewport; `initial`
+// until the observer first reports.
+function useWithin(wrapRef, margin, pageNumber, initial = false) {
+  const [within, setWithin] = useState(initial);
+  useEffect(() => {
+    const el = wrapRef.current;
+    if (!el) return;
+    const obs = new IntersectionObserver((entries) => {
+      setWithin(entries[0].isIntersecting);
+    }, { root: el.closest(".pdfViewer"), rootMargin: margin });
+    obs.observe(el);
+    return () => obs.disconnect();
+  }, [pageNumber, margin]);
+  return within;
+}
+
 // Content-y of page idx's top edge at the given scale.
 function pageTopAt(heights, idx, scale) {
   let y = 0;
@@ -1854,7 +1871,7 @@ const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, scal
   const page = loaded?.doc === pdfDoc ? loaded.page : null;
   const [paintedPage, setPaintedPage] = useState(null); // the pdf.js page whose first pixels have landed
   const [textReady, setTextReady] = useState(null); // {page, layer, runs}: the built pdf.js text layer
-  const [visible, setVisible] = useState(false);
+  const visible = useWithin(wrapRef, RENDER_MARGIN, pageNumber); // inside the look-ahead: rendered
   const renderVisible = visible || forceRender;
   // Highlights, find marks and link boxes are drawn only inside the
   // look-ahead too. Each is a positioned element, which Blink gives its own
@@ -1871,46 +1888,17 @@ const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, scal
   // only; the queue and all fetching live in PdfViewer.
   const transEntry = trans && trans.key === transKey ? trans : null;
 
-  useEffect(() => {
-    const el = wrapRef.current;
-    if (!el) return;
-    const obs = new IntersectionObserver((entries) => {
-      setVisible(entries[0].isIntersecting);
-    }, { root: el.closest(".pdfViewer"), rootMargin: RENDER_MARGIN });
-    obs.observe(el);
-    return () => obs.disconnect();
-  }, [pageNumber]);
-
   // Farther out, up to KEEP_MARGIN, a page keeps the pixels it has (on a
   // desktop; pdf/pageRaster.js trims them to a memory budget) and draws
   // nothing new, so a scroll back over read pages redraws nothing.
-  const [nearby, setNearby] = useState(false);
-  useEffect(() => {
-    const el = wrapRef.current;
-    if (!el) return;
-    const obs = new IntersectionObserver((entries) => {
-      setNearby(entries[0].isIntersecting);
-    }, { root: el.closest(".pdfViewer"), rootMargin: KEEP_MARGIN });
-    obs.observe(el);
-    return () => obs.disconnect();
-  }, [pageNumber]);
+  const nearby = useWithin(wrapRef, KEEP_MARGIN, pageNumber);
   const kept = nearby || renderVisible;
 
   // Far from the view (FAR_MARGIN past it) a page gives up its text layer
   // too; a long read would otherwise leave every visited page's spans in
   // the DOM. It is rebuilt after the page's next paint. A page rendered on
   // request (a jump, the cited page) is never far.
-  const [farAway, setFarAway] = useState(false);
-  useEffect(() => {
-    const el = wrapRef.current;
-    if (!el) return;
-    const obs = new IntersectionObserver((entries) => {
-      setFarAway(!entries[0].isIntersecting);
-    }, { root: el.closest(".pdfViewer"), rootMargin: FAR_MARGIN });
-    obs.observe(el);
-    return () => obs.disconnect();
-  }, [pageNumber]);
-  const far = farAway && !forceRender;
+  const far = !useWithin(wrapRef, FAR_MARGIN, pageNumber, true) && !forceRender;
 
   // The page's canvases belong to the raster (pdf/pageRaster.js). This
   // component only tells it which page, at what zoom, and whether the page is

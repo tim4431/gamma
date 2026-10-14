@@ -416,10 +416,11 @@ npm run e2e -- --keep           # keep the temp data dir + server.log
 ```
 
 High-zoom tablet regressions: `npm run e2e -- --only "pdf touch" --keep`.
-Every context without `hasTouch` reports no touch points whatever the host
-has: Chromium passes the system's touch digitizer through, and a Remote
-Desktop session from a touch device brings the client's (ten points), which
-would turn on the touch-only controls and guide steps and fail their steps.
+A context without `hasTouch` reports no touch points whatever the host has
+(the harness pins `maxTouchPoints` to 0). Chromium passes the system's touch
+digitizer through, and a Remote Desktop session from a touch device brings
+the client's ten points, which turn on the touch-only controls and guide
+steps.
 `GAMMA_E2E_BROWSER=webkit` (after `npx playwright install webkit`) runs the
 suite in WebKit. Native touch gestures need Chromium's CDP, so under WebKit
 the touch scenario checks only the 400% PDF/ink paint and bitmap release at

@@ -31,20 +31,20 @@ const LEAD = 0.25;
 const SLACK = 2; // CSS px
 // The look-ahead: PdfPage renders a page this close to the view (the margin
 // of its IntersectionObserver).
-export const RENDER_MARGIN_PX = 900;
+const RENDER_MARGIN_PX = 900;
 export const RENDER_MARGIN = `${RENDER_MARGIN_PX}px`;
 // Renders of pages away from the view wait while the scroller moves faster
 // than this many viewport heights a second, over the last MOTION_WINDOW_MS.
-export const FAST_VIEWS_PER_S = 2;
+const FAST_VIEWS_PER_S = 2;
 const MOTION_WINDOW_MS = 120;
 // Past the look-ahead a page keeps the pixels it has, as far out as
 // KEEP_MARGIN (PdfPage's observer) and within KEEP_BUDGET_BYTES of canvas
 // over the whole document, so a scroll back over read pages redraws nothing.
 // Only on an engine with the roomy canvas limits: a touch-first device or
-// WebKit releases a page as soon as it leaves the look-ahead, as before.
+// WebKit releases a page as soon as it leaves the look-ahead.
 const ROOMY = CANVAS_MAX_PIXELS >= 16 * 1024 * 1024;
 export const KEEP_MARGIN = ROOMY ? "300% 0px" : RENDER_MARGIN;
-export const KEEP_BUDGET_BYTES = ROOMY ? 256 * 1024 * 1024 : 0;
+const KEEP_BUDGET_BYTES = ROOMY ? 256 * 1024 * 1024 : 0;
 
 // Canvas pixels per CSS pixel that count as sharp on this screen. Past 3
 // nothing is gained.
