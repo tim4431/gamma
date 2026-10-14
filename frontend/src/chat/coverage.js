@@ -78,12 +78,24 @@ export function coverageNote(c, { actions = [], tools = false } = {}) {
     : around ? (place ? t("text around {place}", { place }) : t("selected passages + head")) : `${(c.chars || 0).toLocaleString()} characters`;
   if (shown && place) span += ` · ${t("around {place}", { place })}`;
   if (readText) span += ` · ${t("read {pages} with tools", { pages: readText })}`;
-  const short = refused && !c.partial
-    ? t("PDF file not accepted — sent as text")
-    : refused
-      ? t("PDF file not accepted — text only, {span}", { span })
-      : t("Model saw {span}", { span });
-  let long = refused ? t("This provider does not accept PDF files, so the document went as extracted text. ") : "";
+  // Why the file went as text: the provider refused it, or it never went
+  // (`native_skipped`: too large for one message, or no file to send).
+  const why = !refused ? null
+    : c.native_skipped === "too_large" ? {
+      whole: t("PDF too large to attach — sent as text"),
+      part: t("PDF too large to attach — text only, {span}", { span }),
+      long: t("The PDF file is too large to attach (a message carries about 15 MB of PDFs), so the document went as extracted text. "),
+    } : c.native_skipped === "missing" ? {
+      whole: t("PDF file unavailable — sent as text"),
+      part: t("PDF file unavailable — text only, {span}", { span }),
+      long: t("Gamma couldn't load the PDF file, so the document went as extracted text. "),
+    } : {
+      whole: t("PDF file not accepted — sent as text"),
+      part: t("PDF file not accepted — text only, {span}", { span }),
+      long: t("This provider does not accept PDF files, so the document went as extracted text. "),
+    };
+  const short = why ? (c.partial ? why.part : why.whole) : t("Model saw {span}", { span });
+  let long = why ? why.long : "";
   if (!c.partial) {
     long += t("{what} was sent as extracted text.", { what });
   } else if (around) {

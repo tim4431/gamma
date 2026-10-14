@@ -51,6 +51,16 @@ test("the context pill says what the model saw, read and missed", () => {
   assert.equal(refused.short, "PDF file not accepted — text only, pages 1–2 of 9");
   assert.equal(refused.refused, true);
   assert.equal(coverageNote({ ...partial, partial: false, native_requested: true }).short, "PDF file not accepted — sent as text");
+  // A file that never reached the provider doesn't blame it.
+  const big = coverageNote({ ...partial, native_requested: true, native_skipped: "too_large" });
+  assert.equal(big.short, "PDF too large to attach — text only, pages 1–2 of 9");
+  assert.match(big.long, /too large to attach/);
+  assert.doesNotMatch(big.long, /does not accept/);
+  assert.equal(big.refused, true);
+  assert.equal(coverageNote({ ...partial, partial: false, native_requested: true, native_skipped: "missing" }).short,
+    "PDF file unavailable — sent as text");
+  // A notes-only page that fit whole: nothing to say, PDF switch or not.
+  assert.equal(coverageNote({ ...partial, doc_id: "", partial: false, native_requested: false }), null);
 });
 
 test("area highlights' pictures are announced", () => {

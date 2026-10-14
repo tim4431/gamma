@@ -73,8 +73,9 @@ function relAge(iso) {
 
 // What the model was given for a reply, per document — streamed by
 // /api/ai/chat as its first line and saved on the message. Shown only when
-// it matters: the paper was truncated, or the PDF file was requested but the
-// provider refused it (text went instead). A full native attachment or a
+// it matters: the paper was truncated, or the PDF file was requested but
+// text went instead (the provider refused it, or it was too large or
+// missing). A notes-only page asks for no file. A full native attachment or a
 // paper that fit whole stays silent. The pill folds in what the reply's
 // tools read on their own ("pages 1–2 of 7 · read 3–5 with tools") and
 // which pages nobody saw; a selection says where the server placed it

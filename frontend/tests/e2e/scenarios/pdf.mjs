@@ -475,6 +475,28 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
     assertNoProblems(page);
   });
 
+  await step("pdf: a PDF that went as text says why, and a notes-only page says nothing", async () => {
+    // The server's report (ai_context.gather_inputs): the paper's file was
+    // too large to attach; the notes page has no file to ask for.
+    const coverage = { context: [
+      { title: "Rydberg paper", doc_id: docId, native: false, native_requested: true, native_skipped: "too_large",
+        partial: false, chars: 900, pages: 2, pages_shown: 2 },
+      { title: "Loose notes", page_id: "n", doc_id: "", native: false, native_requested: false, notes: true,
+        partial: false, chars: 300, pages: 0, pages_shown: 0 }] };
+    await page.route("**/api/ai/chat", (route) => route.fulfill({ contentType: "application/x-ndjson",
+      body: `${JSON.stringify(coverage)}\n${JSON.stringify({ delta: "Sent as text." })}\n` }));
+    try {
+      await page.locator("textarea.chatInputArea").fill("Is the file attached?");
+      await page.getByRole("button", { name: "Send", exact: true }).click();
+      await page.getByText("Sent as text.").waitFor();
+      await page.getByText("PDF too large to attach — sent as text").waitFor();
+      assertEq(await page.getByText(/PDF file not accepted/).count(), 0, "no pill blames the provider");
+    } finally {
+      await page.unroute("**/api/ai/chat");
+    }
+    assertNoProblems(page);
+  });
+
   await step("pdf: a picked picture is stored and attached by URL, and an area drag attaches the region the server draws", async () => {
     const requests = [];
     await page.route("**/api/ai/chat", async (route) => {

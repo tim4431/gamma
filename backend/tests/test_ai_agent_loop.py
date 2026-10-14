@@ -264,6 +264,23 @@ def test_chat_reports_context_coverage(org, monkeypatch):
                                      "attach_pdf": True})
     (cover,) = [json.loads(l) for l in r.text.splitlines() if l.strip()][0]["context"]
     assert cover["native"] is True and cover["native_requested"] is True
+    assert "native_skipped" not in cover
+
+    # A file that never reached the provider says why: too large, or none.
+    for loaded, reason in (("", "too_large"), (None, "missing")):
+        monkeypatch.setattr("gamma.ai_context.load_pdf_b64", lambda u, d, loaded=loaded: loaded)
+        r = c.post("/api/ai/chat", json={"prompt": "hi", "doc_id": doc_id, "stream": True,
+                                         "attach_pdf": True})
+        (cover,) = [json.loads(l) for l in r.text.splitlines() if l.strip()][0]["context"]
+        assert cover["native"] is False and cover["native_requested"] is True
+        assert cover["native_skipped"] == reason
+
+    # A notes-only page has no file to ask for, whatever the PDF switch says.
+    r = c.post("/api/ai/chat", json={"prompt": "hi", "page_id": ids["note"], "stream": True,
+                                     "attach_pdf": True})
+    (cover,) = [json.loads(l) for l in r.text.splitlines() if l.strip()][0]["context"]
+    assert cover["doc_id"] == "" and cover["notes"] is True
+    assert cover["native"] is False and cover["native_requested"] is False
 
     # Non-stream callers get the same report in the JSON body.
     class _Ctx(FakeResp):

@@ -74,8 +74,13 @@ excerpt instead, at the same place on the oldest turn:
 - **The provider rejects the file** with a 4xx (other than 401, 403 or
   429). That same message is retried as text, and its coverage says
   `native_requested` without `native`.
-- **The library PDFs pass 20 MB of base64** together. A document that
-  doesn't fit goes as the excerpt.
+- **The library PDFs pass 20 MB of base64** together, or one file passes
+  15 MB on its own. A document that doesn't fit goes as the excerpt, and
+  its coverage says `native_skipped: "too_large"` (`"missing"` when there
+  is no file to send).
+
+A page without a PDF is its notes and never asks for a file, so its
+coverage has `native_requested` false whatever the switch says.
 
 Two other rules cover the switch:
 
