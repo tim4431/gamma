@@ -96,6 +96,11 @@ active conversation) and `/api/chat-history` (the archive).
   nothing. A stored conversation newer than the copy (another tab kept
   talking) is archived too, never deleted. Whichever of the two holds every
   message of the other is archived alone; otherwise both are.
+- **Alt+click on New chat** throws the conversation away instead: the same
+  call with `discard: true` clears the active row and files nothing. There
+  is no confirm and no undo. A stored conversation newer than the copy that
+  holds messages the copy lacks is still archived, so another tab's work is
+  never lost.
 - The **History** button (clock icon) opens a popover listing the active
   conversation first (highlighted, "now") and then the bucket's archived
   ones newest-first (`GET /chat-history?bucket=`; title, age, message count

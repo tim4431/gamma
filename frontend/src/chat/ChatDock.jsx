@@ -798,15 +798,17 @@ export default function ChatDock({
     messages: session.getSnapshot().replies.get(chatKey)?.messages ?? chatMessages,
   });
 
-  async function newChat() {
+  // `discard` (Alt+click): the conversation is dropped, not kept in history.
+  async function newChat(discard = false) {
     if (busyHere) return;
     // A viewer's conversation was never saved: starting over is local.
     if (canSave) {
       try {
         await session.flush(chatKey);
-        await apiJson(`${API}/chat-history/archive`, { method: "POST", headers: JSON_HEADERS, body: JSON.stringify(currentPayload()) });
+        await apiJson(`${API}/chat-history/archive`, { method: "POST", headers: JSON_HEADERS, body: JSON.stringify({ ...currentPayload(), discard }) });
       } catch (err) {
-        setStatus(t("Couldn't keep the conversation in history: {message}", { message: err.message }));
+        setStatus(discard ? t("Couldn't discard the conversation: {message}", { message: err.message })
+          : t("Couldn't keep the conversation in history: {message}", { message: err.message }));
         return;
       }
     }
@@ -1726,8 +1728,8 @@ export default function ChatDock({
             {t("Not saved")}
           </span>
         )}
-        <button type="button" className="ctlBtn" onClick={newChat} disabled={busyHere}
-          title={canSave ? t("New chat — keeps this conversation in history and starts a fresh one") : t("New chat")}
+        <button type="button" className="ctlBtn" onClick={(e) => newChat(e.altKey)} disabled={busyHere}
+          title={canSave ? t("New chat — keeps this conversation in history and starts a fresh one (Alt+click: discard it)") : t("New chat")}
           aria-label={t("New chat")}>
           <PlusIcon size={16} />
         </button>
