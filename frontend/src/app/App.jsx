@@ -283,8 +283,9 @@ function startFolderDrag(e, id) {
 }
 
 // Home sort and kind filter are per-view choices: {"": "updated", "<folder
-// id>": "title", "#<label id>": …} — a view without an entry inherits from
-// its nearest ancestor folder (root = "").
+// id>": "title", "#<label id>": …} (root = ""). A view without a sort of its
+// own inherits its nearest ancestor folder's; the kind filter falls back to
+// "all".
 const HOME_MAP_CODEC = {
   parse: (raw) => { try { const v = JSON.parse(raw); return v && typeof v === "object" ? v : undefined; } catch { return undefined; } },
   serialize: JSON.stringify,
@@ -827,7 +828,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // on scroll). Changing the sort only pins it for the folder being viewed;
   // folders without an explicit choice inherit from their nearest ancestor.
   // Sort and kind are per-VIEW: the key is the folder's id, or "#<label id>"
-  // in a label view. A view with no entry of its own inherits from its
+  // in a label view. A view with no sort of its own inherits from its
   // nearest ancestor folder ("" = library root); labels are flat, so they
   // inherit the root's choice.
   const homeScope = labelFilter ? `#${labelFilter}` : folderFilter;
@@ -842,10 +843,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // Home layout: "list" (block-style rows) or "grid" (icon tiles).
   const [homeView, changeHomeView] = usePersistedState("gamma-home-view", "list");
   // Kind filter: "all" (folders + files), "folders", "files", or "labels" (the
-  // labels used in this view, browsable like folders) — same per-view keying
-  // and inheritance as the sort above.
+  // labels used in this view, browsable like folders) — keyed per view like
+  // the sort, but not inherited: a view with no entry of its own shows "all".
   const [homeKindsMap, setHomeKindsMap] = usePersistedState("gamma-home-kinds-map", NO_VIEW_CHOICES, HOME_MAP_CODEC);
-  const homeKinds = useMemo(() => scopedPref(homeKindsMap, "all"), [homeKindsMap, homeScope, libTree]);
+  const homeKinds = homeKindsMap[homeScope] || "all";
   function changeHomeKinds(v) { setHomeKindsMap((m) => ({ ...m, [homeScope]: v })); }
   // Listing search box (left of the sort pill): live, per-view, not persisted —
   // matches float to the top of the current sort, the rest dim in place.
@@ -5572,7 +5573,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     guideEvents.emit("home.opened");
   }
 
-  function closeTab(id) {
+  // Closing the open tab goes back to where you were: the latest page still
+  // open or library view in the tab history (a promise while a page opens).
+  // `refresh: false` leaves the library's refetch to the caller.
+  function closeTab(id, { refresh = true } = {}) {
     const next = openTabs.filter((t) => t.id !== id);
     updateTabs(next);
     // Closed tabs must never become a later close's return destination.
@@ -5581,13 +5585,13 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     const entry = [...tabHistoryRef.current].reverse().find((entry) =>
       !entry.blockId || next.some((tab) => tab.id === entry.blockId));
     if (entry?.blockId) {
-      openBlock(entry.blockId, { restoreScroll: true });
+      return openBlock(entry.blockId, { restoreScroll: true });
     } else if (entry) {
-      goHome();
+      goHome(refresh);
       openFolder(entry.folder);
       if (entry.label) openLabel(entry.label, entry.folder);
     } else {
-      goHome(true, true);
+      goHome(refresh, true);
     }
   }
 
@@ -8469,25 +8473,21 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                     confirmLabel: t("Delete"),
                     danger: true,
                     onConfirm: async () => {
+                      // Close the tab first, back to where you were, in place:
+                      // the server's `trashed` reaches the page socket with the
+                      // DELETE's answer, and on the page still open it would
+                      // put up the Recently deleted notice. The library drops
+                      // the page at once and refetches once it is gone.
+                      const id = focusedBlockId;
+                      setHomeBlocks((prev) => prev.filter((b) => b.id !== id));
+                      await closeTab(id, { refresh: false });
                       try {
-                        await apiJson(`${API}/blocks/${focusedBlockId}`, { method: "DELETE" });
-                      } catch {}
-                      // Close the page's tab too (write straight to storage +
-                      // server — we reload right after, so state updates and
-                      // debounced pushes wouldn't stick).
-                      try {
-                        if (prefsUserRef.current) {
-                          const nextTabs = openTabs.filter((t) => t.id !== focusedBlockId);
-                          localStorage.setItem(`gamma-tabs:${prefsUserRef.current}`, JSON.stringify(nextTabs));
-                          await apiJson(`${API}/prefs/open-tabs`, {
-                            method: "PUT",
-                            headers: { "Content-Type": "application/json" },
-                            body: JSON.stringify({ value: nextTabs }),
-                          });
-                        }
-                      } catch {}
-                      clearSession();
-                      window.location.href = "/";
+                        await apiJson(`${API}/blocks/${id}`, { method: "DELETE" });
+                        setStatus(t("Moved {n} page{_s} to Recently deleted.", { n: 1, _s: "" }));
+                      } catch (err) {
+                        setStatus(t("Delete failed: {message}", { message: err.message }));
+                      }
+                      fetchHomeBlocks();
                     },
                   })}
                 >
@@ -8678,7 +8678,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                   <KindToggle
                     value={homeKinds}
                     onChange={changeHomeKinds}
-                    scopeLabel={folderFilter ? t("Shown in this folder — subfolders inherit it") : t("Shown in the library — folders inherit it")}
+                    scopeLabel={folderFilter ? t("Shown in this folder") : t("Shown in the library")}
                   />
                 )}
                 <ViewToggle view={homeView} onChange={changeHomeView} />

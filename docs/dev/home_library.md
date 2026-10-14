@@ -171,9 +171,10 @@ The sort choice (updated/created/viewed/title/custom, an iconed MenuSelect
 pill; "viewed" ranks by the account-synced view history with modified time
 as tie-break) and the kind filter are both per-VIEW — localStorage
 `gamma-home-sort-map` / `gamma-home-kinds-map`, keyed by the folder's id
-with `""` = root and `"#<label id>"` for a label view; a view without an
-entry inherits from its nearest ancestor folder (a label view inherits the
-root).
+with `""` = root and `"#<label id>"` for a label view. A view without a sort
+of its own inherits its nearest ancestor folder's (a label view inherits the
+root's); the kind filter is not inherited, so a view without a choice of its
+own shows folders + files.
 
 **Custom order** is the folders' own order: their `position` in the folder
 tree, which every member sees alike, then the pages in the library's order
@@ -443,7 +444,12 @@ Deleting a page moves it to a 30-day trash instead of removing it. The
 page menu's Delete, the Del key, the page header's trash button and a
 folder's "Delete N pages too" all call `DELETE /api/blocks/{id}` on the
 page root, and the server moves the page there (`ops.trash_page`). The
-confirmations say where it goes and for how long.
+confirmations say where it goes and for how long. The header's button
+closes the page's tab first, as its × does (back to the latest page still
+open or library view in the tab history, App's `closeTab`), and then
+deletes. The `trashed` the page socket gets with the answer
+([collab.md](collab.md)) is meant for other windows. If it reached the page
+still open here, it would put up the "moved to Recently deleted" notice.
 
 On the server, the trash is a reserved block `trash` beside `root`
 (`blocks_store.TRASH`). A trashed page is moved under it, and `deleted_at`

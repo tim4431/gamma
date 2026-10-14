@@ -48,6 +48,43 @@ export async function trashScenarios(env) {
     } finally { await ctx.close(); }
   });
 
+  // The page header's Delete closes the tab first, back to the folder the
+  // page was opened from, in place: no reload, and the `trashed` its socket
+  // gets never puts up the Recently deleted notice in this window.
+  await step("trash: the page header's Delete returns to the folder it opened from, with no notice and no reload", async () => {
+    const binOpen = await user.folder("bin/open");
+    const open = await pageApi("Deleted while open", [binOpen]);
+    await pageApi("Stays in the folder", [binOpen]);
+    const ctx = await user.context(browser);
+    const page = await openPage(ctx, `${server.base}/?folder=${binOpen}&ws=${user.ws}`);
+    try {
+      const row = page.locator(".fileRow", { hasText: "Deleted while open" });
+      await row.dblclick();
+      await page.locator(".tabStrip .tab.active", { hasText: "Deleted while open" }).waitFor();
+      await page.evaluate(() => {
+        window.e2eSameDocument = true;
+        window.e2eSawNotice = false;
+        new MutationObserver(() => { if (document.querySelector(".pageTrashedNotice")) window.e2eSawNotice = true; })
+          .observe(document.body, { childList: true, subtree: true });
+      });
+      await page.locator(".pageDeleteBtn").click();
+      const confirm = page.locator(".confirmModal", { hasText: "Move \"Deleted while open\" to Recently deleted?" });
+      await confirm.getByRole("button", { name: "Delete", exact: true }).click();
+      await until(async () => (await trashed()).includes(open.id), { what: "the page is in the trash" });
+      await page.locator(".fileRow", { hasText: "Stays in the folder" }).waitFor();
+      await page.waitForTimeout(500); // room for a late `trashed` or reload to show
+      assertEq(new URL(page.url()).searchParams.get("folder"), binOpen, "back in the folder it was opened from");
+      assertEq(await row.count(), 0, "gone from the folder");
+      assertEq(await page.locator(".tabStrip .tab", { hasText: "Deleted while open" }).count(), 0, "its tab closed");
+      assert(await page.evaluate(() => window.e2eSameDocument === true), "no reload");
+      assert(!(await page.evaluate(() => window.e2eSawNotice)), "the Recently deleted notice never came up");
+      assertNoProblems(page);
+    } finally {
+      await ctx.close();
+      await user.api(`/api/trash/${open.id}`, { method: "DELETE" }).catch(() => {}); // the next step empties the trash
+    }
+  });
+
   await step("trash: a link to a page in the trash offers Restore; Delete permanently asks first", async () => {
     await user.api(`/api/blocks/${doomed.id}`, { method: "DELETE" });
     await user.api(`/api/blocks/${forever.id}`, { method: "DELETE" });
