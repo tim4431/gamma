@@ -9,9 +9,8 @@ is metered per guest. What demo mode changes and how guests work:
 
 ```
 deploy/demo/
-  compose.yml        the demo alone: the image by GAMMA_TAG, ./data, the gamma-edge network
-  .env.example       → .env: GAMMA_TAG, the sha-<short> tag to run (the skill writes it), and
-                       EDGE_SUBNET, gamma-edge's subnet (the one proxy range the demo trusts)
+  compose.yml        the demo (main's :latest, ./data, the gamma-edge network) and its Watchtower
+  .env.example       → .env: EDGE_SUBNET, gamma-edge's subnet (the one proxy range the demo trusts)
   demo.env.example   → demo.env: demo mode, guest lifetime and cap, first admin, seed library
 ```
 
@@ -26,7 +25,7 @@ host, and their updates never touch the demo.
 The one thing the two share is the way in. The account project's Caddy
 owns the host's ports 80/443 and TLS, and its Caddyfile's `*.gammapdf.com`
 site sends `demo.gammapdf.com` to `gamma-demo:9001`. That name is the demo
-container's alias on `gamma-edge`, an external Docker network both projects
+container's name and alias on `gamma-edge`, an external Docker network both projects
 join. Caddy resolves the name per request, so the demo can restart or be
 absent (a 502 for its name only) without Caddy noticing anything else.
 
@@ -37,11 +36,13 @@ believes that header from loopback only, so the demo's `compose.yml` sets
 (compose refuses to start without it). A wrong value makes every visitor
 share Caddy's one limit of ten guests an hour.
 
-The demo runs `main`, like the NAS: the image is pinned to the
-`sha-<short>` tag a merge's `docker.yml` run pushes (not `:latest`, so it
-changes only when deployed), named by `GAMMA_TAG` in the folder's `.env`.
-The `update-demo-server` skill (`.claude/skills/`) takes `main`'s newest
-build, writes that line and restarts the demo.
+The demo runs `main`'s `:latest`, like the NAS, and keeps itself current
+the way the repository's `docker-compose.yml.example` does: the project's
+`watchtower` service polls GHCR every hour and recreates the demo
+when a merge has published a new image. It updates only containers labelled
+`com.centurylinklabs.watchtower.enable=true` (the demo), never the account
+project or the fleet's servers on the same host. The `update-demo-server`
+skill (`.claude/skills/`) does the same pull at once, after a merge.
 
 ## First deployment
 
@@ -66,7 +67,7 @@ build, writes that line and restarts the demo.
    mkdir -p ~/Container/gamma-demo && cd ~/Container/gamma-demo
    B=https://raw.githubusercontent.com/tim4431/Gamma/main/cloud/deploy/demo
    curl -o compose.yml $B/compose.yml
-   curl -o .env $B/.env.example        # then set GAMMA_TAG to the build to run (and EDGE_SUBNET)
+   curl -o .env $B/.env.example        # then check EDGE_SUBNET (step 2)
    curl -o demo.env $B/demo.env.example
    chmod 600 demo.env
    # optional in demo.env: GAMMA_ADMIN_PASSWORD, GAMMA_GUEST_MAX, GAMMA_GUEST_SEED

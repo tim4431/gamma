@@ -324,7 +324,7 @@ state (published pages and files) — back it up like `data/`.
 ## The demo server
 
 `demo.gammapdf.com` is its own compose project in
-`/root/Container/gamma-demo/`, with its own image pin, settings and data:
+`/root/Container/gamma-demo/`, with its own image, Watchtower, settings and data:
 [demo/README.md](demo/README.md). This project holds only its way in: the
 Caddyfile's `@demo` handle sends the name to `gamma-demo:9001`, and Caddy
 joins the external network `gamma-edge` where the demo answers under that

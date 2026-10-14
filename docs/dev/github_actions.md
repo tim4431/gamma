@@ -9,10 +9,11 @@ account server (`cloud/`) and the website (`sites/`) are separate from all
 of that: each has its own check and its own publish (`cloud.yml`,
 `site.yml`), dispatched from any branch (the `build-cloud` / `build-site`
 skills), and a PR that touches only one of them skips `check`. The public
-demo (demo.gammapdf.com) and the Gamma Cloud share host (app.gammapdf.com,
-share.gammapdf.com) run `main`'s server image like the NAS, pinned by the
+demo (demo.gammapdf.com) runs `main`'s `:latest` like the NAS, and both
+pick up a merge's image by themselves through Watchtower; the Gamma Cloud
+share host (app.gammapdf.com, share.gammapdf.com) is pinned to the
 `:sha-<short>` tag a merge's `docker.yml` run pushes (the
-`update-demo-server` and `update-share-host` skills).
+`update-demo-server`, `update-server` and `update-share-host` skills).
 
 | Workflow | File | Runs when | Produces |
 |---|---|---|---|
@@ -41,8 +42,8 @@ PR touching sites/ ──▶ site.yml: check                            ← inst
 build-site ──▶ site.yml --ref <branch>: check → gammapdf.com        ← no merge needed
 update-account-server ──▶ cloud.yml --ref <branch>: test → ghcr gamma-cloud :latest :sha-<short>
                           then pull + restart on the VPS          ← no merge needed
-update-demo-server ──▶ main's newest docker.yml run: pin its :sha-<short>
-                       in the demo's project                      ← after a merge, like update-server
+update-demo-server ──▶ pull main's :latest in the demo's project    ← after a merge, like update-server;
+                                                                     Watchtower does it within the hour
 update-share-host ──▶ the same tag, pinned for the account project's share
                       service in its compose.override.yml         ← after a merge, like update-server
 update-needed ──▶ compares what each deployment runs with the code, then runs
@@ -238,13 +239,15 @@ try a branch's image without moving what the NAS pulls. Never pass
 `-f version` for such a build: that adds the release tags, and the semver
 rule adds `latest` with them.
 
-The public demo runs `main`: the `update-demo-server` skill takes the
-`sha-<short>` tag of `main`'s newest green run and pins it in the demo's own
-compose project on the VPS, as `GAMMA_TAG` in its `.env`
+The public demo runs `main`'s `:latest`, like the NAS: a Watchtower in each
+compose project polls GHCR every hour (the example's six, shortened) and
+recreates the container when a merge has published a new image, as in
+`docker-compose.yml.example`. The
+`update-demo-server` and `update-server` skills do the same pull at once
 ([cloud/deploy/demo/README.md](../../cloud/deploy/demo/README.md),
-[guests.md](guests.md)). Pinned rather than `:latest`, it changes only when
-deployed, and a rollback is one line. The share host follows `main` the
-same way: the `update-share-host` skill pins the same tag for the account
+[guests.md](guests.md)). The share host follows `main` pinned instead,
+changing only when deployed: the `update-share-host` skill pins the
+`sha-<short>` tag of `main`'s newest green run for the account
 project's `share` service in the host's `compose.override.yml`, a file that
 holds only that image, so the project's secrets stay untouched. It stops for
 the user's yes when the build adds a workspace migration step that the

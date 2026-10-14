@@ -13,9 +13,9 @@ and follow it.
 | deployment | runs | built from | skill |
 |---|---|---|---|
 | account server | `ghcr.io/tim4431/gamma-cloud`, `/root/Container/gamma-account/` on `root@69.63.206.178` | the branch (`cloud.yml`) | `update-account-server` |
-| demo | `ghcr.io/tim4431/gamma:sha-<short>`, `/root/Container/gamma-demo/` on the same VPS | `main` only (the `sha-<short>` a merge's `docker.yml` run pushes, pinned) | `update-demo-server` |
+| demo | `ghcr.io/tim4431/gamma:latest`, `/root/Container/gamma-demo/` on the same VPS | `main` only (a merge publishes `:latest`; its Watchtower pulls it within the hour) | `update-demo-server` |
 | share host | `ghcr.io/tim4431/gamma:sha-<short>`, the `share` service of `/root/Container/gamma-account/` on the same VPS | `main` only (the same tag, pinned in the project's `compose.override.yml`) | `update-share-host` |
-| NAS | `ghcr.io/tim4431/gamma:latest`, `/mnt/TimNAS2/Container/gamma/` on `Tim@100.100.10.237` | `main` only (a merge publishes `:latest`) | `update-server` |
+| NAS | `ghcr.io/tim4431/gamma:latest`, `/mnt/TimNAS2/Container/gamma/` on `Tim@100.100.10.237` | `main` only (a merge publishes `:latest`; its Watchtower pulls it within the hour) | `update-server` |
 
 Arguments: a branch name (default `git branch --show-current`, normally
 `dev`) and/or `check` (report, then stop). Never commit. Never merge without
@@ -42,8 +42,10 @@ ssh -o ConnectTimeout=10 -o BatchMode=yes Tim@100.100.10.237 "cd /mnt/TimNAS2/Co
 
 From the output: the account server is the `gamma-cloud` image
 (`gamma-account-account-1`), the share host is `gamma-account-share-1`, the
-demo is `gamma-demo-demo-1`, the NAS is its `ghcr.io/tim4431/gamma:latest`
-container.
+demo is `gamma-demo`, the NAS is `gamma`. The `containrrr/watchtower`
+containers beside the demo and the NAS are not deployments; one missing
+means that host's compose file predates it, which its skill's deploy-file
+step brings.
 
 What `main`'s image is (the candidate for the demo, the share host and the NAS) — the
 newest `docker.yml` run on `main`:
@@ -79,7 +81,8 @@ is not empty. Tests, docs and other folders never make one due.
 - **Demo**, **share host** and **NAS**, each: running vs the newest
   `docker.yml` run on `main`:
   - that run succeeded and its `headSha` ≠ the running commit, and `$IMG`
-    differs → due.
+    differs → due. For the demo and the NAS, Watchtower closes that gap
+    within the hour by itself; the skill does it now.
   - that run is queued / in progress → due once it finishes (each skill
     waits for it).
   - that run failed → not deployable; report its link.
