@@ -50,6 +50,8 @@ import { ContextMenu, MenuButton, MenuDivider, MenuItem, MenuLabel, MenuScope, M
 import { menuPress } from "../shared/ui/press.js";
 import { lastPointer, touchScreen } from "../shared/lib/pointer.js";
 import { pickFiles } from "../shared/lib/pickFiles.js";
+import { folderPick } from "../transfers/folderZip.js";
+import { collectEntryFiles } from "../shared/lib/dropEntries.js";
 import { useWheelPan } from "../shared/ui/wheelPan";
 import {
   ActivityIcon, AlertCircleIcon, ArrowDownIcon, ArrowLeftIcon, ArrowUpDownIcon, ArrowUpIcon, BookIcon, BugIcon, CheckIcon, CopyIcon, DownloadIcon, ExportIcon,
@@ -311,30 +313,6 @@ function folderFromRelPath(relPath) {
 function uploadLeafName(file, fallback = "") {
   const raw = String(file?.name || file?.webkitRelativePath || "").replace(/\\/g, "/");
   return raw.slice(raw.lastIndexOf("/") + 1).trim() || fallback;
-}
-
-// Recursively walk directory entries from a drop into {file, folder} pairs,
-// `folder` the directory names down to the file. The entries themselves
-// must be captured synchronously in the drop handler (webkitGetAsEntry) —
-// the DataTransfer is neutered once the event returns.
-async function collectEntryFiles(entries) {
-  const out = [];
-  async function walk(entry, folder) {
-    if (entry.isFile) {
-      const file = await new Promise((res, rej) => entry.file(res, rej)).catch(() => null);
-      if (file) out.push({ file, folder });
-    } else if (entry.isDirectory) {
-      const sub = entry.name.trim() ? [...folder, entry.name.trim()] : folder;
-      const reader = entry.createReader();
-      for (;;) { // readEntries returns ≤100 entries per call — drain until empty
-        const batch = await new Promise((res, rej) => reader.readEntries(res, rej)).catch(() => null);
-        if (!batch || !batch.length) break;
-        for (const e of batch) await walk(e, sub);
-      }
-    }
-  }
-  for (const entry of entries) await walk(entry, []);
-  return out;
 }
 
 // --- Recently-viewed snapshots -------------------------------------------
@@ -6025,9 +6003,12 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       return;
     }
     if (["zotero", "markdown", "gamma"].includes(o.source)) {
-      pickFiles({ accept: o.source === "markdown" ? ".md,.markdown,.zip,text/markdown,application/zip" : ".zip,application/zip" },
-        ([file]) => setImportReview({ source: o.source, file, strip: o.strip,
-          folder: homeMode && folderFilter ? folderFilter : "" }));
+      const review = (file) => setImportReview({ source: o.source, file, strip: o.strip,
+        folder: homeMode && folderFilter ? folderFilter : "" });
+      if (o.file) review(o.file); // dropped on the dialog: a .zip or a folder (folderZip.js)
+      else if (o.pick === "folder") pickFiles({ directory: true }, (files) => review(folderPick(files)));
+      else pickFiles({ accept: o.source === "markdown" ? ".md,.markdown,.zip,text/markdown,application/zip" : ".zip,application/zip" },
+        ([file]) => review(file));
       return;
     }
     pickFiles({ accept: ".pdf,.edn,.md", multiple: true }, importLogseq);

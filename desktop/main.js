@@ -33,6 +33,7 @@ const updater = require('./lib/updater');
 const startup = require('./lib/startup');
 const keeping = require('./lib/keeping');
 const cloudSignIn = require('./lib/cloudSignIn');
+const openFiles = require('./lib/openFiles');
 
 const SMOKE = process.argv.includes('--smoke');
 const BAR_H = 38;
@@ -40,6 +41,13 @@ const BAR_H = 38;
 // Tests point the shell at a throwaway profile so the real registry, cookies
 // and sidecars are never touched.
 if (process.env.GAMMA_SHELL_USER_DATA) app.setPath('userData', process.env.GAMMA_SHELL_USER_DATA);
+
+// One app per profile: a second one would run a second server on the same
+// data directories. A second start (a PDF opened from the file manager, the
+// Start menu while the app sits in the tray) hands its command line to this
+// one (`second-instance`, below) and quits. The smoke test runs beside it.
+const primary = SMOKE || app.requestSingleInstanceLock();
+if (!primary) app.quit();
 
 // Title-bar palette per Gamma theme: the shell bar's chrome, Gamma's
 // --bg-page in ui/tokens.css (frontend/tests/themes.test.mjs checks it), and
@@ -942,6 +950,151 @@ async function signInWithCloud(startUrl) {
   refreshGamma();
 }
 
+// ------------------------------------------------- PDFs from the system -----
+// A PDF the operating system hands the app ("Open with → Gamma", Gamma as
+// the default PDF app, a file dropped on the app's icon) is added to the
+// library the window shows and opened there, as an upload in Gamma adds it:
+// the file is stored, the page carrying it found or made (`POST
+// /api/blocks/by-doc/<hash>`, so a file already in the library opens its
+// page), the annotations another reader saved in it imported, and the
+// window moves to the page. With no server open the last one opens (the
+// first local server, made when there is none). A workspace others see
+// asks first and offers the account's own; one the account can only read
+// hands the file to its own (lib/openFiles.js; docs/architecture.md
+// "Opening PDF files"). One file at a time, in the order they came.
+
+// A proxy in front of a server caps a request's body, so past this a file
+// goes in parts, as Gamma's own upload sends it (frontend/src/shared/lib/uploadParts.js).
+const PART_BYTES = 32 * 1024 * 1024;
+let booted = false; // until then files wait in earlyPdfs (macOS hands them over before `ready`)
+const earlyPdfs = [];
+let pdfQueue = Promise.resolve();
+
+// One entry per file: `{ file, workspace, page }` once it is open, `{ file,
+// error }` when it could not be (said in a dialog), `{ file }` when the
+// question was cancelled.
+function openPdfFiles(files) {
+  if (!booted) {
+    earlyPdfs.push(...files);
+    return Promise.resolve([]);
+  }
+  const run = pdfQueue.then(async () => {
+    const done = [];
+    for (const file of files) {
+      try {
+        done.push({ file, ...(await addPdf(file)) });
+      } catch (e) {
+        const detail = String((e && e.message) || e);
+        done.push({ file, error: detail });
+        console.error(`[shell] could not open ${file}: ${detail}`);
+        const opts = { type: 'error', title: 'Gamma', message: `Could not open ${path.basename(file)} in Gamma.`, detail, buttons: ['OK'] };
+        (win ? dialog.showMessageBox(win, opts) : dialog.showMessageBox(opts)).catch(() => {});
+      }
+    }
+    return done;
+  });
+  pdfQueue = run.catch(() => {});
+  return run;
+}
+
+async function addPdf(file) {
+  const name = path.basename(file);
+  await showWindow();
+  if (opening) await opening.catch(() => {});
+  if (!current) {
+    const { servers } = registry.load();
+    const srv = registry.getLastOpened() || servers.find((s) => s.type === 'local') || registry.addLocal('Local');
+    await openServer(srv.id);
+    buildMenu();
+  }
+  const origin = openOrigin();
+  const api = serverApi(content.webContents.session);
+  const info = await api(origin, '/api/session');
+  if (!info.user) throw new Error(`Sign in to ${current.name}, then open the file again.`);
+  const place = openFiles.placeFor(info, currentWsId());
+  if (!place) throw new Error(`Your account cannot add files to ${current.name}.`);
+  let ws = place.ws;
+  if (place.audience) {
+    const buttons = [`Add to ${ws.name}`, ...(place.mine ? [`Add to ${place.mine.name}`] : []), 'Cancel'];
+    const r = await ask({
+      type: 'question', buttons, defaultId: 0, cancelId: buttons.length - 1,
+      message: `Add “${name}” to ${ws.name}?`,
+      detail: place.audience === 'clone' ? `${ws.name} is a clone: what you add reaches the workspace it follows too.`
+        : `${ws.name} is shared: everyone in it can see what you add.`,
+    }, 0);
+    if (r === buttons.length - 1) return {};
+    if (r === 1 && place.mine) ws = place.mine;
+  }
+  busy = `Adding ${name}…`;
+  pushState();
+  try {
+    const headers = { 'X-Gamma-Workspace': ws.id };
+    const up = await uploadPdf(api, origin, headers, file, name);
+    const page = await api(origin, `/api/blocks/by-doc/${encodeURIComponent(up.doc_id)}`, {
+      method: 'POST',
+      headers: { ...headers, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ default_title: name, source_url: up.source_url, original_filename: name }),
+    });
+    await importAnnotations(api, origin, headers, page.id, up.doc_id);
+    await openGammaWorkspace(ws.id, page.id);
+    if (place.readOnly) showNotice(`${name} went into ${ws.name}: you can only read ${place.readOnly.name}.`);
+    return { workspace: ws.id, page: page.id };
+  } finally {
+    busy = null;
+    pushState();
+  }
+}
+
+// The file into the workspace's uploads → `{ doc_id, source_url }`: one
+// request, or in parts past PART_BYTES (open, each part, finish), read from
+// disk as it goes.
+async function uploadPdf(api, origin, headers, file, name) {
+  const blob = await fs.openAsBlob(file, { type: 'application/pdf' });
+  if (blob.size <= PART_BYTES) {
+    const form = new FormData();
+    form.append('file', blob, name);
+    return api(origin, '/api/uploads', { method: 'POST', headers, body: form });
+  }
+  const opened = await api(origin, '/api/uploads/parts', {
+    method: 'POST',
+    headers: { ...headers, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ size: blob.size, name }),
+  });
+  const parts = `/api/uploads/parts/${opened.token}`;
+  const step = Math.max(1, Math.min(PART_BYTES, opened.part_bytes || PART_BYTES));
+  try {
+    for (let offset = 0; offset < blob.size;) {
+      const form = new FormData();
+      form.append('offset', String(offset));
+      form.append('part', blob.slice(offset, Math.min(offset + step, blob.size)), 'part');
+      offset = (await api(origin, parts, { method: 'POST', headers, body: form })).received;
+      busy = `Adding ${name}… ${Math.round((offset / blob.size) * 100)}%`;
+      pushState();
+    }
+    return await api(origin, `${parts}/finish`, { method: 'POST', headers });
+  } catch (e) {
+    api(origin, parts, { method: 'DELETE', headers }).catch(() => {}); // the server drops what it held
+    throw e;
+  }
+}
+
+// Annotations another reader saved in the file become Gamma highlights, as
+// on an upload in Gamma, and leave the stored copy unless the account chose
+// to only hide them (Settings → Embedded PDF annotations: `embAnnots` in its
+// profile, frontend/src/app/prefDefs.js). Best effort: the page opens either way.
+async function importAnnotations(api, origin, headers, pageId, docId) {
+  let strip = true;
+  try {
+    const profile = await api(origin, '/api/prefs/profile', { headers, signal: AbortSignal.timeout(5000) });
+    strip = (profile.value || {}).embAnnots !== 'hide';
+  } catch {}
+  await api(origin, '/api/import/pdf-annotations', {
+    method: 'POST',
+    headers: { ...headers, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ block_id: pageId, doc_id: docId, strip }),
+  }).catch((e) => console.error(`[shell] annotations in ${docId}: ${e.message || e}`));
+}
+
 // ---------------------------------------------------------- background -----
 // "Keep running in the background": closing the window leaves the app in
 // the tray with every local server running, so clones and folders on disk
@@ -1068,11 +1221,13 @@ async function offerBackground(what) {
   if (answer === 0) setBackground(true);
 }
 
-// Navigate the open server to one of its Gamma workspaces.
-function openGammaWorkspace(id) {
+// Navigate the open server to one of its Gamma workspaces, or to a page in it.
+function openGammaWorkspace(id, page) {
   if (!current || !content) throw new Error('No server open');
   const target = new URL(current.url);
-  target.search = '?ws=' + encodeURIComponent(String(id || ''));
+  const q = new URLSearchParams({ ws: String(id || '') });
+  if (page) q.set('page', page);
+  target.search = '?' + q;
   return content.webContents.loadURL(target.href);
 }
 
@@ -1495,6 +1650,7 @@ async function runSmoke() {
 // ----------------------------------------------------------------- boot -----
 
 app.whenReady().then(async () => {
+  if (!primary) return; // quitting: the running app has the command line
   registry.init(app.getPath('userData'));
   if (SMOKE) {
     runSmoke();
@@ -1506,17 +1662,34 @@ app.whenReady().then(async () => {
   const settings = registry.getSettings();
   if (settings.background) ensureTray();
   applyLoginItem();
+  const files = [...earlyPdfs.splice(0), ...openFiles.pdfPaths(process.argv.slice(1), process.cwd())];
   // Started at login (`--hidden`; macOS says so itself): no window, the
   // servers run in the background for the clones and the folders on disk.
-  const hidden = Boolean(settings.background) && (process.argv.includes('--hidden') ||
+  const hidden = !files.length && Boolean(settings.background) && (process.argv.includes('--hidden') ||
     (process.platform === 'darwin' && app.getLoginItemSettings().wasOpenedAsHidden));
   if (hidden) startBackgroundHosts();
   else showWindow().finally(startBackgroundHosts);
   scheduleKeeping(3000); // what the servers keep, once they are up
+  booted = true;
+  if (files.length) openPdfFiles(files);
 
   app.on('activate', () => {
     if (!win) showWindow();
   });
+});
+
+// A second start's command line (the lock above): its PDFs are added, and
+// the window comes forward either way — unless it was a login start.
+app.on('second-instance', (_event, argv, cwd) => {
+  const files = openFiles.pdfPaths(argv.slice(1), cwd);
+  if (files.length) openPdfFiles(files);
+  else if (booted && !argv.includes('--hidden')) showWindow();
+});
+
+// macOS hands a file over as an event instead, at launch before `ready` too.
+app.on('open-file', (event, file) => {
+  event.preventDefault();
+  openPdfFiles(openFiles.pdfPaths([file]));
 });
 
 app.on('window-all-closed', () => {
@@ -1553,6 +1726,7 @@ if (process.env.GAMMA_SHELL_TEST) {
     refreshKeeping,
     keepingAction,
     keeping: () => keepingState,
+    openPdfFiles,
     // Gamma's API on the open server in a named workspace, as the shell calls
     // it. A page's own fetch cannot do that: Gamma's wrapper stamps the
     // workspace the page has settled on, or none before it has.

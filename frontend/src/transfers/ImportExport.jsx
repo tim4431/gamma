@@ -7,6 +7,8 @@ import { copyText } from "../shared/lib/utils";
 import { fmtBytes } from "../shared/lib/format.js";
 import { bibliographyPreview, shareToken, sharedBibliographyUrl } from "./exportApi";
 import { CATEGORIES, exportFormatOf, hasReviewStep, resolveExport, resolveImport, exportSummary } from "./transferFormats";
+import { canPickFolder, folderDrop } from "./folderZip.js";
+import { collectEntryFiles } from "../shared/lib/dropEntries.js";
 import { TaskProgress } from "../tasks/TasksTray";
 import { isActive, isFinished } from "../tasks/taskModel.js";
 import { taskTitle } from "../tasks/taskKinds.js";
@@ -347,6 +349,37 @@ function ExportJobStep({ job, folder, folderName, fetchJob, onClose, onDownload,
   </SubDialog>;
 }
 
+// The Zotero step takes the export dropped on it as well as picked: its
+// folder (one directory entry, walked and packed like a picked one) or a
+// .zip. A drop here stops at the dialog — the library behind would take the
+// folder's PDFs as uploads.
+function ExportDrop({ busy, onDrop, children }) {
+  const [over, setOver] = React.useState(false);
+  const hold = (e) => {
+    if (!Array.from(e.dataTransfer?.types || []).includes("Files")) return false;
+    e.preventDefault();
+    e.stopPropagation();
+    return true;
+  };
+  return <div className="importDropArea"
+    onDragOver={(e) => { if (hold(e)) setOver(!busy); }}
+    onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) setOver(false); }}
+    onDrop={(e) => {
+      if (!hold(e)) return;
+      setOver(false);
+      if (busy) return;
+      // Entries now: the DataTransfer is neutered once the handler returns.
+      const entries = Array.from(e.dataTransfer.items || []).map((item) => item.webkitGetAsEntry?.()).filter(Boolean);
+      const zip = Array.from(e.dataTransfer.files || []).find((file) => /\.zip$/i.test(file.name));
+      if (entries.length === 1 && entries[0].isDirectory) {
+        collectEntryFiles(entries).then((found) => { if (found.length) onDrop(folderDrop(found)); });
+      } else if (zip) onDrop(zip);
+    }}>
+    {children}
+    <p className={`importDrop${over ? " over" : ""}`}>{t("Drop the export folder or its .zip here")}</p>
+  </div>;
+}
+
 // The import counterpart of ExportDialog, same shape: pick a source, flip the
 // switch that source understands, confirm. Nothing here is remembered — the
 // strip switch starts from the Settings preference every time, so the setting
@@ -359,6 +392,7 @@ export function ImportDialog({ hasPdf, stripDefault, busy, onCancel, onImport })
   const [strip, setStrip] = React.useState(stripDefault);
   const { definition, formats, needsReview, payload } = resolveImport(source, { hasPdf, strip });
   const src = definition.id;
+  const folderFirst = Boolean(definition.folderLabel) && canPickFolder();
   const advance = (id = src) => {
     if (busy) return;
     const next = resolveImport(id, { hasPdf, strip });
@@ -366,39 +400,43 @@ export function ImportDialog({ hasPdf, stripDefault, busy, onCancel, onImport })
     if (next.needsReview) setStep(1);
     else onImport(next.payload);
   };
+  const review = <>
+    <div className="transferReview">
+      <ImportPreview annotations strip={payload.strip} />
+      <div className="transferControls">
+        <Toggle
+          icon={ScissorsIcon}
+          label={t("Strip the originals")}
+          hint={src === "annots" ? t("Rewrite the stored PDF without them") : t("Rewrite the imported PDFs without them")}
+          title={t("Rewrite the stored file without the annotations you're importing, so only Gamma's copies remain. Off: they stay in the file and the viewer hides them.")}
+          checked={payload.strip}
+          onChange={setStrip}
+        />
+      </div>
+    </div>
+    {src === "zotero" ? (
+      // Same numbered-step guide as the add-API-key wizard.
+      <div className="importSteps">
+        <Step n={1} title={t("Export from Zotero")}
+          hint={t('File → Export Library… (or right-click a collection), format "Zotero RDF".')} />
+        <Step n={2} title={t("Include the files and notes")}
+          hint={t('Check "Export Files" and "Export Notes" — the files carry your PDFs and the annotations you made in Zotero\'s reader.')} />
+        <Step n={3} title={t("Pick the exported folder, or a .zip of it")}
+          hint={t("First wait until Zotero has written every PDF: it keeps writing them after its export window closes. Collections become folders, tags labels, notes blocks; importing again updates instead of duplicating.")} />
+      </div>
+    ) : (
+      <div className="reportModalHint">{t(definition.instructions)}</div>
+    )}
+  </>;
   return <TransferDialog title={t("Import")} step={step} setStep={setStep} onCancel={onCancel} busy={busy}
     firstTitle={t("Choose a source")} secondTitle={t(definition.label)} needsReview={needsReview} onContinue={() => advance()}
-    actionLabel={t(definition.actionLabel)} action={() => onImport(payload)}>
+    actionLabel={t(folderFirst ? definition.folderLabel : definition.actionLabel)}
+    action={() => onImport(folderFirst ? { ...payload, pick: "folder" } : payload)}
+    secondaryAction={folderFirst
+      ? <button type="button" className="uiBtn ghost" disabled={busy} onClick={() => onImport(payload)}>{t("or choose a .zip")}</button> : null}>
     {step === 0 ? <>
       <FormatChoices label={t("Import from")} value={src} onChange={setSource} onConfirm={advance} options={formats} />
       {!needsReview ? <p className="reportModalHint">{t(definition.instructions)}</p> : null}
-    </> : <>
-      <div className="transferReview">
-        <ImportPreview annotations strip={payload.strip} />
-        <div className="transferControls">
-          <Toggle
-            icon={ScissorsIcon}
-            label={t("Strip the originals")}
-            hint={src === "annots" ? t("Rewrite the stored PDF without them") : t("Rewrite the imported PDFs without them")}
-            title={t("Rewrite the stored file without the annotations you're importing, so only Gamma's copies remain. Off: they stay in the file and the viewer hides them.")}
-            checked={payload.strip}
-            onChange={setStrip}
-          />
-        </div>
-      </div>
-      {src === "zotero" ? (
-        // Same numbered-step guide as the add-API-key wizard.
-        <div className="importSteps">
-          <Step n={1} title={t("Export from Zotero")}
-            hint={t('File → Export Library… (or right-click a collection), format "Zotero RDF".')} />
-          <Step n={2} title={t("Include the files and notes")}
-            hint={t('Check "Export Files" and "Export Notes" — the files carry your PDFs and the annotations you made in Zotero\'s reader.')} />
-          <Step n={3} title={t("Zip the exported folder and pick it here")}
-            hint={t("First wait until Zotero has written every PDF: it keeps writing them after its export window closes. Collections become folders, tags labels, notes blocks; importing again updates instead of duplicating.")} />
-        </div>
-      ) : (
-        <div className="reportModalHint">{t(definition.instructions)}</div>
-      )}
-    </>}
+    </> : src === "zotero" ? <ExportDrop busy={busy} onDrop={(file) => onImport({ ...payload, file })}>{review}</ExportDrop> : review}
   </TransferDialog>;
 }

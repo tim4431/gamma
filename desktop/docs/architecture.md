@@ -336,6 +336,72 @@ this is safe against someone else's sign-in link, is
 [cloud_accounts.md](../../docs/dev/cloud_accounts.md) "The desktop app's
 sign-in".
 
+### Opening PDF files
+
+Every build registers Gamma as a PDF app. It is listed under *Open with*,
+and the user can make it the default. No build makes itself the default;
+the user picks it: *Open with → Choose another app → Always* or Settings →
+Default apps on Windows, *Get Info → Open with → Change All* on macOS, the
+desktop's default-applications setting on Linux. The registration differs
+per target (`electron-builder.cjs`):
+
+- The **NSIS installer** runs `assets/installer.nsh`. It writes the ProgID
+  `Gamma.pdf` (open command `"Gamma.exe" "%1"`), adds it to `.pdf`'s
+  `OpenWithProgids`, and registers Gamma's capabilities under
+  `RegisteredApplications`, which puts Gamma in Default apps. It never
+  writes the `.pdf` key's default value. electron-builder's own
+  `fileAssociations` does, and its uninstaller then leaves `.pdf` pointing
+  at a ProgID that is gone, so the config has no top-level
+  `fileAssociations`. The keys go under HKCU or HKLM as the install did;
+  the uninstaller removes them and an update keeps them, so Gamma stays
+  the default where the user made it so.
+- The **Store package** adds a `windows.fileTypeAssociation` extension from
+  `assets/appx-extensions.xml` (`appx.customExtensionsPath`).
+- **macOS** declares the type in `Info.plist` with `LSHandlerRank`
+  *Alternate* (`mac.fileAssociations`).
+- The **.deb**'s desktop entry lists `application/pdf` (`linux.mimeTypes`).
+  A `fileAssociations` entry with a MIME type would also install its own
+  definition of `application/pdf`.
+
+A file arrives on the command line (Windows, Linux) or as an `open-file`
+event (macOS, before `ready` at a launch too). The app runs once per
+profile (`app.requestSingleInstanceLock`, keyed on the userData dir): a
+second start hands its command line to the running app (`second-instance`)
+and quits, and without a PDF it only brings the window forward. A second
+app would run a second server on the same data directories.
+`lib/openFiles.js` reads the arguments. It skips switches (Chromium adds
+its own to a second start's), reads a `file://` URL as its path, and keeps
+existing files ending in `.pdf`. A start that names a file never goes
+hidden into the tray.
+
+Each file is added as an upload in Gamma adds it, one at a time
+(`openPdfFiles` → `addPdf` in `main.js`), through the content session:
+
+1. The window comes forward. With no server open, the last one opens, else
+   the first local server, made when there is none.
+2. `GET /api/session` gives the workspace (`openFiles.placeFor`): the one
+   the window shows (`?ws=`, else the account's default) when the account
+   can write there, else its personal one, and the bar says why. A
+   workspace others see asks first: one with other members, a public one,
+   or a clone, whose changes reach its origin. The question offers *Add to
+   <workspace>*, *Add to <personal workspace>* and *Cancel*. Signed out, or
+   with nowhere to write, a dialog says so.
+3. `POST /api/uploads` stores the file, read from disk as it goes; past
+   32 MB it goes in parts (`/api/uploads/parts`, as
+   `frontend/src/shared/lib/uploadParts.js` sends them).
+4. `POST /api/blocks/by-doc/<hash>` finds the page carrying the file or
+   makes one titled with the file's name. A file already in the library
+   opens its page, not a second one.
+5. `POST /api/import/pdf-annotations` turns the annotations another reader
+   saved in the file into Gamma's. They are stripped from the stored copy
+   unless the account set *Embedded PDF annotations* to hide them
+   (`embAnnots` in `GET /api/prefs/profile`, the one preference name the
+   shell reads). A failure here leaves the page as it is.
+6. The window loads `<origin>/?ws=<id>&page=<id>`.
+
+Under the test harness the question takes its first answer, and
+`openPdfFiles` is on the test hook.
+
 ### Background and tray
 
 Closing the last window quits the app (macOS keeps the dock process, as
@@ -435,8 +501,9 @@ only); `GAMMA_SHELL_NO_UPDATE=1` disables the updater.
   browser; a server's Gamma Cloud sign-in start is taken over, "Gamma Cloud
   sign-in"), the remote health probes, the `/api/session` read behind the
   workspace switcher, the clone and folder-on-this-computer flows over the
-  server's API, the tray and background mode, `--smoke` self-test, sidecar
-  cleanup on quit, the `GAMMA_SHELL_TEST` hook the e2e suite drives.
+  server's API, the tray and background mode, one app per profile and the
+  PDFs the system hands it ("Opening PDF files"), `--smoke` self-test,
+  sidecar cleanup on quit, the `GAMMA_SHELL_TEST` hook the e2e suite drives.
 - `preload.js` — exposes the `gammaShell` IPC bridge **only on `file:`
   URLs**; on server pages it exposes nothing and only reports `data-theme`
   changes.
@@ -471,8 +538,13 @@ only); `GAMMA_SHELL_NO_UPDATE=1` disables the updater.
   listener, the verifier and its challenge, the tab's last page, the claim
   request ("Gamma Cloud sign-in"); no Electron, unit tested by
   `test/cloudSignIn.test.js`.
+- `lib/openFiles.js` — the PDFs a command line names and the workspace a
+  file goes into ("Opening PDF files"); no Electron, unit tested by
+  `test/openFiles.test.js`.
 - `electron-builder.cjs` — the packaging config (targets, extra resources,
-  secret-gated signing, the update feed's `publish` block).
+  secret-gated signing, the update feed's `publish` block, the PDF
+  registration per target). `assets/installer.nsh` — the NSIS installer's
+  PDF registration; `assets/appx-extensions.xml` — the Store package's.
   `scripts/adhoc-sign.cjs` — its `afterPack` hook: ad-hoc signs a macOS
   build made without a certificate ([release.md](release.md)).
 - `backend_entry.py` — entry for the frozen server (`--port`, `--data-dir`;
@@ -501,7 +573,7 @@ only); `GAMMA_SHELL_NO_UPDATE=1` disables the updater.
   `GAMMA_CLOUD_DEFAULT_ISSUER` = Gamma Cloud, the account server until the
   admin saves another, `GAMMA_FOLDER_LINKS` = this server keeps folders on
   disk, anywhere the user picks, since the sidecar runs as the user), `/api/health` and
-  `/api/session` (+ the `?ws=` URL parameter). No imports from `backend/`,
+  `/api/session` (+ the `?ws=` and `?page=` URL parameters). No imports from `backend/`,
   no frontend patches. The one thing it reads off the page is the
   `data-theme` attribute (read-only, via the preload).
 - Server pages never get an IPC bridge; `gammaShell` exists only on the

@@ -29,6 +29,12 @@ package. The unpacked `dist/linux-unpacked` dir has no setuid
 on Ubuntu ≥ 24.04), so `test/smoke.js` and `test/e2e.js` start it with
 `--no-sandbox`; on a headless machine wrap them in `xvfb-run -a`.
 
+Every target registers Gamma as a PDF app, in *Open with* and as a
+default the user may choose, without taking `.pdf` over: the NSIS
+installer through `assets/installer.nsh`, the Store package through
+`assets/appx-extensions.xml`, macOS and the `.deb` through their blocks in
+the config ([architecture.md](architecture.md) "Opening PDF files").
+
 ## The `desktop` workflow
 
 **A release is a dispatch, not a merge.** `.github/workflows/desktop.yml`

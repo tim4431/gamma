@@ -6147,6 +6147,18 @@ a.shareBrand:hover { background: var(--bg-hover); }
 .importSteps { margin-top: 10px; padding-left: 17px; }
 .importSteps .setStep { margin-bottom: 10px; }
 .importSteps .setStepBody { display: none; }
+/* The Zotero step takes its export dropped anywhere on it (ExportDrop); the
+   dashed line says so and lights up while a drag is over the step. */
+.importDrop {
+  margin: 2px 0 0;
+  padding: 12px;
+  border: 1px dashed var(--border-light);
+  border-radius: var(--radius-lg);
+  color: var(--text-muted);
+  font-size: var(--fs-xs);
+  text-align: center;
+}
+.importDrop.over { border-color: var(--accent); color: var(--text-primary); background: var(--bg-surface); }
 .confirmMessage { font-size: var(--fs-xs); color: var(--text-secondary); line-height: 1.5; }
 /* Move-block dialog: the page list scrolls; rows are the shared ctxMenuItem. */
 .moveBlockList { display: flex; flex-direction: column; max-height: 300px; overflow-y: auto; margin-top: 2px; }

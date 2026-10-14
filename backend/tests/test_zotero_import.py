@@ -269,20 +269,29 @@ def test_pdf_path_variations(path, entry):
     assert plan["items"][0]["pdf_entry"] == f"export/{entry}"
 
 
-def test_empty_attachment_folder_says_zotero_was_still_writing():
-    """Zotero makes files/<id>/ at once and writes the PDF after its export
-    reports done; a folder zipped too early has the empty folder."""
+@pytest.mark.parametrize("files", [
+    {"files/3/": b""},  # zipped: the empty folder is in the zip
+    {"files/7/other.pdf": _annotated_pdf()},  # a picked folder lists no empty folders
+])
+def test_unwritten_pdf_says_zotero_was_still_writing(files):
+    """Zotero writes a files/<id>/ path only for a file it is copying, and
+    copies after its export reports done; an export taken too early lacks it."""
     from gamma.zotero_import import plan_zotero_archive
-    with zipfile.ZipFile(io.BytesIO(_custom_zip(RDF, {"files/3/": b""}))) as zf:
+    with zipfile.ZipFile(io.BytesIO(_custom_zip(RDF, files))) as zf:
         plan = plan_zotero_archive(zf)
     assert plan["warnings"][0]["title"] == "Zotero export not finished"
-    assert plan["warnings"][0]["reason"].startswith("1 PDF had not been written")
+    assert plan["warnings"][0]["reason"].startswith("1 PDF was not in the export folder yet.")
     reason = next(w["reason"] for w in plan["items"][0]["warnings"] if "PDF missing" in w["reason"])
-    assert "folder is empty" in reason
-    # No folder at all is not that: nothing says Zotero meant to write it.
+    assert reason.endswith("(Zotero had not written it yet)")
+
+
+def test_export_without_its_files_tree_is_not_an_unwritten_one():
+    """Only the .rdf zipped: nothing says Zotero was still writing."""
+    from gamma.zotero_import import plan_zotero_archive
     with zipfile.ZipFile(io.BytesIO(_custom_zip(RDF, {}))) as zf:
         plan = plan_zotero_archive(zf)
-    assert not any("not finished" in w["title"] or "folder is empty" in w["reason"] for w in plan["warnings"])
+    assert any("PDF missing" in w["reason"] for w in plan["warnings"])
+    assert not any("not finished" in w["title"] or "not written" in w["reason"] for w in plan["warnings"])
 
 
 def test_pdf_matching_never_guesses_across_items_or_ambiguous_folders():

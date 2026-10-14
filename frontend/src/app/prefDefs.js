@@ -194,7 +194,8 @@ export const PREFS = {
   // would render twice once imported as blocks — canvas + overlay. "strip"
   // removes them from the stored file at import time, so the blocks are the
   // only copy and deleting one deletes it from the exports too; "hide" keeps
-  // the file as it came and leaves them out of the canvas.
+  // the file as it came and leaves them out of the canvas. The desktop app
+  // reads it by this name for a PDF opened with it (desktop/main.js importAnnotations).
   embAnnots: pref("gamma-embedded-annots", ACCOUNT, "strip", oneOf(["hide", "strip"])),
 
   // --- Translation (Settings → Translation) ---

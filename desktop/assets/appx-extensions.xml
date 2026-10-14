@@ -1,0 +1,12 @@
+        <!-- The Store package's PDF registration (electron-builder.cjs,
+             appx.customExtensionsPath, appended inside <Extensions>): Gamma in
+             "Open with" and Default apps, the default only when the user
+             chooses it; the file's path arrives on the command line. -->
+        <uap:Extension Category="windows.fileTypeAssociation">
+          <uap:FileTypeAssociation Name="pdf">
+            <uap:DisplayName>PDF document</uap:DisplayName>
+            <uap:SupportedFileTypes>
+              <uap:FileType ContentType="application/pdf">.pdf</uap:FileType>
+            </uap:SupportedFileTypes>
+          </uap:FileTypeAssociation>
+        </uap:Extension>

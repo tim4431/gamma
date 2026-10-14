@@ -32,6 +32,15 @@
 //   chrome-sandbox permissions / the Ubuntu 24.04 AppArmor profile, which is
 //   why the unpacked dir under dist/linux-unpacked needs --no-sandbox to run
 //   (test/smoke.js and test/e2e.js add it).
+//
+// PDFs: every build registers Gamma as a PDF app, so it shows in "Open
+// with" and can be made the default — by the user; no build takes .pdf
+// over from the reader they have (docs/architecture.md "Opening PDF
+// files"). Hence no top-level `fileAssociations`: electron-builder's NSIS
+// association makes itself .pdf's handler and leaves that pointing nowhere
+// after an uninstall. The NSIS installer registers through
+// assets/installer.nsh, the Store package through assets/appx-extensions.xml,
+// macOS as an alternate viewer, the .deb's desktop entry by MIME type.
 
 const env = process.env;
 const has = (...keys) => keys.every((k) => env[k] && env[k].trim());
@@ -72,6 +81,7 @@ module.exports = {
   nsis: {
     oneClick: false,
     allowToChangeInstallationDirectory: true,
+    include: 'installer.nsh', // assets/: the PDF registration (top of file)
   },
   // Microsoft Store package (docs/release.md, "Microsoft Store"). The three
   // identity values are copied verbatim from Partner Center → Product
@@ -91,6 +101,7 @@ module.exports = {
     // upload form let it through as a legacy .appx, the msstore CLI does
     // not). Windows 10 1809 is also Electron's own floor.
     minVersion: '10.0.17763.0',
+    customExtensionsPath: 'assets/appx-extensions.xml', // the PDF file type (top of file)
   },
 
   mac: {
@@ -101,6 +112,8 @@ module.exports = {
     entitlementsInherit: 'assets/entitlements.mac.plist',
     gatekeeperAssess: false,
     notarize,
+    // An alternate viewer: listed under Open With, the default only when chosen.
+    fileAssociations: [{ ext: 'pdf', name: 'PDF document', role: 'Viewer', rank: 'Alternate' }],
   },
 
   linux: {
@@ -111,6 +124,9 @@ module.exports = {
     icon: 'assets/icon.png',
     category: 'Office',
     synopsis: 'PDF annotation and notes',
+    // The desktop entry's MimeType. Not a fileAssociations entry: one with
+    // a mimeType would install a definition of application/pdf of its own.
+    mimeTypes: ['application/pdf'],
     description: 'Gamma: highlight PDFs, keep notes as nested outliner blocks, share annotated copies. Opens local workspaces and remote Gamma servers.',
     // dpkg requires a maintainer; electron-builder otherwise wants
     // package.json "author" with an email.

@@ -108,7 +108,8 @@ writes either way, replacing the embedded original
 
 The View menu's single "Import…" entry → `ImportDialog` in `transfers/ImportExport.jsx`, the
 export dialog's counterpart. Step one is a source card: annotations embedded
-in this PDF, a Logseq .pdf + .edn, a Zotero library .zip, Markdown notes (one
+in this PDF, a Logseq .pdf + .edn, a Zotero library (its export folder or a
+.zip of it), Markdown notes (one
 `.md` or a `.zip` such as a Notion export), or a Gamma export .zip. Double-click
 or Next confirms. Only sources with an option get a review step. That option is
 the strip switch, which applies to embedded annotations, including those
@@ -326,7 +327,19 @@ changed properties plus an `insert` per new note, through `apply_ops`),
 which the page's open tabs and the workspace's mirrors see like any edit.
 A re-import that changes nothing writes nothing.
 
-Choosing the ZIP opens the shared import review dialog. Its two trees show
+The Zotero step leads with "Choose folder…" (the export's folder, as
+Zotero leaves it); "or choose a .zip" sits beside it, and the step takes
+either dropped on it (`ExportDrop`: one directory entry, walked by
+`shared/lib/dropEntries.js` like the library's folder drop, or a `.zip`).
+No picker offers both at once: a browser's is a file or a folder picker
+(`webkitdirectory`, Electron's too), and so are the Windows and Linux
+dialogs. iPhone/iPad Safari has no folder picker, so there ".zip" is the
+button. A folder is packed into a ZIP in the page
+(`transfers/folderZip.js`: stored entries, one CRC pass over the files,
+progress as the "packing" phase), so the server only ever sees an archive;
+neither a pick nor a drop lists empty directories. A drop stops at the
+dialog, so the library behind never takes the folder's PDFs as uploads.
+Choosing or dropping the export opens the shared import review dialog. Its two trees show
 the archive (including empty directories and unused files) and the destination
 library (PDF/page, new/update, collection paths, notes). The active library
 folder becomes the import's destination (its id). `POST /api/import/zotero/preview` accepts
@@ -347,16 +360,19 @@ rechecks the current library, and leaves actual results and warnings in the dial
   PDF to an existing metadata-only page.
 - Warned: missing or invalid PDFs, unsupported or unlinked files, recovered
   filenames, existing PDFs kept.
-- An export zipped before Zotero finished writing it (`unwritten_pdf`). Zotero
-  makes every `files/<id>/` folder at once and writes the files after its
-  export window closes: the RDF translator calls `saveFile` without awaiting
-  it, and with "Include Annotations" each PDF waits its turn in Zotero's PDF
-  worker. A full library zipped right away therefore has empty folders for
-  the tail of its PDFs, which appear on disk later; one item exported alone
-  finishes in time. A missing PDF whose folder is in the ZIP and empty says
-  so, and one warning at the top asks to wait, zip again and re-import, which
-  attaches the PDFs to the pages already made. A file Zotero doesn't have
-  locally gets no `z:path` at all, so it never looks like this.
+- An export taken before Zotero finished writing it (`unwritten_pdf`).
+  Zotero writes a `files/<id>/` path only for a file it has, makes the
+  folders at once and writes the files after its export window closes: the
+  RDF translator calls `saveFile` without awaiting it, and with "Include
+  Annotations" each PDF waits its turn in Zotero's PDF worker. A full
+  library zipped or picked right away therefore lacks the tail of its PDFs
+  (their folders empty), which appear on disk later; one item exported
+  alone finishes in time. A missing PDF with nothing under its folder, in an
+  archive that has the `files/` tree, says so, and one warning at the top
+  asks to wait and import again, which attaches the PDFs to the pages
+  already made. A file Zotero doesn't have locally gets no `z:path` at all,
+  and an archive of only the `.rdf` has no `files/` tree, so neither looks
+  like this.
 
 ## Zotero RDF export
 

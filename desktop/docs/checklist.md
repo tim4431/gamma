@@ -70,6 +70,11 @@ or says it is a manual look (**manual**).
 | 4.6 | *Import data* restores the backup into another server's workspace, uploads included | auto: *import the Alpha backup into Beta* |
 | 4.7 | Drag-and-drop a PDF / `<input type=file>` uploads work in the Electron window | manual |
 | 4.8 | Zotero RDF and Logseq imports | manual (need real export files) |
+| 4.9 | A PDF opened with Gamma while it runs: the second start quits, the page opens in the workspace the window shows, titled with the file's name, with the annotations the file carried; the same file again opens the same page and imports nothing twice; a PDF named at launch opens in the last server once it is up | auto: *a PDF opened with Gamma: …*, *a PDF named at launch …* |
+| 4.10 | Into a shared workspace or a clone the app asks first (*Add to …* / *Add to <personal>* / *Cancel*); from a read-only one the file goes to the personal workspace and the bar says so; signed out of a remote, a dialog says to sign in | manual (the choice itself: `npm test`, `test/openFiles.test.js`) |
+| 4.11 | Windows installer: a PDF's *Open with* lists Gamma, and so does Settings → Default apps (with `.pdf`); the reader that was the default stays it until Gamma is chosen; *Always* makes a double-click open the PDF in Gamma, also while it runs in the tray; an update keeps that choice; an uninstall takes Gamma off both lists and the PDF opens in another reader again | manual (installed build) |
+| 4.12 | Store package, macOS (*Open With*, *Change All*; a file opened while the app is closed and while it runs) and the .deb (the file manager offers Gamma for a PDF): the same as 4.11 | manual |
+| 4.13 | One app per profile: starting Gamma while it runs (Start menu, the tray in background mode) brings the window forward; no second app, no second sidecar on the same data directory | auto: the second start in *a PDF opened with Gamma: …* quits; the window manual |
 
 ## 5. Remote servers + navigation guard
 

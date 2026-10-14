@@ -168,11 +168,13 @@ export function exportSummary({ payload, noPdfCopy }, folder) {
   }
 }
 
-// `instructions` is the preparation note shown under a selected card.
+// `instructions` is the preparation note shown under a selected card;
+// `folderLabel` the button that picks the export's folder instead, first
+// where the browser can pick folders (folderZip.js), the .zip then a link.
 const IMPORT_SOURCES = [
   { id: "annots", label: T("Annotations in this PDF"), category: "This paper", hint: T("Bring embedded highlights and notes into Gamma"), strip: true, actionLabel: T("Import"),
     instructions: T("Highlights, notes and boxes saved inside this PDF (a Gamma export, SumatraPDF, Acrobat…) become regular blocks. Importing twice adds nothing — each annotation is matched to the block it already made.") },
-  { id: "zotero", label: T("Zotero library (.zip)"), category: "Library", hint: T("Papers, collections, tags and notes"), strip: true, actionLabel: T("Choose .zip…") },
+  { id: "zotero", label: T("Zotero library"), category: "Library", hint: T("Papers, collections, tags and notes"), strip: true, actionLabel: T("Choose .zip…"), folderLabel: T("Choose folder…") },
   { id: "markdown", label: T("Markdown notes"), category: "Notes", hint: T("Markdown files, Obsidian vaults or Notion exports"), actionLabel: T("Choose file…"),
     instructions: T("A single .md becomes a note page. A .zip of Markdown — a zipped Obsidian vault, Notion's Export → Markdown & CSV (subpages included), a Gamma Markdown export, or any zipped folder of notes — becomes one page per file: folders become folders, links between the notes ([[wikilinks]] included) become mentions, ![[block]] embeds synced blocks, tags labels, and images and files come along. Notes already imported are skipped.") },
   { id: "logseq", label: T("Logseq highlights"), category: "This paper", hint: T("A PDF and its .edn, with optional notes"), actionLabel: T("Choose files…"),
