@@ -394,7 +394,7 @@ export function ImportDialog({ hasPdf, stripDefault, busy, onCancel, onImport })
           <Step n={2} title={t("Include the files and notes")}
             hint={t('Check "Export Files" and "Export Notes" — the files carry your PDFs and the annotations you made in Zotero\'s reader.')} />
           <Step n={3} title={t("Zip the exported folder and pick it here")}
-            hint={t("Papers arrive with their metadata; collections become folders, tags labels, notes blocks. Importing again updates instead of duplicating.")} />
+            hint={t("First wait until Zotero has written every PDF: it keeps writing them after its export window closes. Collections become folders, tags labels, notes blocks; importing again updates instead of duplicating.")} />
         </div>
       ) : (
         <div className="reportModalHint">{t(definition.instructions)}</div>

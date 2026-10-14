@@ -347,6 +347,16 @@ rechecks the current library, and leaves actual results and warnings in the dial
   PDF to an existing metadata-only page.
 - Warned: missing or invalid PDFs, unsupported or unlinked files, recovered
   filenames, existing PDFs kept.
+- An export zipped before Zotero finished writing it (`unwritten_pdf`). Zotero
+  makes every `files/<id>/` folder at once and writes the files after its
+  export window closes: the RDF translator calls `saveFile` without awaiting
+  it, and with "Include Annotations" each PDF waits its turn in Zotero's PDF
+  worker. A full library zipped right away therefore has empty folders for
+  the tail of its PDFs, which appear on disk later; one item exported alone
+  finishes in time. A missing PDF whose folder is in the ZIP and empty says
+  so, and one warning at the top asks to wait, zip again and re-import, which
+  attaches the PDFs to the pages already made. A file Zotero doesn't have
+  locally gets no `z:path` at all, so it never looks like this.
 
 ## Zotero RDF export
 

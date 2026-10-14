@@ -269,6 +269,22 @@ def test_pdf_path_variations(path, entry):
     assert plan["items"][0]["pdf_entry"] == f"export/{entry}"
 
 
+def test_empty_attachment_folder_says_zotero_was_still_writing():
+    """Zotero makes files/<id>/ at once and writes the PDF after its export
+    reports done; a folder zipped too early has the empty folder."""
+    from gamma.zotero_import import plan_zotero_archive
+    with zipfile.ZipFile(io.BytesIO(_custom_zip(RDF, {"files/3/": b""}))) as zf:
+        plan = plan_zotero_archive(zf)
+    assert plan["warnings"][0]["title"] == "Zotero export not finished"
+    assert plan["warnings"][0]["reason"].startswith("1 PDF had not been written")
+    reason = next(w["reason"] for w in plan["items"][0]["warnings"] if "PDF missing" in w["reason"])
+    assert "folder is empty" in reason
+    # No folder at all is not that: nothing says Zotero meant to write it.
+    with zipfile.ZipFile(io.BytesIO(_custom_zip(RDF, {}))) as zf:
+        plan = plan_zotero_archive(zf)
+    assert not any("not finished" in w["title"] or "folder is empty" in w["reason"] for w in plan["warnings"])
+
+
 def test_pdf_matching_never_guesses_across_items_or_ambiguous_folders():
     from gamma.zotero_import import plan_zotero_archive
     files = {"files/3/one.pdf": _annotated_pdf(), "files/3/two.pdf": _annotated_pdf(),

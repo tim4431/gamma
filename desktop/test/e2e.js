@@ -428,6 +428,19 @@ async function main() {
       return `${urls.beta} (Alpha still up on ${urls.alpha})`;
     });
 
+    await step('the bar menu shows each running local server\'s address, and the registry remembers its port', async () => {
+      await bar.click('#wsBtn');
+      for (const k of ['alpha', 'beta']) {
+        const addr = bar.locator(`#menu .item[data-id="${ids[k]}"] .sub.addr`);
+        await addr.waitFor({ timeout: 5_000 });
+        assert.equal((await addr.textContent()).trim(), new URL(urls[k]).host, `${k}'s address in the menu`);
+        assert.equal(await hook(app, (s, id) => s.registry.get(id).port, ids[k]), Number(new URL(urls[k]).port), `${k}'s port remembered`);
+      }
+      await bar.keyboard.press('Escape');
+      await menuClosed(bar);
+      return `${new URL(urls.alpha).host}, ${new URL(urls.beta).host}`;
+    });
+
     await step('import the Alpha backup into Beta', async () => {
       const r = await content.evaluate(async (b64) => {
         const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
@@ -888,9 +901,17 @@ async function main() {
       const alpha = content.locator('.card', { hasText: 'Alpha' }).first();
       const detail = await alpha.locator('.detail').textContent();
       assert(/\d+(\.\d+)? (KB|MB|GB) on disk/.test(detail), detail);
+      assert(detail.includes(urls.alpha), 'the running server\'s address: ' + detail);
       assert.equal(await content.getAttribute('html', 'data-theme'), 'light');
       const badges = await content.locator('.badge.last').count();
       assert.equal(badges, 1, 'one last-opened badge');
+      // The address to give the Gamma Connector: copied, and in the credentials.
+      await alpha.locator('button[title="Copy address"]').click();
+      await waitFor(async () => (await content.textContent('#status')).includes(`Copied ${urls.alpha}`), 'the copy reported', 5_000);
+      assert.equal(await hook(app, (s) => s.copied()), urls.alpha, 'the address copied');
+      await alpha.locator('button[title="Show credentials"]').click();
+      assert((await content.textContent('#credsText')).includes(`server:   ${urls.alpha}`), 'the credentials name the address');
+      await content.click('#dlgCreds .uiBtn.primary');
       return detail;
     });
 
@@ -927,6 +948,7 @@ async function main() {
       assert(!pidAlive(pids.alpha) && !pidAlive(pids.beta), 'old sidecars stopped for the move');
       await hook(app, (s, id) => s.openServer(id), ids.alpha);
       await waitLoggedIn(content);
+      assert.equal(new URL(content.url()).origin, urls.alpha, 'the same address after the restart');
       const titles = await rootTitles(content);
       assert(titles.includes('E2E paper'), 'data intact after the move: ' + titles.join(' | '));
       pids.alpha = await hook(app, (s, id) => s.sidecar.status(id).child.pid, ids.alpha);
@@ -952,6 +974,7 @@ async function main() {
       bar = await findPage(app, isBar);
       content = await findPage(app, (u) => u.startsWith('http://127.0.0.1'), 90_000);
       await waitLoggedIn(content);
+      assert.equal(new URL(content.url()).origin, urls.alpha, 'the same address as before the quit');
       const titles = await rootTitles(content);
       assert(titles.includes('E2E paper'), 'data persisted: ' + titles.join(' | '));
       await waitFor(async () => (await bar.textContent('#wsName')).trim() === 'Alpha', 'bar shows Alpha');

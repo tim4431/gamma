@@ -20,12 +20,13 @@ or says it is a manual look (**manual**).
 |---|---|---|
 | 1.1 | First start shows the launcher; the shell bar reads *Servers*; layout is bar 38 px + content below | auto: *first start shows the launcher + shell bar* |
 | 1.2 | Create a local server → card appears, data dir created under `workspaces/<id>` | auto: *create a local server from the launcher* |
-| 1.3 | Open it → sidecar starts on a free `127.0.0.1` port, Gamma loads, silent admin login lands, bar shows the name + reload button | auto: *open it: sidecar starts, Gamma loads, auto-login lands* |
+| 1.3 | Open it → sidecar starts on a free `127.0.0.1` port from the dynamic range (49152–65535), Gamma loads, silent admin login lands, bar shows the name + reload button | auto: *open it: sidecar starts, Gamma loads, auto-login lands* |
 | 1.4 | Quit → every sidecar process is gone (no orphan `gamma-server.exe`/python), window bounds saved | auto: *quit: every sidecar stops, window bounds persist* |
-| 1.5 | Relaunch → the last server reopens by itself, data intact, chrome already in the persisted theme | auto: *relaunch reopens the last server with its data intact* |
+| 1.5 | Relaunch → the last server reopens by itself, at the same address, data intact, chrome already in the persisted theme | auto: *relaunch reopens the last server with its data intact* |
 | 1.6 | *Reopen last server at launch* switched off → launcher at start | manual (toggle in the launcher, restart) |
 | 1.7 | Cold start of the frozen server stays well under the 60 s health budget on a slow disk | manual: watch the *Starting …* status; `logs/<id>.log` has the uvicorn banner |
 | 1.8 | A server that will not start explains itself on the launcher (cause, the server's own line, the fixing button, log folded away) | auto: *a server that will not start is explained, not dumped*; manual: open a data dir written by a newer Gamma |
+| 1.9 | A local server keeps its address: the bar menu shows `127.0.0.1:<port>` beside a running local server, its launcher card shows the address with *Copy address*, the credentials dialog names it, and a restart or relaunch comes back on the same port; a port another program took is given up for a new one, shown in the same places | auto: *the bar menu shows each running local server's address …*, *launcher lists sizes …*, *storage folder: …* and *relaunch …* assert the same origin; `npm test` (`test/sidecar.test.js`): the port another program holds, a new one from the dynamic range; manual: the Gamma Connector set to that address, signed in with the credentials, saves a paper into the server, and still does after a relaunch |
 
 ## 2. Switching (the reason the shell bar exists)
 

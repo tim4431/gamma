@@ -21,7 +21,7 @@
 // attribute the preload mirrors so the chrome paints in the same theme, and
 // `/api/session` (public HTTP API) for the workspace list.
 
-const { app, BaseWindow, WebContentsView, Menu, Tray, nativeImage, nativeTheme, session, shell, ipcMain, net, dialog } = require('electron');
+const { app, BaseWindow, WebContentsView, Menu, Tray, clipboard, nativeImage, nativeTheme, session, shell, ipcMain, net, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
@@ -288,6 +288,14 @@ function openDirectory(p) {
   if (!process.env.GAMMA_SHELL_TEST) shell.openPath(p);
 }
 
+// Text on the clipboard; under the test harness only recorded, so a run
+// leaves the developer's clipboard alone.
+let copied = '';
+function copyText(text) {
+  copied = text;
+  if (!process.env.GAMMA_SHELL_TEST) clipboard.writeText(text);
+}
+
 function setBarExpanded(on) {
   barExpanded = Boolean(on);
   layout();
@@ -425,8 +433,7 @@ function startBackgroundHosts() {
   const all = Boolean(state.settings.background);
   for (const srv of state.servers) {
     if (srv.type !== 'local' || (!all && !hosts.has(srv.id)) || sidecar.status(srv.id)) continue;
-    sidecar
-      .start(srv, state.settings, appInfo())
+    startLocal(srv)
       .then(() => pushState())
       .catch((e) => console.error(`[shell] could not start ${srv.name} for what it keeps in the background: ${e.message || e}`));
   }
@@ -513,13 +520,25 @@ function revokeToken(api, origin, wsId, tokenId) {
   return api(origin, `/api/integrations/tokens/${tokenId}`, { method: 'DELETE', headers: { 'X-Gamma-Workspace': wsId } }).catch(() => {});
 }
 
+// A local server's sidecar, started (or the one already running). It gets
+// the port it had last time when that is free and remembers the one it got,
+// so the server keeps its address — the one the Gamma Connector was set to
+// — across launches.
+async function startLocal(srv) {
+  const state = registry.load();
+  const avoid = state.servers.filter((s) => s.id !== srv.id && s.port).map((s) => s.port);
+  const entry = await sidecar.start(registry.get(srv.id) || srv, state.settings, appInfo(), { avoid });
+  registry.setPort(srv.id, entry.port);
+  return entry;
+}
+
 // The local server that hosts what this computer keeps of remote servers —
 // the clones and the folders on disk: the first local server, made when
 // there is none, started, and signed into with its seeded credentials.
 async function ensureHost(api) {
   let local = registry.load().servers.find((s) => s.type === 'local');
   if (!local) local = registry.addLocal('Local');
-  const entry = await sidecar.start(local, registry.getSettings(), appInfo());
+  const entry = await startLocal(local);
   const origin = new URL(entry.url).origin;
   allowedOrigins.add(origin);
   await signIn(api, local, origin);
@@ -1092,6 +1111,8 @@ function fullState() {
     ...barState(),
     servers: state.servers.map((ws) => ({
       ...ws,
+      // A local server's address while it runs (the Connector's server).
+      url: ws.type === 'remote' ? ws.url : (sidecar.status(ws.id) || {}).url,
       running: ws.type === 'local' ? Boolean(sidecar.status(ws.id)) : undefined,
       reachable: remoteReachable(ws),
       sizeBytes: ws.type === 'local' ? registry.dirSize(ws.dataDir) : undefined,
@@ -1166,7 +1187,7 @@ async function openServerNow(id) {
     if (ws.type === 'remote') {
       url = ws.url;
     } else {
-      const entry = await sidecar.start(ws, registry.getSettings(), appInfo());
+      const entry = await startLocal(ws);
       url = entry.url;
       if (ws.adminUser) creds = { username: ws.adminUser, password: ws.adminPassword };
     }
@@ -1356,6 +1377,13 @@ function registerIpc() {
     const p = path.join(app.getPath('userData'), 'logs', `${id}.log`);
     if (fs.existsSync(p)) shell.showItemInFolder(p);
   }));
+  // A running local server's address, for the Gamma Connector's options.
+  ipcMain.handle('shell:copy-address', shellOnly((id) => {
+    const entry = sidecar.status(id);
+    if (!entry) return null;
+    copyText(entry.url);
+    return entry.url;
+  }));
   ipcMain.handle('shell:set-settings', shellOnly((patch) => {
     const s = registry.setSettings(patch);
     if ('background' in patch) setBackground(s.background);
@@ -1544,6 +1572,7 @@ if (process.env.GAMMA_SHELL_TEST) {
     gamma: () => gamma,
     theme: () => currentTheme(),
     externalOpens,
+    copied: () => copied,
     update: () => updater.state(),
     remoteHealth,
     probeRemotes,

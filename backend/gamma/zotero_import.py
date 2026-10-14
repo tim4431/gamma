@@ -290,6 +290,15 @@ def find_zip_entry(name_map: dict, base: str, path: str) -> str | None:
     return None
 
 
+def _attachment_folders(base: str, path: str):
+    """The files/<attachment-id> folder a z:path names, as a zip name (raw
+    and percent-decoded spellings)."""
+    for spelling in (path, urllib.parse.unquote(path)):
+        parent = posixpath.dirname(posixpath.normpath(spelling.replace("\\", "/")))
+        if re.search(r"(?:^|/)files/[^/]+$", parent):
+            yield posixpath.normpath(f"{base}/{parent}" if base else parent)
+
+
 def resolve_pdf_entry(name_map: dict, base: str, path: str) -> tuple[str | None, bool]:
     """Exact path first; a renamed PDF may only match inside its attachment folder.
 
@@ -301,15 +310,22 @@ def resolve_pdf_entry(name_map: dict, base: str, path: str) -> tuple[str | None,
     if exact:
         return exact, False
     candidates = set()
-    for spelling in (path, urllib.parse.unquote(path)):
-        parent = posixpath.dirname(posixpath.normpath(spelling.replace("\\", "/")))
-        if not re.search(r"(?:^|/)files/[^/]+$", parent):
-            continue
-        target = posixpath.normpath(f"{base}/{parent}" if base else parent)
+    for target in _attachment_folders(base, path):
         for name, real in name_map.items():
             if posixpath.dirname(name) == target and name.lower().endswith(".pdf"):
                 candidates.add(real)
     return (next(iter(candidates)), True) if len(candidates) == 1 else (None, False)
+
+
+def unwritten_pdf(name_map: dict, base: str, path: str) -> bool:
+    """The attachment's folder is in the zip but holds nothing. Zotero makes
+    the folder at once and writes the file after its export reports done (the
+    RDF translator doesn't await ``saveFile``; with "Include Annotations"
+    every PDF queues for its PDF worker), so a folder zipped too early
+    has empty folders for the PDFs still to come. A file that isn't on
+    the disk gets no z:path at all."""
+    return any(target in name_map and not any(posixpath.dirname(n) == target for n in name_map)
+               for target in _attachment_folders(base, path))
 
 
 def plan_zotero_archive(zf) -> dict:
@@ -326,12 +342,17 @@ def plan_zotero_archive(zf) -> dict:
     if not items:
         raise ValueError("no importable items in the export")
     warnings, planned, used = [], [], {names[rdf_name]}
+    unwritten = 0
     for item in items:
         problems, valid = [], []
         for path in item["pdf_paths"]:
             real, recovered = resolve_pdf_entry(names, base, path)
             if not real:
-                problems.append({"title": item["title"], "path": path, "reason": f"PDF missing from ZIP: {path}"})
+                reason = f"PDF missing from ZIP: {path}"
+                if unwritten_pdf(names, base, path):
+                    unwritten += 1
+                    reason += " (its folder is empty: Zotero had not written it yet)"
+                problems.append({"title": item["title"], "path": path, "reason": reason})
                 continue
             try:
                 data = zf.read(real)
@@ -363,6 +384,12 @@ def plan_zotero_archive(zf) -> dict:
             problems.append({"title": item["title"], "path": real,
                              "reason": "Additional PDF imports as a separate page in the same folders."})
         warnings.extend(problems)
+    if unwritten:
+        warnings.insert(0, {"title": "Zotero export not finished", "reason": (
+            f"{unwritten} PDF{'s' if unwritten > 1 else ''} had not been written when the export folder was zipped. "
+            "Zotero keeps writing PDFs after its export window closes, one at a time with "
+            "\"Include Annotations\". Wait until the folder stops growing, zip it again and "
+            "import it again: the pages imported now get their PDFs.")})
     entries = []
     for zi in zf.infolist():
         path = zi.filename.replace("\\", "/")

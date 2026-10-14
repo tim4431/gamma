@@ -16,8 +16,9 @@ as many workspaces as you like, and the shell-bar menu switches both.
 Servers come in two kinds:
 
 - **Local** — a data directory under the shell's userData dir, served by a
-  Gamma backend the shell spawns on `127.0.0.1:<free port>` with
-  `GAMMA_DATA_DIR` pointed at it. Fully self-initializing: the server seeds
+  Gamma backend the shell spawns on `127.0.0.1:<port>` with
+  `GAMMA_DATA_DIR` pointed at it (the port below, "A local server's
+  address"). Fully self-initializing: the server seeds
   schema + first admin on an empty data dir (and upgrades an older data
   layout at startup — [docs/dev/migrations.md](../../docs/dev/migrations.md)).
   The shell passes `GAMMA_ADMIN_USER`/`GAMMA_ADMIN_PASSWORD` on the first
@@ -42,6 +43,28 @@ The pencil on a remote's card edits the address as well as the name
 origin follow), and when an `https://` address is refused — a self-signed
 certificate, or a plain-HTTP server answering https — the launcher's
 failure card offers *Use http:// instead* (`lib/startup.js`, action `http`).
+
+### A local server's address
+
+A local server keeps its port. `startLocal` in `main.js` starts every
+sidecar. It asks for the port the server had last time (`port` on its
+registry entry) and saves the one it got. `lib/sidecar.js` `pickPort` uses
+that port while it is free. Otherwise it walks the IANA dynamic range
+(49152–65535) from a random point to the first free port no other local
+server has saved. The OS's own choice is not used, because Windows may hand
+out any port above 1024: a port kept for good should not be 9001 or 5173.
+So the address stays the same across restarts and relaunches. That is the
+address a browser's Gamma Connector, a bookmark or a script was given
+([docs/dev/extension.md](../../docs/dev/extension.md) "Auth and
+permissions"). A port another program took by then is given up for a new
+one, and the new address shows in the places below.
+
+The address of a running local server shows beside its name in the bar
+menu (`127.0.0.1:<port>`) and on its launcher card. The card has a *Copy
+address* button (`shell:copy-address`; under the test harness the copy is
+only recorded) and the credentials dialog names it too. In the browser the
+Connector signs in with those credentials, since the window's session lives
+in Electron's cookie jar, not the browser's.
 
 ### Gamma's workspaces in the switcher
 
@@ -232,7 +255,7 @@ window's own page, never a view like the bar. The logo opens the launcher, which
 server (also `Ctrl/Cmd+Shift+L`). Then the switcher: click the name → dropdown of
 the open server's Gamma workspaces (check on the current one, role or
 *personal* per row, the clone chips), then every server (running /
-reachable dot, check on the current one), then *All servers…* (the
+reachable dot, a running local one's address, check on the current one), then *All servers…* (the
 launcher again). At the right: the sync button and its panel (above, "Kept
 on this computer"), the update pill (only while an update is ready, see
 below) and a reload button. One dropdown is open at a time. While one is,
@@ -241,9 +264,10 @@ transparent outside the strip and the dropdown), which is how a 38 px view
 can show a menu.
 
 The **content view** shows the launcher or the server. The launcher lists
-servers as cards (kind, running / reachable dot, size on disk, data dir /
-URL, *last opened* badge) with open / rename / credentials / data folder /
-server log / remove actions, then Settings: the *reopen last server at
+servers as cards (kind, running / reachable dot, size on disk, a running
+local server's address, data dir / URL, *last opened* badge) with open /
+rename / copy address / credentials / data folder / server log / remove
+actions, then Settings: the *reopen last server at
 launch* switch, the *Local server storage* row, the *Updates* row (status
 line + check / download / restart button), and the dev-mode server
 overrides.
@@ -367,7 +391,8 @@ bottom of the launcher; a Microsoft Store install gets the MSIX-virtualized
 copy under `%LOCALAPPDATA%\Packages\xwtim.GammaPDF_<hash>\LocalCache\Roaming`,
 which the Store uninstall deletes — [release.md](release.md#microsoft-store)):
 
-- `servers.json` — the registry: server list, `lastOpened`, `windowBounds`,
+- `servers.json` — the registry: server list (a local server with its
+  admin credentials and last `port`), `lastOpened`, `windowBounds`,
   and `settings` (`openLastOnLaunch`, `lastTheme`, `dataRoot`, `background`
   and `openAtLogin` (the tray, above), `folderHost` (the local server that
   keeps folders of remote servers), the dev-mode
@@ -428,7 +453,8 @@ only); `GAMMA_SHELL_NO_UPDATE=1` disables the updater.
   Both plain HTML, no build step.
 - `lib/registry.js` — `servers.json` load/save, add/rename/remove,
   last-opened, settings, window bounds, data-dir size.
-- `lib/sidecar.js` — local server lifecycle: free port, spawn, health poll
+- `lib/sidecar.js` — local server lifecycle: the port (`pickPort`, "A local
+  server's address"; `test/sidecar.test.js`), spawn, health poll
   (`/api/health`, 60 s budget for frozen cold starts), log capture,
   tree-kill on Windows. Backend resolution order: explicit settings
   (pythonPath/backendDir) → bundled frozen server (packaged app) →
