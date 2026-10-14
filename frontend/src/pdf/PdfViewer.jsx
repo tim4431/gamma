@@ -81,6 +81,21 @@ const PAGE_GAP = 8;
 // text layer; pdf.js's own viewer keeps about ten pages.
 const FAR_MARGIN = "400% 0px";
 const FALLBACK_H = 800, FALLBACK_W = 600;
+// A page's text layer is built once its scroller has sent no scroll event
+// for this long.
+const TEXT_REST_MS = 100;
+
+// Calls `fn` once `el` has been still for `ms` (at once without an element);
+// the returned function calls it off.
+function afterScrollRest(el, ms, fn) {
+  if (!el) { fn(); return () => {}; }
+  let timer = 0;
+  const off = () => { clearTimeout(timer); el.removeEventListener("scroll", arm); };
+  const arm = () => { clearTimeout(timer); timer = setTimeout(() => { off(); fn(); }, ms); };
+  el.addEventListener("scroll", arm, { passive: true });
+  arm();
+  return off;
+}
 
 // Content-y of page idx's top edge at the given scale.
 function pageTopAt(heights, idx, scale) {
@@ -1952,7 +1967,11 @@ const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, scal
     if (!page || paintedPage !== page) return;
     let cancelled = false;
     let layer = null;
-    (async () => {
+    // Built once the scroller rests. Measuring and laying out a page's spans
+    // takes the main thread for a frame or two, which a wheel glide (JS-driven,
+    // shared/lib/smoothWheel.js) spends standing still; during a fast scroll
+    // the pages passing by would be built for nothing (docs/research/pdf-wheel-spin.md).
+    const rested = afterScrollRest(wrapRef.current?.closest(".pdfViewer"), TEXT_REST_MS, async () => {
       try {
         const vpBase = page.getViewport({ scale: 1 });
         const textL = textRef.current;
@@ -1990,8 +2009,8 @@ const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, scal
       } catch (e) {
         if (!cancelled) console.error("PdfPage render error:", e);
       }
-    })();
-    return () => { cancelled = true; layer?.cancel(); };
+    });
+    return () => { cancelled = true; rested(); layer?.cancel(); };
   }, [page, paintedPage, far]);
 
   // Once a zoom settles the spans are re-measured at the new size, which is

@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { SMOOTH_MS, easeOut, installSmoothWheel, notchDelta } from "../src/shared/lib/smoothWheel.js";
+import { SMOOTH_MS, approach, installSmoothWheel, notchDelta } from "../src/shared/lib/smoothWheel.js";
 
 // A scroller 1000 px tall over 5000 px of content, with the frame clock and
 // requestAnimationFrame in the test's hands.
@@ -40,7 +40,9 @@ function fixture(t, scrollTop = 100) {
     }
     return seen;
   };
-  return { el, wheel, notch, frames, cleanup, pending: () => queued.length };
+  // The motion's full length, tail included.
+  const settle = () => frames(SMOOTH_MS * 4);
+  return { el, wheel, notch, frames, settle, cleanup, pending: () => queued.length };
 }
 
 test("only a notch counts: pixel steps of 120, lines and pages, never a touchpad or a modifier", () => {
@@ -54,46 +56,65 @@ test("only a notch counts: pixel steps of 120, lines and pages, never a touchpad
     assert.equal(notchDelta({ deltaMode: 0, deltaY: 100, wheelDeltaY: -120, [mod]: true }, 1000), 0, mod);
   }
   assert.equal(notchDelta({ deltaMode: 0, deltaY: 100, deltaX: 5, wheelDeltaY: -120 }, 1000), 0, "sideways");
-  assert.equal(easeOut(0), 0);
-  assert.equal(easeOut(1), 1);
+  assert.equal(approach(0), 0);
+  assert(approach(SMOOTH_MS) > 0.94 && approach(SMOOTH_MS) < 0.96, "95% of the way in SMOOTH_MS");
 });
 
-test("a notch eases to its distance over SMOOTH_MS, moving every frame", (t) => {
-  const { el, notch, frames, pending } = fixture(t);
+test("a notch glides to its distance, most of it within SMOOTH_MS, moving every frame", (t) => {
+  const { el, notch, frames, settle, pending } = fixture(t);
   assert.equal(notch(200), true, "the browser's own jump is prevented");
   assert.equal(el.scrollTop, 100, "nothing moves before a frame");
-  const seen = frames(SMOOTH_MS + 50);
-  assert(seen.length >= SMOOTH_MS / 16, `${seen.length} frames`);
-  for (let i = 1; i < seen.length; i++) assert(seen[i] >= seen[i - 1], `monotonic: ${seen}`);
+  const seen = frames(SMOOTH_MS);
+  assert(seen.length >= SMOOTH_MS / 16 - 1, `${seen.length} frames`);
+  for (let i = 1; i < seen.length; i++) assert(seen[i] > seen[i - 1], `moves every frame: ${seen}`);
   assert(seen[0] > 100 && seen[0] < 300, "the first frame is part way");
+  assert(el.scrollTop > 285, `most of the way in SMOOTH_MS: ${el.scrollTop}`);
+  settle();
   assert.equal(el.scrollTop, 300);
   assert.equal(pending(), 0, "done: no frame left");
 });
 
+// Chromium delivers a wheel event inside the frame it belongs to and stamps
+// that frame's animation callbacks with the frame's start, before the event.
+// A spin faster than the frames must still move in every frame.
+test("a notch in every frame of a spin never stops the motion", (t) => {
+  const { el, notch, frames, settle } = fixture(t);
+  const seen = [];
+  for (let i = 0; i < 12; i++) {
+    notch(200);
+    seen.push(...frames(16));
+  }
+  for (let i = 1; i < seen.length; i++) assert(seen[i] > seen[i - 1], `moves every frame: ${seen}`);
+  settle();
+  assert.equal(el.scrollTop, 100 + 12 * 200);
+});
+
 test("a notch on the way extends the motion; a touchpad stays native", (t) => {
-  const { el, notch, wheel, frames } = fixture(t);
+  const { el, notch, wheel, frames, settle } = fixture(t);
   notch(200);
-  frames(48);
+  const before = frames(48);
   notch(200);
-  frames(SMOOTH_MS + 50);
+  const after = frames(16);
+  assert(after[0] > before.at(-1), "the motion carries on");
+  settle();
   assert.equal(el.scrollTop, 500);
   assert.equal(wheel({ deltaY: 3.5, wheelDeltaY: -4 }), false);
   assert.equal(wheel({ deltaY: 100, wheelDeltaY: -120, ctrlKey: true }), false, "zoom is viewerZoom's");
 });
 
 test("any other scroll ends the motion, and the ends are left to the browser", (t) => {
-  const { el, notch, frames, pending } = fixture(t);
+  const { el, notch, frames, settle, pending } = fixture(t);
   notch(400);
   frames(32);
   el.scrollTop = 2500; // a jump to a highlight, a zoom keeping its anchor, the scrollbar
-  frames(SMOOTH_MS);
+  settle();
   assert.equal(el.scrollTop, 2500);
   assert.equal(pending(), 0);
   el.scrollTop = 4000; // the bottom: 5000 - 1000
   assert.equal(notch(200), false, "nothing left to scroll: the browser's overscroll");
   el.scrollTop = 3950;
   notch(200);
-  frames(SMOOTH_MS + 50);
+  settle();
   assert.equal(el.scrollTop, 4000, "clamped to the end");
 });
 

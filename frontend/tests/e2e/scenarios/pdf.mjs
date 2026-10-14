@@ -896,6 +896,25 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
           assertEq(trail.at(-1) - trail[0], 200, `one notch scrolls its 200 px (${on ? "on" : "off"})`);
           if (on) assert(trail.length >= 5, `on: several positions on the way, ${trail.join(" ")}`);
           else assertEq(trail.length, 2, `off: one jump, ${trail.join(" ")}`);
+          if (on) {
+            // A spin, notches closer than the glide: Chromium hands each
+            // notch to the page inside a frame, before that frame's animation
+            // callbacks, so a glide timed from the notch stood still for a
+            // frame per notch (docs/research/pdf-wheel-spin.md).
+            await p.evaluate(() => {
+              const v = document.querySelector(".pdfViewer");
+              window.spinTrail = []; window.spinning = true;
+              const tick = () => { window.spinTrail.push([performance.now(), v.scrollTop]); if (window.spinning) requestAnimationFrame(tick); };
+              requestAnimationFrame(tick);
+            });
+            const t0 = await p.evaluate(() => performance.now());
+            for (let i = 0; i < 10; i++) { await p.mouse.wheel(0, 200); await sleep(20); }
+            const t1 = await p.evaluate(() => performance.now());
+            await until(() => p.evaluate(() => document.querySelector(".pdfViewer").scrollTop >= 2200), { what: "the spin's 2000 px" });
+            const spin = (await p.evaluate(() => { window.spinning = false; return window.spinTrail; })).filter(([t]) => t > t0 + 40 && t < t1);
+            const still = spin.filter(([, y], i) => i > 0 && y === spin[i - 1][1]).length;
+            assert(spin.length >= 6 && still <= 1, `a spin moves in every frame: ${still} of ${spin.length} frames stood still`);
+          }
           assertNoProblems(p);
           await p.close();
         } finally { await c.close(); }

@@ -91,17 +91,17 @@ export function covers(drawn, need) {
     && drawn.y + drawn.height >= need.y + need.height - SLACK;
 }
 
-// One raster of a page into a new width × height canvas: `rect`, a rectangle
-// of the page box at `scale` in CSS px, or the whole page without one. Every
-// render of a page goes through here. The transform is handed to pdf.js
-// rather than set on the context: pdf.js paints the paper before it applies
-// its own, so a context that is already translated gets paper in the wrong
-// place and none where the crop is.
-export function renderRegion(page, { scale, rect, width, height, annotationMode }) {
+// One raster of a page into a width × height canvas, `canvas` (resized, so
+// cleared) or a new one: `rect`, a rectangle of the page box at `scale` in
+// CSS px, or the whole page without one. Every render of a page goes through
+// here. The transform is handed to pdf.js rather than set on the context:
+// pdf.js paints the paper before it applies its own, so a context that is
+// already translated gets paper in the wrong place and none where the crop
+// is.
+export function renderRegion(page, { scale, rect, width, height, annotationMode, canvas = document.createElement("canvas") }) {
   const viewport = page.getViewport({ scale });
   const r = rect || { x: 0, y: 0, width: viewport.width, height: viewport.height };
-  const canvas = document.createElement("canvas");
-  canvas.width = width; canvas.height = height;
+  canvas.width = 0; canvas.height = height; canvas.width = width;
   const ctx = canvas.getContext("2d");
   if (!ctx) throw new Error("PDF canvas allocation failed");
   const kx = width / r.width, ky = height / r.height;
@@ -131,18 +131,50 @@ export async function cropPage(page, rect, box, annotationMode) {
   }
 }
 
-// Keeps one page's two canvases showing the right pixels. `wrap` is the page
-// box, `base` and `detail` the canvases inside it; the scroller is the
-// .pdfViewer around them.
+const release = (canvas) => { canvas.width = 0; canvas.height = 0; };
+
+// Two canvases in one slot: one shows, the other is drawn into and then
+// shown in its place. The browser records what pdf.js draws and rasterizes
+// the record the first time the canvas is used. For a canvas outside the
+// document that was the copy onto the screen: a page's whole record in one
+// frame, 20 to 33 ms for a page with figures, which held a wheel glide
+// still (docs/research/pdf-wheel-spin.md). A canvas in the document, even a
+// hidden one, is rasterized as it is drawn, frame by frame beside pdf.js's
+// own chunks, and nothing is copied. The hidden one is drawn into, so the one
+// on screen never shows a half-painted page, and it gives up its backing
+// store once it is replaced. The hidden one carries `data-spare`.
+function pair(front) {
+  const back = front.cloneNode(false);
+  back.style.display = "none";
+  back.dataset.spare = "";
+  front.after(back);
+  const p = {
+    front, back,
+    show() {
+      [p.front, p.back] = [p.back, p.front];
+      p.front.style.display = "block"; delete p.front.dataset.spare;
+      p.back.style.display = "none"; p.back.dataset.spare = "";
+      release(p.back);
+    },
+    hide() { p.front.style.display = "none"; },
+    clear() { release(p.front); release(p.back); },
+  };
+  return p;
+}
+
+// Keeps one page's canvases showing the right pixels. `wrap` is the page
+// box, `base` and `detail` the canvases inside it (each gets a twin, see
+// `pair`); the scroller is the .pdfViewer around them.
 //   show(page, {scale, annotationMode})  what they should show. A first
 //       paint starts at once; over a bitmap of the same page (a zoom) it
 //       waits for the zoom to settle, and CSS stretches what is there.
-//   show(null)   release both: a page far from the view keeps no backing store.
+//   show(null)   release all: a page far from the view keeps no backing store.
 //   onPainted(page)  fresh pixels of `page` landed.
 //   isCancel(error)  tells pdf.js's cancellation from a failure; the caller
 //       owns the pdf.js module.
-export function installPageRaster({ wrap, base, detail, onPainted, isCancel }) {
+export function installPageRaster({ wrap, base: baseEl, detail: detailEl, onPainted, isCancel }) {
   const scroller = wrap.closest(".pdfViewer");
+  const base = pair(baseEl), detail = pair(detailEl);
   let want = null;        // {page, scale, annotationMode, width, height}; width × height is the page box in CSS px
   let shown = null;       // the `want` the base canvas shows
   let detailShown = null; // {want, rect}: what the detail canvas shows, rect in CSS px of that page box
@@ -154,11 +186,6 @@ export function installPageRaster({ wrap, base, detail, onPainted, isCancel }) {
 
   const dpr = () => window.devicePixelRatio || 1;
   const report = (e) => { if (want) console.error("PdfPage render error:", e); };
-  const clear = (canvas) => { canvas.width = 0; canvas.height = 0; };
-  const put = (canvas, from) => {
-    canvas.width = 0; canvas.height = from.height; canvas.width = from.width;
-    canvas.getContext("2d").drawImage(from, 0, 0);
-  };
 
   // The viewport in the page box's CSS px. Measured from the boxes on screen
   // and scaled back, so it holds under the pinch preview's transform too.
@@ -182,20 +209,19 @@ export function installPageRaster({ wrap, base, detail, onPainted, isCancel }) {
     return want === target;
   }
 
+  // A render that was called off leaves the hidden canvas to the next one,
+  // which resizes it; only when none followed is the canvas released.
   async function drawBase(target, plan) {
-    const { canvas, task } = renderRegion(target.page, {
-      scale: target.scale, width: plan.width, height: plan.height, annotationMode: target.annotationMode,
+    const { task } = renderRegion(target.page, {
+      scale: target.scale, width: plan.width, height: plan.height, annotationMode: target.annotationMode, canvas: base.back,
     });
     baseTask = task;
     try {
-      // Rendered privately: resizing the visible canvas clears its paper and
-      // exposes incomplete paints during rapid zoom changes.
-      if (!(await settled(task, target))) return;
-      put(base, canvas);
+      if (!(await settled(task, target))) { if (baseTask === task) release(base.back); return; }
+      base.show();
       shown = target;
       onPainted?.(target.page);
     } finally {
-      clear(canvas);
       if (baseTask === task) baseTask = null;
     }
   }
@@ -205,8 +231,8 @@ export function installPageRaster({ wrap, base, detail, onPainted, isCancel }) {
     detailJob = null;
     clearTimeout(quiet); quiet = 0;
     outrun = false;
-    clear(detail);
-    detail.style.display = "none";
+    detail.clear();
+    detail.hide();
     detailShown = null;
   }
 
@@ -217,24 +243,22 @@ export function installPageRaster({ wrap, base, detail, onPainted, isCancel }) {
     if (!slice) { dropDetail(); return; }
     const plan = detailPlan(slice, dpr());
     detailJob?.task.cancel();
-    const { canvas, task } = renderRegion(target.page, {
-      scale: target.scale, rect: plan.rect, width: plan.width, height: plan.height, annotationMode: target.annotationMode,
+    const { task } = renderRegion(target.page, {
+      scale: target.scale, rect: plan.rect, width: plan.width, height: plan.height, annotationMode: target.annotationMode, canvas: detail.back,
     });
     const job = detailJob = { task, rect: plan.rect };
     try {
-      if (!(await settled(task, target))) return;
-      put(detail, canvas);
+      if (!(await settled(task, target))) { if (detailJob === job) release(detail.back); return; }
       // In percent of the page box: a zoom stretches it with the page until
       // the redraw lands, like the base.
-      const { rect } = plan, { style } = detail;
+      const { rect } = plan, { style } = detail.back;
       style.left = `${rect.x / target.width * 100}%`; style.top = `${rect.y / target.height * 100}%`;
       style.width = `${rect.width / target.width * 100}%`; style.height = `${rect.height / target.height * 100}%`;
-      style.display = "block";
+      detail.show();
       detailShown = { want: target, rect };
       outrun = false;
       onPainted?.(target.page);
     } finally {
-      clear(canvas);
       if (detailJob === job) detailJob = null;
     }
   }
@@ -300,7 +324,7 @@ export function installPageRaster({ wrap, base, detail, onPainted, isCancel }) {
       halt();
       want = shown = null;
       follow(false);
-      clear(base);
+      base.clear();
       dropDetail();
       return;
     }
