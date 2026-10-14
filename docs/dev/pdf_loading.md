@@ -213,6 +213,17 @@ and measurements behind it are in
   235 px for 1920 × 1030 under the desktop limits (111 and 16 px under the
   iPad ones). A Windows wheel notch set to 6 lines jumps 200 px, so on a
   desktop a single notch stays inside the detail canvas.
+- **One render at a time, the nearest page first.** Every render of a page
+  enters its scroller's queue (`pdf/renderQueue.js`, shared by the pages of
+  one viewer), which starts one at a time, the page nearest the view first,
+  so a frame carries at most one pdf.js chunk. A render of a page away from
+  the view is preempted when one that touches the view arrives, and starts
+  over once that is done (pdf.js can only cancel). While the scroller moves
+  faster than `FAST_VIEWS_PER_S` (two viewport heights a second over the last
+  120 ms) renders away from the view wait: a fast scroll passes the pages it
+  would draw, and each chunk drawn is a frame the scroll loses. The page in
+  view never waits. `tests/renderQueue.test.mjs` pins the order, the
+  preemption, the hold and the cancels.
 - **Zooming.** Both canvases are sized in percent of the page box, so they
   stretch with it in the same commit. The redraw starts 150 ms after the
   last zoom step (`ZOOM_SETTLE_MS`), the part in view first, then the base.
@@ -254,10 +265,20 @@ before blending. On the canvases themselves the overlap would be blended
 twice.
 
 `PdfPage`'s intersection observer is rooted at the PDF scroller with 900 CSS
-pixels of look-ahead. A page outside it releases both backing stores
-(`show(null)`) and calls `page.cleanup()`, which frees pdf.js's operator list
-and decoded images for the page. The next render asks the worker again. Its
-ink and text-box layers are mounted only
+pixels of look-ahead (`RENDER_MARGIN`). A page inside it is rendered. On a
+desktop (the roomy canvas limits) a page that leaves it keeps the pixels it
+has, and draws nothing new, until it is `KEEP_MARGIN` away (three viewport
+heights each way, a second observer), so a scroll back over read pages
+redraws nothing; a zoom meanwhile stretches what it holds and it is redrawn
+when it comes back inside the look-ahead. The pages holding pixels are kept
+within `KEEP_BUDGET_BYTES` (256 MB of canvas over the document): past that
+the pages farthest from the view let go first, never one inside the
+look-ahead nor one rendered on request (`pinned`, the jump target or the
+cited page). A touch-first device or WebKit keeps nothing past the
+look-ahead, as before. A page past the keep margin releases both backing
+stores (`show(null)`) and calls `page.cleanup()`, which frees pdf.js's
+operator list and decoded images for the page. The next render asks the
+worker again. Its ink and text-box layers are mounted only
 inside the look-ahead unless the page carries marks (`MarkupLayers`'s
 `active`: each layer listens on the window and the document, and a book has
 hundreds of pages). Its highlights, find marks and link boxes are drawn only

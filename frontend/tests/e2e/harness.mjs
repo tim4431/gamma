@@ -220,6 +220,13 @@ function english(browser) {
   browser.newContext = async ({ suggestTours = false, ...options } = {}) => {
     const ctx = await newContext({ locale: "en-US", ...options });
     await ctx.addInitScript((on) => { try { localStorage.setItem("gamma-suggest-tours", on ? "1" : "0"); } catch {} }, suggestTours);
+    // A context without touch is a mouse machine whatever the host says:
+    // Chromium reports the system's touch digitizer, and a Remote Desktop
+    // session brings the client's along (ten touch points over an RDP
+    // connection from a touch device), which turns on the touch-only
+    // controls and guide steps. A hasTouch context keeps Playwright's own
+    // emulation.
+    if (!options.hasTouch) await ctx.addInitScript(() => { Object.defineProperty(Navigator.prototype, "maxTouchPoints", { get: () => 0, configurable: true }); });
     const close = ctx.close.bind(ctx);
     ctx.close = async (...args) => {
       for (const page of ctx.pages()) await lastLook(page);

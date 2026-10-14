@@ -78,15 +78,48 @@ not shrink; it is spread over the frames that draw instead of landing in
 one. With the setting off the browser jumps, as before: 32 of 63 frames
 without movement, which is the notches themselves.
 
+## Round two: one render at a time, the look-ahead held, pages kept
+
+Three more changes, all on the main thread, after the worker route was
+declined:
+
+- **A render queue** (`pdf/renderQueue.js`): one page render at a time per
+  scroller, the nearest page first; a render away from the view is
+  preempted by one that touches it and starts over afterwards.
+- **The look-ahead held while fast:** renders of pages away from the view
+  wait while the scroller moves faster than two viewport heights a second
+  (over the last 120 ms). The page in view never waits.
+- **Pages kept:** on a desktop a page keeps its pixels up to three viewport
+  heights from the view, within 256 MB of canvas over the document, trimmed
+  farthest-first; touch devices and WebKit keep nothing past the look-ahead.
+
+The same spin, smooth wheel on: 67 frames, none without movement, no frame
+gap over the display's 32 ms (round one left one 63 ms gap), main thread
+busy 520 ms of 3329. A second probe scrolls 15 notches down (3000 px, about
+two pages), 15 up and 15 down again, 40 ms apart, and counts page renders by
+the sizing of their canvases:
+
+| Leg | Before | After |
+|---|---|---|
+| down | 3 renders | 1 |
+| up | 1 | 0 |
+| down again | 3 | 1 |
+
+The pages in view were painted within a few milliseconds of the last notch
+on both builds: at this speed the look-ahead keeps up either way, and the
+saving is the renders the scroll back no longer repeats. The hold did not
+show in this probe (the one page it would have delayed was already held);
+it is pinned by the unit tests.
+
 ## Still open
 
 - **pdf.js paints on the main thread.** A chunk of a page's operator list
   (up to 15 ms) plus its share of the flush still lands in the glide's
   frames, over budget at 60 Hz. Rendering in a worker with `OffscreenCanvas`
-  would take it off the main thread altogether; not tried.
-- **Pages a spin scrolls past are rendered anyway.** The 900 px look-ahead
-  renders every page it reaches; a spin faster than a page a second could
-  render only what is in view and leave the look-ahead for when it slows.
+  would take it off the main thread altogether; declined for its size.
+- **The keep budget is a guess.** 256 MB of canvas is about ten pages at
+  fit-width on a 4K screen with the Notes panel open, four with it closed;
+  Chromium's own canvas memory pressure handling was not measured against it.
 - **The glide's tail.** Closing a share of the remainder per frame ends
   about 265 ms after the last notch (the last 100 ms move under 5 px), so a
   scroll rests later than it did, which delays the detail redraw and the

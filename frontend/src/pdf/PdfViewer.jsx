@@ -13,7 +13,7 @@ import { createPortal } from "react-dom";
 import { CheckIcon, ChevronRightIcon, CopyIcon, LanguagesIcon, LinkIcon, MessageSquareIcon, OutlineIcon } from "../shared/ui/Icons";
 import { MarkupLayers, NO_MARKS } from "../markup/MarkupLayers";
 import { armedClasses, usePageTools } from "../markup/PageTools";
-import { ZOOM_SETTLE_MS, cropPage, installPageRaster } from "./pageRaster.js";
+import { KEEP_MARGIN, RENDER_MARGIN, ZOOM_SETTLE_MS, cropPage, installPageRaster } from "./pageRaster.js";
 import { installVerticalScrollSnap } from "./verticalScrollSnap.js";
 import { segmentPage, selectionParagraphs } from "./pdfTranslate";
 import { BACKFILL_DELAY_MS, chooseTransport, docIdOf, layoutFromManifest, rangeOpenOptions } from "./pdfSource";
@@ -1876,10 +1876,25 @@ const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, scal
     if (!el) return;
     const obs = new IntersectionObserver((entries) => {
       setVisible(entries[0].isIntersecting);
-    }, { root: el.closest(".pdfViewer"), rootMargin: "900px" });
+    }, { root: el.closest(".pdfViewer"), rootMargin: RENDER_MARGIN });
     obs.observe(el);
     return () => obs.disconnect();
   }, [pageNumber]);
+
+  // Farther out, up to KEEP_MARGIN, a page keeps the pixels it has (on a
+  // desktop; pdf/pageRaster.js trims them to a memory budget) and draws
+  // nothing new, so a scroll back over read pages redraws nothing.
+  const [nearby, setNearby] = useState(false);
+  useEffect(() => {
+    const el = wrapRef.current;
+    if (!el) return;
+    const obs = new IntersectionObserver((entries) => {
+      setNearby(entries[0].isIntersecting);
+    }, { root: el.closest(".pdfViewer"), rootMargin: KEEP_MARGIN });
+    obs.observe(el);
+    return () => obs.disconnect();
+  }, [pageNumber]);
+  const kept = nearby || renderVisible;
 
   // Far from the view (FAR_MARGIN past it) a page gives up its text layer
   // too; a long read would otherwise leave every visited page's spans in
@@ -1937,11 +1952,12 @@ const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, scal
     // retains every visited page. Its operator list and decoded images go
     // too (page.cleanup: pdf.js keeps them per page, a scanned page's
     // decoded bitmap among them); the next render asks the worker again.
-    if (!page || !renderVisible) {
+    if (!page || !kept) {
       rasterRef.current.show(null);
       if (page) page.cleanup();
       return;
     }
+    if (!renderVisible) return; // kept: holds what it has, nothing new is drawn
     rasterRef.current.show(page, {
       scale,
       // DISABLE keeps embedded markup annotations (e.g. highlights burned in
@@ -1949,8 +1965,9 @@ const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, scal
       // they don't stack under Gamma's own overlay after an import. Link
       // regions are unaffected — they're DOM overlays from getAnnotations().
       annotationMode: hideEmbeddedAnnots ? pdfjsLib.AnnotationMode.DISABLE : pdfjsLib.AnnotationMode.ENABLE,
+      pinned: !!forceRender,
     });
-  }, [page, scale, renderVisible, hideEmbeddedAnnots]);
+  }, [page, scale, renderVisible, kept, hideEmbeddedAnnots, forceRender]);
 
   // The text layer and the link boxes: built once per page, after its first
   // pixels, and kept when the page scrolls away or the zoom changes. The
