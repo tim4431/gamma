@@ -45,6 +45,7 @@ import {
   HomeIcon,
   ListIcon,
   MessageSquareIcon,
+  MoveVerticalIcon,
   OutlineIcon,
   PaperIcon,
   PenIcon,
@@ -116,6 +117,14 @@ function ViewerSettings({ value }) {
           <Segmented value={value.embAnnots} onChange={value.setEmbAnnots}
             options={[["hide", t("Keep originals")], ["strip", t("Remove originals")]]} />
         </Row>
+        <Toggle
+          icon={MoveVerticalIcon}
+          label={t("Smooth wheel scrolling")}
+          hint={t("Glide one mouse-wheel notch at a time instead of jumping")}
+          title={t("In the PDF viewer, each notch of a mouse wheel scrolls in a short glide. Touchpads and precise wheels scroll smoothly either way and are left as they are.")}
+          checked={value.smoothWheel}
+          onChange={value.setSmoothWheel}
+        />
         <Toggle
           icon={CloudDownloadIcon}
           label={t("Open-access fallback")}

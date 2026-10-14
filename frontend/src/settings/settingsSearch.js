@@ -26,6 +26,7 @@ const entries = [
   e("appearance", t("Sync pill"), t("Sync status"), t("Where the header shows a page's sync with Gamma Cloud."), "sync status publish published pages Gamma Cloud header"),
   e("appearance", t("Suggest tours"), t("Tours"), t("A short tour the first time a feature comes up."), "guide onboarding hints help"),
   e("reading", t("Imported annotations"), t("PDFs"), t("Annotations saved inside a PDF become highlights"), "hide strip keep remove originals highlights PDF"),
+  e("reading", t("Smooth wheel scrolling"), t("PDFs"), t("Glide one mouse-wheel notch at a time instead of jumping"), "smooth scroll scrolling mouse wheel animation glide PDF"),
   e("reading", t("Open-access fallback"), t("PDFs"), t("Fetch a free copy when a publisher blocks the PDF"), "download PDF publisher free library"),
   e("reading", t("Auto-fetch metadata"), t("PDFs"), t("Title, authors and BibTeX on first open"), "title authors BibTeX DOI library"),
   e("reading", t("Save external PDFs"), t("PDFs"), t("Keep a server copy of PDFs opened from a URL"), "download storage offline URL library"),

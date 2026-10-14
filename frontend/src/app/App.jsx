@@ -2509,7 +2509,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     language, setLanguage,
     fileLabels, setFileLabels,
     oaFallback, setOaFallback, metaAutoFetch, setMetaAutoFetch, pdfSaveLocal, setPdfSaveLocal,
-    embAnnots, setEmbAnnots,
+    embAnnots, setEmbAnnots, smoothWheel, setSmoothWheel,
     inkPenOnly, setInkPenOnly, inkAutoPen, setInkAutoPen, inkPressure, setInkPressure,
     inkTools, setInkTools, inkEraserMode, setInkEraserMode, inkEraserSize, setInkEraserSize,
     inkLassoMode, setInkLassoMode, textBoxStyle, setTextBoxStyle,
@@ -10309,6 +10309,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
             <PdfViewer url={pdfUrl} highlights={highlights}
               citation={pdfCitation?.pageId === focusedBlockId ? pdfCitation : null}
               hideEmbeddedAnnots={embAnnots === "hide"}
+              smoothWheel={smoothWheel}
               darkPage={pdfDarkPage}
               translateKey={`${translateLang}|${translateSendModel}`}
               translateParallel={translateParallel}
@@ -10758,6 +10759,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           setPdfSaveLocal,
           embAnnots,
           setEmbAnnots,
+          smoothWheel,
+          setSmoothWheel,
           inkPenOnly,
           setInkPenOnly,
           inkAutoPen,

@@ -197,6 +197,9 @@ export const PREFS = {
   // the file as it came and leaves them out of the canvas. The desktop app
   // reads it by this name for a PDF opened with it (desktop/main.js importAnnotations).
   embAnnots: pref("gamma-embedded-annots", ACCOUNT, "strip", oneOf(["hide", "strip"])),
+  // Ease each notch of a mouse wheel over the PDF instead of jumping
+  // (shared/lib/smoothWheel.js). Touchpads are smooth either way.
+  smoothWheel: flag("gamma-smooth-wheel", ACCOUNT, false),
 
   // --- Translation (Settings → Translation) ---
   // Master switch: off removes the translate button from the viewer.

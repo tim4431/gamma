@@ -868,6 +868,44 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
     await account.api(`/api/blocks/${citing.id}`, { method: "DELETE" });
   });
 
+  // Settings → Reading › PDFs › Smooth wheel scrolling (shared/lib/smoothWheel.js).
+  await step("pdf: smooth wheel scrolling glides one notch over several frames; off, it is the browser's jump", async () => {
+    const lines = Array.from({ length: 30 }, (_, n) => `Wheel line ${n + 1}`);
+    const up = await account.upload("/api/uploads", makePdf(Array.from({ length: 6 }, () => lines)), "wheel.pdf", "application/pdf");
+    const doc = await account.api(`/api/blocks/by-doc/${up.doc_id}`, { method: "POST", body: { default_title: "Wheel paper" } });
+    try {
+      for (const on of [true, false]) {
+        await account.api("/api/prefs/profile", { method: "PATCH", body: { set: { smoothWheel: on } } });
+        const c = await account.context(browser);
+        await c.addInitScript((v) => localStorage.setItem("gamma-smooth-wheel", v), on ? "1" : "0");
+        try {
+          const p = await openPage(c, `${server.base}/?page=${doc.id}&ws=${account.ws}`);
+          await waitForPdf(p, 1);
+          const box = await p.locator(".pdfViewer").boundingBox();
+          await p.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+          // The positions one notch passes through, one sample per frame.
+          await p.evaluate(() => {
+            const v = document.querySelector(".pdfViewer");
+            window.wheelTrail = [v.scrollTop];
+            const tick = () => { window.wheelTrail.push(v.scrollTop); if (window.wheelTrail.length < 40) requestAnimationFrame(tick); };
+            requestAnimationFrame(tick);
+          });
+          await p.mouse.wheel(0, 200);
+          await until(() => p.evaluate(() => window.wheelTrail.length >= 40), { what: "40 frames sampled" });
+          const trail = await p.evaluate(() => [...new Set(window.wheelTrail)]);
+          assertEq(trail.at(-1) - trail[0], 200, `one notch scrolls its 200 px (${on ? "on" : "off"})`);
+          if (on) assert(trail.length >= 5, `on: several positions on the way, ${trail.join(" ")}`);
+          else assertEq(trail.length, 2, `off: one jump, ${trail.join(" ")}`);
+          assertNoProblems(p);
+          await p.close();
+        } finally { await c.close(); }
+      }
+    } finally {
+      await account.api("/api/prefs/profile", { method: "PATCH", body: { set: { smoothWheel: false } } });
+      await account.api(`/api/blocks/${doc.id}`, { method: "DELETE" });
+    }
+  });
+
   if (ctx) await ctx.close();
   return { pdfPageId: pageId, docId };
 }

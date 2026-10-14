@@ -269,6 +269,23 @@ wheel input, a zoom change or teardown drops the pending alignment. Writing
 offsets mid-gesture fights WebKit's native scroll animation
 ([WebKit issue](https://bugs.webkit.org/show_bug.cgi?id=255193)).
 
+`shared/lib/smoothWheel.js` is the opt-in smooth wheel (Settings → Reading ›
+PDFs › Smooth wheel scrolling, the account pref `smoothWheel`, off by
+default; `installSmoothWheel`, installed by the viewer while it is on). A
+browser without its own smooth scrolling moves a notched mouse wheel in
+jumps, 200 px a notch with Windows set to 6 lines. With the setting on, each
+notch eases over 160 ms instead, and a notch on the way extends the motion.
+Only a notch is taken (`notchDelta`): a pixel-mode event whose legacy
+`wheelDeltaY` is a multiple of 120, or a line- or page-mode one. A
+touchpad's arbitrary deltas, Shift, Ctrl / ⌘ (the zoom) and a wheel over an
+inner element that can scroll itself stay native, and so does a wheel at
+either end. Any other write to the scroller (a jump, a zoom holding its
+anchor, the scrollbar, a key) ends the motion: each frame checks that
+`scrollTop` still reads what the last frame wrote. The detail canvas
+follows the motion like any scroll, and a 200 px glide stays inside its
+margin on a desktop. The `pdf: smooth wheel scrolling…` step checks a notch
+passes through several positions when on and jumps once when off.
+
 `tests/e2e/scenarios/pdfTouch.mjs` covers 400% and 800% rendering at DPR 2 under an
 emulated canvas allocation limit: a detail canvas at 2 backing pixels per
 CSS pixel over the part in view, every canvas inside the limits, the detail
