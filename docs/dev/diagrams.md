@@ -112,6 +112,20 @@ layout, suppressed automatic error diagrams, a 50,000-character limit and a
 SVG anchors are unwrapped after rendering, and Mermaid event bindings are never
 installed, so diagram links and callbacks stay inactive in previews/downloads.
 
+Stale SVG geometry: Mermaid measures each label inside a `foreignObject`
+first sized up to 16384 px, shrinks the box and shifts its group, then lays
+the node out from the node group's `getBBox()`. Some Chrome installations
+keep answering `getBBox()` with the geometry the elements had when first
+laid out, so every node grows by its measuring box and the diagram is drawn
+many times too large, its nodes as dots
+([research note](../research/mermaid-stale-geometry.md)).
+`shared/lib/svgGeometry.js` probes for this once per page
+(`staleSvgGeometry`); where it holds, the render runs under
+`withComputedBBox`, which answers `getBBox()` inside the render container
+from the DOM itself: `foreignObject` and simple shapes' attributes, each
+child's transform list, and the browser's box only for paths, text and
+other leaves. Other browsers keep the native measurement.
+
 Math in flowchart and sequence labels: Mermaid itself typesets only its
 `$$...$$` delimiters, so `mermaidMath` in `shared/lib/diagramMarkdown.js`
 upgrades the note editor's `$...$` spans to that form just before
@@ -208,8 +222,10 @@ npm run e2e -- --group diagrams
 The browser scenarios (`tests/e2e/scenarios/diagrams.mjs`) cover notes,
 editing and reload, the slash command, chat streaming, multiple diagrams,
 errors, source copying, SVG downloads, theme changes, locked Mermaid
-security settings, ordinary code, Markdown round trips, and the width grip
-(drag → `width=N` stored and kept across a reload, double-click clears it).
+security settings, ordinary code, Markdown round trips, the width grip
+(drag → `width=N` stored and kept across a reload, double-click clears it),
+and a subgraph with math laid out as in a healthy browser where
+`getBBox()` is made to keep a label's measuring box.
 For SVG they cover a note mixing an SVG, a Mermaid and an invalid SVG fence
 (two drawings and an error card), the drawing loaded as an image with its
 natural size, none of its markup, ids or style in the page, script and
