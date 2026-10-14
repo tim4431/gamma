@@ -474,7 +474,10 @@ small.
 Whatever went to the model is reported back: the stream's first line is
 `{"context": [...]}` (non-stream: a `context` field) with one entry per
 page — `title`, `page_id`, `doc_id` (`""` for a page without a PDF),
-`native` (the file itself was sent), `native_requested`, `partial`,
+`native` (the file itself was sent), `native_requested` (the PDF switch
+was on and the page has a PDF; a notes-only page never asks), `native_skipped`
+(a requested file that never reached the provider: `too_large`, or
+`missing`), `partial`,
 `chars`, `pages`, `pages_shown`, `notes` (the page's notes are in the
 context) (uploaded `files` are reported the same way, and get the
 single-page budget when they fall back to text). The same report rides in
@@ -487,7 +490,9 @@ reply's tools read folded in ("· read 10–12 with tools", from the read
 actions' `pdf_pages`) and, unfolded, the pages nobody saw, a rough token
 figure, and advice that depends on whether the reply had tools
 (`chat/coverage.js`); "PDF file not accepted — sent as text" when the file
-was requested but the provider took text instead. Two more pills per
+was requested but the provider took text instead, and "PDF too large to
+attach" or "PDF file unavailable" when `native_skipped` says it never went.
+Two more pills per
 reply: "Earlier messages left out: N" (the stream's `{"trimmed": {turns}}`
 line, see "Fitting the window") and "Reply cut off at the output limit"
 (`{"truncated": true}`: the provider's stop reason was `max_tokens`,

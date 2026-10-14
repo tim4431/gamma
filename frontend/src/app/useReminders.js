@@ -82,5 +82,5 @@ export function useReminders(enabled, { labelOf, onOpen } = {}) {
     setTimeout(refresh, 2500);
   }, [refresh]);
 
-  return useMemo(() => ({ due, now, dismiss, noteSet, refresh }), [due, now, dismiss, noteSet, refresh]);
+  return useMemo(() => ({ due, now, dismiss, noteSet }), [due, now, dismiss, noteSet]);
 }

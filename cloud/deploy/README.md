@@ -30,7 +30,8 @@ signing keys and every token hash. Moving to another host is copying
 
 `root@69.63.206.178`, folder `/root/Container/gamma-account/`, running
 `compose.yml` with the GHCR image. Updates go through the
-`update-account-server` skill (`.claude/skills/`). The public demo is its
+`update-account-server` skill (`.claude/skills/`), and the share host's
+through the `update-share-host` skill. The public demo is its
 own compose project in `/root/Container/gamma-demo/`
 ([demo/README.md](demo/README.md), the `update-demo-server` skill); this
 project's Caddy only routes its name to it over the external network
@@ -272,7 +273,11 @@ Restart the container after editing `.env` (`docker compose up -d`).
 ## The free share host
 
 The compose file also runs `share`: one Gamma in cloud mode
-(`ghcr.io/tim4431/gamma`, pinned to an image tag), the shared server. It
+(`ghcr.io/tim4431/gamma`), the shared server. It runs `main`, like the
+demo: the host's `compose.override.yml`, a file holding only the share
+image, pins `main`'s newest `sha-<short>` build, and the
+`update-share-host` skill writes it. Without one, the compose file's
+`:latest` applies. It
 answers at three kinds of address ([docs/dev/cloud_accounts.md](../../docs/dev/cloud_accounts.md)
 "The share host" and "The entrance"):
 

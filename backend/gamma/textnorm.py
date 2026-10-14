@@ -10,6 +10,7 @@ indexes and the live pdf.js viewer. The cases in tests/shared/textnorm.json
 pin both sides; keep them in sync when changing a rule.
 """
 
+import html
 import re
 import unicodedata
 
@@ -104,3 +105,18 @@ def literal_runs(q: str, case: bool = False) -> list[str]:
             cur += c
     runs.append(cur)
     return sorted({r for r in runs if r}, key=lambda r: (-len(r), r))
+
+
+_MARKUP_RE = re.compile(r"<(/?)([A-Za-z][\w:.-]*)(?:\s[^<>]*)?/?>")
+_BLOCK_TAGS = {"br", "p", "div", "li", "tr", "td", "th"}
+
+
+def plain_text(s) -> str:
+    """A registry field as plain text: the markup Crossref keeps from the
+    publisher dropped (an inline tag leaves nothing behind, so
+    ``CsPbCl<sub>3</sub>`` reads ``CsPbCl3`` as the PDF prints it; a block
+    tag becomes a space), HTML entities decoded (``&amp;``), whitespace
+    collapsed."""
+    def tag(m):
+        return " " if m.group(2).lower().split(":")[-1] in _BLOCK_TAGS else ""
+    return _WS_RE.sub(" ", html.unescape(_MARKUP_RE.sub(tag, str(s or "")))).strip()

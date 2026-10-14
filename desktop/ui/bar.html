@@ -99,6 +99,7 @@
   }
   .item .label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .item .sub { color: var(--text-dim); font-size: var(--fs-2xs); margin-left: 6px; }
+  .item .sub.addr { font-family: var(--font-mono); }
   .item .check { color: var(--accent); display: inline-flex; width: 14px; }
   /* A kept row of the sync panel: the name over its state. */
   .item .lines { flex: 1; min-width: 0; display: flex; flex-direction: column; }
@@ -451,7 +452,8 @@
       b.dataset.id = srv.id;
       b.innerHTML = `<span class="ico">${ICONS[srv.type] || ''}</span><span class="label"></span>` +
         (srv.type === 'local'
-          ? `<span class="dot ${srv.running ? 'on' : ''}" title="${srv.running ? 'server running' : 'stopped'}"></span>`
+          ? (srv.url ? `<span class="sub addr" title="Its address, the one to give the Gamma Connector">${esc(new URL(srv.url).host)}</span>` : '') +
+            `<span class="dot ${srv.running ? 'on' : ''}" title="${srv.running ? 'server running' : 'stopped'}"></span>`
           : `<span class="sub">remote</span><span class="dot ${srv.reachable === true ? 'on' : srv.reachable === false ? 'off' : ''}" title="${srv.reachable === true ? 'reachable' : srv.reachable === false ? 'unreachable' : 'checking…'}"></span>`) +
         `<span class="check">${isCur ? ICONS.check : ''}</span>`;
       b.querySelector('.label').textContent = srv.name;

@@ -101,11 +101,12 @@ const PAGES = [
   { id: "open", content: "This page", _updatedAt: "2026-10-09" },
 ];
 const rows = (query, extra = {}) => mentionRows({ query, people: PEOPLE, me: "carol", pages: PAGES, rootId: "open", canInvite: true, now: NOW, ...extra });
-const summary = (list) => list.map((r) => [r.section, r.kind, r.user || r.id || [r.date, r.time].filter(Boolean).join(" ")].filter(Boolean).join(":"));
+const summary = (list) => list.map((r) => [r.section, r.kind,
+  r.kind === "remind" ? `${r.user}:${r.date} ${r.time}` : r.user || r.id || [r.date, r.time].filter(Boolean).join(" ")].filter(Boolean).join(":"));
 
 test("a bare @: today and a reminder, the people (you first) and Invite, the recent pages", () => {
   assert.deepEqual(summary(rows("")), [
-    "date:date:2026-10-09", "date:remind:2026-10-10 09:00",
+    "date:date:2026-10-09", "date:remind:carol:2026-10-10 09:00",
     "people:person:carol", "people:person:alice", "people:person:bob.k", "people:invite",
     "pages:page:p1", "pages:page:p2",
   ]);
@@ -117,16 +118,28 @@ test("a bare @: today and a reminder, the people (you first) and Invite, the rec
 });
 
 test("a query narrows every section", () => {
-  assert.deepEqual(summary(rows("tomorrow 4pm")), ["date:date:2026-10-10 16:00", "date:remind:2026-10-10 16:00"]);
-  assert.deepEqual(summary(rows("9am")), ["date:date:2026-10-09 09:00", "date:remind:2026-10-10 09:00"],
+  assert.deepEqual(summary(rows("tomorrow 4pm")), ["date:date:2026-10-10 16:00", "date:remind:carol:2026-10-10 16:00"]);
+  assert.deepEqual(summary(rows("9am")), ["date:date:2026-10-09 09:00", "date:remind:carol:2026-10-10 09:00"],
     "a time gone by today reminds tomorrow");
   assert.deepEqual(summary(rows("yesterday")), ["date:date:2026-10-08"], "no reminder in the past");
-  assert.deepEqual(summary(rows("rem")), ["date:remind:2026-10-10 09:00"]);
-  assert.deepEqual(summary(rows("remind me next fri 8:30")), ["date:remind:2026-10-16 08:30"]);
+  assert.deepEqual(summary(rows("rem")), ["date:remind:carol:2026-10-10 09:00"]);
+  assert.deepEqual(summary(rows("remind me next fri 8:30")), ["date:remind:carol:2026-10-16 08:30"]);
   assert.deepEqual(summary(rows("k")), ["people:person:bob.k"], "a part of a name");
   assert.deepEqual(summary(rows("inv")), ["people:invite"]);
   assert.deepEqual(summary(rows("design")), ["pages:page:p2"]);
   assert.deepEqual(rows("zzzz"), [], "nothing answers: the menu closes");
+});
+
+test("remind someone else: @name starts a member, a whole name names one, else it is you", () => {
+  assert.deepEqual(summary(rows("remind @b fri")), ["date:remind:bob.k:2026-10-16 09:00"]);
+  assert.deepEqual(summary(rows("remind @a")), ["date:remind:alice:2026-10-10 09:00"], "no date yet: tomorrow morning");
+  assert.deepEqual(summary(rows("remind alice fri 4pm")), ["date:remind:alice:2026-10-16 16:00"]);
+  assert.deepEqual(summary(rows("remind @c")), ["date:remind:carol:2026-10-10 09:00"], "yourself, by name");
+  assert.equal(rows("remind @c")[0].you, true);
+  assert.deepEqual(summary(rows("remind @zed fri")), [], "a name no one has: nothing to offer");
+  assert.deepEqual(summary(rows("remind fri")), ["date:remind:carol:2026-10-16 09:00"], "a date word is no name: you");
+  assert.deepEqual(summary(rows("remind @b", { me: "", people: [] })), [], "a share view (no people, no account) reminds no one");
+  assert.equal(mentionText(rows("remind @b fri")[0], "carol"), "@2026-10-16 09:00 (remind @bob.k)");
 });
 
 test("a picked row's text", () => {

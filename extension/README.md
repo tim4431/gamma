@@ -24,6 +24,16 @@ with one click — like the Zotero Connector. Design and server contract:
    shared. The server must run a Gamma version that has `/api/clip`
    (see `docs/dev/extension.md`).
 
+   With the **desktop app**, use the address of its local server, shown
+   beside the server in the bar menu and on its card in the launcher (e.g.
+   `http://127.0.0.1:58534`; the card's copy button copies it). Sign in with
+   the user and password under the card's key button. The address stays the
+   same across restarts. The Connector can reach the server only while the
+   app runs, so turn on *Keep running in the background* to save with the
+   window closed. If the same browser also uses another Gamma at
+   `127.0.0.1`, the two share one sign-in. Use `http://localhost:<port>` for
+   one of them.
+
 Releases: the `desktop` GitHub workflow (the `release` skill dispatches it;
 no tags to push) zips the extension as `gamma-connector-<version>.zip`, with
 the release's version written into the zipped manifest, and attaches it to

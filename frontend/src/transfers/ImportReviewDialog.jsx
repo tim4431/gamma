@@ -17,8 +17,8 @@ import "./importReview.css";
 import { T, t } from "../shared/i18n/i18n.js";
 
 const STEPS = [T("Upload"), T("Review"), T("Import"), T("Summary")];
-const PHASE_STEP = { upload: 0, scanning: 0, review: 1, importing: 2, ended: 2, complete: 3 };
-const PHASE_LABEL = { upload: t("Uploading for review"), scanning: t("Checking files and library destinations") };
+const PHASE_STEP = { packing: 0, upload: 0, scanning: 0, review: 1, importing: 2, ended: 2, complete: 3 };
+const PHASE_LABEL = { packing: t("Reading the folder"), upload: t("Uploading for review"), scanning: t("Checking files and library destinations") };
 
 // `folder`: the destination folder's id ("" = the library root);
 // `folderPath(id)` names it, for a review opened again from its job too.
@@ -52,8 +52,8 @@ export default function ImportReviewDialog({ source, file, strip, folder = "", f
     requestImport({ source, file, strip, folder }, {
       signal: ctl.signal, onProgress: update => {
         if (ctl.signal.aborted) return;
-        setReviewPhase(update.phase === "processing" ? "scanning" : "upload");
-        if (update.phase === "upload") setProgress(update);
+        setReviewPhase(update.phase === "processing" ? "scanning" : update.phase);
+        if (update.phase !== "processing") setProgress(update);
       },
     }).then(data => {
       if (ctl.signal.aborted) return;
@@ -89,8 +89,8 @@ export default function ImportReviewDialog({ source, file, strip, folder = "", f
   const sourceTree = React.useMemo(() => buildImportTree(plan?.entries || []), [plan]);
   const destination = buildImportTree(shown, true);
   const warnings = importWarnings(result || plan || {});
-  const reviewBusy = phase === "upload" || phase === "scanning";
-  const uploading = phase === "upload";
+  const reviewBusy = phase === "packing" || phase === "upload" || phase === "scanning";
+  const uploading = phase === "packing" || phase === "upload"; // bytes counted
 
   const submit = async () => {
     if (!plan || starting.current || !chosenCount) return;
@@ -120,7 +120,7 @@ export default function ImportReviewDialog({ source, file, strip, folder = "", f
     </section>
   );
   const sourceColumn = (
-    <section aria-label={t("ZIP contents")}><h3>{/\.zip$/i.test(fileName) ? t("Inside the ZIP") : t("Source file")}</h3>
+    <section aria-label={t("ZIP contents")}><h3>{file?.folder ? t("Inside the folder") : /\.zip$/i.test(fileName) ? t("Inside the ZIP") : t("Source file")}</h3>
       <div className="importTreeScroll"><ImportTree node={sourceTree} /></div>
     </section>
   );
@@ -140,7 +140,7 @@ export default function ImportReviewDialog({ source, file, strip, folder = "", f
         {uploading ? <span>{fmtBytes(progress.loaded)}{progress.total ? ` / ${fmtBytes(progress.total)}` : ` / ${fmtBytes(file.size)}`}</span>
           : <span>{t("Upload complete. Reading the archive…")}</span>}
       </div>
-      <progress aria-label={uploading ? t("Upload progress") : t("Import processing")} max={100} value={uploading ? percent ?? undefined : undefined} />
+      <progress aria-label={phase === "packing" ? PHASE_LABEL.packing : uploading ? t("Upload progress") : t("Import processing")} max={100} value={uploading ? percent ?? undefined : undefined} />
     </div> : null}
     {phase === "importing" ? <>
       <TaskProgress task={job} label={t("Import progress")} />

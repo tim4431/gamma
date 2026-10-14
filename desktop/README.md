@@ -42,7 +42,12 @@ the fnm-managed node itself and clears `ELECTRON_RUN_AS_NODE` (pass
 
 Dev-mode gotchas: unset `ELECTRON_RUN_AS_NODE` if launching from inside an
 Electron-based tool (VSCode terminals set it and Electron then runs as plain
-Node). The smoke test prints one `SMOKE {...}` JSON line and exits 0/1. The
+Node). The app runs once per profile, and the dev tree shares the installed
+app's (`%APPDATA%/gamma-desktop`): with the installed app running, `npm
+start` only brings that one forward, so quit it first or set
+`GAMMA_SHELL_USER_DATA` to another folder. A PDF path after the app
+(`npx electron . paper.pdf`) opens as "Open with" would. The smoke test
+prints one `SMOKE {...}` JSON line and exits 0/1. The
 in-app updater is inert in dev (`app.isPackaged` is false) and under the
 test harness; a packaged build reports *Development build* / *disabled* in
 the launcher's Updates row accordingly.

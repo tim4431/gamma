@@ -466,6 +466,22 @@ signed in to the same server works the same way.
   Publisher-session requests reject redirects so cookie snapshots
   cannot be forwarded to another server. This avoids a misleading "Failed to
   fetch" when ordinary account checks followed an HTTPS redirect successfully.
+- **The desktop app's local servers.** A local server of the desktop app is
+  `http://127.0.0.1:<port>`, a plain-HTTP loopback origin the Connector
+  treats like any other. The publisher-session check counts it as secure.
+  The shell keeps each local server on the port it had last time, so the
+  address saved in the Connector keeps working across launches. The bar
+  menu and the launcher card show the address
+  ([desktop architecture](../../desktop/docs/architecture.md) "A local
+  server's address"). The Connector signs in with the server's seeded admin
+  (the card's *Show credentials*). The window's own session is in
+  Electron's cookie jar, not the browser's, and the Connector reaches the
+  server only while the app runs it. Cookies are scoped to the host, not
+  the port, so in one browser every Gamma on `127.0.0.1` shares one
+  `session` cookie: signing in to the desktop server signs that browser out
+  of another Gamma on `127.0.0.1:<other port>`, whose open tabs then get the
+  409 session mismatch. `http://localhost:<port>` reaches the same sidecar
+  with a cookie of its own (checked in Chromium).
 - A 401 anywhere flips the tab state to `auth: false` (badge `!`) and the
   popup shows the sign-in view. Login rate limits apply unchanged; guest
   login is not offered.

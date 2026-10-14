@@ -5,8 +5,8 @@ import json
 import urllib.parse
 from urllib.request import Request as URLRequest
 
-from .base import (Protocol, as_int, attach_index, note_speed, parse_tool_args, served_speed_name, turn_files,
-                   turn_images)
+from .base import (Protocol, as_int, attach_target, note_speed, parse_tool_args, served_speed_name,
+                   turn_attachments)
 
 API_VERSION = "2023-06-01"
 # Fast mode is a beta: the flag rides with the ``speed`` parameter. Only some
@@ -58,8 +58,7 @@ def _user_content(message, pdf_b64s=(), images=()):
     """A user turn's content: its own PDFs, then the request's, its
     pictures, then the request's, and the text last — the plain text when
     there is nothing else."""
-    files = [*turn_files(message), *(pdf_b64s or [])]
-    pictures = [*turn_images(message), *(images or [])]
+    files, pictures = turn_attachments(message, pdf_b64s, images)
     if not files and not pictures:
         return message["content"]
     return [
@@ -75,7 +74,7 @@ def _messages(messages, target=None, pdf_b64s=None, images=None) -> list:
     tool_result blocks in a user turn (consecutive ones coalesced — they must
     directly follow the assistant's tool_use turn), tool calls become tool_use
     blocks after the assistant's text. The request's own attachments go on
-    ``target``, the turn attach_index names."""
+    ``target``, the turn attach_target names."""
     out = []
     for m in messages:
         if m["role"] == "tool":
@@ -127,7 +126,7 @@ class Anthropic(Protocol):
 
     def request(self, conf, messages, system, model, pdf_b64s=None, effort="",
                 max_tokens=8192, images=None, stream=False, tools=None, cache_key="", speed=""):
-        target = messages[attach_index(messages)] if (pdf_b64s or images) and messages else None
+        target = attach_target(messages, pdf_b64s, images)
         body = {"model": model, "max_tokens": max_tokens, "system": system,
                 "messages": _messages(messages, target, pdf_b64s, images)}
         if tools:

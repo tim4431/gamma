@@ -29,6 +29,12 @@ package. The unpacked `dist/linux-unpacked` dir has no setuid
 on Ubuntu ≥ 24.04), so `test/smoke.js` and `test/e2e.js` start it with
 `--no-sandbox`; on a headless machine wrap them in `xvfb-run -a`.
 
+Every target registers Gamma as a PDF app, in *Open with* and as a
+default the user may choose, without taking `.pdf` over: the NSIS
+installer through `assets/installer.nsh`, the Store package through
+`assets/appx-extensions.xml`, macOS and the `.deb` through their blocks in
+the config ([architecture.md](architecture.md) "Opening PDF files").
+
 ## The `desktop` workflow
 
 **A release is a dispatch, not a merge.** `.github/workflows/desktop.yml`
@@ -208,6 +214,12 @@ the launcher with no server configured.
   A Store install and an NSIS install never see each other's servers, and
   **uninstalling the Store app deletes that folder**, including local
   servers' PDFs and databases.
+- That merge exists only inside the package: Explorer, and anything else
+  the app hands a path to, sees the plain `%APPDATA%\gamma-desktop`, which
+  is not there (*Location is not available*). `lib/hostPath.js` turns such a
+  path into the private copy's (package family name from the install dir in
+  `process.execPath`), so the launcher shows that one and *Open data
+  folder*, *Show server log* and the kept-folder links open it.
 - The launcher's *Local server storage* setting is the way out of that
   folder: pick one outside the package (e.g. under *Documents*) and *Move
   data* relocates the existing servers there

@@ -47,9 +47,11 @@ import { BLOCK_TOOLS } from "../chat/agentSteps.js";
 import SearchPanel from "../search/SearchPanel";
 import LibraryEmpty from "../library/LibraryEmpty";
 import { ContextMenu, MenuButton, MenuDivider, MenuItem, MenuLabel, MenuScope, MenuSelect, SubMenuItem, menuGroups } from "../shared/ui/Menus";
-import { menuPress } from "../shared/ui/press.js";
+import { backdropPress, menuPress } from "../shared/ui/press.js";
 import { lastPointer, touchScreen } from "../shared/lib/pointer.js";
 import { pickFiles } from "../shared/lib/pickFiles.js";
+import { folderPick } from "../transfers/folderZip.js";
+import { collectEntryFiles } from "../shared/lib/dropEntries.js";
 import { useWheelPan } from "../shared/ui/wheelPan";
 import {
   ActivityIcon, AlertCircleIcon, ArrowDownIcon, ArrowLeftIcon, ArrowUpDownIcon, ArrowUpIcon, BookIcon, BugIcon, CheckIcon, CopyIcon, DownloadIcon, ExportIcon,
@@ -311,30 +313,6 @@ function folderFromRelPath(relPath) {
 function uploadLeafName(file, fallback = "") {
   const raw = String(file?.name || file?.webkitRelativePath || "").replace(/\\/g, "/");
   return raw.slice(raw.lastIndexOf("/") + 1).trim() || fallback;
-}
-
-// Recursively walk directory entries from a drop into {file, folder} pairs,
-// `folder` the directory names down to the file. The entries themselves
-// must be captured synchronously in the drop handler (webkitGetAsEntry) —
-// the DataTransfer is neutered once the event returns.
-async function collectEntryFiles(entries) {
-  const out = [];
-  async function walk(entry, folder) {
-    if (entry.isFile) {
-      const file = await new Promise((res, rej) => entry.file(res, rej)).catch(() => null);
-      if (file) out.push({ file, folder });
-    } else if (entry.isDirectory) {
-      const sub = entry.name.trim() ? [...folder, entry.name.trim()] : folder;
-      const reader = entry.createReader();
-      for (;;) { // readEntries returns ≤100 entries per call — drain until empty
-        const batch = await new Promise((res, rej) => reader.readEntries(res, rej)).catch(() => null);
-        if (!batch || !batch.length) break;
-        for (const e of batch) await walk(e, sub);
-      }
-    }
-  }
-  for (const entry of entries) await walk(entry, []);
-  return out;
 }
 
 // --- Recently-viewed snapshots -------------------------------------------
@@ -6025,9 +6003,12 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       return;
     }
     if (["zotero", "markdown", "gamma"].includes(o.source)) {
-      pickFiles({ accept: o.source === "markdown" ? ".md,.markdown,.zip,text/markdown,application/zip" : ".zip,application/zip" },
-        ([file]) => setImportReview({ source: o.source, file, strip: o.strip,
-          folder: homeMode && folderFilter ? folderFilter : "" }));
+      const review = (file) => setImportReview({ source: o.source, file, strip: o.strip,
+        folder: homeMode && folderFilter ? folderFilter : "" });
+      if (o.file) review(o.file); // dropped on the dialog: a .zip or a folder (folderZip.js)
+      else if (o.pick === "folder") pickFiles({ directory: true }, (files) => review(folderPick(files)));
+      else pickFiles({ accept: o.source === "markdown" ? ".md,.markdown,.zip,text/markdown,application/zip" : ".zip,application/zip" },
+        ([file]) => review(file));
       return;
     }
     pickFiles({ accept: ".pdf,.edn,.md", multiple: true }, importLogseq);
@@ -8426,7 +8407,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                             </div>
                           ) : null}
                           {pdfTextPreview ? (
-                            <div className="reportOverlay" onClick={() => setPdfTextPreview(null)}>
+                            <div className="reportOverlay" {...backdropPress(() => setPdfTextPreview(null))}>
                               <div className="reportModal" style={{ width: "min(640px, calc(100vw - 32px))" }} onClick={(e) => e.stopPropagation()}>
                                 <div className="reportModalTitle">{t("Extracted PDF text")}</div>
                                 <div className="reportPageList" style={{ maxHeight: "60vh", whiteSpace: "pre-wrap", fontSize: "calc(12px * var(--ui-font-scale, 1))", color: "var(--text-secondary)", padding: 10 }}>
@@ -10517,7 +10498,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       ) : null}
       {confirmBox ? (
         // data-popover keeps an open popover (e.g. search) alive while the dialog is up
-        <div className="reportOverlay" data-popover="confirm" onClick={() => setConfirmBox(null)}>
+        <div className="reportOverlay" data-popover="confirm" {...backdropPress(() => setConfirmBox(null))}>
           <div
             className="reportModal confirmModal"
             onClick={(e) => e.stopPropagation()}
@@ -10549,7 +10530,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         </div>
       ) : null}
       {labelRenaming ? (
-        <div className="reportOverlay" onClick={() => setLabelRenaming(null)}>
+        <div className="reportOverlay" {...backdropPress(() => setLabelRenaming(null))}>
           <div className="reportModal confirmModal" onClick={(e) => e.stopPropagation()}>
             <div className="reportModalTitle">{t("Rename label")}</div>
             <div className="reportModalHint confirmMessage">{t("Renames “{name}” on every page that carries it.", { name: labelName(libTree, labelRenaming.id) })}</div>
@@ -10574,7 +10555,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         </div>
       ) : null}
       {moveBlockDialog ? (
-        <div className="reportOverlay" onClick={() => setMoveBlockDialog(null)}>
+        <div className="reportOverlay" {...backdropPress(() => setMoveBlockDialog(null))}>
           <div className="reportModal confirmModal" onClick={(e) => e.stopPropagation()}
             onKeyDown={(e) => stepList(e, e.currentTarget.querySelector("[data-find]"), [...e.currentTarget.querySelectorAll(".moveBlockList .ctxMenuItem")])}>
             <div className="reportModalTitle">{moveBlockDialog.fragment ? t("Move to page") : t("Move block to page")}</div>
@@ -10610,7 +10591,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         </div>
       ) : null}
       {linkPrompt ? (
-        <div className="reportOverlay" onClick={() => setLinkPrompt(null)}>
+        <div className="reportOverlay" {...backdropPress(() => setLinkPrompt(null))}>
           <div className="reportModal confirmModal linkPromptModal" onClick={(e) => e.stopPropagation()}>
             <div className="confirmHead">
               <span className="confirmIcon"><LinkIcon size={16} /></span>
@@ -10649,7 +10630,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         </div>
       ) : null}
       {linkDialog ? (
-        <div className="reportOverlay" onClick={() => setLinkDialog(null)}>
+        <div className="reportOverlay" {...backdropPress(() => setLinkDialog(null))}>
           <div className="reportModal confirmModal" onClick={(e) => e.stopPropagation()}>
             <div className="reportModalTitle">{linkDialog.editBlockId ? t("Change reference link") : t("Link reference to a page")}</div>
             {linkDialog.content?.text ? (

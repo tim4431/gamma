@@ -18,7 +18,7 @@ const http = require('http');
 const os = require('os');
 const path = require('path');
 const net = require('net');
-const { execFileSync } = require('child_process');
+const { execFileSync, spawn } = require('child_process');
 
 const ROOT = path.join(__dirname, '..');
 const packaged = process.argv.includes('--packaged');
@@ -55,16 +55,21 @@ function packagedBinary() {
 }
 
 // A valid one-page PDF with real text (PyPDF2/pypdfium2 must parse it: the
-// annotated-PDF export and the search index read it back).
-function minimalPdf(text) {
+// annotated-PDF export and the search index read it back). `comment`: a
+// highlight over the text carrying it, as another reader saves one.
+function minimalPdf(text, comment) {
+  const annots = comment ? ' /Annots [6 0 R]' : '';
   const objs = [
     '<< /Type /Catalog /Pages 2 0 R >>',
     '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
-    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>',
+    `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >>${annots} >>`,
   ];
   const stream = `BT /F1 24 Tf 72 700 Td (${text}) Tj ET`;
   objs.push(`<< /Length ${stream.length} >>\nstream\n${stream}\nendstream`);
   objs.push('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>');
+  if (comment) {
+    objs.push(`<< /Type /Annot /Subtype /Highlight /Rect [72 694 300 724] /QuadPoints [72 724 300 724 72 694 300 694] /C [1 0.9 0.3] /Contents (${comment}) >>`);
+  }
   let out = '%PDF-1.4\n';
   const offsets = [];
   objs.forEach((o, i) => {
@@ -157,7 +162,7 @@ function fakeAccountServer(person) {
 
 // ------------------------------------------------------------ driver -------
 
-async function launch(userData, downloadDir) {
+function shellEnv(userData, downloadDir) {
   const env = {
     ...process.env,
     GAMMA_SHELL_USER_DATA: userData,
@@ -166,11 +171,38 @@ async function launch(userData, downloadDir) {
     GAMMA_SHELL_TEST: '1',
   };
   delete env.ELECTRON_RUN_AS_NODE;
-  // Unpacked Linux dir: no setuid chrome-sandbox (the .deb's postinst sets it
-  // up), so Chromium only starts with --no-sandbox. Same as test/smoke.js.
-  const packagedArgs = process.platform === 'linux' ? ['--no-sandbox'] : [];
-  const opts = packaged ? { executablePath: packagedBinary(), args: packagedArgs, env } : { args: [ROOT], env };
+  return env;
+}
+
+// Unpacked Linux dir: no setuid chrome-sandbox (the .deb's postinst sets it
+// up), so Chromium only starts with --no-sandbox. Same as test/smoke.js.
+const packagedArgs = process.platform === 'linux' ? ['--no-sandbox'] : [];
+
+// `files`: what the command line names after the app, as the file manager
+// passes a PDF opened with Gamma.
+async function launch(userData, downloadDir, files = []) {
+  const env = shellEnv(userData, downloadDir);
+  const opts = packaged ? { executablePath: packagedBinary(), args: [...packagedArgs, ...files], env } : { args: [ROOT, ...files], env };
   return electron.launch({ ...opts, timeout: 60_000 });
+}
+
+// A second start of the app on the same profile, as Explorer runs the
+// registered command for a PDF: it should hand its command line to the
+// running app and quit. Resolves to its exit code.
+function secondStart(userData, downloadDir, files) {
+  const [bin, args] = packaged ? [packagedBinary(), [...packagedArgs, ...files]] : [require('electron'), [ROOT, ...files]];
+  return new Promise((resolve, reject) => {
+    const child = spawn(bin, args, { env: shellEnv(userData, downloadDir), stdio: 'ignore' });
+    const timer = setTimeout(() => {
+      child.kill();
+      reject(new Error('the second start did not quit'));
+    }, 30_000);
+    child.once('error', reject);
+    child.once('exit', (code) => {
+      clearTimeout(timer);
+      resolve(code);
+    });
+  });
 }
 
 // The shell's views are separate webContents = separate Playwright pages.
@@ -248,6 +280,13 @@ async function keptRow(app, bar, kind, name) {
   await row.waitFor({ timeout: 15_000 });
   return row;
 }
+
+// The page the content view shows: the shell loads `?page=<id>`, and Gamma
+// rewrites it to `?block=<id>` once the page is open.
+const shownPage = (content) => {
+  const q = new URL(content.url()).searchParams;
+  return q.get('page') || q.get('block') || '';
+};
 
 // Both of the bar's dropdowns closed.
 const menuClosed = (bar) => waitFor(() => bar.evaluate(() => document.getElementById('menu').hidden && document.getElementById('syncPanel').hidden), 'menu closed');
@@ -428,6 +467,19 @@ async function main() {
       return `${urls.beta} (Alpha still up on ${urls.alpha})`;
     });
 
+    await step('the bar menu shows each running local server\'s address, and the registry remembers its port', async () => {
+      await bar.click('#wsBtn');
+      for (const k of ['alpha', 'beta']) {
+        const addr = bar.locator(`#menu .item[data-id="${ids[k]}"] .sub.addr`);
+        await addr.waitFor({ timeout: 5_000 });
+        assert.equal((await addr.textContent()).trim(), new URL(urls[k]).host, `${k}'s address in the menu`);
+        assert.equal(await hook(app, (s, id) => s.registry.get(id).port, ids[k]), Number(new URL(urls[k]).port), `${k}'s port remembered`);
+      }
+      await bar.keyboard.press('Escape');
+      await menuClosed(bar);
+      return `${new URL(urls.alpha).host}, ${new URL(urls.beta).host}`;
+    });
+
     await step('import the Alpha backup into Beta', async () => {
       const r = await content.evaluate(async (b64) => {
         const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
@@ -475,6 +527,27 @@ async function main() {
       assert(g && g.current === lab && g.list.length === 2, 'shell knows the workspaces: ' + JSON.stringify(g));
       assert.equal(new URL(content.url()).origin, urls.alpha, 'same server');
       return `${lab} on ${urls.alpha}`;
+    });
+
+    await step('a PDF opened with Gamma: a second start hands it over and quits; its page opens in the workspace the window shows; the same file again opens that page', async () => {
+      const lab = new URL(content.url()).searchParams.get('ws');
+      const pdf = path.join(profile, 'Opened with Gamma.pdf');
+      fs.writeFileSync(pdf, minimalPdf('Opened from the file manager', 'Saved in another reader'));
+      const before = shownPage(content);
+      assert.equal(await secondStart(profile, downloads, [pdf]), 0, 'the second start quits');
+      const pageId = await waitFor(() => shownPage(content) !== before && shownPage(content), 'the window on the page', 60_000);
+      assert.equal(new URL(content.url()).searchParams.get('ws'), lab, 'in the workspace the window showed');
+      const page = await serverCall(app, `/api/blocks/${pageId}`, { ws: lab });
+      assert.equal(page.content, 'Opened with Gamma.pdf', 'titled as an upload in Gamma is');
+      assert(page.properties.doc_id, 'the page carries the file: ' + JSON.stringify(page.properties));
+      const kids = await serverCall(app, `/api/blocks/${page.id}/children`, { ws: lab });
+      const blocks = JSON.stringify(kids);
+      assert(blocks.includes('Saved in another reader'), 'the highlight the file carried was imported: ' + blocks.slice(0, 400));
+      const [again] = await hook(app, (s, f) => s.openPdfFiles([f]), pdf);
+      assert.equal(again.page, page.id, 'the same page, not a second one: ' + JSON.stringify(again));
+      const twice = await serverCall(app, `/api/blocks/${page.id}/children`, { ws: lab });
+      assert.equal(JSON.stringify(twice).split('Saved in another reader').length, blocks.split('Saved in another reader').length, 'the highlight is not imported twice');
+      return `${page.id} in ${lab}`;
     });
 
     await step('remote server: a URL, loads without auto-login', async () => {
@@ -888,9 +961,17 @@ async function main() {
       const alpha = content.locator('.card', { hasText: 'Alpha' }).first();
       const detail = await alpha.locator('.detail').textContent();
       assert(/\d+(\.\d+)? (KB|MB|GB) on disk/.test(detail), detail);
+      assert(detail.includes(urls.alpha), 'the running server\'s address: ' + detail);
       assert.equal(await content.getAttribute('html', 'data-theme'), 'light');
       const badges = await content.locator('.badge.last').count();
       assert.equal(badges, 1, 'one last-opened badge');
+      // The address to give the Gamma Connector: copied, and in the credentials.
+      await alpha.locator('button[title="Copy address"]').click();
+      await waitFor(async () => (await content.textContent('#status')).includes(`Copied ${urls.alpha}`), 'the copy reported', 5_000);
+      assert.equal(await hook(app, (s) => s.copied()), urls.alpha, 'the address copied');
+      await alpha.locator('button[title="Show credentials"]').click();
+      assert((await content.textContent('#credsText')).includes(`server:   ${urls.alpha}`), 'the credentials name the address');
+      await content.click('#dlgCreds .uiBtn.primary');
       return detail;
     });
 
@@ -927,6 +1008,7 @@ async function main() {
       assert(!pidAlive(pids.alpha) && !pidAlive(pids.beta), 'old sidecars stopped for the move');
       await hook(app, (s, id) => s.openServer(id), ids.alpha);
       await waitLoggedIn(content);
+      assert.equal(new URL(content.url()).origin, urls.alpha, 'the same address after the restart');
       const titles = await rootTitles(content);
       assert(titles.includes('E2E paper'), 'data intact after the move: ' + titles.join(' | '));
       pids.alpha = await hook(app, (s, id) => s.sidecar.status(id).child.pid, ids.alpha);
@@ -952,11 +1034,29 @@ async function main() {
       bar = await findPage(app, isBar);
       content = await findPage(app, (u) => u.startsWith('http://127.0.0.1'), 90_000);
       await waitLoggedIn(content);
+      assert.equal(new URL(content.url()).origin, urls.alpha, 'the same address as before the quit');
       const titles = await rootTitles(content);
       assert(titles.includes('E2E paper'), 'data persisted: ' + titles.join(' | '));
       await waitFor(async () => (await bar.textContent('#wsName')).trim() === 'Alpha', 'bar shows Alpha');
       assert.equal(await bar.getAttribute('html', 'data-theme'), 'light', 'chrome painted in the persisted theme before the page reported');
       return titles.join(' | ');
+    });
+
+    await step('a PDF named at launch opens in the last server once it is up', async () => {
+      await app.close();
+      const pdf = path.join(profile, 'Opened at launch.pdf');
+      fs.writeFileSync(pdf, minimalPdf('Opened while the app was closed'));
+      app = await launch(profile, downloads, [pdf]);
+      content = await findPage(app, (u) => u.startsWith('http://127.0.0.1'), 90_000);
+      // A page carrying this new file can only be open because the shell opened it.
+      const ws = () => new URL(content.url()).searchParams.get('ws');
+      const page = await waitFor(async () => {
+        const id = shownPage(content);
+        const b = id && ws() ? await serverCall(app, `/api/blocks/${id}`, { ws: ws() }) : null;
+        return b && b.content === 'Opened at launch.pdf' && b;
+      }, 'the window on the file\'s page', 90_000);
+      assert.equal(new URL(content.url()).origin, urls.alpha, 'the last server');
+      return `${page.id} in ${ws()}`;
     });
   } finally {
     try {

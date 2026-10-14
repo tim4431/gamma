@@ -30,6 +30,7 @@
   .badge.last { color: var(--accent); border-color: var(--accent-bg); background: var(--accent-bg-light); }
   .card .detail { color: var(--text-muted); font-size: var(--fs-xs); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-top: 2px; }
   .card .detail .sep { margin: 0 6px; color: var(--text-dim); }
+  .card .detail .addr { font-family: var(--font-mono); color: var(--text-secondary); -webkit-user-select: text; user-select: text; }
   .card .actions { display: flex; align-items: center; gap: 2px; flex-shrink: 0; }
   .card .actions .uiBtn { margin-right: 6px; }
   .adders { display: flex; gap: 8px; margin-top: 12px; }
@@ -226,7 +227,8 @@
 
 <dialog id="dlgCreds">
   <h3>Local server credentials</h3>
-  <p>The shell created this admin account and signs you in automatically. You only need it to open the server from a browser, or to add more users in Gamma's settings.</p>
+  <p>The shell created this admin account and signs you in automatically. You only need it to open the server from a browser, to sign the Gamma Connector in to it, or to add more users in Gamma's settings.</p>
+  <p>The address stays the same from one launch to the next, unless another program has taken its port by then.</p>
   <div class="creds" id="credsText"></div>
   <div class="row"><button class="uiBtn primary" onclick="dlgCreds.close()">Close</button></div>
 </dialog>
@@ -258,6 +260,7 @@
     remote: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3a14 14 0 0 1 0 18a14 14 0 0 1 0-18"/></svg>',
     key: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg>',
     folder: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg>',
+    copy: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>',
     log: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M8 13h8"/><path d="M8 17h8"/></svg>',
     pencil: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></svg>',
     trash: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>',
@@ -319,8 +322,11 @@
       const detail = document.createElement('div');
       detail.className = 'detail';
       if (ws.type === 'local') {
+        const sep = () => { const s = document.createElement('span'); s.className = 'sep'; s.textContent = '·'; detail.appendChild(s); };
         detail.textContent = fmtBytes(ws.sizeBytes) + ' on disk';
-        const s = document.createElement('span'); s.className = 'sep'; s.textContent = '·'; detail.appendChild(s);
+        // The address it runs at, the one to give the Gamma Connector.
+        if (ws.url) { sep(); const a = document.createElement('span'); a.className = 'addr'; a.textContent = ws.url; detail.appendChild(a); }
+        sep();
         detail.appendChild(document.createTextNode(ws.dataDir));
       } else {
         detail.textContent = ws.url;
@@ -355,6 +361,12 @@
         $('renameName').select();
       }));
       if (ws.type === 'local') {
+        if (ws.running) {
+          actions.appendChild(iconBtn('copy', 'Copy address', async () => {
+            const url = await gammaShell.copyAddress(ws.id);
+            setStatus(url ? `Copied ${url}` : `${ws.name} is not running.`);
+          }));
+        }
         actions.appendChild(iconBtn('key', 'Show credentials', () => {
           $('credsText').textContent = `username: ${ws.adminUser}\npassword: ${ws.adminPassword}\nserver:   ${ws.url || '(starts when opened)'}`;
           $('dlgCreds').showModal();

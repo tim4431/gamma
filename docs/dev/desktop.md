@@ -28,5 +28,9 @@ folders on disk, anywhere the user picks,
 `error: data_directory_not_upgradable` a server answers when it cannot
 upgrade its data directory — up either way, and the window then shows that
 server's guidance page, [migrations.md](migrations.md)); `/api/session` +
-`/api/login` for the silent first login; and the `data-theme` attribute on
-`<html>` (the shell mirrors it into its own chrome).
+`/api/login` for the silent first login; for a PDF opened with the app,
+the upload routes, `POST /api/blocks/by-doc/<hash>`, `POST
+/api/import/pdf-annotations`, the `embAnnots` entry of the account's
+profile and the `?ws=<id>&page=<id>` URL ([architecture.md](../../desktop/docs/architecture.md)
+"Opening PDF files"); and the `data-theme` attribute on `<html>` (the shell
+mirrors it into its own chrome).

@@ -416,8 +416,10 @@ A press on the backdrop closes a dialog only when it goes down and comes
 up there (`backdropPress` in `shared/ui/press.js`). A click alone lands on
 the nearest element both ends of the press share, so text selected in a
 field with a drag let go past the dialog's edge would otherwise close it,
-or raise the unsaved-edits question. Settings and its `SubDialog` editors
-use it.
+or raise the unsaved-edits question. Every `reportOverlay` dialog uses it
+(Settings, its `SubDialog` editors, the confirm box, the link, label and
+move-block dialogs, the chat's page picker); Quick Open closes on its own
+`mousedown` check instead.
 
 Destructive affordances all read from one set of tokens — `--danger`,
 `--danger-bg`, `--danger-border` — so the solid confirm button

@@ -36,6 +36,7 @@ if (window.location.protocol === 'file:') {
     reload: () => ipcRenderer.invoke('shell:reload'),
     revealData: (id) => ipcRenderer.invoke('shell:reveal-data', id),
     revealLog: (id) => ipcRenderer.invoke('shell:reveal-log', id),
+    copyAddress: (id) => ipcRenderer.invoke('shell:copy-address', id),
     setSettings: (patch) => ipcRenderer.invoke('shell:set-settings', patch),
     pickFolder: (defaultPath) => ipcRenderer.invoke('shell:pick-folder', defaultPath),
     setDataRoot: (dir, opts) => ipcRenderer.invoke('shell:set-data-root', dir, opts),

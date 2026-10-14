@@ -10,8 +10,9 @@
 #            ./share-data and its settings in share.env (share.env.example).
 #            Reached only through caddy (no host port), whose
 #            X-Forwarded-For it believes on this project's network (its
-#            subnet pinned below). Pinned to an image tag: bump it with the
-#            desktop release.
+#            subnet pinned below). It runs main, like the demo: the host's
+#            compose.override.yml pins main's newest sha-<short> build
+#            (the update-share-host skill writes it); without one, :latest.
 #   caddy    TLS on the host's own 80/443 with its internal certificate
 #            (`tls internal`; Cloudflare holds the public one), for a host
 #            with a public address (a VPS). The DNS record for the hostname
@@ -45,7 +46,7 @@ services:
       - "127.0.0.1:9002:9002"
 
   share:
-    image: ghcr.io/tim4431/gamma:sha-a0d31c6
+    image: ghcr.io/tim4431/gamma:latest  # compose.override.yml pins the build on the host
     restart: unless-stopped
     env_file: share.env
     environment:

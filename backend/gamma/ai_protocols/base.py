@@ -118,6 +118,19 @@ def attach_index(messages) -> int:
     return len(messages) - 1
 
 
+def attach_target(messages, pdf_b64s=None, images=None):
+    """The turn the request's own attachments go on (``attach_index``), or
+    None when it brings none."""
+    return messages[attach_index(messages)] if (pdf_b64s or images) and messages else None
+
+
+def turn_attachments(message, pdf_b64s=(), images=()) -> tuple[list, list]:
+    """``(files, pictures)`` of a user turn as a wire writes them: the turn's
+    own PDFs then the request's, the turn's own pictures then the request's;
+    the text comes last."""
+    return [*turn_files(message), *(pdf_b64s or [])], [*turn_images(message), *(images or [])]
+
+
 # The stop reasons that mean the reply hit the output cap (Anthropic,
 # Chat Completions, the Responses API's incomplete status) rather than
 # ending on its own.

@@ -20,12 +20,13 @@ or says it is a manual look (**manual**).
 |---|---|---|
 | 1.1 | First start shows the launcher; the shell bar reads *Servers*; layout is bar 38 px + content below | auto: *first start shows the launcher + shell bar* |
 | 1.2 | Create a local server → card appears, data dir created under `workspaces/<id>` | auto: *create a local server from the launcher* |
-| 1.3 | Open it → sidecar starts on a free `127.0.0.1` port, Gamma loads, silent admin login lands, bar shows the name + reload button | auto: *open it: sidecar starts, Gamma loads, auto-login lands* |
+| 1.3 | Open it → sidecar starts on a free `127.0.0.1` port from the dynamic range (49152–65535), Gamma loads, silent admin login lands, bar shows the name + reload button | auto: *open it: sidecar starts, Gamma loads, auto-login lands* |
 | 1.4 | Quit → every sidecar process is gone (no orphan `gamma-server.exe`/python), window bounds saved | auto: *quit: every sidecar stops, window bounds persist* |
-| 1.5 | Relaunch → the last server reopens by itself, data intact, chrome already in the persisted theme | auto: *relaunch reopens the last server with its data intact* |
+| 1.5 | Relaunch → the last server reopens by itself, at the same address, data intact, chrome already in the persisted theme | auto: *relaunch reopens the last server with its data intact* |
 | 1.6 | *Reopen last server at launch* switched off → launcher at start | manual (toggle in the launcher, restart) |
 | 1.7 | Cold start of the frozen server stays well under the 60 s health budget on a slow disk | manual: watch the *Starting …* status; `logs/<id>.log` has the uvicorn banner |
 | 1.8 | A server that will not start explains itself on the launcher (cause, the server's own line, the fixing button, log folded away) | auto: *a server that will not start is explained, not dumped*; manual: open a data dir written by a newer Gamma |
+| 1.9 | A local server keeps its address: the bar menu shows `127.0.0.1:<port>` beside a running local server, its launcher card shows the address with *Copy address*, the credentials dialog names it, and a restart or relaunch comes back on the same port; a port another program took is given up for a new one, shown in the same places | auto: *the bar menu shows each running local server's address …*, *launcher lists sizes …*, *storage folder: …* and *relaunch …* assert the same origin; `npm test` (`test/sidecar.test.js`): the port another program holds, a new one from the dynamic range; manual: the Gamma Connector set to that address, signed in with the credentials, saves a paper into the server, and still does after a relaunch |
 
 ## 2. Switching (the reason the shell bar exists)
 
@@ -69,6 +70,11 @@ or says it is a manual look (**manual**).
 | 4.6 | *Import data* restores the backup into another server's workspace, uploads included | auto: *import the Alpha backup into Beta* |
 | 4.7 | Drag-and-drop a PDF / `<input type=file>` uploads work in the Electron window | manual |
 | 4.8 | Zotero RDF and Logseq imports | manual (need real export files) |
+| 4.9 | A PDF opened with Gamma while it runs: the second start quits, the page opens in the workspace the window shows, titled with the file's name, with the annotations the file carried; the same file again opens the same page and imports nothing twice; a PDF named at launch opens in the last server once it is up | auto: *a PDF opened with Gamma: …*, *a PDF named at launch …* |
+| 4.10 | Into a shared workspace or a clone the app asks first (*Add to …* / *Add to <personal>* / *Cancel*); from a read-only one the file goes to the personal workspace and the bar says so; signed out of a remote, a dialog says to sign in | manual (the choice itself: `npm test`, `test/openFiles.test.js`) |
+| 4.11 | Windows installer: a PDF's *Open with* lists Gamma, and so does Settings → Default apps (with `.pdf`); the reader that was the default stays it until Gamma is chosen; *Always* makes a double-click open the PDF in Gamma, also while it runs in the tray; an update keeps that choice; an uninstall takes Gamma off both lists and the PDF opens in another reader again | manual (installed build) |
+| 4.12 | Store package, macOS (*Open With*, *Change All*; a file opened while the app is closed and while it runs) and the .deb (the file manager offers Gamma for a PDF): the same as 4.11 | manual |
+| 4.13 | One app per profile: starting Gamma while it runs (Start menu, the tray in background mode) brings the window forward; no second app, no second sidecar on the same data directory | auto: the second start in *a PDF opened with Gamma: …* quits; the window manual |
 
 ## 5. Remote servers + navigation guard
 

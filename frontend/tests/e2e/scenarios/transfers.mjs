@@ -28,12 +28,12 @@ export async function transferScenarios({ server, browser, alice, bob, makePdf, 
   }
   const choice = (dialog, name) => dialog.getByRole("button", { name, exact: true });
   const toggle = (dialog, name) => dialog.getByRole("checkbox", { name, exact: true });
+  const python = process.env.GAMMA_E2E_PYTHON || path.join(ROOT, "backend", "venv", process.platform === "win32" ? "Scripts/python.exe" : "bin/python");
 
   await step("transfer: Zotero ZIP review, cancellation, import report and repeat import", async () => {
     const { ctx, page } = await setup();
     try {
       const fixture = path.join(server.dir, "review.zip");
-      const python = process.env.GAMMA_E2E_PYTHON || path.join(ROOT, "backend", "venv", process.platform === "win32" ? "Scripts/python.exe" : "bin/python");
       // Use the backend's synthetic fixture: one real PDF, one absent PDF,
       // a nested collection and an explicitly empty attachment directory.
       execFileSync(python, ["-c", `
@@ -50,10 +50,10 @@ with zipfile.ZipFile(sys.argv[1], 'w') as z:
 `, fixture], { cwd: ROOT });
       const selectZip = async () => {
         const dialog = await openDialog(page, "Import");
-        await choice(dialog, "Zotero library (.zip)").click();
+        await choice(dialog, "Zotero library").click();
         await choice(dialog, "Next").click();
         const chooser = page.waitForEvent("filechooser");
-        await choice(dialog, "Choose .zip…").click();
+        await choice(dialog, "or choose a .zip").click();
         await (await chooser).setFiles(fixture);
         const review = page.getByRole("dialog", { name: "Review Zotero import", exact: true });
         await review.getByRole("heading", { name: "Library after import", exact: true }).waitFor();
@@ -104,6 +104,74 @@ with zipfile.ZipFile(sys.argv[1], 'w') as z:
       assert(!(await review.evaluate(el => el.scrollWidth > el.clientWidth + 1)), "review fits mobile");
       if (flags.keep) await page.screenshot({ path: `${server.dir}/zotero-review-mobile.png` });
       await choice(review, "Cancel").click();
+      assertNoProblems(page);
+    } finally { await ctx.close(); }
+  });
+
+  await step("transfer: a picked Zotero export folder is packed and reviewed like its zip, and a dropped .zip too", async () => {
+    const { ctx, page } = await setup();
+    try {
+      // The export as Zotero leaves it on disk, one PDF not written yet: a
+      // picked folder lists no empty folders, so files/99 is just absent.
+      const folder = path.join(server.dir, "Folder Review");
+      execFileSync(python, ["-c", `
+import os, sys
+sys.path.insert(0, 'backend/tests')
+from test_zotero_import import RDF, _annotated_pdf
+root = sys.argv[1]
+rdf = RDF.replace('s41586-000-00000-0', 'e2e-zotero-folder').replace('Attention is all you need', 'Folder PDF example')
+rdf = rdf.replace('<dc:title>Proximal Policy Optimization</dc:title>', '<dc:title>Unwritten PDF example</dc:title><link:link rdf:resource="#unwritten"/>')
+rdf = rdf.replace('</rdf:RDF>', '<z:Attachment rdf:about="#unwritten"><z:path rdf:resource="files/99/unwritten.pdf"/></z:Attachment></rdf:RDF>')
+os.makedirs(os.path.join(root, 'files', '3'))
+open(os.path.join(root, 'library.rdf'), 'w', encoding='utf-8').write(rdf)
+open(os.path.join(root, 'files', '3', 'Vaswani - 2017 - Attention.pdf'), 'wb').write(_annotated_pdf(b'E2E folder PDF'))
+`, folder], { cwd: ROOT });
+      await page.waitForSelector(".folderNewBtn");
+      let dialog = await openDialog(page, "Import");
+      await choice(dialog, "Zotero library").click();
+      await choice(dialog, "Next").click();
+      const chooser = page.waitForEvent("filechooser");
+      await choice(dialog, "Choose folder…").click();
+      await (await chooser).setFiles(folder);
+      let review = page.getByRole("dialog", { name: "Review Zotero import", exact: true });
+      await review.getByRole("heading", { name: "Library after import", exact: true }).waitFor();
+      assert(await review.getByRole("heading", { name: "Inside the folder", exact: true }).isVisible());
+      assert((await review.locator(".importReviewHeader").innerText()).includes("Folder Review"));
+      assert(await review.getByRole("region", { name: "ZIP contents", exact: true }).getByText("library.rdf", { exact: true }).isVisible());
+      const warnings = await review.locator(".importWarnings").innerText();
+      assert(warnings.includes("Zotero export not finished") && warnings.includes("(Zotero had not written it yet)"), warnings);
+      await choice(review, "Import to library").click();
+      const report = page.getByRole("dialog", { name: "Import complete", exact: true });
+      await report.waitFor();
+      const imported = report.getByRole("region", { name: "Library after import", exact: true });
+      assert(await imported.getByText("Folder PDF example", { exact: true }).isVisible());
+      await choice(report, "Done").click();
+      // The same export zipped and dropped on the step: reviewed like a
+      // picked .zip, and the library behind never takes the drop.
+      const zip = path.join(server.dir, "Folder Review.zip");
+      execFileSync(python, ["-c", "import shutil, sys; shutil.make_archive(sys.argv[1][:-4], 'zip', sys.argv[2], 'Folder Review')", zip, server.dir]);
+      let uploads = 0;
+      page.on("request", request => { if (request.method() === "POST" && new URL(request.url()).pathname === "/api/uploads") uploads++; });
+      dialog = await openDialog(page, "Import");
+      await choice(dialog, "Zotero library").click();
+      await choice(dialog, "Next").click();
+      const transfer = await page.evaluateHandle(bytes => {
+        const data = new DataTransfer();
+        data.items.add(new File([new Uint8Array(bytes)], "Folder Review.zip", { type: "application/zip" }));
+        return data;
+      }, [...fs.readFileSync(zip)]);
+      const area = dialog.locator(".importDropArea");
+      await area.dispatchEvent("dragover", { dataTransfer: transfer });
+      assert(await dialog.locator(".importDrop.over").isVisible(), "the drop line lights up");
+      if (flags.keep) await dialog.screenshot({ path: `${server.dir}/zotero-drop.png` });
+      await area.dispatchEvent("drop", { dataTransfer: transfer });
+      review = page.getByRole("dialog", { name: "Review Zotero import", exact: true });
+      await review.getByRole("heading", { name: "Inside the ZIP", exact: true }).waitFor();
+      await review.getByRole("heading", { name: "Library after import", exact: true }).waitFor();
+      assert((await review.locator(".importReviewHeader").innerText()).includes("Folder Review.zip"));
+      assert(await review.getByText("Update existing page", { exact: false }).count() >= 1, "the dropped export updates what the folder made");
+      await choice(review, "Cancel").click();
+      assertEq(uploads, 0, "the drop stays in the dialog");
       assertNoProblems(page);
     } finally { await ctx.close(); }
   });
@@ -308,11 +376,18 @@ with zipfile.ZipFile(sys.argv[1], 'w') as z:
       assertEq(await (await markdownChooser).element().getAttribute("accept"), ".md,.markdown,.zip,text/markdown,application/zip");
       await dialog.waitFor({ state: "detached" });
       dialog = await openDialog(page, "Import");
-      await choice(dialog, "Zotero library (.zip)").click();
+      await choice(dialog, "Zotero library").click();
       await choice(dialog, "Next").click();
       assert(await dialog.getByText("Export from Zotero", { exact: true }).isVisible());
+      const folderChooser = page.waitForEvent("filechooser");
+      await choice(dialog, "Choose folder…").click();
+      assert(await (await folderChooser).element().evaluate(input => input.webkitdirectory), "the folder button picks a folder");
+      await dialog.waitFor({ state: "detached" });
+      dialog = await openDialog(page, "Import");
+      await choice(dialog, "Zotero library").click();
+      await choice(dialog, "Next").click();
       const chooser = page.waitForEvent("filechooser");
-      await choice(dialog, "Choose .zip…").click();
+      await choice(dialog, "or choose a .zip").click();
       assertEq(await (await chooser).element().getAttribute("accept"), ".zip,application/zip");
       await dialog.waitFor({ state: "detached" });
       assertNoProblems(page);
@@ -413,7 +488,6 @@ with zipfile.ZipFile(sys.argv[1], 'w') as z:
       const file = await download;
       assertEq(file.suggestedFilename(), `${folder}-annotated.zip`);
       await again.getByRole("heading", { name: "Export ready", exact: true }).waitFor();
-      const python = process.env.GAMMA_E2E_PYTHON || path.join(ROOT, "backend", "venv", process.platform === "win32" ? "Scripts/python.exe" : "bin/python");
       const names = JSON.parse(execFileSync(python, ["-c", "import json, sys, zipfile; print(json.dumps(sorted(zipfile.ZipFile(sys.argv[1]).namelist())))",
         await file.path()]).toString());
       assertEq(names.join(","), "Folder paper one.pdf,Sub/Folder paper two.pdf");

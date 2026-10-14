@@ -1,6 +1,7 @@
 import { API, apiJson } from "../shared/lib/utils";
 import { xhrUpload } from "../shared/lib/xhrUpload";
 import { t, T } from "../shared/i18n/i18n.js";
+import { zipFolder } from "./folderZip.js";
 
 const FORMATS = {
   zotero: { label: T("Zotero"), endpoint: "zotero", instructions: T("Collections become folders. Additional PDFs become separate pages. Existing PDFs are kept.") },
@@ -17,12 +18,17 @@ export function dialogSource(endpoint) {
   return Object.keys(FORMATS).find((source) => FORMATS[source].endpoint === endpoint)
     || (endpoint === "markdown-file" ? "markdown" : "zotero");
 }
-// `onProgress` gets {phase: "upload", loaded, total} while the bytes go up,
+// `file` is a File, or a picked folder (folderZip.js folderPick), packed into
+// a .zip first. `onProgress` gets {phase: "packing", loaded, total} while a
+// folder is read, {phase: "upload", loaded, total} while the bytes go up,
 // then {phase: "processing"} while the server reads the archive.
-export function requestImport({ source, file, folder = "", strip }, { signal, onProgress } = {}) {
-  const format = importFormat(source, file);
+export async function requestImport({ source, file, folder = "", strip }, { signal, onProgress } = {}) {
+  const upload = file.folder
+    ? await zipFolder(file, { signal, onProgress: (loaded, total) => onProgress?.({ phase: "packing", loaded, total }) })
+    : file;
+  const format = importFormat(source, upload);
   const body = new FormData();
-  body.append("file", file);
+  body.append("file", upload);
   body.append("source", format.endpoint);
   if (source !== "gamma") body.append("folder", folder);
   if (source === "zotero") body.append("strip", String(Boolean(strip)));

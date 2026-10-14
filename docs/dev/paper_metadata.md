@@ -10,7 +10,14 @@ the slide citation on the page block (`properties.meta` / `properties.bibtex`
 / `properties.ppt_cite`). The lookup chain, in order:
 
 1. **arXiv API** — id from the source URL or the PDF text (new- and old-style
-   ids).
+   ids). When the arXiv record names the DOI of the published version, the
+   registrar's record replaces the preprint's (`_published_record`: venue,
+   volume, pages and doi.org's own BibTeX; the arXiv id stays on the record,
+   so the entry keeps its `eprint` and the popover its arXiv row) — arXiv's
+   `journal_ref` is one free-text line ("Phys. Rev. Lett. 116, 061102
+   (2016)") that would otherwise be typeset as the journal's name. Taken
+   only when the registrar's title is the preprint's, never for arXiv's own
+   `10.48550/` DOIs; the preprint record stands when doi.org has nothing.
 2. **DOI content negotiation** (doi.org) — every DOI in the source URL and
    scan window, each with a glued-suffix trimmed variant. A CSL `type` of
    `book`/`monograph` keeps `kind: book` + publisher/ISBN.
@@ -39,6 +46,22 @@ pref, **plus the last page** — an issue-clipped Science PDF opens with the
 the end-of-article trailer. Only the AI call is capped at the pref
 (`context_char_limit`).
 
+**What a registry record becomes.** Crossref keeps the publisher's markup
+and entities in titles and venues (`<i>Planck</i> 2018 results`,
+`CsPbCl<sub>3</sub>`, `Astronomy &amp; Astrophysics`), names an organisation
+author by `name` rather than `given`/`family`, and keeps a subtitle apart
+from the title. `_fetch_doi` and `_crossref_search` store plain text
+(`textnorm.plain_text`: tags dropped, entities decoded — the title then
+reads as the PDF prints it, which is what the title match and the popover
+need), join `title: subtitle`, keep organisation authors, and record the
+registry's `work_type` (the CSL type: `journal-article`,
+`proceedings-article`, `book-chapter`, `dissertation`, `report`, …), which
+picks the BibTeX entry type a built entry gets
+([import_export.md](import_export.md#bibtex-bibliography)). doi.org's own
+BibTeX carries the same markup; `bibtex.clean_entry` turns it into LaTeX
+(`\emph{}`, `\textsubscript{}`, `\&`) before it is cached. The quirks as
+observed live: [research/registry-records.md](../research/registry-records.md).
+
 **Trust rules** (the first DOI on page 1 can belong to a *cited* paper, and
 AI output can be a plausible hallucination):
 
@@ -49,7 +72,9 @@ AI output can be a plausible hallucination):
   meta tags).
 - A record found via the *text* counts as **confirmed** only when the
   registry's title appears in the PDF text (`_title_in_text` — normalized
-  for case, ligatures, line-break hyphens). Unconfirmed resolutions are kept
+  for case, ligatures, line-break hyphens; a title with a subtitle also
+  counts when both parts appear, since the PDF sets them on separate
+  lines). Unconfirmed resolutions are kept
   only as a fallback when nothing confirms; a Crossref search hit is accepted
   solely on title-in-text evidence.
 - An ISBN record is confirmed by `_record_in_text`: the paper rule, or —
@@ -88,7 +113,8 @@ AI extractor also classifies the document (`meta.kind`: `paper` / `notes` /
 `slides` / `thesis` / `book` / `report` / `other`, unknown → `paper`); the
 warning only fires for kind `paper` — course notes and the like have no
 registry record to verify against, so they get a quiet "AI-extracted (notes)"
-instead. Registry-sourced records carry no kind except books; a book record
+instead. Registry-sourced records carry no kind except books (their
+`work_type` says what they are); a book record
 (`kind: book`, or a publisher without a venue) renders as BibTeX `@book`
 with `publisher`/`isbn`, and the metadata popover swaps the journal rows
 for Publisher/ISBN. A hand edit keeps the kind and clears the flag (the user
@@ -103,7 +129,9 @@ The fetch also kicks background search indexing for the paper
 document map and library-wide Ctrl+F shouldn't wait for the first search to
 discover it. `/api/metadata/update` saves hand-edited fields from the
 metadata popover (rebuilds BibTeX, source `manual`, invalidates the cached
-citation). In the popover, the DOI and arXiv rows carry an open-on-registry
+citation; the document kind and the registry's `work_type` survive the
+edit, so a conference paper stays an `@inproceedings` after its title is
+corrected). In the popover, the DOI and arXiv rows carry an open-on-registry
 link and a copy button for that URL beside the field. A page with a PDF
 also gets a read-only Source file row (the attachment's path, with a copy
 button); replacing the PDF goes through the paperclip (detach, attach).
@@ -111,7 +139,9 @@ button); replacing the PDF goes through the paperclip (detach, attach).
 **Citation key.** The BibTeX key is generated from the first author's surname
 and the year (`bibtex.default_key`). The popover's Cite key row pins one as
 `properties.cite_key`, beside `meta` so a refetch keeps it. Empty means
-generated, and the placeholder shows the key in use. How a pin is cleaned
+generated, and the placeholder shows the key in use. A cached fetch answers
+`bibtex.page_entry`, the entry every other surface prints, so the popover's
+Copy BibTeX and the `.bib` export agree on the key. How a pin is cleaned
 and who reads it: [import_export.md](import_export.md#bibtex-bibliography).
 
 **Slide citation.** The PPT-style markdown citation is generated *in the

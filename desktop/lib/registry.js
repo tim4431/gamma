@@ -6,7 +6,7 @@
 //
 // Local servers also remember the admin credentials the shell generated on
 // first run — the server's one-time password print would otherwise be lost
-// in the hidden sidecar console.
+// in the hidden sidecar console — and the port they last ran on (`port`).
 //
 // Besides the list the file keeps a little shell UX state: the server opened
 // last (reopened at launch when `openLastOnLaunch`), the theme the Gamma
@@ -285,6 +285,16 @@ function remove(id, { deleteData = false } = {}) {
   }
 }
 
+// The port a local server ran on, asked for again at its next start
+// (lib/sidecar.js), so its address outlives a restart.
+function setPort(id, port) {
+  const state = load();
+  const srv = state.servers.find((s) => s.id === id && s.type === 'local');
+  if (!srv || srv.port === port) return;
+  srv.port = port;
+  save(state);
+}
+
 // Remember which server is open (reopened at next launch).
 function markOpened(id) {
   const state = load();
@@ -386,7 +396,7 @@ function dirSize(dir) {
 }
 
 module.exports = {
-  init, load, get, addLocal, addRemote, setRemoteUrl, withScheme, rename, remove, markOpened, getLastOpened,
+  init, load, get, addLocal, addRemote, setRemoteUrl, withScheme, rename, remove, setPort, markOpened, getLastOpened,
   getSettings, setSettings, getWindowBounds, setWindowBounds, dirSize,
   defaultDataRoot, dataRoot, localsUnderRoot, setDataRoot,
   originOf, findMirror, mirrorOf, addMirror, setServerMirrors,

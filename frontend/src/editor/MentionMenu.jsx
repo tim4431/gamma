@@ -44,7 +44,9 @@ function RowText({ row, query, now }) {
     const far = Math.abs(dayDelta(row.date, now)) > 1;
     return <>{dateLabel(row, now)}{far ? <span className="mentionAside">{fmtDate(localMoment(row.date), { weekday: "long" })}</span> : null}</>;
   }
-  if (row.kind === "remind") return <>{t("Remind me")}<span className="mentionAside">— {dateLabel(row, now)}</span></>;
+  if (row.kind === "remind") {
+    return <>{row.you ? t("Remind me") : t("Remind {name}", { name: `@${row.user}` })}<span className="mentionAside">— {dateLabel(row, now)}</span></>;
+  }
   if (row.kind === "person") {
     return <><MarkedText text={row.user} query={query} />{row.you ? <span className="mentionAside">{t("(You)")}</span> : null}</>;
   }

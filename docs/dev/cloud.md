@@ -217,7 +217,7 @@ page, the CLI and the `/api/admin/*` API call the same functions.
 | the account server | *Update* on its row of the Machines tab, which pulls the newest image of the tag it runs; from a branch, the `update-account-server` skill: build, pull on the VPS, restart. `cloud.db` upgrades itself at start with a copy taken first. A failed update from the Machines tab leaves it down until it is started on the VPS ([hosted.md](hosted.md) "A machine's containers") |
 | the fleet agent | *Update* on its row of the Machines tab (a helper replaces it), the `update-fleet` skill from a branch, or the daily pull `bootstrap.sh --auto-update` installs; hosted containers keep running through it |
 | hosted containers | an upgrade run on the Servers tab, or automatic upgrades |
-| the shared server | the image tag pinned in the account project's `compose.yml`; *Update* on its row of the Machines tab pulls the newest image of that tag |
+| the shared server | runs `main`: the `update-share-host` skill pins main's newest build in the account project's `compose.override.yml`; *Update* on its row of the Machines tab pulls the newest image of that tag |
 | the demo | *Update* on its row of the Machines tab for the newest image of its tag; the `update-demo-server` skill to pin it to main's newest |
 | Caddy | *Update* on its row of the Machines tab |
 | the website | the `build-site` skill |

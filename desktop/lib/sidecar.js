@@ -1,6 +1,7 @@
 // Local-workspace server lifecycle. A "sidecar" is one Gamma backend process
-// bound to 127.0.0.1 on a free port with GAMMA_DATA_DIR pointing at the
-// workspace's data directory. Two launch modes, resolved in this order:
+// bound to 127.0.0.1 — on the port it had last time when that is free, else
+// a free one — with GAMMA_DATA_DIR pointing at the workspace's data
+// directory. Two launch modes, resolved in this order:
 //
 //   1. explicit settings (pythonPath + backendDir) — run uvicorn from a repo
 //   2. packaged: the frozen backend bundled under resources/gamma-server
@@ -27,6 +28,32 @@ function freePort() {
       srv.close(() => resolve(port));
     });
   });
+}
+
+function portFree(port) {
+  return new Promise((resolve) => {
+    const srv = net.createServer();
+    srv.once('error', () => resolve(false));
+    srv.listen(port, '127.0.0.1', () => srv.close(() => resolve(true)));
+  });
+}
+
+// The port the server had last time (`ws.port`) while it is free, so its
+// address stays the same across launches — the address the Gamma Connector
+// or a bookmark was given. Else a free one no other server has remembered,
+// from the IANA dynamic range: the OS may hand out any port above 1024 (it
+// does on Windows machines set up that way), and a port kept for good should
+// not be one another program expects, such as a developer's Gamma on 9001.
+async function pickPort(ws, avoid) {
+  const valid = (p) => Number.isInteger(p) && p > 0 && p < 65536;
+  if (valid(ws.port) && (await portFree(ws.port))) return ws.port;
+  const taken = new Set(avoid);
+  const from = Math.floor(Math.random() * 16384);
+  for (let i = 0; i < 16384; i++) {
+    const port = 49152 + ((from + i) % 16384);
+    if (!taken.has(port) && (await portFree(port))) return port;
+  }
+  return freePort();
 }
 
 function repoRoot() {
@@ -85,7 +112,9 @@ async function healthy(url, timeoutMs = 1500) {
   }
 }
 
-async function start(ws, settings, appInfo) {
+// `avoid`: the ports other local servers remembered, so one never takes
+// another's address while that one is stopped.
+async function start(ws, settings, appInfo, { avoid = [] } = {}) {
   const existing = running.get(ws.id);
   if (existing) {
     if (await healthy(existing.url)) return existing;
@@ -93,7 +122,7 @@ async function start(ws, settings, appInfo) {
   }
 
   const backend = resolveBackend(settings, appInfo);
-  const port = await freePort();
+  const port = await pickPort(ws, avoid);
   const url = `http://127.0.0.1:${port}`;
   fs.mkdirSync(ws.dataDir, { recursive: true });
 
@@ -194,4 +223,4 @@ function status(id) {
   return running.get(id) || null;
 }
 
-module.exports = { start, stop, stopAll, status, detectDev };
+module.exports = { start, stop, stopAll, status, detectDev, pickPort };

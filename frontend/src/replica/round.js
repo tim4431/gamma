@@ -53,6 +53,28 @@ export const CLIENT = "sync";
 export const MAX_OPS = 500;
 export const UNKNOWN_SEQ = -1;
 const WRITE_TRIES = 5;
+// The shape this port keeps a workspace's pages in: the server's
+// `migrations.workspace_format()` at the time of this build (the newest
+// migration step with a workspace part, docs/dev/mirror.md "The data
+// format"). tests/replica.test.mjs pins it to backend/gamma/migrations.py,
+// so a new workspace step moves it here in the same change. A remote whose
+// feed names another format stops the round before anything is written,
+// as the server engine does (FormatMismatch).
+export const WORKSPACE_FORMAT = 34;
+
+// The remote keeps its workspaces in another shape than this app
+// (gamma/sync_engine.py FormatMismatch): one of the two runs a release with
+// a workspace migration step the other lacks, so the round stops before it
+// writes anything, until both do.
+export class FormatMismatch extends Error {
+  constructor(here, remote) {
+    const newer = remote > here;
+    super(`the remote runs ${newer ? "a newer" : "an older"} Gamma (workspace data format ${remote}; `
+      + `this app has ${here}): sync is paused until ${newer ? "this app" : "the remote"} is updated`);
+    this.here = here;
+    this.remote = remote;
+  }
+}
 
 export class RemoteError extends Error {
   constructor(status, detail = "") {
@@ -478,11 +500,14 @@ async function syncPage(ctx, pageId, flags) {
 // _feed_all: the remote feed walked to the end. It lists in the order of the
 // remote's change log, so a page listed again (written again while the walk
 // went on) is what its last entry says. The cursor is the feed's, kept as it
-// is ("" = from the start).
+// is ("" = from the start). A remote whose pages have another shape than
+// this app's raises FormatMismatch; one that names none (a release from
+// before the check) is taken as it is.
 async function feedAll(remote, cursor) {
   const pages = new Map(), deleted = new Map();
   for (let i = 0; i < 200; i++) {
     const out = await remote.get(`/api/sync/changes?since=${encodeURIComponent(cursor)}&limit=1000`);
+    if (Number.isInteger(out.format) && out.format !== WORKSPACE_FORMAT) throw new FormatMismatch(WORKSPACE_FORMAT, out.format);
     for (const p of out.pages) { deleted.delete(p.id); pages.set(p.id, p.seq); }
     for (const d of out.deleted) { pages.delete(d.id); deleted.set(d.id, d.deleted_at); }
     cursor = out.cursor;

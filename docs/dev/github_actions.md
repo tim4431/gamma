@@ -9,9 +9,10 @@ account server (`cloud/`) and the website (`sites/`) are separate from all
 of that: each has its own check and its own publish (`cloud.yml`,
 `site.yml`), dispatched from any branch (the `build-cloud` / `build-site`
 skills), and a PR that touches only one of them skips `check`. The public
-demo (demo.gammapdf.com) runs `main`'s server image like the NAS, pinned by
-the `:sha-<short>` tag a merge's `docker.yml` run pushes (the
-`update-demo-server` skill).
+demo (demo.gammapdf.com) and the Gamma Cloud share host (app.gammapdf.com,
+share.gammapdf.com) run `main`'s server image like the NAS, pinned by the
+`:sha-<short>` tag a merge's `docker.yml` run pushes (the
+`update-demo-server` and `update-share-host` skills).
 
 | Workflow | File | Runs when | Produces |
 |---|---|---|---|
@@ -42,8 +43,11 @@ update-account-server ──▶ cloud.yml --ref <branch>: test → ghcr gamma-cl
                           then pull + restart on the VPS          ← no merge needed
 update-demo-server ──▶ main's newest docker.yml run: pin its :sha-<short>
                        in the demo's project                      ← after a merge, like update-server
+update-share-host ──▶ the same tag, pinned for the account project's share
+                      service in its compose.override.yml         ← after a merge, like update-server
 update-needed ──▶ compares what each deployment runs with the code, then runs
-                  update-account-server → update-demo-server → update-server for the ones behind
+                  update-account-server → update-demo-server → update-share-host
+                  → update-server for the ones behind
 release skill ───▶ desktop.yml  meta: version = max(package.json, newest v* tag + patch)
  (gh workflow           build Win/mac/Linux with that version pinned, smoke on all three
   run)                  zip the extension, the same version pinned into its manifest
@@ -198,8 +202,8 @@ log tail — are uploaded as the `e2e-failures` artifact), and the extension's u
 tests (Node 22, `node --test extension/tests/*.test.mjs` — the pure
 modules; its `.e2e.mjs` files need Playwright's full Chromium and are run
 by hand) followed by a manifest parse + zip of the extension. No installers. A PR that changes only
-`cloud/`, `cloud.yml`, the `update-account-server` or `update-demo-server`
-skill or [cloud_accounts.md](cloud_accounts.md) — or only `sites/`, `site.yml`, the
+`cloud/`, `cloud.yml`, the `update-account-server`, `update-demo-server` or
+`update-share-host` skill or [cloud_accounts.md](cloud_accounts.md) — or only `sites/`, `site.yml`, the
 `build-site` skill, `PRIVACY.md` or `TERMS.md` — skips it (`paths-ignore`); `cloud.yml`
 and `site.yml` check those. (A PR touching the brand artwork the site
 copies still runs `check`: its `branding` job owns those files.) The `merge` skill waits for it before merging; a
@@ -239,7 +243,13 @@ The public demo runs `main`: the `update-demo-server` skill takes the
 compose project on the VPS, as `GAMMA_TAG` in its `.env`
 ([cloud/deploy/demo/README.md](../../cloud/deploy/demo/README.md),
 [guests.md](guests.md)). Pinned rather than `:latest`, it changes only when
-deployed, and a rollback is one line. Setup notes: [docs/dev/debugging.md](debugging.md) and the memory
+deployed, and a rollback is one line. The share host follows `main` the
+same way: the `update-share-host` skill pins the same tag for the account
+project's `share` service in the host's `compose.override.yml`, a file that
+holds only that image, so the project's secrets stay untouched. It stops for
+the user's yes when the build adds a workspace migration step that the
+desktop release lacks, since every publishing desktop app then pauses until
+a release carries it ([mirror.md](mirror.md) "The data format"). Setup notes: [docs/dev/debugging.md](debugging.md) and the memory
 note on GHCR.
 
 ## `cloud.yml`

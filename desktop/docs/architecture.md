@@ -16,8 +16,9 @@ as many workspaces as you like, and the shell-bar menu switches both.
 Servers come in two kinds:
 
 - **Local** — a data directory under the shell's userData dir, served by a
-  Gamma backend the shell spawns on `127.0.0.1:<free port>` with
-  `GAMMA_DATA_DIR` pointed at it. Fully self-initializing: the server seeds
+  Gamma backend the shell spawns on `127.0.0.1:<port>` with
+  `GAMMA_DATA_DIR` pointed at it (the port below, "A local server's
+  address"). Fully self-initializing: the server seeds
   schema + first admin on an empty data dir (and upgrades an older data
   layout at startup — [docs/dev/migrations.md](../../docs/dev/migrations.md)).
   The shell passes `GAMMA_ADMIN_USER`/`GAMMA_ADMIN_PASSWORD` on the first
@@ -42,6 +43,28 @@ The pencil on a remote's card edits the address as well as the name
 origin follow), and when an `https://` address is refused — a self-signed
 certificate, or a plain-HTTP server answering https — the launcher's
 failure card offers *Use http:// instead* (`lib/startup.js`, action `http`).
+
+### A local server's address
+
+A local server keeps its port. `startLocal` in `main.js` starts every
+sidecar. It asks for the port the server had last time (`port` on its
+registry entry) and saves the one it got. `lib/sidecar.js` `pickPort` uses
+that port while it is free. Otherwise it walks the IANA dynamic range
+(49152–65535) from a random point to the first free port no other local
+server has saved. The OS's own choice is not used, because Windows may hand
+out any port above 1024: a port kept for good should not be 9001 or 5173.
+So the address stays the same across restarts and relaunches. That is the
+address a browser's Gamma Connector, a bookmark or a script was given
+([docs/dev/extension.md](../../docs/dev/extension.md) "Auth and
+permissions"). A port another program took by then is given up for a new
+one, and the new address shows in the places below.
+
+The address of a running local server shows beside its name in the bar
+menu (`127.0.0.1:<port>`) and on its launcher card. The card has a *Copy
+address* button (`shell:copy-address`; under the test harness the copy is
+only recorded) and the credentials dialog names it too. In the browser the
+Connector signs in with those credentials, since the window's session lives
+in Electron's cookie jar, not the browser's.
 
 ### Gamma's workspaces in the switcher
 
@@ -232,8 +255,8 @@ window's own page, never a view like the bar. The logo opens the launcher, which
 server (also `Ctrl/Cmd+Shift+L`). Then the switcher: click the name → dropdown of
 the open server's Gamma workspaces (check on the current one, role or
 *personal* per row, the clone chips), then every server (running /
-reachable dot, check on the current one), then *All servers…* (the
-launcher again). At the right: the sync button and its panel (above, "Kept
+reachable dot, a running local one's address, check on the current one),
+then *All servers…* (the launcher again). At the right: the sync button and its panel (above, "Kept
 on this computer"), the update pill (only while an update is ready, see
 below) and a reload button. One dropdown is open at a time. While one is,
 the bar view is temporarily enlarged over the content (its page is
@@ -241,9 +264,10 @@ transparent outside the strip and the dropdown), which is how a 38 px view
 can show a menu.
 
 The **content view** shows the launcher or the server. The launcher lists
-servers as cards (kind, running / reachable dot, size on disk, data dir /
-URL, *last opened* badge) with open / rename / credentials / data folder /
-server log / remove actions, then Settings: the *reopen last server at
+servers as cards (kind, running / reachable dot, size on disk, a running
+local server's address, data dir / URL, *last opened* badge) with open /
+rename / copy address / credentials / data folder / server log / remove
+actions, then Settings: the *reopen last server at
 launch* switch, the *Local server storage* row, the *Updates* row (status
 line + check / download / restart button), and the dev-mode server
 overrides.
@@ -306,11 +330,78 @@ that navigation over on a registered origin (`signInWithCloud` in `main.js`,
 A refusal comes back as `?error=` and is shown in the bar and in the tab. A
 sign-in waits ten minutes, and a new one replaces it. A server older than
 `app-start` (it answers 404 or 405) gets the old behaviour: the start
-opens in the system browser, which ends up signed in instead of the window. A result for a server
-that is no longer open is dropped with a notice. The server side, and why
+opens in the system browser, which ends up signed in instead of the
+window. A result for a server that is no longer open is dropped with a
+notice. The server side, and why
 this is safe against someone else's sign-in link, is
 [cloud_accounts.md](../../docs/dev/cloud_accounts.md) "The desktop app's
 sign-in".
+
+### Opening PDF files
+
+Every build registers Gamma as a PDF app. It is listed under *Open with*,
+and the user can make it the default. No build makes itself the default;
+the user picks it: *Open with → Choose another app → Always* or Settings →
+Default apps on Windows, *Get Info → Open with → Change All* on macOS, the
+desktop's default-applications setting on Linux. The registration differs
+per target (`electron-builder.cjs`):
+
+- The **NSIS installer** runs `assets/installer.nsh`. It writes the ProgID
+  `Gamma.pdf` (open command `"Gamma.exe" "%1"`), adds it to `.pdf`'s
+  `OpenWithProgids`, and registers Gamma's capabilities under
+  `RegisteredApplications`, which puts Gamma in Default apps. It never
+  writes the `.pdf` key's default value. electron-builder's own
+  `fileAssociations` does, and its uninstaller then leaves `.pdf` pointing
+  at a ProgID that is gone, so the config has no top-level
+  `fileAssociations`. The keys go under HKCU or HKLM as the install did;
+  the uninstaller removes them and an update keeps them, so Gamma stays
+  the default where the user made it so.
+- The **Store package** adds a `windows.fileTypeAssociation` extension from
+  `assets/appx-extensions.xml` (`appx.customExtensionsPath`).
+- **macOS** declares the type in `Info.plist` with `LSHandlerRank`
+  *Alternate* (`mac.fileAssociations`).
+- The **.deb**'s desktop entry lists `application/pdf` (`linux.mimeTypes`).
+  A `fileAssociations` entry with a MIME type would also install its own
+  definition of `application/pdf`.
+
+A file arrives on the command line (Windows, Linux) or as an `open-file`
+event (macOS, before `ready` at a launch too). The app runs once per
+profile (`app.requestSingleInstanceLock`, keyed on the userData dir): a
+second start hands its command line to the running app (`second-instance`)
+and quits, and without a PDF it only brings the window forward. A second
+app would run a second server on the same data directories.
+`lib/openFiles.js` reads the arguments. It skips switches (Chromium adds
+its own to a second start's), reads a `file://` URL as its path, and keeps
+existing files ending in `.pdf`. A start that names a file never goes
+hidden into the tray.
+
+Each file is added as an upload in Gamma adds it, one at a time
+(`openPdfFiles` → `addPdf` in `main.js`), through the content session:
+
+1. The window comes forward. With no server open, the last one opens, else
+   the first local server, made when there is none.
+2. `GET /api/session` gives the workspace (`openFiles.placeFor`): the one
+   the window shows (`?ws=`, else the account's default) when the account
+   can write there, else its personal one, and the bar says why. A
+   workspace others see asks first: one with other members, a public one,
+   or a clone, whose changes reach its origin. The question offers *Add to
+   <workspace>*, *Add to <personal workspace>* and *Cancel*. Signed out, or
+   with nowhere to write, a dialog says so.
+3. `POST /api/uploads` stores the file, read from disk as it goes; past
+   32 MB it goes in parts (`/api/uploads/parts`, as
+   `frontend/src/shared/lib/uploadParts.js` sends them).
+4. `POST /api/blocks/by-doc/<hash>` finds the page carrying the file or
+   makes one titled with the file's name. A file already in the library
+   opens its page, not a second one.
+5. `POST /api/import/pdf-annotations` turns the annotations another reader
+   saved in the file into Gamma's. They are stripped from the stored copy
+   unless the account set *Embedded PDF annotations* to hide them
+   (`embAnnots` in `GET /api/prefs/profile`, the one preference name the
+   shell reads). A failure here leaves the page as it is.
+6. The window loads `<origin>/?ws=<id>&page=<id>`.
+
+Under the test harness the question takes its first answer, and
+`openPdfFiles` is on the test hook.
 
 ### Background and tray
 
@@ -365,9 +456,11 @@ Electron's userData dir (`%APPDATA%/gamma-desktop` /
 the app shows the path at the
 bottom of the launcher; a Microsoft Store install gets the MSIX-virtualized
 copy under `%LOCALAPPDATA%\Packages\xwtim.GammaPDF_<hash>\LocalCache\Roaming`,
-which the Store uninstall deletes — [release.md](release.md#microsoft-store)):
+which the Store uninstall deletes — [release.md](release.md#microsoft-store);
+the launcher shows that real location, and opens it, through `lib/hostPath.js`):
 
-- `servers.json` — the registry: server list, `lastOpened`, `windowBounds`,
+- `servers.json` — the registry: server list (a local server with its
+  admin credentials and last `port`), `lastOpened`, `windowBounds`,
   and `settings` (`openLastOnLaunch`, `lastTheme`, `dataRoot`, `background`
   and `openAtLogin` (the tray, above), `folderHost` (the local server that
   keeps folders of remote servers), the dev-mode
@@ -410,8 +503,9 @@ only); `GAMMA_SHELL_NO_UPDATE=1` disables the updater.
   browser; a server's Gamma Cloud sign-in start is taken over, "Gamma Cloud
   sign-in"), the remote health probes, the `/api/session` read behind the
   workspace switcher, the clone and folder-on-this-computer flows over the
-  server's API, the tray and background mode, `--smoke` self-test, sidecar
-  cleanup on quit, the `GAMMA_SHELL_TEST` hook the e2e suite drives.
+  server's API, the tray and background mode, one app per profile and the
+  PDFs the system hands it ("Opening PDF files"), `--smoke` self-test,
+  sidecar cleanup on quit, the `GAMMA_SHELL_TEST` hook the e2e suite drives.
 - `preload.js` — exposes the `gammaShell` IPC bridge **only on `file:`
   URLs**; on server pages it exposes nothing and only reports `data-theme`
   changes.
@@ -428,7 +522,8 @@ only); `GAMMA_SHELL_NO_UPDATE=1` disables the updater.
   Both plain HTML, no build step.
 - `lib/registry.js` — `servers.json` load/save, add/rename/remove,
   last-opened, settings, window bounds, data-dir size.
-- `lib/sidecar.js` — local server lifecycle: free port, spawn, health poll
+- `lib/sidecar.js` — local server lifecycle: the port (`pickPort`, "A local
+  server's address"; `test/sidecar.test.js`), spawn, health poll
   (`/api/health`, 60 s budget for frozen cold starts), log capture,
   tree-kill on Windows. Backend resolution order: explicit settings
   (pythonPath/backendDir) → bundled frozen server (packaged app) →
@@ -445,8 +540,16 @@ only); `GAMMA_SHELL_NO_UPDATE=1` disables the updater.
   listener, the verifier and its challenge, the tab's last page, the claim
   request ("Gamma Cloud sign-in"); no Electron, unit tested by
   `test/cloudSignIn.test.js`.
+- `lib/openFiles.js` — the PDFs a command line names and the workspace a
+  file goes into ("Opening PDF files"); no Electron, unit tested by
+  `test/openFiles.test.js`.
+- `lib/hostPath.js` — a path as programs outside a Store package find it:
+  the package's private copy of AppData ("Shell state"); no Electron, unit
+  tested by `test/hostPath.test.js`.
 - `electron-builder.cjs` — the packaging config (targets, extra resources,
-  secret-gated signing, the update feed's `publish` block).
+  secret-gated signing, the update feed's `publish` block, the PDF
+  registration per target). `assets/installer.nsh` — the NSIS installer's
+  PDF registration; `assets/appx-extensions.xml` — the Store package's.
   `scripts/adhoc-sign.cjs` — its `afterPack` hook: ad-hoc signs a macOS
   build made without a certificate ([release.md](release.md)).
 - `backend_entry.py` — entry for the frozen server (`--port`, `--data-dir`;
@@ -475,7 +578,7 @@ only); `GAMMA_SHELL_NO_UPDATE=1` disables the updater.
   `GAMMA_CLOUD_DEFAULT_ISSUER` = Gamma Cloud, the account server until the
   admin saves another, `GAMMA_FOLDER_LINKS` = this server keeps folders on
   disk, anywhere the user picks, since the sidecar runs as the user), `/api/health` and
-  `/api/session` (+ the `?ws=` URL parameter). No imports from `backend/`,
+  `/api/session` (+ the `?ws=` and `?page=` URL parameters). No imports from `backend/`,
   no frontend patches. The one thing it reads off the page is the
   `data-theme` attribute (read-only, via the preload).
 - Server pages never get an IPC bridge; `gammaShell` exists only on the

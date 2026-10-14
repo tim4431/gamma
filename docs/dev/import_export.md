@@ -108,7 +108,8 @@ writes either way, replacing the embedded original
 
 The View menu's single "Import…" entry → `ImportDialog` in `transfers/ImportExport.jsx`, the
 export dialog's counterpart. Step one is a source card: annotations embedded
-in this PDF, a Logseq .pdf + .edn, a Zotero library .zip, Markdown notes (one
+in this PDF, a Logseq .pdf + .edn, a Zotero library (its export folder or a
+.zip of it), Markdown notes (one
 `.md` or a `.zip` such as a Notion export), or a Gamma export .zip. Double-click
 or Next confirms. Only sources with an option get a review step. That option is
 the strip switch, which applies to embedded annotations, including those
@@ -326,7 +327,19 @@ changed properties plus an `insert` per new note, through `apply_ops`),
 which the page's open tabs and the workspace's mirrors see like any edit.
 A re-import that changes nothing writes nothing.
 
-Choosing the ZIP opens the shared import review dialog. Its two trees show
+The Zotero step leads with "Choose folder…" (the export's folder, as
+Zotero leaves it); "or choose a .zip" sits beside it, and the step takes
+either dropped on it (`ExportDrop`: one directory entry, walked by
+`shared/lib/dropEntries.js` like the library's folder drop, or a `.zip`).
+No picker offers both at once: a browser's is a file or a folder picker
+(`webkitdirectory`, Electron's too), and so are the Windows and Linux
+dialogs. iPhone/iPad Safari has no folder picker, so there ".zip" is the
+button. A folder is packed into a ZIP in the page
+(`transfers/folderZip.js`: stored entries, one CRC pass over the files,
+progress as the "packing" phase), so the server only ever sees an archive;
+neither a pick nor a drop lists empty directories. A drop stops at the
+dialog, so the library behind never takes the folder's PDFs as uploads.
+Choosing or dropping the export opens the shared import review dialog. Its two trees show
 the archive (including empty directories and unused files) and the destination
 library (PDF/page, new/update, collection paths, notes). The active library
 folder becomes the import's destination (its id). `POST /api/import/zotero/preview` accepts
@@ -347,6 +360,19 @@ rechecks the current library, and leaves actual results and warnings in the dial
   PDF to an existing metadata-only page.
 - Warned: missing or invalid PDFs, unsupported or unlinked files, recovered
   filenames, existing PDFs kept.
+- An export taken before Zotero finished writing it (`unwritten_pdf`).
+  Zotero writes a `files/<id>/` path only for a file it has, makes the
+  folders at once and writes the files after its export window closes: the
+  RDF translator calls `saveFile` without awaiting it, and with "Include
+  Annotations" each PDF waits its turn in Zotero's PDF worker. A full
+  library zipped or picked right away therefore lacks the tail of its PDFs
+  (their folders empty), which appear on disk later; one item exported
+  alone finishes in time. A missing PDF with nothing under its folder, in an
+  archive that has the `files/` tree, says so, and one warning at the top
+  asks to wait and import again, which attaches the PDFs to the pages
+  already made. A file Zotero doesn't have locally gets no `z:path` at all,
+  and an archive of only the `.rdf` has no `files/` tree, so neither looks
+  like this.
 
 ## Zotero RDF export
 
@@ -591,16 +617,38 @@ document cites, so the export has no switches and no bundling.
   metadata lookup cached (a registrar's own BibTeX when doi.org served one,
   else `bibtex.build_entry` over `properties.meta`). A page that has a record
   but no rendering — an older page, a hand-made one — is rendered on the
-  spot. A page with no metadata at all is skipped with "page has no paper
+  spot (here, in the Markdown and Obsidian exports, in a cached
+  `/metadata/fetch` answer and in the AI `cite` tool alike).
+  A page with no metadata at all is skipped with "page has no paper
   metadata" and named in the finished export; a set where no page has any
   fails with "none of these pages has paper metadata to cite".
+- **What an entry looks like** (`bibtex.build_entry`): the entry type
+  follows the record — the registry's `work_type` when the lookup stored
+  one (`proceedings-article` → `@inproceedings` with `booktitle`,
+  `book-chapter` → `@incollection`, `dissertation` → `@phdthesis`,
+  `report` → `@techreport`, a book → `@book` with publisher and ISBN), else
+  the document kind (`thesis`, `report`, `book`), else the record's shape:
+  an arXiv id without a venue is the preprint `@article`, a venue an
+  `@article`, neither `@misc` (an `@article` without a journal is a BibTeX
+  warning). An arXiv id always adds `eprint`/`archivePrefix`, so a published
+  paper read from arXiv cites the journal and keeps the preprint. Values go
+  through `bibtex.latex_text` — registry markup as macros (`<i>` →
+  `\emph{}`, `<sub>` → `\textsubscript{}`), entities decoded, a bare `& % #`
+  escaped, one already escaped left alone — and a page range is written
+  `436--444`; identifiers (DOI, eprint, ISBN) are verbatim. A registrar's
+  own rendering gets the same treatment on the way in
+  (`bibtex.clean_entry`): Crossref prints `&amp;` and `<sub>3</sub>` as they
+  are, which breaks the LaTeX run. What the registries really return:
+  [research/registry-records.md](../research/registry-records.md).
 - **Citation keys**: generated as first author's surname + year
   (`bibtex.default_key`; it must not change, because cached entries carry
   it). Two papers by one author in one year would collide in a
   bibliography, so `bibtex.unique_keys` suffixes clashes `a`, `b`, … `z`,
-  `aa` — Better BibTeX's convention. Pinned keys are assigned first, so the
-  key a user chose is never the one that moves; two pins that collide are
-  still made distinct rather than writing a broken file.
+  `aa` — Better BibTeX's convention. Clashes are found case-insensitively
+  (classic BibTeX treats `Smith2020` and `smith2020` as one entry). Pinned
+  keys are assigned first, so the key a user chose is never the one that
+  moves; two pins that collide are still made distinct rather than writing
+  a broken file.
 - **A pinned key** is `properties.cite_key`, set in the metadata popover's
   Cite key row (empty shows the generated key as its placeholder). It lives
   *beside* `meta`, not inside it, because a refetch replaces the record and

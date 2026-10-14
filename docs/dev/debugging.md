@@ -549,7 +549,8 @@ The scenarios live in `tests/e2e/scenarios/`:
   highlight from a text selection (overlay, quote row, persisted position),
   the find bar hitting page 2, an AI citation link
   highlighting its quote on the cited page ([pdf_citations.md](pdf_citations.md)),
-  the translate button and the selection popup's translator (against a
+  the chat's coverage pills against a mocked `/api/ai/chat` (a selection's
+  page and picture, a PDF that went as text and why), the translate button and the selection popup's translator (against a
   mocked `/api/ai/translate`).
 - `transfers.mjs`: the Import and Export dialogs — format/source cards,
   the review step and its switches, direct export for fixed formats, the

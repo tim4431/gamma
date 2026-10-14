@@ -829,14 +829,15 @@ def pdf_excerpt(ws: str, doc_id: str, limit: int, offset: int = 0,
 
 
 def load_pdf_b64(ws: str, doc_id: str) -> str | None:
-    """Return a size-limited document PDF as base64."""
+    """Return a size-limited document PDF as base64: ``None`` when there is
+    no file, ``""`` when it is too large to attach."""
     path = pdf_path(ws, doc_id)
     if not path:
         return None
     data = path.read_bytes()
     if len(data) > MAX_ATTACH_PDF_BYTES:
         log.info(f"[ai_chat] PDF too large to attach ({len(data)} bytes), falling back to text")
-        return None
+        return ""
     return base64.standard_b64encode(data).decode("ascii")
 
 
@@ -1495,8 +1496,10 @@ def gather_inputs(ws: str, payload, allow_native: bool,
     ``coverage`` is the report the chat streams back as its first
     `{"context": [...]}` line — one entry per page: ``{"title", "page_id",
     "doc_id" ("" for a page without a PDF), "native" (the file itself went),
-    "native_requested" (the user asked for that; requested but not native =
-    the provider refused it and text went instead), "partial", "chars",
+    "native_requested" (the user asked for that and the page has a PDF;
+    requested but not native = text went instead: the provider refused the
+    file, or, with "native_skipped", it never went — "too_large" for this
+    message, or "missing"), "partial", "chars",
     "pages", "pages_shown", "notes" (the page's notes are in the context)}``
     — so the UI can say "the model saw pages 1–9 of 22" instead of leaving
     the user to guess, and the agent prompt and read_page can name the pages
@@ -1520,9 +1523,12 @@ def gather_inputs(ws: str, payload, allow_native: bool,
     attach = payload.attach_pdf and allow_native
     none = {"partial": False, "chars": 0, "pages": 0, "pages_shown": 0}
 
-    def report(title, page_id, doc_id, native, cover=None, notes=False):
+    def report(title, page_id, doc_id, native, cover=None, notes=False, skipped=""):
+        # Only a page with a PDF has a file to ask for: a notes-only page
+        # always goes as text, and says nothing about the PDF switch.
         coverage.append({"title": title, "page_id": page_id, "doc_id": doc_id, "native": native,
-                         "native_requested": bool(payload.attach_pdf), "notes": notes,
+                         "native_requested": bool(payload.attach_pdf and doc_id), "notes": notes,
+                         **({"native_skipped": skipped} if skipped else {}),
                          **(cover or none)})
 
     page_ids = list(payload.pages or [])
@@ -1554,6 +1560,7 @@ def gather_inputs(ws: str, payload, allow_native: bool,
             doc_id = attachment["id"] if attachment else ""
             document_text = ""
             attached = False
+            skipped = ""
             cover = dict(none)
             if doc_id and attach:
                 data = load_pdf_b64(ws, doc_id)
@@ -1561,6 +1568,10 @@ def gather_inputs(ws: str, payload, allow_native: bool,
                     document_pdfs.append(data)
                     total_b64 += len(data)
                     attached = True
+                else:
+                    # The provider never saw the file: too large, alone or
+                    # with this message's other papers, or none to send.
+                    skipped = "missing" if data is None else "too_large"
             if doc_id:
                 # Index the paper (background) so the map and search_library
                 # exist for the next turn — the first chat on a fresh paper
@@ -1596,7 +1607,7 @@ def gather_inputs(ws: str, payload, allow_native: bool,
                         message_sections.append(
                             f'Text around the selected passage{"s" if len(passages) > 1 else ""} of '
                             f'"{title}" (Gamma page ID: {page_id}):\n{windows}')
-                report(title, page_id, doc_id, False, {**cover, **selected}, notes=with_notes)
+                report(title, page_id, doc_id, False, {**cover, **selected}, notes=with_notes, skipped=skipped)
             shown: dict = {}
             section = page_report_section(connection, ws, page_id, 0,
                                           document_text=document_text or "",

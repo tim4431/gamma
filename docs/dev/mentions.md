@@ -2,7 +2,8 @@
 
 Typing `@` in a note opens a menu with three sections, as in Notion:
 
-- **Date**: Today, and "Remind me", tomorrow at 9 by default.
+- **Date**: Today, and "Remind me" (or "Remind @bob"), tomorrow at 9 by
+  default.
 - **People**: the workspace's members (you first, marked "(You)"), then
   Invite….
 - **Link to page**: pages by title, each with its folder path.
@@ -71,8 +72,11 @@ surface, rows and footer, with a person's `PeerAvatar` in the icon column.
 
   A time alone is today. As a reminder, it is tomorrow once that time has
   passed, and a moment already gone reminds no one. A query starting with
-  `remind` (`remind me fri 4pm`) offers only the reminder. A date more
-  than a day away shows its weekday beside it.
+  `remind` (`remind me fri 4pm`) offers only the reminder. `remind @bo
+  fri` offers one for each member the name starts (`remindTargets`), and
+  `remind bob fri` for the member it names in full; any other word after
+  `remind` is read as the date, for you. A date more than a day away shows
+  its weekday beside it.
 - **People.** The workspace's members are matched by the start of the
   username, then the start of one of its parts (`k` finds `bob.k`), then the
   `/` menu's fuzzy match (`fuzzyIndices`). Invite… follows when the editor
@@ -183,8 +187,6 @@ reminder. `POST /api/reminders/done {keys, done}` writes the pref
   server sends no e-mail or push.
 - Being mentioned notifies no one: there is no inbox. The notes index could
   find a person's mentions the same way it finds their reminders.
-- The menu only offers "Remind me". A reminder for someone else is typed by
-  hand (`(remind @bob)`).
 
 ## Tests
 

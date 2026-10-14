@@ -43,7 +43,7 @@ from ..logbuf import log
 from ..pdf_index import doc_chars
 from ..pdf_text import PDF_EXTRACT_FAILED
 from ..pdf_text import page_count as _page_count
-from ..textnorm import INDEX_VERSION, normalize_text
+from ..textnorm import INDEX_VERSION, normalize_text, plain_text
 from .ai import CITE_PROMPT, METADATA_PROMPT, _resolve_model
 from .pdf import ARXIV_ID, CONTACT_EMAIL
 
@@ -123,9 +123,17 @@ def _norm_match(s: str) -> str:
 def _title_in_text(title: str, text: str) -> bool:
     """Does this (registry) title literally appear in the PDF's text head?
     The strongest evidence a looked-up record describes *this* paper. Short
-    titles are too generic to count."""
+    titles are too generic to count. A title with a subtitle ("Planck 2018
+    results: VI. Cosmological parameters") also counts when both parts
+    appear — the PDF sets them on separate lines, often with other text
+    between."""
+    head = _norm_match((text or "")[:SCAN_CHARS])
     t = _norm_match(title)
-    return len(t) >= 15 and t in _norm_match((text or "")[:SCAN_CHARS])
+    if len(t) >= 15 and t in head:
+        return True
+    main, _, sub = (title or "").partition(": ")
+    main, sub = _norm_match(main), _norm_match(sub)
+    return bool(sub) and len(main) >= 15 and main in head and sub in head
 
 
 def _years_compatible(a, b) -> bool:
@@ -452,10 +460,46 @@ def _arxiv_search(query: str, rows: int = 5, detail: bool = False) -> list[dict]
     return _arxiv_query(" AND ".join(f"all:{w}" for w in longest), rows, detail)
 
 
+def _csl_authors(entries) -> list[str]:
+    """Author names from a CSL JSON author list: "given family", or the name
+    an organisation goes by (Crossref's ``name``, CSL's ``literal`` — the
+    Planck Collaboration is such a first author), blanks dropped."""
+    out = []
+    for a in entries or []:
+        if not isinstance(a, dict):
+            continue
+        name = (" ".join(filter(None, [a.get("given"), a.get("family")])).strip()
+                or str(a.get("literal") or a.get("name") or ""))
+        name = plain_text(name)
+        if name:
+            out.append(name)
+    return out
+
+
+def _csl_year(obj: dict) -> str:
+    """The year of a CSL ``issued`` date, "" when the registry has none."""
+    parts = (obj.get("issued") or {}).get("date-parts") or []
+    first = parts[0] if parts and isinstance(parts[0], list) else []
+    return str(first[0]) if first and first[0] else ""
+
+
+def _csl_text(value) -> str:
+    """A CSL title/container-title (a string, or a one-element list in the
+    REST API) as plain text — Crossref keeps the publisher's markup and
+    entities (``<i>``, ``<sub>``, ``&amp;``), which neither the UI nor the
+    text match wants."""
+    if isinstance(value, list):
+        value = value[0] if value else ""
+    return plain_text(value)
+
+
 def _fetch_doi(doi: str, with_bibtex: bool = True) -> tuple[dict | None, str]:
     """Metadata via doi.org content negotiation (works for Crossref and DataCite),
     plus the registrar's own BibTeX rendering (a second round trip — skipped
-    by callers that only want the record, e.g. the extension's preview)."""
+    by callers that only want the record, e.g. the extension's preview). The
+    record also carries the registry's ``work_type`` (the CSL/Crossref type:
+    ``journal-article``, ``proceedings-article``, ``book-chapter``, …),
+    which decides the BibTeX entry type a built entry gets."""
     url = f"https://doi.org/{urllib.parse.quote(doi)}"
     try:
         data = json.loads(_http_get(url, accept="application/vnd.citationstyles.csl+json"))
@@ -469,38 +513,71 @@ def _fetch_doi(doi: str, with_bibtex: bool = True) -> tuple[dict | None, str]:
         else:
             log.warning(f"[metadata] doi lookup failed: {e}")
         return None, ""
-    title = data.get("title") or ""
-    if isinstance(title, list):
-        title = title[0] if title else ""
+    title = _csl_text(data.get("title"))
     if not title:
         return None, ""
-    date_parts = ((data.get("issued") or {}).get("date-parts") or [[None]])[0]
+    # Crossref keeps a subtitle apart ("Planck 2018 results" / "VI.
+    # Cosmological parameters"); the citation needs both.
+    subtitle = _csl_text(data.get("subtitle"))
+    if subtitle and subtitle.lower() not in title.lower():
+        title = f"{title}: {subtitle}"
+    work_type = str(data.get("type") or "").strip()
     meta = {
-        "title": re.sub(r"\s+", " ", str(title)).strip(),
-        "authors": [
-            " ".join(filter(None, [a.get("given"), a.get("family")])).strip()
-            for a in (data.get("author") or [])
-        ],
-        "year": str(date_parts[0] or ""),
-        "venue": str(data.get("container-title") or ""),
+        "title": title,
+        "authors": _csl_authors(data.get("author")),
+        "year": _csl_year(data),
+        "venue": _csl_text(data.get("container-title")),
         "volume": str(data.get("volume") or ""),
         "pages": str(data.get("page") or ""),
         "doi": doi,
         "arxiv_id": "",
         "source": "doi",
     }
-    if str(data.get("type") or "") in ("book", "monograph"):
+    if work_type:
+        meta["work_type"] = work_type
+    if work_type in ("book", "monograph"):
         # A DOI-registered book: keep it a book so BibTeX says @book.
         isbns = data.get("ISBN") or []
-        meta.update({"kind": "book", "publisher": str(data.get("publisher") or ""),
+        meta.update({"kind": "book", "publisher": plain_text(data.get("publisher")),
                      "isbn": str(isbns[0] if isinstance(isbns, list) and isbns else "")})
+    elif work_type in ("proceedings-article", "book-chapter", "dissertation", "report") and data.get("publisher"):
+        # The entry types built from these carry the publisher/institution.
+        meta["publisher"] = plain_text(data.get("publisher"))
     bibtex = ""
     if with_bibtex:
         try:
             bibtex = _http_get(url, accept="application/x-bibtex").decode("utf-8", "replace").strip()
         except Exception:
             pass
-    return meta, bibtex
+    # Crossref prints its markup and entities into the BibTeX as they are
+    # ("Astronomy &amp; Astrophysics", "CsPbCl<sub>3</sub>"); as LaTeX they
+    # typeset, as printed they break the run.
+    return meta, bibtex_mod.clean_entry(bibtex)
+
+
+def _published_record(meta: dict) -> tuple[dict, str]:
+    """An arXiv record as a bibliography should cite it. When arXiv names the
+    DOI of the published version, the registrar's record (venue, volume,
+    pages, its own BibTeX) replaces the preprint's: arXiv's ``journal_ref``
+    is one free-text line ("Phys. Rev. Lett. 116, 061102 (2016)") that
+    would otherwise be typeset as the journal's name. The arXiv id stays on
+    the record, so the entry keeps its ``eprint`` and the popover its arXiv
+    row. Taken only when the registrar's title is the preprint's (authors
+    do mistype the DOI), never for arXiv's own DataCite DOIs, and the
+    preprint record stands when doi.org has nothing."""
+    doi = str(meta.get("doi") or "").strip()
+    if not doi or doi.lower().startswith("10.48550/"):
+        return meta, ""
+    better, bib = _fetch_doi(doi)
+    if not better:
+        return meta, ""
+    # The registrar's title may carry a subtitle the preprint's does not.
+    mine = _norm_match(meta.get("title", ""))
+    theirs = [_norm_match(t) for t in (better.get("title", ""), better.get("title", "").partition(": ")[0])]
+    if not mine or max(SequenceMatcher(None, mine, t).ratio() for t in theirs) < 0.9:
+        log.info(f"[metadata] arXiv {meta.get('arxiv_id')} names DOI {doi} of a different title; keeping the preprint record")
+        return meta, ""
+    return {**better, "arxiv_id": meta.get("arxiv_id", "")}, bib
 
 
 def _crossref_search(query: str, rows: int = 5, detail: bool = False, from_year: int = 0,
@@ -513,7 +590,7 @@ def _crossref_search(query: str, rows: int = 5, detail: bool = False, from_year:
     (a Crossref type such as ``journal-article``) keeps that kind only."""
     if not (query or "").strip():
         return []
-    fields = "DOI,title,author,container-title,volume,page,issued" + (
+    fields = "DOI,type,title,author,container-title,volume,page,issued" + (
         ",abstract,is-referenced-by-count" if detail else "")
     narrow = ([f"from-pub-date:{int(from_year)}"] if from_year else []) + (
         [f"type:{work_type}"] if work_type else [])
@@ -529,24 +606,22 @@ def _crossref_search(query: str, rows: int = 5, detail: bool = False, from_year:
         return []
     out = []
     for it in items:
-        title = (it.get("title") or [""])[0]
+        title = _csl_text(it.get("title"))
         if not title:
             continue
-        date_parts = ((it.get("issued") or {}).get("date-parts") or [[None]])[0]
         out.append({
-            "title": re.sub(r"\s+", " ", str(title)).strip(),
-            "authors": [
-                " ".join(filter(None, [a.get("given"), a.get("family")])).strip()
-                for a in (it.get("author") or [])
-            ],
-            "year": str(date_parts[0] or ""),
-            "venue": str((it.get("container-title") or [""])[0] or ""),
+            "title": title,
+            "authors": _csl_authors(it.get("author")),
+            "year": _csl_year(it),
+            "venue": _csl_text(it.get("container-title")),
             "volume": str(it.get("volume") or ""),
             "pages": str(it.get("page") or ""),
             "doi": str(it.get("DOI") or ""),
             "arxiv_id": "",
             "source": "crossref",
         })
+        if it.get("type"):
+            out[-1]["work_type"] = str(it["type"])
         if detail:
             out[-1].update(abstract=plain_abstract(it.get("abstract")),
                            cited_by=it.get("is-referenced-by-count"))
@@ -584,7 +659,7 @@ def _verify_ai_meta(meta: dict, text: str, hints: str = "") -> tuple[dict, str]:
     if meta.get("arxiv_id"):
         better = _fetch_arxiv(meta["arxiv_id"])
         if better:
-            return better, ""
+            return _published_record(better)
         if meta["arxiv_id"].lower() not in hay:
             log.info(f"[metadata] dropping unresolvable AI arXiv id {meta['arxiv_id']!r}")
             meta["arxiv_id"] = ""
@@ -820,7 +895,7 @@ def fetch_page_metadata(ws: str, block_id: str, actor: str, prompt: str = "", mo
     nothing was found (after negative-caching it)."""
     content, props = _load_page(ws, block_id)
     if props.get("meta") and not force:
-        return {"meta": props["meta"], "bibtex": props.get("bibtex", ""),
+        return {"meta": props["meta"], "bibtex": bibtex_mod.page_entry(props),
                 "ppt_cite": props.get("ppt_cite", ""), "cite_key": props.get("cite_key", ""),
                 "source": props["meta"].get("source", ""), "cached": True,
                 "title_updated": False, "page_title": content}
@@ -866,6 +941,9 @@ def fetch_page_metadata(ws: str, block_id: str, actor: str, prompt: str = "", mo
     if aid:
         meta = _fetch_arxiv(aid)
         confirmed = bool(meta) and (bool(trusted_arxiv) or _title_in_text(meta["title"], text))
+        if meta:
+            # Published since: cite the journal's record, keep the arXiv id.
+            meta, bibtex = _published_record(meta)
 
     if not confirmed:
         # The first DOI in the text can belong to a *cited* paper (footnotes
@@ -1016,6 +1094,11 @@ def metadata_update(payload: MetaUpdateRequest, request: Request):
     kind = (props.get("meta") or {}).get("kind")
     if kind in _DOC_KINDS:
         meta["kind"] = kind
+    # So does the registry's work type: a conference paper stays an
+    # @inproceedings after its title is corrected.
+    work_type = str((props.get("meta") or {}).get("work_type") or "").strip()
+    if work_type:
+        meta["work_type"] = work_type
     # ppt_cite is stale (the metadata changed); meta_error is settled (or
     # reset) by the hand-edit either way
     stale = ("ppt_cite", "meta_error")
