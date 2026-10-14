@@ -41,7 +41,8 @@ its own: its zip rides on the same release with the same version.
    (`gh run view <id> --json jobs --jq '.jobs[] | select(.name=="meta")'`).
    Report the link and version. Do not wait for the desktop build
    (~20 min) unless asked; `gh run watch <id> --exit-status` if so. The
-   desktop publish job re-dispatches `docker.yml` with the version, so the
+   desktop publish job re-dispatches `docker.yml` with the version (a
+   release from `main` only: `docker.yml` releases nothing else), so the
    image gets a matching `:<version>` tag on its own, and uploads the
    Gamma Connector zip and the assistant plugin assets (the Codex and
    Claude Code zips, the dsh tarball, setup scripts and checksums) onto the

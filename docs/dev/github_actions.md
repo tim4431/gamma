@@ -146,9 +146,11 @@ the commit subjects since the previous tag, restricted to
 `desktop/ backend/ frontend/ extension/`** (this repo's PR
 titles are all "Merge pull request #N from dev", so GitHub's generator
 would say nothing) — creates the release + tag with `make_latest: true`,
-then runs `gh workflow run docker.yml --ref v<version> -f version=…` so the
-server image gets the same version tag (a tag made with `GITHUB_TOKEN`
-would not trigger `docker.yml` by itself). `docker.yml` also bakes the
+then, for a release made from `main`, runs
+`gh workflow run docker.yml --ref v<version> -f version=…` so the server
+image gets the same version tag (a tag made with `GITHUB_TOKEN` would not
+trigger `docker.yml` by itself). A pre-release from a branch gets no server
+image. `docker.yml` also bakes the
 build stamp into the image as build args (`GAMMA_VERSION` = the dispatched
 version, or `<newest v* tag>-dev.<commits since it>` for any other build,
 with `GAMMA_BRANCH` = the branch it was built from; `GAMMA_COMMIT` = the
@@ -235,9 +237,12 @@ Dispatched on a branch without a version
 (`gh workflow run docker.yml --ref <branch>`) it pushes only
 `sha-<short>`: `latest` is enabled on the default branch alone
 (`{{is_default_branch}}`) and the semver tags only with a version: a way to
-try a branch's image without moving what the NAS pulls. Never pass
-`-f version` for such a build: that adds the release tags, and the semver
-rule adds `latest` with them.
+try a branch's image without moving what the NAS and the demo pull. A run
+with `-f version` is a release (`<version>`, `<major.minor>` and, through
+the semver rules, `latest`), so only `main`'s code gets one: its first step
+fails unless the commit is already on `main`. The account server's and the
+fleet agent's images (`cloud.yml`, `fleet.yml`) are separate and still
+publish from any branch.
 
 The public demo runs `main`'s `:latest`, like the NAS: a Watchtower in each
 compose project polls GHCR every hour (the example's six, shortened) and
