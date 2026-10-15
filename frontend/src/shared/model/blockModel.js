@@ -15,9 +15,7 @@
 // is a `view` kept beside the tree ({editingId, folds}, EMPTY_VIEW below),
 // never a flag on a node, so revealing a block or opening an editor can't
 // be mistaken for an edit, and an edit can't be mistaken for a load.
-import { COLORS } from "./highlightColors.js";
-
-const DEFAULT_COLOR = COLORS[0];
+import { DEFAULT_HIGHLIGHT, normalizeColor } from "./palette.js";
 
 // 9 random bytes, base64url — same shape and strength as the backend's
 // secrets.token_urlsafe(9) (12 chars, 72 bits; the old Math.random base36
@@ -42,8 +40,10 @@ export function isHighlightBlock(b) {
   return Boolean(p && isObject(p.pdf_position) && p.ink_url === undefined && !isObject(p.text_box) && !isObject(p.sheet));
 }
 
+// A highlight's colour as stored (#rrggbbaa, palette.js), the default for
+// a block without a readable one. An older rgba(…) string reads too.
 export function blockColor(b) {
-  return (b?.properties?.color) || DEFAULT_COLOR;
+  return normalizeColor(b?.properties?.color) || DEFAULT_HIGHLIGHT;
 }
 
 // The PDF page a block is placed on: its position's (a highlight, a link
@@ -341,7 +341,7 @@ export function addHighlightAsBlock(blocks, highlight) {
     children: [],
     content: highlight.comment?.text || "",
     properties: {
-      color: highlight.color || DEFAULT_COLOR,
+      color: normalizeColor(highlight.color) || DEFAULT_HIGHLIGHT,
       quote: highlight.content?.text || "",
       pdf_position: highlight.position,
     },

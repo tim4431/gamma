@@ -5,6 +5,7 @@ import random
 import re
 import string
 
+from .colors import logseq_color
 from .highlights import from_scaled
 
 
@@ -115,21 +116,11 @@ def make_block_id():
     return ''.join(random.choices(string.ascii_lowercase + string.digits, k=8))
 
 
-# Logseq named colors → app rgba colors (closest match)
-_LOGSEQ_COLORS = {
-    'yellow': 'rgba(255, 226, 143, 0.65)',
-    'orange': 'rgba(255, 226, 143, 0.65)',
-    'red':    'rgba(255, 226, 143, 0.65)',
-    'green':  'rgba(170, 235, 170, 0.65)',
-    'blue':   'rgba(155, 205, 255, 0.65)',
-    'purple': 'rgba(230, 180, 255, 0.65)',
-    'pink':   'rgba(230, 180, 255, 0.65)',
-}
-
-
 def map_color(c):
-    """Map a Logseq color name to the app's closest rgba color."""
-    return _LOGSEQ_COLORS.get(str(c).lower().strip(), 'rgba(255, 226, 143, 0.65)')
+    """A Logseq colour name → the highlight colour the import stores
+    (gamma/colors.py logseq_color: the wash swatch of that name at the
+    highlight alpha, yellow for an unknown name)."""
+    return logseq_color(c)
 
 
 def parse_logseq_md(text):

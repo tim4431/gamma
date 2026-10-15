@@ -64,7 +64,7 @@ def test_annotate_roundtrips_through_import_extractor():
     assert abs(br["x1"] - 100) < 0.01 and abs(br["y1"] - 72) < 0.01
     assert abs(br["x2"] - 300) < 0.01 and abs(br["y2"] - 92) < 0.01
     # /CA round-trips too: re-import gives back the exact exported shade.
-    assert a["color"] == "rgba(170, 235, 170, 0.65)"
+    assert a["color"] == "#aaebaaa6"  # the same shade, in the stored spelling (gamma/colors.py)
 
 
 def _pdf_with_dangling_reference():
@@ -189,7 +189,7 @@ def test_annotate_area_as_square():
     a = found[0]
     assert a["position"]["area"] is True
     assert a["content"] == "figure note"
-    assert a["color"] == "rgba(155, 205, 255, 0.65)"
+    assert a["color"] == "#9bcdffa6"
     br = a["position"]["boundingRect"]
     assert abs(br["x1"] - 100) < 0.01 and abs(br["y1"] - 72) < 0.01
     assert abs(br["x2"] - 300) < 0.01 and abs(br["y2"] - 92) < 0.01
@@ -303,7 +303,7 @@ def test_import_annotations_strip_rewrites_pdf(guest):
     assert len(hl) == 2
     assert all(b["properties"].get("annot_stripped") for b in hl)
     colors = {b["properties"]["color"] for b in hl}
-    assert colors == {"rgba(170, 235, 170, 0.65)", "rgba(155, 205, 255, 0.65)"}
+    assert colors == {"#aaebaaa6", "#9bcdffa6"}
     areas = [b for b in hl if b["properties"]["pdf_position"].get("area")]
     assert len(areas) == 1 and areas[0]["content"] == "figure"
 

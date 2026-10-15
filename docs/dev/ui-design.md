@@ -151,9 +151,11 @@ Two node tests hold the tokens in place. Each may only get better.
 
 A value that is raw on purpose says why in a comment the scanner reads:
 `/* ds-allow: why */` on its line, or `ds-allow-start: why` …
-`ds-allow-end` around a block. Examples: the syntax and highlight palettes,
-the collaborator colours, the transfer illustration, a transition that
-follows the pointer.
+`ds-allow-end` around a block. Examples: the syntax palette, the
+collaborator colours, the transfer illustration, the custom-colour
+swatch's rainbow, a transition that follows the pointer. (The highlight and
+ink colours are not in a stylesheet at all: they come from the account's
+palette, `shared/model/palette.js`, as inline values.)
 
 ### The desktop shell and the extension
 
@@ -764,7 +766,7 @@ the ordinary row editor. The card footer navigates to the source.
 | `shared/lib/viewerZoom.js`, `shared/model/zoom.js` | the Ctrl+wheel and two-finger pinch/pan gestures both zooming viewers read, and the zoom limits every entry point clamps to (above) |
 | `shared/lib/stableActions.js`, `shared/lib/keepIfSame.js` | what a memoized row or page relies on: one stable wrapper per handler name calling the latest handler (`useStableActions` for the page tools, `makeStableActions` for the outliner's `rowProps`), and a derived map or object kept by identity while it reads the same (`keepIfSame` with `sameMap` / `sameObject`) ([frontend-refactor.md](frontend-refactor.md)) |
 | `chat/ChatDock.jsx` | the AI chat panel (incl. agent wiring); header = a `.ctlBtnRow` of `.ctlBtn` icon buttons (the PDF zoom column's buttons laid flat) with the ⚙ settings popover |
-| `pdf/PdfViewer.jsx` | the custom pdf.js viewer. A highlight's colour rides in `--hl`; a palette colour is also tagged with its `COLORS` index (`paletteIndex` in `shared/model/highlightColors.js`, `data-hl-color`), so on a dark page — Flip page colors or Gamma Dark — app.css draws a dark-tuned set with normal blending in place of the screened pastels, while colours from other apps keep the screen blend. A jump to a highlight (its note's dot, a deep link, a search hit) pulses it once in its own hue: App's `triggerFlash` → `flashHighlightId` → `.pdfHlFlash` on its rects, a still ring under reduced motion |
+| `pdf/PdfViewer.jsx` | the custom pdf.js viewer. A highlight's colour (`#rrggbbaa`, `shared/model/palette.js`) rides in `--hl` beside the dark-page variant the viewer derives for it (`darkPageColor`: the same hue, saturated, at a middle lightness, mostly transparent; `--hl-dark`, and `--hl-dark-line` for an area outline), so on a dark page — Flip page colors or Gamma Dark — app.css draws that with normal blending in place of the screened pastel, whatever app the colour came from. The selection popup's swatches are the account's wash palette (`usePalette`, `shared/ui/paletteContext.js`). A jump to a highlight (its note's dot, a deep link, a search hit) pulses it once in its own hue: App's `triggerFlash` → `flashHighlightId` → `.pdfHlFlash` on its rects, a still ring under reduced motion |
 | `ink/ink.js`, `ink/inkStore.js`, `ink/inkInput.js`, `ink/InkLayer.jsx` | handwriting ([handwriting.md](handwriting.md)): the stroke codec + geometry (pure), the files/drafts store, pointer sampling, and the page layer + selection menu (`.inkEditMenu`, placed by `useSelectionMenuAnchor`) + notes card + `ColorChoices`, the swatches and custom colour that a pen preset's row and a text box's style share |
 | `markup/MarkupToolbar.jsx`, `markup/MarkupLayers.jsx`, `markup/PageTools.jsx` | the tool strip (`.pdfInkBar`: `ctlBtn`s and `colorBtn` swatches; the Text tool's `TypeIcon`), the one mount of a page surface's layers (text boxes, then ink), and the tools context they read, with `armedClasses` for a surface's armed-tool classes ([handwriting.md](handwriting.md)) |
 | `markup/TextBoxLayer.jsx`, `markup/useTextBoxes.js`, `markup/textBox.js`, `markup/markup.css` | text boxes ([text_boxes.md](text_boxes.md)): the boxes of a page (frame, width handle and band in screen pixels over a box sized in the page's points), the box menu (the handwriting menu's `inkEditMenu` rows: `TextSizeIcon`, `PaletteIcon`, `PaintBucketIcon`, then Duplicate, Show note, Delete), and `TextStyleChoices`, the size numbers, the pen palette through `ColorChoices`, and the four backgrounds ("none" a struck-out swatch, `.textNoBackground`) that the menu and the strip's Text row share; the notes row's `TypeIcon` marker (`.textBoxMarker`) |

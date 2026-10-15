@@ -782,6 +782,20 @@ export async function settingsScenarios(env) {
       assert(await page.locator(".appearancePdfPreview.isDark").isVisible());
       await page.getByRole("checkbox", { name: "Dark PDF pages", exact: true }).uncheck();
       await until(() => user.api("/api/prefs/profile").then((v) => v.value?.pdfDarkPage === false));
+      // Colors: a swatch is a native colour picker; a change syncs as the palette, Reset puts the defaults back
+      const swatches = row(page, "Highlights").locator(".paletteSwatch");
+      assertEq(await swatches.count(), 8);
+      assertEq(await row(page, "Pens").locator(".paletteSwatch").count(), 14);
+      const reset = page.getByRole("button", { name: "Reset colors", exact: true });
+      assert(await reset.isDisabled(), "nothing to reset at the defaults");
+      await swatches.first().locator("input").fill("#ff8800");
+      await until(() => user.api("/api/prefs/profile").then((v) => v.value?.palette?.wash?.[0] === "#ff8800"));
+      assertEq(await swatches.first().evaluate((el) => getComputedStyle(el).backgroundColor), "rgb(255, 136, 0)");
+      assertEq(await swatches.first().getAttribute("title"), "Amber", "named after the nearest colour");
+      assertEq((await user.api("/api/prefs/profile")).value.palette.wash[1], "#aaebaa", "the other slots stay");
+      await reset.click();
+      await until(() => user.api("/api/prefs/profile").then((v) => v.value?.palette?.wash?.[0] === "#ffe28f"));
+      assert(await reset.isDisabled());
       await row(page, "Interface size").getByRole("button", { name: "Larger", exact: true }).click();
       assert((await row(page, "Interface size").innerText()).includes("110%"));
       await row(page, "Interface size").getByRole("button", { name: "Reset", exact: true }).click();

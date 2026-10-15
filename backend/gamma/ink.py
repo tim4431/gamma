@@ -29,6 +29,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
+from .colors import parse_color as _parse_color
 from .highlights import position
 
 FORMAT = "gamma-ink"
@@ -237,15 +238,9 @@ def pdf_position(ink: InkFile) -> dict | None:
 
 
 def parse_color(value: str) -> tuple[float, float, float, float]:
-    """``#rrggbb`` or ``rgb[a](…)`` → (r, g, b, a) in 0..1."""
-    v = (value or "").strip()
-    if v.startswith("#") and len(v) == 7:
-        return tuple(int(v[i:i + 2], 16) / 255 for i in (1, 3, 5)) + (1.0,)
-    m = re.match(r"rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*(?:,\s*([0-9.]+)\s*)?\)", v)
-    if m:
-        r, g, b = (min(int(c), 255) / 255 for c in m.groups()[:3])
-        return (r, g, b, min(float(m.group(4)), 1.0) if m.group(4) else 1.0)
-    return (0.12, 0.12, 0.12, 1.0)
+    """``#rrggbb`` or ``rgb[a](…)`` (any form gamma/colors.py reads) → (r, g,
+    b, a) in 0..1; near-black for anything else."""
+    return _parse_color(value) or (0.12, 0.12, 0.12, 1.0)
 
 
 # --- renderers ------------------------------------------------------------------

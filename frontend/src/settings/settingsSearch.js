@@ -19,6 +19,8 @@ const entries = [
   e("appearance", t("Theme"), null, t("System, light, dark and five more"), "dark light gamma amber gold sepia solarized gray system colors"),
   e("translation", t("Language"), t("Language"), t("Interface text only."), "interface text locale english chinese 中文 语言"),
   e("appearance", t("Dark PDF pages"), t("PDF pages"), t("Light text on a dark page; figures invert too."), "flip invert page colors"),
+  e("appearance", t("Highlights"), t("Colors"), t("Text highlights and highlighter strokes. Click a swatch to change it."), "palette swatches highlight colours highlighter yellow"),
+  e("appearance", t("Pens"), t("Colors"), t("Pens and text boxes. Existing highlights and strokes keep their colours."), "palette swatches pen ink colours handwriting text box"),
   e("appearance", t("Interface size"), t("Interface"), t("Text, buttons, icons and switches."), "zoom text buttons controls scale touch"),
   e("appearance", t("Status bar"), t("Interface"), t("Show the latest activity below your tabs."), "notifications messages"),
   e("appearance", t("Recents thumbnails"), t("Library"), t("Preview the page you last read."), "snapshots library home display cards"),

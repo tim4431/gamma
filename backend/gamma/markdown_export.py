@@ -20,16 +20,6 @@ from .note_markup import obsidian_image_sizes
 from .notebook import is_sheet
 from .text_box import box_page
 
-# rgba → Logseq colour name, the inverse of logseq_import._LOGSEQ_COLORS (using
-# the canonical name for each distinct rgba we emit). Used by the Logseq graph
-# export.
-_RGBA_TO_NAME = {
-    "rgba(255, 226, 143, 0.65)": "yellow",
-    "rgba(170, 235, 170, 0.65)": "green",
-    "rgba(155, 205, 255, 0.65)": "blue",
-    "rgba(230, 180, 255, 0.65)": "purple",
-}
-
 # /api/uploads/<hexsha>.<ext> — content-addressed, so the filename is a stable key.
 # Narrower than storage.UPLOAD_REF_RE on purpose: only hex stems (what the
 # server writes) are rewritten into an export or opened as an ink/image file,
