@@ -45,6 +45,7 @@ import {
   HomeIcon,
   ListIcon,
   MessageSquareIcon,
+  MicIcon,
   MoveVerticalIcon,
   OutlineIcon,
   PaperIcon,
@@ -180,6 +181,25 @@ function ViewerSettings({ value }) {
           title={t("Use the stylus pressure for stroke width, like ink on paper. Off gives even strokes. Mouse and finger strokes are always even.")}
           checked={value.inkPressure}
           onChange={value.setInkPressure}
+        />
+      </Section>
+      <Section title={t("Recordings")} scope="account" prefs={SECTION_PREFS.reading["Recordings"]}>
+        <Row
+          icon={MicIcon}
+          label={t("Lead-in")}
+          hint={t("How far before a written moment a tap plays from")}
+          title={t("Tapping handwriting or a note while a recording plays starts the audio a few seconds before the moment it was written, so the words that led up to it are heard too. The player's writing skips and a bookmark use the same lead-in.")}
+        >
+          <Stepper value={value.replayLeadIn} onChange={value.setReplayLeadIn} min={0} max={15} step={1}
+            format={(v) => tn("{n} second", "{n} seconds", v)} />
+        </Row>
+        <Toggle
+          icon={SparklesIcon}
+          label={t("Transcribe recordings")}
+          hint={t("Write the spoken words under a recording when it ends")}
+          title={t("When a recording stops, a background job writes its transcript under the recording block, one paragraph per stretch of speech, each linked to its moment; it uses the OpenAI-protocol connection dictation uses. A recording can also be transcribed from its menu.")}
+          checked={value.recordingTranscribe}
+          onChange={value.setRecordingTranscribe}
         />
       </Section>
     </>

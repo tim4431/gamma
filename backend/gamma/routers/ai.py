@@ -81,6 +81,7 @@ from ..ai_settings import (
     resolve_model as _resolve_model,
     server_entries_for,
     shared_allowance,
+    transcriber_for,
     update_entry,
     update_provider_entries,
 )
@@ -1363,23 +1364,7 @@ def ai_transcribe(request: Request, file: UploadFile = File(...),
     provider when that entry speaks the OpenAI protocol. `model` and
     `language` (ISO-639-1, "" = auto-detect) come from Settings → AI chat."""
     user_id = require_user_id(request)
-    # Needs an OpenAI credential, not chat models: an entry with none picked
-    # still transcribes.
-    rt = ai_runtime(user_id)
-    # The entry that surely transcribes (Protocol.transcription: OpenAI
-    # itself) before one that may (a compatible server), the chat's own entry
-    # first within each.
-    # (A shared entry's ids have a colon of their own: "server:<id>:<model>".)
-    hinted = rt["providers"].get(next((m["provider"] for m in rt["models"] if m["id"] == model_hint),
-                                      (model_hint or "").split(":", 1)[0]))
-    candidates = [(ai_protocols.of(c).transcription(c), c)
-                  for c in ([hinted] if hinted else []) + list(rt["providers"].values())]
-    best = max((rank for rank, _ in candidates), default=0)
-    conf = next((c for rank, c in candidates if rank == best), None) if best else None
-    if not conf:
-        raise HTTPException(status_code=503,
-                            detail="Voice input needs an OpenAI API key (Settings → AI → Connections) — "
-                                   "Anthropic and ChatGPT sign-in connections don't offer transcription.")
+    proto, conf = transcriber_for(user_id, model_hint)
     # Transcription is billed on the entry's key but reports no tokens: it is
     # not metered, only refused once a shared entry's allowance is used up.
     _check_allowance(conf)
@@ -1399,7 +1384,6 @@ def ai_transcribe(request: Request, file: UploadFile = File(...),
     if _TRANSCRIBE_FALLBACK not in candidates:
         candidates.append(_TRANSCRIBE_FALLBACK)
     detail = ""
-    proto = ai_protocols.of(conf)
     for model in candidates:
         req = proto.transcription_request(conf, model, language, filename,
                                           file.content_type or "application/octet-stream", audio)

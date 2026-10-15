@@ -1,7 +1,8 @@
-"""Reading a paper: highlight, draw, type on the page, notebooks, links, translation."""
-from scene import (AMBER, BAR, BAR_DARK, BLUE, CARD, CHIP, CHIP_INK, EDGE, FIG_EDGE, FIG_LINE, INK, MONO, MUTED, RED,
-                   SELECT, SOFT, YELLOW, anim, block, bullet, button, frame, hide, key, keytimes, line_y, panel, paper,
-                   path_length, path_points, pointer, show, strip, stroke, typed)
+"""Reading a paper: highlight, draw, type on the page, notebooks, links, translation, recording."""
+import scene
+from scene import (AMBER, BAR, BAR_DARK, BLUE, CARD, CHIP, CHIP_INK, EDGE, FIG_EDGE, FIG_LINE, FONT, INK, MONO, MUTED, RED,
+                   SELECT, SOFT, TINT, YELLOW, anim, block, bullet, button, frame, hide, key, keytimes, line_y, move, panel,
+                   paper, path_length, path_points, pointer, show, strip, stroke, typed)
 
 PEN_TOOLS = ['pen', 'highlighter', 'eraser', 'lasso', 'text', 'undo']
 
@@ -318,6 +319,122 @@ def translate():
                  'stays put. Holding Alt shows the original for a moment.', scene)
 
 
+def _mic(color=INK, width=2):
+    """The microphone of the zoom column's Record audio button."""
+    return (f'<rect x="-5" y="-13" width="10" height="16" rx="5" fill="none" stroke="{color}" stroke-width="{width}"/>'
+            f'<path d="M-9 -2 C-9 5 -5 8 0 8 C5 8 9 5 9 -2 M0 8 V13 M-5 13 H5" fill="none" stroke="{color}" '
+            f'stroke-width="{width}" stroke-linecap="round"/>')
+
+
+scene._GLYPHS.setdefault('mic', _mic())  # the zoom column's last button, after the pen
+
+
+def _redraw(d, loop, start, end, gone, length, width):
+    """Playback redrawing a stroke solid along `d` from start to end; gone again at `gone`."""
+    return (f'<path d="{d}" fill="none" stroke="{AMBER}" stroke-width="{width}" stroke-linecap="round" stroke-linejoin="round" '
+            f'stroke-dasharray="{length:.0f}" stroke-dashoffset="{length:.0f}" opacity="0">'
+            + anim('stroke-dashoffset', f'{length:.0f};{length:.0f};0;0', loop, 0, start, end, loop)
+            + anim('opacity', '0;0;1;1;0;0', loop, 0, start - 0.02, start, gone, gone + 0.15, loop) + '</path>')
+
+
+def record():
+    """The microphone starts a recording (a pill with a timer at the page's bottom); a word is
+    written and a note typed meanwhile. Stop turns it into a row in the notes; Play replays
+    it, the writing coming back as the playhead reaches it, and a tap on the word seeks there."""
+    loop = 13
+    rec0, rec1 = 1.1, 5.5  # the recording, in the scene's seconds
+    tools, at = strip(60, 150, ['minus', 'plus', 'fit', 'pen', 'mic'], loop,
+                      picks=[('mic', 1.05, rec1), ('pen', 1.6, 6.5)])
+    word = _scribble(232, 398, [6], seed=1, size=1.8)[0]
+    w_len = path_length(word) + 4
+    w0, w1 = 2.1, 3.3      # written
+    n0, n1 = 3.95, 4.75    # typed
+    body = []
+    # Recording: the pill at the page's bottom, a breathing red dot, the timer, the level, Stop.
+    px, py, pw, ph = 278, 474, 244, 52
+    ticks = [rec0 + k for k in range(5)]
+    timer = ''.join(f'<text x="{px + 44}" y="{py + 35}" font-size="24" font-weight="500" fill="{INK}" '
+                    f'style="font-variant-numeric:tabular-nums" opacity="0">0:0{k}'
+                    + anim('opacity', '0;1;0;0', loop, 0, t, ticks[k + 1] if k + 1 < len(ticks) else loop - 0.01, loop, calc='discrete')
+                    + '</text>' for k, t in enumerate(ticks))
+    levels = ';'.join(str(12 + (i * 37) % 48) for i in range(33))
+    body.append(f'<g opacity="0"><rect x="{px}" y="{py}" width="{pw}" height="{ph}" rx="{ph / 2}" fill="{CARD}" stroke="{EDGE}" stroke-width="1.5" filter="url(#lift)"/>'
+                f'<circle cx="{px + 26}" cy="{py + ph / 2}" r="8" fill="{RED}">'
+                f'<animate attributeName="opacity" values="1;0.35;1" keyTimes="0;0.5;1" dur="{loop / 8}s" repeatCount="indefinite"/></circle>'
+                + timer
+                + f'<rect x="{px + 110}" y="{py + 21.5}" width="60" height="9" rx="4.5" fill="{EDGE}"/>'
+                f'<rect x="{px + 110}" y="{py + 21.5}" width="20" height="9" rx="4.5" fill="{RED}">'
+                + anim('width', levels, loop, *[min(loop, i * 0.4) for i in range(32)], loop) + '</rect>'
+                f'<rect x="{px + 188}" y="{py + 8}" width="36" height="36" rx="10" fill="{SOFT}" stroke="{EDGE}" stroke-width="1.5"/>'
+                f'<rect x="{px + 199}" y="{py + 19}" width="14" height="14" rx="3" fill="{RED}"/>'
+                + show(loop, rec0, rec1) + '</g>')
+    stop = (px + 206, py + ph / 2)
+    # The pill leaves for the notes, where it is a row: the microphone marker, Play, the length.
+    body.append(f'<g opacity="0"><rect x="{px}" y="{py}" width="{pw}" height="{ph}" rx="{ph / 2}" fill="{SOFT}" stroke="{EDGE}" stroke-width="1.5"/>'
+                + move(loop, 567, -174, rec1, rec1 + 0.3)
+                + anim('opacity', '0;0;0.9;0.9;0;0', loop, 0, rec1 - 0.02, rec1, rec1 + 0.22, rec1 + 0.32, loop) + '</g>')
+    cy = 326
+    play = (852, cy)
+    body.append('<g opacity="0">'
+                f'<circle cx="800" cy="{cy}" r="13" fill="{CHIP}"/><g transform="translate(800 {cy}) scale(0.62)">{_mic(CHIP_INK, 2.6)}</g>'
+                + block(822, cy - 28, 290, 56)
+                + f'<circle cx="{play[0]}" cy="{cy}" r="17" fill="{CARD}" stroke="{EDGE}" stroke-width="1.5"/>'
+                f'<circle cx="{play[0]}" cy="{cy}" r="17" fill="{TINT}" stroke="{AMBER}" stroke-width="1.5" opacity="0">' + show(loop, 6.5) + '</circle>'
+                f'<path d="M{play[0] - 5} {cy - 9} L{play[0] + 9} {cy} L{play[0] - 5} {cy + 9} Z" fill="{INK}">' + hide(loop, 6.5) + '</path>'
+                f'<g fill="{INK}" opacity="0"><rect x="{play[0] - 7}" y="{cy - 8}" width="5" height="16" rx="1.5"/>'
+                f'<rect x="{play[0] + 2}" y="{cy - 8}" width="5" height="16" rx="1.5"/>' + show(loop, 6.5) + '</g>'
+                f'<text x="884" y="{cy + 7}" font-size="21" font-weight="600" fill="{INK}">Recording'
+                f'<tspan font-weight="400" fill="{MUTED}"> · 0:04</tspan></text>'
+                + show(loop, rec1 + 0.2) + '</g>')
+    # Playback: the player bar where the pill was, the playhead crossing the writing's marks.
+    bx0, bx1, by = 236, 596, 500
+    mark_w, mark_n = (w0 - rec0) / (rec1 - rec0), (n0 - rec0) / (rec1 - rec0)
+    rate, p0, tap = 0.3, 6.7, 9.5          # track per second; the playhead starts at p0; the tap seeks at `tap`
+    back = mark_w - 0.08                   # just before the word's mark
+    at_tap, end = (tap - p0) * rate, tap + (1 - back) / rate
+    x = lambda f: bx0 + f * (bx1 - bx0)
+    times = keytimes(loop, 0, p0, tap, tap + 0.02, end, loop)
+    body.append(f'<g opacity="0"><rect x="176" y="{by - 24}" width="448" height="48" rx="14" fill="{CARD}" stroke="{EDGE}" stroke-width="1.5" filter="url(#lift)"/>'
+                f'<g fill="{INK}"><rect x="199" y="{by - 10}" width="5" height="20" rx="1.5"/><rect x="208" y="{by - 10}" width="5" height="20" rx="1.5"/></g>'
+                f'<rect x="{bx0}" y="{by - 2.5}" width="{bx1 - bx0}" height="5" rx="2.5" fill="{EDGE}"/>'
+                f'<rect x="{bx0}" y="{by - 2.5}" width="0" height="5" rx="2.5" fill="{AMBER}">'
+                f'<animate attributeName="width" values="0;0;{x(at_tap) - bx0:.0f};{x(back) - bx0:.0f};{bx1 - bx0};{bx1 - bx0}" keyTimes="{times}" dur="{loop}s" repeatCount="indefinite"/></rect>'
+                + ''.join(f'<rect x="{x(f) - 2:.0f}" y="{by - 8}" width="4" height="16" rx="2" fill="{BAR_DARK}"/>' for f in (mark_w, mark_n))
+                + f'<circle cx="{bx0}" cy="{by}" r="9" fill="{AMBER}" stroke="{CARD}" stroke-width="2.5">'
+                f'<animate attributeName="cx" values="{bx0};{bx0};{x(at_tap):.0f};{x(back):.0f};{bx1};{bx1}" keyTimes="{times}" dur="{loop}s" repeatCount="indefinite"/></circle>'
+                + show(loop, 6.55) + '</g>')
+    # The word: written during the recording, faded once playback starts, redrawn as the playhead reaches it.
+    reach1 = p0 + mark_w / rate
+    reach2 = tap + (mark_w - back) / rate
+    span = (w1 - w0) / (rec1 - rec0) / rate
+    body.append('<g>' + stroke(word, loop, w0, w1, width=3.5, length=w_len)
+                + anim('opacity', '1;1;0.25;0.25', loop, 0, 6.55, 6.7, loop) + '</g>')
+    body.append(_redraw(word, loop, reach1, reach1 + span, tap, w_len, 3.5))
+    body.append(_redraw(word, loop, reach2, reach2 + span, loop - 0.3, w_len, 3.5))
+    # The note: typed during the recording, shaded in playback until the playhead reaches it.
+    seen1, seen2 = p0 + mark_n / rate, tap + (mark_n - back) / rate
+    body.append('<g opacity="0"><g>' + bullet(800, 260) + typed('Proof idea', 822, 268, loop, n0, n1, 22)
+                + anim('opacity', '1;1;0.3;0.3;1;1;0.3;0.3;1;1', loop, 0, 6.55, 6.7, seen1, seen1 + 0.1, tap, tap + 0.1, seen2, seen2 + 0.1, loop)
+                + '</g>' + show(loop, 3.8) + '</g>')
+    # The pointer: Record, the pen, the word, the notes, Stop, Play, then a tap on the word.
+    rest = (690, 440)
+    pts, ts = [rest, at['mic'], at['mic'], at['pen'], at['pen']], [0, 0.8, 1.05, 1.4, 1.6]
+    p, t = _trace(word, w0, w1)
+    pts += [p[0], *p]; ts += [1.95, *t]
+    pts += [(1010, 260), (1010, 260), stop, stop, play, play, (700, 330), (700, 330), (318, 380), (318, 380), rest]
+    ts += [3.6, 4.9, 5.3, 5.55, 6.25, 6.6, 7.2, 8.9, 9.3, 9.65, 10.5]
+    desk = (paper(160, 80, 480, 460, 5) + tools + panel(740, 80, 560, 460, 'Notes')
+            + bullet(800, 206) + f'<rect x="822" y="201" width="300" height="10" rx="5" fill="{BAR}"/>')
+    svg = desk + ''.join(body) + pointer(pts, loop, ts, press=[1.0, 1.55, 3.75, 5.45, 6.45, tap - 0.05])
+    return frame('Record audio while you take notes',
+                 'The microphone after the pen in the zoom column beside the paper is clicked, and a recording pill with '
+                 'a red dot, a counting timer and a level bar appears at the bottom of the page. While it records, a word '
+                 'is handwritten on the page and a note is typed. Stop on the pill turns the recording into a row in the '
+                 'notes. Its play button opens a player bar: the handwriting and the note are faded, and each comes back '
+                 'as the playhead reaches the moment it was written. A tap on the handwritten word jumps the playhead '
+                 'back to just before it.', svg)
+
+
 SCENES = [
     ('annotate', annotate),
     ('pen', pen),
@@ -325,4 +442,5 @@ SCENES = [
     ('notebook', notebook),
     ('links', links),
     ('translate', translate),
+    ('record', record),
 ]

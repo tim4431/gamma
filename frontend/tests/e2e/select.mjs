@@ -27,6 +27,7 @@ export const GROUPS = [
   { id: "pdf-load", files: ["pdfload.mjs"] }, // ~20
   { id: "ink", files: ["ink.mjs"] }, // ~19
   { id: "notebooks", files: ["notebooks.mjs"] }, // ~15
+  { id: "recording", files: ["recording.mjs"] }, // ~15
   { id: "pdf-touch", files: ["pdfTouch.mjs"] }, // ~15
   { id: "publish", files: ["publish.mjs"] }, // ~15
   { id: "chat-navigation", files: ["chatNavigation.mjs"] }, // ~12
@@ -82,6 +83,9 @@ export const RULES = [
   // what a page surface carries (ink and text boxes) and the tool strip, whose anchors the ink tour uses
   ["frontend/src/markup/**", ["ink", "ink-editing", "pdf-touch", "triggered-guide", "notebooks", "textbox", "touch"]],
   ["frontend/src/notebook/**", ["notebooks", "replica", "textbox", "touch"]],
+  // the replay store every handwriting replay and a recording's player run on
+  ["frontend/src/replay/**", ["ink", "ink-editing", "notebooks", "recording"]],
+  ["frontend/src/recording/**", ["recording"]],
   ["frontend/src/replica/**", ["replica"]],
   ["frontend/src/pdf/**", PDF_VIEW],
   // (a text box's editor and read mode are the notes')
@@ -135,6 +139,8 @@ export const RULES = [
   ["backend/gamma/ink.py", ["ink", "ink-editing", "triggered-guide", "notebooks"]],
   ["backend/gamma/routers/ink.py", ["ink", "ink-editing", "triggered-guide", "notebooks"]],
   ["backend/gamma/notebook.py", ["notebooks"]],
+  ["backend/gamma/recording.py", ["recording", ...EXPORTS]],
+  ["backend/gamma/routers/recordings.py", ["recording"]],
   // what the exports, the notebook PDF and the agent's outline read of a text box
   ["backend/gamma/text_box.py", [...EXPORTS, "notebooks", "textbox", ...CHAT]],
   ["backend/gamma/pdf_meta.py", PDF_VIEW],

@@ -92,6 +92,14 @@ for (const [dest, src] of Object.entries(MEDIA)) {
   if (!fs.existsSync(from)) throw new Error(`Missing repository asset: ${src}`);
   write(path.join('media', dest), fs.readFileSync(from));
 }
+// The user guide's interactive demos (docs/user_guide/demos/): published
+// as they are under /docs/demos/, where the guide's links to them land.
+const DEMOS = 'docs/user_guide/demos';
+if (fs.existsSync(path.join(ROOT, DEMOS))) {
+  for (const name of fs.readdirSync(path.join(ROOT, DEMOS))) {
+    write(path.join('docs', 'demos', name), fs.readFileSync(path.join(ROOT, DEMOS, name)));
+  }
+}
 // A picture a document shows: an existing copy above, else copied under its
 // repository path.
 const asset = repoPath => {
@@ -144,6 +152,7 @@ const resolver = page => {
     }
     if (fs.statSync(abs).isDirectory()) return `${REPO}/tree/${BRANCH}/${target}`;
     if (IMAGE.test(target)) return asset(target);
+    if (target.startsWith(`${DEMOS}/`)) return `/docs/demos/${path.posix.basename(target)}${hash}`;
     return `${REPO}/blob/${BRANCH}/${target}${hash}`;
   };
 };

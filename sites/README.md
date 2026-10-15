@@ -48,7 +48,10 @@ sites/
    Everything about a page comes from its Markdown: the title is the first
    heading, the description the first paragraph, heading ids follow GitHub's
    rules so an anchor written for the repository works on the site too. The
-   sidebar lists the page's sections. The developer guide and the research
+   sidebar lists the page's sections. The user guide's interactive demos
+   (`docs/user_guide/demos/`, a page and its script each, since the site's
+   CSP allows no inline script) are copied as they are under `/docs/demos/`,
+   where the guide's links to them land. The developer guide and the research
    notes are written for contributors and are not published: they stay on
    GitHub, where a link from the user guide to one of them lands. A relative
    link in a document becomes the page it points at when that document is

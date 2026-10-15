@@ -39,6 +39,8 @@ const entries = [
   e("reading", t("Draws with"), t("Handwriting"), t("Pen only, or pen and finger"), "handwriting pen finger touch stylus ink"),
   e("reading", t("Stylus draws right away"), t("Handwriting"), t("Without opening the tools first"), "handwriting pen ink"),
   e("reading", t("Pressure-sensitive strokes"), t("Handwriting"), t("Pen strokes thicken with pressure"), "handwriting pen ink width"),
+  e("reading", t("Lead-in"), t("Recordings"), t("How far before a written moment a tap plays from"), "audio recording replay seconds before playback tap seek"),
+  e("reading", t("Transcribe recordings"), t("Recordings"), t("Write the spoken words under a recording when it ends"), "audio transcript speech to text whisper automatic"),
   e("reading", t("On the home page"), t("Search opens as"), t("Full panel: grouped result lists"), "search panel find bar expand results"),
   e("reading", t("On a page"), t("Search opens as"), t("Find bar: match counter and next / previous"), "search panel find bar expand results"),
   e("translation", t("Translation button"), t("Viewer & selection"), t("In the viewer; nothing translates until you ask"), "translation shortcut viewer"),

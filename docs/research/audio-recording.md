@@ -5,9 +5,19 @@ it keeps the recording and the notes in step, what Goodnotes, OneNote,
 Samsung Notes, Noted, Apple Notes and the upstream fork built around the
 same idea, what this repository already has that a recording would
 drive, how the existing handwriting replay and an audio replay become
-one clock, and the design recommended. Findings
-and a plan; nothing here is built. The timed replay the design extends is
+one clock, and the design recommended. The timed replay the design extends is
 described in [dev/handwriting.md](../dev/handwriting.md) "Replay".
+
+**Status (2026-10-15).** Built on the `audio-recording` branch as designed,
+with the differences noted in [dev/recording.md](../dev/recording.md):
+the recording block and its segments, the `t0` stamp on every new block,
+the one replay store with the compressed and the recording clocks, the
+player with its three modes, marks, skips, lead-in and Follow, the
+bookmark, the spool and the recovery, the transcription job writing timed
+paragraphs, and the exports. Not built: trim, split and merge, importing an
+audio file, live transcription, per-word reveal, strokes drawn during
+playback linked to the moment heard, the iPad's native capture, and a
+record button on a page without a viewer.
 
 ## What Notability does
 

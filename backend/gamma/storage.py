@@ -80,7 +80,14 @@ FILE_MEDIA_TYPES = {
     ".mp4": "video/mp4",
     ".mp3": "audio/mpeg",
     ".wav": "audio/wav",
+    ".webm": "audio/webm",   # a recording's segments (gamma/recording.py): what MediaRecorder gives
+    ".m4a": "audio/mp4",
+    ".ogg": "audio/ogg",
+    ".opus": "audio/ogg",
 }
+# Audio an <audio> element plays straight from /api/uploads/ (a recording's
+# segments, an audio file chip), so it is served inline.
+AUDIO_EXTENSIONS = {".webm", ".m4a", ".mp3", ".ogg", ".opus", ".wav"}
 # Files an OS runs as code when opened — the one kind Gamma refuses to host,
 # on upload and (belt and braces) on serving. Archives and package formats
 # (zip, whl, dmg, deb …) are fine: a lab shares software.
@@ -98,7 +105,7 @@ EXTENSION_RE = re.compile(r"^\.[a-z0-9]{1,12}$")
 # like html — <img>/<object> embedding still works, inline note images are
 # unaffected. SANDBOXED_EXTENSIONS additionally get a sandboxing CSP in case
 # a browser renders them anyway.
-INLINE_EXTENSIONS = {".pdf", ".txt", ".md", *(e for e in IMAGE_MEDIA_TYPES if e != ".svg")}
+INLINE_EXTENSIONS = {".pdf", ".txt", ".md", *(e for e in IMAGE_MEDIA_TYPES if e != ".svg"), *AUDIO_EXTENSIONS}
 SANDBOXED_EXTENSIONS = {".svg", ".html"}
 
 
@@ -190,6 +197,24 @@ def url_filename(url: str) -> str:
 
 def is_pdf(data: bytes) -> bool:
     return len(data) >= 4 and data[:4] == b"%PDF"
+
+
+def is_audio(ext: str, data: bytes) -> bool:
+    """Whether ``data`` opens as the audio container its extension names,
+    by the container's magic bytes: EBML for WebM, an ISO ``ftyp`` box for
+    M4A, ``OggS`` for Ogg and Opus, an ID3 tag or an MPEG frame sync for
+    MP3, ``RIFF…WAVE`` for WAV. Another extension is no audio."""
+    if ext == ".webm":
+        return data[:4] == b"\x1a\x45\xdf\xa3"
+    if ext == ".m4a":
+        return data[4:8] == b"ftyp"
+    if ext in (".ogg", ".opus"):
+        return data[:4] == b"OggS"
+    if ext == ".mp3":
+        return data[:3] == b"ID3" or (len(data) >= 2 and data[0] == 0xFF and data[1] & 0xE0 == 0xE0)
+    if ext == ".wav":
+        return data[:4] == b"RIFF" and data[8:12] == b"WAVE"
+    return False
 
 
 def digest_id(digest) -> str:

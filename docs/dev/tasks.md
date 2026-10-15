@@ -42,11 +42,11 @@ in the worker thread and returns the result. It reports through
 `job.progress(done=, total=, unit=, phase=, item=)`:
 
 - `unit` names what `done` and `total` count: `pages`, `bytes`, `files`,
-  `items`, `papers`, `workspaces`.
+  `items`, `papers`, `workspaces`, `segments`.
 - `phase` is a short key the interface words (`packing`, `typesetting`,
   `unpacking`, `checking`, `saving`, `copying`, `restoring`, `annotations`,
-  `databases`, `files`, the paper-handoff row's `browser` and `connector`;
-  `PHASES` in `tasks/taskKinds.js`).
+  `databases`, `files`, the paper-handoff row's `browser` and `connector`,
+  the transcription's `transcribing`; `PHASES` in `tasks/taskKinds.js`).
 - `item` is the thing at hand, a page title or a workspace name.
 - A new phase or unit starts its own counts; a field left out is kept.
 
@@ -132,6 +132,7 @@ Each kind starts at `POST /api/jobs/<route>`, in the router of its work.
 | `metadata` | `metadata` (`routers/metadata.py`) | Settings → Maintenance → Fetch needed / Fetch selected / Refetch; an upload of several PDFs | `{papers, fetched, failed}` |
 | `server-backup` | `server-backup` (`routers/admin.py`) | Settings → Server → Server backups | the snapshot's info |
 | `indexing` | — (`routers/search.py`, owner `""`) | a search, a page chat, Settings → Maintenance → Rebuild | `{papers}` |
+| `transcribe` | `transcribe` (`routers/recordings.py`, one per recording block) | a recording's menu → Transcribe; every recording that ends, with Settings → Reading & editing › Recordings › Transcribe recordings on | `{paragraphs, model}` ([recording.md](recording.md)) |
 
 The off-site copies' Copy now (Settings → Backups, `POST
 /api/admin/offsite/run`) is not a job: it starts the server's own

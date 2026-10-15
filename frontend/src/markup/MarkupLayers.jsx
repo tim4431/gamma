@@ -63,18 +63,14 @@ export function useMarks({ ink, inkSelection, inkFlash, boxes, boxSel, boxFlash 
 // is near the view (a PDF page within its viewer's look-ahead); one that is
 // not and carries no marks mounts nothing — each layer listens on the
 // window and the document, and a book has hundreds of pages.
-export function MarkupLayers({ surface, wrapRef, width, height, marks, replay = null, active = true }) {
+export function MarkupLayers({ surface, wrapRef, width, height, marks, active = true }) {
   const { readOnly, ink, text, actions } = usePageTools();
   const edit = readOnly || text.armed ? {} : actions;
-  if (!active && !replay && !marks.ink.length && !marks.boxes.length) return null;
+  if (!active && !marks.ink.length && !marks.boxes.length) return null;
   return (
     <>
       <TextBoxLayer surface={surface} wrapRef={wrapRef} width={width} height={height} marks={marks} />
-      {replay ? (
-        <svg className="inkLayer" viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none" aria-hidden="true">
-          <Strokes ink={replay} />
-        </svg>
-      ) : readOnly && !marks.ink.length ? null : (
+      {readOnly && !marks.ink.length ? null : (
         <InkLayer pageNumber={surface} wrapRef={wrapRef} width={width} height={height} blocks={marks.ink}
           tool={ink.tool} penTool={ink.penTool} penOnly={ink.penOnly} pressure={ink.pressure} eraserMode={ink.eraserMode}
           eraserSize={ink.eraserSize} lassoMode={ink.lassoMode} selection={marks.inkSelection} flash={marks.inkFlash}

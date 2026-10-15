@@ -1502,6 +1502,17 @@ def _v37_highlight_colors(ws: str, pages: sqlite3.Connection, data) -> None:
     pages.executemany("UPDATE unified_blocks SET properties = ? WHERE id = ?", changed)
 
 
+def _v38_recording_kind(ws: str, pages: sqlite3.Connection, data) -> None:
+    """The generated ``kind`` gains its ``recording`` case (a ``recording``
+    object, gamma/recording.py), after ``sheet``: ``block_columns`` finds
+    the column's stored definition outdated and adds it again, with its
+    index and the generated columns after it. It commits what it rebuilt
+    itself, ahead of the stamp; a rerun finds the current definition and
+    changes nothing. Nothing is stamped or touched: the column is derived."""
+    if _columns(pages, "unified_blocks"):  # an old copy without the table gets it from the schema statements
+        block_columns(pages)
+
+
 STEPS = [
     (20, "guest_accounts", _v20_guest_accounts),
     (21, "folder_shares", _v21_folder_shares),
@@ -1528,4 +1539,5 @@ WORKSPACE_STEPS = [
     # Next release: a global step deletes the users.db user_prefs rows whose workspace_id is not '' (34 kept them).
     (34, "workspace_prefs", _v34_workspace_prefs),
     (37, "highlight_colors", _v37_highlight_colors),
+    (38, "recording_kind", _v38_recording_kind),
 ]

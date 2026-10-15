@@ -46,6 +46,7 @@ trash.py           Recently deleted: the trashed pages, their 30-day purge (back
 ink.py             the gamma-ink stroke file: schema, codec, geometry, renderers, the three-way stroke merge
 ink_view.py        handwriting as a picture for a vision model (the view_ink tool)
 notebook.py        notebook pages: paper rules, sheets, the notebook as a PDF (docs/dev/notebooks.md)
+recording.py       audio recordings: the recording block's rules, its label and export line, the transcribe job
 block_index.py     the notes index (block_fts in pages.db, kept by triggers): its queries
 pdf_index.py       the PDF text index (pdf_fts in data.db): schema, writes, queries
 pdf_meta.py        a PDF's manifest for the viewer: bytes, page count, page sizes (data.db)

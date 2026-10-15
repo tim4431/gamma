@@ -14,6 +14,10 @@ import { DEFAULT_HIGHLIGHT, normalizeColor } from "../shared/model/palette.js";
 import { citesSeveralPapers, gammaLinkId, parseGammaLink, relativeGammaLink } from "../shared/model/gammaLinks.js";
 import { NO_LABELS, REF_RE, refIdsOf } from "./refLabels.js";
 import { InkCard } from "../ink/InkLayer";
+import { RecordingCard } from "../recording/RecordingCard";
+import { isRecordingBlock } from "../recording/recording.js";
+import { useRecordings } from "../recording/RecordingContext.js";
+import { useBlockFrame } from "../replay/useFrame.js";
 import { isTextBox } from "../markup/textBox.js";
 import { isSheet } from "../notebook/notebook";
 import { NoteSheet } from "../notebook/NoteSheet";
@@ -23,7 +27,7 @@ import { mapOutsideCodeFences, remarkDiagrams, scanDiagramFences, setDiagramWidt
 import { MdObject, ObjectMenuButton, findObject } from "./MdObject";
 import { cutObject } from "./mdObjects";
 import { blockSpans, parseTable, protectedSpans, scanMathSpans, scanTables } from "./mdScan";
-import { LinkIcon, PenIcon, TypeIcon, XIcon } from "../shared/ui/Icons";
+import { LinkIcon, MicIcon, PenIcon, PlayIcon, TypeIcon, XIcon } from "../shared/ui/Icons";
 import { FileChip, parseUploadUrl, postFile, uploadFilesAsLines } from "../transfers/FileChip";
 import {
   envCompletions, findMathAtCursor, latexCompletionEdit, latexCompletions,
@@ -1257,6 +1261,14 @@ const BlockRow = React.memo(function BlockRow({
   // (docs/dev/text_boxes.md): a T marker; its content is the box's text.
   const isInk = block.properties?.ink_url !== undefined;
   const isBox = !isInk && isTextBox(block);
+  // A recording (docs/dev/recording.md): a mic marker, its content the
+  // title, the card under it the player. Any block written during a
+  // recording carries `t0`: while that recording plays the row is shaded
+  // until its moment is reached, and a glyph in the margin plays from it.
+  const isRec = !isInk && !isBox && isRecordingBlock(block);
+  const recordings = useRecordings();
+  const replayState = useBlockFrame(block.properties?.t0);
+  const recorded = recordings?.covers(block.properties?.t0);
   // A box under a sheet is on that sheet, whatever pdf_page it still
   // carries (markup/textBox.js textBoxesBySurface): it names no PDF page.
   const shownPage = isBox && onSheet ? null : block.page;
@@ -1588,7 +1600,7 @@ const BlockRow = React.memo(function BlockRow({
           open={mergeOpen === block.id} onOpenChange={(v) => onMergeOpen?.(v ? block.id : null)} />
       ) : null}
       <div
-        className={`blockRow ${focusedId === block.id ? "focused" : ""}${flashingId === block.id ? " landed" : ""}${aiMark ? ` ai-${aiMark.kind} aiMark${aiMark.n % 2}` : ""}${scanIdx != null ? ` ai-scan aiMark${aiScan.n % 2}` : ""}${peerEditing ? ` peerOn peer-${peerEditing.color}` : ""}`}
+        className={`blockRow ${focusedId === block.id ? "focused" : ""}${flashingId === block.id ? " landed" : ""}${replayState ? (replayState === "pending" ? " replayPending" : " replayReached") : ""}${aiMark ? ` ai-${aiMark.kind} aiMark${aiMark.n % 2}` : ""}${scanIdx != null ? ` ai-scan aiMark${aiScan.n % 2}` : ""}${peerEditing ? ` peerOn peer-${peerEditing.color}` : ""}`}
         style={scanIdx != null ? { animationDelay: `${Math.min(scanIdx * 45, 1600)}ms` } : undefined}
         onMouseDown={(e) => {
           if (e.button !== 0) return; // right-click is the context menu's
@@ -1715,6 +1727,8 @@ const BlockRow = React.memo(function BlockRow({
               >⊕</button>
             ) : null}
           </>
+        ) : isRec && !editing ? (
+          <span className="dotSlot" title={t("Recording")}><span className="recordingMarker"><MicIcon size={9} /></span></span>
         ) : (isInk || isBox) && !editing ? (
           <button
             className="collapseBtn highlightDotBtn dotSlot"
@@ -1734,6 +1748,12 @@ const BlockRow = React.memo(function BlockRow({
           <div className="blockMeta">
             {shownPage ? `p.${shownPage}` : "note"}
           </div>
+          {recorded && !isRec ? (
+            <button type="button" className="replayGlyph" onClick={(e) => { e.stopPropagation(); recordings.playAt(block.properties.t0); }}
+              title={t("Play the recording from when this was written")} aria-label={t("Play the recording from when this was written")}>
+              <PlayIcon size={9} />
+            </button>
+          ) : null}
 
           {!readOnly && editing ? (
             <BlockCmEditor
@@ -1967,6 +1987,7 @@ const BlockRow = React.memo(function BlockRow({
           ) : null}
           {inlineSheets && isSheet(block) ? <NoteSheet block={block} number={sheetNumber} /> : null}
           {isInk ? <InkCard block={block} onJump={onShowOnPage} /> : null}
+          {isRec ? <RecordingCard block={block} editable={!readOnly} /> : null}
           {(block.properties?.link_url || block.properties?.link_page_id) ? (
             <button
               type="button"

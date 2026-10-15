@@ -104,4 +104,4 @@ def test_step_37_respells_every_stored_colour_and_nothing_else():
     empty = sqlite3.connect(":memory:")
     migrations._v37_highlight_colors("", empty, None)  # a copy without the table: nothing to do
     assert (37, "highlight_colors", migrations._v37_highlight_colors) in migrations.WORKSPACE_STEPS
-    assert migrations.workspace_format() == 37
+    assert migrations.workspace_format() >= 37

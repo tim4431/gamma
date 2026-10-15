@@ -130,7 +130,9 @@ app ([ipad.md](ipad.md)). Typed text on a page is
   it is on a group's row in the notes and plays on the page
   ([ipad.md](ipad.md)). A replay shows the drawing as it is now: erased
   strokes are gone, and the pieces the partial eraser left keep the time
-  they were written.
+  they were written. A recording made while writing replays the same
+  strokes in step with its audio ([recording.md](recording.md)): the
+  replay button and the recording's player run on one store.
 - **Transcribe with AI**, in a group's ⋮⋮ menu, attaches the block to the
   chat and asks for its text in the caption ([ai_tools.md](ai_tools.md)
   "view_ink"). The chat's "Attach what I see" sends the visible page with
@@ -285,24 +287,34 @@ text box's `text_box`, merged key by key ([text_boxes.md](text_boxes.md)
   stroke wins ties); `restyleStrokes` changes selected color/width, returning
   the original object for a no-op; `duplicateStrokes` preserves original
   samples and channels while assigning unique IDs to translated copies.
-- The replay (`ink.js`, pure, so the iPad runs it too):
+- The replay (`ink.js`, pure, so the iPad runs it too;
+  [recording.md](recording.md) "One clock for every replay"):
+  - `strokeWalls(stroke)` is each sample's wall-clock ms (`t0` plus its
+    `t`), null for a stroke without timing; `inkWallSpan(ink)` the
+    stretch a drawing's timed strokes cover.
   - `inkTimeline(ink)` puts the strokes in the order they were written.
     A stroke starts at `t0` plus its first sample's `t`, and the file's
     order breaks ties. A stroke with no timing counts as written right
     after the stroke before it in the file, its samples spread over
     300 ms. Each sample gets a replay time: gaps between strokes and
     inside one are cut to `REPLAY_PAUSE` (400 ms), and the whole replay
-    is scaled down to `REPLAY_MAX` (15 s) when longer.
-  - `inkAtTime(ink, timeline, t)` is the drawing at replay time `t`: the
-    strokes begun, and the one being written cut short. A prefix of a
-    stroke's delta-coded `pts` is its first samples, so that is a slice.
-  - `ink/inkReplay.js` plays one replay at a time on animation frames,
-    under the id of what it shows (a group, or a sheet's whole
-    handwriting). `InkLayer.jsx` `useReplayOf(ids)` gives a layer or a
-    card the frame of one of its own groups, so only they re-render; the
-    layer draws that group as it stood, the card too.
-    `InkReplayButton` starts and stops it. An edit to the group
-    (`applyInk`) or leaving the page ends it.
+    is scaled down to `REPLAY_MAX` (15 s) when longer. Its `times` map
+    (stroke id → the samples' replay times) is the compressed clock's
+    table.
+  - `inkUntil(ink, at, times)` is the drawing at an instant: the strokes
+    begun by then in the order begun, the one being written cut short (a
+    prefix of a stroke's delta-coded `pts` is its first samples, so that
+    is a slice), the ids not yet reached; on a clock's table, or on the
+    strokes' own wall clock without one. `inkAtTime(ink, timeline, t)` is
+    `inkUntil` on the timeline.
+  - `replay/playback.js` plays one replay at a time on animation frames,
+    on a clock (`replay/clock.js compressedClock` for a group's or a
+    sheet's own replay). `replay/useFrame.js useGroupFrame(groups,
+    surface)` gives a layer or a card the state only while one of its own
+    groups or its sheet takes part, so only they re-render; `InkLayer.jsx
+    ReplayStrokes` draws the group as it stood. `InkReplayButton` starts
+    and stops it. An edit to the group (`applyInk`) or leaving the page
+    ends it.
 - `ink/inkStore.js`: files by URL, and per-block **drafts** — the strokes as
   edited here, ahead of upload. A draft wins over the block's file until
   the upload replaces `ink_url` with the draft's; a remote `ink_url` change
@@ -479,10 +491,10 @@ text box's `text_box`, merged key by key ([text_boxes.md](text_boxes.md)
 Shape tools, reordering presets
 by drag, syncing the preset row across devices (it is per browser),
 ballpoint / fountain / dashed pen styles, Xournal++ `.xopp` import,
-live co-drawing over presence, audio recording to go with the replay
-(designed in [research/audio-recording.md](../research/audio-recording.md)), and a
+live co-drawing over presence, and a
 replay of erasures and edits (it shows the drawing as it is, in the order
-it was written). Obsidian vault export writes an ink block's
+it was written). Audio recording to go with the replay is
+[recording.md](recording.md). Obsidian vault export writes an ink block's
 caption only. The Notability comparison in the research note lists what a
 closer pen experience still needs (draw-and-hold straightening, an eraser
 that returns to the last tool, the highlighter behind the ink, clipboard

@@ -1,0 +1,222 @@
+/* Recordings (docs/dev/recording.md): the pill while one is recorded, the
+   card in the notes, the player bar, and how the page and the notes look
+   during playback. Built from the design tokens like the markup strip
+   (app.css .pdfInkBar), whose surface the bar and the pill share. */
+
+/* --- the pill: over the viewer's bottom edge, the status pill's place -- */
+.recordingPill {
+  position: absolute;
+  z-index: var(--z-float);
+  left: 50%;
+  bottom: 12px;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px 4px 12px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full);
+  color: var(--text-primary);
+  font-size: var(--fs-sm);
+  box-shadow: var(--shadow-2);
+  white-space: nowrap;
+}
+.recordingPill .recText { color: var(--text-muted); }
+.recordingPill .recTime { font-variant-numeric: tabular-nums; min-width: 3.2em; }
+.recordingPill .recStop { color: var(--danger); }
+/* the input level: a short bar that fills with the voice */
+.recLevel {
+  display: inline-block;
+  width: 44px;
+  height: 6px;
+  border-radius: var(--radius-full);
+  background: var(--bg-active);
+  overflow: hidden;
+}
+.recLevel > span {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--danger);
+  transform-origin: left;
+  transition: transform var(--dur-fast) linear;
+}
+/* the red dot, breathing while audio is captured */
+.recDot {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  border-radius: var(--radius-full);
+  background: var(--text-tertiary);
+  flex: none;
+}
+.recDot.live, .recordingPill.live .recDot { background: var(--danger); animation: recBreathe 1.6s ease-in-out infinite; }
+@keyframes recBreathe { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+@media (prefers-reduced-motion: reduce) { .recDot.live, .recordingPill.live .recDot { animation: none; } }
+/* the status pill moves up while the recording pill holds the bottom */
+.main:has(.recordingPill) > .statusPill, .main:has(.replayBar) > .statusPill { top: auto; bottom: 60px; }
+
+/* --- the card under a recording block's title ------------------------- */
+.recordingCard {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 100%;
+  margin: 4px 0 2px;
+  padding: 3px 6px 3px 4px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-full);
+  background: var(--bg-card);
+  color: var(--text-secondary);
+  font-size: var(--fs-xs);
+  line-height: 1.2;
+}
+.recordingCard.live { padding-left: 10px; }
+.recordingCard .recMeta { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.recordingCard .recPlay { width: var(--ctl-icon-btn-xs); height: var(--ctl-icon-btn-xs); border-radius: var(--radius-full); }
+.recordingCard .recMenuBtn { opacity: 0; }
+.recordingCard:hover .recMenuBtn, .recordingCard .recMenuBtn:focus-visible, .recordingCard .recMenuBtn[aria-expanded="true"] { opacity: 1; }
+@media (hover: none) { .recordingCard .recMenuBtn { opacity: 1; } }
+.recordingMarker {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 12px;
+  height: 12px;
+  border-radius: var(--radius-xs);
+  background: var(--bg-active);
+  color: var(--text-tertiary);
+}
+
+/* --- the player bar: the markup strip's surface, at the bottom ---------- */
+.replayBar {
+  position: absolute;
+  z-index: calc(var(--z-dock) + 1);
+  left: 50%;
+  bottom: 10px;
+  transform: translateX(-50%);
+  /* clear of the control boxes in the viewer's corners, as the ink strip keeps */
+  width: min(calc(100% - 2 * (var(--ctl-icon-btn) + 34px)), 820px);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+[data-scheme="light"] .replayBar { box-shadow: var(--shadow-2); }
+/* over the notes, when no viewer is there to hold it: stuck to the list's bottom */
+.notesReplayDock {
+  position: sticky;
+  bottom: 0;
+  z-index: 3;
+  display: flex;
+  justify-content: center;
+  padding: 6px 8px;
+  pointer-events: none;
+}
+.notesReplayDock .replayBar { position: relative; bottom: auto; left: auto; transform: none; width: 100%; pointer-events: auto; }
+/* One row of controls the height of an icon button; only the scrubber
+   gives way, and the row wraps only when even that is not enough. */
+.replayRow {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 2px;
+  padding: 3px 5px;
+}
+.replayRow > * { flex: none; }
+.replayRow > .replayScrub { flex: 1 1 200px; min-width: 120px; }
+.replayRow .ctlBtn { width: var(--ctl-icon-btn); height: var(--ctl-icon-btn); }
+.replayRow .replayRate { width: 46px; padding: 0; font-size: var(--fs-xs); font-variant-numeric: tabular-nums; }
+.replayTime { font-size: var(--fs-xs); font-variant-numeric: tabular-nums; color: var(--text-secondary); min-width: 2.6em; text-align: center; padding: 0 2px; }
+.replaySep { width: 1px; height: 18px; margin: 0 3px; background: var(--border); }
+/* the scrubber: a native range over a track that shows what was written */
+.replayScrub { position: relative; height: var(--ctl-icon-btn); }
+.replayTrack {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  height: 6px;
+  transform: translateY(-50%);
+  border-radius: var(--radius-full);
+  background: var(--bg-active);
+}
+.replayFill { height: 100%; border-radius: inherit; background: color-mix(in oklab, var(--accent) 55%, var(--bg-active)); }
+.replayTick {
+  position: absolute;
+  top: -3px;
+  width: 2px;
+  height: 12px;
+  margin-left: -1px;
+  border-radius: 1px;
+  background: var(--text-tertiary);
+  opacity: 0.8;
+}
+.replayTick.ink { background: var(--accent); }
+.replayJoin { position: absolute; top: -2px; width: 1px; height: 10px; background: var(--text-muted); }
+.replayJoin.pause { border-left: 1px dashed var(--text-muted); background: none; }
+.replayScrub input[type="range"] {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  background: transparent;
+  cursor: pointer;
+  -webkit-appearance: none;
+  appearance: none;
+}
+.replayScrub input[type="range"]::-webkit-slider-runnable-track { background: transparent; height: 100%; }
+.replayScrub input[type="range"]::-moz-range-track { background: transparent; }
+.replayScrub input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 14px;
+  height: 14px;
+  margin-top: calc((var(--ctl-icon-btn) - 14px) / 2);
+  border-radius: var(--radius-full);
+  background: var(--accent);
+  border: 2px solid var(--bg-elevated);
+  box-shadow: 0 0 0 1px var(--border);
+}
+.replayScrub input[type="range"]::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border-radius: var(--radius-full);
+  background: var(--accent);
+  border: 2px solid var(--bg-elevated);
+  box-shadow: 0 0 0 1px var(--border);
+}
+.replayScrub input[type="range"]:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; border-radius: var(--radius-sm); }
+.replayClose { margin-left: 2px; }
+
+/* --- the page and the notes during playback ---------------------------- */
+/* handwriting not yet reached (Spotlight) */
+.inkPending { opacity: 0.15; }
+/* a note not yet reached, and the one reached last */
+.blockRow.replayPending > .blockBody { opacity: 0.4; }
+.blockRow.replayPending > .blockBody, .blockRow.replayReached > .blockBody { transition: opacity var(--dur-base) ease; }
+/* a stamped note's play glyph in the margin (OneNote's), on hover */
+.blockBody:has(> .replayGlyph) { position: relative; }
+.replayGlyph {
+  position: absolute;
+  left: -22px;
+  top: 1px;
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full);
+  background: var(--bg-elevated);
+  color: var(--text-secondary);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity var(--dur-fast) ease;
+}
+.blockRow:hover .replayGlyph, .replayGlyph:focus-visible { opacity: 1; }
+.replayGlyph:hover { color: var(--text-primary); }
+@media (hover: none) { .replayGlyph { display: none; } }
+/* a text box not yet reached */
+.textBox.replayPending { opacity: 0.4; }

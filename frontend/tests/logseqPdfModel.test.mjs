@@ -1,6 +1,7 @@
 // The pure block-tree operations the outliner's keys run on.
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { setWallClock } from "../src/shared/model/wallClock.js";
 import {
   EMPTY_VIEW, addChildBlock, addHighlightAsBlock, addSiblingBlock, blockPage, blockPosition, blocksToHighlights,
   closeEditing, extractBlock, findBlockContext, flattenBlocks, indentBlock, insertChild, insertSibling, isDescendant,
@@ -63,10 +64,13 @@ test("isDescendant and findBlockContext", () => {
 
 test("new blocks: sibling below or above, child, with fresh 12-char ids and nothing but the document's fields", () => {
   const t = tree();
+  setWallClock(() => 1700000000000);
   let { blocks, newId } = addSiblingBlock(t, "b");
+  setWallClock(null);
   assert.deepEqual(ids(blocks), ["a", "b", newId, "c"]);
   assert.match(newId, /^[A-Za-z0-9_-]{12}$/);
-  assert.deepEqual(blocks[2], { id: newId, parentId: null, children: [], content: "", properties: {} });
+  // the moment it was made is the one field of its own (docs/dev/recording.md)
+  assert.deepEqual(blocks[2], { id: newId, parentId: null, children: [], content: "", properties: { t0: 1700000000000 } });
   ({ blocks, newId } = addSiblingBlock(t, "b", { above: true }));
   assert.deepEqual(ids(blocks), ["a", newId, "b", "c"]);
   ({ blocks, newId } = addChildBlock(t, "b"));
@@ -159,7 +163,9 @@ test("a highlight is a block with a position that is no ink group; its page is t
 });
 
 test("a highlight made in the viewer is a block whose id is the highlight's, its position as given", () => {
+  setWallClock(() => 1700000000000);
   const [block] = addHighlightAsBlock([], { id: "hx", position: POS, content: { text: "q" }, comment: { text: "c" }, color: "red" });
+  setWallClock(null);
   assert.deepEqual(block, { id: "hx", parentId: null, children: [], content: "c",
-    properties: { color: "red", quote: "q", pdf_position: POS } });
+    properties: { t0: 1700000000000, color: "red", quote: "q", pdf_position: POS } });
 });

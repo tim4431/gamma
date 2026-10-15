@@ -884,6 +884,22 @@ Pagination is per line, not per block: the canvas breaks a page between lines
 so nothing is ever clipped, and code lines carry their leading whitespace as an
 x offset because wrapping drops spaces at the start of a line.
 
+## Recordings in the exports
+
+A recording block ([recording.md](recording.md)) is audio the exports
+cannot carry as a PDF annotation, so each renderer says what it is and
+hands the files on where it can. The Markdown export writes a
+`**Recording · 12:34**` line with one link per audio file (`[audio](…)`,
+or `[part 1](…) [part 2](…)`), so `collect_and_rewrite` bundles the files
+into `assets/` like any `/api/uploads/` reference the rendered Markdown
+names; the Obsidian vault writes the same line and an `![[attachments/<hash>.webm]]`
+embed per file; the notes PDF a muted "Recording · 12:34 (audio not
+included in a PDF)" line; the annotated PDF nothing. The title and the
+children (a transcript's paragraphs are plain notes) follow as usual. With
+the highlights switch off a recording is treated like ink: its property
+dropped, its title kept. The Gamma backup needs nothing of its own: it
+copies every referenced upload.
+
 ## Text boxes in the exports
 
 A text box ([text_boxes.md](text_boxes.md)) is the user's writing placed on
