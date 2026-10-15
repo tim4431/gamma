@@ -66,9 +66,14 @@ def test_asking_tools_are_armed_and_tools_that_are_off_are_not():
 def test_the_prompt_names_the_tools_that_ask():
     scope = {**folder(""), "can_write": True}
     asking = agent_system(scope, tool_states({**ALLOW_ALL, "rename": "ask"}))
-    assert "approves each call of rename_page before it runs" in asking
+    assert "ask the user first" in asking and "rename_page before" not in asking  # no names: they would change
     assert "never ask for permission in your reply first" in asking
-    assert "approves each call" not in agent_system(scope, tool_states(ALLOW_ALL))
+    assert "ask the user first" not in agent_system(scope, tool_states(ALLOW_ALL))
+    # "Allow in this chat" leaves the prompt as it was, for the prompt cache —
+    # even when it allowed the only tool that asked.
+    granted = agent_system({**scope, "granted": ["rename"]},
+                           tool_states({**ALLOW_ALL, "rename": "ask"}, granted=["rename"]))
+    assert granted == asking
 
 
 def test_every_change_tool_previews_its_approval():
@@ -311,7 +316,7 @@ def test_a_change_asks_first_and_runs_once_allowed(org, monkeypatch):
     assert "".join(text for kind, text in card["preview"]["diff"] if kind != "del") == "Ada2019 cavity"
     assert (actions[0]["kind"], actions[0]["approval"]) == ("rename", "once")
     assert props(c, ids["a"])["content"] == "Ada2019 cavity"
-    assert "rename_page" in opened[0]["tools"] and "approves each call of rename_page" in opened[0]["system"]
+    assert "rename_page" in opened[0]["tools"] and "ask the user first" in opened[0]["system"]
     assert opened[1]["messages"][-1]["content"].startswith("ok")
 
 

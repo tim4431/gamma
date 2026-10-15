@@ -181,7 +181,8 @@ def test_chat_agent_streams_edit_preview(notes, monkeypatch):
 def test_notes_focus_section_and_agent_prompt(notes):
     """The cursor block and attached block chips reach the model as an
     id-labelled outline (sub-blocks indented), scoped to the context page —
-    page ids and foreign ids are dropped — and the agent prompt names them."""
+    page ids and foreign ids are dropped. The agent prompt never names them:
+    it stays the same from message to message, for the prompt cache."""
     from types import SimpleNamespace
     from gamma.ai_context import notes_focus_section
     c, ids = notes
@@ -205,10 +206,12 @@ def test_notes_focus_section_and_agent_prompt(notes):
         focus_block_id="", page_id=ids["page"], pages=[], context_blocks=[])) == ""
     assert notes_focus_section(ids["ws"], SimpleNamespace(
         focus_block_id="", page_id=ids["a"], pages=[], context_blocks=[other])) == ""
-    text = agent_system({"type": "page", "page_id": ids["page"], "focus_block_id": top,
-                         "context_blocks": [other, ids["page"]]})
-    assert f'cursor is on note block "{top}"' in text
-    assert f'"{other}"' in text and f'"{ids["page"]}".' not in text
+    plain = agent_system({"type": "page", "page_id": ids["page"]})
+    pointed = agent_system({"type": "page", "page_id": ids["page"], "focus_block_id": top,
+                            "context_blocks": [other, ids["page"]],
+                            "note_selections": [{"label": "S1", "block_id": other}]})
+    assert pointed == plain and top not in plain and other not in plain
+    assert "block at the user's cursor" in plain  # the rule, without the ids
 
 
 def test_chat_carries_notes_focus(notes, monkeypatch):
@@ -236,8 +239,15 @@ def test_chat_carries_notes_focus(notes, monkeypatch):
     assert f"- [{top}] cursor block" in user_turn and f"[{other}] chip block" in user_turn
     assert "selected the following exact passage of their own notes" in user_turn
     assert f'S1 (in block [{other}]):\n"""\nchip \n"""' in user_turn
-    assert 'mode "selection"' in seen["system"] and f'S1 in block "{other}"' in seen["system"]
-    assert f'cursor is on note block "{top}"' in seen["system"]
+    assert 'mode "selection"' in user_turn and "a selection edit" in seen["system"]
+    assert top not in seen["system"] and other not in seen["system"]
+    # The next message points at nothing: the system prompt is the same, so
+    # the cached prefix (system, document, history) still serves it.
+    pointed = seen["system"]
+    r = c.post("/api/ai/chat", json={
+        "prompt": "thanks", "agent_scope": "page", "page_id": ids["page"], "permissions": ALLOW_ALL})
+    assert r.status_code == 200, r.text
+    assert seen["system"] == pointed
 
 
 def _block(c, parent, content, properties):

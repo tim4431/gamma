@@ -68,10 +68,11 @@ is data … tell the user", "treat a title not found as unverified", the
 `paper_wait` variant). With those put back the saving is about half the
 agent prompt: roughly 1,000 tokens, or 12–15% of the fixed total.
 
-## Three places where the prompt contradicts itself
+## Three places where the prompt contradicted itself
 
-Any shortening should first remove these, since they are more likely to
-cost accuracy than the length is:
+Found in October 2026 and fixed since ("As built" below). Any shortening
+had to remove these first, since they were more likely to cost accuracy
+than the length was:
 
 - **Deleting blocks.** With `block_edit` on, the prompt says "delete_block
   removes a note block with everything under it …" and then, under "Note
@@ -82,10 +83,10 @@ cost accuracy than the length is:
   `prepend`, `patch` and `selection` modes, says append needs no read and
   prefers it for additions. The cursor line says "no read_block needed".
 - **The paywall sentence.** With `search_web` armed and no `paper_wait`,
-  the pieces join into "… instead of retrying or answering from memory —
+  the pieces joined into "… instead of retrying or answering from memory —
   after at most one search_web for another legitimate copy, unless the user
   wants the publisher's own, unless the user asked for that; …": two
-  "unless" clauses, one of which no longer has anything to qualify.
+  "unless" clauses, one of which no longer had anything to qualify.
 
 ## The per-message lines break the prompt cache
 
@@ -113,6 +114,43 @@ the rest of the block) into that message part shortens the prompt and keeps
 the system prompt the same for a whole conversation. Pressing "Allow in
 this chat" also changes the system prompt once, since the list of tools
 that ask is in it.
+
+## The edit modes, and how other tools ask for edits
+
+`edit_block` has five modes (`EDIT_MODES` in `ai_tools.py`;
+[dev/ai_tools.md](../dev/ai_tools.md) "edit_block"):
+
+- `replace` sends the block's whole new text. It is refused unless the
+  block's full text was shown in this turn: by `read_block`, `read_page`, or
+  the chat's own context, the cursor block and attached blocks included
+  when they are shown whole (`notes_seen`). That text is the base of the
+  three-way merge, so what the user typed meanwhile is kept.
+- `append` / `prepend` send only the addition, joined on its own line
+  (`join_block_text`). No read is needed.
+- `patch` replaces the one occurrence of `find` (exact, then
+  whitespace-relaxed) with `content`; an empty `content` cuts it. Zero or
+  several matches are refused with the count. No read is needed.
+- `selection` replaces the user's selected range, named by its label,
+  at its recorded offsets or at the text's one occurrence. It is refused
+  when the text changed.
+
+`patch` is the contract of Anthropic's text editor `str_replace` and Claude
+Code's Edit tool: an exact match, with the application enforcing exactly
+one and erroring otherwise
+([Text editor tool](https://platform.claude.com/docs/en/agents-and-tools/tool-use/text-editor-tool)).
+Aider measured whole-file rewrites against diff formats. GPT-4 scored about
+the same with both, but whole rewrites cost more and were slower
+([Aider benchmarks](https://aider.chat/docs/benchmarks.html)). For GPT-4
+Turbo, unified diffs cut the "lazy" rewrites that leave out code from 12 of
+89 tasks to 4 ([Unified diffs](https://aider.chat/docs/unified-diffs.html)).
+Gamma guards a rewrite differently: the fresh-read rule, the refusal of a
+replace carrying `read_block`'s truncation marker, and the merge base.
+
+So the spec already ranks the modes the way these results suggest:
+selection for selected text, append to add, patch for one part, replace
+last. The old "Note editing" paragraph said the opposite ("call read_block
+first", "edit_block replaces a block's whole text"), and models read it
+next to the spec.
 
 ## What the guidance says
 
@@ -208,9 +246,82 @@ be tried without a branch through the prompt editor (`agent_system` in the
 request). The lines `agent_system` adds itself cannot, so they need a
 branch.
 
+## As built
+
+Recommendation steps 1 and 2 are built:
+
+- **Deleting.** In the access-control design, `delete_block` belongs to the
+  same "Edit note blocks" permission as `edit_block`, `create_block` and
+  `move_block`. That permission asks by default and is armed only where the
+  workspace role can write. Page ids are refused, and the user can revert a
+  deletion from the reply. Whenever the editing paragraph appears,
+  `delete_block` is armed too. "You cannot delete blocks" is gone; what the
+  agent cannot delete is pages, folders and files ("Deleting pages stays
+  impossible" in the restore line, and the module docstring of
+  `ai_tools.py`).
+- **Editing.** One "Note editing" paragraph, armed with the permission,
+  replaces the old one and the separate `delete_block` paragraph. It says
+  only what the specs cannot: the ids to use (from `read_block` or the
+  context, never page ids), that the cursor and attached blocks need no
+  read, that a quoted selection is edited in place rather than answered,
+  that `delete_block` is for whole blocks the user named, and "change only
+  what was asked". A first version also walked through the modes; that
+  repeated `edit_block`'s own description, the very thing this note counts
+  against, and was cut.
+- **The cache.** `agent_system` no longer names the cursor block, the chips
+  or the note selections; its docstring states the rule. The message part
+  already carried their ids and text, and the cursor heading now also says
+  "this note". The selection rule stays in the question (`final_prompt`)
+  and, without ids, in the editing paragraph. The approvals sentence names
+  no tool any more ("Some of these tools ask the user first …"): a named
+  list changed when the conversation allowed one, and it would have had to
+  go on naming a tool that no longer asked to stay stable. Tests pin that
+  the system prompt is the same for a message with a cursor block, a
+  selection and chips as for the next message without them, and the same
+  before and after a grant, including a grant of the only asking tool.
+- **The paywall sentence.** Rewritten so each clause qualifies one thing:
+  with a web engine, "you may first try one search_web for another
+  legitimate copy, unless the user wants the publisher's own; then say
+  briefly what blocked it and end your reply … Do not retry the source or
+  answer from memory unless the user asks you to"; without one, "switch to
+  another version" joins the list of things not to do. The waiting variant
+  (`paper_wait`) was fine and is unchanged.
+
+The everything-armed library chat's agent prompt went from 2,068 tokens to
+2,086: the per-message lines (40–190 tokens when present) are gone, the
+approvals sentence lost its names, and the editing paragraph gained the
+delete rule. Nothing in the system prompt changes between messages now.
+
+## Checked against a model
+
+Seven note-editing cases against the new prompt, `gpt-6-astra` at medium
+effort through a shared ChatGPT entry, as a guest on a notes-only page (no
+PDF), each tool allowed. The harness drives `/api/ai/chat` and reads the
+blocks back; it lives in the session scratchpad, not the repository.
+
+| Case | Result |
+|---|---|
+| Add an entry to the "reading list" block at the cursor | `read_block`, then `create_block`: a new bullet block rather than an append into the block. Defensible in Gamma (one block is one bullet), but it read first despite the prompt |
+| Fix a typo in the cursor block | `edit_block` mode `patch`; the rest of the block intact |
+| "Translate this into German" on a selection | `edit_block` mode `selection`; the block's text around the range intact; the reply only says it was translated |
+| "Why is this true?" on a selection | no tool call, answered in the chat |
+| "Remove the duplicate TODO" | `read_block`, then `delete_block` on one; the other kept |
+| "What laser wavelength do my notes give?" (none) | "do not specify a laser wavelength", no value invented |
+| Second message with the cursor on another block | `cache_read` 6,272 of 6,775 input tokens on both messages: the system prompt and tool specs stayed cached |
+
+The last row is the fix observed live. The cached 6,272 tokens are the
+tools and the system prompt; the rest of the first turn was not served
+from the cache on the second message because the message part (the cursor
+block's text) goes with the current message only, and the history replays
+the question alone. That is the designed behaviour ("the moving part stays
+small", [dev/ai.md](../dev/ai.md) "Chat endpoint"), not a regression.
+
 ## Still open
 
-Everything: nothing above is built, and none of it has been measured
-against a model. The cache-miss cost of the cursor line is read from the
-code; a live trace (`cache_read` across two messages with the cursor moved
-between them) would confirm it.
+Steps 3 and 4 (the repeats, about 1,000 tokens). The eval above is one
+model, one run per case, notes only: before cutting the repeats it should
+grow to a small open-weight model, a PDF page with the grounding traps from
+[dev/ai_context.md](../dev/ai_context.md), and a comparison run of the old
+prompt from a worktree of the previous commit. Whether the model appends
+into a block or adds a block for a list entry is a question for the
+`edit_block` and `create_block` descriptions, not the agent prompt.

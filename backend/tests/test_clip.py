@@ -195,6 +195,17 @@ def test_clip_dead_pdf_link_falls_back_to_web_page(guest, upstream, meta_calls):
     assert "PDF" in r.json()["note"]
     # Without a tab URL or title there is nothing to make a page from: still a 400.
     assert guest.post("/api/clip", json={"pdf_url": "https://example.org/articles/dead-file-2"}).status_code == 400
+    # The extension asks for the 400 instead (web_fallback: false), to try the
+    # browser's session before settling for a web page: no page is made.
+    def pages():
+        with connect_pages_db(workspace_of(guest_name())) as conn:
+            return conn.execute("SELECT COUNT(*) FROM unified_blocks WHERE parent_id = 'root'").fetchone()[0]
+    before = pages()
+    for body in ({"source_url": "https://example.org/articles/dead-3", "doi": "10.5555/dead.3", "title": "Dead"},
+                 {"source_url": "https://example.org/articles/plain", "title": "Plain"}):
+        r = guest.post("/api/clip", json={**body, "web_fallback": False})
+        assert r.status_code == 400, r.text
+    assert pages() == before
 
 
 def test_clip_no_copy_probes_only(guest, upstream, meta_calls):

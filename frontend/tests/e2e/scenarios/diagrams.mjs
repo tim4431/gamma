@@ -84,6 +84,26 @@ async function imageMarkup(img) {
   return decodeURIComponent(src.slice(SVG_URL.length));
 }
 
+// The clipboard's one item, by type: text as text, a PNG as its pixel size
+// and how many of its pixels differ from its corner's (0: a blank image).
+const readClipboard = async () => {
+  const [item] = await navigator.clipboard.read();
+  const out = {};
+  for (const type of item.types) {
+    const blob = await item.getType(type);
+    if (type !== "image/png") { out[type] = await blob.text(); continue; }
+    const bitmap = await createImageBitmap(blob);
+    const canvas = Object.assign(document.createElement("canvas"), { width: bitmap.width, height: bitmap.height });
+    const g = canvas.getContext("2d");
+    g.drawImage(bitmap, 0, 0);
+    const px = g.getImageData(0, 0, bitmap.width, bitmap.height).data;
+    let inked = 0;
+    for (let i = 4; i < px.length; i += 4) if (px[i] !== px[0] || px[i + 1] !== px[1] || px[i + 2] !== px[2] || px[i + 3] !== px[3]) inked += 1;
+    out[type] = { size: `${bitmap.width}x${bitmap.height}`, inked };
+  }
+  return out;
+};
+
 const setTheme = (page, theme) => page.evaluate((value) => {
   Object.assign(document.documentElement.dataset, { scheme: value, theme: value });
 }, theme);
@@ -339,6 +359,34 @@ export async function diagramScenarios(env) {
       assertEq(download.suggestedFilename(), "diagram.svg");
       const file = await readFile(await download.path(), "utf8");
       assertEq(file, markup, "the download is the image's drawing");
+
+      // The menu's Copy image: each figure as shown, an SVG at its size on
+      // its page plus a PNG twice that, the flowchart's labels drawn in it.
+      const copyImageOf = async (picture) => {
+        await page.evaluate(() => navigator.clipboard.writeText("before"));
+        await picture.click({ button: "right" });
+        await page.getByRole("button", { name: "Copy image", exact: true }).click();
+        let copied = null;
+        await until(async () => !(copied = await page.evaluate(readClipboard))["text/plain"], { what: "the figure reached the clipboard" });
+        return copied;
+      };
+      const drawing = await copyImageOf(img);
+      assertEq(drawing["image/png"]?.size, "640x400", "the drawing's PNG is twice its shown size");
+      assert(drawing["image/png"].inked > 0, "the PNG is drawn");
+      const drawnSvg = drawing["image/svg+xml"] || "";
+      assert(/<svg[^>]* width="320" height="200"/.test(drawnSvg) && drawnSvg.includes("background-color: rgb(255, 255, 255)"),
+        `the SVG at its shown size on its white page: ${drawnSvg.slice(0, 200)}`);
+      assert(drawnSvg.includes('<marker id="arrow"') && !/script|onload/.test(drawnSvg), "the sanitized drawing");
+      const flowSvg = page.locator('.diagramCard[data-diagram-kind="mermaid"] .diagramSvg > svg');
+      const flowBox = await flowSvg.boundingBox();
+      const flowchart = await copyImageOf(flowSvg);
+      assertEq(flowchart["image/png"]?.size, `${Math.floor(flowBox.width * 2)}x${Math.floor(flowBox.height * 2)}`, "the flowchart's PNG is twice its shown size");
+      assert(flowchart["image/png"].inked > 0, "the flowchart's PNG is drawn");
+      const flowRoot = /<svg[^>]*>/.exec(flowchart["image/svg+xml"] || "")?.[0] || "";
+      assert(flowRoot.includes(` width="${Math.round(flowBox.width)}"`) && !flowRoot.includes("max-width"),
+        `the flowchart's SVG at its shown size: ${flowRoot}`);
+      assert(flowchart["image/svg+xml"].includes("Finish"), "with its labels");
+      await page.getByText("Copied image", { exact: true }).waitFor();
 
       // The drawing hugs its own width; its grip writes width=N on its own
       // fence, the flowchart's grip on the flowchart's: one index for both kinds.

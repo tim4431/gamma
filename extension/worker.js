@@ -13,6 +13,7 @@ import {
   sameWork, siteOf,
 } from "./handoff.js";
 import { connectPublisher, publisherHost, publisherRoot, secureServer, shouldAutoRefresh } from "./publisherSessions.js";
+import { RECENT_KEY, describeResponse, formatBytes, saveLog, withRecent } from "./saveLog.js";
 import "./ids.js"; // defines globalThis.gammaDoiFromPath and gammaArxivId
 
 const ICON_ON = { 16: "assets/icons/icon16.png", 32: "assets/icons/icon32.png" };
@@ -565,9 +566,13 @@ function pdfUrlVariants(url) {
   return list;
 }
 
+// Where a download outside a save reports (a chat's fetch): the console only.
+const consoleLog = { step: (text) => console.info(`[gamma] ${text}`) };
+
 // A failed attempt remembers where its download ended (`landed` on the
 // error): a sign-in page means the user has no access yet (harvestHandoff).
-async function bytesFromTab(url, tabId) {
+// Every attempt and its answer go to `log` (saveLog.js).
+async function bytesFromTab(url, tabId, log = consoleLog) {
   // The browser's own session (institutional login, cookies) fetches what
   // the server can't. Two attempts per URL variant: the worker's direct
   // fetch, then — publisher bot checks 403 requests with an extension origin
@@ -577,34 +582,36 @@ async function bytesFromTab(url, tabId) {
   let lastErr = new Error("the browser couldn't download the PDF");
   let landed = "";
   for (const u of pdfUrlVariants(url)) {
-    try {
-      const res = await fetch(u, { credentials: "include" });
+    let res = null;
+    try { res = await fetch(u, { credentials: "include" }); }
+    catch (err) { lastErr = err; log.step(`worker fetch ${u} failed: ${err.message}`); }
+    if (res) {
       landed = res.url || landed;
-      if (!res.ok) throw new Error(`the browser couldn't download the PDF (${res.status})`);
-      const blob = await res.blob();
-      if (await looksLikePdf(blob)) return blob;
-      throw new Error(NOT_PDF_MSG);
-    } catch (err) {
-      lastErr = err;
-      console.warn(`[gamma] worker fetch failed for ${u}: ${err.message}`);
+      const blob = res.ok ? await res.blob().catch(() => null) : null;
+      const pdf = !!blob && await looksLikePdf(blob);
+      log.step(`worker fetch ${u} → ${describeResponse({ status: res.status, type: res.headers.get("content-type") || "",
+        size: blob?.size, url: u, landed: res.url })}${blob && !pdf ? " · not a PDF" : ""}`);
+      if (pdf) return blob;
+      lastErr = new Error(res.ok ? NOT_PDF_MSG : `the browser couldn't download the PDF (${res.status})`);
     }
     if (tabId == null) continue;
     let r = null;
     try { r = await chrome.tabs.sendMessage(tabId, { type: "fetch-pdf", url: u }); }
-    catch (err) { console.warn(`[gamma] no content-script relay in tab ${tabId} (${err.message}) — is the tab reloaded?`); }
-    if (r && r.ok && r.base64) {
+    catch (err) { log.step(`in-page fetch ${u}: no content script in tab ${tabId} (${err.message}) — is the tab reloaded?`); }
+    if (!r) continue;
+    const answer = r.status ? describeResponse({ status: r.status, type: r.type, size: r.size, url: u, landed: r.landed }) : "";
+    if (r.ok && r.base64) {
       const bytes = Uint8Array.from(atob(r.base64), (c) => c.charCodeAt(0));
       const blob = new Blob([bytes], { type: "application/pdf" });
-      if (await looksLikePdf(blob)) return blob;
+      const pdf = await looksLikePdf(blob);
+      log.step(`in-page fetch ${u} → ${answer}${pdf ? "" : " · not a PDF"}`);
+      if (pdf) return blob;
       lastErr = new Error(NOT_PDF_MSG);
-      console.warn(`[gamma] in-page fetch of ${u} returned non-PDF bytes`);
-    } else if (r && r.notPdf) {
-      lastErr = new Error(NOT_PDF_MSG);
-    } else if (r && (r.status || r.error)) {
-      lastErr = new Error(r.error || `the browser couldn't download the PDF (${r.status})`);
-      console.warn(`[gamma] in-page fetch failed for ${u}: ${lastErr.message}`);
+    } else {
+      lastErr = new Error(r.error || (r.notPdf ? NOT_PDF_MSG : `the browser couldn't download the PDF (${r.status})`));
+      log.step(`in-page fetch ${u} → ${[answer, r.notPdf ? "not a PDF" : "", r.error || ""].filter(Boolean).join(" · ")}`);
     }
-    if (r && r.landed) landed = r.landed;
+    if (r.landed) landed = r.landed;
   }
   lastErr.landed = landed;
   throw lastErr;
@@ -640,6 +647,33 @@ async function uploadBlob(tabId, blob, url, pin) {
   }
 }
 
+// What this browser could download the paper's PDF from itself, best first
+// (handoff.js harvestUrls): the tab that is a PDF, the page's advertised PDF,
+// an Atypon reader's file, the page's own PDF links on its site — only on a
+// page that names a paper (a "maybe" DOI is often a reference's).
+function browserPdfUrls(cand) {
+  return ["pdf", "arxiv", "doi"].includes(cand.kind) ? harvestUrls(cand, null, { tabUrl: cand.source_url }) : [];
+}
+
+// The first of `urls` the browser gets a PDF from: {url, blob}.
+async function downloadFirst(urls, tabId, log) {
+  let lastErr = new Error("the browser couldn't download the PDF");
+  for (const url of urls) {
+    try { return { url, blob: await bytesFromTab(url, tabId, log) }; }
+    catch (err) { lastErr = err; }
+  }
+  throw lastErr;
+}
+
+// A save's log, kept for copying: in the tab's state (the popup's "Copy the
+// save log") and among the recent ones (the options page).
+async function keepLog(tabId, log) {
+  const text = log.text();
+  const recent = (await chrome.storage.session.get(RECENT_KEY))[RECENT_KEY];
+  await chrome.storage.session.set({ [RECENT_KEY]: withRecent(recent, text) });
+  if (tabId != null) await setTabState(tabId, { log: text });
+}
+
 async function savePaper({ tabId, candidate, folder, folder_path, labels, title, source_url }) {
   const settings = await getSettings();
   // Where this save goes, start to end: its uploaded bytes and the clip
@@ -652,9 +686,29 @@ async function savePaper({ tabId, candidate, folder, folder_path, labels, title,
   // still replace it, a user rename never is).
   const st = tabId != null ? await getTabState(tabId) : {};
   const previewTitle = st.preview && st.preview.title || "";
-  // The URL this browser could download itself: the tab that *is* a PDF, or
-  // the page's advertised PDF link.
-  const fetchUrl = cand.pdf_url || (cand.is_pdf_tab ? cand.source_url : "");
+  const pageTitle = title != null ? title : (cand.title || previewTitle);
+  const urls = browserPdfUrls(cand);
+  const log = saveLog({ version: chrome.runtime.getManifest().version, browser: navigator.userAgent,
+                        server: settings.server, workspace: pin.workspace, tab: cand.source_url || source_url || "",
+                        candidate: cand, title: pageTitle });
+  log.step(urls.length ? `the browser can try: ${urls.join("  ")}` : "nothing the browser could download itself");
+  const clip = async (body, why) => {
+    log.step(`POST /api/clip${why}`);
+    try {
+      const out = await api("/clip", { json: body, ...pin });
+      log.step(`← ${out.existed ? "already in the library" : "saved"}: page ${out.block_id} · `
+        + `${out.doc_id ? `PDF ${out.doc_id}` : "no PDF"}${out.note ? ` · note: ${out.note}` : ""}`);
+      return out;
+    } catch (err) {
+      log.step(`← ${err.status || "failed"}: ${err.message}`);
+      throw err;
+    }
+  };
+  const upload = async ({ url, blob }) => {
+    const docId = await uploadBlob(tabId, blob, url, pin);
+    log.step(`POST /api/uploads ${formatBytes(blob.size)} from ${url} → ${docId}`);
+    return docId;
+  };
   if (tabId != null) await progress(tabId, "resolving…");
   // Everything that talks to the server runs inside this try, so an
   // unreachable server or an expired sign-in ends the same way wherever it
@@ -668,45 +722,63 @@ async function savePaper({ tabId, candidate, folder, folder_path, labels, title,
     const payload = {
       source_url: cand.source_url || source_url || "",
       pdf_url: cand.pdf_url || "", doi: cand.doi || "", arxiv_id: cand.arxiv_id || "",
-      title: title != null ? title : (cand.title || previewTitle),
+      title: pageTitle,
       ...filing,
       labels: labels != null ? labels : settings.labels,
       allow_oa: settings.allowOa, save_copy: settings.saveCopy,
     };
-    if (cand.is_pdf_tab && fetchUrl) {
-      // The tab is the PDF — upload the bytes the browser already has access
-      // to instead of making the server re-download (it may not be able to).
-      // Best-effort: on failure the server-side resolve below still runs.
-      try {
-        if (tabId != null) await progress(tabId, "downloading in your browser…");
-        payload.doc_id = await uploadBlob(tabId, await bytesFromTab(fetchUrl, tabId), fetchUrl, pin);
-      } catch (err) { console.warn(`[gamma] browser-first upload failed, server will try: ${err.message}`); }
+    let browserErr = null;  // why this browser couldn't download the PDF, once it tried
+    // The tab is the PDF — upload the bytes the browser already has access
+    // to instead of making the server re-download (it may not be able to).
+    // Best-effort: on failure the server-side resolve below still runs.
+    const browserFirst = cand.is_pdf_tab && urls.length > 0;
+    if (browserFirst) {
+      if (tabId != null) await progress(tabId, "downloading in your browser…");
+      let got = null;
+      try { got = await downloadFirst(urls, tabId, log); }
+      catch (err) { browserErr = err; log.step(`the browser couldn't download it, the server will try: ${err.message}`); }
+      if (got) {
+        try { payload.doc_id = await upload(got); }
+        catch (err) { log.step(`uploading failed, the server will try: ${err.message}`); }
+      }
     }
+    // Otherwise, while the browser has a download of its own to try, a PDF
+    // the server can't fetch (paywall, bot check) comes back as the 400 —
+    // not yet as a page with its web source.
+    const retry = !browserFirst && urls.length > 0;
     if (tabId != null) await progress(tabId, "saving to your library…");
     let out;
     try {
-      out = await api("/clip", { json: payload, ...pin });
+      out = await clip({ ...payload, web_fallback: !retry }, retry ? " (the 400 if the server can't fetch the PDF)" : "");
     } catch (err) {
-      // The server couldn't fetch the PDF (paywall, bot check) — this
-      // browser's session often can. Download here, upload, save again.
-      if (!(err instanceof ApiError) || err.status !== 400 || payload.doc_id || !fetchUrl) throw err;
+      if (!retry || !(err instanceof ApiError) || err.status !== 400) throw err;
+      // This browser's session often gets past what stopped the server:
+      // download here, upload, save again — and when it can't either, save
+      // the page with its web source, as the server would have.
       if (tabId != null) await progress(tabId, "server couldn't fetch it — downloading in your browser…");
-      let blob;
-      try { blob = await bytesFromTab(fetchUrl, tabId); }
-      catch (bErr) { throw new Error(`${err.message} The browser-side download failed too: ${bErr.message}.`); }
-      payload.doc_id = await uploadBlob(tabId, blob, fetchUrl, pin);
+      let got = null;
+      try { got = await downloadFirst(urls, tabId, log); }
+      catch (bErr) { browserErr = bErr; log.step(`the browser couldn't download it either: ${bErr.message}`); }
+      if (got) payload.doc_id = await upload(got);
       if (tabId != null) await progress(tabId, "saving to your library…");
-      out = await api("/clip", { json: payload, ...pin });
+      out = await clip({ ...payload, web_fallback: true }, got ? " with the uploaded PDF" : " (a page with its web source if there's no PDF)");
     }
+    if (browserErr && !out.doc_id && out.note) {
+      out = { ...out, note: `${out.note} Your browser couldn't download it either: ${browserErr.message}.` };
+    }
+    log.step(`done: ${out.existed ? "already in your library" : "saved"} as "${out.title || ""}"`);
     // The folder saved into becomes the default; labels are per-paper, so they
     // are not remembered (each popup starts from the options-page defaults).
     await rememberFolder(settings, filing).catch((err) => console.warn(`[gamma] couldn't remember the folder: ${err.message}`));
+    await keepLog(tabId, log);
     if (tabId != null && sameLibrary({ origin: settings.server, ws: pin.workspace }, await getSettings())) {
       await setTabState(tabId, { saving: "", hit: out, last: out, error: "", origin: settings.server, ws: pin.workspace });
     }
     return { ...out, ws: pin.workspace };
   } catch (err) {
     const message = err.message || "save failed";
+    log.step(`failed: ${message}`);
+    await keepLog(tabId, log).catch(() => {});
     if (tabId != null) await setTabState(tabId, { saving: "", error: message, auth: err.status === 401 ? false : undefined });
     if (err.status === 401) authCache.at = 0;
     throw err;

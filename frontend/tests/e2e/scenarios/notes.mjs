@@ -1055,5 +1055,58 @@ export async function noteScenarios({ server, browser, alice, step, until, sleep
     await ctxO.close();
   });
 
+  await step("notes: the object menu's Copy image — a PNG as it is, a JPEG as a PNG, an SVG as itself plus a PNG twice its size", async () => {
+    const ctxC = await alice2.context(browser, { permissions: ["clipboard-read", "clipboard-write"] });
+    const p = await openPage(ctxC, `${server.base}/?ws=${second.id}`);
+    try {
+      // A 40×30 JPEG, which the clipboard refuses as such.
+      const jpeg = Buffer.from(await p.evaluate(async () => {
+        const canvas = Object.assign(document.createElement("canvas"), { width: 40, height: 30 });
+        canvas.getContext("2d").fillRect(0, 0, 40, 30);
+        const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg"));
+        return btoa(String.fromCharCode(...new Uint8Array(await blob.arrayBuffer())));
+      }), "base64");
+      const png = await alice2.upload("/api/upload-image", PNG_1PX, "copy.png", "image/png");
+      const jpg = await alice2.upload("/api/upload-image", jpeg, "copy.jpg", "image/jpeg");
+      const svg = await alice2.upload("/api/upload-image", Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="60" height="40"><rect width="60" height="40" fill="rgb(50, 100, 200)"/></svg>'), "copy.svg", "image/svg+xml");
+      const block = await alice2.api("/api/blocks", { method: "POST", body: { parent_id: pageId, content: `![|100](${png.url})\n\n![|120](${jpg.url})\n\n![|120](${svg.url})` } });
+      const withTable = await alice2.api("/api/blocks", { method: "POST", body: { parent_id: pageId, content: "| a |\n|---|\n| 1 |" } });
+      await p.goto(`${server.base}/?ws=${second.id}&page=${pageId}`);
+      const imgs = p.locator(`.blockRowWrap[data-block-id="${block.id}"] img.mdImg`);
+      await until(async () => (await imgs.evaluateAll((els) => els.filter((el) => el.complete && el.naturalWidth > 0).length)) === 3, { what: "the three pictures load" });
+      // The clipboard's one item: each type, an image as its pixel size.
+      const clipboard = () => p.evaluate(async () => {
+        const [item] = await navigator.clipboard.read();
+        const out = {};
+        for (const type of item.types) {
+          const blob = await item.getType(type);
+          out[type] = type === "image/png" ? await createImageBitmap(blob).then((b) => `${b.width}x${b.height}`) : await blob.text();
+        }
+        return out;
+      });
+      const copyNth = async (n) => {
+        await p.evaluate(() => navigator.clipboard.writeText("before"));
+        const box = await imgs.nth(n).boundingBox();
+        await imgs.nth(n).click({ button: "right", position: { x: box.width / 2, y: box.height - 4 } }); // clear of the toolbar and the grips
+        await p.getByRole("button", { name: "Copy image", exact: true }).click();
+        await until(async () => !(await clipboard())["text/plain"], { what: `picture ${n} reached the clipboard` });
+        return clipboard();
+      };
+      assertEq(JSON.stringify(await copyNth(0)), JSON.stringify({ "image/png": "1x1" }), "a PNG keeps its own pixels, not its shown size");
+      await p.getByText("Copied image", { exact: true }).waitFor();
+      assertEq(JSON.stringify(await copyNth(1)), JSON.stringify({ "image/png": "40x30" }), "a JPEG becomes a PNG of the same size");
+      const vector = await copyNth(2);
+      assertEq(vector["image/png"], "240x160", "an SVG's PNG is twice its shown size");
+      assert(/<svg[^>]* width="120" height="80"/.test(vector["image/svg+xml"]) && vector["image/svg+xml"].includes('viewBox="0 0 60 40"'),
+        `the SVG at its shown size, scaled: ${vector["image/svg+xml"]}`);
+      // A table has no picture to copy.
+      await p.locator(`.blockRowWrap[data-block-id="${withTable.id}"] .mdObject-table`).click({ button: "right", position: { x: 2, y: 2 } });
+      await p.getByRole("button", { name: "Copy as markdown", exact: true }).waitFor();
+      assertEq(await p.getByRole("button", { name: "Copy image", exact: true }).count(), 0, "no Copy image on a table");
+      await p.keyboard.press("Escape");
+      assertNoProblems(p);
+    } finally { await ctxC.close(); }
+  });
+
   return { second, alice2, pageId };
 }

@@ -51,6 +51,7 @@ import { remarkCallouts } from "./callouts";
 import { PeerChips, RenderedCarets } from "../collaboration/Presence";
 import { ContextMenu, MenuItem } from "../shared/ui/Menus";
 import { API, apiJson, assetUrl, copyText, withShare, withWorkspace } from "../shared/lib/utils";
+import { copyImage } from "../shared/lib/copyImage.js";
 import { CopyIcon, ExportIcon, MessageSquareIcon, PlusIcon, SheetIcon, SparklesIcon, Trash2Icon } from "../shared/ui/Icons";
 import { T, t } from "../shared/i18n/i18n.js";
 import { guideEvents } from "../guide/events.js";
@@ -924,9 +925,10 @@ const BlockRow = React.memo(function BlockRow({
   // diagram of this block as a source range. "Edit source" opens the raw
   // editor with the caret on it (the click-to-source path with a known
   // offset); a move is App's one-transition tree edit (onMoveObject); the
-  // drag publishes the object for App's block drop handlers.
+  // drag publishes the object for App's block drop handlers. "Copy image"
+  // copies the picture the frame shows, not its source.
   const objectActionRef = useRef(null);
-  objectActionRef.current = (kind, idx, action, e) => {
+  objectActionRef.current = (kind, idx, action, e, picture) => {
     const content = block.content || "";
     const obj = findObject(content, kind, idx);
     if (!obj) return;
@@ -939,6 +941,8 @@ const BlockRow = React.memo(function BlockRow({
     } else if (action === "copy") {
       copyText(content.slice(obj.from, obj.to));
       onStatus?.(t("Copied as markdown"));
+    } else if (action === "copyImage") {
+      copyImage(picture).then((ok) => onStatus?.(ok ? t("Copied image") : t("Could not copy the image")));
     } else if (action === "delete") {
       onChangeText(block.id, cutObject(content, obj).content);
     } else if (action === "moveNewAbove" || action === "moveNewBelow") {
@@ -957,7 +961,7 @@ const BlockRow = React.memo(function BlockRow({
       window._gammaSetDropTarget?.(null);
     }
   };
-  const stableObjectAction = useRef((k, i, a, e) => objectActionRef.current?.(k, i, a, e)).current;
+  const stableObjectAction = useRef((k, i, a, e, p) => objectActionRef.current?.(k, i, a, e, p)).current;
   // The editor's picture / table widgets drag through the same action.
   const stableObjectDrag = useRef((k, i, phase, e) =>
     objectActionRef.current?.(k, i, phase === "start" ? "dragStart" : "dragEnd", e)).current;

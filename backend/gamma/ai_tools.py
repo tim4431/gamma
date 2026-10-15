@@ -29,9 +29,10 @@ pages' notes and PDF text via the two FTS indexes; search the scholarly record
 and read a document that is not in the library (``ai_web.py`` — read-only,
 nothing stored); list Recently deleted.  Writes: rename pages and
 file them into (sub)folders, restore deleted pages (folder scope only); edit,
-create and move note blocks; save a paper to the library (both scopes, each
-under its own permission).  Deliberately NOT offered
-under any permission: deleting anything, rewriting flat labels, or touching
+create, move and delete note blocks (a deletion the user can revert); save a
+paper to the library (both scopes, each under its own permission).
+Deliberately NOT offered under any permission: deleting pages, folders or
+files, rewriting flat labels, or touching
 pages outside the scope — and every successful call is streamed back to the
 UI as an ``action`` event so the user sees exactly what the agent did.  The
 human-facing description lives in ``docs/dev/ai_tools.md``; the base role
@@ -3040,7 +3041,7 @@ TOOLS = [
                 "selection edit. Otherwise prefer append when asked "
                 "to add, extend, note something, or continue a block; patch to delete, "
                 "shorten or correct one part of a long block; replace only for a full "
-                "rewrite. Use exact block ids from read_block (never page ids — "
+                "rewrite. Use exact block ids from read_block or the context (never page ids — "
                 "titles change via rename_page). Editing a highlight block changes its "
                 "note text; the highlighted PDF passage itself cannot be changed."),
             "parameters": {
@@ -3281,7 +3282,14 @@ def coverage_lines(coverage: list, can_read: bool) -> str:
 
 def agent_system(scope: dict, perms: dict | None = None, base: str = "") -> str:
     """System-prompt addendum: the (user-editable) base role prompt plus
-    mechanical lines describing this chat's scope and armed tools."""
+    mechanical lines describing this chat's scope and armed tools.
+
+    Nothing here may change from one message of a conversation to the next:
+    the system prompt sits ahead of the document context and the history in
+    every provider's cached prefix, so a line that moves costs the whole
+    prefix. What a message points at (the cursor block, attached chips, note
+    selections) goes with the message instead (``ai_context.notes_focus_section``,
+    ``final_prompt``)."""
     armed = agent_tools(scope.get("type") or "", perms, can_write=scope.get("can_write", True),
                         has=available(scope))
     names = [t["name"] for t in armed]
@@ -3300,37 +3308,21 @@ def agent_system(scope: dict, perms: dict | None = None, base: str = "") -> str:
                  + ". Read and search tools can access them, including their PDF text and notes. "
                  "Attachments outside the original page/folder scope are read-only. "
                  "Match @ mentions to their titles and Gamma page IDs in context.\n")
-    focus = scope.get("focus_block_id")
-    if focus and focus != scope.get("page_id"):
-        text += (f'The user\'s cursor is on note block "{focus}" (its text is in the '
-                 'context): "this block", "here", "this note" refer to it — edit or '
-                 "extend it directly by that id, no read_block needed.\n")
-    sels = scope.get("note_selections") or []
-    if sels and "edit_block" in names:
-        text += ("The user selected text in their notes (" + ", ".join(
-                     f'{s["label"]} in block "{s["block_id"]}"' for s in sels)
-                 + '; the passages are quoted after their message). "This", "the selection" '
-                 "mean it. An instruction that transforms it — rewrite, fix, shorten, expand, "
-                 "translate, reformat, restyle — is an edit in place: call edit_block with mode "
-                 "\"selection\" and its label instead of writing the new text in your reply, and "
-                 "never rewrite the rest of the block. A question about it is answered in the "
-                 "chat without editing.\n")
-    chips = [b for b in (scope.get("context_blocks") or []) if b and b != scope.get("page_id")]
-    if chips:
-        text += ("The user attached these note blocks to the message (text in the "
-                 "context, ids in brackets): " + ", ".join(f'"{b}"' for b in chips)
-                 + ". A request to change/rewrite/expand them means those ids.\n")
     text += coverage_lines(scope.get("coverage") or [], "read_page" in names)
     text += f"Available tools: {', '.join(names)}. Any other tool is disabled in the user's settings."
-    asking = [t["spec"]["name"] for t in TOOLS if t["spec"]["name"] in names
-              and _state_of(perms, t) == "ask"]
-    if asking:
+    # The tools that ask are not named: the names would change when the
+    # conversation allows one on a card ("Allow in this chat", ``granted``),
+    # and a declined call's result names itself. The sentence stays while any
+    # armed tool asked at the start of the conversation, grants or not.
+    granted = set(scope.get("granted") or ())
+    if any(t["spec"]["name"] in names and (_state_of(perms, t) == "ask" or t["perm"] in granted)
+           for t in TOOLS):
         text += (
-            "\nThe user approves each call of " + ", ".join(asking) + " before it runs: the chat "
-            "shows them exactly what the call will do and waits for their answer. Call these tools "
-            "directly when the task needs them, never ask for permission in your reply first. A "
-            "call the user declined was not made: do not repeat it or make the same change another "
-            "way; carry on without it, and say what you would have changed.")
+            "\nSome of these tools ask the user first: the chat shows them exactly what the call "
+            "will do on a card and waits for their answer. Call tools directly when the task "
+            "needs them, never ask for permission in your reply first. A call the user declined "
+            "was not made: do not repeat it or make the same change another way; carry on "
+            "without it, and say what you would have changed.")
     if any(n in names for n in ("list_pages", "read_page", "read_block", "search_library")):
         # The chat renders /?page=<id> links as open-in-place; the ids come
         # from the tool results (list_pages, search hits, read_* headers).
@@ -3381,11 +3373,6 @@ def agent_system(scope: dict, perms: dict | None = None, base: str = "") -> str:
             "create_block or edit_block. The pictures attached to the user's message carry their "
             "URLs in the lines that name them and can be embedded the same way. Never write an "
             "/api/uploads/ URL you were not given.")
-    if "delete_block" in names:
-        text += (
-            "\ndelete_block removes a note block with everything under it and the user can "
-            "revert it; delete only what the user asked to remove, and edit instead of "
-            "deleting when only part of a block should go.")
     if "view_ink" in names:
         text += (
             "\nHandwriting: a handwriting block (read_block: \"handwriting on p. N\" or \"on the "
@@ -3414,7 +3401,7 @@ def agent_system(scope: dict, perms: dict | None = None, base: str = "") -> str:
     if "restore_page" in names:
         text += (
             f"\nDeleted pages stay in Recently deleted for {KEEP_DAYS} days: list_deleted finds "
-            "them and restore_page brings one back when the user asks. Deleting stays impossible.")
+            "them and restore_page brings one back when the user asks. Deleting pages stays impossible.")
     web = [n for n in ("search_papers", "related_papers", "search_web", "fetch_paper") if n in names]
     if web:
         text += (
@@ -3464,12 +3451,12 @@ def agent_system(scope: dict, perms: dict | None = None, base: str = "") -> str:
                    "carry on with the rest of the work."
                    if scope.get("paper_wait")
                    else "The user then has a card under your reply to get it in their browser: "
-                        "say briefly what blocked it and end your reply instead of retrying or "
-                        "answering from memory"
-                        + (" — after at most one search_web for another legitimate copy, unless "
-                           "the user wants the publisher's own" if "search_web" in names else
-                           ", switching to another version")
-                        + ", unless the user asked for that; the chat continues once the PDF arrives."))
+                        + ("you may first try one search_web for another legitimate copy, unless "
+                           "the user wants the publisher's own; then " if "search_web" in names else "")
+                        + "say briefly what blocked it and end your reply, and the chat continues "
+                        "once the PDF arrives. Do not retry the source"
+                        + ("" if "search_web" in names else ", switch to another version")
+                        + " or answer from memory unless the user asks you to."))
         if "read_paper" in names:
             text += (
                 " When the user asks you to read, summarise, explain or compare papers outside "
@@ -3481,13 +3468,28 @@ def agent_system(scope: dict, perms: dict | None = None, base: str = "") -> str:
                 "you carry the answer and not the paper. Read it yourself with fetch_paper when "
                 "you need its own wording, a table or a quotation. Say that a helper read it, "
                 "and keep its page citations.")
-    if "edit_block" in names or "create_block" in names or "move_block" in names:
+    if any(n in names for n in ("edit_block", "create_block", "move_block", "delete_block")):
+        # One permission arms all four. Only what the specs cannot say is
+        # here: which ids, which blocks need no read, and the two rules a
+        # model got wrong without them (a selection is edited in place, not
+        # answered; a deletion is for whole blocks). The modes themselves and
+        # when to pick each are edit_block's description.
         text += (
-            "\nNote editing: call read_block first and use its exact block ids. "
-            "edit_block replaces a block's whole text — preserve everything the user "
-            "didn't ask to change. You cannot delete blocks; if one should go, empty "
-            "it or tell the user to delete it. Only change notes the user asked you "
-            "to change.")
+            "\nNote editing: use the exact block ids read_block or the context shows in "
+            "brackets, never page ids. The block at the user's cursor and the blocks "
+            "attached to their message come with their ids and text, so change those "
+            "without reading them first.")
+        if "edit_block" in names:
+            text += (
+                " When the message quotes a selection of the user's notes, an instruction that "
+                "transforms it is a selection edit (edit_block mode \"selection\"), never the "
+                "new text in your reply; a question about it is answered in the chat.")
+        if "delete_block" in names:
+            text += (
+                " delete_block removes a whole block with everything under it, and the user "
+                "can revert it: only for what the user asked to remove; patch a block to cut "
+                "part of it.")
+        text += " Change only the notes the user asked you to change."
     if not any(n in MUTATING_TOOLS for n in names):
         text += " Making changes is not available here — suggest them instead of attempting them."
     return text

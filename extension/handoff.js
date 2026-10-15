@@ -59,16 +59,31 @@ export function signInUrl(url) {
   } catch { return false; }
 }
 
+// The file behind an Atypon reader tab (science.org, Wiley, ACS, Taylor &
+// Francis…): /doi/epdf/<doi> shows the PDF in an HTML reader and advertises
+// no PDF link; /doi/pdf/<doi>?download=true is the file itself. "" for any
+// other URL.
+export function readerPdfUrl(url) {
+  try {
+    const u = new URL(url);
+    const m = u.pathname.match(/^(.*)\/doi\/epdf\/(10\.\d{4,9}\/.+)$/i);
+    return m ? `${u.origin}${m[1]}/doi/pdf/${m[2]}?download=true` : "";
+  } catch { return ""; }
+}
+
 // What to try downloading in the tab, in order: the tab itself when it shows
 // a PDF (Chrome's viewer runs no content script — `viewer`), the PDF link the
-// page advertises, its "View PDF"-style links on the same site, and the link
-// the server found — only on a page of its site that names a paper, so a
-// sign-in page (or another host's) costs no request.
+// page advertises, the file of an Atypon reader, its "View PDF"-style links on
+// the same site, and the link the server found — only on a page of its site
+// that names a paper, so a sign-in page (or another host's) costs no request.
+// A save from the popup tries the same list, without a request (worker.js
+// savePaper).
 export function harvestUrls(candidate, request, { tabUrl = "", viewer = false } = {}) {
   const out = [];
   const add = (u) => { if (u && /^https?:/i.test(u) && !out.includes(u)) out.push(u); };
   if (viewer || candidate?.is_pdf_tab) add(tabUrl);
   add(candidate?.pdf_url);
+  add(readerPdfUrl(tabUrl));
   for (const u of candidate?.pdf_links || []) if (sameSite(siteOf(u), siteOf(tabUrl))) add(u);
   const here = siteOf(tabUrl);
   const there = siteOf(request?.pdf_url);
