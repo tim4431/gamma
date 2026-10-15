@@ -770,7 +770,7 @@ a press keeps an on-screen keyboard up.
 - **Message tools.** A message's Copy and Edit, and a code block's Copy, come
   up with the message where a pointer hovers (taking no press while hidden)
   and are always there where none does.
-- **Pictures.** A paste, a drop or the [+] menu's "Add photos & files"
+- **Pictures.** A paste or the [+] menu's "Add photos & files"
   stores the picture at once (`POST /api/ai/pictures`, sized for the
   model) and attaches it by URL. "Attach what I see", offered with a paper
   open, attaches the visible part of each page in view, with the

@@ -5,17 +5,31 @@
 export const EVENTS = [
   "window.collapsed", // {id, collapsed}: a window's title was double-clicked
   "window.moved",     // {id, side}: a window was dropped into a dock slot
+  "window.closed",    // {id: chat | notes | pdf}: a window was closed with its ×
+  "window.shown",     // {id}: a closed window was brought back (the View menu, a palette command)
   "popover.opened",   // {name} — a topbar popover opened: add, search, user, share, downloads
   "page.opened",      // {id, title}
   "home.opened",      // returned to the library
+  "tab.opened",       // a page got a tab of its own
+  "tab.menu",         // a tab's right-click menu opened
   "nav.pushed",       // a link jump recorded a place for Back to return to
   "nav.back",         // Back (the button or Alt+←) returned to that place
   "palette.opened",   // the Ctrl+P page palette opened
+  "commands.opened",  // the palette turned command palette (Ctrl+Shift+P, or > typed)
   "highlight.created", // {id, kind: "text" | "area"}
-  "block.created",
+  "block.created",    // a new note: Shift+Enter (or Enter, as Settings has it) or the + under a handle
   "block.indented",
-  "chat.sent",
+  "note.lineBreak",   // Enter broke a line in a note with text, where Enter is not the new-note key
+  "slash.opened",     // the / command menu came up
+  "paste.offered",    // the Paste as chooser came up after a paste
+  "mention.opened",   // the @ menu came up
+  "object.selected",  // {kind}: a picture, table or diagram in the notes was selected
+  "chat.sent",        // {pdf}: a message went; pdf — the whole PDF file went with it
   "chat.cited",       // an AI reply finished with a citation link in it
+  "chat.changed",     // an AI reply finished having changed the library or notes
+  "chat.archived",    // {discard}: New chat kept the conversation in History (or, Alt+click, threw it away)
+  "ink.selected",     // handwriting was selected (the lasso, or a tap on ink)
+  "bibtex.shown",     // {folder}: the export dialog shows a bibliography and its Overleaf link
   "citation.shown",   // a citation's quote was found and marked in the PDF
   "share.created",    // the page got a share link
   "peer.joined",      // someone else came onto the open page

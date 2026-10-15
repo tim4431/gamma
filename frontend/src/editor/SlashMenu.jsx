@@ -6,6 +6,7 @@ import React, { useEffect } from "react";
 import { Matched, useCaretAnchored } from "./LatexEditor";
 import { SLASH_GROUPS } from "./slashCommands.js";
 import { t } from "../shared/i18n/i18n.js";
+import { guideEvents } from "../guide/events.js";
 import {
   AlignLeftIcon, CalendarIcon, CalloutIcon, CopyIcon, DiagramIcon, DividerIcon, EmbedIcon, FilePlusIcon, FileTextIcon,
   GlobeIcon, Heading1Icon, Heading2Icon, Heading3Icon, HighlightIcon, ImageIcon, IndentIcon, LinkIcon, ListIcon,
@@ -35,15 +36,19 @@ const MENU_ICONS = {
 // "Paste as" chooser after a URL paste (same look, plus a quiet `title`
 // line) — blockTree owns both triggers and passes the item lists.
 // `commands` is the "/" menu: names and the key-hint footer; `grouped`
-// puts the SLASH_GROUPS titles over the bare "/" list.
-export function SlashMenuPopup({ items, selected, anchor, onPick, title, grouped, commands }) {
+// puts the SLASH_GROUPS titles over the bare "/" list. `guide` is the
+// guide's anchor on the popup and `event` what it hears when it comes up
+// (the "/" menu's and the chooser's hints).
+export function SlashMenuPopup({ items, selected, anchor, onPick, title, grouped, commands, guide, event }) {
   const [listRef, style] = useCaretAnchored(anchor, false, [items]);
   useEffect(() => {
     listRef.current?.querySelector(".slashMenuItem.selected")
       ?.scrollIntoView({ block: "nearest" });
   }, [selected, listRef]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { if (event) guideEvents.emit(event); }, []);
   return (
-    <div ref={listRef} className="slashMenu" style={style}>
+    <div ref={listRef} className="slashMenu" style={style} data-guide={guide}>
       {title ? <div className="slashMenuTitle">{title}</div> : null}
       {items.map((c, i) => {
         const group = grouped && c.group !== items[i - 1]?.group ? SLASH_GROUPS[c.group] : null;

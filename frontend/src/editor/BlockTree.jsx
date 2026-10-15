@@ -50,6 +50,7 @@ import { API, apiJson, assetUrl, copyText, withShare, withWorkspace } from "../s
 import { CopyIcon, ExportIcon, MessageSquareIcon, PlusIcon, SheetIcon, SparklesIcon, Trash2Icon } from "../shared/ui/Icons";
 import { T, t } from "../shared/i18n/i18n.js";
 import { guideEvents } from "../guide/events.js";
+import { useIsRecent } from "../guide/recent.js";
 import { pageKindLabel } from "../library/libraryUtils";
 import {
   applyImageEdit, applyTableEdit, formatTables, htmlTableToMarkdown,
@@ -1244,6 +1245,9 @@ const BlockRow = React.memo(function BlockRow({
   }, [editing]);
 
   const isHighlight = isHighlightBlock(block);
+  // The highlight made last: its card is the one the guide's highlight tour
+  // points at (guide/recent.js).
+  const recentHighlight = useIsRecent("highlight", block.id);
   // A handwriting group (docs/dev/handwriting.md): pen marker + the strokes
   // as a card; its content is the caption. A text box
   // (docs/dev/text_boxes.md): a T marker; its content is the box's text.
@@ -1721,7 +1725,8 @@ const BlockRow = React.memo(function BlockRow({
           <span className="dotSlot dotSlotEmpty"><span className="noteBulletDot" /></span>
         )}
 
-        <div className="blockBody" data-guide={isInk ? "notes.ink" : undefined}>
+        <div className="blockBody" data-guide={isInk ? "notes.ink" : isHighlight ? "notes.highlight" : undefined}
+          data-guide-recent={isHighlight && recentHighlight ? "" : undefined}>
           <div className="blockMeta">
             {shownPage ? `p.${shownPage}` : "note"}
           </div>
@@ -1868,6 +1873,7 @@ const BlockRow = React.memo(function BlockRow({
                 if (e.key === "Enter" && newNoteKey) {
                   e.preventDefault();
                   onEnterSibling(block.id);
+                  guideEvents.emit("block.created");
                 } else if (e.key === "Enter") {
                   // The line-break Enter continues markdown lists and quotes
                   // (Obsidian-style, mdLines.enterPlan): "> - [ ] foo⏎"
@@ -1876,6 +1882,9 @@ const BlockRow = React.memo(function BlockRow({
                   // No marker → plain newline.
                   const ta = ref.current;
                   const cursor = ta?.selectionStart;
+                  // A line break in a note with text in it, where Enter is
+                  // not the new-note key: the guide says which key is.
+                  if (!enterNewNote && ta?.value.trim()) guideEvents.emit("note.lineBreak");
                   const plan = ta && cursor === ta.selectionEnd ? enterPlan(ta.value, cursor) : null;
                   if (plan) {
                     e.preventDefault();
@@ -1987,14 +1996,15 @@ const BlockRow = React.memo(function BlockRow({
       {!readOnly && editing ? <EditBar context={commandContext} onUndo={onUndo} /> : null}
       {!readOnly && editing && slashMenu ? (
         <SlashMenuPopup items={slashMenu.items} selected={slashIdx} anchor={slashMenu.anchor} onPick={runSlashCommand}
-          grouped={!slashMenu.query} commands />
+          grouped={!slashMenu.query} commands guide="editor.slashMenu" event="slash.opened" />
       ) : null}
       {!readOnly && editing && atMenu?.rows.length ? (
         <MentionMenuPopup rows={atMenu.rows} selected={Math.min(atIdx, atMenu.rows.length - 1)} anchor={atMenu.anchor}
           query={atMenu.query} onPick={pickMention} />
       ) : null}
       {!readOnly && editing && pasteMenu ? (
-        <SlashMenuPopup title={t("Paste as")} items={pasteMenu.items} selected={pasteIdx} anchor={pasteMenu.anchor} onPick={applyPasteAs} />
+        <SlashMenuPopup title={t("Paste as")} items={pasteMenu.items} selected={pasteIdx} anchor={pasteMenu.anchor} onPick={applyPasteAs}
+          guide="editor.pasteAs" event="paste.offered" />
       ) : null}
       {refSearchShown ? (
         <RefPickerPopup rows={refRows} selected={refSelected} anchor={refPopup.anchor}
@@ -2055,6 +2065,7 @@ const SortableBlockRow = React.memo(function SortableBlockRow({ block, ...rowPro
     e.preventDefault();
     e.stopPropagation();
     rowProps.onEnterSibling?.(block.id, { above: e.altKey });
+    guideEvents.emit("block.created");
   }
 
   return (
@@ -2064,6 +2075,7 @@ const SortableBlockRow = React.memo(function SortableBlockRow({ block, ...rowPro
       <span className="rowHandles">
         <span
           className="dragHandle"
+          data-guide="notes.handle"
           draggable="true"
           onDragStart={onDragStart}
           onDragEnd={onDragEnd}
@@ -2075,6 +2087,7 @@ const SortableBlockRow = React.memo(function SortableBlockRow({ block, ...rowPro
           <button
             type="button"
             className="addHandle"
+            data-guide="notes.addBelow"
             onClick={onAddClick}
             onMouseDown={(e) => e.preventDefault()}
             aria-label={t("Add a block below (Alt+click: above)")}

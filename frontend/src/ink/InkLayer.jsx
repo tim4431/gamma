@@ -540,7 +540,7 @@ export function InkLayer({ pageNumber, wrapRef, width, height, blocks, tool, pen
             width={fb[2] - fb[0] + 12} height={fb[3] - fb[1] + 12} rx={4} />
         ) : null}
       </svg>
-      {selBox && onSelect ? <div className="inkSelectionHit" aria-label={t("Move selected handwriting")}
+      {selBox && onSelect ? <div className="inkSelectionHit" data-guide="ink.selection" aria-label={t("Move selected handwriting")}
         style={{ left: `${hitBox[0] / width * 100}%`, top: `${hitBox[1] / height * 100}%`,
           width: `${(hitBox[2] - hitBox[0]) / width * 100}%`, height: `${(hitBox[3] - hitBox[1]) / height * 100}%` }} /> : null}
       {selBox && onAction && !dragging ? <InkSelectionMenu wrapRef={wrapRef} box={selBox} width={width}

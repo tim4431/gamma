@@ -3735,7 +3735,6 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   const flashTimerRef = useRef(null);
   const [attachModeBlockId, setAttachModeBlockId] = useState(null);
   const attachModeBlockIdRef = useRef(null);
-  const [attachContextMenu, setAttachContextMenu] = useState(null); // {x, y, highlight}
   const blocksRef = useRef(blocks);
   blocksRef.current = blocks;
   const blockRefs = useRef({});
@@ -4338,13 +4337,16 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   useEffect(() => {
     if (!focusedBlockId || shareMode || !prefsUserRef.current) return;
     const title = (pageTitle || t("Untitled")).slice(0, 60);
+    const opened = !openTabs.some((tab) => tab.id === focusedBlockId);
     updateTabs((prev) => {
       const existing = prev.find((t) => t.id === focusedBlockId);
       if (existing && existing.title === title) return prev;
       if (existing) return prev.map((t) => (t.id === focusedBlockId ? { ...t, title } : t));
       return [...prev, { id: focusedBlockId, title }];
     });
-  }, [focusedBlockId, pageTitle, shareMode]);
+    // A page got a tab of its own (the guide's tabs hint counts them).
+    if (opened) guideEvents.emit("tab.opened");
+  }, [focusedBlockId, pageTitle, shareMode]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Persist session state on relevant changes (skip initial mount)
   const firstRenderRef = useRef(true);
@@ -6384,6 +6386,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     if (items.length) {
       setInkUi((s) => ({ ...s, open: true, options: false }));
       textBoxes.actions.onBoxDeselect();
+      guideEvents.emit("ink.selected");
     }
   }
   // The lasso selection, edited group by group: edit(ink, ids) -> ink.
@@ -6595,7 +6598,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // Escape cancels attach mode
   useEffect(() => {
     if (!attachModeBlockId) return;
-    const onKey = (e) => { if (e.key === 'Escape') { setAttachModeBlockId(null); setAttachContextMenu(null); } };
+    const onKey = (e) => { if (e.key === 'Escape') setAttachModeBlockId(null); };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [attachModeBlockId]);
@@ -6613,7 +6616,6 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         pdf_position: { pageNumber: highlight.position.pageNumber } }),
     })));
     setAttachModeBlockId(null);
-    setAttachContextMenu(null);
   }
 
   function unlinkHighlightFromBlock(blockId) {
@@ -6885,9 +6887,22 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     deletePages: () => deletePages([...selectedPages]),
     organize: lib.organize,
     recentlyDeleted: () => { setOpenPopover(null); setTrashOpen(true); },
-    toggleChat: () => setChatHidden((v) => !v),
-    togglePdf: () => setPdfHidden((v) => !v),
-    toggleNotes: () => setNotesVisible((v) => !v),
+    // On a phone Chat and Notes are the bottom bar's panels, which the
+    // desktop windows' hidden flags don't drive.
+    toggleChat: () => {
+      if (isPhone) { setPhonePanel((p) => (p === "chat" ? null : "chat")); return; }
+      if (chatHidden) guideEvents.emit("window.shown", { id: "chat" });
+      setChatHidden((v) => !v);
+    },
+    togglePdf: () => {
+      if (pdfHidden) guideEvents.emit("window.shown", { id: "pdf" });
+      setPdfHidden((v) => !v);
+    },
+    toggleNotes: () => {
+      if (isPhone) { setNotesVisible(true); setPhonePanel((p) => (p === "notes" ? null : "notes")); return; }
+      if (!notesVisible) guideEvents.emit("window.shown", { id: "notes" });
+      setNotesVisible((v) => !v);
+    },
     openSettings: (pane) => { setOpenPopover(null); setSettingsOpen((cur) => pane || cur || "appearance"); },
     // The Export dialog, preset to a format (transfers/transferFormats.js).
     exportAs: (format) => { setExportFolder(null); setExportOpts((o) => ({ ...o, format })); setExportOpen(true); },
@@ -6974,13 +6989,19 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       if (!profileSync.pending.size && !profileSync.inflight.size && profileSync.state === "loaded") syncQuiet.current = true;
     } else if (syncQuiet.current) setPrefsChanged(true);
   }, [profileSync.pending, profileSync.inflight, profileSync.state]);
+  // Whether the first tour was done when this load's profile arrived, read
+  // once: finishing it now does not count until the next visit.
+  const firstRunDoneAtLoad = useRef(undefined);
+  if (firstRunDoneAtLoad.current === undefined && profileSync.state === "loaded") {
+    firstRunDoneAtLoad.current = tourProgress?.["first-run"]?.state === "done";
+  }
   const guide = useGuide({
     services: {
       // A finished tour's `restore`: "pen" re-arms the pen last drawn with
-      // when the handwriting tour leaves the eraser or the lasso armed.
+      // when the handwriting tour leaves the eraser, the lasso or Text armed.
       restore: (what) => {
         if (what !== "pen") return;
-        setInkUi((s) => (s.open && s.pen && (s.tool === "eraser" || s.tool === "select") ? { ...s, tool: s.pen, options: false } : s));
+        setInkUi((s) => (s.open && s.pen && ["eraser", "select", "text"].includes(s.tool) ? { ...s, tool: s.pen, options: false } : s));
       },
       // the first tour's finish card: "Connect an AI provider"
       openSettings: (pane) => appCmdRef.current.openSettings(pane),
@@ -7045,12 +7066,27 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       // a touch screen: the viewer offers its text/rectangle toggle
       touch: touchScreen(),
       sharedWorkspace: workspaces.some((w) => !w.personal),
-      // the open page's share audience ("" unshared or not loaded): the
-      // sharing tour words its access step for an anyone-with-the-link share
-      shareAudience: shareTarget?.kind === "page" && shareTarget.id === focusedBlockId && shareSettings?.token
-        ? shareSettings.audience : "",
+      // what the topbar's Share button shares: the open page, or on the
+      // library the open folder (desktop: a phone's More sheet shares it)
+      shareTarget: focusedBlockId && !homeMode ? "page"
+        : homeMode && !isPhone && lib.organize && libTree.folders.has(folderFilter) && !labelFilter ? "folder" : "",
+      // the open page's or folder's share audience ("" unshared or not
+      // loaded): the sharing tour words its access step for an
+      // anyone-with-the-link share
+      shareAudience: shareSettings?.token && ((shareTarget?.kind === "page" && shareTarget.id === focusedBlockId)
+        || (shareTarget?.kind === "folder" && homeMode && shareTarget.id === folderFilter)) ? shareSettings.audience : "",
       onPage: !!focusedBlockId,
       editable: !readOnly,
+      // which Enter starts a new note (Settings → Keyboard): the Shift+Enter
+      // hint is for the default, where Enter breaks the line
+      enterNewNote: !!enterNewNote,
+      // the open paper's details are unverified (the ⓘ button's red "!"),
+      // with the notes header that carries the button on screen
+      unverifiedMeta: !!(focusedBlockId && !homeMode && pageMeta && metaSrc?.warn && !metaBusy)
+        && (isPhone ? phonePanel === "notes" : !pageAttach || pdfHidden || (notesVisible && !collapsedWins.notes)),
+      // the first tour was finished before this page load (the Settings hint
+      // comes on a later visit, not on top of the finish card)
+      firstRunDone: firstRunDoneAtLoad.current === true,
       unfiledLibrary,
       emptyLibrary: freshLibrary,
       growingLibrary,
@@ -8218,6 +8254,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                     <button
                       ref={metaBtnRef}
                       className="pageActionBtn"
+                      data-guide="page.metadata"
                       title={metaBusy
                         ? t("Fetching paper metadata…")
                         : metaSrc?.warn
@@ -8693,7 +8730,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                   </>
                 ) : (
                   <button type="button" className="uiBtn sm" title={t("Pick several pages or folders to act on together")}
-                    onClick={() => setSelecting(true)}>{t("Select")}</button>
+                    data-guide="home.select" onClick={() => setSelecting(true)}>{t("Select")}</button>
                 )}
                 {lib.organize && !folderFilter && !labelFilter ? (
                   <button type="button" className="ctlBtn" title={t("Recently deleted")} data-guide="home.trash"
@@ -9396,15 +9433,22 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       },
       collapsed: isPhone ? false : !!collapsedWins[id],
     };
+    // A window closed with its × (desktop): the guide's window-closed hint
+    // says where it waits (the View menu).
+    const closeWindow = (hide) => () => {
+      if (isPhone) { setPhonePanel(null); return; }
+      hide();
+      guideEvents.emit("window.closed", { id });
+    };
     if (id === "notes") {
       return (
-        <DockWindow title={t("Notes")} guide="notes.grip" {...common} onClose={() => (isPhone ? setPhonePanel(null) : setNotesVisible(false))}>
+        <DockWindow title={t("Notes")} guide="notes.grip" {...common} onClose={closeWindow(() => setNotesVisible(false))}>
           {notesWindow}
         </DockWindow>
       );
     }
     if (id === "chat") {
-      const closeChat = () => (isPhone ? setPhonePanel(null) : setChatHidden(true));
+      const closeChat = closeWindow(() => setChatHidden(true));
       return (
         // Until the chat's module is in, its window frame with an empty body.
         <LazyBoundary fallback={(
@@ -9505,19 +9549,24 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     const pdfRow = !homeMode && (!!pageAttach || hasSheets);
     const shown = (on) => (on ? <CheckIcon size={14} className="ctxMenuCheck" /> : null);
     const exportable = (focusedBlock && !homeMode) || (homeMode && libTree.folders.has(folderFilter));
+    // Bringing a closed window back retires the guide's window-closed hint.
+    const toggleWindow = (id, isShown, toggle) => () => {
+      if (!isShown) guideEvents.emit("window.shown", { id });
+      toggle();
+    };
     return menuGroups(
       [
         (!isPhone || pdfRow) && <div key="windows" className="popoverSection">{t("Windows")}</div>,
         pdfRow && (pageAttach ? (
-          <MenuItem key="pdf" icon={FileIcon} trailing={shown(!pdfHidden)} onClick={() => setPdfHidden((v) => !v)}>PDF</MenuItem>
+          <MenuItem key="pdf" icon={FileIcon} trailing={shown(!pdfHidden)} onClick={toggleWindow("pdf", !pdfHidden, () => setPdfHidden((v) => !v))}>PDF</MenuItem>
         ) : (
           <MenuItem key="pdf" icon={NotebookIcon} trailing={shown(notebook)} onClick={() => setNotebookView(focusedBlockId, !notebook)}>{t("Notebook view")}</MenuItem>
         )),
         !homeMode && !isPhone && (
-          <MenuItem key="notes" icon={FileTextIcon} trailing={shown(notesVisible)} onClick={() => setNotesVisible((v) => !v)}>{t("Notes")}</MenuItem>
+          <MenuItem key="notes" icon={FileTextIcon} trailing={shown(notesVisible)} onClick={toggleWindow("notes", notesVisible, () => setNotesVisible((v) => !v))}>{t("Notes")}</MenuItem>
         ),
         (!menuReadOnly || focusedBlockId) && !isPhone && (
-          <MenuItem key="chat" icon={SparklesIcon} trailing={shown(!chatHidden)} onClick={() => setChatHidden((v) => !v)}>{t("AI Chat")}</MenuItem>
+          <MenuItem key="chat" icon={SparklesIcon} trailing={shown(!chatHidden)} onClick={toggleWindow("chat", !chatHidden, () => setChatHidden((v) => !v))}>{t("AI Chat")}</MenuItem>
         ),
       ],
       focusedBlockId && !readOnly ? ["app.undo", "app.redo"].map(commandRow) : [],
@@ -9527,6 +9576,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           <MenuItem
             key="import"
             icon={ImportIcon}
+            data-guide="view.import"
             onClick={() => { setOpenPopover(null); setImportOpen(true); }}
             title={t("Bring in highlights — the ones saved inside this PDF file, a Logseq export, or a whole Zotero library")}
           >{t("Import…")}</MenuItem>
@@ -9571,7 +9621,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         <MenuIcon size={16} />
       </button>
       {openPopover === "menu" ? (
-        <div className="popover menuPopover">{viewMenuItems(menuReadOnly)}</div>
+        <div className="popover menuPopover" data-guide="view.menu">{viewMenuItems(menuReadOnly)}</div>
       ) : null}
     </PopoverAnchor>
   );
@@ -9722,6 +9772,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
             onClick={() => { if (openPopover === "share") setOpenPopover(null); else openFolderShare(folderFilter); }}
             onPointerEnter={SharePopover.preload}
             onFocus={SharePopover.preload}
+            data-guide="header.share"
             title={t("Share this folder")}
             aria-label={t("Share this folder")}
           >
@@ -9981,7 +10032,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
               onOpen={(id) => openBlock(id, { restoreScroll: true })}
               onClose={closeTab}
               onTogglePin={toggleTabPinned}
-              onContext={(tab, x, y) => setTabMenu({ id: tab.id, pinned: !!tab.pinned, x, y })}
+              onContext={(tab, x, y) => { setTabMenu({ id: tab.id, pinned: !!tab.pinned, x, y }); guideEvents.emit("tab.menu"); }}
             />
             {isPhone ? null : topbarActions}
           </div>
@@ -10112,15 +10163,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       {attachModeBlockId && (
         <div className="attachModeBanner">
           {t("Click a PDF highlight to link it")}
-          <button onClick={() => { setAttachModeBlockId(null); setAttachContextMenu(null); }}>{t("Cancel")}</button>
+          <button onClick={() => setAttachModeBlockId(null)}>{t("Cancel")}</button>
         </div>
-      )}
-      {attachContextMenu && (
-        <ContextMenu x={attachContextMenu.x} y={attachContextMenu.y} onClose={() => setAttachContextMenu(null)}>
-          <button className="ctxMenuItem" onClick={() => linkHighlightToBlock(attachModeBlockId, attachContextMenu.highlight)}>
-            {t("Link highlight here")}
-          </button>
-        </ContextMenu>
       )}
       {transMenu && (
         <ContextMenu x={transMenu.x} y={transMenu.y} onClose={() => setTransMenu(null)}>
@@ -10177,7 +10221,11 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           {(pdfUrl || notebook) && !viewerHidden ? (
             <button
               className="uiClose uiCloseLg pdfCloseBtn"
-              onClick={() => (notebook ? setNotebookView(focusedBlockId, false) : setPdfHidden(true))}
+              onClick={() => {
+                if (notebook) { setNotebookView(focusedBlockId, false); return; }
+                setPdfHidden(true);
+                guideEvents.emit("window.closed", { id: "pdf" });
+              }}
               title={notebook ? t("Back to the notes") : t("Close PDF")}
               aria-label={notebook ? t("Back to the notes") : t("Close PDF")}
             ><XIcon size={16} /></button>
@@ -10343,6 +10391,12 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
               }}
               onJump={jumpToHighlightId}
               onHighlightJump={(hlId, additive) => {
+                // A note's ⊕ is waiting for its highlight: this click picks it.
+                if (attachModeBlockIdRef.current) {
+                  const picked = highlights.find((h) => h.id === hlId);
+                  if (picked) linkHighlightToBlock(attachModeBlockIdRef.current, picked);
+                  return;
+                }
                 if (findBlock(blocks, hlId)) { scrollToBlock(hlId); reveal(hlId); }
                 // Clicking a highlight also feeds the chat: quote as the
                 // selection (Ctrl+click appends), area rects as an image.

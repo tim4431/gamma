@@ -12,7 +12,7 @@ import { TOURS } from "./tours/index.js";
 import { previewHighlight } from "./previewHighlight.js";
 import { previewArea } from "./previewArea.js";
 import { typeDemoNote } from "./typeDemoNote.js";
-import { canOffer, createGuideProgress, factsMatch, guideStorage, retiresOffer, stepApplies, triggerMatches } from "./triggers.js";
+import { answersOffer, canOffer, createGuideProgress, factsMatch, guideStorage, retiresOffer, stepApplies, triggerMatches } from "./triggers.js";
 import { createRunLog, madeItems, recordEvent } from "./finish.js";
 import { t, T } from "../shared/i18n/i18n.js";
 import { chordLabel } from "../shared/lib/hotkeys.js";
@@ -159,7 +159,8 @@ async function revealAnchor(id, cancelled) {
 // first step sits inside a surface that may be closed, else that step's.
 const offerAnchor = (tour) => tour.offerAnchor || tour.steps[0]?.anchor || null;
 const TRIGGERED = Object.values(TOURS).filter((tour) => tour.trigger);
-const TRIGGER_EVENTS = new Set(TRIGGERED.flatMap((tour) => [tour.trigger.event, tour.trigger.doneOn?.event]).filter(Boolean));
+const TRIGGER_EVENTS = new Set(TRIGGERED.flatMap((tour) => [tour.trigger.event, tour.trigger.doneOn?.event, tour.trigger.answeredBy?.event])
+  .filter(Boolean));
 const SETTLE_MS = 3000; // state-triggered offers wait for the app to settle after load
 const CREATES_GRACE_MS = 1500; // what turns up this soon was there already
 
@@ -339,6 +340,14 @@ export function useGuide({ enabled = true, suggest = true, scope = "", synced = 
     if (!enabled || !scope) return;
     const current = factsRef.current;
     if (event) {
+      // A shown card answered by the move it asks for (the menu it points
+      // at, opened) goes as done, so it never covers what that move opens.
+      setOffer((o) => {
+        if (!o || !answersOffer(o.tour, event)) return o;
+        progress.current.write(o.tour, o.scope, { state: "done" });
+        activity.current = null;
+        return null;
+      });
       for (const tour of TRIGGERED) {
         if (retiresOffer(tour, event)) {
           const state = progress.current.read(tour, scope)?.state;

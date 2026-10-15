@@ -10,9 +10,11 @@ import aiChat from "./aiChat.js";
 import notebook from "./notebook.js";
 import windows from "./windows.js";
 import { pdfViewer, notebookView } from "./viewer.js";
+import highlights from "./highlights.js";
 import citations from "./citations.js";
 import sharing from "./sharing.js";
 import tables from "./tables.js";
+import notes from "./notes.js";
 import handwriting from "./handwriting.js";
 import library from "./library.js";
 import tasks from "./tasks.js";
@@ -21,5 +23,5 @@ import workspaces from "./workspaces.js";
 import hints from "./hints.js";
 
 export const TOURS = Object.fromEntries(
-  [firstRun, addPaper, aiChat, notebook, windows, pdfViewer, notebookView, citations, sharing, tables, handwriting, library, tasks,
-    presence, workspaces, ...hints].map((t) => [t.id, t]));
+  [firstRun, addPaper, aiChat, notebook, windows, pdfViewer, notebookView, highlights, citations, sharing, tables, notes,
+    handwriting, library, tasks, presence, workspaces, ...hints].map((t) => [t.id, t]));

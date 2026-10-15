@@ -241,6 +241,31 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
     assertNoProblems(page);
   });
 
+  // A note placed on a page but not on a passage (an imported one, say)
+  // carries ⊕: the next highlight clicked on the PDF is the one it links to.
+  await step("pdf: a note's ⊕ links it to the highlight clicked next", async () => {
+    const loose = await account.api("/api/blocks", { method: "POST", body: { parent_id: pageId, content: "Loose remark",
+      properties: { pdf_position: { pageNumber: 1 } } } });
+    await page.reload();
+    await waitForPdf(page);
+    const mark = page.locator('[data-page="1"] div[data-hl-id]').first();
+    await mark.waitFor();
+    const target = await mark.getAttribute("data-hl-id");
+    const row = page.locator(".blockRow", { hasText: "Loose remark" });
+    await row.hover(); // ⊕ takes a press only while its row is hovered or focused
+    await row.getByTitle("Attach to a PDF highlight").click();
+    await page.locator(".attachModeBanner").waitFor();
+    await mark.click();
+    await page.locator(".attachModeBanner").waitFor({ state: "detached" });
+    await row.getByTitle("Unlink highlight").waitFor();
+    await until(async () => {
+      const d = await account.api(`/api/blocks/${pageId}/subtree`);
+      return (d.block.children || []).find((b) => b.id === loose.id)?.properties?.linked_highlight_id === target;
+    }, { what: "the note is linked to the clicked highlight" });
+    await account.api(`/api/blocks/${loose.id}`, { method: "DELETE" });
+    assertNoProblems(page);
+  });
+
   await step("pdf: flipped pages draw palette highlights in a dark-tuned set; other colours keep screening", async () => {
     const mark = page.locator('[data-page="1"] div[data-hl-id]').first();
     const look = () => mark.evaluate((el) => { const s = getComputedStyle(el); return `${s.backgroundColor} ${s.mixBlendMode}`; });

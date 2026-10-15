@@ -6,8 +6,9 @@ import { T } from "../../shared/i18n/i18n.js";
 // explains are only on screen while the popover is open
 // (docs/dev/onboarding.md).
 //
-// The address box shows typing into it (`scene`); the last step carries the
-// drawing of the one page behind both views (`media`, guide/media.js).
+// The address box shows typing into it (`scene`); the blank-page step
+// carries the drawing of the one page behind both views (`media`,
+// guide/media.js); the last points at Import in the View menu.
 export default {
   id: "add-paper",
   version: 1,
@@ -31,7 +32,7 @@ export default {
       anchor: "add.upload",
       placement: "right",
       title: T("Or upload PDFs and Markdown"),
-      body: T("**Upload folder…** keeps its subfolders as folders."),
+      body: T("Or drop files and folders onto the library; subfolders stay folders."),
     },
     {
       id: "add-notebook",
@@ -40,7 +41,17 @@ export default {
       media: "page-notebook",
       title: T("Or start blank: notes or a notebook"),
       body: T("It's one kind of page: any page can hold both."),
-      next: T("Done"),
+    },
+    // A library kept elsewhere comes in through the View menu, which this
+    // step opens (its open path), closing Add. The phone's View rows are in
+    // the More sheet, with no anchor.
+    {
+      id: "add-import",
+      anchor: "view.import",
+      placement: "left",
+      requires: { phone: false },
+      title: T("Coming from Zotero? Import is in View"),
+      body: T("Obsidian, Notion and Logseq too."),
     },
   ],
 };

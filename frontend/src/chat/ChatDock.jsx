@@ -61,14 +61,14 @@ function deriveTitle(messages) {
 // Compact age for a history row: "now", "5m", "3h", "2d", "4mo", "1y".
 function relAge(iso) {
   const ms = Date.now() - Date.parse(iso || "");
-  if (!Number.isFinite(ms) || ms < 60000) return "now";
+  if (!Number.isFinite(ms) || ms < 60000) return t("now");
   const m = Math.floor(ms / 60000);
-  if (m < 60) return `${m}m`;
+  if (m < 60) return t("{n}m", { n: m });
   const h = Math.floor(m / 60);
-  if (h < 24) return `${h}h`;
+  if (h < 24) return t("{n}h", { n: h });
   const d = Math.floor(h / 24);
-  if (d < 30) return `${d}d`;
-  return d < 365 ? `${Math.floor(d / 30)}mo` : `${Math.floor(d / 365)}y`;
+  if (d < 30) return t("{n}d", { n: d });
+  return d < 365 ? t("{n}mo", { n: Math.floor(d / 30) }) : t("{n}y", { n: Math.floor(d / 365) });
 }
 
 // What the model was given for a reply, per document — streamed by
@@ -803,6 +803,7 @@ export default function ChatDock({
     if (busyHere) return;
     // A viewer's conversation was never saved: starting over is local.
     if (canSave) {
+      const kept = chatMessages.length > 0;
       try {
         await session.flush(chatKey);
         await apiJson(`${API}/chat-history/archive`, { method: "POST", headers: JSON_HEADERS, body: JSON.stringify({ ...currentPayload(), discard }) });
@@ -811,6 +812,9 @@ export default function ChatDock({
           : t("Couldn't keep the conversation in history: {message}", { message: err.message }));
         return;
       }
+      // A conversation went into History (or was thrown away): the guide's
+      // hint names History and the Alt+click.
+      if (kept) guideEvents.emit("chat.archived", { discard });
     }
     session.forget(chatKey);
     if (chatKeyRef.current !== chatKey) return;
@@ -1120,7 +1124,8 @@ export default function ChatDock({
     if (readOnly || aiOff) return;
     const text = (rawText || "").trim();
     if (!text || busyHere) return;
-    guideEvents.emit("chat.sent");
+    // pdf: the whole file goes with this message (the PDF switch's hint).
+    guideEvents.emit("chat.sent", { pdf: !!(pdfInContext && attachPdf && nativePdf) });
     const selectedDocs = referenceMessage ? (referenceMessage.contextPages || []).map((p) => p.id) : chatDocs;
     const includeNotes = referenceMessage ? !!referenceMessage.includeNotes : chatIncludeNotes;
     if (referenceMessage) { setChatDocs(selectedDocs); setChatIncludeNotes(includeNotes); }
@@ -1282,6 +1287,9 @@ export default function ChatDock({
       });
       showReply(aiMsg({ text: acc || (actions.length ? "" : t("(no response)")) }), true);
       if (gammaLinksIn(acc).some((link) => link.kind === "citation")) guideEvents.emit("chat.cited");
+      // The reply changed the library or notes: its list of changes, each
+      // with its own undo, is on screen.
+      if (actions.some(isChange)) guideEvents.emit("chat.changed");
     } catch (err) {
       const stopped = err?.name === "AbortError";
       // fetch's own TypeError ("Failed to fetch", or the body reader's
@@ -1627,7 +1635,7 @@ export default function ChatDock({
           className={`ctlBtn ${toolsEnabled ? "modeActive" : ""}`}
           data-guide="chat.tools"
           aria-pressed={toolsEnabled}
-          aria-label={`Tools ${toolsEnabled ? "on" : "off"}`}
+          aria-label={toolsEnabled ? t("Tools on") : t("Tools off")}
           onClick={() => { setOpenPopover(null); toggleTools(); }}
           title={t("Tools {off} for all chats - click to change the global setting", { off: toolsEnabled ? t("on") : t("off") })}
         >
@@ -1635,7 +1643,7 @@ export default function ChatDock({
         </button>
         {findBtn}
         {canSave ? <span data-popover="chathistory" className="popoverAnchor">
-          <button type="button" className={`ctlBtn ${historyOpen ? "modeActive" : ""}`}
+          <button type="button" className={`ctlBtn ${historyOpen ? "modeActive" : ""}`} data-guide="chat.history"
             onClick={() => setOpenPopover((p) => (p === "chathistory" ? null : "chathistory"))}
             title={t("Chat history — earlier conversations of {scope}", { scope: folderChat ? t("this folder") : t("this page") })}
             aria-label={t("Chat history")} aria-expanded={historyOpen}>
@@ -1686,7 +1694,7 @@ export default function ChatDock({
                         onChange={() => togglePicked(s.id)} />
                     )}
                     <span className="chatHistTitle">{s.title || t("Untitled")}</span>
-                    <span className="chatHistAge">{s.active ? "now" : relAge(s.updated_at)}</span>
+                    <span className="chatHistAge">{s.active ? t("now") : relAge(s.updated_at)}</span>
                     <MenuButton open={openRowMenu(s)} />
                   </div>
                 ))}
@@ -1728,7 +1736,7 @@ export default function ChatDock({
             {t("Not saved")}
           </span>
         )}
-        <button type="button" className="ctlBtn" onClick={(e) => newChat(e.altKey)} disabled={busyHere}
+        <button type="button" className="ctlBtn" data-guide="chat.new" onClick={(e) => newChat(e.altKey)} disabled={busyHere}
           title={canSave ? t("New chat — keeps this conversation in history and starts a fresh one (Alt+click: discard it)") : t("New chat")}
           aria-label={t("New chat")}>
           <PlusIcon size={16} />
@@ -2114,11 +2122,11 @@ export default function ChatDock({
           disabled={aiOff}
           placeholder={aiOff ? t("Connect an AI service to start chatting") : (
             // Names what the message will be about, most specific attachment first.
-            chatFiles.length ? `Ask about the attached file${chatFiles.length > 1 ? "s" : ""}…`
-            : chatImages.length ? t("Ask about the attached picture…") : pdfSelections.length > 1 ? `Ask about the ${pdfSelections.length} selected passages…`
+            chatFiles.length ? tn("Ask about the attached file…", "Ask about the attached files…", chatFiles.length)
+            : chatImages.length ? t("Ask about the attached picture…") : pdfSelections.length > 1 ? t("Ask about the {n} selected passages…", { n: pdfSelections.length })
             : pdfSelections.length ? t("Ask about the selection…") : chatNotes?.length > 1 ? t("Ask about the {n} attached notes…", { n: chatNotes.length })
             : chatNotes?.length ? (chatNotes[0].kind === "block" ? t("Ask about the attached block…") : t("Ask about the selected note…"))
-            : cursorChip?.sel ? t("Ask about the selection…") : cursorChip ? t("Ask about this block…") : chatDocs.length ? `Ask about ${chatDocs.length} attached page${chatDocs.length > 1 ? "s" : ""}…`
+            : cursorChip?.sel ? t("Ask about the selection…") : cursorChip ? t("Ask about this block…") : chatDocs.length ? tn("Ask about {n} attached page…", "Ask about {n} attached pages…", chatDocs.length)
             : agentAsk || t("Ask…")
           ) + t(" (@ paper)")}
         />
@@ -2161,7 +2169,7 @@ export default function ChatDock({
                     <BookIcon size={16} />
                   </span>
                   <span className="chatPlusMenuLabel">{t("Add pages from library")}</span>
-                  <span className="chatPlusMenuHint">{chatDocs.length ? `${chatDocs.length} selected` : t("Search your pages")}</span>
+                  <span className="chatPlusMenuHint">{chatDocs.length ? t("{n} selected", { n: chatDocs.length }) : t("Search your pages")}</span>
                 </button>
               </div>
             ) : null}
@@ -2177,6 +2185,7 @@ export default function ChatDock({
           {pdfInContext && !aiOff ? <button
             type="button"
             className={`chatAttachToggle chatPdfToggle ${attachPdf ? "on" : ""}`}
+            data-guide="chat.pdfSwitch"
             aria-pressed={attachPdf}
             onClick={() => { attachPdfManualRef.current = true; setAttachPdf((v) => !v); }}
             title={!nativePdf
@@ -2205,7 +2214,7 @@ export default function ChatDock({
             </button>
           ) : null}
           {!aiOff && headerModels.length ? (
-            <span className="chatModelChip">
+            <span className="chatModelChip" data-guide="chat.model">
               <MenuSelect
                 up
                 label={knobsLabel(speed)}

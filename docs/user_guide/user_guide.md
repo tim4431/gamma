@@ -187,7 +187,7 @@ The agent cannot delete pages, and an assistant connected from outside ([Assista
 The home page lists your pages, most recent first, with a **Recently viewed** strip on top.
 
 - **Folders** nest, and a paper can live in several at once. Drag a paper onto a folder to add it there; drop it on the back row to take it out.
-- **Labels** are flat tags. Type one into the row under a paper's title; click a chip to filter by it.
+- **Labels** are flat tags. Type one into the row under a paper's title; the listing bar's **Labels** view shows each label as a folder, and its filter box finds a label by name.
 - **Select** like a file manager: click, Ctrl+click, Shift+click; double-click opens; right-click for rename, move, label, share, export, delete.
 - **Recently deleted** keeps a page for 30 days, with its notes and files.
 
@@ -365,6 +365,6 @@ Account menu → **Settings**, or **Ctrl+,**. The search box at the top finds an
 | Ctrl+click a highlight | Quote it into the chat |
 | Ctrl+drag across note text | Attach that passage to the chat |
 | Double-click | Open a library card; collapse a window (on its grip) |
-| Middle-click a tab | Close it |
+| Right-click a tab | Pin it, or pin its page to the library |
 | Ctrl+Shift+S | In the browser extension: save this page to Gamma |
 | Esc | Close popups, clear selections, cancel modes |

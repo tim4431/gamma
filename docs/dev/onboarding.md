@@ -1,14 +1,15 @@
 # Onboarding: tours and contextual guides
 
-**Status: the engine, the two manual tours (first paper, AI chat), thirteen
-triggered tours, twelve hints and the welcome page with its sample PDF are
-built. The first paper tour is also offered to every new library.** A
+**Status: the engine, the two manual tours (first paper, AI chat), fifteen
+triggered tours, twenty-seven hints and the welcome page with its sample PDF
+are built. The first paper tour is also offered to every new library.** A
 checklist is not built (see "Not built").
 What exists: `frontend/src/guide/` (anchor registry, event bus, trigger rules
 in `triggers.js`, `useGuide`, `GuideOverlay` and its positioner `place.js`,
 the scene player `scene.js`, the illustration registry `media.js` with its
-drawings in `media/` and their shared stylesheet `media.css`, one file per
-tour in `tours/`, the hints in `tours/hints.js`), the node test
+drawings in `media/` and their shared stylesheet `media.css`, the newest
+highlight for `pick: "recent"` in `recent.js`, one file per tour in `tours/`,
+the hints in `tours/hints.js`), the node test
 `tests/guide.test.mjs` and the e2e scenarios `guide.mjs` (first paper),
 `contextualGuide.mjs` (AI chat) and `triggeredGuide.mjs` (offers and hints).
 
@@ -71,14 +72,17 @@ brings up its own surface first (AI chat opens the chat). So **Your first
 paper** is always listed, and so is **AI chat** once `/api/ai/models` has
 answered, except for a guest with no AI connected (no step applies there).
 **Adding to your library** and **Organize your library** are listed
-wherever you can write, the first from its own popover. **Sharing a page**
-is listed on
-any open page, **Editing tables** on any page you can edit,
+wherever you can write, the first from its own popover. **Sharing a page or
+folder** is listed on any open page and, on the desktop library, in an open
+folder (`shareTarget`), **Editing tables** on any page you can edit,
 **Handwriting** on any PDF you can edit and **Pages to write on** on any
 page you can edit; **The PDF viewer** on a PDF whose viewer is open and
 **The notebook view** in the notebook view. Each of the first four begins by having you make the
 thing it explains when there is none yet (see "Steps that have the user
-make something"). **Background tasks** is listed on the desktop layout.
+make something"). **Your highlights** is listed on a PDF you can edit that
+has a highlight, **Moving notes around** on any page you can edit (with a
+mouse: on a touch screen the handle neither drags nor has a + under every
+note). **Background tasks** is listed on the desktop layout.
 **Shared workspaces** is listed once you belong to one.
 **Working together** and **Citations in answers** are listed only while
 their subject is on screen: someone else on the page, a cited reply. Hints
@@ -99,22 +103,30 @@ user on the step to try it. A waiting step has Back and a quiet **Skip
 step**, so the task, not skipping it, is the loudest thing on the card.
 
 AI chat (`tours/aiChat.js`) has steps per place, chosen by step-level
-`requires`, each ending on Send: a light step on the composer whose Done
-leaves, and which the user's own send (`chat.sent`) ticks. The tour never
-submits a message or starts recording, and there is no voice step.
+`requires`, each with the model chip ("Pick the model, effort and speed",
+`optional`: the chip is there once the models have loaded) and Send: a light
+step on the composer which the user's own send (`chat.sent`) ticks. Every
+place ends on New chat where conversations are kept (`editable`): "**+**
+starts a new chat", the old one waiting in History; its scene clicks **+**,
+points at History and Alt-clicks **+** (a `key` click), which discards one
+instead. The tour never submits a message or starts recording, and there is
+no voice step.
 
 - **On a paper** (`view: "pdf"`): the message box types *What is the main
   result, and where is it shown?* ("Ask about this paper"); with the PDF
   window visible, the Ctrl-drag demo frames a figure (`findFigure`, below)
   and releases, so the snapshot lands in the chat. The same demo then
-  points at it (`{point: "chat.imageContext"}`). Then Send ("Answers link to
-  the passages they quote"). Hidden PDFs and phone chat skip the figure step.
+  points at it (`{point: "chat.imageContext"}`). Then the model chip and Send
+  ("Answers link to the passages they quote"). Hidden PDFs and phone chat
+  skip the figure step.
 - **On a page of notes** (`view: "page"`): *Turn these notes into a short
-  summary* ("Or select part of a note to have it rewritten"), then Send.
+  summary* ("Or select part of a note to have it rewritten"), then "Ctrl+click
+  a note to attach it" (a scene clicking a note with the Ctrl cap on the
+  pointer), the model chip, Send.
 - **On the library** (`view: "home"`): *Which of these papers use attention?
   File them into ML/attention* ("It can search, read and file your pages" —
   true under the default tool permissions), then the Tools button
-  (optional), then Send.
+  (optional), the model chip, Send.
 - **No AI connected** (`aiConfigured: false`, and `aiEditable`: the account
   can store keys — a guest cannot, and gets no tour): one step on the chat's
   setup card (`chat.setup`), "Connect an AI to use chat". Clicking a tile
@@ -152,7 +164,8 @@ only a PDF with an outline has it), then the tool column. The two viewers
 share the column up to the pen (zoom out, zoom in, fit to width, the pen,
 in the same places in both). The zoom step's scene visits the three zoom
 buttons; the pen step's presses the pen and writes a stroke on the page.
-What only one viewer has comes after them: Translate and, on a touch screen
+What only one viewer has comes after them: Translate (right-click for the
+whole paper; a selected passage is translated by itself) and, on a touch screen
 (`requires: {touch: true}`), the selection mode on a PDF; Paper and Notes
 view in the notebook view. So the
 tours are **siblings**: the zoom and pen steps are `shared`, the same step
@@ -188,22 +201,39 @@ an amber **Tip** chip over one plain sentence that says why it helps, with
 
 | Guide | Offered when | Points at |
 |---|---|---|
-| Adding to your library | Add is opened (`popover.opened {name: "add"}`). The only guide that comes *with* its control rather than after it: opening Add is already the intent, and the rows it explains are on screen only while the popover is | inside the popover, undimmed whole: the address box (a scene typing into it), Upload files, New notebook (a drawing of the one page behind both views) |
+| Adding to your library | Add is opened (`popover.opened {name: "add"}`). The only tour that comes *with* its control rather than after it: opening Add is already the intent, and the rows it explains are on screen only while the popover is | inside the popover, undimmed whole: the address box (a scene typing into it), Upload files (dropping files and folders on the library does the same), New notebook (a drawing of the one page behind both views); then, desktop only, Import… in the View menu, which the step opens (Zotero, Obsidian, Notion, Logseq) |
 | Arrange windows | a PDF is opened (`page.opened`) on desktop | Chat's title: a scene double-clicking it to fold, then one dragging it to the left dock |
 | Citations in answers | an AI reply finishes with a citation link (`chat.cited`) | the link; a demo clicks it and waits for `citation.shown`, then the marked passage in the PDF |
-| Sharing a page | the page gets its first share link (`share.created`: the Share popover's Share button) | (press Share,) the link, who has access, general access naming Stop sharing beside the link (worded for what an anyone-with-the-link share exposes when it is one, `shareAudience`) — inside the Share popover, top to bottom, the popover undimmed whole |
+| Sharing a page or folder | a page or a folder gets its first share link (`share.created`: the Share popover's Share button) | (press Share,) the link (a folder's opens every page filed there, now and later: `shareTarget`), who has access, general access naming Stop sharing beside the link (worded for what an anyone-with-the-link share exposes when it is one, `shareAudience`) — inside the Share popover, top to bottom, the popover undimmed whole |
+| Your highlights | the third highlight of a load (`highlight.created`, `count: 3`) | the highlight made last (`pick: "recent"`, `guide/recent.js`): a scene clicking it (its note, and a quote in the next chat message), one right-clicking it (recolour, link, delete); then its card in the notes, which jumps back (`optional`: the Notes window may be closed) |
 | Editing tables | the user makes a table (/table, or a pasted spreadsheet or html table) and it first renders (`table.created`); opening a page that has one offers nothing | (add one with /table,) a cell to type into, the + strips and the row/column handles, the corner handle (copy, move or delete the whole table), each with a scene clicking it — on the table just made when the page has several, each card clear of the table |
-| Handwriting | the first stroke (`ink.stroke`) | (draw something, with a scene writing on the page,) the drawing's note block and its caption, tap the pen again for colour, width and pen vs monoline, then the eraser and the lasso on one card (Ctrl+Z brings back what was erased); finishing re-arms the pen |
+| Moving notes around | the eighth note made in a load (`block.created`, `count: 8`: Shift+Enter, or the + under a handle); not on a touch screen, nor in the notebook view | the last note's ⋮⋮ (a scene carrying it down and to the right, where a nested note lands: a drag by `offset`), its menu (a scene clicking it), the + under it (a scene clicking it, then Alt-clicking it). The handles show on hover and while pointed at (`[data-guide-active]`) |
+| Handwriting | the first stroke (`ink.stroke`) | (draw something, with a scene writing on the page,) the drawing's note block and its caption, tap the pen again for colour, width and pen vs monoline, the eraser and the lasso on one card (Ctrl+Z brings back what was erased), then the Text tool (a scene clicking T, then the page); finishing re-arms the pen |
 | The PDF viewer | a PDF is opened (`page.opened`) with its viewer on screen (`viewerTools`), in a load whose offer Arrange windows did not take | the table of contents (if any), zoom and fit, the pen, Translate (if on), the selection mode on a touch screen; after The notebook view, only the outline and Translate |
 | The notebook view | the notebook view is open (`notebookView`, state) | zoom and fit, the pen, the paper, Notes view (a drawing of the one page behind both views); after The PDF viewer, the paper and Notes view |
 | Pages to write on | a sheet of paper is made (`sheet.created`: a new notebook, **+**, `/note`, or writing low on the last sheet), in the notes view (`notebookView: false`: the notebook view has none of the steps' anchors) | (make one,) the sheet (a scene writing low on it while the next page's outline arrives under it), its pen, the notebook view (a drawing of the one page behind both views). The paper is the notebook view tour's to teach |
 | Background tasks | the account starts a job on the server (`job.started`, from the tasks store's `adopt`, so every kind counts); desktop only — the phone's tray row carries no anchor | the tray button (the job runs on the server and outlives the tab); a task's row with Clear finished, `optional`: a tour started from the menu may find no rows |
-| Organize your library | the library passes 20 pages (`growingLibrary`, state) — past the folders hint, which arrives at ten and only says how to move one page | a page card (a scene right-clicking it), a centred card with a drawing of one paper in several folders, Recently viewed, Recently deleted; the last two are `optional`, so a library with nothing viewed passes over them |
+| Organize your library | the library passes 20 pages (`growingLibrary`, state) — past the folders hint, which arrives at ten and only says how to move one page | a page card (a scene right-clicking it), the listing bar's filter box (a scene typing into it; Enter with no match searches inside notes and PDFs), Select (Ctrl+ or Shift+click too), a centred card with a drawing of one paper in several folders, the Labels view (the same model on screen), Recently viewed, Recently deleted; the last three are `optional`, so a label view or a library with nothing viewed passes over them |
 | Working together | another account or a link visitor comes onto the page (`peer.joined`; your own second tab or the desktop app beside the browser is nobody else) | the avatar stack (a face marks their block), undo |
 | Shared workspaces | the account belongs to a shared workspace (state) | the account menu's switcher and card |
-| hint: math keys | the live formula preview comes up (`math.previewed`) | the preview: Tab and `\` |
+| hint: math keys | the live formula preview comes up (`math.previewed`); version 2 since Tab, not Enter, accepts a suggestion | the preview: Tab accepts or jumps on, `\` looks up a symbol |
+| hint: new-note key | Enter breaks a line in a note with text in it (`note.lineBreak`), where Enter is not the new-note key (`enterNewNote: false`, Settings → Keyboard), unless a note was made already (`doneOn: block.created`) | the editor: Shift+Enter starts a note, Tab nests it |
+| hint: / menu | the / menu comes up (`slash.opened`) — like Add, opening it is the intent | the menu: `/eq`, `/red` |
+| hint: Paste as | the chooser comes up after a paste (`paste.offered`) | the chooser: a block link can be a live Synced block |
+| hint: mentions | the @ menu comes up (`mention.opened`) | the menu: a page, a person, `@fri 3pm` for a reminder (dates are English words; the Chinese copy says so) |
+| hint: objects | a picture, table or diagram in the notes is selected (`object.selected`); not on a touch screen, where its menu is a long press | the selected object (the anchor goes with the selection): right-click for source, move, delete |
 | hint: block references | the `[[` search shows results (`ref.search`) | the search: mention vs `![[…]]` |
 | hint: Ctrl+P | the 4th return to the library in one load (`home.opened`, `count: 4`), unless the palette was used (`doneOn: palette.opened`); never on the phone layout (`requires: {phone: false}` — App's `phone` fact), where Home is the bottom bar's Library tab | Home |
+| hint: command palette | the 3rd Ctrl+P of a load (`palette.opened`, `count: 3`), unless the command palette was found (`doneOn: commands.opened`, Ctrl+Shift+P or `>` typed); desktop | the palette's box: `>` or Ctrl+Shift+P runs any command, the unbound ones included |
+| hint: tabs | the 4th page of a load to get a tab (`tab.opened`, `count: 4`); desktop; a tab's menu answers it (`answeredBy: tab.menu`) | the tab strip: right-click pins a tab, or its page to the library |
+| hint: window closed | a window closed with its × (`window.closed {id: chat \| notes \| pdf}`); desktop — the phone's tabs bring its panels back — and retired if the user brings one back first (`doneOn: window.shown`, from the View rows and the palette's toggles); opening View answers it (`answeredBy`), so it never covers the menu's Windows rows | the View button: closed windows wait there |
+| hint: New chat | the first New chat that kept a conversation (`chat.archived {discard: false}`); opening History answers it | History: where it went, and that Alt+click on + discards one instead |
+| hint: PDF switch | the first message sent with the whole PDF (`chat.sent {pdf: true}`) | the composer's PDF switch: figures count, toggle for text only |
+| hint: assistant changes | the first reply that changed the library or notes (`chat.changed`) | the reply's change list: each change with its own undo |
+| hint: ink selection | handwriting is selected (`ink.selected`: the lasso, or a tap on ink) | the selection box: drag, the handles resize and rotate, Shift snaps to 15° |
+| hint: paper details | an open paper's details are unverified with the ⓘ button on screen (`unverifiedMeta`, state); opening ⓘ answers it | ⓘ: the red ! means unchecked; fix them, pin a cite key |
+| hint: .bib link | the Export dialog shows a folder's bibliography (`bibtex.shown {folder: true}`) | Keep this .bib up to date: a link Overleaf refreshes from |
+| hint: Settings | a page load after the first tour was finished (`firstRunDone`, read once when the profile arrives, so never on top of the finish card); desktop; opening the account menu answers it | the account button: Ctrl+, opens Settings (theme, language, keys, smooth scrolling) |
 | hint: Back | the first link jump (`nav.pushed`), unless Back was already used (`doneOn: nav.back`) | the Back button: it returns to the same spot, or `{key:app.back}` |
 | hint: conflict | a clone conflict's versions show (`conflict.shown`) | the versions: nothing was lost, both are kept; pick one, then Apply |
 | hint: folders | the library has 10+ pages and no folder or label (state) | the listing bar |
@@ -217,8 +247,13 @@ an amber **Tip** chip over one plain sentence that says why it helps, with
 
 Rules the engine keeps (`useGuide.js`, `triggers.js`):
 
-- **Trigger shape.** `trigger: { event, match?, count?, doneOn?, requires?,
-  anyOf? }`. Without `event` it is a state trigger: offered once the tour's
+- **Answered by a move.** `trigger.answeredBy` (`{event, match?}`) is the
+  move a shown card asks for — opening the menu it points at (View for a
+  closed window, History, ⓘ, the account menu, a tab's menu). That event
+  closes the card as done, before it can cover what the move opens. Unlike
+  `doneOn` it settles nothing while the card has not come.
+- **Trigger shape.** `trigger: { event, match?, count?, doneOn?, answeredBy?,
+  requires?, anyOf? }`. Without `event` it is a state trigger: offered once the tour's
   `requires` (and the trigger's) hold, checked when the facts change, never
   in the first 3 s after load. The tour-level `requires` also gates manual
   starts; the trigger's `requires` gates only the offer, which is how the
@@ -298,8 +333,12 @@ Engine abilities available to every step:
   tour is recorded as done, since every card was shown.
 - **`pick`** in the registry for an anchor that repeats: `"last"` where the
   newest one is meant (the latest chat reply's citation), `"recent"` where
-  it is the one inside the element marked `data-guide-recent` (the table
-  the user just made, not an older one above it).
+  it is the one inside (or on) the element marked `data-guide-recent` (the
+  table the user just made, not an older one above it; the highlight made
+  last, on the PDF and in the notes). `guide/recent.js` keeps the newest
+  highlight from the guide's own `highlight.created`, so the PDF page and
+  the note row showing it mark it without App telling them; a row
+  re-renders only when its own answer changes.
 - **`avoid: anchor`** on a step: a box the card keeps clear of besides the
   spotlight. The tables tour's add strip sits under the table, so with no
   room below the card goes above the whole table, else beside it, never
@@ -364,8 +403,9 @@ in the anchor's box as fractions of it, `[0.5, 0.5]` by default.
 | Primitive | What it shows |
 |---|---|
 | `{point: anchor, at?}` | the pointer glides there and a soft halo marks the spot |
-| `{click: anchor, at?, count?, button?}` | a press and its ripple; `count: 2` a double-click, `button: "right"` a right-click (a mouse badge beside the pointer) |
+| `{click: anchor, at?, count?, button?, key?}` | a press and its ripple; `count: 2` a double-click, `button: "right"` a right-click (a mouse badge beside the pointer), `key` (`Alt`, `Mod` or `Shift`) a click with that key held, its cap beside the pointer as the Ctrl-drag demo shows it (`Mod` reads Ctrl, ⌘ on a Mac) |
 | `{drag: anchor, at?, to: {zone, window}}` | the pointer presses, carries an outline of the anchor and lets go where `window` (`chat` or `notes`) would dock on side `zone` (`left`, `right` or `bottom`). The dock's own drop preview appears there at the size that window would get (App's `dockZone` service, the geometry the real drag previews) |
+| `{drag: anchor, at?, to: {offset: [dx, dy], size?: [w, h]}}` | the same carry by so many pixels, a drop preview of `size` (220 px wide, the anchor's height, by default) where it lands: a note carried down a row and to the right, where it nests |
 | `{stroke: anchor, at?: [x0, y0, x1, y1]}` | the pointer writes a squiggle inside that part of the anchor |
 | `{type: anchor}` | the pointer steps aside, and a caret runs a line of text into the field |
 | `{ghost: anchor, size?}` | a dashed outline of what is about to appear under the anchor (the next sheet of paper) |
@@ -618,10 +658,15 @@ state directly; App passes what the engine needs through one `useGuide()`
 call: the facts steps and triggers are matched against (`view`, `hasPdf`,
 `pdfChatVisible`, `aiConfigured`, `aiEditable`, `onPage`, `editable`,
 `phone`, `touch` (a touch screen, `touchScreen()`: the viewer offers its
-text / rectangle toggle), `guideAvailable`, `sharedWorkspace`, `shareAudience`,
+text / rectangle toggle), `guideAvailable`, `sharedWorkspace`, `shareTarget`
+(what the topbar's Share shares: `"page"`, `"folder"` — an open folder on the
+desktop library — or `""`), `shareAudience`,
 `unfiledLibrary`, `emptyLibrary`, `growingLibrary`, `annotatedPage`,
 `notebookView`, `viewerTools`, `clonedWorkspace`, `installable`, `connectorHere`,
-`cloudLinkable`, `prefsChanged`, `demo`), the
+`cloudLinkable`, `prefsChanged`, `enterNewNote` (Enter starts a note: Settings →
+Keyboard), `unverifiedMeta` (the open paper's ⓘ shows its red !, the button on
+screen), `firstRunDone` (the first tour was done when this load's profile
+arrived), `demo`), the
 services demos, scenes and tour ends call (`show`, `restore`, `openSettings`,
 `findEquation`, `findFigure`, `snapshotDemo`, `prepareNote`, `dockZone`)
 and `tidy`.
@@ -720,16 +765,21 @@ where the thing happens:
 |---|---|
 | `popover.opened` `{name}` | App, when a topbar popover opens |
 | `window.collapsed` `{id, collapsed}`, `window.moved` `{id, side}` | App: a window folded (its title double-clicked or double-tapped) or opened (a press on its folded header), and a window dropped into a dock slot (the Arrange windows tour) |
+| `window.closed` `{id}`, `window.shown` `{id}` | App: a window (`chat`, `notes`, `pdf`) closed with its × on the desktop, and a closed one brought back by the View menu's rows or the palette's Show or hide commands |
 | `page.opened` `{id, title}`, `home.opened` | App's page open and `goHome` |
+| `tab.opened`, `tab.menu` | App's tab-strip sync, when the open page gets a tab of its own; a tab's right-click menu opening |
 | `nav.pushed`, `nav.back` | App's `pushNav` (a link jump recorded where you were) and `goBackNav` (the Back button or Alt+←) |
 | `palette.opened` | App, when the Ctrl+P palette opens |
+| `commands.opened` | QuickOpen, when the palette is the command palette (Ctrl+Shift+P, or `>` typed) |
 | `highlight.created` `{id, kind}` | App's highlight creation path |
-| `chat.sent`, `chat.cited` | ChatDock's send, and the end of a reply holding a citation (`gammaLinksIn`) |
+| `chat.sent` `{pdf}`, `chat.cited`, `chat.changed` | ChatDock's send (`pdf`: the whole file goes with it), and the end of a reply holding a citation (`gammaLinksIn`) or changes (`isChange`) |
+| `chat.archived` `{discard}` | ChatDock's New chat, once a conversation with messages was kept in History (or, Alt+click, thrown away) |
 | `citation.shown` | PdfCitationOverlay, once a quote is found and marked |
 | `share.created` | App's `createShareLink` (the Share popover's Share button) |
 | `peer.joined` | App, when another account or a link visitor appears on the open page (a peer whose `user` is not this account) |
 | `ink.stroke` | App's `handleInkStroke` |
 | `ink.options`, `ink.erased`, `ink.undone` | App, when the armed tool's options row opens; `handleInkErase` / `handleInkErasePartial`; `inkUndo` (not redo) |
+| `ink.selected` | App's `handleInkSelect`, when a selection of handwriting comes up |
 | `table.shown` | MdTableWrap, when an editable table mounts |
 | `sheet.created` `{id}` | App's three ways to make a sheet of paper: `addSheetAfter` (**+**, Add page, writing low on the last sheet), `insertSheetAt` (`/note` in an empty block) and `createNotebook` |
 | `job.started` `{kind}` | the tasks store's `adopt` — the one place both `start()` and `upload()` hand this tab a server job, so every kind counts once ([tasks.md](tasks.md)) |
@@ -739,8 +789,14 @@ where the thing happens:
 | `conflict.shown` | MergeResolver's versions |
 | `ref.search` | BlockTree, when the `[[` search shows results |
 | `math.previewed` | MathLivePreview, when it comes up |
+| `block.created` | BlockTree: a new note from the new-note Enter, or the + under a handle |
+| `note.lineBreak` | BlockTree: the line-break Enter in a note with text, where Enter is not the new-note key |
+| `slash.opened`, `paste.offered` | SlashMenuPopup (its `event`), when the / menu or the Paste as chooser comes up |
+| `mention.opened` | MentionMenuPopup, when the @ menu comes up |
+| `object.selected` `{kind}` | MdObject, when a picture, table or diagram in the notes is selected |
+| `bibtex.shown` `{folder}` | the Export dialog's bibliography step (its Overleaf link) |
 | `settings.opened` `{pane}` | App, whenever Settings opens (on any pane) |
-| `block.created`, `block.indented` | catalogued, not emitted |
+| `block.indented` | catalogued, not emitted |
 
 A test asserts every `advanceOn`, trigger and `doneOn` name is in the catalog;
 emitting a name outside it logs a warning and does nothing.
@@ -892,6 +948,7 @@ frontend/src/guide/
   useGuide.js       state machine, offers, reveal, demo actions
   scene.js          a step's scene: its primitives, MOTION (the guide's timing) and the player
   previewHighlight.js, previewArea.js, typeDemoNote.js   the demos that drag or type
+  recent.js         the highlight made last, for anchors that pick "recent"
   GuideOverlay.jsx  spotlight + scene layer + card + bottom sheet, offer, hint and finish cards
   tours/*.js        one file per tour; tours/index.js registers them
   tours/hints.js    the hints
@@ -910,7 +967,9 @@ frontend/tests/e2e/scenarios/triggeredGuide.mjs   offers and hints: tables (made
                                                   (offered, and from the menu with and without a link),
                                                   citations, math, Ctrl+P, Back, workspaces, presence,
                                                   handwriting from the menu (draw, note, style, erase,
-                                                  lasso, the pen re-armed), Suggest tours off
+                                                  lasso, Text, the pen re-armed), a closed window, the
+                                                  first New chat, the new-note key, the highlights
+                                                  tour, Suggest tours off
 ```
 
 ## Validation
@@ -935,9 +994,12 @@ frontend/tests/e2e/scenarios/triggeredGuide.mjs   offers and hints: tables (made
   is catalogued; the finish card lists only what the run made; a repeated
   anchor picks as its `pick` says; a card keeps clear of its `avoid` box;
   every scene primitive is a known kind naming registered anchors (a dock
-  zone names a side and a window) and no hint has a scene or a drawing; a
+  zone names a side and a window, an offset drag two numbers, a held key
+  `Alt`, `Mod` or `Shift`) and no hint has a scene or a drawing; a
   surface is a registered anchor opened by the same path as the anchors in
-  it.
+  it; the October hints come after their moment and retire when the
+  feature is found; the highlights and notes tours wait for several; the
+  Add, library and handwriting tours end where their new controls are.
 - `guide.mjs`: every `home` anchor without an `open` path is present once;
   the first tour runs end to end from the Tours menu (welcome card, the add
   demo, both highlights with their demos and the light hand-over, the note
@@ -950,9 +1012,10 @@ frontend/tests/e2e/scenarios/triggeredGuide.mjs   offers and hints: tables (made
   the real title and changes nothing, the steps keep Next, the drag scene's
   drop preview is the left dock zone clear of the card, the sheet lifts and
   the scene steps aside while the user drags, and their own fold and drop
-  tick the steps; the AI chat tour's steps per place, the figure snapshot
-  taken back when the tour ends unsent, and the setup card with no AI
-  connected.
+  tick the steps; the AI chat tour's steps per place, through the model chip
+  to Send and New chat (its scene's Alt cap on the pointer), the figure
+  snapshot taken back when the tour ends unsent, and the setup card with no
+  AI connected.
 - `triggeredGuide.mjs`: each offer appears after its event without dimming
   the app (each case clears the account's synced progress first); Dismiss
   leaves a running tour, and a browser with empty storage is not offered it
@@ -964,8 +1027,15 @@ frontend/tests/e2e/scenarios/triggeredGuide.mjs   offers and hints: tables (made
   it; the PDF viewer tour is listed and walked on a PDF without a table of
   contents, and after it the notebook view's offer is two cards that end
   as done when the user clicks Notes view; a hint keeps the editor's caret; a `creates` step or an optional step
-  whose anchor is there or gone passes without a warning; nothing is offered
-  twice, or at all once Suggest tours is off in Settings.
+  whose anchor is there or gone passes without a warning; the Add tour ends
+  in the View menu on Import; the library tour's filter scene types nothing
+  for real; closing Chat offers where it waits, and opening View answers the
+  card before it covers the menu; the first New chat points at History; a line break offers
+  Shift+Enter with the caret kept; the highlights tour walks the highlight,
+  its menu and its note; nothing is offered
+  twice, or at all once Suggest tours is off in Settings. The guides offered
+  on everyday moves (a line break, `/`, a paste, a fourth tab…) are settled
+  for every case but the one about them (`EVERYDAY`, `offers`).
 - Backend (`test_welcome.py`, `test_guests.py`): a new account's workspace
   holds the welcome page with its PDF, `seeded` property and one op batch; a
   guest's names the lifetime; existing, shared and non-empty workspaces are
@@ -1003,5 +1073,5 @@ review turned it down for now:
 - **A Getting-started checklist**: a few first tasks (add a paper,
   highlight, write a note, search, share) ticked from the event bus whether
   or not a tour ran, each with a way into the matching tour.
-  `block.created` and `block.indented` are catalogued for it and emitted
-  nowhere.
+  `block.indented` is catalogued for it and emitted nowhere
+  (`block.created` now serves the notes tour and the new-note hint).
