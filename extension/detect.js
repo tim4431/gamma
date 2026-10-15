@@ -134,21 +134,25 @@
   // Download a PDF from inside the page: a same-origin fetch with the page's
   // Referer and Sec-Fetch headers, which publisher bot checks accept where
   // they 403 the same fetch from the extension's service worker.
+  // The answer says what came back (status, type, size, where it ended) for
+  // the save's log (saveLog.js).
   async function fetchPdfForWorker(url) {
     const res = await fetch(url, { credentials: "include" });
-    console.info(`[gamma] in-page PDF fetch ${url} → ${res.status} ${res.headers.get("content-type") || ""}`);
-    if (!res.ok) return { ok: false, status: res.status, landed: res.url };
+    const seen = { status: res.status, type: res.headers.get("content-type") || "", landed: res.url };
+    console.info(`[gamma] in-page PDF fetch ${url} → ${res.status} ${seen.type}`);
+    if (!res.ok) return { ok: false, ...seen };
     const blob = await res.blob();
-    if (blob.size > 60 * 1024 * 1024) return { ok: false, error: "the PDF is too large to relay from this tab" };
+    seen.size = blob.size;
+    if (blob.size > 60 * 1024 * 1024) return { ok: false, ...seen, error: "the PDF is too large to relay from this tab" };
     const head = new Uint8Array(await blob.slice(0, 5).arrayBuffer());
-    if (String.fromCharCode(...head) !== "%PDF-") return { ok: false, notPdf: true, landed: res.url };
+    if (String.fromCharCode(...head) !== "%PDF-") return { ok: false, notPdf: true, ...seen };
     const dataUrl = await new Promise((resolve, reject) => {
       const r = new FileReader();
       r.onload = () => resolve(String(r.result));
       r.onerror = () => reject(new Error("could not read the downloaded PDF"));
       r.readAsDataURL(blob);
     });
-    return { ok: true, base64: dataUrl.slice(dataUrl.indexOf(",") + 1) };
+    return { ok: true, ...seen, base64: dataUrl.slice(dataUrl.indexOf(",") + 1) };
   }
 
   chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {

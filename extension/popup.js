@@ -145,6 +145,7 @@ async function showMain(st) {
   show("result", false);
   if (st.saving) { show("progress"); $("progress-text").textContent = st.saving; } else show("progress", false);
   if (st.error) { $("result").className = "msg err"; $("result").textContent = st.error; show("result"); }
+  show("log-row", !!st.log);
 
   await fillPickers(st);
   $("pub-auto").checked = st.settings.autoRefreshSessions !== false;
@@ -437,8 +438,10 @@ async function doSave({ candidate, force } = {}) {
     // fallback when the server can't get past a paywall) — secure the host
     // permission while we still have the user's click. Best-effort: normally
     // <all_urls> is already granted and this resolves silently.
-    const fetchUrl = c.pdf_url || (c.is_pdf_tab ? c.source_url : "");
-    if (fetchUrl) { try { await chrome.permissions.request({ origins: [originPattern(new URL(fetchUrl).origin)] }); } catch {} }
+    const fetchUrls = ["pdf", "arxiv", "doi"].includes(c.kind) ? [c.pdf_url, c.source_url] : [];
+    const origins = [...new Set(fetchUrls.map((u) => { try { return originPattern(new URL(u).origin); } catch { return ""; } }))]
+      .filter(Boolean);
+    if (origins.length) { try { await chrome.permissions.request({ origins }); } catch {} }
     const out = await send({ type: "save", tabId: tab.id, candidate: c, ...folder, labels, source_url: force ? (tab && tab.url) : undefined });
     show("progress", false);
     const r = $("result");
@@ -460,6 +463,21 @@ async function doSave({ candidate, force } = {}) {
   } finally {
     $("save").disabled = false; $("save-anyway").disabled = false;
   }
+}
+
+// The tab's last save, step by step (worker.js keepLog), onto the clipboard
+// for a bug report.
+async function copyLog() {
+  const k = `tab:${tab.id}`;
+  const text = ((await chrome.storage.session.get(k))[k] || {}).log || "";
+  const btn = $("copy-log");
+  try {
+    await navigator.clipboard.writeText(text);
+    btn.replaceChildren(icon("check", "", 14, 2), document.createTextNode("Copied"));
+  } catch (err) {
+    btn.replaceChildren(document.createTextNode(`Couldn't copy: ${err.message}`));
+  }
+  setTimeout(() => btn.replaceChildren(icon("copy"), document.createTextNode("Copy the save log")), 1600);
 }
 
 async function doClip() {
@@ -590,6 +608,8 @@ document.addEventListener("DOMContentLoaded", async () => {
   $("refile").onclick = () => { show("existing", false); show("found"); };
   $("clip").onclick = doClip;
   $("clip").append(icon("scissors"), document.createTextNode("Clip selected text"));
+  $("copy-log").onclick = copyLog;
+  $("copy-log").append(icon("copy"), document.createTextNode("Copy the save log"));
   $("cookie-glyph").appendChild(icon("cookie", "", 16));
   $("drawer-icon").appendChild(icon("cookie"));
   $("cookie-btn").onclick = () => { $("cookie-drawer").classList.contains("hidden") ? openDrawer(state) : closeDrawer(); };
@@ -611,6 +631,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     if (!ch || !ch.newValue) return;
     const st = ch.newValue;
     if (st.saving) { show("progress"); $("progress-text").textContent = st.saving; }
+    if (st.log) show("log-row");
     // The registry preview lands after the popup opened — show it.
     if (st.preview && state && !state.preview && state.candidate && st.candidate
         && st.candidate.source_url === state.candidate.source_url) {
