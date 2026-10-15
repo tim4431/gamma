@@ -12,6 +12,7 @@
 // blocks under a sheet are notes about that page. Stored papers are read
 // through normalizePaper, never trusted.
 import { findBlock, insertSibling, updateBlockTree } from "../shared/model/blockModel.js";
+import { wallNow } from "../shared/model/wallClock.js";
 
 export const DEFAULT_PAPER = Object.freeze({ width: 595.28, height: 841.89, color: "#ffffff", pattern: "blank",
   spacing: 24, line: "#c8d1dc" });
@@ -172,7 +173,7 @@ export const sheetIdAfter = (sheetId) => stableId("s", "sheet-after", sheetId);
 // A new sheet block, folded: its handwriting groups are its children, and
 // the sheet itself shows them.
 export function newSheet(id, paper) {
-  return { id, content: "", properties: { sheet: normalizePaper(paper), collapsed: true }, children: [] };
+  return { id, content: "", properties: { t0: wallNow(), sheet: normalizePaper(paper), collapsed: true }, children: [] };
 }
 
 // --- editing the sheets --------------------------------------------------

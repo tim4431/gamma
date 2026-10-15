@@ -316,8 +316,8 @@ test("replay: a long drawing plays within REPLAY_MAX; an empty one takes no time
   assert.equal(line.duration, REPLAY_MAX);
   assert.ok(Math.abs(line.strokes[99].end - REPLAY_MAX) < 1e-6);
   assert.ok(line.strokes.every((s, i) => !i || s.start >= line.strokes[i - 1].end));
-  assert.deepEqual(inkTimeline(canvas([])), { duration: 0, strokes: [] });
-  assert.deepEqual(inkTimeline(null), { duration: 0, strokes: [] });
+  assert.deepEqual(inkTimeline(canvas([])), { duration: 0, strokes: [], times: new Map() });
+  assert.deepEqual(inkTimeline(null), { duration: 0, strokes: [], times: new Map() });
 });
 
 test("replay: the drawing at a moment holds the strokes begun, the one being written cut short", () => {

@@ -604,3 +604,26 @@ export const EmbedIcon = (p) => (
 export const NotebookPenIcon = (p) => (
   <Icon {...p}><path d="M13.4 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-7.4" /><path d="M2 6h4" /><path d="M2 10h4" /><path d="M2 14h4" /><path d="M2 18h4" /><path d="M21.378 5.626a1 1 0 1 0-3.004-3.004l-5.01 5.012a2 2 0 0 0-.506.854l-.837 2.87a.5.5 0 0 0 .62.62l2.87-.837a2 2 0 0 0 .854-.506z" /></Icon>
 );
+
+// The recording player (recording/PlayerBar.jsx) and pill (RecordingPill.jsx).
+export const PauseIcon = ({ size = 16, ...rest }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" {...rest}><rect x="5" y="4" width="5" height="16" rx="1.5" /><rect x="14" y="4" width="5" height="16" rx="1.5" /></svg>
+);
+export const Back10Icon = (p) => (
+  <Icon {...p}><path d="M3 12a9 9 0 1 0 3-6.7" /><path d="M3 4v5h5" /><text x="7.5" y="16" fontSize="8" fontFamily="inherit" fontWeight="600" stroke="none" fill="currentColor">10</text></Icon>
+);
+export const Forward10Icon = (p) => (
+  <Icon {...p}><path d="M21 12a9 9 0 1 1-3-6.7" /><path d="M21 4v5h-5" /><text x="7.5" y="16" fontSize="8" fontFamily="inherit" fontWeight="600" stroke="none" fill="currentColor">10</text></Icon>
+);
+export const SkipBackIcon = (p) => (
+  <Icon {...p}><polygon points="19 20 9 12 19 4 19 20" /><line x1="5" y1="19" x2="5" y2="5" /></Icon>
+);
+export const SkipForwardIcon = (p) => (
+  <Icon {...p}><polygon points="5 4 15 12 5 20 5 4" /><line x1="19" y1="5" x2="19" y2="19" /></Icon>
+);
+export const BookmarkIcon = (p) => (
+  <Icon {...p}><path d="m19 21-7-4-7 4V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v16z" /></Icon>
+);
+export const LocateIcon = (p) => (
+  <Icon {...p}><line x1="2" y1="12" x2="5" y2="12" /><line x1="19" y1="12" x2="22" y2="12" /><line x1="12" y1="2" x2="12" y2="5" /><line x1="12" y1="19" x2="12" y2="22" /><circle cx="12" cy="12" r="7" /></Icon>
+);

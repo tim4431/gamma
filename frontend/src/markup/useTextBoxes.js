@@ -18,6 +18,7 @@ import {
   findBlock, insertSibling, makeBlockId, removeBlockTree, setBlockText, updateBlockTree,
 } from "../shared/model/blockModel.js";
 import { normalizeTextBox, refitBox, textBoxesBySurface, textStyle } from "./textBox.js";
+import { wallNow } from "../shared/model/wallClock.js";
 
 // A box's editor takes the block editor's formatting keys (Ctrl+B, I, E,
 // K …) but not its block commands: Enter is a new line in the box.
@@ -134,7 +135,7 @@ export function useTextBoxes({ blocks, blocksRef, setBlocks, foldBlocks, readOnl
       const id = makeBlockId();
       const onSheet = typeof surface === "string";
       const node = { id, parentId: onSheet ? surface : null, children: [], content: "",
-        properties: onSheet ? { text_box: textBox } : { text_box: textBox, pdf_page: surface } };
+        properties: { t0: wallNow(), text_box: textBox, ...(onSheet ? {} : { pdf_page: surface }) } };
       setBlocks((prev) => {
         if (!onSheet) return [...prev, node];
         return findBlock(prev, surface) ? updateBlockTree(prev, surface, (s) => ({ ...s, children: [...(s.children || []), node] })) : prev;

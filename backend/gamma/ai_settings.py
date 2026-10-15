@@ -560,6 +560,30 @@ def require_ai_runtime(user_id: str) -> dict:
     return rt
 
 
+def transcriber_for(user_id: str, model_hint: str = "") -> tuple:
+    """The connection the account's speech-to-text goes through, ``(protocol
+    adapter, conf)``: dictation (``/ai/transcribe``) and a recording's
+    transcript (gamma/recording.py). It needs an OpenAI credential, not chat
+    models: an entry with none picked still transcribes. The entry that
+    surely transcribes (Protocol.transcription: OpenAI itself) comes before
+    one that may (a compatible server), the entry of ``model_hint`` (a
+    model-registry id, the chat's model) first within each; the standard
+    503 when none does."""
+    rt = ai_runtime(user_id)
+    # (A shared entry's ids have a colon of their own: "server:<id>:<model>".)
+    hinted = rt["providers"].get(next((m["provider"] for m in rt["models"] if m["id"] == model_hint),
+                                      (model_hint or "").split(":", 1)[0]))
+    candidates = [(ai_protocols.of(c).transcription(c), c)
+                  for c in ([hinted] if hinted else []) + list(rt["providers"].values())]
+    best = max((rank for rank, _ in candidates), default=0)
+    conf = next((c for rank, c in candidates if rank == best), None) if best else None
+    if not conf:
+        raise HTTPException(status_code=503,
+                            detail="Voice input needs an OpenAI API key (Settings → AI → Connections) — "
+                                   "Anthropic and ChatGPT sign-in connections don't offer transcription.")
+    return ai_protocols.of(conf), conf
+
+
 def resolve_model(runtime: dict, requested: str) -> dict:
     """The runtime entry a request's model names — its registry id
     (``<pid>:<model>``) or a bare model name — else the default."""

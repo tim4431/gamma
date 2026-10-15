@@ -481,21 +481,55 @@ export function boundsOf(ink, ids) {
 }
 
 // --- replay ----------------------------------------------------------------
-// A drawing as it was written. A stroke starts at its wall-clock `t0` plus
-// its first sample's `t` (a run the partial eraser cut out of a longer
-// stroke keeps the times it had), and its samples follow their `t`. Pauses,
-// between strokes and inside one, shrink to `pause`, and a replay longer
-// than `max` plays faster, so a page written over an hour replays in
-// seconds. Strokes play in the order they were drawn: by that start, the
-// file's order breaking ties; a stroke without timing counts as drawn right
-// after the stroke before it in the file, its samples spread over UNTIMED_MS.
+// A drawing as it was written, on one of two clocks (docs/dev/recording.md
+// "One clock for every replay"). The strokes' own clock is wall-clock
+// time: a stroke starts at its `t0` plus its first sample's `t` (a run the
+// partial eraser cut out of a longer stroke keeps the times it had) and
+// its samples follow their `t`; `strokeWalls` reads it, and `inkUntil`
+// draws the drawing as it stood at an instant on it — what a recording's
+// player drives from the audio. The compressed clock of a group's own
+// replay button is `inkTimeline`: the same strokes in the order they were
+// drawn, pauses between strokes and inside one shrunk to `pause` and the
+// whole scaled into `max`, so a page written over an hour replays in
+// seconds; a stroke without timing counts as drawn right after the stroke
+// before it in the file, its samples spread over UNTIMED_MS. `inkAtTime` is
+// `inkUntil` on that clock.
 export const REPLAY_PAUSE = 400;
 export const REPLAY_MAX = 15000;
 const UNTIMED_MS = 300;
 
-// → {duration, strokes: [{id, index, start, end, times}]} in ms from the
-// replay's start, in drawing order: `index` is the stroke's place in the
-// file, `times` each sample's time.
+const walls = new WeakMap();
+// Each sample's wall-clock ms, or null for a stroke no clock places (no
+// `t0`, or no `t` channel: imported foreign ink). Cached per stroke object.
+export function strokeWalls(stroke) {
+  if (walls.has(stroke)) return walls.get(stroke);
+  const samples = decodeStroke(stroke);
+  const timed = Number.isFinite(stroke.t0) && samples.length > 0 && samples.every((p) => p.t != null);
+  const out = timed ? samples.map((p) => stroke.t0 + p.t) : null;
+  walls.set(stroke, out);
+  return out;
+}
+
+const spans = new WeakMap();
+// [first start, last end] in wall-clock ms over the timed strokes, or null
+// when none is timed. Cached per drawing object.
+export function inkWallSpan(ink) {
+  if (!ink) return null;
+  if (spans.has(ink)) return spans.get(ink);
+  let out = null;
+  for (const stroke of ink.strokes || []) {
+    const ts = strokeWalls(stroke);
+    if (!ts) continue;
+    out = out ? [Math.min(out[0], ts[0]), Math.max(out[1], ts[ts.length - 1])] : [ts[0], ts[ts.length - 1]];
+  }
+  spans.set(ink, out);
+  return out;
+}
+
+// → {duration, strokes: [{id, index, start, end, times}], times} in ms from
+// the replay's start, in drawing order: `index` is the stroke's place in
+// the file, `times` each sample's time, and the map `times` the same per
+// id — inkUntil's table.
 export function inkTimeline(ink, { pause = REPLAY_PAUSE, max = REPLAY_MAX } = {}) {
   let before = -Infinity;
   const order = (ink?.strokes || []).map((stroke, index) => {
@@ -530,26 +564,40 @@ export function inkTimeline(ink, { pause = REPLAY_PAUSE, max = REPLAY_MAX } = {}
     }
     clock = max;
   }
-  return { duration: clock, strokes };
+  return { duration: clock, strokes, times: new Map(strokes.map((s) => [s.id, s.times])) };
 }
 
-// The drawing at replay time `t` (ms): the strokes begun by then, in the
-// order they were drawn, the one being written cut to the samples it had
-// (a prefix of its delta-coded `pts` is its first samples). The file itself
-// once the replay has ended.
-export function inkAtTime(ink, timeline, t) {
-  if (!ink || t >= timeline.duration) return ink;
-  const strokes = [];
-  for (const item of timeline.strokes) {
-    if (item.start > t) break;
-    const stroke = ink.strokes[item.index];
-    if (!stroke) continue;
-    if (t >= item.end) { strokes.push(stroke); continue; }
+// The drawing as it stood at instant `at`: `times` is a clock's table of
+// stroke id → each sample's instant on it (a timeline's), else the strokes'
+// own wall clock. The strokes begun by `at` are drawn in the order they
+// were begun, the one being written cut to the samples it had (a prefix of
+// its delta-coded `pts` is its first samples); a stroke the clock does not
+// place is drawn as it is, under the rest. → {ink, pending, latest, done}:
+// `pending` the ids not yet begun, `latest` the id begun last, `done`
+// whether every stroke is complete — `ink` is then the file itself.
+export function inkUntil(ink, at, times = null) {
+  if (!ink) return { ink, pending: [], latest: null, done: true };
+  const drawn = [], pending = [];
+  let latest = null, latestAt = -Infinity, done = true;
+  for (const stroke of ink.strokes || []) {
+    const ts = times ? times.get(stroke.id) : strokeWalls(stroke);
+    if (!ts?.length) { drawn.push({ stroke, at: -Infinity }); continue; }
+    if (ts[0] > at) { pending.push(stroke.id); done = false; continue; }
+    if (ts[0] >= latestAt) { latestAt = ts[0]; latest = stroke.id; }
+    if (ts[ts.length - 1] <= at) { drawn.push({ stroke, at: ts[0] }); continue; }
+    done = false;
     let k = 1;
-    while (k < item.times.length && item.times[k] <= t) k++;
-    strokes.push({ ...stroke, pts: stroke.pts.slice(0, k * (stroke.ch || "xy").length) });
+    while (k < ts.length && ts[k] <= at) k++;
+    drawn.push({ stroke: { ...stroke, pts: stroke.pts.slice(0, k * (stroke.ch || "xy").length) }, at: ts[0] });
   }
-  return { ...ink, strokes };
+  if (done) return { ink, pending, latest, done };
+  drawn.sort((a, b) => a.at - b.at);
+  return { ink: { ...ink, strokes: drawn.map((d) => d.stroke) }, pending, latest, done };
+}
+
+// The drawing at replay time `t` of `timeline` (inkTimeline's).
+export function inkAtTime(ink, timeline, t) {
+  return inkUntil(ink, t, timeline.times).ink;
 }
 
 // --- rendering -------------------------------------------------------------

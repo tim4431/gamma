@@ -58,6 +58,12 @@ export const ANCHORS = {
   // The viewer's left edge, the same in the PDF and the notebook viewer up
   // to the pen; "viewer" is either of them, open and not closed.
   "viewer.tools": { view: "viewer", description: "The viewer's tool column, mid-left: zoom, the pen, then what only this viewer has" },
+  // Recordings (docs/dev/recording.md): the mic after the pen, the pill
+  // while one is recorded, a recording's card in the notes, and the player.
+  "viewer.record": { view: "viewer", description: "Records audio; in the PDF and the notebook viewer's tool column after the pen" },
+  "recording.pill": { view: "viewer", description: "The recording in progress: its time, the input level, Pause, Bookmark and Stop" },
+  "recording.card": { view: "notes", pick: "last", description: "A recording block in the notes: its length and date, Play and its menu" },
+  "recording.player": { view: "viewer", description: "The recording player at the viewer's bottom: the scrubber with its writing marks, the display modes, the speed" },
   "viewer.zoom": { view: "viewer", description: "Zoom out, zoom in and fit to width" },
   "viewer.fullscreen": { view: "viewer", description: "Full screen, bottom-left" },
   "viewer.translate": { view: "translatable pdf", description: "Translate this page; right-click or long-press for the whole document and options" },

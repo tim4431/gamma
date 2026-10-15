@@ -241,8 +241,15 @@ class OpenAIChat(Protocol):
         # OpenAI surely transcribes; a compatible server (DeepSeek) may not.
         return 2 if is_openai_platform(conf["base_url"]) else 1
 
-    def transcription_request(self, conf, model, language, filename, content_type, audio):
+    def transcription_request(self, conf, model, language, filename, content_type, audio, *, timestamps=False):
         fields = {"model": model, **({"language": language} if language else {})}
+        if timestamps and model.endswith("-diarize"):
+            # the diarizing model times its segments in its own format, and
+            # takes audio past 30 s only in chunks
+            fields.update({"response_format": "diarized_json", "chunking_strategy": "auto"})
+        elif timestamps:
+            # whisper-1's; gpt-4o-transcribe answers json or text only (a 400)
+            fields.update({"response_format": "verbose_json", "timestamp_granularities[]": "segment"})
         body, multipart_type = multipart_body(fields, filename, content_type, audio)
         return URLRequest(api_url(conf["base_url"], "/audio/transcriptions"), data=body, headers={
             "Authorization": f"Bearer {conf['api_key']}",
@@ -251,3 +258,13 @@ class OpenAIChat(Protocol):
 
     def transcript(self, data):
         return (data.get("text") or "").strip()
+
+    def transcript_segments(self, data):
+        # verbose_json's and diarized_json's segments: {start, end, text, …} in seconds
+        def seconds(value):
+            return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else None
+
+        segments = [{"start": seconds(s.get("start")) or 0.0, "end": seconds(s.get("end")),
+                     "text": str(s.get("text") or "").strip()}
+                    for s in data.get("segments") or [] if isinstance(s, dict)]
+        return [s for s in segments if s["text"]] or super().transcript_segments(data)

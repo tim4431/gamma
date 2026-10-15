@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { flushSync } from "react-dom";
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import PdfViewer, { preloadPdfEngine } from "../pdf/PdfViewer";
@@ -62,7 +62,7 @@ import {
   FilePlusIcon, PaperclipIcon, FolderIcon, FolderOpenIcon, FolderPlusIcon, HardDriveIcon, HelpCircleIcon, HomeIcon, ImportIcon, InfoIcon, LabelGlyph, LabelIcon,
   LanguagesIcon, LanguagesOffIcon, LinkIcon, LogOutIcon, MaximizeIcon, MenuIcon, MinimizeIcon, MoveVerticalIcon, PenIcon, PinIcon, PlusIcon,
   RectSelectIcon, RefreshIcon, SettingsIcon, SparklesIcon, TextCursorIcon, Trash2Icon, TrashIcon, TypeIcon, UploadIcon,
-  ScissorsIcon, ShareIcon, UserIcon, UsersIcon, XIcon, ZoomInIcon, ZoomOutIcon, NotebookIcon, SheetIcon,
+  ScissorsIcon, ShareIcon, UserIcon, UsersIcon, XIcon, ZoomInIcon, ZoomOutIcon, NotebookIcon, SheetIcon, MicIcon,
 } from "../shared/ui/Icons";
 
 
@@ -131,7 +131,14 @@ import {
 } from "../notebook/notebook";
 import { generateKeyBetween } from "fractional-indexing";
 import * as inkStore from "../ink/inkStore";
-import * as inkReplay from "../ink/inkReplay";
+import * as playback from "../replay/playback.js";
+import { recordingClock } from "../replay/clock.js";
+import { audioSource } from "../recording/audioSource.js";
+import * as recorderStore from "../recording/recorderStore.js";
+import { RecordingContext } from "../recording/RecordingContext.js";
+import { RecordingPill } from "../recording/RecordingPill";
+import { PlayerBar } from "../recording/PlayerBar";
+import { isRecordingBlock, recordingAt, normalizeRecording } from "../recording/recording.js";
 import { usePageCollab } from "../collaboration/usePageCollab";
 import { retryableStatus } from "../collaboration/collabSession.js";
 import { applyOps, applyPatch, displacedRow } from "../shared/model/blockOps";
@@ -2516,6 +2523,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     oaFallback, setOaFallback, metaAutoFetch, setMetaAutoFetch, pdfSaveLocal, setPdfSaveLocal,
     embAnnots, setEmbAnnots, smoothWheel, setSmoothWheel,
     inkPenOnly, setInkPenOnly, inkAutoPen, setInkAutoPen, inkPressure, setInkPressure,
+    replayMode, setReplayMode, replayRate, setReplayRate, replayFollow, setReplayFollow, replayLeadIn, setReplayLeadIn,
+    recordingTranscribe, setRecordingTranscribe,
     inkTools, setInkTools, inkEraserMode, setInkEraserMode, inkEraserSize, setInkEraserSize,
     inkLassoMode, setInkLassoMode, textBoxStyle, setTextBoxStyle,
     translateEnabled, setTranslateEnabled,
@@ -6265,7 +6274,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     // a fresh group.
     if (inkTimerRef.current) flushInk();
     inkActiveRef.current = null;
-    inkReplay.stop();
+    playback.stop();
+    recorderStore.stop();
     inkHistRef.current = { undo: [], redo: [] };
     setInkHistoryState({ undo: 0, redo: 0 });
     setInkSelection(null);
@@ -6283,7 +6293,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // block back first.
   function applyInk(changes, { record = true, label = t("ink stroke") } = {}) {
     if (!changes.length) return;
-    for (const c of changes) inkReplay.stop(c.id);
+    for (const c of changes) playback.stop(c.id);
     const present = new Set(flattenBlocks(blocksRef.current).map((b) => b.id));
     const missing = changes.filter((c) => c.after.strokes.length && !present.has(c.id));
     if (missing.length) {
@@ -6816,6 +6826,117 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     actions: pageActions,
   }), [readOnly, inkTool, inkPenTool, inkPenOnly, inkPressure, inkEraserMode, inkEraserSize, inkLassoMode, textArmed, textBoxStyle,
     pageActions]);
+  // --- Recordings (docs/dev/recording.md) ---------------------------------------
+  // The page's recording blocks and every block stamped with the moment it
+  // was written, each list kept while its contents are the same, so the
+  // player's marks and the rows' glyphs re-render only for a real change.
+  const prevRecRef = useRef({ json: "", value: [] });
+  const recordingBlocks = useMemo(() => {
+    const next = flattenBlocks(blocks).filter(isRecordingBlock).map((b) => ({ id: b.id, properties: b.properties }));
+    const json = JSON.stringify(next);
+    if (json === prevRecRef.current.json) return prevRecRef.current.value;
+    prevRecRef.current = { json, value: next };
+    return next;
+  }, [blocks]);
+  const prevStampedRef = useRef({ json: "", value: [] });
+  const stampedBlocks = useMemo(() => {
+    const next = flattenBlocks(blocks).filter((b) => Number.isFinite(b.properties?.t0)).map((b) => ({ id: b.id, t0: b.properties.t0 }));
+    const json = JSON.stringify(next);
+    if (json === prevStampedRef.current.json) return prevStampedRef.current.value;
+    prevStampedRef.current = { json, value: next };
+    return next;
+  }, [blocks]);
+  // Only the id of the recording playing, so App never re-renders for a frame.
+  const playingRecordingId = useSyncExternalStore(playback.subscribe, () => playback.now()?.scope.recording || null);
+  const recordingNow = useSyncExternalStore(recorderStore.subscribe, recorderStore.coarseNow);
+  // A new recording block, or a bookmark, goes at the page's top level like
+  // an ink group; the tree's own save path inserts it.
+  const insertRecordingBlock = useCallback(({ content, properties }) => {
+    if (!focusedBlockIdRef.current) return null;
+    const id = makeId();
+    setBlocks((prev) => [...prev, { id, parentId: null, children: [], content, properties }]);
+    return id;
+  }, []);
+  const transcribeRecording = useCallback((blockId) => {
+    const b = findBlock(blocksRef.current, blockId);
+    if (!b) return;
+    tasks.start("transcribe", { block_id: blockId, model: dictationModel, language: dictationLang }, { download: "none" })
+      .catch((err) => setStatus(String(err?.message || err)));
+  }, [tasks, dictationModel, dictationLang]);
+  useEffect(() => {
+    recorderStore.configure({
+      setStatus, insertBlock: insertRecordingBlock, leadIn: () => replayLeadIn * 1000,
+      onDone: recordingTranscribe ? transcribeRecording : null,
+    });
+  }, [insertRecordingBlock, replayLeadIn, recordingTranscribe, transcribeRecording]);
+  // A closed or crashed tab's unsaved audio, found at start: put up and
+  // its block finished, silently; a block that is gone takes it with it.
+  useEffect(() => {
+    if (!authUser?.user || shareMode) return;
+    let stale = false;
+    recorderStore.leftBehind().then(async (entries) => {
+      for (const entry of entries) {
+        if (stale) return;
+        const r = await recorderStore.recover(entry);
+        if (r.ok) setStatus(t("An interrupted recording was recovered."));
+      }
+    }).catch(() => {});
+    return () => { stale = true; };
+  }, [authUser?.user, shareMode]);
+  // Play a recording: its clock drives the page and the notes. A tap on
+  // something written then plays from just before that moment.
+  // The display choices as the player reads them when it starts (a ref, so
+  // a change of mode or speed re-renders the player and nothing else).
+  const replayPrefRef = useRef({});
+  replayPrefRef.current = { leadIn: replayLeadIn * 1000, rate: replayRate, mode: replayMode };
+  const playRecording = useCallback((blockId, { atWall = null } = {}) => {
+    const b = findBlock(blocksRef.current, blockId);
+    if (!b) return;
+    if (recorderStore.coarseNow()) { setStatus(t("Stop the recording first.")); return; }
+    const clock = recordingClock(normalizeRecording(b.properties.recording));
+    if (!clock.duration) { setStatus(t("This recording has no audio.")); return; }
+    const source = audioSource(clock, {
+      onError: () => { playback.stop(); setStatus(t("The browser could not play this recording's audio.")); },
+    });
+    const { leadIn, rate, mode } = replayPrefRef.current;
+    const at = atWall != null ? Math.max(0, (clock.toT(atWall) ?? 0) - leadIn) : 0;
+    setInkUi((s) => (s.tool ? { ...s, tool: null, options: false } : s)); // taps seek rather than draw
+    setInkSelection(null);
+    playback.play(clock, { recording: blockId }, { source, at, rate, mode, onEnd: "hold", leadIn });
+  }, []);
+  const toggleRecording = useCallback(() => {
+    if (recorderStore.coarseNow()) { recorderStore.stop(); return; }
+    if (!focusedBlockIdRef.current) return;
+    playback.stop();
+    recorderStore.start(focusedBlockIdRef.current);
+  }, []);
+  const recordingCtx = useMemo(() => ({
+    play: playRecording,
+    transcribe: readOnly ? null : transcribeRecording,
+    covers: (t0) => Number.isFinite(t0) && !!recordingAt(recordingBlocks, t0),
+    playAt: (wall) => {
+      const b = recordingAt(recordingBlocks, wall);
+      if (!b) return;
+      if (playback.now()?.scope.recording === b.id) playback.seekBefore(wall);
+      else playRecording(b.id, { atWall: wall });
+    },
+  }), [playRecording, transcribeRecording, readOnly, recordingBlocks]);
+  // Follow the writing: what the player names, shown.
+  const showTick = useCallback((tick) => {
+    if (tick.kind === "ink") { showOnPage(tick.group); return; }
+    reveal(tick.id);
+    requestAnimationFrame(() => {
+      document.querySelector(`.blockRowWrap[data-block-id="${CSS.escape(tick.id)}"]`)?.scrollIntoView({ block: "center", behavior: "smooth" });
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const replayPrefs = useMemo(() => ({ mode: replayMode, setMode: setReplayMode, rate: replayRate, setRate: setReplayRate,
+    follow: replayFollow, setFollow: setReplayFollow }), [replayMode, setReplayMode, replayRate, setReplayRate, replayFollow, setReplayFollow]);
+  const playerBar = playingRecordingId ? (
+    <PlayerBar block={findBlock(blocksRef.current, playingRecordingId)} inkBlocks={inkBlocks} blocks={stampedBlocks}
+      prefs={replayPrefs} onShow={replayFollow ? showTick : null} />
+  ) : null;
+
   const inkBySurface = useMemo(() => {
     const map = new Map();
     for (const b of inkBlocks) {
@@ -8015,6 +8136,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   );
   const notesInkStrip = !viewerInk && !notebook && nbSheets.length > 0 && inkUi.open && !readOnly
     ? <div className="notesInkDock">{markupToolbar}</div> : null;
+  const notesReplayDock = !viewerInk && (playerBar || recordingNow)
+    ? <div className="notesReplayDock">{playerBar}<RecordingPill /></div> : null;
 
   // When no viewer shows (home, page-only, or PDF closed) the notes window
   // takes the center instead, whether or not the Notes dock is on.
@@ -9286,7 +9409,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                     // text paste would, and the caret goes to the end of the
                     // last pasted block. A highlight's or ink's block stays.
                     const host = findBlock(blocks, id);
-                    const dropHost = replace && !!host && Object.keys(host.properties || {}).every((k) => k === "collapsed");
+                    // (a block's fold and the moment it was made, `t0`, are bookkeeping, not content)
+                    const dropHost = replace && !!host && Object.keys(host.properties || {}).every((k) => k === "collapsed" || k === "t0");
                     let last = created[created.length - 1];
                     while (last.children.length) last = last.children[last.children.length - 1];
                     // Siblings after the pasting block (its own editor stays
@@ -9936,6 +10060,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   return (
     <GammaNavContext.Provider value={gammaNav}>
     <PageToolsContext.Provider value={pageTools}>
+    <RecordingContext.Provider value={recordingCtx}>
     <PaletteContext.Provider value={palette}>
     <MentionContext.Provider value={mentionPeople}>
     <MentionClock.Provider value={reminders.now}>
@@ -10262,6 +10387,18 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                     <PenIcon size={16} />
                   </button>
                 ) : null}
+                {!readOnly ? (
+                  <button
+                    className={recordingNow ? "modeActive recordBtn" : ""}
+                    data-guide="viewer.record"
+                    onClick={toggleRecording}
+                    aria-pressed={!!recordingNow}
+                    title={recordingNow ? t("Stop recording") : t("Record audio: what you write meanwhile replays in step with it")}
+                    aria-label={recordingNow ? t("Stop recording") : t("Record audio")}
+                  >
+                    <MicIcon size={16} />
+                  </button>
+                ) : null}
               </div>
               {translateEnabled && !shareMode && pdfUrl ? (
                 <button
@@ -10342,6 +10479,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
             );
           })() : null}
           {viewerInk && inkUi.open && !readOnly ? markupToolbar : null}
+          {viewerInk ? <RecordingPill /> : null}
+          {viewerInk ? playerBar : null}
           {(pdfUrl || notebook) && !viewerHidden ? (
             <div className="pdfCtlBox pdfFullscreenBox" data-guide="viewer.fullscreen">
               <button
@@ -10829,6 +10968,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           setInkAutoPen,
           inkPressure,
           setInkPressure,
+          replayLeadIn,
+          setReplayLeadIn,
+          recordingTranscribe,
+          setRecordingTranscribe,
           translateEnabled,
           setTranslateEnabled,
           selTranslate,
@@ -11349,6 +11492,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     </MentionClock.Provider>
     </MentionContext.Provider>
     </PaletteContext.Provider>
+    </RecordingContext.Provider>
     </PageToolsContext.Provider>
     </GammaNavContext.Provider>
   );

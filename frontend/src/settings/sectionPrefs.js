@@ -33,6 +33,7 @@ export const SECTION_PREFS = Object.freeze({
   reading: sections({
     PDFs: ["embAnnots", "smoothWheel", "oaFallback", "metaAutoFetch", "pdfSaveLocal"],
     Notes: ["backlinksVisible"],
+    Recordings: ["replayLeadIn", "recordingTranscribe"],
     "Search opens as": ["searchDetailsHome", "searchDetailsPaper"],
   }),
   translation: sections({

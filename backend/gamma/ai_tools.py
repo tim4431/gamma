@@ -2680,7 +2680,10 @@ TOOLS = [
                 "of paper with all its handwriting instead; the id of a page of paper (\"a page of "
                 "paper: the handwriting under it…\") shows that page. Use it to read or transcribe "
                 "handwriting, or to see what the user drew or marked on a PDF page. A picture "
-                "costs many tokens: look only at the blocks you need."),
+                "costs many tokens: look only at the blocks you need. A recording block (read_block "
+                "labels it \"a recording, m:ss\") is audio the user recorded, not handwriting: its "
+                "text is its title, and its sub-blocks marked (transcript) are the words spoken, in "
+                "the order they were said."),
             "parameters": {
                 "type": "object",
                 "properties": {"block_id": {"type": "string",
@@ -3394,6 +3397,10 @@ def agent_system(scope: dict, perms: dict | None = None, base: str = "") -> str:
                 "block's caption with edit_block — append when it already has a caption, unless "
                 "the user asks to replace it: keep the lines as written, math as LaTeX ($…$), and "
                 "mark a word you cannot read [illegible] instead of guessing.")
+        text += (
+            " A recording block (read_block: \"a recording, m:ss\") is audio the user recorded: its "
+            "text is its title, and its sub-blocks marked (transcript) are the words spoken, in the "
+            "order they were said.")
     if "cite" in names:
         text += (
             "\ncite returns the citation records Gamma keeps with pages, BibTeX included: build "

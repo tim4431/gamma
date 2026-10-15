@@ -60,6 +60,13 @@ export const TASK_KINDS = {
     icon: "search",
     title: () => t("Indexing PDFs for search"),
   },
+  // A recording's transcript (docs/dev/recording.md): the spoken words
+  // written under the recording block, each paragraph at its moment.
+  transcribe: {
+    icon: "sparkles",
+    title: ({ params }) => t("Transcribe “{name}”", { name: named(params.title) }),
+    retry: ({ params }) => ["transcribe", { block_id: params.block_id }],
+  },
   // Settings → Maintenance's batch lookup and the one after an upload of
   // several PDFs. A start while it runs adds papers to it, so the count is
   // its progress's. No retry: the pane is where the papers are picked again.
@@ -117,6 +124,7 @@ const PHASES = {
   files: t("Copying files"),
   browser: t("Waiting for you in your browser"),
   connector: t("Gamma Connector is on it"),
+  transcribing: t("Transcribing"),
 };
 
 // "12 of 40 pages", "120 MB of 2.1 GB", "" when there are no counts.

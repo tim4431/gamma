@@ -52,6 +52,9 @@ const json = (normalize) => ({
 // AI context-size preferences (chars of extracted PDF text).
 const CONTEXT_CHARS = intIn(100, 1000000);
 
+// The speeds a recording plays at (recording/PlayerBar.jsx).
+export const REPLAY_RATES = [0.7, 1, 1.25, 1.5, 2];
+
 // Chip-display modes for home cards/rows: the Folders and Labels switches
 // of Settings → Appearance › Library, together.
 export const FILE_LABEL_MODES = ["off", "labels", "folders", "both"];
@@ -346,6 +349,17 @@ export const PREFS = {
   inkEraserSize: pref("gamma-ink-eraser-size", BROWSER, 1, { ...intIn(0, 2), serialize: String }),
   // The lasso draws a freeform loop or a box.
   inkLassoMode: pref("gamma-ink-lasso", BROWSER, "free", oneOf(["free", "box"])),
+  // --- Recordings and their replay (docs/dev/recording.md) ---
+  // How the player draws the strokes not yet reached (replay/playback.js
+  // MODES): faded, hidden until written, or as they are; its speed; and
+  // whether the view follows the writing. The lead-in, how long before a
+  // written moment a tap plays from, is the account's.
+  replayMode: pref("gamma-replay-mode", BROWSER, "spotlight", oneOf(["spotlight", "reveal", "static"])),
+  replayRate: pref("gamma-replay-rate", BROWSER, 1, { parse: (raw) => (REPLAY_RATES.includes(Number(raw)) ? Number(raw) : undefined), serialize: String }),
+  replayFollow: flag("gamma-replay-follow", BROWSER, true),
+  replayLeadIn: pref("gamma-replay-lead-in", ACCOUNT, 3, { ...intIn(0, 15), serialize: String }),
+  // A recording is transcribed by a background job when it ends.
+  recordingTranscribe: flag("gamma-recording-transcribe", ACCOUNT, false),
   // The size, colour and background of new text boxes (markup/textBox.js
   // textStyle), set from the Text tool's options row like a pen preset.
   textBoxStyle: pref("gamma-text-box-style", BROWSER, textStyle({}), json(textStyle)),

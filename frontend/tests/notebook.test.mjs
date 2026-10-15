@@ -2,6 +2,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
+import { setWallClock } from "../src/shared/model/wallClock.js";
 import {
   DEFAULT_PAPER, blockToSheet, firstSheetId, inkBySheet, insertSheetAfter, newSheet, normalizePaper, paperBefore, paperLines,
   paperSizeKey, sheetAfterPlan, sheetIdAfter, sheetOfBlock, sheetsOf, stableId, turnPaper, withAllSheetsPaper, withSheetPaper,
@@ -88,8 +89,10 @@ test("paper sizes are recognised either way round", () => {
 });
 
 test("a new sheet stores its whole paper and starts folded: it shows its drawings itself", () => {
+  setWallClock(() => 1700000000000);
   assert.deepEqual(newSheet("s9", { pattern: "grid" }),
-    { id: "s9", content: "", properties: { sheet: { ...DEFAULT_PAPER, pattern: "grid" }, collapsed: true }, children: [] });
+    { id: "s9", content: "", properties: { t0: 1700000000000, sheet: { ...DEFAULT_PAPER, pattern: "grid" }, collapsed: true }, children: [] });
+  setWallClock(null);
 });
 
 // --- editing the sheets (what App's setBlocks wrappers apply) ---------------

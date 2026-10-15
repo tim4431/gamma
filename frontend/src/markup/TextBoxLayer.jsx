@@ -28,6 +28,8 @@ import { t } from "../shared/i18n/i18n.js";
 import { ContextMenu } from "../shared/ui/Menus";
 import { CopyIcon, FileTextIcon, PaintBucketIcon, PaletteIcon, TextSizeIcon, TrashIcon } from "../shared/ui/Icons";
 import { usePageTools } from "./PageTools";
+import * as playback from "../replay/playback.js";
+import { useBlockFrame } from "../replay/useFrame.js";
 import { TEXT_BACKGROUNDS, TEXT_SIZES, moveBox, normalizeTextBox, placeBox, resizeBox } from "./textBox.js";
 import "./markup.css";
 
@@ -115,6 +117,9 @@ export function TextBoxLayer({ surface, wrapRef, width, height, marks }) {
 // One box. `editing` is {id, at} while its editor is open (`at`: the tap
 // that opened it, for the caret).
 const TextBox = React.memo(function TextBox({ block, width, height, readOnly, armed, actions, selected, editing, flash }) {
+  // Under a playing recording that covers the box (docs/dev/recording.md):
+  // shaded until the moment it was written, and a click plays from there.
+  const replayState = useBlockFrame(block.properties?.t0);
   const ref = useRef(null);
   const editorRef = useRef(null);
   // A press on the box, its band or its width handle: {id, mode ("move" |
@@ -254,6 +259,7 @@ const TextBox = React.memo(function TextBox({ block, width, height, readOnly, ar
       || ((e.ctrlKey || e.metaKey) && e.target.closest?.("a"))) return;
     e.preventDefault();
     e.stopPropagation();
+    if (replayState && !armed && !selected && playback.seekBefore(block.properties.t0)) return;
     if (readOnly) { actions.onJump(block.id); return; }
     if (!armed && !selected) { actions.onBoxSelect(block.id); return; }
     const rendered = ref.current.querySelector(".textBoxText");
@@ -265,7 +271,8 @@ const TextBox = React.memo(function TextBox({ block, width, height, readOnly, ar
   const keepFocus = (e) => e.preventDefault(); // a press on the band or the handle leaves the editor open
   return (
     <div ref={ref} data-box-id={block.id}
-      className={"textBox" + (at.auto ? " auto" : "") + (selected ? " selected" : "") + (editing ? " editing" : "")}
+      className={"textBox" + (at.auto ? " auto" : "") + (selected ? " selected" : "") + (editing ? " editing" : "")
+        + (replayState === "pending" ? " replayPending" : "")}
       style={{
         ...frame(at, width, height),
         ...(at.auto ? { maxWidth: `${(width - at.x) / width * 100}%` } : { width: `${at.w / width * 100}%` }),

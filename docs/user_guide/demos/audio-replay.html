@@ -1,0 +1,180 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Audio replay · Gamma user guide</title>
+<meta name="description" content="Write while you record, then tap anything you wrote to hear that moment: a simulated lecture recording replayed over handwriting and notes.">
+<style>
+/* The user guide's palette (tools/user_guide/scene.py): warm paper, white cards, amber accent. Light only. */
+:root {
+  --bg: #f6f4ef; --card: #ffffff; --edge: #e3e0d8; --soft: #f2f0ea; --ink: #1a1a18; --muted: #6b6a65;
+  --bar: #cfccc4; --bar-dark: #8d8a82; --amber: #e8a020; --amber-dark: #a86a10; --tint: #fbefd6; --red: #d9534f;
+  --font: Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  --mono: 'Cascadia Code', Consolas, 'Courier New', monospace;
+  --math: 'Cambria Math', Cambria, Georgia, 'Times New Roman', serif;
+  color-scheme: light;
+}
+[hidden] { display: none !important; }
+*, *::before, *::after { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.5 var(--font); -webkit-text-size-adjust: 100%; }
+button { font: inherit; color: inherit; }
+:focus-visible { outline: 2px solid var(--amber-dark); outline-offset: 2px; }
+.wrap { max-width: 1080px; margin: 0 auto; padding-inline: 20px; padding-block: 28px 48px; display: grid; gap: 18px; }
+@media (max-width: 520px) { .wrap { padding-inline: 16px; padding-block: 18px 36px; } }
+header h1 { margin: 0; font-size: 24px; font-weight: 600; letter-spacing: -0.01em; }
+header p { margin: 4px 0 0; color: var(--muted); max-width: 64ch; }
+
+/* the player */
+.player { position: sticky; top: 0; z-index: 3; display: grid; gap: 10px; padding: 12px 16px; background: var(--card); border: 1px solid var(--edge); border-radius: 14px; box-shadow: 0 8px 22px rgba(0, 0, 0, 0.07); }
+.row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; }
+.play { width: 40px; height: 40px; flex: none; border: 0; border-radius: 50%; display: grid; place-items: center; background: var(--amber); color: #ffffff; cursor: pointer; }
+.play svg { width: 18px; height: 18px; fill: currentColor; }
+.btn { height: 32px; padding: 0 11px; border: 1px solid var(--edge); border-radius: 10px; background: var(--card); font-size: 13px; font-weight: 600; cursor: pointer; white-space: nowrap; }
+.btn:hover { background: var(--soft); }
+.time { font: 600 14px var(--mono); white-space: nowrap; min-width: 6.6em; }
+.time span { color: var(--muted); font-weight: 400; }
+.scrub { position: relative; flex: 1 1 260px; min-width: 0; height: 58px; cursor: pointer; touch-action: none; border-radius: 8px; }
+.wave { position: absolute; left: 0; top: 16px; width: 100%; height: 28px; display: block; }
+#waveBase { fill: var(--bar); }
+#waveDone { fill: var(--amber); }
+.join { position: absolute; top: 12px; height: 34px; border-left: 2px dashed var(--muted); pointer-events: none; }
+.join span { position: absolute; top: -12px; left: 5px; font-size: 11px; line-height: 13px; color: var(--muted); white-space: nowrap; }
+.ticks { position: absolute; left: 0; right: 0; bottom: 0; height: 10px; pointer-events: none; }
+.tick { position: absolute; bottom: 1px; width: 7px; height: 7px; margin-left: -3.5px; border-radius: 50%; }
+.tick.note { border-radius: 2px; background: var(--bar-dark); }
+.head { position: absolute; top: 14px; bottom: 11px; border-left: 2px solid var(--ink); margin-left: -1px; pointer-events: none; }
+.head::before { content: ""; position: absolute; top: -6px; left: -7px; width: 12px; height: 12px; border-radius: 50%; background: var(--amber); box-shadow: 0 0 0 2px var(--card); }
+.seg { display: inline-flex; gap: 2px; padding: 2px; border: 1px solid var(--edge); border-radius: 10px; background: var(--soft); }
+.seg button { height: 28px; padding: 0 11px; border: 0; border-radius: 8px; background: transparent; color: var(--muted); font-size: 13px; font-weight: 600; cursor: pointer; }
+.seg button[aria-pressed="true"] { background: var(--tint); color: var(--ink); box-shadow: inset 0 0 0 1.5px var(--amber); }
+.hint { font-size: 12.5px; color: var(--muted); }
+.caption { margin: 0; padding: 8px 12px; border-radius: 10px; background: var(--soft); font-size: 14px; font-variant-numeric: tabular-nums; }
+@media (max-width: 600px) { .caption { min-height: calc(3em + 16px); } }
+
+/* the page and the notes */
+.stage { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); gap: 20px; align-items: start; }
+@media (max-width: 760px) { .stage { grid-template-columns: minmax(0, 1fr); } }
+.paper { margin: 0; min-width: 0; }
+.page { display: block; width: 100%; height: auto; filter: drop-shadow(0 12px 16px rgba(0, 0, 0, 0.08)); }
+.eq { font-family: var(--math); font-size: 21px; fill: var(--ink); }
+#ink path { fill: none; stroke-width: 2.6; stroke-linecap: round; stroke-linejoin: round; }
+#ink .ghost { display: none; }
+.m-spotlight #ink .ghost[data-s="ahead"], .m-spotlight #ink .ghost[data-s="writing"] { display: inline; opacity: 0.15; }
+#ink .live[data-s="ahead"] { display: none; }
+#ink .hit { stroke: transparent; stroke-width: 16; pointer-events: stroke; cursor: pointer; }
+.m-reveal #ink .hit[data-s="ahead"] { display: none; }
+#flash path { fill: none; stroke-width: 12; stroke-linecap: round; stroke-linejoin: round; opacity: 0; pointer-events: none; animation: flash 1.1s ease-out; }
+@keyframes flash { from { opacity: 0.4; } to { opacity: 0; } }
+.notes { min-width: 0; padding: 18px 20px 20px; background: var(--card); border: 1px solid var(--edge); border-radius: 14px; box-shadow: 0 14px 32px rgba(0, 0, 0, 0.07); }
+.notes h2 { margin: 0; padding-bottom: 12px; border-bottom: 1.5px solid var(--edge); font-size: 18px; font-weight: 600; }
+.rec { display: flex; align-items: center; gap: 10px; margin: 12px 0 6px; padding: 9px 12px; border-radius: 12px; background: var(--tint); font-size: 14px; }
+.rec small { display: block; color: var(--muted); font-size: 12.5px; }
+.recdot { width: 10px; height: 10px; flex: none; border-radius: 50%; background: var(--red); }
+.recplay { width: 32px; height: 32px; flex: none; border: 0; border-radius: 50%; display: grid; place-items: center; background: var(--amber); color: #ffffff; cursor: pointer; }
+.recplay svg { width: 14px; height: 14px; fill: currentColor; }
+.notes ul { list-style: none; margin: 4px 0 0; padding: 0; display: grid; gap: 4px; }
+.notes li { position: relative; display: grid; grid-template-columns: 12px minmax(0, 1fr); gap: 10px; padding: 7px 10px; border-radius: 10px; transition: background-color 160ms, color 160ms; }
+.js .notes li, .js .rec { margin-left: 46px; }
+.js .notes li { cursor: pointer; }
+.js .notes li:hover { box-shadow: inset 0 0 0 1.5px var(--edge); }
+.bul { width: 9px; height: 9px; margin-top: 7px; border-radius: 50%; background: var(--bar-dark); }
+.notes li[data-s="pending"] { background: var(--soft); color: var(--muted); }
+.notes li[data-s="pending"] .bul { background: transparent; box-shadow: inset 0 0 0 1.5px var(--bar-dark); }
+.notes li.now .bul { background: var(--amber); box-shadow: 0 0 0 3px var(--tint); }
+.notes li.flashing { animation: noteflash 1.1s ease-out; }
+@keyframes noteflash { from { background-color: var(--tint); box-shadow: inset 0 0 0 1.5px var(--amber); } }
+.glyph { position: absolute; left: -46px; top: 6px; height: 24px; padding: 0 7px 0 6px; display: inline-flex; align-items: center; gap: 4px; border: 1px solid var(--edge); border-radius: 999px; background: var(--card); font: 600 11.5px var(--mono); cursor: pointer; opacity: 0; transition: opacity 120ms; }
+.glyph svg { width: 9px; height: 9px; fill: var(--amber); }
+.notes li:hover .glyph, .notes li:focus .glyph, .notes li:focus-within .glyph { opacity: 1; }
+@media (hover: none), (max-width: 480px) { .glyph { display: none; } .js .notes li, .js .rec { margin-left: 0; } }
+.noscript { margin: 0; padding: 10px 14px; border-radius: 10px; background: var(--tint); font-size: 14px; }
+.how h2 { margin: 0 0 6px; font-size: 16px; font-weight: 600; }
+.how p { margin: 0 0 4px; max-width: 72ch; color: var(--muted); }
+@media (prefers-reduced-motion: reduce) { #flash path, .notes li.flashing { animation-duration: 0.5s; } .notes li, .glyph { transition: none; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Audio replay</h1>
+    <p>Write while you record, then tap anything you wrote to hear that moment. This is a simulated lecture, so no sound plays.</p>
+  </header>
+
+  <noscript><p class="noscript">This demo needs JavaScript to play. Without it you see the finished page and notes.</p></noscript>
+
+  <div class="player" id="player" hidden>
+    <div class="row">
+      <button class="play" id="play" type="button" aria-label="Play"></button>
+      <button class="btn" id="back" type="button" aria-label="Back 10 seconds">−10 s</button>
+      <button class="btn" id="fwd" type="button" aria-label="Forward 10 seconds">+10 s</button>
+      <span class="time"><b id="now">0:00</b> <span>/ <span id="total">0:00</span></span></span>
+      <div class="scrub" id="scrub" role="slider" tabindex="0" aria-label="Playhead" aria-valuemin="0" aria-valuemax="0" aria-valuenow="0">
+        <svg class="wave" id="wave" preserveAspectRatio="none" aria-hidden="true">
+          <defs><clipPath id="played"><rect id="playedRect" x="0" y="0" width="0" height="32"/></clipPath></defs>
+          <path id="waveBase"/>
+          <path id="waveDone" clip-path="url(#played)"/>
+        </svg>
+        <div class="join" id="join"><span id="joinLabel"></span></div>
+        <div class="ticks" id="ticks"></div>
+        <div class="head" id="head"></div>
+      </div>
+    </div>
+    <div class="row">
+      <div class="seg" id="modes" role="group" aria-label="Display">
+        <button type="button" data-mode="spotlight" aria-pressed="true">Spotlight</button>
+        <button type="button" data-mode="reveal" aria-pressed="false">Reveal</button>
+        <button type="button" data-mode="static" aria-pressed="false">Static</button>
+      </div>
+      <button class="btn" id="speed" type="button">Speed 1×</button>
+      <span class="hint">A tap plays from 3 s before.</span>
+    </div>
+    <p class="caption" id="caption">Press play, or tap anything you wrote to hear that moment.</p>
+  </div>
+
+  <div class="stage">
+    <figure class="paper">
+      <svg class="page" id="page" viewBox="0 0 520 580" role="img" aria-label="A lecture handout on Fourier series with handwriting: an underline and “key idea”, a star and “exam!” in the margin, and a circle around the formula with “why?”">
+        <rect width="520" height="580" rx="12" fill="#ffffff"/>
+        <rect x="56" y="48" width="286" height="14" rx="4" fill="#8d8a82"/>
+        <rect x="56" y="74" width="208" height="9" rx="4" fill="#8d8a82"/>
+        <rect x="56" y="116" width="408" height="9" rx="4.5" fill="#cfccc4"/>
+        <rect x="56" y="140" width="408" height="9" rx="4.5" fill="#cfccc4"/>
+        <rect x="56" y="164" width="196" height="9" rx="4.5" fill="#cfccc4"/>
+        <text class="eq" x="260" y="223" text-anchor="middle">f(x) = Σ (a<tspan dy="4" font-size="14">n</tspan><tspan dy="-4"> cos nx + b</tspan><tspan dy="4" font-size="14">n</tspan><tspan dy="-4"> sin nx)</tspan></text>
+        <rect x="56" y="296" width="408" height="9" rx="4.5" fill="#cfccc4"/>
+        <rect x="56" y="320" width="330" height="9" rx="4.5" fill="#cfccc4"/>
+        <rect x="110" y="350" width="300" height="136" rx="6" fill="none" stroke="#d6d3cb" stroke-width="1.5"/>
+        <path d="M118 418H402" stroke="#e3e0d8" stroke-width="1.5"/>
+        <path d="M125.0 418.0L126.1 430.1L127.3 441.6L128.4 451.7L129.5 460.1L130.6 466.3L131.8 470.2L132.9 472.1L134.0 472.1L135.1 470.7L136.3 468.4L137.4 465.7L138.5 463.2L139.6 461.1L140.8 459.8L141.9 459.4L143.0 459.8L144.1 460.9L145.3 462.4L146.4 464.0L147.5 465.5L148.6 466.6L149.8 467.2L150.9 467.2L152.0 466.6L153.1 465.7L154.3 464.5L155.4 463.3L156.5 462.3L157.6 461.7L158.8 461.4L159.9 461.7L161.0 462.3L162.1 463.1L163.3 464.1L164.4 465.1L165.5 465.8L166.6 466.1L167.8 466.1L168.9 465.8L170.0 465.1L171.1 464.3L172.3 463.4L173.4 462.7L174.5 462.2L175.6 462.0L176.8 462.2L177.9 462.7L179.0 463.4L180.1 464.2L181.3 464.9L182.4 465.5L183.5 465.8L184.6 465.8L185.8 465.5L186.9 464.9L188.0 464.2L189.1 463.4L190.3 462.8L191.4 462.3L192.5 462.2L193.6 462.3L194.8 462.8L195.9 463.4L197.0 464.2L198.1 464.9L199.3 465.5L200.4 465.8L201.5 465.8L202.6 465.5L203.8 464.9L204.9 464.2L206.0 463.4L207.1 462.7L208.3 462.2L209.4 462.0L210.5 462.2L211.6 462.7L212.8 463.4L213.9 464.3L215.0 465.1L216.1 465.8L217.3 466.1L218.4 466.1L219.5 465.8L220.6 465.1L221.8 464.1L222.9 463.1L224.0 462.3L225.1 461.7L226.3 461.4L227.4 461.7L228.5 462.3L229.6 463.3L230.8 464.5L231.9 465.7L233.0 466.6L234.1 467.2L235.3 467.2L236.4 466.6L237.5 465.5L238.6 464.0L239.8 462.4L240.9 460.9L242.0 459.8L243.1 459.4L244.3 459.8L245.4 461.1L246.5 463.2L247.6 465.7L248.8 468.4L249.9 470.7L251.0 472.1L252.1 472.1L253.3 470.2L254.4 466.3L255.5 460.1L256.6 451.7L257.8 441.6L258.9 430.1L260.0 418.0L261.1 405.9L262.3 394.4L263.4 384.3L264.5 375.9L265.6 369.7L266.8 365.8L267.9 363.9L269.0 363.9L270.1 365.3L271.3 367.6L272.4 370.3L273.5 372.8L274.6 374.9L275.8 376.2L276.9 376.6L278.0 376.2L279.1 375.1L280.3 373.6L281.4 372.0L282.5 370.5L283.6 369.4L284.8 368.8L285.9 368.8L287.0 369.4L288.1 370.3L289.3 371.5L290.4 372.7L291.5 373.7L292.6 374.3L293.8 374.6L294.9 374.3L296.0 373.7L297.1 372.9L298.3 371.9L299.4 370.9L300.5 370.2L301.6 369.9L302.8 369.9L303.9 370.2L305.0 370.9L306.1 371.7L307.3 372.6L308.4 373.3L309.5 373.8L310.6 374.0L311.8 373.8L312.9 373.3L314.0 372.6L315.1 371.8L316.3 371.1L317.4 370.5L318.5 370.2L319.6 370.2L320.8 370.5L321.9 371.1L323.0 371.8L324.1 372.6L325.3 373.2L326.4 373.7L327.5 373.8L328.6 373.7L329.8 373.2L330.9 372.6L332.0 371.8L333.1 371.1L334.3 370.5L335.4 370.2L336.5 370.2L337.6 370.5L338.8 371.1L339.9 371.8L341.0 372.6L342.1 373.3L343.3 373.8L344.4 374.0L345.5 373.8L346.6 373.3L347.8 372.6L348.9 371.7L350.0 370.9L351.1 370.2L352.3 369.9L353.4 369.9L354.5 370.2L355.6 370.9L356.8 371.9L357.9 372.9L359.0 373.7L360.1 374.3L361.3 374.6L362.4 374.3L363.5 373.7L364.6 372.7L365.8 371.5L366.9 370.3L368.0 369.4L369.1 368.8L370.3 368.8L371.4 369.4L372.5 370.5L373.6 372.0L374.8 373.6L375.9 375.1L377.0 376.2L378.1 376.6L379.3 376.2L380.4 374.9L381.5 372.8L382.6 370.3L383.8 367.6L384.9 365.3L386.0 363.9L387.1 363.9L388.3 365.8L389.4 369.7L390.5 375.9L391.6 384.3L392.8 394.4L393.9 405.9L395.0 418.0" fill="none" stroke="#b9b6ae" stroke-width="2"/>
+        <rect x="56" y="516" width="408" height="9" rx="4.5" fill="#cfccc4"/>
+        <rect x="56" y="540" width="280" height="9" rx="4.5" fill="#cfccc4"/>
+        <g id="flash"></g>
+        <g id="ink"><g stroke="#e8a020"><g data-what="you underlined a sentence"><path data-t0="10:03:08.00" data-dur="500" d="M57.0 153.0L61.5 153.1L67.0 153.2L73.5 153.3L80.9 153.4L88.8 153.6L97.3 153.7L106.0 153.8L115.0 154.0L124.1 154.1L133.0 154.1L141.7 154.2L150.0 154.2L158.4 154.2L167.4 154.1L176.9 154.0L186.5 153.8L196.2 153.7L205.8 153.5L215.1 153.3L223.8 153.1L231.9 153.0L239.0 152.8L245.1 152.7L250.0 152.6"/></g><g data-what="you wrote “key idea”"><path data-t0="10:03:10.40" data-dur="185" d="M277.1 151.6L276.7 153.2L276.1 155.4L275.4 158.0L274.8 160.7L274.2 163.0L273.7 165.2L273.3 167.4L272.9 169.5L272.6 171.3L272.4 172.6"/><path data-t0="10:03:10.68" data-dur="159" d="M281.3 161.8L280.7 162.4L279.8 163.2L278.7 164.1L277.6 165.1L276.7 165.8L276.0 166.4L275.2 166.9L274.5 167.4L274.1 167.8L273.9 168.1L274.0 168.3L274.5 168.4L275.1 168.5L275.8 168.6L276.5 168.9L277.1 169.5L277.9 170.4L278.7 171.3L279.4 172.1L279.8 172.6"/><path data-t0="10:03:10.96" data-dur="284" d="M284.7 167.8L285.9 167.7L287.6 167.5L289.4 167.2L291.1 166.9L292.3 166.4L292.9 165.8L293.1 165.1L293.1 164.2L292.9 163.5L292.6 162.9L292.3 162.5L291.7 162.2L291.0 162.0L290.3 162.0L289.5 162.0L288.8 162.1L288.0 162.3L287.2 162.6L286.5 163.0L285.8 163.6L285.3 164.3L284.8 165.2L284.3 166.2L284.0 167.2L283.8 168.1L283.7 169.0L283.7 170.0L283.8 170.9L284.1 171.7L284.5 172.3L285.0 172.7L285.6 173.0L286.4 173.1L287.2 173.1L287.9 173.0L288.7 172.8L289.6 172.5L290.5 172.1L291.2 171.7L291.7 171.5"/><path data-t0="10:03:11.38" data-dur="111" d="M296.8 162.0L296.8 162.8L296.9 163.9L297.0 165.2L297.1 166.5L297.3 167.7L297.6 168.7L298.0 169.8L298.3 170.8L298.7 171.7L298.9 172.3"/><path data-t0="10:03:11.62" data-dur="202" d="M305.4 162.0L305.0 162.9L304.3 164.2L303.5 165.7L302.7 167.3L301.8 168.8L301.0 170.4L300.1 172.0L299.3 173.6L298.4 175.1L297.7 176.4L297.0 177.6L296.4 178.6L295.8 179.5L295.3 180.3L294.8 180.9L294.3 181.3L293.8 181.5L293.3 181.6L292.9 181.7L292.6 181.7"/><path data-t0="10:03:12.21" data-dur="123" d="M314.8 162.0L314.6 163.0L314.3 164.4L313.9 166.0L313.5 167.5L313.3 168.8L313.1 169.8L313.0 170.7L313.0 171.4L313.0 172.1L313.1 172.6L313.3 172.9L313.5 173.1L313.9 173.2L314.2 173.2L314.4 173.2"/><path data-t0="10:03:12.44" data-dur="60" d="M316.0 157.1L316.0 157.2L316.1 157.3L316.2 157.4L316.3 157.6L316.3 157.6"/><path data-t0="10:03:12.60" data-dur="484" d="M327.0 164.6L326.8 164.2L326.5 163.6L326.2 162.9L325.7 162.3L325.2 162.0L324.5 162.0L323.7 162.2L322.8 162.5L321.9 162.9L321.1 163.3L320.4 163.9L319.8 164.6L319.2 165.3L318.7 166.2L318.4 167.0L318.1 168.0L318.0 169.1L318.0 170.3L318.1 171.3L318.3 172.1L318.7 172.6L319.2 173.1L319.9 173.3L320.6 173.4L321.4 173.3L322.2 173.0L323.1 172.4L324.0 171.7L324.8 170.9L325.6 169.9L326.1 168.6L326.6 167.2L327.0 165.6L327.4 164.0L327.9 162.3L328.5 160.3L329.2 157.8L329.8 155.5L330.3 153.7L330.5 153.1L330.4 153.8L329.9 155.6L329.3 157.9L328.7 160.4L328.3 162.5L327.9 164.2L327.5 166.0L327.2 167.6L327.0 169.1L326.8 170.3L326.7 171.2L326.6 171.9L326.7 172.4L326.7 172.8L326.8 173.1L327.0 173.3L327.3 173.3L327.7 173.3L327.9 173.2L328.1 173.2"/><path data-t0="10:03:13.24" data-dur="291" d="M331.9 167.7L333.2 167.6L335.1 167.5L337.2 167.3L339.1 167.1L340.3 166.7L340.9 166.1L341.0 165.2L340.8 164.3L340.4 163.5L340.1 162.9L339.7 162.4L339.2 162.0L338.6 161.8L337.9 161.6L337.2 161.7L336.5 161.8L335.7 162.2L334.9 162.6L334.1 163.2L333.5 163.8L332.9 164.5L332.3 165.4L331.9 166.4L331.6 167.3L331.4 168.2L331.4 169.1L331.5 170.0L331.7 170.8L332.1 171.5L332.5 172.1L333.0 172.5L333.6 172.7L334.4 172.9L335.1 172.9L335.8 172.9L336.6 172.6L337.5 172.2L338.4 171.8L339.1 171.3L339.6 171.0"/><path data-t0="10:03:13.69" data-dur="348" d="M352.1 164.8L351.9 164.4L351.6 163.8L351.2 163.1L350.8 162.5L350.3 162.1L349.6 162.1L348.8 162.2L348.0 162.4L347.1 162.8L346.4 163.3L345.7 163.9L345.0 164.7L344.4 165.6L343.9 166.5L343.5 167.4L343.2 168.3L343.0 169.3L342.9 170.2L342.9 171.1L343.1 171.8L343.6 172.4L344.2 172.9L345.0 173.3L345.8 173.5L346.5 173.4L347.3 173.1L348.1 172.6L348.9 171.8L349.6 170.9L350.3 169.9L351.0 168.5L351.7 166.7L352.3 164.8L352.7 163.4L353.0 162.9L353.0 163.5L352.6 164.9L352.2 166.8L351.8 168.7L351.6 170.1L351.5 171.1L351.5 171.8L351.5 172.4L351.6 172.8L351.7 173.2L351.9 173.4L352.2 173.5L352.5 173.5L352.8 173.5L352.9 173.5"/></g></g>
+<g stroke="#d9534f"><g data-what="you drew a star in the margin"><path data-t0="10:03:52.00" data-dur="660" d="M27.8 205.6L28.9 208.9L29.9 212.2L31.0 215.6L32.0 218.9L33.1 222.2L34.1 225.5L35.2 228.8L32.4 226.7L29.7 224.5L26.9 222.3L24.2 220.1L21.4 218.0L18.7 215.8L15.9 213.6L19.5 213.7L23.1 213.8L26.7 213.8L30.2 213.9L33.8 214.0L37.4 214.0L41.0 214.1L38.0 216.1L35.0 218.1L32.1 220.1L29.1 222.2L26.1 224.2L23.2 226.2L20.2 228.2L21.4 224.8L22.5 221.4L23.7 218.1L24.9 214.7L26.0 211.3L27.2 207.9L28.3 204.5"/></g><g data-what="you wrote “exam!”"><path data-t0="10:04:12.50" data-dur="283" d="M7.8 257.9L8.8 257.8L10.1 257.8L11.7 257.7L13.1 257.6L14.0 257.3L14.4 256.8L14.5 256.1L14.4 255.4L14.1 254.7L13.9 254.1L13.7 253.7L13.3 253.5L12.9 253.3L12.5 253.2L12.0 253.2L11.3 253.3L10.6 253.6L9.9 253.9L9.2 254.3L8.6 254.8L8.1 255.4L7.8 256.1L7.4 256.9L7.2 257.6L7.1 258.3L7.0 259.1L7.1 259.8L7.2 260.6L7.4 261.2L7.7 261.7L8.1 262.1L8.6 262.3L9.1 262.5L9.7 262.5L10.3 262.5L10.9 262.3L11.7 261.9L12.4 261.5L13.0 261.1L13.5 260.9"/><path data-t0="10:04:12.95" data-dur="126" d="M17.4 252.8L17.7 253.5L18.3 254.4L18.9 255.4L19.6 256.5L20.2 257.5L20.7 258.4L21.3 259.5L21.9 260.4L22.4 261.2L22.7 261.8"/><path data-t0="10:04:13.15" data-dur="146" d="M24.6 253.0L24.0 253.6L23.1 254.5L22.0 255.5L20.9 256.5L19.9 257.5L19.0 258.5L17.9 259.6L17.0 260.6L16.1 261.6L15.6 262.2"/><path data-t0="10:04:13.44" data-dur="349" d="M33.5 255.0L33.3 254.7L33.0 254.3L32.6 253.8L32.2 253.4L31.7 253.1L31.1 253.1L30.4 253.2L29.7 253.3L29.0 253.6L28.4 254.0L27.9 254.4L27.3 255.0L26.8 255.6L26.4 256.3L26.1 257.0L25.9 257.8L25.8 258.7L25.7 259.6L25.8 260.4L26.0 261.0L26.3 261.5L26.8 261.9L27.3 262.2L27.9 262.4L28.6 262.3L29.2 262.0L30.0 261.6L30.8 261.0L31.5 260.3L32.1 259.5L32.6 258.3L33.1 256.8L33.5 255.3L33.7 254.1L33.9 253.7L33.8 254.1L33.5 255.3L33.1 256.9L32.7 258.4L32.5 259.6L32.4 260.3L32.5 260.9L32.6 261.3L32.7 261.6L32.8 261.9L33.0 262.1L33.2 262.1L33.4 262.1L33.7 262.0L33.8 262.0"/><path data-t0="10:04:13.92" data-dur="446" d="M37.2 253.6L37.1 254.4L37.0 255.5L36.8 256.8L36.6 258.1L36.4 259.1L36.3 260.0L36.0 260.9L35.8 261.7L35.7 262.2L35.7 262.2L35.8 261.5L36.1 260.4L36.4 258.9L36.8 257.5L37.2 256.4L37.7 255.5L38.2 254.6L38.7 253.9L39.2 253.3L39.6 253.0L40.1 252.8L40.4 252.9L40.8 253.2L41.1 253.6L41.3 254.1L41.3 254.7L41.3 255.6L41.1 256.5L41.0 257.5L40.9 258.4L40.7 259.3L40.5 260.4L40.3 261.3L40.2 262.0L40.2 262.1L40.4 261.5L40.7 260.3L41.1 258.8L41.4 257.4L41.8 256.2L42.2 255.4L42.6 254.7L43.0 254.0L43.4 253.6L43.8 253.3L44.2 253.1L44.6 253.0L44.9 253.2L45.3 253.4L45.4 253.9L45.5 254.7L45.4 255.8L45.2 257.0L45.0 258.1L44.9 259.1L44.8 259.8L44.7 260.5L44.7 261.1L44.6 261.6L44.6 262.0"/><path data-t0="10:04:14.50" data-dur="144" d="M51.6 245.0L51.3 245.9L51.0 247.1L50.6 248.6L50.2 250.1L49.9 251.5L49.6 252.7L49.3 254.1L49.0 255.4L48.8 256.5L48.7 257.2"/><path data-t0="10:04:14.75" data-dur="60" d="M47.9 261.1L47.9 261.2L48.0 261.2L48.0 261.3L48.1 261.3L48.1 261.3"/></g></g>
+<g stroke="#3a7bd5"><g data-what="you circled the formula"><path data-t0="10:04:26.00" data-dur="1479" d="M94.7 206.4L101.1 204.0L108.8 201.7L117.9 199.6L128.2 197.5L139.7 195.7L152.3 194.0L165.9 192.5L180.3 191.2L195.5 190.1L211.2 189.2L227.4 188.6L243.9 188.2L260.6 188.1L277.3 188.2L293.9 188.6L310.2 189.2L326.2 190.0L341.6 191.1L356.3 192.3L370.2 193.8L383.1 195.5L395.1 197.4L405.8 199.5L415.4 201.7L423.6 204.0L430.4 206.4L435.7 209.0L439.6 211.6L441.9 214.2L442.6 216.9L441.7 219.5L439.3 222.2L435.4 224.8L429.9 227.3L422.9 229.8L414.6 232.1L404.9 234.3L393.9 236.3L381.8 238.2L368.7 239.9L354.6 241.4L339.6 242.7L324.0 243.8L307.8 244.6L291.2 245.2L274.4 245.5L257.4 245.6L240.4 245.5L223.6 245.0L207.2 244.4L191.2 243.5L175.8 242.4L161.1 241.0L147.3 239.5L134.5 237.7L122.8 235.8L112.2 233.7L103.0 231.5L95.2 229.1L88.8 226.6L83.9 224.1L80.6 221.5L78.8 218.8L78.6 216.1L80.1 213.5L83.1 210.8L87.6 208.2L93.8 205.7L101.3 203.3L110.3 201.1L120.6 198.9L132.2 196.9"/></g><g data-what="you wrote “why?”"><path data-t0="10:04:28.18" data-dur="327" d="M421.9 259.2L421.9 260.1L422.0 261.3L422.0 262.8L422.1 264.3L422.1 265.5L422.2 266.7L422.3 267.8L422.4 268.9L422.6 269.6L422.9 269.8L423.3 269.4L423.8 268.5L424.3 267.3L424.9 266.0L425.4 264.9L425.9 263.9L426.4 262.9L426.9 261.9L427.3 261.2L427.6 260.9L427.7 261.3L427.7 262.1L427.7 263.2L427.7 264.4L427.7 265.4L427.7 266.5L427.8 267.8L427.9 268.9L428.0 269.8L428.3 270.0L428.7 269.6L429.2 268.6L429.9 267.3L430.5 265.9L431.1 264.6L431.6 263.4L432.2 262.1L432.7 260.8L433.2 259.7L433.5 258.9"/><path data-t0="10:04:28.64" data-dur="353" d="M438.8 248.9L438.4 250.4L437.9 252.6L437.3 255.0L436.7 257.6L436.2 259.9L435.7 262.2L435.2 264.6L434.8 266.9L434.5 268.7L434.3 269.6L434.4 269.3L434.7 268.1L435.1 266.4L435.6 264.6L436.1 263.2L436.7 262.1L437.4 261.0L438.1 260.1L438.8 259.3L439.4 258.8L440.0 258.6L440.6 258.6L441.2 258.8L441.7 259.2L442.0 259.8L442.2 260.5L442.3 261.6L442.3 262.7L442.3 263.9L442.2 265.0L442.1 266.0L441.8 267.1L441.6 268.1L441.4 269.0L441.2 269.6"/><path data-t0="10:04:29.15" data-dur="111" d="M446.5 258.5L446.6 259.3L446.7 260.3L446.9 261.6L447.1 262.8L447.3 264.0L447.7 265.0L448.1 266.1L448.5 267.1L448.9 267.9L449.2 268.5"/><path data-t0="10:04:29.38" data-dur="202" d="M455.8 258.5L455.2 259.4L454.4 260.6L453.4 262.0L452.4 263.6L451.5 265.1L450.7 266.6L449.9 268.3L449.1 270.0L448.3 271.6L447.6 273.0L446.8 274.3L446.1 275.4L445.4 276.4L444.8 277.2L444.3 277.8L443.9 278.1L443.5 278.2L443.2 278.2L443.0 278.1L442.9 278.0"/><path data-t0="10:04:29.73" data-dur="213" d="M459.3 253.3L459.7 252.7L460.1 251.8L460.7 250.9L461.3 250.0L461.9 249.3L462.6 248.9L463.3 248.6L464.0 248.4L464.7 248.4L465.3 248.6L465.8 249.1L466.3 249.7L466.7 250.5L466.9 251.4L467.0 252.1L466.8 252.8L466.4 253.5L466.0 254.1L465.4 254.7L464.9 255.4L464.3 256.0L463.7 256.5L463.1 257.1L462.5 257.7L462.0 258.4L461.5 259.3L461.2 260.5L460.8 261.6L460.6 262.6L460.4 263.3"/><path data-t0="10:04:30.05" data-dur="60" d="M459.7 268.2L459.6 268.3L459.6 268.4L459.6 268.5L459.5 268.6L459.5 268.6"/></g></g></g>
+      </svg>
+    </figure>
+
+    <section class="notes" aria-label="Notes">
+      <h2>Notes</h2>
+      <div class="rec" id="rec"><span class="recdot" id="recdot"></span><div><b>Recording</b> · 14 Oct, 10:03<small id="recsub">1:15 of audio, paused once</small></div></div>
+      <ul id="notes">
+        <li data-t0="10:03:03" data-what="you typed a note on Fourier series"><span class="bul"></span><span>Fourier series: any periodic f is a sum of sines and cosines</span></li>
+        <li data-t0="10:03:24" data-what="you typed a note on the coefficients"><span class="bul"></span><span>The coefficients come from integrating f against cos nx and sin nx</span></li>
+        <li data-t0="10:04:16" data-what="you typed a note on the Gibbs phenomenon"><span class="bul"></span><span>Gibbs phenomenon: about 9 % overshoot next to a jump</span></li>
+        <li data-t0="10:04:38" data-what="you typed the problem set"><span class="bul"></span><span>Problem set 4: exercises 3, 5 and 8</span></li>
+      </ul>
+    </section>
+  </div>
+
+  <section class="how">
+    <h2>How it works</h2>
+    <p>While you record, Gamma keeps the time you wrote each thing: every pen stroke already carries it, and each note gets a stamp.</p>
+    <p>Press play and the page keeps pace with the audio. Spotlight fades what you haven't written yet, Reveal hides it, and Static leaves the page as it is.</p>
+    <p>Tap any stroke or note to hear that moment, from 3 s before. A pause leaves no gap in the audio, so what you wrote while paused plays where the recording resumed.</p>
+  </section>
+</div>
+<script src="audio-replay.js" defer></script>
+</body>
+</html>

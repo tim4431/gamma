@@ -2,7 +2,7 @@
 // among the page's blocks, fitted to the column — its paper, with the
 // layers the notebook view's sheets have. Its tools sit at the right of the
 // block's own header line, clear of the handwriting: the pen (the ink strip),
-// its paper, a replay of all its handwriting (ink/inkReplay.js, under the
+// its paper, a replay of all its handwriting (replay/playback.js, under the
 // sheet's id) and the switch to the notebook view (opening at this sheet);
 // a new page after it is "+" under the paper. In the notebook view the viewer draws the
 // sheets and the notes list them as rows. App owns the tree, the tools, the
@@ -10,8 +10,10 @@
 // (markup/PageTools.jsx), the sheet's marks and actions through
 // NoteSheetContext.
 import React, { createContext, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { InkReplayButton, useInkVersion, useReplayOf } from "../ink/InkLayer";
-import * as inkReplay from "../ink/inkReplay";
+import { InkReplayButton, useInkVersion } from "../ink/InkLayer";
+import * as playback from "../replay/playback.js";
+import { compressedClock } from "../replay/clock.js";
+import { useOwnReplay } from "../replay/useFrame.js";
 import * as inkStore from "../ink/inkStore";
 import { newCanvasInk } from "../ink/ink";
 import { MarkupLayers, NO_MARKS } from "../markup/MarkupLayers";
@@ -60,12 +62,12 @@ export function NoteSheet({ block, number }) {
   const inks = useSame(groups.map((b) => inkStore.inkFor(b)).filter(Boolean));
   const drawing = useMemo(() => ({ ...newCanvasInk(paper.width, paper.height), strokes: inks.flatMap((ink) => ink.strokes || []) }),
     [inks, paper.width, paper.height]);
-  const playing = useReplayOf([block.id]);
+  const playing = useOwnReplay(block.id);
   // a drawing that changes ends its replay
-  useEffect(() => () => inkReplay.stop(block.id), [drawing, block.id]);
+  useEffect(() => () => playback.stop(block.id), [drawing, block.id]);
   const replay = {
-    playing: !!playing, frame: playing?.frame || null,
-    play: () => inkReplay.play(block.id, drawing), stop: () => inkReplay.stop(block.id),
+    playing: !!playing,
+    play: () => playback.play(compressedClock(drawing), { sheet: block.id }), stop: () => playback.stop(block.id),
   };
   if (!ctx) return null;
   const scale = boxW ? Math.min(MAX_SCALE, boxW / paper.width) : 0;
@@ -104,8 +106,7 @@ export function NoteSheet({ block, number }) {
         <div ref={wrapRef} className="nbSheet" data-sheet-id={block.id}
           style={{ width: `${paper.width * scale}px`, height: `${paper.height * scale}px` }} aria-label={t("Page {n}", { n: number })}>
           <PaperBackground paper={paper} />
-          <MarkupLayers surface={block.id} wrapRef={wrapRef} width={paper.width} height={paper.height} marks={marks}
-            replay={replay.frame} />
+          <MarkupLayers surface={block.id} wrapRef={wrapRef} width={paper.width} height={paper.height} marks={marks} />
           <span className="nbSheetNo" aria-hidden="true">{number}</span>
         </div>
       ) : null}
