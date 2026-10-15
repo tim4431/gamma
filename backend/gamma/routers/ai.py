@@ -50,7 +50,6 @@ from ..ai_tools import (
 )
 from ..ai_context import (
     build_messages as _build_messages,
-    MAX_CONTEXT_BLOCKS,
     context_markdown,
     gather_inputs as _gather_inputs,
     pdf_path as _pdf_path,
@@ -1611,11 +1610,10 @@ def _chat_scope(request: Request, ws: str, user_id: str, payload, runtime=None, 
     return {**web, "type": payload.agent_scope, "folder": payload.folder, "folder_path": PATH_SEP.join(names),
             "page_id": payload.page_id, "read_chars": payload.read_char_limit,
             "permissions": states,
+            # The agent prompt's approvals sentence stays once the conversation
+            # allowed a tool, so it reads the same (ai_tools.agent_system).
+            "granted": list(payload.granted),
             "context_pages": list(payload.pages),
-            # The agent prompt names the cursor block / attached chips so
-            # "this block" resolves without a read_block round-trip.
-            "focus_block_id": (payload.focus_block_id or "").strip()[:64],
-            "context_blocks": [str(b)[:64] for b in payload.context_blocks[:MAX_CONTEXT_BLOCKS]],
             # What edit_block mode "selection" rewrites (labels S1, S2…).
             "note_selections": request_note_selections(payload),
             "actor": user_id, "can_write": can_write(request),

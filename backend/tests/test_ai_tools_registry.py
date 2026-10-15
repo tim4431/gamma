@@ -57,6 +57,11 @@ def test_agent_system_mentions_scope_and_armed_tools():
     # With note editing armed, the editing guidance replaces the read-only line.
     edit_text = agent_system({"type": "page", "page_id": "p1"})
     assert "Note editing" in edit_text and "suggest them" not in edit_text
+    # It agrees with delete_block, armed under the same permission, and leaves
+    # the modes to edit_block's own description.
+    assert "selection edit" in edit_text and "delete_block removes a whole block" in edit_text
+    assert "cannot delete blocks" not in edit_text and "read_block first" not in edit_text
+    assert "append" not in edit_text.split("Note editing")[1]
     # The base role prompt is user-replaceable; the mechanical lines stay.
     custom = agent_system(folder(""), None, "Be terse.")
     assert custom.startswith("Be terse.") and "Available tools" in custom

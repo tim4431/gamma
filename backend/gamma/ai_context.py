@@ -317,7 +317,7 @@ def notes_focus_section(ws: str, payload, notes_seen: dict | None = None,
                 text = outline(focus, 1500)
                 if text:
                     out.append("The user's cursor is on this note block (\"this block\", "
-                               "\"here\" mean it):\n" + text)
+                               "\"this note\", \"here\" mean it):\n" + text)
             def ink_picture(block_id: str):
                 """An attached handwriting block's (or page of paper's)
                 picture (an ai_pictures dict); None for any other block."""
