@@ -100,6 +100,25 @@ def test_new_chat_from_an_older_copy_archives_the_newer_one_too(tabs):
     assert [s["count"] for s in _sessions(c, key)] == [2]
 
 
+def test_a_discarding_new_chat_drops_only_this_copy(tabs):
+    # Alt+click New chat: the copy goes, nothing reaches history.
+    c, key = tabs, "cv-discard"
+    at = c.put(f"/api/chats/{key}", json={"messages": _msgs("q"), "updated_at": ""}).json()["updated_at"]
+    r = c.post("/api/chat-history/archive", json={"bucket": key, "messages": _msgs("q", "a"), "updated_at": at,
+                                                   "discard": True})
+    assert r.status_code == 200 and r.json()["id"] is None
+    assert c.get(f"/api/chats/{key}").json()["messages"] == []
+    assert _sessions(c, key) == []
+    # What another tab added since this copy was read is still archived.
+    key = "cv-discard-newer"
+    base = _msgs("shared question")
+    at = c.put(f"/api/chats/{key}", json={"messages": base, "updated_at": ""}).json()["updated_at"]
+    c.put(f"/api/chats/{key}", json={"messages": base + _msgs("B only", who="B"), "updated_at": at})
+    r = c.post("/api/chat-history/archive", json={"bucket": key, "messages": base, "updated_at": at, "discard": True})
+    assert r.json()["id"]
+    assert [s["count"] for s in _sessions(c, key)] == [2]
+
+
 def test_opening_an_entry_from_an_older_copy_keeps_the_newer_one(tabs):
     c, key = tabs, "cv-open"
     entry = c.post("/api/chat-history/archive", json={"bucket": key, "messages": _msgs("old convo")}).json()["id"]

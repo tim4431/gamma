@@ -60,6 +60,16 @@ export const TASK_KINDS = {
     icon: "search",
     title: () => t("Indexing PDFs for search"),
   },
+  // Settings → Maintenance's batch lookup and the one after an upload of
+  // several PDFs. A start while it runs adds papers to it, so the count is
+  // its progress's. No retry: the pane is where the papers are picked again.
+  metadata: {
+    icon: "sparkles", open: "settings:maintenance",
+    title: ({ params, progress }) => {
+      const n = progress?.total || params.papers || 0;
+      return tn("Metadata lookup for {n} paper", "Metadata lookup for {n} papers", n);
+    },
+  },
   "server-backup": {
     icon: "hardDrive", open: "settings:server",
     title: ({ params }) => (params.uploads ? t("Server snapshot of databases and files") : t("Server snapshot of databases")),

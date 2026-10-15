@@ -151,6 +151,34 @@ export async function chatNavigationScenarios(env) {
     }
   });
 
+  await step("chat navigation: Alt+click New chat discards the conversation; a plain click keeps it in History", async () => {
+    const own = await alice.api("/api/pages", { method: "POST", body: { title: "Discarded chat" } });
+    const historyCount = async () => (await alice.api(`/api/chat-history?bucket=${own.id}`)).sessions.length;
+    const seed = (text) => alice.api(`/api/chats/${own.id}`, { method: "PUT", body: { messages: [
+      { role: "user", text }, { role: "ai", text: `${text}: answered.` },
+    ] } });
+    await seed("Throw this one away");
+    const ctx = await alice.context(browser);
+    await fakeAiModels(ctx);
+    await ctx.addInitScript(() => localStorage.setItem("gamma-ai-login-check", "off"));
+    const page = await openPage(ctx, `${server.base}/?ws=${alice.ws}&page=${own.id}`);
+    try {
+      const panel = page.locator(".chatPanel");
+      const newChat = page.getByRole("button", { name: "New chat", exact: true });
+      await until(async () => (await panel.innerText()).includes("Throw this one away: answered."));
+      await newChat.click({ modifiers: ["Alt"] });
+      await until(async () => !(await panel.innerText()).includes("Throw this one away"), { what: "Alt+click empties the chat" });
+      assertEq((await alice.api(`/api/chats/${own.id}`)).messages.length, 0, "the active conversation is cleared");
+      assertEq(await historyCount(), 0, "nothing reaches History");
+      await seed("Keep this one");
+      await page.reload();
+      await until(async () => (await panel.innerText()).includes("Keep this one: answered."));
+      await newChat.click();
+      await until(async () => (await historyCount()) === 1, { what: "a plain click archives" });
+      assertNoProblems(page);
+    } finally { await ctx.close(); }
+  });
+
   await step("chat navigation: two papers answer at once, each with its own Stop", async () => {
     await alice.api(`/api/chats/${pdf.id}`, { method: "PUT", body: { messages: [] } });
     await alice.api(`/api/chats/${target.id}`, { method: "PUT", body: { messages: [] } });

@@ -213,12 +213,26 @@ and measurements behind it are in
   235 px for 1920 × 1030 under the desktop limits (111 and 16 px under the
   iPad ones). A Windows wheel notch set to 6 lines jumps 200 px, so on a
   desktop a single notch stays inside the detail canvas.
+- **One render at a time, the nearest page first.** Every render of a page
+  enters its scroller's queue (`pdf/renderQueue.js`, shared by the pages of
+  one viewer). The queue starts one at a time, the page nearest the view
+  first, so a frame carries at most one pdf.js chunk. A render of a page away from
+  the view is preempted when one that touches the view arrives, and starts
+  over once that is done (pdf.js can only cancel). While the scroller moves
+  faster than `FAST_VIEWS_PER_S` (two viewport heights a second over the last
+  120 ms) renders away from the view wait: a fast scroll passes the pages it
+  would draw, and each chunk drawn is a frame the scroll loses. The page in
+  view never waits. `tests/renderQueue.test.mjs` pins the order, the
+  preemption, the hold and the cancels.
 - **Zooming.** Both canvases are sized in percent of the page box, so they
   stretch with it in the same commit. The redraw starts 150 ms after the
   last zoom step (`ZOOM_SETTLE_MS`), the part in view first, then the base.
   A first paint does not wait.
-- **The text layer is built once per page**, after the page's first pixels,
-  and kept across zooms and when the page scrolls away. pdf_viewer.css sets
+- **The text layer is built once per page**, after the page's first pixels
+  and once the scroller has sent no scroll event for 100 ms
+  (`afterScrollRest`), and kept across zooms and when the page scrolls away.
+  A fast scroll would build it for pages it passes, and under the smooth
+  wheel the frame or two it takes is a visible stall. pdf_viewer.css sets
   `--scale-factor: 1` on `.pdfViewer`, so the layer is laid out at scale 1
   and `PdfPage` scales it with a CSS transform. After a zoom settles
   `TextLayer.update` re-measures the spans at the new size. A text selection
@@ -234,6 +248,15 @@ and measurements behind it are in
   to pdf.js as its `transform` parameter. pdf.js paints the paper before
   applying its own transform, so a context translated beforehand leaves the
   crop without paper.
+- **Drawn in place, never copied.** The base and the detail each have a
+  hidden twin in the page box (`pair`; the hidden one carries `data-spare`).
+  A render draws into the twin and the two swap once it lands, so the screen
+  never shows a half-painted page and the replaced canvas gives up its
+  backing store. The browser rasterizes what pdf.js draws when the canvas is
+  first used; a page rendered into a canvas outside the document and copied
+  in paid for its whole record at the copy, 20 to 33 ms in one frame
+  ([research/pdf-wheel-spin.md](../research/pdf-wheel-spin.md)). In the
+  document it is rasterized frame by frame beside pdf.js's own chunks.
 
 `.pdfPageCanvas` is a wrapper element around the two canvases. The theme
 treatments (multiply and soft-ink opacity in the paper themes, the invert
@@ -242,10 +265,20 @@ before blending. On the canvases themselves the overlap would be blended
 twice.
 
 `PdfPage`'s intersection observer is rooted at the PDF scroller with 900 CSS
-pixels of look-ahead. A page outside it releases both backing stores
-(`show(null)`) and calls `page.cleanup()`, which frees pdf.js's operator list
-and decoded images for the page. The next render asks the worker again. Its
-ink and text-box layers are mounted only
+pixels of look-ahead (`RENDER_MARGIN`). A page inside it is rendered. On a
+desktop (the roomy canvas limits) a page that leaves it keeps the pixels it
+has, and draws nothing new, until it is `KEEP_MARGIN` away (three viewport
+heights each way, a second observer), so a scroll back over read pages
+redraws nothing. A zoom meanwhile stretches what it holds, and the page is
+redrawn when it comes back inside the look-ahead. The pages holding pixels are kept
+within `KEEP_BUDGET_BYTES` (256 MB of canvas over the document): past that
+the pages farthest from the view let go first, never one inside the
+look-ahead nor one rendered on request (`pinned`, the jump target or the
+cited page). A touch-first device or WebKit keeps nothing past the
+look-ahead. A page past the keep margin releases both backing
+stores (`show(null)`) and calls `page.cleanup()`, which frees pdf.js's
+operator list and decoded images for the page. The next render asks the
+worker again. Its ink and text-box layers are mounted only
 inside the look-ahead unless the page carries marks (`MarkupLayers`'s
 `active`: each layer listens on the window and the document, and a book has
 hundreds of pages). Its highlights, find marks and link boxes are drawn only
@@ -273,8 +306,16 @@ offsets mid-gesture fights WebKit's native scroll animation
 PDFs › Smooth wheel scrolling, the account pref `smoothWheel`, off by
 default; `installSmoothWheel`, installed by the viewer while it is on). A
 browser without its own smooth scrolling moves a notched mouse wheel in
-jumps, 200 px a notch with Windows set to 6 lines. With the setting on, each
-notch eases over 160 ms instead, and a notch on the way extends the motion.
+jumps, 200 px a notch with Windows set to 6 lines. With the setting on, the
+scroller glides toward where the notches point: every frame it closes a
+fixed share of what is left (`approach`, 95% of a notch in `SMOOTH_MS`,
+150 ms), and a notch on the way only moves the goal, so the motion carries
+on. The glide is timed by the frame clock, never the wheel's: Chromium hands
+a wheel event to the page inside its frame, before that frame's animation
+callbacks, whose timestamp is the frame's start and so precedes the event. A
+glide measured from the event found no time passed in its first frame and
+stood still for a frame per notch, which a fast spin, a notch to a frame,
+turned into a standstill ([research/pdf-wheel-spin.md](../research/pdf-wheel-spin.md)).
 Only a notch is taken (`notchDelta`): a pixel-mode event whose legacy
 `wheelDeltaY` is a multiple of 120, or a line- or page-mode one. A
 touchpad's arbitrary deltas, Shift, Ctrl / ⌘ (the zoom) and a wheel over an
@@ -283,8 +324,11 @@ either end. Any other write to the scroller (a jump, a zoom holding its
 anchor, the scrollbar, a key) ends the motion: each frame checks that
 `scrollTop` still reads what the last frame wrote. The detail canvas
 follows the motion like any scroll, and a 200 px glide stays inside its
-margin on a desktop. The `pdf: smooth wheel scrolling…` step checks a notch
-passes through several positions when on and jumps once when off.
+margin on a desktop. A JS-driven scroll stops whenever the main thread
+does, so the page work above (drawn in place, the text layer at rest) is
+what keeps it moving. The `pdf: smooth wheel scrolling…` step checks a
+notch passes through several positions when on, that a spin of notches
+moves in every frame, and that off, a notch jumps once.
 
 `tests/e2e/scenarios/pdfTouch.mjs` covers 400% and 800% rendering at DPR 2 under an
 emulated canvas allocation limit: a detail canvas at 2 backing pixels per

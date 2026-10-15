@@ -108,3 +108,20 @@ def setup_logging():
     uvicorn_error = logging.getLogger("uvicorn.error")  # keeps its own console handlers
     if not any(isinstance(h, _BufferHandler) for h in uvicorn_error.handlers):
         uvicorn_error.addHandler(buffer_handler)
+    access = logging.getLogger("uvicorn.access")
+    if not any(isinstance(f, _QuietPolls) for f in access.filters):
+        access.addFilter(_QuietPolls())
+
+
+class _QuietPolls(logging.Filter):
+    """Drops the Background tasks tray's answered polls from uvicorn's access
+    log: ``GET /api/jobs`` comes every 1.5 s while a job runs. A failed or
+    slow poll still has its ``[http]`` line (auth.py)."""
+
+    def filter(self, record):
+        args = record.args
+        if isinstance(args, tuple) and len(args) == 5:  # client, method, path, http version, status
+            _, method, path, _, status = args
+            if method == "GET" and path == "/api/jobs" and isinstance(status, int) and status < 400:
+                return False
+        return True

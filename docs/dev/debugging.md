@@ -416,6 +416,11 @@ npm run e2e -- --keep           # keep the temp data dir + server.log
 ```
 
 High-zoom tablet regressions: `npm run e2e -- --only "pdf touch" --keep`.
+A context without `hasTouch` reports no touch points whatever the host has
+(the harness pins `maxTouchPoints` to 0). Chromium passes the system's touch
+digitizer through, and a Remote Desktop session from a touch device brings
+the client's ten points, which turn on the touch-only controls and guide
+steps.
 `GAMMA_E2E_BROWSER=webkit` (after `npx playwright install webkit`) runs the
 suite in WebKit. Native touch gestures need Chromium's CDP, so under WebKit
 the touch scenario checks only the 400% PDF/ink paint and bitmap release at
@@ -665,7 +670,10 @@ save path, workspaces, auth or rendering of URLs should add a step here; the
   admin should notice. Secrets are masked at insert time. Gone on restart.
 - **Two request lines, on purpose.** The console carries uvicorn's access
   log for every request (`INFO: 127.0.0.1:… "GET /api/… HTTP/1.1" 200 OK`)
-  and, interleaved with it, Gamma's own line for the ones worth reading
+  except the Background tasks tray's answered `GET /api/jobs`, which comes
+  every 1.5 s while a job runs (`logbuf._QuietPolls`). Likewise a `[jobs]`
+  line marks how a job ended, except a search-indexer run that simply
+  finished. Interleaved with the access log comes Gamma's own line for the ones worth reading
   (`auth.py` `_finish_request_log`): `[http] request=<id> GET /api/… status=…
   duration_ms=… session=… expected=… reason=…`. It is emitted only for a
   4xx/5xx, a request on an auth path, or one that took over 2 s, so a quiet

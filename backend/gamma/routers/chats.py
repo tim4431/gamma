@@ -65,6 +65,7 @@ class ChatArchiveRequest(StorableBody):
     messages: list = []   # the client's current conversation (authoritative)
     title: str = ""
     updated_at: str | None = None  # the version the client's copy is based on (see ChatSaveRequest)
+    discard: bool = False  # Alt+click New chat: the client's copy goes instead of into history
 
 
 class ChatTitleRequest(StorableBody):
@@ -123,7 +124,8 @@ def _file(database, bucket: str, messages: list, title: str, now: str) -> str:
     return entry_id
 
 
-def _archive(database, bucket: str, messages: list, title: str, seen: str | None = None) -> str | None:
+def _archive(database, bucket: str, messages: list, title: str, seen: str | None = None,
+             discard: bool = False) -> str | None:
     """Move a non-empty conversation into the bucket's history and clear the
     active row. Returns the new history id, or None when there was nothing
     to keep (the active row is cleared either way).
@@ -132,7 +134,8 @@ def _archive(database, bucket: str, messages: list, title: str, seen: str | None
     conversation moved on since (another tab or member kept talking), it is
     archived too instead of being deleted — unless the client's copy already
     holds all of it; and when the stored one holds all of the client's, only
-    the stored one is kept."""
+    the stored one is kept. ``discard`` drops the client's copy rather than
+    filing it; a newer stored one is still archived as above."""
     now = page_now()
     row = database.execute("SELECT title, messages, updated_at FROM chats WHERE bucket = ?",
                            (bucket,)).fetchone()
@@ -145,7 +148,7 @@ def _archive(database, bucket: str, messages: list, title: str, seen: str | None
             entry_id = _file(database, bucket, stored, stored_title or derive_title(stored), now)
             if _holds(stored, messages):
                 messages = []
-    if not messages:
+    if not messages or discard:
         return entry_id
     title = _clean_title(title) or stored_title or derive_title(messages)
     return _file(database, bucket, messages, title, now)
@@ -269,15 +272,16 @@ def list_history(request: Request, bucket: str = ""):
 @history_router.post("/archive")
 def archive_chat(payload: ChatArchiveRequest, request: Request):
     """"New chat": file the active conversation (the client's copy — the
-    autosave may still be pending) into history and clear the bucket. A
-    newer stored conversation (``updated_at`` not the stored version) is
-    archived too, never dropped."""
+    autosave may still be pending) into history and clear the bucket; with
+    ``discard`` the copy is dropped instead. A newer stored conversation
+    (``updated_at`` not the stored version) is archived too, never dropped."""
     ws = _require_chat_writer(request)
     if not payload.bucket:
         raise HTTPException(status_code=400, detail="bucket required")
     with connect_pages_db(ws) as database:
         database.execute("BEGIN IMMEDIATE")
-        entry_id = _archive(database, payload.bucket, payload.messages, payload.title, payload.updated_at)
+        entry_id = _archive(database, payload.bucket, payload.messages, payload.title, payload.updated_at,
+                            payload.discard)
         database.commit()
     return {"id": entry_id}
 

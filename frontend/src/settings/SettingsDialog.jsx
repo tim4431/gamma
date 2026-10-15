@@ -277,10 +277,21 @@ function MetaStatusSection({ value }) {
   const [papers, setPapers] = React.useState(null); // null = loading
   const [error, setError] = React.useState("");
   const [selected, setSelected] = React.useState(() => new Set());
-  const [busy, setBusy] = React.useState(null); // {done, total, title} during a batch run
+  const [starting, setStarting] = React.useState(false);
   const [sortMode, setSortMode] = React.useState("meta"); // meta | text | updated
   const [filterMode, setFilterMode] = React.useState("all"); // all | attention | unverified | missing | notext
-  const stopRef = React.useRef(false);
+  // The batch lookup is a background job (kind metadata) that outlives this
+  // pane: while one runs in this workspace, its progress is the batch row's,
+  // and the table reads itself again as each paper is done and once it ends.
+  const job = value.metadataJob;
+  const busy = !!job || starting;
+  const jobDone = job ? job.progress?.done ?? 0 : null;
+  React.useEffect(() => { if (jobDone) refresh(); }, [jobDone]); // eslint-disable-line react-hooks/exhaustive-deps
+  const wasRunning = React.useRef(false);
+  React.useEffect(() => {
+    if (wasRunning.current && !job) refresh();
+    wasRunning.current = !!job;
+  }, [job]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function refresh() {
     try {
@@ -364,35 +375,25 @@ function MetaStatusSection({ value }) {
     return arr;
   }, [list, sortMode, filterMode]);
 
+  // Look the papers up again on the server (POST /api/jobs/metadata); how it
+  // ended is said by App's onJobFinished (tasks/useAppJobs.js).
   async function retry(targets) {
     if (!targets.length || busy) return;
-    stopRef.current = false;
-    let ok = 0, failed = 0;
-    for (let i = 0; i < targets.length; i++) {
-      if (stopRef.current) break;
-      const paper = targets[i];
-      setBusy({ done: i, total: targets.length, title: paper.title });
-      try {
-        await apiJson(`${API}/metadata/fetch`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            block_id: paper.id,
-            force: true,
-            prompt: value.metaPrompt || "",
-            model: value.metaFetchModel || "",
-            context_char_limit: value.metaContextChars || 6000,
-          }),
-        });
-        ok++;
-      } catch {
-        failed++;
-      }
+    setStarting(true);
+    try {
+      await value.tasks.start("metadata", {
+        block_ids: targets.map((p) => p.id),
+        prompt: value.metaPrompt || "",
+        model: value.metaFetchModel || "",
+        context_char_limit: value.metaContextChars || 6000,
+        cite_prompt: value.citePrompt || "",
+        cite_model: value.citeModel || "",
+      });
+    } catch (err) {
+      value.setStatus(t("Metadata lookup failed: {message}", { message: err.message }));
+    } finally {
+      setStarting(false);
     }
-    setBusy(null);
-    value.setStatus([t("Metadata: {ok} fetched", { ok }), failed ? t("{failed} failed", { failed }) : "", stopRef.current ? t("stopped") : ""]
-      .filter(Boolean).join(" · "));
-    refresh();
   }
 
   function toggle(id) {
@@ -542,8 +543,13 @@ function MetaStatusSection({ value }) {
           </div>
           {busy ? (
             <div className="metaStatBatchRow">
-              <span className="metaStatProgress">{t("Fetching {done}/{total} — {title}", { done: busy.done + 1, total: busy.total, title: busy.title })}</span>
-              <button className="uiBtn sm" onClick={() => { stopRef.current = true; }}>{t("Stop")}</button>
+              <span className="metaStatProgress" title={t("Runs in the background — closing Settings or the tab does not stop it")}>
+                {job?.stopping ? t("Stopping…") : job?.state === "queued" ? t("Waiting for its turn…")
+                  : !job?.progress?.total ? t("Starting…")
+                    : t("Fetching {done}/{total} — {title}", { done: Math.min(job.progress.done + 1, job.progress.total),
+                      total: job.progress.total, title: job.progress.item || "" })}
+              </span>
+              <button className="uiBtn sm" disabled={!job?.stoppable} onClick={() => value.tasks.cancel(job)}>{t("Stop")}</button>
             </div>
           ) : (
             <div className="metaStatBatchRow">

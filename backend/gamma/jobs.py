@@ -1,6 +1,6 @@
 """Background jobs: work that outlives the request that started it — exports,
-workspace backups and snapshots, restores, library imports, the search
-indexer (docs/dev/tasks.md).
+workspace backups and snapshots, restores, library imports, batch metadata
+lookups, the search indexer (docs/dev/tasks.md).
 
 A job is a row in users.db (``jobs``) and, while it is queued or running, a
 worker thread in this process. The row is what every tab, device and later
@@ -372,7 +372,10 @@ def _work(live: _Live) -> None:
             live.state = state
             _live.pop(live.id, None)
             _pump()
-    log.info(f"[jobs] {live.kind} {live.id} {state}")
+    # A workspace's own job (the indexer) runs on every search and paper set
+    # up: only how it ended otherwise is worth a console line.
+    routine = live.owner == WORKSPACE and state == "done"
+    (log.debug if routine else log.info)(f"[jobs] {live.kind} {live.id} {state}")
 
 
 # --- control ------------------------------------------------------------------------------

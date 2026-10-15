@@ -126,7 +126,7 @@ Open the chat from the **View menu (≡) → AI Chat**. Gamma has no AI of its o
 - **Citations are clickable**: `p. 12` jumps the PDF to the passage and highlights it.
 - The **model chip** switches the model, reasoning effort and speed. Each reply says what wrote it and what it cost in tokens.
 - Select part of a note and ask for a change: the assistant rewrites only that selection.
-- Each paper and folder keeps its own conversation. **New chat** starts over.
+- Each paper and folder keeps its own conversation. **New chat** starts over and keeps the old one in History; Alt+click it to throw the old one away.
 
 ### AI services you can connect
 

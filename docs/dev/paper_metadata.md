@@ -205,14 +205,29 @@ is configured.
 present/failed + source/kind, extracted-text chars and index state from the
 FTS tables) — it feeds the Settings → Maintenance pane's status table and its
 adaptive batch retry (selected, else missing + unverified-AI; plus "Refetch
-all"/"Refetch shown" → sequential `metadata/fetch` with `force`).
+all"/"Refetch shown"). The batch is the `metadata` background job (`POST
+/api/jobs/metadata`, [tasks.md](tasks.md)): the server looks the papers up
+one after the other with `force`, through the same `fetch_page_metadata` as
+`metadata/fetch`, so closing Settings or the tab does not stop it. The pane's
+batch row shows the job's progress and Stop, and the table reads itself again
+after each paper.
 
 No Google Scholar — it has no API and blocks scraping. The book registries
 (Open Library, Google Books' anonymous quota) are keyless public APIs;
-neither needs configuration.
+neither needs configuration. Google Books' quota belongs to the server's
+address, so a batch of book-like documents can run into its 429. A 429 is not
+retried: Google Books then rests for the `Retry-After` it names, else 10
+minutes (`_google_books`), and says so in one log line. In the meantime a
+book lookup asks Open Library alone, and the AI-read record stands as it is.
 
 PDF uploads use the browser-provided original filename as their initial page
-title and enter a lazy sequential metadata queue after the upload UI completes.
+title. Once the upload UI completes, a single file opens and gets the open
+page's lookup; several files go to the same `metadata` job, without `force`.
+That job is one per account and workspace, so a later upload adds its papers
+to the job already running. The open page receives the record over its
+socket: App's remote-op handler copies `meta`, `bibtex` and `ppt_cite` into
+the metadata button's state, so a lookup run elsewhere (this job, the
+extension's clip) shows without a reload.
 The page stores an `auto_title` compare-and-swap marker: a successful lookup may
 replace that filename with the paper title only while the page title still
 matches the marker. Any explicit rename clears it, so a slow lookup cannot

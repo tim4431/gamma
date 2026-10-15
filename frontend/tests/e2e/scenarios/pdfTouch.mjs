@@ -5,7 +5,8 @@ export async function pdfTouchScenarios({ server, browser, alice, makePdf, step,
   // A page's bitmaps (pdf/pageRaster.js): the base over the whole page and,
   // past the zoom where the canvas cap bites, the detail over the part in view.
   const CAP = 8 * 1024 * 1024; // shared/lib/canvasSize.js
-  const bitmap = (pn, which = "base") => page.locator(`[data-page="${pn}"] > .pdfPageCanvas > ${which === "detail" ? ".pdfDetailCanvas" : "canvas:first-child"}`);
+  // The canvas on screen; its hidden twin (pdf/pageRaster.js `pair`) carries data-spare.
+  const bitmap = (pn, which = "base") => page.locator(`[data-page="${pn}"] > .pdfPageCanvas > ${which === "detail" ? ".pdfDetailCanvas" : "canvas:not(.pdfDetailCanvas)"}:not([data-spare])`);
   const painted = async (pn, which) => bitmap(pn, which).evaluate((canvas) => {
     if (!canvas.width || !canvas.height) return false;
     const sample = document.createElement("canvas"); sample.width = sample.height = 128;
@@ -19,7 +20,8 @@ export async function pdfTouchScenarios({ server, browser, alice, makePdf, step,
   // One page's two canvases, and whether the detail's box on screen covers
   // the part of the page inside the viewer's viewport (2 px slack).
   const raster = (pn) => page.locator(`[data-page="${pn}"]`).evaluate((wrap) => {
-    const [base, detail] = wrap.querySelector(".pdfPageCanvas").children;
+    const slot = wrap.querySelector(".pdfPageCanvas");
+    const base = slot.querySelector("canvas:not(.pdfDetailCanvas):not([data-spare])"), detail = slot.querySelector(".pdfDetailCanvas:not([data-spare])");
     const viewer = wrap.closest(".pdfViewer");
     const p = wrap.getBoundingClientRect(), s = viewer.getBoundingClientRect(), d = detail.getBoundingClientRect();
     const vl = s.left + viewer.clientLeft, vt = s.top + viewer.clientTop;
@@ -34,7 +36,8 @@ export async function pdfTouchScenarios({ server, browser, alice, makePdf, step,
   // Every page: its backing pixels, and how far (CSS px, vertically) it lies
   // outside the viewer's viewport.
   const holdings = () => page.locator(".pdfPageWrap").evaluateAll((wraps) => wraps.map((wrap) => {
-    const [base, detail] = wrap.querySelector(".pdfPageCanvas").children;
+    const slot = wrap.querySelector(".pdfPageCanvas");
+    const base = slot.querySelector("canvas:not(.pdfDetailCanvas):not([data-spare])"), detail = slot.querySelector(".pdfDetailCanvas:not([data-spare])");
     const viewer = wrap.closest(".pdfViewer");
     const p = wrap.getBoundingClientRect(), top = viewer.getBoundingClientRect().top + viewer.clientTop;
     return {

@@ -7,6 +7,7 @@ together with the metadata instead of on first share.
 import json
 import urllib.parse
 
+import pytest
 from conftest import make_page
 from test_metadata_verify import CITED_META, _paper_page
 
@@ -101,6 +102,36 @@ def test_book_search_asks_open_library_then_google_books(monkeypatch):
     assert [(c["title"], c["source"], c["isbns"]) for c in cands] == [("Lasers", "googlebooks", ["0935702113"])]
     rec = _pick_book_match(cands, BOOK_TEXT)
     assert rec["source"] == "googlebooks" and rec["isbn"] == "0935702113" and rec["year"] == "1986"
+
+
+@pytest.mark.parametrize("retry_after, rest", [(None, metadata._GOOGLE_BOOKS_REST_S), ("30", 30)])
+def test_google_books_rests_after_a_429(monkeypatch, retry_after, rest):
+    """A 429 is the keyless quota of the server's address: the lookups
+    after it skip Google Books for the Retry-After it names (else the
+    default), instead of each spending the quota again."""
+    import time
+    import urllib.error
+    from email.message import Message
+
+    monkeypatch.setattr(metadata, "_google_books_rest_until", 0.0)
+    asked = []
+
+    def fake_get(url, accept="", timeout=20):
+        if url.startswith("https://openlibrary.org/"):
+            return b'{"docs": []}'
+        asked.append(url)
+        headers = Message()
+        if retry_after:
+            headers["Retry-After"] = retry_after
+        raise urllib.error.HTTPError(url, 429, "Too Many Requests", headers, None)
+    monkeypatch.setattr(metadata, "_http_get", fake_get)
+    assert metadata._book_search("Lasers", "Anthony E. Siegman") == []
+    assert metadata._fetch_isbn("0935702113") is None
+    assert len(asked) == 1  # the ISBN lookup did not ask again
+    assert rest - 5 < metadata._google_books_rest_until - time.monotonic() <= rest
+    monkeypatch.setattr(metadata, "_google_books_rest_until", time.monotonic() - 1)  # rested
+    metadata._book_search("Lasers")
+    assert len(asked) == 2
 
 
 def test_book_bibtex():

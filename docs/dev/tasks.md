@@ -5,11 +5,13 @@ tasks button in the topbar (on a phone, a row of the More sheet). Two kinds
 of work meet there:
 
 - **Server jobs**: exports, workspace exports, snapshots, restores, library
-  imports, the admin's server snapshots and the search indexer. A job lives
+  imports, batch metadata lookups, the admin's server snapshots and the
+  search indexer. A job lives
   on the server (`gamma/jobs.py`), so it goes on when the tab or the dialog
   that started it closes, and every tab and device of the account sees it.
 - **This tab's own work**: a PDF loading in the viewer, a file uploading,
-  an AI lookup (metadata, a title, a slide citation), a translation. These
+  an AI lookup (the open page's metadata, a title, a slide citation), a
+  translation. These
   rows exist in this tab only; they stop with the tab.
 
 The **Background tasks** tour says the part a spinner cannot — that the job
@@ -127,6 +129,7 @@ Each kind starts at `POST /api/jobs/<route>`, in the router of its work.
 | `workspace-export` | `workspace-export` (`routers/ws_backups.py`) | Settings → Workspaces → Data → Export…, Export all | the zip |
 | `snapshot` | `snapshot` | Settings → Backups → Back up now, Back up all | `{snapshots, failed}` |
 | `restore` | `restore` (an uploaded zip), `restore-snapshot` | Settings → Workspaces → Data → Merge / Restore, Settings → Backups → Restore, a shared page imported by link | the restore report |
+| `metadata` | `metadata` (`routers/metadata.py`) | Settings → Maintenance → Fetch needed / Fetch selected / Refetch; an upload of several PDFs | `{papers, fetched, failed}` |
 | `server-backup` | `server-backup` (`routers/admin.py`) | Settings → Server → Server backups | the snapshot's info |
 | `indexing` | — (`routers/search.py`, owner `""`) | a search, a page chat, Settings → Maintenance → Rebuild | `{papers}` |
 
@@ -134,6 +137,17 @@ The off-site copies' Copy now (Settings → Backups, `POST
 /api/admin/offsite/run`) is not a job: it starts the server's own
 scheduled round early, one at a time, and the section's status line
 follows it (`gamma/offsite.py`).
+
+A metadata batch looks its papers up one at a time; a paper nothing is found
+for counts as failed and the batch goes on. A stop lands between two
+papers, so the lookup in progress finishes first. An account has one batch
+per workspace: a start while it is queued or running adds its papers to it
+and answers that job (a paper still waiting is not added twice), so
+Maintenance and uploads share one of the account's two job slots. Because
+the batch can grow, its tray title counts its progress's total. A stopping
+batch takes no more papers; the next start begins a new one. When it ends,
+the tab that started it says how many were fetched, and the open
+workspace's library reloads, since titles may have changed.
 
 The export driver reads a folder's pages again when the job runs, so a
 queued export holds what the folder holds then. An import job holds the
@@ -230,7 +244,8 @@ through the synchronous endpoints.
   the account lifecycle. `test_export_jobs.py` covers every export format
   as a job and the annotated-PDF folder zip; `test_backup_jobs.py` the
   snapshots, restores and server backups. The import job is tested in
-  `test_import_review.py` and the indexer in `test_search.py`.
+  `test_import_review.py`, the metadata batch in `test_metadata_batch.py`
+  and the indexer in `test_search.py`.
 - Frontend: `tests/tasks.test.mjs` covers the model and kinds, and
   `tests/transferFormats.test.mjs` the export job's body.
 - Browser: the transfers group covers a folder's annotated PDFs closed

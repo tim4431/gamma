@@ -1219,6 +1219,34 @@ export async function settingsScenarios(env) {
     } finally { await ctx.close(); }
   });
 
+  // Settings → Maintenance: the batch metadata lookup is a background job
+  // (kind metadata) — closing Settings right after starting it does not stop
+  // it. Note pages that carry a record but no PDF text: their lookup finds
+  // nothing without asking the network, so both count as failed.
+  await step("settings: Maintenance's metadata lookup runs in Background tasks after Settings closes", async () => {
+    const titles = ["Batch lookup paper A", "Batch lookup paper B"];
+    for (const title of titles) {
+      const block = await user.api("/api/blocks", { method: "POST", body: { parent_id: "root", content: title } });
+      await user.api(`/api/blocks/${block.id}`, { method: "PUT", body: { properties: { meta: { title, source: "ai" } } } });
+    }
+    const { ctx, page } = await setup();
+    try {
+      await openSettings(page);
+      await nav(page, "Maintenance").click();
+      for (const title of titles) {
+        await page.locator(".metaStatRow", { hasText: title }).locator("input[type=checkbox]").check();
+      }
+      await page.getByRole("button", { name: "Fetch selected", exact: true }).click();
+      await page.getByRole("button", { name: "Close settings", exact: true }).click();
+      await page.click("button[aria-label='Background tasks']");
+      const row = page.locator(".taskRow", { hasText: "Metadata lookup for 2 papers" }).first();
+      await row.locator(".taskStatus.done").waitFor({ timeout: 30000 });
+      const job = (await user.api("/api/jobs")).jobs.find((j) => j.kind === "metadata");
+      assertEq(JSON.stringify((await user.api(`/api/jobs/${job.id}`)).result), JSON.stringify({ papers: 2, fetched: 0, failed: 2 }));
+      assertNoProblems(page);
+    } finally { await ctx.close(); }
+  });
+
   await step("settings: a backup merged in from Workspaces runs as a job and the library reloads with it", async () => {
     const donor = await user.api("/api/workspaces", { method: "POST", body: { name: "Merge donor" } });
     await user.api(`/api/blocks?ws=${donor.id}`, { method: "POST", body: { parent_id: "root", content: "Merged in by a job" } });
