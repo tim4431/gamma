@@ -883,6 +883,10 @@ def metadata_status(request: Request):
             "meta_unverified": (meta or {}).get("unverified"),
             "meta_user_verified": bool((meta or {}).get("user_verified")),
             "meta_error": (props.get("meta_error") or {}).get("detail", ""),
+            # When the record was looked up or edited ("" for records from
+            # before the stamp, or imported), and when a lookup last failed.
+            "meta_at": (meta or {}).get("at", ""),
+            "meta_error_at": (props.get("meta_error") or {}).get("at", ""),
             "indexed": bool(entry and entry["ver"] == INDEX_VERSION),
             "index_stale": bool(entry and entry["ver"] != INDEX_VERSION),
             "text_chars": entry["chars"] if entry else None,
@@ -1072,6 +1076,7 @@ def fetch_page_metadata(ws: str, block_id: str, actor: str, prompt: str = "", mo
         except Exception as e:
             log.warning(f"[metadata] slide citation failed: {e}")
     title = str(meta.get("title") or "").strip()
+    meta["at"] = page_now()  # when this record was looked up (Settings → Maintenance, the popover)
     updates = {"meta": meta, "bibtex": bibtex}
     if ppt_cite:
         updates["ppt_cite"] = ppt_cite
@@ -1250,6 +1255,7 @@ def metadata_update(payload: MetaUpdateRequest, request: Request):
     kind = item_types.normalize(m.get("kind")) or item_types.normalize((props.get("meta") or {}).get("kind"))
     if kind:
         meta["kind"] = kind
+    meta["at"] = page_now()  # when it was edited, as a lookup stamps when it looked
     # An unsent cite_key leaves the page's pin as it is; "" unpins.
     cite_key = (bibtex_mod.clean_key(payload.cite_key) if payload.cite_key is not None
                 else bibtex_mod.clean_key(props.get("cite_key") or ""))

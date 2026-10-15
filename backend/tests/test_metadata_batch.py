@@ -54,8 +54,11 @@ def test_a_batch_looks_every_paper_up_and_counts_what_it_could_not_find(guest, a
     assert done["state"] == "done", done
     assert guest.get(f"/api/jobs/{job['id']}").json()["result"] == {"papers": 2, "fetched": 1, "failed": 1}
     assert done["progress"] == {"done": 2, "total": 2, "unit": "papers", "item": ""}
-    assert guest.get(f"/api/blocks/{found}").json()["properties"]["meta"]["title"] == "Fetched Title"
+    meta = guest.get(f"/api/blocks/{found}").json()["properties"]["meta"]
+    assert meta["title"] == "Fetched Title" and meta["at"].endswith("Z")  # stamped when looked up
     assert "meta_error" in guest.get(f"/api/blocks/{nothing}").json()["properties"]
+    status = {p["id"]: p for p in guest.get("/api/metadata/status").json()["papers"]}
+    assert status[found]["meta_at"] == meta["at"]
 
 
 def test_a_start_while_a_batch_runs_adds_its_papers_to_it(guest, arxiv):

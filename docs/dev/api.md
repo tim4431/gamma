@@ -470,7 +470,7 @@ the request's workspace — the one the extension's workspace picker names
 | POST | `/metadata/update` | save hand-edited fields incl. `publisher`/`isbn` and `kind`, the Type row's item type (rebuilds BibTeX, keeps the stored type when `kind` is not sent or names none, drops the cached citation). `cite_key` pins the citation key the BibTeX is written under: omitted leaves the page's pin alone, `""` unpins, and clearing the record clears it too. → `{meta, bibtex, cite_key, source, cached}` |
 | POST | `/metadata/verify` | the user vouches for the stored record (the metadata popover's Verify): `meta.unverified: false`, `meta.user_verified: true`; source and BibTeX stay. 409 without a record. → `{meta}` |
 | POST | `/metadata/cite` | BibTeX → PPT-style citation via AI (regenerate / fallback; the fetch already produces one) |
-| GET | `/metadata/status` | library-wide health table (feeds Settings → Maintenance): every page with a PDF attachment plus pages carrying `properties.meta` without one (`has_file: false`); per paper `meta_source`, `meta_kind`, `meta_unverified` (null for pre-flag records), `meta_user_verified` |
+| GET | `/metadata/status` | library-wide health table (feeds Settings → Maintenance): every page with a PDF attachment plus pages carrying `properties.meta` without one (`has_file: false`); per paper `meta_source`, `meta_kind`, `meta_unverified` (null for pre-flag records), `meta_user_verified`, `meta_at` (when the record was looked up or edited, `""` for older records) and `meta_error_at` (when a lookup last found nothing) |
 
 ### AI (`ai.py`) — all config is GUI entries (each account's own plus the server's shared ones), no env API keys
 | Method | Path | Purpose |

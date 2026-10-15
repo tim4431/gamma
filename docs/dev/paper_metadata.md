@@ -169,6 +169,15 @@ an edit: `/api/metadata/verify` sets `meta.user_verified` and clears
 verified by hand" (Settings: "AI ✓"). With unsaved edits in the popover,
 Verify saves them instead. A refetch replaces the record and drops the mark.
 
+**When.** A lookup that stores a record stamps `meta.at` (UTC, the
+`page_now` shape), and so does a hand edit; Verify keeps the stamp, since
+the record is unchanged. A failed lookup's time is `meta_error.at`, as
+before. The popover shows the stamp in a Fetched row (Edited for a manual
+record), and the Settings → Maintenance table in its Fetched column: the
+time today, else the day, with the full date and time on hover; for a paper
+whose lookup found nothing, that lookup's time. Records stored before the
+stamp, and imported ones, have none and show "—".
+
 The fetch also kicks background search indexing for the paper
 (`ai_context.ensure_indexed`) — the paper is being set up, so search, the AI
 document map and library-wide Ctrl+F shouldn't wait for the first search to

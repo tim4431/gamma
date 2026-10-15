@@ -316,19 +316,23 @@ callbacks, whose timestamp is the frame's start and so precedes the event. A
 glide measured from the event found no time passed in its first frame and
 stood still for a frame per notch, which a fast spin, a notch to a frame,
 turned into a standstill ([research/pdf-wheel-spin.md](../research/pdf-wheel-spin.md)).
-Only a notch is taken (`notchDelta`): a pixel-mode event whose legacy
-`wheelDeltaY` is a multiple of 120, or a line- or page-mode one. A
-touchpad's arbitrary deltas, Shift, Ctrl / ⌘ (the zoom) and a wheel over an
-inner element that can scroll itself stay native, and so does a wheel at
-either end. Any other write to the scroller (a jump, a zoom holding its
+Only a notch is taken (`notchDelta`): a line- or page-mode event, or a
+pixel-mode one whose legacy `wheelDeltaY` counts whole notches
+(`wholeNotches`). That value is 120 a notch, but Chromium divides it by
+`devicePixelRatio` and truncates it (`wheel_event.cc`), so a notch reads
+109 at 110% page zoom and 96 on a 125% display; the check undoes that
+division, and also takes WebKit's undivided 120. A touchpad or a precise
+wheel moves by fractions of a notch and stays native, as do Shift, Ctrl / ⌘
+(the zoom), a wheel over an inner element that can scroll itself and a
+wheel at either end. Any other write to the scroller (a jump, a zoom holding its
 anchor, the scrollbar, a key) ends the motion: each frame checks that
 `scrollTop` still reads what the last frame wrote. The detail canvas
 follows the motion like any scroll, and a 200 px glide stays inside its
 margin on a desktop. A JS-driven scroll stops whenever the main thread
 does, so the page work above (drawn in place, the text layer at rest) is
 what keeps it moving. The `pdf: smooth wheel scrolling…` step checks a
-notch passes through several positions when on, that a spin of notches
-moves in every frame, and that off, a notch jumps once.
+notch passes through several positions when on, at scale 1 and 1.25, that
+a spin of notches moves in every frame, and that off, a notch jumps once.
 
 `tests/e2e/scenarios/pdfTouch.mjs` covers 400% and 800% rendering at DPR 2 under an
 emulated canvas allocation limit: a detail canvas at 2 backing pixels per

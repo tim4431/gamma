@@ -562,7 +562,7 @@
 }
 .metaStatRow {
   display: grid;
-  grid-template-columns: 24px 1fr 84px 76px 76px 26px;
+  grid-template-columns: 24px 1fr 84px 72px 76px 76px 26px;
   align-items: center;
   gap: 6px;
   padding: 3px 10px;
@@ -801,7 +801,7 @@
   .settingsNavBtn { padding: 14px 12px; }
   .settingsPane { padding: 18px; }
   .setStats { gap: 6px; }
-  .metaStatRow { grid-template-columns: 18px minmax(0, 1fr) 58px 58px 58px 24px; padding: 3px 6px; font-size: var(--fs-2xs); }
+  .metaStatRow { grid-template-columns: 18px minmax(0, 1fr) 58px 50px 58px 58px 24px; padding: 3px 6px; font-size: var(--fs-2xs); }
   .settingsUnsaved { padding: 12px; }
 }
 

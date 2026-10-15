@@ -3,7 +3,7 @@ import { stepList } from "../shared/ui/listKeys.js";
 import { backdropPress } from "../shared/ui/press.js";
 import { API, apiJson, fmtBytes, isUnverifiedPaperMeta, metaSourceInfo, getCurrentWorkspace } from "../shared/lib/utils";
 import { MenuSelect } from "../shared/ui/Menus";
-import { T, t, tn } from "../shared/i18n/i18n.js";
+import { fmtDate, T, t, tn } from "../shared/i18n/i18n.js";
 import {
   PaneHead, Section, Row, Toggle, Segmented, IconChoices, UnitInput, CharSlider, Stepper, approxPages,
   Stat, Empty, QuotaMeter, LogBox, NavAccountCard, SettingsDraftContext, SettingsSyncContext, useSettingsDraft,
@@ -273,6 +273,16 @@ function MaintenanceSettings({ value }) {
   </>;
 }
 
+// A stamp in a narrow column: the time today, else the day, with the year
+// when it is not this one.
+function fmtStoredAt(stamp, now = new Date()) {
+  const at = new Date(stamp);
+  if (Number.isNaN(at.getTime())) return "";
+  if (at.toDateString() === now.toDateString()) return fmtDate(at, { hour: "numeric", minute: "2-digit" });
+  return fmtDate(at, at.getFullYear() === now.getFullYear()
+    ? { month: "short", day: "numeric" } : { year: "numeric", month: "short", day: "numeric" });
+}
+
 function MetaStatusSection({ value }) {
   const [papers, setPapers] = React.useState(null); // null = loading
   const [error, setError] = React.useState("");
@@ -437,6 +447,16 @@ function MetaStatusSection({ value }) {
           t("{text_chars} characters extracted", { text_chars: p.text_chars.toLocaleString() }))
         : cell("bad", t("no text"), p.has_file ? t("No text layer — scanned or image-only?") : t("PDF file not on the server"))
   );
+  // When the record was looked up or edited — or when a lookup that found
+  // nothing ran. Records from before the stamp (and imported ones) have none.
+  const fetchedCell = (p) => {
+    const at = p.has_meta ? p.meta_at : p.meta_error_at;
+    if (!at) return <span className="metaCell muted">—</span>;
+    const when = fmtDate(at, { dateStyle: "medium", timeStyle: "short" });
+    const title = !p.has_meta ? t("Lookup found nothing · {when}", { when })
+      : p.meta_source === "manual" ? t("Edited {when}", { when }) : t("Fetched {when}", { when });
+    return <span className="metaCell muted" title={title}>{fmtStoredAt(at)}</span>;
+  };
   const indexCell = (p) => (
     p.indexed
       ? cell("ok", t("indexed"), t("In the search index"))
@@ -506,6 +526,7 @@ function MetaStatusSection({ value }) {
               />
               <span>{t("Paper")}</span>
               <span>{t("Metadata")}</span>
+              <span>{t("Fetched")}</span>
               <span>{t("Text")}</span>
               <span>{t("Index")}</span>
               <span />
@@ -527,6 +548,7 @@ function MetaStatusSection({ value }) {
                   }}
                 >{p.title}</span>
                 {metaCell(p)}
+                {fetchedCell(p)}
                 {textCell(p)}
                 {indexCell(p)}
                 {needsIndex(p) ? (

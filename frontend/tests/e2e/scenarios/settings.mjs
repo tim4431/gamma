@@ -1225,14 +1225,21 @@ export async function settingsScenarios(env) {
   // nothing without asking the network, so both count as failed.
   await step("settings: Maintenance's metadata lookup runs in Background tasks after Settings closes", async () => {
     const titles = ["Batch lookup paper A", "Batch lookup paper B"];
-    for (const title of titles) {
+    for (const [i, title] of titles.entries()) {
       const block = await user.api("/api/blocks", { method: "POST", body: { parent_id: "root", content: title } });
-      await user.api(`/api/blocks/${block.id}`, { method: "PUT", body: { properties: { meta: { title, source: "ai" } } } });
+      // A was looked up at a known time; B predates the stamp
+      const meta = { title, source: "ai", ...(i === 0 ? { at: "2025-03-04T09:30:00Z" } : {}) };
+      await user.api(`/api/blocks/${block.id}`, { method: "PUT", body: { properties: { meta } } });
     }
     const { ctx, page } = await setup();
     try {
       await openSettings(page);
       await nav(page, "Maintenance").click();
+      // the Fetched column: the day (with the year, not this one), the time on hover
+      const fetched = page.locator(".metaStatRow", { hasText: titles[0] }).locator(".metaCell").nth(1);
+      assert(/2025/.test(await fetched.innerText()), `fetched cell: ${await fetched.innerText()}`);
+      assert((await fetched.getAttribute("title")).startsWith("Fetched "), `hover: ${await fetched.getAttribute("title")}`);
+      assertEq((await page.locator(".metaStatRow", { hasText: titles[1] }).locator(".metaCell").nth(1).innerText()).trim(), "—");
       for (const title of titles) {
         await page.locator(".metaStatRow", { hasText: title }).locator("input[type=checkbox]").check();
       }

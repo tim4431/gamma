@@ -1,12 +1,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { SMOOTH_MS, approach, installSmoothWheel, notchDelta } from "../src/shared/lib/smoothWheel.js";
+import { SMOOTH_MS, approach, installSmoothWheel, notchDelta, wholeNotches } from "../src/shared/lib/smoothWheel.js";
 
 // A scroller 1000 px tall over 5000 px of content, with the frame clock and
 // requestAnimationFrame in the test's hands.
-function fixture(t, scrollTop = 100) {
+function fixture(t, scrollTop = 100, devicePixelRatio = 1) {
   let clock = 0, queued = [];
   const stubs = {
+    devicePixelRatio,
     performance: { now: () => clock },
     requestAnimationFrame: (fn) => { queued.push(fn); return queued.length; },
     cancelAnimationFrame: () => { queued = []; },
@@ -45,7 +46,7 @@ function fixture(t, scrollTop = 100) {
   return { el, wheel, notch, frames, settle, cleanup, pending: () => queued.length };
 }
 
-test("only a notch counts: pixel steps of 120, lines and pages, never a touchpad or a modifier", () => {
+test("only a notch counts: whole notches in pixels, lines and pages, never a touchpad or a modifier", () => {
   assert.equal(notchDelta({ deltaMode: 0, deltaY: 200, wheelDeltaY: -240 }, 1000), 200);
   assert.equal(notchDelta({ deltaMode: 0, deltaY: -100, wheelDeltaY: 120 }, 1000), -100);
   assert.equal(notchDelta({ deltaMode: 1, deltaY: 3 }, 1000), 120, "Firefox: lines");
@@ -58,6 +59,30 @@ test("only a notch counts: pixel steps of 120, lines and pages, never a touchpad
   assert.equal(notchDelta({ deltaMode: 0, deltaY: 100, deltaX: 5, wheelDeltaY: -120 }, 1000), 0, "sideways");
   assert.equal(approach(0), 0);
   assert(approach(SMOOTH_MS) > 0.94 && approach(SMOOTH_MS) < 0.96, "95% of the way in SMOOTH_MS");
+});
+
+// Chromium reports wheelDeltaY as trunc(-notches × 120 / devicePixelRatio),
+// and devicePixelRatio carries the page zoom and the display's scale.
+test("a notch is a notch at any zoom and display scale; a fraction of one never", () => {
+  // What Chromium sent at these ratios (Playwright, one notch).
+  for (const [dpr, deltaY, legacy] of [[1.100000023841858, 90.90908893868948, -109], [1.25, 80, -96], [1.5, 66.66666666666667, -80], [2, 50, -60]]) {
+    assert.equal(notchDelta({ deltaMode: 0, deltaY, wheelDeltaY: legacy }, 1000, dpr), deltaY, `dpr ${dpr}`);
+  }
+  assert.equal(notchDelta({ deltaMode: 0, deltaY: 100, wheelDeltaY: -120 }, 1000, 1.1), 100, "WebKit: 120 at any ratio");
+  const zooms = [0.25, 1 / 3, 0.5, 2 / 3, 0.75, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2, 2.5, 3, 4, 5];
+  for (const scale of [1, 1.25, 1.5, 1.75, 2, 2.25, 3]) {
+    for (const zoom of zooms) {
+      const dpr = Math.fround(zoom * scale);
+      for (const n of [1, 2, 3, -1, -4]) {
+        assert(wholeNotches(Math.trunc(n * 120 / dpr), dpr), `${n} notches at zoom ${zoom}, scale ${scale}`);
+      }
+      // A precise wheel's eighths and a touchpad's few pixels of a notch.
+      for (const part of [1 / 8, 3 / 8, 0.5, 5 / 6, 7 / 8, 1.5, 0.05]) {
+        const legacy = Math.trunc(part * 120 / dpr);
+        if (legacy) assert(!wholeNotches(legacy, dpr), `${part} of a notch at zoom ${zoom}, scale ${scale}`);
+      }
+    }
+  }
 });
 
 test("a notch glides to its distance, most of it within SMOOTH_MS, moving every frame", (t) => {
@@ -87,6 +112,15 @@ test("a notch in every frame of a spin never stops the motion", (t) => {
   for (let i = 1; i < seen.length; i++) assert(seen[i] > seen[i - 1], `moves every frame: ${seen}`);
   settle();
   assert.equal(el.scrollTop, 100 + 12 * 200);
+});
+
+test("at 110% zoom a notch glides like any other; a touchpad stays native", (t) => {
+  const { el, wheel, frames, settle } = fixture(t, 100, 1.100000023841858);
+  assert.equal(wheel({ deltaY: 181.81817787737896, wheelDeltaY: -109 }), true, "the browser's own jump is prevented");
+  assert(frames(SMOOTH_MS).length >= 5, "several frames on the way");
+  settle();
+  assert.equal(Math.round(el.scrollTop), 282);
+  assert.equal(wheel({ deltaY: 3.18, wheelDeltaY: -3 }), false);
 });
 
 test("a notch on the way extends the motion; a touchpad stays native", (t) => {

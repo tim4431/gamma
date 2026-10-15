@@ -91,6 +91,7 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
     const typeSelect = pop.getByRole("button", { name: "Item type", exact: true });
     assertEq((await typeSelect.innerText()).trim(), "Journal article", "a venue and no type read as a journal article");
     assert((await keys()).includes("Journal"), `rows: ${await keys()}`);
+    assert(!(await keys()).includes("Edited"), "a record from before the stamp says no time");
     await typeSelect.click();
     await page.locator(".uiSelectMenu .ctxMenuItem").getByText("Conference paper", { exact: true }).click();
     await until(async () => (await keys()).includes("Proceedings"), { what: "the venue row reads Proceedings" });
@@ -103,6 +104,8 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
     }, { what: "the item type saved" });
     assert(saved.bibtex.startsWith("@inproceedings{he2016,") && saved.bibtex.includes("booktitle = {2016 IEEE CVPR}"),
       `entry: ${saved.bibtex}`);
+    // the hand edit is stamped, and the popover says when
+    await until(async () => (await keys()).includes("Edited"), { what: "the Edited row" });
     await page.click("button[aria-label='Paper metadata']");
     await account.api("/api/metadata/update", { method: "POST", body: { block_id: pageId, meta: {} } });
     assertNoProblems(page);
@@ -869,14 +872,16 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
   });
 
   // Settings → Reading › PDFs › Smooth wheel scrolling (shared/lib/smoothWheel.js).
-  await step("pdf: smooth wheel scrolling glides one notch over several frames; off, it is the browser's jump", async () => {
+  await step("pdf: smooth wheel scrolling glides one notch over several frames at any zoom; off, it is the browser's jump", async () => {
     const lines = Array.from({ length: 30 }, (_, n) => `Wheel line ${n + 1}`);
     const up = await account.upload("/api/uploads", makePdf(Array.from({ length: 6 }, () => lines)), "wheel.pdf", "application/pdf");
     const doc = await account.api(`/api/blocks/by-doc/${up.doc_id}`, { method: "POST", body: { default_title: "Wheel paper" } });
     try {
-      for (const on of [true, false]) {
+      // At a scale other than 1 (a page zoom or the display's) Chromium
+      // divides a notch's wheelDeltaY by devicePixelRatio: 96 at 1.25.
+      for (const [on, scale] of [[true, 1], [false, 1], [true, 1.25]]) {
         await account.api("/api/prefs/profile", { method: "PATCH", body: { set: { smoothWheel: on } } });
-        const c = await account.context(browser);
+        const c = await account.context(browser, { deviceScaleFactor: scale });
         await c.addInitScript((v) => localStorage.setItem("gamma-smooth-wheel", v), on ? "1" : "0");
         try {
           const p = await openPage(c, `${server.base}/?page=${doc.id}&ws=${account.ws}`);
@@ -893,10 +898,10 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
           await p.mouse.wheel(0, 200);
           await until(() => p.evaluate(() => window.wheelTrail.length >= 40), { what: "40 frames sampled" });
           const trail = await p.evaluate(() => [...new Set(window.wheelTrail)]);
-          assertEq(trail.at(-1) - trail[0], 200, `one notch scrolls its 200 px (${on ? "on" : "off"})`);
-          if (on) assert(trail.length >= 5, `on: several positions on the way, ${trail.join(" ")}`);
+          assertEq(Math.round(trail.at(-1) - trail[0]), 200 / scale, `one notch scrolls its ${200 / scale} px (${on ? "on" : "off"}, scale ${scale})`);
+          if (on) assert(trail.length >= 5, `on: several positions on the way at scale ${scale}, ${trail.join(" ")}`);
           else assertEq(trail.length, 2, `off: one jump, ${trail.join(" ")}`);
-          if (on) {
+          if (on && scale === 1) {
             // A spin, notches closer than the glide: Chromium hands each
             // notch to the page inside a frame, before that frame's animation
             // callbacks, so a glide timed from the notch stood still for a

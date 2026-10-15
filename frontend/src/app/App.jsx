@@ -8382,6 +8382,12 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                               </span>
                             </div>
                           ) : null}
+                          {pageMeta?.at ? (
+                            <div className="metaRow">
+                              <span className="metaKey">{pageMeta.source === "manual" ? t("Edited") : t("Fetched")}</span>
+                              <span className="metaVal">{fmtDate(pageMeta.at, { dateStyle: "medium", timeStyle: "short" })}</span>
+                            </div>
+                          ) : null}
                           <div className="metaRow">
                             <span className="metaKey">{t("Status")}</span>
                             <span className="metaVal metaStatus">
