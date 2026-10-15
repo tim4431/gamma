@@ -17,7 +17,7 @@ const BACKEND = path.join(ROOT, "backend");
 const DIST = process.env.GAMMA_E2E_DIST || path.join(ROOT, "frontend", "dist");
 // The backend interpreter: the project venv, or whatever GAMMA_E2E_PYTHON
 // names (CI installs the requirements into the runner's python).
-const PYTHON = process.env.GAMMA_E2E_PYTHON || (process.platform === "win32"
+export const PYTHON = process.env.GAMMA_E2E_PYTHON || (process.platform === "win32"
   ? path.join(BACKEND, "venv", "Scripts", "python.exe")
   : path.join(BACKEND, "venv", "bin", "python"));
 

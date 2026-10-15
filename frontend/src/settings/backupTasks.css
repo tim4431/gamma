@@ -1,4 +1,6 @@
-.backupTaskTableWrap { margin: 16px 0; border: 1px solid var(--border); border-radius: var(--radius-lg); overflow: auto; }
+/* flex-shrink: 0 — a child of the scrolling settingsPane column; with
+   overflow: auto it would shrink to its border when the pane runs long. */
+.backupTaskTableWrap { margin: 16px 0; border: 1px solid var(--border); border-radius: var(--radius-lg); overflow: auto; flex-shrink: 0; }
 .backupTaskTable { width: 100%; min-width: 640px; border-collapse: collapse; font-size: var(--fs-xs); }
 .backupTaskTable th { padding: 12px 9px; text-align: left; color: var(--text-muted); background: var(--bg-elevated); font-weight: 600; white-space: nowrap; }
 .backupTaskTable td { padding: 14px 9px; vertical-align: middle; border-top: 1px solid var(--border); line-height: 1.5; white-space: normal; }

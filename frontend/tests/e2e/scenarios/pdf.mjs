@@ -2,8 +2,9 @@
 // text layer, creating a highlight from a text selection (overlay + block
 // row + persisted position), the library card, and the search panel hitting
 // PDF text on another page.
+import { execFileSync } from "node:child_process";
 import { tree, same, partialBlockSearch } from "./notes.mjs";
-import { fakeAiModels } from "../harness.mjs";
+import { PYTHON, fakeAiModels } from "../harness.mjs";
 import { DEFAULT_PALETTE, darkPageColor } from "../../../src/shared/model/palette.js";
 
 // Select `needle` inside one text-layer span of `pageNo` and release the
@@ -671,6 +672,26 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
       // The sent message shows both, and the composer row is empty again.
       await until(async () => await page.locator(".chatBubble.user img.chatMsgImage").count() === 2, { what: "the bubble shows the pictures" });
       assertEq(await thumbs.count(), 0, "the composer's pictures went with the message");
+      // Exporting the conversation packs both pictures beside the transcript.
+      await page.getByText("A picture.").waitFor();
+      const downloadEvent = page.waitForEvent("download");
+      await page.getByRole("button", { name: "Export chat", exact: true }).click();
+      await page.getByRole("button", { name: "Export conversation", exact: true }).click();
+      const download = await downloadEvent;
+      assert(download.suggestedFilename().endsWith(".zip"), download.suggestedFilename());
+      const zip = JSON.parse(execFileSync(PYTHON, ["-c", [
+        "import json, sys, zipfile",
+        "z = zipfile.ZipFile(sys.argv[1])",
+        "md = next(n for n in z.namelist() if n.endswith('.md'))",
+        "print(json.dumps({'names': sorted(z.namelist()), 'md': z.read(md).decode()}))",
+      ].join("\n"), await download.path()]).toString());
+      const linked = (md) => [...md.matchAll(/!\[[^\]]*\]\((assets\/[^)]+)\)/g)].map((m) => m[1]);
+      assert(linked(zip.md).every((name) => zip.names.includes(name)), `every picture is in the zip: ${zip.names}`);
+      // (Earlier steps' messages come along, an earlier reply's selection crop among them.)
+      const asked = zip.md.slice(zip.md.lastIndexOf("## You"));
+      assertEq(linked(asked).length, 2, `both pictures are in the transcript:\n${asked}`);
+      assert(asked.includes("![Image file") && asked.includes("![Region of PDF page 2](assets/"), asked);
+      assert(asked.includes("What are these?") && asked.includes("## AI\n\nA picture."), asked);
     } finally {
       await page.unroute("**/api/ai/chat");
     }

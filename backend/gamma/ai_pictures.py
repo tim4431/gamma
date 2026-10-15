@@ -35,16 +35,20 @@ attached first, then the selection crops, then attached handwriting, then
 the area highlights of the context pages. The newest pictures of earlier
 turns stay in the conversation under the same budget (:func:`history_pictures`);
 older ones are named in a line and not sent again.
+
+:func:`picture_at` reads any picture back from the URL the chat shows it
+by, for the chat export (gamma/chat_export.py).
 """
 
 import base64
 import io
 import json
 import re
+from urllib.parse import parse_qs, unquote, urlsplit
 
 from PIL import Image, ImageOps
 
-from .blocks_store import page_attachment
+from .blocks_store import page_attachment, page_root_id
 from .logbuf import log
 from .pdf_text import RENDER_MAX_SIDE, image_part, render_page
 from .storage import IMAGE_EXTENSIONS, IMAGE_MEDIA_TYPES, UPLOAD_REF_RE, find_upload_file, store_file
@@ -61,6 +65,8 @@ GROUP_ORDER = ("user", "selection", "ink", "area")
 REGION_KINDS = frozenset({"area", "view"})
 
 _DATA_URL_RE = re.compile(r"^data:(image/(?:png|jpeg|jpg|gif|webp));base64,([A-Za-z0-9+/=]+)$")
+# The routes that draw a chat picture again from its parameters.
+_DRAWN_RE = re.compile(r"^/api/ai/(page-image|ink-image|selection-crop)/([^/]+)$")
 
 
 # --- one size for every picture -----------------------------------------------------
@@ -296,6 +302,69 @@ def ink_picture_url(block_id: str, whole: bool = False) -> str:
     picture (with ``whole`` its page or sheet with all the handwriting):
     what an ink chip expands to and what the model embeds."""
     return f"/api/ai/ink-image/{block_id}" + ("?area=page" if whole else "")
+
+
+def picture_at(ws: str, conn, url: str) -> tuple[bytes, str] | None:
+    """``(bytes, media_type)`` of the picture the chat shows from ``url``,
+    read or drawn now in the workspace ``ws``: a stored upload
+    (``/api/uploads/…``, as stored), an older chat's data URL, or a picture
+    the routes draw from their parameters (``/api/ai/page-image``,
+    ``/api/ai/ink-image``, ``/api/ai/selection-crop``, as they draw it).
+    None for any other URL and for a picture that can no longer be drawn.
+    What the chat export packs (gamma/chat_export.py)."""
+    url = str(url or "").strip()
+    match = _DATA_URL_RE.match(url)
+    if match:
+        try:
+            data = base64.b64decode(match.group(2), validate=True)
+        except (ValueError, TypeError):
+            return None
+        media = sniff(data)
+        return (data, media) if media else None
+    split = urlsplit(url)
+    if split.scheme or split.netloc:
+        return None
+    path, query = unquote(split.path), parse_qs(split.query)
+
+    def arg(name):
+        return (query.get(name) or [""])[0]
+
+    stored = UPLOAD_REF_RE.fullmatch(path)
+    if stored:
+        name = stored.group(1)
+        media = IMAGE_MEDIA_TYPES.get(name[name.rfind("."):].lower())
+        found = find_upload_file(name, ws) if media else None
+        try:
+            if not found or found.stat().st_size > STORED_MAX_BYTES:
+                return None
+            return found.read_bytes(), media
+        except OSError:
+            return None
+    drawn = _DRAWN_RE.match(path)
+    if not drawn:
+        return None
+    route, target = drawn.groups()
+    if route == "ink-image":
+        from .ink_view import picture as ink_picture
+
+        page_id = page_root_id(conn, target)
+        shown = ink_picture(ws, conn, target, page_id, whole=arg("area") == "page") if page_id else {}
+        return tuple(shown["image"][:2]) if shown.get("image") else None
+    try:
+        page_no = int(arg("page"))
+    except ValueError:
+        return None
+    box = parse_box(arg("box").split(",")) if arg("box") else None
+    if page_no < 1 or (arg("box") and box is None):
+        return None
+    if route == "page-image":
+        image, _ = render_region(ws, conn, target, page_no, box, ink=arg("ink") == "1")
+    else:
+        from . import ai_context
+
+        pdf = ai_context.pdf_path(ws, target) if box and re.fullmatch(r"[0-9a-f]+", target) else None
+        image = ai_context.render_selection_crop(pdf, page_no, box) if pdf else None
+    return tuple(image[:2]) if image else None
 
 
 def resolve(ws: str, conn, value, group: str = "user") -> dict | None:
