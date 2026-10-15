@@ -25,18 +25,23 @@ with 409 and the stored conversation for the client to merge
 archives the newer stored conversation too instead of deleting it. Writing
 takes an editor (``require_ws(write=True)``): viewers and read-scope tokens
 read chats, never change them.
+
+Either conversation downloads as a file to keep, its pictures beside it
+(``POST /export``, ``GET /api/chat-history/{id}/export``; gamma/chat_export.py).
 """
 
 import json
 import uuid
 
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 
 from ..auth import require_ws, resolve_ws, share_scope
+from ..chat_export import export_file
 from ..db import connect_pages_db, page_now, stamp_after
 from ..json_response import OrjsonResponse
 from ..ops import StorableBody
+from ..storage import attachment_disposition
 
 
 router = APIRouter(prefix="/api/chats", tags=["chats"])
@@ -74,6 +79,12 @@ class ChatTitleRequest(StorableBody):
 
 class ChatDeleteRequest(StorableBody):
     ids: list[str] = []
+
+
+class ChatExportRequest(StorableBody):
+    bucket: str = ""
+    messages: list = []  # the tab's copy: a viewer's is never saved, a reply may be in the autosave debounce
+    title: str = ""
 
 
 def _clean_title(raw) -> str:
@@ -173,6 +184,23 @@ def file_into_home(database, buckets) -> int:
             moved += 1
     return moved + database.execute(
         "UPDATE chat_history SET bucket = 'home' WHERE bucket IN (SELECT value FROM json_each(?))", (ids,)).rowcount
+
+
+def _export(ws: str, bucket: str, messages: list, title: str) -> Response:
+    """A conversation as its download (gamma/chat_export.py): the .md, or a
+    zip of it and the pictures it shows."""
+    with connect_pages_db(ws) as database:
+        data, name, media_type = export_file(ws, database, messages,
+                                             _clean_title(title) or derive_title(messages) or "AI chat", bucket)
+    return Response(data, media_type=media_type, headers={"Content-Disposition": attachment_disposition(name)})
+
+
+@router.post("/export")
+def export_chat(payload: ChatExportRequest, request: Request):
+    """The open conversation as a file to keep, from the tab's own copy —
+    with its pictures read or drawn in the request's workspace. Any member,
+    like reading the chat."""
+    return _export(require_ws(request), payload.bucket, payload.messages, payload.title)
 
 
 @router.get("/{bucket}")
@@ -312,6 +340,18 @@ def open_history(entry_id: str, payload: ChatArchiveRequest, request: Request):
         )
         database.commit()
     return {"messages": json.loads(row[1] or "[]"), "title": row[0] or "", "updated_at": at}
+
+
+@history_router.get("/{entry_id}/export")
+def export_history(entry_id: str, request: Request):
+    """An archived conversation as a file to keep (``POST /api/chats/export``)."""
+    ws = require_ws(request)
+    with connect_pages_db(ws) as database:
+        row = database.execute("SELECT bucket, title, messages FROM chat_history WHERE id = ?",
+                               (entry_id,)).fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="conversation not found")
+    return _export(ws, row[0], json.loads(row[2] or "[]"), row[1] or "")
 
 
 @history_router.put("/{entry_id}")

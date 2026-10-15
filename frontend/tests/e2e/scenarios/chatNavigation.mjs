@@ -135,7 +135,8 @@ export async function chatNavigationScenarios(env) {
       await until(async () => (await page.locator(".chatPanel").innerText()).includes("It is about chat navigation."));
       await input.fill("A draft question");
       const downloadEvent = page.waitForEvent("download");
-      await page.getByRole("button", { name: "Export chat context", exact: true }).click();
+      await page.getByRole("button", { name: "Export chat", exact: true }).click();
+      await page.getByRole("button", { name: "Export context", exact: true }).click();
       const download = await downloadEvent;
       assert(download.suggestedFilename().endsWith(" - context.md"), download.suggestedFilename());
       const text = await readFile(await download.path(), "utf8");
@@ -175,6 +176,15 @@ export async function chatNavigationScenarios(env) {
       await until(async () => (await panel.innerText()).includes("Keep this one: answered."));
       await newChat.click();
       await until(async () => (await historyCount()) === 1, { what: "a plain click archives" });
+      // The archived conversation exports from its History row's menu.
+      await page.getByRole("button", { name: "Chat history", exact: true }).click();
+      await page.locator(".chatHistRow", { hasText: "Keep this one" }).click({ button: "right" });
+      const downloadEvent = page.waitForEvent("download");
+      await page.getByRole("button", { name: "Export", exact: true }).click();
+      const download = await downloadEvent;
+      assertEq(download.suggestedFilename(), "Keep this one.md", "no pictures: the bare transcript");
+      const text = await readFile(await download.path(), "utf8");
+      assert(text.startsWith("# Keep this one\n") && text.includes("## AI\n\nKeep this one: answered."), text);
       assertNoProblems(page);
     } finally { await ctx.close(); }
   });
