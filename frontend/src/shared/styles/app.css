@@ -1659,7 +1659,8 @@ html, body { overscroll-behavior: none; }
   cursor: grab;
   -webkit-user-drag: element;
 }
-.sortableBlockWrap:is(:hover, :focus-within, :has(:hover)) > .rowHandles > :is(.dragHandle, .addHandle) {
+.sortableBlockWrap:is(:hover, :focus-within, :has(:hover)) > .rowHandles > :is(.dragHandle, .addHandle),
+.rowHandles > :is(.dragHandle, .addHandle)[data-guide-active] {
   opacity: 1;
   pointer-events: auto;
 }

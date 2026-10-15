@@ -4,7 +4,7 @@
 // one per page load, never with "Suggest tours" off, and the card never
 // takes the caret or closes the popover it points into. A fresh account, so
 // no earlier scenario has seen these offers.
-import { Account, wanted } from "../harness.mjs";
+import { Account, FAKE_AI_MODELS, wanted } from "../harness.mjs";
 import { closeEditor, editRow } from "./notes.mjs";
 import { waitForPdf } from "./pdf.mjs";
 import { TOURS } from "../../../src/guide/tours/index.js";
@@ -14,7 +14,14 @@ export async function triggeredGuideScenarios(env) {
   if (!wanted("triggered guide")) return;
   server.manage("create-user", "tourist", "tourist-pw");
   const user = await new Account(server, "tourist", "tourist-pw").login();
-  const open = async (query, { setup, seenWindows = false, seen = [], ...opts } = {}) => {
+  // The guides offered on everyday moves — a line break, "/", a paste, a
+  // closed window, a few highlights, a fourth tab — would take the load's
+  // only offer from the one a case is about: each case settles them, but
+  // for those it names in `offers`.
+  const EVERYDAY = ["new-note-key", "slash-menu", "paste-as", "mentions", "objects", "tabs", "command-palette", "settings",
+    "paper-details", "window-closed", "new-chat", "pdf-switch", "assistant-changes", "ink-selection", "bib-link",
+    "highlights", "notes"];
+  const open = async (query, { setup, seenWindows = false, seen = [], offers = [], ...opts } = {}) => {
     // Progress follows the account to every browser, so each case starts
     // with the account's copy cleared as well as a fresh browser.
     await user.api("/api/prefs/profile", { method: "PATCH", body: { set: { tourProgress: {} } } });
@@ -22,7 +29,7 @@ export async function triggeredGuideScenarios(env) {
     // A PDF's window-layout or viewer offer otherwise takes this load's only
     // offer slot and can cover the menu used to start a different tour;
     // `seen` settles any other guide this case would compete with for it.
-    const settled = [...(seenWindows ? ["windows", "pdf-viewer"] : []), ...seen];
+    const settled = [...(seenWindows ? ["windows", "pdf-viewer"] : []), ...seen, ...EVERYDAY.filter((id) => !offers.includes(id))];
     // Only where nothing is recorded: the script runs on every navigation,
     // and a tour finished in this context stays finished.
     if (settled.length) await ctx.addInitScript((rows) => {
@@ -126,7 +133,11 @@ export async function triggeredGuideScenarios(env) {
       assertNoProblems(first.page);
     } finally { await first.ctx.close(); }
     // A browser with nothing in its own storage: the account's copy decides.
+    // (Only the hints the table's Enter and "/" would offer are settled here.)
     const ctx = await user.context(browser, { suggestTours: true });
+    await ctx.addInitScript((rows) => rows.forEach(([id, version]) =>
+      localStorage.setItem(`gamma-guide:tourist:${id}`, JSON.stringify({ version, state: "dismissed" }))),
+    ["new-note-key", "slash-menu"].map((id) => [id, TOURS[id].version]));
     const page = await openPage(ctx, `${server.base}/?ws=${user.ws}&page=${pg.id}`);
     try {
       await makeTable(page, "second grid");
@@ -438,20 +449,25 @@ export async function triggeredGuideScenarios(env) {
       await page.waitForSelector('[data-guide-overlay="ink-style"] .guideCard');
       await page.click(".pdfInkBar .inkToolBtn.modeActive");
       await page.waitForSelector('[data-guide-overlay="ink-erase"] .guideCard');
-      assertEq(await page.locator(".guideSegments i").count(), 4, "four steps from the menu");
+      assertEq(await page.locator(".guideSegments i").count(), 5, "five steps from the menu");
       await page.click('[data-guide="ink.eraser"]');
       await line([box.x + 180, box.y + 120], [box.x + 180, box.y + 200]);
-      assertEq(await page.locator('[data-guide-overlay="ink-erase"] .guideCard').count(), 1, "erasing does not end the last card");
+      assertEq(await page.locator('[data-guide-overlay="ink-erase"] .guideCard').count(), 1, "erasing does not move the card on");
       // The erase card's promise: Ctrl+Z brings the drawing back.
       await page.keyboard.press("Control+z");
       await page.waitForSelector('[data-guide="notes.ink"] svg.blockInkCard');
       await page.click('[data-guide="ink.lasso"]');
       await primary(page).click();
+      // Last, the Text tool beside them in the strip.
+      await page.waitForSelector('[data-guide-overlay="ink-text"] .guideCard');
+      assertEq(await page.locator('[data-guide="ink.text"][data-guide-active]').count(), 1, "the T button is pointed at");
+      await page.click('[data-guide="ink.text"]');
+      await primary(page).click();
       await until(async () => await page.locator(".guideCard").count() === 0);
       assertEq(await progress(page, "handwriting"), "done");
-      // Finishing leaves the pen armed, not the lasso or the eraser: the next drag writes.
-      await until(async () => await page.locator('[data-guide="ink.lasso"].modeActive, [data-guide="ink.eraser"].modeActive').count() === 0,
-        { what: "no lasso or eraser armed" });
+      // Finishing leaves the pen armed, not the lasso, the eraser or Text: the next drag writes.
+      await until(async () => await page.locator('[data-guide="ink.lasso"].modeActive, [data-guide="ink.eraser"].modeActive, [data-guide="ink.text"].modeActive').count() === 0,
+        { what: "no lasso, eraser or Text armed" });
       assertEq(await page.locator('.pdfInkBar .inkToolBtn.modeActive:not([aria-label="Hand"])').count(), 1, "the pen is armed again");
       // With a drawing on the page, a replay starts at the drawing's note instead.
       await page.click('[data-guide="header.account"]');
@@ -467,14 +483,15 @@ export async function triggeredGuideScenarios(env) {
   // into the card, so what this checks in a real browser is that the file is
   // bundled, drawn with media.css's classes and there before the card is
   // placed (docs/dev/onboarding.md, "Illustrations").
-  // steps: [step id, the drawing it must carry, or null for a card of words].
+  // steps: [step id, the drawing it must carry, or null for a card of words,
+  // and optionally the surface that must be open at it, over `open`].
   const walk = async (page, steps, { open = null } = {}) => {
-    for (const [id, media] of steps) {
+    for (const [id, media, surface = open] of steps) {
       const card = `[data-guide-overlay="${id}"] .guideCard`;
       // One selector for the step and its drawing together: a step that
       // passed over while we looked cannot read as a step that drew nothing.
       await page.waitForSelector(media ? `${card} .guideMedia[data-media="${media}"] svg` : card);
-      if (open) assertEq(await page.locator(open).count(), 1, `${open} stays open at ${id}`);
+      if (surface) assertEq(await page.locator(surface).count(), 1, `${surface} stays open at ${id}`);
       if (!media) assertEq(await page.locator(`${card} .guideMedia`).count(), 0, `${id}: no drawing asked for`);
       await primary(page).click();
     }
@@ -508,7 +525,10 @@ export async function triggeredGuideScenarios(env) {
       // Its scene types into the field and leaves it as it was.
       await page.waitForSelector('[data-guide-scene="add-url"] .guideSceneCaret', { state: "attached", timeout: 8000 });
       assertEq(await page.inputValue('[data-guide="add.urlInput"]'), "", "the scene types nothing for real");
-      await walk(page, [["add-url", null], ["add-upload", null], ["add-notebook", "page-notebook"]], { open: ".addPopover" });
+      // Last, a library kept elsewhere: that step opens the View menu, whose
+      // Import row it rings, the menu undimmed whole.
+      await walk(page, [["add-url", null], ["add-upload", null], ["add-notebook", "page-notebook"],
+        ["add-import", null, ".menuPopover"]], { open: ".addPopover" });
       assertEq(await progress(page, "add-paper"), "done");
       assertNoProblems(page);
     } finally { await ctx.close(); }
@@ -590,10 +610,22 @@ export async function triggeredGuideScenarios(env) {
       // Its scene right-clicks a card: the mouse badge shows the button.
       await page.waitForSelector('[data-guide-scene="lib-menu"] .guideMouse', { state: "attached", timeout: 8000 });
       await primary(page).click();
+      // The listing bar: its filter box (a scene types into it, for show
+      // only), then Select.
+      await page.waitForSelector('[data-guide-overlay="lib-filter"] .guideCard');
+      await page.waitForSelector('[data-guide-scene="lib-filter"] .guideSceneCaret', { state: "attached", timeout: 8000 });
+      assertEq(await page.inputValue(".homeFindInput"), "", "the scene filters nothing for real");
+      await primary(page).click();
+      await page.waitForSelector('[data-guide-overlay="lib-select"] .guideCard');
+      await primary(page).click();
       // The model step is a centred card with no anchor, so it is the one
       // step of this tour that can never be passed over.
       await page.waitForSelector('[data-guide-overlay="lib-model"] .guideCard.guideCardCentered .guideMedia[data-media="labels-folders"] svg');
       assert((await page.textContent(".guideCard")).includes("never copies"), "what a folder actually is");
+      await primary(page).click();
+      // The same model on screen: the listing's Labels view.
+      await page.waitForSelector('[data-guide-overlay="lib-labels"] .guideCard');
+      assertEq(await page.locator('[data-guide="home.labelsView"][data-guide-active]').count(), 1);
       await primary(page).click();
       // Nothing was viewed yet, so the recents step passes over on its own.
       await page.waitForSelector('[data-guide-overlay="lib-trash"] .guideCard', { timeout: 15000 });
@@ -625,6 +657,96 @@ export async function triggeredGuideScenarios(env) {
       await page.getByRole("button", { name: "Got it" }).click();
       await until(async () => await page.locator(".guideCard").count() === 0);
       assertEq(await progress(page, "export-page"), "done");
+      assertNoProblems(page);
+    } finally { await ctx.close(); }
+  });
+
+  await step("triggered guide: closing a window offers where it waits; bringing it back retires the hint", async () => {
+    const upload = await user.upload("/api/uploads", makePdf([["Closing windows", "A page to read."]]), "closing.pdf", "application/pdf");
+    const paper = await user.api(`/api/blocks/by-doc/${upload.doc_id}`, { method: "POST", body: { default_title: "Closing paper", source_url: upload.source_url } });
+    const { ctx, page } = await open(`&page=${paper.id}`, { seenWindows: true, seen: ["add-paper", "notebook", "workspaces"], offers: ["window-closed"] });
+    try {
+      await waitForPdf(page);
+      await page.getByRole("button", { name: "Close Chat", exact: true }).click();
+      await page.waitForSelector('[data-guide-offer="window-closed"] .guideCard');
+      assertEq(await page.locator(".guideDim").count(), 0, "a hint never dims the app");
+      assertEq(await page.locator('[data-guide="header.view"][data-guide-active]').count(), 1, "it points at the View menu");
+      // Opening View, as the card says, answers it: the card goes before it
+      // can cover the menu's Windows rows, and the window comes back.
+      await page.click('[data-guide="header.view"]');
+      await until(async () => await page.locator('[data-guide-offer="window-closed"]').count() === 0, { what: "opening View answers the card" });
+      assertEq(await progress(page, "window-closed"), "done");
+      await page.locator(".menuPopover").getByRole("button", { name: "AI Chat", exact: true }).click();
+      await page.getByRole("button", { name: "Close Chat", exact: true }).waitFor();
+      assertNoProblems(page);
+    } finally { await ctx.close(); }
+  });
+
+  await step("triggered guide: the first New chat says the conversation is in History, and that Alt+click discards", async () => {
+    const pg = await user.api("/api/pages", { method: "POST", body: { title: "Kept chat page" } });
+    await user.api(`/api/chats/${pg.id}`, { method: "PUT", body: { messages: [{ role: "user", text: "Keep me" }, { role: "ai", text: "Kept for later." }] } });
+    const { ctx, page } = await open(`&page=${pg.id}`, { offers: ["new-chat"], setup: async (ctx) => {
+      await ctx.addInitScript(() => localStorage.setItem("gamma-ai-login-check", "off"));
+      await ctx.route("**/api/ai/models*", (route) => route.fulfill({ json: FAKE_AI_MODELS }));
+    } });
+    try {
+      await until(async () => (await page.locator(".chatPanel").innerText()).includes("Kept for later."), { what: "the conversation shows" });
+      await page.getByRole("button", { name: "New chat", exact: true }).click();
+      await page.waitForSelector('[data-guide-offer="new-chat"] .guideCard');
+      assertEq(await page.locator('[data-guide="chat.history"][data-guide-active]').count(), 1, "it points at History");
+      assert((await page.textContent(".guideCard")).includes("Alt"), "and names the Alt+click");
+      await page.getByRole("button", { name: "Got it" }).click();
+      assertEq(await progress(page, "new-chat"), "done");
+      assertEq((await user.api(`/api/chat-history?bucket=${pg.id}`)).sessions.length, 1, "the conversation went into History");
+      assertNoProblems(page);
+    } finally { await ctx.close(); }
+  });
+
+  await step("triggered guide: a line break in a note offers the key that makes a new one, and the editor keeps its caret", async () => {
+    const pg = await user.api("/api/pages", { method: "POST", body: { title: "Enter page" } });
+    await user.api("/api/blocks", { method: "POST", body: { parent_id: pg.id, content: "First thought" } });
+    const { ctx, page } = await open(`&page=${pg.id}`, { offers: ["new-note-key"] });
+    try {
+      await editRow(page, "First thought");
+      await page.keyboard.press("End");
+      await page.keyboard.press("Enter");
+      await page.waitForSelector('[data-guide-offer="new-note-key"] .guideCard');
+      assertEq(await page.locator(".guideCard kbd", { hasText: "Shift" }).count() > 0, true, "it shows Shift+Enter as keys");
+      await page.keyboard.type("same note");
+      assert((await page.locator(".blockEditorCm .cm-content").textContent()).includes("same note"), "typing goes on in place");
+      await page.getByRole("button", { name: "Got it" }).click();
+      assertEq(await progress(page, "new-note-key"), "done");
+      assertNoProblems(page);
+    } finally { await ctx.close(); }
+  });
+
+  await step("triggered guide: the highlights tour points at the highlight, its menu, then its note", async () => {
+    const upload = await user.upload("/api/uploads", makePdf([["Highlights tour", "A line to mark."]]), "marks.pdf", "application/pdf");
+    const paper = await user.api(`/api/blocks/by-doc/${upload.doc_id}`, { method: "POST", body: { default_title: "Marked paper", source_url: upload.source_url } });
+    const rect = { x1: 60, y1: 60, x2: 480, y2: 78 };
+    await user.api("/api/blocks", { method: "POST", body: { parent_id: paper.id, content: "Marked once",
+      properties: { quote: "A line to mark.", color: "rgba(255, 229, 100, 0.55)",
+        pdf_position: { pageNumber: 1, width: 612, height: 792, boundingRect: rect, rects: [rect] } } } });
+    const { ctx, page } = await open(`&page=${paper.id}`, { seenWindows: true, seen: ["add-paper", "notebook", "workspaces"] });
+    try {
+      await waitForPdf(page);
+      await page.waitForSelector('[data-guide="pdf.highlight"]');
+      await page.click('[data-guide="header.account"]');
+      await page.click('[data-guide="account.tour"]');
+      await page.click('[data-tour="highlights"]');
+      await page.waitForSelector('[data-guide-overlay="hl-note"] .guideCard');
+      await page.mouse.move(5, 5);
+      await page.waitForSelector('[data-guide-scene="hl-note"] .guideSceneRipple', { state: "attached", timeout: 8000 });
+      await primary(page).click();
+      await page.waitForSelector('[data-guide-overlay="hl-menu"] .guideCard');
+      await page.mouse.move(5, 5);
+      await page.waitForSelector('[data-guide-scene="hl-menu"] .guideMouse', { state: "attached", timeout: 8000 });
+      await primary(page).click();
+      await page.waitForSelector('[data-guide-overlay="hl-back"] .guideCard');
+      assertEq(await page.locator('[data-guide="notes.highlight"][data-guide-active]').count(), 1, "its note in the notes");
+      await primary(page).click();
+      await until(async () => await page.locator(".guideCard").count() === 0);
+      assertEq(await progress(page, "highlights"), "done");
       assertNoProblems(page);
     } finally { await ctx.close(); }
   });

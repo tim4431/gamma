@@ -25,6 +25,7 @@ import { lastPointer } from "../shared/lib/pointer.js";
 import { PdfCitationOverlay } from "./PdfCitationOverlay";
 import { citationRuns, runChars } from "./pdfCitation.js";
 import { noteBadgeAnchor } from "./noteAnchor.js";
+import { useRecentIn } from "../guide/recent.js";
 import { DEFAULT_HIGHLIGHT, colorName, darkPageColor, darkPageLine, normalizeColor, pickerColors, swatchCss } from "../shared/model/palette.js";
 import { usePalette } from "../shared/ui/paletteContext.js";
 import { t } from "../shared/i18n/i18n.js";
@@ -1867,6 +1868,9 @@ const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, scal
   const rasterRef = useRef(null);
   const textRef = useRef(null);
   const textScaleRef = useRef(0); // the scale the text layer's spans were last measured at
+  // The highlight made last, when it is on this page: the guide's highlight
+  // tour points at it (guide/recent.js).
+  const recentHl = useRecentIn("highlight", highlights);
   const [pageSize, setPageSize] = useState(null);
   const [loaded, setLoaded] = useState(null); // {doc, page}: the pdf.js page, once this one has come near the view
   const page = loaded?.doc === pdfDoc ? loaded.page : null;
@@ -2271,8 +2275,10 @@ const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, scal
         // Right-click, or a finger held on it: colour, link, copy as reference.
         const openMenu = (e) => { e.preventDefault(); onHighlightContext?.({ id: h.id, x: e.clientX, y: e.clientY }); };
         const elements = [];
-        for (const r of rects) {
+        for (const [ri, r] of rects.entries()) {
           elements.push(<div key={h.id + "-" + r.x1 + "-" + r.y1} data-hl-id={h.id}
+            data-guide={ri === 0 ? "pdf.highlight" : undefined}
+            data-guide-recent={ri === 0 && recentHl === h.id ? "" : undefined}
             className={flashId === h.id ? "pdfHlFlash" : undefined}
             style={{
             position: "absolute", zIndex: 2, cursor: "pointer",

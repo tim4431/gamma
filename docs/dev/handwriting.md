@@ -112,8 +112,8 @@ app ([ipad.md](ipad.md)). Typed text on a page is
   draws", with **Draw with finger** (which turns `inkPenOnly` off): once a
   session, and never after a pen has drawn. The pen's eraser end and
   barrel button erase.
-- Strokes on one page join the **current group** until *New group*, a
-  stroke on another page, or leaving the page. A group is one block in the
+- Strokes on one page join the **current group** until a stroke on
+  another page, or leaving the page. A group is one block in the
   notes: a rounded pen marker, the strokes as a picture, and the block's
   text as its caption (children allowed). The marker or the card scrolls
   the PDF to the group and outlines it briefly; a click on ink selects it
@@ -429,8 +429,7 @@ text box's `text_box`, merged key by key ([text_boxes.md](text_boxes.md)
   group as it is now, by stroke id (`mergeInk`), so strokes someone else
   drew meanwhile stay.
   Two clients drawing into one group keep both drawings (see "Two
-  writers, one group"). Each client keeps a fresh group after
-  *New group*.
+  writers, one group").
   A focused note editor keeps the block history even with the strip open,
   and other text inputs keep their own undo; an empty ink history never
   falls through to block undo. Undo and redo report the action and PDF page

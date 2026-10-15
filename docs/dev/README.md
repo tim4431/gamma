@@ -80,7 +80,7 @@ These describe the implementation unless explicitly marked as plans.
 | Provider configuration, chat, and the library agent | [AI](ai.md) |
 | Agent tools and guardrails | [AI tools](ai_tools.md) |
 | Long-paper context and grounding | [AI context](ai_context.md) |
-| Chat buckets per page and folder, the active conversation, and the archive | [Chat history](chat_history.md) |
+| Chat buckets per page and folder, the active conversation, the archive, and exporting a conversation with its pictures | [Chat history](chat_history.md) |
 | The translated PDF view, its engines and limits | [PDF translation](translation.md) |
 | Clickable PDF citations and library links | [PDF citations](pdf_citations.md) |
 | MCP, integration tokens, OAuth, and assistant plugins | [MCP](mcp.md) |

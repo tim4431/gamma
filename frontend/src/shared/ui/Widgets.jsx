@@ -514,7 +514,7 @@ function OpenTabs({
 
   return (
     <>
-      <div ref={setStrip} role="tablist"
+      <div ref={setStrip} role="tablist" data-guide="header.tabs"
         className={`tabStrip${overflow.over && !overflow.atEnd ? " fadeEnd" : ""}`}>
         {tabs.map((tab) => (
           <div
@@ -546,14 +546,6 @@ function OpenTabs({
             onDrop={(event) => event.preventDefault()}
             onClick={() => {
               if (tab.id !== activeId) onOpen(tab.id);
-            }}
-            onAuxClick={(event) => {
-              // Middle-click close skips pinned tabs — pinning is a guard
-              // against exactly this kind of accidental close.
-              if (event.button === 1 && !tab.pinned) {
-                event.preventDefault();
-                onClose(tab.id);
-              }
             }}
             {...menuPress((event) => {
               event.preventDefault();

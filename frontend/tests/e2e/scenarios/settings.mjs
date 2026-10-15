@@ -938,17 +938,26 @@ export async function settingsScenarios(env) {
 
   // An account keeps at most five tasks (backup_schedule.MAX_TASKS): at five,
   // Add task and Duplicate are disabled and a line under the table says why.
+  // On a short window the pane scrolls, and the table keeps its full height
+  // rather than shrinking to its border.
   await step("settings: at five backup tasks, Add task is disabled and says why", async () => {
     const made = [];
     for (let i = 1; i <= 5; i++) {
       made.push(await user.api("/api/backup-tasks", { method: "POST", body: { name: `Task ${i}`, scope: "all_owned", cron: "0 3 * * *" } }));
     }
-    const { ctx, page } = await setup();
+    const { ctx, page } = await setup({ width: 1280, height: 600 });
     try {
       await openSettings(page);
       await nav(page, "Backups").click();
       const add = page.getByRole("button", { name: "Add task", exact: true });
-      await page.getByRole("region", { name: "Periodic backup tasks" }).locator("tr", { hasText: "Task 5" }).waitFor();
+      const table = page.getByRole("region", { name: "Periodic backup tasks" });
+      await table.locator("tr", { hasText: "Task 5" }).waitFor();
+      const fit = await table.evaluate((wrap) => {
+        const pane = wrap.closest(".settingsPane");
+        return { overflows: pane.scrollHeight > pane.clientHeight, clipped: wrap.scrollHeight - wrap.clientHeight };
+      });
+      assert(fit.clipped <= 1, `the task table is not clipped (${fit.clipped}px hidden)`);
+      assert(fit.overflows, "the Backups pane scrolls on a short window"); // (else the check above proves nothing)
       assert(await add.isDisabled(), "Add task is disabled at the limit");
       await page.getByText("You can keep up to 5 backup tasks. Delete one to add another.").waitFor();
       const actions = page.getByRole("button", { name: "Actions for Task 1", exact: true });

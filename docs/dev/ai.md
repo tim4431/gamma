@@ -520,8 +520,11 @@ invisible to search AND read_page, so keep it far above real documents).
 
 ### Exporting the context
 
-The chat header's download button saves what the model would be sent right
-now as a Markdown file. ChatDock builds the body with the same
+The chat header's download menu has two entries. "Export conversation" saves
+the conversation as the user saw it, with its pictures
+([chat_history.md](chat_history.md#exporting-a-conversation)). "Export
+context" saves what the model would be sent right now as a Markdown file,
+for looking at the prompt itself. ChatDock builds its body with the same
 `chatRequest(text, history)` a send uses, with the composer's draft as the
 prompt. `POST /api/ai/chat/context` runs it through `_chat_prompt`, the one
 step `/ai/chat` also uses for its turns and system prompt, and
@@ -770,7 +773,7 @@ a press keeps an on-screen keyboard up.
 - **Message tools.** A message's Copy and Edit, and a code block's Copy, come
   up with the message where a pointer hovers (taking no press while hidden)
   and are always there where none does.
-- **Pictures.** A paste, a drop or the [+] menu's "Add photos & files"
+- **Pictures.** A paste or the [+] menu's "Add photos & files"
   stores the picture at once (`POST /api/ai/pictures`, sized for the
   model) and attaches it by URL. "Attach what I see", offered with a paper
   open, attaches the visible part of each page in view, with the
@@ -961,7 +964,11 @@ bubble comes from the first; `view_pdf_page`, `view_ink`, `view_image` and
 the view tools' results tell the model it may embed that URL in its reply
 as a markdown image, which `ChatMarkdown` renders.
 `GET /api/ai/selection-crop/{doc_id}` draws the selection pill's picture in
-saved replies.
+saved replies. `ai_pictures.picture_at` gives the bytes of any of these
+pictures from the URL the chat shows it by: a stored upload as stored, a
+data URL decoded, a drawn one drawn as its route draws it. That is how the
+conversation export packs them
+([chat_history.md](chat_history.md#exporting-a-conversation)).
 
 **The store and the upload GC.** A chat's pictures are stored uploads like a
 note's, and the saved conversation points at them, so `upload_gc.referenced`

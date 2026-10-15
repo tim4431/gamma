@@ -18,6 +18,7 @@ import {
   ArrowDownIcon, ArrowUpIcon, CodeIcon, CopyIcon, FileTextIcon, MoveVerticalIcon, Trash2Icon,
 } from "../shared/ui/Icons";
 import { t } from "../shared/i18n/i18n.js";
+import { guideEvents } from "../guide/events.js";
 import { blockSpans, scanImages, scanTables } from "./mdScan";
 import { scanDiagramFences } from "../shared/lib/diagramMarkdown.js";
 import { blockStartInSource, gapInSource, renderedBlocks, renderedGaps } from "./clickToSource";
@@ -142,6 +143,9 @@ export function MdObject({ as: Tag = "div", kind, idx, editable = true, onAction
       className={cls}
       data-kind={kind}
       data-idx={idx}
+      // The guide's object hint points at the selected object, and goes
+      // with the selection.
+      data-guide={selected ? "notes.object" : undefined}
       draggable={editable ? "true" : undefined}
       // The block row opens its raw editor on mousedown. A press on the
       // object's own body (the picture, the table, the diagram) selects it
@@ -153,7 +157,10 @@ export function MdObject({ as: Tag = "div", kind, idx, editable = true, onAction
         const body = e.target.closest?.(".mdImgFrame, .mdTableWrap, .diagramCard");
         if (!body || !ref.current?.contains(body)) return;
         e.stopPropagation();
-        if (e.button === 0) setSelected(true);
+        if (e.button === 0) {
+          setSelected(true);
+          if (editable) guideEvents.emit("object.selected", { kind });
+        }
       }}
       // A diagram has no editing of its own — a picture zooms on
       // double-click and a table edits the cell under the pointer — so a

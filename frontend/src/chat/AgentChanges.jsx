@@ -159,7 +159,7 @@ export default function AgentChanges({ actions, onOpenPage, onReverted, busy = f
     );
   };
   const group = (list, place) => list.length ? (
-    <div className="chatChanges" key={place}>
+    <div className="chatChanges" key={place} data-guide="chat.changes">
       <div className="chatChangesHead">
         <span>{place === "library" ? t("Changed in your library · {n}", { n: list.length }) : t("Changed in your notes · {n}", { n: list.length })}</span>
         {place === "notes" && revertible.length > 1 ? (

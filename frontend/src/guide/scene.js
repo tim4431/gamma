@@ -12,6 +12,7 @@
 // reduced motion it shows its last frame, still. On a touch screen the
 // pointer is a fingertip and a right-click is a long press.
 import { anchorElement } from "./anchors.js";
+import { chordLabel } from "../shared/lib/hotkeys.js";
 
 // The guide's one timing scale, for scenes and for the demo pointer
 // (guide.css's .guideCursor glide is MOTION.glide).
@@ -32,9 +33,13 @@ export const POINTER_PATH = "M2 2 L2 20 L7 15.5 L10.5 23 L14 21.5 L10.5 14 L17 1
 
 // The primitives, each { <kind>: anchor, ...options } (`wait` takes ms):
 //   point  {at?}                         glide there, with a soft hover halo
-//   click  {at?, count?, button?}        press with a ripple; count 2 is a double-click, button "right" a right-click
+//   click  {at?, count?, button?, key?}  press with a ripple; count 2 is a double-click, button "right" a right-click,
+//                                        key ("Alt" | "Mod" | "Shift") a click with that key held, its cap beside the pointer
 //   drag   {at?, to: {zone, window}}     carry an outline of the anchor to where `window` would dock on
 //                                        side `zone` ("left" | "right" | "bottom"), the dock's drop preview there
+//   drag   {at?, to: {offset: [dx, dy], size?: [w, h]}}
+//                                        carry it by that many pixels; a drop preview of `size` (the anchor's
+//                                        height, 220 px wide, by default) shows where it lands — a note nested
 //   stroke {at?: [x0, y0, x1, y1]}       a handwriting squiggle inside that fraction of the anchor
 //   type                                 a caret and a growing line of text inside a field
 //   ghost  {size?}                       a dashed outline of what is about to appear under the anchor
@@ -44,13 +49,21 @@ export const SCENE_KINDS = ["point", "click", "drag", "stroke", "type", "ghost",
 const sceneKind = (primitive) => SCENE_KINDS.find((kind) => kind in primitive) || null;
 export const DOCK_ZONES = ["left", "right", "bottom"];
 export const DOCK_WINDOWS = ["chat", "notes"];
+export const SCENE_KEYS = ["Alt", "Mod", "Shift"];
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 const SVG = "http://www.w3.org/2000/svg";
 
-// An anchor's box, or a dock zone's ({zone, window}).
-function boxOf(target, services) {
+// An anchor's box, a dock zone's ({zone, window}), or the box a drag by
+// {offset} lands in, measured from `from` (the dragged anchor's box).
+function boxOf(target, services, from = null) {
+  if (target?.offset) {
+    if (!from) return null;
+    const [dx, dy] = target.offset;
+    const [w, h] = target.size || [220, from.height];
+    return { left: from.left + dx, top: from.top + dy, width: w, height: h, right: from.left + dx + w, bottom: from.top + dy + h };
+  }
   const b = typeof target === "string" ? anchorElement(target)?.getBoundingClientRect()
     : services.dockZone?.(target.window, target.zone);
   return b?.width && b?.height
@@ -136,6 +149,16 @@ export function playScene(layer, scene, { services = {}, reduced = false, touch 
     badge.innerHTML = '<svg width="12" height="16" viewBox="0 0 12 16" aria-hidden="true"><rect x="1" y="1" width="10" height="14" rx="5" /><path d="M6 1v6M6 7h5V6a5 5 0 0 0-5-5z" /></svg>';
     pointer.appendChild(badge);
   };
+  // A click with a key held: the key's cap beside the pointer, the one the
+  // Ctrl-drag demo shows ("Mod" reads Ctrl, or ⌘ on a Mac).
+  const showKey = (key) => {
+    pointer.querySelector(".guideHeldKey")?.remove();
+    if (!key) return;
+    const cap = document.createElement("kbd");
+    cap.className = "guideModifier guideHeldKey";
+    cap.textContent = chordLabel(key);
+    pointer.appendChild(cap);
+  };
 
   async function glide(mine, to, { duration, easing } = {}) {
     dropHalo();
@@ -189,16 +212,18 @@ export function playScene(layer, scene, { services = {}, reduced = false, touch 
       await go(mine, sleep(dur(160)));
       const right = p.button === "right";
       if (right && !touch) showMouse(true);
+      showKey(p.key);
       for (let i = 0; i < (p.count || 1); i++) {
         if (i) await go(mine, sleep(dur(70)));
         await press(mine, to, { long: right && touch });
       }
       await go(mine, sleep(dur(420)));
       showMouse(false);
+      showKey(null);
     },
     async drag(mine, p) {
       const fromBox = touches(boxOf(p.drag, services));
-      const toBox = boxOf(p.to, services);
+      const toBox = boxOf(p.to, services, fromBox);
       if (!fromBox || !toBox) return;
       const start = pointIn(fromBox, p.at);
       const end = pointIn(toBox, [0.5, 0.42]);
@@ -310,6 +335,7 @@ export function playScene(layer, scene, { services = {}, reduced = false, touch 
     shapes = [];
     halo = null;
     showMouse(false);
+    showKey(null);
     tip.style.transform = "";
     pointer.style.opacity = "0";
     at = null;

@@ -2,8 +2,9 @@
 // text layer, creating a highlight from a text selection (overlay + block
 // row + persisted position), the library card, and the search panel hitting
 // PDF text on another page.
+import { execFileSync } from "node:child_process";
 import { tree, same, partialBlockSearch } from "./notes.mjs";
-import { fakeAiModels } from "../harness.mjs";
+import { PYTHON, fakeAiModels } from "../harness.mjs";
 import { DEFAULT_PALETTE, darkPageColor } from "../../../src/shared/model/palette.js";
 
 // Select `needle` inside one text-layer span of `pageNo` and release the
@@ -240,6 +241,31 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
     await badge.waitFor();
     await badge.click();
     await until(async () => (await page.$(".blockRow.focused .blockQuote")) != null, { what: "badge focuses its note" });
+    assertNoProblems(page);
+  });
+
+  // A note placed on a page but not on a passage (an imported one, say)
+  // carries ⊕: the next highlight clicked on the PDF is the one it links to.
+  await step("pdf: a note's ⊕ links it to the highlight clicked next", async () => {
+    const loose = await account.api("/api/blocks", { method: "POST", body: { parent_id: pageId, content: "Loose remark",
+      properties: { pdf_position: { pageNumber: 1 } } } });
+    await page.reload();
+    await waitForPdf(page);
+    const mark = page.locator('[data-page="1"] div[data-hl-id]').first();
+    await mark.waitFor();
+    const target = await mark.getAttribute("data-hl-id");
+    const row = page.locator(".blockRow", { hasText: "Loose remark" });
+    await row.hover(); // ⊕ takes a press only while its row is hovered or focused
+    await row.getByTitle("Attach to a PDF highlight").click();
+    await page.locator(".attachModeBanner").waitFor();
+    await mark.click();
+    await page.locator(".attachModeBanner").waitFor({ state: "detached" });
+    await row.getByTitle("Unlink highlight").waitFor();
+    await until(async () => {
+      const d = await account.api(`/api/blocks/${pageId}/subtree`);
+      return (d.block.children || []).find((b) => b.id === loose.id)?.properties?.linked_highlight_id === target;
+    }, { what: "the note is linked to the clicked highlight" });
+    await account.api(`/api/blocks/${loose.id}`, { method: "DELETE" });
     assertNoProblems(page);
   });
 
@@ -646,6 +672,26 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
       // The sent message shows both, and the composer row is empty again.
       await until(async () => await page.locator(".chatBubble.user img.chatMsgImage").count() === 2, { what: "the bubble shows the pictures" });
       assertEq(await thumbs.count(), 0, "the composer's pictures went with the message");
+      // Exporting the conversation packs both pictures beside the transcript.
+      await page.getByText("A picture.").waitFor();
+      const downloadEvent = page.waitForEvent("download");
+      await page.getByRole("button", { name: "Export chat", exact: true }).click();
+      await page.getByRole("button", { name: "Export conversation", exact: true }).click();
+      const download = await downloadEvent;
+      assert(download.suggestedFilename().endsWith(".zip"), download.suggestedFilename());
+      const zip = JSON.parse(execFileSync(PYTHON, ["-c", [
+        "import json, sys, zipfile",
+        "z = zipfile.ZipFile(sys.argv[1])",
+        "md = next(n for n in z.namelist() if n.endswith('.md'))",
+        "print(json.dumps({'names': sorted(z.namelist()), 'md': z.read(md).decode()}))",
+      ].join("\n"), await download.path()]).toString());
+      const linked = (md) => [...md.matchAll(/!\[[^\]]*\]\((assets\/[^)]+)\)/g)].map((m) => m[1]);
+      assert(linked(zip.md).every((name) => zip.names.includes(name)), `every picture is in the zip: ${zip.names}`);
+      // (Earlier steps' messages come along, an earlier reply's selection crop among them.)
+      const asked = zip.md.slice(zip.md.lastIndexOf("## You"));
+      assertEq(linked(asked).length, 2, `both pictures are in the transcript:\n${asked}`);
+      assert(asked.includes("![Image file") && asked.includes("![Region of PDF page 2](assets/"), asked);
+      assert(asked.includes("What are these?") && asked.includes("## AI\n\nA picture."), asked);
     } finally {
       await page.unroute("**/api/ai/chat");
     }

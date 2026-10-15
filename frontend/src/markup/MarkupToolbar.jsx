@@ -35,7 +35,7 @@ export function MarkupToolbar({ tools, active, options, eraserMode, eraserSize, 
   // tap on the armed tool opens the options row that restyles that box.
   const btn = (id, label, icon, extra) => (
     <button key={id} type="button" className={"ctlBtn inkToolBtn" + (active === id ? " modeActive" : "")}
-      data-guide={id === "eraser" ? "ink.eraser" : id === "select" ? "ink.lasso" : undefined}
+      data-guide={id === "eraser" ? "ink.eraser" : id === "select" ? "ink.lasso" : id === "text" ? "ink.text" : undefined}
       onMouseDown={id === "text" ? (e) => e.preventDefault() : undefined}
       onClick={() => tap(id)} title={label} aria-label={label} aria-pressed={active === id}>{icon}{extra}</button>
   );

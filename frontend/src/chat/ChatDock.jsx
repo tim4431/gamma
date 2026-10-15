@@ -4,7 +4,7 @@
 // App provides context (open paper, library, selections) and the model/effort/
 // prompt preferences it also needs elsewhere.
 import React, { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
-import { API, apiJson, copyText, isPdfFile, makeId, readNdjson, withWorkspace } from "../shared/lib/utils";
+import { API, apiJson, copyText, downloadFetched, isPdfFile, makeId, readNdjson, withWorkspace } from "../shared/lib/utils";
 import { DEFAULT_PICTURE_BUDGET, addPictures, chipPicture, historyPictures, isPictureFile, pictureAlt, pictureUrl } from "./chatPictures.js";
 import { pictureSrc } from "./pictureSrc.js";
 import { postFile } from "../transfers/FileChip";
@@ -40,7 +40,7 @@ import { aiServiceTiles } from "../settings/providerEditor.js";
 import { renderKatex } from "../editor/LatexEditor";
 import { chipSegments } from "./chipText";
 import { effortFor, providerModels, speedFor } from "./modelPrefs";
-import { AlertCircleIcon, ArrowDownIcon, ArrowUpIcon, BookIcon, CheckIcon, ChevronDownIcon, ChevronUpIcon, ClockIcon, CopyIcon, DownloadIcon, EyeIcon, FileIcon, FolderIcon, HighlightIcon, HistoryIcon, InfoIcon, MicIcon, OutlineIcon, PaperclipIcon, PencilIcon, PenIcon, PlusIcon, QuoteIcon, SearchIcon, SettingsIcon, ShieldIcon, SlidersIcon, SparklesIcon, SquareCheckIcon, StopIcon, TextCursorIcon, TrashIcon, XIcon, ZapIcon } from "../shared/ui/Icons";
+import { AlertCircleIcon, ArrowDownIcon, ArrowUpIcon, BookIcon, BotIcon, CheckIcon, ChevronDownIcon, ChevronUpIcon, ClockIcon, CopyIcon, DownloadIcon, EyeIcon, FileIcon, FolderIcon, HighlightIcon, HistoryIcon, InfoIcon, MessageSquareIcon, MicIcon, OutlineIcon, PaperclipIcon, PencilIcon, PenIcon, PlusIcon, QuoteIcon, SearchIcon, SettingsIcon, ShieldIcon, SlidersIcon, SparklesIcon, SquareCheckIcon, StopIcon, TextCursorIcon, TrashIcon, XIcon, ZapIcon } from "../shared/ui/Icons";
 import { T, getLocale, t, tn } from "../shared/i18n/i18n.js";
 
 const JSON_HEADERS = { "Content-Type": "application/json" };
@@ -62,14 +62,14 @@ function deriveTitle(messages) {
 // Compact age for a history row: "now", "5m", "3h", "2d", "4mo", "1y".
 function relAge(iso) {
   const ms = Date.now() - Date.parse(iso || "");
-  if (!Number.isFinite(ms) || ms < 60000) return "now";
+  if (!Number.isFinite(ms) || ms < 60000) return t("now");
   const m = Math.floor(ms / 60000);
-  if (m < 60) return `${m}m`;
+  if (m < 60) return t("{n}m", { n: m });
   const h = Math.floor(m / 60);
-  if (h < 24) return `${h}h`;
+  if (h < 24) return t("{n}h", { n: h });
   const d = Math.floor(h / 24);
-  if (d < 30) return `${d}d`;
-  return d < 365 ? `${Math.floor(d / 30)}mo` : `${Math.floor(d / 365)}y`;
+  if (d < 30) return t("{n}d", { n: d });
+  return d < 365 ? t("{n}mo", { n: Math.floor(d / 30) }) : t("{n}y", { n: Math.floor(d / 365) });
 }
 
 // What the model was given for a reply, per document — streamed by
@@ -805,6 +805,7 @@ export default function ChatDock({
     if (busyHere) return;
     // A viewer's conversation was never saved: starting over is local.
     if (canSave) {
+      const kept = chatMessages.length > 0;
       try {
         await session.flush(chatKey);
         await apiJson(`${API}/chat-history/archive`, { method: "POST", headers: JSON_HEADERS, body: JSON.stringify({ ...currentPayload(), discard }) });
@@ -813,6 +814,9 @@ export default function ChatDock({
           : t("Couldn't keep the conversation in history: {message}", { message: err.message }));
         return;
       }
+      // A conversation went into History (or was thrown away): the guide's
+      // hint names History and the Alt+click.
+      if (kept) guideEvents.emit("chat.archived", { discard });
     }
     session.forget(chatKey);
     if (chatKeyRef.current !== chatKey) return;
@@ -1077,38 +1081,41 @@ export default function ChatDock({
     };
   }
 
-  // Download what the model would be sent now — system prompt, tools, every
-  // turn with the pages' context, the draft as the last message — as Markdown.
+  // The header's download menu: the conversation as a file to keep, or the
+  // context the model is sent.
   const [exporting, setExporting] = useState(false);
-  async function exportContext() {
+  const [exportMenu, setExportMenu] = useState(null); // {x, y}: the menu under the button
+  const exportBtnRef = useRef(null);
+  const fileBase = activeTitle.replace(/[\\/:*?"<>|\s]+/g, " ").trim().slice(0, 80) || "chat";
+  async function exportWith(run, failed) {
     setExporting(true);
     try {
-      const res = await fetch(`${API}/ai/chat/context`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({ ...chatRequest(chatInput.trim(), chatMessages), title: activeTitle }),
-      });
-      if (!res.ok) {
-        let detail = "";
-        try { detail = (await res.json()).detail || ""; } catch { /* not JSON */ }
-        throw new Error(detail || `HTTP ${res.status}`);
-      }
-      const url = URL.createObjectURL(await res.blob());
-      const filename = `${activeTitle.replace(/[\\/:*?"<>|\s]+/g, " ").trim().slice(0, 80) || "chat"} - context.md`;
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = filename;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      setTimeout(() => URL.revokeObjectURL(url), 2000);
+      await run();
     } catch (err) {
-      setStatus(t("Couldn't export the chat context: {message}", { message: err.message }));
+      setStatus(failed(err.message));
     } finally {
       setExporting(false);
     }
   }
+
+  // Download what the model would be sent now — system prompt, tools, every
+  // turn with the pages' context, the draft as the last message — as Markdown.
+  const exportContext = () => exportWith(() => downloadFetched(`${API}/ai/chat/context`, {
+    method: "POST", headers: JSON_HEADERS,
+    body: JSON.stringify({ ...chatRequest(chatInput.trim(), chatMessages), title: activeTitle }),
+  }, `${fileBase} - context.md`), (message) => t("Couldn't export the chat context: {message}", { message }));
+
+  // A conversation as a file to keep: the transcript as Markdown with every
+  // picture the chat shows beside it (a .zip with assets/; the bare .md when
+  // it has none — docs/dev/chat_history.md "Exporting a conversation"). The
+  // open one goes from this tab's copy, so a viewer's unsaved chat and a
+  // reply still in the autosave debounce come along; an archived one by id.
+  const exportConversation = (entry = null) => exportWith(() => (entry
+    ? downloadFetched(`${API}/chat-history/${encodeURIComponent(entry.id)}/export`, {}, `${entry.title || "chat"}.md`)
+    : downloadFetched(`${API}/chats/export`, {
+      method: "POST", headers: JSON_HEADERS,
+      body: JSON.stringify({ bucket: chatKey, title: chatTitle, messages: chatMessages }),
+    }, `${fileBase}.md`)), (message) => t("Couldn't export the conversation: {message}", { message }));
 
   // Anything of the user's waiting in the composer: a fetch handoff's card
   // does not send its continuation over it (chat/FetchHandoffCards.jsx).
@@ -1122,7 +1129,8 @@ export default function ChatDock({
     if (readOnly || aiOff) return;
     const text = (rawText || "").trim();
     if (!text || busyHere) return;
-    guideEvents.emit("chat.sent");
+    // pdf: the whole file goes with this message (the PDF switch's hint).
+    guideEvents.emit("chat.sent", { pdf: !!(pdfInContext && attachPdf && nativePdf) });
     const selectedDocs = referenceMessage ? (referenceMessage.contextPages || []).map((p) => p.id) : chatDocs;
     const includeNotes = referenceMessage ? !!referenceMessage.includeNotes : chatIncludeNotes;
     if (referenceMessage) { setChatDocs(selectedDocs); setChatIncludeNotes(includeNotes); }
@@ -1284,6 +1292,9 @@ export default function ChatDock({
       });
       showReply(aiMsg({ text: acc || (actions.length ? "" : t("(no response)")) }), true);
       if (gammaLinksIn(acc).some((link) => link.kind === "citation")) guideEvents.emit("chat.cited");
+      // The reply changed the library or notes: its list of changes, each
+      // with its own undo, is on screen.
+      if (actions.some(isChange)) guideEvents.emit("chat.changed");
     } catch (err) {
       const stopped = err?.name === "AbortError";
       // fetch's own TypeError ("Failed to fetch", or the body reader's
@@ -1539,7 +1550,7 @@ export default function ChatDock({
   }
 
   // Header: one icon strip (the PDF zoom column's buttons, laid flat) —
-  // Export context, the context ring (opens the settings popover, whose Tokens section
+  // Export (the conversation or its context), the context ring (opens the settings popover, whose Tokens section
   // spells it out), ⚙ chat settings (context size, tools and tokens — the
   // same prefs Settings / AI edits, in a popover; the model and effort are
   // the composer's model chip), Tools, Find, History, New chat.
@@ -1566,11 +1577,26 @@ export default function ChatDock({
       <div className="ctlBtnRow chatPanelHeaderBtns">
         {/* First in the strip: a button right of ⚙ would push its popover
             (right-aligned under it) past a narrow panel's edge. */}
-        <button type="button" className="ctlBtn" onClick={exportContext} disabled={exporting}
-          title={t("Export context — download what the model is sent (system prompt, pages, every message and your draft) as Markdown")}
-          aria-label={t("Export chat context")}>
+        <button type="button" ref={exportBtnRef} className={`ctlBtn${exportMenu ? " modeActive" : ""}`} disabled={exporting}
+          title={t("Export this conversation or the context the model is sent")} aria-label={t("Export chat")}
+          aria-haspopup="menu" aria-expanded={!!exportMenu}
+          onClick={(e) => {
+            if (exportMenu) { setExportMenu(null); return; }
+            const r = e.currentTarget.getBoundingClientRect();
+            setExportMenu({ x: r.left, y: r.bottom + 4 });
+          }}>
           <DownloadIcon size={16} />
         </button>
+        {exportMenu ? (
+          <ContextMenu x={exportMenu.x} y={exportMenu.y} onClose={() => setExportMenu(null)} ignoreRef={exportBtnRef}>
+            <MenuItem icon={MessageSquareIcon} disabled={!chatMessages.length}
+              title={t("Download this conversation as Markdown, with its pictures")}
+              onClick={() => { setExportMenu(null); exportConversation(); }}>{t("Export conversation")}</MenuItem>
+            <MenuItem icon={BotIcon}
+              title={t("Export context — download what the model is sent (system prompt, pages, every message and your draft) as Markdown")}
+              onClick={() => { setExportMenu(null); exportContext(); }}>{t("Export context")}</MenuItem>
+          </ContextMenu>
+        ) : null}
         {headerModels.length > 0 ? (() => {
           const totalUsage = conversationUsage(chatMessages);
           const usageTitle = totalUsage ? t("; this conversation: {input} tokens in, {output} out", { input: fmtTokens(totalUsage.input), output: fmtTokens(totalUsage.output) }) : "";
@@ -1633,7 +1659,7 @@ export default function ChatDock({
           className={`ctlBtn ${toolsEnabled ? "modeActive" : ""}`}
           data-guide="chat.tools"
           aria-pressed={toolsEnabled}
-          aria-label={`Tools ${toolsEnabled ? "on" : "off"}`}
+          aria-label={toolsEnabled ? t("Tools on") : t("Tools off")}
           onClick={() => { setOpenPopover(null); toggleTools(); }}
           title={t("Tools {off} for all chats - click to change the global setting", { off: toolsEnabled ? t("on") : t("off") })}
         >
@@ -1641,7 +1667,7 @@ export default function ChatDock({
         </button>
         {findBtn}
         {canSave ? <span data-popover="chathistory" className="popoverAnchor">
-          <button type="button" className={`ctlBtn ${historyOpen ? "modeActive" : ""}`}
+          <button type="button" className={`ctlBtn ${historyOpen ? "modeActive" : ""}`} data-guide="chat.history"
             onClick={() => setOpenPopover((p) => (p === "chathistory" ? null : "chathistory"))}
             title={t("Chat history — earlier conversations of {scope}", { scope: folderChat ? t("this folder") : t("this page") })}
             aria-label={t("Chat history")} aria-expanded={historyOpen}>
@@ -1692,7 +1718,7 @@ export default function ChatDock({
                         onChange={() => togglePicked(s.id)} />
                     )}
                     <span className="chatHistTitle">{s.title || t("Untitled")}</span>
-                    <span className="chatHistAge">{s.active ? "now" : relAge(s.updated_at)}</span>
+                    <span className="chatHistAge">{s.active ? t("now") : relAge(s.updated_at)}</span>
                     <MenuButton open={openRowMenu(s)} />
                   </div>
                 ))}
@@ -1703,6 +1729,8 @@ export default function ChatDock({
                       renameCancelRef.current = false;
                       setRenaming({ id: rowMenu.row.id, text: rowMenu.row.active ? chatTitle : rowMenu.row.title || "" });
                     }}>{t("Rename")}</MenuItem>
+                    <MenuItem icon={DownloadIcon} title={t("Download this conversation as Markdown, with its pictures")}
+                      onClick={() => { setRowMenu(null); exportConversation(rowMenu.row.active ? null : rowMenu.row); }}>{t("Export")}</MenuItem>
                     {rowMenu.row.active ? null : <>
                       {picked.has(rowMenu.row.id) ? null : (
                         <MenuItem icon={SquareCheckIcon} onClick={() => { setRowMenu(null); togglePicked(rowMenu.row.id); }}>{t("Select")}</MenuItem>
@@ -1734,7 +1762,7 @@ export default function ChatDock({
             {t("Not saved")}
           </span>
         )}
-        <button type="button" {...newChatAltProps} className={`ctlBtn${discardArmed ? " danger" : ""}`}
+        <button type="button" {...newChatAltProps} className={`ctlBtn${discardArmed ? " danger" : ""}`} data-guide="chat.new"
           onClick={(e) => newChat(e.altKey)} disabled={busyHere}
           title={discardArmed ? t("Discard chat — it isn't kept in history")
             : canSave ? t("New chat — keeps this conversation in history and starts a fresh one (Alt+click: discard it)") : t("New chat")}
@@ -2122,11 +2150,11 @@ export default function ChatDock({
           disabled={aiOff}
           placeholder={aiOff ? t("Connect an AI service to start chatting") : (
             // Names what the message will be about, most specific attachment first.
-            chatFiles.length ? `Ask about the attached file${chatFiles.length > 1 ? "s" : ""}…`
-            : chatImages.length ? t("Ask about the attached picture…") : pdfSelections.length > 1 ? `Ask about the ${pdfSelections.length} selected passages…`
+            chatFiles.length ? tn("Ask about the attached file…", "Ask about the attached files…", chatFiles.length)
+            : chatImages.length ? t("Ask about the attached picture…") : pdfSelections.length > 1 ? t("Ask about the {n} selected passages…", { n: pdfSelections.length })
             : pdfSelections.length ? t("Ask about the selection…") : chatNotes?.length > 1 ? t("Ask about the {n} attached notes…", { n: chatNotes.length })
             : chatNotes?.length ? (chatNotes[0].kind === "block" ? t("Ask about the attached block…") : t("Ask about the selected note…"))
-            : cursorChip?.sel ? t("Ask about the selection…") : cursorChip ? t("Ask about this block…") : chatDocs.length ? `Ask about ${chatDocs.length} attached page${chatDocs.length > 1 ? "s" : ""}…`
+            : cursorChip?.sel ? t("Ask about the selection…") : cursorChip ? t("Ask about this block…") : chatDocs.length ? tn("Ask about {n} attached page…", "Ask about {n} attached pages…", chatDocs.length)
             : agentAsk || t("Ask…")
           ) + t(" (@ paper)")}
         />
@@ -2169,7 +2197,7 @@ export default function ChatDock({
                     <BookIcon size={16} />
                   </span>
                   <span className="chatPlusMenuLabel">{t("Add pages from library")}</span>
-                  <span className="chatPlusMenuHint">{chatDocs.length ? `${chatDocs.length} selected` : t("Search your pages")}</span>
+                  <span className="chatPlusMenuHint">{chatDocs.length ? t("{n} selected", { n: chatDocs.length }) : t("Search your pages")}</span>
                 </button>
               </div>
             ) : null}
@@ -2185,6 +2213,7 @@ export default function ChatDock({
           {pdfInContext && !aiOff ? <button
             type="button"
             className={`chatAttachToggle chatPdfToggle ${attachPdf ? "on" : ""}`}
+            data-guide="chat.pdfSwitch"
             aria-pressed={attachPdf}
             onClick={() => { attachPdfManualRef.current = true; setAttachPdf((v) => !v); }}
             title={!nativePdf
@@ -2213,7 +2242,7 @@ export default function ChatDock({
             </button>
           ) : null}
           {!aiOff && headerModels.length ? (
-            <span className="chatModelChip">
+            <span className="chatModelChip" data-guide="chat.model">
               <MenuSelect
                 up
                 label={knobsLabel(speed)}
