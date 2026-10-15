@@ -782,6 +782,56 @@ export async function settingsScenarios(env) {
       assert(await page.locator(".appearancePdfPreview.isDark").isVisible());
       await page.getByRole("checkbox", { name: "Dark PDF pages", exact: true }).uncheck();
       await until(() => user.api("/api/prefs/profile").then((v) => v.value?.pdfDarkPage === false));
+      // Colors: groups of swatches; a swatch opens an editor (colour, opacity, Remove); groups are added and
+      // deleted; each picker chooses groups; Reset puts the defaults back
+      const group = (name) => page.locator(`.paletteGroup[data-setting="${name}"]`);
+      const swatches = group("Highlight").locator(".paletteSwatch:not(.paletteAdd)");
+      assertEq(await swatches.count(), 4);
+      assertEq(await group("Ink highlight").locator(".paletteSwatch:not(.paletteAdd)").count(), 8);
+      assertEq(await group("Pen").locator(".paletteSwatch:not(.paletteAdd)").count(), 14);
+      const palette = async () => (await user.api("/api/prefs/profile")).value?.palette;
+      const reset = page.getByRole("button", { name: "Reset colors", exact: true });
+      assert(await reset.isDisabled(), "nothing to reset at the defaults");
+      await swatches.first().click();
+      const editor = group("Highlight").locator(".paletteEditor");
+      // the picker: a hex field (#rrggbbaa sets the opacity too), an opacity field, the hue bar
+      const hexField = editor.getByRole("textbox", { name: "Hex color", exact: true });
+      await hexField.fill("#ff8800");
+      await until(async () => (await palette())?.groups?.[0]?.colors?.[0]?.hex === "#ff8800");
+      assertEq(await swatches.first().getAttribute("aria-label"), "Amber, 65% opaque", "named after the nearest colour, at its alpha");
+      await editor.getByRole("spinbutton", { name: "Opacity", exact: true }).fill("40");
+      await until(async () => (await palette())?.groups?.[0]?.colors?.[0]?.alpha === 0.4);
+      assertEq(await swatches.first().evaluate((el) => getComputedStyle(el).backgroundColor), "rgba(255, 136, 0, 0.4)");
+      await hexField.fill("#00ff0080");
+      await until(async () => { const c = (await palette())?.groups?.[0]?.colors?.[0]; return c?.hex === "#00ff00" && c?.alpha === 0.5; });
+      const hue = editor.getByRole("slider", { name: "Hue", exact: true });
+      const box = await hue.boundingBox();
+      await page.mouse.click(box.x + 1, box.y + box.height / 2); // the left edge of the hue bar is red (a pixel in: nearly)
+      await until(async () => /^#ff0[0-9a-f]00$/.test((await palette())?.groups?.[0]?.colors?.[0]?.hex || ""), { what: "the hue bar's left edge, red" });
+      assertEq((await palette()).groups[0].colors[0].alpha, 0.5, "a hue change keeps the opacity");
+      assertEq((await palette()).groups[0].colors[1].hex, "#aaebaa", "the other swatches stay");
+      await group("Highlight").getByRole("button", { name: "Add color to Highlight", exact: true }).click();
+      await until(async () => (await palette())?.groups?.[0]?.colors?.length === 5);
+      assertEq(await swatches.count(), 5);
+      await editor.getByRole("button", { name: "Remove", exact: true }).click();
+      await until(async () => (await palette())?.groups?.[0]?.colors?.length === 4);
+      await page.getByRole("button", { name: "Add group", exact: true }).click();
+      await until(async () => (await palette())?.groups?.length === 4);
+      await group("New group").getByRole("textbox", { name: "Group name", exact: true }).fill("Work");
+      await until(async () => (await palette())?.groups?.[3]?.name === "Work");
+      // each picker row is a dropdown of the groups; the new one becomes the text highlights' group
+      const pickerRow = row(page, "Text highlights");
+      assertEq(await pickerRow.getByRole("button", { name: "Text highlights", exact: true }).innerText(), "Highlight");
+      await pickerRow.getByRole("button", { name: "Text highlights", exact: true }).click();
+      await page.locator(".uiSelectMenu").getByRole("button", { name: "Work", exact: true }).click();
+      await until(async () => { const p = await palette(); return p?.pickers?.highlight === p?.groups?.[3]?.id; });
+      assertEq(await pickerRow.getByRole("button", { name: "Text highlights", exact: true }).innerText(), "Work");
+      // deleting the chosen group sends the picker back to its default group
+      await group("Work").getByRole("button", { name: "Delete group Work", exact: true }).click();
+      await until(async () => (await palette())?.groups?.length === 3 && (await palette())?.pickers?.highlight === "highlight");
+      await reset.click();
+      await until(async () => (await palette())?.groups?.[0]?.colors?.[0]?.hex === "#ffe28f");
+      assert(await reset.isDisabled());
       await row(page, "Interface size").getByRole("button", { name: "Larger", exact: true }).click();
       assert((await row(page, "Interface size").innerText()).includes("110%"));
       await row(page, "Interface size").getByRole("button", { name: "Reset", exact: true }).click();

@@ -6,8 +6,10 @@ import {
   CopyIcon, ErasePartialIcon, EraserIcon, EraseStrokeIcon, HandIcon, HighlightIcon, LassoIcon, LineWidthIcon, PenIcon,
   RectSelectIcon, RedoIcon, TrashIcon, TypeIcon, UndoIcon, XIcon,
 } from "../shared/ui/Icons";
-import { HIGHLIGHTER_COLORS, HIGHLIGHTER_OPACITY, MAX_TOOLS, PEN_COLORS, sizesFor, toolId } from "../ink/ink";
+import { MAX_TOOLS, defaultOpacity, sizesFor, toolId } from "../ink/ink";
 import { ColorChoices, ERASER_SIZES, InkTooltips, inkColorName } from "../ink/InkLayer";
+import { pickerColors } from "../shared/model/palette.js";
+import { usePalette } from "../shared/ui/paletteContext.js";
 import { TextStyleChoices } from "./TextBoxLayer";
 import { t } from "../shared/i18n/i18n.js";
 
@@ -54,7 +56,9 @@ export function MarkupToolbar({ tools, active, options, eraserMode, eraserSize, 
     <button type="button" className={"ctlBtn inkSegBtn" + (on ? " modeActive" : "")} onClick={click}
       title={title} aria-label={label} aria-pressed={on}>{icon}<span>{label}</span></button>
   );
-  const palette = preset ? (preset.kind === "highlighter" ? HIGHLIGHTER_COLORS : PEN_COLORS) : null;
+  const colors = usePalette();
+  const palette = preset ? pickerColors(colors, preset.kind === "highlighter" ? "highlighter" : "pen") : null;
+  const presetOpacity = preset ? preset.opacity ?? defaultOpacity(preset.kind) : 1;
   return (
     <InkTooltips className="pdfInkBar" role="toolbar" aria-label={t("Markup tools")} data-guide="ink.toolbar">
       <div className="pdfInkRow">
@@ -98,13 +102,14 @@ export function MarkupToolbar({ tools, active, options, eraserMode, eraserSize, 
             {seg(preset.brush === "monoline", t("Monoline"), <LineWidthIcon size={14} />, () => edit({ brush: "monoline" }), t("Monoline: an even line at every pressure"))}
             <span className="pdfInkSep" />
           </> : null}
-          <ColorChoices colors={palette} color={preset.color} onColor={(color) => edit({ color })} />
+          <ColorChoices colors={palette} color={preset.color} alpha={presetOpacity}
+            onColor={(color, alpha) => edit({ color, opacity: alpha })} />
           <span className="pdfInkSep" />
           {sizesFor(preset.kind).map((sz, i) => (
             <button key={sz} type="button" className={"ctlBtn inkSizeBtn" + (preset.size === sz ? " modeActive" : "")}
               onClick={() => edit({ size: sz })} title={t("{sz} pt", { sz: sz })} aria-label={t("Width {sz} pt", { sz: sz })}>
               <span className="inkSizeDot" style={{ width: 4 + i * 2, height: 4 + i * 2, background: preset.color,
-                opacity: preset.kind === "highlighter" ? HIGHLIGHTER_OPACITY + 0.2 : 1 }} />
+                opacity: Math.min(1, presetOpacity + (preset.kind === "highlighter" ? 0.2 : 0)) }} />
             </button>
           ))}
           <span className="pdfInkSep" />

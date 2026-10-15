@@ -4,6 +4,7 @@
 // PDF text on another page.
 import { tree, same, partialBlockSearch } from "./notes.mjs";
 import { fakeAiModels } from "../harness.mjs";
+import { DEFAULT_PALETTE, darkPageColor } from "../../../src/shared/model/palette.js";
 
 // Select `needle` inside one text-layer span of `pageNo` and release the
 // mouse the way the viewer listens for it (document-level mouseup).
@@ -170,6 +171,7 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
     // The block is the highlight: no second id, the page and its size once.
     const { pdf_position: pos, ...rest } = saved.properties;
     assert(!("highlight_id" in rest) && !("pdf_page" in rest), `no highlight_id or pdf_page: ${JSON.stringify(rest)}`);
+    assertEq(rest.color, "#ffe28fa6", "the first swatch, stored as hex with the highlight alpha");
     assertEq(pos.pageNumber, 1, "highlight page");
     assert(pos.width > 0 && pos.height > 0, "the page size the rects are measured in");
     assert(pos.rects.length && pos.rects.every((r) => JSON.stringify(Object.keys(r)) === '["x1","y1","x2","y2"]')
@@ -266,23 +268,65 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
     assertNoProblems(page);
   });
 
-  await step("pdf: flipped pages draw palette highlights in a dark-tuned set; other colours keep screening", async () => {
+  await step("pdf: flipped pages draw every highlight in a dark-tuned colour of its own hue, not screened", async () => {
     const mark = page.locator('[data-page="1"] div[data-hl-id]').first();
     const look = () => mark.evaluate((el) => { const s = getComputedStyle(el); return `${s.backgroundColor} ${s.mixBlendMode}`; });
-    assertEq(await mark.getAttribute("data-hl-color"), "0", "the first palette colour is tagged by its index");
-    assert((await look()).endsWith(" multiply"), "a light page multiplies");
+    assertEq(await look(), "rgba(255, 226, 143, 0.65) multiply", "a light page multiplies the stored colour (#ffe28fa6)");
+    const dark = await mark.evaluate((el) => el.style.getPropertyValue("--hl-dark").trim());
+    assertEq(dark, darkPageColor("#ffe28fa6"), "the viewer derives the dark variant with the palette module");
     const flip = (on) => page.locator(".pdfViewer").evaluate((el, on) => el.classList.toggle("pdfDark", on), on);
     await flip(true);
     try {
-      assertEq(await look(), "rgba(250, 204, 21, 0.3) normal", "the dark-tuned yellow, not screened");
+      assertEq(await look(), `${dark} normal`, "the dark-tuned yellow, not screened");
       assertEq(await page.locator(".pdfNoteBadge").first().evaluate((el) => getComputedStyle(el).backgroundColor), "rgb(42, 42, 42)", "a dark note badge");
-      // A colour from another app has no palette index and keeps the screen blend.
-      await mark.evaluate((el) => { el.removeAttribute("data-hl-color"); el.style.setProperty("--hl", "rgba(255, 0, 0, 0.4)"); });
-      assertEq(await look(), "rgba(255, 0, 0, 0.4) screen");
+      // A colour from another app is treated the same: its own hue, dark-tuned.
+      await mark.evaluate((el) => {
+        el.style.setProperty("--hl", "rgba(255, 0, 0, 0.4)");
+        el.style.setProperty("--hl-dark", "rgba(230, 20, 20, 0.3)");
+      });
+      assertEq(await look(), "rgba(230, 20, 20, 0.3) normal");
     } finally { await flip(false); }
     await page.reload();
     await waitForPdf(page);
     assertNoProblems(page);
+  });
+
+  await step("pdf: a changed palette swatch colours new highlights; stored ones keep theirs", async () => {
+    // the first swatch of the Highlight group becomes a half-transparent orange
+    const palette = JSON.parse(JSON.stringify(DEFAULT_PALETTE));
+    palette.groups[0].colors[0] = { hex: "#ff8800", alpha: 0.5 };
+    await account.api("/api/prefs/profile", { method: "PATCH", body: { set: { palette } } });
+    try {
+      await page.reload();
+      await waitForPdf(page, 1);
+      const first = page.locator(".plainTip .colorBtn").first();
+      await selectPdfText(page, 1, "Rydberg arrays");
+      await page.waitForSelector(".plainTip .colorBtn", { timeout: 5000 });
+      assertEq(await first.getAttribute("aria-label"), "Highlight in Amber", "the swatch is named after its nearest colour");
+      assertEq(await first.evaluate((el) => getComputedStyle(el).backgroundColor), "rgba(255, 136, 0, 0.5)", "drawn at its alpha");
+      await first.click();
+      const saved = await until(async () => {
+        const d = await account.api(`/api/blocks/${pageId}/subtree`);
+        return (d.block.children || []).find((b) => b.properties?.quote === "Rydberg arrays") || null;
+      }, { what: "the orange highlight" });
+      assertEq(saved.properties.color, "#ff880080", "the new swatch at its own alpha");
+      const kept = await account.api(`/api/blocks/${pageId}/subtree`);
+      assert((kept.block.children || []).some((b) => b.properties?.color === "#ffe28fa6"), "the earlier highlight keeps its yellow");
+      // the recolour menu offers the same swatches
+      await page.click(`[data-page="1"] [data-hl-id="${saved.id}"]`, { button: "right" });
+      const swatch = page.locator(".ctxMenuColors .colorBtn").nth(1);
+      assertEq(await swatch.getAttribute("aria-label"), "Change to Green");
+      await swatch.click();
+      await until(async () => {
+        const d = await account.api(`/api/blocks/${pageId}/subtree`);
+        return (d.block.children || []).find((b) => b.id === saved.id)?.properties?.color === "#aaebaaa6";
+      }, { what: "the highlight recoloured green" });
+      assertNoProblems(page);
+    } finally {
+      await account.api("/api/prefs/profile", { method: "PATCH", body: { set: { palette: DEFAULT_PALETTE } } });
+      await page.reload();
+      await waitForPdf(page, 1);
+    }
   });
 
   await step("pdf: interface scale keeps note badges anchored and Tours consistent", async () => {

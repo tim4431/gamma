@@ -45,8 +45,7 @@ from PyPDF2.generic import (
     TextStringObject,
 )
 
-_RGBA_RE = re.compile(r"rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*(?:,\s*([0-9.]+)\s*)?\)")
-_HEX_RE = re.compile(r"#([0-9a-fA-F]{6})$")
+from . import colors
 DEFAULT_COLOR = (1.0, 226 / 255, 143 / 255, 0.65)  # the viewer's yellow
 
 
@@ -68,17 +67,10 @@ class ExportPdfReader(PdfReader):
 
 
 def parse_css_color(value):
-    """CSS color string (as stored on highlight blocks) → (r, g, b, alpha) in 0..1."""
-    m = _RGBA_RE.match((value or "").strip())
-    if m:
-        r, g, b = (min(int(v), 255) / 255 for v in m.groups()[:3])
-        a = min(float(m.group(4)), 1.0) if m.group(4) else 1.0
-        return (r, g, b, a)
-    m = _HEX_RE.match((value or "").strip())
-    if m:
-        h = m.group(1)
-        return tuple(int(h[i:i + 2], 16) / 255 for i in (0, 2, 4)) + (1.0,)
-    return DEFAULT_COLOR
+    """A colour as stored on highlight blocks (``#rrggbbaa``, or the older
+    ``rgba(…)`` / ``#rrggbb``, gamma/colors.py) → (r, g, b, alpha) in 0..1;
+    the viewer's yellow for anything else."""
+    return colors.parse_color(value) or DEFAULT_COLOR
 
 
 def still_embedded(props: dict) -> bool:

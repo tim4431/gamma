@@ -725,6 +725,62 @@
 .appearancePdf { display: flex; align-items: center; gap: 12px; border: 1px solid var(--border-subtle); border-radius: var(--radius-md); padding: 8px 10px; }
 .appearancePdfPreview { flex: 0 0 40px; width: 40px; height: 49px; }
 .appearancePdfControls { flex: 1; min-width: 0; }
+/* Appearance › Colors: one card per colour group — its name, its swatches
+   drawn at their alpha, a "+" swatch — and, under a selected swatch, the
+   editor: the native colour picker (the tool strip's custom-colour swatch),
+   the opacity slider and Remove. */
+.paletteGroup { display: flex; flex-direction: column; gap: 8px; margin: 4px 8px; }
+.paletteGroupHead { display: flex; align-items: center; gap: 6px; }
+.paletteGroupName {
+  flex: 1 1 auto; min-width: 0;
+  font: inherit; font-weight: 600; color: var(--text-primary);
+  background: transparent; border: 1px solid transparent; border-radius: var(--radius-md);
+  padding: 2px 6px; margin-left: -6px;
+}
+.paletteGroupName:hover { border-color: var(--border-subtle); }
+.paletteGroupName:focus { outline: none; border-color: var(--accent); background: var(--bg-input, var(--bg-block)); }
+.paletteGroupCount { font-size: var(--fs-xs); color: var(--text-dim); white-space: nowrap; }
+.paletteSwatches { display: flex; flex-wrap: wrap; gap: 6px; }
+.paletteSwatch { width: 22px; height: 22px; display: inline-flex; align-items: center; justify-content: center; }
+.paletteSwatch.selected { box-shadow: 0 0 0 2px var(--accent); border-color: var(--bg); }
+.paletteAdd { background: var(--bg-block); color: var(--text-muted); border-style: dashed; }
+.paletteAdd:hover:not(:disabled) { color: var(--text-primary); border-color: var(--text-muted); }
+.paletteAdd:disabled { opacity: 0.4; cursor: default; }
+.paletteEditor {
+  display: flex; align-items: flex-start; gap: 14px;
+  padding: 10px; border-radius: var(--radius-md);
+  background: var(--bg-subtle); border: 1px solid var(--border-subtle);
+}
+.paletteEditorSide { display: flex; flex-direction: column; gap: 8px; min-width: 0; flex: 1 1 auto; }
+.paletteEditorName { font-weight: 600; color: var(--text-primary); }
+.paletteEditorSide .uiBtn { align-self: flex-start; }
+.paletteEditor > .uiClose { margin-left: auto; }
+@media (max-width: 560px) { .paletteEditor { flex-wrap: wrap; } }
+
+/* The colour picker (shared/ui/ColorPicker.jsx): the square, the two bars
+   and the fields. Its gradients are inline styles. */
+.colorPicker { display: flex; flex-direction: column; gap: 8px; width: 220px; max-width: 100%; flex-shrink: 0; }
+.cpArea, .cpBar { position: relative; border-radius: var(--radius-md); border: 1px solid var(--border-subtle); cursor: crosshair; touch-action: none; }
+.cpArea { height: 140px; }
+.cpBar { height: 14px; cursor: ew-resize; }
+.cpArea:focus-visible, .cpBar:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.cpHandle {
+  position: absolute; width: 14px; height: 14px; border-radius: var(--radius-full);
+  border: 2px solid var(--bg); box-shadow: 0 0 0 1px var(--text-muted);
+  transform: translate(-50%, -50%); pointer-events: none;
+}
+.cpBar .cpHandle { top: 50%; }
+.cpFields { display: flex; align-items: center; gap: 6px; }
+.cpPreview { width: 26px; height: 26px; border-radius: var(--radius-full); border: 1px solid var(--border-subtle); overflow: hidden; flex-shrink: 0; }
+.cpPreview > span { display: block; width: 100%; height: 100%; }
+.cpHex, .cpAlphaField input {
+  font: inherit; font-size: var(--fs-sm); font-variant-numeric: tabular-nums; color: var(--text-primary);
+  background: var(--bg-input, var(--bg-block)); border: 1px solid var(--border-subtle); border-radius: var(--radius-md);
+  padding: 4px 6px; min-width: 0;
+}
+.cpHex { flex: 1 1 auto; width: 90px; font-family: var(--font-mono); }
+.cpAlphaField { display: inline-flex; align-items: center; gap: 2px; color: var(--text-muted); font-size: var(--fs-sm); }
+.cpAlphaField input { width: 52px; text-align: right; }
 .appearancePdf .setRow { padding: 0; grid-template-columns: minmax(0, 1fr) auto; }
 .appearancePdf .setIcon { display: none; }
 .appearanceInterface { border: 1px solid var(--border-subtle); border-radius: var(--radius-md); padding: 2px 10px; }

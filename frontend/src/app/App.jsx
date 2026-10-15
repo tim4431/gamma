@@ -3,7 +3,8 @@ import { flushSync } from "react-dom";
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import PdfViewer, { preloadPdfEngine } from "../pdf/PdfViewer";
 import { highlightSpot, rangeSpot } from "../pdf/pdfSelectionSpot";
-import { COLORS } from "../shared/model/highlightColors.js";
+import { DEFAULT_HIGHLIGHT, colorName, highlightColor, normalizeColor, pickerColors, swatchCss } from "../shared/model/palette.js";
+import { PaletteContext } from "../shared/ui/paletteContext.js";
 import { clampZoom } from "../shared/model/zoom.js";
 import { fmtDate, getLocale, resolveLocale, t, T, tn } from "../shared/i18n/i18n.js";
 import { REOPEN_SETTINGS_KEY, resolveSettingsPane } from "../settings/settingsNavigation.js";
@@ -2509,6 +2510,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   const profileSync = useProfileSync(appPrefs, authUser?.user && !authUser.is_guest && !shareMode ? authUser.user : "");
   const {
     theme, setTheme, pdfDarkPage, setPdfDarkPage, uiScale, setUiScale, recentThumbs, setRecentThumbs,
+    palette, setPalette,
     language, setLanguage,
     fileLabels, setFileLabels,
     oaFallback, setOaFallback, metaAutoFetch, setMetaAutoFetch, pdfSaveLocal, setPdfSaveLocal,
@@ -4132,7 +4134,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
 
   function changeHighlightColor(id, newColor) {
     if (readOnly || !findBlock(blocks, id)) return;
-    setBlocks(updateBlockTree(blocks, id, (b) => ({ ...b, properties: { ...b.properties, color: newColor } })));
+    const color = normalizeColor(newColor) || DEFAULT_HIGHLIGHT;
+    setBlocks(updateBlockTree(blocks, id, (b) => ({ ...b, properties: { ...b.properties, color } })));
   }
 
   // Gamma's own links (chat citations, copied page/block links) open in
@@ -9933,6 +9936,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   return (
     <GammaNavContext.Provider value={gammaNav}>
     <PageToolsContext.Provider value={pageTools}>
+    <PaletteContext.Provider value={palette}>
     <MentionContext.Provider value={mentionPeople}>
     <MentionClock.Provider value={reminders.now}>
     <div
@@ -10416,7 +10420,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                   content: content || { text: "" },
                   position,
                   comment: { text: extras?.commentText || "" },
-                  color: extras?.color || COLORS[0],
+                  // the popup's swatch is a palette colour; a highlight stores it at the wash alpha
+                  color: highlightColor(extras?.color) || DEFAULT_HIGHLIGHT,
                 });
                 hideTip?.();
               }}
@@ -10843,6 +10848,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           refreshAiModels, // saving a service's key updates that list
           pdfDarkPage,
           setPdfDarkPage,
+          palette,
+          setPalette,
           suggestTours,
           setSuggestTours,
           recentThumbs,
@@ -11263,17 +11270,18 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       {highlightMenu ? (
         <ContextMenu x={highlightMenu.x} y={highlightMenu.y} onClose={() => setHighlightMenu(null)}>
             <div className="colorRow ctxMenuColors">
-              {COLORS.map((c) => (
+              {pickerColors(palette, "highlight").map((c, i) => (
                 <button
-                  key={c}
+                  key={c.hex + c.alpha + i}
                   type="button"
                   className="colorBtn"
-                  style={{ background: c }}
+                  style={{ background: swatchCss(c) }}
                   onClick={() => {
-                    changeHighlightColor(highlightMenu.id, c);
+                    changeHighlightColor(highlightMenu.id, highlightColor(c));
                     setHighlightMenu(null);
                   }}
-                  title={t("Change color")}
+                  title={t("Change to {color}", { color: t(colorName(c)) })}
+                  aria-label={t("Change to {color}", { color: t(colorName(c)) })}
                 />
               ))}
             </div>
@@ -11340,6 +11348,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     </div>
     </MentionClock.Provider>
     </MentionContext.Provider>
+    </PaletteContext.Provider>
     </PageToolsContext.Provider>
     </GammaNavContext.Provider>
   );

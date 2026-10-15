@@ -26,16 +26,24 @@ app ([ipad.md](ipad.md)). Typed text on a page is
   and select text), close, and Undo / Redo. Its accessible name is
   "Markup tools". One tap arms a tool;
   **tapping the armed tool again opens its options row** under the strip.
-  For a preset that row is the palette (14 pen / 8 highlighter colours
-  plus a custom colour through the browser's picker), eight widths as
-  dots, *Duplicate* (a copy right after it, armed and still open for
-  editing) and *Remove*; the change applies to that preset, so the row is
-  the user's own set of pens (up to 12, kept in localStorage,
-  `gamma-ink-tools`). Colours are named in words, never hex codes: a
-  preset reads "Pink highlighter · 14 pt · key 7", and each swatch is
-  titled and labelled by its name (`INK_COLOR_NAMES` in `InkLayer.jsx`). A
-  custom colour takes the name of the nearest palette colour
-  (`nearestInkColor` in `ink.js`, redmean distance). Keys while the strip
+  For a preset that row is the palette — the colour groups the account
+  chose for pen presets or for highlighter presets (Settings → Appearance
+  › Colors, [settings.md](settings.md); by default the 14 dark "Pen"
+  colours and the eight light "Ink highlight" colours, the four text
+  highlight colours and four more) plus
+  a custom colour through the browser's picker — eight widths as dots,
+  *Duplicate* (a copy right after it, armed and still open for editing)
+  and *Remove*; the change applies to that preset, so the row is the
+  user's own set of pens (up to 12, kept in localStorage,
+  `gamma-ink-tools`, each with the concrete hex it was given and, when a
+  swatch brought one, its own `opacity` — a swatch's alpha; a preset
+  without one draws at the kind's usual opacity, 0.6 for a highlighter
+  and 1 for a pen, `toolStyle`). Colours are
+  named in words, never hex codes: a preset reads "Pink highlighter · 14 pt
+  · key 7", and each swatch is titled and labelled by its name. Any colour,
+  a custom one or a changed swatch included, takes the name of the nearest
+  reference colour (`colorName` in `shared/model/palette.js`, redmean
+  distance). Keys while the strip
   is open: `1`–`9` arm the preset
   at that position, `P` / `H` step through the pens / highlighters, `E`
   `L` `T` `V` the eraser / lasso / Text tool / hand, `Esc`, `Delete` (the
@@ -310,8 +318,10 @@ text box's `text_box`, merged key by key ([text_boxes.md](text_boxes.md)
   strip and the menus, since native titles are unreliable under Pencil
   hover. `InkCard` is the picture in the notes. For `markup/` the file
   exports `InkTooltips`, `inkColorName`, `ERASER_SIZES`, `ColorChoices` (a
-  palette's swatches plus a custom colour, for a pen preset's row and a
-  text box's colours) and `swallowClick` (eats the click a handled
+  palette role's swatches plus a custom colour, for a pen preset's row and a
+  text box's colours; the strip, the selection menu and the text box read
+  the account's palette through `usePalette`, `shared/ui/paletteContext.js`)
+  and `swallowClick` (eats the click a handled
   pointer-up would deliver). Imports run from `markup/` to `ink/`, never
   back.
   - Claiming input: a capture-phase `pointerdown` listener on the page
@@ -469,7 +479,8 @@ text box's `text_box`, merged key by key ([text_boxes.md](text_boxes.md)
 Shape tools, reordering presets
 by drag, syncing the preset row across devices (it is per browser),
 ballpoint / fountain / dashed pen styles, Xournal++ `.xopp` import,
-live co-drawing over presence, audio recording to go with the replay, and a
+live co-drawing over presence, audio recording to go with the replay
+(designed in [research/audio-recording.md](../research/audio-recording.md)), and a
 replay of erasures and edits (it shows the drawing as it is, in the order
 it was written). Obsidian vault export writes an ink block's
 caption only. The Notability comparison in the research note lists what a
