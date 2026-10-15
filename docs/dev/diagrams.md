@@ -32,6 +32,12 @@ resize grips keep their own double-clicks (`editor/MdObject.jsx`, object
 kind `"diagram"`). Hovering a diagram, or selecting a note's, shows its
 toolbar, the same flat icon buttons as a note image's strip: show source
 (`</>`), copy source, download SVG, and in a note the object menu's "⋯".
+The menu's "Copy image" copies the figure as drawn (`shared/lib/copyImage.js`,
+shared with note pictures): its SVG at the shown size on the card's
+background, so a Mermaid figure keeps its theme's colours and a drawing its
+white page, plus a PNG of it at twice that size for apps that paste only
+bitmaps. A figure showing its source or an error has nothing to copy, and
+the row is left out.
 
 A note's diagram resizes like a note image: a grip on each side
 (`shared/ui/ResizeGrip.jsx`, shared with `MdImage`) drags the width. The
@@ -214,7 +220,7 @@ PDF exports print a diagram's fence as a code block, and the note editor
 From `frontend/`:
 
 ```sh
-node --test tests/diagramMarkdown.test.mjs tests/svgSanitize.test.mjs
+node --test tests/diagramMarkdown.test.mjs tests/svgSanitize.test.mjs tests/copyImage.test.mjs
 npm run build
 npm run e2e -- --group diagrams
 ```
@@ -230,7 +236,8 @@ For SVG they cover a note mixing an SVG, a Mermaid and an invalid SVG fence
 (two drawings and an error card), the drawing loaded as an image with its
 natural size, none of its markup, ids or style in the page, script and
 handlers gone from the image and the download, the white page in both
-themes, source copying, the grips writing `width=N` on the right fence of
+themes, source copying, Copy image (the drawing and a flowchart as an SVG at
+the shown size plus a drawn PNG twice that), the grips writing `width=N` on the right fence of
 the shared index, a streamed reply that waits for the closing fence, two
 drawings with the same ids in one reply, and a copied reply that keeps its
 `svg` fences.

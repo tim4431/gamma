@@ -94,7 +94,7 @@ Notes are a nested outline. Highlights and free notes are the same kind of block
 
 - **Live rendering**: the block you are on stays raw; everything else renders. Headings, lists, to-dos, callouts, tables, code, images, links.
 - **Math**: `$…$` and `$$…$$` render with KaTeX, with a live preview while you type and Tab hopping between `{}` arguments.
-- **Pictures**: paste or drag an image in; drag its grip to resize.
+- **Pictures**: paste or drag an image in; drag its grip to resize. Right-click a picture or a diagram and choose **Copy image** to paste it elsewhere; this needs HTTPS or localhost.
 - **Tables** are edited in place; a table from Excel pastes as markdown.
 - **"/" menu**: type `/` for headings, callouts, code, colors, a notebook sheet, a new page.
 - **Quotes and callouts** keep going over several lines: Enter carries the `>` (and a list inside it) to the next line, and **Ctrl+Shift+.** quotes or unquotes the selected lines. `/callout` on a quote's first line turns it into a callout; on a line inside one it starts a box inside it.
