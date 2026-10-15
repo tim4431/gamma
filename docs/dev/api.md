@@ -275,11 +275,20 @@ its page is `pdf_page` ([text_boxes.md](text_boxes.md)). A page stores
 frontend's `pageAttachment` derive that URL. Page creation, the op path,
 `POST /blocks/by-doc/{doc_id}` and `POST /pages/{id}/attachment` drop a
 `source_url` equal to it. Migration step 30 converts older data
-([migrations.md](migrations.md)). Tests: `tests/test_highlight_shape.py` (the shape, its writers, the derived
+([migrations.md](migrations.md)). A highlight's `properties.color` is
+its concrete colour as `#rrggbbaa` — a palette swatch at the highlight
+alpha (0.65) when made in the viewer, an annotation's own `/C` and `/CA`
+when imported from a PDF — never a palette slot, so every member of a
+workspace and every export sees the same colour whatever palette their
+account keeps ([settings.md](settings.md) "Colors"). `gamma/colors.py`
+(the frontend's `shared/model/palette.js`) reads the older `rgba(…)`
+and `#rrggbb` spellings too, which an older server or export can still
+send; workspace step 37 respells stored ones. Tests: `tests/test_highlight_shape.py` (the shape, its writers, the derived
 URL), `test_block_columns.py` (the kinds), `test_migrations.py` and
-`test_restore_consistency.py` (step 30 and an older backup), the browser
-suite's `pdf.mjs` (a highlight made from a selection, a link region
-landing on its block).
+`test_restore_consistency.py` (step 30 and an older backup),
+`test_colors.py` (the colour spellings, the Logseq names, step 37), the browser
+suite's `pdf.mjs` (a highlight made from a selection, its stored colour,
+a changed palette swatch, a link region landing on its block).
 
 **The library listing** (`GET /blocks/root/children`, `routers/blocks.page_summary`)
 carries only what the home view reads — the cards, the folder and label

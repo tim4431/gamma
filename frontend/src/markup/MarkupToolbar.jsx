@@ -6,8 +6,9 @@ import {
   CopyIcon, ErasePartialIcon, EraserIcon, EraseStrokeIcon, HandIcon, HighlightIcon, LassoIcon, LineWidthIcon, PenIcon,
   RectSelectIcon, RedoIcon, TrashIcon, TypeIcon, UndoIcon, XIcon,
 } from "../shared/ui/Icons";
-import { HIGHLIGHTER_COLORS, HIGHLIGHTER_OPACITY, MAX_TOOLS, PEN_COLORS, sizesFor, toolId } from "../ink/ink";
+import { HIGHLIGHTER_OPACITY, MAX_TOOLS, sizesFor, toolId } from "../ink/ink";
 import { ColorChoices, ERASER_SIZES, InkTooltips, inkColorName } from "../ink/InkLayer";
+import { usePalette } from "../shared/ui/paletteContext.js";
 import { TextStyleChoices } from "./TextBoxLayer";
 import { t } from "../shared/i18n/i18n.js";
 
@@ -54,7 +55,8 @@ export function MarkupToolbar({ tools, active, options, eraserMode, eraserSize, 
     <button type="button" className={"ctlBtn inkSegBtn" + (on ? " modeActive" : "")} onClick={click}
       title={title} aria-label={label} aria-pressed={on}>{icon}<span>{label}</span></button>
   );
-  const palette = preset ? (preset.kind === "highlighter" ? HIGHLIGHTER_COLORS : PEN_COLORS) : null;
+  const colors = usePalette();
+  const palette = preset ? (preset.kind === "highlighter" ? colors.wash : colors.ink) : null;
   return (
     <InkTooltips className="pdfInkBar" role="toolbar" aria-label={t("Markup tools")} data-guide="ink.toolbar">
       <div className="pdfInkRow">

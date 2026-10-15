@@ -216,9 +216,10 @@ Split `shared/ui/Widgets.jsx` by ownership: generic controls stay shared;
 workspace docks (`DockWindow`, `OpenTabs`) and chat/editor rendering
 (`ChatMarkdown`, `GammaLinkCard`, `BlockDropIndicator`) belong with their
 feature. The transfer dialogs already live in `transfers/`.
-The highlight palette is `shared/model/highlightColors.js` and the zoom
-limits are `shared/model/zoom.js`, so neither the block editor nor the
-notebook viewer imports the PDF viewer for constants. Split `shared/lib/utils.js` into API transport and
+The colour palette is `shared/model/palette.js` (its React context
+`shared/ui/paletteContext.js`) and the zoom limits are
+`shared/model/zoom.js`, so neither the block editor nor the notebook viewer
+imports the PDF viewer for constants. Split `shared/lib/utils.js` into API transport and
 domain helpers as actual consumers are moved; avoid another catch-all folder.
 
 ## Implementation order

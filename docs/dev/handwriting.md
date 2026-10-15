@@ -26,16 +26,19 @@ app ([ipad.md](ipad.md)). Typed text on a page is
   and select text), close, and Undo / Redo. Its accessible name is
   "Markup tools". One tap arms a tool;
   **tapping the armed tool again opens its options row** under the strip.
-  For a preset that row is the palette (14 pen / 8 highlighter colours
-  plus a custom colour through the browser's picker), eight widths as
+  For a preset that row is the palette — the account's ink set for a pen
+  (14 colours), its wash set for a highlighter (8, the same colours text
+  highlights offer; Settings → Appearance › Colors, [settings.md](settings.md))
+  plus a custom colour through the browser's picker — eight widths as
   dots, *Duplicate* (a copy right after it, armed and still open for
   editing) and *Remove*; the change applies to that preset, so the row is
   the user's own set of pens (up to 12, kept in localStorage,
-  `gamma-ink-tools`). Colours are named in words, never hex codes: a
-  preset reads "Pink highlighter · 14 pt · key 7", and each swatch is
-  titled and labelled by its name (`INK_COLOR_NAMES` in `InkLayer.jsx`). A
-  custom colour takes the name of the nearest palette colour
-  (`nearestInkColor` in `ink.js`, redmean distance). Keys while the strip
+  `gamma-ink-tools`, each with the concrete hex it was given). Colours are
+  named in words, never hex codes: a preset reads "Pink highlighter · 14 pt
+  · key 7", and each swatch is titled and labelled by its name. Any colour,
+  a custom one or a changed swatch included, takes the name of the nearest
+  reference colour (`colorName` in `shared/model/palette.js`, redmean
+  distance). Keys while the strip
   is open: `1`–`9` arm the preset
   at that position, `P` / `H` step through the pens / highlighters, `E`
   `L` `T` `V` the eraser / lasso / Text tool / hand, `Esc`, `Delete` (the
@@ -310,8 +313,10 @@ text box's `text_box`, merged key by key ([text_boxes.md](text_boxes.md)
   strip and the menus, since native titles are unreliable under Pencil
   hover. `InkCard` is the picture in the notes. For `markup/` the file
   exports `InkTooltips`, `inkColorName`, `ERASER_SIZES`, `ColorChoices` (a
-  palette's swatches plus a custom colour, for a pen preset's row and a
-  text box's colours) and `swallowClick` (eats the click a handled
+  palette role's swatches plus a custom colour, for a pen preset's row and a
+  text box's colours; the strip, the selection menu and the text box read
+  the account's palette through `usePalette`, `shared/ui/paletteContext.js`)
+  and `swallowClick` (eats the click a handled
   pointer-up would deliver). Imports run from `markup/` to `ink/`, never
   back.
   - Claiming input: a capture-phase `pointerdown` listener on the page

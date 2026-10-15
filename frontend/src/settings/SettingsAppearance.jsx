@@ -2,9 +2,10 @@ import React from "react";
 import { PaneHead, Section, Row, Toggle, Stepper, PictureChoices, Segmented } from "./SettingsKit";
 import { SECTION_PREFS } from "./sectionPrefs.js";
 import { LibraryDisplaySettings } from "./SettingsLibraryDisplay";
-import { CloudIcon, ContrastIcon, HelpCircleIcon, LayoutIcon, MaximizeIcon, MoonIcon } from "../shared/ui/Icons";
+import { CloudIcon, ContrastIcon, HelpCircleIcon, HighlightIcon, LayoutIcon, MaximizeIcon, MoonIcon, PenIcon } from "../shared/ui/Icons";
 import { ThemePreview, PdfPreview } from "../shared/illustrations";
 import { UI_SCALE, themeScheme } from "../app/prefs";
+import { DEFAULT_PALETTE, colorName } from "../shared/model/palette.js";
 import { T, t } from "../shared/i18n/i18n.js";
 
 // The swatches paint from each theme's own tokens (ThemePreview).
@@ -19,7 +20,26 @@ const THEMES = [
   ["gray", T("Gray"), T("Soft & neutral")],
 ];
 
+// One role of the palette (Appearance › Colors): its swatches, each a native
+// colour picker under the colour it holds, named like the tool strip names
+// them. onChange(index, hex) replaces one slot.
+function PaletteSwatches({ label, colors, onChange }) {
+  return (
+    <div className="paletteSwatches">
+      {colors.map((c, i) => (
+        <label key={i} className="colorBtn inkSwatch paletteSwatch" style={{ background: c }} title={t(colorName(c))}>
+          <input type="color" value={c} aria-label={t("{label} color {n}: {name}", { label, n: i + 1, name: t(colorName(c)) })}
+            onChange={(e) => onChange(i, e.target.value.toLowerCase())} />
+        </label>
+      ))}
+    </div>
+  );
+}
+
 export function AppearanceSettings({ value, diagnostics }) {
+  const palette = value.palette || DEFAULT_PALETTE;
+  const setSlot = (role) => (i, hex) => value.setPalette({ ...palette, [role]: palette[role].map((c, k) => (k === i ? hex : c)) });
+  const paletteChanged = ["wash", "ink"].some((role) => palette[role].some((c, i) => c !== DEFAULT_PALETTE[role][i]));
   return (
     <div className="appearanceSettings">
       <PaneHead icon={ContrastIcon} title={t("Appearance")} />
@@ -39,6 +59,21 @@ export function AppearanceSettings({ value, diagnostics }) {
               checked={value.pdfDarkPage} onChange={value.setPdfDarkPage} />
           </div>
         </div>
+      </Section>
+
+      <Section title={t("Colors")} scope="account" prefs={SECTION_PREFS.appearance["Colors"]}
+        action={(
+          <button type="button" className="uiBtn sm" disabled={!paletteChanged}
+            title={t("Put every swatch back to its default colour")} onClick={() => value.setPalette(DEFAULT_PALETTE)}>
+            {t("Reset colors")}
+          </button>
+        )}>
+        <Row icon={HighlightIcon} label={t("Highlights")} hint={t("Text highlights and highlighter strokes. Click a swatch to change it.")}>
+          <PaletteSwatches label={t("Highlights")} colors={palette.wash} onChange={setSlot("wash")} />
+        </Row>
+        <Row icon={PenIcon} label={t("Pens")} hint={t("Pens and text boxes. Existing highlights and strokes keep their colours.")}>
+          <PaletteSwatches label={t("Pens")} colors={palette.ink} onChange={setSlot("ink")} />
+        </Row>
       </Section>
 
       <Section title={t("Library")} scope="account" prefs={SECTION_PREFS.appearance["Library"]}>

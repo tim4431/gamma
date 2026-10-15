@@ -25,6 +25,7 @@ export const SECTION_PREFS = Object.freeze({
   appearance: sections({
     Theme: ["theme"],
     "PDF pages": ["pdfDarkPage"],
+    Colors: ["palette"],
     Library: ["recentThumbs", "fileLabels"],
     "Sync status": ["syncPillScope"],
     Tours: ["suggestTours", "tourProgress"],

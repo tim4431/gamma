@@ -10,7 +10,7 @@ import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
 import rehypeRaw from "rehype-raw";
 import { isFolded, isHighlightBlock, withLegacyAccessors } from "../shared/model/blockModel";
-import { COLORS } from "../shared/model/highlightColors.js";
+import { DEFAULT_HIGHLIGHT, normalizeColor } from "../shared/model/palette.js";
 import { citesSeveralPapers, gammaLinkId, parseGammaLink, relativeGammaLink } from "../shared/model/gammaLinks.js";
 import { NO_LABELS, REF_RE, refIdsOf } from "./refLabels.js";
 import { InkCard } from "../ink/InkLayer";
@@ -1686,9 +1686,9 @@ const BlockRow = React.memo(function BlockRow({
             >
               <span className="highlightDot" style={{
                 background: block.position
-                  ? (block.color || COLORS[0])
+                  ? (normalizeColor(block.color) || DEFAULT_HIGHLIGHT)
                   : block.properties?.linked_highlight_id
-                    ? (highlightColors?.[block.properties.linked_highlight_id] || COLORS[0])
+                    ? (normalizeColor(highlightColors?.[block.properties.linked_highlight_id]) || DEFAULT_HIGHLIGHT)
                     : 'rgba(140,140,140,0.5)'
               }} />
             </button>

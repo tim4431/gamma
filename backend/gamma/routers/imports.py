@@ -28,6 +28,7 @@ from ..db import connect_pages_db, page_now, safe_doc_id, ws_uploads_dir
 from ..blocks_store import (FOLDERS, LABELS, STORED_COLUMNS, create_page, existing_in, filing, folder_paths,
                             last_child_position, new_block_id, page_for_doc, page_root_id, refiled, refiled_paths,
                             touch_page, write_lock)
+from ..colors import DEFAULT_HIGHLIGHT, normalize_color
 from ..highlights import position as highlight_position
 from ..logbuf import log
 from ..ops import MAX_OPS, after_commit, apply_ops, commit_ops, ensure_filing, note_reload, props_patch
@@ -697,18 +698,19 @@ def _mark_from_annotation(obj, subtype, pnum, pw, ph, contents, glyphs):
     if not quads:
         return None
     quote = quote_under(glyphs.page(pnum), quads) if glyphs is not None and subtype in _MARKUP_TYPES else ""
-    color = "rgba(255, 226, 143, 0.65)"
+    color = DEFAULT_HIGHLIGHT
     c = _resolve(obj.get("/C"))
     try:
         # /CA is the annotation's own opacity — honoring it makes a
-        # Gamma export → re-import round-trip the exact shade.
+        # Gamma export → re-import round-trip the exact shade. Stored as the
+        # viewer stores a colour, #rrggbbaa (gamma/colors.py).
         alpha = 0.45
         ca = _resolve(obj.get("/CA"))
         if ca is not None:
             alpha = min(max(float(ca), 0.05), 1.0)
         if c is not None and len(c) == 3:
-            color = (f"rgba({int(float(_resolve(c[0])) * 255)}, {int(float(_resolve(c[1])) * 255)}, "
-                     f"{int(float(_resolve(c[2])) * 255)}, {round(alpha, 3)})")
+            color = normalize_color(f"rgba({int(float(_resolve(c[0])) * 255)}, {int(float(_resolve(c[1])) * 255)}, "
+                                    f"{int(float(_resolve(c[2])) * 255)}, {round(alpha, 3)})") or DEFAULT_HIGHLIGHT
     except Exception:
         pass
     # Flipped to top-left origin (what the viewer stores), in the page's points

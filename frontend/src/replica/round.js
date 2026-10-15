@@ -60,7 +60,7 @@ const WRITE_TRIES = 5;
 // so a new workspace step moves it here in the same change. A remote whose
 // feed names another format stops the round before anything is written,
 // as the server engine does (FormatMismatch).
-export const WORKSPACE_FORMAT = 34;
+export const WORKSPACE_FORMAT = 37;
 
 // The remote keeps its workspaces in another shape than this app
 // (gamma/sync_engine.py FormatMismatch): one of the two runs a release with

@@ -20,7 +20,7 @@ import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { BlockCmEditor } from "../editor/BlockCmEditor";
 import { BlockMarkdown } from "../editor/BlockTree";
 import { sourceOffsetAtPoint } from "../editor/clickToSource";
-import { PEN_COLORS } from "../ink/ink";
+import { usePalette } from "../shared/ui/paletteContext.js";
 import { ColorChoices, InkTooltips, swallowClick, useSelectionMenuAnchor } from "../ink/InkLayer";
 import { isTextField } from "../shared/lib/hotkeys.js";
 import { t } from "../shared/i18n/i18n.js";
@@ -357,6 +357,7 @@ function TextBoxMenu({ boxRef, box, onStyle, onDuplicate, onShowNote, onDelete, 
 // (TEXT_BACKGROUNDS): the Text tool's options row shows all three, the box
 // menu one at a time. `style` {size, color, bg}; onStyle(patch).
 export function TextStyleChoices({ kind, style, onStyle }) {
+  const palette = usePalette();
   if (kind === "size") {
     return TEXT_SIZES.map((sz) => (
       <button key={sz} type="button" className={"ctlBtn inkTextSize" + (style.size === sz ? " modeActive" : "")}
@@ -364,7 +365,7 @@ export function TextStyleChoices({ kind, style, onStyle }) {
         aria-pressed={style.size === sz}>{sz}</button>
     ));
   }
-  if (kind === "color") return <ColorChoices colors={PEN_COLORS} color={style.color} onColor={(color) => onStyle({ color })} />;
+  if (kind === "color") return <ColorChoices colors={palette.ink} color={style.color} onColor={(color) => onStyle({ color })} />;
   return TEXT_BACKGROUNDS.map((bg, i) => (
     <button key={bg || "none"} type="button" className={"colorBtn inkSwatch" + (bg ? "" : " textNoBackground")
       + (style.bg === bg ? " selected" : "")} style={bg ? { background: bg } : undefined}

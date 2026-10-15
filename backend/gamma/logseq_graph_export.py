@@ -32,7 +32,7 @@ import uuid
 import zlib
 
 from .highlights import is_highlight, page_of
-from .markdown_export import _RGBA_TO_NAME
+from .colors import logseq_name
 
 CONFIG_EDN = "{:meta/version 1}\n"
 
@@ -49,8 +49,9 @@ def hl_stamp(u):
     return int.from_bytes(u.bytes[:6], "big") % 10**13
 
 
-def color_name(rgba):
-    return _RGBA_TO_NAME.get((rgba or "").strip(), "yellow")
+def color_name(color):
+    """A stored highlight colour → the Logseq colour name nearest to it."""
+    return logseq_name(color)
 
 
 # --- highlight collection ----------------------------------------------------

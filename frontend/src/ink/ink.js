@@ -9,6 +9,7 @@
 // are deltas after the first sample, p is 0..1000. Keep the codec here in
 // step with the backend's.
 import { getStroke } from "perfect-freehand";
+import { INK_COLORS, WASH_COLORS } from "../shared/model/palette.js";
 
 export const FORMAT = "gamma-ink";
 export const VERSION = 1;
@@ -62,44 +63,23 @@ function strokeId() {
 // The strip is a row of presets, Notability-style: each pen or highlighter
 // keeps its own colour and width ({id, kind: pen|highlighter, color, size}),
 // and the user edits, duplicates and removes them. Widths are pt at scale 1
-// (the options row shows them as dots); colours are hex — a highlighter
-// gets HIGHLIGHTER_OPACITY on top and multiplies onto the page.
+// (the options row shows them as dots); colours are hex, picked from the
+// account's palette (shared/model/palette.js: the ink set for a pen, the
+// wash set for a highlighter) or a custom one — a highlighter gets
+// HIGHLIGHTER_OPACITY on top and multiplies onto the page.
 export const PEN_SIZES = [0.6, 1, 1.4, 2, 2.8, 4, 5.6, 8];
 export const HIGHLIGHTER_SIZES = [5, 7, 10, 14, 18, 24, 32, 40];
-export const PEN_COLORS = ["#1f1f1f", "#6b7280", "#1d4ed8", "#0284c7", "#0f766e", "#15803d", "#65a30d",
-  "#ca8a04", "#ea580c", "#dc2626", "#db2777", "#7c3aed", "#92400e", "#ffffff"];
-export const HIGHLIGHTER_COLORS = ["#fde047", "#86efac", "#7dd3fc", "#f9a8d4", "#fdba74", "#c4b5fd", "#67e8f9", "#d4d4d8"];
 export const HIGHLIGHTER_OPACITY = 0.6;
-// The palette colour nearest to `hex` (#rgb or #rrggbb) by the "redmean"
-// weighted RGB distance — a palette colour maps to itself; null for what is
-// not a hex colour. The tool strip names a custom colour after it.
-export function nearestInkColor(hex) {
-  const rgb = (h) => {
-    const m = /^#?([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(String(h || "").trim());
-    if (!m) return null;
-    const v = m[1].length === 3 ? m[1].replace(/./g, "$&$&") : m[1];
-    return [0, 2, 4].map((i) => parseInt(v.slice(i, i + 2), 16));
-  };
-  const c = rgb(hex);
-  if (!c) return null;
-  let best = null, bestD = Infinity;
-  for (const p of [...PEN_COLORS, ...HIGHLIGHTER_COLORS]) {
-    const q = rgb(p), rm = (c[0] + q[0]) / 2;
-    const d = (2 + rm / 256) * (c[0] - q[0]) ** 2 + 4 * (c[1] - q[1]) ** 2 + (2 + (255 - rm) / 256) * (c[2] - q[2]) ** 2;
-    if (d < bestD) { best = p; bestD = d; }
-  }
-  return best;
-}
 // Cap on a stroke's nominal width (pt); scaling a selection stops here.
 export const MAX_STROKE_SIZE = 100;
 export const DEFAULT_TOOLS = [
-  { id: "pen1", kind: "pen", color: "#1f1f1f", size: 2 },
-  { id: "pen2", kind: "pen", color: "#1d4ed8", size: 2 },
-  { id: "pen3", kind: "pen", color: "#dc2626", size: 2 },
-  { id: "pen4", kind: "pen", color: "#15803d", size: 1.4 },
-  { id: "hl1", kind: "highlighter", color: "#fde047", size: 14 },
-  { id: "hl2", kind: "highlighter", color: "#86efac", size: 14 },
-  { id: "hl3", kind: "highlighter", color: "#f9a8d4", size: 14 },
+  { id: "pen1", kind: "pen", color: INK_COLORS[0], size: 2 },
+  { id: "pen2", kind: "pen", color: INK_COLORS[2], size: 2 },
+  { id: "pen3", kind: "pen", color: INK_COLORS[9], size: 2 },
+  { id: "pen4", kind: "pen", color: INK_COLORS[5], size: 1.4 },
+  { id: "hl1", kind: "highlighter", color: WASH_COLORS[0], size: 14 },
+  { id: "hl2", kind: "highlighter", color: WASH_COLORS[1], size: 14 },
+  { id: "hl3", kind: "highlighter", color: WASH_COLORS[4], size: 14 },
 ];
 export const MAX_TOOLS = 12;
 const HEX_RE = /^#[0-9a-f]{6}$/i;
@@ -143,7 +123,7 @@ export function toolStyle(preset) {
 // --- codec -----------------------------------------------------------------
 
 // samples: [{x, y, p?, t?}] with x/y in points and t in ms since t0.
-export function encodeStroke({ id, tool = "pen", brush, color = PEN_COLORS[0], size = 2, opacity = 1,
+export function encodeStroke({ id, tool = "pen", brush, color = INK_COLORS[0], size = 2, opacity = 1,
   pen = true, t0 = null, samples, ch = "xyp" }) {
   const pts = [];
   let px = 0, py = 0, pt = 0;

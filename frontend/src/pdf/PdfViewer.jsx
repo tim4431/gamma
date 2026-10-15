@@ -25,7 +25,8 @@ import { lastPointer } from "../shared/lib/pointer.js";
 import { PdfCitationOverlay } from "./PdfCitationOverlay";
 import { citationRuns, runChars } from "./pdfCitation.js";
 import { noteBadgeAnchor } from "./noteAnchor.js";
-import { COLORS, paletteIndex } from "../shared/model/highlightColors.js";
+import { DEFAULT_HIGHLIGHT, colorName, darkPageColor, darkPageLine, normalizeColor } from "../shared/model/palette.js";
+import { usePalette } from "../shared/ui/paletteContext.js";
 import { t } from "../shared/i18n/i18n.js";
 import { TRANSLATE_PARALLEL_MAX } from "../app/prefDefs.js";
 import { ZOOM_MIN, clampZoom } from "../shared/model/zoom.js";
@@ -2262,24 +2263,26 @@ const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, scal
         // Area notes (Ctrl+drag rectangles) draw as an outline with a faint
         // wash — a solid multiply fill would tint the figure underneath.
         const isArea = !!h.position?.area;
-        const color = h.color || COLORS[0];
+        const color = normalizeColor(h.color) || DEFAULT_HIGHLIGHT;
         // The colour rides in --hl (the border in --hl-line, defaulting to
-        // it), and a palette colour is tagged with its index: dark pages
-        // swap in a dark-tuned set by index (app.css, "Flip page colors").
-        const palette = paletteIndex(color);
+        // it) beside its dark-page variant in --hl-dark / --hl-dark-line:
+        // a flipped page (Flip page colors, Gamma Dark) draws those instead
+        // (app.css), whatever app the colour came from.
         // Right-click, or a finger held on it: colour, link, copy as reference.
         const openMenu = (e) => { e.preventDefault(); onHighlightContext?.({ id: h.id, x: e.clientX, y: e.clientY }); };
         const elements = [];
         for (const r of rects) {
           elements.push(<div key={h.id + "-" + r.x1 + "-" + r.y1} data-hl-id={h.id}
             className={flashId === h.id ? "pdfHlFlash" : undefined}
-            data-hl-color={palette >= 0 ? palette : undefined} style={{
+            style={{
             position: "absolute", zIndex: 2, cursor: "pointer",
             left: r.x1 * curW / storedW, top: r.y1 * curH / storedH,
             width: Math.max(1, (r.x2 - r.x1) * curW / storedW),
             height: Math.max(1, (r.y2 - r.y1) * curH / storedH),
             mixBlendMode: "multiply",
             "--hl": color,
+            "--hl-dark": darkPageColor(color),
+            "--hl-dark-line": darkPageLine(color),
             ...(isArea ? {
               boxSizing: "border-box", borderRadius: 3,
               border: "2px solid var(--hl-line, var(--hl))",
@@ -2376,6 +2379,7 @@ const SEL_TRANSLATE_MAX = 5000;
 // language and server cache apply. Auto starts it on open; the button starts
 // it, then folds/unfolds the result.
 function PlainTip({ onConfirm, onLink, translate }) {
+  const palette = usePalette();
   const [trans, setTrans] = useState(null); // {status: "loading"|"done"|"error", text, open}
   const ctlRef = useRef(null);
   const source = useMemo(() => (translate ? selectionParagraphs(translate.text) : ""), [translate?.text]);
@@ -2403,7 +2407,7 @@ function PlainTip({ onConfirm, onLink, translate }) {
   return (
     <div className="plainTip">
       <div className="colorRow">
-        {COLORS.map((c) => (
+        {palette.wash.map((c) => (
           <button
             key={c}
             className="colorBtn"
@@ -2411,7 +2415,8 @@ function PlainTip({ onConfirm, onLink, translate }) {
             style={{ background: c }}
             onMouseDown={(e) => { keep(e); onConfirm("", c); }}
             type="button"
-            title={t("Highlight in this color")}
+            title={t("Highlight in {color}", { color: t(colorName(c)) })}
+            aria-label={t("Highlight in {color}", { color: t(colorName(c)) })}
           />
         ))}
         {onLink ? (
