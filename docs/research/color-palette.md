@@ -34,14 +34,17 @@ on names (ink had them, highlights did not).
 
 ## The decisions
 
-- **One module, two roles.** A wash set of eight light colours for text
+- **One module, two roles.** A wash set of light colours for text
   highlights and highlighter strokes, an ink set of fourteen dark colours
   for pens and text boxes. Pens genuinely want dark tones and washes light
   ones, so "one palette" means one named source with two roles, not one
   flat list. The owner asked that the existing highlight colours not
-  change, so the four classic pastels lead the wash set and the ink
-  highlighter presets adopt them; the other four wash colours come from
-  the old highlighter set.
+  change, so the Highlight group is the four classic pastels, and the
+  tool strip's highlighters keep their own Ink highlight group: those
+  four and the four more they always had (pink, peach, cyan, light gray),
+  at the stroke opacity. Text highlights and ink highlights are different
+  things to the user — a mark on selected text, a freehand stroke — so
+  they get different default groups rather than one shared list.
 - **A stored colour is concrete, not a slot.** A highlight keeps
   `#rrggbbaa`; a stroke keeps hex plus its opacity. The alternative — a
   highlight naming a palette slot, resolved at render — was rejected: a
@@ -68,16 +71,26 @@ on names (ink had them, highlights did not).
   the hues the old highlighter set had so existing presets keep their
   names. A user's own swatch is named after whatever it is closest to,
   rather than inheriting the name of the slot it replaced.
-- **The palette is one account preference**, `{wash, ink}` with fixed slot
-  counts, filled from the defaults slot by slot, so it syncs through the
-  profile like the theme and a partial or hand-edited value never breaks
-  the pickers.
+- **The palette is one account preference.** It started as `{wash, ink}`
+  with fixed slot counts; the owner then asked to add and remove colours,
+  name groups, choose which colours each picker shows, and set alpha. So
+  it became `{groups, pickers}`: named groups of `{hex, alpha}` swatches,
+  and per picker (text highlights, highlighter presets, pen presets, text
+  boxes) the one group it shows, picked from a dropdown. Selection is at
+  the group level rather than a checkbox per colour per picker: a user
+  composes a group for a picker instead, and the settings pane stays four
+  rows. A list of groups per picker was tried first; one group per picker
+  is what the owner asked for and is simpler to read. The old shape still
+  reads and becomes the default groups.
+  Each swatch's alpha is what a text highlight stores and what a pen or
+  highlighter preset takes as its opacity when the swatch is picked; a
+  text box stays opaque, as the server validates its colour as plain hex
+  and a translucent label reads badly over a page.
 
 ## Left out
 
 - A remembered last-used highlight colour. Nothing consumes a default
   today: the popup's click both picks and creates.
-- Adding or removing swatches. Fixed slots keep the settings row and the
-  popup simple; a user who wants a different colour changes a slot.
-- Per-colour opacity for highlights. One wash alpha (0.65) is baked in at
-  creation; an import keeps whatever alpha it came with.
+- Per-colour selection inside a picker, and reordering groups or
+  swatches by drag. Deleting and re-adding is the way to reorder.
+- Alpha for text boxes.

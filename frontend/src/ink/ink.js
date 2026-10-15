@@ -9,7 +9,7 @@
 // are deltas after the first sample, p is 0..1000. Keep the codec here in
 // step with the backend's.
 import { getStroke } from "perfect-freehand";
-import { INK_COLORS, WASH_COLORS } from "../shared/model/palette.js";
+import { INK_COLORS, INK_HIGHLIGHT_ALPHA, INK_HIGHLIGHT_COLORS } from "../shared/model/palette.js";
 
 export const FORMAT = "gamma-ink";
 export const VERSION = 1;
@@ -69,7 +69,7 @@ function strokeId() {
 // HIGHLIGHTER_OPACITY on top and multiplies onto the page.
 export const PEN_SIZES = [0.6, 1, 1.4, 2, 2.8, 4, 5.6, 8];
 export const HIGHLIGHTER_SIZES = [5, 7, 10, 14, 18, 24, 32, 40];
-export const HIGHLIGHTER_OPACITY = 0.6;
+export const HIGHLIGHTER_OPACITY = INK_HIGHLIGHT_ALPHA;
 // Cap on a stroke's nominal width (pt); scaling a selection stops here.
 export const MAX_STROKE_SIZE = 100;
 export const DEFAULT_TOOLS = [
@@ -77,9 +77,9 @@ export const DEFAULT_TOOLS = [
   { id: "pen2", kind: "pen", color: INK_COLORS[2], size: 2 },
   { id: "pen3", kind: "pen", color: INK_COLORS[9], size: 2 },
   { id: "pen4", kind: "pen", color: INK_COLORS[5], size: 1.4 },
-  { id: "hl1", kind: "highlighter", color: WASH_COLORS[0], size: 14 },
-  { id: "hl2", kind: "highlighter", color: WASH_COLORS[1], size: 14 },
-  { id: "hl3", kind: "highlighter", color: WASH_COLORS[4], size: 14 },
+  { id: "hl1", kind: "highlighter", color: INK_HIGHLIGHT_COLORS[0], size: 14 },
+  { id: "hl2", kind: "highlighter", color: INK_HIGHLIGHT_COLORS[1], size: 14 },
+  { id: "hl3", kind: "highlighter", color: INK_HIGHLIGHT_COLORS[4], size: 14 },
 ];
 export const MAX_TOOLS = 12;
 const HEX_RE = /^#[0-9a-f]{6}$/i;
@@ -105,17 +105,25 @@ export function normalizeTools(list) {
     let id = typeof t.id === "string" && /^[A-Za-z0-9_-]{1,24}$/.test(t.id) ? t.id : toolId();
     while (seen.has(id)) id = toolId();
     seen.add(id);
+    // A preset's own opacity (the swatch's alpha when it was picked); left
+    // out, the kind's usual one applies (toolStyle).
+    const opacity = Number(t.opacity);
     out.push({ id, kind, color: t.color.toLowerCase(), size: Math.round(size * 100) / 100,
+      ...(Number.isFinite(opacity) && opacity >= 0.1 && opacity <= 1 && opacity !== defaultOpacity(kind)
+        ? { opacity: Math.round(opacity * 100) / 100 } : {}),
       ...(kind === "pen" && t.brush === "monoline" ? { brush: "monoline" } : {}) });
     if (out.length >= MAX_TOOLS) break;
   }
   return out.length ? out : DEFAULT_TOOLS.map((t) => ({ ...t }));
 }
+// A kind's opacity when a preset names none.
+export const defaultOpacity = (kind) => (kind === "highlighter" ? HIGHLIGHTER_OPACITY : 1);
 // What the layer draws with for a preset: {tool, color, size, opacity}.
 export function toolStyle(preset) {
+  const opacity = preset.opacity ?? defaultOpacity(preset.kind);
   return preset.kind === "highlighter"
-    ? { tool: "highlighter", color: preset.color, size: preset.size, opacity: HIGHLIGHTER_OPACITY }
-    : { tool: "pen", color: preset.color, size: preset.size, opacity: 1,
+    ? { tool: "highlighter", color: preset.color, size: preset.size, opacity }
+    : { tool: "pen", color: preset.color, size: preset.size, opacity,
       ...(preset.brush === "monoline" ? { brush: "monoline" } : {}) };
 }
 
@@ -265,9 +273,10 @@ export function restyleStrokes(ink, ids, patch) {
     const sizes = sizesFor(s.tool);
     const size = Number.isFinite(patch.size)
       ? Math.round(Math.max(sizes[0], Math.min(sizes.at(-1), patch.size)) * 100) / 100 : s.size;
-    if (color === s.color && size === s.size) return s;
+    const opacity = Number.isFinite(patch.opacity) ? Math.round(Math.min(1, Math.max(0.1, patch.opacity)) * 100) / 100 : s.opacity;
+    if (color === s.color && size === s.size && opacity === s.opacity) return s;
     changed = true;
-    return { ...s, color, size };
+    return { ...s, color, size, opacity };
   });
   return changed ? { ...ink, strokes } : ink;
 }

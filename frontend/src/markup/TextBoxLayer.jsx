@@ -20,6 +20,7 @@ import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { BlockCmEditor } from "../editor/BlockCmEditor";
 import { BlockMarkdown } from "../editor/BlockTree";
 import { sourceOffsetAtPoint } from "../editor/clickToSource";
+import { pickerColors } from "../shared/model/palette.js";
 import { usePalette } from "../shared/ui/paletteContext.js";
 import { ColorChoices, InkTooltips, swallowClick, useSelectionMenuAnchor } from "../ink/InkLayer";
 import { isTextField } from "../shared/lib/hotkeys.js";
@@ -365,7 +366,8 @@ export function TextStyleChoices({ kind, style, onStyle }) {
         aria-pressed={style.size === sz}>{sz}</button>
     ));
   }
-  if (kind === "color") return <ColorChoices colors={palette.ink} color={style.color} onColor={(color) => onStyle({ color })} />;
+  // a box is opaque: the swatch's alpha is not taken
+  if (kind === "color") return <ColorChoices colors={pickerColors(palette, "text").map((c) => ({ hex: c.hex, alpha: 1 }))} color={style.color} alpha={1} onColor={(color) => onStyle({ color })} />;
   return TEXT_BACKGROUNDS.map((bg, i) => (
     <button key={bg || "none"} type="button" className={"colorBtn inkSwatch" + (bg ? "" : " textNoBackground")
       + (style.bg === bg ? " selected" : "")} style={bg ? { background: bg } : undefined}

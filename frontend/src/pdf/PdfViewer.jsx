@@ -25,7 +25,7 @@ import { lastPointer } from "../shared/lib/pointer.js";
 import { PdfCitationOverlay } from "./PdfCitationOverlay";
 import { citationRuns, runChars } from "./pdfCitation.js";
 import { noteBadgeAnchor } from "./noteAnchor.js";
-import { DEFAULT_HIGHLIGHT, colorName, darkPageColor, darkPageLine, normalizeColor } from "../shared/model/palette.js";
+import { DEFAULT_HIGHLIGHT, colorName, darkPageColor, darkPageLine, normalizeColor, pickerColors, swatchCss } from "../shared/model/palette.js";
 import { usePalette } from "../shared/ui/paletteContext.js";
 import { t } from "../shared/i18n/i18n.js";
 import { TRANSLATE_PARALLEL_MAX } from "../app/prefDefs.js";
@@ -2407,12 +2407,12 @@ function PlainTip({ onConfirm, onLink, translate }) {
   return (
     <div className="plainTip">
       <div className="colorRow">
-        {palette.wash.map((c) => (
+        {pickerColors(palette, "highlight").map((c, i) => (
           <button
-            key={c}
+            key={c.hex + c.alpha + i}
             className="colorBtn"
             data-guide="pdf.highlightColor"
-            style={{ background: c }}
+            style={{ background: swatchCss(c) }}
             onMouseDown={(e) => { keep(e); onConfirm("", c); }}
             type="button"
             title={t("Highlight in {color}", { color: t(colorName(c)) })}

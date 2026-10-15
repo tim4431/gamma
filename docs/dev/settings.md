@@ -272,17 +272,35 @@ Preferences:
   from that theme's own tokens, `ThemePreview` in
   `shared/illustrations/`), the
   dark-page switch with its live PDF sample, **Colors**: the account's
-  colour palette (`palette`, [shared/model/palette.js](../../frontend/src/shared/model/palette.js)),
-  two rows of swatches — Highlights, the 8 light "wash" colours text
-  highlights and highlighter strokes offer, and Pens, the 14 dark "ink"
-  colours pens and text boxes offer — each a native colour picker under
-  the colour it holds, titled by its nearest colour name, with a Reset
-  colors button; a changed swatch is what the selection popup, a
-  highlight's recolour menu, the tool strip's options row and a text box's
-  colour row offer from then on, through `PaletteContext`
-  (`shared/ui/paletteContext.js`), while stored highlights and strokes
-  keep the concrete colour they have (a highlight's `properties.color` is
-  `#rrggbbaa`, [api.md](api.md) "The highlight shape"), **Library**: the live card demo
+  colour palette (`palette`, [shared/model/palette.js](../../frontend/src/shared/model/palette.js)):
+  `{groups, pickers}`. A group is `{id, name, colors: [{hex, alpha}]}`,
+  shown as a card — its name (an inline text box), its swatches drawn at
+  their alpha and titled by their nearest colour name, a "+" swatch,
+  Duplicate and Delete — and a selected swatch opens the editor under
+  the row: the `ColorPicker` ([ui-design.md](ui-design.md), a saturation
+  square, hue and alpha bars, a hex field that takes `#rrggbbaa`, an
+  opacity field, 10–100%, and the eyedropper where the browser has one)
+  with the colour's name and Remove beside it. Add group adds one; up to 12 groups of 24 colours, names up to
+  40 characters. The defaults are three groups: Highlight (the four light
+  wash colours Gamma always had, at 0.65), Ink highlight (those four and
+  the four more the tool strip's highlighters always offered, at 0.6) and
+  Pen (the 14 dark ink colours, opaque). Four picker rows — Text
+  highlights (the selection popup and a highlight's recolour menu), Ink
+  highlights and Ink pens (a tool strip preset's options row), Text boxes
+  — each choose one group in a `MenuSelect` dropdown (`pickers`, a group
+  id per picker; one naming a deleted group falls back to the picker's
+  default group, else the first group with a colour, and `pickerColors`
+  never comes back empty). Reset colors puts the
+  defaults back. The pickers read the palette through `PaletteContext`
+  (`shared/ui/paletteContext.js`): the selection popup and a highlight's
+  recolour menu store the swatch at its alpha (a highlight's
+  `properties.color` is `#rrggbbaa`, [api.md](api.md) "The highlight
+  shape"), a pen or highlighter preset takes the swatch's alpha as its
+  own `opacity` ([handwriting.md](handwriting.md)), a text box takes the
+  hex alone. A changed swatch is what the pickers offer from then on;
+  stored highlights and strokes keep the colour they have. The first
+  shape of the preference, `{wash, ink}`, still reads: it becomes the two
+  default groups, **Library**: the live card demo
   with the thumbnails / folders / labels switches
   ([SettingsLibraryDisplay.jsx](../../frontend/src/settings/SettingsLibraryDisplay.jsx)),
   interface size and the status bar, **Sync status** (the header's sync

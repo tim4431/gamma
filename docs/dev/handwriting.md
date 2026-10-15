@@ -26,14 +26,19 @@ app ([ipad.md](ipad.md)). Typed text on a page is
   and select text), close, and Undo / Redo. Its accessible name is
   "Markup tools". One tap arms a tool;
   **tapping the armed tool again opens its options row** under the strip.
-  For a preset that row is the palette — the account's ink set for a pen
-  (14 colours), its wash set for a highlighter (8, the same colours text
-  highlights offer; Settings → Appearance › Colors, [settings.md](settings.md))
-  plus a custom colour through the browser's picker — eight widths as
-  dots, *Duplicate* (a copy right after it, armed and still open for
-  editing) and *Remove*; the change applies to that preset, so the row is
-  the user's own set of pens (up to 12, kept in localStorage,
-  `gamma-ink-tools`, each with the concrete hex it was given). Colours are
+  For a preset that row is the palette — the colour groups the account
+  chose for pen presets or for highlighter presets (Settings → Appearance
+  › Colors, [settings.md](settings.md); by default the 14 dark "Pen"
+  colours and the eight light "Ink highlight" colours, the four text
+  highlight colours and four more) plus
+  a custom colour through the browser's picker — eight widths as dots,
+  *Duplicate* (a copy right after it, armed and still open for editing)
+  and *Remove*; the change applies to that preset, so the row is the
+  user's own set of pens (up to 12, kept in localStorage,
+  `gamma-ink-tools`, each with the concrete hex it was given and, when a
+  swatch brought one, its own `opacity` — a swatch's alpha; a preset
+  without one draws at the kind's usual opacity, 0.6 for a highlighter
+  and 1 for a pen, `toolStyle`). Colours are
   named in words, never hex codes: a preset reads "Pink highlighter · 14 pt
   · key 7", and each swatch is titled and labelled by its name. Any colour,
   a custom one or a changed swatch included, takes the name of the nearest
@@ -475,7 +480,8 @@ text box's `text_box`, merged key by key ([text_boxes.md](text_boxes.md)
 Shape tools, reordering presets
 by drag, syncing the preset row across devices (it is per browser),
 ballpoint / fountain / dashed pen styles, Xournal++ `.xopp` import,
-live co-drawing over presence, audio recording to go with the replay, and a
+live co-drawing over presence, audio recording to go with the replay
+(designed in [research/audio-recording.md](../research/audio-recording.md)), and a
 replay of erasures and edits (it shows the drawing as it is, in the order
 it was written). Obsidian vault export writes an ink block's
 caption only. The Notability comparison in the research note lists what a

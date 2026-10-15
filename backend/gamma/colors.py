@@ -14,9 +14,9 @@ their colour names onto it by nearest hue.
 
 import re
 
-# The default wash set (palette.js WASH_COLORS): the first four are the
-# highlight colours Gamma always had.
-WASH = ("#ffe28f", "#aaebaa", "#9bcdff", "#e6b4ff", "#f9a8d4", "#fdba74", "#67e8f9", "#d4d4d8")
+# The default wash set (palette.js WASH_COLORS): the four highlight colours
+# Gamma always had.
+WASH = ("#ffe28f", "#aaebaa", "#9bcdff", "#e6b4ff")
 WASH_ALPHA = 0.65
 
 _HEX_RE = re.compile(r"^#([0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$")
@@ -88,10 +88,11 @@ def nearest(color, colors):
     return best
 
 
-# Logseq's highlight colour names, each on the wash swatch it means (red has
-# no wash colour of its own: it reads as the pink).
+# Logseq's highlight colour names, each on the wash it means: the four
+# defaults, and a pink and a peach of the same family for the rest (red
+# has no wash of its own: it reads as the pink).
 _LOGSEQ = {"yellow": WASH[0], "green": WASH[1], "blue": WASH[2], "purple": WASH[3],
-           "pink": WASH[4], "orange": WASH[5], "red": WASH[4]}
+           "pink": "#f9a8d4", "orange": "#fdba74", "red": "#f9a8d4"}
 _LOGSEQ_NAMES = {v: k for k, v in reversed(list(_LOGSEQ.items()))}  # a swatch → its first name
 
 

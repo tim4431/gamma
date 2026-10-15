@@ -1,44 +1,135 @@
-// The colour palette (docs/dev/settings.md "Colors"): one named source of
-// colours for text highlights, highlighter strokes, pens and text boxes,
-// and the colour arithmetic they share. Pure — no React, no DOM — so it
-// runs under node --test; the React context is shared/ui/paletteContext.js.
+// The colour palette (docs/dev/settings.md "Colors"): the account's named
+// colour groups, which of them each picker shows, and the colour
+// arithmetic every picker shares. Pure — no React, no DOM — so it runs
+// under node --test; the React context is shared/ui/paletteContext.js.
 //
-// Two roles. The WASH set is light: a text highlight multiplies it onto the
-// page at WASH_ALPHA, a highlighter stroke at ink.js HIGHLIGHTER_OPACITY.
-// The INK set is dark: pens and text boxes draw it opaque. The account's
-// palette (the `palette` preference, {wash, ink}) starts as the defaults
-// below and keeps their slot count; a swatch the user changes replaces the
-// colour new highlights and the tool strip offer, never the colour a stored
-// highlight or stroke already has.
+// The `palette` preference is {groups, pickers}. A group is {id, name,
+// colors: [{hex, alpha}]}, the user's own set — renamed, added to, pruned
+// or deleted in Settings → Appearance › Colors. The four PICKERS (the text
+// selection popup and a highlight's recolour menu, a highlighter preset's
+// colours, a pen preset's, a text box's) each list the group ids they
+// show. The defaults are two groups: "Highlight", the light wash colours a
+// text highlight or highlighter stroke multiplies onto the page at their
+// alpha, and "Pen", the dark opaque colours pens and text boxes draw.
 //
 // A stored colour is concrete, never a slot: a highlight block's
-// `properties.color` is `#rrggbbaa` (hex with alpha), a stroke's hex plus
-// its own `opacity`, a text box's hex. normalizeColor reads the older
-// `rgba(…)` strings too (migration step 37 rewrites them; an older server
-// or an old export can still send one).
+// `properties.color` is `#rrggbbaa` (the swatch at its alpha), a stroke's
+// hex plus its own `opacity` (the swatch's alpha when picked), a text box's
+// hex. A changed swatch replaces what the pickers offer from then on, never
+// the colour a stored highlight or stroke already has. normalizeColor reads
+// the older `rgba(…)` strings too (migration step 37 rewrote them; an
+// older server or an old export can still send one).
 import { T } from "../i18n/i18n.js";
 
-// The first four are the highlight colours Gamma always had.
-export const WASH_COLORS = ["#ffe28f", "#aaebaa", "#9bcdff", "#e6b4ff", "#f9a8d4", "#fdba74", "#67e8f9", "#d4d4d8"];
+// The wash colours are the four highlight colours Gamma always had; the
+// ink-highlight colours are those four and the four more the tool strip's
+// highlighters always offered; the ink colours are the pens'.
+export const WASH_COLORS = ["#ffe28f", "#aaebaa", "#9bcdff", "#e6b4ff"];
+export const INK_HIGHLIGHT_COLORS = [...WASH_COLORS, "#f9a8d4", "#fdba74", "#67e8f9", "#d4d4d8"];
 export const INK_COLORS = ["#1f1f1f", "#6b7280", "#1d4ed8", "#0284c7", "#0f766e", "#15803d", "#65a30d",
   "#ca8a04", "#ea580c", "#dc2626", "#db2777", "#7c3aed", "#92400e", "#ffffff"];
-export const WASH_ALPHA = 0.65;
-export const DEFAULT_PALETTE = Object.freeze({ wash: Object.freeze([...WASH_COLORS]), ink: Object.freeze([...INK_COLORS]) });
+export const WASH_ALPHA = 0.65;           // a text highlight's
+export const INK_HIGHLIGHT_ALPHA = 0.6;   // a highlighter stroke's (ink.js HIGHLIGHTER_OPACITY)
+export const MIN_ALPHA = 0.1;
+export const MAX_GROUPS = 12;
+export const MAX_GROUP_COLORS = 24;
+export const MAX_GROUP_NAME = 40;
+
+// The pickers: what shows swatches, in the order the pane lists them.
+export const PICKERS = ["highlight", "highlighter", "pen", "text"];
+// Each picker shows one group (its id).
+const DEFAULT_PICKERS = { highlight: "highlight", highlighter: "ink-highlight", pen: "pen", text: "pen" };
+
+const freeze = (v) => (Array.isArray(v) ? Object.freeze(v.map(freeze)) : v && typeof v === "object" ? Object.freeze(Object.fromEntries(Object.entries(v).map(([k, x]) => [k, freeze(x)]))) : v);
+export const DEFAULT_PALETTE = freeze({
+  groups: [
+    { id: "highlight", name: T("Highlight"), colors: WASH_COLORS.map((hex) => ({ hex, alpha: WASH_ALPHA })) },
+    { id: "ink-highlight", name: T("Ink highlight"), colors: INK_HIGHLIGHT_COLORS.map((hex) => ({ hex, alpha: INK_HIGHLIGHT_ALPHA })) },
+    { id: "pen", name: T("Pen"), colors: INK_COLORS.map((hex) => ({ hex, alpha: 1 })) },
+  ],
+  pickers: DEFAULT_PICKERS,
+});
 
 const HEX6 = /^#([0-9a-f]{6})$/i;
+const GROUP_ID = /^[A-Za-z0-9_-]{1,24}$/;
 
-// A stored palette ({wash, ink}, possibly hand-edited or from an older
-// build) → a complete one: each slot a lowercase #rrggbb, a missing or bad
-// slot its default, the slot counts the defaults'. undefined for a value
-// that is no object (the preference falls back to the defaults).
+const alphaOf = (v, fallback) => {
+  const n = typeof v === "number" ? v : typeof v === "string" ? Number.parseFloat(v) : NaN;
+  return Number.isFinite(n) ? Math.round(Math.min(1, Math.max(MIN_ALPHA, n)) * 100) / 100 : fallback;
+};
+
+// One stored swatch (an {hex, alpha} or a bare hex string) → {hex, alpha}
+// or null. `alpha` is the default when none is stored.
+export function normalizeSwatch(value, alpha = 1) {
+  const raw = typeof value === "string" ? { hex: value } : value;
+  if (!raw || typeof raw !== "object" || typeof raw.hex !== "string" || !HEX6.test(raw.hex)) return null;
+  return { hex: raw.hex.toLowerCase(), alpha: alphaOf(raw.alpha, alpha) };
+}
+
+// A fresh group id no group in `groups` has.
+export function newGroupId(groups) {
+  const used = new Set((groups || []).map((g) => g.id));
+  let id;
+  do { id = "g" + Math.random().toString(36).slice(2, 8); } while (used.has(id));
+  return id;
+}
+
+// A stored palette (possibly hand-edited, from an older build, or the
+// {wash, ink} shape the preference had first) → a complete one: every
+// group a valid id, a name and lowercase swatches with an alpha, within
+// the caps; every picker the id of an existing group (a list, from a
+// build that let a picker show several, keeps its first). No usable group
+// leaves the defaults. undefined for a value that is no object (the
+// preference falls back to the defaults).
 export function normalizePalette(value) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
-  const role = (list, defaults) => defaults.map((d, i) => {
-    const c = Array.isArray(list) ? list[i] : undefined;
-    return typeof c === "string" && HEX6.test(c) ? c.toLowerCase() : d;
-  });
-  return { wash: role(value.wash, WASH_COLORS), ink: role(value.ink, INK_COLORS) };
+  if (!Array.isArray(value.groups) && (Array.isArray(value.wash) || Array.isArray(value.ink))) {
+    // The first shape: two fixed slot lists, 8 wash and 14 ink. The wash
+    // slots become the Ink highlight group and their first four the
+    // Highlight group; the ink slots the Pen group.
+    const slots = (list, defaults, alpha) => defaults.map((d, i) => normalizeSwatch(Array.isArray(list) ? list[i] : null, alpha) || { hex: d, alpha });
+    return normalizePalette({ groups: [
+      { id: "highlight", name: DEFAULT_PALETTE.groups[0].name, colors: slots(value.wash, WASH_COLORS, WASH_ALPHA) },
+      { id: "ink-highlight", name: DEFAULT_PALETTE.groups[1].name, colors: slots(value.wash, INK_HIGHLIGHT_COLORS, INK_HIGHLIGHT_ALPHA) },
+      { id: "pen", name: DEFAULT_PALETTE.groups[2].name, colors: slots(value.ink, INK_COLORS, 1) },
+    ] });
+  }
+  const groups = [];
+  const ids = new Set();
+  for (const g of Array.isArray(value.groups) ? value.groups : []) {
+    if (!g || typeof g !== "object") continue;
+    let id = typeof g.id === "string" && GROUP_ID.test(g.id) ? g.id : newGroupId(groups);
+    while (ids.has(id)) id = newGroupId(groups);
+    ids.add(id);
+    const name = (typeof g.name === "string" ? g.name.trim().slice(0, MAX_GROUP_NAME) : "") || T("Group");
+    const colors = (Array.isArray(g.colors) ? g.colors : []).map((c) => normalizeSwatch(c)).filter(Boolean).slice(0, MAX_GROUP_COLORS);
+    groups.push({ id, name, colors });
+    if (groups.length >= MAX_GROUPS) break;
+  }
+  if (!groups.some((g) => g.colors.length)) return { groups: DEFAULT_PALETTE.groups.map((g) => ({ ...g, colors: g.colors.map((c) => ({ ...c })) })), pickers: { ...DEFAULT_PICKERS } };
+  // A picker names an existing group: the one given, else its default
+  // group, else the first group with a colour.
+  const fallback = groups.find((g) => g.colors.length).id;
+  const pickers = {};
+  for (const key of PICKERS) {
+    const given = value.pickers && typeof value.pickers === "object" ? value.pickers[key] : undefined;
+    const id = Array.isArray(given) ? given[0] : given;
+    pickers[key] = ids.has(id) ? id : ids.has(DEFAULT_PICKERS[key]) ? DEFAULT_PICKERS[key] : fallback;
+  }
+  return { groups, pickers };
 }
+
+// The swatches a picker offers: its group's colours, or, when that group
+// has none (emptied while being edited), the first group's that has any —
+// a picker is never empty.
+export function pickerColors(palette, picker) {
+  const p = palette || DEFAULT_PALETTE;
+  const own = p.groups.find((g) => g.id === p.pickers?.[picker])?.colors;
+  return own?.length ? own : p.groups.find((g) => g.colors.length)?.colors || DEFAULT_PALETTE.groups[0].colors;
+}
+
+// Whether `palette` is the defaults (the Reset button's state).
+export const isDefaultPalette = (palette) => JSON.stringify(normalizePalette(palette)) === JSON.stringify(normalizePalette(DEFAULT_PALETTE));
 
 // --- one colour ---------------------------------------------------------------
 
@@ -84,8 +175,14 @@ export function withAlpha(color, alpha) {
   return c ? `#${hex2(c[0])}${hex2(c[1])}${hex2(c[2])}${hex2(alpha * 255)}` : null;
 }
 
-// What a highlight stores for a wash swatch: the swatch at WASH_ALPHA.
-export const highlightColor = (swatch) => withAlpha(swatch, WASH_ALPHA);
+// What a highlight stores for a swatch ({hex, alpha}, or a bare hex at the
+// wash alpha): the colour at the swatch's alpha.
+export function highlightColor(swatch) {
+  if (!swatch) return null;
+  return typeof swatch === "string" ? withAlpha(swatch, WASH_ALPHA) : withAlpha(swatch.hex, swatch.alpha ?? WASH_ALPHA);
+}
+// A swatch as CSS (#rrggbbaa), for drawing it.
+export const swatchCss = (swatch) => highlightColor(swatch);
 // The colour a highlight without one (or with an unreadable one) draws in.
 export const DEFAULT_HIGHLIGHT = highlightColor(WASH_COLORS[0]);
 
@@ -109,7 +206,7 @@ export function nearestColor(color, colors) {
 // Words for colours, so a swatch reads "Pink highlighter", not "#f9a8d4":
 // a fixed table of reference colours, and any colour takes the name of the
 // nearest one — a user's own swatch included. The table holds the default
-// palettes and the highlighter colours older presets still carry.
+// groups and the highlighter colours older presets still carry.
 const NAMES = [
   ["#1f1f1f", T("Black")], ["#6b7280", T("Gray")], ["#1d4ed8", T("Blue")], ["#0284c7", T("Sky blue")],
   ["#0f766e", T("Teal")], ["#15803d", T("Green")], ["#65a30d", T("Lime")], ["#ca8a04", T("Amber")],
@@ -121,10 +218,40 @@ const NAMES = [
 ];
 const NAME_KEYS = NAMES.map(([hex]) => hex);
 // The English name (a T() key — the caller translates with t()); null for
-// what is not a colour.
+// what is not a colour. A swatch object names its hex.
 export function colorName(color) {
-  const hex = nearestColor(color, NAME_KEYS);
+  const hex = nearestColor(color && typeof color === "object" ? color.hex : color, NAME_KEYS);
   return hex ? NAMES[NAME_KEYS.indexOf(hex)][1] : null;
+}
+
+// --- the colour picker's space (shared/ui/ColorPicker.jsx) ---------------------
+
+// `#rrggbb` → [h 0..360, s 0..1, v 0..1]; null for what is not a colour.
+// A gray keeps hue 0.
+export function hexToHsv(hex) {
+  const c = parseColor(hex);
+  if (!c) return null;
+  const r = c[0] / 255, g = c[1] / 255, b = c[2] / 255;
+  const max = Math.max(r, g, b), min = Math.min(r, g, b), d = max - min;
+  let h = 0;
+  if (d) {
+    if (max === r) h = ((g - b) / d + (g < b ? 6 : 0)) * 60;
+    else if (max === g) h = ((b - r) / d + 2) * 60;
+    else h = ((r - g) / d + 4) * 60;
+  }
+  return [h, max ? d / max : 0, max];
+}
+
+// [h, s, v] → `#rrggbb`, each clamped into range.
+export function hsvToHex(h, s, v) {
+  h = ((h % 360) + 360) % 360;
+  s = Math.min(1, Math.max(0, s));
+  v = Math.min(1, Math.max(0, v));
+  const f = (n) => {
+    const k = (n + h / 60) % 6;
+    return v - v * s * Math.max(0, Math.min(k, 4 - k, 1));
+  };
+  return `#${hex2(f(5) * 255)}${hex2(f(3) * 255)}${hex2(f(1) * 255)}`;
 }
 
 // --- dark pages -----------------------------------------------------------------

@@ -21,7 +21,7 @@ import {
   MAX_STROKE_SIZE, boundsOf, encodeStroke, hitStrokes, inkBounds,
   nearestInkStroke, outlineOptions, sizesFor, strokePath, strokesInLasso, svgPathFromPoints, transformPoint, unionBox,
 } from "./ink";
-import { INK_COLORS, colorName } from "../shared/model/palette.js";
+import { INK_COLORS, colorName, pickerColors, swatchCss } from "../shared/model/palette.js";
 import { usePalette } from "../shared/ui/paletteContext.js";
 import * as inkStore from "./inkStore";
 import * as inkReplay from "./inkReplay";
@@ -608,19 +608,24 @@ function InkTransformHandles({ wrapRef, box, width, height, positions, maxScale,
   </>;
 }
 
-// A palette's swatches and a custom colour, `color` marked; onColor(hex).
-// A pen preset's colours (markup/MarkupToolbar.jsx) and a text box's
-// (markup/TextBoxLayer.jsx TextStyleChoices).
-export function ColorChoices({ colors, color, onColor }) {
+// A picker's swatches ({hex, alpha}, shared/model/palette.js pickerColors)
+// and a custom colour, the current `color` (hex) marked; onColor(hex,
+// alpha) — a swatch brings its alpha, the custom picker keeps the current
+// one. A pen preset's colours (markup/MarkupToolbar.jsx), the handwriting
+// selection menu and a text box's (markup/TextBoxLayer.jsx
+// TextStyleChoices, which ignores the alpha).
+export function ColorChoices({ colors, color, alpha, onColor }) {
+  const current = String(color || "").toLowerCase();
+  const listed = colors.some((c) => c.hex === current);
   return <>
-    {colors.map((c) => (
-      <button key={c} type="button" className={"colorBtn inkSwatch" + (color === c ? " selected" : "")}
-        style={{ background: c }} onClick={() => onColor(c)} title={inkColorName(c)} aria-label={inkColorName(c)}
-        aria-pressed={color === c} />
+    {colors.map((c, i) => (
+      <button key={c.hex + c.alpha + i} type="button" className={"colorBtn inkSwatch" + (current === c.hex ? " selected" : "")}
+        style={{ background: swatchCss(c) }} onClick={() => onColor(c.hex, c.alpha)} title={inkColorName(c.hex)} aria-label={inkColorName(c.hex)}
+        aria-pressed={current === c.hex} />
     ))}
-    <label className={"colorBtn inkSwatch inkCustomColor" + (colors.includes(color) ? "" : " selected")}
+    <label className={"colorBtn inkSwatch inkCustomColor" + (listed ? "" : " selected")}
       title={t("Custom color")} style={{ "--ink-custom": color }}>
-      <input type="color" value={color} aria-label={t("Custom color")} onChange={(e) => onColor(e.target.value.toLowerCase())} />
+      <input type="color" value={color} aria-label={t("Custom color")} onChange={(e) => onColor(e.target.value.toLowerCase(), alpha)} />
     </label>
   </>;
 }
@@ -738,9 +743,9 @@ function InkSelectionMenu({ wrapRef, box, width, strokes, onAction, onClose }) {
         <button className="ctlBtn inkDeleteBtn" aria-label={t("Delete")} title={t("Delete selected handwriting")} onClick={() => onAction("delete")}><TrashIcon aria-hidden="true" /></button>
       </div>
       {options === "color" ? <div className="inkEditOptions" aria-label={t("Selected ink color")}>
-        {(kinds.every((k) => k === "highlighter") ? palette.wash : palette.ink).map((color) =>
-          <button key={color} className="colorBtn inkSwatch" style={{ background: color }} title={inkColorName(color)} aria-label={inkColorName(color)}
-            aria-pressed={strokes.every((s) => s.color === color)} onClick={() => onAction("style", { color })} />)}
+        {pickerColors(palette, kinds.every((k) => k === "highlighter") ? "highlighter" : "pen").map((c, i) =>
+          <button key={c.hex + c.alpha + i} className="colorBtn inkSwatch" style={{ background: swatchCss(c) }} title={inkColorName(c.hex)} aria-label={inkColorName(c.hex)}
+            aria-pressed={strokes.every((s) => s.color === c.hex)} onClick={() => onAction("style", { color: c.hex, opacity: c.alpha })} />)}
         <label className="colorBtn inkSwatch inkCustomColor" title={t("Custom color")}><input type="color" aria-label={t("Selected ink custom color")} value={strokes[0]?.color || INK_COLORS[0]}
           onChange={(e) => onAction("style", { color: e.target.value })} /></label>
       </div> : null}

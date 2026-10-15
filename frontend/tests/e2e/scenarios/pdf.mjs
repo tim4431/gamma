@@ -4,7 +4,7 @@
 // PDF text on another page.
 import { tree, same, partialBlockSearch } from "./notes.mjs";
 import { fakeAiModels } from "../harness.mjs";
-import { DEFAULT_PALETTE, WASH_COLORS, darkPageColor } from "../../../src/shared/model/palette.js";
+import { DEFAULT_PALETTE, darkPageColor } from "../../../src/shared/model/palette.js";
 
 // Select `needle` inside one text-layer span of `pageNo` and release the
 // mouse the way the viewer listens for it (document-level mouseup).
@@ -267,10 +267,10 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
   });
 
   await step("pdf: a changed palette swatch colours new highlights; stored ones keep theirs", async () => {
-    const profile = (await account.api("/api/prefs/profile")).value || {};
-    const wash = [...WASH_COLORS];
-    wash[0] = "#ff8800";
-    await account.api("/api/prefs/profile", { method: "PATCH", body: { set: { palette: { wash, ink: profile.palette?.ink } } } });
+    // the first swatch of the Highlight group becomes a half-transparent orange
+    const palette = JSON.parse(JSON.stringify(DEFAULT_PALETTE));
+    palette.groups[0].colors[0] = { hex: "#ff8800", alpha: 0.5 };
+    await account.api("/api/prefs/profile", { method: "PATCH", body: { set: { palette } } });
     try {
       await page.reload();
       await waitForPdf(page, 1);
@@ -278,13 +278,13 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
       await selectPdfText(page, 1, "Rydberg arrays");
       await page.waitForSelector(".plainTip .colorBtn", { timeout: 5000 });
       assertEq(await first.getAttribute("aria-label"), "Highlight in Amber", "the swatch is named after its nearest colour");
-      assertEq(await first.evaluate((el) => getComputedStyle(el).backgroundColor), "rgb(255, 136, 0)");
+      assertEq(await first.evaluate((el) => getComputedStyle(el).backgroundColor), "rgba(255, 136, 0, 0.5)", "drawn at its alpha");
       await first.click();
       const saved = await until(async () => {
         const d = await account.api(`/api/blocks/${pageId}/subtree`);
         return (d.block.children || []).find((b) => b.properties?.quote === "Rydberg arrays") || null;
       }, { what: "the orange highlight" });
-      assertEq(saved.properties.color, "#ff8800a6", "the new swatch at the highlight alpha");
+      assertEq(saved.properties.color, "#ff880080", "the new swatch at its own alpha");
       const kept = await account.api(`/api/blocks/${pageId}/subtree`);
       assert((kept.block.children || []).some((b) => b.properties?.color === "#ffe28fa6"), "the earlier highlight keeps its yellow");
       // the recolour menu offers the same swatches

@@ -218,6 +218,16 @@ test("tool presets: a stored list is validated, bad entries dropped, nothing lef
   assert.equal(normalizeTools(Array(30).fill({ kind: "pen", color: "#000000", size: 2 })).length, MAX_TOOLS);
   assert.deepEqual(toolStyle(tools[0]), { tool: "pen", color: "#dc2626", size: 4, opacity: 1 });
   assert.deepEqual(toolStyle(tools[1]), { tool: "highlighter", color: "#fde047", size: 14, opacity: HIGHLIGHTER_OPACITY });
+  // a preset's own opacity — the swatch's alpha when picked — rides along; the kind's usual one is left out
+  const [faint, usual, bad] = normalizeTools([
+    { kind: "highlighter", color: "#fde047", size: 14, opacity: 0.333 },
+    { kind: "highlighter", color: "#fde047", size: 14, opacity: HIGHLIGHTER_OPACITY },
+    { kind: "pen", color: "#000000", size: 2, opacity: 5 },
+  ]);
+  assert.equal(faint.opacity, 0.33);
+  assert.equal(toolStyle(faint).opacity, 0.33);
+  assert.ok(!("opacity" in usual) && !("opacity" in bad));
+  assert.equal(toolStyle(bad).opacity, 1);
 });
 
 // tests/shared/inkmerge.json: the same cases gamma/ink.py merge_ink passes

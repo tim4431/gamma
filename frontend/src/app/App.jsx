@@ -3,7 +3,7 @@ import { flushSync } from "react-dom";
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import PdfViewer, { preloadPdfEngine } from "../pdf/PdfViewer";
 import { highlightSpot, rangeSpot } from "../pdf/pdfSelectionSpot";
-import { DEFAULT_HIGHLIGHT, colorName, highlightColor, normalizeColor } from "../shared/model/palette.js";
+import { DEFAULT_HIGHLIGHT, colorName, highlightColor, normalizeColor, pickerColors, swatchCss } from "../shared/model/palette.js";
 import { PaletteContext } from "../shared/ui/paletteContext.js";
 import { clampZoom } from "../shared/model/zoom.js";
 import { fmtDate, getLocale, resolveLocale, t, T, tn } from "../shared/i18n/i18n.js";
@@ -11216,12 +11216,12 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       {highlightMenu ? (
         <ContextMenu x={highlightMenu.x} y={highlightMenu.y} onClose={() => setHighlightMenu(null)}>
             <div className="colorRow ctxMenuColors">
-              {palette.wash.map((c) => (
+              {pickerColors(palette, "highlight").map((c, i) => (
                 <button
-                  key={c}
+                  key={c.hex + c.alpha + i}
                   type="button"
                   className="colorBtn"
-                  style={{ background: c }}
+                  style={{ background: swatchCss(c) }}
                   onClick={() => {
                     changeHighlightColor(highlightMenu.id, highlightColor(c));
                     setHighlightMenu(null);
