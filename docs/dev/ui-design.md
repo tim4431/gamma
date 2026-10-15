@@ -179,7 +179,7 @@ already exists. Bespoke CSS classes are for **layout only**.
 | Class / component | Use for |
 |---|---|
 | `uiBtn` (+ `primary`, `ghost`, `danger`, `sm`, `iconSq`, `on`) | every button with a label, in the topbar too (there is no generic topbar button style); the hierarchy and sizes are under Buttons below |
-| `ctlBtn` / `ctlBtnRow` / `pdfCtlBox` | the flat `--ctl-icon-btn` (29 px) icon buttons (a 16 px icon) of the PDF zoom column: `pdfCtlBox` = the elevated vertical box, `ctlBtnRow` = the same buttons laid flat with no box (chat header), `modeActive` = on; `pdfCtlGroup` keeps a run of a box's buttons together (a guide anchor) without changing the layout. The zoom column of the PDF and the notebook viewer starts with the same buttons in the same places (zoom out, zoom in, fit to width, the pen); what only one viewer has goes after them. **`ctlBtn` (frameless) is the DEFAULT style for any icon button** — new icon toolbars (e.g. the image tools) use it, not bespoke button styles |
+| `ctlBtn` / `ctlBtnRow` / `pdfCtlBox` | the flat `--ctl-icon-btn` (29 px) icon buttons (a 16 px icon) of the PDF zoom column: `pdfCtlBox` = the elevated vertical box, `ctlBtnRow` = the same buttons laid flat with no box (chat header), `modeActive` = on, `danger` = destructive (red under the pointer or the keyboard's focus); `pdfCtlGroup` keeps a run of a box's buttons together (a guide anchor) without changing the layout. The zoom column of the PDF and the notebook viewer starts with the same buttons in the same places (zoom out, zoom in, fit to width, the pen); what only one viewer has goes after them. **`ctlBtn` (frameless) is the DEFAULT style for any icon button** — new icon toolbars (e.g. the image tools) use it, not bespoke button styles |
 | `uiClose` (+ `uiCloseSm`/`uiCloseLg`) | every × close button: round, `--ctl-close` 26 px (Sm 22 for chips and rows, Lg 31 for dialogs and panes) |
 | `MenuButton` ([Menus.jsx](../../frontend/src/shared/ui/Menus.jsx)) | a row's or a card's "⋯": the visible way into the menu its right-click or held finger opens ([below](#one-behaviour-for-mouse-and-finger)) |
 | `aiKeyInput` | every text/number/password input in dialogs and settings |
@@ -222,6 +222,18 @@ take `--radius-md`, icon buttons and chips `--radius-sm`. States: hover
 with an accent border, disabled the faint text colour with no lift (a filled
 button fades as a whole). Native checkboxes, radios and ranges take the
 accent from one `accent-color` on the root.
+
+### Alt variants
+
+A control whose Alt+click does something else shows that variant while Alt
+is held over it, so the outcome is visible before the click lands.
+`useAltVariant()` ([altVariant.js](../../frontend/src/shared/ui/altVariant.js))
+reports Alt held under the pointer or the keyboard's focus, and nowhere
+else, so an Alt held over the PDF (the translation peek) restyles nothing.
+The control swaps its icon for the variant's; a destructive variant adds
+`danger` and takes its own name and `title`. The click still reads
+`e.altKey`. The chat header's New chat, which becomes Discard chat, is the
+model.
 
 ### Icons
 

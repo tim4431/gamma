@@ -27,6 +27,7 @@ import { rankLibraryPages } from "../library/librarySearch";
 import { filedIn, pageAttachment } from "../library/libraryUtils";
 import { ActionMenu, ContextMenu, MenuButton, MenuItem, MenuSelect } from "../shared/ui/Menus";
 import { backdropPress, menuPress } from "../shared/ui/press.js";
+import { useAltVariant } from "../shared/ui/altVariant.js";
 import { touchTyping } from "../shared/lib/pointer.js";
 import { composing, sendsOnEnter } from "./enterKey.js";
 import { chatFailure, failureCopy, failureFields, fixLabel } from "./chatErrors";
@@ -616,6 +617,7 @@ export default function ChatDock({
   // Ctrl+scroll over the transcript: session-only text size (useTextScale).
   const chatTextScale = useTextScale();
   const chatScrollRefCb = useCallback((el) => { chatScrollRef.current = el; chatTextScale.ref(el); }, [chatTextScale.ref]);
+  const [newChatAlt, newChatAltProps] = useAltVariant();
   // Voice dictation (ChatGPT-style): mic records (live waveform), ■ transcribes
   // into the input via /api/ai/transcribe, ↑ transcribes and sends, × discards.
   const [dictation, setDictation] = useState(""); // "" | "rec" | "busy"
@@ -1555,6 +1557,10 @@ export default function ChatDock({
     <ChatSetupCard info={setupInfo} isAdmin={isAdmin} openSettings={openSettings}
       onConnect={(service) => openAiKeysEditor({ service })} />
   ) : null;
+  // Alt over New chat turns it into Discard: only when there is a saved
+  // conversation to lose (a viewer's chat is never kept, an empty one has
+  // nothing to drop).
+  const discardArmed = newChatAlt && canSave && chatMessages.length > 0;
   const headerContent = aiOff ? null : (
     <>
       <div className="ctlBtnRow chatPanelHeaderBtns">
@@ -1728,10 +1734,12 @@ export default function ChatDock({
             {t("Not saved")}
           </span>
         )}
-        <button type="button" className="ctlBtn" onClick={(e) => newChat(e.altKey)} disabled={busyHere}
-          title={canSave ? t("New chat — keeps this conversation in history and starts a fresh one (Alt+click: discard it)") : t("New chat")}
-          aria-label={t("New chat")}>
-          <PlusIcon size={16} />
+        <button type="button" {...newChatAltProps} className={`ctlBtn${discardArmed ? " danger" : ""}`}
+          onClick={(e) => newChat(e.altKey)} disabled={busyHere}
+          title={discardArmed ? t("Discard chat — it isn't kept in history")
+            : canSave ? t("New chat — keeps this conversation in history and starts a fresh one (Alt+click: discard it)") : t("New chat")}
+          aria-label={discardArmed ? t("Discard chat") : t("New chat")}>
+          {discardArmed ? <TrashIcon size={16} /> : <PlusIcon size={16} />}
         </button>
       </div>
     </>

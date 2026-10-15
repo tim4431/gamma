@@ -895,6 +895,8 @@
   "Directories under workspaces/ that no workspace names (inspect or delete by hand):": "workspaces/ 下没有任何工作区使用的目录（请手动检查或删除）：",
   "Discard": "放弃",
   "Discard changes": "放弃更改",
+  "Discard chat": "丢弃对话",
+  "Discard chat — it isn't kept in history": "丢弃对话——不会保留在历史中",
   "Discard your unsaved edits?": "放弃未保存的编辑？",
   "Disconnect": "断开连接",
   "Disconnect {name}: the assistant loses access to this workspace": "断开 {name}：该助手将失去此工作区的访问权限",

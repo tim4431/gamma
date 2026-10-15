@@ -98,9 +98,12 @@ active conversation) and `/api/chat-history` (the archive).
   message of the other is archived alone; otherwise both are.
 - **Alt+click on New chat** throws the conversation away instead: the same
   call with `discard: true` clears the active row and files nothing. There
-  is no confirm and no undo. A stored conversation newer than the copy that
-  holds messages the copy lacks is still archived, so another tab's work is
-  never lost.
+  is no confirm and no undo. Instead, Alt held over the button turns it into
+  **Discard chat** (red, a trash icon; [Alt variants](ui-design.md#alt-variants))
+  before the click. An empty chat has nothing to discard, so the button
+  stays New chat. A stored conversation newer than the copy that holds
+  messages the copy lacks is still archived, so another tab's work is never
+  lost.
 - The **History** button (clock icon) opens a popover listing the active
   conversation first (highlighted, "now") and then the bucket's archived
   ones newest-first (`GET /chat-history?bucket=`; title, age, message count

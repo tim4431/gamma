@@ -151,7 +151,7 @@ export async function chatNavigationScenarios(env) {
     }
   });
 
-  await step("chat navigation: Alt+click New chat discards the conversation; a plain click keeps it in History", async () => {
+  await step("chat navigation: Alt over New chat arms Discard, Alt+click discards the conversation; a plain click keeps it in History", async () => {
     const own = await alice.api("/api/pages", { method: "POST", body: { title: "Discarded chat" } });
     const historyCount = async () => (await alice.api(`/api/chat-history?bucket=${own.id}`)).sessions.length;
     const seed = (text) => alice.api(`/api/chats/${own.id}`, { method: "PUT", body: { messages: [
@@ -165,11 +165,30 @@ export async function chatNavigationScenarios(env) {
     try {
       const panel = page.locator(".chatPanel");
       const newChat = page.getByRole("button", { name: "New chat", exact: true });
+      const discard = page.getByRole("button", { name: "Discard chat", exact: true });
       await until(async () => (await panel.innerText()).includes("Throw this one away: answered."));
+      // Alt over the button shows the discard before the click (its name and
+      // the danger tint); releasing Alt or leaving puts New chat back.
+      await newChat.hover();
+      await page.keyboard.down("Alt");
+      await discard.waitFor();
+      assert(await discard.evaluate((el) => el.classList.contains("danger")), "the armed button is red");
+      await page.keyboard.up("Alt");
+      await newChat.waitFor();
+      await page.keyboard.down("Alt");
+      await discard.waitFor();
+      await panel.locator(".chatMessages").hover();
+      await newChat.waitFor();
+      await page.keyboard.up("Alt");
       await newChat.click({ modifiers: ["Alt"] });
       await until(async () => !(await panel.innerText()).includes("Throw this one away"), { what: "Alt+click empties the chat" });
       assertEq((await alice.api(`/api/chats/${own.id}`)).messages.length, 0, "the active conversation is cleared");
       assertEq(await historyCount(), 0, "nothing reaches History");
+      await newChat.hover();
+      await page.keyboard.down("Alt");
+      await page.evaluate(() => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done))));
+      assertEq(await discard.count(), 0, "an empty chat has nothing to discard");
+      await page.keyboard.up("Alt");
       await seed("Keep this one");
       await page.reload();
       await until(async () => (await panel.innerText()).includes("Keep this one: answered."));

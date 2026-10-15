@@ -1082,7 +1082,6 @@ html, body { overscroll-behavior: none; }
 .mdImgFrame:is(:hover, :has(.mdImgTools :focus-visible)) .mdImgTools,
 .mdObjectSelected .mdImgTools { opacity: 1; pointer-events: auto; }
 .mdImgTools a.ctlBtn { text-decoration: none; }
-.mdImgTools .ctlBtn.danger:hover { background: var(--danger-bg); color: var(--danger); }
 /* The edge drag grips shared by sized figures (note images, Mermaid and
    SVG diagrams — shared/ui/ResizeGrip.jsx), one per side; each frame reveals
    them on hover and while its object is selected, and out of sight they
@@ -1749,7 +1748,8 @@ html, body { overscroll-behavior: none; }
 }
 /* .ctlBtn is the same button outside a box — .ctlBtnRow lays them flat
    (the chat header's ⚙ / tools / find / new-chat strip). State classes are
-   shared: .modeActive = on. */
+   shared: .modeActive = on, .danger = destructive (red under the pointer
+   or the keyboard's focus). */
 :is(.pdfCtlBox button, .ctlBtn) {
   background: transparent;
   border: none;
@@ -1768,6 +1768,10 @@ html, body { overscroll-behavior: none; }
   background: var(--bg-active);
 }
 :is(.pdfCtlBox button, .ctlBtn):disabled { opacity: 0.4; cursor: default; }
+:is(.pdfCtlBox button, .ctlBtn).danger:is(:hover, :focus-visible):not(:disabled) {
+  color: var(--danger);
+  background: var(--danger-bg);
+}
 /* A row's "⋯" (MenuButton in shared/ui/Menus.jsx): where a pointer hovers
    it shows with its row (.rowMenuHost), under the keyboard's focus, and
    while its menu is open; where nothing hovers it is always there. */
