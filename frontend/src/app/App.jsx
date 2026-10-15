@@ -2265,6 +2265,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   const { addLocal: addTask, updateLocal: updateTask } = tasks;
   // The search indexer of the open workspace runs (Settings shows it).
   const indexing = tasks.jobs.some((job) => job.kind === "indexing" && job.workspace === workspace?.id && isActive(job));
+  // So does a batch metadata lookup there (Settings → Maintenance).
+  const metadataJob = tasks.jobs.find((job) => job.kind === "metadata" && job.workspace === workspace?.id && isActive(job)) || null;
   const transferByUrlRef = useRef({});
   // Byte-level download state reported by the PDF viewer (skips local uploads).
   // One row per URL: a re-download (LRU eviction, retry) reactivates the
@@ -3013,10 +3015,16 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     return () => { live = false; };
   }, [sharedPageId, pageBibtex]);
   // Block ids with a metadata fetch in flight. Tracked per page (not one
-  // boolean) so the button's spinner also covers the upload queue's fetches
-  // and doesn't spin for a fetch that belongs to a different page.
+  // boolean) so the button doesn't spin for a fetch that belongs to a
+  // different page. A page this tab handed to the metadata job (an upload)
+  // spins too, until its record or its failure arrives over the page's
+  // socket or the job ends.
   const [metaFetchingIds, setMetaFetchingIds] = useState(() => new Set());
-  const metaBusy = metaFetchingIds.has(focusedBlockId);
+  const metaQueuedRef = useRef(new Set());
+  useEffect(() => { if (!metadataJob) metaQueuedRef.current.clear(); }, [metadataJob]);
+  const metaBusy = metaFetchingIds.has(focusedBlockId)
+    || (!!metadataJob && metaQueuedRef.current.has(focusedBlockId)
+      && !focusedBlock?.properties?.meta && !focusedBlock?.properties?.meta_error);
   // Provenance wording shared with the share popover and the Settings →
   // Library status table (utils.js); `warn` drives the red "!".
   const metaSrc = metaSourceInfo(pageMeta);
@@ -3238,8 +3246,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     }
   }
 
-  // POST /metadata/fetch for one page, tracked as a transfer-panel task.
-  // Shared by the open-page fetch and the bulk-upload follow-up; throws on
+  // POST /metadata/fetch for one page, tracked as a transfer-panel task:
+  // the open page's lookup (an upload's are the metadata job's). Throws on
   // failure (with the task already marked).
   async function fetchMetadataRequest(block, force = false) {
     const ctl = new AbortController();
@@ -3316,39 +3324,24 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     }
   }
 
-  // Every uploaded PDF enters the same lazy, sequential metadata queue. The
-  // server may replace its original-filename title only while the automatic
-  // title marker still matches, so an in-flight lookup cannot undo a rename.
+  // The uploaded PDFs' lookups are the server's metadata job (one per
+  // workspace: a later upload adds to it), so they go on when the tab
+  // closes. The open page hears its record over its socket; the server may
+  // replace the original-filename title only while the automatic title
+  // marker still matches, so a lookup cannot undo a rename. A job that
+  // cannot start leaves the papers to the lookup on open.
   function queueMetadataForUploads(uploaded) {
     if (shareMode || readOnly || !metaAutoFetch) return;
-    const pending = uploaded.filter(({ block }) => block?.id
+    const ids = uploaded.map(({ block }) => block).filter((block) => block?.id
       && !block.properties?.meta && !block.properties?.meta_error
-      && !attemptedMetaRef.current.has(block.id));
-    pending.forEach(({ block }) => attemptedMetaRef.current.add(block.id));
-    if (pending.length) setTimeout(() => fetchMetadataForUploads(pending), 0);
-  }
-
-  async function fetchMetadataForUploads(uploaded) {
-    if (shareMode || readOnly || !metaAutoFetch) return;
-    let completed = 0;
-    for (const { block } of uploaded) {
-      if (!block?.id || block.properties?.meta) continue;
-      try {
-        const data = await fetchMetadataRequest(block);
-        completed++;
-        Object.assign(block, mergeMetaResult(block, data));
-        if (focusedBlockIdRef.current === block.id) {
-          setPageMeta(data.meta || null);
-          setPageBibtex(data.bibtex || "");
-          setPptCite(data.ppt_cite || "");
-          // Merge into the live copy — the upload's block is a snapshot from
-          // before the page was opened (labels, folders edited since).
-          setFocusedBlock((prev) => prev && prev.id === block.id ? mergeMetaResult(prev, data) : prev);
-          if (data.page_title) setPageTitle(data.page_title);
-        }
-      } catch {} // task already marked failed by fetchMetadataRequest
-    }
-    if (completed) fetchHomeBlocks();
+      && !attemptedMetaRef.current.has(block.id)).map((block) => block.id);
+    if (!ids.length) return;
+    ids.forEach((id) => { attemptedMetaRef.current.add(id); metaQueuedRef.current.add(id); });
+    tasks.start("metadata", {
+      block_ids: ids, force: false,
+      prompt: metaPrompt || "", model: metaFetchModel || "", context_char_limit: metaContextChars,
+      cite_prompt: citePrompt || "", cite_model: chatSendModel || "",
+    }).catch(() => ids.forEach((id) => { attemptedMetaRef.current.delete(id); metaQueuedRef.current.delete(id); }));
   }
 
   // Metadata is a page property: show it on any page that has it; a page with
@@ -4064,6 +4057,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           if ("folders" in op.props) setPageFolders(props.folders || []);
           if ("labels" in op.props) setPageLabels(props.labels || []);
           if ("summary" in op.props) setSummary(props.summary || "");
+          // A lookup the server ran (a metadata job, the extension's clip)
+          if ("meta" in op.props) setPageMeta(props.meta || null);
+          if ("bibtex" in op.props) setPageBibtex(props.bibtex || "");
+          if ("ppt_cite" in op.props) setPptCite(props.ppt_cite || "");
         }
         return { ...b, ...(op.content !== undefined ? { content: op.content } : {}), properties: props };
       });
@@ -10802,12 +10799,17 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         }}
         keyboard={{ keybindings, setKeybindings, enterNewNote, setEnterNewNote }}
         library={{
-          // batch metadata retry uses the same prompt/model/context prefs as
-          // the per-paper fetch in the metadata popover
+          // the batch metadata lookup (a background job) uses the same
+          // prompt/model/context prefs as the per-paper fetch in the
+          // metadata popover
           metaPrompt,
           metaFetchModel,
           metaContextChars,
+          citePrompt,
+          citeModel: chatSendModel,
           indexing,
+          metadataJob,
+          tasks,
           wakeTasks: tasks.wake,
           setStatus,
           // status-table row click: jump to the paper (closing the dialog)

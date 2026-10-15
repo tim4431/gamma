@@ -59,3 +59,22 @@ def test_seeded_admin_password_never_enters_buffer():
     """seed.py prints the one-time admin password with raw print() on purpose —
     the startup seed ran in this very process, so its line must be absent."""
     assert not any("[startup]   password" in e["msg"] for e in tail(0))
+
+
+def test_the_console_access_log_leaves_out_answered_task_polls(client):
+    """uvicorn's access log keeps every request but the tray's answered
+    GET /api/jobs, which comes every 1.5 s while a job runs."""
+    import logging
+
+    access = logging.getLogger("uvicorn.access")
+
+    def shown(method, path, status):
+        record = access.makeRecord("uvicorn.access", logging.INFO, __file__, 0, '%s - "%s %s HTTP/%s" %d',
+                                   ("127.0.0.1:1", method, path, "1.1", status), None)
+        return access.filter(record)
+
+    assert not shown("GET", "/api/jobs", 200)
+    assert shown("GET", "/api/jobs", 500)
+    assert shown("GET", "/api/jobs/abc", 200)
+    assert shown("POST", "/api/jobs/metadata", 200)
+    assert shown("GET", "/api/quota", 200)

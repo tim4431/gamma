@@ -71,6 +71,7 @@ test("titles read the job's params; local rows keep their own name", () => {
   assert.equal(taskTitle(job({ kind: "restore", params: { name: "Lab", mode: "replace", source: "snapshot" } })), "Restore “Lab” from a snapshot");
   assert.equal(taskTitle(job({ kind: "import", params: { filename: "zotero.zip" } })), "Import zotero.zip");
   assert.equal(taskTitle(job({ kind: "scheduled-backup", params: { name: "Nightly" } })), "Backup task “Nightly”");
+  assert.equal(taskTitle(job({ kind: "metadata", params: { papers: 12 } })), "Metadata lookup for 12 papers");
   assert.equal(taskTitle(job({ kind: "future-kind", title: "Something new" })), "Something new");
   assert.equal(taskTitle({ local: true, kind: "upload", name: "paper.pdf" }), "paper.pdf");
   assert.equal(kindOf({ kind: "nope" }).icon, "activity");
@@ -117,6 +118,7 @@ test("a click opens the export and import dialogs again, or where the work is ma
   assert.equal(canOpen(job({})), true);
   assert.equal(kindOf(job({ kind: "import" })).open, "import");
   assert.equal(kindOf(job({ kind: "snapshot" })).open, "settings:backups");
+  assert.equal(kindOf(job({ kind: "metadata" })).open, "settings:maintenance");
   assert.equal(canOpen(job({ kind: "workspace-export" })), false);
   assert.equal(canOpen({ local: true, kind: "download" }), false);
 });

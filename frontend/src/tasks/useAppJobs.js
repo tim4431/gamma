@@ -178,6 +178,22 @@ export function useAppJobs({
       }
       return;
     }
+    if (job.kind === "metadata") {
+      // Done or stopped part-way, papers may carry their registry titles now.
+      if (here && job.state !== "failed") fetchHomeBlocks();
+      if (!started) return;
+      if (job.state === "done") {
+        tasks.fetchJob(job.id).then((full) => {
+          const r = full?.result;
+          if (r) setStatus([t("Metadata: {ok} fetched", { ok: r.fetched }), r.failed ? t("{failed} failed", { failed: r.failed }) : ""].filter(Boolean).join(" · "));
+        }).catch(() => {});
+      } else if (job.state === "cancelled") {
+        setStatus(t("Metadata lookup stopped after {done} of {total} papers.", { done: job.progress?.done || 0, total: job.progress?.total || job.params?.papers || 0 }));
+      } else {
+        setStatus(t("{name} failed: {message}", { name: title, message: t(job.error) }));
+      }
+      return;
+    }
     if (!started || shownInDialog) return;
     if (job.state === "done" && job.artifact) {
       if (started.download === "auto") {

@@ -5,7 +5,8 @@ A job is the business of the account that started it; a workspace's own
 jobs (the search indexer) are seen by that workspace's members while they
 work in it, and stopped or removed by its editors and owners. Jobs are
 started by the endpoints of the work itself, ``POST /api/jobs/<kind>`` in
-the router that owns it (export.py, imports.py, ws_backups.py, admin.py).
+the router that owns it (export.py, imports.py, metadata.py, ws_backups.py,
+admin.py).
 The listing also shows the account's scheduled backup tasks while one runs
 (gamma/backup_schedule.py, which keeps its own state): read-only rows of
 kind ``scheduled-backup``.

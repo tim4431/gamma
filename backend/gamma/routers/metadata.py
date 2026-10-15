@@ -20,6 +20,9 @@ import json
 import os
 import re
 import sqlite3
+import threading
+import time
+import urllib.error
 import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
@@ -28,14 +31,14 @@ from difflib import SequenceMatcher
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from .. import ai_usage, item_types, storage
+from .. import ai_usage, item_types, jobs, storage
 from .. import bibtex as bibtex_mod
 from ..ai_client import CallRefused, call_ai as _call_ai
 from ..ai_context import ensure_indexed as _ensure_indexed
 from ..ai_context import pdf_excerpt as _pdf_excerpt
 from ..ai_context import pdf_path as _pdf_path
 from ..ai_settings import ai_runtime, require_ai_runtime
-from ..auth import require_ws
+from ..auth import require_user_id, require_ws
 from ..blocks_store import page_attachment, write_lock
 from ..ops import StorableBody, after_commit, apply_ops, props_patch
 from ..db import connect_data_db, connect_pages_db, page_now
@@ -177,6 +180,12 @@ _ISBN_RE = re.compile(r"ISBN(?:-1[03])?\s*[:：]?\s*([0-9][0-9Xx\s‐-―-]{8,22
 # path that has already tried arXiv/DOI, and Open Library can be slow or
 # unreachable from some networks — a fetch must not hang on them.
 _BOOK_API_TIMEOUT = 8
+# Google Books' keyless quota belongs to the server's address: once it answers
+# 429, asking again at once (the next paper of a batch) spends what the quota
+# grants next. It rests for the Retry-After it names, else this long; a book
+# record then stands on Open Library and the AI read alone.
+_GOOGLE_BOOKS_REST_S = 600
+_google_books_rest_until = 0.0
 
 
 def _isbn_valid(digits: str) -> bool:
@@ -241,6 +250,28 @@ def _gb_record(info: dict, source: str) -> dict | None:
         source, years=[str(info.get("publishedDate") or "")[:4]])
 
 
+def _google_books(query: str, what: str) -> list[dict]:
+    """Google Books volumes for the ``q`` query ``query``, or [] when it fails
+    or rests after a 429. ``what`` names the lookup in the log."""
+    global _google_books_rest_until
+    if time.monotonic() < _google_books_rest_until:
+        return []
+    try:
+        return json.loads(_http_get("https://www.googleapis.com/books/v1/volumes?" + query,
+                                    timeout=_BOOK_API_TIMEOUT)).get("items") or []
+    except urllib.error.HTTPError as e:
+        if e.code != 429:
+            log.warning(f"[metadata] google books {what} failed: {e}")
+            return []
+        retry_after = str(e.headers.get("Retry-After") or "").strip()
+        rest = int(retry_after) if retry_after.isdigit() else _GOOGLE_BOOKS_REST_S
+        _google_books_rest_until = time.monotonic() + rest
+        log.warning(f"[metadata] google books is rate-limiting this server (429): not asked for {max(1, rest // 60)} min")
+    except Exception as e:
+        log.warning(f"[metadata] google books {what} failed: {e}")
+    return []
+
+
 def _fetch_isbn(isbn: str) -> dict | None:
     """Resolve one ISBN: Open Library's books API, then Google Books."""
     try:
@@ -256,13 +287,7 @@ def _fetch_isbn(isbn: str) -> dict | None:
         data.get("publish_date"), (data.get("publishers") or [{}])[0].get("name"),
         [isbn], "isbn") if data else None
     if not rec:
-        try:
-            items = json.loads(_http_get(
-                "https://www.googleapis.com/books/v1/volumes?q=isbn:" + isbn,
-                timeout=_BOOK_API_TIMEOUT)).get("items") or []
-        except Exception as e:
-            log.warning(f"[metadata] google books isbn lookup failed: {e}")
-            items = []
+        items = _google_books("q=isbn:" + isbn, "isbn lookup")
         rec = next((r for r in (_gb_record(it.get("volumeInfo") or {}, "isbn") for it in items) if r), None)
     if rec:
         rec["isbn"] = isbn
@@ -295,15 +320,7 @@ def _book_search(title: str, author: str = "") -> list[dict]:
         if rec:
             out.append(rec)
     gq = f'intitle:"{title[:200]}"' + (f' inauthor:"{author[:100]}"' if author else "")
-    try:
-        items = json.loads(_http_get(
-            "https://www.googleapis.com/books/v1/volumes?maxResults=5&q=" + urllib.parse.quote(gq),
-            timeout=_BOOK_API_TIMEOUT,
-        )).get("items") or []
-    except Exception as e:
-        log.warning(f"[metadata] google books search failed: {e}")
-        items = []
-    for it in items:
+    for it in _google_books("maxResults=5&q=" + urllib.parse.quote(gq), "search"):
         rec = _gb_record(it.get("volumeInfo") or {}, "googlebooks")
         if rec:
             out.append(rec)
@@ -1068,6 +1085,121 @@ def fetch_page_metadata(ws: str, block_id: str, actor: str, prompt: str = "", mo
     # client shows whatever comes back here.
     return {"meta": meta, "bibtex": bibtex, "ppt_cite": ppt_cite, "source": meta.get("source", ""),
             "cite_key": cite_key, "cached": False, "title_updated": title_updated, "page_title": page_title}
+
+
+class MetaBatchRequest(BaseModel):
+    block_ids: list[str]
+    force: bool = True  # False: a page that has its record keeps it (the upload follow-up)
+    prompt: str = ""
+    model: str = ""
+    context_char_limit: int = Field(default=6000, ge=100, le=1_000_000)
+    cite_prompt: str = ""
+    cite_model: str = ""
+
+
+class _Batch:
+    """The papers one account's ``metadata`` job looks up in one workspace,
+    in the order asked. A start while the batch is open adds its papers to
+    it; the run takes them one at a time and closes the batch once none is
+    left. Both happen under ``_batches_lock``, so a paper is never added to
+    a batch whose run already ended."""
+
+    def __init__(self, key: tuple[str, str]):
+        self.key = key
+        self.job_id = ""
+        self.items: list[list] = []      # [block_id, title, force, options]
+        self.waiting: dict[str, int] = {}  # block_id → its item, while not taken yet
+        self.taken = 0
+
+    def add(self, papers: list[tuple[str, str]], force: bool, options: dict) -> None:
+        for block_id, title in papers:
+            at = self.waiting.get(block_id)
+            if at is not None and at >= self.taken:  # asked again before its turn
+                item = self.items[at]
+                item[2], item[3] = item[2] or force, options
+                continue
+            self.waiting[block_id] = len(self.items)
+            self.items.append([block_id, title, force, options])
+
+    def _close(self) -> None:
+        if _batches.get(self.key) is self:
+            del _batches[self.key]
+
+    def run(self, job, ws: str, actor: str) -> dict:
+        fetched = failed = 0
+        try:
+            while True:
+                with _batches_lock:
+                    if self.taken >= len(self.items):
+                        self._close()
+                        break
+                    block_id, title, force, options = self.items[self.taken]
+                    done, total = self.taken, len(self.items)
+                    self.taken += 1
+                job.progress(done=done, total=total, unit="papers", item=title)
+                try:
+                    fetch_page_metadata(ws, block_id, actor, force=force, **options)
+                    fetched += 1
+                except HTTPException:  # nothing found (negative-cached on the page), or the page went
+                    failed += 1
+                except Exception as e:  # noqa: BLE001 — one paper's failure never ends the batch
+                    log.warning(f"[metadata] batch lookup of {block_id} failed: {e}")
+                    failed += 1
+        finally:  # stopped or failed: a later start begins a new batch
+            with _batches_lock:
+                self._close()
+        job.progress(done=len(self.items), total=len(self.items), unit="papers", item="")
+        return {"papers": len(self.items), "fetched": fetched, "failed": failed}
+
+
+_batches: dict[tuple[str, str], _Batch] = {}  # (account, workspace) → its open batch
+_batches_lock = threading.Lock()
+
+
+@router.post("/jobs/metadata")
+def metadata_batch(payload: MetaBatchRequest, request: Request):
+    """Look papers up as a background job (kind ``metadata``,
+    docs/dev/tasks.md), one after the other, so the work goes on when the
+    dialog or the tab closes: Settings → Maintenance's Fetch needed / Fetch
+    selected / Refetch (``force``) and the lookups after an upload of several
+    PDFs (``force: false``). An account has one batch per workspace: a start
+    while it is queued or running adds its papers to it and answers that
+    job. A paper nothing is found for is counted, not fatal; a stop lands
+    between two papers."""
+    user_id = require_user_id(request)
+    ws = require_ws(request, write=True)
+    wanted = list(dict.fromkeys(i for i in payload.block_ids if i))
+    titles = {}
+    with connect_pages_db(ws) as conn:
+        for start in range(0, len(wanted), 500):
+            chunk = wanted[start:start + 500]
+            rows = conn.execute(
+                "SELECT id, content, properties FROM unified_blocks WHERE parent_id = 'root' "
+                f"AND id IN ({', '.join('?' for _ in chunk)})", chunk).fetchall()
+            for block_id, content, props_json in rows:
+                meta = json.loads(props_json or "{}").get("meta") or {}
+                titles[block_id] = meta.get("title") or content or "Untitled"
+    papers = [(i, titles[i]) for i in wanted if i in titles]  # own pages only, in the order asked
+    if not papers:
+        raise HTTPException(status_code=400, detail="no papers to look up")
+    options = {"prompt": payload.prompt, "model": payload.model, "context_char_limit": payload.context_char_limit,
+               "cite_prompt": payload.cite_prompt, "cite_model": payload.cite_model}
+    key = (user_id, ws)
+    with _batches_lock:
+        batch = _batches.get(key)
+        if batch is not None:
+            job = jobs.get(batch.job_id)
+            if job and job["state"] in jobs.ACTIVE and not job["stopping"]:
+                batch.add(papers, payload.force, options)
+                return job
+            del _batches[key]  # stopped (while queued, its run never started): it takes no more
+        batch = _Batch(key)
+        batch.add(papers, payload.force, options)
+        job = jobs.start("metadata", owner=user_id, ws=ws, run=lambda job: batch.run(job, ws, user_id),
+                         title="Paper metadata lookup", params={"papers": len(papers)})
+        batch.job_id = job["id"]
+        _batches[key] = batch
+    return job
 
 
 class MetaUpdateRequest(StorableBody):

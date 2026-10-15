@@ -18,7 +18,7 @@ One module per API area. Mounted under `/api` in `gamma/app.py`.
 | `uploads.py`  | `/api/uploads/*`, `/upload-image`, `/upload-file`, `/pdf-info/{doc_id}`, `/quota` | PDF / image / any-file upload + serving (content-addressed; executables refused); a PDF's upload in parts (`/uploads/parts`, gamma/upload_parts.py); a PDF's manifest (gamma/pdf_meta.py); the storage limits |
 | `ink.py`      | `/api/upload-ink`                   | handwriting uploads: one `gamma-ink` file per ink group, stored like any upload |
 | `pdf.py`      | `/api/resolve-pdf`, `/pdf`          | find a real PDF url (arXiv → meta tag → Unpaywall OA), and proxy it (optional local cache) |
-| `metadata.py` | `/api/metadata/*` (`fetch`, `update`, `verify`, `status`, `cite`) | paper metadata + BibTeX + PPT citation (cached on the page) |
+| `metadata.py` | `/api/metadata/*` (`fetch`, `update`, `verify`, `status`, `cite`), `/jobs/metadata` | paper metadata + BibTeX + PPT citation (cached on the page), and the batch lookup as a job |
 | `ai.py`       | `/api/ai/*` (chat, models, providers, approvals, revert, translate, transcribe, search services, ChatGPT OAuth), `/translate/engines*` | chat orchestration, AI settings, OAuth, translation |
 | `ai_handoffs.py` | `/api/ai/handoffs/{id}*`         | the chat's fetch handoffs (gamma/fetch_handoff.py): a PDF the user's browser fetches for the chat, from the card or the Gamma Connector |
 | `chats.py`    | `/api/chats/*`, `/api/chat-history*` | the AI chats per bucket (a page, a folder, `home`) and their history (workspace data) |

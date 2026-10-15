@@ -670,7 +670,10 @@ save path, workspaces, auth or rendering of URLs should add a step here; the
   admin should notice. Secrets are masked at insert time. Gone on restart.
 - **Two request lines, on purpose.** The console carries uvicorn's access
   log for every request (`INFO: 127.0.0.1:… "GET /api/… HTTP/1.1" 200 OK`)
-  and, interleaved with it, Gamma's own line for the ones worth reading
+  except the Background tasks tray's answered `GET /api/jobs`, which comes
+  every 1.5 s while a job runs (`logbuf._QuietPolls`). Likewise a `[jobs]`
+  line marks how a job ended, except a search-indexer run that simply
+  finished. Interleaved with the access log comes Gamma's own line for the ones worth reading
   (`auth.py` `_finish_request_log`): `[http] request=<id> GET /api/… status=…
   duration_ms=… session=… expected=… reason=…`. It is emitted only for a
   4xx/5xx, a request on an auth path, or one that took over 2 s, so a quiet

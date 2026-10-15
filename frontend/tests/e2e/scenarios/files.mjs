@@ -265,4 +265,25 @@ export async function fileScenarios({ server, browser, alice, makePdf, step, unt
     assertNoProblems(page);
     await ctx.close();
   });
+
+  // Several PDFs at once: their lookups are one metadata job on the server
+  // (docs/dev/tasks.md), not a lookup per paper in the tab. The suite's
+  // registries are off and the account has no AI, so each finds nothing.
+  await step("files: an upload of several PDFs looks their metadata up as one background job", async () => {
+    ctx = await account.context(browser);
+    page = await openPage(ctx, `${server.base}/?ws=${account.ws}`);
+    await page.waitForSelector(".folderNewBtn");
+    await page.click("button[aria-label='Add']");
+    const chooser = page.waitForEvent("filechooser");
+    await page.locator(".addPopover .ctxMenuItem", { hasText: "Upload files" }).click();
+    await (await chooser).setFiles(["First batch paper", "Second batch paper"].map((title, i) => ({
+      name: `batch-${i + 1}.pdf`, mimeType: "application/pdf", buffer: Buffer.from(makePdf([[title]])) })));
+    await page.click("button[aria-label='Background tasks']");
+    await page.locator(".taskRow", { hasText: "Metadata lookup for 2 papers" }).locator(".taskStatus.done").waitFor({ timeout: 30000 });
+    assertEq((await page.$$(".taskRow:has-text('Metadata —')")).length, 0, "no lookup row per paper");
+    const job = (await account.api("/api/jobs")).jobs.find((j) => j.kind === "metadata");
+    assertEq(JSON.stringify((await account.api(`/api/jobs/${job.id}`)).result), JSON.stringify({ papers: 2, fetched: 0, failed: 2 }));
+    assertNoProblems(page);
+    await ctx.close();
+  });
 }
