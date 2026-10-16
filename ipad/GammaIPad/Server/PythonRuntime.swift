@@ -34,17 +34,29 @@ enum PythonRuntime {
         }
     }
 
-    /// The server's entry. PyRun_SimpleString answers an uncaught SystemExit
-    /// (uvicorn's way of saying it could not start) by ending the process,
-    /// which here is the whole app: it becomes an ordinary error, printed to
-    /// the server's log (gamma_ios redirects stderr there) and reported.
+    /// The server's entry. Whatever fails, the traceback goes to the server's
+    /// log by this code itself, since a failure before gamma_ios redirects
+    /// the output (its own import, say) would otherwise go to a console no
+    /// one sees. An uncaught SystemExit (uvicorn's way of saying it could
+    /// not start) would end the process, which here is the whole app: it
+    /// becomes an ordinary error, logged and reported like the rest.
     static let entry = """
-    import sys
+    import os, sys, traceback
     try:
         import gamma_ios
         gamma_ios.main()
-    except SystemExit as stop:
-        print(f"gamma_ios: the server exited ({stop.code!r})", file=sys.stderr)
+    except BaseException as error:
+        text = traceback.format_exc()
+        logs = os.path.join(os.environ.get("GAMMA_DATA_DIR", "."), "logs")
+        try:
+            os.makedirs(logs, exist_ok=True)
+            with open(os.path.join(logs, "server.log"), "a", encoding="utf-8", errors="backslashreplace") as log:
+                log.write("
+--- the server did not start ---
+" + text)
+        except OSError:
+            pass
+        sys.stderr.write(text)
         raise RuntimeError("the server exited") from None
     """
 
