@@ -145,7 +145,7 @@ app ([ipad.md](ipad.md)). Typed text on a page is
   edit shares draw.
 - On an iPad this layer runs in Safari or the web app installed to the
   home screen. The iPad app captures the Pencil natively and writes the
-  same files ([ipad.md](ipad.md) "Ink on the iPad").
+  same files ([ipad.md](ipad.md) "The pen").
 
 ## Model
 
@@ -214,16 +214,15 @@ retains the brush for re-import.
 
 The codec lives twice by design (`ink.py` `decode_stroke`/`encode_points`,
 `ink/ink.js` `decodeStroke`/`encodeStroke`); the two test files pin the same
-sample bytes. The iPad runs `ink.js` itself (in JavaScriptCore), so it has
-no third copy.
+sample bytes.
 
 **The bytes of an upload** are the client's: `ink.js serializeInk` (keys
 sorted at every level, no whitespace, empty keys dropped). The server
 validates an upload and stores it as it came, named by the hash of those
 bytes. So the same strokes from a browser and the iPad are one file, and
-a client can name a file by its hash before the server has it (the
-iPad's replica). The server writes files of its own with `ink.dumps`
-(sorted keys) for a merge or an import.
+a client can name a file by its hash before the server has it. The
+server writes files of its own with `ink.dumps` (sorted keys) for a merge
+or an import.
 
 ## Two writers, one group
 
@@ -259,7 +258,6 @@ itself:
 
 - the desktop mirror, through its local server's op path (its diffs
   carry `base_props`, sync_tree `_set_op`);
-- the iPad's replica (`ink.js mergeInk` in `replica/tree.js applyLocal`);
 - undo and redo in the browser and on the iPad, which apply an entry's
   change onto the group as it is now, so strokes someone else drew
   meanwhile stay.
@@ -287,7 +285,7 @@ text box's `text_box`, merged key by key ([text_boxes.md](text_boxes.md)
   stroke wins ties); `restyleStrokes` changes selected color/width, returning
   the original object for a no-op; `duplicateStrokes` preserves original
   samples and channels while assigning unique IDs to translated copies.
-- The replay (`ink.js`, pure, so the iPad runs it too;
+- The replay (`ink.js`, pure;
   [recording.md](recording.md) "One clock for every replay"):
   - `strokeWalls(stroke)` is each sample's wall-clock ms (`t0` plus its
     `t`), null for a stroke without timing; `inkWallSpan(ink)` the

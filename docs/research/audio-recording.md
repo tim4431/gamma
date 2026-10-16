@@ -213,8 +213,7 @@ are in the dev docs named; this lists only what matters to the design.
   row branch in `editor/BlockTree.jsx` ([dev/user_db.md](../dev/user_db.md)).
 - **Stored files are content-addressed and found by regex.** Anything a
   block names as `/api/uploads/<hash>.<ext>` in its content or properties
-  is kept alive by the orphan collector, copied by the mirror and the
-  iPad's replica, bundled by the Gamma backup, readable through a share
+  is kept alive by the orphan collector, copied by the mirror, bundled by the Gamma backup, readable through a share
   link, and metered against the quota (`storage.UPLOAD_REF_RE`,
   [dev/user_db.md](../dev/user_db.md) "Stored files"). `POST
   /api/upload-file` takes any non-executable file (50 MB per file by
@@ -601,8 +600,8 @@ Stage 2 is a refactor that ships on its own with no visible change;
   WebM must play on an old Safari, or AAC on a codec-less Chromium, the
   answer is a server job with `ffmpeg` present or a WebCodecs transcode
   in the browser; both are deferred until a real device shows the gap.
-- **The iPad's native capture** (`AVAudioRecorder`, the same block, the
-  replica pushing the segments) when the Pencil app should record.
+- **The iPad's native capture** (`AVAudioRecorder`, the same block) if the
+  web app's own recorder in the iPad shell falls short.
 
 [n-rec]: https://support.gingerlabs.com/hc/en-us/articles/206060617-Recording-and-Playing-Audio
 [n-import]: https://support.gingerlabs.com/hc/en-us/articles/360044640052-Importing-Audio

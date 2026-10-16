@@ -279,10 +279,10 @@ them only after further relevant changes or when a failure needs investigation.
   than the change, e.g. a one-line edit in a shared module selects every
   group. Check that the intended steps actually ran. A pure-module change
   does not automatically require a build or browser run.
-- The iPad app: a change to the sync protocol, the uploads routes, the
-  integration tokens or the session's answer also runs the iPad checks
-  ([ipad.md](ipad.md) "Keeping the host in step": the contract test,
-  the core bundle's test and the `replica` browser group).
+- The iPad app shows the web app, so a web change needs no iPad check of
+  its own. A change to the host bridge (`shared/lib/host.js`, the ink
+  layer's claim) runs the `ipad` browser group; one that changes a message
+  changes the Swift side with it ([ipad.md](ipad.md)).
 - Shared contracts and helpers: include tests for affected consumers. For
   example, changes to shared normalization cases need both Python and Node
   coverage; auth, workspace access, migrations, and block storage may require
@@ -647,8 +647,7 @@ The scenarios live in `tests/e2e/scenarios/`:
 - `share.mjs`: the share dialog, the anonymous share view (PDF, highlight,
   image through the share token, no editor), an edit share.
 - `settings.mjs`, `folders.mjs`, `trash.mjs`, `quickOpen.mjs`,
-  `notebooks.mjs`, `mcp.mjs`, `cloudSignIn.mjs` and `replica.mjs` (the
-  iPad's sync core against a real server, no browser) are groups of their
+  `notebooks.mjs`, `mcp.mjs` and `cloudSignIn.mjs` are groups of their
   own; each file's header names the doc it covers.
 
 Every step also asserts that no API call failed (4xx/5xx), no console error

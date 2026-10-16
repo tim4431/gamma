@@ -51,6 +51,7 @@ import LibraryEmpty from "../library/LibraryEmpty";
 import { ContextMenu, MenuButton, MenuDivider, MenuItem, MenuLabel, MenuScope, MenuSelect, SubMenuItem, menuGroups } from "../shared/ui/Menus";
 import { backdropPress, menuPress } from "../shared/ui/press.js";
 import { lastPointer, touchScreen } from "../shared/lib/pointer.js";
+import { appShell, nativeHost, onHostMessage, postToHost } from "../shared/lib/host.js";
 import { pickFiles } from "../shared/lib/pickFiles.js";
 import { folderPick } from "../transfers/folderZip.js";
 import { bibliographyPreview } from "../transfers/exportApi";
@@ -61,7 +62,7 @@ import {
   ExternalLinkIcon, EyeIcon, EyeOffIcon, FileGlyph, FileIcon, FileTextIcon, FitWidthIcon, FolderGlyph,
   FilePlusIcon, PaperclipIcon, FolderIcon, FolderOpenIcon, FolderPlusIcon, HardDriveIcon, HelpCircleIcon, HomeIcon, ImportIcon, InfoIcon, LabelGlyph, LabelIcon,
   LanguagesIcon, LanguagesOffIcon, LinkIcon, LogOutIcon, MaximizeIcon, MenuIcon, MinimizeIcon, MoveVerticalIcon, PenIcon, PinIcon, PlusIcon,
-  RectSelectIcon, RefreshIcon, SettingsIcon, SparklesIcon, TextCursorIcon, Trash2Icon, TrashIcon, TypeIcon, UploadIcon,
+  RectSelectIcon, RefreshIcon, ServerIcon, SettingsIcon, SparklesIcon, TextCursorIcon, Trash2Icon, TrashIcon, TypeIcon, UploadIcon,
   ScissorsIcon, ShareIcon, UserIcon, UsersIcon, XIcon, ZoomInIcon, ZoomOutIcon, NotebookIcon, SheetIcon, MicIcon,
 } from "../shared/ui/Icons";
 
@@ -247,19 +248,25 @@ function useIsPhone() {
   return UA_MOBILE || mqPhone;
 }
 // Safari on an iPhone or iPad (desktop-class UA plus touch points), not yet
-// running as the installed home-screen app (docs/dev/ipad.md).
+// running as the installed home-screen app or inside the iPad app's shell
+// (docs/dev/ipad.md).
 const HOME_SCREEN_INSTALLABLE = (/iPad|iPhone/.test(navigator.userAgent)
   || (/Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1))
-  && !(window.matchMedia?.("(display-mode: standalone)").matches || navigator.standalone);
+  && !appShell();
 // The installed app paints the status bar with theme-color, so it continues
 // what sits under it: the topbar (chrome, --bg-page), or — on a phone's
 // library with no tab open, where the compact layout drops the topbar — the
 // library itself (content, --bg-surface). Read from the theme variables, not
 // the elements: the topbar's background transitions, and a mid-transition
-// read would lag a theme change.
+// read would lag a theme change. The iPad app's shell takes the same colour
+// for the window behind its web view, and the scheme for its status bar.
 function paintStatusBar(bareTop) {
-  const meta = document.querySelector('meta[name="theme-color"]');
-  if (meta) meta.setAttribute("content", tokenHex(bareTop ? "--bg-surface" : "--bg-page"));
+  const bg = tokenHex(bareTop ? "--bg-surface" : "--bg-page");
+  document.querySelector('meta[name="theme-color"]')?.setAttribute("content", bg);
+  if (nativeHost()) {
+    const scheme = document.documentElement.getAttribute("data-scheme") === "dark" ? "dark" : "light";
+    postToHost({ type: "theme", bg, scheme }).catch(() => {});
+  }
 }
 // A colour token as #rrggbb. Most tokens are color-mix() expressions
 // (tokens.css), which the theme-color meta can't take: the colour is
@@ -6788,6 +6795,32 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // The viewer is hidden: a PDF closed (never the notebook view's sheets).
   const viewerHidden = !notebook && pdfHidden;
   useEffect(() => { if (!notebook) setPaperMenu(false); }, [notebook]);
+  // The Pencil's double tap and squeeze, forwarded by the iPad app's shell
+  // with the system's preferred action (shared/lib/host.js): the eraser
+  // toggle and the previous tool on the strip, and the armed tool's options
+  // row for the palette and the ink attributes; only where a page takes ink.
+  const inkPrevRef = useRef({ tool: null, previous: null });
+  useEffect(() => {
+    const r = inkPrevRef.current;
+    if (inkUi.tool === r.tool) return;
+    if (r.tool) r.previous = r.tool;
+    r.tool = inkUi.tool;
+  }, [inkUi.tool]);
+  const pencilRef = useRef(null);
+  pencilRef.current = (action) => {
+    if (readOnly || !(((!!pdfUrl || notebook) && !viewerHidden) || nbSheets.length)) return;
+    const pen = inkTools.find((x) => x.id === inkUi.pen)?.id || inkTools[0].id;
+    const { previous } = inkPrevRef.current;
+    const known = ["eraser", "select", "text"].includes(previous) || inkTools.some((x) => x.id === previous);
+    const back = known && previous !== inkUi.tool ? previous : pen;
+    if (action === "switchEraser") pickInkTool(inkUi.tool === "eraser" ? back : "eraser");
+    else if (action === "switchPrevious") pickInkTool(back);
+    else if (action === "showColorPalette" || action === "showInkAttributes") {
+      // With the hand armed the Pencil writes with the stylus pen: its row.
+      setInkUi((s) => (s.tool ? { ...s, open: true, options: !s.options } : { ...s, open: true, tool: pen, options: true }));
+    }
+  };
+  useEffect(() => (nativeHost()?.pencil ? onHostMessage("pencil", ({ action }) => pencilRef.current(action)) : undefined), []);
   // The notes view opens at the reader's place on the sheets (tabScrollRef;
   // the notebook view takes it as `place`), unless a jump to a block is on its
   // way there. Read before that jump's effect spends it, applied once the
@@ -10034,6 +10067,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                 trailing={notices.tone ? <span className={`noticeDot inline ${dotTone(notices.tone)}`} aria-hidden="true" /> : null}>
                 {t("Settings…")}
               </MenuItem>
+              {nativeHost()?.servers ? (
+                <MenuItem icon={ServerIcon} onClick={() => { setOpenPopover(null); postToHost({ type: "servers" }).catch(() => {}); }}
+                  title={t("Connect this app to another Gamma server")}>{t("Server…")}</MenuItem>
+              ) : null}
               <MenuDivider />
               {/* The tours that can start here (guide.startable); a tour
                   whose first step needs no open popover closes this menu. */}

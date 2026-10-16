@@ -34,3 +34,7 @@ the upload routes, `POST /api/blocks/by-doc/<hash>`, `POST
 profile and the `?ws=<id>&page=<id>` URL ([architecture.md](../../desktop/docs/architecture.md)
 "Opening PDF files"); and the `data-theme` attribute on `<html>` (the shell
 mirrors it into its own chrome).
+
+The iPad app runs the same sidecar model: the same backend inside the app,
+started with these variables except `GAMMA_FOLDER_LINKS`
+([ipad.md](ipad.md#the-local-server)).

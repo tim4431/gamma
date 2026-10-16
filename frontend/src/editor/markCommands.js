@@ -1,8 +1,7 @@
 // The formatting commands of the block editor (bold, italic, code, strike,
 // highlight, link, inline math) and the "/" that opens the insert menu, as
 // functions of a CodeMirror view over plans of the text alone (`…Plan`,
-// `…At`: {changes, selection} or null), which the iPad app's editing bar
-// applies too (ipad/core/entry.js `format`). Plain JS, no editor imports:
+// `…At`: {changes, selection} or null). Plain JS, no editor imports:
 // editor/blockCommands.js makes them catalog commands and node tests load
 // the catalog. Toggle semantics live in mdMarks.toggleMark; inside math, a
 // code fence or inline code a formatting key is swallowed and does nothing —

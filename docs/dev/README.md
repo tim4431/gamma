@@ -95,7 +95,7 @@ These describe the implementation unless explicitly marked as plans.
 | Tours, anchors, triggers, and seeded welcome content | [Onboarding](onboarding.md) |
 | Browser connector | [Extension](extension.md) |
 | Electron shell, local servers, packaging, and QA | [Desktop](desktop.md) |
-| The native iPad app (offline replica, Pencil), the home-screen web app, and the touch editing bar | [iPad](ipad.md) |
+| The iPad app (a shell over the web app, with a native Pencil layer and a Gamma server of its own on the device), the home-screen web app, and the touch editing bar | [iPad](ipad.md) |
 | The map of Gamma Cloud: its pieces and names, what happens on a sign-in, a purchase and a lapse, where settings live, the Admin page | [Gamma Cloud](cloud.md) |
 | Gamma Cloud identity service and server sign-in | [Cloud accounts](cloud_accounts.md) |
 | Paid hosted containers: limits sync, lifecycle, the fleet agent and batch upgrades | [Hosted servers](hosted.md) |

@@ -70,8 +70,8 @@ None of that wants changing. The debt sits around it:
    text stamp and re-lists the last 60 seconds on every poll because a
    writer may stamp before it commits ([dev/collab.md](../dev/collab.md)
    "The change feed"). Deletions need their own `deleted_pages` table,
-   written by both trashing and hard deletion. The mirror, the iPad
-   replica and backup merges all consume this feed, and the direction of
+   written by both trashing and hard deletion. The mirror and backup
+   merges consume this feed, and the direction of
    the product ([mirror.md](../dev/mirror.md), [ipad.md](../dev/ipad.md))
    makes more consumers likely. Every writer already stamps the page root
    once per batch; a counter would cost the same discipline and be exact.
@@ -142,7 +142,7 @@ becomes a read of the `folders` subtree plus a count per id.
 `apply_ops` stamps the root today), with `deleted` as a kind, so
 `deleted_pages` folds into it. The feed becomes `WHERE seq > ?`, exact,
 clock-independent, with no grace window and no "stamp close to commit"
-rule for writers to remember. Mirrors and the replica then need one cursor
+rule for writers to remember. Mirrors then need one cursor
 per workspace instead of a time plus an id.
 
 **Split by lifecycle, not by origin.** Move `chats` and `chat_history` into

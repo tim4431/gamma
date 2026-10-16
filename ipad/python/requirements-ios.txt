@@ -1,0 +1,40 @@
+# The Gamma server's dependencies for the iPad's embedded CPython 3.13.
+# ipad/scripts/build-python.sh installs them as iOS wheels (PyPI, plus
+# Flet's index at https://pypi.flet.dev, which publishes iOS builds of the
+# native packages PyPI lacks). The list is backend/requirements.txt with
+# the changes commented below, made only where a package has no iOS wheel
+# at the server's pin. backend/tests/test_ios_requirements.py fails when the
+# server gains a dependency this file does not decide on.
+#
+# Left out: pypdfium2 (no iOS wheel anywhere). Every pdfium import in the
+# server is guarded: gamma/pdf_text.py falls back to PyPDF2, so PDF text
+# still works with worse word spacing; exported notes go in the margins
+# (pdf_notes.py) and the Logseq export leaves out area-highlight images.
+# Page images for the AI and MCP are unavailable: pdf_text.render_page
+# answers (None, 0) without pdfium, so the AI's page and region pictures
+# (ai_tools, ai_pictures, ai_context) and MCP's view_pdf_page get none.
+
+fastapi==0.136.0
+# Flet's newest cp313 iOS build; 3.12.0 (the server's) has none.
+orjson==3.11.9
+# No [standard] extras: uvloop and httptools have no iOS wheels, and the
+# extras' watchfiles/pyyaml/dotenv serve only the dev reloader and config
+# files. h11 and the asyncio loop are what the plain install runs on, and
+# websockets (the extras' WebSocket library) is listed on its own below.
+uvicorn==0.44.0
+websockets==17.1
+diff-match-patch==20241021
+bcrypt==5.0.0
+# pydantic pins its pydantic-core exactly, and Flet publishes iOS builds of
+# only some cores: 2.13.4 needs pydantic-core 2.46.4, which it has (the
+# server's 2.13.2 needs 2.46.2, and 2.14.x needs 2.50.x, which it has not).
+pydantic==2.13.4
+PyPDF2==3.0.1
+python-multipart==0.0.26
+fractional-indexing==0.1.3
+ziamath==0.13
+# Flet's iOS build; the server's 50.x has none. The backend uses only
+# cryptography.fernet, unchanged across these versions.
+cryptography==43.0.1
+mcp==1.30.0
+Pillow==12.3.0

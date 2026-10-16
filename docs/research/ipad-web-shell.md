@@ -1,6 +1,8 @@
 # The iPad app as the web app, with a native pen
 
-Survey from 2026-10-16. Findings only; nothing is built. The question:
+Survey from 2026-10-16. Findings only; what was decided and built the same
+day, and how it differs from this note, is at its end
+([Decided and built](#decided-and-built-2026-10-16)). The question:
 the native iPad app (`ipad/`) draws its own library, notes, reader and
 editing bar in SwiftUI, so it looks and behaves nothing like the web app,
 and every web feature the app lacks is a gap on its list. It should
@@ -229,8 +231,9 @@ container:
   and the surface rectangle captured at the claim stays valid.
 - **The live stroke.** A `CAShapeLayer` polyline at the tool's width and
   colour on a transparent, non-interactive view over the web view, with
-  the predicted touches extending it and never stored, as the current
-  app's preview ([dev/ipad.md](../dev/ipad.md) "Drawing"). The outline
+  the predicted touches extending it and never stored, as the native
+  app's preview was (the shell's is in [dev/ipad.md](../dev/ipad.md#the-pen),
+  step 4). The outline
   through the JavaScript core would keep JavaScriptCore and the bundle for
   one function; the plain line was accepted once and is accepted again.
 - **The lift.** Native posts `stroke`: `preciseLocation` in the web view's
@@ -386,8 +389,10 @@ that app with a Pencil layer.
    it to work.
 2. The claim's round trip under load: a `postMessage` from the page's
    `pointerdown`, typically a few milliseconds. A stroke that ends before
-   the claim is the page's; the native side matches claims to touches by
-   pointer id and drops stale ones.
+   the claim is the page's. The page's pointer id means nothing natively,
+   so the shell matches a claim to the Pencil touch that began where the
+   claim says the pointer went down, and drops stale ones
+   ([dev/ipad.md](../dev/ipad.md#the-pen), step 3).
 3. Pointer events in a web view equal to Safari's: pressure, tilt, hover,
    and 18.2's coalesced and predicted events.
 4. The keyboard accessory bar under the editing bar, and the visual
@@ -421,6 +426,33 @@ that app with a Pencil layer.
    device.
 4. **The offline bundle's source** (B only): a copy fetched from the
    server, so it matches the server's API, or one built into the app.
+
+### Decided and built (2026-10-16)
+
+Offline went A then C, and both were built the same day: the shell first,
+then the backend on the device, run as the desktop runs its sidecar, with
+offline copies as the mirror's clones made in the web app. The replica
+and the JavaScriptCore bundle were removed, since neither phase uses
+them. The live stroke is the plain line (decision 2), the raster seam
+waits for a device (3), and decision 4 went with B. The mechanics are in
+[dev/ipad.md](../dev/ipad.md). What differs from this note:
+
+- The claim carries where the pointer went down, and the shell matches it
+  to the Pencil touch that began there, since the page's pointer id means
+  nothing natively. It carries no surface: the web keeps the rect and zoom
+  of the down itself. The stroke carries no `t0` either: the web stamps it
+  with its own clock at the down.
+- A `stroke` with no samples means the system cancelled the touch: the
+  claim ends and nothing is saved.
+- The web drops its draft on the `{taken: true}` reply rather than on a
+  `pointercancel`, which WebKit may not send. It then ignores that
+  pointer's events and treats fingers as palms until the stroke ends.
+- The server picker is declared by the host (`servers`) and sits on the
+  pages shown before the library (the sign-in page, an unavailable
+  workspace, a blocked share link) as well as in the account menu.
+- `pypdfium2` has no iOS build, so the server on the device reads PDF text
+  through PyPDF2 and renders no page images. Background running is not
+  built: the server stops while iOS suspends the app.
 
 ## Sources
 

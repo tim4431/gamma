@@ -1,8 +1,6 @@
 // What the "/" menu's insertions do to a note's text, by command name:
-// editor/slashCommands.js lists them with their labels, and the iPad app's
-// editing bar runs the same ones (ipad/core/entry.js `insert`). Pure, and
-// importing only the pure mdLines.js: the iPad's JavaScriptCore loads it
-// without the catalog's i18n (and the React that brings).
+// editor/slashCommands.js lists them with their labels. Pure, and
+// importing only the pure mdLines.js.
 import { retypeLine } from "./mdLines.js";
 //
 // Each takes the menu's ctx, { value, start, cursor, setText(newVal,

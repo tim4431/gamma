@@ -29,6 +29,7 @@ import { compressedClock } from "../replay/clock.js";
 import { frameOf, groupInScope, useGroupFrame } from "../replay/useFrame.js";
 import { appendInkSample, predictedInkSamples } from "./inkInput.js";
 import { canvasSize } from "../shared/lib/canvasSize.js";
+import { nativeHost, onHostMessage, postToHost } from "../shared/lib/host.js";
 import { t, T } from "../shared/i18n/i18n.js";
 
 // Words for colours, so tooltips read "Pink highlighter", not "#f9a8d4":
@@ -54,6 +55,25 @@ const NOT_INK = ".inkEditMenu, .inkTransformHandle, .textBoxWidth, .textBoxBand,
 // the stroke's note): the page's own clickable marks. The strokes are drawn
 // above them all, text boxes included (app.css), but take no pointer.
 const ABOVE_PASSIVE_INK = "[data-hl-id], .pdfNoteAnchor, .pdfLinkBox, .textBox";
+// Under a native host that captures the Pencil (shared/lib/host.js), a pen
+// stroke is claimed at its down: the host takes the touch and draws the live
+// line itself, then hands the finished samples back, and they commit here as
+// the browser's own stroke would. The claims by pointer id: {commit, taken}.
+// A taken claim always ends with a `stroke` message: the host sends one
+// with no samples when the system cancels the touch.
+const hostClaims = new Map();
+if (nativeHost()?.ink) {
+  onHostMessage("stroke", async ({ pointerId, samples }) => {
+    const claim = hostClaims.get(pointerId);
+    hostClaims.delete(pointerId);
+    // No samples: the system cancelled the touch, and the claim just ends.
+    const committed = !!claim?.commit(samples || []);
+    // The reply drops the host's live line: wait for React's commit and a
+    // paint, so the stroke never blinks out between the two.
+    await new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done)));
+    return { committed };
+  });
+}
 // Whether a finger scrolling under an armed tool is still worth explaining
 // (onFingerScroll): once a session, and never once a pen has drawn.
 let fingerHint = true;
@@ -155,6 +175,10 @@ export function InkLayer({ pageNumber, wrapRef, width, height, blocks, tool, pen
     const el = wrapRef.current;
     if (!el) return;
     let drawing = null; // {mode: stroke|erase|lasso|move, …}
+    // The pointer the native host took from this page (claimForHost): its
+    // stroke arrives as a message, its own events are ignored, and fingers
+    // stay palms until it ends.
+    let hostOwned = null;
     let pending = null; // A possible tap/hold; swipes retain native scrolling.
     const contacts = new Set();
     let hover = null;
@@ -287,12 +311,72 @@ export function InkLayer({ pageNumber, wrapRef, width, height, blocks, tool, pen
       canvas.style.display = "none";
     };
 
+    // A finished stroke's samples (page units) to the page's ink.
+    const commitStroke = (d) => {
+      if (!d.samples.length) return false;
+      const L = live.current, { use } = d;
+      const stroke = encodeStroke({
+        tool: use.tool, brush: use.brush, color: use.color, size: use.size, opacity: use.opacity ?? 1, pen: d.pen,
+        t0: d.t0, samples: d.samples, ch: d.pen ? "xypt" : "xyt",
+      });
+      L.onStroke?.(pageNumber, stroke, { width: L.width, height: L.height });
+      return true;
+    };
+    // The host took the draft's pointer: the draft goes now, without saving,
+    // whatever events WebKit sends that pointer afterwards (a pointercancel,
+    // a pointerup, or more moves), so a stroke is never saved twice. The
+    // pointer capture stays, so its events keep coming here to be ignored.
+    const handOver = (d) => {
+      if (drawing !== d) return;
+      drawing = null;
+      hostOwned = d.id;
+      if (d.raf) cancelAnimationFrame(d.raf);
+      clearTimeout(d.predictionTimer);
+      hideCanvas();
+    };
+    // A pen stroke under a host that captures the Pencil: claim it (with
+    // where it went down, which tells the host which touch it is) and keep
+    // drawing the draft until the host answers. Taken, the draft goes and
+    // the host's samples commit instead; left, the stroke ends here. The
+    // host's samples are viewport CSS px and ms from the first, sampled as
+    // the pointer path samples, with the rect and zoom of the down.
+    const claimForHost = (d, e) => {
+      const claim = {
+        taken: false,
+        commit: (samples) => {
+          handOver(d);
+          if (hostOwned === d.id) hostOwned = null;
+          const c = { ...d, samples: [], startTime: 0 };
+          for (const [x, y, p, t] of samples) appendInkSample(c, { clientX: x, clientY: y, pressure: p, timeStamp: t });
+          return commitStroke(c);
+        },
+      };
+      hostClaims.set(d.id, claim);
+      const drop = () => { if (hostClaims.get(d.id) === claim) hostClaims.delete(d.id); };
+      const { use } = d;
+      // size: the width on screen, in CSS px (the host's points)
+      postToHost({ type: "claim", pointerId: d.id, at: { x: e.clientX, y: e.clientY },
+        tool: { kind: use.tool, color: use.color, size: use.size * d.k, opacity: use.opacity ?? 1 } })
+        .then((reply) => {
+          if (hostClaims.get(d.id) !== claim) return; // the page already ended it
+          if (!reply?.taken) { drop(); return; }
+          claim.taken = true;
+          handOver(d);
+        }, drop);
+    };
+
     const onDown = (e) => {
       if (e.target.closest?.(NOT_INK)) { hideCursor(); return; }
       showCursor(e);
       const L = live.current;
       const selectionDrag = !!L.onSelect && e.target.closest?.(".inkSelectionHit")
         && (e.pointerType === "touch" || !L.tool || L.tool.tool === "select") && e.pointerType !== "pen";
+      // While the host draws a stroke, fingers are palms; a new pen down
+      // means that stroke is over.
+      if (hostOwned != null) {
+        if (e.pointerType !== "pen") { e.preventDefault(); e.stopPropagation(); return; }
+        hostOwned = null;
+      }
       const ctx = setup(e, selectionDrag ? { tool: "select" } : null);
       // A pen takes priority even if the palm landed first in finger-draw mode.
       if (drawing?.pointerType === "touch" && e.pointerType === "pen" && ctx) {
@@ -355,6 +439,7 @@ export function InkLayer({ pageNumber, wrapRef, width, height, blocks, tool, pen
       drawing = { ...ctx, id: e.pointerId, mode: "stroke", samples: [], t0: Date.now(),
         startTime: e.timeStamp, pressure: live.current.pressure, pen: e.pointerType === "pen", raf: 0 };
       appendInkSample(drawing, e);
+      if (drawing.pen && nativeHost()?.ink) claimForHost(drawing, e);
       paint();
     };
     const onMove = (e) => {
@@ -445,14 +530,15 @@ export function InkLayer({ pageNumber, wrapRef, width, height, blocks, tool, pen
       }
       if (!d.samples.length) return;
       appendInkSample(d, e, true);
-      const { use } = d;
-      const stroke = encodeStroke({
-        tool: use.tool, brush: use.brush, color: use.color, size: use.size, opacity: use.opacity ?? 1, pen: d.pen,
-        t0: d.t0, samples: d.samples, ch: d.pen ? "xypt" : "xyt",
-      });
-      L.onStroke?.(pageNumber, stroke, { width: L.width, height: L.height });
+      commitStroke(d);
     };
-    const onUp = (e) => finish(e, false);
+    // A claim the host did not take ends with the page's own pointer-up; a
+    // taken one ends with the host's stroke message, whenever that comes.
+    const onUp = (e) => {
+      if (e.pointerId === hostOwned) hostOwned = null;
+      if (!hostClaims.get(e.pointerId)?.taken) hostClaims.delete(e.pointerId);
+      finish(e, false);
+    };
     const onCancel = (e) => { contacts.delete(e.pointerId); finish(e, true); hideCursor(); };
     // iPad Safari can pan with Pencil even after pointerdown.preventDefault().
     // Cancel its matching touch gesture before scrolling cancels the pointer
@@ -472,7 +558,7 @@ export function InkLayer({ pageNumber, wrapRef, width, height, blocks, tool, pen
         fingerHint = false;
         L.onFingerScroll();
       }
-      if (!pencil && drawing?.pointerType !== "pen" && drawing?.mode !== "move") return;
+      if (!pencil && drawing?.pointerType !== "pen" && drawing?.mode !== "move" && hostOwned == null) return;
       if (e.cancelable) e.preventDefault();
       e.stopPropagation(); // Do not feed Pencil into the viewer's pan/pinch handlers.
     };

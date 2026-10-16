@@ -1,364 +1,582 @@
 # Gamma on the iPad (and other tablets)
 
-There are two ways to use Gamma on an iPad:
+There are two ways to use Gamma on an iPad, and both are the same web app:
 
-- **The native app** (`ipad/`, [ipad/README.md](../../ipad/README.md))
-  keeps a copy of one workspace on the iPad. Its PDFs and notebooks read
-  and write offline with Apple Pencil, and it syncs with the server by the
-  desktop mirror's rules.
-- **The web app installed to the home screen** is every feature, online.
-  It is described under [The installed web app](#the-installed-web-app).
+- **The iPad app** (`ipad/`, [ipad/README.md](../../ipad/README.md)) is a
+  shell over Gamma's own web app. It shows it in one `WKWebView` and adds
+  what Safari cannot: Apple Pencil strokes captured natively, the
+  Pencil's double tap and squeeze, a Gamma Cloud sign-in that works with
+  Google, and a Gamma server of its own inside the app, so it works with
+  no connection, as the desktop app runs its own
+  ([The local server](#the-local-server)). Why it has this shape:
+  [research/ipad-web-shell.md](../research/ipad-web-shell.md).
+- **The web app installed to the home screen** is every feature, online,
+  with Safari's own pen. It is described under
+  [The installed web app](#the-installed-web-app).
 
-Both store the same thing: handwriting is the same `gamma-ink` file and
-the same block properties, whichever client wrote it
-([handwriting.md](handwriting.md)). The native app also opens the web app
-in a web view for everything it does not do itself.
+Handwriting is the same `gamma-ink` file and the same block properties
+whichever wrote it ([handwriting.md](handwriting.md)): in the app, the web's
+ink layer still encodes and saves every stroke.
 
 ## The native app
 
 ### What the user does
 
-1. Enter the server's address and sign in on its own web page, with a
-   password or Gamma Cloud (whatever the server offers).
-2. Choose a workspace. The app mints a write token for it
-   (`POST /api/integrations/tokens {scope: "write"}`, the credential a
-   desktop clone holds, [mirror.md](mirror.md) "Credentials") and keeps it
-   in the Keychain. The web session stays in the app's web views for
-   "Open on the web".
-3. The first sync brings the workspace over, files included. The library
-   lists its pages by folder. A PDF page opens in PDFKit, and a page of
-   notes as its outline. A page with sheets of paper
-   ([notebooks.md](notebooks.md)) opens in the notebook view, its sheets
-   one under the other; a toolbar button shows its notes alone and back.
-   The notes open beside a PDF or the sheets. "Add a page to write on" at
-   the end of the notes adds a sheet after the last. While a note is
-   edited, a bar over the keyboard nests, moves, adds and formats notes
-   ([Editing the notes](#editing-the-notes)).
-4. The Pencil writes. Fingers scroll, zoom and select. The tool strip has
-   the pen and highlighter presets, the eraser, the hand (the Pencil
-   scrolls), a new group, undo and redo. The Pencil's double tap switches
-   to the eraser and back. A handwriting group's row in the notes has a
-   play button: the page scrolls to the group and replays its writing.
-5. Rounds run every 30 seconds while the app is in front, when it comes
-   back, two seconds after an edit, and on request. The sync button shows
-   a round running, edits not sent yet, or a problem. "Sync decisions"
-   lists the choices rounds made on their own (merged texts, edits that
-   beat deletions). "Receive only" stops pushing, like a clone's
-   direction.
+1. Pick a server. The first launch shows the server picker: **This
+   iPad**, the server inside the app, or another server by its address (a
+   NAS, a hosted Gamma). The app loads that server's page.
+2. Sign in. On This iPad the app signs in by itself with the account it
+   made ([below](#the-account-and-the-silent-sign-in)). On another server
+   the person signs in on the web app's own login page, with a password or
+   Gamma Cloud.
+3. From then on everything is the web app: the library, the notes, the
+   PDF viewer, settings, sharing. The Pencil writes through the native
+   capture ([The pen](#the-pen)), and its double tap and squeeze do what
+   the system's Pencil settings ask for.
+4. **Server…**, in the account menu and on every page shown before the
+   library (the sign-in page, an unavailable workspace, a blocked share
+   link), brings the picker back. When a server cannot be reached, the
+   app shows a page of its own with Try again and Choose a server;
+   choosing the same server again retries.
+5. For work away from the network, a workspace of another server is
+   cloned onto This iPad in the web app's settings
+   ([Offline use](#offline-use-clones)).
 
-### A replica: a mirror without a server
+The Swift side holds no page, stroke, tool or token; the one secret it
+keeps is the local server's seeded password. The session is the web
+view's cookie (the default data store keeps it across launches), and
+the library is the server's, This iPad's included.
 
-A desktop clone is a second Gamma server holding a copy
-([mirror.md](mirror.md)). An iPad cannot run that server, so the app keeps
-a **replica**: the same copy, kept by the same protocol and rules, on a
-device with no server of its own.
+### How it is put together
 
-- **What the remote sees is a clone's traffic.** The replica calls
-  `GET /api/sync/whoami`, walks `GET /api/sync/changes`, reads
-  `GET /api/blocks/{id}/subtree`, and pushes `POST /api/pages/{id}/ops`
-  batches under batch ids with `client: "sync"`. It creates pages with
-  `POST /api/pages {id, title, properties}` and deletes them with
-  `DELETE /api/blocks/{id}` (never the folder and label trees, below).
-  Files travel by name with `HEAD`/`GET`
-  `/api/uploads/<name>` and `POST /api/upload-file`, or `/api/uploads`
-  for a PDF. The server needs nothing new.
-- **The data format is checked.** Every feed answer names the shape the
-  remote keeps its pages in (`format`), and the round stops before any
-  write when it differs from this build's `WORKSPACE_FORMAT`
-  (`replica/round.js`, pinned to the server's newest workspace migration
-  step by `tests/replica.test.mjs`; [mirror.md](mirror.md) "The data
-  format"). The message names the side to update, and the app shows it as
-  the round's error until both run releases that agree.
-- **The cursor is the feed's.** Each round walks the change feed to the
-  end from the cursor the last one kept (`remote_cursor` in the host's
-  meta) and keeps the new one. It is a string the replica stores as it is
-  and never reads (the remote's change-log seq; `""` at first). A cursor
-  the remote never gave out lists from the start once, which costs a
-  re-walk and no writes.
-- **The rules are the mirror's**, one page at a time as in
-  `sync_engine._sync_page`. A page deleted on one side goes on the other
-  unless the other side edited it. The remote's changes since the saved
-  base are applied here, and an edit beats a delete in both directions.
-  Only this copy's own edits are pushed. A push whose answer was lost is
-  confirmed and sent again only where the remote does not show it. A
-  block the remote moved to another page moves here too, carrying what
-  was typed in it here.
-- **Folders and labels are two more snapshots**, `folders` and `labels`
-  ([collab.md](collab.md) "The folder and label trees"; `tree.js`
-  `TREES`). The feed lists them like pages, and a round reconciles them
-  first, so a page filed in a new folder never arrives before its
-  folder. The root of each is a reserved row whose `parent` is `null`. A
-  folder is a block under `folders` or under another folder, with its name
-  as `content` and its pin as `props.pinned`. A label is a child of
-  `labels`. A tree is never created or deleted on either side: the remote
-  refuses a page with a reserved id, so a tree the remote lacks is left as
-  it is, and a tombstone for one deletes nothing. A tree missing here,
-  before the first round that lists it, is pulled whole (its snapshot
-  stored). Both sides' folders are kept, since each side's pages are filed
-  in its own. A page names its filing as block ids,
-  `props.folders` and `props.labels`.
-- **The library's rows** come from `views.js libraryRows(roots, {folders,
-  labels})`, where `roots` is every stored page root and the second
-  argument holds the two trees' snapshots (either may be missing until a
-  round brings it). The tree roots get no row. A row is `{id, title,
-  kind, position, folders, labels}`, ordered by position. `folders` lists
-  the page's folders as display paths, the names from the top joined
-  with `" / "` (`"Physics / QEC"`), and `labels` lists the label names.
-  Both follow the page's filing order, with no repeats. A name may contain
-  any character, `/` and `,` included, so the host groups by these
-  strings and never splits them. An id the trees lack (a dangling id: the
-  folder deleted, or not here yet) gives nothing. `pageView` carries the
-  page's raw filing ids as `folders` and `labels`. The web app reads the
-  same names with `libraryUtils.js` `filingChips` over the listing's trees.
-- **The code is JavaScript,** a port of the pure half of the Python
-  engine that runs in the app's JavaScriptCore. `frontend/src/replica/tree.js`
-  is `sync_tree.py`, and `reconcile.js` holds `_known`,
-  `_reconcile_remote_ops`, `_own_edits`, `_split`, `_strays` and
-  `_unlanded`. `round.js` is `_sync_page` and `_round`, and `textmerge.js`
-  is `textmerge.py` over the same diff-match-patch. The replica applies
-  the remote's ops itself, with the server's merge rules
-  (`tree.applyLocal`: a text edited from an older base merges, a drawing
-  edited from an older `ink_url` merges by stroke, an insert of a known
-  id changes nothing).
-- **Local writes during a round** use versions instead of the Python
-  engine's op-log scan (`_touched`). The round reads a page with its
-  version and writes the merge only if the page is still at that
-  version, otherwise it reads again. It then acknowledges the version it
-  pushed from, so an edit made during the push stays marked for the next
-  round.
-- **The host** is where the replica lives: the device's storage,
-  network and files. `round.js` names its interface, and the iPad's is
-  Swift (`ipad/GammaIPad/Core/Replica.swift` over SQLite and URLSession).
-  The tests' host keeps it in memory (`frontend/tests/replica/memoryHost.mjs`).
-  The host only reads and writes. Every decision is the shared JavaScript's.
+The web app is the one owner of the page. Native code is a window, an
+input device, a preview layer and, for This iPad, a process manager, and
+nothing in Swift knows what a block is. So a web feature reaches the iPad
+when the server has it (This iPad's at the app's next build), with no
+iPad work: the only thing the two halves share is the host contract
+below. The files are listed in [ipad/README.md](../../ipad/README.md).
 
-Two implementations of one logic need a pin. The pure rules have shared
-fixtures, which both the Python engine and the JavaScript port read:
+- **The window.** `ShellView` hosts one controller (`ShellController`),
+  made once and kept: a new server or a retry loads into the same web
+  view. Its container fills the screen and is painted with the theme's
+  background, so the strip under the status bar is the page's colour. The
+  web view starts below the status bar (pinned to the safe area's top)
+  and runs under the home indicator, as the page's CSS expects
+  (`html[data-shell] .app` pads only the bottom, [below](#what-the-install-adds-and-where-it-lives)).
+  The live stroke view keeps exactly the web view's frame.
+- **One CSS pixel is one point.** The viewport is at scale 1
+  (`width=device-width, initial-scale=1`), the document never scrolls
+  (`html, body, #root` fill the viewport; the panes scroll), and the web
+  view has `preferredContentMode = .desktop` (an iPad mini would get the
+  phone's layout otherwise), no bounce and
+  `contentInsetAdjustmentBehavior = .never`. So a point in the web view
+  is the page's `clientX`/`clientY`, which the pen's places and samples
+  rely on.
+- **Navigation** (`Navigation.swift`). The server's own pages stay in the
+  web view. Another origin, and `target=_blank`, open in a Safari view.
+  Other schemes (`mailto:`) go to the system. A download goes to a
+  temporary file and then the share sheet. The microphone is granted to
+  the server's page for recordings. The Gamma Cloud start is taken over
+  ([below](#gamma-cloud)). When the system ends the page's process, the
+  shell reloads, and the web app restores itself as after any reload.
+- **Theme.** The page posts `theme` where it sets `theme-color`. The shell
+  paints the colour under the page and behind it, keeps it for the next
+  launch so the app opens in the colour it closed in, and gives the window
+  the page's scheme for the status bar's style. The web view itself stays
+  at the system's style, so a page on the "system" theme still reads the
+  system's preference.
 
-- `tests/shared/synctree.json`: diff, apply, moved and `_unlanded`, with
-  outputs taken from the Python reference.
-- `textmerge.json`: merge, contains and map_offset.
-- `inkmerge.json`: the stroke merge.
-- `paper.json`: notebook paper.
+### The host contract
 
-The rounds themselves run against a real server in the browser suite's
-`replica` group (below).
+Declared by a `WKUserScript` at document start, before the bundle runs
+(`HostInfo` in `Bridge.swift`):
 
-### Ink on the iPad
+```js
+window.gammaNative = {
+  platform: "ipad",   // the host
+  version: "0.2.0",   // the app's CFBundleShortVersionString
+  ink: true,          // the host captures claimed Pencil strokes
+  pencil: true,       // the host forwards the Pencil's double tap and squeeze
+  servers: true,      // the host has a server picker (the web shows "Server…")
+};
+document.documentElement.setAttribute("data-host", "ipad");
+```
 
-The iPad captures the Pencil itself, and stores exactly what a browser
-stores.
+The web half is one module, `frontend/src/shared/lib/host.js`:
+`nativeHost()` (the object or null, read once), `postToHost(msg)` (a
+promise of the reply; it rejects with no host) and
+`onHostMessage(type, fn)`. It also sets `data-shell` on `<html>`, for the
+installed app and the shell alike, which the full-screen CSS keys off.
+Nothing else in the web app knows a host exists.
 
-- **Capture.** A Pencil-only gesture recognizer (`Ink/InkPageView.swift`
-  `PencilRecognizer`) takes the coalesced touches, every sample the
-  Pencil measured. Each sample carries `preciseLocation`, force over
-  `maximumPossibleForce`, and the hardware timestamp, in ms since the
-  stroke's first sample. A touch that reports no force, such as the
-  lift, keeps the last pressure, as `ink/inkInput.js` does. Predicted
-  touches only extend the preview and are never stored. Fingers keep
-  PDFKit's scrolling, zooming and text selection, because its scroll
-  views accept direct touches only.
-- **Encoding.** The stroke is `ink.js encodeStroke` in the core, with
-  `ch: "xypt"` like a browser pen and `t0` as wall-clock ms rounded to an
-  integer (the schema's `t0: int`).
-- **Frame.** A PDF page's ink is in pdf.js's viewport frame at scale 1,
-  rotation applied. The core's `viewportTransform` is pdf.js's
-  `PageViewport` transform. `Reader/PDFReader.swift` composes its inverse
-  with PDFKit's page-to-overlay mapping, read off three points, so
-  rotated pages and every zoom land in the same frame. A notebook
-  sheet's ink is in the sheet's own frame, points from its top-left.
-- **Saving** is `replica/edits.js saveInk`, the browser's `flushInk` on
-  the device. The file is written as `serializeInk` bytes and named by
-  their hash. The block properties come from `inkProps`. The base is the
-  file the strokes were drawn onto. An emptied group follows the same
-  rule as in the browser.
-- **Drawing** comes from the core too: a pen stroke's outline polygon
-  (`perfect-freehand` with `outlineOptions`) is filled as the web's
-  `svgPathFromPoints` path, and a highlighter's centre line is stroked
-  and multiplied. The live stroke is a plain line at the tool's width
-  until the outline replaces it.
-- **Undo and redo** rebase by stroke id (`mergeInk`), like the browser's.
-- **Replay** runs on the core's `inkTimeline`, the browser's
-  ([handwriting.md](handwriting.md) "Replay"). `InkSession.replay` takes
-  the timeline once. On each frame (a main-actor task, about 60 a second)
-  it rebuilds the group's geometry: the strokes finished keep their
-  geometry, and the one being written is cut to its first samples (a
-  prefix of its `pts`) and passed to `strokeGeometry`. The frames go out
-  on `replayFrames`, a Combine subject rather than a published value, so
-  only the page the group is on redraws and SwiftUI does not. An edit to
-  the group, or the store changing it, ends the replay.
-- **Sheets.** `pageView` lists a page's sheets (`sheets`); its kind is
-  `pdf` or `page`, since nothing else marks a notebook. Writing low on
-  the last sheet adds the next, once (edits.js `addSheet` with `after`
-  and `once`, as the browser's `addSheetAfter` does). "Add page" in the
-  reader adds one after the last sheet. A new sheet is folded and takes
-  the paper of the sheet before it.
+Web → app: `window.webkit.messageHandlers.gamma.postMessage(msg)`
+(`WKScriptMessageHandlerWithReply`, the page content world). The shell
+takes messages only from the server's own main frame.
 
-Why not PencilKit: its `PKDrawing` is an opaque format no server or
-browser reads ([research/handwriting.md](../research/handwriting.md)).
-Converting to and from it resamples strokes and loses their identity.
-Raw touches carry everything `gamma-ink` stores.
+| Message | Reply | Meaning |
+|---|---|---|
+| `{type: "claim", pointerId, at: {x, y}, tool: {kind: "pen"\|"highlighter", color, size, opacity}}` | `{taken}` | This Pencil touch is a stroke: take it. `at` is where the pointer went down, in viewport CSS px; `size` is the width on screen, in CSS px |
+| `{type: "theme", bg: "#rrggbb", scheme: "light"\|"dark"}` | `{}` | Paint the window behind the page and pick the status bar's style |
+| `{type: "servers"}` | `{}` | Show the server picker |
 
-### Editing the notes
+App → web: `window.gammaNative.receive(msg)` through
+`callAsyncJavaScript`, which waits for the returned promise. The user
+script defines a stub that queues until `host.js` takes over and delivers
+the queue, so nothing sent early is lost.
 
-`NotesView` lists a page's blocks as text fields, indented by depth. A
-note's text is sent as `setText` from the text it was edited from, so a
-text changed meanwhile merges. While a field has the keyboard, the editing
-bar (`Views/NoteEditBar.swift`) sits on it. It is the web app's bar
-([below](#the-editing-bar)), with the same tools in the same order,
-without Next math argument:
+| Message | Resolves | Meaning |
+|---|---|---|
+| `{type: "stroke", pointerId, samples: [[x, y, p, t], …]}` | `{committed}`, two frames later (React's commit and a paint) | The claimed stroke ended. x, y in viewport CSS px; p = force / maximum force, the lift keeping the last pressure; t = ms from the first sample, from the hardware timestamps, never going back. No samples: the system cancelled the touch, and the claim just ends |
+| `{type: "pencil", gesture: "tap"\|"squeeze", action, at: {x, y}\|null}` | at once | `action` is the system's preferred action: `switchEraser`, `switchPrevious`, `showColorPalette`, `showInkAttributes`, `runSystemShortcut` or `ignore`; `at` is the hover pose's place when known |
 
-**Insert** · Outdent · Indent · Move up · Move down · New block · Bold ·
-Italic · Inline code · Strikethrough · Link · Inline equation · Undo ·
-Redo … **Done**
+Keeping it small is the point. A message is added in `Bridge.swift` and
+`host.js` together, and `version` tells the web which host it runs under.
+A message type nobody listens for resolves at once on the web side, so a
+newer shell never hangs an older page; a message the shell does not know
+gets an error reply.
 
-- **Where it sits.** It is the notes' bottom safe-area inset, and the
-  keyboard takes the safe area, so the bar rides on the keyboard without
-  measuring it. With a hardware keyboard it sits at the bottom of the
-  notes. Where the notes are narrow (the inspector beside a PDF), the
-  tools scroll sideways and Done stays.
-- **The outline.** Outdent, Indent, Move up, Move down and New block are
-  `edits.js` `outdent`, `indent`, `moveBlock` and `addNoteAfter`. Each is
-  the browser's own change of the page's tree (`blockModel.js`
-  `outdentBlock`, `indentBlock`, `moveSibling`, `insertSibling`), sent as
-  the ops the browser sends for it (`blockOps.js` `diffTrees`). A button is
-  greyed out where the web's is: Outdent at the top level, Indent and Move
-  up on a first child, Move down on a last.
-- **Undo and redo.** Each outline edit returns its undo, and `OutlineUndo`
-  registers it with the window's undo manager, which the bar's Undo and
-  Redo run.
-  - An undo is a list of placements: where each block the edit moved, made
-    or took away stood, as its parent and the sibling it followed.
-    `edits.js` `restore` puts them back and returns the redo.
-  - The keys are worked out when the undo runs, as the browser's undo
-    does. A round may have re-keyed a block meanwhile: the server re-keys
-    an insert whose key a sibling has.
-  - Whether the text fields' typing and the keyboard's own undo key use
-    the same manager is a device check.
-- **Text commands.** Bold, Italic, Inline code, Strikethrough, Link and
-  Inline equation are the web editor's own plans (`markCommands.js`
-  `markPlan` with `**`, `*`, `` ` `` and `~~`, `linkPlan`, `mathInsertAt`).
-  - Insert lists the `/` menu's text insertions (`slashInserts.js`) and,
-    on a page without a PDF, a page to write on after the note.
-  - The core's `format` and `insert` turn a plan into one replacement and
-    the selection after, in UTF-16 offsets. `KeyboardField` makes the
-    replacement through the field's own `UITextInput`, so it undoes like
-    typing.
-  - A link's address is not taken from the clipboard as the web's is:
-    reading it raises iPadOS's paste prompt.
-- **Done** takes the keyboard away, which commits the note.
+### The pen
+
+The web decides, native executes. On a Pencil touch the web's ink layer
+decides what the touch is, as it does in Safari: a stroke, a tap, the
+eraser, the lasso, a move, the hand. Only a pen or highlighter stroke is
+claimed.
+
+1. **The touch begins.** `PencilCapture`, a Pencil-and-direct recognizer
+   on the web view's container, records the touch from its first sample
+   (the coalesced touches, every sample the Pencil measured). It delays
+   nothing and recognizes alongside every other recognizer, so the page
+   gets the touch as in Safari.
+2. **The page claims it.** `InkLayer.jsx` starts its stroke as always,
+   draws its own draft, and posts `claim` with the pointer's id, where it
+   went down and the tool (`claimForHost`).
+3. **The shell matches the claim to a touch** (`ClaimQueue`). The page's
+   pointer id means nothing natively, so a claim takes the oldest Pencil
+   touch that began within 10 points of `at`. A claim whose touch already
+   ended takes nothing (a dot the page's own `pointerup` finished first),
+   and an ended touch is remembered for half a second, so a late claim
+   cannot take the next touch at the same spot. A touch nobody claimed (a
+   tap on a button, the eraser, the lasso) only stands in the way of a
+   claim at that same spot. A touch going down forgets the long-ended ones.
+4. **Taken.** The recognizer begins. That prevents WebKit's recognizers
+   still deciding (its touch events, pans, long presses: `canPrevent` is
+   true, `canBePrevented` false) and cancels the web view's touch
+   (`cancelsTouchesInView`). While it captures, it swallows fingers on the
+   screen (the palm) and draws the live line (`LiveStrokeView`: a plain
+   polyline at the tool's colour, width and opacity, extended by the
+   predicted touches).
+5. **The page gives way on the reply.** On `{taken: true}` the layer drops
+   its draft without saving (`handOver`), ignores that pointer's own
+   events, and treats fingers as palms until the stroke ends, whether or
+   not WebKit sends a `pointercancel`. So a stroke is never saved twice,
+   and the page never pans under the Pencil.
+6. **The lift.** The shell sends `stroke` with the samples. The layer
+   converts them with the rect and zoom of the down, applies the
+   repeated-point rule of `appendInkSample`, and commits through the same
+   `encodeStroke` and `onStroke` as its own strokes (`ch: "xypt"`, `t0` the
+   web's wall clock at the down). Undo, replay and saving are unchanged.
+   The live line stays until the reply, which comes after the page has
+   painted the stroke, so the swap never blinks; a page that never
+   answers loses the line after three seconds.
+7. **Cancelled.** When the system cancels a captured touch, the line goes,
+   and the shell sends `stroke` with no samples, which ends the claim and
+   saves nothing.
+
+A claim the shell does not take (`{taken: false}`) leaves the touch to the
+page, which finishes it as in Safari. Pencil hover, pressure and tilt
+reach the page as Safari gives them.
+
+**Gestures.** `PencilGestures` (`UIPencilInteraction`) forwards the double
+tap and, on iPadOS 17.5 and later, the squeeze with its hover pose, as
+`pencil` with the system's preferred action. `App.jsx` maps it onto the
+markup toolbar's own handlers: `switchEraser` toggles the eraser,
+`switchPrevious` picks the previous preset, `showColorPalette` and
+`showInkAttributes` open the active tool's options row, and the rest do
+nothing.
+
+### Gamma Cloud
+
+Google refuses to sign in inside an embedded web view, so the page's own
+start (`/api/auth/cloud/start`) is taken over, as the desktop app does
+(`CloudSignIn.swift`; `desktop/lib/cloudSignIn.js`). The shell listens on
+`127.0.0.1:<port>`, posts `app-start` from inside the page (so a Link
+carries the page's session) with that return address and an S256 PKCE
+challenge, and opens the authorize URL in an
+`ASWebAuthenticationSession`. The server sends that browser back to the
+loopback address with a one-time result; the listener keeps it and
+redirects the sheet to `gamma-ipad://cloud-signin`, which closes it. The
+web view then posts `app-claim` with the verifier, which sets the session
+cookie where the web app runs. The server needs nothing new. A password
+sign-in is just the web app's login page.
+
+### The local server
+
+"This iPad" is Gamma's own backend running inside the app on
+`127.0.0.1:<port>`, the way the desktop app runs a sidecar server beside
+its window ([desktop/docs/architecture.md](../../desktop/docs/architecture.md#servers-and-workspaces)).
+The shell shows it like any other server: the web view loads its address,
+and the page is the web app that server serves. So the whole web app works
+with no connection, and the Swift side stays a process manager
+(`Server/LocalServer.swift`): it picks the data directory and the port,
+seeds the first account, starts the interpreter and says when the server
+answers. Nothing in it knows what the server holds.
+
+#### What runs
+
+- **CPython 3.13 for iOS**: BeeWare's
+  [Python-Apple-support](https://github.com/beeware/Python-Apple-support)
+  `3.13-b16` (Python 3.13.16), embedded as `Python.xcframework`. CPython
+  supports iOS since 3.13 (PEP 730), and the app embeds it as
+  [its iOS guide](https://docs.python.org/3/using/ios.html) describes.
+- **The backend from `backend/`, unchanged**: `app.py` and the `gamma`
+  package, copied into the bundle at build time. The server has no iPad
+  branch. It reads the environment the desktop's sidecars are given
+  ([desktop.md](desktop.md)), and it spawns no processes, which iOS would
+  not allow.
+- **The built web app** from `frontend/dist`, served at the server's root
+  (`GAMMA_STATIC_DIR`). This iPad therefore shows the web app of the app's
+  own build, as a desktop's local server does; another server shows its
+  own.
+- **`ipad/python/gamma_ios.py`**, the entry, the iPad's
+  `desktop/backend_entry.py`. It sends all output to the log, imports the
+  server once the environment is final (`gamma/config.py` reads it at
+  import), and runs uvicorn on `127.0.0.1` at `GAMMA_PORT`.
+
+`Server/PythonRuntime.swift` runs one interpreter on a thread of its own
+(`gamma-server`). The thread has a 16 MiB stack, because a secondary
+thread's 512 KiB default is too small for Python's recursion and the
+server's imports. The configuration follows the guide:
+
+- UTF-8 mode, whatever the device's locale.
+- Unbuffered standard streams, so the log is current.
+- No bytecode written, since the signed bundle is read-only.
+- No signal handlers: the process's signals are the app's, and this is
+  not the main thread.
+- Exactly four module paths, all in the bundle: the standard library, its
+  `lib-dynload`, `python/app` and `python/app_packages`.
+
+The C API comes in through a bridging header. The interpreter is never
+finalized, and it cannot be started twice in one process. So a failed
+start stays failed until the app is opened again, and the pages say so.
+An uncaught `SystemExit` (uvicorn's way of saying it could not start)
+would end the whole app under `PyRun_SimpleString`, so the entry turns it
+into an ordinary error.
+
+#### The wheels
+
+The server's dependencies come as iOS wheels, from PyPI and from
+[Flet's index](https://pypi.flet.dev), which publishes iOS builds of the
+native packages PyPI lacks. `ipad/python/requirements-ios.txt` is
+`backend/requirements.txt`, changed only where a package has no iOS wheel
+at the server's pin. Each change is commented in the file:
+
+| Package | Server | iPad | Why |
+|---|---|---|---|
+| uvicorn | `uvicorn[standard]` | `uvicorn` | uvloop and httptools have no iOS wheels. h11 on the asyncio loop serves the same, websockets is listed on its own, and the other extras serve only the development reloader and config files |
+| orjson | 3.12.0 | 3.11.9 | Flet's newest iOS build |
+| pydantic | 2.13.2 | 2.13.4 | pydantic pins its pydantic-core exactly, and Flet builds only some cores: 2.13.4's (2.46.4) is there, the server's (2.46.2) and 2.14's (2.50) are not |
+| cryptography | 50.0.1 | 43.0.1 | Flet's iOS build. The server uses only `cryptography.fernet`, the same in both |
+| pypdfium2 | 5.11.0 | left out | no iOS build anywhere |
+
+The native wheels are pydantic-core, cryptography (with cffi), orjson,
+bcrypt, Pillow, and rpds-py (jsonschema's, through mcp); the rest is pure
+Python. `backend/tests/test_ios_requirements.py` fails when the server
+gains a dependency the iOS file neither lists nor excludes with a reason,
+so each new one gets an iOS decision.
+
+Every pdfium import in the server is guarded, so without pypdfium2 each
+use falls back:
+
+- PDF text for search and the AI comes from PyPDF2 (`gamma/pdf_text.py`),
+  with worse word spacing. The viewer is pdf.js in the page and is
+  unaffected.
+- There are no page images: `pdf_text.render_page` answers none, so the
+  AI's page and region pictures and MCP's `view_pdf_page` go without.
+- A PDF's own highlights import without their quotes.
+- The annotated-PDF export puts the notes in the margins (`pdf_notes.py`),
+  and the Logseq export leaves out area-highlight images.
+
+A server change that imported pdfium unguarded would break This iPad's
+start. The start test ([Tests](#tests)) is what catches it.
+
+#### Where the data lives
+
+The data directory (`GAMMA_DATA_DIR`) is `Documents/Gamma/local` in the
+app's container. It is in Documents because that is the folder the Files
+app shows (`UIFileSharingEnabled` and `LSSupportsOpeningDocumentsInPlace`
+in `project.yml`). There it appears as On My iPad › Gamma › Gamma › local,
+with the log, as the desktop app shows its data folder. The picker shows
+its size. It is in the iPad's backups like any app's documents, and
+deleting the app deletes it.
+
+#### The address
+
+The server keeps its port, by the desktop's rule (`desktop/lib/sidecar.js`
+`pickPort`):
+
+1. The port it had last time (`gamma.local.port` in `UserDefaults`), while
+   that is free.
+2. Otherwise, the first free port in the IANA dynamic range (49152–65535),
+   from a random point.
+3. Only then, whatever port the system hands out.
+
+A kept port keeps the origin, and with it what the web app stores per
+origin (its local storage). The free check binds `127.0.0.1` with
+`SO_REUSEADDR`, as uvicorn does. So a port the last run left in
+`TIME_WAIT` (the app killed and opened again at once) still counts as
+free, while one another socket listens on does not.
+
+#### The account and the silent sign-in
+
+A first start, on an empty data directory, seeds one account: `admin`,
+with a random 12-character password (9 random bytes in base64url, the
+desktop's shape and the server's own). The password is kept in the
+Keychain (`Server/Keychain.swift`). It is readable after the first unlock
+and travels in an encrypted backup, so a restored iPad gets it back with
+the data directory. The app passes the account as `GAMMA_ADMIN_USER` and
+`GAMMA_ADMIN_PASSWORD` only on that start, since the server ignores them
+once it has accounts. The picker shows the account and copies the
+password, for signing in again after a sign-out.
+
+A data directory whose password the Keychain does not hold gets no silent
+sign-in: one restored from a backup without the Keychain, or one whose
+first write to the Keychain was refused. The person then signs in on the
+page. A password the server made itself, with no account seeded, is in
+its log.
+
+The shell signs in to the local server as the desktop does
+(`autoLoginScript` in `desktop/main.js`; `WebShell.swift`). After the
+first finished main-frame load on the local server's origin, it asks
+`/api/session`. When that is anonymous, it posts `/api/login` with the
+seeded account and reloads, so the session cookie lands in the web view's
+own store.
+
+- It runs through `callAsyncJavaScript` in the app's own content world,
+  with the account passed as arguments, so the page's scripts never see
+  the password.
+- It runs only when the page's origin is the local server's; nothing runs
+  in another server's page.
+- It runs once per open: a pick in the picker, Try again, or the reload
+  after the page's process ended. So a person who signs out stays signed
+  out until This iPad is opened again, as on the desktop.
+
+#### The environment
+
+Set with `setenv` before the interpreter starts, since `os.environ` is a
+copy taken then (`LocalEnvironment` in `LocalServer.swift`):
+
+| Variable | Value |
+|---|---|
+| `GAMMA_DATA_DIR` | `<Documents>/Gamma/local` |
+| `GAMMA_STATIC_DIR` | `<bundle>/python/frontend_dist` |
+| `GAMMA_VERSION` | the app's `CFBundleShortVersionString`, shown as the server's build |
+| `GAMMA_CLOUD_DEFAULT_ISSUER` | `https://account.gammapdf.com`: Gamma Cloud sign-in is on until the admin picks another account server or none, as on the desktop ([cloud_accounts.md](cloud_accounts.md)) |
+| `GAMMA_PORT` | the port above, read by `gamma_ios.py` |
+| `GAMMA_ADMIN_USER`, `GAMMA_ADMIN_PASSWORD` | the seeded account, on a first start only |
+
+`GAMMA_FOLDER_LINKS` is not set: folders kept on disk are the desktop
+app's ([folder_sync.md](folder_sync.md#folders-kept-by-the-desktop-app)).
+
+#### Starting, and the log
+
+The server starts at launch when This iPad was the last pick, and
+otherwise the first time it is opened. It then runs while the app does,
+whichever server the window shows.
+
+- **Before the start**, the app checks that the bundle has the server and
+  the web app in it, so a build made without the Python step says so.
+- **While it starts**, a page of its own covers the web view
+  (`LocalStartView`), and the app asks `/api/health` every 250 ms. It
+  counts as up by the desktop's rule: a 2xx, or the 503 with
+  `data_directory_not_upgradable`, a server that is up and shows its own
+  guidance ([migrations.md](migrations.md)).
+- **There is no deadline**, because the interpreter cannot be started
+  again in the process: giving up would only hide a server that answers
+  later. After a minute the start is marked slow (the first one after an
+  install, on an older iPad). The pages then say it can take a few
+  minutes, and the polling drops to once a second. Only the interpreter's
+  own end makes the start fail.
+- **Back from the background.** iOS suspends the app, and the server with
+  it, and can reclaim a suspended app's listening socket, notably while
+  the screen is locked. When the app is active again, it asks
+  `/api/health` up to three times, a second apart. A server that stays
+  silent is reported as stopped, with what to do (close the app and open
+  it again), rather than left behind a page that cannot load.
+
+Everything the server prints goes to `<data>/logs/server.log`
+(`gamma_ios.py`). The file is appended across launches, and each start is
+marked with a `--- <UTC time> start port <port> ---` line, the desktop
+sidecar's marker. `faulthandler` writes the threads' stacks there before a
+crash in native code. A failed start shows its message and the log's last
+4 KB in the picker, and the Files app reaches the whole file.
+
+#### Offline use: clones
+
+This iPad is a Gamma server like the desktop's local one. So the offline
+copies of another server's workspaces are Gamma's own clones (mirrors,
+[mirror.md](mirror.md)), made and resolved in the web app as the
+desktop's are ([desktop/docs/architecture.md](../../desktop/docs/architecture.md#clones)),
+and the Swift side keeps no sync state.
+
+The desktop makes a clone with one click on its switcher's *clone* chip.
+The iPad shell has no switcher, so a clone is made the way any Gamma
+makes one ([mirror.md](mirror.md#making-one)):
+
+1. On the other server, Settings → Integrations: a read-and-write token.
+2. On This iPad, Settings → Workspaces → Clones → *Clone a remote
+   workspace*, with that server's address and the token.
+
+From then on the sync pill, the merge chips and the conflict cards are the
+web app's. A clone syncs only while the local server runs, that is, while
+the app is open and This iPad has been opened in that launch.
+
+#### The server picker
+
+`Views/ServersView.swift` shows at first launch, and whenever the web
+app's Server… posts `servers`. It is plain SwiftUI with the system's
+styling.
+
+- **This iPad**: a dot for the state (green running, orange starting, red
+  failed, grey not started), the address or the state with the data
+  directory's size, and Open. A failed start adds its message and the
+  log's tail. The account's name and Copy the password sit under it.
+- **Servers**: the other servers by address, newest first. Each has a
+  reachability dot from `/api/health` (a 3 s timeout, the answer kept for
+  30 s, as the desktop caches its remotes'), Open, and Edit and Remove on
+  a swipe or a long press. Editing the shown server's address loads the
+  new one.
+- **Add a server**: the address as typed or pasted, opened at once. A bare
+  host means `https`, and a page link keeps only its origin.
+
+The pick and the list are kept in `UserDefaults` as one JSON value
+(`gamma.servers`, `AppModel.swift`). The single address and recent list an
+earlier version kept become the current server and the list the first
+time it is read.
+
+#### How the bundle is made
+
+`ipad/scripts/build-python.sh` runs on a Mac before each Xcode build (how
+to run it, its outputs and its cache: [ipad/README.md](../../ipad/README.md#build-and-run)).
+It downloads the support package once and checks it against a pinned
+sha256. It installs the wheels for the device and for the simulator,
+copies the server code and the built web app, and compiles their bytecode
+with the Mac's Python 3.13. The device writes no bytecode, so without it
+each launch would compile the standard library, the wheels and the
+server from source.
+
+After Xcode has copied the resources, a post-build phase in `project.yml`
+copies `python/app`, `python/frontend_dist` and the platform's wheels into
+the bundle. It then runs the support package's `install_python`. That
+adds the standard library and turns each compiled module (`.so`) into a
+framework of its own, signed, since iOS loads an app's native code only
+from frameworks.
 
 ### Tests
 
-- `ipad/scripts/core.test.mjs` runs the bundle in a bare context with no
-  browser or Node globals. It covers ink, paper, the viewport transform,
-  a notebook made through a synchronous host, the replay's timeline, a
-  page placed among a note's blocks, the editing bar's outline edits with
-  their undo and redo, and its text commands. It runs in `check.yml` and
-  `ipad.yml`.
-- `frontend/tests/replica.test.mjs` covers the tree rules against the
-  shared fixtures, the local merges, edit-beats-delete, the page views and
-  the library rows. Rounds against a remote in memory cover the folder and
-  label trees: reconciled first and pulled whole, both sides' folders
-  kept, never deleted either way, and never created on a remote that
-  lacks one.
-- The browser suite's `replica` group (`frontend/tests/e2e/scenarios/replica.mjs`,
-  no browser) runs rounds against a real server: the first fill, the
-  folder and label trees both ways with the library rows named from them,
-  pushes, the editing bar's outline edits with their undo and redo, text
-  and drawings merged on both sides, an edit beating a delete
-  both ways, a lost answer, a block moved between pages, deletions both
-  ways, and receive-only.
-- `ipad/GammaIPadTests` (XCTest, on macOS in `ipad.yml`) covers the
-  store's version, edit-mark and tombstone semantics, file names, and the
-  bundled core through the Swift host (the replay's order, a page among a
-  note's blocks, an outline edit and its undo). The editing bar itself
-  (`NoteEditBar`, `KeyboardField`, `OutlineUndo`) has no automated test;
-  it is checked on a device.
+- `ipad/GammaIPadTests` (XCTest, on macOS in `ipad.yml`), the pure parts:
+  - the messages' decoding and encoding and the user script
+    (`BridgeTests`)
+  - the cloud sign-in's requests and PKCE (`CloudSignInTests`)
+  - claim matching and sampling (`PencilTests`)
+  - the address, navigation and colour rules (`ShellTests`)
+  - the local server's port rule, environment, password shape, module
+    paths and health rule, and the saved servers, an earlier version's
+    keys included (`ServerTests`)
+- `LocalServerStartTests` (in `ServerTests.swift`) starts the embedded
+  server for real in the test host. It checks the bundle's layout first,
+  so an unprepared build says what is missing. Then it waits up to three
+  minutes for `/api/health`. It is CI's one check that the bundle runs: a
+  wrong layout, a broken framework conversion, a missing wheel or an
+  import error fails here instead of on an iPad. It skips when the app had
+  already started its own server (a simulator whose last pick was This
+  iPad), since an interpreter starts once per process.
+- `backend/tests/test_ios_requirements.py`: every server dependency is in
+  the iOS requirements or excluded with a reason, and nothing excluded is
+  still listed.
+- `frontend/tests/host.test.mjs`: `host.js` with a fake `window` (the
+  queue delivered, replies, unknown types, no host).
+- The `ipad` browser group's shell step (`tests/e2e/scenarios/ipad.mjs`)
+  fakes the host. A pen down on a PDF page is claimed with its place and
+  tool; the reply ends the draft, and the pointer's own events save
+  nothing. The host's samples commit as an ink block with the right page
+  units, pressures and times, and a stroke with no samples saves nothing.
+  The theme message matches `theme-color`, the gestures switch tools, the
+  account menu's Server… row and the sign-in page's Server… link post
+  `servers`, and no install offer shows.
 
-### Keeping the host in step
-
-Nearly everything the app knows about the server is the shared
-JavaScript, so a protocol change is made once, in `frontend/src/replica/`,
-and the checks above carry it to the app: `check.yml` bundles the core
-and runs `core.test.mjs` on every pull request, the shared fixtures pin
-the pure rules against the Python engine, and the `replica` group runs
-rounds against the real server. The Swift host decides nothing; a rule
-that would need a Swift change belongs in the core.
-
-What is Swift's alone is small: the web session's shape and the write
-token's minting (`Core/Remote.swift` `ServerSetup`), files moved by name
-through `/api/uploads` and `/api/upload-file` (`Remote.upload`, `head`,
-`download`), and the upload-reference pattern (`Core/Store.swift`).
-`backend/tests/test_ipad_contract.py` pins those four answers from the
-server's side, with a comment naming the Swift that reads each one. A
-backend change under `routers/sync.py`, `routers/collab.py`, `ops.py`,
-`sync_engine.py`, `sync_tree.py`, `textmerge.py`, `routers/uploads.py`,
-`routers/integrations.py` or the session's answer runs, in this order:
+A change to the bridge (`host.js`, the ink layer's claim, App's theme,
+gesture or Server wiring, the sign-in pages, or anything under `ipad/`)
+runs:
 
 ```bash
-cd backend && venv/Scripts/python.exe -m pytest tests/test_ipad_contract.py tests/test_shared_fixtures.py tests/test_sync_feed.py -q
-node ipad/scripts/build-core.mjs && node --test ipad/scripts/core.test.mjs
-cd frontend && npm run e2e -- --group replica,ipad
+cd frontend && node --test tests/host.test.mjs && npm run e2e -- --group ipad,ink
 ```
 
-A Swift change (`ipad/**`) also runs the XCTest suite on a Mac, which
-`ipad.yml` does in CI. When a server answer the Swift reads changes,
-change `test_ipad_contract.py` and the Swift together, and say so in
-the step's row of [migrations.md](migrations.md) when stored shapes are
-involved, as "Following the server's data model" below does for the
-core.
+and, for `ipad/**`, the XCTest suite on a Mac, which `ipad.yml` does in
+CI ([github_actions.md](github_actions.md#ipadyml)). A change to
+`backend/requirements.txt` runs `test_ios_requirements.py`, and
+`ipad.yml` runs for it too. Other backend and frontend changes reach This
+iPad at the app's next build, as the same code the other checks test.
+`ipad.yml` does not run for them, so a change that matters on the device
+(a pdfium import, a process spawned) is worth a manual dispatch.
+`bash ipad/scripts/build-python.sh --check` resolves every pin for both
+platforms without Xcode, on macOS or Linux.
+
+### Device checks
+
+Only an iPad can show these, and none has been run yet:
+
+1. Whether WebKit sends the page a `pointercancel` once the recognizer
+   begins, and whether preventing its recognizers stops a pan begun
+   meanwhile. The page no longer depends on the `pointercancel` (step 5),
+   but a scroll that starts before the claim would move the page.
+2. The claim's round trip under load, and the 10-point reach against the
+   place WebKit reports for the `pointerdown`.
+3. Palms during a captured stroke: swallowed by the recognizer, and
+   refused by the page.
+4. Pointer events in the web view equal to Safari's: pressure, tilt,
+   hover, coalesced and predicted events.
+5. The keyboard accessory bar under the editing bar, and the visual
+   viewport's keyboard behaviour the bar depends on ("Where it sits",
+   below).
+6. Recording, exports through the share sheet, the file picker and the
+   clipboard.
+7. The Gamma Cloud sheet: Google in `ASWebAuthenticationSession`, the
+   loopback return, the sheet closed by the custom scheme.
+8. The swap from the native line to the web's outline.
+9. A terminated web content process: the reload and the web app's
+   restoration.
+10. The local server's first start on a real iPad: how long it takes,
+    and the memory of the server and the page's process together.
+11. The server after the background and a locked screen: whether iOS
+    reclaims its socket, and how often the recheck reports it stopped.
+12. A device build signed with a real team: `install_python`'s
+    frameworks loading on the device.
+13. The data directory in Files, and a restore from an encrypted backup
+    bringing the password back with the data.
+14. A clone on This iPad syncing with another server, and Gamma Cloud
+    sign-in on the local server.
 
 ### Not built yet
 
-- A highlight from a text selection. PDFKit selects, and the web view
-  highlights.
-- Sheets drawn in place in a page's outline, as the browser's notes view
-  draws them (the notebook view shows them instead), and sheets in a PDF
-  page's notes (the PDF is that page's reader).
-- The lasso, the partial eraser, moving and restyling strokes, and
-  editing presets beyond colour and width.
-- Text boxes ([text_boxes.md](text_boxes.md)). The app neither draws them
-  on a PDF page or a sheet nor makes them. A box shows as a note row with
-  its text, which edits like any note. The browser redraws the box at the
-  new text's size and stores that size at its next local edit of the box.
-- The rest of the web outliner in the notes. Return makes no new note,
-  and Backspace in an empty note does not delete it. A typed `/` opens no
-  menu, and Insert offers no links, embeds, images or new pages. Notes do
-  not fold, and a note's markdown shows as its source.
-- A per-page choice of what to keep offline: every file comes over, like
-  a desktop clone.
-- Sync in the background, and resolving a conflict from the app (the
-  list is for looking; the web app's clone view resolves).
-
-### Following the server's data model
-
-Schema versions 25–30 changed what the server stores and answers
-([migrations.md](migrations.md)). The JavaScript core follows them and its
-tests pin it (`frontend/tests/replica*.mjs`, `ipad/scripts/core.test.mjs`);
-the app ships the core built from the current `replica/`
-(`ipad/core/entry.js`). The Swift code reads two things from it:
-
-- **The library** (`Replica.libraryRows`, `LibraryView.swift`) passes the
-  stored page roots and the two tree snapshots (`store.snapshot("folders")`
-  / `("labels")`) to `libraryRows` above. The view groups by a row's first
-  folder path as it is, and its
-  search box matches titles, paths and labels. A page the app makes
-  (`createPage`, `createNotebook`) is filed nowhere; filing is the web
-  app's.
-- **An ink row's page** (`NotesView.swift`) is `pdf_position.pageNumber`;
-  `pdf_page` is a text box's only (the app shows no text boxes). The core's
-  `pageView` keys `pdfInk` by the position's page and derives `pdf.url` from
-  `doc_id` when a page stores no `source_url`.
-
-The replica never reads `actor` (an account id), the block dict's `page_id`
-and `kind` (it ignores them and sends neither back), or the library listing
-endpoint (the app's library is the replica's).
-
-A replica synced before the server's step 30 keeps its pages' old highlight
-shape until the server lists each page again (the step touched no page).
-The core reads the new shape only, so an ink group's page shows once its
-page has come over again: `Sync now` after the server's upgrade does it.
+- **Background running.** iOS suspends the app soon after it leaves the
+  screen, and the server with it. So a clone syncs only while the app is
+  open, and a server whose socket was reclaimed needs the app closed and
+  opened again. Restarting uvicorn inside the running interpreter, without
+  running the server's startup again, would make that relaunch
+  unnecessary; it is not built.
+- **Retrying a failed start** without relaunching the app, for the same
+  reason: the interpreter starts once per process.
+- **A store release.** The app is built from source with a developer's
+  own team. CI signs and uploads nothing, and App Review has not been
+  tried ([research/ipad-web-shell.md](../research/ipad-web-shell.md),
+  risk 9).
+- **pypdfium2**, and with it what [The wheels](#the-wheels) lists.
+- **Moving data between servers.** Nothing moves a library from This iPad
+  to another server or back, beyond clones and the web app's per-workspace
+  Export and Import, as on the desktop.
+- **The keyboard accessory bar.** The web view's ‹ › Done bar is not
+  hidden, so it sits under the web app's editing bar.
 
 ## The installed web app
 
@@ -392,7 +610,7 @@ app counts as one browser, separate from Safari).
 | The icons | `frontend/public/media/icons/apple-touch-icon.png` (180), `icon-192.png`, `icon-512.png`, `icon-maskable-512.png` | Rendered from the one brand mark by `tools/branding/build.mjs` like every other icon ([design/brand](../../design/brand/README.md)); never edited by hand. The `bleed` option of `mark.mjs` gives them a full-bleed square plate — the OS masks the corners itself, and iOS paints transparent corners black — and the maskable one keeps the mark inside the inner 80%. |
 | The head tags | `frontend/index.html` | `manifest`, `apple-touch-icon`, `apple-mobile-web-app-capable` / `mobile-web-app-capable`, the title, `apple-mobile-web-app-status-bar-style` **default**; the pre-paint script adds `theme-color` for the stored theme (below). |
 | The status bar colour | `index.html`'s pre-paint script, then `app/App.jsx`, `paintStatusBar` (the theme effect and the phone-topbar effect) | With the *default* status-bar style the bar sits above the viewport and is painted with `theme-color`. Before the bundle loads, the pre-paint script writes the resolved theme's chrome colour from a small table of each theme's `--bg-page` (`tests/themes.test.mjs` holds it to the tokens), so a cold start never shows another theme's bar. From then on the meta is set to the topbar's background (the chrome, `--bg-page`) whenever the theme changes, so the bar continues the topbar for every theme — or to the library's (the content surface, `--bg-surface`) while the compact layout shows no topbar. Both are resolved to a hex first (`tokenHex`): most tokens are `color-mix()` expressions. `black-translucent` was rejected: it puts content under the bar with fixed light text, wrong on the light themes. |
-| Standalone-mode CSS | `shared/styles/app.css`, `@media (display-mode: standalone)` | `.app` pads `env(safe-area-inset-bottom)` for the home indicator. There is no top inset to absorb with the default status bar. The document's `overscroll-behavior: none` (html/body; the panes still scroll) sits outside the block: a Safari tab gets it too. |
+| Full-screen CSS | `shared/styles/app.css`, `html[data-shell]` (set by `shared/lib/host.js` when the app runs installed or in the iPad app's shell) | `.app` pads `env(safe-area-inset-bottom)` for the home indicator. There is no top inset to absorb: with the default status bar the bar sits above the viewport, and the shell's web view starts below it. The document's `overscroll-behavior: none` (html/body; the panes still scroll) sits outside the block: a Safari tab gets it too. |
 
 ### Layout by orientation
 
@@ -458,7 +676,7 @@ keyboard (`editor/EditBar.jsx`):
 block · Bold · Italic · Inline code · Strikethrough · Link · Inline
 equation · Next math argument · Undo · Redo … **Done**
 
-The native app's notes have the same bar ([Editing the notes](#editing-the-notes)).
+The iPad app shows this same bar, since it is the web app.
 
 - **Every tool is a command.** All but Undo and Redo are block commands
   ([hotkeys.md](hotkeys.md)), run with the context the row's keydown
@@ -561,14 +779,12 @@ the panes scroll.
 
 - **No service worker or offline shell.** Installability on iOS does not
   need one, and a cache layer would sit on top of the asset cache rules
-  in [repository.md](repository.md). Offline reading and writing is the
-  native app's job ([above](#the-native-app)).
+  in [repository.md](repository.md). Offline use is the iPad app's,
+  through its own server ([The local server](#the-local-server)).
 - **Pencil double tap and squeeze** are not exposed to web content by
   iPadOS. Pencil hover is exposed (a `pen` pointer with no buttons) and
-  already shows the tool footprint. The native app handles the double tap.
-- **No wrapper around the web app.** The native app is not a
-  `WKWebView` shell: it reads and writes its replica natively, and opens
-  the web app in a web view only for what it does not do itself.
+  already shows the tool footprint. The iPad app forwards both
+  ([The pen](#the-pen)).
 
 ### Tests
 
@@ -590,9 +806,11 @@ the panes scroll.
     icon it and the `apple-touch-icon` link name is a real PNG.
     `theme-color` matches what sits under the status bar (the library with
     no tab open, the topbar once one is) and follows a theme change. The
-    document's overscroll is off, and the bundled stylesheet carries the
-    standalone block (the home-indicator inset). Chromium cannot emulate
+    document's overscroll is off, the bundled stylesheet carries the
+    full-screen rule (`html[data-shell]`, the home-indicator inset), and a
+    browser tab gets no `data-shell`. Chromium cannot emulate
     `display-mode`: CDP accepts the feature, but `matchMedia` ignores it.
+  - The iPad app's shell, with a stand-in host: [the native app's tests](#tests).
   - Upright (834×1194) is the compact shell: the PDF full width, Notes full
     screen from the bottom bar. Rotating to landscape brings the docks back.
   - A 390px phone: no topbar without tabs, the bar's words (Library Chat

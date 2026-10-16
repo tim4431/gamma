@@ -8,12 +8,12 @@ launcher, and desktop release workflows use these locations.
 | `backend/gamma/` | FastAPI application, routers, and backend logic |
 | `backend/tests/` | Backend tests using temporary data directories |
 | `frontend/tests/` | `node --test` tests of the pure modules; `e2e/` the Playwright browser suite (`npm run e2e`, [debugging.md](debugging.md)) |
-| `tests/shared/` | JSON cases for rules mirrored between backend and frontend (search normalization, published pages' slugs, the ink and text merges, text boxes, notebook paper, the mirror's tree rules), read by both test suites |
+| `tests/shared/` | JSON cases for rules mirrored between backend and frontend (search normalization, published pages' slugs, the ink and text merges, text boxes, notebook paper, the mirror's tree rules), read by both test suites (the mirror's tree rules and the text merge by the backend's alone) |
 | `frontend/src/` | React code grouped by function (`editor/`, `pdf/`, `settings/`, etc.), orchestration in `app/`, reused code/assets in `shared/`; [source map](../../frontend/src/README.md) |
 | `frontend/public/` | Files copied as-is into the frontend build |
 | `cloud/` | The Gamma Cloud account server (`gammacloud` package, `manage.py`, `tests/`, its own Dockerfile and requirements); imports nothing from `backend/` ([cloud_accounts.md](cloud_accounts.md)) |
 | `desktop/` | Electron shell and desktop packaging |
-| `ipad/` | The native iPad app: Swift host, the bundle entry of the shared JavaScript, XcodeGen project ([ipad/README.md](../../ipad/README.md)) |
+| `ipad/` | The native iPad app: a Swift shell over the web app with a native Pencil layer, and the Gamma server inside it (CPython 3.13 for iOS; `python/` its entry and iOS requirements, `scripts/build-python.sh` the bundle's Python, wheels and web app, all generated and ignored); XcodeGen project ([ipad/README.md](../../ipad/README.md)) |
 | `extension/` | Browser connector, loaded unpacked without a build step |
 | `sites/` | The gammapdf.com website: static pages deployed as a Cloudflare Worker; its build copies the branding, demos and screenshot from `docs/assets/` and renders the user guide, the privacy policy and the terms as pages ([sites/README.md](../../sites/README.md)) |
 | `docs/dev/` | Architecture, implementation notes, and plans |

@@ -46,7 +46,7 @@ By package or folder: the Settings panes 250 KB, CodeMirror altogether
 245 KB, `highlight.js` 165 KB over 37 modules (`lib/common`, for code
 fences in notes, chat replies and the editor's code widget), `parse5` with
 `entities` 159 KB, the chat 116 KB, the guide 80 KB. `diff-match-patch` is
-not in the web bundle (only `replica/`, the iPad app's); `perfect-freehand`
+not in the web bundle (only the iPad's replica used it, since removed); `perfect-freehand`
 is 4 KB.
 
 Every first screen also downloaded the pdf.js worker, 1.4 MB (333 KB as

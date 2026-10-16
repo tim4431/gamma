@@ -1,7 +1,10 @@
-# The iPad app (ipad/, ipad/README.md): the web app's JavaScript bundled for
-# JavaScriptCore and checked in a bare context, the Xcode project generated,
-# the unit tests on an iPad simulator, and an unsigned device build. No
-# signing, no upload: running on a device takes a developer's own team.
+# The iPad app (ipad/, ipad/README.md): the embedded Python and server
+# prepared (ipad/scripts/build-python.sh), the Xcode project generated, the
+# unit tests on an iPad simulator, and an unsigned device build. No signing,
+# no upload: running on a device takes a developer's own team. The app
+# carries the backend and the built web app, so a change to the server's
+# dependencies starts this workflow too; the code itself is the one the
+# other checks test.
 # Overview: docs/dev/github_actions.md.
 
 name: ipad
@@ -10,20 +13,8 @@ on:
   pull_request:
     paths:
       - "ipad/**"
-      - "frontend/src/ink/**"
-      - "frontend/src/notebook/**"
-      - "frontend/src/replica/**"
-      - "frontend/src/shared/model/blockModel.js"
-      - "frontend/src/shared/model/blockOps.js"
-      # the note editor's text commands the editing bar runs (ipad/core/entry.js;
-      # not slashCommands.js, which the bundle leaves out)
-      - "frontend/src/editor/markCommands.js"
-      - "frontend/src/editor/slashInserts.js"
-      - "frontend/src/editor/mdMarks.js"
-      - "frontend/src/editor/mdScan.js"
-      - "frontend/src/editor/fences.js"
-      - "frontend/src/editor/latexInput.js"
-      - "frontend/package*.json"
+      - "backend/requirements.txt"
+      - "tools/build_frontend_if_needed.mjs"
       - ".github/workflows/ipad.yml"
   workflow_dispatch:
 
@@ -34,25 +25,42 @@ concurrency:
 jobs:
   app:
     runs-on: macos-15
-    timeout-minutes: 40
+    timeout-minutes: 50
     steps:
       - uses: actions/checkout@v7
+      # pip runs under the device's Python version, so environment markers
+      # resolve as they do on the iPad (build-python.sh).
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
       - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
           cache-dependency-path: frontend/package-lock.json
-      - working-directory: frontend
+      - name: Install the frontend's packages
+        working-directory: frontend
         run: npm ci
-      - name: Bundle and check the shared JavaScript
-        run: |
-          node ipad/scripts/build-core.mjs
-          node --test ipad/scripts/core.test.mjs
+      # The support tarball, the pip venv and pip's cache of the iOS wheels.
+      - uses: actions/cache@v4
+        with:
+          path: ~/Library/Caches/gamma-ipad
+          key: gamma-ipad-${{ runner.os }}-${{ hashFiles('ipad/scripts/build-python.sh', 'ipad/python/requirements-ios.txt') }}
+          restore-keys: gamma-ipad-${{ runner.os }}-
+      # Through bash: the script's executable bit does not survive a commit
+      # from a Windows checkout.
+      - name: Python for iOS, the wheels, the server and the web app
+        run: bash ipad/scripts/build-python.sh
       - name: Generate the Xcode project
         working-directory: ipad
         run: |
           brew install xcodegen
           xcodegen generate
+      # One architecture: install_python copies the standard library's
+      # lib-$ARCHS folder (project.yml), and the runner is Apple Silicon.
+      # Besides the pure parts, one test starts the embedded interpreter and
+      # waits for the server's /api/health (LocalServerStartTests), so a
+      # broken bundle fails here and not on an iPad.
       - name: Unit tests on an iPad simulator
         working-directory: ipad
         run: |
@@ -65,7 +73,7 @@ jobs:
           print(ipads[-1][1]["udid"])')
           echo "simulator: $DEVICE"
           xcodebuild test -project GammaIPad.xcodeproj -scheme GammaIPad -destination "id=$DEVICE" \
-            CODE_SIGNING_ALLOWED=NO | xcbeautify
+            ONLY_ACTIVE_ARCH=YES ARCHS=arm64 CODE_SIGNING_ALLOWED=NO | xcbeautify
       - name: Device build (unsigned)
         working-directory: ipad
         run: |

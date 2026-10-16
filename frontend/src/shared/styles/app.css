@@ -237,12 +237,12 @@ body {
 /* The document itself never rubber-bands or pulls to refresh, in a browser
    tab as installed: only the panes scroll (docs/dev/ipad.md). */
 html, body { overscroll-behavior: none; }
-/* Installed as a home-screen app: the bottom edge keeps clear of the home
+/* Full screen, as the installed home-screen app or in the iPad app's shell
+   (data-shell, shared/lib/host.js): the bottom edge keeps clear of the home
    indicator. The status bar sits above the viewport (status-bar-style
-   "default"), so there is no top inset to absorb. */
-@media (display-mode: standalone) {
-  .app { padding-bottom: env(safe-area-inset-bottom); }
-}
+   "default"; the shell's web view starts below it), so there is no top
+   inset to absorb. */
+html[data-shell] .app { padding-bottom: env(safe-area-inset-bottom); }
 
 .topbar {
   display: flex;

@@ -287,7 +287,7 @@ seq order, at most `limit`: a live page with its latest op `seq` (`pages`),
 a deleted one as a tombstone (`deleted`, its `at` and `actor`), `cursor`
 the highest seq listed (or `since`), `more` while rows remain. It exists
 for anything that keeps a copy of a workspace in step (a mirror,
-[mirror.md](mirror.md); the iPad's replica, [ipad.md](ipad.md)) so it can
+[mirror.md](mirror.md)) so it can
 find out *which* pages to look at without walking the library; what
 actually changed on a page is still its op log (`seq`,
 `GET /pages/{id}/ops?since=`), and a page whose log no longer reaches back

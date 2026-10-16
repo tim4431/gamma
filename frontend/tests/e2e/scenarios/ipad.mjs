@@ -2,9 +2,26 @@
 // home-screen head tags, theme-color following the theme, the
 // standalone-mode stylesheet, the layout by orientation (upright: the
 // compact shell; landscape: the docks), and the editing bar a touch screen's
-// note editor brings. Chromium in a tablet-sized touch context — emulation,
-// not an iPad.
+// note editor brings; and the iPad app's shell over it (shared/lib/host.js),
+// played by a stand-in host: the Pencil's claim and the stroke handed back,
+// the theme message, the Pencil gestures and the Server row. Chromium in a
+// tablet-sized touch context — emulation, not an iPad.
 import { same, tree } from "./notes.mjs";
+import { waitForPdf } from "./pdf.mjs";
+
+// What the iPad app's user script declares before the bundle runs, with a
+// message handler that records what the page posts and takes every claim.
+function fakeShell() {
+  const sent = [];
+  window.e2eHostSent = sent;
+  const native = { platform: "ipad", version: "0.2.0", ink: true, pencil: true, servers: true };
+  native.receive = (msg) => new Promise((resolve, reject) => (native.queue ||= []).push({ msg, resolve, reject }));
+  window.gammaNative = native;
+  window.webkit = { messageHandlers: { gamma: { postMessage: (msg) => {
+    sent.push(JSON.parse(JSON.stringify(msg)));
+    return Promise.resolve(msg.type === "claim" ? { taken: true } : {});
+  } } } };
+}
 
 export async function ipadScenarios({ server, browser, alice, makePdf, step, until, sleep, assert, assertEq, assertNoProblems, openPage }) {
   await step("ipad: install manifest, icons, status-bar colour and standalone mode", async () => {
@@ -82,22 +99,22 @@ export async function ipadScenarios({ server, browser, alice, makePdf, step, unt
       // Installed: the document does not rubber-band and the bottom edge keeps
       // clear of the home indicator. Chromium cannot emulate display-mode
       // (CDP accepts the feature, matchMedia ignores it), so this reads the
-      // bundled stylesheet's standalone block.
-      const standalone = await page.evaluate(() => {
+      // bundled stylesheet's full-screen rule: html[data-shell], which
+      // shared/lib/host.js sets for the installed app and the iPad shell.
+      const shellRules = await page.evaluate(() => {
         const out = [];
         for (const sheet of document.styleSheets) {
           let rules; try { rules = sheet.cssRules; } catch { continue; }
           for (const rule of rules) {
-            if (rule instanceof CSSMediaRule && /display-mode:\s*standalone/.test(rule.conditionText)) {
-              for (const inner of rule.cssRules) out.push(`${inner.selectorText} { ${inner.style.cssText} }`);
-            }
+            if (rule instanceof CSSStyleRule && /^html\[data-shell\]/.test(rule.selectorText)) out.push(`${rule.selectorText} { ${rule.style.cssText} }`);
           }
         }
         return out;
       });
+      assertEq(await page.locator("html").getAttribute("data-shell"), null, "a browser tab is no shell");
       // The document never rubber-bands or pulls to refresh, in a tab as installed.
       assertEq(await page.evaluate(() => getComputedStyle(document.documentElement).overscrollBehaviorY), "none", "document overscroll");
-      assert(standalone.some((r) => /^\.app\b/.test(r) && /safe-area-inset-bottom/.test(r)), `home indicator inset: ${standalone.join(" | ")}`);
+      assert(shellRules.some((r) => /\.app\b/.test(r) && /safe-area-inset-bottom/.test(r)), `home indicator inset: ${shellRules.join(" | ")}`);
       assertNoProblems(page);
     } finally { await ctx.close(); }
   });
@@ -142,6 +159,135 @@ export async function ipadScenarios({ server, browser, alice, makePdf, step, unt
       assertEq(await page.locator(".phoneBottomBar").count(), 0, "no bottom bar with the docks");
       assertNoProblems(page);
     } finally { await ctx.close(); }
+  });
+
+  // The iPad app's shell (docs/dev/ipad.md): the web decides that a Pencil
+  // touch is a stroke and claims it; the host's {taken: true} ends the page's
+  // draft (whatever WebKit sends the pointer next), and the host hands the
+  // finished samples back in viewport CSS px, which commit as the browser's
+  // own stroke. The device side (the
+  // recognizer, the live line) is the Swift tests' and the device checks'.
+  await step("ipad shell: a Pencil stroke is claimed and committed from the host's samples; theme, gestures, Server row", async () => {
+    const up = await alice.upload("/api/uploads", makePdf([["A page the Pencil writes on."]]), "shell.pdf", "application/pdf");
+    const paper = await alice.api(`/api/blocks/by-doc/${up.doc_id}`, { method: "POST", body: { default_title: "Shell paper", source_url: up.source_url } });
+    // An iPad's own Safari would be offered Add to Home Screen; the shell never is.
+    const ctx = await alice.context(browser, { hasTouch: true, viewport: { width: 1194, height: 834 },
+      userAgent: "Mozilla/5.0 (iPad; CPU OS 18_2 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.2 Mobile/15E148 Safari/604.1" });
+    await ctx.addInitScript(fakeShell);
+    try {
+      const page = await openPage(ctx, `${server.base}/?ws=${alice.ws}&block=${paper.id}`);
+      await waitForPdf(page, 1);
+      const sent = (type) => page.evaluate((type) => window.e2eHostSent.filter((m) => m.type === type), type);
+      assertEq(await page.locator("html").getAttribute("data-host"), "ipad");
+      assertEq(await page.locator("html").getAttribute("data-shell"), "ipad", "the shell takes the full-screen rules");
+
+      // theme: the colour under the status bar, and the scheme for its style.
+      const theme = (await sent("theme")).at(-1);
+      assert(theme, "a theme message");
+      assertEq(theme.bg, await page.locator('meta[name="theme-color"]').getAttribute("content"), "the window's colour is the status bar's");
+      assertEq(theme.scheme, await page.locator("html").getAttribute("data-scheme"));
+      assert(/^#[0-9a-f]{6}$/.test(theme.bg), `a hex colour: ${theme.bg}`);
+
+      await page.click("button[aria-label='Handwriting tools']");
+      await page.waitForSelector(".pdfInkBar .inkToolBtn.modeActive .inkToolInk");
+      const paths = '[data-page="1"] .inkLayer path';
+      const count = await page.locator(paths).count();
+      const before = new Set((await alice.api(`/api/blocks/${paper.id}/subtree`)).block.children.map((b) => b.id));
+      // The Pencil goes down and moves: the page draws its draft and claims
+      // the touch, with where it went down; the host takes it.
+      const down = await page.locator('[data-page="1"]').evaluate((el) => {
+        const box = el.getBoundingClientRect();
+        const send = (type, x) => el.dispatchEvent(new PointerEvent(type, { bubbles: true, cancelable: true,
+          pointerType: "pen", pointerId: 61, button: 0, buttons: 1, pressure: 0.5, clientX: box.left + x, clientY: box.top + 300 }));
+        send("pointerdown", 100);
+        send("pointermove", 110);
+        return { left: box.left, top: box.top, k: box.width / el.querySelector(".inkLayer").viewBox.baseVal.width };
+      });
+      const claim = await until(async () => (await sent("claim"))[0], { what: "the stroke is claimed" });
+      assertEq(claim.pointerId, 61);
+      assertEq(claim.tool.kind, "pen");
+      assert(/^#/.test(claim.tool.color) && claim.tool.opacity === 1, `the tool's colour and opacity: ${JSON.stringify(claim.tool)}`);
+      assert(claim.tool.size > 0, "the width on screen");
+      assertEq(JSON.stringify(claim.at), JSON.stringify({ x: down.left + 100, y: down.top + 300 }), "where the pointer went down");
+      await until(async () => (await page.locator('[data-page="1"] .inkCanvas').evaluate((c) => c.style.display)) === "none",
+        { what: "the draft gives way to the host's line on the reply" });
+      // WebKit may still deliver the pointer's own events: they save nothing.
+      await page.locator('[data-page="1"]').evaluate((el) => {
+        const box = el.getBoundingClientRect();
+        for (const type of ["pointermove", "pointerup"]) {
+          el.dispatchEvent(new PointerEvent(type, { bubbles: true, cancelable: true, pointerType: "pen", pointerId: 61,
+            button: 0, buttons: type === "pointerup" ? 0 : 1, pressure: 0.5, clientX: box.left + 120, clientY: box.top + 300 }));
+        }
+      });
+      assertEq(await page.locator(paths).count(), count, "the page's own pointer-up commits nothing");
+      // The lift: the host's samples, viewport px and ms from the first; the
+      // repeated last point is dropped as the pointer path drops it.
+      const { left, top, k } = down;
+      const samples = [[100, 0.2, 0], [110, 0.4, 4], [120, 0.6, 8], [130, 0.8, 12], [130, 0.8, 16]]
+        .map(([x, p, t]) => [left + x, top + 300, p, t]);
+      const stroke = (samples) => window.gammaNative.receive({ type: "stroke", pointerId: 61, samples });
+      assertEq(JSON.stringify(await page.evaluate(stroke, samples)), JSON.stringify({ committed: true }));
+      assertEq(await page.locator(paths).count(), count + 1, "the stroke is on the page by the reply");
+      const block = await until(async () => {
+        const d = await alice.api(`/api/blocks/${paper.id}/subtree`);
+        return d.block.children.find((b) => !before.has(b.id) && b.properties?.ink_url);
+      }, { what: "the host's stroke saved as an ink block" });
+      const ink = await alice.api(block.properties.ink_url);
+      const st = ink.strokes[0];
+      assertEq(st.ch, "xypt");
+      assert(st.pen === true && typeof st.t0 === "number", "a pen stroke with its wall clock");
+      assertEq(st.pts.length, 16, "four samples, the repeat dropped");
+      assertEq(JSON.stringify(st.pts.filter((_, i) => i % 4 === 2)), "[200,400,600,800]", "pressure");
+      assertEq(JSON.stringify(st.pts.filter((_, i) => i % 4 === 3)), "[0,4,4,4]", "time deltas");
+      const x = st.pts.filter((_, i) => i % 4 === 0).reduce((a, b) => a + b, 0) / 100;
+      const y = st.pts.filter((_, i) => i % 4 === 1).reduce((a, b) => a + b, 0) / 100;
+      assert(Math.abs(x - 130 / k) < 0.02 && Math.abs(y - 300 / k) < 0.02, `page units from the down's rect and zoom: ${x}, ${y}`);
+      // The same pointer again, no longer claimed, commits nothing.
+      assertEq(JSON.stringify(await page.evaluate(stroke, samples)), JSON.stringify({ committed: false }));
+      // A touch the system cancelled: the host's stroke has no samples, which
+      // ends the claim and saves nothing.
+      await page.locator('[data-page="1"]').evaluate((el) => {
+        const box = el.getBoundingClientRect();
+        el.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, cancelable: true, pointerType: "pen",
+          pointerId: 62, button: 0, buttons: 1, pressure: 0.5, clientX: box.left + 200, clientY: box.top + 400 }));
+      });
+      await until(async () => (await sent("claim")).some((m) => m.pointerId === 62), { what: "the second stroke is claimed" });
+      const abandoned = await page.evaluate(() => window.gammaNative.receive({ type: "stroke", pointerId: 62, samples: [] }));
+      assertEq(JSON.stringify(abandoned), JSON.stringify({ committed: false }));
+      assertEq(await page.locator(paths).count(), count + 1, "nothing saved for a cancelled touch");
+
+      // The Pencil's double tap with the system's "switch to the eraser": on, then back.
+      const armed = () => page.locator(".pdfInkBar .inkToolBtn.modeActive").getAttribute("aria-label");
+      const pen = await armed();
+      const gesture = (action) => page.evaluate((action) => window.gammaNative.receive({ type: "pencil", gesture: "tap", action, at: null }), action);
+      await gesture("switchEraser");
+      await page.waitForSelector(".pdfInkBar button[title^='Eraser'].modeActive");
+      await gesture("switchEraser");
+      await until(async () => (await armed()) === pen, { what: "the double tap again goes back to the pen" });
+      await gesture("showColorPalette");
+      await page.waitForSelector(".pdfInkSub[data-ink-options='tool']");
+      await gesture("ignore");
+      assertEq(await armed(), pen, "an ignored gesture changes nothing");
+
+      // The account menu's Server row asks the host for its server picker.
+      await page.getByRole("button", { name: "Account & settings", exact: true }).click();
+      await page.getByRole("button", { name: "Server…", exact: true }).click();
+      await until(async () => (await sent("servers")).length === 1, { what: "the servers message" });
+      // No install offer under the shell.
+      assertEq(await page.getByText("Add to Home Screen").count(), 0, "no install offer");
+      assertNoProblems(page);
+    } finally { await ctx.close(); }
+    // Signed out, the sign-in page offers the same picker: a reachable but
+    // wrong server is never a dead end.
+    const anon = await browser.newContext({ hasTouch: true, viewport: { width: 1194, height: 834 } });
+    await anon.addInitScript(fakeShell);
+    try {
+      const page = await openPage(anon, `${server.base}/`);
+      await page.waitForSelector(".loginInput");
+      await page.getByRole("button", { name: "Server…", exact: true }).click();
+      await until(async () => (await page.evaluate(() => window.e2eHostSent.filter((m) => m.type === "servers").length)) === 1,
+        { what: "the sign-in page's servers message" });
+    } finally { await anon.close(); }
   });
 
   await step("phone: a labelled bottom bar, the More sheet, no empty topbar, the Library tab as home", async () => {

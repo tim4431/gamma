@@ -1,6 +1,5 @@
 // Sheets of paper to write on (docs/dev/notebooks.md). The client half of
-// gamma/notebook.py; pure, so it runs under node --test and in the iPad's
-// JavaScriptCore.
+// gamma/notebook.py; pure, so it runs under node --test.
 //
 // A sheet is a block carrying `sheet: <paper>`, anywhere among a page's
 // blocks; nothing else marks a page as a notebook — the notebook view is a

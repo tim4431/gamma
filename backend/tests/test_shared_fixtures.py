@@ -1,7 +1,8 @@
 """Rules the frontend mirrors, pinned by one set of cases both sides read:
 tests/shared/*.json at the repository root. The node half is
-frontend/tests/textnorm.test.mjs, ink.test.mjs, replica.test.mjs, mentions.test.mjs and
-textBox.test.mjs; a case added here fails whichever side drifts."""
+frontend/tests/textnorm.test.mjs, ink.test.mjs, notebook.test.mjs, mentions.test.mjs
+and textBox.test.mjs; a case added here fails whichever side drifts. The
+mirror's cases (synctree.json, textmerge.json) have only this Python side."""
 
 import json
 from pathlib import Path
@@ -126,7 +127,7 @@ SYNCTREE = _load("synctree.json")
 
 @pytest.mark.parametrize("case", SYNCTREE["diff"], ids=[c["note"] for c in SYNCTREE["diff"]])
 def test_sync_tree_diff(case):
-    """The mirror's tree rules the iPad's replica mirrors (frontend/src/replica/tree.js)."""
+    """The mirror's tree rules: the ops between two trees, applied back."""
     from gamma import sync_tree
     page = SYNCTREE["page"]
     assert sync_tree.diff(case["base"], case["target"], page) == case["ops"]
@@ -136,7 +137,7 @@ def test_sync_tree_diff(case):
 
 @pytest.mark.parametrize("case", SYNCTREE["unlanded"], ids=[c["note"] for c in SYNCTREE["unlanded"]])
 def test_sync_unlanded(case):
-    """What a push whose answer was lost sends again (frontend/src/replica/reconcile.js unlanded)."""
+    """What a push whose answer was lost sends again."""
     from gamma import sync_engine
     assert list(sync_engine._unlanded(case["op"], case["base"], case["remote"])) == case["result"]
 

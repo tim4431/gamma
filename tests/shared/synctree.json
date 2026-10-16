@@ -1,5 +1,5 @@
 {
- "about": "The mirror's pure tree rules: gamma/sync_tree.py (diff, apply, moved) with gamma/sync_engine.py _unlanded, and frontend/src/replica/tree.js + reconcile.js read these cases (outputs from the Python reference). The page is `pg`.",
+ "about": "The mirror's pure tree rules: gamma/sync_tree.py (diff, apply, moved) with gamma/sync_engine.py _unlanded read these cases (backend/tests/test_shared_fixtures.py). The page is `pg`.",
  "page": "pg",
  "diff": [
   {

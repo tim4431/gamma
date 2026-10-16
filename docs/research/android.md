@@ -248,10 +248,12 @@ a PDF renderer, a pen canvas and a notes outline:
   front-buffer renderer draws the core's outline directly.
 
 This is the only shape with native latency and an offline replica at
-once, and the most expensive: a third host beside Swift and the tests'
-memory host, two to four months, and a second native app to keep in step.
-Zotero's native Android app took two and a half years from repository to
-general release.
+once, and the most expensive: a host of its own for the shared JavaScript,
+two to four months, and a second native app to keep in step. Zotero's
+native Android app took two and a half years from repository to general
+release. The iPad no longer has this shape: its app dropped the replica
+and the bundle when it became a shell over the web app, with the server
+on the device for offline use, shape C here ([dev/ipad.md](../dev/ipad.md)).
 
 ### E. The shapes not worth taking
 
@@ -281,7 +283,7 @@ general release.
 |---|---|---|---|---|
 | Effort | days | 1–3 weeks | 3–6 weeks plus wheels | 2–4 months |
 | Download size | 0 | 2–5 MB | ~50 MB (one ABI) | 5–15 MB with QuickJS |
-| Offline | no | no | whole app, by the mirror engine | replica, as the iPad |
+| Offline | no | no | whole app, by the mirror engine | a replica |
 | Pen | Chrome's | Chrome's | Chrome's | front buffer |
 | New code to keep in step | one route | a shell | a shell, a wheel build | a third host |
 | Play policy | n/a | wrapper scrutiny | foreground-service type if any | low |

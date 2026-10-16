@@ -1,7 +1,7 @@
 """The workspace change feed: what changed since a cursor, for anything that
-keeps a copy of a workspace in step (a desktop mirror, the iPad's replica),
-and the folder reads of the ``gamma-sync`` client, which keeps a folder of
-the workspace as a folder on disk (gamma/folder_sync.py).
+keeps a copy of a workspace in step (a desktop mirror), and the folder reads
+of the ``gamma-sync`` client, which keeps a folder of the workspace as a
+folder on disk (gamma/folder_sync.py).
 
 ``GET /api/sync/changes?since=&limit=`` reads the workspace's change log
 (``page_changes``, gamma/blocks_store.py ``touch_page``): every page whose

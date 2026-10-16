@@ -129,8 +129,8 @@ it was changed from merges key by key.
 - `mergeTextBox` (`markup/textBox.js`) is the twin;
   `tests/shared/textboxmerge.json` pins both.
 - The browser names the base on every change ([collab.md](collab.md)
-  "same-box merge"). So do the mirror and the iPad's replica, which also
-  judge a lost push key by key ([mirror.md](mirror.md)).
+  "same-box merge"). So does the mirror, which
+  also judges a lost push key by key ([mirror.md](mirror.md)).
 
 ## Client
 
@@ -336,8 +336,8 @@ highlight, placed by the nearest-sheet rule.
 - `frontend/tests/textBox.test.mjs`: the shared cases, `textBoxesBySurface`
   (nested sheets, a stale `pdf_page`, identity), `textStyle`, the geometry.
   `blockHistory.test.mjs`: the labels, folds, runs and the key-by-key
-  rebase. Also `blockOps.test.mjs`, `collabSession.test.mjs`
-  ([collab.md](collab.md#testing)) and `replica.test.mjs`.
+  rebase. Also `blockOps.test.mjs` and `collabSession.test.mjs`
+  ([collab.md](collab.md#testing)).
 - `backend/tests/test_text_box_merge.py`: the merge through `/ops` and
   `PUT /blocks/{id}`, a writer with no base box, removal, the mirror's diff.
 - `backend/tests/test_text_box.py`: the `/FreeText` keys and their

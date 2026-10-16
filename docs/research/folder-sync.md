@@ -28,9 +28,8 @@ back is the open item at the end.
 - **A WebDAV or FUSE mount** gives no offline copy, is painful on Windows,
   and still needs the same mapping.
 
-So the sync is a client of Gamma's own API, the third consumer of its sync
-surface after the server-to-server [mirror](../dev/mirror.md) and the
-iPad's replica. For the one-way half the client needs only to read: a
+So the sync is a client of Gamma's own API, a consumer of its sync
+surface beside the server-to-server [mirror](../dev/mirror.md). For the one-way half the client needs only to read: a
 single stdlib-only Python file and a read-scope integration token, no
 Gamma installed on the PC.
 

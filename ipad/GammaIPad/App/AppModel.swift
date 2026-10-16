@@ -1,140 +1,184 @@
-import Foundation
 import SwiftUI
 
-/// The app's one piece of state: the connection, its replica, the sync
-/// status. Rounds run one at a time on a queue of their own (every 30
-/// seconds while the app is in front, when it comes back, a couple of
-/// seconds after an edit, and on request) — the desktop mirror's cadence
-/// (docs/dev/mirror.md "Rounds and cadence").
+/// A Gamma server the shell can show: the one inside the app ("This iPad",
+/// LocalServer) or another one at its address.
+enum Server: Hashable, Codable {
+    case local
+    case remote(URL)
+}
+
+/// The app's one piece of state: which server the shell shows and the
+/// servers in the picker (ServersView), as the desktop's registry has them
+/// (desktop/lib/registry.js). The session is the web view's cookie and the
+/// library is the server's: the shell never holds a token (docs/dev/ipad.md).
 @MainActor
 final class AppModel: ObservableObject {
-    @Published private(set) var replica: Replica?
-    @Published private(set) var status = SyncStatus()
-    /// Bumps whenever the library here changed (a round, an edit): views reload.
-    @Published private(set) var revision = 0
-    @Published var failure: String?
+    /// The server chosen last; nil until the first pick.
+    @Published private(set) var current: Server?
+    /// The other servers, newest first.
+    @Published private(set) var remotes: [URL]
+    /// The address the shell shows. It changes only to another address, so
+    /// the shell's web view, made once, stays while the local server starts.
+    @Published private(set) var shellURL: URL? = nil
+    /// The server picker is up (the web app's "Server…" row asked for it).
+    @Published var choosingServer = false
+    /// How many times a server was picked, counted so the shell reloads even
+    /// when the pick is the server already shown (a retry after an outage).
+    @Published private(set) var connects = 0
+    /// The remotes' last /api/health answers (the picker's dots).
+    @Published private(set) var reachable: [URL: Bool] = [:]
 
-    private var timer: Timer?
-    private var pending: Task<Void, Never>?
-    private let rounds = DispatchQueue(label: "net.gammapdf.ipad.rounds", qos: .utility)
-    private static let connectionKey = "gamma.connection"
+    let local: LocalServer
+    private var probed: [URL: Date] = [:]
+    private let defaults: UserDefaults
 
-    init() {
-        restore()
+    /// A dot stays as it is this long before the picker asks again, as the
+    /// desktop caches its remotes' health.
+    private static let probeInterval: TimeInterval = 30
+
+    init(defaults: UserDefaults = .standard, local: LocalServer? = nil) {
+        self.defaults = defaults
+        self.local = local ?? LocalServer(defaults: defaults)
+        let saved = SavedServers.load(from: defaults)
+        current = saved.current
+        remotes = saved.remotes
+        if case let .remote(url) = saved.current { shellURL = url }
+        self.local.onState = { [weak self] state in self?.localChanged(state) }
+        if saved.current == .local { self.local.start() }
     }
 
-    // --- the connection -----------------------------------------------------------------
-
-    private func restore() {
-        guard let data = UserDefaults.standard.data(forKey: Self.connectionKey),
-              let connection = try? JSONDecoder().decode(Connection.self, from: data),
-              let token = Keychain.load(account: connection.id) else { return }
-        open(connection, token: token)
-    }
-
-    private func open(_ connection: Connection, token: String) {
-        do {
-            let replica = try Replica(connection: connection, token: token, directory: Replica.directory(for: connection.id))
-            replica.onProgress = { [weak self] text in
-                Task { @MainActor in self?.status.progress = text }
-            }
-            self.replica = replica
-            revision += 1
-        } catch {
-            failure = error.localizedDescription
-        }
-    }
-
-    func connect(_ connection: Connection, token: String) throws {
-        try Keychain.save(token, account: connection.id)
-        UserDefaults.standard.set(try JSONEncoder().encode(connection), forKey: Self.connectionKey)
-        open(connection, token: token)
-        syncNow()
-    }
-
-    /// Forget the server here. The pages kept here go too when `erase` (edits
-    /// not yet sent are lost with them: the caller asks first).
-    func disconnect(erase: Bool) {
-        stopTimer()
-        if let connection = replica?.connection {
-            Keychain.delete(account: connection.id)
-            if erase { try? FileManager.default.removeItem(at: Replica.directory(for: connection.id)) }
-        }
-        UserDefaults.standard.removeObject(forKey: Self.connectionKey)
-        replica = nil
-        status = SyncStatus()
-    }
-
-    func setMode(_ mode: String) {
-        guard let replica else { return }
-        var connection = replica.connection
-        connection.mode = mode
-        guard let token = Keychain.load(account: connection.id) else { return }
-        UserDefaults.standard.set(try? JSONEncoder().encode(connection), forKey: Self.connectionKey)
-        open(connection, token: token)
-        syncNow()
-    }
-
-    // --- rounds -----------------------------------------------------------------------------
-
-    func scene(_ phase: ScenePhase) {
-        switch phase {
-        case .active:
-            startTimer()
-            syncNow()
-        case .background:
-            stopTimer()
-        default:
-            break
-        }
-    }
-
-    private func startTimer() {
-        guard timer == nil else { return }
-        timer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.syncNow() }
-        }
-    }
-
-    private func stopTimer() {
-        timer?.invalidate()
-        timer = nil
-    }
-
-    func syncNow() {
-        guard let replica, !status.running else { return }
-        status.running = true
-        status.progress = ""
-        rounds.async { [weak self] in
-            let result = Result { try replica.syncRound() }
-            Task { @MainActor in
-                guard let self else { return }
-                self.status.running = false
-                self.status.progress = ""
-                switch result {
-                case .success(let out):
-                    self.status.lastSync = Date()
-                    self.status.lastError = out.string("last_error")
-                    self.status.pulled = out.int("pages_pulled") ?? 0
-                    self.status.pushed = out.int("pages_pushed") ?? 0
-                    self.status.deleted = out.int("pages_deleted") ?? 0
-                case .failure(let error):
-                    self.status.lastError = error.localizedDescription
-                }
-                self.revision += 1
+    func open(_ server: Server) {
+        current = server
+        choosingServer = false
+        switch server {
+        case let .remote(url):
+            if !remotes.contains(url) { remotes = ServerAddress.remember(url, in: remotes) }
+            shellURL = url
+            connects += 1
+        case .local:
+            // A server already up opens now; else it is shown once it answers
+            // (localChanged), and the page under the start view stays as it is.
+            if let url = local.url {
+                shellURL = url
+                connects += 1
+            } else {
+                local.start()
             }
         }
+        save()
     }
 
-    /// An edit landed in the library here: views reload, a round follows soon.
-    func edited() {
-        revision += 1
-        pending?.cancel()
-        pending = Task { @MainActor [weak self] in
-            try? await Task.sleep(nanoseconds: 2_000_000_000)
-            if !Task.isCancelled { self?.syncNow() }
+    /// The seeded account for `url` when it is the local server's, so the
+    /// shell signs in there and nowhere else.
+    func login(for url: URL) -> LocalLogin? {
+        url == local.url ? local.login : nil
+    }
+
+    /// Adds a server to the list without opening it.
+    func add(_ url: URL) {
+        guard !remotes.contains(url) else { return }
+        remotes = ServerAddress.remember(url, in: remotes)
+        save()
+        probe([url], force: true)
+    }
+
+    /// A server's address edited. The one shown loads its new address.
+    func replace(_ old: URL, with new: URL) {
+        guard old != new, let index = remotes.firstIndex(of: old) else { return }
+        if remotes.contains(new) {
+            remotes.remove(at: index)
+        } else {
+            remotes[index] = new
+        }
+        if current == .remote(old) {
+            current = .remote(new)
+            shellURL = new
+        }
+        save()
+        probe([new], force: true)
+    }
+
+    /// Takes a server off the list. The page shown stays until another pick.
+    func remove(_ url: URL) {
+        remotes.removeAll { $0 == url }
+        reachable[url] = nil
+        probed[url] = nil
+        save()
+    }
+
+    /// Asks each server's /api/health, unless it answered within the last
+    /// `probeInterval`.
+    func probe(_ urls: [URL], force: Bool = false) {
+        let now = Date()
+        for url in urls {
+            if !force, let last = probed[url], now.timeIntervalSince(last) < Self.probeInterval { continue }
+            probed[url] = now
+            Task { reachable[url] = await Health.probe(url, timeout: 3) }
         }
     }
 
-    var pendingEdits: Int { replica?.store.pendingEdits ?? 0 }
+    private func localChanged(_ state: LocalServer.State) {
+        if case let .running(url) = state, current == .local { shellURL = url }
+    }
+
+    private func save() {
+        SavedServers(current: current, remotes: remotes).save(to: defaults)
+    }
+}
+
+/// What is kept between launches, as JSON under one key. Phase 1 kept one
+/// address and a recent list; those become the current server and the
+/// remotes the first time this reads them.
+struct SavedServers: Codable, Equatable {
+    var current: Server?
+    var remotes: [URL]
+
+    static let key = "gamma.servers"
+    private static let legacyServerKey = "gamma.server"
+    private static let legacyRecentKey = "gamma.recentServers"
+
+    static func load(from defaults: UserDefaults) -> SavedServers {
+        if let data = defaults.data(forKey: key),
+           let saved = try? JSONDecoder().decode(SavedServers.self, from: data) {
+            return saved
+        }
+        let server = defaults.string(forKey: legacyServerKey).flatMap(ServerAddress.parse)
+        let recent = (defaults.stringArray(forKey: legacyRecentKey) ?? []).compactMap(ServerAddress.parse)
+        return SavedServers(current: server.map(Server.remote), remotes: recent)
+    }
+
+    func save(to defaults: UserDefaults) {
+        guard let data = try? JSONEncoder().encode(self) else { return }
+        defaults.set(data, forKey: Self.key)
+    }
+}
+
+/// What the address field accepts. Pure, so the tests cover it.
+enum ServerAddress {
+    /// The list is kept by hand (add, edit, remove); the cap only keeps a
+    /// forgotten one from growing without end.
+    static let recentLimit = 20
+
+    /// The server's origin from what a person types or pastes: a bare host
+    /// means https, and a page link keeps only its origin. The web app is
+    /// served at the root, and the Gamma Cloud sign-in works by origin
+    /// (CloudSignIn), so a path would only get in the way.
+    static func parse(_ text: String) -> URL? {
+        var text = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return nil }
+        if !text.contains("://") { text = "https://" + text }
+        guard let parts = URLComponents(string: text),
+              let scheme = parts.scheme?.lowercased(), scheme == "https" || scheme == "http",
+              let host = parts.host, !host.isEmpty else { return nil }
+        var origin = URLComponents()
+        origin.scheme = scheme
+        origin.host = host.lowercased()
+        origin.port = parts.port
+        return origin.url
+    }
+
+    /// `url` first, without duplicates, at most `recentLimit` long.
+    static func remember(_ url: URL, in list: [URL]) -> [URL] {
+        Array(([url] + list.filter { $0 != url }).prefix(recentLimit))
+    }
 }

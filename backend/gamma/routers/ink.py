@@ -17,7 +17,7 @@ async def upload_ink(request: Request):
     budgets, then stored as it came as ``uploads/<sha>.ink`` — the clients
     serialize a file one way (``serializeInk``, sorted keys), so identical
     strokes are identical bytes and dedup, and a client that names a file
-    by its hash offline (the iPad's replica) names what the server stores.
+    by its hash before uploading it names what the server stores.
     → ``{url, size, strokes, bbox, pdf_position, already_existed}``. A
     workspace editor or an edit share (the block writers' rule). Async only
     to read the body; the rest runs in the threadpool."""

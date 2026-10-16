@@ -20,8 +20,7 @@ Code: `gamma/notebook.py` (server: paper rules, the PDF), `frontend/src/notebook
 (the same rules and the sheet edits on the client, pure), `notebook/sheetPlace.js`
 (the reader's place, pure), `notebook/NotebookViewer.jsx`
 (the notebook view and the paper menu), `notebook/NoteSheet.jsx` (a sheet
-in the notes view), the sheets half of `app/App.jsx` ("Sheets"), and
-`ipad/GammaIPad/Reader/NotebookReader.swift`. Tests:
+in the notes view), and the sheets half of `app/App.jsx` ("Sheets"). Tests:
 `backend/tests/test_notebooks.py`, `frontend/tests/notebook.test.mjs`,
 the shared cases in `tests/shared/paper.json`, and e2e
 `tests/e2e/scenarios/notebooks.mjs`.
