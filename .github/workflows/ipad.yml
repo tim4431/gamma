@@ -74,15 +74,17 @@ jobs:
           echo "simulator: $DEVICE"
           echo "DEVICE=$DEVICE" >> "$GITHUB_ENV"
           xcodebuild test -project GammaIPad.xcodeproj -scheme GammaIPad -destination "id=$DEVICE" \
-            ONLY_ACTIVE_ARCH=YES ARCHS=arm64 CODE_SIGNING_ALLOWED=NO | xcbeautify
+            ONLY_ACTIVE_ARCH=YES ARCHS=arm64 CODE_SIGNING_ALLOWED=NO | tee "$RUNNER_TEMP/xcodebuild-test.log" | xcbeautify
       # The embedded server's own log, where a failed start's traceback is
-      # (gamma_ios.py, PythonRuntime.swift): xcbeautify shows none of it.
+      # (gamma_ios.py, PythonRuntime.swift), and what the test host printed:
+      # xcbeautify shows none of it.
       - name: The server's log from the simulator
         if: failure()
         run: |
-          data=$(xcrun simctl get_app_container "$DEVICE" net.gammapdf.ipad data 2>/dev/null || true)
-          log="$data/Documents/Gamma/local/logs/server.log"
-          if [ -f "$log" ]; then tail -c 20000 "$log"; else echo "no server log at $log"; fi
+          find ~/Library/Developer/CoreSimulator/Devices/"$DEVICE"/data -path "*/Documents/Gamma/local/logs/server.log" 2>/dev/null \
+            | while read -r log; do echo "== $log"; tail -c 20000 "$log"; done
+          echo "== raw xcodebuild output around the failure"
+          grep -n -i -B3 -A30 "Traceback\|gamma_ios\|python could not\|the server stopped" "$RUNNER_TEMP/xcodebuild-test.log" | tail -200 || true
       - name: Device build (unsigned)
         working-directory: ipad
         run: |

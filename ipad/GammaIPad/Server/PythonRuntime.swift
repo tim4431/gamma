@@ -69,7 +69,7 @@ enum PythonRuntime {
     /// reads it at import). `onExit` hears why the server stopped, which it
     /// only does on a failure. False when it was already started.
     @MainActor
-    static func start(environment: [String: String], layout: Layout,
+    static func start(environment: [String: String], layout: Layout, log: URL,
                       onExit: @escaping @MainActor @Sendable (String) -> Void) -> Bool {
         guard !started else { return false }
         started = true
@@ -77,6 +77,7 @@ enum PythonRuntime {
         // taken when the interpreter starts.
         for (name, value) in environment { setenv(name, value, 1) }
         let thread = Thread {
+            redirectOutput(to: log)
             let reason = run(layout)
             Task { @MainActor in onExit(reason) }
         }
@@ -84,6 +85,20 @@ enum PythonRuntime {
         thread.stackSize = stackSize
         thread.start()
         return true
+    }
+
+    /// The process's standard output and error become the server's log,
+    /// appended, before the interpreter prints anything: what Python says
+    /// before gamma_ios redirects its streams (a failure to start, an import
+    /// that fails, a traceback the entry could not write itself) would
+    /// otherwise go to a console an iPad does not have. The app's own
+    /// output is nothing it needs; the log is where a failed start is read.
+    private static func redirectOutput(to log: URL) {
+        let fd = open(log.path, O_WRONLY | O_APPEND | O_CREAT, 0o644)
+        guard fd >= 0 else { return }
+        dup2(fd, STDOUT_FILENO)
+        dup2(fd, STDERR_FILENO)
+        close(fd)
     }
 
     /// Configures and starts the interpreter, then runs the server. Returns

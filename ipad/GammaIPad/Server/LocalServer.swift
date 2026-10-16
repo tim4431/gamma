@@ -98,7 +98,7 @@ final class LocalServer: ObservableObject {
             seed: fresh ? login : nil)
 
         let layout = PythonRuntime.Layout(resources: resources)
-        let started = PythonRuntime.start(environment: environment, layout: layout) { [weak self] reason in
+        let started = PythonRuntime.start(environment: environment, layout: layout, log: logFile) { [weak self] reason in
             self?.state = .failed(reason)
         }
         guard started, let url = URL(string: "http://127.0.0.1:\(port)") else {
