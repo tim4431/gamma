@@ -328,7 +328,16 @@ text box's `text_box`, merged key by key ([text_boxes.md](text_boxes.md)
   places a text box's menu too. `InkTransformHandles` are the resize/rotate
   buttons; `InkTooltips` shows a button's title on hover or focus for the
   strip and the menus, since native titles are unreliable under Pencil
-  hover. `InkCard` is the picture in the notes. For `markup/` the file
+  hover. A press takes the tooltip away and keeps it away while the pointer
+  stays on that button, and a button whose menu stands open has none: a
+  tooltip must not flicker over what the press just opened. For the same
+  reason a menu a tooltip host holds belongs outside it — React hands a
+  portal's events to the host all the same, so every row the pointer
+  crossed would raise one — and opens on the press, not the click, so the
+  menu takes the tooltip's place in the same frame. A tip goes below its
+  button unless that is near the window's bottom; `above` keeps a strip's
+  tips on the side its menus open (the recording player's bar).
+  `InkCard` is the picture in the notes. For `markup/` the file
   exports `InkTooltips`, `inkColorName`, `ERASER_SIZES`, `ColorChoices` (a
   palette role's swatches plus a custom colour, for a pen preset's row and a
   text box's colours; the strip, the selection menu and the text box read

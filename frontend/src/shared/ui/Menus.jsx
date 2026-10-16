@@ -34,7 +34,13 @@ const SUB_TOP_NUDGE = -4;
 // outside-pointerdown dismissal.
 function ContextMenu({ x, y, onClose, className = "", anchorRight = false, anchorBottom = false, ignoreRef, children }) {
   const ref = useRef(null);
-  const [pos, setPos] = useState({ left: x, top: y });
+  // Where the menu was placed, and for which anchor. Until it is placed for
+  // the anchor it has now, it is laid out where it stands but not shown: a
+  // menu opening upward stands over its button and below it until then, and
+  // must never be seen there (a frame of that is a menu jumping up).
+  const at = `${x},${y},${anchorRight},${anchorBottom}`;
+  const [pos, setPos] = useState(null);
+  const placed = pos?.at === at;
 
   // Clamp inside the viewport once we know the menu's size.
   useLayoutEffect(() => {
@@ -48,7 +54,7 @@ function ContextMenu({ x, y, onClose, className = "", anchorRight = false, ancho
       if (left < pad) left = pad;
       if (top + height > window.innerHeight - pad) top = Math.max(pad, window.innerHeight - height - pad);
       if (top < pad) top = pad;
-      setPos((old) => old.left === left && old.top === top ? old : { left, top });
+      setPos((old) => old?.at === at && old.left === left && old.top === top ? old : { at, left, top });
     };
     place();
     const observer = new ResizeObserver(place);
@@ -79,7 +85,7 @@ function ContextMenu({ x, y, onClose, className = "", anchorRight = false, ancho
     <MenuScope
       ref={ref}
       className={`ctxMenu ${className}`}
-      style={{ left: pos.left, top: pos.top }}
+      style={placed ? { left: pos.left, top: pos.top } : { left: x, top: y, visibility: "hidden" }}
       onContextMenu={(e) => e.preventDefault()}
     >
       {children}

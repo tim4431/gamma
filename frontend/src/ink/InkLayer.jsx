@@ -669,9 +669,17 @@ export function ColorChoices({ colors, color, alpha, onColor }) {
 
 // Native title tooltips are inconsistent for Pencil hover. Use the same
 // descriptions for mouse, pen and keyboard focus, outside clipped toolbars.
-export function InkTooltips({ children, contentRef, ...props }) {
-  const id = useId(), [tip, setTip] = useState(null), active = useRef(null), timer = useRef(null);
+// A tip goes below its button unless that is near the window's bottom;
+// `above` puts every tip above, for a strip whose menus open upward (the
+// recording player's), so a tip and the menu its button opens share a side.
+export function InkTooltips({ children, contentRef, above = false, ...props }) {
+  const id = useId(), [tip, setTip] = useState(null), active = useRef(null), timer = useRef(null), hushed = useRef(null);
   const clear = () => { clearTimeout(timer.current); active.current?.removeAttribute("aria-describedby"); active.current = null; setTip(null); };
+  // A press takes the tooltip away and keeps it away while the pointer stays
+  // on that button: otherwise the smallest move of the hand brings it back,
+  // on top of whatever the press has just opened.
+  const press = (e) => { clear(); hushed.current = e.target.closest("button, label[title]"); };
+  const leave = () => { hushed.current = null; clear(); };
   useEffect(() => {
     window.addEventListener("scroll", clear, true);
     window.addEventListener("blur", clear);
@@ -680,7 +688,10 @@ export function InkTooltips({ children, contentRef, ...props }) {
   const show = (e) => {
     if (e.pointerType === "touch") return;
     const target = e.target.closest("button, label[title]");
-    if (!target || target === active.current) return;
+    if (!target || target === active.current || target === hushed.current) return;
+    hushed.current = null;
+    // A button whose menu stands open needs no tooltip; it would cover it.
+    if (target.getAttribute("aria-expanded") === "true") return;
     clear(); active.current = target;
     const description = target.title || target.getAttribute("aria-label");
     if (!description) return;
@@ -688,11 +699,11 @@ export function InkTooltips({ children, contentRef, ...props }) {
       const r = target.getBoundingClientRect();
       target.setAttribute("aria-describedby", id);
       setTip({ text: description, x: Math.max(8, Math.min(r.left, window.innerWidth - 288)),
-        y: r.bottom + 8, above: r.bottom > window.innerHeight - 100, top: r.top - 8 });
+        y: r.bottom + 8, above: above || r.bottom > window.innerHeight - 100, top: r.top - 8 });
     }, e.type === "focus" ? 0 : 250);
   };
-  return <><div {...props} ref={contentRef} onPointerOver={show} onPointerLeave={clear} onFocus={show} onBlur={clear}
-    onPointerDownCapture={clear}>{children}</div>
+  return <><div {...props} ref={contentRef} onPointerOver={show} onPointerLeave={leave} onFocus={show} onBlur={clear}
+    onPointerDownCapture={press}>{children}</div>
     {tip ? createPortal(<div id={id} role="tooltip" className="inkTooltip" style={{ left: tip.x, top: tip.above ? tip.top : tip.y,
       transform: tip.above ? "translateY(-100%)" : undefined }}>{tip.text}</div>, document.body) : null}</>;
 }

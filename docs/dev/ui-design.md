@@ -379,8 +379,11 @@ so one tap cannot toggle twice. Mouse and keyboard keep the plain click path.
 
 ### Menus and submenus
 
-Every cursor-anchored menu is a `ContextMenu`; every row inside one is a
-`MenuItem` (icon column, ellipsizing label, optional `trailing` node or
+Every cursor-anchored menu is a `ContextMenu`. It measures itself and is
+clamped inside the viewport (`anchorRight` / `anchorBottom` take the point
+as its right or bottom edge), and it stays hidden until it is placed, so a
+menu opening upward is never seen over its button first. Every row inside
+one is a `MenuItem` (icon column, ellipsizing label, optional `trailing` node or
 `keys` — the row's shortcut, e.g. the page menu's Enter / F2 / Del —
 `danger` for destructive actions). Groups of rows are separated by
 `MenuDivider`; `menuGroups(...groups)` drops empty groups and puts one

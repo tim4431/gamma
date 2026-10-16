@@ -92,80 +92,94 @@ export function PlayerBar({ block, inkBlocks, blocks, prefs, onShow }) {
     if (tick) playback.seek(Math.max(0, tick.t - state.leadIn));
     else playback.seek(dir > 0 ? duration : 0);
   };
-  const openMenu = (kind) => (e) => {
-    if (menu?.kind === kind) { setMenu(null); return; }
-    const r = e.currentTarget.getBoundingClientRect();
-    triggerRef.current = e.currentTarget;
-    setMenu({ kind, x: r.left, y: r.top - 4 });
+  // A menu opens on the press, as a native menu does, not on the click that
+  // follows it: the press takes the button's tooltip away (InkTooltips), and
+  // with the menu coming in the same frame there is no gap between the two
+  // to flicker. A click with no press behind it (Enter, Space) toggles it
+  // too. The updater sees the close an open menu's outside press queued
+  // first, so a press on the other button swaps one menu for the other.
+  const toggleMenu = (kind, button) => {
+    const r = button.getBoundingClientRect();
+    triggerRef.current = button;
+    setMenu((open) => (open?.kind === kind ? null : { kind, x: r.left, y: r.top - 4 }));
   };
+  const menuButton = (kind) => ({
+    onPointerDown: (e) => { if (e.button === 0) toggleMenu(kind, e.currentTarget); },
+    onClick: (e) => { if (e.detail === 0) toggleMenu(kind, e.currentTarget); },
+  });
   const ModeIcon = MODE_ICONS[mode] || ContrastIcon;
   const joins = clock.segments.slice(1).map((seg, i) => {
     const before = clock.segments[i];
     return { key: seg.url + i, left: (seg.start / duration) * 100, pause: seg.started > before.started + before.dur + 1000 };
   });
   return (
-    <InkTooltips className="replayBar" role="toolbar" aria-label={t("Recording player")} data-guide="recording.player">
-      <div className="replayRow">
-        <button type="button" onMouseDown={keepFocus} className="ctlBtn replayPlay" onClick={() => playback.toggle()} aria-pressed={playing}
-          aria-label={playing ? t("Pause (Space)") : t("Play (Space)")}>
-          {playing ? <PauseIcon size={16} /> : <PlayIcon size={16} />}
-        </button>
-        <button type="button" onMouseDown={keepFocus} className="ctlBtn" onClick={() => playback.seek(at - SKIP_MS)} aria-label={t("Back 10 seconds (←)")}>
-          <Back10Icon size={16} />
-        </button>
-        <button type="button" onMouseDown={keepFocus} className="ctlBtn" onClick={() => playback.seek(at + SKIP_MS)} aria-label={t("Forward 10 seconds (→)")}>
-          <Forward10Icon size={16} />
-        </button>
-        <span className="replayTime">{fmtClock(at)}</span>
-        <div className="replayScrub">
-          <div className="replayTrack" aria-hidden="true">
-            <div className="replayFill" style={{ width: `${duration ? (at / duration) * 100 : 0}%` }} />
-            {joins.map((j) => <span key={j.key} className={"replayJoin" + (j.pause ? " pause" : "")} style={{ left: `${j.left}%` }} />)}
-            {ticks.map((k) => (
-              <span key={`${k.kind}-${k.id}`} className={`replayTick ${k.kind}`} style={{ left: `${(k.t / duration) * 100}%` }} />
-            ))}
+    <>
+      <InkTooltips above className="replayBar" role="toolbar" aria-label={t("Recording player")} data-guide="recording.player">
+        <div className="replayRow">
+          <button type="button" onMouseDown={keepFocus} className="ctlBtn replayPlay" onClick={() => playback.toggle()} aria-pressed={playing}
+            aria-label={playing ? t("Pause (Space)") : t("Play (Space)")}>
+            {playing ? <PauseIcon size={16} /> : <PlayIcon size={16} />}
+          </button>
+          <button type="button" onMouseDown={keepFocus} className="ctlBtn" onClick={() => playback.seek(at - SKIP_MS)} aria-label={t("Back 10 seconds (←)")}>
+            <Back10Icon size={16} />
+          </button>
+          <button type="button" onMouseDown={keepFocus} className="ctlBtn" onClick={() => playback.seek(at + SKIP_MS)} aria-label={t("Forward 10 seconds (→)")}>
+            <Forward10Icon size={16} />
+          </button>
+          <span className="replayTime">{fmtClock(at)}</span>
+          <div className="replayScrub">
+            <div className="replayTrack" aria-hidden="true">
+              <div className="replayFill" style={{ width: `${duration ? (at / duration) * 100 : 0}%` }} />
+              {joins.map((j) => <span key={j.key} className={"replayJoin" + (j.pause ? " pause" : "")} style={{ left: `${j.left}%` }} />)}
+              {ticks.map((k) => (
+                <span key={`${k.kind}-${k.id}`} className={`replayTick ${k.kind}`} style={{ left: `${(k.t / duration) * 100}%` }} />
+              ))}
+            </div>
+            <input type="range" min={0} max={duration} step={100} value={Math.round(at)} aria-label={t("Position in the recording")}
+              aria-valuetext={`${fmtClock(at)} / ${fmtClock(duration)}`} onChange={(e) => playback.seek(Number(e.target.value))} />
           </div>
-          <input type="range" min={0} max={duration} step={100} value={Math.round(at)} aria-label={t("Position in the recording")}
-            aria-valuetext={`${fmtClock(at)} / ${fmtClock(duration)}`} onChange={(e) => playback.seek(Number(e.target.value))} />
+          <span className="replayTime">{fmtClock(duration)}</span>
+          <button type="button" onMouseDown={keepFocus} className="ctlBtn" onClick={() => skip(-1)} disabled={!ticks.length}
+            aria-label={t("Previous writing: skip back to the moment before something was written")}>
+            <SkipBackIcon size={15} />
+          </button>
+          <button type="button" onMouseDown={keepFocus} className="ctlBtn" onClick={() => skip(1)} disabled={!ticks.length}
+            aria-label={t("Next writing: skip the silence to the next thing written")}>
+            <SkipForwardIcon size={15} />
+          </button>
+          <span className="replaySep" aria-hidden="true" />
+          <button type="button" onMouseDown={keepFocus} className={"ctlBtn" + (menu?.kind === "mode" ? " modeActive" : "")} {...menuButton("mode")}
+            aria-haspopup="menu" aria-expanded={menu?.kind === "mode"} aria-label={t(MODE_TITLES[mode])} data-role="mode">
+            <ModeIcon size={16} />
+          </button>
+          <button type="button" onMouseDown={keepFocus} className={"ctlBtn replayRate" + (menu?.kind === "rate" ? " modeActive" : "")} {...menuButton("rate")}
+            aria-haspopup="menu" aria-expanded={menu?.kind === "rate"} aria-label={t("Speed {rate}×", { rate })}>
+            {rate}×
+          </button>
+          <button type="button" onMouseDown={keepFocus} className={"ctlBtn" + (prefs.follow ? " modeActive" : "")} aria-pressed={prefs.follow}
+            onClick={() => prefs.setFollow(!prefs.follow)}
+            aria-label={prefs.follow ? t("Following the writing: the page and the notes scroll to what is being written") : t("Follow the writing")}>
+            <LocateIcon size={16} />
+          </button>
+          <button type="button" onMouseDown={keepFocus} className="ctlBtn replayClose" onClick={() => playback.stop()} aria-label={t("Done (Esc)")}>
+            <XIcon size={16} />
+          </button>
         </div>
-        <span className="replayTime">{fmtClock(duration)}</span>
-        <button type="button" onMouseDown={keepFocus} className="ctlBtn" onClick={() => skip(-1)} disabled={!ticks.length}
-          aria-label={t("Previous writing: skip back to the moment before something was written")}>
-          <SkipBackIcon size={15} />
-        </button>
-        <button type="button" onMouseDown={keepFocus} className="ctlBtn" onClick={() => skip(1)} disabled={!ticks.length}
-          aria-label={t("Next writing: skip the silence to the next thing written")}>
-          <SkipForwardIcon size={15} />
-        </button>
-        <span className="replaySep" aria-hidden="true" />
-        <button type="button" onMouseDown={keepFocus} className={"ctlBtn" + (menu?.kind === "mode" ? " modeActive" : "")} onClick={openMenu("mode")}
-          aria-haspopup="menu" aria-expanded={menu?.kind === "mode"} aria-label={t(MODE_TITLES[mode])} data-role="mode">
-          <ModeIcon size={16} />
-        </button>
-        <button type="button" onMouseDown={keepFocus} className={"ctlBtn replayRate" + (menu?.kind === "rate" ? " modeActive" : "")} onClick={openMenu("rate")}
-          aria-haspopup="menu" aria-expanded={menu?.kind === "rate"} aria-label={t("Speed {rate}×", { rate })}>
-          {rate}×
-        </button>
-        <button type="button" onMouseDown={keepFocus} className={"ctlBtn" + (prefs.follow ? " modeActive" : "")} aria-pressed={prefs.follow}
-          onClick={() => prefs.setFollow(!prefs.follow)}
-          aria-label={prefs.follow ? t("Following the writing: the page and the notes scroll to what is being written") : t("Follow the writing")}>
-          <LocateIcon size={16} />
-        </button>
-        <button type="button" onMouseDown={keepFocus} className="ctlBtn replayClose" onClick={() => playback.stop()} aria-label={t("Done (Esc)")}>
-          <XIcon size={16} />
-        </button>
-      </div>
+      </InkTooltips>
       {menu ? (
         <PlayerMenu menu={menu} mode={mode} rate={rate} triggerRef={triggerRef} onClose={closeMenu}
           onMode={(m) => { playback.setMode(m); prefs.setMode(m); setMenu(null); }}
           onRate={(r) => { playback.setRate(r); prefs.setRate(r); setMenu(null); }} />
       ) : null}
-    </InkTooltips>
+    </>
   );
 }
 
-// The mode or speed menu, apart from the bar so the bar's re-render on
-// every frame of the replay leaves the open menu as it is.
+// The mode or speed menu, apart from the bar: the bar's re-render on every
+// frame of the replay leaves the open menu as it is, and the menu sits
+// outside the InkTooltips host, whose children's events a portal still
+// bubbles to — inside it, every row the pointer crossed raised one of the
+// bar's tooltips over the menu.
 const PlayerMenu = React.memo(function PlayerMenu({ menu, mode, rate, triggerRef, onClose, onMode, onRate }) {
   return (
     <ContextMenu x={menu.x} y={menu.y} anchorBottom ignoreRef={triggerRef} onClose={onClose}>
