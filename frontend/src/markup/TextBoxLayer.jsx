@@ -337,15 +337,15 @@ const TextBox = React.memo(function TextBox({ block, width, height, readOnly, ar
 function TextBoxMenu({ boxRef, box, onStyle, onDuplicate, onShowNote, onDelete, onClose }) {
   const [options, setOptions] = useState(null);
   const everywhere = useRef(document.body);
-  const { anchor, contentRef } = useSelectionMenuAnchor(boxRef, (r) => r, [box.x, box.y]);
+  const anchor = useSelectionMenuAnchor(boxRef, (r) => r, [box.x, box.y]);
   if (!anchor) return null;
   const choice = (kind, label, Icon) => (
     <button type="button" className={"ctlBtn" + (options === kind ? " modeActive" : "")} aria-label={label} title={label}
       aria-expanded={options === kind} onClick={() => setOptions(options === kind ? null : kind)}><Icon aria-hidden="true" /></button>
   );
   return (
-    <ContextMenu x={anchor.x} y={anchor.y} ignoreRef={everywhere} onClose={onClose} className="inkEditMenu textBoxMenu">
-      <InkTooltips contentRef={contentRef} role="toolbar" aria-label={t("Edit text box")} onPointerDown={(e) => e.stopPropagation()}>
+    <ContextMenu {...anchor} ignoreRef={everywhere} onClose={onClose} className="inkEditMenu textBoxMenu">
+      <InkTooltips role="toolbar" aria-label={t("Edit text box")} onPointerDown={(e) => e.stopPropagation()}>
         <div className="inkEditRow">
           {choice("size", t("Size"), TextSizeIcon)}
           {choice("color", t("Color"), PaletteIcon)}

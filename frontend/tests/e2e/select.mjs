@@ -46,7 +46,6 @@ export const GROUPS = [
   { id: "folders", files: ["folders.mjs"] },
   { id: "trash", files: ["trash.mjs"] },
   { id: "ipad", files: ["ipad.mjs"] },
-  { id: "replica", files: ["replica.mjs"] },
 ];
 
 const ALL = "all";
@@ -68,7 +67,6 @@ export const RULES = [
   ["frontend/tests/e2e/harness.mjs", ALL],
   ["frontend/tests/e2e/run.mjs", ALL],
   ["frontend/tests/e2e/**", []],
-  ["frontend/tests/replica/**", ["replica"]], // the replica's in-memory host
   ["frontend/tests/**", []],
   ["frontend/tools/**", []],
 
@@ -79,14 +77,13 @@ export const RULES = [
   ["frontend/src/main.jsx", ALL],
   ["frontend/src/guide/**", GUIDES],
   // (a text box's menu is placed and labelled by the ink layer's helpers)
-  ["frontend/src/ink/**", ["ink", "ink-editing", "pdf-touch", "triggered-guide", "notebooks", "textbox", "touch"]],
+  ["frontend/src/ink/**", ["ink", "ink-editing", "pdf-touch", "triggered-guide", "notebooks", "textbox", "touch", "ipad"]], // ipad: the host claim path
   // what a page surface carries (ink and text boxes) and the tool strip, whose anchors the ink tour uses
   ["frontend/src/markup/**", ["ink", "ink-editing", "pdf-touch", "triggered-guide", "notebooks", "textbox", "touch"]],
-  ["frontend/src/notebook/**", ["notebooks", "replica", "textbox", "touch"]],
+  ["frontend/src/notebook/**", ["notebooks", "textbox", "touch"]],
   // the replay store every handwriting replay and a recording's player run on
   ["frontend/src/replay/**", ["ink", "ink-editing", "notebooks", "recording"]],
   ["frontend/src/recording/**", ["recording"]],
-  ["frontend/src/replica/**", ["replica"]],
   ["frontend/src/pdf/**", PDF_VIEW],
   // (a text box's editor and read mode are the notes')
   // the @ menu and its chips (the reminders are App's, under app/**)
@@ -106,7 +103,7 @@ export const RULES = [
   ["frontend/src/transfers/**", EXPORTS],
   ["frontend/src/tasks/**", [...EXPORTS, "settings", "ipad"]], // the Background tasks tray and its store
   ["frontend/src/support/**", ["settings"]],
-  ["frontend/src/auth/**", ["auth", "cloud-sign-in", "publish"]],
+  ["frontend/src/auth/**", ["auth", "cloud-sign-in", "publish", "ipad"]], // ipad: the sign-in page's Server link
   ["frontend/public/**", ["ipad"]],
   ["frontend/index.html", ALL],
   ["frontend/vite.config.js", ALL],
@@ -127,9 +124,9 @@ export const RULES = [
   ["backend/gamma/folder_sync.py", []],
   ["backend/gamma/gamma_sync.py", []],
   ["backend/gamma/routers/folder_links.py", []],
-  ["backend/gamma/sync_*.py", ["mirror", "publish", "replica"]],
-  ["backend/gamma/textmerge.py", ["mirror", "replica"]],
-  ["backend/gamma/routers/sync.py", ["mirror", "publish", "replica"]],
+  ["backend/gamma/sync_*.py", ["mirror", "publish"]],
+  ["backend/gamma/textmerge.py", ["mirror"]],
+  ["backend/gamma/routers/sync.py", ["mirror", "publish"]],
   ["backend/gamma/routers/mirrors.py", ["mirror", "publish"]],
   ["backend/gamma/cloud_*.py", ["cloud-sign-in", "publish"]],
   ["backend/gamma/routers/cloud_auth.py", ["cloud-sign-in", "publish"]],

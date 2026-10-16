@@ -1,12 +1,17 @@
 """Zotero RDF export: a page or folder → .rdf + files/ tree in a zip, the
 import's exact inverse — verified by round-tripping through
-``zotero_import.parse_zotero_rdf`` and the real ``/api/import/zotero``."""
+``zotero_import.parse_zotero_rdf`` and the real ``/api/import/zotero``.
+What the PDF copies carry follows Zotero 9's pdf-worker (readRawAnnotation):
+an /Ink or /FreeText needs a Zotero id, a /FreeText its /Zotero:* keys."""
 
 import io
+import json
 import zipfile
 
-from conftest import folder_names, make_folder, make_label, make_page
+from conftest import folder_names, fresh_client, make_folder, make_label, make_page
+from PyPDF2 import PdfReader
 
+from gamma import ink as inkmod
 from gamma.zotero_import import parse_zotero_rdf
 
 
@@ -49,6 +54,34 @@ def _rdf_items(z):
     # don't). Attachment paths travel in z:path only, like Zotero's own export.
     assert "<rdf:resource" not in text
     return parse_zotero_rdf(text)
+
+
+def _pdf_annots(z, item):
+    """The annotations on the first page of an item's PDF copy."""
+    base = next(n for n in z.namelist() if n.endswith(".rdf")).rsplit("/", 1)[0]
+    page = PdfReader(io.BytesIO(z.read(f"{base}/{item['pdf_paths'][0]}"))).pages[0]
+    return [a.get_object() for a in page.get("/Annots") or []]
+
+
+def _ink_block(guest, bid, caption):
+    """A handwriting group on PDF page 1, its strokes uploaded."""
+    ink = {"format": "gamma-ink", "version": 1,
+           "space": {"kind": "pdf-page", "page": 1, "width": 612, "height": 792},
+           "strokes": [{"id": "s1", "tool": "pen", "color": "#1d4ed8", "size": 2, "opacity": 1, "pen": True,
+                        "t0": 1757760000000, "ch": "xypt",
+                        "pts": inkmod.encode_points([{"x": 100 + 10 * i, "y": 400 + 3 * i, "p": 0.5, "t": 16 * i}
+                                                     for i in range(6)], "xypt")}]}
+    up = guest.post("/api/upload-ink", content=json.dumps(ink))
+    assert up.status_code == 200, up.text
+    return {"id": bid, "content": caption, "children": [],
+            "properties": {"ink_url": up.json()["url"], "pdf_position": up.json()["pdf_position"], "ink_strokes": 1}}
+
+
+def _other_library():
+    """A client signed in to a guest account of its own: another library."""
+    other = fresh_client()
+    assert other.post("/api/login-guest").status_code == 200
+    return other
 
 
 def _paper(guest, prefix):
@@ -151,26 +184,59 @@ def test_zotero_export_note_images(guest):
     assert "“quoted”" in hl_note and "see" in hl_note
 
 
-def test_zotero_export_writes_a_text_box_as_a_note(guest):
-    """A text box is the user's writing: a Zotero note headed by its page
-    (the highlight memo's convention), never an annotation burned into the
-    PDF copy, and gone with the Notes switch like any note."""
+def test_zotero_export_puts_a_text_box_on_the_pdf_copy(guest):
+    """A text box on a PDF page rides in the PDF copy as the /FreeText the
+    annotated PDF writes, which Zotero 7+ imports as its text annotation —
+    with either switch, as there. It is a note where no copy carries it, and
+    as well when notes sit under it, which a text annotation can't hold."""
     page = _paper(guest, "zxt")
     _put_children(guest, page["id"], [
         _positioned("zxth", "the quoted passage"),
         {"id": "zxtb", "content": "typed on the **paper**", "children": [],
          "properties": {"text_box": {"x": 40, "y": 60, "w": 180}, "pdf_page": 1}},
+        {"id": "zxtc", "content": "boxed with a thought", "properties": {
+            "text_box": {"x": 40, "y": 300, "w": 180}, "pdf_page": 1}, "children": [
+            {"id": "zxtcn", "content": "the thought", "properties": {}, "children": []}]},
     ])
+
+    def export(**params):
+        z = _zip_of(guest.get(f"/api/pages/{page['id']}/export", params={"mode": "zotero-rdf", **params}))
+        it = _rdf_items(z)[0]
+        return it, ([str(a["/Subtype"]) for a in _pdf_annots(z, it)] if it["pdf_paths"] else None), z
+
+    it, kinds, z = export()
+    assert sorted(kinds) == ["/FreeText", "/FreeText", "/Highlight"]
+    boxes = [a for a in _pdf_annots(z, it) if a["/Subtype"] == "/FreeText"]
+    assert sorted(a["/Contents"] for a in boxes) == ["boxed with a thought", "typed on the paper"]
+    assert all("/Zotero:Rect" in a and a["/NM"].startswith("Zotero-") for a in boxes)
+    [note] = [n["text"] for n in it["notes"]]
+    assert "Text box on p.1" in note and "boxed with a thought" in note and "- the thought" in note
+
+    it, kinds, _z = export(notes=0)
+    assert it["notes"] == [] and kinds.count("/FreeText") == 2
+    assert export(notes=0, highlights=0)[1] == []                 # both off: the stored file
+    # no copy to carry them: each box is a note headed by its page
+    notes = [n["text"] for n in export(pdf=0)[0]["notes"]]
+    assert any("Text box on p.1" in n and "typed on the **paper**" in n for n in notes) and len(notes) == 2
+
+
+def test_zotero_export_carries_handwriting_in_the_pdf_copy(guest):
+    """Handwriting rides in the PDF copy as /Ink with a Zotero id, which
+    Zotero imports as its ink annotation, the caption its comment rather
+    than a note as well. Without the highlights switch the copy carries no
+    ink, and the caption stays a note."""
+    page = _paper(guest, "zxk")
+    _put_children(guest, page["id"], [_ink_block(guest, "zxkink", "my sketch")])
     z = _zip_of(guest.get(f"/api/pages/{page['id']}/export", params={"mode": "zotero-rdf"}))
     it = _rdf_items(z)[0]
-    notes = [n["text"] for n in it["notes"]]
-    assert len(notes) == 1 and "Text box on p.1" in notes[0] and "typed on the **paper**" in notes[0]
-    base = next(n for n in z.namelist() if n.endswith(".rdf")).rsplit("/", 1)[0]
-    pdf = z.read(f"{base}/{it['pdf_paths'][0]}")
-    assert pdf.count(b"/Highlight") == 1 and b"/Square" not in pdf and b"/FreeText" not in pdf
+    [ink] = _pdf_annots(z, it)
+    assert ink["/Subtype"] == "/Ink" and ink["/NM"].startswith("Zotero-") and ink["/Contents"] == "my sketch"
+    assert float(ink["/BS"]["/W"]) > 0 and len(ink["/InkList"][0]) % 2 == 0
+    assert it["notes"] == []
 
-    z = _zip_of(guest.get(f"/api/pages/{page['id']}/export", params={"mode": "zotero-rdf", "notes": 0}))
-    assert _rdf_items(z)[0]["notes"] == []
+    z = _zip_of(guest.get(f"/api/pages/{page['id']}/export", params={"mode": "zotero-rdf", "highlights": 0}))
+    it = _rdf_items(z)[0]
+    assert _pdf_annots(z, it) == [] and [n["text"] for n in it["notes"]] == ["my sketch"]
 
 
 def test_zotero_export_switches(guest):
@@ -221,26 +287,75 @@ def test_zotero_export_reimports_via_the_real_endpoint(guest):
     r = guest.get(f"/api/folders/{roundtrip}/export", params={"mode": "zotero-rdf"})
     assert r.status_code == 200, r.text
 
-    imp = guest.post(
+    other = _other_library()
+    imp = other.post(
         "/api/import/zotero",
         files={"file": ("lib.zip", io.BytesIO(r.content), "application/zip")},
-        data={"folder": make_folder(guest, "zimported")},
+        data={"folder": make_folder(other, "zimported")},
     )
     assert imp.status_code == 200, imp.text
     d = imp.json()
     assert d["items"] == 2 and d["skipped"] == []
-    assert d["pages_created"] == 2  # fresh pages: nothing to merge into
+    assert d["pages_created"] == 2  # another library: nothing to merge into
     by_title = {p["title"]: p for p in d["pages"]}
-    one = guest.get(f"/api/blocks/{by_title['Paper one']['id']}").json()["properties"]
+    one = other.get(f"/api/blocks/{by_title['Paper one']['id']}").json()["properties"]
     assert one["meta"]["authors"] == ["Ada Lovelace"]
     # the pinned key went out as Better BibTeX's "Citation Key:" line and came back
     assert one["cite_key"] == "lovelace:notes" and "@article{lovelace:notes," in one["bibtex"]
     assert one["meta"]["doi"] == "10.1000/rt1" and one["meta"]["venue"] == "Notes"
-    paths = folder_names(guest)
+    paths = folder_names(other)
     assert [paths[f] for f in one["folders"]] == [["zimported"]]
-    two = guest.get(f"/api/blocks/{by_title['Paper two']['id']}").json()["properties"]
+    two = other.get(f"/api/blocks/{by_title['Paper two']['id']}").json()["properties"]
     assert [paths[f] for f in two["folders"]] == [["zimported", "deep"]]
     assert by_title["Paper two"]["folders"] == [["zimported", "deep"]]
+
+
+def test_zotero_keys_name_one_page_in_every_export(guest):
+    """An item's key is the same whatever else the export holds, and no two
+    items share one: two pages exported one at a time were both
+    "#gamma_item_1" once, and the import merged the second into the first."""
+    folder = make_folder(guest, "zxkeys")
+    a, b = (make_page(guest, f"Zxkeys {t}", properties={"folders": [folder]}) for t in "AB")
+    # a page and its copy, which kept the Zotero key it was imported with
+    c, d = (make_page(guest, f"Zxkeys {t}", properties={"folders": [folder], "zotero_key": "#item_7"})
+            for t in "CD")
+    alone = {}
+    for p in (a, b):
+        [it] = _rdf_items(_zip_of(guest.get(f"/api/pages/{p['id']}/export", params={"mode": "zotero-rdf"})))
+        alone[p["id"]] = it["key"]
+    assert alone == {a["id"]: f"#gamma_page_{a['id']}", b["id"]: f"#gamma_page_{b['id']}"}
+    other = _other_library()
+    for p in (a, b):
+        r = guest.get(f"/api/pages/{p['id']}/export", params={"mode": "zotero-rdf"})
+        imp = other.post("/api/import/zotero", files={"file": ("lib.zip", io.BytesIO(r.content), "application/zip")})
+        assert imp.json()["pages_created"] == 1, imp.text
+
+    keys = {i["title"]: i["key"] for i in _rdf_items(_zip_of(
+        guest.get(f"/api/folders/{folder}/export", params={"mode": "zotero-rdf"})))}
+    assert keys["Zxkeys A"] == alone[a["id"]]
+    # one Zotero key on two pages: the key once, then the other page's id
+    assert {keys["Zxkeys C"], keys["Zxkeys D"]} in (
+        {"#item_7", f"#gamma_page_{c['id']}"}, {"#item_7", f"#gamma_page_{d['id']}"})
+
+
+def test_reimporting_an_export_into_its_own_library_adds_nothing(guest):
+    """Each item names the page it was exported from and each note the block
+    it was written from, so the export brought back into the same library
+    merges into those pages and adds nothing — whether its PDF copy carries
+    the highlights or is the stored file itself."""
+    page = _paper(guest, "zxr")
+    kids = [c["id"] for c in guest.get(f"/api/blocks/{page['id']}/subtree").json()["block"]["children"]]
+    for params in ({}, {"highlights": 0}):
+        r = guest.get(f"/api/pages/{page['id']}/export", params={"mode": "zotero-rdf", **params})
+        upload = {"file": ("lib.zip", io.BytesIO(r.content), "application/zip")}
+        [preview] = guest.post("/api/import/zotero/preview", files=upload).json()["pages"]
+        assert (preview["action"], preview["existing_id"]) == ("merge", page["id"])
+        upload["file"][1].seek(0)
+        d = guest.post("/api/import/zotero", files=upload).json()
+        assert (d["pages_created"], d["pages_merged"], d["notes_imported"], d["annotations_imported"]) == (0, 1, 0, 0)
+        assert d["pages"][0]["id"] == page["id"]
+    after = guest.get(f"/api/blocks/{page['id']}/subtree").json()["block"]["children"]
+    assert [c["id"] for c in after] == kids
 
 
 def test_each_item_type_goes_out_as_zotero_writes_it_and_comes_back():

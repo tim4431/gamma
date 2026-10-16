@@ -155,7 +155,7 @@ names covers what Overleaf's completion does.
   time (`gamma/textmerge.py`, diff-match-patch), shows peers' carets, is
   indexed for search (first 20,000 characters), reaches the AI as notes,
   can be patched by `edit_block` and reverted (`ai_revert.py`), and travels
-  with exports, backups, the mirror and the iPad replica. The `ink_url` +
+  with exports, backups, and the mirror. The `ink_url` +
   `base_props` merge is the precedent for a block whose content lives in a
   file.
 - **Uploads.** `POST /upload-file` stores any non-executable file under its
@@ -200,7 +200,7 @@ the notes about it share one page, one chat and one share link.
 
 Why blocks and not uploads with a manifest: a text file as a block gets the
 three-way merge, presence, undo, the search index, the AI's `edit_block`
-and revert, exports, backups, the mirror and the replica without new code.
+and revert, exports, backups and the mirror without new code.
 An upload-only project would need a second sync, history and permission
 path for exactly the data people edit most. Why not a new table: the same
 reason, plus the op log, the share reach and the trash all speak blocks.
@@ -210,7 +210,7 @@ mirrored by `blocks_store.block_kind`, so a new kind is a numbered
 migration (drop the index, replace the virtual column, recreate it) and a
 line in each; `SUMMARY_PROPS` and `pageKindLabel` learn the `latex`
 property so the library card can say "LaTeX"; the outliner, the Markdown
-and Obsidian exports, the replica's tree rules and the search snippets each
+and Obsidian exports, the mirror's tree rules and the search snippets each
 decide what a `file` block is to them (hidden, a file on disk, carried,
 indexed). The 200k-character limit is fine for `.tex` (3,000–4,000 dense
 lines) and wrong for a Zotero-sized `.bib`: a text file past the limit is
@@ -399,8 +399,8 @@ sidecar is the answer for untrusted members; the local engine should be an
 admin's opt-in with the fence settings on); hosted containers have no TeX
 and little room, so Gamma Cloud needs a compile service or the WASM path
 before the feature means anything there; the per-block limit versus large
-`.bib` files; the replica and the mirror meeting a kind they have not seen
-(their tree rules must carry it through untouched); MiKTeX on Windows
+`.bib` files; the mirror meeting a kind it has not seen
+(its tree rules must carry it through untouched); MiKTeX on Windows
 installing packages at compile time with a prompt (set its auto-install
 to yes for the child process); materialising a big project per compile
 (solved by writing only changed hashes).

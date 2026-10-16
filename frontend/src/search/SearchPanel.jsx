@@ -12,7 +12,9 @@
 // sorts through the same scorer), then the open paper (its notes, then its
 // PDF text with
 // highlighted, navigable matches), then other notes, reference links, and
-// finally content hits across the rest of the library. Opening a library hit
+// finally content hits across the rest of the library. The filter chips go
+// to the server as the search's scope, and each group pages with a "Show
+// more" (search/searchPages.js). Opening a library hit
 // keeps the search "pinned": once the paper renders, the query is re-found
 // with pdf.js and the match is highlighted and scrolled into view — positions
 // come from the same engine that draws the page, so they are always exact.
@@ -25,6 +27,7 @@ import { buildSearchRegex, normalizeQuery } from "../shared/lib/textnorm";
 import { createTitleScorer } from "../library/librarySearch";
 import { filedIn, filingChips, folderEntries, folderSubtree, pageAttachment } from "../library/libraryUtils";
 import { markedParts, plainSnippet } from "./snippets";
+import { NOTES_PAGE, PDF_PAGE, TITLES_PAGE, appendNew, searchQuery } from "./searchPages";
 import { t, tn } from "../shared/i18n/i18n.js";
 
 export { buildSearchRegex, normalizeQuery };
@@ -49,8 +52,13 @@ export default function SearchPanel({
   const [sugIdx, setSugIdx] = useState(0);
   const [noteHits, setNoteHits] = useState([]); // /api/block-search
   const [notesPartial, setNotesPartial] = useState(false); // its scan stopped at the server's time budget
+  const [notesNext, setNotesNext] = useState(""); // its `next`: the cursor of the following page
   const [libHits, setLibHits] = useState([]);   // /api/pdf-search (FTS over all papers)
   const [libIndexing, setLibIndexing] = useState(0);
+  const [libNext, setLibNext] = useState("");
+  const [titlesShown, setTitlesShown] = useState(TITLES_PAGE);
+  const [moreBusy, setMoreBusy] = useState(""); // the group ("notes" / "lib") whose next page is coming
+  const runRef = useRef(0); // the search run an answer belongs to: a later one drops it
   const [pdfMatches, setPdfMatches] = useState([]); // pdf.js matches in the open document
   const [findIndex, setFindIndex] = useState(0);
   const [busy, setBusy] = useState(false);
@@ -75,6 +83,7 @@ export default function SearchPanel({
     pendingFindRef.current = null;
   }, [open, initialQuery]);
   useEffect(() => { setSugIdx(0); }, [query]);
+  useEffect(() => { setTitlesShown(TITLES_PAGE); }, [q, labels]);
   useEffect(() => { setFindIndex(0); }, [pdfMatches]);
 
   // ---- filter chips (a label = the pages carrying it, a folder = the pages
@@ -134,33 +143,46 @@ export default function SearchPanel({
   useEffect(() => { onFindMarks(marks); }, [marks, onFindMarks]);
 
   // ---- the search itself (debounced; re-runs when a new document renders so
-  // pinned searches follow navigation)
+  // pinned searches follow navigation). One page per group; the chips go
+  // along as the scope, so the server ranks and limits inside them.
+  const notesPage = (cursor) => apiJson(`${API}/block-search?${searchQuery(q, {
+    limit: NOTES_PAGE, chips: labels, cursor, case: caseSensitive ? 1 : 0, whole: wholeWord ? 1 : 0,
+  })}`);
+  // Full-text over every paper's PDF (server-side FTS index; normalized
+  // word matching — the Aa/ab toggles only apply to notes and the open
+  // document, whose matches pdf.js lists: the server leaves it out).
+  const libPage = (cursor) => apiJson(`${API}/pdf-search?${searchQuery(q, {
+    limit: PDF_PAGE, chips: labels, cursor, exclude: focusedBlockId || "",
+  })}`);
   useEffect(() => {
+    // A new run: the last one's answers (its next pages too) are dropped,
+    // and its cursors go with them.
+    const run = ++runRef.current;
+    const current = () => runRef.current === run;
+    setMoreBusy(""); setNotesNext(""); setLibNext("");
     if (!q || !(open || pinned)) {
       setNoteHits([]); setNotesPartial(false); setLibHits([]); setLibIndexing(0); setPdfMatches([]); setBusy(false);
       return;
     }
     const timer = setTimeout(() => {
       setBusy(true);
-      const flags = `&case=${caseSensitive ? 1 : 0}&whole=${wholeWord ? 1 : 0}`;
       // `partial`: the server's scan ran out of time, so the notes found
       // are only some of them (the notes group says so).
-      const notesReq = apiJson(`${API}/block-search?q=${encodeURIComponent(q)}&limit=20${flags}`)
-        .then((d) => { setNoteHits(d.blocks || []); setNotesPartial(!!d.partial); })
-        .catch(() => { setNoteHits([]); setNotesPartial(false); });
-      // Full-text over every paper's PDF (server-side FTS index; normalized
-      // word matching — the Aa/ab toggles only apply to notes and the
-      // open document)
-      const libReq = apiJson(`${API}/pdf-search?q=${encodeURIComponent(q)}&limit=15`)
+      const notesReq = notesPage("")
+        .then((d) => { if (current()) { setNoteHits(d.blocks || []); setNotesPartial(!!d.partial); setNotesNext(d.next || ""); } })
+        .catch(() => { if (current()) { setNoteHits([]); setNotesPartial(false); setNotesNext(""); } });
+      const libReq = libPage("")
         .then((d) => {
+          if (!current()) return;
           setLibHits(d.results || []);
           setLibIndexing(d.indexing || 0);
+          setLibNext(d.next || "");
           // Missing papers were just scheduled for extraction: wake the
           // tasks poller so the progress button appears without waiting
           // for its idle heartbeat.
           if (d.indexing) wakeTasks?.();
         })
-        .catch(() => { setLibHits([]); setLibIndexing(0); });
+        .catch(() => { if (current()) { setLibHits([]); setLibIndexing(0); setLibNext(""); } });
       let pdfReq = Promise.resolve();
       const re = pdfSearchRef.current ? buildSearchRegex(q, { caseSensitive, wholeWord }) : null;
       if (re) {
@@ -194,10 +216,33 @@ export default function SearchPanel({
       } else {
         setPdfMatches([]);
       }
-      Promise.allSettled([notesReq, libReq, pdfReq]).then(() => setBusy(false));
+      Promise.allSettled([notesReq, libReq, pdfReq]).then(() => { if (current()) setBusy(false); });
     }, 250);
     return () => clearTimeout(timer);
-  }, [q, open, pinned, caseSensitive, wholeWord, docNonce]);
+  }, [q, open, pinned, caseSensitive, wholeWord, docNonce, labels]);
+
+  // "Show more": the group's next page, after the hits it lists (dropped
+  // when the search moved on meanwhile). The notes cursor of a scan cut
+  // short by the time budget goes on from where that scan stopped.
+  function showMore(group) {
+    const run = runRef.current;
+    const notes = group === "notes";
+    setMoreBusy(group);
+    (notes ? notesPage(notesNext) : libPage(libNext))
+      .then((d) => {
+        if (runRef.current !== run) return;
+        if (notes) {
+          setNoteHits((prev) => appendNew(prev, d.blocks || [], (r) => r.id));
+          setNotesPartial(!!d.partial);
+          setNotesNext(d.next || "");
+        } else {
+          setLibHits((prev) => appendNew(prev, d.results || [], (r) => `${r.doc_id}:${r.page}`));
+          setLibNext(d.next || "");
+        }
+      })
+      .catch(() => {}) // the cursor stays: the button tries again
+      .finally(() => { if (runRef.current === run) setMoreBusy(""); });
+  }
 
   // Open a library content hit: pin the search, load the paper, and let the
   // re-run above land on the exact match (page-top scroll as a fallback while
@@ -233,14 +278,17 @@ export default function SearchPanel({
 
   // ---- result grouping: titles → this page (notes, then its PDF text) →
   // other notes → reference links → other pages' PDF content
+  // The chips' pages: titles and the open PDF are kept to them here. The
+  // notes and library hits come scoped from the server; for them this only
+  // holds back a previous scope's hits until the new search answers.
   const inScope = (pageId) => !labelPageIds || labelPageIds.has(pageId);
-  const titleMatches = titleScoreOf
+  const allTitles = titleScoreOf
     ? homeBlocks
       .filter((b) => inScope(b.id) && titleScoreOf(b) > 0)
       .sort((a, b) => titleScoreOf(b) - titleScoreOf(a))
-      .slice(0, 8)
     : [];
-  const titleIds = new Set(titleMatches.map((b) => b.id));
+  const titleMatches = allTitles.slice(0, titlesShown);
+  const titleIds = new Set(allTitles.map((b) => b.id)); // listed here (or by its "Show more"), not as a note
   const scopedNotes = noteHits.filter((r) => inScope(r.page_root_id || r.id) && !(r.kind === "page" && titleIds.has(r.id)));
   const inPage = (r) => focusedBlockId && (r.page_root_id === focusedBlockId || r.id === focusedBlockId);
   const titlesExtra = scopedNotes.filter((r) => r.kind === "page"); // regex-mode / non-home pages
@@ -252,7 +300,7 @@ export default function SearchPanel({
   // An incomplete notes scan is no "No matches.": the notes group says why.
   const anything = titleMatches.length || titlesExtra.length || notesHere.length || notesElsewhere.length
     || linkHits.length || labelMatches.length || (showPdfMatches && pdfMatches.length) || libElsewhere.length
-    || notesPartial;
+    || notesPartial || notesNext || libNext;
   // What the details list besides the open PDF's matches (the compact bar's
   // summary line).
   const listed = titleMatches.length + titlesExtra.length + notesHere.length + notesElsewhere.length
@@ -312,6 +360,12 @@ export default function SearchPanel({
     >
       {resultHead(b.content, !!pageAttachment(b))}
       {subtitle ? <span className="searchResultText">{subtitle}</span> : null}
+    </button>
+  );
+  // A group's next page: the home feed's "load more" pill, at the group's end.
+  const moreButton = (group, onClick) => (
+    <button type="button" className="loadMoreBtn" disabled={moreBusy === group} onClick={onClick}>
+      {moreBusy === group ? t("Loading…") : t("Show more")}
     </button>
   );
   const notesElsewhereLabel = focusedBlockId ? t("Other notes") : t("Notes");
@@ -442,6 +496,8 @@ export default function SearchPanel({
                 {titleMatches.length || titlesExtra.length ? section(t("Titles"), titleMatches.length + titlesExtra.length) : null}
                 {titleMatches.map((b) => titleRow(b, filingLine(b)))}
                 {titlesExtra.map(noteRow)}
+                {allTitles.length > titleMatches.length
+                  ? moreButton("titles", () => setTitlesShown((n) => n + TITLES_PAGE)) : null}
                 {notesHere.length ? section(t("Notes on this page"), notesHere.length) : null}
                 {notesHere.map(noteRow)}
                 {showPdfMatches && pdfMatches.length ? section(t("This PDF"), pdfMatches.length) : null}
@@ -455,12 +511,13 @@ export default function SearchPanel({
                     <span className="searchResultText">…{marked(m.snippet)}…</span>
                   </button>
                 ))}
-                {notesElsewhere.length || notesPartial ? section(notesElsewhereLabel, notesElsewhere.length) : null}
+                {notesElsewhere.length || notesPartial || notesNext ? section(notesElsewhereLabel, notesElsewhere.length) : null}
                 {notesPartial ? <div className="searchHint">{t("Stopped early — refine the search to see more.")}</div> : null}
                 {notesElsewhere.map(noteRow)}
+                {notesNext ? moreButton("notes", () => showMore("notes")) : null}
                 {linkHits.length ? section(t("Reference links"), linkHits.length) : null}
                 {linkHits.map(noteRow)}
-                {libElsewhere.length || libIndexing ? section(libLabel, libElsewhere.length) : null}
+                {libElsewhere.length || libIndexing || libNext ? section(libLabel, libElsewhere.length) : null}
                 {libIndexing ? (
                   <div className="searchHint">{tn("Indexing {n} PDF in the background — results will fill in shortly.", "Indexing {n} PDFs in the background — results will fill in shortly.", libIndexing)}</div>
                 ) : null}
@@ -476,6 +533,7 @@ export default function SearchPanel({
                     <span className="searchResultText">{marked(r.snippet, {})}</span>
                   </button>
                 ))}
+                {libNext ? moreButton("lib", () => showMore("lib")) : null}
               </>
             ) : null}
           </div>

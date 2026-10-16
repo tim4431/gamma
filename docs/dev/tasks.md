@@ -75,7 +75,12 @@ indexer, one per workspace; an import, one per review).
 
 **Files.** A job's file is `<data dir>/jobs/<id>/artifact`; an upload a job
 reads (a restore's zip) waits in `jobs/incoming/` and the job removes it
-once read. A job that writes a file does not start while the disk has less
+once read. A zip past 32 MiB goes up in parts instead (`/jobs/restore/parts`,
+the protocol of a PDF's upload in parts), since a proxy in front of the
+server caps a request's body (Cloudflare at 100 MB): it is staged like an
+import review's upload (`gamma/import_staging.py`, no size cap, refused only
+when the disk would keep less than 1 GB free), the finish starts the job,
+and the job removes the staged zip once it is over. A job that writes a file does not start while the disk has less
 than 1 GB free or the account's finished files take 10 GB (507, "download
 them and remove them in Background tasks first"). Files are not metered
 against the account's storage quota.

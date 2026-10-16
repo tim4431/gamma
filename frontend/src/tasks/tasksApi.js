@@ -2,6 +2,7 @@
 // POST /api/jobs/<route> that each kind of work starts with.
 import { API, apiJson } from "../shared/lib/utils";
 import { xhrUpload } from "../shared/lib/xhrUpload";
+import { PART_BYTES, uploadInParts } from "../shared/lib/uploadParts";
 
 const job = (id) => `${API}/jobs/${encodeURIComponent(id)}`;
 const json = (body) => ({ method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
@@ -9,9 +10,20 @@ const json = (body) => ({ method: "POST", headers: { "Content-Type": "applicatio
 export const listJobs = () => apiJson(`${API}/jobs`);
 export const getJob = (id) => apiJson(job(id));
 export const startJob = (route, body) => apiJson(`${API}/jobs/${route}`, json(body));
-// A job over an uploaded file (a restore's zip): the upload's progress
-// comes as onProgress(loaded, total), then the started job.
-export const uploadJob = (route, form, options) => xhrUpload(`${API}/jobs/${route}`, form, options);
+// A job over an uploaded file (a restore's zip) and its form `fields`: one
+// request, or past PART_BYTES in parts at /jobs/<route>/parts (a proxy in
+// front of the server caps a request's body; shared/lib/uploadParts.js).
+// The upload's progress comes as onProgress(loaded, total), then the
+// started job.
+export function uploadJob(route, file, fields, options) {
+  if (file.size > PART_BYTES) {
+    return uploadInParts(file, { url: `${API}/jobs/${route}/parts`, fields: { name: file.name, ...fields } }, options);
+  }
+  const form = new FormData();
+  form.append("file", file);
+  for (const [key, value] of Object.entries(fields)) form.append(key, String(value));
+  return xhrUpload(`${API}/jobs/${route}`, form, options);
+}
 export const cancelJob = (id) => apiJson(`${job(id)}/cancel`, { method: "POST" });
 export const dismissJob = (id) => apiJson(job(id), { method: "DELETE" });
 export const clearJobs = () => apiJson(`${API}/jobs/clear`, { method: "POST" });

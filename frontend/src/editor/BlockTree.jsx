@@ -1401,6 +1401,8 @@ const BlockRow = React.memo(function BlockRow({
     } else if (item.name === "blocks") {
       // Parse server-side (same parser as the .md file import), remove the
       // pasted text from this block, then hand the tree to App to insert.
+      // A paste that can't be split (the server takes at most 5 MB and
+      // markdown_import.MAX_BLOCKS blocks) stays text, and says so.
       apiJson(`${API}/markdown-blocks`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -1417,7 +1419,9 @@ const BlockRow = React.memo(function BlockRow({
         });
         // Pasted into an empty line: the blocks take this block's place.
         onPasteBlocks?.(block.id, nodes, { replace: !(ta.value || "").trim() && !block.children?.length });
-      }).catch(() => {});
+      }).catch((err) => onStatus?.(err.status === 413
+        ? t("The paste is too large to split into blocks; it stays as text.")
+        : t("Couldn't split the paste into blocks ({message}); it stays as text.", { message: err.message })));
     } else if (item.name === "gamma") {
       // Stored host-free: the note keeps working when this library moves to
       // another server (a desktop sidecar, the NAS, a mirror).

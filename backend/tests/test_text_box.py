@@ -278,6 +278,38 @@ def test_a_foreign_free_text_becomes_a_fixed_box_in_its_style():
     assert found[0]["key"] == "1:/FreeText:100:600:300"      # the key these always had
 
 
+@pytest.mark.parametrize("rotation", [0, 90, 180, 270])
+def test_zotero_reads_the_box_as_its_own_text_annotation(rotation):
+    """Zotero 7+ takes a /FreeText for a text annotation only with its own
+    keys (pdf-worker's readRawAnnotation drops it otherwise): the box as
+    shown around the drawn box's centre, the page's turn (Zotero draws the
+    text turned by the page's rotation less this, so upright), the size and
+    the text's colour, not the /C fill."""
+    tb = _tb(size=16, color="#c0392b", bg="#fff4b8")
+    [a] = _free_texts(annotate_pdf(_pdf(rotation, CROP), [], text_boxes=[tb])[0])
+    x0, y0, x1, y1 = (float(v) for v in a["/Rect"])
+    zx0, zy0, zx1, zy1 = (float(v) for v in a["/Zotero:Rect"])
+    w, h = (float(v) for v in a["/AP"]["/N"].get_object()["/BBox"][2:])
+    assert (zx1 - zx0, zy1 - zy0) == pytest.approx((w, h), abs=0.001)
+    assert ((zx0 + zx1) / 2, (zy0 + zy1) / 2) == pytest.approx(((x0 + x1) / 2, (y0 + y1) / 2), abs=0.001)
+    assert a["/Zotero:Rotation"] == rotation and a["/Zotero:FontSize"] == 16
+    assert [float(v) for v in a["/Zotero:Color"]] == pytest.approx([0xC0 / 255, 0x39 / 255, 0x2B / 255], abs=1e-4)
+    assert a["/NM"].startswith("Zotero-")                     # the id Zotero needs too
+
+
+def test_a_turned_zotero_text_annotation_imports_upright_on_its_centre():
+    """Zotero writes a text annotation the user turned with its /Rect around
+    the turned text and the text's own box in /Zotero:Rect. A box can't turn:
+    it is that box upright, on the same centre, in the /DA's size and colour."""
+    found = _imported(_pdf(annots=[
+        _annot("/FreeText", (100, 300, 140, 500), Contents="Turned in Zotero", NM="Zotero-TRAAAAAA",
+               DA="/Helvetica 12 Tf 0 0 1 rg", **{"Zotero:Rect": (20, 380, 220, 420), "Zotero:Rotation": 90,
+                                                  "Zotero:FontSize": 12}),
+    ]))
+    assert found[0]["box"] == {"x": 20, "y": 372, "w": 200, "h": 40, "auto": False,
+                               "size": 12, "color": "#0000ff", "bg": None}
+
+
 def test_a_sticky_note_becomes_a_yellow_box_at_its_icon():
     found = _imported(_pdf(annots=[
         _annot("/Text", (500, 700, 520, 720), Contents="Sticky"),

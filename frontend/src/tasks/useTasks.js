@@ -171,14 +171,15 @@ export function useTasks({ enabled, onFinished }) {
   // wants back in onFinished.
   const start = useCallback(async (route, body, meta = {}) => adopt(await startJob(route, body), meta), [adopt]);
 
-  // A job over a file this tab uploads (a restore's zip): the upload is a
-  // row of its own until the server answers with the job.
-  const upload = useCallback(async (route, form, { name = "", meta = {} } = {}) => {
+  // A job over a file this tab uploads (a restore's zip) with its form
+  // `fields`: the upload is a row of its own until the server answers with
+  // the job.
+  const upload = useCallback(async (route, file, fields, { name = "", meta = {} } = {}) => {
     const ctl = new AbortController();
     const id = addLocal({ kind: "upload", name, info: t("uploading…"), cancel: () => ctl.abort() });
     let lastPct = -1;
     try {
-      const job = await uploadJob(route, form, {
+      const job = await uploadJob(route, file, fields, {
         signal: ctl.signal,
         onProgress: (loaded, total) => {
           const pct = Math.floor((loaded / total) * 100);

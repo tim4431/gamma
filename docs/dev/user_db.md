@@ -67,6 +67,12 @@ All state is SQLite + files on disk under a data directory (env
     notices) is changed through `db.update_pref(user, key, change)`: the
     read and the write share one `BEGIN IMMEDIATE` transaction, so two
     edits of one list never undo each other;
+  - `reminders_done` — the reminders each account has dismissed, a row
+    per reminder key (`<block id>/<date>/<time>`) with the workspace a
+    listing last found it in (`''` until one has) and when; a listing of
+    the account's reminders drops the rows whose reminder is gone, and the
+    rest go with their workspace and their account ([mentions.md](mentions.md)
+    "Reminders");
   - `settings` — admin-tunable server settings (KV), including the
     admin-confirmed `public_url`, the shared AI provider entries
     (`ai_providers`, keys encrypted, [ai.md](ai.md)), the `cloud_*`
@@ -457,7 +463,9 @@ track of the ones nothing uses.
 - **In parts.** A PDF past 32 MiB comes in parts (`gamma/upload_parts.py`,
   `POST /api/uploads/parts`, [api.md](api.md)): a proxy in front of the
   server caps a request's body (Cloudflare at 100 MB), and a part stays
-  well under that. The parts are appended, one request each and in order,
+  well under that. `kind: file` takes any other file the same way and
+  stores it as `POST /upload-file` would (its name's extension, the same
+  refusals; a mirror pushes its large files so). The parts are appended, one request each and in order,
   to a file in `uploads/.partial/` (`storage.partial_dir`) and hashed as
   they land; finishing checks the PDF header and stores the file under its
   digest by a rename (`storage.store_pdf_path` → `storage.put_path`), so
@@ -470,7 +478,9 @@ track of the ones nothing uses.
   sweep below. The web client (`shared/lib/uploadParts.js`) resends a part
   the network lost from the byte the server says it holds and asks the
   server to drop an upload it stopped; the browser extension speaks the
-  same protocol (`extension/worker.js`).
+  same protocol (`extension/worker.js`), and so does the import review's
+  upload, into its staging rather than the store
+  ([import_export.md](import_export.md)).
 - **Dedup repairs.** A dedup hit compares the sizes and rewrites a copy an
   older write left short. For a PDF only when the stored bytes are the start
   of the new ones: a PDF whose embedded annotations were stripped keeps its

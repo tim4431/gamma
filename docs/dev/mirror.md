@@ -64,7 +64,11 @@ the frontend changes: editing a mirror is editing a workspace.
 - **Files**: every upload a page references (`/api/uploads/<hash>.<ext>` in
   content or properties, a page's `doc_id`), by content hash — fetched when
   missing on the copy, uploaded when missing on the original. A re-run
-  never duplicates. Every fetched tree's files are checked, not only the
+  never duplicates. A file past 32 MiB goes up in parts of 8 MiB over the
+  remote's `/api/uploads/parts` (a PDF as `kind: pdf`, anything else as
+  `kind: file`), read from disk a part at a time, since a proxy in front of
+  the remote caps a request's body (Cloudflare at 100 MB); a remote that
+  does not echo the kind (an older server) gets it whole, as before. Every fetched tree's files are checked, not only the
   changed blocks', and each round ends with a sweep for files the copy's
   pages name but lack (`missing_uploads`), so a round cut short after a
   page landed but before its PDF did heals by itself. A fetched file is
@@ -878,7 +882,9 @@ move, new folders on both sides, a page filed in a new folder, a folder
 deleted there), files by hash, pull-only, stopping. `test_publish.py`'s
 filtered mirror keeps a published page's filing on both sides without its
 trees.
-`test_sync_tree.py` pins the diff, `apply` and `moved`; `test_token_api.py` the bearer rules;
+`test_sync_tree.py` pins the diff, `apply` and `moved`, and
+`test_shared_fixtures.py` the same rules' cases in `tests/shared/synctree.json`;
+`test_token_api.py` the bearer rules;
 `test_sync_feed.py` the feed and `test_page_changes.py` the change log under it
 (every writer, racing writers). `test_mirror_edges.py` is the odd cases:
 typing while a round is in flight, two clones of one remote editing the
@@ -932,26 +938,14 @@ desktop's flow — the *clone* chip, the registry map, the
 *clone* / *origin* cross-links, one copy per workspace — is a step
 of `desktop/test/e2e.js`.
 
-## A replica on a device: the iPad
+## Other consumers of the feed
 
-The iPad app keeps a copy without a server of its own ([ipad.md](ipad.md)
-"A replica"). To the remote it is a clone: the same whoami, feed, subtree
-reads, batches under ids with `client: "sync"`, page creation, deletion
-and files by name. Its rounds are this engine's rules, ported to
-JavaScript (`frontend/src/replica/`) and run in the app's JavaScriptCore.
-The folder and label trees travel as described above: first in a round,
-never created or deleted, and both sides' folders kept. A device starts
-with neither tree, so the first round that lists one pulls it whole,
-while a tree the remote lacks is left as it is. Shared fixtures pin the port to the pure half of this engine:
-`tests/shared/synctree.json` (diff, apply, moved, `_unlanded`),
-`textmerge.json` and `inkmerge.json`. `backend/tests/test_shared_fixtures.py`
-checks this side, and `frontend/tests/replica.test.mjs` the port. The
-browser suite's `replica` group runs the port's rounds against a real
-server. A change to a rule here changes the fixture, so the port fails
-until it follows.
+The iPad app keeps no copy of its own: it shows a server's web app, and
+its next phase runs the server itself on the device, which then mirrors
+like any other ([ipad.md](ipad.md)).
 
-A third consumer keeps no copy of the workspace at all: the folder sync
-([folder_sync.md](folder_sync.md)) writes one folder's pages to a directory
+The folder sync ([folder_sync.md](folder_sync.md)) keeps no copy of the
+workspace either: it writes one folder's pages to a directory
 on a PC as files, one way from Gamma to disk, through
 `GET /api/sync/folders/{id}` (the manifest) and `…/notes` beside the change
 feed.
@@ -981,8 +975,3 @@ feed.
 - Every automated test runs both sides in one process (the backend suite's
   TestClient transport; the browser scenario clones a workspace of the same
   server). Two real servers are not exercised.
-- The iPad's replica compares the feed's `format` with the one its build
-  keeps (`WORKSPACE_FORMAT` in `frontend/src/replica/round.js`, pinned to
-  `migrations.py` by `tests/replica.test.mjs`) and stops the round the
-  same way (`FormatMismatch`, the message as the round's error). The app
-  shows the message; it has no amber state of its own.

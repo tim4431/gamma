@@ -99,7 +99,7 @@ The kind: `json_type(properties, '$.recording') = 'object'` → `recording`,
 after `sheet` in `db.BLOCK_HOT_COLUMNS` and `blocks_store.block_kind`
 (migration step 38 rebuilds the generated column). The files are named in
 the block's properties, so the orphan collector, the share scoping, the
-mirror and the iPad's replica, the backup and the quota handle them with
+mirror, the backup and the quota handle them with
 no code of their own ([user_db.md](user_db.md) "Stored files").
 
 Why wall-clock time and not an event stream: Notability and the upstream

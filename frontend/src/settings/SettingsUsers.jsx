@@ -11,7 +11,7 @@
 // editor. Backups of anyone's workspaces live in Settings → Backups (and,
 // for admins, Settings → Server), not here.
 import React from "react";
-import { API, apiJson, fmtBytes } from "../shared/lib/utils";
+import { API, apiJson, fmtBytes, getExpectedUser, setExpectedUser } from "../shared/lib/utils";
 import { PaneHead, Section, Row, SubDialog, Field, UnitInput, Empty, QuotaMeter, PasswordInput } from "./SettingsKit";
 import { CloudIdentityRow } from "./SettingsCloudSignIn";
 import { ManageWorkspaceDialog, useAccounts } from "./SettingsWorkspace";
@@ -79,6 +79,10 @@ export function UsersSettings({ value, selfOnly = false, onServer }) {
         method,
         ...(body ? { headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) } : {}),
       });
+      // This tab's own account renamed: every request from here on says the
+      // new name (the X-Gamma-User guard, utils.js), or the next one — the
+      // workspace refresh below, a password change after it — is refused.
+      if (d.renamed && d.renamed.from === getExpectedUser()) setExpectedUser(d.renamed.to);
       setInfo((prev) => {
         const usage = new Map((prev?.users || []).map((u) => [u.username, u.used_bytes]));
         if (d.renamed) usage.set(d.renamed.to, usage.get(d.renamed.from));
@@ -123,27 +127,31 @@ export function UsersSettings({ value, selfOnly = false, onServer }) {
   }
 
   async function saveAccount() {
-    const u = edit.original;
+    let u = edit.original;
     const payload = {};
     if (edit.password) payload.password = edit.password;
     if (edit.is_admin !== !!u.is_admin) payload.is_admin = edit.is_admin;
     const newName = (edit.username || "").trim();
     const renaming = newName && newName !== u.username;
     if (!Object.keys(payload).length && !renaming) { setEdit(null); return; }
-    if (Object.keys(payload).length) {
-      if (!await usersCall(`/${encodeURIComponent(u.username)}`, "PUT", payload)) return;
-    }
+    // The rename goes first: a new password ends the account's sessions —
+    // the editor's own when they edit themselves — so a rename sent after
+    // it would go out signed out and fail.
+    let renamed = null;
     if (renaming) {
       const d = await usersCall(`/${encodeURIComponent(u.username)}/rename`, "POST", { new_username: newName });
       if (!d) return;
-      if (d.renamed) setStatus(t("Renamed {from} → {to}. Sessions keep working.", { from: d.renamed.from, to: d.renamed.to }));
-      // Renamed yourself? Re-read the session so the whole app re-keys
-      // (avatar, per-user prefs, synced tabs all follow the new name).
-      if (d.renamed?.from === myName) onSelfRenamed?.();
-    } else {
-      setStatus(t("Updated {username}.", { username: u.username }));
+      renamed = d.renamed;
+      u = { ...u, username: newName };
+      setEdit((f) => ({ ...f, original: u })); // a failed update below is retried under the new name
     }
-    setEdit(null);
+    const updated = !Object.keys(payload).length || !!await usersCall(`/${encodeURIComponent(u.username)}`, "PUT", payload);
+    if (renamed && !payload.password) setStatus(t("Renamed {from} → {to}. Sessions keep working.", { from: renamed.from, to: renamed.to }));
+    else if (updated) setStatus(t("Updated {username}.", { username: u.username }));
+    // Renamed yourself? Re-read the session so the whole app re-keys
+    // (avatar, per-user prefs, synced tabs all follow the new name).
+    if (renamed?.from === myName) onSelfRenamed?.();
+    if (updated) setEdit(null);
   }
 
   async function saveStorage() {

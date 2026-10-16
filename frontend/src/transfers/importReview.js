@@ -44,6 +44,12 @@ export function buildImportTree(items, library = false) {
 export function treeItemIds(node) {
   return [...new Set([...node.files.flatMap(itemIds), ...[...node.folders.values()].flatMap(treeItemIds)])];
 }
+// The number of files in a tree, its folders' included.
+export function treeSize(node) {
+  let n = node.files.length;
+  for (const child of node.folders.values()) n += treeSize(child);
+  return n;
+}
 export function resultPages(data) {
   const unique = new Map();
   for (const page of data.pages || []) {

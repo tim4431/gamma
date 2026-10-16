@@ -514,6 +514,26 @@ def page_in_folder(conn, page_id: str, folder_id: str) -> bool:
         (folder_id, page_id)).fetchone() is not None
 
 
+def pages_in_scope(conn, scope: list[str]) -> set[str]:
+    """The library's pages inside every folder and label of ``scope`` (block
+    ids, the search panel's filter chips): filed in the folder or below it
+    (``pages_in_folder``), carrying the label. An id that is neither reaches
+    none."""
+    pages = None
+    for chip in scope:
+        row = conn.execute("SELECT page_id FROM unified_blocks WHERE id = ?", (chip,)).fetchone()
+        if row and row[0] == FOLDERS:
+            found = set(pages_in_folder(conn, chip))
+        elif row and row[0] == LABELS:
+            found = {r[0] for r in conn.execute(
+                "SELECT p.id FROM unified_blocks p WHERE p.parent_id = 'root' AND EXISTS "
+                "(SELECT 1 FROM json_each(p.properties, '$.labels') l WHERE l.value = ?)", (chip,))}
+        else:
+            found = set()
+        pages = found if pages is None else pages & found
+    return pages or set()
+
+
 def root_pages(conn, folder: str = "") -> dict:
     """{page_id: {"title", "doc_id"}} for the root pages a library-wide
     operation reaches: every page, or — with ``folder`` a folder id — the

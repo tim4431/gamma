@@ -1,5 +1,5 @@
 {
-  "about": "The same-block text merge: gamma/textmerge.py and frontend/src/replica/textmerge.js read these cases (outputs from the Python reference). merge applies ours (base → ours) to theirs; contains asks whether theirs already holds base → ours; map_offset moves a caret from src to dst.",
+  "about": "The same-block text merge: gamma/textmerge.py reads these cases (backend/tests/test_shared_fixtures.py). merge applies ours (base → ours) to theirs; contains asks whether theirs already holds base → ours; map_offset moves a caret from src to dst.",
   "merge": [
     {
       "note": "different spans both survive",

@@ -41,13 +41,20 @@ naming and link conventions:
   to the existing page. Notion splits big exports into ``Part-N.zip`` members
   and wraps workspace exports in ``Export-<uuid>/``: nested zips are read in
   place, one common root directory (and any such wrapper) is dropped.
+
+There is no cap on the size of the zip or its number of notes; what guards
+the server is a zip-bomb rule (MAX_RATIO) and the free disk (see below).
 """
 
+import contextlib
 import csv
 import io
+import itertools
 import json
 import posixpath
 import re
+import shutil
+import tempfile
 import unicodedata
 import zipfile
 from urllib.parse import unquote
@@ -55,20 +62,38 @@ from urllib.parse import unquote
 from fastapi import HTTPException
 from fractional_indexing import generate_key_between, generate_n_keys_between
 
-from . import jobs
+from . import config, jobs
 from .blocks_store import (FOLDERS, STORED_COLUMNS, filing, folder_inserts, folder_paths, last_child_position,
                            new_block_id, split_path, touch_page, write_lock)
 from .db import page_now
 from .import_review import archive_entries, destination, validate_selection
+from .import_staging import MIN_FREE_BYTES
 from .logbuf import log
-from .markdown_import import MAX_MARKDOWN_BYTES, fm_list, fm_text, md_to_blocks, parse_frontmatter
+from .markdown_import import (MAX_BLOCKS, MAX_MARKDOWN_BYTES, TooManyBlocks, fm_list, fm_text, md_to_blocks,
+                              parse_frontmatter)
 from .ops import after_commit, apply_batches, ensure_filing
+from .server_settings import MB, workspace_quota
 from .storage import IMAGE_MEDIA_TYPES, content_digest, is_pdf, store_file, upload_media_type
 
-MAX_PAGES = 2000
-MAX_TOTAL_BYTES = 1 << 30        # uncompressed, across nested zips
-MAX_NESTED_ZIPS = 50
-MAX_TABLE_ROWS = 500
+# The zip-bomb guard, in place of a cap on the unpacked size (Apache POI's
+# rule): an entry past RATIO_GRACE bytes that inflates more than MAX_RATIO
+# times its compressed size is not read, and an archive that does so as a
+# whole is refused. Notes pack about 4:1 and photos or PDFs 1:1, a zip
+# bomb 1000:1. What the import writes — a nested zip spooled to a
+# temporary file, a bundled file stored — must leave the disk
+# MIN_FREE_BYTES free, as the staged upload had to.
+MAX_RATIO = 100
+RATIO_GRACE = 1 << 20
+# Zips inside the zip are opened (Notion's Part-N.zip, a zipped export) to
+# this depth. Each one opened holds a temporary file until the import ends,
+# hence a ceiling on how many, far above Notion's parts.
+MAX_ZIP_DEPTH = 2
+MAX_NESTED_ZIPS = 500
+# A Notion database's rows, in tables of at most this many rows (and
+# characters): each table one block the editor renders and can save
+# (ops.MAX_CONTENT is 200,000 characters).
+TABLE_ROWS = 500
+TABLE_CHARS = 100_000
 MAX_TABLE_COLS = 40
 # New pages written in one transaction: few commits, and each hold of the
 # write lock stays short (a page's files are stored before it is staged).
@@ -120,6 +145,10 @@ class _Entry:
     def read(self) -> bytes:
         return self._zf.read(self._info)
 
+    def head(self, n: int) -> bytes:
+        with self._zf.open(self._info) as f:
+            return f.read(n)
+
 
 def _entry_name(zi) -> str:
     name = zi.filename
@@ -131,7 +160,11 @@ def _entry_name(zi) -> str:
     return unicodedata.normalize("NFC", name.replace("\\", "/")).lstrip("/")
 
 
-def _walk_zip(zf, prefix, out, budget, opened, depth=0):
+def _walk_zip(zf, prefix, out, walk, depth=0):
+    """Collect ``zf``'s files as entries in ``out``, the zips inside it
+    opened in place (``_open_nested``). ``walk``: an ExitStack the zips
+    opened are closed by, their count, ``[path, reason]`` for what was
+    left out, and the sizes the whole archive's ratio is checked on."""
     for zi in zf.infolist():
         if zi.is_dir():
             continue
@@ -140,20 +173,53 @@ def _walk_zip(zf, prefix, out, budget, opened, depth=0):
         if any(p in ("__MACOSX", ".DS_Store", "") or p.startswith("._") for p in parts):
             continue
         full = f"{prefix}{name}"
-        if name.lower().endswith(".zip") and depth < 2 and len(opened) < MAX_NESTED_ZIPS:
-            # Notion's Part-N.zip: its members are siblings of the part file.
-            try:
-                inner = zipfile.ZipFile(io.BytesIO(zf.read(zi)))
-            except zipfile.BadZipFile:
-                continue
-            opened.append(inner)
-            _walk_zip(inner, posixpath.dirname(full) + "/" if "/" in full else "",
-                      out, budget, opened, depth + 1)
+        if zi.file_size > RATIO_GRACE and zi.file_size > MAX_RATIO * zi.compress_size:
+            walk["left_out"].append([full, f"unpacks to over {MAX_RATIO} times its packed size, "
+                                           "like a zip bomb: not read"])
             continue
-        budget["bytes"] += zi.file_size
-        if budget["bytes"] > MAX_TOTAL_BYTES:
-            raise HTTPException(status_code=413, detail="zip too large (1 GB uncompressed limit)")
+        walk["unpacked"] += zi.file_size
+        walk["packed"] += zi.compress_size
+        if name.lower().endswith(".zip"):
+            # Notion's Part-N.zip: its members are siblings of the part file.
+            inner = _open_nested(zf, zi, full, depth, walk)
+            if inner is not None:
+                _walk_zip(inner, posixpath.dirname(full) + "/" if "/" in full else "", out, walk, depth + 1)
+                continue
         out.append(_Entry(full, zf, zi))
+
+
+def _open_nested(zf, zi, path, depth, walk):
+    """The zip ``zi`` inside ``zf`` (at ``path``), spooled to a temporary
+    file, never held in memory (a Notion part is gigabytes) — or None,
+    with the reason in ``walk``, when it is not opened: too deep, one too
+    many, or no zip after all. It then stays a file, which a note may link.
+    507 when spooling it would leave the disk with less than MIN_FREE_BYTES
+    free."""
+    if depth >= MAX_ZIP_DEPTH:
+        walk["left_out"].append([path, f"a zip nested more than {MAX_ZIP_DEPTH} deep is not opened: "
+                                       "its notes are not imported"])
+        return None
+    if walk["zips"] >= MAX_NESTED_ZIPS:
+        walk["left_out"].append([path, f"more than {MAX_NESTED_ZIPS} zips inside the zip: this one is not "
+                                       "opened, its notes are not imported"])
+        return None
+    if shutil.disk_usage(tempfile.gettempdir()).free - zi.file_size < MIN_FREE_BYTES:
+        raise HTTPException(status_code=507, detail="the server's disk has no room to unpack this zip")
+    spool = tempfile.TemporaryFile()
+    try:
+        with zf.open(zi) as src:
+            shutil.copyfileobj(src, spool, 1 << 20)
+        inner = zipfile.ZipFile(spool)
+    except BaseException as exc:
+        spool.close()
+        if not isinstance(exc, zipfile.BadZipFile):
+            raise
+        walk["left_out"].append([path, "not a readable zip: not opened"])
+        return None
+    walk["stack"].callback(spool.close)  # a ZipFile leaves a file it was handed open
+    walk["stack"].enter_context(inner)
+    walk["zips"] += 1
+    return inner
 
 
 def _strip_wrappers(entries):
@@ -275,13 +341,17 @@ def _wiki_source(value: str) -> str:
     return m.group(1).strip() if m else value.strip()
 
 
-def _csv_to_markdown(data: bytes) -> str:
-    """A Notion database CSV → GFM table (capped, cells pipe-escaped)."""
+def _csv_to_markdown(data: bytes) -> tuple[str, int]:
+    """A Notion database CSV → GFM tables, cells pipe-escaped: every row,
+    TABLE_ROWS (or TABLE_CHARS) to a table, each table under the header and
+    a block of its own. Returns the Markdown and the number of columns left
+    out past MAX_TABLE_COLS."""
     text = data.decode("utf-8-sig", errors="replace")
     rows = [r for r in csv.reader(io.StringIO(text)) if any(c.strip() for c in r)]
     if not rows:
-        return ""
-    width = min(max(len(r) for r in rows), MAX_TABLE_COLS)
+        return "", 0
+    columns = max(len(r) for r in rows)
+    width = min(columns, MAX_TABLE_COLS)
 
     def cell(v):
         return re.sub(r"\s*\n\s*", "<br>", (v or "").strip()).replace("|", "\\|") or " "
@@ -289,44 +359,60 @@ def _csv_to_markdown(data: bytes) -> str:
     def line(r):
         return "| " + " | ".join(cell(c) for c in (r + [""] * width)[:width]) + " |"
 
-    out = [line(rows[0]), "|" + "|".join(" --- " for _ in range(width)) + "|"]
-    out += [line(r) for r in rows[1:MAX_TABLE_ROWS + 1]]
-    if len(rows) - 1 > MAX_TABLE_ROWS:
-        out.append(f"\n*… {len(rows) - 1 - MAX_TABLE_ROWS} more rows not shown*")
-    return "\n".join(out)
+    head = [line(rows[0]), "|" + "|".join(" --- " for _ in range(width)) + "|"]
+    tables, table, size = [], [], 0
+    for r in rows[1:]:
+        row = line(r)
+        if table and (len(table) >= TABLE_ROWS or size + len(row) > TABLE_CHARS):
+            tables.append(table)
+            table, size = [], 0
+        table.append(row)
+        size += len(row) + 1
+    tables.append(table)
+    return "\n\n".join("\n".join(head + t) for t in tables), columns - width
 
 
 # --- the block tree: ids, anchors, headings ----------------------------------
 
-def _prepare_tree(nodes, anchors, headings):
+def _prepare_tree(nodes, plan, places=None):
     """Give every node an id, take Obsidian ``^id`` anchors out of the text
-    (``anchors``: marker → block id; an anchor on its own line belongs to the
-    block before it) and index heading texts (``headings``: normalized text →
-    block id, first wins) so ``[[Note#…]]`` links can target blocks."""
-    kept = []
+    (``plan.anchors``: marker → block id; an anchor on its own line belongs
+    to the block before it) and index heading texts (``plan.headings``:
+    normalized text → block id, first wins) so ``[[Note#…]]`` links can
+    target blocks. Those targets' ids are kept in ``plan.ids`` by their
+    place in the tree (``places`` counts them), so the note parsed again
+    gets them again: the import parses each note once for its targets and
+    once when it writes it, never holding every tree at once."""
+    places = places if places is not None else itertools.count()
+    kept = []  # (place, node)
+
+    def target(place, node):
+        return plan.ids.setdefault(place, node["id"])
+
     for node in nodes:
         content = node.get("content", "")
         alone = _ANCHOR_LINE_RE.match(content.strip())
         if alone and kept and not node.get("children"):
-            anchors.setdefault(alone.group(1).lower(), kept[-1]["id"])
+            plan.anchors.setdefault(alone.group(1).lower(), target(*kept[-1]))
             continue
-        node["id"] = new_block_id()
+        place = next(places)
+        node["id"] = plan.ids.get(place) or new_block_id()
         lines = content.split("\n")
         if len(lines) > 1 and _ANCHOR_LINE_RE.match(lines[-1].strip()):
-            anchors.setdefault(lines[-1].strip()[1:].lower(), node["id"])
+            plan.anchors.setdefault(lines[-1].strip()[1:].lower(), target(place, node))
             lines.pop()
         for idx in {len(lines) - 1, 0}:
             m = _ANCHOR_END_RE.search(lines[idx])
             if m:
-                anchors.setdefault(m.group(1).lower(), node["id"])
+                plan.anchors.setdefault(m.group(1).lower(), target(place, node))
                 lines[idx] = lines[idx][:m.start()]
         node["content"] = "\n".join(lines).strip("\n")
         hm = _HEADING_TEXT_RE.match(node["content"].split("\n")[0])
         if hm:
-            headings.setdefault(_norm_heading(hm.group(1)), node["id"])
-        node["children"] = _prepare_tree(node.get("children") or [], anchors, headings)
-        kept.append(node)
-    return kept
+            plan.headings.setdefault(_norm_heading(hm.group(1)), target(place, node))
+        node["children"] = _prepare_tree(node.get("children") or [], plan, places)
+        kept.append((place, node))
+    return [node for _, node in kept]
 
 
 def _walk(nodes):
@@ -347,9 +433,10 @@ def markdown_page(ws: str, conn, raw: bytes, original: str, folder: str = "", *,
     of its own). The page records ``markdown_import`` = the content hash of
     ``raw`` — the same digest a stored upload of the file is named by, which
     is how a file chip finds the page made from it. Commits. Raises
-    HTTPException 413/400 for an oversized or non-UTF-8 file, 400 for a
-    ``folder`` that is no folder. Shared by POST /import/markdown (a fresh
-    upload) and POST /pages/from-file (a stored one)."""
+    HTTPException 413/400 for an oversized (5 MB, MAX_BLOCKS) or non-UTF-8
+    file, 400 for a ``folder`` that is no folder. Shared by POST
+    /import/markdown (a fresh upload) and POST /pages/from-file (a stored
+    one)."""
     if len(raw) > MAX_MARKDOWN_BYTES:
         raise HTTPException(status_code=413, detail="Markdown file exceeds 5 MB")
     try:
@@ -359,7 +446,10 @@ def markdown_page(ws: str, conn, raw: bytes, original: str, folder: str = "", *,
     fields, body = parse_frontmatter(text)
     fallback = re.sub(r"\.(?:md|markdown)$", "", original, flags=re.I).strip() or "Untitled note"
     title = (fm_text(fields, "title") or fallback).strip()[:500]
-    tree = md_to_blocks(body)
+    try:
+        tree = md_to_blocks(body)
+    except TooManyBlocks as exc:
+        raise HTTPException(status_code=413, detail=f"Markdown file has {exc}")
     props = {"original_filename": original, "markdown_import": content_digest(raw)}
     page_id = new_block_id()
     write_lock(conn)
@@ -416,7 +506,7 @@ def insert_note_page(conn, page_id, title, props, tree, actor) -> int:
 
 class _Plan:
     __slots__ = ("entry", "page_id", "title", "path", "labels", "body", "props", "existing",
-                 "tree", "anchors", "headings")
+                 "tree", "anchors", "headings", "ids")
 
     def __init__(self, entry):
         self.entry = entry
@@ -424,12 +514,13 @@ class _Plan:
         self.title = ""
         self.path = []      # the folder path below the destination (names)
         self.labels = []    # label names
-        self.body = ""
+        self.body = ""      # until the page is written
         self.props = {}
         self.existing = False
-        self.tree = []
+        self.tree = []      # while the page is written
         self.anchors = {}
         self.headings = {}
+        self.ids = {}       # place in the tree → id, of the blocks links can target
 
 
 def import_markdown_zip(ws: str, zf: zipfile.ZipFile, conn, folder: str = "", *, actor: str = "",
@@ -446,10 +537,20 @@ def import_markdown_zip(ws: str, zf: zipfile.ZipFile, conn, folder: str = "", *,
     note; a stopped job keeps the notes it got to. Returns the report
     dict: each page entry's ``folders`` are the paths (lists of names from
     the top) the page is, or would be, filed in."""
+    with contextlib.ExitStack() as unpacked:  # the zips opened inside it
+        return _import_zip(ws, zf, conn, folder, unpacked, actor=actor, preview=preview, selected=selected,
+                           progress=progress)
+
+
+def _import_zip(ws, zf, conn, folder, unpacked, *, actor, preview, selected, progress) -> dict:
     progress = progress or jobs.no_progress
     under, under_path = destination(conn, folder)
-    entries, opened = [], []
-    _walk_zip(zf, "", entries, {"bytes": 0}, opened)
+    entries = []
+    walk = {"stack": unpacked, "zips": 0, "left_out": [], "unpacked": 0, "packed": 0}
+    _walk_zip(zf, "", entries, walk)
+    if walk["unpacked"] > RATIO_GRACE and walk["unpacked"] > MAX_RATIO * walk["packed"]:
+        raise HTTPException(status_code=413, detail=f"this zip unpacks to over {MAX_RATIO} times its size, "
+                                                    "like a zip bomb: refused")
     _strip_wrappers(entries)
     report = {"pages_created": 0, "pages_skipped": 0, "blocks_imported": 0,
               "assets_stored": 0, "links_resolved": 0, "notion": False, "obsidian": False,
@@ -459,6 +560,9 @@ def import_markdown_zip(ws: str, zf: zipfile.ZipFile, conn, folder: str = "", *,
     def warn(title, reason):
         if len(report["warnings"]) < 200:
             report["warnings"].append({"title": title, "reason": reason, "selection_id": current_selection})
+
+    for path, reason in walk["left_out"]:
+        warn(path, reason)
 
     # An Obsidian vault carries its settings folder; the folder itself (and
     # the vault's trash) holds no notes.
@@ -507,9 +611,6 @@ def import_markdown_zip(ws: str, zf: zipfile.ZipFile, conn, folder: str = "", *,
 
     plans, targets, plan_of = [], {}, {}
     for e in notes + list(databases.values()):
-        if len(plans) >= MAX_PAGES:
-            warn(e.path, f"more than {MAX_PAGES} notes — the rest were skipped")
-            break
         if e.size > MAX_MARKDOWN_BYTES:
             warn(e.path, "file exceeds 5 MB")
             continue
@@ -525,7 +626,9 @@ def import_markdown_zip(ws: str, zf: zipfile.ZipFile, conn, folder: str = "", *,
         plan.path = _dir_path(e.path)
         if ext == ".csv":
             plan.title = _clean_stem(re.sub(r"_all$", "", stem))[:500] or "Database"
-            plan.body = _csv_to_markdown(raw)
+            plan.body, cut = _csv_to_markdown(raw)
+            if cut:
+                warn(e.path, f"{cut} columns past the first {MAX_TABLE_COLS} are left out")
         else:
             try:
                 text = raw.decode("utf-8-sig")
@@ -565,8 +668,17 @@ def import_markdown_zip(ws: str, zf: zipfile.ZipFile, conn, folder: str = "", *,
             plan.page_id = existing
             plan.title, plan.props = existing_pages[existing]
             plan.props = dict(plan.props)
-        elif plan.body.strip():
-            plan.tree = _prepare_tree(md_to_blocks(plan.body), plan.anchors, plan.headings)
+            plan.body = ""
+        elif plan.body.strip() and (not preview or len(plan.body) >= 2 * MAX_BLOCKS):
+            # The ids links may target (the tree itself is parsed again when
+            # the page is written). A preview needs none: it parses only a
+            # body long enough to hold too many blocks (a block takes a line
+            # of its own, two characters at least).
+            try:
+                _prepare_tree(md_to_blocks(plan.body), plan)
+            except TooManyBlocks as exc:
+                warn(e.path, f"has {exc}: not imported")
+                continue
         plans.append(plan)
         targets[e.path] = plan.page_id
         plan_of[plan.page_id] = plan
@@ -623,24 +735,31 @@ def import_markdown_zip(ws: str, zf: zipfile.ZipFile, conn, folder: str = "", *,
         return None
 
     stored = {}
+    max_mb = workspace_quota(ws)["max_upload_mb"]
 
     def store_asset(path):
-        """Upload a bundled file once; None when it can't be (type, limits)."""
+        """Upload a bundled file once; None when it can't be (type, limits).
+        A file is read whole only to be stored: a preview reads no more
+        than a PDF's header, and one past the per-file cap is never read (a
+        vault's video can be gigabytes)."""
         if path in stored:
             return stored[path]
         url = None
         entry = assets.get(path)
         if entry is not None:
             ext = _split_ext(path)[1]
-            data = entry.read()
-            if ext == ".pdf" and not is_pdf(data):
+            if entry.size > max_mb * MB:
+                warn(path, f"file too large (max {max_mb} MB)")
+            elif ext == ".pdf" and not is_pdf(entry.head(4)):
                 warn(path, "not a valid PDF")
+            elif preview:
+                url = f"/api/uploads/preview{ext}"
+                report["assets_stored"] += 1
+            elif shutil.disk_usage(config.DATA_DIR).free - entry.size < MIN_FREE_BYTES:
+                warn(path, "the server's disk has no room for this file")
             else:
                 try:
-                    if preview:
-                        filename = f"{content_digest(data)}{ext}"
-                    else:
-                        filename, _ = store_file(ws, data, ext)
+                    filename, _ = store_file(ws, entry.read(), ext)
                     url = f"/api/uploads/{filename}"
                     report["assets_stored"] += 1
                 except HTTPException as exc:
@@ -724,6 +843,8 @@ def import_markdown_zip(ws: str, zf: zipfile.ZipFile, conn, folder: str = "", *,
         except BaseException:
             conn.rollback()
             raise
+        for plan in staged:
+            plan.tree = []
         staged.clear()
 
     chosen = [plan for plan in plans if selected is None or plan.entry.path in selected]
@@ -776,9 +897,15 @@ def import_markdown_zip(ws: str, zf: zipfile.ZipFile, conn, folder: str = "", *,
             if plan.labels:
                 plan.props["labels"] = list(dict.fromkeys(label_ids[name] for name in plan.labels))
         # The page's bundled files are stored while its links are rewritten —
-        # before its rows, outside any transaction.
-        for node in _walk(plan.tree):
-            node["content"] = rewrite_links(node["content"], base_dir, plan.page_id)
+        # before its rows, outside any transaction. A preview, which writes
+        # no tree, reads the links off the body.
+        if preview:
+            rewrite_links(plan.body, base_dir, plan.page_id)
+        elif plan.body.strip():
+            plan.tree = _prepare_tree(md_to_blocks(plan.body), plan)
+            for node in _walk(plan.tree):
+                node["content"] = rewrite_links(node["content"], base_dir, plan.page_id)
+        plan.body = ""
         if not preview:
             staged.append(plan)
             if len(staged) >= PAGES_PER_COMMIT:
@@ -793,8 +920,6 @@ def import_markdown_zip(ws: str, zf: zipfile.ZipFile, conn, folder: str = "", *,
                                 "missing": any("Missing" in w["reason"] for w in warnings)})
 
     flush()
-    for inner in opened:
-        inner.close()
     log.info(f"[markdown-zip] {report['pages_created']} pages, {report['pages_skipped']} skipped, "
              f"{report['assets_stored']} files, {report['links_resolved']} links"
              f"{' (Notion)' if report['notion'] else ''}{' (Obsidian vault)' if vault else ''}")

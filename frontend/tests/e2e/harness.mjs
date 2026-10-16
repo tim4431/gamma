@@ -302,6 +302,51 @@ export function assertNoProblems(page, allow = []) {
   if (bad.length) throw new Error(`problems on the page:\n  ${bad.join("\n  ")}`);
 }
 
+// Asserts that `act` opens (or changes) the surfaces `selector` matches in
+// place: no frame shows one where it then leaves without changing its size
+// or content — a menu painted on one side of its anchor and moved to the
+// other, a card beside the last step's anchor. Every frame is read from a
+// ResizeObserver made in that frame: observers run in the order they were
+// made, so it sees the app's own same-frame corrections, as the paint does
+// (docs/dev/ui-design.md, "Menus and popups open in place").
+export async function assertOpensInPlace(page, selector, act, { ms = 600, what = selector } = {}) {
+  await page.evaluate((selector) => {
+    const frames = [], ids = new WeakMap();
+    let n = 0, stop = false;
+    const sample = () => frames.push([...document.querySelectorAll(selector)].map((el) => {
+      if (!ids.has(el)) ids.set(el, ++n);
+      const r = el.getBoundingClientRect(), cs = getComputedStyle(el);
+      return { id: ids.get(el), seen: cs.visibility !== "hidden" && cs.display !== "none" && r.width > 0,
+        x: Math.round(r.left), y: Math.round(r.top), w: Math.round(r.width), h: Math.round(r.height), text: el.textContent };
+    }));
+    const tick = () => {
+      if (stop) return;
+      const ro = new ResizeObserver(() => { ro.disconnect(); sample(); });
+      ro.observe(document.documentElement);
+      requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+    window.__framesInPlace = () => { stop = true; return frames; };
+  }, selector);
+  await act();
+  await sleep(ms);
+  const frames = await page.evaluate(() => window.__framesInPlace());
+  const last = new Map();
+  let seen = false;
+  for (const [i, frame] of frames.entries()) {
+    for (const s of frame) {
+      if (!s.seen) continue;
+      seen = true;
+      const p = last.get(s.id);
+      if (p && p.w === s.w && p.h === s.h && p.text === s.text && (Math.abs(p.x - s.x) > 2 || Math.abs(p.y - s.y) > 2)) {
+        throw new Error(`${what} was painted at (${p.x}, ${p.y}) and moved to (${s.x}, ${s.y}) in frame ${i}`);
+      }
+      last.set(s.id, s);
+    }
+  }
+  if (!seen) throw new Error(`${what} never showed`);
+}
+
 // ---------------------------------------------------------------------------
 // PDFs: a small but real PDF (Helvetica text, one content stream per page)
 // that pdf.js renders with a selectable text layer.

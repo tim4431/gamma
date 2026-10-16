@@ -4,9 +4,9 @@
 // barely shrink, so packing is one CRC pass and the zip is a Blob over the
 // picked files rather than a copy of them — under the folder's own name
 // with UTF-8 names, as Explorer's or Finder's Compress writes it. Neither a
-// pick nor a drop here lists empty folders. No ZIP64: past 4 GB or 65,535
-// files it refuses, far above the server's staging cap anyway.
-import { t } from "../shared/i18n/i18n.js";
+// pick nor a drop here lists empty folders. Past 4 GB or 65,535 files the
+// sizes, offsets and counts that no longer fit go in ZIP64 records.
+const MAX32 = 0xFFFFFFFF;
 
 const CRC_TABLE = (() => {
   const table = new Uint32Array(256);
@@ -60,20 +60,30 @@ function record(size, fields) {
   let at = 0;
   for (const [width, value] of fields) {
     if (width === 2) view.setUint16(at, value, true);
-    else view.setUint32(at, value, true);
+    else if (width === 4) view.setUint32(at, value, true);
+    else view.setBigUint64(at, BigInt(value), true);
     at += width;
   }
   return bytes;
 }
 
-const join = (head, name) => { const out = new Uint8Array(head.length + name.length); out.set(head); out.set(name, head.length); return out; };
+// The ZIP64 extra field carrying `values` (8 bytes each), or none.
+const zip64Extra = (values) => (values.length
+  ? record(4 + 8 * values.length, [[2, 0x0001], [2, 8 * values.length], ...values.map((value) => [8, value])])
+  : new Uint8Array());
+
+const join = (...arrays) => {
+  const out = new Uint8Array(arrays.reduce((sum, a) => sum + a.length, 0));
+  let at = 0;
+  for (const a of arrays) { out.set(a, at); at += a.length; }
+  return out;
+};
 
 // → a File `<folder>.zip`. `onProgress(read, total)` while the files are read.
 export async function zipFolder(pick, { signal, onProgress } = {}) {
   const encoder = new TextEncoder();
   const parts = [], central = [];
   let offset = 0, read = 0;
-  if (pick.entries.length > 0xFFFF) throw new Error(t("This folder has too many files to send at once."));
   for (const { path, file } of pick.entries) {
     const name = encoder.encode(path);
     let crc = 0;
@@ -87,15 +97,31 @@ export async function zipFolder(pick, { signal, onProgress } = {}) {
       onProgress?.(read, pick.size);
     }
     const [time, date] = dosStamp(file.lastModified);
-    // version 2.0, flag 0x800: the name is UTF-8; method 0: stored
-    const common = [[2, 20], [2, 0x800], [2, 0], [2, time], [2, date], [4, crc], [4, file.size], [4, file.size], [2, name.length], [2, 0]];
-    const local = join(record(30, [[4, 0x04034B50], ...common]), name);
-    central.push(join(record(46, [[4, 0x02014B50], [2, 20], ...common, [2, 0], [2, 0], [2, 0], [4, 0], [4, offset]]), name));
+    // A size or offset of 4 GB or more reads 0xFFFFFFFF here, the real value
+    // in a ZIP64 extra field (version 4.5): the local header's holds both
+    // sizes, the central record's the sizes and offset that overflowed.
+    const bigFile = file.size >= MAX32, bigOffset = offset >= MAX32;
+    const size32 = bigFile ? MAX32 : file.size;
+    const version = bigFile || bigOffset ? 45 : 20;
+    const localExtra = zip64Extra(bigFile ? [file.size, file.size] : []);
+    const centralExtra = zip64Extra([...(bigFile ? [file.size, file.size] : []), ...(bigOffset ? [offset] : [])]);
+    // flag 0x800: the name is UTF-8; method 0: stored
+    const common = [[2, version], [2, 0x800], [2, 0], [2, time], [2, date], [4, crc], [4, size32], [4, size32], [2, name.length]];
+    const local = join(record(30, [[4, 0x04034B50], ...common, [2, localExtra.length]]), name, localExtra);
+    central.push(join(record(46, [[4, 0x02014B50], [2, version], ...common, [2, centralExtra.length], [2, 0], [2, 0], [2, 0], [4, 0],
+      [4, bigOffset ? MAX32 : offset]]), name, centralExtra));
     parts.push(local, file);
     offset += local.length + file.size;
   }
   const size = central.reduce((sum, entry) => sum + entry.length, 0);
-  if (offset + size > 0xFFFFFFFF) throw new Error(t("This folder is too big to send at once (over 4 GB)."));
-  const end = record(22, [[4, 0x06054B50], [2, 0], [2, 0], [2, central.length], [2, central.length], [4, size], [4, offset], [2, 0]]);
-  return new File([...parts, ...central, end], `${pick.name}.zip`, { type: "application/zip" });
+  const count = central.length;
+  const tail = [];
+  if (count >= 0xFFFF || size >= MAX32 || offset >= MAX32) {
+    // the ZIP64 end record, right after the central directory, then its locator
+    tail.push(record(56, [[4, 0x06064B50], [8, 44], [2, 45], [2, 45], [4, 0], [4, 0], [8, count], [8, count], [8, size], [8, offset]]),
+      record(20, [[4, 0x07064B50], [4, 0], [8, offset + size], [4, 1]]));
+  }
+  tail.push(record(22, [[4, 0x06054B50], [2, 0], [2, 0], [2, Math.min(count, 0xFFFF)], [2, Math.min(count, 0xFFFF)],
+    [4, Math.min(size, MAX32)], [4, Math.min(offset, MAX32)], [2, 0]]));
+  return new File([...parts, ...central, ...tail], `${pick.name}.zip`, { type: "application/zip" });
 }

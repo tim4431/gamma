@@ -1,9 +1,9 @@
 // What a reply's context pills say: the pages the model was given (the
 // stream's {"context"} line, saved on the message) combined with the pages
 // its tools read (the read_page actions' `pdf_pages`), the turns left out
-// of a conversation too long for the model, and a reply cut off at the
-// output limit. Pure functions, so the chat's component and the test share
-// them.
+// of a conversation too long for the model, the selected passages that
+// went short, and a reply cut off at the output limit. Pure functions, so
+// the chat's component and the test share them.
 import { t } from "../shared/i18n/i18n.js";
 import { estimateTokens, fmtTokens } from "./tokenUsage.js";
 
@@ -138,6 +138,33 @@ export function trimmedNote(trimmed) {
   return {
     short: t("Earlier messages left out: {turns}", { turns }),
     long: t("The conversation grew past what this model can hold, so its {turns} oldest messages were not sent with this reply. Start a new chat to free the space, or pick a model with a larger window.", { turns }),
+    refused: true,
+  };
+}
+
+// The pill for the passages and attached blocks the message pointed at
+// that went short ({"shortened": {items, budget, asked}} on the stream:
+// ai_context's passage budget cut them, or the window fit shrank it below
+// what the request asked for, `asked`).
+export function shortenedNote(shortened) {
+  const items = shortened?.items || [];
+  if (!items.length) return null;
+  const chars = (n) => (n || 0).toLocaleString();
+  const what = (item) => (item.kind === "pdf" ? (item.of > 1 ? t("PDF passage {i}", { i: item.n }) : t("PDF passage"))
+    : item.kind === "note" ? t("Selected note text") : t("Attached block"));
+  const kept = items.reduce((sum, item) => sum + (item.kept || 0), 0);
+  const total = items.reduce((sum, item) => sum + (item.total || 0), 0);
+  const fit = shortened.asked > shortened.budget;
+  const lines = items.map((item) => t("{what}: first {kept} of {total} characters.",
+    { what: what(item), kept: chars(item.kept), total: chars(item.total) }));
+  return {
+    short: items.length === 1
+      ? t("{what} shortened: first {kept} of {total} characters sent", { what: what(items[0]), kept: chars(kept), total: chars(total) })
+      : t("{n} passages shortened: {kept} of {total} characters sent", { n: items.length, kept: chars(kept), total: chars(total) }),
+    long: `${lines.join(" ")} ${fit
+      ? t("This model's window couldn't hold all of it, even with every earlier message left out, so less was sent. Ask about less at a time, or pick a model with a larger window.")
+      : t("A message sends up to {budget} characters of what you point at, shared between the passages ({path}). Raise it there, or ask about less at a time.",
+        { budget: chars(shortened.budget), path: SETTINGS_PATH() })}`,
     refused: true,
   };
 }

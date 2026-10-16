@@ -15,6 +15,10 @@ for ink, notebooks and the mirror's merges, and Swift only stores, draws
 and talks to the network ([dev/ipad.md](../dev/ipad.md) "The native app").
 The installed web app remains, for everything online.
 
+**Revisited 2026-10-16.** The native app's own interface is the next
+question: [ipad-web-shell.md](ipad-web-shell.md) surveys turning it into
+a shell over the web app with only the Pencil native.
+
 ## What upstream's app delivers
 
 `amogadget/Gamma` ships `ipad/`: a SwiftUI app (iPadOS 17+, built from

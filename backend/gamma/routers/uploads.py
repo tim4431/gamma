@@ -19,6 +19,7 @@ from ..storage import (
     ALLOWED_IMAGE_TYPES,
     IMAGE_EXTENSIONS,
     INLINE_EXTENSIONS,
+    RECORDING_EXTENSIONS,
     SANDBOXED_EXTENSIONS,
     display_filename,
     find_upload_file,
@@ -34,9 +35,6 @@ from ..storage import (
 # Link visitors (anyone-with-the-link edit shares) may paste images and files
 # like any editor, within the page's workspace quota, but only so many per IP.
 LINK_UPLOADS_PER_5_MIN = 60
-# The containers MediaRecorder writes (and their Ogg kin), checked by their
-# magic bytes on upload (storage.is_audio).
-RECORDING_EXTENSIONS = (".webm", ".m4a", ".ogg", ".opus")
 
 router = APIRouter(prefix="/api", tags=["uploads"])
 
@@ -80,16 +78,19 @@ def upload_pdf(request: Request, file: UploadFile = File(...)):
 class PartsStart(BaseModel):
     size: int
     name: str = ""
+    kind: str = "pdf"  # "file": stored like POST /upload-file (gamma/upload_parts.py)
 
 
 @router.post("/uploads/parts")
 def start_upload_parts(request: Request, body: PartsStart):
-    """Open an upload in parts → ``{token, part_bytes, received: 0}``: the
-    size and quota checks of ``POST /uploads`` (413 / 507) run here, before
-    a byte travels; 429 past ``upload_parts.MAX_PER_WS`` open at once."""
+    """Open an upload in parts → ``{token, part_bytes, received: 0, kind}``:
+    the size and quota checks of ``POST /uploads`` (413 / 507) run here,
+    before a byte travels; 429 past ``upload_parts.MAX_PER_WS`` open at
+    once. ``kind`` is echoed, so a client tells a server that stores a
+    ``file`` from an older one that takes every upload for a PDF."""
     ws = require_ws(request, write=True)
-    session = upload_parts.start(ws, body.size, body.name)
-    return {"token": session.token, "part_bytes": upload_parts.PART_BYTES, "received": 0}
+    session = upload_parts.start(ws, body.size, body.name, body.kind)
+    return {"token": session.token, "part_bytes": upload_parts.PART_BYTES, "received": 0, "kind": session.kind}
 
 
 @router.post("/uploads/parts/{token}")
@@ -109,12 +110,16 @@ def put_upload_part(token: str, request: Request, part: UploadFile = File(...), 
 @router.post("/uploads/parts/{token}/finish")
 def finish_upload_parts(token: str, request: Request):
     """Store the assembled PDF → ``{doc_id, source_url, size, already_existed}``
-    like ``POST /uploads``; 400 while bytes are missing or when it is no
-    PDF. The token is gone afterwards."""
+    like ``POST /uploads``, a ``file`` → ``{url, name, size,
+    already_existed}`` like ``POST /upload-file``; 400 while bytes are
+    missing or when it is not what it says. The token is gone afterwards."""
     ws = require_ws(request, write=True)
     session = upload_parts.get(ws, token)
-    doc_id, already_existed = upload_parts.finish(session)
-    return {"doc_id": doc_id, "source_url": pdf_url(doc_id), "size": session.size,
+    stored, already_existed = upload_parts.finish(session)
+    if session.kind == "file":
+        return {"url": f"/api/uploads/{stored}", "name": display_filename(session.name, "file"),
+                "size": session.size, "already_existed": already_existed}
+    return {"doc_id": stored, "source_url": pdf_url(stored), "size": session.size,
             "already_existed": already_existed}
 
 

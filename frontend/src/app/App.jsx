@@ -43,6 +43,7 @@ import { CardLabels, KindToggle, ListFindBox, ListSearchElsewhere, PageCard, Sel
 import { createChatSession } from "../chat/chatSession";
 import { providerModels } from "../chat/modelPrefs";
 import { addPictures, isPdfPicture, pictureUrl, regionBox, regionPicture, round4 } from "../chat/chatPictures.js";
+import { MAX_CHAT_PASSAGES } from "../chat/passageBudget.js";
 // Agent tools whose applied action changes the open page's block tree
 // (handleAgentEvent reloads it and lights the block up).
 import { BLOCK_TOOLS } from "../chat/agentSteps.js";
@@ -51,6 +52,7 @@ import LibraryEmpty from "../library/LibraryEmpty";
 import { ContextMenu, MenuButton, MenuDivider, MenuItem, MenuLabel, MenuScope, MenuSelect, SubMenuItem, menuGroups } from "../shared/ui/Menus";
 import { backdropPress, menuPress } from "../shared/ui/press.js";
 import { lastPointer, touchScreen } from "../shared/lib/pointer.js";
+import { appShell, nativeHost, onHostMessage, postToHost } from "../shared/lib/host.js";
 import { pickFiles } from "../shared/lib/pickFiles.js";
 import { folderPick } from "../transfers/folderZip.js";
 import { bibliographyPreview } from "../transfers/exportApi";
@@ -61,7 +63,7 @@ import {
   ExternalLinkIcon, EyeIcon, EyeOffIcon, FileGlyph, FileIcon, FileTextIcon, FitWidthIcon, FolderGlyph,
   FilePlusIcon, PaperclipIcon, FolderIcon, FolderOpenIcon, FolderPlusIcon, HardDriveIcon, HelpCircleIcon, HomeIcon, ImportIcon, InfoIcon, LabelGlyph, LabelIcon,
   LanguagesIcon, LanguagesOffIcon, LinkIcon, LogOutIcon, MaximizeIcon, MenuIcon, MinimizeIcon, MoveVerticalIcon, PenIcon, PinIcon, PlusIcon,
-  RectSelectIcon, RefreshIcon, SettingsIcon, SparklesIcon, TextCursorIcon, Trash2Icon, TrashIcon, TypeIcon, UploadIcon,
+  RectSelectIcon, RefreshIcon, ServerIcon, SettingsIcon, SparklesIcon, TextCursorIcon, Trash2Icon, TrashIcon, TypeIcon, UploadIcon,
   ScissorsIcon, ShareIcon, UserIcon, UsersIcon, XIcon, ZoomInIcon, ZoomOutIcon, NotebookIcon, SheetIcon, MicIcon,
 } from "../shared/ui/Icons";
 
@@ -247,19 +249,25 @@ function useIsPhone() {
   return UA_MOBILE || mqPhone;
 }
 // Safari on an iPhone or iPad (desktop-class UA plus touch points), not yet
-// running as the installed home-screen app (docs/dev/ipad.md).
+// running as the installed home-screen app or inside the iPad app's shell
+// (docs/dev/ipad.md).
 const HOME_SCREEN_INSTALLABLE = (/iPad|iPhone/.test(navigator.userAgent)
   || (/Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1))
-  && !(window.matchMedia?.("(display-mode: standalone)").matches || navigator.standalone);
+  && !appShell();
 // The installed app paints the status bar with theme-color, so it continues
 // what sits under it: the topbar (chrome, --bg-page), or — on a phone's
 // library with no tab open, where the compact layout drops the topbar — the
 // library itself (content, --bg-surface). Read from the theme variables, not
 // the elements: the topbar's background transitions, and a mid-transition
-// read would lag a theme change.
+// read would lag a theme change. The iPad app's shell takes the same colour
+// for the window behind its web view, and the scheme for its status bar.
 function paintStatusBar(bareTop) {
-  const meta = document.querySelector('meta[name="theme-color"]');
-  if (meta) meta.setAttribute("content", tokenHex(bareTop ? "--bg-surface" : "--bg-page"));
+  const bg = tokenHex(bareTop ? "--bg-surface" : "--bg-page");
+  document.querySelector('meta[name="theme-color"]')?.setAttribute("content", bg);
+  if (nativeHost()) {
+    const scheme = document.documentElement.getAttribute("data-scheme") === "dark" ? "dark" : "light";
+    postToHost({ type: "theme", bg, scheme }).catch(() => {});
+  }
 }
 // A colour token as #rrggbb. Most tokens are color-mix() expressions
 // (tokens.css), which the theme-color meta can't take: the colour is
@@ -2868,15 +2876,28 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // PDF passages the next chat question focuses on, as {text, page, box}
   // (pdf/pdfSelectionSpot.js — where it sits, so the server can place it
   // and picture a formula). Ctrl (additive) appends — whether from text
-  // selection or highlight clicks; plain replaces.
+  // selection or highlight clicks; plain replaces. A passage is kept whole:
+  // how much of it the message quotes is the chat's budget to decide, and
+  // its chip says so (chat/passageBudget.js). One past the most a message
+  // takes is refused with a word, never dropped quietly.
   const [pdfSelections, setPdfSelections] = useState([]);
+  // The viewer's mouseup listener, set up once, reads the set through this.
+  const pdfSelectionsRef = useRef(pdfSelections);
+  useEffect(() => { pdfSelectionsRef.current = pdfSelections; }, [pdfSelections]);
   function addPdfSelection(text, additive, spot) {
-    const part = (text || "").trim().slice(0, 4000);
+    const part = (text || "").trim();
     if (!part) return;
     const item = { text: part, page: spot?.page || 0, box: spot?.box || null };
-    setPdfSelections((prev) => additive
-      ? (prev.some((s) => s.text === part) || prev.length >= 6 ? prev : [...prev, item])
-      : [item]);
+    if (!additive) {
+      setPdfSelections([item]);
+      return;
+    }
+    const held = pdfSelectionsRef.current;
+    if (!held.some((s) => s.text === part) && held.length >= MAX_CHAT_PASSAGES) {
+      setStatus(t("A chat message takes at most {n} PDF passages — remove one to add another.", { n: MAX_CHAT_PASSAGES }));
+      return;
+    }
+    setPdfSelections((prev) => (prev.some((s) => s.text === part) || prev.length >= MAX_CHAT_PASSAGES ? prev : [...prev, item]));
   }
   // Note chips for the next chat message — blocks attached with Ctrl+click /
   // the ⋮⋮ menu's "Add to chat" ({kind: "block", id, text}; the server serves
@@ -2886,11 +2907,21 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // rewrites just that). Cleared on send, like pdfSelections; a page switch
   // drops them (their ids belong to the page).
   const [chatNotes, setChatNotes] = useState([]);
+  const chatNotesRef = useRef(chatNotes);
+  useEffect(() => { chatNotesRef.current = chatNotes; }, [chatNotes]);
+  // A block chip's text is only its preview: the server serves the block
+  // itself, with its sub-blocks, within the message's budget.
   const blockChip = (block) => ({ kind: "block", id: block.id, text: blockChipText(block).slice(0, 4000) });
+  const attachedBlocks = () => chatNotesRef.current.filter((n) => n.kind === "block");
   function addBlockToChat(block) {
     if (!block?.id || block.id === "root") return;
-    setChatNotes((prev) => prev.some((n) => n.kind === "block" && n.id === block.id)
-      ? prev : prev.length >= 12 ? prev : [...prev, blockChip(block)]);
+    const attached = attachedBlocks();
+    if (!attached.some((n) => n.id === block.id) && attached.length >= MAX_CHAT_PASSAGES) {
+      setStatus(t("A chat message takes at most {n} attached blocks — detach one to add another.", { n: MAX_CHAT_PASSAGES }));
+      return;
+    }
+    setChatNotes((prev) => (prev.some((n) => n.kind === "block" && n.id === block.id)
+      || prev.filter((n) => n.kind === "block").length >= MAX_CHAT_PASSAGES ? prev : [...prev, blockChip(block)]));
     setStatus(t("Block attached to your next chat message."));
   }
   // "Transcribe with AI" on a handwriting block: the block goes to the chat
@@ -2900,10 +2931,14 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   const [chatAsk, setChatAsk] = useState(null);
   function transcribeInk(block) {
     if (!block?.id) return;
-    // The block the request is about always goes: at 12 chips the oldest
-    // makes room.
-    setChatNotes((prev) => prev.some((n) => n.kind === "block" && n.id === block.id)
-      ? prev : [...prev.slice(-11), blockChip(block)]);
+    // The block the request is about always goes: with as many blocks
+    // attached as a message takes, the oldest makes room, and says so.
+    const attached = attachedBlocks();
+    if (!attached.some((n) => n.id === block.id)) {
+      const oldest = attached.length >= MAX_CHAT_PASSAGES ? attached[0] : null;
+      setChatNotes((prev) => [...prev.filter((n) => n !== oldest), blockChip(block)]);
+      if (oldest) setStatus(t("The oldest attached block was detached to make room."));
+    }
     showChat();
     setChatAsk({ id: Date.now(), text: t("Transcribe this handwriting into its caption.") });
   }
@@ -2923,8 +2958,13 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       return;
     }
     const note = { kind: "note", id: block.id, from: at.from, to: at.to, text };
-    setChatNotes((prev) => prev.some((n) => n.kind === "note" && n.id === note.id && n.from === note.from && n.to === note.to)
-      || prev.filter((n) => n.kind === "note").length >= 6 ? prev : [...prev, note]);
+    const same = (n) => n.kind === "note" && n.id === note.id && n.from === note.from && n.to === note.to;
+    const notes = (list) => list.filter((n) => n.kind === "note").length;
+    if (!chatNotesRef.current.some(same) && notes(chatNotesRef.current) >= MAX_CHAT_PASSAGES) {
+      setStatus(t("A chat message takes at most {n} note selections — remove one to add another.", { n: MAX_CHAT_PASSAGES }));
+      return;
+    }
+    setChatNotes((prev) => (prev.some(same) || notes(prev) >= MAX_CHAT_PASSAGES ? prev : [...prev, note]));
   }
   useEffect(() => { setChatNotes([]); }, [focusedBlockId]);
   // The open editor's selection, for the chat's Cursor chip, which becomes
@@ -6788,6 +6828,32 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // The viewer is hidden: a PDF closed (never the notebook view's sheets).
   const viewerHidden = !notebook && pdfHidden;
   useEffect(() => { if (!notebook) setPaperMenu(false); }, [notebook]);
+  // The Pencil's double tap and squeeze, forwarded by the iPad app's shell
+  // with the system's preferred action (shared/lib/host.js): the eraser
+  // toggle and the previous tool on the strip, and the armed tool's options
+  // row for the palette and the ink attributes; only where a page takes ink.
+  const inkPrevRef = useRef({ tool: null, previous: null });
+  useEffect(() => {
+    const r = inkPrevRef.current;
+    if (inkUi.tool === r.tool) return;
+    if (r.tool) r.previous = r.tool;
+    r.tool = inkUi.tool;
+  }, [inkUi.tool]);
+  const pencilRef = useRef(null);
+  pencilRef.current = (action) => {
+    if (readOnly || !(((!!pdfUrl || notebook) && !viewerHidden) || nbSheets.length)) return;
+    const pen = inkTools.find((x) => x.id === inkUi.pen)?.id || inkTools[0].id;
+    const { previous } = inkPrevRef.current;
+    const known = ["eraser", "select", "text"].includes(previous) || inkTools.some((x) => x.id === previous);
+    const back = known && previous !== inkUi.tool ? previous : pen;
+    if (action === "switchEraser") pickInkTool(inkUi.tool === "eraser" ? back : "eraser");
+    else if (action === "switchPrevious") pickInkTool(back);
+    else if (action === "showColorPalette" || action === "showInkAttributes") {
+      // With the hand armed the Pencil writes with the stylus pen: its row.
+      setInkUi((s) => (s.tool ? { ...s, open: true, options: !s.options } : { ...s, open: true, tool: pen, options: true }));
+    }
+  };
+  useEffect(() => (nativeHost()?.pencil ? onHostMessage("pencil", ({ action }) => pencilRef.current(action)) : undefined), []);
   // The notes view opens at the reader's place on the sheets (tabScrollRef;
   // the notebook view takes it as `place`), unless a jump to a block is on its
   // way there. Read before that jump's effect spends it, applied once the
@@ -10034,6 +10100,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                 trailing={notices.tone ? <span className={`noticeDot inline ${dotTone(notices.tone)}`} aria-hidden="true" /> : null}>
                 {t("Settings…")}
               </MenuItem>
+              {nativeHost()?.servers ? (
+                <MenuItem icon={ServerIcon} onClick={() => { setOpenPopover(null); postToHost({ type: "servers" }).catch(() => {}); }}
+                  title={t("Connect this app to another Gamma server")}>{t("Server…")}</MenuItem>
+              ) : null}
               <MenuDivider />
               {/* The tours that can start here (guide.startable); a tour
                   whose first step needs no open popover closes this menu. */}

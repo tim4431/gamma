@@ -1513,6 +1513,40 @@ def _v38_recording_kind(ws: str, pages: sqlite3.Connection, data) -> None:
         block_columns(pages)
 
 
+# users.db ``reminders_done`` as schema version 39 shaped it, frozen: step
+# 39 creates it from this.
+_V39_REMINDERS_DONE = """CREATE TABLE IF NOT EXISTS reminders_done (
+        user_id TEXT NOT NULL,
+        key TEXT NOT NULL,
+        workspace_id TEXT NOT NULL DEFAULT '',
+        done_at TEXT NOT NULL,
+        PRIMARY KEY (user_id, key)
+    )"""
+
+
+def _v39_reminders_done(conn: sqlite3.Connection) -> None:
+    """users.db gains ``reminders_done`` (gamma/mentions.py), a row per
+    reminder an account has dismissed, in place of the account-wide
+    ``reminders-done`` pref, one JSON object ``{key: when}`` that kept the
+    latest 500. Each account's pref becomes its rows, under workspace ''
+    (the account's next listing of its reminders places them). Re-runnable:
+    a row there already is kept. The pref rows stay for the release before
+    (rule 6). No workspace is touched."""
+    conn.execute(_V39_REMINDERS_DONE)
+    # keyed by account id since step 25; the tests' v24 copies stamped later are not, and hold none
+    if "user_id" in _columns(conn, "user_prefs"):
+        for user_id, raw in conn.execute("SELECT user_id, value FROM user_prefs "
+                                         "WHERE workspace_id = '' AND key = 'reminders-done'").fetchall():
+            try:
+                marks = json.loads(raw)
+            except ValueError:
+                continue
+            if isinstance(marks, dict):
+                conn.executemany("INSERT OR IGNORE INTO reminders_done (user_id, key, done_at) VALUES (?, ?, ?)",
+                                 [(user_id, key, str(at)) for key, at in marks.items()])
+    conn.commit()
+
+
 STEPS = [
     (20, "guest_accounts", _v20_guest_accounts),
     (21, "folder_shares", _v21_folder_shares),
@@ -1530,6 +1564,8 @@ STEPS = [
     (33, "page_ops_batch_id", _v33_page_ops_batch_id),
     (35, "folder_links", _v35_folder_links),
     (36, "folder_links_remote", _v36_folder_links_remote),
+    # Next release: a global step deletes the user_prefs rows of the reminders-done key (39 kept them).
+    (39, "reminders_done", _v39_reminders_done),
 ]
 
 # The workspace parts of the steps from version 34 on: (version, name,

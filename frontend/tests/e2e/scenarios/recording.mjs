@@ -144,6 +144,45 @@ export async function recordingScenarios({ server, browser, alice, makePdf, step
     await until(async () => (await page.$$(".blockRow.replayReached")).length >= 1, { what: "the note reached", timeout: 15000 });
     await until(async () => !(await page.$('[data-page="1"] .inkLayer .inkPending')), { what: "the stroke reached", timeout: 15000 });
     await until(async () => (await page.$("button[aria-label='Play (Space)']")) !== null, { what: "the player holds at the end", timeout: 15000 });
+    // The bar's tooltips stay off its open menus, with no gap between the
+    // two: the press itself swaps the trigger's tooltip for the menu (the
+    // click that follows on release would leave the press's length of
+    // nothing in between), keeps the tooltip away while the pointer stays on
+    // the button, and the menu's own rows raise none of their own over it.
+    // The bar lifted well off the window's bottom (a layout with a window
+    // docked under the viewer), where a tip would otherwise go below: the
+    // bar's tips stay above, on the side its menus open.
+    const lift = await page.addStyleTag({ content: ".replayBar { bottom: 160px !important; }" });
+    await page.hover(".replayBar .replayPlay");
+    const modeBtn = await page.locator(".replayBar button[data-role='mode']").boundingBox();
+    const onMode = (dx = 0, dy = 0) => page.mouse.move(modeBtn.x + modeBtn.width / 2 + dx, modeBtn.y + modeBtn.height / 2 + dy);
+    await onMode();
+    await until(async () => !!(await page.$(".inkTooltip")), { what: "the mode button's tooltip" });
+    const tip = await page.locator(".inkTooltip").boundingBox();
+    assert(tip.y + tip.height <= modeBtn.y, `the tip sits above the button, where the menu opens: tip ${JSON.stringify(tip)}, button ${JSON.stringify(modeBtn)}`);
+    await page.mouse.down();
+    const held = await page.evaluate(() => ({ tooltip: !!document.querySelector(".inkTooltip"), menu: !!document.querySelector(".ctxMenu") }));
+    assert(held.menu && !held.tooltip, `the press swaps the tooltip for the menu at once: ${JSON.stringify(held)}`);
+    await page.mouse.up();
+    await page.waitForSelector(".ctxMenu .ctxMenuItem", { timeout: 5000 });
+    await onMode(9, 0);                   // the smallest move a hand makes, off the glyph
+    await sleep(500);
+    assert(!(await page.$(".inkTooltip")), "the press keeps the trigger's tooltip away while the pointer stays on it");
+    for (const row of await page.locator(".ctxMenu .ctxMenuItem").all()) await row.hover();
+    await sleep(500);
+    assert(!(await page.$(".inkTooltip")), "no tooltip of the bar's covers the open mode menu");
+    await onMode();
+    await page.mouse.down(); await page.mouse.up();
+    await until(async () => !(await page.$(".ctxMenu")), { what: "mode menu closed by a second press" });
+    // Enter (a click with no press behind it) opens it too; Escape closes
+    // the menu and leaves the player.
+    await page.focus(".replayBar button[data-role='mode']");
+    await page.keyboard.press("Enter");
+    await page.waitForSelector(".ctxMenu .ctxMenuItem", { timeout: 5000 });
+    await page.keyboard.press("Escape");
+    await until(async () => !(await page.$(".ctxMenu")), { what: "mode menu closed by Escape" });
+    assert(await page.$(".replayBar"), "Escape on the open menu leaves the player");
+    await lift.evaluate((el) => el.remove());
     // back to the start, then a tap on the stroke plays from just before it was written
     await page.$eval(".replayScrub input[type='range']", (el) => {
       Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set.call(el, "0");

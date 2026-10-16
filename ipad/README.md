@@ -1,91 +1,174 @@
 # Gamma for iPad
 
-A native iPad app that keeps a copy of one workspace of a Gamma server on
-the iPad, reads its PDFs and notebooks, writes on them with Apple Pencil,
-and syncs with the server whenever it can reach it. Everything else Gamma
-does (search, AI chat, sharing, settings) stays in the web app, which the
-app opens in a web view.
+The iPad app is a shell over Gamma's web app. It shows a server's own
+interface in one web view and adds what Safari cannot give that web app:
+Apple Pencil strokes captured natively, the Pencil's double tap and
+squeeze, a Gamma Cloud sign-in that works with Google, and a Gamma server
+of its own inside the app ("This iPad"), so it works with no connection.
+Every page, tool and setting is the web app's, so a web feature reaches
+the iPad with no work here.
 
-The developer documentation for the whole design is
-[docs/dev/ipad.md](../docs/dev/ipad.md). This file covers building and
-running the app.
+The design, the host contract, the local server and the device checks are
+in [docs/dev/ipad.md](../docs/dev/ipad.md). The survey that chose this
+shape is [docs/research/ipad-web-shell.md](../docs/research/ipad-web-shell.md).
+This file covers how the app is put together, building it, and its tests.
 
 ## How it is put together
 
-The app has no server of its own and no second implementation of Gamma's
-rules. Two layers do the work:
+The web app is the one owner of the page. Native code never holds a page,
+a stroke, a tool or a token. It is a window, an input device, a preview
+layer and a process manager, and nothing in Swift knows what a block is.
+There are three parts:
 
-- **JavaScript core.** The web app's own modules run in JavaScriptCore:
-  the ink codec and geometry (`frontend/src/ink/ink.js`), the notebook
-  rules (`frontend/src/notebook/notebook.js`), the note editor's text
-  commands (`frontend/src/editor/markCommands.js`, `slashInserts.js`), and
-  the replica (`frontend/src/replica/`). The replica is the desktop
-  mirror's sync protocol and merges, ported to run on a device. `core/entry.js` is the
-  bundle's entry, and `scripts/build-core.mjs` bundles it into
-  `GammaIPad/Resources/gamma-core.js`.
-- **Swift host.** It stores, draws and talks to the network, and makes no
-  decisions. The core calls one function, `invoke(method, argsJSON)`,
-  which `Core/Replica.swift` answers from SQLite (`Core/Store.swift`), the
-  files (`Core/FileStore.swift`) and HTTP (`Core/Remote.swift`).
-  `Core/GammaCore.swift` runs two contexts: one for sync rounds and one
-  for the editors, so drawing never waits for the network.
+- **The shell** (`Shell/`). One `WKWebView`, made once and kept, shows the
+  chosen server's web app. A user script declares the host before the
+  bundle runs, and the page and the app talk through a small message
+  vocabulary (`Bridge.swift` here, `frontend/src/shared/lib/host.js`
+  there, changed together). Other sites, downloads and the Gamma Cloud
+  sign-in leave the web view for the system's own sheets.
+- **The Pencil layer** (`Pencil/`). A recognizer on the web view's
+  container records every Pencil touch. The page's ink layer decides what
+  a touch is and claims a stroke; the recognizer then takes the touch,
+  draws the live line and hands the samples back, and the page saves them
+  through its own path ([docs/dev/ipad.md "The pen"](../docs/dev/ipad.md#the-pen)).
+- **The server on the device** (`Server/`, `python/`, `scripts/`).
+  CPython 3.13 for iOS runs the backend from `backend/`, unchanged, on
+  `127.0.0.1`, as the desktop app runs its sidecar, and serves the web app
+  built from `frontend/`. Offline copies of another server's workspaces
+  are Gamma's own clones, made in the web app
+  ([docs/dev/ipad.md "The local server"](../docs/dev/ipad.md#the-local-server)).
 
-| Folder | What it holds |
+| File | What it does |
 |---|---|
-| `GammaIPad/App` | The app entry and the model: connection, replica, sync cadence |
-| `GammaIPad/Core` | The JavaScript bridge, the host, the store, files, HTTP, Keychain |
-| `GammaIPad/Views` | Connect (web sign-in, workspace, token), library, page, notes and their editing bar, web view |
-| `GammaIPad/Reader` | The PDF reader (PDFKit with ink overlays) and the notebook |
-| `GammaIPad/Ink` | The ink session (groups, undo, save), the drawing view, the Pencil recognizer, the tool strip |
-| `GammaIPadTests` | XCTest: store semantics, file names, the bundled core through the host |
-| `core/`, `scripts/` | The bundle entry, its build, and its test in a bare JavaScript context |
+| `App/GammaApp.swift` | The entry: the server picker until a server is chosen, then the shell, covered by a page of its own while the local server starts or when it could not; checks the local server again when the app is active again |
+| `App/AppModel.swift` | The server shown, "This iPad" or another server by address, and the other servers, in `UserDefaults` |
+| `Views/ServersView.swift` | The server picker, at first launch and when the web app asks for it: "This iPad" (status, address, data size, the account, the log's tail after a failed start), the other servers with reachability dots, edit and remove, and an add form; also the page over the shell while the local server starts |
+| `Server/LocalServer.swift` | The local server: the port, the data directory (`Documents/Gamma/local`, visible in Files), the seeded account, the environment, the wait for `/api/health` |
+| `Server/PythonRuntime.swift` | The embedded CPython: configured and started once on a thread of its own, running `gamma_ios.main()` |
+| `Server/Keychain.swift` | The seeded account's password in the Keychain |
+| `Server/GammaIPad-Bridging-Header.h` | Python's C API for Swift |
+| `Shell/ShellView.swift` | The window: the web view, the live stroke over it, the Pencil layer on their container, a page of its own when the server cannot be reached |
+| `Shell/WebShell.swift` | The one `WKWebView`, set up once: desktop content mode, no bounce, no inset adjustment, inspectable in Debug builds, reloaded when the system ends its process; the silent sign-in to the local server |
+| `Shell/Bridge.swift` | The message vocabulary as Codable types, the handler the page posts to, and `send` back. The only file that knows the protocol |
+| `Shell/Navigation.swift` | Other sites and `target=_blank` in a Safari view, downloads to the share sheet, the microphone for recordings, the Gamma Cloud start handed to `CloudSignIn` |
+| `Shell/CloudSignIn.swift` | The desktop app's Gamma Cloud sign-in (`app-start`, a loopback return, `app-claim`) through a system browser sheet |
+| `Pencil/PencilCapture.swift` | The recognizer that takes a Pencil touch once the web claims it, and the pure parts it uses (claim matching, sampling) |
+| `Pencil/LiveStrokeView.swift` | The stroke being drawn, as a plain line, until the web has painted it |
+| `Pencil/PencilGestures.swift` | The double tap and the squeeze, forwarded with the system's preferred action |
+| `python/gamma_ios.py` | The server's entry on the device: output to the log, then uvicorn on `127.0.0.1` at `GAMMA_PORT` |
+| `python/requirements-ios.txt` | The server's dependencies as the iPad installs them |
+| `scripts/build-python.sh` | Prepares Python, the wheels, the server code and the web app for the bundle (below) |
+| `project.yml` | The XcodeGen project, with the build phases that run the script and install Python into the bundle |
 
 ## Build and run
 
-You need a Mac with Xcode 16 or newer, Node 22 or newer, and
-[XcodeGen](https://github.com/yonaskolb/XcodeGen).
+You need a Mac with Xcode 16 or newer,
+[XcodeGen](https://github.com/yonaskolb/XcodeGen), Node.js (for the web
+app) and a Python 3.13 on the `PATH` as `python3.13` (Homebrew's or
+python.org's). From the repository's root:
 
 ```bash
-cd frontend && npm ci && cd ..      # the web app's dependencies (esbuild, perfect-freehand, …)
-node ipad/scripts/build-core.mjs    # bundle the JavaScript (the build also does this)
-node --test ipad/scripts/core.test.mjs
+bash ipad/scripts/build-python.sh   # once from a shell, before the first build
 cd ipad
 xcodegen generate                   # makes GammaIPad.xcodeproj from project.yml
 open GammaIPad.xcodeproj
 ```
 
+The script has to run once from a shell before the first build, because
+Xcode reads `Python.xcframework` when it plans a build. After that, Xcode
+runs it before each build, and it is quick when nothing changed. Call it
+through `bash`: its executable bit does not survive a commit from a
+Windows checkout.
+
 Pick an iPad simulator or your iPad, set your development team under
 Signing & Capabilities, and run. The project targets iPadOS 17 and iPad
-only.
+only. The simulator wheels are arm64, so the simulator needs an Apple
+Silicon Mac. A build for more than one architecture (a Release build for
+the simulator) needs `ONLY_ACTIVE_ARCH=YES`, because `install_python`
+copies one architecture's standard library.
 
-In the app, enter your server's address and sign in on its own page. Any
-sign-in the server offers works. Then choose a workspace. The app mints a
-write token for that workspace, the credential a desktop clone uses, and
-keeps it in the Keychain. The first sync brings the workspace over,
-including every PDF.
+In the app, open **This iPad**, or enter another server's address and
+sign in on its own page. The account menu's "Server…" row, or the
+"Server…" link on the sign-in page, brings the picker back. A server
+reached over plain `http` must be on the local network, because App
+Transport Security allows local networking only; use `https` otherwise.
+In a Debug build, Safari's Web Inspector on a Mac opens the page (Develop
+→ your iPad).
 
-A server reached over plain `http` must be on the local network (App
-Transport Security allows local networking only). Use `https` otherwise.
+### Python on the device
+
+`scripts/build-python.sh` makes everything the server on the device
+needs, all of it generated and gitignored (`ipad/.gitignore`):
+
+| Output | What it is |
+|---|---|
+| `Python.xcframework/` | CPython 3.13.16 for iOS, BeeWare's [Python-Apple-support](https://github.com/beeware/Python-Apple-support) `3.13-b16`, downloaded once and checked against the sha256 pinned in the script |
+| `GammaIPad/Resources/python/app_packages.iphoneos/` | The server's dependencies as iOS device wheels |
+| `GammaIPad/Resources/python/app_packages.iphonesimulator/` | The same as simulator wheels; a build takes the one for its platform |
+| `GammaIPad/Resources/python/app/` | `backend/app.py`, `backend/gamma/` and `python/gamma_ios.py`, with bytecode compiled for the device |
+| `GammaIPad/Resources/python/frontend_dist/` | The built web app the local server serves |
+
+```bash
+bash ipad/scripts/build-python.sh           # prepare everything (macOS)
+bash ipad/scripts/build-python.sh --check   # only check that every pin resolves, for both platforms (macOS or Linux, no Xcode)
+```
+
+- **The cache.** The tarball, pip's cache and the pip the script runs
+  live in `~/Library/Caches/gamma-ipad` (`GAMMA_IPAD_CACHE` moves it).
+  The wheels are reinstalled only when `python/requirements-ios.txt` or
+  the pip flags change, and the copies are rsyncs.
+- **pip's Python.** pip runs from a venv the script makes in the cache,
+  so the Mac's own Python is never touched. The venv is made from
+  `python3.13` when there is one (`GAMMA_IPAD_PYTHON` names another),
+  because pip evaluates environment markers for the Python it runs under.
+  A venv made from another Python stays until it is deleted.
+- **Bytecode.** The same Python compiles the standard library, the wheels
+  and the server code, because the device writes no bytecode (its bundle
+  is read-only) and would otherwise compile them all at each launch. That
+  needs a 3.13; with another Python the script warns and ships source
+  only.
+- **The web app** is rebuilt through `tools/build_frontend_if_needed.mjs`
+  when `frontend/` changed, which runs `npm run build` and so empties
+  `frontend/dist` for its duration (a dev server serving that folder on
+  the same Mac shows errors meanwhile). The script runs `npm ci` first
+  when `node_modules` is missing or older than the lockfile, and adds
+  Homebrew's folders to the `PATH`, which Xcode's build scripts lack.
+  Without Node, a copy built before is kept with a warning.
+
+In the build, a post-build phase copies the server code, the web app and
+the platform's wheels into the bundle, then runs the support package's
+`install_python`, which adds the standard library and makes each native
+module a signed framework. Unsigned builds sign those ad hoc.
+
+`python/requirements-ios.txt` is `backend/requirements.txt` with the
+changes an iOS wheel needs, each commented there; why each was made, and
+what going without `pypdfium2` costs, is in
+[docs/dev/ipad.md "The wheels"](../docs/dev/ipad.md#the-wheels).
 
 ## Tests
 
-- `node --test ipad/scripts/core.test.mjs` runs the bundle the way
-  JavaScriptCore does, with no browser or Node globals.
-- `xcodebuild test -scheme GammaIPad -destination 'platform=iOS Simulator,name=<an iPad>'`
-  runs the XCTest suite.
-- The sync rules are tested against a real server by the web app's
-  browser suite, in group `replica` (`cd frontend && npm run e2e -- --group replica`).
-  The pure rules also have shared fixtures that the Python engine passes
-  too (`tests/shared/synctree.json`, `textmerge.json`, `inkmerge.json`).
-- CI runs all of it on macOS: `.github/workflows/ipad.yml`.
+- The XCTest suite, on a simulator:
 
-## Not built yet
+  ```bash
+  cd ipad
+  xcodebuild test -project GammaIPad.xcodeproj -scheme GammaIPad \
+    -destination 'platform=iOS Simulator,name=<an iPad>' ONLY_ACTIVE_ARCH=YES ARCHS=arm64
+  ```
 
-- Text selection makes no highlight. PDFKit selects text, and the
-  highlight is made in the web view.
-- The lasso, the partial eraser, and moving or restyling strokes exist in
-  the web app only. The iPad has pens, highlighters, the whole-stroke
-  eraser, undo and redo.
-- Every PDF of the workspace is downloaded. A per-page "keep offline"
-  choice is not built.
-- Sync runs while the app is in front. Background refresh is not built.
+  It covers the pure parts (`BridgeTests`, `CloudSignInTests`,
+  `PencilTests`, `ShellTests`, `ServerTests`), and `LocalServerStartTests`
+  starts the embedded server and waits for `/api/health`, so it needs the
+  Python step to have run.
+- Without a Mac: `backend/tests/test_ios_requirements.py` (the iOS
+  requirements keep up with the server's), a unit test for `host.js`, and
+  the `ipad` browser group, which fakes the host and checks a claimed
+  stroke is saved (`cd frontend && npm run e2e -- --group ipad`).
+- How the recognizer lives among WebKit's own recognizers, and how the
+  server fares on a real iPad, need a device. What each test covers and
+  the list of device checks are in [docs/dev/ipad.md](../docs/dev/ipad.md#tests).
+- CI prepares the bundle, generates the project, runs the tests and makes
+  an unsigned device build on macOS: `.github/workflows/ipad.yml`
+  ([docs/dev/github_actions.md](../docs/dev/github_actions.md#ipadyml)).
+
+What is not built yet (background running, a store release, pypdfium2)
+is listed in [docs/dev/ipad.md](../docs/dev/ipad.md#not-built-yet).

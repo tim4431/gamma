@@ -379,8 +379,12 @@ so one tap cannot toggle twice. Mouse and keyboard keep the plain click path.
 
 ### Menus and submenus
 
-Every cursor-anchored menu is a `ContextMenu`; every row inside one is a
-`MenuItem` (icon column, ellipsizing label, optional `trailing` node or
+Every cursor-anchored menu is a `ContextMenu`. It measures itself and is
+clamped inside the viewport; `anchorRight` / `anchorBottom` take the point
+as its right or bottom edge, `flipY` is the other side of what it opens
+from, taken when its own side has no room, and `bounds` a band it stays in
+([below](#menus-and-popups-open-in-place)). Every row inside one
+is a `MenuItem` (icon column, ellipsizing label, optional `trailing` node or
 `keys` — the row's shortcut, e.g. the page menu's Enter / F2 / Del —
 `danger` for destructive actions). Groups of rows are separated by
 `MenuDivider`; `menuGroups(...groups)` drops empty groups and puts one
@@ -417,6 +421,41 @@ is what lets a diagonal move into the flyout pass over the rows below the
 trigger without closing it. The module is plain geometry plus a `useMenuAim`
 hook (`setTarget` / `guard` / `keep`) — any other menu surface can adopt it
 without going through `shared/ui/Menus.jsx`.
+
+### Menus and popups open in place
+
+A floating surface is first seen where it stays: never on one side of its
+anchor and then the other, never over its button and then above it, never
+grown in place and then moved. A surface placed from its own size knows
+that size only once it is laid out, so
+[placement.js](../../frontend/src/shared/ui/placement.js) holds the one way
+to place it:
+
+- `placeFloating(size, {x, y, anchorRight, anchorBottom, flipY, bounds})`
+  is the pure geometry (`tests/placement.test.mjs`): its own side of the
+  point, the other side (`flipY`) when its own has no room and that one
+  has, then inside the window and the `bounds` band.
+- `useFloatingPosition(ref, place, deps, {follow})` measures and places it
+  in a layout effect, before the browser paints it, and returns null until
+  then, while the surface stands hidden. When its size changes later (a row
+  of options opens, a translation streams in), the window's does, or, with
+  `follow`, the page scrolls, it is placed again in that same frame
+  (`flushSync`).
+
+The rule behind the second half: a state update from a ResizeObserver, a
+scroll listener, a `requestAnimationFrame` or a passive effect renders
+only after the browser has painted, so a position set there shows one
+frame of the surface where it stood. The side is chosen by the surface
+itself, from its measured size, never by a caller from a guessed one: the
+handwriting and text box menus give `ContextMenu` the selection's edges
+(`useSelectionMenuAnchor`) and it picks above or below. `ContextMenu`, the
+PDF selection popup (`TipFrame`) and the caret-anchored popups
+(`useCaretAnchored`: "/", `[[`, `@`, the LaTeX completion and preview) are
+built on it; the guide card's anchor is measured the same way
+(`GuideOverlay`). A surface placed in its event handler before it renders
+(the tooltips, the citation preview) or by CSS under its button (the
+popovers) has nothing to correct. The browser suite's
+`assertOpensInPlace` (harness.mjs) checks a surface frame by frame.
 
 ### Dialogs
 
@@ -802,7 +841,7 @@ the ordinary row editor. The card footer navigates to the source.
 | `editor/clickToSource.js` | maps the rendered view back to the raw source by text (the layouts differ too much for coordinates): the clicked character a new editor opens on (`sourceOffsetAtPoint`), the gap line between two rendered blocks (`renderedBlocks`, `renderedGaps`, `blockStartInSource`, `gapInSource`), a Ctrl-selection's source range for the chat (`sourceRangeOfSelection`), and other people's carets placed on the rendered view (`renderedCaretRect`, via `locateInRendered`); `locateInSource` / `locateInRendered` / `gapInSource` are pure and unit-tested |
 | `editor/mdMarks.js` | the inline-mark table (regex + class per marker) shared by the live renderer and the hotkeys, plus the pure `toggleMark`/`insertLink` transforms (wrap / unwrap / empty pair / per-line for multi-line selections). `scanMarks` allows proper nesting (`**a *b* c**`, `*a **b** c*`; nothing inside inline code) and treats `***x***` as one bold+italic span with two `layers`, so Ctrl+B and Ctrl+I each peel off their own delimiters |
 | `editor/mdLines.js` | the pure structure of a note's lines (`tests/mdLines.test.mjs`): `parseLine` splits one into where it sits (quote marks, nested `> > `, and indentation) and what it is (a bullet, number, to-do, heading or a callout's `[!type]` title) and its text, and everything else works on that. `enterPlan` is the line-break Enter's Obsidian-style continuation (`> - [x] ` continues as `> - [ ] `; on an empty item the list ends, then a quote level); `pastePlacements` moves pasted lines to the level of the line they land on (the clipboard bullet above); `retypeLine` is the "/" menu's line commands, which swap what a line is and keep where it sits (`/todo` on `> - item` is `> - [ ] item`; `/quote` adds a quote level; `/callout` turns the quote the line starts into a callout, else starts a box there, one level in); `toggleQuotePlan` is Toggle quote (Ctrl+Shift+.) over the selected lines. Every line of a quote carries its marks, a blank one a bare `>`, so it stays one box here, in Obsidian and on GitHub |
-| `editor/slashCommands.js`, `editor/SlashMenu.jsx` (their text-only insertions in `editor/slashInserts.js`, which the iPad app runs too) | the "/" command catalog and its matching (pure, `tests/slashCommands.test.mjs`): headings, to-do, lists, quote, callout, divider, equations, `/page` (a new library page, linked) and `/note` (a sheet of paper), table, code, mermaid, image, date, link, embed, highlight, and the `hidden` text/background color commands from `mdMarks.TEXT_COLORS` that show only when the query matches. The bare "/" list is the catalog in order under the `SLASH_GROUPS` titles (Text, Math, Insert, Link, Style); a typed query is one ranked list, by tier: the command's own name, a name it begins, a word of its label it begins, a keyword it begins, then a VS Code-style fuzzy match of the name or label (anchored on the first letter, jumping to word starts: `/cb` → Code block), like the `\command` completion's ([latex_editing.md](latex_editing.md)). A command that `needs` an ability (`newPage`, `sheet`) is left out where the editor lacks it (`filterSlashCommands`' `can`: a share's editor makes no library page). `SlashMenuPopup` draws a row as an icon tile (`MENU_ICONS` by the item's `icon` key; the colors keep a tinted "A" `glyph`), the label over a one-line description, and the `/name` to type at the right, the matched letters marked with search's `mark.searchMark` in the name or the label, wherever they matched; a key-hint footer (Tab or Enter inserts). The same popup is the "Paste as" chooser shown after a URL paste (gamma block link → mention/synced block/URL, other URLs → URL/titled link), without names; blockTree owns trigger detection and key handling |
+| `editor/slashCommands.js`, `editor/SlashMenu.jsx` (their text-only insertions in `editor/slashInserts.js`) | the "/" command catalog and its matching (pure, `tests/slashCommands.test.mjs`): headings, to-do, lists, quote, callout, divider, equations, `/page` (a new library page, linked) and `/note` (a sheet of paper), table, code, mermaid, image, date, link, embed, highlight, and the `hidden` text/background color commands from `mdMarks.TEXT_COLORS` that show only when the query matches. The bare "/" list is the catalog in order under the `SLASH_GROUPS` titles (Text, Math, Insert, Link, Style); a typed query is one ranked list, by tier: the command's own name, a name it begins, a word of its label it begins, a keyword it begins, then a VS Code-style fuzzy match of the name or label (anchored on the first letter, jumping to word starts: `/cb` → Code block), like the `\command` completion's ([latex_editing.md](latex_editing.md)). A command that `needs` an ability (`newPage`, `sheet`) is left out where the editor lacks it (`filterSlashCommands`' `can`: a share's editor makes no library page). `SlashMenuPopup` draws a row as an icon tile (`MENU_ICONS` by the item's `icon` key; the colors keep a tinted "A" `glyph`), the label over a one-line description, and the `/name` to type at the right, the matched letters marked with search's `mark.searchMark` in the name or the label, wherever they matched; a key-hint footer (Tab or Enter inserts). The same popup is the "Paste as" chooser shown after a URL paste (gamma block link → mention/synced block/URL, other URLs → URL/titled link), without names; blockTree owns trigger detection and key handling |
 | `editor/RefPicker.jsx`, `editor/refLists.js` | the `[[` link picker: a caret-anchored popup (the "/" menu's placement) with pages matched by title (`rankRefPages`, the library matcher) above note blocks from `/api/block-search`, each block one plain line under its page path (`refBlockText` / `refBlockPath`, search's `plainSnippet`); when that search stopped at the server's time budget (`partial`) the key-hint footer leads with a "stopped early" line; the typed text is marked with search's `MarkedText` and a page row says `pageKindLabel()` ("Page" / "PDF"), as Search, Quick Open and the library do. `pageByTitle` is the hand-typed rule: `[[title]]` closed by hand becomes `[[id]]` when exactly one page has that title, else it renders as a dashed `.unlinkedRef` chip. blockTree owns the trigger, the keys and the insertion |
 | `editor/mentions.js`, `editor/MentionMenu.jsx`, `app/useReminders.js`, `app/ReminderAlerts.jsx` | the `@` menu and mentions ([mentions.md](mentions.md)): the pure syntax, date words, rows and chip text (`mentions.js`); the popup on the `[[` picker's surface and rows (`refPopup mentionMenu`; Date, People with a `PeerAvatar` each, Link to page with the folder path as the meta line; a row's aside such as "(You)" muted in `.mentionAside`); the chip (`.mentionChip`, the ref chip's shape in the quiet fill, a reminder accent-coloured behind a masked alarm clock, red once due), drawn by the rendered view and the editor alike; the due reminders as `.reminderCard`s on the floating surface in the bottom right corner (Open a `uiBtn sm`, dismiss a `uiClose uiCloseSm`) |
 | `editor/BacklinksPanel.jsx` | "Linked from N pages" under a page's notes: App's `/blocks/{id}/backlinks` list grouped by page, each linking block a three-line rendered snippet; a click opens its page at the block (`openBlockLink`, a link jump); the section is off until the account turns it on (`backlinksVisible`, Settings → Reading & editing › Notes — off, no backlinks are fetched), and its fold is the browser pref `backlinksCollapsed` |

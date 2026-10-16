@@ -24,10 +24,21 @@ blocks and how they nest:
 
 import re
 
-# blocks per document — a runaway guard, far above any real notes file
-MAX_BLOCKS = 5000
+# blocks per document. A 5 MB file of real notes holds about 100,000; only
+# one of nothing but very short lines gets past this (a 5 MB file of "- x"
+# lines is 1.3 million blocks: a minute and a gigabyte to write, a page no
+# editor opens). Such a document is refused, as one past the size cap is.
+MAX_BLOCKS = 200_000
 # one .md file (upload or zip member)
 MAX_MARKDOWN_BYTES = 5 * 1024 * 1024
+
+
+class TooManyBlocks(ValueError):
+    """The document parses into more than MAX_BLOCKS blocks."""
+
+    def __init__(self):
+        super().__init__(f"more than {MAX_BLOCKS:,} blocks")
+
 
 _FRONTMATTER_RE = re.compile(r"^---[ \t]*\n(.*?)\n(?:---|\.\.\.)[ \t]*(?:\n|$)", re.S)
 _HEADING_RE = re.compile(r"^(#{1,6})\s+\S")
@@ -129,7 +140,8 @@ _CALLOUT_FOLD_RE = re.compile(r"^(\s*(?:>\s*)+\[![^\]\n]+\])[+-](?=\s|$)", re.M)
 
 
 def md_to_blocks(text: str) -> list:
-    """Parse markdown into a tree of ``{"content": str, "children": [...]}``."""
+    """Parse markdown into a tree of ``{"content": str, "children": [...]}``.
+    Raises TooManyBlocks past MAX_BLOCKS blocks, where it stops reading."""
     text = _CALLOUT_FOLD_RE.sub(r"\1", text)
     lines = text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
     root = {"content": "", "children": []}
@@ -141,18 +153,18 @@ def md_to_blocks(text: str) -> list:
     count = 0
 
     def flush_para():
-        nonlocal para, count
-        if para and count < MAX_BLOCKS:
-            para_target["children"].append({"content": "\n".join(para).strip(), "children": []})
-            count += 1
+        nonlocal para
+        if para:
+            add(para_target, "\n".join(para).strip())
         para = []
 
     def add(parent, content):
         nonlocal count
+        count += 1
+        if count > MAX_BLOCKS:
+            raise TooManyBlocks()
         node = {"content": content, "children": []}
-        if count < MAX_BLOCKS:
-            parent["children"].append(node)
-            count += 1
+        parent["children"].append(node)
         return node
 
     i = 0

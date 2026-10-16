@@ -28,7 +28,8 @@ points (the page box once, the quads as bare rects, `area: true` for a
 /Square or /Circle; [api.md](api.md) "The highlight shape") under a block
 id of its own, which is the highlight's id — idempotent via `properties.imported_annot`
 keys; opacity honors the annotation's `/CA` so a Gamma export → re-import
-round-trips exact colors; PyPDF2 dict access returns `IndirectObject`s, always
+round-trips exact colors, and each channel is rounded, not truncated (an
+app that writes 0.831 means 212); PyPDF2 dict access returns `IndirectObject`s, always
 `.get_object()` them. `/Ink` (freehand drawings from any PDF app, or a Gamma
 export) becomes a handwriting block: the strokes are stored as an `.ink`
 upload (`gamma/ink.py`), the block gets `ink_url` / `ink_strokes` /
@@ -129,7 +130,12 @@ share one review flow: Upload → Review → Import → Summary.
   destination folder's id, `""` the library's top; 400 when it is no
   folder, `import_review.destination`) and `strip`.
   It stages the upload, runs the source's preview and returns the two trees
-  plus a `review_id`; `DELETE` discards it.
+  plus a `review_id`; `DELETE` discards it. An upload past 32 MiB comes in
+  parts instead (`POST /api/import/review/parts`, [api.md](api.md)), the
+  protocol of a PDF's upload in parts ([user_db.md](user_db.md) "Stored
+  files"), since a proxy in front of the server caps a request's body
+  (Cloudflare at 100 MB): the parts are appended to the staged upload, and
+  finishing answers with the preview, as the single request does.
 - The import itself is a background job ([tasks.md](tasks.md)):
   `POST /api/jobs/import` with `{review_id, selected: [...]}` imports from
   the staged upload against the current library, reporting each item; its
@@ -144,8 +150,11 @@ share one review flow: Upload → Review → Import → Summary.
   swept on the next upload). The import job holds a claim (`running/`
   mkdir; a `DELETE` meanwhile answers 409) while it reads the upload, and
   removes the review when it ends — done, failed or stopped. Staging has
-  its own 1 GB cap (`import_staging.MAX_BYTES`) and is not metered by the
-  account quota.
+  no size cap and is not metered by the account quota; an upload that would
+  leave the disk with less than 1 GB free is refused (507,
+  `import_staging.MIN_FREE_BYTES`). A review expires two hours after its
+  last activity (a part, a claim), so a long upload in parts does not run
+  out.
 - Selection ids are source ids (`page:<id>` / `chat:<id>` for a Gamma
   export, Zotero item keys, ...); duplicate Zotero records share
   `selection_ids`. `parse_selection` (`gamma/import_review.py`): `None`
@@ -158,7 +167,10 @@ share one review flow: Upload → Review → Import → Summary.
   the job runs, and the job's row in Background tasks opens it again on that
   job (`{jobId}`, no file: the summary then shows the library column only).
   `ImportTree.jsx` renders one tree with its checkboxes (a folder toggles
-  its descendants); `importReview.js` owns selection, filters and tree
+  its descendants). A tree of more than 300 files (a vault) starts with its
+  folders closed, a closed folder's rows are made only once it opens, and
+  a list shows 300 files at a time, so 20,000 notes open and click as fast
+  as a few; `importReview.js` owns selection, filters and tree
   construction (filters only hide rows; hidden selections stay selected);
   `importApi.js` the upload, the job's body and the discard;
   `shared/lib/xhrUpload.js` the upload progress.
@@ -185,6 +197,15 @@ indented deeper after a blank line becomes a child block, which is how Notion
 exports a toggle's content. In mixed folder uploads, Markdown note pages and PDF pages
 are filed in the same subfolders; unsupported files are skipped.
 `POST /api/import/markdown` answers the page's `folders` (ids).
+
+A document past 5 MB, or past 200,000 blocks (`markdown_import.MAX_BLOCKS`),
+is refused with a 413 that says which, never cut short. A 5 MB file of real
+notes holds about 100,000 blocks (one of 50,000 parses in 0.2 s and imports
+in 2.5 s); only a file of nothing but very short lines gets past the block
+cap, and a 5 MB one of `- x` lines would be 1.3 million blocks, a minute and
+about a gigabyte to write. The editor's paste as blocks
+(`POST /api/markdown-blocks`) has the same two caps: a paste past them stays
+text, and the status line says so.
 
 ## Markdown zips: Obsidian vaults, Notion exports, Gamma exports, zipped notes
 
@@ -216,9 +237,12 @@ folder of notes, because they only differ in naming and link conventions
   and labels the chosen new notes need are made once, before any page is
   written (one committed batch per tree): an import that stops keeps them.
   A preview makes none. One common root directory (a zipped folder)
-  and Notion's `Export-<uuid>/` wrappers are dropped; Notion's `Part-N.zip`
-  members (big exports) are read in place; `.obsidian/`, `.trash/` and
-  `.canvas` files are skipped (a canvas is a warning).
+  and Notion's `Export-<uuid>/` wrappers are dropped; zips inside the zip
+  (Notion's `Part-N.zip` members of a big export) are read in place, each
+  spooled to a temporary file, to two levels deep and up to 500 of them
+  (`MAX_ZIP_DEPTH`, `MAX_NESTED_ZIPS`: each holds its file open until the
+  import ends), and a warning names every one left closed; `.obsidian/`,
+  `.trash/` and `.canvas` files are skipped (a canvas is a warning).
 - **Links**: a link to another note in the zip becomes a `[[page]]` mention
   of the page it produced — Markdown links (Notion's percent-encoded
   `[Sub](Parent%20<id>/Sub%20<id>.md)`, Gamma's `[label](Page-id.md)` and
@@ -245,8 +269,11 @@ folder of notes, because they only differ in naming and link conventions
   `%%comments%%` are removed in a vault (inline or block, never inside
   fences). Inline `#tags`, footnotes and task states pass through as text.
 - **Notion specifics**: a database `Name <id>.csv` becomes a page holding
-  the table (`_all.csv` preferred when both exist — it has every row; capped
-  at 500 rows × 40 columns) and its row pages `Name <id>/Row <id>.md` land in
+  the table (`_all.csv` preferred when both exist — it has every row). Every
+  row is kept, 500 rows (or 100,000 characters) to a table, each table a
+  block of its own under the header, so each renders and stays under a
+  block's 200,000 characters; columns past 40 are left out with a warning.
+  Its row pages `Name <id>/Row <id>.md` land in
   the folder of that name; `<aside>` callouts become `> [!info]` callouts;
   the row pages' `Property: value` lines stay as text.
 - **Gamma specifics**: the front matter's `source:` restores the PDF when it
@@ -271,11 +298,28 @@ folder of notes, because they only differ in naming and link conventions
   lands ([collab.md](collab.md) "The change feed"), and an import that
   fails half way keeps the batches it finished. (A transaction per page
   made big imports about twice as slow.)
+- **No size cap**: neither the zip nor its number of notes is capped; a note
+  past 5 MB or 200,000 blocks is a warning and not imported. What guards
+  the server instead is a zip-bomb rule, Apache POI's: an entry past 1 MiB
+  that unpacks to over 100 times its packed size (`MAX_RATIO`) is not read,
+  with a warning, and an archive that does so as a whole is refused (413).
+  Notes pack about 4:1 and photos or PDFs 1:1, a zip bomb about 1000:1. A
+  bundled file past the per-file upload cap is a warning without being
+  read, and a nested zip is spooled or a bundled file stored only while the
+  disk keeps `import_staging.MIN_FREE_BYTES` free (507 for the zip, a
+  warning for the file), as a staged upload must.
 
 The report's counts (`pages_created`, `pages_skipped`, `assets_stored`,
 `links_resolved`, `notion`) and warnings appear in the shared dialog. `pages`
 lists selected pages and their destinations, including pages already in the library. The same engine's `preview=True`
-mode parses notes and checks assets without writing uploads or blocks; optional
+mode reads notes and their links and checks assets without writing uploads or
+blocks; it parses a note into blocks only when it is long enough to pass the
+block cap, and reads no more of a bundled file than a PDF's header (a
+20,000-note vault: 4 s, a 7.8 MB answer, 0.7 MB gzipped). An import
+parses each new note twice, first for the blocks its links may target (their
+ids kept by place in the tree), then when it writes the page, so it never
+holds every note's tree at once (20,000 notes, 620,000 blocks: 100 s, at
+most 330 MB). Optional
 selection limits page creation and associated assets. Links to unselected new
 notes remain as written, with warnings. A selected note may still link to an
 already imported note. To make the round trip work the
@@ -302,7 +346,12 @@ tags, HTML notes) and tolerant zip-name lookup
 (cp437-mojibake, NFC/NFD, backslashes); the endpoint in `routers/imports.py`
 uploads PDFs (dedup + quota per file, over-quota items are skipped not fatal),
 upserts pages keyed by file hash then `properties.zotero_key` (re-exports
-change bytes — Zotero re-embeds annotations at export time), maps
+change bytes — Zotero re-embeds annotations at export time) — an item Gamma
+exported (`#gamma_page_<id>`) first by the page it came from, when it is in
+this workspace, so a Gamma export brought back merges into its pages even
+where another page holds the same PDF, and a note Gamma exported
+(`#gamma_note_<id>`) is there as that block (`_zotero_existing_page`;
+the preview looks in the same order) —, maps
 collections→folders, nested as in Zotero, made below the destination
 folder (the optional `folder` form field, a folder id) where missing — an
 item in no collection lands in the destination itself —,
@@ -310,6 +359,16 @@ tags→labels (by name, made where missing), notes→child blocks
 (`properties.zotero_note`), then runs the
 shared `import_embedded_annotations` (reader annotations arrive inside the
 exported PDFs; `strip` follows the client's embedded-annotations preference).
+Zotero writes each of its kinds as a standard annotation
+([research/zotero-annotations.md](../research/zotero-annotations.md)): a
+highlight and an underline become highlights (Gamma has no underline; the
+quote is the text under it), an image an area highlight, ink handwriting, a
+text annotation and a note text boxes. A text annotation turned in Zotero
+is its unturned `/Zotero:Rect` upright on the same centre, since a box
+cannot turn. Zotero writes no `/CA` on markup, so its colours take the
+importer's 0.45; its annotation tags (`/Zotero:Tags`) are not kept.
+`test_each_kind_of_zotero_annotation_imports` holds the shapes Zotero 9
+writes.
 Merging only fills gaps: existing meta/bibtex/files are kept, the folders
 and labels union (the page's own ids first, those that still exist —
 `existing_in`).
@@ -337,7 +396,8 @@ No picker offers both at once: a browser's is a file or a folder picker
 dialogs. iPhone/iPad Safari has no folder picker, so there ".zip" is the
 button. A folder is packed into a ZIP in the page
 (`transfers/folderZip.js`: stored entries, one CRC pass over the files,
-progress as the "packing" phase), so the server only ever sees an archive;
+progress as the "packing" phase; ZIP64 records past 4 GB or 65,535 files),
+so the server only ever sees an archive;
 neither a pick nor a drop lists empty directories. A drop stops at the
 dialog, so the library behind never takes the folder's PDFs as uploads.
 Choosing or dropping the export opens the shared import review dialog. Its two trees show
@@ -399,8 +459,15 @@ container's identifiers. Notes go as `bib:Memo` HTML
 notes→child-blocks mapping), the page's folders as the `z:Collection` tree
 (paths below the exported folder on a folder export — a page filed in the
 exported folder itself is in no collection —, the whole path for one page),
-its labels' names as `dc:subject`,
-`properties.zotero_key` reused as `rdf:about` so keys survive a round trip.
+its labels' names as `dc:subject`. An item's `rdf:about` is
+`properties.zotero_key`, so keys survive a round trip, else
+`#gamma_page_<page id>`, and a Memo's is `#gamma_note_<block id>`
+(`GAMMA_PAGE_KEY`, `GAMMA_NOTE_KEY`): the same in every export, whatever
+else it holds. A key written once in an export goes to the page id the next
+time (a copied page keeps its Zotero key), as Zotero's translator keeps its
+own names unique. They used to be the page's place in the export
+(`#gamma_item_<n>`), so two pages exported one at a time had one key, and
+the import merged the second into the first and dropped it.
 Attachment paths live in `z:path` like Zotero's own export — never an
 `rdf:resource` *element*, an RDF/XML syntax term that Zotero tolerates but
 strict parsers (rdflib) reject. The pipeline is verified against a live Zotero
@@ -418,11 +485,29 @@ replaced by a plain `(image: … — see item notes)` placeholder in annotation
 comments (`strip_image_md`) — comments come from the PDF's `/Contents` and can
 never render a picture, so a highlight whose notes carry images ALSO becomes
 its own Memo with a page+quote header (`highlight_memo_html`). An export job
-([tasks.md](tasks.md)) reports each page as it goes. Highlights are not in the RDF
+([tasks.md](tasks.md)) reports each page as it goes. Annotations are not in the RDF
 — like Zotero's "Include Annotations" they're burned into the exported PDF
-copies with `pdf_export.annotate_pdf` (`highlights=0` skips that, `pdf=0`
-omits the files entirely, `notes=0` the Memos). The copies carry no ink or
-text boxes; a text box is a Memo ([below](#text-boxes-in-the-exports)).
+copies with `pdf_export.annotate_pdf` (`_ZoteroBuilder._annotated_copy`),
+as the annotated PDF writes them: highlights, area notes and handwriting
+with `highlights=1`, text boxes with either switch (`pdf=0` omits the files
+entirely, `notes=0` the Memos). An ink group's caption and notes are its
+`/Ink` comment, not a Memo too; a text box is its `/FreeText` alone, and a
+Memo as well only when notes sit under it, which a Zotero text annotation
+cannot hold ([below](#text-boxes-in-the-exports)). Without a copy (`pdf=0`,
+no stored PDF, `highlights=0` for ink) they stay Memos.
+
+What Zotero takes from the copies, by its pdf-worker's `readRawAnnotation`
+(Zotero 9.0.6; [research/zotero-annotations.md](../research/zotero-annotations.md)):
+`/Highlight` → highlight, `/Square` → image, `/Ink` → ink, `/FreeText` →
+text (Zotero 7+). An `/Ink`, `/Square` or `/FreeText` without a Zotero id
+(`/NM` `Zotero-<key>`) is dropped, so each carries one from its block id
+(`zotero_annot_key`); a `/FreeText` also needs `/Zotero:Rect`,
+`/Zotero:Rotation` and `/Zotero:FontSize` ([text_boxes.md](text_boxes.md#server-and-interchange)).
+Zotero shows them once the PDF is open, locked (external), and its reader's
+File → Import Annotations… makes them its own and takes them out of the
+file; the zip's README.txt says so. A colour arrives blended with white by
+the annotation's `/CA` (Zotero's rule), so Gamma's 0.65 washes look paler
+there than here.
 
 ## The export framework
 
@@ -911,8 +996,8 @@ does a box on no page. The nearest sheet wins, as on screen: the recursive
 writers pass down whether they walked through a sheet, so a box under one
 names no page whatever its `pdf_page` says. The Highlights switch leaves
 boxes in, the Notes switch takes them out with the other notes. The
-annotated PDF writes them with either switch on
-([pdf_typesetting.md](pdf_typesetting.md#annotated-pdf-export)).
+annotated PDF, and the Zotero export's PDF copies, write them with either
+switch on ([pdf_typesetting.md](pdf_typesetting.md#annotated-pdf-export)).
 
 - **Markdown** (`markdown_export.py`): a note bullet, then the page line a
   highlight carries (two-space indent, `` `p.N` ``).
@@ -926,10 +1011,13 @@ annotated PDF writes them with either switch on
   Logseq keeps a page (`hl-page`) only on annotation blocks, and
   `collect_highlights` takes highlights only (`is_highlight`), so a box
   never reaches the hls page, the EDN file or the area crops.
-- **Zotero RDF** (`zotero_export.py`): a note (`bib:Memo`). A box on a PDF
-  page opens with a bold "Text box on p.N" line, as a highlight's memo
-  opens with its page. The bundled PDF copies carry highlights only, so a
-  box reaches Zotero once, as the note.
+- **Zotero RDF** (`zotero_export.py`): a box on a PDF page rides in the
+  bundled PDF copy as the annotated PDF's `/FreeText`, which Zotero 7+
+  imports as its text annotation, and is no note. One with notes under it
+  is a note as well (`bib:Memo`), since Zotero's text annotation holds its
+  text alone. Without a copy, every box is a note; one on a PDF page opens
+  with a bold "Text box on p.N" line, as a highlight's memo opens with its
+  page.
 - **Notes as PDF** (`pdf_document.py`): a small grey "text box, p. N" line,
   like the "handwriting, p. N" line and kept with the text, then the text
   in the normal note style.

@@ -24,7 +24,7 @@ share host (app.gammapdf.com, share.gammapdf.com) is pinned to the
 | `cloud` | `cloud.yml` | a pull request touching `cloud/`; manual dispatch from any branch (`update-account-server` skill) | pass/fail: the account server's pytest; when dispatched and green, `ghcr.io/tim4431/gamma-cloud:latest` + `:sha-<short>` (`cloud/Dockerfile`, amd64) |
 | `fleet` | `fleet.yml` | a pull request or a push to `main` touching `cloud/fleet/`; manual dispatch from any branch | pass/fail: the fleet agent's pytest; on a push to main or a dispatch, when green, `ghcr.io/tim4431/gamma-fleet:latest` + `:sha-<short>` (`cloud/fleet/Dockerfile`, amd64; [hosted.md](hosted.md)) |
 | `site` | `site.yml` | a PR or a push to `main` touching `sites/`, `docs/` (the artwork it copies and the documents it renders), `PRIVACY.md` or `TERMS.md`; manual dispatch from any branch (`build-site` skill) | pass/fail: the site builds with every internal link resolving and its Worker passes a dry run; on a push or dispatch, gammapdf.com: `sites/dist` deployed as a Cloudflare Worker (static assets only; needs `CLOUDFLARE_API_TOKEN` + `CLOUDFLARE_ACCOUNT_ID`; [sites/README.md](../../sites/README.md)) |
-| `ipad` | `ipad.yml` | a pull request touching `ipad/`, the ink, notebook or replica modules, or the frontend's dependencies; manual dispatch | pass/fail on macOS: the shared JavaScript bundled and run bare, the Xcode project generated (XcodeGen), the XCTest suite on an iPad simulator, an unsigned device build ([ipad/README.md](../../ipad/README.md)) |
+| `ipad` | `ipad.yml` | a pull request touching `ipad/`, `backend/requirements.txt`, `tools/build_frontend_if_needed.mjs` or the workflow; manual dispatch | pass/fail on macOS: the app's Python, wheels, server code and web app prepared (`ipad/scripts/build-python.sh`), the Xcode project generated (XcodeGen), the XCTest suite on an iPad simulator with the embedded server started, an unsigned device build ([ipad/README.md](../../ipad/README.md)) |
 | `Assistant plugin package` | `codex-plugin.yml` | PRs touching the plugin or its tooling, or manual dispatch | plugin packaging and installer tests on Windows/macOS/Linux and preview plugin release assets (pins `checkout@v4`/`setup-python@v5`/`upload-artifact@v4`, older than the rule below) |
 
 The `desktop` workflow also builds the versioned assistant plugin assets —
@@ -194,8 +194,7 @@ backend pytest (Python 3.12, `requirements.txt` + `requirements-dev.txt`,
 `-n auto` over pytest-xdist; the job is capped at 20 minutes and a single
 test at 300 s, after which it fails with every thread's stack instead of
 holding the job), the frontend unit tests + build (Node 22,
-`npm test` then `npm run build`, then the iPad app's JavaScript bundled and
-run in a bare context, `ipad/scripts/core.test.mjs`), the browser suite
+`npm test` then `npm run build`), the browser suite
 (`npm run e2e -- --continue --jobs 3` against a backend started from the checkout with
 `GAMMA_E2E_PYTHON=python` — both requirements files, since a scenario
 builds its Zotero fixture from a backend test module — Playwright's
@@ -214,13 +213,31 @@ red check is fixed on the branch as normal work.
 
 ## `ipad.yml`
 
-One macOS job (`macos-15`) for the iPad app. It runs `npm ci` in
-`frontend/`, then `ipad/scripts/build-core.mjs` and its bare-context test.
-`xcodegen generate` makes the project from `ipad/project.yml`.
-`xcodebuild test` runs on the newest iPad simulator the image has.
-`xcodebuild build -sdk iphoneos` makes an unsigned device build, with
-`CODE_SIGNING_ALLOWED=NO`. Nothing is signed or uploaded: running on an
-iPad takes a developer's own team, set in Xcode.
+One macOS job (`macos-15`, 50 minutes) for the iPad app, which carries
+the Gamma server and the built web app ([ipad.md](ipad.md#the-local-server)).
+It runs for the server's dependencies and the frontend's build helper as
+well as for `ipad/`, but not for backend or frontend code, which the other
+checks test; a change that matters on the device is dispatched by hand.
+
+- Python 3.13 (`setup-python`), so pip's environment markers match the
+  device's, and Node 22 with `npm ci` in `frontend/`.
+- `actions/cache` on `~/Library/Caches/gamma-ipad`, the support tarball,
+  the pip venv and pip's cache of the iOS wheels, keyed on
+  `ipad/scripts/build-python.sh` and `ipad/python/requirements-ios.txt`.
+- `bash ipad/scripts/build-python.sh` prepares `Python.xcframework` and
+  the bundle's Python folder.
+- `xcodegen generate` makes the project from `ipad/project.yml`.
+- `xcodebuild test` runs on the newest iPad simulator the image has, with
+  `ONLY_ACTIVE_ARCH=YES ARCHS=arm64` (`install_python` copies one
+  architecture's standard library) and `CODE_SIGNING_ALLOWED=NO`. Besides
+  the pure parts, one test starts the embedded server and waits for its
+  `/api/health`, so a broken bundle fails here and not on an iPad.
+- `xcodebuild build -sdk iphoneos -configuration Release` makes an
+  unsigned device build, with `CODE_SIGNING_ALLOWED=NO`.
+
+Nothing is signed or uploaded: running on an iPad takes a developer's own
+team, set in Xcode. The script's `--check` (every pin resolved for both
+platforms, no Xcode) runs on Linux too, but no workflow runs it.
 
 ## `docker.yml`
 

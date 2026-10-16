@@ -81,6 +81,39 @@ def test_a_pdf_in_parts_is_stored_whole_under_its_hash(cam):
     assert c.get("/api/quota").json()["workspace_bytes"] == used + len(PDF)
 
 
+def test_any_file_in_parts_is_stored_like_upload_file(cam):
+    """``kind: file`` stores what a block references under the extension of
+    its name, with /upload-file's checks; the kind is echoed (an older
+    server, which takes every upload for a PDF, echoes none)."""
+    c, ws = cam
+    data = b"col1,col2\n" + b"1,2\n" * 100_000
+
+    def file_upload(name, body):
+        r = c.post("/api/uploads/parts", json={"size": len(body), "name": name, "kind": "file"})
+        assert r.status_code == 200, r.text
+        assert r.json()["kind"] == "file"
+        token = r.json()["token"]
+        assert _part(c, token, 0, body).status_code == 200
+        return _finish(c, token)
+
+    r = file_upload("Data.CSV", data)
+    assert r.status_code == 200, r.text
+    name = f"{storage.content_digest(data)}.csv"
+    assert r.json() == {"url": f"/api/uploads/{name}", "name": "Data.CSV", "size": len(data), "already_existed": False}
+    assert c.get(r.json()["url"]).content == data
+    opened = _start(c, len(PDF)).json()
+    assert opened["kind"] == "pdf"  # the default, as before
+    assert c.delete(f"/api/uploads/parts/{opened['token']}").status_code == 200
+    # refused when opened: executables, a drawing (it always fits one request), an unknown kind
+    for name in ("setup.exe", "sketch.ink"):
+        assert c.post("/api/uploads/parts", json={"size": 10, "name": name, "kind": "file"}).status_code == 400
+    assert c.post("/api/uploads/parts", json={"size": 10, "name": "a.bin", "kind": "movie"}).status_code == 400
+    # refused at the end: a recording or a PDF that is not what its extension says
+    assert file_upload("take.webm", b"not webm" * 10).status_code == 400
+    assert file_upload("fake.pdf", b"not a pdf" * 10).status_code == 400
+    assert _partial(ws) == []
+
+
 def test_a_part_at_the_wrong_offset_says_where_the_upload_stands(cam):
     c, ws = cam
     token = _start(c, len(PDF)).json()["token"]

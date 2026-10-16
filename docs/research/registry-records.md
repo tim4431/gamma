@@ -104,7 +104,7 @@ What was decided:
 - **Normalize every printed entry.** `bibtex.page_entry` parses the stored
   text and writes it through the same formatter as a built entry. Rewriting
   stored entries through a data migration was rejected: a workspace step
-  pauses every clone and the iPad replica until both sides upgrade, which is
+  pauses every clone until both sides upgrade, which is
   too much for a text fix the printer can make on the way out.
 - **ASCII LaTeX for text, as Better BibTeX's BibTeX export does.** Classic
   BibTeX sorts and abbreviates `{\"o}` right and raw UTF-8 wrong (an

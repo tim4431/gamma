@@ -1,4 +1,5 @@
-import { Account, FAKE_AI_MODELS, Server, fakeAiModels, wanted } from "../harness.mjs";
+import { Account, FAKE_AI_MODELS, ROOT, Server, fakeAiModels, wanted } from "../harness.mjs";
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import http from "node:http";
 import path from "node:path";
@@ -1336,6 +1337,38 @@ export async function settingsScenarios(env) {
     } finally { await ctx.close(); }
   });
 
+  await step("settings: a backup past one request's size goes up in parts and merges as a job", async () => {
+    // A proxy in front of the server caps a request's body (Cloudflare at
+    // 100 MB): past 32 MiB the zip goes in parts (/jobs/restore/parts).
+    const donor = await user.api("/api/workspaces", { method: "POST", body: { name: "Big merge donor" } });
+    await user.api(`/api/blocks?ws=${donor.id}`, { method: "POST", body: { parent_id: "root", content: "Merged in parts" } });
+    const file = path.join(server.dir, "big-donor.zip");
+    fs.writeFileSync(file, Buffer.from(await (await user.api(`/api/export?ws=${donor.id}&uploads=0`, { raw: true })).arrayBuffer()));
+    // 40 MB the restore passes over: it reads pages.db, data.db and uploads/
+    const python = process.env.GAMMA_E2E_PYTHON || path.join(ROOT, "backend", "venv", process.platform === "win32" ? "Scripts/python.exe" : "bin/python");
+    execFileSync(python, ["-c", "import os, sys, zipfile; zipfile.ZipFile(sys.argv[1], 'a').writestr('padding.bin', os.urandom(40 << 20))", file]);
+    const { ctx, page } = await setup();
+    try {
+      const posts = [];
+      page.on("request", (request) => { if (request.method() === "POST") posts.push(new URL(request.url()).pathname); });
+      await openSettings(page);
+      await nav(page, "Workspaces").click();
+      await openRow(page).getByRole("button", { name: "Data", exact: true }).click();
+      const chooser = page.waitForEvent("filechooser");
+      await page.locator(".ctxMenuItem", { hasText: "Merge a backup into it…" }).click();
+      await (await chooser).setFiles(file);
+      const reloaded = page.waitForEvent("load", { timeout: 60000 });
+      await page.locator(".confirmModal").getByRole("button", { name: "Merge", exact: true }).click();
+      await reloaded;
+      assertEq(posts.filter((p) => /^\/api\/jobs\/restore\/parts\/[0-9a-f]+$/.test(p)).length, 2, "40 MB goes up as two parts");
+      assert(!posts.includes("/api/jobs/restore"), "never as one request");
+      await page.waitForSelector(".folderNewBtn");
+      await page.getByText("Merged in parts", { exact: true }).first().waitFor();
+      const merged = (await user.api("/api/jobs")).jobs.find((job) => job.kind === "restore" && job.params.filename === "big-donor.zip");
+      assertEq(merged?.state, "done");
+    } finally { await ctx.close(); }
+  });
+
   await step("settings: prompt and connection drafts have save, cancel, and dismissal protection", async () => {
     const { ctx, page } = await setup();
     try {
@@ -1786,6 +1819,36 @@ export async function settingsScenarios(env) {
       await until(() => row(page, "Check databases").innerText().then((text) => /database files? passed/.test(text)),
         { what: "the database check's result" });
       assertNoProblems(page);
+    } finally { await ctx.close(); }
+  });
+
+  await step("settings: an admin's own new username and password saved together both take", async () => {
+    // The new password ends the account's sessions, the editor's own too,
+    // so the rename has to go first or it is sent signed out.
+    server.manage("create-user", "rename-self", "rename-self-pw");
+    server.manage("set-admin", "rename-self", "on");
+    const self = await new Account(server, "rename-self", "rename-self-pw").login();
+    const ctx = await self.context(browser);
+    await ctx.addInitScript(() => localStorage.setItem("gamma-ai-login-check", "off"));
+    try {
+      const page = await openPage(ctx, server.base);
+      await page.waitForSelector(".folderNewBtn");
+      await openSettings(page);
+      await nav(page, "Users").click();
+      const own = page.locator(".settingsPane .aiProvRow").filter({ has: page.locator(".aiProvName", { hasText: "rename-self" }) });
+      await own.getByRole("button", { name: "Edit", exact: true }).click();
+      const edit = page.getByRole("dialog", { name: "Edit rename-self", exact: true });
+      await edit.getByRole("textbox").first().fill("renamed-self");
+      await edit.locator('input[autocomplete="new-password"]').fill("renamed-self-pw");
+      const saved = page.waitForResponse((r) => r.request().method() === "PUT" && new URL(r.url()).pathname === "/api/admin/users/renamed-self");
+      await edit.getByRole("button", { name: "Save", exact: true }).click();
+      // the tab's identity follows the rename, so the password change after it is not refused as another account's
+      assertEq((await saved).status(), 200, "the password set under the new name");
+      const signIn = (username, password) => fetch(`${server.base}/api/login`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ username, password }),
+      }).then((r) => r.status);
+      assertEq(await signIn("renamed-self", "renamed-self-pw"), 200, "the new name with the new password");
+      assert(await signIn("rename-self", "rename-self-pw") !== 200, "the old name is gone");
     } finally { await ctx.close(); }
   });
 

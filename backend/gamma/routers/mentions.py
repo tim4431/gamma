@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field
 
 from .. import mentions, workspaces
 from ..auth import require_user_id, require_ws
-from ..db import REMINDERS_DONE_PREF_KEY, get_pref
+from ..json_response import OrjsonResponse
 
 router = APIRouter(prefix="/api", tags=["mentions"])
 
@@ -21,18 +21,15 @@ def list_people(request: Request):
     return {"people": [{"username": m["username"], "role": m["role"]} for m in workspaces.members(ws)]}
 
 
-def _done(user_id: str) -> list[str]:
-    value, _ = get_pref(user_id, REMINDERS_DONE_PREF_KEY)
-    return list(value) if isinstance(value, dict) else []
-
-
 @router.get("/reminders")
 def list_reminders(request: Request):
     """``{reminders: [...], done: [key]}``: the account's reminders across
-    its workspaces (mentions.reminders_for) and the keys of those it has
-    dismissed. Sync: one notes-index query per workspace."""
-    user_id = require_user_id(request)
-    return {"reminders": mentions.reminders_for(user_id, request.state.user), "done": _done(user_id)}
+    its workspaces and the keys of those it has dismissed
+    (mentions.reminders_for, which drops the marks of reminders that are
+    gone). Sync: one notes-index query per workspace; thousands of
+    reminders, each with its block's text, are encoded here, not on the
+    event loop."""
+    return OrjsonResponse(mentions.reminders_for(require_user_id(request), request.state.user))
 
 
 class DoneRequest(BaseModel):
@@ -42,7 +39,8 @@ class DoneRequest(BaseModel):
 
 @router.post("/reminders/done")
 def mark_done(payload: DoneRequest, request: Request):
-    """Dismiss reminders (``done: false`` brings them back): ``{done: [key]}``."""
+    """Dismiss reminders (``done: false`` brings them back): ``{done:
+    [key]}``, those of the keys now done."""
     user_id = require_user_id(request)
     keys = [k for k in payload.keys if isinstance(k, str) and 0 < len(k) <= 200]
     return {"done": mentions.set_done(user_id, keys, payload.done)}

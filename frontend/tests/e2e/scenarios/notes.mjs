@@ -762,6 +762,41 @@ export async function noteScenarios({ server, browser, alice, step, until, sleep
     }
   });
 
+  // A paste the server will not split (past 5 MB or MAX_BLOCKS blocks: a
+  // 413) stays in its block as text, and the status line says so.
+  await step("notes: Paste as Blocks the server refuses stays as text and says so", async () => {
+    const pg = await alice2.api("/api/pages", { method: "POST", body: { title: "Paste refused" } });
+    await alice2.api(`/api/pages/${pg.id}/ops`, { method: "POST", body: { client: "e2e", ops: [
+      { op: "insert", id: "prfirst", parent: pg.id, position: "a0", content: "above the refused paste" }] } });
+    const p2 = await openPage(ctx, `${server.base}/?ws=${second.id}&page=${pg.id}`);
+    try {
+      await p2.route("**/api/markdown-blocks*", (route) => route.fulfill({
+        status: 413, contentType: "application/json", body: JSON.stringify({ detail: "text exceeds 5 MB" }) }));
+      await editRow(p2, "above the refused paste");
+      await p2.keyboard.press("Shift+Enter");
+      await p2.waitForFunction(() => {
+        const ed = document.activeElement?.closest(".cm-content");
+        return !!ed && (ed.querySelector(".cm-placeholder") != null || ed.textContent === "");
+      }, null, { timeout: 5000 });
+      await p2.evaluate((text) => {
+        const dt = new DataTransfer();
+        dt.setData("text/plain", text);
+        document.activeElement.closest(".cm-content")
+          .dispatchEvent(new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true }));
+      }, "- kept one\n- kept two");
+      await p2.locator(".slashMenu .slashMenuItem", { hasText: "Blocks" }).first().click();
+      await p2.getByText("The paste is too large to split into blocks; it stays as text.").waitFor();
+      await closeEditor(p2);
+      await until(async () => {
+        const blocks = await tree(alice2, pg.id);
+        return blocks.length === 2 && /kept one[\s\S]*kept two/.test(blocks[1].content);
+      }, { what: "the paste stayed in its block as text" });
+      assertNoProblems(p2, [/markdown-blocks.* -> 413$/]);
+    } finally {
+      await p2.close();
+    }
+  });
+
   // Text over the server's limit (collabSession's MAX_CONTENT, 200,000
   // characters) is held back: the notice says why, and the editor stays open
   // on it (App's onStartEdit) until it is short enough to save.

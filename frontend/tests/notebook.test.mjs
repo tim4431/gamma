@@ -8,11 +8,27 @@ import {
   paperSizeKey, sheetAfterPlan, sheetIdAfter, sheetOfBlock, sheetsOf, stableId, turnPaper, withAllSheetsPaper, withSheetPaper,
 } from "../src/notebook/notebook.js";
 import { placeAt, placeY } from "../src/notebook/sheetPlace.js";
-import { treeOf } from "../src/replica/tree.js";
 
 // tests/shared/paper.json: the same cases gamma/notebook.py passes
 // (backend/tests/test_shared_fixtures.py).
 const PAPER = JSON.parse(readFileSync(new URL("../../tests/shared/paper.json", import.meta.url), "utf8"));
+// The cases' flat blocks ({id: {parent, position, content, props}}) as the
+// nested tree the app holds under `pageId`: siblings by (position, id).
+function treeOf(blocks, pageId) {
+  const kids = new Map();
+  for (const [id, b] of Object.entries(blocks)) {
+    if (!kids.has(b.parent)) kids.set(b.parent, []);
+    kids.get(b.parent).push(id);
+  }
+  const before = (x, y) => {
+    const [px, py] = [blocks[x].position, blocks[y].position];
+    return px < py ? -1 : px > py ? 1 : x < y ? -1 : 1; // ids are unique
+  };
+  const build = (id) => (kids.get(id) || []).sort(before).map((cid) => ({
+    id: cid, content: blocks[cid].content, properties: blocks[cid].props, position: blocks[cid].position, children: build(cid),
+  }));
+  return build(pageId);
+}
 for (const c of PAPER.normalize) {
   test(`paper: ${c.note}`, () => assert.deepEqual(normalizePaper(c.input, c.fallback), c.output));
 }

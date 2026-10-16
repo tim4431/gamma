@@ -169,6 +169,65 @@ def test_staged_upload_is_bound_to_user_and_workspace_and_cancelled(accounts):
     assert start(owner, plan, ids).status_code == 404
 
 
+def test_upload_in_parts_reviews_and_imports_like_one_request(accounts):
+    """Past what a proxy lets one request carry, the upload comes in parts;
+    finishing answers the same preview, and the job imports from it."""
+    owner, other = accounts["review-owner"], accounts["review-other"]
+    data = archive({f"part{i}.md": f"# Note sent in parts {i}\n" + "text " * 400 for i in range(3)})
+    whole = review(owner, data, "markdown-zip")
+    owner.delete(f"/api/import/review/{whole['review_id']}")
+
+    opened = owner.post("/api/import/review/parts", json={"source": "markdown-zip", "size": len(data), "name": "notes.zip"})
+    assert opened.status_code == 200, opened.text
+    token = opened.json()["token"]
+
+    def send(offset, chunk, client=owner):
+        return client.post(f"/api/import/review/parts/{token}", data={"offset": str(offset)},
+                           files={"part": ("part", chunk, "application/octet-stream")})
+
+    third = len(data) // 3
+    assert send(0, data[:third]).json() == {"received": third}
+    # a part whose reply was lost, sent again: told where the upload stands
+    resent = send(0, data[:third])
+    assert resent.status_code == 409 and resent.json()["received"] == third
+    assert send(third, data[third:]).json() == {"received": len(data)}
+    assert send(len(data), b"x").status_code == 413  # past the announced size
+    assert send(third, data[third:], client=other).status_code == 404
+
+    plan = owner.post(f"/api/import/review/parts/{token}/finish").json()
+    assert plan["review_id"] == token
+    assert [p["title"] for p in plan["pages"]] == [p["title"] for p in whole["pages"]]
+    ids = [i for p in plan["pages"] for i in p["selection_ids"]]
+    assert report(commit(owner, plan, ids))["pages_created"] == 3
+
+
+def test_upload_in_parts_is_imported_only_once_whole(accounts):
+    owner = accounts["review-owner"]
+    data = archive({"one.md": "# Half sent\ntext"})
+    token = owner.post("/api/import/review/parts", json={"source": "markdown-zip", "size": len(data)}).json()["token"]
+    owner.post(f"/api/import/review/parts/{token}", data={"offset": "0"}, files={"part": ("part", data[:10])})
+    assert owner.post("/api/jobs/import", json={"review_id": token, "selected": []}).status_code == 409
+    missing = owner.post(f"/api/import/review/parts/{token}/finish")
+    assert missing.status_code == 400 and "10 of" in missing.json()["detail"]
+    assert owner.delete(f"/api/import/review/{token}").status_code == 200
+    assert owner.post(f"/api/import/review/parts/{token}/finish").status_code == 404
+    assert owner.post("/api/import/review/parts", json={"source": "nope", "size": 10}).status_code == 400
+    assert owner.post("/api/import/review/parts", json={"source": "zotero", "size": 0}).status_code == 400
+
+
+def test_staging_refuses_an_upload_the_disk_has_no_room_for(accounts, monkeypatch):
+    """No size cap: only the disk's free space bounds a staged upload."""
+    from gamma import import_staging
+    owner = accounts["review-owner"]
+    data = archive({"one.md": "# Room\ntext"})
+    monkeypatch.setattr(import_staging, "MIN_FREE_BYTES", 1 << 62)
+    full = owner.post("/api/import/review", data={"source": "markdown-zip"}, files={"file": ("a.zip", data)})
+    assert full.status_code == 507
+    assert owner.post("/api/import/review/parts", json={"source": "markdown-zip", "size": len(data)}).status_code == 507
+    monkeypatch.setattr(import_staging, "MIN_FREE_BYTES", 0)
+    owner.delete(f"/api/import/review/{review(owner, data, 'markdown-zip')['review_id']}")
+
+
 def test_gamma_selection_keeps_page_dependencies_and_excludes_other_pages(accounts):
     donor, receiver = accounts["review-donor"], accounts["review-owner"]
     a_pdf = donor.post("/api/uploads", files={"file": ("a.pdf", _annotated_pdf(b"Selected Gamma PDF"), "application/pdf")}).json()

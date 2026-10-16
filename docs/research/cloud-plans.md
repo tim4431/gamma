@@ -48,7 +48,7 @@ are in [dev/cloud_accounts.md](../dev/cloud_accounts.md),
 | Storage for uploads | the share host's small default | 1 GB | 6 GB | 100 GB pooled, per-workspace quotas |
 | Per-file cap | 50 MB | 50 MB | 100 MB | 250 MB |
 | Published pages | 5 | unlimited | unlimited | unlimited |
-| Devices | against a server you run | desktop offline copies, iPad replica, extension clipping, Codex and Claude Code over MCP | desktop offline copies, iPad replica, extension clipping, Codex and Claude Code over MCP | the same |
+| Devices | against a server you run | desktop offline copies, the iPad app, extension clipping, Codex and Claude Code over MCP | desktop offline copies, the iPad app, extension clipping, Codex and Claude Code over MCP | the same |
 | Off-site copies | none | the shared server's own | the shared server's own | hourly, 30 kept |
 | AI | own key or ChatGPT sign-in | the same | the same | the same, plus one shared connection the admin adds for the whole server |
 | Administration | none | none: an ordinary account | none: an ordinary account | users, workspaces, shared AI |

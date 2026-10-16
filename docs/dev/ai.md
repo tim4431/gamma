@@ -492,9 +492,11 @@ figure, and advice that depends on whether the reply had tools
 (`chat/coverage.js`); "PDF file not accepted — sent as text" when the file
 was requested but the provider took text instead, and "PDF too large to
 attach" or "PDF file unavailable" when `native_skipped` says it never went.
-Two more pills per
+Three more pills per
 reply: "Earlier messages left out: N" (the stream's `{"trimmed": {turns}}`
-line, see "Fitting the window") and "Reply cut off at the output limit"
+line, see "Fitting the window"), "PDF passage shortened: first 12,000 of
+31,400 characters sent" (`{"shortened"}`, see "Selected PDF passages") and
+"Reply cut off at the output limit"
 (`{"truncated": true}`: the provider's stop reason was `max_tokens`,
 `length`, `max_output_tokens` or the Responses API's `incomplete`
 (`ai_protocols.base.TRUNCATED_STOPS`) — `Protocol.events` ends every
@@ -604,10 +606,18 @@ PDF files are not counted) against the model's window
 the reply cap (`ai_catalog.reply_cap`) and `_ESTIMATE_SLACK`, and leaves the oldest history items out
 (`build_messages(drop_turns=)`: two, then doubling; the kept history opens
 on a question, the document context moves to the oldest kept one) until it
-fits. A provider that still answers `too_long` (no source knew the window,
-or the estimate fell short) is retried the same way. The stream says
+fits. Once every earlier turn is out, what the message points at gives way
+(`give_way` in `ai_chat`): the budget its passages and attached blocks
+share halves (`_smaller_quote`, from what they take, not from the
+setting), never below `MIN_PASSAGE_BUDGET` (4,000 characters); a prompt
+that still doesn't fit goes as it is and the provider decides. The
+selection goes last because it is what the user is asking about. A provider
+that still answers `too_long` (no source knew the window, or the estimate
+fell short) is retried the same way. The stream says
 `{"trimmed": {"turns": N}}` after the model line and the chat shows the
-pill. Within one reply, the rounds' tool results share
+pill; a passage that went short is reported as `{"shortened"}` ("Selected
+PDF passages" below), its `budget` under the `asked` one. Within one
+reply, the rounds' tool results share
 `ai_context.LIVE_RESULT_BUDGET` (60,000 chars, a picture counting
 `_IMAGE_CHARS`): a valve, not a per-round trim — rewriting an earlier turn
 costs the cache the rest of the prefix, so nothing is touched until the
@@ -711,9 +721,10 @@ A PDF selection reaches the chat with its position. App keeps
 `rangeSpot` for a live selection, which gives the page its start sits on and
 the union of its rects there, and `highlightSpot` for a clicked highlight's
 stored position). `box` is `[x0, y0, x1, y1]` as fractions of the page,
-top-left origin. The request sends them as `selections`, at most 6 × 4000
-chars. The older `selection` string ("---"-joined text) is still read when
-`selections` is empty (`ai_context.request_selections`).
+top-left origin. The request sends them as `selections`, each whole, at
+most 12 (`MAX_SELECTIONS`; App refuses a thirteenth Ctrl+selection with a
+status line). The older `selection` string ("---"-joined text) is still
+read when `selections` is empty (`ai_context.request_selections`).
 
 The single-paper text context then centres on the passages instead of the
 start of the paper (`selection_context`):
@@ -758,6 +769,33 @@ saved page and box by `GET /api/ai/selection-crop/{doc_id}` through the same
 without a picture. Nothing placed at all falls back to the
 plain head excerpt. With a native PDF attachment there is no window and no
 picture, and the passages carry the viewer's page only.
+
+**How much is quoted.** A selection is what the user asks about, so it gets
+the single-paper budget the request carries (`context_char_limit`,
+Settings → AI → Chat → Context size, 60,000 characters by default): a dozen
+dense PDF pages, where a page runs 3,000 to 5,000 characters. The question
+quotes the selected PDF passages and the selected note text within that one
+budget (`passage_budget`, `quoted_shares`). It is shared by `fair_shares`:
+a passage within an even share goes whole, and what it leaves is split
+evenly among the rest, so a long first passage can't starve the others and
+none is dropped. A passage cut short ends in a line telling the model how
+much of it is quoted (`_quoted`). The attached blocks' outlines share
+another budget of the same size the same way (`notes_focus_section`,
+"Pointing the chat at notes"), and the text around the passages never takes
+more than it.
+
+The user is told before sending. The composer applies the same rule to
+the chips (`chat/passageBudget.js`, `fairShares` to the character, with
+cases shared between `tests/passageBudget.test.mjs` and
+`tests/test_ai_passages.py`), and a chip whose passage won't go whole says
+"first 12,000 of 31,400 characters" in the warning colour, with the reason
+and the setting in its hover text. After sending, the stream's
+`{"shortened": {items, budget, asked}}` line (after `{"trimmed"}`) lists
+what went short, block outlines included, which only the server can
+measure. The reply keeps it as `shortened` and shows the pill
+(`coverage.js` `shortenedNote`). Its explanation names the setting, or the
+model's window when the window fit shrank the budget (`budget` below
+`asked`, "Fitting the window" above).
 
 ### The composer
 
@@ -853,9 +891,13 @@ notes. The server resolves all three against the request's context pages.
   in App). Each is served as `[id] text` with its subtree indented
   (`ai_context.notes_focus_section`, the same form `read_block` uses), under
   a heading that says to edit them by id when asked to change them, so
-  *"rewrite these"* means them. Capped at
-  12 chips / 12k chars (`MAX_CONTEXT_BLOCKS`, `MAX_BLOCK_SECTION_CHARS`).
-  Ids outside the context pages, and page ids, are dropped silently.
+  *"rewrite these"* means them. At most 12 chips (`MAX_CONTEXT_BLOCKS`;
+  App refuses a thirteenth with a status line, and Transcribe with AI
+  detaches the oldest and says so). Their outlines share the single-paper
+  budget by `fair_shares` ("Selected PDF passages" above): each is measured
+  whole, and one over its share is drawn again within it and reported in
+  `{"shortened"}`. Ids outside the context pages, and page ids, are
+  dropped silently.
   Handwriting blocks and pages of paper are labelled the way `read_block`
   labels them, in the cursor block too. An attached one also sends its
   picture with the message, the same picture `view_ink` gives, within the
@@ -880,7 +922,9 @@ notes. The server resolves all three against the request's context pages.
     can't place attaches its block instead.
 
   `ai_context.request_note_selections` validates them and labels them S1,
-  S2… (6 max). The prompt quotes each with its block id, and each
+  S2… (`MAX_NOTE_SELECTIONS`: 12 attached plus the editor's). The prompt
+  quotes each with its block id, within the budget it shares with the PDF
+  passages ("Selected PDF passages" above), and each
   selection's block rides along whole in the notes-focus section. Both the
   prompt and the agent prompt say that a question is answered in the chat,
   while an instruction that transforms the selection (rewrite, fix,
@@ -902,7 +946,8 @@ with the markdown dropped and inline math typeset (`chat/chipText.js`,
 KaTeX; the words between formulas go through search's `plainSnippet`, the
 same rule as the search rows and the `[[` picker). A dashed border marks what rode along by itself (the cursor block
 and the editor's selection in it); what the user attached keeps a solid
-one. They clear on send and on a page switch, since the ids belong to the
+one. A passage too long for the message's budget adds what it keeps to the
+first line ("first 12,000 of 31,400 characters"). They clear on send and on a page switch, since the ids belong to the
 page. Ctrl+click on a highlight card sends the quote as a PDF passage, not
 a block chip.
 

@@ -18,11 +18,12 @@ from collections import Counter
 from pathlib import Path
 
 from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from fractional_indexing import generate_key_between, generate_n_keys_between
 
 from .. import bibtex as bibtex_mod
-from .. import import_staging, jobs
+from .. import import_staging, jobs, upload_parts
 from ..auth import actor_of, require_user_id, require_ws
 from ..db import connect_pages_db, page_now, safe_doc_id, ws_uploads_dir
 from ..blocks_store import (FOLDERS, LABELS, STORED_COLUMNS, create_page, existing_in, filing, folder_paths,
@@ -32,7 +33,7 @@ from ..colors import DEFAULT_HIGHLIGHT, normalize_color
 from ..highlights import position as highlight_position
 from ..logbuf import log
 from ..ops import MAX_OPS, after_commit, apply_ops, commit_ops, ensure_filing, note_reload, props_patch
-from ..markdown_import import MAX_MARKDOWN_BYTES, md_to_blocks
+from ..markdown_import import MAX_MARKDOWN_BYTES, TooManyBlocks, md_to_blocks
 from ..markdown_zip_import import import_markdown_zip, markdown_page
 from ..ink import InkError, dumps as ink_dumps, from_pdf_ink, parse_ink, pdf_position as ink_position
 from ..pdf_text import GlyphPages, quote_under
@@ -48,6 +49,7 @@ from ..logseq_import import (
     parse_edn,
     parse_logseq_md,
 )
+from ..zotero_export import GAMMA_NOTE_KEY, GAMMA_PAGE_KEY
 from ..zotero_import import html_note_text, plan_zotero_archive
 from ..import_review import destination, parse_selection, selected_warnings, validate_selection
 from ..workspaces import is_guest_workspace
@@ -77,22 +79,77 @@ def _review_source(source):
     return sources[source]
 
 
+def _preview_staged(ws, user_id, token):
+    """The staged upload's preview with the review's ``review_id``; a
+    preview that fails discards the upload."""
+    try:
+        path, metadata = import_staging.get(token, user_id, ws)
+        preview, _ = _review_source(metadata["source"])
+        with (path / "upload").open("rb") as data:
+            report = preview(ws, data, metadata)
+        return {**report, "review_id": token}
+    except Exception:
+        import_staging.discard(token, user_id, ws)
+        raise
+
+
 @router.post("/import/review")
 def upload_import_review(request: Request, file: UploadFile = File(...), source: str = Form(...),
                          folder: str = Form(""), strip: bool = Form(False)):
     """Stage the upload and answer the source's preview with the review's
     ``review_id``: nothing is imported until ``POST /api/jobs/import``."""
     ws = require_ws(request, write=True)
-    preview, _ = _review_source(source)
+    _review_source(source)
     token = import_staging.create(file, user_id=request.state.user_id, ws=ws, source=source, folder=folder, strip=strip)
+    return _preview_staged(ws, request.state.user_id, token)
+
+
+# An upload larger than a proxy lets one request carry (Cloudflare caps a
+# body at 100 MB) comes in parts, as a PDF does (routers/uploads.py): open →
+# the parts, in order → finish, which answers like POST /import/review.
+
+class ImportParts(BaseModel):
+    source: str
+    size: int
+    name: str = ""
+    folder: str = ""
+    strip: bool = False
+
+
+@router.post("/import/review/parts")
+def open_import_review_parts(payload: ImportParts, request: Request):
+    """Open an import upload in parts → ``{token, part_bytes, received: 0}``;
+    the token becomes the review's ``review_id``."""
+    ws = require_ws(request, write=True)
+    _review_source(payload.source)
+    if payload.source == "gamma" and is_guest_workspace(ws):  # refused before the bytes travel
+        raise HTTPException(status_code=403, detail="a guest workspace cannot import backups")
+    token = import_staging.open_parts(user_id=request.state.user_id, ws=ws, source=payload.source,
+                                      folder=payload.folder, strip=payload.strip, filename=payload.name,
+                                      size=payload.size)
+    return {"token": token, "part_bytes": upload_parts.PART_BYTES, "received": 0}
+
+
+@router.post("/import/review/parts/{token}")
+def put_import_review_part(token: str, request: Request, part: UploadFile = File(...), offset: int = Form(...)):
+    """One part at byte ``offset`` → ``{received}``; at any other offset a
+    409 whose body carries ``received``, where the client goes on from."""
+    ws = require_ws(request, write=True)
     try:
-        path, metadata = import_staging.get(token, request.state.user_id, ws)
-        with (path / "upload").open("rb") as data:
-            report = preview(ws, data, metadata)
-        return {**report, "review_id": token}
-    except Exception:
-        import_staging.discard(token, request.state.user_id, ws)
-        raise
+        received = import_staging.append(token, request.state.user_id, ws, offset, part.file)
+    except upload_parts.OffsetMismatch as e:
+        return JSONResponse({"detail": str(e), "received": e.received}, status_code=409)
+    return {"received": received}
+
+
+@router.post("/import/review/parts/{token}/finish")
+def finish_import_review_parts(token: str, request: Request):
+    """The whole upload is in: answer its preview like POST /import/review
+    (400 while bytes are missing). ``DELETE /import/review/{token}`` drops
+    an unfinished one."""
+    ws = require_ws(request, write=True)
+    import_staging.finish(token, request.state.user_id, ws)
+    return _preview_staged(ws, request.state.user_id, token)
 
 
 @router.delete("/import/review/{token}")
@@ -409,11 +466,15 @@ def markdown_blocks(payload: MarkdownBlocksRequest, request: Request):
     """Parse markdown text into a ``{content, children}`` block tree — the
     editor's "paste as blocks" helper, same parser as the .md file import.
     Nothing is stored; the client inserts the tree through its normal
-    tree-edit/autosave path."""
+    tree-edit/autosave path. 413 past 5 MB or MAX_BLOCKS blocks: the paste
+    stays text."""
     require_user_id(request)
     if len(payload.text.encode("utf-8", errors="ignore")) > MAX_MARKDOWN_BYTES:
         raise HTTPException(status_code=413, detail="text exceeds 5 MB")
-    return {"blocks": md_to_blocks(payload.text)}
+    try:
+        return {"blocks": md_to_blocks(payload.text)}
+    except TooManyBlocks as exc:
+        raise HTTPException(status_code=413, detail=f"text has {exc}")
 
 
 # --- Annotations embedded in the PDF file itself ------------------------------
@@ -553,6 +614,16 @@ def _text_area(obj, rect):
     return (x0, y0, x1, y1) if min(left, bottom, right, top) >= 0 and x1 > x0 and y1 > y0 else rect
 
 
+def _zotero_rect(obj):
+    """A Zotero text annotation's box before its turn (``/Zotero:Rect``,
+    centred where its turned /Rect is), or None."""
+    try:
+        x0, y0, x1, y1 = (float(_resolve(v)) for v in _resolve(obj.get("/Zotero:Rect")) or ())
+    except (TypeError, ValueError):
+        return None
+    return (min(x0, x1), min(y0, y1), max(x0, x1), max(y0, y1)) if x0 != x1 and y0 != y1 else None
+
+
 def _on_page(box: dict, disp_w: float, disp_h: float) -> dict:
     """The box kept inside the page, as the client keeps a moved box: no
     wider or taller than the page, its corner moved in."""
@@ -572,8 +643,10 @@ def _text_box_from_annotation(obj, subtype: str, pnum: int, page, contents: str)
     Markdown that shows it as written (``text_box.markdown_of``). A foreign
     /FreeText is a fixed-width box over its text area (``_text_area``),
     with the /DA size and colour and the /C fill; its text is /Contents, or
-    /RC reduced to text. A /Text sticky note becomes a note-yellow box at
-    its icon's top-left, as wide as its text."""
+    /RC reduced to text. A Zotero text annotation may be turned, which a
+    box is not: it is its unturned ``/Zotero:Rect`` upright, on the same
+    centre. A /Text sticky note becomes a note-yellow box at its icon's
+    top-left, as wide as its text."""
     rect = first_rect(obj)
     if not rect:
         return None
@@ -600,6 +673,11 @@ def _text_box_from_annotation(obj, subtype: str, pnum: int, page, contents: str)
         else:
             box = {"x": left, "y": top, "w": right - left, "h": bottom - top, "auto": False,
                    **_da_style(str(_resolve(obj.get("/DA")) or "")), "bg": _pdf_hex(_resolve(obj.get("/C")))}
+            zotero = _zotero_rect(obj)
+            if zotero:
+                u, v = pdf_point_to_viewer((zotero[0] + zotero[2]) / 2, (zotero[1] + zotero[3]) / 2, rotation, crop)
+                w, h = zotero[2] - zotero[0], zotero[3] - zotero[1]
+                box.update(x=u * disp_w - w / 2, y=v * disp_h - h / 2, w=w, h=h)
     if not md.strip():
         return None
     return {"key": key, "page": pnum, "content": md, "kind": "text_box",
@@ -709,8 +787,9 @@ def _mark_from_annotation(obj, subtype, pnum, pw, ph, contents, glyphs):
         if ca is not None:
             alpha = min(max(float(ca), 0.05), 1.0)
         if c is not None and len(c) == 3:
-            color = normalize_color(f"rgba({int(float(_resolve(c[0])) * 255)}, {int(float(_resolve(c[1])) * 255)}, "
-                                    f"{int(float(_resolve(c[2])) * 255)}, {round(alpha, 3)})") or DEFAULT_HIGHLIGHT
+            # Rounded, not truncated: an app that writes 0.831 means 212.
+            r, g, b = (round(float(_resolve(v)) * 255) for v in c)
+            color = normalize_color(f"rgba({r}, {g}, {b}, {round(alpha, 3)})") or DEFAULT_HIGHLIGHT
     except Exception:
         pass
     # Flipped to top-left origin (what the viewer stores), in the page's points
@@ -916,7 +995,16 @@ def import_pdf_annotations(payload: PdfAnnotsRequest, request: Request):
 
 
 def _zotero_existing_page(conn, item):
-    row = page_for_doc(conn, item["digest"], "id, properties, content")
+    """The page an item merges into: an item Gamma exported, the page it was
+    exported from when it is in this workspace, which other pages may share
+    a PDF with; else the page holding its PDF; else the one its Zotero key
+    made."""
+    row = None
+    if item["key"].startswith(GAMMA_PAGE_KEY):
+        row = conn.execute("SELECT id, properties, content FROM unified_blocks WHERE parent_id='root' AND id = ?",
+                           (item["key"][len(GAMMA_PAGE_KEY):],)).fetchone()
+    if row is None:
+        row = page_for_doc(conn, item["digest"], "id, properties, content")
     if row is None and item["key"]:
         row = conn.execute(
             "SELECT id, properties, content FROM unified_blocks WHERE parent_id='root' "
@@ -988,9 +1076,15 @@ def _zotero_prepare(conn, ws, zf, item, dest, report) -> dict:
 
     todo = item["notes"]
     if todo and not created:
-        existing = {r[0] for r in conn.execute(
-            "SELECT json_extract(properties,'$.zotero_note') FROM unified_blocks WHERE parent_id=?",
-            (block_id,)).fetchall() if r[0]}
+        # A note is there under its key, or — a note Gamma exported — as the
+        # block it was written from.
+        existing = set()
+        for bid, note_key in conn.execute(
+                "SELECT id, json_extract(properties,'$.zotero_note') FROM unified_blocks WHERE page_id=?",
+                (block_id,)):
+            existing.add(f"{GAMMA_NOTE_KEY}{bid}")
+            if note_key:
+                existing.add(note_key)
         todo = [n for n in todo if n["key"] not in existing]
     return {"item": item, "row": row, "block_id": block_id, "old": old, "props": props,
             "todo": todo, "created": created,
@@ -1093,7 +1187,7 @@ def _preview_zotero(ws, data, meta):
     it would be filed in."""
     with _open_zotero_zip(data) as zf:
         plan = _zotero_plan(zf)
-    pages, by_digest, by_key = {}, {}, {}
+    pages, by_digest, by_key, by_id = {}, {}, {}, {}
     # Simulate merges within this ZIP too, without storing files or changing pages.
     with connect_pages_db(ws) as conn:
         _, under_path = destination(conn, meta.get("folder", ""))
@@ -1102,12 +1196,15 @@ def _preview_zotero(ws, data, meta):
             props = json.loads(row[1] or "{}")
             target = {"id": row[0], "title": row[2], "props": props, "exists": True,
                       "folders": [paths[f] for f in filing(props, FOLDERS) if f in paths]}
+            by_id[row[0]] = target
             if props.get("doc_id"):
                 by_digest.setdefault(props["doc_id"], target)
             if props.get("zotero_key"):
                 by_key.setdefault(props["zotero_key"], target)
         for index, item in enumerate(plan["items"]):
-            target = by_digest.get(item["digest"]) or by_key.get(item["key"])
+            # _zotero_existing_page's order: the page Gamma exported it from, the PDF, the key
+            target = ((by_id.get(item["key"][len(GAMMA_PAGE_KEY):]) if item["key"].startswith(GAMMA_PAGE_KEY)
+                       else None) or by_digest.get(item["digest"]) or by_key.get(item["key"]))
             if target is None:
                 target = {"id": f"new:{index}", "title": item["title"], "props": {}, "exists": False, "folders": []}
             props = target["props"]

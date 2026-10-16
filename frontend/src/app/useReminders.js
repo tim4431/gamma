@@ -15,6 +15,7 @@ import { reminderState, reminderText, ringsNow } from "./reminders";
 const POLL_MS = 5 * 60 * 1000;
 const RUNG_KEY = "gamma-reminders-rung"; // the keys this browser has notified, the latest kept
 const RUNG_CAP = 200;
+const DONE_BATCH = 100; // the keys one POST /api/reminders/done takes
 
 function rungKeys() {
   try { return JSON.parse(localStorage.getItem(RUNG_KEY) || "[]"); } catch { return []; }
@@ -66,11 +67,19 @@ export function useReminders(enabled, { labelOf, onOpen } = {}) {
     try { localStorage.setItem(RUNG_KEY, JSON.stringify([...rung, ...fresh.map((r) => r.key)].slice(-RUNG_CAP))); } catch {}
   }, [due, now]);
 
-  const dismiss = useCallback((keys) => {
+  // Dismiss all may name more keys than one request takes: they go in turn.
+  const dismiss = useCallback(async (keys) => {
     setData((d) => ({ ...d, done: [...new Set([...d.done, ...keys])] }));
-    apiJson(`${API}/reminders/done`, {
-      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ keys }),
-    }).catch(() => refresh());
+    try {
+      for (let i = 0; i < keys.length; i += DONE_BATCH) {
+        await apiJson(`${API}/reminders/done`, {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ keys: keys.slice(i, i + DONE_BATCH) }),
+        });
+      }
+    } catch {
+      refresh();
+    }
   }, [refresh]);
 
   // "Remind me" was just picked: ask once whether this browser may notify

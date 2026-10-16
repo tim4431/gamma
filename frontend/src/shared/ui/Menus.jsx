@@ -9,6 +9,7 @@ import React, { createContext, useContext, useEffect, useLayoutEffect, useRef, u
 import { createPortal } from "react-dom";
 import { CheckIcon, ChevronDownIcon, ChevronRightIcon, MoreIcon } from "./Icons";
 import { useMenuAim } from "./menuAim";
+import { VIEWPORT_PAD, placeFloating, useFloatingPosition } from "./placement.js";
 import { pressAt } from "./press.js";
 import { t } from "../../shared/i18n/i18n.js";
 
@@ -16,9 +17,7 @@ import { t } from "../../shared/i18n/i18n.js";
 // any nesting depth — can open/close flyouts without the caller wiring state.
 const MenuCtx = createContext(null);
 
-// Shared geometry: minimum gap a menu keeps to the viewport edge, and how far
-// a flyout rides above its trigger row so their first items line up.
-const VIEWPORT_PAD = 8;
+// How far a flyout rides above its trigger row so their first items line up.
 const SUB_TOP_NUDGE = -4;
 
 // A context menu positioned at a screen point (x, y). Rendered through a
@@ -29,33 +28,19 @@ const SUB_TOP_NUDGE = -4;
 // right-aligned control, e.g. the settings selects).
 // anchorBottom treats y as the menu's BOTTOM edge (a dropdown opening upward
 // from a control at the bottom of the window, e.g. the chat composer's).
+// flipY / bounds: the other side to open on when its own has no room, and
+// the band it stays in (placeFloating, placement.js).
 // ignoreRef: element whose pointerdowns must NOT dismiss the menu — the
 // dropdown trigger, so its own click can toggle instead of fighting the
 // outside-pointerdown dismissal.
-function ContextMenu({ x, y, onClose, className = "", anchorRight = false, anchorBottom = false, ignoreRef, children }) {
+function ContextMenu({ x, y, onClose, className = "", anchorRight = false, anchorBottom = false, flipY, bounds, ignoreRef, children }) {
   const ref = useRef(null);
-  const [pos, setPos] = useState({ left: x, top: y });
-
-  // Clamp inside the viewport once we know the menu's size.
-  useLayoutEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    const pad = VIEWPORT_PAD;
-    const place = () => {
-      const { width, height } = el.getBoundingClientRect();
-      let left = anchorRight ? x - width : x, top = anchorBottom ? y - height : y;
-      if (left + width > window.innerWidth - pad) left = Math.max(pad, window.innerWidth - width - pad);
-      if (left < pad) left = pad;
-      if (top + height > window.innerHeight - pad) top = Math.max(pad, window.innerHeight - height - pad);
-      if (top < pad) top = pad;
-      setPos((old) => old.left === left && old.top === top ? old : { left, top });
-    };
-    place();
-    const observer = new ResizeObserver(place);
-    observer.observe(el);
-    window.addEventListener("resize", place);
-    return () => { observer.disconnect(); window.removeEventListener("resize", place); };
-  }, [x, y, anchorRight, anchorBottom]);
+  // Placed from its measured size before it is painted, and again in the
+  // frame its size changes (placement.js). Until it is first placed it is
+  // laid out where it stands but not shown: a menu opening upward stands
+  // over its button and below it until then, and must never be seen there.
+  const pos = useFloatingPosition(ref, (el) => placeFloating(el.getBoundingClientRect(), { x, y, anchorRight, anchorBottom, flipY, bounds }),
+    [x, y, anchorRight, anchorBottom, flipY, bounds?.top, bounds?.bottom]);
 
   useEffect(() => {
     function onDown(e) {
@@ -79,7 +64,7 @@ function ContextMenu({ x, y, onClose, className = "", anchorRight = false, ancho
     <MenuScope
       ref={ref}
       className={`ctxMenu ${className}`}
-      style={{ left: pos.left, top: pos.top }}
+      style={pos ? { left: pos.left, top: pos.top } : { left: x, top: y, visibility: "hidden" }}
       onContextMenu={(e) => e.preventDefault()}
     >
       {children}

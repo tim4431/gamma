@@ -7,7 +7,7 @@ versions, the reindex endpoint, the indexing job."""
 
 import sqlite3
 
-from conftest import login, make_folder, make_page, make_user, workspace_of
+from conftest import login, make_folder, make_label, make_page, make_user, workspace_of
 from gamma.db import connect_data_db, connect_pages_db
 from gamma.pdf_index import store_doc
 from gamma.textnorm import normalize_text
@@ -147,6 +147,60 @@ def test_pdf_search_and_block_search_unchanged():
     assert r.status_code == 200 and r.json()["blocks"]
 
 
+def test_block_search_keeps_to_the_chips_and_pages_on():
+    """The Ctrl+F panel's notes group: its folder and label chips go along
+    as ``scope`` (each must hold), so a match inside them is found however
+    many newer ones elsewhere come first; ``next`` goes on where a page
+    stopped, nothing listed twice or passed by — blocks written in one
+    request (one timestamp) too."""
+    make_user("srch_scope", "pw")
+    c = login("srch_scope", "pw")
+    folder, sub, label = make_folder(c, "atoms"), make_folder(c, "atoms/traps"), make_label(c, "toread")
+    inside = make_page(c, "Inside", properties={"folders": [sub], "labels": [label]})
+    filed = make_page(c, "Filed", properties={"folders": [folder]})
+    old = _block(c, inside["id"], "quokka in the trap")  # the oldest: last, newest first
+    filed_hit = _block(c, filed["id"], "quokka filed away")
+    elsewhere = make_page(c, "Elsewhere")
+    newer = [_block(c, elsewhere["id"], f"quokka note {i}") for i in range(25)]
+
+    def notes(**params):
+        r = c.get("/api/block-search", params={"q": "quokka", "limit": 20, **params})
+        assert r.status_code == 200, r.text
+        return r.json()
+
+    def ids(body):
+        return [b["id"] for b in body["blocks"]]
+
+    first = notes()
+    assert old not in ids(first) and first["next"]  # the newest 20 are all elsewhere
+    assert ids(notes(scope=folder)) == [filed_hit, old]  # a folder takes in its subfolders
+    assert ids(notes(scope=sub)) == ids(notes(scope=label)) == [old]
+    assert ids(notes(scope=f"{folder},{label}")) == [old]
+    assert notes(scope=f"{folder},{make_label(c, 'unread')}") == {"blocks": []}
+    assert notes(scope="nosuchid") == {"blocks": []}
+    assert "next" not in notes(scope=folder)
+
+    second = notes(cursor=first["next"])
+    assert "next" not in second
+    assert ids(first) + ids(second) == [*reversed(newer), filed_hit, old]
+    assert c.get("/api/block-search", params={"q": "quokka", "cursor": "nonsense"}).status_code == 400
+
+    r = c.put(f"/api/blocks/{elsewhere['id']}/children",
+              json={"blocks": [{"content": f"quokka tie {i}"} for i in range(12)]})
+    assert r.status_code == 200, r.text
+    whole = ids(notes(limit=100))
+    assert len(whole) == 14  # the twelve, filed_hit and old
+    pages, cursor = [], ""
+    while True:
+        body = notes(limit=5, cursor=cursor)
+        pages.append(ids(body))
+        cursor = body.get("next", "")
+        if not cursor:
+            break
+    assert [len(p) for p in pages] == [5, 5, 4]
+    assert [i for p in pages for i in p] == whole
+
+
 # --- the PDF index ---------------------------------------------------------------
 
 def test_pdf_search_hits_indexed_docs(guest):
@@ -176,6 +230,57 @@ def test_pdf_search_is_separator_tolerant(guest):
     for q in ("3000", "3,000", "3000-qubit", "3000 qubit system"):
         hits = guest.get("/api/pdf-search", params={"q": q}).json()["results"]
         assert any(h["doc_id"] == "ftsdoc002" for h in hits), f"query {q!r} missed"
+
+
+def test_pdf_search_scope_pages_and_per_paper_cap():
+    """The panel's PDF group: a book that matches on every page lists its
+    best three, then waits for every other paper's best three; ``next``
+    pages on through the same order; the chips (``scope``) and the open
+    paper (``exclude``) are applied before the ranking, so a paper outranked
+    by the whole library is still found inside its folder."""
+    make_user("srch_pdfpages", "pw")
+    c = login("srch_pdfpages", "pw")
+    user = "srch_pdfpages"
+    folder, label = make_folder(c, "zoo"), make_label(c, "amphibians")
+    book = make_page(c, "Big book", properties={"doc_id": "pgbook001"})
+    _index_pdf(user, "pgbook001", [(p, f"axolotl axolotl on page {p}") for p in range(1, 41)])
+    for n in range(6):
+        make_page(c, f"Paper {n}", properties={"doc_id": f"pgpaper00{n}"})
+        _index_pdf(user, f"pgpaper00{n}", [(1, f"an axolotl in paper {n} among many other words here"),
+                                           (2, f"one more axolotl in paper {n} with yet more words around it")])
+    filed = make_page(c, "Filed paper", properties={"doc_id": "pgfiled01", "folders": [folder], "labels": [label]})
+    _index_pdf(user, "pgfiled01", [(7, "a lone axolotl " + "and plenty of unrelated words " * 20)])
+
+    def hits(**params):
+        r = c.get("/api/pdf-search", params={"q": "axolotl", **params})
+        assert r.status_code == 200, r.text
+        return r.json()
+
+    def keys(body):
+        return [(h["doc_id"], h["page"]) for h in body["results"]]
+
+    first = hits(limit=15)
+    assert sum(d == "pgbook001" for d, _ in keys(first)) == 3
+    assert {d for d, _ in keys(first)} >= {f"pgpaper00{n}" for n in range(6)}
+    assert first["next"] == "15"
+
+    whole = keys(hits(limit=100))
+    assert len(whole) == len(set(whole)) == 40 + 12 + 1
+    pages, cursor = [], ""
+    while True:
+        body = hits(limit=15, cursor=cursor)
+        pages += keys(body)
+        cursor = body.get("next", "")
+        if not cursor:
+            break
+    assert pages == whole
+
+    assert keys(hits(scope=folder)) == keys(hits(scope=label)) == [("pgfiled01", 7)]
+    assert keys(hits(scope=f"{folder},{make_label(c, 'reptiles')}")) == []
+    assert keys(hits(limit=5, scope=folder, cursor="5")) == []
+    assert "pgbook001" not in {d for d, _ in keys(hits(limit=100, exclude=book["id"]))}
+    assert filed["id"] in {h["block_id"] for h in hits(limit=100)["results"]}
+    assert c.get("/api/pdf-search", params={"q": "axolotl", "cursor": "x"}).status_code == 400
 
 
 def test_stale_index_version_counts_as_missing(guest):

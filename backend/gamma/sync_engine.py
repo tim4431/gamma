@@ -89,6 +89,7 @@ from .ops import MAX_OPS, OpError, commit_ops, latest_seq, props_patch, trash_pa
 from .publisher_sessions import seal, unseal
 from .routers.sync import changes as local_changes
 from .storage import find_upload_file, matches_name, put_upload
+from .upload_parts import PART_BYTES
 from .sync_tree import (ancestors, apply, children_of, diff, moved, snapshot_from_rows, snapshot_from_tree,
                         subtree_ids, tree_order, upload_refs)
 from .text_box import normalize_text_box
@@ -103,6 +104,7 @@ TICK_S = 1                           # the loop's clock
 WHOAMI_TTL_S = 900                   # how long a round trusts the remote's last whoami (a failed round asks again)
 UNKNOWN_SEQ = -1                     # a base saved before the remote's answer was read: the next round fetches the page
 STREAM_CHUNK = 256 * 1024
+PUSH_PART_BYTES = 8 * 1024 * 1024    # a pushed file's part: sent within the transport's 60 s on a slow link
 default_fetch = None       # the tests point this at an in-process TestClient; None = urllib
 UPLOAD_NAME_RE = re.compile(r"^[0-9a-f]{8,64}\.[a-z0-9]{1,8}$")
 _locks: dict[str, threading.Lock] = {}
@@ -261,12 +263,48 @@ class Remote:
             raise RemoteError(0, f"{path}: the transfer stopped at {done} of {total} bytes")
         return b"".join(chunks)
 
+    def post_parts(self, name: str, path, size: int, progress=None):
+        """A file past one request's size sent in parts — a proxy in front
+        of the remote caps a request's body (Cloudflare at 100 MB) — over
+        its ``/api/uploads/parts`` (gamma/upload_parts.py), read from
+        ``path`` a part at a time: the finish's answer (``source_url`` for a
+        PDF, ``url`` for another file), or None when the remote cannot take
+        this file in parts (an older server: no parts at all, or every
+        upload taken for a PDF), for the caller to send it whole. A part
+        the remote holds already (409) goes on from where it stands."""
+        kind = "pdf" if name.endswith(".pdf") else "file"
+        try:
+            opened = self.post("/api/uploads/parts", {"size": size, "name": name, "kind": kind})
+        except RemoteError as e:
+            if e.status in (404, 405):
+                return None
+            raise
+        token = opened["token"]
+        if kind == "file" and opened.get("kind") != "file":
+            self.delete(f"/api/uploads/parts/{token}")
+            return None
+        step = min(int(opened.get("part_bytes") or PUSH_PART_BYTES), PUSH_PART_BYTES)
+        try:
+            offset = 0
+            with open(path, "rb") as f:
+                while offset < size:
+                    f.seek(offset)
+                    body, content_type = _multipart({"offset": str(offset)}, "part", "part", f.read(step))
+                    _, out = self.request("POST", f"/api/uploads/parts/{token}", body=body,
+                                          content_type=content_type, ok=(200, 409))
+                    offset = json.loads(out)["received"]
+                    if progress:
+                        progress(offset, size)
+            return self.post(f"/api/uploads/parts/{token}/finish", {})
+        except BaseException:
+            try:
+                self.delete(f"/api/uploads/parts/{token}")
+            except RemoteError:
+                pass
+            raise
+
     def post_file(self, path, name: str, data: bytes, progress=None):
-        boundary = "gammaMirror" + str(int(time.time() * 1000))
-        ctype = mimetypes.guess_type(name)[0] or "application/octet-stream"
-        body = (f"--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"{name}\"\r\n"
-                f"Content-Type: {ctype}\r\n\r\n").encode() + data + f"\r\n--{boundary}--\r\n".encode()
-        content_type = f"multipart/form-data; boundary={boundary}"
+        body, content_type = _multipart({}, "file", name, data)
         if not self._streaming():
             _, out = self.request("POST", path, body=body, content_type=content_type)
             if progress:
@@ -287,6 +325,18 @@ class Remote:
         with self._open(req, 600) as resp:
             out = resp.read()
         return json.loads(out) if out else None
+
+
+def _multipart(fields: dict, file_field: str, filename: str, data: bytes) -> tuple[bytes, str]:
+    """A multipart/form-data body of ``fields`` and one file → ``(body,
+    content type)``."""
+    boundary = "gammaMirror" + secrets.token_hex(12)
+    ctype = mimetypes.guess_type(filename)[0] or "application/octet-stream"
+    head = "".join(f"--{boundary}\r\nContent-Disposition: form-data; name=\"{key}\"\r\n\r\n{value}\r\n"
+                   for key, value in fields.items())
+    head += (f"--{boundary}\r\nContent-Disposition: form-data; name=\"{file_field}\"; filename=\"{filename}\"\r\n"
+             f"Content-Type: {ctype}\r\n\r\n")
+    return head.encode() + data + f"\r\n--{boundary}--\r\n".encode(), f"multipart/form-data; boundary={boundary}"
 
 
 # --- the registry -----------------------------------------------------------------
@@ -922,10 +972,15 @@ def _push_files(ws: str, remote: Remote, names: set[str], report: dict) -> None:
         path = find_upload_file(name, ws)
         if path is None:
             continue  # purged since
-        data = path.read_bytes()
         prog = report.get("progress")
-        out = remote.post_file("/api/uploads" if name.endswith(".pdf") else "/api/upload-file", name, data,
-                               progress=(lambda d, t: prog(name, d, t, "up")) if prog else None)
+        progress = (lambda d, t: prog(name, d, t, "up")) if prog else None
+        size = path.stat().st_size
+        # past what the web client sends whole, in parts: a proxy in front of
+        # the remote caps a request's body (Cloudflare at 100 MB)
+        out = remote.post_parts(name, path, size, progress) if size > PART_BYTES else None
+        if out is None:
+            out = remote.post_file("/api/uploads" if name.endswith(".pdf") else "/api/upload-file", name,
+                                   path.read_bytes(), progress=progress)
         got = (out or {}).get("source_url") or (out or {}).get("url") or ""
         if not got.endswith("/" + name):
             log.warning(f"[mirror] {ws}: uploaded {name} but the remote stored it as {got!r}")

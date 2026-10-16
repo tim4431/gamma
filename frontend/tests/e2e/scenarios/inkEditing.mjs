@@ -1,5 +1,6 @@
 import { encodeStroke, newInk, decodeStroke } from "../../../src/ink/ink.js";
 import { waitForPdf } from "./pdf.mjs";
+import { assertOpensInPlace } from "../harness.mjs";
 
 export async function inkEditingScenarios({ server, browser, alice, bob, makePdf, step, until, assert, assertEq, assertNoProblems, openPage, flags }) {
   let ctx, page, cdp, pageId, noteId, secondId;
@@ -75,7 +76,9 @@ export async function inkEditingScenarios({ server, browser, alice, bob, makePdf
     await until(async () => await page.locator(paths).count() === 2);
     await page.getByRole("button", { name: "Handwriting tools", exact: true }).tap();
     const pen = await page.locator(".pdfInkBar .inkToolBtn.modeActive").getAttribute("aria-label");
-    await tapInk(130, 223); // Near a sub-pixel line: hit tolerance is in screen pixels.
+    // Near a sub-pixel line: hit tolerance is in screen pixels. The menu
+    // knows its height before it is painted, so it opens on its side.
+    await assertOpensInPlace(page, ".inkEditMenu", () => tapInk(130, 223), { what: "the selection menu" });
     assertEq(await page.locator(".pdfInkBar .inkToolBtn.modeActive").getAttribute("aria-label"), pen);
     assertEq(await page.locator(paths).count(), 2);
     assert(await page.locator('[aria-label="Undo ink"]').isDisabled(), "selection is not an edit");
@@ -93,7 +96,8 @@ export async function inkEditingScenarios({ server, browser, alice, bob, makePdf
 
   await step("ink edit: color and width affect only selected ink, persist samples, and use visible undo/redo", async () => {
     const before = await stored();
-    await menu().getByRole("button", { name: "Color", exact: true }).tap();
+    // The menu grows and moves up to fit in one frame, never grown in place first.
+    await assertOpensInPlace(page, ".inkEditMenu", () => menu().getByRole("button", { name: "Color", exact: true }).tap(), { what: "the menu opening its colours" });
     await menu().getByRole("button", { name: "Red", exact: true }).tap();
     await menu().getByRole("button", { name: "Width", exact: true }).tap();
     await menu().getByRole("button", { name: "Pen width 4 pt", exact: true }).tap();

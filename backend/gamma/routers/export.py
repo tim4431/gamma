@@ -64,6 +64,8 @@ from ..pdf_document import render_document
 from ..pdf_export import annotate_pdf, highlight_note_text, still_embedded
 from ..pdf_notes import render_notes
 from ..zotero_export import (
+    GAMMA_NOTE_KEY,
+    GAMMA_PAGE_KEY,
     IMAGE_MIME,
     MD_IMAGE_RE,
     build_rdf,
@@ -460,8 +462,10 @@ class _LogseqBuilder(_Builder):
 
 class _ZoteroBuilder(_Builder):
     """A Zotero RDF library: ``<base>/<base>.rdf`` + ``<base>/files/<n>/…``.
-    Highlights travel embedded inside the PDF copies (annotate_pdf — Zotero's
-    "Include Annotations" convention), notes become bib:Memo items with pasted
+    What is drawn on the page travels inside the PDF copies (annotate_pdf —
+    Zotero's "Include Annotations" convention): highlights, area notes and
+    handwriting with the highlights switch, text boxes with either switch,
+    as the annotated PDF writes them. Notes become bib:Memo items with pasted
     images embedded as data URIs, the folders below the exported folder the
     collection tree, labels tags. Images referenced anywhere in a page also
     ride as item attachments; annotation comments carry a plain "(image: …)"
@@ -471,7 +475,45 @@ class _ZoteroBuilder(_Builder):
     def __init__(self, ws, base, opts):
         super().__init__(ws, base, opts)
         self.items = []
+        self.keys = set()  # the item keys written: each names one item
         self.resolve_image = _image_resolver(self.uploads_dir)
+        self.resolve_ref = None
+
+    def begin(self, conn, root_ids):
+        super().begin(conn, root_ids)
+        # [[refs]] in a text box read as the text they name, as in the annotated PDF.
+        self.resolve_ref = block_ref_resolver(conn)
+
+    def _item_key(self, page, props) -> str:
+        """The page's Zotero key when it came from Zotero, else its id: the
+        same in every export, which is what the import upserts by, and back
+        in its own library names the page itself. A key already written (a
+        copied page keeps its Zotero key) goes to the page's id, as Zotero's
+        translator keeps its own names unique."""
+        key = props.get("zotero_key") or ""
+        if not key or key in self.keys:
+            key = f"{GAMMA_PAGE_KEY}{page['id']}"
+        self.keys.add(key)
+        return key
+
+    def _annotated_copy(self, data, blocks, page_id, title):
+        """The PDF copy with the page's annotations, and the ids of the ink
+        groups and text boxes it carries."""
+        highlights, notes = self.opts["highlights"], self.opts["notes"]
+        marks = _collect_marks(blocks) if highlights else []
+        ink = _collect_ink(blocks, self.uploads_dir) if highlights else []
+        boxes, replaced = _collect_text_boxes(blocks, page_id) if highlights or notes else ([], set())
+        for mark in marks + ink:
+            mark["note"] = strip_image_md(mark["note"])
+        if not (marks or ink or boxes or replaced):
+            return data, set()
+        try:
+            data, _ = annotate_pdf(data, marks, author=self.opts.get("author", ""), ink=ink,
+                                   text_boxes=boxes, replaced=replaced, resolve_ref=self.resolve_ref)
+        except Exception as e:
+            log(f"zotero export: annotating '{title}' failed, exporting bare PDF: {e}")
+            return data, set()
+        return data, {g["id"] for g in ink} | {b["id"] for b in boxes}
 
     def add_page(self, n, rows, page):
         props = page.get("properties") or {}
@@ -480,6 +522,7 @@ class _ZoteroBuilder(_Builder):
         include_pdf = self.opts["pdf"]
 
         pdf_arc = None
+        in_copy = set()  # the ink groups and text boxes the PDF copy carries
         doc_id = props.get("doc_id")
         if include_pdf and doc_id:
             try:
@@ -487,17 +530,8 @@ class _ZoteroBuilder(_Builder):
             except ValueError:
                 pdf_path = None
             if pdf_path and pdf_path.is_file():
-                data = pdf_path.read_bytes()
-                if self.opts["highlights"]:
-                    marks = _collect_marks([block_to_dict(r) for r in rows])
-                    for m in marks:
-                        m["note"] = strip_image_md(m["note"])
-                    if marks:
-                        try:
-                            data, _ = annotate_pdf(data, marks, author=self.ws)
-                        except Exception as e:
-                            log(f"zotero export: annotating '{title}' failed, exporting bare PDF: {e}")
-                            data = pdf_path.read_bytes()
+                data, in_copy = self._annotated_copy(
+                    pdf_path.read_bytes(), [block_to_dict(r) for r in rows], page["id"], title)
                 pdf_arc = f"files/{n}/{slugify(title, '')}.pdf"
                 self.spool(f"{self.base}/{pdf_arc}", data)
 
@@ -515,38 +549,41 @@ class _ZoteroBuilder(_Builder):
                                    "mime": IMAGE_MIME.get(fname.rsplit(".", 1)[-1].lower())
                                            or "application/octet-stream"})
 
-        note_htmls = []
+        notes = []
         if self.opts["notes"]:
             # Top-level non-highlight subtrees, one Zotero note each — the
             # inverse of the import's notes→child-blocks mapping. Writing
-            # nested under highlights instead travels in the annotation popups.
+            # nested under highlights instead travels in the annotation popups,
+            # and so does an ink group's in the copy. A text box in the copy
+            # is its own text there; one with notes under it is a note too,
+            # since a Zotero text annotation holds nothing but its text.
             for child in page["children"]:
                 cprops = child.get("properties") or {}
                 if is_highlight(cprops) or cprops.get("link_url"):
                     continue
+                if child["id"] in in_copy and not (
+                        is_text_box(cprops) and any((d.get("content") or "").strip()
+                                                    for d in _walk_tree(child) if d is not child)):
+                    continue
                 html = note_html(child, resolve_image=self.resolve_image)
                 if html:
-                    note_htmls.append(html)
-            # Popup comments are plain text, so a highlight whose notes carry
-            # images ALSO becomes a Zotero note (page + quote header) with the
-            # pictures embedded.
+                    notes.append({"key": f"{GAMMA_NOTE_KEY}{child['id']}", "html": html})
+            # Popup comments are plain text, so a highlight (or an ink group in
+            # the copy) whose notes carry images ALSO becomes a Zotero note
+            # (page + quote header) with the pictures embedded.
             for node in _walk_tree(page):
                 nprops = node.get("properties") or {}
-                if not is_highlight(nprops):
+                if not (is_highlight(nprops) or (node["id"] in in_copy and nprops.get("ink_url"))):
                     continue
                 if not any(MD_IMAGE_RE.search(d.get("content") or "")
                            for d in _walk_tree(node)):
                     continue
                 html = highlight_memo_html(node, resolve_image=self.resolve_image)
                 if html:
-                    note_htmls.append(html)
+                    notes.append({"key": f"{GAMMA_NOTE_KEY}{node['id']}", "html": html})
 
-        arxiv = (meta or {}).get("arxiv_id") or ""
         self.items.append({
-            # Real Zotero keys are "#item_<n>" — a distinct prefix for generated
-            # ones so a re-exported import can't collide with a fresh page.
-            "key": props.get("zotero_key")
-                   or (f"https://arxiv.org/abs/{arxiv}" if arxiv else f"#gamma_item_{n}"),
+            "key": self._item_key(page, props),
             "title": title,
             "meta": meta or {},
             "cite_key": bibtex_mod.pinned_key(props),
@@ -554,7 +591,7 @@ class _ZoteroBuilder(_Builder):
             "folders": self.filing.folders(props),
             "pdf_path": pdf_arc,
             "images": images,
-            "notes": note_htmls,
+            "notes": notes,
         })
 
     def finish(self):
@@ -566,7 +603,10 @@ class _ZoteroBuilder(_Builder):
             f"1. Extract this zip somewhere (keep {self.base}.rdf and files/ together).\n"
             f"2. In Zotero: File -> Import... -> \"A file\" -> pick {self.base}.rdf.\n\n"
             "Do NOT pick the .zip itself - Zotero reports 'unsupported format' for it.\n"
-            "Collections, tags, notes and PDFs (highlights embedded) come along.\n"
+            "Collections, tags, notes and PDFs come along. Highlights, handwriting and\n"
+            "text boxes ride inside the PDFs: Zotero shows them, locked, once a PDF is\n"
+            "open, and File -> Import Annotations... there makes them Zotero's own.\n"
+            "Text boxes need Zotero 7 or later.\n"
         )
         self.entries += [(f"{self.base}/{self.base}.rdf", build_rdf(self.items)),
                          (f"{self.base}/README.txt", readme)]

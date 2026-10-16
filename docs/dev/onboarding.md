@@ -815,8 +815,12 @@ mounted once in App, renders what it says.
   moment, the finish card) or an offer (`{tour}`). A synchronous
   `activity` ref reserves the one surface, so an offer never lands on a
   starting tour. Progress is written as it goes (Storage, below).
-- **Finding the anchor**: `anchorElement(id)` in the registry, re-measured on
-  every DOM mutation, resize and scroll plus a 250 ms retry while it mounts.
+- **Finding the anchor**: `anchorElement(id)` in the registry, measured
+  before the step is painted and re-measured on every DOM mutation, resize
+  and scroll plus a 250 ms retry while it mounts, each landing in the frame
+  it is seen in: a box measured after the paint shows the new step's card
+  a frame beside the last step's anchor first
+  ([ui-design.md](ui-design.md#menus-and-popups-open-in-place)).
   An anchor that has not appeared after 3 s skips the step (the overlay logs
   `guide: anchor "…" not found`, except for an `optional` step, which passes
   silently) or withdraws the offer. A demo action waits up to 4 s for its

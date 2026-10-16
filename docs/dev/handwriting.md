@@ -145,7 +145,7 @@ app ([ipad.md](ipad.md)). Typed text on a page is
   edit shares draw.
 - On an iPad this layer runs in Safari or the web app installed to the
   home screen. The iPad app captures the Pencil natively and writes the
-  same files ([ipad.md](ipad.md) "Ink on the iPad").
+  same files ([ipad.md](ipad.md) "The pen").
 
 ## Model
 
@@ -214,16 +214,15 @@ retains the brush for re-import.
 
 The codec lives twice by design (`ink.py` `decode_stroke`/`encode_points`,
 `ink/ink.js` `decodeStroke`/`encodeStroke`); the two test files pin the same
-sample bytes. The iPad runs `ink.js` itself (in JavaScriptCore), so it has
-no third copy.
+sample bytes.
 
 **The bytes of an upload** are the client's: `ink.js serializeInk` (keys
 sorted at every level, no whitespace, empty keys dropped). The server
 validates an upload and stores it as it came, named by the hash of those
 bytes. So the same strokes from a browser and the iPad are one file, and
-a client can name a file by its hash before the server has it (the
-iPad's replica). The server writes files of its own with `ink.dumps`
-(sorted keys) for a merge or an import.
+a client can name a file by its hash before the server has it. The
+server writes files of its own with `ink.dumps` (sorted keys) for a merge
+or an import.
 
 ## Two writers, one group
 
@@ -259,7 +258,6 @@ itself:
 
 - the desktop mirror, through its local server's op path (its diffs
   carry `base_props`, sync_tree `_set_op`);
-- the iPad's replica (`ink.js mergeInk` in `replica/tree.js applyLocal`);
 - undo and redo in the browser and on the iPad, which apply an entry's
   change onto the group as it is now, so strokes someone else drew
   meanwhile stay.
@@ -287,7 +285,7 @@ text box's `text_box`, merged key by key ([text_boxes.md](text_boxes.md)
   stroke wins ties); `restyleStrokes` changes selected color/width, returning
   the original object for a no-op; `duplicateStrokes` preserves original
   samples and channels while assigning unique IDs to translated copies.
-- The replay (`ink.js`, pure, so the iPad runs it too;
+- The replay (`ink.js`, pure;
   [recording.md](recording.md) "One clock for every replay"):
   - `strokeWalls(stroke)` is each sample's wall-clock ms (`t0` plus its
     `t`), null for a stroke without timing; `inkWallSpan(ink)` the
@@ -324,11 +322,22 @@ text box's `text_box`, merged key by key ([text_boxes.md](text_boxes.md)
   highlights and the text boxes) is the retained SVG plus a
   `desynchronized` canvas for the stroke in progress. `InkSelectionMenu`
   is a portalled `ContextMenu` (its controls sit outside the page's pointer
-  listeners); `useSelectionMenuAnchor` places it, measuring its height, and
-  places a text box's menu too. `InkTransformHandles` are the resize/rotate
+  listeners); `useSelectionMenuAnchor` gives it the selection's edges and
+  the band it stays in, and the menu, from its own measured height, picks
+  above or below before it is painted ([ui-design.md](ui-design.md#menus-and-popups-open-in-place)).
+  A text box's menu is placed the same way. `InkTransformHandles` are the resize/rotate
   buttons; `InkTooltips` shows a button's title on hover or focus for the
   strip and the menus, since native titles are unreliable under Pencil
-  hover. `InkCard` is the picture in the notes. For `markup/` the file
+  hover. A press takes the tooltip away and keeps it away while the pointer
+  stays on that button, and a button with `aria-expanded="true"` gets none,
+  so no tooltip flickers over the menu the press just opened. A menu such a
+  button opens belongs outside the `InkTooltips` host: React bubbles a
+  portal's events to the host, so every row the pointer crossed would raise
+  a tooltip. It opens on the press, not the click, so the menu takes the
+  tooltip's place in the same frame (the recording player's `PlayerBar`).
+  A tip goes below its button unless that is near the window's bottom;
+  `above` keeps a strip's tips above, on the side its menus open.
+  `InkCard` is the picture in the notes. For `markup/` the file
   exports `InkTooltips`, `inkColorName`, `ERASER_SIZES`, `ColorChoices` (a
   palette role's swatches plus a custom colour, for a pen preset's row and a
   text box's colours; the strip, the selection menu and the text box read
@@ -361,7 +370,7 @@ text box's `text_box`, merged key by key ([text_boxes.md](text_boxes.md)
     session (`fingerHint`, which a pen press also spends); App puts the
     hint on the status pill ([ui-design.md](ui-design.md#the-status-pill)).
   - Samples (`ink/inkInput.js`): `getCoalescedEvents()` where available
-    (Safari has none but delivers 120/240 Hz moves), hardware timestamps,
+    (Safari since 18.2; older Safari delivers 120/240 Hz moves without it), hardware timestamps,
     the pressure preference snapshotted at stroke start, the pointer-up
     position with the last contact pressure (up reports zero), repeated
     points dropped. The live outline gets the same endpoint treatment as
@@ -472,7 +481,8 @@ text box's `text_box`, merged key by key ([text_boxes.md](text_boxes.md)
   [pdf_typesetting.md](pdf_typesetting.md)): the annotated PDF
   writes one `/Ink` per look bucket (colour × tool × size × opacity) with
   `/InkList` in user space, the mean drawn width as `/BS /W`, the note on
-  the first, an `/NM` for Zotero, and a private `/GammaInk` key carrying the
+  the first, an `/NM` Zotero needs to import it as ink (the Zotero export's
+  PDF copies carry it too), and a private `/GammaInk` key carrying the
   bucket's strokes so a Gamma re-import keeps pressure and time; the
   embedded-annotation importer reads `/Ink` (Gamma's or anyone's) into ink
   blocks and strips them like the other types; the Markdown export writes
