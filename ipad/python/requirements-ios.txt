@@ -34,7 +34,9 @@ python-multipart==0.0.26
 fractional-indexing==0.1.3
 ziamath==0.13
 # Flet's iOS build; the server's 50.x has none. The backend uses only
-# cryptography.fernet, unchanged across these versions.
+# cryptography.fernet, unchanged across these versions. The iOS build links
+# OpenSSL 3 without its legacy provider and imports only with
+# CRYPTOGRAPHY_OPENSSL_NO_LEGACY set, which gamma_ios.py does.
 cryptography==43.0.1
 mcp==1.30.0
 Pillow==12.3.0

@@ -275,7 +275,7 @@ at the server's pin. Each change is commented in the file:
 | uvicorn | `uvicorn[standard]` | `uvicorn` | uvloop and httptools have no iOS wheels. h11 on the asyncio loop serves the same, websockets is listed on its own, and the other extras serve only the development reloader and config files |
 | orjson | 3.12.0 | 3.11.9 | Flet's newest iOS build |
 | pydantic | 2.13.2 | 2.13.4 | pydantic pins its pydantic-core exactly, and Flet builds only some cores: 2.13.4's (2.46.4) is there, the server's (2.46.2) and 2.14's (2.50) are not |
-| cryptography | 50.0.1 | 43.0.1 | Flet's iOS build. The server uses only `cryptography.fernet`, the same in both |
+| cryptography | 50.0.1 | 43.0.1 | Flet's iOS build. The server uses only `cryptography.fernet`, the same in both. It links OpenSSL 3 without the legacy provider and imports only with `CRYPTOGRAPHY_OPENSSL_NO_LEGACY` set, which `gamma_ios.py` does before the server's imports |
 | pypdfium2 | 5.11.0 | left out | no iOS build anywhere |
 
 The native wheels are pydantic-core, cryptography (with cffi), orjson,

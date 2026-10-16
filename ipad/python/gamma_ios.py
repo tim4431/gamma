@@ -52,6 +52,11 @@ def main():
     if os.path.isdir(static):
         os.environ.setdefault("GAMMA_STATIC_DIR", static)
 
+    # The cryptography wheel for iOS links OpenSSL 3 without its legacy
+    # provider and refuses to import until told that is expected; the server
+    # needs none of the legacy algorithms (it uses Fernet: AES and HMAC).
+    os.environ.setdefault("CRYPTOGRAPHY_OPENSSL_NO_LEGACY", "1")
+
     # gamma/config.py reads the environment at import time, so the import
     # comes after the environment is final, and after the redirect so an
     # import error lands in the log.
