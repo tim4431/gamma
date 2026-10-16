@@ -10,6 +10,7 @@ import { MarkedText } from "../search/SearchPanel";
 import { PeerAvatar, nameColor } from "../collaboration/Presence";
 import { AlarmClockIcon, ClockIcon, FileGlyph, UserPlusIcon } from "../shared/ui/Icons";
 import { fmtDate, t } from "../shared/i18n/i18n.js";
+import { guideEvents } from "../guide/events.js";
 import {
   MENTION_SECTIONS, NO_MENTIONS, dateLabel, dayDelta, localMoment, mentionChip, mentionChipClass, scanMentions,
 } from "./mentions.js";
@@ -63,8 +64,10 @@ export function MentionMenuPopup({ rows, selected, anchor, query, onPick }) {
   useEffect(() => {
     ref.current?.querySelector(".refPopupItem.selected")?.scrollIntoView({ block: "nearest" });
   }, [selected, ref]);
+  // The guide's mentions hint comes with the menu.
+  useEffect(() => { guideEvents.emit("mention.opened"); }, []);
   return (
-    <div ref={ref} className="refPopup mentionMenu" style={style} role="listbox" aria-label={t("Mention")}>
+    <div ref={ref} className="refPopup mentionMenu" style={style} role="listbox" aria-label={t("Mention")} data-guide="editor.mentionMenu">
       {rows.map((row, i) => (
         <React.Fragment key={row.key}>
           {row.section !== rows[i - 1]?.section ? <div className="refPopupHead">{t(MENTION_SECTIONS[row.section])}</div> : null}

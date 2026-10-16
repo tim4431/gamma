@@ -52,6 +52,15 @@ committed beyond `origin/main`, stop and say so.
    merge — say so). Report it with its link. Do not
    wait for it unless asked (`gh run watch <id> --exit-status`).
 
+7. **Clean up the worktree.** Once a branch's work is merged — here into
+   `main`, or a feature branch's into `dev` — remove its worktree and the
+   branch without asking: `git worktree remove .claude/worktrees/<name>`
+   then `git branch -d <name>` (the plain `-d` refuses an unmerged branch,
+   which is the one case to stop and ask; never `-D` or `--force` on your
+   own). A worktree with uncommitted changes is likewise a question, not a
+   deletion. Run this from the main checkout, after leaving the worktree
+   session if the work was done in one.
+
 Follow-ups to offer, not to run: `update-server`, `update-demo-server` and
 `update-share-host` once the Docker run has published (they deploy that
 build to the NAS, the demo and the share host; `update-needed` checks all

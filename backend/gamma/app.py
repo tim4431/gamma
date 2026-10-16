@@ -47,6 +47,7 @@ from .routers import (
     prefs,
     publish,
     publisher_sessions,
+    recordings,
     search,
     shares,
     sync,
@@ -362,6 +363,7 @@ def create_app() -> FastAPI:
     app.include_router(publisher_sessions.router)
     app.include_router(uploads.router)
     app.include_router(ink.router)
+    app.include_router(recordings.router)
     app.include_router(blocks.router)
     app.include_router(pages.router)
     app.include_router(trash_router.router)

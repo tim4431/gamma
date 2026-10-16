@@ -53,9 +53,13 @@ range requests asks once, not per chunk.
 `pdf/pdfSource.js` holds the pure decisions, unit-tested in
 `tests/pdfSource.test.mjs`: which URL is an upload (`docIdOf`), which
 transport to use (`chooseTransport`), the pdf.js options of a range open
-(`rangeOpenOptions`), and how a manifest becomes a page layout
+(`rangeOpenOptions`), how a manifest becomes a page layout
 (`layoutFromManifest`, refusing anything that does not describe a readable
-document). The viewer's load effect composes them:
+document), and which page stands for the document's size
+(`typicalPageIndex`: the widest of the pages sharing the most common width,
+to the point). Fit-width sizes to that page, not to page 1: a scanned book's
+cover is often an image of another size, and fitting it pushed every text page
+past the viewer's edge. The viewer's load effect composes them:
 
 1. **A parsed document from a recent visit** (`DOC_CACHE`, the last two
    `PDFDocumentProxy` objects with their layout) is committed as it is.
@@ -113,7 +117,9 @@ document). The viewer's load effect composes them:
    measure loop and the 50-page background refinement are skipped, which also
    removes the layout shifting under a scroll restore that the refinement
    caused. Without a manifest (proxy URLs, a failed read) the old path
-   measures and refines exactly as before. Bytes from the cache wait at most
+   measures the first eight pages, estimates the rest from the typical one
+   among them (`typicalPageIndex`, so a cover of another size does not set
+   the layout or the fit-width zoom) and refines in the background. Bytes from the cache wait at most
    250 ms for the manifest; measuring is still correct, only slower.
 
 **The worker.** pdf.js does its parsing in a Web Worker whose script is 1.3 MB.
@@ -316,19 +322,23 @@ callbacks, whose timestamp is the frame's start and so precedes the event. A
 glide measured from the event found no time passed in its first frame and
 stood still for a frame per notch, which a fast spin, a notch to a frame,
 turned into a standstill ([research/pdf-wheel-spin.md](../research/pdf-wheel-spin.md)).
-Only a notch is taken (`notchDelta`): a pixel-mode event whose legacy
-`wheelDeltaY` is a multiple of 120, or a line- or page-mode one. A
-touchpad's arbitrary deltas, Shift, Ctrl / ⌘ (the zoom) and a wheel over an
-inner element that can scroll itself stay native, and so does a wheel at
-either end. Any other write to the scroller (a jump, a zoom holding its
+Only a notch is taken (`notchDelta`): a line- or page-mode event, or a
+pixel-mode one whose legacy `wheelDeltaY` counts whole notches
+(`wholeNotches`). That value is 120 a notch, but Chromium divides it by
+`devicePixelRatio` and truncates it (`wheel_event.cc`), so a notch reads
+109 at 110% page zoom and 96 on a 125% display; the check undoes that
+division, and also takes WebKit's undivided 120. A touchpad or a precise
+wheel moves by fractions of a notch and stays native, as do Shift, Ctrl / ⌘
+(the zoom), a wheel over an inner element that can scroll itself and a
+wheel at either end. Any other write to the scroller (a jump, a zoom holding its
 anchor, the scrollbar, a key) ends the motion: each frame checks that
 `scrollTop` still reads what the last frame wrote. The detail canvas
 follows the motion like any scroll, and a 200 px glide stays inside its
 margin on a desktop. A JS-driven scroll stops whenever the main thread
 does, so the page work above (drawn in place, the text layer at rest) is
 what keeps it moving. The `pdf: smooth wheel scrolling…` step checks a
-notch passes through several positions when on, that a spin of notches
-moves in every frame, and that off, a notch jumps once.
+notch passes through several positions when on, at scale 1 and 1.25, that
+a spin of notches moves in every frame, and that off, a notch jumps once.
 
 `tests/e2e/scenarios/pdfTouch.mjs` covers 400% and 800% rendering at DPR 2 under an
 emulated canvas allocation limit: a detail canvas at 2 backing pixels per

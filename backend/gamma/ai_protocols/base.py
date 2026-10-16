@@ -498,13 +498,23 @@ class Protocol:
         server may implement it), 2 yes."""
         return 0
 
-    def transcription_request(self, conf, model, language, filename, content_type, audio) -> URLRequest:
-        """The speech-to-text upload (``language`` "" = auto-detect)."""
+    def transcription_request(self, conf, model, language, filename, content_type, audio, *,
+                              timestamps=False) -> URLRequest:
+        """The speech-to-text upload (``language`` "" = auto-detect).
+        ``timestamps``: ask for the text in timed segments
+        (``transcript_segments``), where the model can give them."""
         raise NotImplementedError
 
     def transcript(self, data) -> str:
         """The text of a transcription response."""
         raise NotImplementedError
+
+    def transcript_segments(self, data) -> list[dict]:
+        """A transcription response as ``[{start, end, text}]``, seconds into
+        the audio; an answer without segments is one from 0 (``end`` None),
+        none when it holds no text."""
+        text = self.transcript(data)
+        return [{"start": 0, "end": None, "text": text}] if text else []
 
 
 def multipart_body(fields: dict, filename: str, content_type: str, data: bytes):

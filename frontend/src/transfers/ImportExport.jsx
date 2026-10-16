@@ -13,6 +13,7 @@ import { TaskProgress } from "../tasks/TasksTray";
 import { isActive, isFinished } from "../tasks/taskModel.js";
 import { taskTitle } from "../tasks/taskKinds.js";
 import { T, t, tn } from "../shared/i18n/i18n.js";
+import { guideEvents } from "../guide/events.js";
 
 const EXPORT_CONTROLS = {
   highlights: { icon: HighlightIcon, label: T("Highlights") },
@@ -145,7 +146,9 @@ function BibtexReview({ bib, folder, summary, copied, onCopy }) {
 // Sharing itself stays in the share popover, where the audience is chosen —
 // this only reports whether a link exists.
 function BibtexSteps({ url, folder }) {
-  return <details className="transferHelp"><summary>{t("Keep this .bib up to date")}</summary><div className="importSteps">
+  // A folder's bibliography on screen: the guide's hint names this link.
+  React.useEffect(() => { guideEvents.emit("bibtex.shown", { folder: !!folder }); }, [folder]);
+  return <details className="transferHelp" data-guide="transfer.bibLink"><summary>{t("Keep this .bib up to date")}</summary><div className="importSteps">
     {url ? <>
       <CopyField label={t("Bibliography link")} value={url} action={t("Copy the bibliography link")} rows={1} />
       <Step n={1} title={t("In Overleaf: Upload → From External URL")}

@@ -63,6 +63,7 @@ from pathlib import Path
 
 from . import backups, config
 from .blocks_store import FOLDERS, folder_by_path
+from .colors import normalize_color
 from .db import (BUSY_TIMEOUT_S, SCHEMA_VERSION, USER_PREF_KEYS, USERS_SCHEMA, WORKSPACE_PREFS_SCHEMA, WS_VERSION_BASE,
                  connect_pages_db, new_account_id, page_now, register_functions, safe_ws_id, users_db_version,
                  workspace_ids, workspace_version, ws_dir)
@@ -1469,6 +1470,49 @@ def _v36_folder_links_remote(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
+def _v37_highlight_colors(ws: str, pages: sqlite3.Connection, data) -> None:
+    """A block's ``properties.color`` (a highlight's, gamma/colors.py) is
+    ``#rrggbbaa``: every stored ``rgba(…)`` / ``#rrggbb`` string takes that
+    spelling, hue and alpha unchanged, and one that is no colour goes
+    (readers draw the default for it). The rows are rewritten in place,
+    nothing is stamped — a spelling is no edit, and a mirror and its remote
+    upgraded apart rewrite their copies of a page alike. Re-runnable: a
+    converted row reads as itself. The SQL filter keeps a file with no
+    such row at one query."""
+    cols = _columns(pages, "unified_blocks")
+    if not cols:
+        return  # an old copy without the table gets it from the schema statements
+    changed = []
+    for block_id, raw in pages.execute(
+            "SELECT id, properties FROM unified_blocks WHERE properties LIKE '%\"color\":%'").fetchall():
+        try:
+            props = json.loads(raw) if raw else None
+        except ValueError:
+            continue
+        if not isinstance(props, dict) or "color" not in props:
+            continue
+        new = normalize_color(props["color"])
+        if new == props["color"]:
+            continue
+        if new is None:
+            del props["color"]
+        else:
+            props["color"] = new
+        changed.append((json.dumps(props), block_id))
+    pages.executemany("UPDATE unified_blocks SET properties = ? WHERE id = ?", changed)
+
+
+def _v38_recording_kind(ws: str, pages: sqlite3.Connection, data) -> None:
+    """The generated ``kind`` gains its ``recording`` case (a ``recording``
+    object, gamma/recording.py), after ``sheet``: ``block_columns`` finds
+    the column's stored definition outdated and adds it again, with its
+    index and the generated columns after it. It commits what it rebuilt
+    itself, ahead of the stamp; a rerun finds the current definition and
+    changes nothing. Nothing is stamped or touched: the column is derived."""
+    if _columns(pages, "unified_blocks"):  # an old copy without the table gets it from the schema statements
+        block_columns(pages)
+
+
 STEPS = [
     (20, "guest_accounts", _v20_guest_accounts),
     (21, "folder_shares", _v21_folder_shares),
@@ -1494,4 +1538,6 @@ STEPS = [
 WORKSPACE_STEPS = [
     # Next release: a global step deletes the users.db user_prefs rows whose workspace_id is not '' (34 kept them).
     (34, "workspace_prefs", _v34_workspace_prefs),
+    (37, "highlight_colors", _v37_highlight_colors),
+    (38, "recording_kind", _v38_recording_kind),
 ]

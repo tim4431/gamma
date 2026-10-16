@@ -10,8 +10,8 @@ import { MenuButton } from "../shared/ui/Menus";
 import { menuPress } from "../shared/ui/press.js";
 import { t } from "../shared/i18n/i18n.js";
 
-// Folder + label chips for a page, filtered by the Settings → General "File
-// labels" preference ("off" | "labels" | "folders" | "both"). `folders` and
+// Folder + label chips for a page, filtered by the Settings → Appearance →
+// Library "File labels" preference ("off" | "labels" | "folders" | "both"). `folders` and
 // `labels` are {id, name} — a folder's name its path — as App's page rows
 // carry them (`_folderChips` / `_labelChips`). Purely informational — chips
 // don't navigate; `onLabelMenu(id)` optionally wires the label rename/delete
@@ -131,6 +131,7 @@ function KindToggle({ value, onChange, scopeLabel }) {
         <button
           key={val}
           className={`homeViewBtn ${value === val ? "active" : ""}`}
+          data-guide={val === "labels" ? "home.labelsView" : undefined}
           onClick={() => onChange(val)}
           title={label}
           aria-pressed={value === val}
@@ -151,7 +152,7 @@ function KindToggle({ value, onChange, scopeLabel }) {
 function ListFindBox({ value, onChange, onEnter, keyLabel }) {
   const label = t("Filter by title or label");
   return (
-    <div className={`homeFindBox ${value ? "active" : ""}`}>
+    <div className={`homeFindBox ${value ? "active" : ""}`} data-guide="home.filter">
       <SearchIcon size={14} />
       <input
         className="homeFindInput"

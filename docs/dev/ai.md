@@ -520,8 +520,11 @@ invisible to search AND read_page, so keep it far above real documents).
 
 ### Exporting the context
 
-The chat header's download button saves what the model would be sent right
-now as a Markdown file. ChatDock builds the body with the same
+The chat header's download menu has two entries. "Export conversation" saves
+the conversation as the user saw it, with its pictures
+([chat_history.md](chat_history.md#exporting-a-conversation)). "Export
+context" saves what the model would be sent right now as a Markdown file,
+for looking at the prompt itself. ChatDock builds its body with the same
 `chatRequest(text, history)` a send uses, with the composer's draft as the
 prompt. `POST /api/ai/chat/context` runs it through `_chat_prompt`, the one
 step `/ai/chat` also uses for its turns and system prompt, and
@@ -578,6 +581,17 @@ user turn is the cached head. With the PDF switch on, the PDF files go there too
 ahead of the turn's text, on every message
 ([ai_context.md](ai_context.md#with-the-pdf-switch-on)). The head changes only when
 the pages, the notes, the map, the PDF switch or the context settings
+change.
+
+The tool specs and the system prompt come before that head in the cached
+prefix, so a change in either costs the head and the history too. The system
+prompt therefore holds only what stays the same for a whole conversation
+(`agent_system`'s docstring is the rule). What a message points at in the
+notes (the cursor block, attached chips, note selections) goes with that
+message ("Pointing the chat at notes" below). The tools that ask are not
+named, so a permission the conversation allows on an approval card changes
+nothing ("Asking before a call" below). The system prompt changes only when the model, the custom
+prompts, the tool permissions, the pages in context or their coverage
 change.
 
 ### Fitting the window
@@ -770,7 +784,7 @@ a press keeps an on-screen keyboard up.
 - **Message tools.** A message's Copy and Edit, and a code block's Copy, come
   up with the message where a pointer hovers (taking no press while hidden)
   and are always there where none does.
-- **Pictures.** A paste, a drop or the [+] menu's "Add photos & files"
+- **Pictures.** A paste or the [+] menu's "Add photos & files"
   stores the picture at once (`POST /api/ai/pictures`, sized for the
   model) and attaches it by URL. "Attach what I see", offered with a paper
   open, attaches the visible part of each page in view, with the
@@ -830,14 +844,16 @@ notes. The server resolves all three against the request's context pages.
   and only flashes that row), so the chip first appears after a real click
   or caret move. Explicit jumps (a `?block=` link, a highlight, a backlink,
   a search hit) do focus their row. Its text and sub-blocks enter the
-  context as an id-labelled outline ("The user's cursor is on this note
-  block …"), and the agent prompt says "this block" / "here" mean that id.
-  So *"expand this"* edits the right block without a `read_block` first.
+  message's context as an id-labelled outline ("The user's cursor is on
+  this note block ("this block", "this note", "here" mean it)"), and the
+  agent prompt's note-editing rule says such blocks need no read first. So
+  *"expand this"* edits the right block without a `read_block` first.
 - `context_blocks` — ids of blocks attached as chips: Ctrl+click a block
   row, or the ⋮⋮ handle menu's **Add to chat** (`onAddToChat` → `chatNotes`
   in App). Each is served as `[id] text` with its subtree indented
-  (`ai_context.notes_focus_section`, the same form `read_block` uses), and
-  the agent prompt lists the ids, so *"rewrite these"* means them. Capped at
+  (`ai_context.notes_focus_section`, the same form `read_block` uses), under
+  a heading that says to edit them by id when asked to change them, so
+  *"rewrite these"* means them. Capped at
   12 chips / 12k chars (`MAX_CONTEXT_BLOCKS`, `MAX_BLOCK_SECTION_CHARS`).
   Ids outside the context pages, and page ids, are dropped silently.
   Handwriting blocks and pages of paper are labelled the way `read_block`
@@ -870,7 +886,12 @@ notes. The server resolves all three against the request's context pages.
   while an instruction that transforms the selection (rewrite, fix,
   translate, …) is an in-place `edit_block` mode `"selection"`. Without that
   rule a small model answered "translate this" with the translation in its
-  reply.
+  reply. The question carries the labels and ids; the agent prompt carries
+  only the rule, so it reads the same with or without a selection.
+
+  None of the three is named in the system prompt: they change from one
+  message to the next, and the system prompt is part of the cached prefix
+  ("Prompt caching" above).
 
 Chips render in the composer's chip strip next to PDF passages
 (`SelChip` in `chat/ChatDock.jsx`). Each is two lines. The first is a label
@@ -961,7 +982,11 @@ bubble comes from the first; `view_pdf_page`, `view_ink`, `view_image` and
 the view tools' results tell the model it may embed that URL in its reply
 as a markdown image, which `ChatMarkdown` renders.
 `GET /api/ai/selection-crop/{doc_id}` draws the selection pill's picture in
-saved replies.
+saved replies. `ai_pictures.picture_at` gives the bytes of any of these
+pictures from the URL the chat shows it by: a stored upload as stored, a
+data URL decoded, a drawn one drawn as its route draws it. That is how the
+conversation export packs them
+([chat_history.md](chat_history.md#exporting-a-conversation)).
 
 **The store and the upload GC.** A chat's pictures are stored uploads like a
 note's, and the saved conversation points at them, so `upload_gc.referenced`
@@ -1150,9 +1175,14 @@ no further provider round is opened.
 
 Only a streamed request of a signed-in account can ask (`_chat_scope`'s
 `can_ask`). A request without a stream arms no asking tool, and the context
-export shows the tools as the streamed chat would. The agent prompt names
-the asking tools and tells the model to call them directly, never asking for
-permission in its reply first. An asking `edit_block` or `create_block`
+export shows the tools as the streamed chat would. The agent prompt says
+that some tools ask the user first and tells the model to call them
+directly, never asking for permission in its reply first. It names no
+tool: the names would change when the conversation allows one on a card
+(`granted`), and the result of a declined call names itself. The sentence
+stays while any armed tool asked at the start of the conversation, so the
+system prompt reads the same before and after a grant and the cached
+prefix holds. An asking `edit_block` or `create_block`
 streams no `progress`, so the note is not typed in before the user decides.
 
 In the client (`chat/ApprovalCard.jsx`, its rules in `chat/approvals.js`),

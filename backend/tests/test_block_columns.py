@@ -77,6 +77,10 @@ def test_kind_and_doc_id_follow_the_properties(owner):
         "bcBox": ({"text_box": {"x": 1}, "pdf_page": 1}, "text_box"),
         "bcBoxPlaced": ({"text_box": {"x": 1}, "pdf_position": pos}, "text_box"),
         "bcSheet": ({"sheet": {"size": "a4"}, "pdf_position": pos}, "sheet"),
+        # a recording is tested after the sheet and before the link
+        "bcRec": ({"recording": {"started": 1, "segments": [], "state": "done"}, "link_page_id": page["id"]},
+                  "recording"),
+        "bcRecNull": ({"recording": None}, "note"),
         "bcNoPos": ({"pdf_position": None, "quote": "q"}, "note"),
         "bcOldId": ({"highlight_id": "h1", "pdf_page": 1}, "note"),  # no position: no highlight
         "bcFileBlock": ({"doc_id": "e" * 24}, "note"),
@@ -94,6 +98,7 @@ def test_kind_and_doc_id_follow_the_properties(owner):
     # the notes search reports the stored kind
     kinds = {b["id"]: b["kind"] for b in owner.get("/api/block-search", params={"ids": ",".join(cases)}).json()["blocks"]}
     assert kinds["bcBox"] == "text_box" and kinds["bcLink"] == "link" and kinds["bcInk"] == "ink"
+    assert kinds["bcRec"] == "recording"
 
 
 def test_folders_and_labels_are_kinds_of_their_trees(owner):
@@ -190,6 +195,10 @@ _KIND_SHAPES = [
     ({"text_box": {"x": 1}}, "text_box"),
     ({"text_box": "no"}, "note"),
     ({"sheet": {}}, "sheet"),
+    ({"recording": {}}, "recording"),
+    ({"recording": []}, "note"),
+    ({"sheet": {}, "recording": {}}, "sheet"),
+    ({"recording": {"segments": []}, "link_url": "u"}, "recording"),
     ({"link_url": "https://example.org"}, "link"),
     ({"link_url": ""}, "note"),
     ({"link_url": None}, "note"),

@@ -793,7 +793,7 @@ export async function touchScenarios({ server, browser, alice, makePdf, step, un
     }
   });
 
-  await step("touch: a history row's ⋯ renames, selects and deletes, the current one only renames; a rename kept by clicking away", async () => {
+  await step("touch: a history row's ⋯ renames, exports, selects and deletes, the current one only renames and exports; a rename kept by clicking away", async () => {
     const { ctx } = await chatContext({});
     try {
       const page = await openPage(ctx, chatUrl);
@@ -806,13 +806,13 @@ export async function touchScenarios({ server, browser, alice, makePdf, step, un
       await archived.hover();
       await archived.locator(".rowMenuBtn").click();
       await menu(page).waitFor();
-      assertEq((await menuRows(page)).join(" | "), "Rename | Select | Delete", "an earlier conversation's menu");
+      assertEq((await menuRows(page)).join(" | "), "Rename | Export | Select | Delete", "an earlier conversation's menu");
       await closeMenu(page);
       const current = pop.locator(".chatHistRow.active");
       await current.hover();
       await current.locator(".rowMenuBtn").click();
       await menu(page).waitFor();
-      assertEq((await menuRows(page)).join(" | "), "Rename", "the current conversation's menu");
+      assertEq((await menuRows(page)).join(" | "), "Rename | Export", "the current conversation's menu");
       await closeMenu(page);
       // Rename, then a click elsewhere: the name is kept.
       await archived.hover();

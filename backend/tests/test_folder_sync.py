@@ -265,3 +265,6 @@ def test_client_can_take_the_pdfs_alone_and_lists_folders(owner, lab, token, tmp
     out = capsys.readouterr().out
     assert "root  (the whole library)" in out and f"FS lab / Sub2  ({lab['sub']})" in out
     assert mod.main(["init", str(tmp_path / "x"), "--server", SERVER, "--folder", "no such folder", "--token", token]) == 1
+    # an id beginning with "-" is the folder asked for, not another option
+    assert mod.main(["init", str(tmp_path / "y"), "--server", SERVER, "--folder", "-Ab9_xYz12", "--token", token]) == 1
+    assert "no folder called '-Ab9_xYz12'" in capsys.readouterr().err

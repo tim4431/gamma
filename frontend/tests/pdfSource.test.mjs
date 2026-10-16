@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { WHOLE_MAX_BYTES, chooseTransport, docIdOf, layoutFromManifest, rangeOpenOptions } from "../src/pdf/pdfSource.js";
+import { WHOLE_MAX_BYTES, chooseTransport, docIdOf, layoutFromManifest, rangeOpenOptions, typicalPageIndex } from "../src/pdf/pdfSource.js";
 
 test("docIdOf reads upload urls only, query or not", () => {
   assert.equal(docIdOf("/api/uploads/0123abcdef0123abcdef0123.pdf"), "0123abcdef0123abcdef0123");
@@ -50,4 +50,25 @@ test("layoutFromManifest rejects what does not describe a readable document", ()
   assert.equal(layoutFromManifest({ pages: 0, dims: [] }), null, "an unreadable file");
   assert.equal(layoutFromManifest({ pages: 2, dims: [[1, 1]] }), null, "count and dims disagree");
   assert.equal(layoutFromManifest({ pages: "2", dims: [[1, 1], [1, 1]] }), null);
+});
+
+test("typicalPageIndex skips a cover of another size", () => {
+  // Nagourney's Quantum Electronics: a 252 pt cover image, then 393 text
+  // pages whose alternating crop boxes are 444.235 and 444.239 pt wide.
+  const widths = [252, ...Array.from({ length: 393 }, (_, i) => (i % 2 ? 444.239 : 444.235))];
+  const i = typicalPageIndex(widths);
+  assert.equal(widths[i], 444.239, "the widest of the common width, so no text page overflows");
+});
+
+test("typicalPageIndex: a uniform document is page 1, a tie goes to the wider width", () => {
+  assert.equal(typicalPageIndex([612, 612, 612]), 0);
+  assert.equal(typicalPageIndex([612, 792]), 1, "two pages, two widths");
+  assert.equal(typicalPageIndex([612, 792, 792, 612, 1224]), 1, "a tie of two each");
+  assert.equal(typicalPageIndex([612, 612, 1224]), 0, "one fold-out does not shrink the rest");
+});
+
+test("typicalPageIndex ignores missing widths and has none to give for an empty layout", () => {
+  assert.equal(typicalPageIndex([]), -1);
+  assert.equal(typicalPageIndex([0, undefined, NaN]), -1);
+  assert.equal(typicalPageIndex([undefined, 500, 500]), 1);
 });

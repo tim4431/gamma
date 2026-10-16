@@ -62,3 +62,27 @@ export function layoutFromManifest(m, fallback = { width: 600, height: 800 }) {
   }
   return { heights, widths };
 }
+
+// The index of the page that stands for the document's size: the widest of
+// the pages sharing the most common width (to the point; on a tie, the wider
+// width), or -1 when no width is known. Fit-width sizes to it, and the
+// measure loop estimates the unmeasured pages from it. Page 1 alone is not
+// enough: a scanned book's cover is often an image of another size (252 pt
+// against 444 pt text pages), and fitting it put every text page 1.76× past
+// the viewer's edge. The widest of the group, because widths that round
+// alike still differ (alternating crop boxes, 444.235 and 444.239 pt) and a
+// fraction of a pixel too wide is enough for a horizontal scrollbar.
+export function typicalPageIndex(widths) {
+  const groups = new Map(); // width to the point → { count, i: its widest page }
+  widths.forEach((w, i) => {
+    if (!(w > 0)) return;
+    const key = Math.round(w), g = groups.get(key);
+    if (!g) groups.set(key, { count: 1, i });
+    else { g.count++; if (w > widths[g.i]) g.i = i; }
+  });
+  let best = null, bestW = 0;
+  for (const [w, g] of groups) {
+    if (!best || g.count > best.count || (g.count === best.count && w > bestW)) { best = g; bestW = w; }
+  }
+  return best ? best.i : -1;
+}

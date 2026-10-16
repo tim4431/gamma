@@ -1082,7 +1082,6 @@ html, body { overscroll-behavior: none; }
 .mdImgFrame:is(:hover, :has(.mdImgTools :focus-visible)) .mdImgTools,
 .mdObjectSelected .mdImgTools { opacity: 1; pointer-events: auto; }
 .mdImgTools a.ctlBtn { text-decoration: none; }
-.mdImgTools .ctlBtn.danger:hover { background: var(--danger-bg); color: var(--danger); }
 /* The edge drag grips shared by sized figures (note images, Mermaid and
    SVG diagrams — shared/ui/ResizeGrip.jsx), one per side; each frame reveals
    them on hover and while its object is selected, and out of sight they
@@ -1360,6 +1359,7 @@ html, body { overscroll-behavior: none; }
 
 .colorRow {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   margin-bottom: 10px;
 }
@@ -1659,7 +1659,8 @@ html, body { overscroll-behavior: none; }
   cursor: grab;
   -webkit-user-drag: element;
 }
-.sortableBlockWrap:is(:hover, :focus-within, :has(:hover)) > .rowHandles > :is(.dragHandle, .addHandle) {
+.sortableBlockWrap:is(:hover, :focus-within, :has(:hover)) > .rowHandles > :is(.dragHandle, .addHandle),
+.rowHandles > :is(.dragHandle, .addHandle)[data-guide-active] {
   opacity: 1;
   pointer-events: auto;
 }
@@ -1748,7 +1749,8 @@ html, body { overscroll-behavior: none; }
 }
 /* .ctlBtn is the same button outside a box — .ctlBtnRow lays them flat
    (the chat header's ⚙ / tools / find / new-chat strip). State classes are
-   shared: .modeActive = on. */
+   shared: .modeActive = on, .danger = destructive (red under the pointer
+   or the keyboard's focus). */
 :is(.pdfCtlBox button, .ctlBtn) {
   background: transparent;
   border: none;
@@ -1767,6 +1769,10 @@ html, body { overscroll-behavior: none; }
   background: var(--bg-active);
 }
 :is(.pdfCtlBox button, .ctlBtn):disabled { opacity: 0.4; cursor: default; }
+:is(.pdfCtlBox button, .ctlBtn).danger:is(:hover, :focus-visible):not(:disabled) {
+  color: var(--danger);
+  background: var(--danger-bg);
+}
 /* A row's "⋯" (MenuButton in shared/ui/Menus.jsx): where a pointer hovers
    it shows with its row (.rowMenuHost), under the keyboard's focus, and
    while its menu is open; where nothing hovers it is always there. */
@@ -5321,20 +5327,18 @@ a.shareBrand:hover { background: var(--bg-hover); }
   --scrollbar-thumb-hover: var(--scrollbar-thumb-dark-hover); } /* dark surround + scrollbar even in the light theme */
 .pdfViewer.pdfDark .pdfPageWrap { background: #0f0f0f !important; }
 .pdfViewer.pdfDark .pdfPageCanvas { filter: invert(0.94) hue-rotate(180deg); }
-:is(.pdfViewer.pdfDark, [data-theme="gamma-dark"] .pdfViewer) .pdfPageWrap :is([data-hl-id], .pdfFindMark) { mix-blend-mode: screen !important; }
-/* Screened, the palette's pastels turn into mid-tones the light text can't
-   be read on (about 2.4:1 on yellow). The four palette colours (data-hl-color,
-   the COLORS index) instead draw a dark-tuned set with normal blending,
-   about 7:1; an area outline keeps a stronger line of the same hue. Colours
-   from other apps are not remapped and keep the screen blend above. The
-   note badge turns dark with them.
-   ds-allow-start: the highlight palette's dark set */
-:is(.pdfViewer.pdfDark, [data-theme="gamma-dark"] .pdfViewer) .pdfPageWrap [data-hl-color] { mix-blend-mode: normal !important; }
-:is(.pdfViewer.pdfDark, [data-theme="gamma-dark"] .pdfViewer) .pdfPageWrap [data-hl-color="0"] { --hl: rgba(250, 204, 21, 0.30) !important; --hl-line: rgba(250, 204, 21, 0.75); }
-:is(.pdfViewer.pdfDark, [data-theme="gamma-dark"] .pdfViewer) .pdfPageWrap [data-hl-color="1"] { --hl: rgba(74, 222, 128, 0.26) !important; --hl-line: rgba(74, 222, 128, 0.7); }
-:is(.pdfViewer.pdfDark, [data-theme="gamma-dark"] .pdfViewer) .pdfPageWrap [data-hl-color="2"] { --hl: rgba(96, 165, 250, 0.32) !important; --hl-line: rgba(96, 165, 250, 0.8); }
-:is(.pdfViewer.pdfDark, [data-theme="gamma-dark"] .pdfViewer) .pdfPageWrap [data-hl-color="3"] { --hl: rgba(192, 132, 252, 0.32) !important; --hl-line: rgba(192, 132, 252, 0.8); }
-/* ds-allow-end */
+:is(.pdfViewer.pdfDark, [data-theme="gamma-dark"] .pdfViewer) .pdfPageWrap .pdfFindMark { mix-blend-mode: screen !important; }
+/* Screened, a pastel wash turns into a mid-tone the light text can't be
+   read on (about 2.4:1 on yellow). Every highlight instead draws the
+   dark-tuned colour of its own hue the viewer derives for it
+   (shared/model/palette.js darkPageColor, --hl-dark beside --hl) with
+   normal blending, about 7:1; an area outline keeps a stronger line of the
+   same hue. The note badge turns dark with them. */
+:is(.pdfViewer.pdfDark, [data-theme="gamma-dark"] .pdfViewer) .pdfPageWrap [data-hl-id] {
+  mix-blend-mode: normal !important;
+  --hl: var(--hl-dark) !important;
+  --hl-line: var(--hl-dark-line);
+}
 :is(.pdfViewer.pdfDark, [data-theme="gamma-dark"] .pdfViewer) .pdfPageWrap .pdfNoteBadge {
   mix-blend-mode: normal !important;
   background: #2a2a2a;

@@ -25,6 +25,7 @@ export const SECTION_PREFS = Object.freeze({
   appearance: sections({
     Theme: ["theme"],
     "PDF pages": ["pdfDarkPage"],
+    Colors: ["palette"],
     Library: ["recentThumbs", "fileLabels"],
     "Sync status": ["syncPillScope"],
     Tours: ["suggestTours", "tourProgress"],
@@ -32,6 +33,7 @@ export const SECTION_PREFS = Object.freeze({
   reading: sections({
     PDFs: ["embAnnots", "smoothWheel", "oaFallback", "metaAutoFetch", "pdfSaveLocal"],
     Notes: ["backlinksVisible"],
+    Recordings: ["replayLeadIn", "recordingTranscribe"],
     "Search opens as": ["searchDetailsHome", "searchDetailsPaper"],
   }),
   translation: sections({

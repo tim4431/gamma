@@ -2,8 +2,10 @@
 // text layer, creating a highlight from a text selection (overlay + block
 // row + persisted position), the library card, and the search panel hitting
 // PDF text on another page.
+import { execFileSync } from "node:child_process";
 import { tree, same, partialBlockSearch } from "./notes.mjs";
-import { fakeAiModels } from "../harness.mjs";
+import { PYTHON, fakeAiModels } from "../harness.mjs";
+import { DEFAULT_PALETTE, darkPageColor } from "../../../src/shared/model/palette.js";
 
 // Select `needle` inside one text-layer span of `pageNo` and release the
 // mouse the way the viewer listens for it (document-level mouseup).
@@ -91,6 +93,7 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
     const typeSelect = pop.getByRole("button", { name: "Item type", exact: true });
     assertEq((await typeSelect.innerText()).trim(), "Journal article", "a venue and no type read as a journal article");
     assert((await keys()).includes("Journal"), `rows: ${await keys()}`);
+    assert(!(await keys()).includes("Edited"), "a record from before the stamp says no time");
     await typeSelect.click();
     await page.locator(".uiSelectMenu .ctxMenuItem").getByText("Conference paper", { exact: true }).click();
     await until(async () => (await keys()).includes("Proceedings"), { what: "the venue row reads Proceedings" });
@@ -103,6 +106,8 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
     }, { what: "the item type saved" });
     assert(saved.bibtex.startsWith("@inproceedings{he2016,") && saved.bibtex.includes("booktitle = {2016 IEEE CVPR}"),
       `entry: ${saved.bibtex}`);
+    // the hand edit is stamped, and the popover says when
+    await until(async () => (await keys()).includes("Edited"), { what: "the Edited row" });
     await page.click("button[aria-label='Paper metadata']");
     await account.api("/api/metadata/update", { method: "POST", body: { block_id: pageId, meta: {} } });
     assertNoProblems(page);
@@ -167,6 +172,7 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
     // The block is the highlight: no second id, the page and its size once.
     const { pdf_position: pos, ...rest } = saved.properties;
     assert(!("highlight_id" in rest) && !("pdf_page" in rest), `no highlight_id or pdf_page: ${JSON.stringify(rest)}`);
+    assertEq(rest.color, "#ffe28fa6", "the first swatch, stored as hex with the highlight alpha");
     assertEq(pos.pageNumber, 1, "highlight page");
     assert(pos.width > 0 && pos.height > 0, "the page size the rects are measured in");
     assert(pos.rects.length && pos.rects.every((r) => JSON.stringify(Object.keys(r)) === '["x1","y1","x2","y2"]')
@@ -238,23 +244,90 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
     assertNoProblems(page);
   });
 
-  await step("pdf: flipped pages draw palette highlights in a dark-tuned set; other colours keep screening", async () => {
+  // A note placed on a page but not on a passage (an imported one, say)
+  // carries ⊕: the next highlight clicked on the PDF is the one it links to.
+  await step("pdf: a note's ⊕ links it to the highlight clicked next", async () => {
+    const loose = await account.api("/api/blocks", { method: "POST", body: { parent_id: pageId, content: "Loose remark",
+      properties: { pdf_position: { pageNumber: 1 } } } });
+    await page.reload();
+    await waitForPdf(page);
+    const mark = page.locator('[data-page="1"] div[data-hl-id]').first();
+    await mark.waitFor();
+    const target = await mark.getAttribute("data-hl-id");
+    const row = page.locator(".blockRow", { hasText: "Loose remark" });
+    await row.hover(); // ⊕ takes a press only while its row is hovered or focused
+    await row.getByTitle("Attach to a PDF highlight").click();
+    await page.locator(".attachModeBanner").waitFor();
+    await mark.click();
+    await page.locator(".attachModeBanner").waitFor({ state: "detached" });
+    await row.getByTitle("Unlink highlight").waitFor();
+    await until(async () => {
+      const d = await account.api(`/api/blocks/${pageId}/subtree`);
+      return (d.block.children || []).find((b) => b.id === loose.id)?.properties?.linked_highlight_id === target;
+    }, { what: "the note is linked to the clicked highlight" });
+    await account.api(`/api/blocks/${loose.id}`, { method: "DELETE" });
+    assertNoProblems(page);
+  });
+
+  await step("pdf: flipped pages draw every highlight in a dark-tuned colour of its own hue, not screened", async () => {
     const mark = page.locator('[data-page="1"] div[data-hl-id]').first();
     const look = () => mark.evaluate((el) => { const s = getComputedStyle(el); return `${s.backgroundColor} ${s.mixBlendMode}`; });
-    assertEq(await mark.getAttribute("data-hl-color"), "0", "the first palette colour is tagged by its index");
-    assert((await look()).endsWith(" multiply"), "a light page multiplies");
+    assertEq(await look(), "rgba(255, 226, 143, 0.65) multiply", "a light page multiplies the stored colour (#ffe28fa6)");
+    const dark = await mark.evaluate((el) => el.style.getPropertyValue("--hl-dark").trim());
+    assertEq(dark, darkPageColor("#ffe28fa6"), "the viewer derives the dark variant with the palette module");
     const flip = (on) => page.locator(".pdfViewer").evaluate((el, on) => el.classList.toggle("pdfDark", on), on);
     await flip(true);
     try {
-      assertEq(await look(), "rgba(250, 204, 21, 0.3) normal", "the dark-tuned yellow, not screened");
+      assertEq(await look(), `${dark} normal`, "the dark-tuned yellow, not screened");
       assertEq(await page.locator(".pdfNoteBadge").first().evaluate((el) => getComputedStyle(el).backgroundColor), "rgb(42, 42, 42)", "a dark note badge");
-      // A colour from another app has no palette index and keeps the screen blend.
-      await mark.evaluate((el) => { el.removeAttribute("data-hl-color"); el.style.setProperty("--hl", "rgba(255, 0, 0, 0.4)"); });
-      assertEq(await look(), "rgba(255, 0, 0, 0.4) screen");
+      // A colour from another app is treated the same: its own hue, dark-tuned.
+      await mark.evaluate((el) => {
+        el.style.setProperty("--hl", "rgba(255, 0, 0, 0.4)");
+        el.style.setProperty("--hl-dark", "rgba(230, 20, 20, 0.3)");
+      });
+      assertEq(await look(), "rgba(230, 20, 20, 0.3) normal");
     } finally { await flip(false); }
     await page.reload();
     await waitForPdf(page);
     assertNoProblems(page);
+  });
+
+  await step("pdf: a changed palette swatch colours new highlights; stored ones keep theirs", async () => {
+    // the first swatch of the Highlight group becomes a half-transparent orange
+    const palette = JSON.parse(JSON.stringify(DEFAULT_PALETTE));
+    palette.groups[0].colors[0] = { hex: "#ff8800", alpha: 0.5 };
+    await account.api("/api/prefs/profile", { method: "PATCH", body: { set: { palette } } });
+    try {
+      await page.reload();
+      await waitForPdf(page, 1);
+      const first = page.locator(".plainTip .colorBtn").first();
+      await selectPdfText(page, 1, "Rydberg arrays");
+      await page.waitForSelector(".plainTip .colorBtn", { timeout: 5000 });
+      assertEq(await first.getAttribute("aria-label"), "Highlight in Amber", "the swatch is named after its nearest colour");
+      assertEq(await first.evaluate((el) => getComputedStyle(el).backgroundColor), "rgba(255, 136, 0, 0.5)", "drawn at its alpha");
+      await first.click();
+      const saved = await until(async () => {
+        const d = await account.api(`/api/blocks/${pageId}/subtree`);
+        return (d.block.children || []).find((b) => b.properties?.quote === "Rydberg arrays") || null;
+      }, { what: "the orange highlight" });
+      assertEq(saved.properties.color, "#ff880080", "the new swatch at its own alpha");
+      const kept = await account.api(`/api/blocks/${pageId}/subtree`);
+      assert((kept.block.children || []).some((b) => b.properties?.color === "#ffe28fa6"), "the earlier highlight keeps its yellow");
+      // the recolour menu offers the same swatches
+      await page.click(`[data-page="1"] [data-hl-id="${saved.id}"]`, { button: "right" });
+      const swatch = page.locator(".ctxMenuColors .colorBtn").nth(1);
+      assertEq(await swatch.getAttribute("aria-label"), "Change to Green");
+      await swatch.click();
+      await until(async () => {
+        const d = await account.api(`/api/blocks/${pageId}/subtree`);
+        return (d.block.children || []).find((b) => b.id === saved.id)?.properties?.color === "#aaebaaa6";
+      }, { what: "the highlight recoloured green" });
+      assertNoProblems(page);
+    } finally {
+      await account.api("/api/prefs/profile", { method: "PATCH", body: { set: { palette: DEFAULT_PALETTE } } });
+      await page.reload();
+      await waitForPdf(page, 1);
+    }
   });
 
   await step("pdf: interface scale keeps note badges anchored and Tours consistent", async () => {
@@ -599,6 +672,26 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
       // The sent message shows both, and the composer row is empty again.
       await until(async () => await page.locator(".chatBubble.user img.chatMsgImage").count() === 2, { what: "the bubble shows the pictures" });
       assertEq(await thumbs.count(), 0, "the composer's pictures went with the message");
+      // Exporting the conversation packs both pictures beside the transcript.
+      await page.getByText("A picture.").waitFor();
+      const downloadEvent = page.waitForEvent("download");
+      await page.getByRole("button", { name: "Export chat", exact: true }).click();
+      await page.getByRole("button", { name: "Export conversation", exact: true }).click();
+      const download = await downloadEvent;
+      assert(download.suggestedFilename().endsWith(".zip"), download.suggestedFilename());
+      const zip = JSON.parse(execFileSync(PYTHON, ["-c", [
+        "import json, sys, zipfile",
+        "z = zipfile.ZipFile(sys.argv[1])",
+        "md = next(n for n in z.namelist() if n.endswith('.md'))",
+        "print(json.dumps({'names': sorted(z.namelist()), 'md': z.read(md).decode()}))",
+      ].join("\n"), await download.path()]).toString());
+      const linked = (md) => [...md.matchAll(/!\[[^\]]*\]\((assets\/[^)]+)\)/g)].map((m) => m[1]);
+      assert(linked(zip.md).every((name) => zip.names.includes(name)), `every picture is in the zip: ${zip.names}`);
+      // (Earlier steps' messages come along, an earlier reply's selection crop among them.)
+      const asked = zip.md.slice(zip.md.lastIndexOf("## You"));
+      assertEq(linked(asked).length, 2, `both pictures are in the transcript:\n${asked}`);
+      assert(asked.includes("![Image file") && asked.includes("![Region of PDF page 2](assets/"), asked);
+      assert(asked.includes("What are these?") && asked.includes("## AI\n\nA picture."), asked);
     } finally {
       await page.unroute("**/api/ai/chat");
     }
@@ -869,14 +962,16 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
   });
 
   // Settings → Reading › PDFs › Smooth wheel scrolling (shared/lib/smoothWheel.js).
-  await step("pdf: smooth wheel scrolling glides one notch over several frames; off, it is the browser's jump", async () => {
+  await step("pdf: smooth wheel scrolling glides one notch over several frames at any zoom; off, it is the browser's jump", async () => {
     const lines = Array.from({ length: 30 }, (_, n) => `Wheel line ${n + 1}`);
     const up = await account.upload("/api/uploads", makePdf(Array.from({ length: 6 }, () => lines)), "wheel.pdf", "application/pdf");
     const doc = await account.api(`/api/blocks/by-doc/${up.doc_id}`, { method: "POST", body: { default_title: "Wheel paper" } });
     try {
-      for (const on of [true, false]) {
+      // At a scale other than 1 (a page zoom or the display's) Chromium
+      // divides a notch's wheelDeltaY by devicePixelRatio: 96 at 1.25.
+      for (const [on, scale] of [[true, 1], [false, 1], [true, 1.25]]) {
         await account.api("/api/prefs/profile", { method: "PATCH", body: { set: { smoothWheel: on } } });
-        const c = await account.context(browser);
+        const c = await account.context(browser, { deviceScaleFactor: scale });
         await c.addInitScript((v) => localStorage.setItem("gamma-smooth-wheel", v), on ? "1" : "0");
         try {
           const p = await openPage(c, `${server.base}/?page=${doc.id}&ws=${account.ws}`);
@@ -893,10 +988,10 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
           await p.mouse.wheel(0, 200);
           await until(() => p.evaluate(() => window.wheelTrail.length >= 40), { what: "40 frames sampled" });
           const trail = await p.evaluate(() => [...new Set(window.wheelTrail)]);
-          assertEq(trail.at(-1) - trail[0], 200, `one notch scrolls its 200 px (${on ? "on" : "off"})`);
-          if (on) assert(trail.length >= 5, `on: several positions on the way, ${trail.join(" ")}`);
+          assertEq(Math.round(trail.at(-1) - trail[0]), 200 / scale, `one notch scrolls its ${200 / scale} px (${on ? "on" : "off"}, scale ${scale})`);
+          if (on) assert(trail.length >= 5, `on: several positions on the way at scale ${scale}, ${trail.join(" ")}`);
           else assertEq(trail.length, 2, `off: one jump, ${trail.join(" ")}`);
-          if (on) {
+          if (on && scale === 1) {
             // A spin, notches closer than the glide: Chromium hands each
             // notch to the page inside a frame, before that frame's animation
             // callbacks, so a glide timed from the notch stood still for a

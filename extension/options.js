@@ -2,6 +2,7 @@ import {
   api, checkedWorkspace, chooseWorkspace, defaultFolder, folderByPath, getSettings, login, logout, normalizeServer,
   originPattern, rememberFolder, removeServer, setSettings, whoAmI, writableWorkspaces,
 } from "./api.js";
+import { RECENT_KEY } from "./saveLog.js";
 import { renderServerList } from "./serverList.js";
 import { folderPicker, workspacePicker } from "./ui.js";
 
@@ -170,6 +171,17 @@ async function saveFolder(folder) {
   saved();
 }
 
+// The last few saves' logs (worker.js keepLog), newest first, onto the
+// clipboard — the shortcut's and the context menu's too, which only notify.
+async function copyLogs() {
+  const recent = (await chrome.storage.session.get(RECENT_KEY))[RECENT_KEY] || [];
+  if (!recent.length) { status("logs-status", "No saves since the browser started."); return; }
+  try {
+    await navigator.clipboard.writeText(recent.join("\n\n"));
+    status("logs-status", `Copied the last ${recent.length === 1 ? "save" : `${recent.length} saves`}.`, "ok");
+  } catch (err) { status("logs-status", `Couldn't copy: ${err.message}`, "err"); }
+}
+
 document.addEventListener("DOMContentLoaded", async () => {
   const s = await getSettings();
   $("server").value = s.server;
@@ -184,6 +196,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   $("login-form").addEventListener("submit", doLogin);
   $("login").onclick = doLogin;
   $("logout").onclick = doLogout;
+  $("copy-logs").onclick = copyLogs;
   for (const id of ["labels", "allow-oa", "save-copy", "auto-sessions"]) $(id).addEventListener("change", saveDefaults);
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area !== "sync" || !(changes.server || changes.servers) || busy) return;

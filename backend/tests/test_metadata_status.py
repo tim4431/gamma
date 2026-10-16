@@ -44,6 +44,8 @@ def test_status_lists_papers_not_notes(guest):
     p2 = _paper(r, failed["id"])
     assert p2["has_meta"] is False
     assert "no arXiv id" in p2["meta_error"]
+    # when the record was stored, when a lookup last failed ("" when unknown)
+    assert p1["meta_at"] == "" and p2["meta_error_at"] == "2026-01-01T00:00:00Z"
 
 
 def test_status_reads_index_state(guest):

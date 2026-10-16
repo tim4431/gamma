@@ -10,10 +10,14 @@ import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
 import rehypeRaw from "rehype-raw";
 import { isFolded, isHighlightBlock, withLegacyAccessors } from "../shared/model/blockModel";
-import { COLORS } from "../shared/model/highlightColors.js";
+import { DEFAULT_HIGHLIGHT, normalizeColor } from "../shared/model/palette.js";
 import { citesSeveralPapers, gammaLinkId, parseGammaLink, relativeGammaLink } from "../shared/model/gammaLinks.js";
 import { NO_LABELS, REF_RE, refIdsOf } from "./refLabels.js";
 import { InkCard } from "../ink/InkLayer";
+import { RecordingCard } from "../recording/RecordingCard";
+import { isRecordingBlock } from "../recording/recording.js";
+import { useRecordings } from "../recording/RecordingContext.js";
+import { useBlockFrame } from "../replay/useFrame.js";
 import { isTextBox } from "../markup/textBox.js";
 import { isSheet } from "../notebook/notebook";
 import { NoteSheet } from "../notebook/NoteSheet";
@@ -23,7 +27,7 @@ import { mapOutsideCodeFences, remarkDiagrams, scanDiagramFences, setDiagramWidt
 import { MdObject, ObjectMenuButton, findObject } from "./MdObject";
 import { cutObject } from "./mdObjects";
 import { blockSpans, parseTable, protectedSpans, scanMathSpans, scanTables } from "./mdScan";
-import { LinkIcon, PenIcon, TypeIcon, XIcon } from "../shared/ui/Icons";
+import { LinkIcon, MicIcon, PenIcon, PlayIcon, TypeIcon, XIcon } from "../shared/ui/Icons";
 import { FileChip, parseUploadUrl, postFile, uploadFilesAsLines } from "../transfers/FileChip";
 import {
   envCompletions, findMathAtCursor, latexCompletionEdit, latexCompletions,
@@ -47,9 +51,11 @@ import { remarkCallouts } from "./callouts";
 import { PeerChips, RenderedCarets } from "../collaboration/Presence";
 import { ContextMenu, MenuItem } from "../shared/ui/Menus";
 import { API, apiJson, assetUrl, copyText, withShare, withWorkspace } from "../shared/lib/utils";
+import { copyImage } from "../shared/lib/copyImage.js";
 import { CopyIcon, ExportIcon, MessageSquareIcon, PlusIcon, SheetIcon, SparklesIcon, Trash2Icon } from "../shared/ui/Icons";
 import { T, t } from "../shared/i18n/i18n.js";
 import { guideEvents } from "../guide/events.js";
+import { useIsRecent } from "../guide/recent.js";
 import { pageKindLabel } from "../library/libraryUtils";
 import {
   applyImageEdit, applyTableEdit, formatTables, htmlTableToMarkdown,
@@ -919,9 +925,10 @@ const BlockRow = React.memo(function BlockRow({
   // diagram of this block as a source range. "Edit source" opens the raw
   // editor with the caret on it (the click-to-source path with a known
   // offset); a move is App's one-transition tree edit (onMoveObject); the
-  // drag publishes the object for App's block drop handlers.
+  // drag publishes the object for App's block drop handlers. "Copy image"
+  // copies the picture the frame shows, not its source.
   const objectActionRef = useRef(null);
-  objectActionRef.current = (kind, idx, action, e) => {
+  objectActionRef.current = (kind, idx, action, e, picture) => {
     const content = block.content || "";
     const obj = findObject(content, kind, idx);
     if (!obj) return;
@@ -934,6 +941,8 @@ const BlockRow = React.memo(function BlockRow({
     } else if (action === "copy") {
       copyText(content.slice(obj.from, obj.to));
       onStatus?.(t("Copied as markdown"));
+    } else if (action === "copyImage") {
+      copyImage(picture).then((ok) => onStatus?.(ok ? t("Copied image") : t("Could not copy the image")));
     } else if (action === "delete") {
       onChangeText(block.id, cutObject(content, obj).content);
     } else if (action === "moveNewAbove" || action === "moveNewBelow") {
@@ -952,7 +961,7 @@ const BlockRow = React.memo(function BlockRow({
       window._gammaSetDropTarget?.(null);
     }
   };
-  const stableObjectAction = useRef((k, i, a, e) => objectActionRef.current?.(k, i, a, e)).current;
+  const stableObjectAction = useRef((k, i, a, e, p) => objectActionRef.current?.(k, i, a, e, p)).current;
   // The editor's picture / table widgets drag through the same action.
   const stableObjectDrag = useRef((k, i, phase, e) =>
     objectActionRef.current?.(k, i, phase === "start" ? "dragStart" : "dragEnd", e)).current;
@@ -1244,11 +1253,22 @@ const BlockRow = React.memo(function BlockRow({
   }, [editing]);
 
   const isHighlight = isHighlightBlock(block);
+  // The highlight made last: its card is the one the guide's highlight tour
+  // points at (guide/recent.js).
+  const recentHighlight = useIsRecent("highlight", block.id);
   // A handwriting group (docs/dev/handwriting.md): pen marker + the strokes
   // as a card; its content is the caption. A text box
   // (docs/dev/text_boxes.md): a T marker; its content is the box's text.
   const isInk = block.properties?.ink_url !== undefined;
   const isBox = !isInk && isTextBox(block);
+  // A recording (docs/dev/recording.md): a mic marker, its content the
+  // title, the card under it the player. Any block written during a
+  // recording carries `t0`: while that recording plays the row is shaded
+  // until its moment is reached, and a glyph in the margin plays from it.
+  const isRec = !isInk && !isBox && isRecordingBlock(block);
+  const recordings = useRecordings();
+  const replayState = useBlockFrame(block.properties?.t0);
+  const recorded = recordings?.covers(block.properties?.t0);
   // A box under a sheet is on that sheet, whatever pdf_page it still
   // carries (markup/textBox.js textBoxesBySurface): it names no PDF page.
   const shownPage = isBox && onSheet ? null : block.page;
@@ -1580,7 +1600,7 @@ const BlockRow = React.memo(function BlockRow({
           open={mergeOpen === block.id} onOpenChange={(v) => onMergeOpen?.(v ? block.id : null)} />
       ) : null}
       <div
-        className={`blockRow ${focusedId === block.id ? "focused" : ""}${flashingId === block.id ? " landed" : ""}${aiMark ? ` ai-${aiMark.kind} aiMark${aiMark.n % 2}` : ""}${scanIdx != null ? ` ai-scan aiMark${aiScan.n % 2}` : ""}${peerEditing ? ` peerOn peer-${peerEditing.color}` : ""}`}
+        className={`blockRow ${focusedId === block.id ? "focused" : ""}${flashingId === block.id ? " landed" : ""}${replayState ? (replayState === "pending" ? " replayPending" : " replayReached") : ""}${aiMark ? ` ai-${aiMark.kind} aiMark${aiMark.n % 2}` : ""}${scanIdx != null ? ` ai-scan aiMark${aiScan.n % 2}` : ""}${peerEditing ? ` peerOn peer-${peerEditing.color}` : ""}`}
         style={scanIdx != null ? { animationDelay: `${Math.min(scanIdx * 45, 1600)}ms` } : undefined}
         onMouseDown={(e) => {
           if (e.button !== 0) return; // right-click is the context menu's
@@ -1686,9 +1706,9 @@ const BlockRow = React.memo(function BlockRow({
             >
               <span className="highlightDot" style={{
                 background: block.position
-                  ? (block.color || COLORS[0])
+                  ? (normalizeColor(block.color) || DEFAULT_HIGHLIGHT)
                   : block.properties?.linked_highlight_id
-                    ? (highlightColors?.[block.properties.linked_highlight_id] || COLORS[0])
+                    ? (normalizeColor(highlightColors?.[block.properties.linked_highlight_id]) || DEFAULT_HIGHLIGHT)
                     : 'rgba(140,140,140,0.5)'
               }} />
             </button>
@@ -1707,6 +1727,8 @@ const BlockRow = React.memo(function BlockRow({
               >⊕</button>
             ) : null}
           </>
+        ) : isRec && !editing ? (
+          <span className="dotSlot" title={t("Recording")}><span className="recordingMarker"><MicIcon size={9} /></span></span>
         ) : (isInk || isBox) && !editing ? (
           <button
             className="collapseBtn highlightDotBtn dotSlot"
@@ -1721,10 +1743,17 @@ const BlockRow = React.memo(function BlockRow({
           <span className="dotSlot dotSlotEmpty"><span className="noteBulletDot" /></span>
         )}
 
-        <div className="blockBody" data-guide={isInk ? "notes.ink" : undefined}>
+        <div className="blockBody" data-guide={isInk ? "notes.ink" : isHighlight ? "notes.highlight" : undefined}
+          data-guide-recent={isHighlight && recentHighlight ? "" : undefined}>
           <div className="blockMeta">
             {shownPage ? `p.${shownPage}` : "note"}
           </div>
+          {recorded && !isRec ? (
+            <button type="button" className="replayGlyph" onClick={(e) => { e.stopPropagation(); recordings.playAt(block.properties.t0); }}
+              title={t("Play the recording from when this was written")} aria-label={t("Play the recording from when this was written")}>
+              <PlayIcon size={9} />
+            </button>
+          ) : null}
 
           {!readOnly && editing ? (
             <BlockCmEditor
@@ -1868,6 +1897,7 @@ const BlockRow = React.memo(function BlockRow({
                 if (e.key === "Enter" && newNoteKey) {
                   e.preventDefault();
                   onEnterSibling(block.id);
+                  guideEvents.emit("block.created");
                 } else if (e.key === "Enter") {
                   // The line-break Enter continues markdown lists and quotes
                   // (Obsidian-style, mdLines.enterPlan): "> - [ ] foo⏎"
@@ -1876,6 +1906,9 @@ const BlockRow = React.memo(function BlockRow({
                   // No marker → plain newline.
                   const ta = ref.current;
                   const cursor = ta?.selectionStart;
+                  // A line break in a note with text in it, where Enter is
+                  // not the new-note key: the guide says which key is.
+                  if (!enterNewNote && ta?.value.trim()) guideEvents.emit("note.lineBreak");
                   const plan = ta && cursor === ta.selectionEnd ? enterPlan(ta.value, cursor) : null;
                   if (plan) {
                     e.preventDefault();
@@ -1954,6 +1987,7 @@ const BlockRow = React.memo(function BlockRow({
           ) : null}
           {inlineSheets && isSheet(block) ? <NoteSheet block={block} number={sheetNumber} /> : null}
           {isInk ? <InkCard block={block} onJump={onShowOnPage} /> : null}
+          {isRec ? <RecordingCard block={block} editable={!readOnly} /> : null}
           {(block.properties?.link_url || block.properties?.link_page_id) ? (
             <button
               type="button"
@@ -1987,14 +2021,15 @@ const BlockRow = React.memo(function BlockRow({
       {!readOnly && editing ? <EditBar context={commandContext} onUndo={onUndo} /> : null}
       {!readOnly && editing && slashMenu ? (
         <SlashMenuPopup items={slashMenu.items} selected={slashIdx} anchor={slashMenu.anchor} onPick={runSlashCommand}
-          grouped={!slashMenu.query} commands />
+          grouped={!slashMenu.query} commands guide="editor.slashMenu" event="slash.opened" />
       ) : null}
       {!readOnly && editing && atMenu?.rows.length ? (
         <MentionMenuPopup rows={atMenu.rows} selected={Math.min(atIdx, atMenu.rows.length - 1)} anchor={atMenu.anchor}
           query={atMenu.query} onPick={pickMention} />
       ) : null}
       {!readOnly && editing && pasteMenu ? (
-        <SlashMenuPopup title={t("Paste as")} items={pasteMenu.items} selected={pasteIdx} anchor={pasteMenu.anchor} onPick={applyPasteAs} />
+        <SlashMenuPopup title={t("Paste as")} items={pasteMenu.items} selected={pasteIdx} anchor={pasteMenu.anchor} onPick={applyPasteAs}
+          guide="editor.pasteAs" event="paste.offered" />
       ) : null}
       {refSearchShown ? (
         <RefPickerPopup rows={refRows} selected={refSelected} anchor={refPopup.anchor}
@@ -2055,6 +2090,7 @@ const SortableBlockRow = React.memo(function SortableBlockRow({ block, ...rowPro
     e.preventDefault();
     e.stopPropagation();
     rowProps.onEnterSibling?.(block.id, { above: e.altKey });
+    guideEvents.emit("block.created");
   }
 
   return (
@@ -2064,6 +2100,7 @@ const SortableBlockRow = React.memo(function SortableBlockRow({ block, ...rowPro
       <span className="rowHandles">
         <span
           className="dragHandle"
+          data-guide="notes.handle"
           draggable="true"
           onDragStart={onDragStart}
           onDragEnd={onDragEnd}
@@ -2075,6 +2112,7 @@ const SortableBlockRow = React.memo(function SortableBlockRow({ block, ...rowPro
           <button
             type="button"
             className="addHandle"
+            data-guide="notes.addBelow"
             onClick={onAddClick}
             onMouseDown={(e) => e.preventDefault()}
             aria-label={t("Add a block below (Alt+click: above)")}

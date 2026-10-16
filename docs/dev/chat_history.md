@@ -2,7 +2,8 @@
 
 Where a chat conversation is kept: one bucket per page, folder or the
 library root, the active conversation of each, and the archive of earlier
-ones. The chat request itself is in [ai.md](ai.md).
+ones; and how one is exported with its pictures. The chat request itself is
+in [ai.md](ai.md).
 
 ## Buckets
 
@@ -98,9 +99,12 @@ active conversation) and `/api/chat-history` (the archive).
   message of the other is archived alone; otherwise both are.
 - **Alt+click on New chat** throws the conversation away instead: the same
   call with `discard: true` clears the active row and files nothing. There
-  is no confirm and no undo. A stored conversation newer than the copy that
-  holds messages the copy lacks is still archived, so another tab's work is
-  never lost.
+  is no confirm and no undo. Instead, Alt held over the button turns it into
+  **Discard chat** (red, a trash icon; [Alt variants](ui-design.md#alt-variants))
+  before the click. An empty chat has nothing to discard, so the button
+  stays New chat. A stored conversation newer than the copy that holds
+  messages the copy lacks is still archived, so another tab's work is never
+  lost.
 - The **History** button (clock icon) opens a popover listing the active
   conversation first (highlighted, "now") and then the bucket's archived
   ones newest-first (`GET /chat-history?bucket=`; title, age, message count
@@ -136,3 +140,45 @@ active conversation) and `/api/chat-history` (the archive).
   the workspace lacks — a bucket's active one, an archived one by its id
   (`db.copy_chats`); a replace restore brings the backup's chats with its
   pages.
+
+## Exporting a conversation
+
+The chat header's download menu → "Export conversation", or a History row's
+menu → "Export", saves a conversation as a file to keep. It holds what the
+chat shows, with every picture beside it (`gamma/chat_export.py`). The other
+entry of the header's menu, "Export context", is the prompt the model is
+sent ([ai.md](ai.md#exporting-the-context)).
+
+- **The file.** `<title>.zip` holds `<title>.md` and an `assets/` folder
+  with one file per picture. A conversation that shows no picture is the
+  bare `<title>.md`. The title is the user's, else the first question's
+  first line (`derive_title`).
+- **The transcript.** An `# title` heading, then a line naming whose chat it
+  is ("AI chat of “Paper” · 14 messages · exported …"), then one section
+  per message. `## You` lists the message's pictures, its attached PDFs,
+  the pages put in context and the text as typed. `## AI · model · effort`
+  shows the selection pictures the model got, then **Steps** (each tool
+  chip's summary, with the picture a view or ink chip expands to), then the
+  reply's Markdown. A failed reply is one line with its error, and a reply
+  that broke off says so. Reasoning, tool output, approvals and usage are
+  left out: they aren't part of the conversation as read.
+- **The pictures.** Every picture is read or drawn now in the request's
+  workspace, the way the chat shows it (`ai_pictures.picture_at`). That
+  covers a message's stored uploads, its PDF regions, an older chat's data
+  URLs, the chips' pictures, the selection crops on the coverage report,
+  and the `/api/uploads/…` and `/api/ai/…` images a reply embeds. A reply's
+  fenced code stays as written. Each picture is written once, named by a
+  hash of its bytes, and linked as `assets/<hash>.<ext>`. A picture that
+  can no longer be drawn becomes "*(picture no longer available: …)*" and
+  never fails the export. Absolute URLs and data URLs inside a reply stay as
+  they are.
+- **Routes.** `POST /api/chats/export` `{bucket, messages, title}` takes
+  the open conversation from the tab's copy, so a reply still in the
+  autosave debounce and a viewer's unsaved conversation come along.
+  `GET /api/chat-history/{id}/export` reads an archived one. Both take any
+  member (`require_ws`), a viewer too. They answer in the request, like the
+  context export, and are not a background job.
+
+Covered by `backend/tests/test_chat_export.py`, the e2e step "a picked
+picture is stored and attached by URL" (the zip and its two pictures) and
+"Alt+click New chat discards the conversation" (a History row's export).

@@ -7,6 +7,7 @@ Read papers, keep what you learn. This guide shows each part of Gamma in a short
 | [Getting started](#getting-started) | Sign in, add a paper, read it |
 | [Highlight and annotate](#highlight-and-annotate) | Highlights, comments, area screenshots |
 | [Draw and type on the page](#draw-and-type-on-the-page) | Pens, the lasso, text boxes |
+| [Record audio](#record-audio) | A lecture in step with your notes; tap anything to hear that moment |
 | [Notebooks](#notebooks) | Sheets of paper to write on |
 | [Follow links and translate](#follow-links-and-translate) | Citations, Back, translation in place |
 | [Notes](#notes) | Markdown and math that render as you type |
@@ -62,6 +63,22 @@ The pen button in the viewer's zoom column opens the tool strip: pens and highli
 
 The **Text** tool puts typed text on the page like a text box in Acrobat: click to place, type, drag the handle to resize. Markdown and math work inside it, and each box is a note with a **T** marker.
 
+
+## Record audio
+
+<img alt="The microphone button starts a recording; a word is written and a note typed while it runs; after Stop, Play on the recording's card replays the audio with the handwriting and the note revealed as they were written, and a tap on the word jumps the audio back to that moment" src="assets/record.svg" width="100%">
+
+Press the **microphone** in the viewer's zoom column, after the pen, and keep reading and writing: everything you write or type while it records is linked to the moment you made it.
+
+- The **recording** appears as a block in the notes with its length and date. **Pause** and **Stop** are on the pill at the bottom of the page; **Bookmark** drops a note stamped a few seconds back, for a moment you want to find again.
+- **Play** on the recording's card plays it back: handwriting not yet reached is faded and appears as it was written, notes are shaded until their moment, and the page and the notes follow along.
+- **Tap any stroke, text box or note** during playback to hear what was being said when you wrote it, from a few seconds before. Outside playback, hover a note for the play glyph in its margin.
+- The player has 10-second skips, *Previous* / *Next writing* to jump past the silence, three display modes (Spotlight, Reveal, Static) and speeds from 0.7× to 2×.
+- **Transcribe** in the card's menu writes the spoken words under the recording, each paragraph linked to its moment, so you can search them and tap one to hear it. Settings → Reading & editing › Recordings can do this for every recording.
+- Recording needs HTTPS, localhost or the desktop app: a browser blocks the microphone on plain HTTP.
+
+Try the [interactive demo](demos/audio-replay.html) of playback.
+
 ## Notebooks
 
 <img alt="/note is typed in the notes, a ruled sheet appears, a pen writes on it, and a second sheet slides in below when the writing nears the bottom" src="assets/notebook.svg" width="100%">
@@ -94,7 +111,7 @@ Notes are a nested outline. Highlights and free notes are the same kind of block
 
 - **Live rendering**: the block you are on stays raw; everything else renders. Headings, lists, to-dos, callouts, tables, code, images, links.
 - **Math**: `$…$` and `$$…$$` render with KaTeX, with a live preview while you type and Tab hopping between `{}` arguments.
-- **Pictures**: paste or drag an image in; drag its grip to resize.
+- **Pictures**: paste or drag an image in; drag its grip to resize. Right-click a picture or a diagram and choose **Copy image** to paste it elsewhere; this needs HTTPS or localhost.
 - **Tables** are edited in place; a table from Excel pastes as markdown.
 - **"/" menu**: type `/` for headings, callouts, code, colors, a notebook sheet, a new page.
 - **Quotes and callouts** keep going over several lines: Enter carries the `>` (and a list inside it) to the next line, and **Ctrl+Shift+.** quotes or unquotes the selected lines. `/callout` on a quote's first line turns it into a callout; on a line inside one it starts a box inside it.
@@ -187,7 +204,7 @@ The agent cannot delete pages, and an assistant connected from outside ([Assista
 The home page lists your pages, most recent first, with a **Recently viewed** strip on top.
 
 - **Folders** nest, and a paper can live in several at once. Drag a paper onto a folder to add it there; drop it on the back row to take it out.
-- **Labels** are flat tags. Type one into the row under a paper's title; click a chip to filter by it.
+- **Labels** are flat tags. Type one into the row under a paper's title; the listing bar's **Labels** view shows each label as a folder, and its filter box finds a label by name.
 - **Select** like a file manager: click, Ctrl+click, Shift+click; double-click opens; right-click for rename, move, label, share, export, delete.
 - **Recently deleted** keeps a page for 30 days, with its notes and files.
 
@@ -365,6 +382,6 @@ Account menu → **Settings**, or **Ctrl+,**. The search box at the top finds an
 | Ctrl+click a highlight | Quote it into the chat |
 | Ctrl+drag across note text | Attach that passage to the chat |
 | Double-click | Open a library card; collapse a window (on its grip) |
-| Middle-click a tab | Close it |
+| Right-click a tab | Pin it, or pin its page to the library |
 | Ctrl+Shift+S | In the browser extension: save this page to Gamma |
 | Esc | Close popups, clear selections, cancel modes |

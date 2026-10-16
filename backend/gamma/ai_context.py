@@ -20,6 +20,7 @@ from .notebook import is_sheet
 from .pdf_index import doc_pages, pdf_missing
 from .pdf_text import (MAX_PAGES, PAGE_LABEL_RE, PDF_EXTRACT_FAILED, extract_pages, extract_text,
                        extract_text_pages, outline, page_count, page_label, render_page)
+from .recording import recording_label
 from .server_settings import can_store
 from .storage import find_upload_file, put_upload
 from .text_box import box_page, is_text_box
@@ -211,7 +212,8 @@ def request_note_selections(payload) -> list[dict]:
 
 def handwriting_label(props: dict) -> str:
     """How an outline line (read_block, the notes-focus section) names a
-    handwriting block or a page of paper, whose text is only a caption; ""
+    handwriting block or a page of paper, whose text is only a caption, and
+    a recording and its transcript's paragraphs (gamma/recording.py); ""
     for any other block."""
     if props.get("ink_url"):
         page = page_of(props)
@@ -219,7 +221,7 @@ def handwriting_label(props: dict) -> str:
         return f"(handwriting {where}, {props.get('ink_strokes', 0)} strokes; the text is its caption)"
     if is_sheet(props):
         return "(a page of paper: the handwriting under it is written on it)"
-    return ""
+    return recording_label(props)
 
 
 def notes_focus_section(ws: str, payload, notes_seen: dict | None = None,
@@ -317,7 +319,7 @@ def notes_focus_section(ws: str, payload, notes_seen: dict | None = None,
                 text = outline(focus, 1500)
                 if text:
                     out.append("The user's cursor is on this note block (\"this block\", "
-                               "\"here\" mean it):\n" + text)
+                               "\"this note\", \"here\" mean it):\n" + text)
             def ink_picture(block_id: str):
                 """An attached handwriting block's (or page of paper's)
                 picture (an ai_pictures dict); None for any other block."""
@@ -327,7 +329,7 @@ def notes_focus_section(ws: str, payload, notes_seen: dict | None = None,
                     props = json.loads(row[0] or "{}") if row else {}
                 except ValueError:
                     props = {}
-                if not handwriting_label(props):
+                if not (props.get("ink_url") or is_sheet(props)):
                     return None
                 from .ink_view import picture
                 try:

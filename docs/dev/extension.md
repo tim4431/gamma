@@ -79,17 +79,18 @@ helpers — never re-implement it in the extension.
 | File | Role |
 |---|---|
 | `manifest.json` | MV3: module service worker, `<all_urls>` content scripts (`ids.js`, `detect.js`, `bridge.js`), popup, options, `save-to-gamma` command. `host_permissions: ["<all_urls>"]` — the same install warning the content script already carries, and it makes cookie-carrying fetches to the (user-configured) server origin and the PDF-from-tab fetch work without runtime permission prompts |
-| `worker.js` | per-tab state in `chrome.storage.session` (`tab:<id>` → `{candidate, hit, preview, auth, saving, error, origin, ws}`), badge/icon, `lookup` + `preview`, the save pipeline, context menus, keyboard command, notifications, the publisher-session status cache + automatic refresh (`publisher:auto`, `publisher:attempts` in session storage), the tabs fetching for the chat (`handoffs`: tab id → request, `handoff:queue`), and the message API (`get-state`, `save`, `clip-selection`, `auth-changed`, `publisher-status`, `open`, and bridge.js's `connector-hello` / `connector-probe` / `connector-tab`) |
-| `handoff.js` | the chat-fetch rules: a tab's `/go` address → the request id (`handoffIdFrom`), whether the tab's paper can be the requested one (`sameWork`), which URLs to try in it (`harvestUrls`), which one to open in the tab when downloads fail (`nextToOpen`, `needsSignIn`, `signInUrl`), whether the tab shows a bot check (`checkPage`), and whether every background turn is taken (`backgroundBusy`, `MAX_BACKGROUND`, `NEEDS_YOU`) — pure, tested in `tests/` |
+| `worker.js` | per-tab state in `chrome.storage.session` (`tab:<id>` → `{candidate, hit, preview, auth, saving, error, log, origin, ws}`), badge/icon, `lookup` + `preview`, the save pipeline and its log (`log:saves`, the last five), context menus, keyboard command, notifications, the publisher-session status cache + automatic refresh (`publisher:auto`, `publisher:attempts` in session storage), the tabs fetching for the chat (`handoffs`: tab id → request, `handoff:queue`), and the message API (`get-state`, `save`, `clip-selection`, `auth-changed`, `publisher-status`, `open`, and bridge.js's `connector-hello` / `connector-probe` / `connector-tab`) |
+| `handoff.js` | the chat-fetch rules: a tab's `/go` address → the request id (`handoffIdFrom`), whether the tab's paper can be the requested one (`sameWork`), which URLs to try in it (`harvestUrls`, a save's list too, with an Atypon reader's file: `readerPdfUrl`), which one to open in the tab when downloads fail (`nextToOpen`, `needsSignIn`, `signInUrl`), whether the tab shows a bot check (`checkPage`), and whether every background turn is taken (`backgroundBusy`, `MAX_BACKGROUND`, `NEEDS_YOU`) — pure, tested in `tests/` |
 | `bridge.js` | content script between the Gamma app and the worker: a `connector-probe` window message gets the worker's verdict on one request (`ok` / `signed-out` / `other-account` / `unreachable`), a `connector-tab` one (`open`, `show`, `close`) the worker's answer (`opened` / `queued` / `shown` / `none` / `closed`), and a `connector-hello` (no request) answers `connector-here` to the Connector's own server's app only — how Gamma knows not to suggest the extension to a browser that has it (`shared/lib/connector.js`, [onboarding.md](onboarding.md)); nothing to a page the worker gives no answer for; a question a second per request and kind |
 | `ids.js` | the identifier rules — a DOI used as a URL path (`gammaDoiFromPath`) and the arXiv id (`gammaArxivId`) — one file loaded by the content script and imported by the worker, tested in `tests/` |
-| `detect.js` | content script (`document_idle`): identifier extraction, re-run on SPA URL changes; answers `get-detection` / `get-selection` / `fetch-pdf` (downloads a PDF from inside the page and relays it base64 — publisher bot checks that 403 the worker's fetch accept the page's own same-origin request) |
+| `saveLog.js` | a save's log (below, "The save log"): the header, each timed step, the detection and a download's answer as lines, the last five kept — pure, tested in `tests/` |
+| `detect.js` | content script (`document_idle`): identifier extraction, re-run on SPA URL changes; answers `get-detection` / `get-selection` / `fetch-pdf` (downloads a PDF from inside the page and relays it base64, with the answer's status, type and size — publisher bot checks that 403 the worker's fetch accept the page's own same-origin request) |
 | `api.js` | settings (`chrome.storage.sync`: `server, servers, workspaces, defaultFolders, folder, labels, allowOa, saveCopy, autoRefreshSessions`), `api()` fetch wrapper (`credentials: "include"`, the chosen workspace as `X-Gamma-Workspace`, JSON `detail` → `ApiError{status}`), `login/logout/whoAmI`, and the workspace and default folder (below) |
 | `publisherSessions.js` | Publisher-host validation and the connection flow (checks the active tab and account, then sends a snapshot to Gamma with the browser's `navigator.userAgent`); the automatic-refresh rule (`shouldAutoRefresh`, `REFRESH_AFTER` / `RETRY_AFTER`) and the status text (`describeSession`) — pure, tested in `tests/` |
-| `popup.html/js/css` | setup (no server) → offline (server unreachable, with Retry) → sign-in → main view; the footer shows a connection dot (green signed in / amber signed out / red unreachable) beside `host · user`, the publisher-session **cookie button** and an options gear (the app's SettingsIcon). The folder picker and label suggestions are plain-JS menus mirroring the app's MenuSelect/ctxMenu recipes; labels are the app's `categoryTag` chip input (comma/Enter commits a chip, Backspace removes, arrow keys + Enter pick a suggestion). A save remembers its folder (the worker, once it succeeds) but not its labels — each popup prefills only the options-page default labels. `popup.css` reads the app's design tokens and repeats `shared/styles/app.css`'s control recipes (buttons, fields, the switch, the menu surface, the focus ring) — keep those in step when the app's recipes change. `?tab=<id>` targets a specific tab when opened as a page (tests) |
+| `popup.html/js/css` | setup (no server) → offline (server unreachable, with Retry) → sign-in → main view; the footer shows a connection dot (green signed in / amber signed out / red unreachable) beside `host · user`, the publisher-session **cookie button** and an options gear (the app's SettingsIcon). The folder picker and label suggestions are plain-JS menus mirroring the app's MenuSelect/ctxMenu recipes; labels are the app's `categoryTag` chip input (comma/Enter commits a chip, Backspace removes, arrow keys + Enter pick a suggestion). A save remembers its folder (the worker, once it succeeds) but not its labels — each popup prefills only the options-page default labels. `popup.css` reads the app's design tokens and repeats `shared/styles/app.css`'s control recipes (buttons, fields, the switch, the menu surface, the focus ring) — keep those in step when the app's recipes change. *Copy the save log* (under the result, whenever the tab has one) copies the tab's last save log. `?tab=<id>` targets a specific tab when opened as a page (tests) |
 | `tokens.css`, `fonts/` | committed copies of the app's `shared/styles/tokens.css` and the Latin subset of Inter, like the desktop shell's ([ui-design.md](ui-design.md#the-desktop-shell-and-the-extension)): `npm run copy-tokens` in `frontend/` refreshes them, and `frontend/tests/themes.test.mjs` fails while a copy differs from its source |
 | `theme.js` | a classic script in the head of both pages, before the stylesheets: the app's pinned theme isn't knowable here, so it sets `data-theme` / `data-scheme` to Light or Dark from `prefers-color-scheme`, live |
-| `options.html/js` | server + host permission, account, saving defaults (the workspace and the folder picked from the signed-in account's libraries) |
+| `options.html/js` | server + host permission, account, saving defaults (the workspace and the folder picked from the signed-in account's libraries), *Copy recent saves* (the last five save logs) |
 | `ui.js` | controls shared by the popup and options: the icons (mirroring `Icons.jsx`), ctxMenu rows (`menuRow`) and the pickers — `menuSelect` (the app's MenuSelect over `[{value, label, icon}]`, a value no item carries falling back to the first) with `folderPicker` ("Library root", every folder by its path, optionally "New folder…") and `workspacePicker` (the libraries by name) over it |
 | `serverList.js` | shared saved-server rows for options and the popup footer: active checkmark, switch action and remove button, using the existing menu/close-button styles |
 | `assets/icons/` | blue tile (paper detected) and grey tile (nothing) at 16/32/48/128, generated with Pillow |
@@ -135,25 +136,56 @@ Popup → `save` message → `savePaper()` in the worker (so it survives the pop
 closing; progress is written to the tab state and the popup renders it):
 
 ```
+urls = what the browser could download itself (browserPdfUrls)
 PDF tab?  fetch bytes in the browser → %PDF check → POST /api/uploads → doc_id   (best-effort; past 32 MiB in parts, /api/uploads/parts)
-POST /api/clip { source_url, pdf_url, doi, arxiv_id, doc_id?, title, selection?, folder | folder_path, labels, allow_oa, save_copy }
-  └─ 400 and no doc_id yet? → fetch bytes in the browser → POST /api/uploads → retry /api/clip with doc_id
+POST /api/clip { source_url, pdf_url, doi, arxiv_id, doc_id?, title, selection?, folder | folder_path, labels, allow_oa, save_copy,
+                 web_fallback: false while urls are left to try }
+  └─ 400? → fetch bytes in the browser → POST /api/uploads → POST /api/clip with doc_id
+            browser fails too → POST /api/clip { web_fallback: true } → the page with its web source
 → { block_id, doc_id, title, existed, open_url, folders, labels, note? }
    doc_id "" = no PDF: the clip became a page with properties.web_url
 ```
 
-Browser-side downloads are automatic, no checkbox: PDF tabs upload their bytes
-up front (the browser already has them; the server may be paywalled out), and
-any other save that fails server-side with a 400 retries through the browser
-when a `pdf_url` was detected. If the browser fetch fails too, the server's
-error (paywall explanation) is the one shown. "Fetch bytes in the browser"
-itself is two attempts: the worker's direct `fetch(url,
+Browser-side downloads are automatic, no checkbox. PDF tabs upload their
+bytes up front (the browser already has them; the server may be paywalled
+out). Any other save first lets the server try, but with `web_fallback:
+false`: when the server can't fetch the PDF, `/api/clip` answers with its
+400 instead of saving the page with its web source, and the worker downloads
+the PDF itself, uploads it and sends the clip again with the `doc_id`. Only
+when the browser fails too does a last `/api/clip` with `web_fallback: true`
+save the page with its web source, its `note` saying the browser couldn't
+download it either.
+
+What the browser tries (`browserPdfUrls`, handoff.js `harvestUrls`, the
+list a chat's fetch uses), only on a page that names a paper (kind `pdf`,
+`arxiv` or `doi`; a "maybe" DOI is often a reference's): the tab when it is
+a PDF, the advertised `pdf_url`, the file of an Atypon reader
+(`readerPdfUrl`: `/doi/epdf/<doi>` → `/doi/pdf/<doi>?download=true` on
+science.org, Wiley, ACS, Taylor & Francis — the reader advertises no PDF),
+then the page's own PDF links on its site (`pdf_links`). Each URL is
+itself two attempts per variant (`pdfUrlVariants`, which also asks Atypon's
+`/doi/pdf/` for `?download=true`): the worker's direct `fetch(url,
 {credentials:"include"})` first, then — publisher bot checks (science.org
 & co.) 403 requests with an extension origin and no Referer — the tab's
 content script via `fetch-pdf`, a same-origin fetch from the page's own
 context, indistinguishable from the reader loading the PDF, relayed back
-base64 (capped at 60 MB). Raw PDF tabs have no content script, so there the
-direct fetch is the only (and working) path.
+base64 (capped at 60 MB) with its status, type and size. Raw PDF tabs have
+no content script, so there the direct fetch is the only (and working) path.
+
+**The save log** (`saveLog.js`). Each save writes what it rests on (the
+Connector's version, the browser, the server and workspace, the tab, the
+detection) and then each step with its time since the start: every
+`/api/clip` and its answer or error, every download with its status, content
+type, size and where it ended, the upload's size and `doc_id`. The text is
+kept in the tab's state (`log`, gone when the tab navigates) and among the
+last five saves in session storage (`log:saves`, gone when the browser
+closes). The popup's *Copy the save log* (under the result, also after the
+popup was reopened) copies the tab's last one; the options page's *Copy
+recent saves* copies all five, the shortcut's and the context menu's
+included, since those only notify. Each step also goes to the service
+worker's console as `[gamma] …`. The log carries the page's address and
+title, never cookies or the PDF's contents; it only leaves the browser when
+the user pastes it somewhere.
 
 **The workspace** a save lands in is a choice per server (`workspaces`:
 origin → workspace id), sent as the `X-Gamma-Workspace` header the app's
@@ -222,7 +254,9 @@ Server side (`clip.py`, sync `def` — it downloads):
    skips the resolver and goes there directly. Re-clipping the same URL finds
    that page (`find_web_page`: `web_url` match on attachment-less pages) and
    only files it / appends the new selection. Only a request with nothing at
-   all (no URL, title or selection) is a 400. With `doc_id` (uploaded bytes)
+   all (no URL, title or selection) is a 400 — and, with `web_fallback:
+   false`, one whose PDF can't be had: then no page is made, and the
+   extension tries the browser's own download first. With `doc_id` (uploaded bytes)
    this step is skipped; the file must exist.
 4. **Page** — `blocks_store.get_or_create_doc_page()` (extracted from
    `POST /api/blocks/by-doc`) with `default_title = citation_title`, so
@@ -498,7 +532,8 @@ signed in to the same server works the same way.
   `norm_doi` on publisher paths, `norm_arxiv` on HTML URLs and old-style ids,
   an arXiv HTML page saving its PDF, folders, clip notes, 401s).
 - `extension/tests/*.test.mjs` (`node --test extension/tests/*.test.mjs`) —
-  the pure modules: `ids.js`, `publisherSessions.js` and `handoff.js`, plus
+  the pure modules: `ids.js`, `publisherSessions.js`, `handoff.js` and
+  `saveLog.js`, plus
   API settings, the default folder, folder paths, origin guards, and the
   chosen workspace (the header, a save's pin, a default folder per
   workspace, forgetting one the account can no longer write to). The
@@ -510,6 +545,16 @@ signed in to the same server works the same way.
   a typed new folder's path and label names, the default is remembered by
   id per server, and a path stored by an older version is sent once and
   replaced by its id.
+- `node extension/tests/save.e2e.mjs` — full Chromium against a fake
+  server whose `/api/clip` answers a clip without bytes with the paywall
+  400 when `web_fallback` is off, and a fake Atypon publisher whose ePDF
+  reader advertises no PDF and whose `/doi/pdf/…?download=true` answers only
+  a same-origin fetch: the popup's save gets the 400, the worker's fetch is
+  refused, the page's own fetch is answered, the bytes are uploaded and the
+  clip sent again with the `doc_id`; a paper the browser can't get either is
+  saved with its web source and a note saying so; the popup's *Copy the save
+  log* copies the tab's log (which names each of those steps) and the options
+  page's *Copy recent saves* both, newest first.
 - `node extension/tests/workspaces.e2e.mjs` — full Chromium against a fake
   server whose `/api/session` lists three libraries (one read-only): both
   pickers offer the two writable ones, picking one stores it and refills

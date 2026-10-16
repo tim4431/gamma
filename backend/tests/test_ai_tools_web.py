@@ -271,7 +271,7 @@ def test_web_tools_prompt_and_permission_gate():
     # With an engine it rides along, with the one-look rule for blocked fetches.
     text = agent_system({**folder(""), "web_engine": "brave"})
     assert "Web reach: search_papers, related_papers, search_web, fetch_paper" in text
-    assert "search_papers and search_web" in text and "at most one search_web" in text
+    assert "search_papers and search_web" in text and "one search_web for another legitimate copy" in text
 
 
 def test_search_links_escape_titles_and_do_not_invent_identifiers():

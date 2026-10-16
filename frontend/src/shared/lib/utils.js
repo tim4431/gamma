@@ -405,6 +405,28 @@ async function probePdfUrl(sourceUrl) {
   try { await r.body?.cancel(); } catch {}
 }
 
+// Fetch a file and save it as a download, named by the response's
+// Content-Disposition (its UTF-8 form first), else `fallbackName`; resolves
+// to the name. Fetch + blob rather than a navigation, so a refusal throws
+// with the server's words instead of replacing the app with an error page.
+async function downloadFetched(url, options, fallbackName) {
+  const r = await fetch(url, { ...options, credentials: "include" });
+  if (!r.ok) throw await apiError(r);
+  const cd = r.headers.get("Content-Disposition") || "";
+  const star = /filename\*=UTF-8''([^;]+)/i.exec(cd);
+  const plain = /filename="?([^";]+)"?/i.exec(cd);
+  const filename = star ? decodeURIComponent(star[1]) : plain ? plain[1] : fallbackName;
+  const href = URL.createObjectURL(await r.blob());
+  const a = document.createElement("a");
+  a.href = href;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(href), 2000);
+  return filename;
+}
+
 // Read an NDJSON response as it arrives: `onBatch(events)` once per network
 // chunk with the JSON objects of the lines it completed (a trailing partial
 // line waits for its rest). Throwing from onBatch ends the read.
@@ -423,4 +445,4 @@ async function readNdjson(res, onBatch) {
   }
 }
 
-export { API, makeId, fmtBytes, sha256, getDocIdForUrl, isPdfFile, isMarkdownFile, PAGE_FILE_ACCEPT, isUnverifiedPaperMeta, metaSourceInfo, apiJson, proxyRefusal, setShareView, getShareToken, withShare, withWorkspace, assetUrl, setCurrentWorkspace, getCurrentWorkspace, setLinkName, getLinkName, resolvePdfUrl, pdfProxyUrl, probePdfUrl, setExpectedUser, getExpectedUser, usePersistedState, usePersistedFlag, copyText, copyRich, readNdjson };
+export { API, makeId, fmtBytes, sha256, getDocIdForUrl, isPdfFile, isMarkdownFile, PAGE_FILE_ACCEPT, isUnverifiedPaperMeta, metaSourceInfo, apiJson, proxyRefusal, setShareView, getShareToken, withShare, withWorkspace, assetUrl, setCurrentWorkspace, getCurrentWorkspace, setLinkName, getLinkName, resolvePdfUrl, pdfProxyUrl, probePdfUrl, setExpectedUser, getExpectedUser, usePersistedState, usePersistedFlag, copyText, copyRich, readNdjson, downloadFetched };

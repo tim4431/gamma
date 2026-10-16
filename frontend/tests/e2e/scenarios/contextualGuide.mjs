@@ -132,17 +132,27 @@ export async function contextualGuideScenarios(env) {
           await page.waitForSelector('[data-guide="chat.imageContext"] img');
           assertEq(await page.locator('[data-hl-id]').count(), 0, "context creates no saved annotation");
           if (flags.keep) await page.screenshot({ path: `${server.dir}/chat-pdf-context.png` });
-        } else if (!paperId) {
-          // The library's tools step, when its header button is on screen.
-          await page.waitForSelector(`[data-guide-overlay="chat-tools"], [data-guide-overlay="${send}"]`);
-          if (await page.locator('[data-guide-overlay="chat-tools"]').count()) await page.locator('.guideCard .primary').click();
         }
-        // The last step invites the user's own Send; its Done leaves without one.
-        await page.waitForSelector(`[data-guide-overlay="${send}"]`);
+        // The light steps before Send — the library's tools, the model chip —
+        // each keep Next.
+        for (;;) {
+          await page.waitForSelector(`[data-guide-overlay="chat-tools"], [data-guide-overlay^="chat-model-"], [data-guide-overlay="${send}"]`);
+          if (await page.locator(`[data-guide-overlay="${send}"]`).count()) break;
+          await page.locator('.guideCard .primary').click();
+        }
+        // Send invites the user's own; Next moves on without one.
         await until(async () => await input.inputValue() === "Keep this draft", { what: "existing draft is restored" });
         assertEq(await page.getByRole("button", { name: "Cancel recording", exact: true }).count(), 0, "tour never records");
         assertEq(await page.locator('[data-guide-overlay="chat-voice"]').count(), 0, "no voice step");
-        assertEq((await page.locator('.guideCard .primary').textContent()).trim(), "Done", "a light last step: Done, and Send ticks it");
+        assertEq((await page.locator('.guideCard .primary').textContent()).trim(), "Next", "a light step: Send ticks it, Next moves on");
+        await page.locator('.guideCard .primary').click();
+        // The last card: New chat keeps this conversation in History; its
+        // scene shows the Alt+click, with the key's cap on the pointer.
+        await page.waitForSelector('[data-guide-overlay="chat-new"]');
+        await page.mouse.move(5, 5);
+        await page.locator('[data-guide-scene="chat-new"] .guideHeldKey').waitFor({ state: "attached", timeout: 12000 });
+        assertEq((await page.locator('[data-guide-scene="chat-new"] .guideHeldKey').textContent()).trim(), "Alt");
+        assertEq((await page.locator('.guideCard .primary').textContent()).trim(), "Done", "a light last step: Done");
         await page.locator('.guideCard .primary').click();
         await until(async () => await page.locator('.guideCard').count() === 0);
         assertEq(sends, 0, "tour sends no AI request");

@@ -782,6 +782,56 @@ export async function settingsScenarios(env) {
       assert(await page.locator(".appearancePdfPreview.isDark").isVisible());
       await page.getByRole("checkbox", { name: "Dark PDF pages", exact: true }).uncheck();
       await until(() => user.api("/api/prefs/profile").then((v) => v.value?.pdfDarkPage === false));
+      // Colors: groups of swatches; a swatch opens an editor (colour, opacity, Remove); groups are added and
+      // deleted; each picker chooses groups; Reset puts the defaults back
+      const group = (name) => page.locator(`.paletteGroup[data-setting="${name}"]`);
+      const swatches = group("Highlight").locator(".paletteSwatch:not(.paletteAdd)");
+      assertEq(await swatches.count(), 4);
+      assertEq(await group("Ink highlight").locator(".paletteSwatch:not(.paletteAdd)").count(), 8);
+      assertEq(await group("Pen").locator(".paletteSwatch:not(.paletteAdd)").count(), 14);
+      const palette = async () => (await user.api("/api/prefs/profile")).value?.palette;
+      const reset = page.getByRole("button", { name: "Reset colors", exact: true });
+      assert(await reset.isDisabled(), "nothing to reset at the defaults");
+      await swatches.first().click();
+      const editor = group("Highlight").locator(".paletteEditor");
+      // the picker: a hex field (#rrggbbaa sets the opacity too), an opacity field, the hue bar
+      const hexField = editor.getByRole("textbox", { name: "Hex color", exact: true });
+      await hexField.fill("#ff8800");
+      await until(async () => (await palette())?.groups?.[0]?.colors?.[0]?.hex === "#ff8800");
+      assertEq(await swatches.first().getAttribute("aria-label"), "Amber, 65% opaque", "named after the nearest colour, at its alpha");
+      await editor.getByRole("spinbutton", { name: "Opacity", exact: true }).fill("40");
+      await until(async () => (await palette())?.groups?.[0]?.colors?.[0]?.alpha === 0.4);
+      assertEq(await swatches.first().evaluate((el) => getComputedStyle(el).backgroundColor), "rgba(255, 136, 0, 0.4)");
+      await hexField.fill("#00ff0080");
+      await until(async () => { const c = (await palette())?.groups?.[0]?.colors?.[0]; return c?.hex === "#00ff00" && c?.alpha === 0.5; });
+      const hue = editor.getByRole("slider", { name: "Hue", exact: true });
+      const box = await hue.boundingBox();
+      await page.mouse.click(box.x + 1, box.y + box.height / 2); // the left edge of the hue bar is red (a pixel in: nearly)
+      await until(async () => /^#ff0[0-9a-f]00$/.test((await palette())?.groups?.[0]?.colors?.[0]?.hex || ""), { what: "the hue bar's left edge, red" });
+      assertEq((await palette()).groups[0].colors[0].alpha, 0.5, "a hue change keeps the opacity");
+      assertEq((await palette()).groups[0].colors[1].hex, "#aaebaa", "the other swatches stay");
+      await group("Highlight").getByRole("button", { name: "Add color to Highlight", exact: true }).click();
+      await until(async () => (await palette())?.groups?.[0]?.colors?.length === 5);
+      assertEq(await swatches.count(), 5);
+      await editor.getByRole("button", { name: "Remove", exact: true }).click();
+      await until(async () => (await palette())?.groups?.[0]?.colors?.length === 4);
+      await page.getByRole("button", { name: "Add group", exact: true }).click();
+      await until(async () => (await palette())?.groups?.length === 4);
+      await group("New group").getByRole("textbox", { name: "Group name", exact: true }).fill("Work");
+      await until(async () => (await palette())?.groups?.[3]?.name === "Work");
+      // each picker row is a dropdown of the groups; the new one becomes the text highlights' group
+      const pickerRow = row(page, "Text highlights");
+      assertEq(await pickerRow.getByRole("button", { name: "Text highlights", exact: true }).innerText(), "Highlight");
+      await pickerRow.getByRole("button", { name: "Text highlights", exact: true }).click();
+      await page.locator(".uiSelectMenu").getByRole("button", { name: "Work", exact: true }).click();
+      await until(async () => { const p = await palette(); return p?.pickers?.highlight === p?.groups?.[3]?.id; });
+      assertEq(await pickerRow.getByRole("button", { name: "Text highlights", exact: true }).innerText(), "Work");
+      // deleting the chosen group sends the picker back to its default group
+      await group("Work").getByRole("button", { name: "Delete group Work", exact: true }).click();
+      await until(async () => (await palette())?.groups?.length === 3 && (await palette())?.pickers?.highlight === "highlight");
+      await reset.click();
+      await until(async () => (await palette())?.groups?.[0]?.colors?.[0]?.hex === "#ffe28f");
+      assert(await reset.isDisabled());
       await row(page, "Interface size").getByRole("button", { name: "Larger", exact: true }).click();
       assert((await row(page, "Interface size").innerText()).includes("110%"));
       await row(page, "Interface size").getByRole("button", { name: "Reset", exact: true }).click();
@@ -888,17 +938,26 @@ export async function settingsScenarios(env) {
 
   // An account keeps at most five tasks (backup_schedule.MAX_TASKS): at five,
   // Add task and Duplicate are disabled and a line under the table says why.
+  // On a short window the pane scrolls, and the table keeps its full height
+  // rather than shrinking to its border.
   await step("settings: at five backup tasks, Add task is disabled and says why", async () => {
     const made = [];
     for (let i = 1; i <= 5; i++) {
       made.push(await user.api("/api/backup-tasks", { method: "POST", body: { name: `Task ${i}`, scope: "all_owned", cron: "0 3 * * *" } }));
     }
-    const { ctx, page } = await setup();
+    const { ctx, page } = await setup({ width: 1280, height: 600 });
     try {
       await openSettings(page);
       await nav(page, "Backups").click();
       const add = page.getByRole("button", { name: "Add task", exact: true });
-      await page.getByRole("region", { name: "Periodic backup tasks" }).locator("tr", { hasText: "Task 5" }).waitFor();
+      const table = page.getByRole("region", { name: "Periodic backup tasks" });
+      await table.locator("tr", { hasText: "Task 5" }).waitFor();
+      const fit = await table.evaluate((wrap) => {
+        const pane = wrap.closest(".settingsPane");
+        return { overflows: pane.scrollHeight > pane.clientHeight, clipped: wrap.scrollHeight - wrap.clientHeight };
+      });
+      assert(fit.clipped <= 1, `the task table is not clipped (${fit.clipped}px hidden)`);
+      assert(fit.overflows, "the Backups pane scrolls on a short window"); // (else the check above proves nothing)
       assert(await add.isDisabled(), "Add task is disabled at the limit");
       await page.getByText("You can keep up to 5 backup tasks. Delete one to add another.").waitFor();
       const actions = page.getByRole("button", { name: "Actions for Task 1", exact: true });
@@ -1225,14 +1284,21 @@ export async function settingsScenarios(env) {
   // nothing without asking the network, so both count as failed.
   await step("settings: Maintenance's metadata lookup runs in Background tasks after Settings closes", async () => {
     const titles = ["Batch lookup paper A", "Batch lookup paper B"];
-    for (const title of titles) {
+    for (const [i, title] of titles.entries()) {
       const block = await user.api("/api/blocks", { method: "POST", body: { parent_id: "root", content: title } });
-      await user.api(`/api/blocks/${block.id}`, { method: "PUT", body: { properties: { meta: { title, source: "ai" } } } });
+      // A was looked up at a known time; B predates the stamp
+      const meta = { title, source: "ai", ...(i === 0 ? { at: "2025-03-04T09:30:00Z" } : {}) };
+      await user.api(`/api/blocks/${block.id}`, { method: "PUT", body: { properties: { meta } } });
     }
     const { ctx, page } = await setup();
     try {
       await openSettings(page);
       await nav(page, "Maintenance").click();
+      // the Fetched column: the day (with the year, not this one), the time on hover
+      const fetched = page.locator(".metaStatRow", { hasText: titles[0] }).locator(".metaCell").nth(1);
+      assert(/2025/.test(await fetched.innerText()), `fetched cell: ${await fetched.innerText()}`);
+      assert((await fetched.getAttribute("title")).startsWith("Fetched "), `hover: ${await fetched.getAttribute("title")}`);
+      assertEq((await page.locator(".metaStatRow", { hasText: titles[1] }).locator(".metaCell").nth(1).innerText()).trim(), "—");
       for (const title of titles) {
         await page.locator(".metaStatRow", { hasText: title }).locator("input[type=checkbox]").check();
       }

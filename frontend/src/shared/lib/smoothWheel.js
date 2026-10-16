@@ -31,15 +31,24 @@ const LINE_PX = 40; // a line of deltaMode 1, as Firefox reports a notch
 const DRIFT_PX = 2; // how far scrollTop may read back from what was written
 const DONE_PX = 1; // this close, the goal is written exactly and the motion ends
 
+// Whether a legacy wheelDeltaY counts whole notches: 120 each, divided by
+// `ratio` and truncated toward zero. Chromium divides by devicePixelRatio,
+// so a notch reads 109 at 110% zoom, 96 on a 125% display; WebKit does not
+// divide (ratio 1). A touchpad or a precise wheel moves by fractions of one.
+export function wholeNotches(legacy, ratio) {
+  if (typeof legacy !== "number" || !legacy) return false;
+  const n = Math.round(legacy * ratio / 120);
+  return n !== 0 && Math.trunc(n * 120 / ratio) === legacy;
+}
+
 // The vertical distance a wheel event asks for when it comes from a notch,
-// else 0. In pixel mode a notch still reports the legacy wheelDeltaY in
-// steps of 120; a touchpad's deltas are arbitrary.
-export function notchDelta(e, pageHeight) {
+// else 0: lines and pages always do; in pixel mode the legacy wheelDeltaY
+// tells, read at the page's devicePixelRatio `dpr` (Chromium) or as is.
+export function notchDelta(e, pageHeight, dpr = 1) {
   if (e.ctrlKey || e.metaKey || e.shiftKey || e.altKey || e.deltaX || !e.deltaY) return 0;
   if (e.deltaMode === 1) return e.deltaY * LINE_PX;
   if (e.deltaMode === 2) return e.deltaY * pageHeight;
-  const legacy = e.wheelDeltaY;
-  return typeof legacy === "number" && legacy !== 0 && legacy % 120 === 0 ? e.deltaY : 0;
+  return wholeNotches(e.wheelDeltaY, dpr) || wholeNotches(e.wheelDeltaY, 1) ? e.deltaY : 0;
 }
 
 // The share of the remaining distance a frame of `dt` ms closes.
@@ -75,7 +84,7 @@ export function installSmoothWheel(el) {
     else frame = requestAnimationFrame(step);
   };
   const onWheel = (e) => {
-    const dy = notchDelta(e, el.clientHeight);
+    const dy = notchDelta(e, el.clientHeight, globalThis.devicePixelRatio || 1);
     if (!dy || innerScrolls(e.target, el, dy)) return;
     const here = to ?? el.scrollTop;
     const goal = Math.max(0, Math.min(el.scrollHeight - el.clientHeight, here + dy));

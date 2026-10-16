@@ -208,7 +208,7 @@ def test_gamma_export_delete_reimport_is_near_identical(gdonor):
     rect = {"x1": 50.0, "y1": 60.0, "x2": 250.0, "y2": 160.0}
     r = gdonor.put(f"/api/blocks/{paper['id']}/children", json={"blocks": [
         {"id": "rth1", "content": "thought", "properties": {
-            "quote": "q", "color": "rgba(170, 235, 170, 0.65)",
+            "quote": "q", "color": "#aaebaaa6",  # the stored spelling: the re-import (restore_zip) respells any other
             "pdf_position": {"pageNumber": 1, "width": 612.0, "height": 792.0, "boundingRect": rect, "rects": [rect]},
         }, "children": [
             {"id": "rth1a", "content": "nested note", "properties": {}, "children": []},

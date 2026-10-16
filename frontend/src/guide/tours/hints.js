@@ -5,12 +5,71 @@ import { T } from "../../shared/i18n/i18n.js";
 // reason; `{key:…}` shows a key as caps — a command's the way this account
 // has it bound (guide/keys.js).
 
+// Version 2: Tab, not Enter, accepts a \command suggestion (October 2026),
+// so people who saw the first wording hear it again.
 export const mathKeys = {
   id: "math-keys",
-  version: 1,
+  version: 2,
   hint: true,
   trigger: { event: "math.previewed" },
-  steps: [{ id: "math-keys", anchor: "editor.mathPreview", placement: "top", title: T("{key:Tab} jumps to the next { }; {key:\\} looks up a symbol.") }],
+  steps: [{ id: "math-keys", anchor: "editor.mathPreview", placement: "top", title: T("{key:Tab} accepts a suggestion, or jumps to the next { }; {key:\\} looks up a symbol.") }],
+};
+
+// Enter broke a line in a note that has text, where Enter is not the
+// new-note key (Settings → Keyboard): most outliners do the reverse.
+// Retired once the user has made a note with the right key.
+export const newNoteKey = {
+  id: "new-note-key",
+  version: 1,
+  hint: true,
+  requires: { enterNewNote: false, editable: true },
+  trigger: { event: "note.lineBreak", doneOn: { event: "block.created" } },
+  steps: [{ id: "new-note-key", anchor: "notes.editor", placement: "left",
+    title: T("{key:Shift-Enter} starts a new note; {key:Tab} nests it under the one above.") }],
+};
+
+// The / menu came up: opening it is already the intent, so the hint comes
+// with it, as the Add tour comes with Add.
+export const slashMenu = {
+  id: "slash-menu",
+  version: 1,
+  hint: true,
+  trigger: { event: "slash.opened" },
+  steps: [{ id: "slash-menu", anchor: "editor.slashMenu", placement: "right",
+    title: T("Keep typing to filter: `/eq` for an equation, `/red` for colour.") }],
+};
+
+// The Paste as chooser: where "Copy link to block" pays off.
+export const pasteAs = {
+  id: "paste-as",
+  version: 1,
+  hint: true,
+  trigger: { event: "paste.offered" },
+  steps: [{ id: "paste-as", anchor: "editor.pasteAs", placement: "right",
+    title: T("Choose how it lands; a block link can become a live **Synced block**.") }],
+};
+
+// The @ menu: people and pages, and reminders, whose dates are English words.
+export const mentions = {
+  id: "mentions",
+  version: 1,
+  hint: true,
+  trigger: { event: "mention.opened" },
+  steps: [{ id: "mentions", anchor: "editor.mentionMenu", placement: "right",
+    title: T("Mention a page or a person, or type `@fri 3pm` for a reminder.") }],
+};
+
+// A picture, table or diagram selected in the notes: its menu is a
+// right-click away (a long press on a touch screen, where this copy would
+// be wrong, so not there).
+export const objects = {
+  id: "objects",
+  version: 1,
+  hint: true,
+  requires: { editable: true, touch: false },
+  trigger: { event: "object.selected" },
+  steps: [{ id: "objects", anchor: "notes.object", placement: "top",
+    title: T("Right-click it to edit its source, move it or delete it.") }],
 };
 
 export const blockRefs = {
@@ -142,5 +201,128 @@ export const cloudAccount = {
     title: T("Link **Gamma Cloud** (Settings → Account & sync) to take settings to your other servers and publish pages for free.") }],
 };
 
+// A window closed with its × (desktop): it waits in the View menu, and a
+// page without a layout of its own keeps it closed. Retired without showing
+// if the user brings one back by themselves first; opening View answers the
+// card, which would otherwise cover the menu's Windows rows.
+export const windowClosed = {
+  id: "window-closed",
+  version: 1,
+  hint: true,
+  requires: { phone: false },
+  trigger: { event: "window.closed", doneOn: { event: "window.shown" },
+    answeredBy: { event: "popover.opened", match: { name: "menu" } } },
+  steps: [{ id: "window-closed", anchor: "header.view", placement: "bottom",
+    title: T("Closed windows wait in **View**: tick one to bring it back.") }],
+};
+
+// The first New chat that kept a conversation: where it went, and the
+// Alt+click that throws one away instead. Opening History answers it.
+export const newChat = {
+  id: "new-chat",
+  version: 1,
+  hint: true,
+  trigger: { event: "chat.archived", match: { discard: false },
+    answeredBy: { event: "popover.opened", match: { name: "chathistory" } } },
+  steps: [{ id: "new-chat", anchor: "chat.history", placement: "bottom",
+    title: T("Your last conversation is in **History**. {key:Alt}+click **+** to discard one instead.") }],
+};
+
+// The first message that took the whole PDF with it: figures count, and so
+// do the tokens.
+export const pdfSwitch = {
+  id: "pdf-switch",
+  version: 1,
+  hint: true,
+  trigger: { event: "chat.sent", match: { pdf: true } },
+  steps: [{ id: "pdf-switch", anchor: "chat.pdfSwitch", placement: "top",
+    title: T("The whole PDF goes with each message, figures too; toggle **PDF** to send its text only.") }],
+};
+
+// The first reply that changed the library or the notes: each change can be
+// taken back, which is what makes "Allow" comfortable.
+export const assistantChanges = {
+  id: "assistant-changes",
+  version: 1,
+  hint: true,
+  trigger: { event: "chat.changed" },
+  steps: [{ id: "assistant-changes", anchor: "chat.changes", placement: "top",
+    title: T("Every change it made is listed here, each with its own undo.") }],
+};
+
+// Handwriting selected: what the box and its handles do (the handwriting
+// tour stops at the lasso).
+export const inkSelection = {
+  id: "ink-selection",
+  version: 1,
+  hint: true,
+  requires: { editable: true },
+  trigger: { event: "ink.selected" },
+  steps: [{ id: "ink-selection", anchor: "ink.selection", placement: "bottom",
+    title: T("Drag to move it; the handles resize and rotate, and {key:Shift} snaps to 15°.") }],
+};
+
+// A paper whose details nothing has confirmed (the ⓘ button's red "!"),
+// with the button on screen. Opening it answers the card.
+export const paperDetails = {
+  id: "paper-details",
+  version: 1,
+  hint: true,
+  requires: { unverifiedMeta: true, editable: true },
+  trigger: { answeredBy: { event: "popover.opened", match: { name: "meta" } } },
+  steps: [{ id: "paper-details", anchor: "page.metadata", placement: "bottom",
+    title: T("The **!** means unchecked details: open it to fix them and pin a cite key.") }],
+};
+
+// A folder's bibliography in the Export dialog: the link that keeps an
+// Overleaf project's .bib in step with the folder.
+export const bibLink = {
+  id: "bib-link",
+  version: 1,
+  hint: true,
+  trigger: { event: "bibtex.shown", match: { folder: true } },
+  steps: [{ id: "bib-link", anchor: "transfer.bibLink", placement: "top",
+    title: T("**Keep this .bib up to date** gives Overleaf a link that follows the folder.") }],
+};
+
+// The third Ctrl+P of a load: the same box runs every command, the unbound
+// ones (the window toggles among them) included. Retired once the command
+// palette has been found.
+export const commandPalette = {
+  id: "command-palette",
+  version: 1,
+  hint: true,
+  requires: { phone: false },
+  trigger: { event: "palette.opened", count: 3, doneOn: { event: "commands.opened" } },
+  steps: [{ id: "command-palette", anchor: "palette.input", placement: "bottom",
+    title: T("Type `>` here, or press {key:app.commandPalette}, to run any command.") }],
+};
+
+// A later visit of someone who finished the first tour: Settings, which no
+// guide points into (it has no anchors), is a key away. Opening the account
+// menu, which holds Settings…, answers the card.
+export const settings = {
+  id: "settings",
+  version: 1,
+  hint: true,
+  requires: { firstRunDone: true, phone: false },
+  trigger: { answeredBy: { event: "popover.opened", match: { name: "user" } } },
+  steps: [{ id: "settings", anchor: "header.account", placement: "bottom",
+    title: T("{key:app.settings} opens Settings: theme, language, keys and smooth scrolling.") }],
+};
+
+// The fourth tab of a load: a tab pins from its right-click menu, in the
+// strip or to the library. Opening that menu answers the card.
+export const tabs = {
+  id: "tabs",
+  version: 1,
+  hint: true,
+  requires: { phone: false },
+  trigger: { event: "tab.opened", count: 4, answeredBy: { event: "tab.menu" } },
+  steps: [{ id: "tabs", anchor: "header.tabs", placement: "bottom",
+    title: T("Right-click a tab to pin it here, or to pin its page to the library.") }],
+};
+
 export default [mathKeys, blockRefs, quickOpen, back, conflicts, folders, install, approvals, exportPage,
-  cloneSync, connector, cloudAccount];
+  cloneSync, connector, cloudAccount, windowClosed, newChat, pdfSwitch, assistantChanges, inkSelection,
+  newNoteKey, slashMenu, pasteAs, mentions, objects, paperDetails, bibLink, commandPalette, settings, tabs];

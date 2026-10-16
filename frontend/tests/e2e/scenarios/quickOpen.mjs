@@ -239,7 +239,10 @@ export async function quickOpenScenarios(env) {
       // The previously viewed tab is third even though first is leftmost.
       await tab(0).click();
       await onPage(0);
+      // A middle-click closes nothing (a stray one used to lose the tab).
       await tab(0).click({ button: "middle" });
+      assertEq(await tab(0).count(), 1, "a middle-click leaves the tab open");
+      await tab(0).getByRole("button", { name: `Close ${made[0].content}`, exact: true }).click();
       await onPage(2);
       await tab(0).waitFor({ state: "detached" });
       // Context-menu close takes the same route; repeated closes skip first.

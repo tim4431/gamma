@@ -6,8 +6,8 @@ Where every setting lives, and how the Settings dialog is built.
 
 | Layer | Storage | Examples |
 |---|---|---|
-| Per browser | `localStorage`, one `gamma-*` key per preference, all declared in `PREFS` ([frontend/src/app/prefDefs.js](../../frontend/src/app/prefDefs.js)) with scope `browser` — except `gamma-link-name`, the share view's display name for a visitor without an account, owned by `src/collaboration/linkName.js` because the fetch wrapper reads it outside React | what describes this device: the interface size (`gamma-ui-scale`, applied pre-paint by `index.html`), the status bar, the handwriting input rules and the tool strip's presets, eraser and lasso choices (`gamma-ink-*`) and the style of new text boxes (`gamma-text-box-style`), the metadata and translation model picks and dictation (they name this server's provider entries, like the chat model `gamma-chat-model`), and whether a shown "Linked from" section is folded (`gamma-backlinks-collapsed`; whether it is shown at all is the account's `gamma-backlinks`); outside `PREFS`, diagnostics tracing (`gamma-debug-log`) |
-| Per account, profile | the account-wide `profile` prefs key (`/api/prefs/profile`, one JSON object keyed by preference name), every `PREFS` entry with scope `account`; each also keeps its `gamma-*` localStorage key as the instant-paint cache | appearance (theme — the pre-paint script in `index.html` reads `gamma-theme`, resolves System to light or dark the way App.jsx's theme effect does and sets `data-theme` with its `data-scheme`, so the first frame has the right tokens ([ui-design.md](ui-design.md#tokens)) — flip page colors, whether tours are suggested, `suggestTours`, and which tours the account has seen, `tourProgress`, written by the guide and shown nowhere, [onboarding.md](onboarding.md#storage)), the interface language (`gamma-language`, read by `main.jsx` before the first render, [i18n.md](i18n.md)), reading and editing (imported annotations, smooth wheel scrolling, how search opens), translation (button and language, selection translation, effort, parallel requests), the Enter key, library display and PDF fetching, the sync pill's scope (`syncPillScope`), chat behaviour (tools switch, per-kind tool permissions, reasoning effort, speed, the login connection check, tool limits, snapshot clearing), context budgets, prompts, keyboard shortcuts (`keybindings`: command id → chord or null, [hotkeys.md](hotkeys.md)) |
+| Per browser | `localStorage`, one `gamma-*` key per preference, all declared in `PREFS` ([frontend/src/app/prefDefs.js](../../frontend/src/app/prefDefs.js)) with scope `browser` — except `gamma-link-name`, the share view's display name for a visitor without an account, owned by `src/collaboration/linkName.js` because the fetch wrapper reads it outside React | what describes this device: the interface size (`gamma-ui-scale`, applied pre-paint by `index.html`), the status bar, the handwriting input rules and the tool strip's presets, eraser and lasso choices (`gamma-ink-*`), the style of new text boxes (`gamma-text-box-style`) and how a recording plays back (`gamma-replay-mode`, `gamma-replay-rate`, `gamma-replay-follow`; its lead-in `gamma-replay-lead-in` and the automatic transcript `gamma-recording-transcribe` are the account's), the metadata and translation model picks and dictation (they name this server's provider entries, like the chat model `gamma-chat-model`), and whether a shown "Linked from" section is folded (`gamma-backlinks-collapsed`; whether it is shown at all is the account's `gamma-backlinks`); outside `PREFS`, diagnostics tracing (`gamma-debug-log`) |
+| Per account, profile | the account-wide `profile` prefs key (`/api/prefs/profile`, one JSON object keyed by preference name), every `PREFS` entry with scope `account`; each also keeps its `gamma-*` localStorage key as the instant-paint cache | appearance (theme — the pre-paint script in `index.html` reads `gamma-theme`, resolves System to light or dark the way App.jsx's theme effect does and sets `data-theme` with its `data-scheme`, so the first frame has the right tokens ([ui-design.md](ui-design.md#tokens)) — flip page colors, the colour palette (`palette`, the swatches highlights, pens and text boxes offer), whether tours are suggested, `suggestTours`, and which tours the account has seen, `tourProgress`, written by the guide and shown nowhere, [onboarding.md](onboarding.md#storage)), the interface language (`gamma-language`, read by `main.jsx` before the first render, [i18n.md](i18n.md)), reading and editing (imported annotations, smooth wheel scrolling, how search opens), translation (button and language, selection translation, effort, parallel requests), the Enter key, library display and PDF fetching, the sync pill's scope (`syncPillScope`), chat behaviour (tools switch, per-kind tool permissions, reasoning effort, speed, the login connection check, tool limits, snapshot clearing), context budgets, prompts, keyboard shortcuts (`keybindings`: command id → chord or null, [hotkeys.md](hotkeys.md)) |
 | Session only | React state, nothing stored | the Ctrl+scroll text size of the notes list and the chat transcript (`useTextScale` in [Widgets.jsx](../../frontend/src/shared/ui/Widgets.jsx)) — resets on reload |
 | Per account, synced | `/api/prefs/{key}` (small JSON KV: the account-wide keys in `users.db` `user_prefs`, the others in the workspace's `pages.db` `workspace_prefs`, [user_db.md](user_db.md)) | per account AND workspace, kept in that workspace and left out of its exports and backups: open tabs (`open-tabs`), the recently-viewed queue (`recent-views`), reading positions (`read-pos`) — they name one workspace's pages (pins are no pref: a pinned page or folder carries `properties.pinned` on its block, [home_library.md](home_library.md) "Pinned"); account-wide: active AI key (`ai-provider`) and the preference profile (`profile`, previous row). Server wins on load, localStorage (keyed `user@workspace`) is the instant-paint cache. The recents-card cover thumbnails are workspace data, through their own `/api/page-snaps` store (`page_snaps` in the workspace's `data.db` — over the prefs size cap) |
 | Per account, seen notices | the account-wide `notices-seen` prefs key (`db.NOTICES_SEEN_PREF_KEY`), `{notice id: fingerprint}`, written only by `POST /api/notices/{id}/seen` (below, "Notices") | which release and which log error the account has already looked at |
@@ -271,7 +271,36 @@ Preferences:
   is drawn under its theme's `data-theme` / `data-scheme`, so it paints
   from that theme's own tokens, `ThemePreview` in
   `shared/illustrations/`), the
-  dark-page switch with its live PDF sample, **Library**: the live card demo
+  dark-page switch with its live PDF sample, **Colors**: the account's
+  colour palette (`palette`, [shared/model/palette.js](../../frontend/src/shared/model/palette.js)):
+  `{groups, pickers}`. A group is `{id, name, colors: [{hex, alpha}]}`,
+  shown as a card — its name (an inline text box), its swatches drawn at
+  their alpha and titled by their nearest colour name, a "+" swatch,
+  Duplicate and Delete — and a selected swatch opens the editor under
+  the row: the `ColorPicker` ([ui-design.md](ui-design.md), a saturation
+  square, hue and alpha bars, a hex field that takes `#rrggbbaa`, an
+  opacity field, 10–100%, and the eyedropper where the browser has one)
+  with the colour's name and Remove beside it. Add group adds one; up to 12 groups of 24 colours, names up to
+  40 characters. The defaults are three groups: Highlight (the four light
+  wash colours Gamma always had, at 0.65), Ink highlight (those four and
+  the four more the tool strip's highlighters always offered, at 0.6) and
+  Pen (the 14 dark ink colours, opaque). Four picker rows — Text
+  highlights (the selection popup and a highlight's recolour menu), Ink
+  highlights and Ink pens (a tool strip preset's options row), Text boxes
+  — each choose one group in a `MenuSelect` dropdown (`pickers`, a group
+  id per picker; one naming a deleted group falls back to the picker's
+  default group, else the first group with a colour, and `pickerColors`
+  never comes back empty). Reset colors puts the
+  defaults back. The pickers read the palette through `PaletteContext`
+  (`shared/ui/paletteContext.js`): the selection popup and a highlight's
+  recolour menu store the swatch at its alpha (a highlight's
+  `properties.color` is `#rrggbbaa`, [api.md](api.md) "The highlight
+  shape"), a pen or highlighter preset takes the swatch's alpha as its
+  own `opacity` ([handwriting.md](handwriting.md)), a text box takes the
+  hex alone. A changed swatch is what the pickers offer from then on;
+  stored highlights and strokes keep the colour they have. The first
+  shape of the preference, `{wash, ink}`, still reads: it becomes the two
+  default groups, **Library**: the live card demo
   with the thumbnails / folders / labels switches
   ([SettingsLibraryDisplay.jsx](../../frontend/src/settings/SettingsLibraryDisplay.jsx)),
   interface size and the status bar, **Sync status** (the header's sync
@@ -442,8 +471,8 @@ Library:
   rounds themselves: [debugging.md](debugging.md) "Off-site copies in a
   bucket".
 - **Maintenance** (the pane's head says Library maintenance): workspace
-  storage, search-index rebuilding and the per-paper metadata / text / index
-  health table.
+  storage, search-index rebuilding and the per-paper metadata / fetched /
+  text / index health table.
 
 Administration (admins only):
 

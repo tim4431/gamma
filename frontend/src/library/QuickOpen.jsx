@@ -24,6 +24,7 @@ import PageOption, { recencySections } from "./PageOption";
 import { createLibraryMatcher, rankLibraryPages } from "./librarySearch";
 import { filedIn, folderPath } from "./libraryUtils";
 import { t, tn } from "../shared/i18n/i18n.js";
+import { guideEvents } from "../guide/events.js";
 
 const MAX_ROWS = 40;
 const MAX_CONTAINERS = 8;
@@ -58,6 +59,8 @@ export default function QuickOpen({
     return () => document.removeEventListener("focusin", hold, true);
   }, [open]);
   useEffect(() => { setActive(0); }, [query]);
+  // The command palette found (the guide's palette hint retires on it).
+  useEffect(() => { if (open && commandMode) guideEvents.emit("commands.opened"); }, [open, commandMode]);
   useEffect(() => {
     listRef.current?.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: "nearest" });
   }, [active]);
@@ -197,7 +200,7 @@ export default function QuickOpen({
   return (
     <div className="reportOverlay quickOpenOverlay" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
       <div className="reportModal quickOpen" role="dialog" aria-label={commandMode ? t("Command palette") : t("Open a page")}>
-        <div className="quickOpenInput">
+        <div className="quickOpenInput" data-guide="palette.input">
           {commandMode ? <TerminalIcon size={16} /> : <SearchIcon size={16} />}
           <input
             ref={inputRef}

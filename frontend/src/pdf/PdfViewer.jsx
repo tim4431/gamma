@@ -16,7 +16,7 @@ import { armedClasses, usePageTools } from "../markup/PageTools";
 import { KEEP_MARGIN, RENDER_MARGIN, ZOOM_SETTLE_MS, cropPage, installPageRaster } from "./pageRaster.js";
 import { installVerticalScrollSnap } from "./verticalScrollSnap.js";
 import { segmentPage, selectionParagraphs } from "./pdfTranslate";
-import { BACKFILL_DELAY_MS, chooseTransport, docIdOf, layoutFromManifest, rangeOpenOptions } from "./pdfSource";
+import { BACKFILL_DELAY_MS, chooseTransport, docIdOf, layoutFromManifest, rangeOpenOptions, typicalPageIndex } from "./pdfSource";
 import { normalizeChars } from "../shared/lib/textnorm";
 import { apiJson, copyText, withShare, withWorkspace } from "../shared/lib/utils";
 import { ChatMarkdown, useCopied } from "../shared/ui/Widgets";
@@ -25,7 +25,9 @@ import { lastPointer } from "../shared/lib/pointer.js";
 import { PdfCitationOverlay } from "./PdfCitationOverlay";
 import { citationRuns, runChars } from "./pdfCitation.js";
 import { noteBadgeAnchor } from "./noteAnchor.js";
-import { COLORS, paletteIndex } from "../shared/model/highlightColors.js";
+import { useRecentIn } from "../guide/recent.js";
+import { DEFAULT_HIGHLIGHT, colorName, darkPageColor, darkPageLine, normalizeColor, pickerColors, swatchCss } from "../shared/model/palette.js";
+import { usePalette } from "../shared/ui/paletteContext.js";
 import { t } from "../shared/i18n/i18n.js";
 import { TRANSLATE_PARALLEL_MAX } from "../app/prefDefs.js";
 import { ZOOM_MIN, clampZoom } from "../shared/model/zoom.js";
@@ -462,7 +464,7 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
   const [forcePages, setForcePages] = useState(new Set());
   const pageHeightsRef = useRef([]); // viewport heights at scale 1, indexed 0..n-1
   const pageWidthsRef = useRef([]); // viewport widths at scale 1 — the zoom anchor's horizontal math needs them
-  const heightsExactRef = useRef(true); // false while a long doc's tail heights are page-1 estimates still refining
+  const heightsExactRef = useRef(true); // false while a long doc's tail heights are estimates still refining
   const lastScrollRef = useRef(0); // scrollTop as of the last scroll event — the pre-clamp value during a zoom commit
   const lastScrollLeftRef = useRef(0);
 
@@ -717,8 +719,9 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
     return () => { captureRef.current = null; };
   }, [pdfDoc, captureRef]);
   // Resolve scale: numeric value as-is, "page-width" computes a scale that
-  // fits the first page to the viewer width. Recomputed on viewer resize so
-  // it adapts to sidebar drags / phone rotation.
+  // fits the typical page (typicalPageIndex: the most common width, not
+  // page 1, which may be a cover of another size) to the viewer width.
+  // Recomputed on viewer resize so it adapts to sidebar drags / phone rotation.
   const [fitWidthScale, setFitWidthScale] = useState(1);
   const numericScale = parseFloat(pdfScaleValue);
   const isFitWidth = isNaN(numericScale);
@@ -729,10 +732,11 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
   useEffect(() => { onEffectiveScale?.(scale); }, [scale, onEffectiveScale]);
   useEffect(() => {
     if (!isFitWidth || !pdfDoc || !viewerRef.current) return;
-    // Page 1's width is in pageWidthsRef, measured before the doc was shown —
+    // The widths are in pageWidthsRef, measured before the doc was shown —
     // no async worker round trip per sidebar drag / rotation.
     const compute = () => {
-      const naturalW = pageWidthsRef.current[0];
+      const widths = pageWidthsRef.current;
+      const naturalW = widths[typicalPageIndex(widths)];
       const containerW = viewerRef.current?.clientWidth;
       if (naturalW > 0 && containerW > 0) setFitWidthScale(Math.max(ZOOM_MIN, containerW / naturalW));
     };
@@ -876,8 +880,9 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
           ({ heights, widths } = fromManifest);
         } else {
           // Measure the first pages (a worker round trip each) and estimate
-          // the rest from page 1, refined below. Kept small: this loop
-          // blocks first paint.
+          // the rest from the typical one among them — not page 1, which may
+          // be a cover of another size — refined below. Kept small: this
+          // loop blocks first paint.
           const measured = Math.min(n, EXACT);
           heights = []; widths = [];
           for (let i = 1; i <= measured; i++) {
@@ -888,7 +893,8 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
             } catch { heights.push(heights[0] || FALLBACK_H); widths.push(widths[0] || FALLBACK_W); }
             if (cancelled) { doc.destroy().catch(() => {}); return; }
           }
-          for (let i = heights.length; i < n; i++) { heights.push(heights[0] || FALLBACK_H); widths.push(widths[0] || FALLBACK_W); }
+          const typical = typicalPageIndex(widths);
+          for (let i = heights.length; i < n; i++) { heights.push(heights[typical] || FALLBACK_H); widths.push(widths[typical] || FALLBACK_W); }
         }
         const exact = !!fromManifest || n <= EXACT;
         commitDoc(url, doc, heights, widths, exact);
@@ -1866,6 +1872,9 @@ const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, scal
   const rasterRef = useRef(null);
   const textRef = useRef(null);
   const textScaleRef = useRef(0); // the scale the text layer's spans were last measured at
+  // The highlight made last, when it is on this page: the guide's highlight
+  // tour points at it (guide/recent.js).
+  const recentHl = useRecentIn("highlight", highlights);
   const [pageSize, setPageSize] = useState(null);
   const [loaded, setLoaded] = useState(null); // {doc, page}: the pdf.js page, once this one has come near the view
   const page = loaded?.doc === pdfDoc ? loaded.page : null;
@@ -2262,24 +2271,28 @@ const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, scal
         // Area notes (Ctrl+drag rectangles) draw as an outline with a faint
         // wash — a solid multiply fill would tint the figure underneath.
         const isArea = !!h.position?.area;
-        const color = h.color || COLORS[0];
+        const color = normalizeColor(h.color) || DEFAULT_HIGHLIGHT;
         // The colour rides in --hl (the border in --hl-line, defaulting to
-        // it), and a palette colour is tagged with its index: dark pages
-        // swap in a dark-tuned set by index (app.css, "Flip page colors").
-        const palette = paletteIndex(color);
+        // it) beside its dark-page variant in --hl-dark / --hl-dark-line:
+        // a flipped page (Flip page colors, Gamma Dark) draws those instead
+        // (app.css), whatever app the colour came from.
         // Right-click, or a finger held on it: colour, link, copy as reference.
         const openMenu = (e) => { e.preventDefault(); onHighlightContext?.({ id: h.id, x: e.clientX, y: e.clientY }); };
         const elements = [];
-        for (const r of rects) {
+        for (const [ri, r] of rects.entries()) {
           elements.push(<div key={h.id + "-" + r.x1 + "-" + r.y1} data-hl-id={h.id}
+            data-guide={ri === 0 ? "pdf.highlight" : undefined}
+            data-guide-recent={ri === 0 && recentHl === h.id ? "" : undefined}
             className={flashId === h.id ? "pdfHlFlash" : undefined}
-            data-hl-color={palette >= 0 ? palette : undefined} style={{
+            style={{
             position: "absolute", zIndex: 2, cursor: "pointer",
             left: r.x1 * curW / storedW, top: r.y1 * curH / storedH,
             width: Math.max(1, (r.x2 - r.x1) * curW / storedW),
             height: Math.max(1, (r.y2 - r.y1) * curH / storedH),
             mixBlendMode: "multiply",
             "--hl": color,
+            "--hl-dark": darkPageColor(color),
+            "--hl-dark-line": darkPageLine(color),
             ...(isArea ? {
               boxSizing: "border-box", borderRadius: 3,
               border: "2px solid var(--hl-line, var(--hl))",
@@ -2376,6 +2389,7 @@ const SEL_TRANSLATE_MAX = 5000;
 // language and server cache apply. Auto starts it on open; the button starts
 // it, then folds/unfolds the result.
 function PlainTip({ onConfirm, onLink, translate }) {
+  const palette = usePalette();
   const [trans, setTrans] = useState(null); // {status: "loading"|"done"|"error", text, open}
   const ctlRef = useRef(null);
   const source = useMemo(() => (translate ? selectionParagraphs(translate.text) : ""), [translate?.text]);
@@ -2403,15 +2417,16 @@ function PlainTip({ onConfirm, onLink, translate }) {
   return (
     <div className="plainTip">
       <div className="colorRow">
-        {COLORS.map((c) => (
+        {pickerColors(palette, "highlight").map((c, i) => (
           <button
-            key={c}
+            key={c.hex + c.alpha + i}
             className="colorBtn"
             data-guide="pdf.highlightColor"
-            style={{ background: c }}
+            style={{ background: swatchCss(c) }}
             onMouseDown={(e) => { keep(e); onConfirm("", c); }}
             type="button"
-            title={t("Highlight in this color")}
+            title={t("Highlight in {color}", { color: t(colorName(c)) })}
+            aria-label={t("Highlight in {color}", { color: t(colorName(c)) })}
           />
         ))}
         {onLink ? (

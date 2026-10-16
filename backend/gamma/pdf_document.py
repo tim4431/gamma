@@ -63,6 +63,7 @@ from .pdf_typeset import (
 )
 from .highlights import is_highlight, page_of
 from .notebook import is_sheet
+from .recording import heading as recording_heading, is_recording
 from .text_box import box_page
 
 PAGE_W, PAGE_H = 595.28, 841.89          # A4
@@ -780,9 +781,10 @@ def _emit_block(cv: _Canvas, node: dict, depth: int, highlights: bool, notes: bo
     is_region = is_highlight(props)
     is_link = bool(props.get("link_url"))
     is_ink = bool(props.get("ink_url"))
-    if is_region or is_link or is_ink:
+    is_rec = is_recording(props)
+    if is_region or is_link or is_ink or is_rec:
         if not highlights:
-            props, is_region, is_link, is_ink = {}, False, False, False
+            props, is_region, is_link, is_ink, is_rec = {}, False, False, False, False
         if not notes:
             content = ""
     elif not notes:
@@ -813,6 +815,16 @@ def _emit_block(cv: _Canvas, node: dict, depth: int, highlights: bool, notes: bo
             inset = QUOTE_PAD if emitted else 0
             _emit_chunks(cv, content, x + inset, width - inset, bullet=bool(depth or inset))
             emitted = True
+    elif is_rec:
+        # A recording: a line naming it, as a text box's does, then its
+        # title; its transcript is its children.
+        cv.gap(BLOCK_GAP)
+        cv.need((SMALL_SIZE + BODY_SIZE) * LEADING)
+        cv.paragraph([(TEXT, f"{recording_heading(props)} (audio not included in a PDF)", 0, PLAIN)],
+                     x, width, SMALL_SIZE, color=MUTED, bullet="" if depth else None)
+        if content:
+            _emit_chunks(cv, content, x, width)
+        emitted = True
     elif is_region:
         quote = (props.get("quote") or "").strip()
         bar = tuple(max(0.0, c * 0.7) for c in parse_css_color(props.get("color"))[:3])

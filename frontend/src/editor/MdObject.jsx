@@ -4,22 +4,25 @@
 // is left to the row (click-to-source opens the editor there). A right-click
 // or a held finger (or the "⋯" in a toolbar, the table's corner handle)
 // opens one menu for all three kinds — edit the markdown source, move it to
-// a new block or another page, copy it, delete it — and Delete removes a
-// selected object. A selected object shows its tools. The frame is also the
-// drag source: dragging it carries the object's source range
-// (`_dragState.fragment`, read by App's block drop handlers), which lands
-// between two blocks as a new block or inside a block at the gap the pointer
-// is nearest to. Nothing here touches the stored text: every outcome is a
-// source transform in mdObjects.js.
+// a new block or another page, copy it (as markdown, or a picture or drawn
+// diagram as an image), delete it — and Delete removes a selected object. A
+// selected object shows its tools. The frame is also the drag source:
+// dragging it carries the object's source range (`_dragState.fragment`,
+// read by App's block drop handlers), which lands between two blocks as a
+// new block or inside a block at the gap the pointer is nearest to. Nothing
+// here touches the stored text: every outcome is a source transform in
+// mdObjects.js.
 import React, { createContext, useContext, useEffect, useRef, useState } from "react";
 import { ContextMenu, MenuButton, MenuItem, SubMenuItem } from "../shared/ui/Menus";
 import { doublePress, menuPress } from "../shared/ui/press.js";
 import {
-  ArrowDownIcon, ArrowUpIcon, CodeIcon, CopyIcon, FileTextIcon, MoveVerticalIcon, Trash2Icon,
+  ArrowDownIcon, ArrowUpIcon, CodeIcon, CopyIcon, FileTextIcon, ImageIcon, MoveVerticalIcon, Trash2Icon,
 } from "../shared/ui/Icons";
 import { t } from "../shared/i18n/i18n.js";
+import { guideEvents } from "../guide/events.js";
 import { blockSpans, scanImages, scanTables } from "./mdScan";
 import { scanDiagramFences } from "../shared/lib/diagramMarkdown.js";
+import { canCopyImage } from "../shared/lib/copyImage.js";
 import { blockStartInSource, gapInSource, renderedBlocks, renderedGaps } from "./clickToSource";
 import { isTextField } from "../shared/lib/hotkeys.js";
 
@@ -80,6 +83,14 @@ function constructStartInSource(rendered, content, el) {
 
 // ------------------------------------------------------------- the frame
 
+// The picture a frame shows, for "Copy image": a loaded image, an SVG
+// fence's drawing or a Mermaid figure. None for a table, a broken image, or
+// a diagram showing its source or an error.
+function objectPicture(frame) {
+  const el = frame?.querySelector("img.mdImg, img.diagramImg, .diagramSvg > svg");
+  return el && (el.localName === "svg" || (el.complete && el.naturalWidth > 0)) ? el : null;
+}
+
 // Lets a control inside the frame (the table's corner handle) open the
 // object menu instead of a menu of its own.
 const MdObjectCtx = createContext(null);
@@ -92,15 +103,16 @@ export function ObjectMenuButton() {
   return menu ? <MenuButton open={menu.openMenu} /> : null;
 }
 
-// `onAction(kind, idx, action, event)`: editRaw · copy · delete ·
-// moveNewAbove · moveNewBelow · moveToPage · dragStart · dragEnd. Without it
-// (read-only, an embed card) the frame is inert layout.
+// `onAction(kind, idx, action, event, picture)`: editRaw · copy · copyImage
+// (with the picture element) · delete · moveNewAbove · moveNewBelow ·
+// moveToPage · dragStart · dragEnd. Without it (read-only, an embed card) the
+// frame is inert layout, and the browser's own menu shows on its pictures.
 export function MdObject({ as: Tag = "div", kind, idx, editable = true, onAction, children }) {
   const ref = useRef(null);
   const [selected, setSelected] = useState(false);
-  const [menu, setMenu] = useState(null); // {x, y}
+  const [menu, setMenu] = useState(null); // {x, y, picture}
   const active = !!onAction;
-  const act = (action, e) => { setMenu(null); onAction?.(kind, idx, action, e); };
+  const act = (action, e, picture) => { setMenu(null); onAction?.(kind, idx, action, e, picture); };
 
   // Selected: a press anywhere else (the menu excepted) or Escape drops it;
   // Delete / Backspace remove the object unless a field has the keyboard.
@@ -131,7 +143,7 @@ export function MdObject({ as: Tag = "div", kind, idx, editable = true, onAction
     e.preventDefault();
     e.stopPropagation();
     setSelected(true);
-    setMenu({ x: e.clientX, y: e.clientY });
+    setMenu({ x: e.clientX, y: e.clientY, picture: objectPicture(ref.current) });
   };
 
   const cls = `mdObject mdObject-${kind}${selected ? " mdObjectSelected" : ""}`;
@@ -142,6 +154,9 @@ export function MdObject({ as: Tag = "div", kind, idx, editable = true, onAction
       className={cls}
       data-kind={kind}
       data-idx={idx}
+      // The guide's object hint points at the selected object, and goes
+      // with the selection.
+      data-guide={selected ? "notes.object" : undefined}
       draggable={editable ? "true" : undefined}
       // The block row opens its raw editor on mousedown. A press on the
       // object's own body (the picture, the table, the diagram) selects it
@@ -153,7 +168,10 @@ export function MdObject({ as: Tag = "div", kind, idx, editable = true, onAction
         const body = e.target.closest?.(".mdImgFrame, .mdTableWrap, .diagramCard");
         if (!body || !ref.current?.contains(body)) return;
         e.stopPropagation();
-        if (e.button === 0) setSelected(true);
+        if (e.button === 0) {
+          setSelected(true);
+          if (editable) guideEvents.emit("object.selected", { kind });
+        }
       }}
       // A diagram has no editing of its own — a picture zooms on
       // double-click and a table edits the cell under the pointer — so a
@@ -193,6 +211,11 @@ export function MdObject({ as: Tag = "div", kind, idx, editable = true, onAction
               <MenuItem icon={ArrowDownIcon} onClick={(e) => act("moveNewBelow", e)}>{t("New block below")}</MenuItem>
               <MenuItem icon={FileTextIcon} onClick={(e) => act("moveToPage", e)}>{t("Another page…")}</MenuItem>
             </SubMenuItem>
+          ) : null}
+          {menu.picture ? (
+            <MenuItem icon={ImageIcon} disabled={!canCopyImage()}
+              title={canCopyImage() ? undefined : t("Copying an image needs a secure connection (HTTPS or localhost)")}
+              onClick={(e) => act("copyImage", e, menu.picture)}>{t("Copy image")}</MenuItem>
           ) : null}
           <MenuItem icon={CopyIcon} onClick={(e) => act("copy", e)}>{t("Copy as markdown")}</MenuItem>
           {editable ? (

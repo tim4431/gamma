@@ -44,7 +44,7 @@ from .textnorm import normalize_text
 # The data-directory schema version this code expects (users.db
 # ``PRAGMA user_version``). Bump it together with a new step in
 # gamma/migrations.py — never without one, never without bumping.
-SCHEMA_VERSION = 36
+SCHEMA_VERSION = 38
 # A workspace's pages.db keeps a version of its own (its ``PRAGMA
 # user_version``): the newest step whose per-workspace part has run on it
 # (gamma/migrations.py WORKSPACE_STEPS). One stamped 0 is at this version:
@@ -391,6 +391,7 @@ BLOCK_HOT_COLUMNS = {
             WHEN json_type(properties, '$.ink_url') IS NOT NULL THEN 'ink'
             WHEN json_type(properties, '$.text_box') = 'object' THEN 'text_box'
             WHEN json_type(properties, '$.sheet') = 'object' THEN 'sheet'
+            WHEN json_type(properties, '$.recording') = 'object' THEN 'recording'
             WHEN json_extract(properties, '$.link_url') != ''
                 OR json_extract(properties, '$.link_page_id') != '' THEN 'link'
             WHEN json_type(properties, '$.pdf_position') = 'object' THEN 'highlight'

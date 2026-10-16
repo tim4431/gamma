@@ -8,13 +8,13 @@ import { join } from "node:path";
 import { ANCHORS, anchorElement } from "../src/guide/anchors.js";
 import { EVENTS, eventMatches } from "../src/guide/events.js";
 import { TOURS } from "../src/guide/tours/index.js";
-import { canOffer, createGuideProgress, factsMatch, guideProgressKey, guideStorage, normalizeTourProgress, retiresOffer, stepApplies } from "../src/guide/triggers.js";
+import { answersOffer, canOffer, createGuideProgress, factsMatch, guideProgressKey, guideStorage, normalizeTourProgress, retiresOffer, stepApplies } from "../src/guide/triggers.js";
 import { ACCOUNT_PREFS, readProfile } from "../src/app/prefDefs.js";
 import { keyNames, keyText, resolveKey } from "../src/guide/keys.js";
 import { createRunLog, madeItems, recordEvent } from "../src/guide/finish.js";
 import { CARD_W, placeCard } from "../src/guide/place.js";
 import { MEDIA, mediaRatio } from "../src/guide/media.js";
-import { DOCK_WINDOWS, DOCK_ZONES, SCENE_KINDS } from "../src/guide/scene.js";
+import { DOCK_WINDOWS, DOCK_ZONES, SCENE_KEYS, SCENE_KINDS } from "../src/guide/scene.js";
 
 function walk(dir, out = []) {
   for (const name of readdirSync(dir)) {
@@ -38,6 +38,7 @@ test("tours reference registered anchors and catalogued events", () => {
     if (tour.trigger) {
       assert.ok(!tour.trigger.event || EVENTS.includes(tour.trigger.event), `${tour.id}: trigger event`);
       assert.ok(!tour.trigger.doneOn || EVENTS.includes(tour.trigger.doneOn.event), `${tour.id}: doneOn event`);
+      assert.ok(!tour.trigger.answeredBy || EVENTS.includes(tour.trigger.answeredBy.event), `${tour.id}: answeredBy event`);
       assert.ok(tour.trigger.event || Object.keys({ ...tour.requires, ...tour.trigger.requires }).length,
         `${tour.id}: trigger needs an event or prerequisites`);
       const anchor = tour.offerAnchor || tour.steps[0].anchor;
@@ -87,12 +88,18 @@ test("the first tours are manual; AI chat has steps per place, each ending on th
   assert.deepEqual(stepsIn({ aiConfigured: false, aiEditable: false, view: "home" }), [], "a guest can't connect: no tour");
   assert.deepEqual(stepsIn({ view: "home" }), [], "nothing before the AI state is known");
   assert.deepEqual(stepsIn({ aiConfigured: true, view: "pdf", pdfChatVisible: true }),
-    ["chat-question", "chat-figure", "chat-send-paper"]);
+    ["chat-question", "chat-figure", "chat-model-pdf", "chat-send-paper"]);
   assert.deepEqual(aiTour.steps.find((s) => s.id === "chat-figure").do.at(-1), { point: "chat.imageContext", wait: 1400 },
     "the figure demo ends on the snapshot it made");
-  assert.deepEqual(stepsIn({ aiConfigured: true, view: "pdf", pdfChatVisible: false }), ["chat-question", "chat-send-paper"]);
-  assert.deepEqual(stepsIn({ aiConfigured: true, view: "page" }), ["chat-question-notes", "chat-send-notes"]);
-  assert.deepEqual(stepsIn({ aiConfigured: true, view: "home" }), ["chat-question-library", "chat-tools", "chat-send-library"]);
+  assert.deepEqual(stepsIn({ aiConfigured: true, view: "pdf", pdfChatVisible: false }), ["chat-question", "chat-model-pdf", "chat-send-paper"]);
+  assert.deepEqual(stepsIn({ aiConfigured: true, view: "page" }), ["chat-question-notes", "chat-attach-note", "chat-model-page", "chat-send-notes"]);
+  assert.deepEqual(stepsIn({ aiConfigured: true, view: "home" }), ["chat-question-library", "chat-tools", "chat-model-home", "chat-send-library"]);
+  // Where conversations are kept, every place ends on New chat and History.
+  for (const view of ["pdf", "page", "home"]) {
+    assert.equal(stepsIn({ aiConfigured: true, view, editable: true }).at(-1), "chat-new", `${view}: ends on New chat`);
+  }
+  assert.ok(aiTour.steps.filter((s) => s.id.startsWith("chat-model-")).every((s) => s.optional && s.anchor === "chat.model"),
+    "the model chip is there once the models have loaded");
   for (const s of aiTour.steps.filter((x) => x.id.startsWith("chat-send-"))) {
     assert.deepEqual(s.advanceOn, { event: "chat.sent" }, `${s.id} waits for the user's own send`);
   }
@@ -357,11 +364,16 @@ test("a demo server keeps guide progress in sessionStorage, anyone else in local
 test("the sharing tour follows the popover and words access for an anyone-with-the-link share", () => {
   assert.equal(factsMatch({ shareAudience: ["", "list"] }, { shareAudience: "list" }), true, "an array requires one of its values");
   assert.equal(factsMatch({ shareAudience: ["", "list"] }, { shareAudience: "anyone" }), false);
-  const steps = (shareAudience) => TOURS.sharing.steps.filter((s) => factsMatch(s.requires, { shareAudience })).map((s) => s.id);
+  const steps = (shareAudience, shareTarget = "page") => TOURS.sharing.steps
+    .filter((s) => factsMatch(s.requires, { shareAudience, shareTarget })).map((s) => s.id);
   assert.deepEqual(steps("anyone"), ["share-create", "share-link", "share-people", "share-access-anyone"]);
   for (const audience of ["", "users", "list"]) {
     assert.deepEqual(steps(audience), ["share-create", "share-link", "share-people", "share-access"], `audience "${audience}"`);
   }
+  // A folder: the same popover, its link reaching every page filed there.
+  assert.deepEqual(steps("", "folder"), ["share-create", "share-link-folder", "share-people", "share-access"]);
+  assert.equal(factsMatch(TOURS.sharing.requires, { shareTarget: "folder" }), true);
+  assert.equal(factsMatch(TOURS.sharing.requires, { shareTarget: "" }), false, "nothing to share: not listed, not offered");
   for (const id of ["share-access-anyone", "share-access"]) {
     const s = TOURS.sharing.steps.find((x) => x.id === id);
     assert.match(s.body, /Stop sharing/, `${id}: the last card says how to turn the link off`);
@@ -424,7 +436,77 @@ test("the Connector and Cloud hints wait for what they suggest to be missing", (
 test("hints are single cards kept out of the Tours menu", () => {
   const hints = Object.values(TOURS).filter((t) => t.hint).map((t) => t.id);
   assert.deepEqual(hints, ["math-keys", "block-refs", "quick-open", "back", "conflicts", "folders", "install",
-    "approvals", "export-page", "clone-sync", "connector", "cloud-account"]);
+    "approvals", "export-page", "clone-sync", "connector", "cloud-account", "window-closed", "new-chat", "pdf-switch",
+    "assistant-changes", "ink-selection", "new-note-key", "slash-menu", "paste-as", "mentions", "objects",
+    "paper-details", "bib-link", "command-palette", "settings", "tabs"]);
+});
+
+// Each hint comes right after the thing it explains, and steps aside once
+// the user found the feature unaided.
+test("the October hints come after their moment and retire when the feature is found", () => {
+  const offered = (id, event, more = {}) => canOffer(TOURS[id], { facts: { ...facts, ...more }, progress: null, event, seen: 1 });
+  assert.equal(offered("window-closed", at("window.closed", { id: "chat" })), true, "a window closed with its ×");
+  assert.equal(offered("window-closed", at("window.closed", { id: "chat" }), { phone: true }), false, "no View menu on the phone");
+  assert.equal(retiresOffer(TOURS["window-closed"], at("window.shown", { id: "chat" })), true, "brought back unaided");
+  // Opening the menu a card points at answers it, so the card never covers
+  // that menu; doing so before the card came settles nothing.
+  assert.equal(answersOffer(TOURS["window-closed"], at("popover.opened", { name: "menu" })), true);
+  assert.equal(retiresOffer(TOURS["window-closed"], at("popover.opened", { name: "menu" })), false);
+  assert.equal(answersOffer(TOURS["window-closed"], at("popover.opened", { name: "add" })), false);
+  for (const [id, event] of [["new-chat", at("popover.opened", { name: "chathistory" })], ["paper-details", at("popover.opened", { name: "meta" })],
+    ["settings", at("popover.opened", { name: "user" })], ["tabs", at("tab.menu")]]) {
+    assert.equal(answersOffer(TOURS[id], event), true, `${id}: answered by the move it asks for`);
+  }
+  assert.equal(offered("new-chat", at("chat.archived", { discard: false })), true);
+  assert.equal(offered("new-chat", at("chat.archived", { discard: true })), false, "the Alt+click user knows already");
+  assert.equal(offered("pdf-switch", at("chat.sent", { pdf: true })), true);
+  assert.equal(offered("pdf-switch", at("chat.sent", { pdf: false })), false, "text only: nothing to say");
+  assert.equal(offered("new-note-key", at("note.lineBreak"), { enterNewNote: false }), true);
+  assert.equal(offered("new-note-key", at("note.lineBreak"), { enterNewNote: true }), false, "Enter already makes notes here");
+  assert.equal(retiresOffer(TOURS["new-note-key"], at("block.created")), true);
+  assert.equal(offered("objects", at("object.selected", { kind: "image" }), { touch: true }), false, "a long press there, not a right-click");
+  const palette = TOURS["command-palette"];
+  assert.equal(canOffer(palette, { facts, progress: null, event: at("palette.opened"), seen: 2 }), false);
+  assert.equal(canOffer(palette, { facts, progress: null, event: at("palette.opened"), seen: 3 }), true, "the third Ctrl+P");
+  assert.equal(retiresOffer(palette, at("commands.opened")), true);
+  assert.equal(canOffer(TOURS.tabs, { facts, progress: null, event: at("tab.opened"), seen: 4 }), true, "the fourth tab");
+  assert.equal(canOffer(TOURS.tabs, { facts, progress: null, event: at("tab.opened"), seen: 3 }), false);
+  // State hints: an unchecked paper with its button on screen; a later visit
+  // of someone who finished the first tour.
+  assert.equal(canOffer(TOURS["paper-details"], { facts: { ...facts, unverifiedMeta: true }, progress: null }), true);
+  assert.equal(canOffer(TOURS["paper-details"], { facts: { ...facts, unverifiedMeta: false }, progress: null }), false);
+  assert.equal(canOffer(TOURS.settings, { facts: { ...facts, firstRunDone: true }, progress: null }), true);
+  assert.equal(canOffer(TOURS.settings, { facts: { ...facts, firstRunDone: false }, progress: null }), false);
+  assert.equal(offered("bib-link", at("bibtex.shown", { folder: true })), true);
+  assert.equal(offered("bib-link", at("bibtex.shown", { folder: false })), false, "a page's .bib follows the page, not a folder");
+  // The math hint's second wording: Tab, not Enter, accepts a suggestion.
+  assert.equal(TOURS["math-keys"].version, 2);
+  assert.match(TOURS["math-keys"].steps[0].title, /accepts a suggestion/);
+});
+
+test("the highlights and notes tours come once the user has made several", () => {
+  const hl = TOURS.highlights;
+  const pdf = { ...facts, hasPdf: true };
+  assert.equal(canOffer(hl, { facts: pdf, progress: null, event: at("highlight.created", { kind: "text" }), seen: 2 }), false);
+  assert.equal(canOffer(hl, { facts: pdf, progress: null, event: at("highlight.created", { kind: "area" }), seen: 3 }), true);
+  assert.deepEqual(hl.steps.map((s) => s.id), ["hl-note", "hl-menu", "hl-back"]);
+  assert.equal(hl.steps.at(-1).optional, true, "a closed Notes window passes over the way back");
+  assert.equal(ANCHORS["pdf.highlight"].pick, "recent", "the highlight made last");
+  const notes = TOURS.notes;
+  assert.equal(canOffer(notes, { facts: { ...facts, notebookView: false, touch: false }, progress: null, event: at("block.created"), seen: 8 }), true);
+  assert.equal(canOffer(notes, { facts: { ...facts, notebookView: false, touch: true }, progress: null, event: at("block.created"), seen: 8 }), false,
+    "a finger neither drags the handle nor has a + under it");
+  assert.deepEqual(notes.steps.find((s) => s.id === "notes-add").scene.at(-1), { click: "notes.addBelow", key: "Alt" });
+});
+
+test("the Add, library and handwriting tours end where the new controls are", () => {
+  const add = TOURS["add-paper"].steps;
+  assert.equal(add.at(-1).anchor, "view.import", "Import, in the View menu");
+  assert.deepEqual(add.filter((s) => factsMatch(s.requires, { phone: true })).map((s) => s.id).at(-1), "add-notebook",
+    "the phone's View rows have no anchor");
+  assert.deepEqual(TOURS.library.steps.map((s) => s.id),
+    ["lib-menu", "lib-filter", "lib-select", "lib-model", "lib-labels", "lib-recents", "lib-trash"]);
+  assert.equal(TOURS.handwriting.steps.at(-1).anchor, "ink.text", "the Text tool, last in the strip's tour");
 });
 
 // A hint interrupts, so it stays one card of words: nothing drawn, nothing acted out.
@@ -460,8 +542,13 @@ test("every scene primitive is a known kind on a registered anchor", () => {
         if (kind === "click") {
           assert.ok(p.count === undefined || [1, 2].includes(p.count), `${where}: click count`);
           assert.ok(p.button === undefined || ["left", "right"].includes(p.button), `${where}: click button`);
+          assert.ok(p.key === undefined || SCENE_KEYS.includes(p.key), `${where}: click key ${p.key}`);
         }
-        if (kind === "drag") {
+        if (kind === "drag" && p.to?.offset) {
+          // A drag by so many pixels (a note carried to where it nests).
+          assert.ok(p.to.offset.length === 2 && p.to.offset.every(Number.isFinite), `${where}: drag offset`);
+          assert.ok(!p.to.size || (p.to.size.length === 2 && p.to.size.every((n) => n > 0)), `${where}: drag size`);
+        } else if (kind === "drag") {
           assert.ok(DOCK_ZONES.includes(p.to?.zone), `${where}: drag zone ${p.to?.zone}`);
           assert.ok(DOCK_WINDOWS.includes(p.to.window), `${where}: drag window ${p.to.window}`);
         }

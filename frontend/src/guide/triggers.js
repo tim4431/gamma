@@ -14,6 +14,9 @@
 // - count: offer on the count-th matching event of this page load.
 // - doneOn: an event ({event, match?}) showing the user already knows the
 //   feature; it retires the tour's offer without showing anything.
+// - answeredBy: the move a shown card asks for ({event, match?}: opening the
+//   menu it points at); it closes the card as done, out of that move's way.
+//   Unlike doneOn it settles nothing before the card has come.
 // The tour-level `requires` gates offers and manual starts alike.
 import { eventMatches } from "./events.js";
 
@@ -50,6 +53,11 @@ export function canOffer(tour, { facts, progress, event = null, seen = 0 }) {
 // Does this event retire the tour's offer (the user found the feature)?
 export function retiresOffer(tour, event) {
   return !!tour.trigger?.doneOn && !!event && eventMatches(tour.trigger.doneOn, event.name, event.payload);
+}
+
+// Is this event the move the tour's shown card asks for?
+export function answersOffer(tour, event) {
+  return !!tour.trigger?.answeredBy && !!event && eventMatches(tour.trigger.answeredBy, event.name, event.payload);
 }
 
 export function guideProgressKey(tour, scope) {

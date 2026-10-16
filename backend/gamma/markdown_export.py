@@ -1,6 +1,7 @@
 """Render a page's block subtree to readable Markdown: clean nested bullets,
 highlights as blockquotes with a page marker, a text box on a PDF page as a
-note with one, page title as an H1, scalar metadata as YAML front-matter and
+note with one, a recording as its length with a link per audio file, page
+title as an H1, scalar metadata as YAML front-matter and
 the cached BibTeX as a fenced block. Lossy but portable. (Logseq-app export
 lives in ``logseq_graph_export``.)
 
@@ -18,17 +19,8 @@ from .blocks_store import TRASH, block_to_dict, page_attachment
 from .highlights import is_highlight, page_of
 from .note_markup import obsidian_image_sizes
 from .notebook import is_sheet
+from .recording import heading as recording_heading, is_recording, segments_of
 from .text_box import box_page
-
-# rgba → Logseq colour name, the inverse of logseq_import._LOGSEQ_COLORS (using
-# the canonical name for each distinct rgba we emit). Used by the Logseq graph
-# export.
-_RGBA_TO_NAME = {
-    "rgba(255, 226, 143, 0.65)": "yellow",
-    "rgba(170, 235, 170, 0.65)": "green",
-    "rgba(155, 205, 255, 0.65)": "blue",
-    "rgba(230, 180, 255, 0.65)": "purple",
-}
 
 # /api/uploads/<hexsha>.<ext> — content-addressed, so the filename is a stable key.
 # Narrower than storage.UPLOAD_REF_RE on purpose: only hex stems (what the
@@ -218,7 +210,8 @@ def _render_readable_block(node, depth, lines, highlights=True, notes=True,
     # The two export switches. A highlight block carries both a PDF region and
     # (often) writing of your own, so dropping highlights keeps its text as a
     # plain bullet rather than losing the note with the quote.
-    if not highlights and (is_highlight(props) or props.get("link_url") or props.get("ink_url")):
+    if not highlights and (is_highlight(props) or props.get("link_url") or props.get("ink_url")
+                           or is_recording(props)):
         props = {}
     if not notes:
         content = ""
@@ -264,6 +257,16 @@ def _render_readable_block(node, depth, lines, highlights=True, notes=True,
         page_no = page_of(props)
         label = f"Handwriting (p.{page_no})" if page_no else "Handwriting"
         lines.append(f"{indent}- ![{label}]({ink_svg_name(props['ink_url'])})")
+        for c in content.split("\n") if content else []:
+            lines.append(f"{indent}  {c}")
+        emitted = True
+    elif is_recording(props):
+        # A recording: its length and a link per audio file (bundled like
+        # any upload), its title under it; the transcript is its children.
+        urls = [s["url"] for s in segments_of(props)]
+        links = [f"[audio]({urls[0]})"] if len(urls) == 1 else \
+            [f"[part {i}]({url})" for i, url in enumerate(urls, 1)]
+        lines.append(f"{indent}- " + " ".join([f"**{recording_heading(props)}**", *links]))
         for c in content.split("\n") if content else []:
             lines.append(f"{indent}  {c}")
         emitted = True

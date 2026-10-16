@@ -18,10 +18,13 @@ the change come from one place ("Asking before a call" in
 [ai.md](ai.md#asking-before-a-call-approvals)). A permission is either
 reading or changing: its tools share the `mutating` flag, which also sets its
 default (reading allowed, changes ask; `ai_permissions.permission_state`).
-When the request names a cursor block (`focus_block_id`) or attached block
-chips (`context_blocks`), `agent_system` adds one line each so "this block" /
-"these" resolve to ids without a `read_block` round-trip — their text is
-already in the context (see "Pointing the chat at notes" in [ai.md](ai.md)).
+A cursor block (`focus_block_id`), attached block chips (`context_blocks`)
+and note selections reach the model with the message, ids and text, so
+"this block" / "these" resolve without a `read_block` round-trip (see
+"Pointing the chat at notes" in [ai.md](ai.md)). `agent_system` never names
+them: it holds only what stays the same for a whole conversation, since the
+system prompt is part of the cached prefix ("Prompt caching" in
+[ai.md](ai.md)).
 Whenever a reading tool is armed it also tells the model to point at a page
 as a markdown link `[title](/?page=<page_id>)` using ids from the tool
 results; `ChatMarkdown` (`shared/ui/Widgets.jsx`) renders such same-origin
@@ -91,7 +94,7 @@ to pages, PDF pages and blocks (`gamma_link`; the chat's results carry none,
 | `move_page` | Move pages | folder | File a page into a (sub)folder |
 | `list_deleted` | List pages | folder | List Recently deleted as far as the chat's folder reaches |
 | `restore_page` | Restore deleted pages | folder | Bring a page back from Recently deleted, filed where it was |
-| `edit_block` | Edit note blocks | folder + page | Replace one note block's markdown text |
+| `edit_block` | Edit note blocks | folder + page | Change one note block's markdown text: replace it, add to it, patch one passage, or rewrite the user's selection |
 | `create_block` | Edit note blocks | folder + page | Add a note block under a page or block, optionally after a sibling |
 | `move_block` | Edit note blocks | folder + page | Re-parent/reorder a note block (with its subtree) |
 | `delete_block` | Edit note blocks | folder + page | Delete a note block with everything under it; the user can revert |
@@ -960,7 +963,7 @@ so the two tools have one each:
 The approval card's preview has the page's `title` and the folders it goes
 back `to`. The restore's action (kind `restore`) carries `page_id`, `title`
 and `to` (its folders). The chat lists it under "Changed in your library".
-Deleting is not offered.
+Deleting pages is not offered.
 
 ### edit_block / create_block / move_block (both scopes, one permission)
 
@@ -989,7 +992,11 @@ an edit the selection covers the new text, so a second edit in the same turn
 rewrites the first. The spec tells the model that a change to selected
 text is always a selection edit; otherwise to prefer append for
 "add / extend / note that", patch for deleting or fixing one part, and
-replace only for full rewrites. The action carries
+replace only for full rewrites. The agent prompt's one "Note editing"
+paragraph, armed with the permission, adds only what the specs cannot say:
+which ids to use, that the cursor and attached blocks need no read, that a
+quoted selection is edited in place rather than answered, and that
+`delete_block` is for whole blocks. The action carries
 `mode`, and its chip reads "Appended to" / "Prepended to" / "Edited part of" /
 "Edited the selection in" / "Edited". Page
 roots are refused (titles go through `rename_page`); editing a highlight

@@ -66,9 +66,15 @@ Edge and other Chromium browsers load it the same way. Firefox needs a
   the tab is a bare PDF). ✓ means the paper is already in your library, and
   clicking opens it. If that library page carries a different title, the
   popup says so.
-- Paywalled PDF your browser can see (institutional login)? The bytes are
-  uploaded from your browser automatically when the server can't fetch them
-  itself.
+- Paywalled PDF your browser can see (institutional login, a bot check you
+  passed)? The bytes are uploaded from your browser automatically when the
+  server can't fetch them itself, also from a publisher's PDF reader such as
+  science.org's ePDF. Only when the browser can't either does the page save
+  as a link to its web source.
+- A save went wrong? **Copy the save log** under the result (or *Copy recent
+  saves* on the options page, for the shortcut and the context menu) gives a
+  step-by-step report to paste into a bug report: what was detected, each
+  download tried and the server's answers.
 - Right-click: *Save link to Gamma*, *Save page to Gamma*, *Clip selection
   to Gamma* (a quoted block under the matching paper, else a "Web clips" page).
 - <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>S</kbd> saves the current page.
@@ -114,7 +120,8 @@ See [backend storage details](../docs/dev/paper_metadata.md#connected-publisher-
 |---|---|
 | `manifest.json` | MV3 manifest: service worker, content scripts, popup, options, command |
 | `worker.js` | per-tab detection state + badge, save pipeline, context menus, popup message API, the tabs that fetch PDFs for the AI chat |
-| `handoff.js` | the rules for those chat fetches (which URLs to try, when a tab needs the user), pure |
+| `handoff.js` | which URLs the browser tries for a save or a chat fetch, and when a chat fetch's tab needs the user, pure |
+| `saveLog.js` | a save's step-by-step log, the text the popup and options page copy, pure |
 | `ids.js` | DOI-in-path and arXiv-id rules shared by the content script and the worker |
 | `detect.js` | content script: identifier extraction (meta tags, URL, JSON-LD, DOI fallback) |
 | `bridge.js` | content script: answers the Gamma app's questions about the Connector (installed, can it fetch this request) |
@@ -123,7 +130,7 @@ See [backend storage details](../docs/dev/paper_metadata.md#connected-publisher-
 | `popup.html/js/css` | the popup (setup → offline → sign-in → save); styling reads the app's design tokens and repeats its control recipes |
 | `tokens.css`, `fonts/` | committed copies of the app's design tokens and the Latin subset of Inter; `npm run copy-tokens` in `frontend/` refreshes them |
 | `theme.js` | sets Light or Dark (the tokens' `data-theme` / `data-scheme`) from the OS before the stylesheets paint |
-| `options.html/js` | server, account, saving defaults |
+| `options.html/js` | server, account, saving defaults, copying recent save logs |
 | `ui.js`, `serverList.js` | controls shared by popup and options: icons, menu rows, the folder picker, the saved-server rows |
 | `assets/icons/` | enabled/disabled toolbar icons, manifest icons, and notification icon |
 

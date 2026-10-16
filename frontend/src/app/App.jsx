@@ -1,9 +1,10 @@
-import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { flushSync } from "react-dom";
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import PdfViewer, { preloadPdfEngine } from "../pdf/PdfViewer";
 import { highlightSpot, rangeSpot } from "../pdf/pdfSelectionSpot";
-import { COLORS } from "../shared/model/highlightColors.js";
+import { DEFAULT_HIGHLIGHT, colorName, highlightColor, normalizeColor, pickerColors, swatchCss } from "../shared/model/palette.js";
+import { PaletteContext } from "../shared/ui/paletteContext.js";
 import { clampZoom } from "../shared/model/zoom.js";
 import { fmtDate, getLocale, resolveLocale, t, T, tn } from "../shared/i18n/i18n.js";
 import { REOPEN_SETTINGS_KEY, resolveSettingsPane } from "../settings/settingsNavigation.js";
@@ -61,7 +62,7 @@ import {
   FilePlusIcon, PaperclipIcon, FolderIcon, FolderOpenIcon, FolderPlusIcon, HardDriveIcon, HelpCircleIcon, HomeIcon, ImportIcon, InfoIcon, LabelGlyph, LabelIcon,
   LanguagesIcon, LanguagesOffIcon, LinkIcon, LogOutIcon, MaximizeIcon, MenuIcon, MinimizeIcon, MoveVerticalIcon, PenIcon, PinIcon, PlusIcon,
   RectSelectIcon, RefreshIcon, SettingsIcon, SparklesIcon, TextCursorIcon, Trash2Icon, TrashIcon, TypeIcon, UploadIcon,
-  ScissorsIcon, ShareIcon, UserIcon, UsersIcon, XIcon, ZoomInIcon, ZoomOutIcon, NotebookIcon, SheetIcon,
+  ScissorsIcon, ShareIcon, UserIcon, UsersIcon, XIcon, ZoomInIcon, ZoomOutIcon, NotebookIcon, SheetIcon, MicIcon,
 } from "../shared/ui/Icons";
 
 
@@ -130,7 +131,14 @@ import {
 } from "../notebook/notebook";
 import { generateKeyBetween } from "fractional-indexing";
 import * as inkStore from "../ink/inkStore";
-import * as inkReplay from "../ink/inkReplay";
+import * as playback from "../replay/playback.js";
+import { recordingClock } from "../replay/clock.js";
+import { audioSource } from "../recording/audioSource.js";
+import * as recorderStore from "../recording/recorderStore.js";
+import { RecordingContext } from "../recording/RecordingContext.js";
+import { RecordingPill } from "../recording/RecordingPill";
+import { PlayerBar } from "../recording/PlayerBar";
+import { isRecordingBlock, recordingAt, normalizeRecording } from "../recording/recording.js";
 import { usePageCollab } from "../collaboration/usePageCollab";
 import { retryableStatus } from "../collaboration/collabSession.js";
 import { applyOps, applyPatch, displacedRow } from "../shared/model/blockOps";
@@ -2509,11 +2517,14 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   const profileSync = useProfileSync(appPrefs, authUser?.user && !authUser.is_guest && !shareMode ? authUser.user : "");
   const {
     theme, setTheme, pdfDarkPage, setPdfDarkPage, uiScale, setUiScale, recentThumbs, setRecentThumbs,
+    palette, setPalette,
     language, setLanguage,
     fileLabels, setFileLabels,
     oaFallback, setOaFallback, metaAutoFetch, setMetaAutoFetch, pdfSaveLocal, setPdfSaveLocal,
     embAnnots, setEmbAnnots, smoothWheel, setSmoothWheel,
     inkPenOnly, setInkPenOnly, inkAutoPen, setInkAutoPen, inkPressure, setInkPressure,
+    replayMode, setReplayMode, replayRate, setReplayRate, replayFollow, setReplayFollow, replayLeadIn, setReplayLeadIn,
+    recordingTranscribe, setRecordingTranscribe,
     inkTools, setInkTools, inkEraserMode, setInkEraserMode, inkEraserSize, setInkEraserSize,
     inkLassoMode, setInkLassoMode, textBoxStyle, setTextBoxStyle,
     translateEnabled, setTranslateEnabled,
@@ -3735,7 +3746,6 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   const flashTimerRef = useRef(null);
   const [attachModeBlockId, setAttachModeBlockId] = useState(null);
   const attachModeBlockIdRef = useRef(null);
-  const [attachContextMenu, setAttachContextMenu] = useState(null); // {x, y, highlight}
   const blocksRef = useRef(blocks);
   blocksRef.current = blocks;
   const blockRefs = useRef({});
@@ -4133,7 +4143,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
 
   function changeHighlightColor(id, newColor) {
     if (readOnly || !findBlock(blocks, id)) return;
-    setBlocks(updateBlockTree(blocks, id, (b) => ({ ...b, properties: { ...b.properties, color: newColor } })));
+    const color = normalizeColor(newColor) || DEFAULT_HIGHLIGHT;
+    setBlocks(updateBlockTree(blocks, id, (b) => ({ ...b, properties: { ...b.properties, color } })));
   }
 
   // Gamma's own links (chat citations, copied page/block links) open in
@@ -4338,13 +4349,16 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   useEffect(() => {
     if (!focusedBlockId || shareMode || !prefsUserRef.current) return;
     const title = (pageTitle || t("Untitled")).slice(0, 60);
+    const opened = !openTabs.some((tab) => tab.id === focusedBlockId);
     updateTabs((prev) => {
       const existing = prev.find((t) => t.id === focusedBlockId);
       if (existing && existing.title === title) return prev;
       if (existing) return prev.map((t) => (t.id === focusedBlockId ? { ...t, title } : t));
       return [...prev, { id: focusedBlockId, title }];
     });
-  }, [focusedBlockId, pageTitle, shareMode]);
+    // A page got a tab of its own (the guide's tabs hint counts them).
+    if (opened) guideEvents.emit("tab.opened");
+  }, [focusedBlockId, pageTitle, shareMode]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Persist session state on relevant changes (skip initial mount)
   const firstRenderRef = useRef(true);
@@ -6260,7 +6274,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     // a fresh group.
     if (inkTimerRef.current) flushInk();
     inkActiveRef.current = null;
-    inkReplay.stop();
+    playback.stop();
+    recorderStore.stop();
     inkHistRef.current = { undo: [], redo: [] };
     setInkHistoryState({ undo: 0, redo: 0 });
     setInkSelection(null);
@@ -6278,7 +6293,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // block back first.
   function applyInk(changes, { record = true, label = t("ink stroke") } = {}) {
     if (!changes.length) return;
-    for (const c of changes) inkReplay.stop(c.id);
+    for (const c of changes) playback.stop(c.id);
     const present = new Set(flattenBlocks(blocksRef.current).map((b) => b.id));
     const missing = changes.filter((c) => c.after.strokes.length && !present.has(c.id));
     if (missing.length) {
@@ -6384,6 +6399,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     if (items.length) {
       setInkUi((s) => ({ ...s, open: true, options: false }));
       textBoxes.actions.onBoxDeselect();
+      guideEvents.emit("ink.selected");
     }
   }
   // The lasso selection, edited group by group: edit(ink, ids) -> ink.
@@ -6595,7 +6611,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // Escape cancels attach mode
   useEffect(() => {
     if (!attachModeBlockId) return;
-    const onKey = (e) => { if (e.key === 'Escape') { setAttachModeBlockId(null); setAttachContextMenu(null); } };
+    const onKey = (e) => { if (e.key === 'Escape') setAttachModeBlockId(null); };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [attachModeBlockId]);
@@ -6613,7 +6629,6 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         pdf_position: { pageNumber: highlight.position.pageNumber } }),
     })));
     setAttachModeBlockId(null);
-    setAttachContextMenu(null);
   }
 
   function unlinkHighlightFromBlock(blockId) {
@@ -6811,6 +6826,117 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     actions: pageActions,
   }), [readOnly, inkTool, inkPenTool, inkPenOnly, inkPressure, inkEraserMode, inkEraserSize, inkLassoMode, textArmed, textBoxStyle,
     pageActions]);
+  // --- Recordings (docs/dev/recording.md) ---------------------------------------
+  // The page's recording blocks and every block stamped with the moment it
+  // was written, each list kept while its contents are the same, so the
+  // player's marks and the rows' glyphs re-render only for a real change.
+  const prevRecRef = useRef({ json: "", value: [] });
+  const recordingBlocks = useMemo(() => {
+    const next = flattenBlocks(blocks).filter(isRecordingBlock).map((b) => ({ id: b.id, properties: b.properties }));
+    const json = JSON.stringify(next);
+    if (json === prevRecRef.current.json) return prevRecRef.current.value;
+    prevRecRef.current = { json, value: next };
+    return next;
+  }, [blocks]);
+  const prevStampedRef = useRef({ json: "", value: [] });
+  const stampedBlocks = useMemo(() => {
+    const next = flattenBlocks(blocks).filter((b) => Number.isFinite(b.properties?.t0)).map((b) => ({ id: b.id, t0: b.properties.t0 }));
+    const json = JSON.stringify(next);
+    if (json === prevStampedRef.current.json) return prevStampedRef.current.value;
+    prevStampedRef.current = { json, value: next };
+    return next;
+  }, [blocks]);
+  // Only the id of the recording playing, so App never re-renders for a frame.
+  const playingRecordingId = useSyncExternalStore(playback.subscribe, () => playback.now()?.scope.recording || null);
+  const recordingNow = useSyncExternalStore(recorderStore.subscribe, recorderStore.coarseNow);
+  // A new recording block, or a bookmark, goes at the page's top level like
+  // an ink group; the tree's own save path inserts it.
+  const insertRecordingBlock = useCallback(({ content, properties }) => {
+    if (!focusedBlockIdRef.current) return null;
+    const id = makeId();
+    setBlocks((prev) => [...prev, { id, parentId: null, children: [], content, properties }]);
+    return id;
+  }, []);
+  const transcribeRecording = useCallback((blockId) => {
+    const b = findBlock(blocksRef.current, blockId);
+    if (!b) return;
+    tasks.start("transcribe", { block_id: blockId, model: dictationModel, language: dictationLang }, { download: "none" })
+      .catch((err) => setStatus(String(err?.message || err)));
+  }, [tasks, dictationModel, dictationLang]);
+  useEffect(() => {
+    recorderStore.configure({
+      setStatus, insertBlock: insertRecordingBlock, leadIn: () => replayLeadIn * 1000,
+      onDone: recordingTranscribe ? transcribeRecording : null,
+    });
+  }, [insertRecordingBlock, replayLeadIn, recordingTranscribe, transcribeRecording]);
+  // A closed or crashed tab's unsaved audio, found at start: put up and
+  // its block finished, silently; a block that is gone takes it with it.
+  useEffect(() => {
+    if (!authUser?.user || shareMode) return;
+    let stale = false;
+    recorderStore.leftBehind().then(async (entries) => {
+      for (const entry of entries) {
+        if (stale) return;
+        const r = await recorderStore.recover(entry);
+        if (r.ok) setStatus(t("An interrupted recording was recovered."));
+      }
+    }).catch(() => {});
+    return () => { stale = true; };
+  }, [authUser?.user, shareMode]);
+  // Play a recording: its clock drives the page and the notes. A tap on
+  // something written then plays from just before that moment.
+  // The display choices as the player reads them when it starts (a ref, so
+  // a change of mode or speed re-renders the player and nothing else).
+  const replayPrefRef = useRef({});
+  replayPrefRef.current = { leadIn: replayLeadIn * 1000, rate: replayRate, mode: replayMode };
+  const playRecording = useCallback((blockId, { atWall = null } = {}) => {
+    const b = findBlock(blocksRef.current, blockId);
+    if (!b) return;
+    if (recorderStore.coarseNow()) { setStatus(t("Stop the recording first.")); return; }
+    const clock = recordingClock(normalizeRecording(b.properties.recording));
+    if (!clock.duration) { setStatus(t("This recording has no audio.")); return; }
+    const source = audioSource(clock, {
+      onError: () => { playback.stop(); setStatus(t("The browser could not play this recording's audio.")); },
+    });
+    const { leadIn, rate, mode } = replayPrefRef.current;
+    const at = atWall != null ? Math.max(0, (clock.toT(atWall) ?? 0) - leadIn) : 0;
+    setInkUi((s) => (s.tool ? { ...s, tool: null, options: false } : s)); // taps seek rather than draw
+    setInkSelection(null);
+    playback.play(clock, { recording: blockId }, { source, at, rate, mode, onEnd: "hold", leadIn });
+  }, []);
+  const toggleRecording = useCallback(() => {
+    if (recorderStore.coarseNow()) { recorderStore.stop(); return; }
+    if (!focusedBlockIdRef.current) return;
+    playback.stop();
+    recorderStore.start(focusedBlockIdRef.current);
+  }, []);
+  const recordingCtx = useMemo(() => ({
+    play: playRecording,
+    transcribe: readOnly ? null : transcribeRecording,
+    covers: (t0) => Number.isFinite(t0) && !!recordingAt(recordingBlocks, t0),
+    playAt: (wall) => {
+      const b = recordingAt(recordingBlocks, wall);
+      if (!b) return;
+      if (playback.now()?.scope.recording === b.id) playback.seekBefore(wall);
+      else playRecording(b.id, { atWall: wall });
+    },
+  }), [playRecording, transcribeRecording, readOnly, recordingBlocks]);
+  // Follow the writing: what the player names, shown.
+  const showTick = useCallback((tick) => {
+    if (tick.kind === "ink") { showOnPage(tick.group); return; }
+    reveal(tick.id);
+    requestAnimationFrame(() => {
+      document.querySelector(`.blockRowWrap[data-block-id="${CSS.escape(tick.id)}"]`)?.scrollIntoView({ block: "center", behavior: "smooth" });
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const replayPrefs = useMemo(() => ({ mode: replayMode, setMode: setReplayMode, rate: replayRate, setRate: setReplayRate,
+    follow: replayFollow, setFollow: setReplayFollow }), [replayMode, setReplayMode, replayRate, setReplayRate, replayFollow, setReplayFollow]);
+  const playerBar = playingRecordingId ? (
+    <PlayerBar block={findBlock(blocksRef.current, playingRecordingId)} inkBlocks={inkBlocks} blocks={stampedBlocks}
+      prefs={replayPrefs} onShow={replayFollow ? showTick : null} />
+  ) : null;
+
   const inkBySurface = useMemo(() => {
     const map = new Map();
     for (const b of inkBlocks) {
@@ -6885,9 +7011,22 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     deletePages: () => deletePages([...selectedPages]),
     organize: lib.organize,
     recentlyDeleted: () => { setOpenPopover(null); setTrashOpen(true); },
-    toggleChat: () => setChatHidden((v) => !v),
-    togglePdf: () => setPdfHidden((v) => !v),
-    toggleNotes: () => setNotesVisible((v) => !v),
+    // On a phone Chat and Notes are the bottom bar's panels, which the
+    // desktop windows' hidden flags don't drive.
+    toggleChat: () => {
+      if (isPhone) { setPhonePanel((p) => (p === "chat" ? null : "chat")); return; }
+      if (chatHidden) guideEvents.emit("window.shown", { id: "chat" });
+      setChatHidden((v) => !v);
+    },
+    togglePdf: () => {
+      if (pdfHidden) guideEvents.emit("window.shown", { id: "pdf" });
+      setPdfHidden((v) => !v);
+    },
+    toggleNotes: () => {
+      if (isPhone) { setNotesVisible(true); setPhonePanel((p) => (p === "notes" ? null : "notes")); return; }
+      if (!notesVisible) guideEvents.emit("window.shown", { id: "notes" });
+      setNotesVisible((v) => !v);
+    },
     openSettings: (pane) => { setOpenPopover(null); setSettingsOpen((cur) => pane || cur || "appearance"); },
     // The Export dialog, preset to a format (transfers/transferFormats.js).
     exportAs: (format) => { setExportFolder(null); setExportOpts((o) => ({ ...o, format })); setExportOpen(true); },
@@ -6974,13 +7113,19 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       if (!profileSync.pending.size && !profileSync.inflight.size && profileSync.state === "loaded") syncQuiet.current = true;
     } else if (syncQuiet.current) setPrefsChanged(true);
   }, [profileSync.pending, profileSync.inflight, profileSync.state]);
+  // Whether the first tour was done when this load's profile arrived, read
+  // once: finishing it now does not count until the next visit.
+  const firstRunDoneAtLoad = useRef(undefined);
+  if (firstRunDoneAtLoad.current === undefined && profileSync.state === "loaded") {
+    firstRunDoneAtLoad.current = tourProgress?.["first-run"]?.state === "done";
+  }
   const guide = useGuide({
     services: {
       // A finished tour's `restore`: "pen" re-arms the pen last drawn with
-      // when the handwriting tour leaves the eraser or the lasso armed.
+      // when the handwriting tour leaves the eraser, the lasso or Text armed.
       restore: (what) => {
         if (what !== "pen") return;
-        setInkUi((s) => (s.open && s.pen && (s.tool === "eraser" || s.tool === "select") ? { ...s, tool: s.pen, options: false } : s));
+        setInkUi((s) => (s.open && s.pen && ["eraser", "select", "text"].includes(s.tool) ? { ...s, tool: s.pen, options: false } : s));
       },
       // the first tour's finish card: "Connect an AI provider"
       openSettings: (pane) => appCmdRef.current.openSettings(pane),
@@ -7045,12 +7190,27 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       // a touch screen: the viewer offers its text/rectangle toggle
       touch: touchScreen(),
       sharedWorkspace: workspaces.some((w) => !w.personal),
-      // the open page's share audience ("" unshared or not loaded): the
-      // sharing tour words its access step for an anyone-with-the-link share
-      shareAudience: shareTarget?.kind === "page" && shareTarget.id === focusedBlockId && shareSettings?.token
-        ? shareSettings.audience : "",
+      // what the topbar's Share button shares: the open page, or on the
+      // library the open folder (desktop: a phone's More sheet shares it)
+      shareTarget: focusedBlockId && !homeMode ? "page"
+        : homeMode && !isPhone && lib.organize && libTree.folders.has(folderFilter) && !labelFilter ? "folder" : "",
+      // the open page's or folder's share audience ("" unshared or not
+      // loaded): the sharing tour words its access step for an
+      // anyone-with-the-link share
+      shareAudience: shareSettings?.token && ((shareTarget?.kind === "page" && shareTarget.id === focusedBlockId)
+        || (shareTarget?.kind === "folder" && homeMode && shareTarget.id === folderFilter)) ? shareSettings.audience : "",
       onPage: !!focusedBlockId,
       editable: !readOnly,
+      // which Enter starts a new note (Settings → Keyboard): the Shift+Enter
+      // hint is for the default, where Enter breaks the line
+      enterNewNote: !!enterNewNote,
+      // the open paper's details are unverified (the ⓘ button's red "!"),
+      // with the notes header that carries the button on screen
+      unverifiedMeta: !!(focusedBlockId && !homeMode && pageMeta && metaSrc?.warn && !metaBusy)
+        && (isPhone ? phonePanel === "notes" : !pageAttach || pdfHidden || (notesVisible && !collapsedWins.notes)),
+      // the first tour was finished before this page load (the Settings hint
+      // comes on a later visit, not on top of the finish card)
+      firstRunDone: firstRunDoneAtLoad.current === true,
       unfiledLibrary,
       emptyLibrary: freshLibrary,
       growingLibrary,
@@ -7976,6 +8136,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   );
   const notesInkStrip = !viewerInk && !notebook && nbSheets.length > 0 && inkUi.open && !readOnly
     ? <div className="notesInkDock">{markupToolbar}</div> : null;
+  const notesReplayDock = !viewerInk && (playerBar || recordingNow)
+    ? <div className="notesReplayDock">{playerBar}<RecordingPill /></div> : null;
 
   // When no viewer shows (home, page-only, or PDF closed) the notes window
   // takes the center instead, whether or not the Notes dock is on.
@@ -8218,6 +8380,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                     <button
                       ref={metaBtnRef}
                       className="pageActionBtn"
+                      data-guide="page.metadata"
                       title={metaBusy
                         ? t("Fetching paper metadata…")
                         : metaSrc?.warn
@@ -8380,6 +8543,12 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                                   </button>
                                 ) : null}
                               </span>
+                            </div>
+                          ) : null}
+                          {pageMeta?.at ? (
+                            <div className="metaRow">
+                              <span className="metaKey">{pageMeta.source === "manual" ? t("Edited") : t("Fetched")}</span>
+                              <span className="metaVal">{fmtDate(pageMeta.at, { dateStyle: "medium", timeStyle: "short" })}</span>
                             </div>
                           ) : null}
                           <div className="metaRow">
@@ -8687,7 +8856,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                   </>
                 ) : (
                   <button type="button" className="uiBtn sm" title={t("Pick several pages or folders to act on together")}
-                    onClick={() => setSelecting(true)}>{t("Select")}</button>
+                    data-guide="home.select" onClick={() => setSelecting(true)}>{t("Select")}</button>
                 )}
                 {lib.organize && !folderFilter && !labelFilter ? (
                   <button type="button" className="ctlBtn" title={t("Recently deleted")} data-guide="home.trash"
@@ -9240,7 +9409,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                     // text paste would, and the caret goes to the end of the
                     // last pasted block. A highlight's or ink's block stays.
                     const host = findBlock(blocks, id);
-                    const dropHost = replace && !!host && Object.keys(host.properties || {}).every((k) => k === "collapsed");
+                    // (a block's fold and the moment it was made, `t0`, are bookkeeping, not content)
+                    const dropHost = replace && !!host && Object.keys(host.properties || {}).every((k) => k === "collapsed" || k === "t0");
                     let last = created[created.length - 1];
                     while (last.children.length) last = last.children[last.children.length - 1];
                     // Siblings after the pasting block (its own editor stays
@@ -9390,15 +9560,22 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       },
       collapsed: isPhone ? false : !!collapsedWins[id],
     };
+    // A window closed with its × (desktop): the guide's window-closed hint
+    // says where it waits (the View menu).
+    const closeWindow = (hide) => () => {
+      if (isPhone) { setPhonePanel(null); return; }
+      hide();
+      guideEvents.emit("window.closed", { id });
+    };
     if (id === "notes") {
       return (
-        <DockWindow title={t("Notes")} guide="notes.grip" {...common} onClose={() => (isPhone ? setPhonePanel(null) : setNotesVisible(false))}>
+        <DockWindow title={t("Notes")} guide="notes.grip" {...common} onClose={closeWindow(() => setNotesVisible(false))}>
           {notesWindow}
         </DockWindow>
       );
     }
     if (id === "chat") {
-      const closeChat = () => (isPhone ? setPhonePanel(null) : setChatHidden(true));
+      const closeChat = closeWindow(() => setChatHidden(true));
       return (
         // Until the chat's module is in, its window frame with an empty body.
         <LazyBoundary fallback={(
@@ -9499,19 +9676,24 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     const pdfRow = !homeMode && (!!pageAttach || hasSheets);
     const shown = (on) => (on ? <CheckIcon size={14} className="ctxMenuCheck" /> : null);
     const exportable = (focusedBlock && !homeMode) || (homeMode && libTree.folders.has(folderFilter));
+    // Bringing a closed window back retires the guide's window-closed hint.
+    const toggleWindow = (id, isShown, toggle) => () => {
+      if (!isShown) guideEvents.emit("window.shown", { id });
+      toggle();
+    };
     return menuGroups(
       [
         (!isPhone || pdfRow) && <div key="windows" className="popoverSection">{t("Windows")}</div>,
         pdfRow && (pageAttach ? (
-          <MenuItem key="pdf" icon={FileIcon} trailing={shown(!pdfHidden)} onClick={() => setPdfHidden((v) => !v)}>PDF</MenuItem>
+          <MenuItem key="pdf" icon={FileIcon} trailing={shown(!pdfHidden)} onClick={toggleWindow("pdf", !pdfHidden, () => setPdfHidden((v) => !v))}>PDF</MenuItem>
         ) : (
           <MenuItem key="pdf" icon={NotebookIcon} trailing={shown(notebook)} onClick={() => setNotebookView(focusedBlockId, !notebook)}>{t("Notebook view")}</MenuItem>
         )),
         !homeMode && !isPhone && (
-          <MenuItem key="notes" icon={FileTextIcon} trailing={shown(notesVisible)} onClick={() => setNotesVisible((v) => !v)}>{t("Notes")}</MenuItem>
+          <MenuItem key="notes" icon={FileTextIcon} trailing={shown(notesVisible)} onClick={toggleWindow("notes", notesVisible, () => setNotesVisible((v) => !v))}>{t("Notes")}</MenuItem>
         ),
         (!menuReadOnly || focusedBlockId) && !isPhone && (
-          <MenuItem key="chat" icon={SparklesIcon} trailing={shown(!chatHidden)} onClick={() => setChatHidden((v) => !v)}>{t("AI Chat")}</MenuItem>
+          <MenuItem key="chat" icon={SparklesIcon} trailing={shown(!chatHidden)} onClick={toggleWindow("chat", !chatHidden, () => setChatHidden((v) => !v))}>{t("AI Chat")}</MenuItem>
         ),
       ],
       focusedBlockId && !readOnly ? ["app.undo", "app.redo"].map(commandRow) : [],
@@ -9521,6 +9703,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           <MenuItem
             key="import"
             icon={ImportIcon}
+            data-guide="view.import"
             onClick={() => { setOpenPopover(null); setImportOpen(true); }}
             title={t("Bring in highlights — the ones saved inside this PDF file, a Logseq export, or a whole Zotero library")}
           >{t("Import…")}</MenuItem>
@@ -9565,7 +9748,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         <MenuIcon size={16} />
       </button>
       {openPopover === "menu" ? (
-        <div className="popover menuPopover">{viewMenuItems(menuReadOnly)}</div>
+        <div className="popover menuPopover" data-guide="view.menu">{viewMenuItems(menuReadOnly)}</div>
       ) : null}
     </PopoverAnchor>
   );
@@ -9716,6 +9899,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
             onClick={() => { if (openPopover === "share") setOpenPopover(null); else openFolderShare(folderFilter); }}
             onPointerEnter={SharePopover.preload}
             onFocus={SharePopover.preload}
+            data-guide="header.share"
             title={t("Share this folder")}
             aria-label={t("Share this folder")}
           >
@@ -9876,6 +10060,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   return (
     <GammaNavContext.Provider value={gammaNav}>
     <PageToolsContext.Provider value={pageTools}>
+    <RecordingContext.Provider value={recordingCtx}>
+    <PaletteContext.Provider value={palette}>
     <MentionContext.Provider value={mentionPeople}>
     <MentionClock.Provider value={reminders.now}>
     <div
@@ -9975,7 +10161,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
               onOpen={(id) => openBlock(id, { restoreScroll: true })}
               onClose={closeTab}
               onTogglePin={toggleTabPinned}
-              onContext={(tab, x, y) => setTabMenu({ id: tab.id, pinned: !!tab.pinned, x, y })}
+              onContext={(tab, x, y) => { setTabMenu({ id: tab.id, pinned: !!tab.pinned, x, y }); guideEvents.emit("tab.menu"); }}
             />
             {isPhone ? null : topbarActions}
           </div>
@@ -10106,15 +10292,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       {attachModeBlockId && (
         <div className="attachModeBanner">
           {t("Click a PDF highlight to link it")}
-          <button onClick={() => { setAttachModeBlockId(null); setAttachContextMenu(null); }}>{t("Cancel")}</button>
+          <button onClick={() => setAttachModeBlockId(null)}>{t("Cancel")}</button>
         </div>
-      )}
-      {attachContextMenu && (
-        <ContextMenu x={attachContextMenu.x} y={attachContextMenu.y} onClose={() => setAttachContextMenu(null)}>
-          <button className="ctxMenuItem" onClick={() => linkHighlightToBlock(attachModeBlockId, attachContextMenu.highlight)}>
-            {t("Link highlight here")}
-          </button>
-        </ContextMenu>
       )}
       {transMenu && (
         <ContextMenu x={transMenu.x} y={transMenu.y} onClose={() => setTransMenu(null)}>
@@ -10171,7 +10350,11 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           {(pdfUrl || notebook) && !viewerHidden ? (
             <button
               className="uiClose uiCloseLg pdfCloseBtn"
-              onClick={() => (notebook ? setNotebookView(focusedBlockId, false) : setPdfHidden(true))}
+              onClick={() => {
+                if (notebook) { setNotebookView(focusedBlockId, false); return; }
+                setPdfHidden(true);
+                guideEvents.emit("window.closed", { id: "pdf" });
+              }}
               title={notebook ? t("Back to the notes") : t("Close PDF")}
               aria-label={notebook ? t("Back to the notes") : t("Close PDF")}
             ><XIcon size={16} /></button>
@@ -10202,6 +10385,18 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                     aria-label={t("Handwriting tools")}
                   >
                     <PenIcon size={16} />
+                  </button>
+                ) : null}
+                {!readOnly ? (
+                  <button
+                    className={recordingNow ? "modeActive recordBtn" : ""}
+                    data-guide="viewer.record"
+                    onClick={toggleRecording}
+                    aria-pressed={!!recordingNow}
+                    title={recordingNow ? t("Stop recording") : t("Record audio: what you write meanwhile replays in step with it")}
+                    aria-label={recordingNow ? t("Stop recording") : t("Record audio")}
+                  >
+                    <MicIcon size={16} />
                   </button>
                 ) : null}
               </div>
@@ -10284,6 +10479,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
             );
           })() : null}
           {viewerInk && inkUi.open && !readOnly ? markupToolbar : null}
+          {viewerInk ? <RecordingPill /> : null}
+          {viewerInk ? playerBar : null}
           {(pdfUrl || notebook) && !viewerHidden ? (
             <div className="pdfCtlBox pdfFullscreenBox" data-guide="viewer.fullscreen">
               <button
@@ -10337,6 +10534,12 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
               }}
               onJump={jumpToHighlightId}
               onHighlightJump={(hlId, additive) => {
+                // A note's ⊕ is waiting for its highlight: this click picks it.
+                if (attachModeBlockIdRef.current) {
+                  const picked = highlights.find((h) => h.id === hlId);
+                  if (picked) linkHighlightToBlock(attachModeBlockIdRef.current, picked);
+                  return;
+                }
                 if (findBlock(blocks, hlId)) { scrollToBlock(hlId); reveal(hlId); }
                 // Clicking a highlight also feeds the chat: quote as the
                 // selection (Ctrl+click appends), area rects as an image.
@@ -10356,7 +10559,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                   content: content || { text: "" },
                   position,
                   comment: { text: extras?.commentText || "" },
-                  color: extras?.color || COLORS[0],
+                  // the popup's swatch is a palette colour; a highlight stores it at the wash alpha
+                  color: highlightColor(extras?.color) || DEFAULT_HIGHLIGHT,
                 });
                 hideTip?.();
               }}
@@ -10764,6 +10968,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           setInkAutoPen,
           inkPressure,
           setInkPressure,
+          replayLeadIn,
+          setReplayLeadIn,
+          recordingTranscribe,
+          setRecordingTranscribe,
           translateEnabled,
           setTranslateEnabled,
           selTranslate,
@@ -10783,6 +10991,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           refreshAiModels, // saving a service's key updates that list
           pdfDarkPage,
           setPdfDarkPage,
+          palette,
+          setPalette,
           suggestTours,
           setSuggestTours,
           recentThumbs,
@@ -11203,17 +11413,18 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       {highlightMenu ? (
         <ContextMenu x={highlightMenu.x} y={highlightMenu.y} onClose={() => setHighlightMenu(null)}>
             <div className="colorRow ctxMenuColors">
-              {COLORS.map((c) => (
+              {pickerColors(palette, "highlight").map((c, i) => (
                 <button
-                  key={c}
+                  key={c.hex + c.alpha + i}
                   type="button"
                   className="colorBtn"
-                  style={{ background: c }}
+                  style={{ background: swatchCss(c) }}
                   onClick={() => {
-                    changeHighlightColor(highlightMenu.id, c);
+                    changeHighlightColor(highlightMenu.id, highlightColor(c));
                     setHighlightMenu(null);
                   }}
-                  title={t("Change color")}
+                  title={t("Change to {color}", { color: t(colorName(c)) })}
+                  aria-label={t("Change to {color}", { color: t(colorName(c)) })}
                 />
               ))}
             </div>
@@ -11280,6 +11491,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     </div>
     </MentionClock.Provider>
     </MentionContext.Provider>
+    </PaletteContext.Provider>
+    </RecordingContext.Provider>
     </PageToolsContext.Provider>
     </GammaNavContext.Provider>
   );

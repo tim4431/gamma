@@ -1,6 +1,8 @@
 // The pure block-tree operations the outliner's keys run on.
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { DEFAULT_HIGHLIGHT } from "../src/shared/model/palette.js";
+import { setWallClock } from "../src/shared/model/wallClock.js";
 import {
   EMPTY_VIEW, addChildBlock, addHighlightAsBlock, addSiblingBlock, blockPage, blockPosition, blocksToHighlights,
   closeEditing, extractBlock, findBlockContext, flattenBlocks, indentBlock, insertChild, insertSibling, isDescendant,
@@ -63,10 +65,13 @@ test("isDescendant and findBlockContext", () => {
 
 test("new blocks: sibling below or above, child, with fresh 12-char ids and nothing but the document's fields", () => {
   const t = tree();
+  setWallClock(() => 1700000000000);
   let { blocks, newId } = addSiblingBlock(t, "b");
+  setWallClock(null);
   assert.deepEqual(ids(blocks), ["a", "b", newId, "c"]);
   assert.match(newId, /^[A-Za-z0-9_-]{12}$/);
-  assert.deepEqual(blocks[2], { id: newId, parentId: null, children: [], content: "", properties: {} });
+  // the moment it was made is the one field of its own (docs/dev/recording.md)
+  assert.deepEqual(blocks[2], { id: newId, parentId: null, children: [], content: "", properties: { t0: 1700000000000 } });
   ({ blocks, newId } = addSiblingBlock(t, "b", { above: true }));
   assert.deepEqual(ids(blocks), ["a", newId, "b", "c"]);
   ({ blocks, newId } = addChildBlock(t, "b"));
@@ -137,14 +142,21 @@ test("normalizeBlocks gives every node a children array and nothing else", () =>
 });
 
 const POS = { pageNumber: 2, width: 600, height: 800, boundingRect: { x1: 1, y1: 2, x2: 3, y2: 4 }, rects: [{ x1: 1, y1: 2, x2: 3, y2: 4 }] };
+const GREEN = "#aaebaaa6";   // a highlight's colour as stored, the green wash at its alpha
 
 test("blocksToHighlights lists positioned highlight blocks, by block id, and whether they carry a note", () => {
-  const hl = (id, content, children = []) => N(id, children, { content, properties: { quote: "q", color: "red", pdf_position: POS } });
+  const hl = (id, content, children = []) => N(id, children, { content, properties: { quote: "q", color: GREEN, pdf_position: POS } });
   const out = blocksToHighlights([N("plain"), hl("h1", ""), hl("h2", "a comment"), hl("h3", "", [N("k", [], { content: " " }), N("m", [], { content: "note" })]),
     N("pageonly", [], { properties: { quote: "q", pdf_position: { pageNumber: 4 } } }),
     N("ink", [], { properties: { ink_url: "/api/uploads/a.ink", pdf_position: POS } })]);
   assert.deepEqual(out.map((h) => [h.id, h.hasNote]), [["h1", false], ["h2", true], ["h3", true]]);
-  assert.deepEqual(out[0], { id: "h1", content: { text: "q" }, comment: { text: "" }, hasNote: false, color: "red", position: POS });
+  assert.deepEqual(out[0], { id: "h1", content: { text: "q" }, comment: { text: "" }, hasNote: false, color: GREEN, position: POS });
+});
+
+test("a highlight's colour comes out stored; an older rgba string is respelled, an unreadable one is the default", () => {
+  const colored = (id, color) => N(id, [], { content: "", properties: { quote: "q", color, pdf_position: POS } });
+  const out = blocksToHighlights([colored("a", "rgba(170, 235, 170, 0.65)"), colored("b", "red"), colored("c", undefined)]);
+  assert.deepEqual(out.map((h) => h.color), [GREEN, DEFAULT_HIGHLIGHT, DEFAULT_HIGHLIGHT]);
 });
 
 test("a highlight is a block with a position that is no ink group; its page is the position's", () => {
@@ -159,7 +171,9 @@ test("a highlight is a block with a position that is no ink group; its page is t
 });
 
 test("a highlight made in the viewer is a block whose id is the highlight's, its position as given", () => {
-  const [block] = addHighlightAsBlock([], { id: "hx", position: POS, content: { text: "q" }, comment: { text: "c" }, color: "red" });
+  setWallClock(() => 1700000000000);
+  const [block] = addHighlightAsBlock([], { id: "hx", position: POS, content: { text: "q" }, comment: { text: "c" }, color: GREEN });
+  setWallClock(null);
   assert.deepEqual(block, { id: "hx", parentId: null, children: [], content: "c",
-    properties: { color: "red", quote: "q", pdf_position: POS } });
+    properties: { t0: 1700000000000, color: GREEN, quote: "q", pdf_position: POS } });
 });

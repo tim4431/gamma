@@ -486,9 +486,15 @@ def test_search_keeps_both_identifiers_and_ranks_the_exact_title_first(monkeypat
 
 def test_prompt_says_whether_the_reply_waits_for_the_browser():
     waiting = agent_system({**folder(""), "paper_wait": True})
-    assert "this reply waits" in waiting and "end your reply instead of retrying" not in waiting
+    assert "this reply waits" in waiting and "end your reply" not in waiting
     ends = agent_system(folder(""))
-    assert "end your reply instead of retrying" in ends and "this reply waits" not in ends
+    assert "end your reply" in ends and "this reply waits" not in ends
+    # Without a web engine the model may not switch versions; with one it may
+    # try one search_web instead. Either way one "unless", never two in a row.
+    assert "switch to another version or answer from memory unless" in ends
+    with_web = agent_system({**folder(""), "web_engine": "x"})
+    assert "one search_web" in with_web and "switch to another version" not in with_web
+    assert "unless the user asked for that" not in with_web and "own, unless" not in with_web
     assert "stop the server" not in agent_system(folder(""), {"web_read": "off"})
 
 

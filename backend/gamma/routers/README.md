@@ -17,6 +17,7 @@ One module per API area. Mounted under `/api` in `gamma/app.py`.
 | `trash.py`    | `/api/trash`, `/trash/{id}/restore` | Recently deleted: list, restore, delete for good, empty |
 | `uploads.py`  | `/api/uploads/*`, `/upload-image`, `/upload-file`, `/pdf-info/{doc_id}`, `/quota` | PDF / image / any-file upload + serving (content-addressed; executables refused); a PDF's upload in parts (`/uploads/parts`, gamma/upload_parts.py); a PDF's manifest (gamma/pdf_meta.py); the storage limits |
 | `ink.py`      | `/api/upload-ink`                   | handwriting uploads: one `gamma-ink` file per ink group, stored like any upload |
+| `recordings.py` | `/api/jobs/transcribe` | a recording's transcript as the `transcribe` job (`gamma/recording.py`); the recording is a block, its audio uploads |
 | `pdf.py`      | `/api/resolve-pdf`, `/pdf`          | find a real PDF url (arXiv → meta tag → Unpaywall OA), and proxy it (optional local cache) |
 | `metadata.py` | `/api/metadata/*` (`fetch`, `update`, `verify`, `status`, `cite`), `/jobs/metadata` | paper metadata + BibTeX + PPT citation (cached on the page), and the batch lookup as a job |
 | `ai.py`       | `/api/ai/*` (chat, models, providers, approvals, revert, translate, transcribe, search services, ChatGPT OAuth), `/translate/engines*` | chat orchestration, AI settings, OAuth, translation |

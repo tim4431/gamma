@@ -26,16 +26,24 @@ app ([ipad.md](ipad.md)). Typed text on a page is
   and select text), close, and Undo / Redo. Its accessible name is
   "Markup tools". One tap arms a tool;
   **tapping the armed tool again opens its options row** under the strip.
-  For a preset that row is the palette (14 pen / 8 highlighter colours
-  plus a custom colour through the browser's picker), eight widths as
-  dots, *Duplicate* (a copy right after it, armed and still open for
-  editing) and *Remove*; the change applies to that preset, so the row is
-  the user's own set of pens (up to 12, kept in localStorage,
-  `gamma-ink-tools`). Colours are named in words, never hex codes: a
-  preset reads "Pink highlighter · 14 pt · key 7", and each swatch is
-  titled and labelled by its name (`INK_COLOR_NAMES` in `InkLayer.jsx`). A
-  custom colour takes the name of the nearest palette colour
-  (`nearestInkColor` in `ink.js`, redmean distance). Keys while the strip
+  For a preset that row is the palette — the colour groups the account
+  chose for pen presets or for highlighter presets (Settings → Appearance
+  › Colors, [settings.md](settings.md); by default the 14 dark "Pen"
+  colours and the eight light "Ink highlight" colours, the four text
+  highlight colours and four more) plus
+  a custom colour through the browser's picker — eight widths as dots,
+  *Duplicate* (a copy right after it, armed and still open for editing)
+  and *Remove*; the change applies to that preset, so the row is the
+  user's own set of pens (up to 12, kept in localStorage,
+  `gamma-ink-tools`, each with the concrete hex it was given and, when a
+  swatch brought one, its own `opacity` — a swatch's alpha; a preset
+  without one draws at the kind's usual opacity, 0.6 for a highlighter
+  and 1 for a pen, `toolStyle`). Colours are
+  named in words, never hex codes: a preset reads "Pink highlighter · 14 pt
+  · key 7", and each swatch is titled and labelled by its name. Any colour,
+  a custom one or a changed swatch included, takes the name of the nearest
+  reference colour (`colorName` in `shared/model/palette.js`, redmean
+  distance). Keys while the strip
   is open: `1`–`9` arm the preset
   at that position, `P` / `H` step through the pens / highlighters, `E`
   `L` `T` `V` the eraser / lasso / Text tool / hand, `Esc`, `Delete` (the
@@ -104,8 +112,8 @@ app ([ipad.md](ipad.md)). Typed text on a page is
   draws", with **Draw with finger** (which turns `inkPenOnly` off): once a
   session, and never after a pen has drawn. The pen's eraser end and
   barrel button erase.
-- Strokes on one page join the **current group** until *New group*, a
-  stroke on another page, or leaving the page. A group is one block in the
+- Strokes on one page join the **current group** until a stroke on
+  another page, or leaving the page. A group is one block in the
   notes: a rounded pen marker, the strokes as a picture, and the block's
   text as its caption (children allowed). The marker or the card scrolls
   the PDF to the group and outlines it briefly; a click on ink selects it
@@ -122,7 +130,9 @@ app ([ipad.md](ipad.md)). Typed text on a page is
   it is on a group's row in the notes and plays on the page
   ([ipad.md](ipad.md)). A replay shows the drawing as it is now: erased
   strokes are gone, and the pieces the partial eraser left keep the time
-  they were written.
+  they were written. A recording made while writing replays the same
+  strokes in step with its audio ([recording.md](recording.md)): the
+  replay button and the recording's player run on one store.
 - **Transcribe with AI**, in a group's ⋮⋮ menu, attaches the block to the
   chat and asks for its text in the caption ([ai_tools.md](ai_tools.md)
   "view_ink"). The chat's "Attach what I see" sends the visible page with
@@ -277,24 +287,34 @@ text box's `text_box`, merged key by key ([text_boxes.md](text_boxes.md)
   stroke wins ties); `restyleStrokes` changes selected color/width, returning
   the original object for a no-op; `duplicateStrokes` preserves original
   samples and channels while assigning unique IDs to translated copies.
-- The replay (`ink.js`, pure, so the iPad runs it too):
+- The replay (`ink.js`, pure, so the iPad runs it too;
+  [recording.md](recording.md) "One clock for every replay"):
+  - `strokeWalls(stroke)` is each sample's wall-clock ms (`t0` plus its
+    `t`), null for a stroke without timing; `inkWallSpan(ink)` the
+    stretch a drawing's timed strokes cover.
   - `inkTimeline(ink)` puts the strokes in the order they were written.
     A stroke starts at `t0` plus its first sample's `t`, and the file's
     order breaks ties. A stroke with no timing counts as written right
     after the stroke before it in the file, its samples spread over
     300 ms. Each sample gets a replay time: gaps between strokes and
     inside one are cut to `REPLAY_PAUSE` (400 ms), and the whole replay
-    is scaled down to `REPLAY_MAX` (15 s) when longer.
-  - `inkAtTime(ink, timeline, t)` is the drawing at replay time `t`: the
-    strokes begun, and the one being written cut short. A prefix of a
-    stroke's delta-coded `pts` is its first samples, so that is a slice.
-  - `ink/inkReplay.js` plays one replay at a time on animation frames,
-    under the id of what it shows (a group, or a sheet's whole
-    handwriting). `InkLayer.jsx` `useReplayOf(ids)` gives a layer or a
-    card the frame of one of its own groups, so only they re-render; the
-    layer draws that group as it stood, the card too.
-    `InkReplayButton` starts and stops it. An edit to the group
-    (`applyInk`) or leaving the page ends it.
+    is scaled down to `REPLAY_MAX` (15 s) when longer. Its `times` map
+    (stroke id → the samples' replay times) is the compressed clock's
+    table.
+  - `inkUntil(ink, at, times)` is the drawing at an instant: the strokes
+    begun by then in the order begun, the one being written cut short (a
+    prefix of a stroke's delta-coded `pts` is its first samples, so that
+    is a slice), the ids not yet reached; on a clock's table, or on the
+    strokes' own wall clock without one. `inkAtTime(ink, timeline, t)` is
+    `inkUntil` on the timeline.
+  - `replay/playback.js` plays one replay at a time on animation frames,
+    on a clock (`replay/clock.js compressedClock` for a group's or a
+    sheet's own replay). `replay/useFrame.js useGroupFrame(groups,
+    surface)` gives a layer or a card the state only while one of its own
+    groups or its sheet takes part, so only they re-render; `InkLayer.jsx
+    ReplayStrokes` draws the group as it stood. `InkReplayButton` starts
+    and stops it. An edit to the group (`applyInk`) or leaving the page
+    ends it.
 - `ink/inkStore.js`: files by URL, and per-block **drafts** — the strokes as
   edited here, ahead of upload. A draft wins over the block's file until
   the upload replaces `ink_url` with the draft's; a remote `ink_url` change
@@ -310,8 +330,10 @@ text box's `text_box`, merged key by key ([text_boxes.md](text_boxes.md)
   strip and the menus, since native titles are unreliable under Pencil
   hover. `InkCard` is the picture in the notes. For `markup/` the file
   exports `InkTooltips`, `inkColorName`, `ERASER_SIZES`, `ColorChoices` (a
-  palette's swatches plus a custom colour, for a pen preset's row and a
-  text box's colours) and `swallowClick` (eats the click a handled
+  palette role's swatches plus a custom colour, for a pen preset's row and a
+  text box's colours; the strip, the selection menu and the text box read
+  the account's palette through `usePalette`, `shared/ui/paletteContext.js`)
+  and `swallowClick` (eats the click a handled
   pointer-up would deliver). Imports run from `markup/` to `ink/`, never
   back.
   - Claiming input: a capture-phase `pointerdown` listener on the page
@@ -419,8 +441,7 @@ text box's `text_box`, merged key by key ([text_boxes.md](text_boxes.md)
   group as it is now, by stroke id (`mergeInk`), so strokes someone else
   drew meanwhile stay.
   Two clients drawing into one group keep both drawings (see "Two
-  writers, one group"). Each client keeps a fresh group after
-  *New group*.
+  writers, one group").
   A focused note editor keeps the block history even with the strip open,
   and other text inputs keep their own undo; an empty ink history never
   falls through to block undo. Undo and redo report the action and PDF page
@@ -470,9 +491,10 @@ text box's `text_box`, merged key by key ([text_boxes.md](text_boxes.md)
 Shape tools, reordering presets
 by drag, syncing the preset row across devices (it is per browser),
 ballpoint / fountain / dashed pen styles, Xournal++ `.xopp` import,
-live co-drawing over presence, audio recording to go with the replay, and a
+live co-drawing over presence, and a
 replay of erasures and edits (it shows the drawing as it is, in the order
-it was written). Obsidian vault export writes an ink block's
+it was written). Audio recording to go with the replay is
+[recording.md](recording.md). Obsidian vault export writes an ink block's
 caption only. The Notability comparison in the research note lists what a
 closer pen experience still needs (draw-and-hold straightening, an eraser
 that returns to the last tool, the highlighter behind the ink, clipboard

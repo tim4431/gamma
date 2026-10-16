@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   MAX_BACKGROUND, MAX_OPENS, backgroundBusy, checkPage, handoffIdFrom, harvestUrls, needsSignIn,
-  needsYouMessage, nextToOpen, sameWork, signInUrl, sourceIds,
+  needsYouMessage, nextToOpen, readerPdfUrl, sameWork, signInUrl, sourceIds,
 } from "../handoff.js";
 
 const ORIGIN = "https://gamma.example";
@@ -62,6 +62,22 @@ test("what the tab tries: itself when it shows a PDF, the advertised link, the s
   const sd = "https://www.sciencedirect.com/science/article/pii/0031916362913690";
   assert.deepEqual(harvestUrls({ kind: "none", pdf_links: [`${sd}/pdfft?md5=a&pid=b.pdf`, "https://ads.example/x.pdf"] }, {},
     { tabUrl: sd }), [`${sd}/pdfft?md5=a&pid=b.pdf`]);
+  // An Atypon reader (science.org's ePDF) advertises no PDF: its file. A
+  // save from the popup asks without a request.
+  assert.deepEqual(harvestUrls({ kind: "doi", doi: "10.1126/science.adz9952" }, null,
+    { tabUrl: "https://www.science.org/doi/epdf/10.1126/science.adz9952" }),
+  ["https://www.science.org/doi/pdf/10.1126/science.adz9952?download=true"]);
+});
+
+test("an Atypon reader's file", () => {
+  assert.equal(readerPdfUrl("https://onlinelibrary.wiley.com/doi/epdf/10.1002/anie.202400001#page=2"),
+    "https://onlinelibrary.wiley.com/doi/pdf/10.1002/anie.202400001?download=true");
+  assert.equal(readerPdfUrl("https://pubs.acs.org/doi/epdf/10.1021/jacs.5b00001?ref=x"),
+    "https://pubs.acs.org/doi/pdf/10.1021/jacs.5b00001?download=true");
+  for (const url of ["https://www.science.org/doi/10.1126/science.adz9952",
+                     "https://www.science.org/doi/pdf/10.1126/science.adz9952", "https://x.example/epdf/1", "", "nope"]) {
+    assert.equal(readerPdfUrl(url), "", url);
+  }
 });
 
 test("when downloads fail, the tab opens the next untried link — never from the viewer", () => {

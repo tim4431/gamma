@@ -17,8 +17,10 @@ blocks that are actually linked carry an anchor). Highlights are
 ``[!quote]`` callouts whose title links the bundled PDF's page
 (``[[Paper.pdf#page=3|p. 3]]``); the PDF is also the quoted
 ``source: "[[Paper.pdf]]"`` property. A text box on a PDF page is a note
-followed by that page link. Targets outside the export degrade the way the
-readable Markdown export does (text, or the materialized block).
+followed by that page link. A recording is its length, an ``![[…]]`` embed
+per audio file in ``attachments/`` and its title. Targets outside the
+export degrade the way the readable Markdown export does (text, or the
+materialized block).
 
 Upload references are rewritten by the caller with ``collect_and_rewrite``
 (prefix ``attachments/``), as for the readable export.
@@ -34,6 +36,7 @@ from .highlights import is_highlight, page_of
 from .markdown_export import _BLOCK_REF_RE, _link_label, resolve_block_links
 from .note_markup import obsidian_image_sizes
 from .notebook import is_sheet
+from .recording import heading as recording_heading, is_recording, segments_of
 from .text_box import box_page
 
 # What Obsidian refuses in a note name on any OS (link syntax) plus the
@@ -287,9 +290,18 @@ class _Renderer:
 
     def _props(self, node):
         props = node.get("properties") or {}
-        if not self.highlights and (is_highlight(props) or props.get("link_url")):
+        if not self.highlights and (is_highlight(props) or props.get("link_url") or is_recording(props)):
             return {}
         return props
+
+    def _recording(self, props, content) -> list[str]:
+        """A recording → its lines: the length, an embed per audio file
+        (``/api/uploads/`` names, which the caller's rewrite bundles as it
+        bundles images), the title; [] for any other block."""
+        if not is_recording(props):
+            return []
+        return [f"**{recording_heading(props)}**", *(f"![[{s['url']}]]" for s in segments_of(props)),
+                *(content.split("\n") if content else [])]
 
     def _page_link(self, page_no):
         if page_no is None:
@@ -333,6 +345,9 @@ class _Renderer:
 
         if region:
             lines += [region + (f" ^{marker}" if marker else ""), ""]
+            self._children_as_list(node, lines, under_sheet)
+        elif recording := self._recording(props, content):
+            self._paragraph("\n".join(recording), marker, lines)
             self._children_as_list(node, lines, under_sheet)
         elif quote:
             title = self._page_link(page_of(props))
@@ -394,6 +409,9 @@ class _Renderer:
 
         if region:
             lines.append(f"{pad}- {region}" + (f" ^{marker}" if marker else ""))
+        elif recording := self._recording(props, content):
+            lines.append(f"{pad}- {recording[0]}" + (f" ^{marker}" if marker else ""))
+            lines += [f"{pad}  {r}" for r in recording[1:]]
         elif quote:
             qlines = quote.split("\n")
             lines.append(f"{pad}- > {qlines[0]}" + (f" ^{marker}" if marker else ""))

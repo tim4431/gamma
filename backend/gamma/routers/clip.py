@@ -6,8 +6,10 @@ app's ``openPdf`` orchestrates client-side: dedup by identifier,
 resolve the link to a PDF, store a copy, create the page, file it, and kick
 off the metadata lookup. When no PDF can be resolved the clip still becomes a
 page — one carrying the tab's URL as ``properties.web_url`` (and the clipped
-selection as its first block) instead of a PDF attachment. The companions are
-read-only helpers for the popup (``/api/library/lookup`` for the "already in
+selection as its first block) instead of a PDF attachment — unless the request
+says ``web_fallback: false``: the extension first tries the download with the
+browser's own session, which gets past walls the server can't. The companions
+are read-only helpers for the popup (``/api/library/lookup`` for the "already in
 your library" badge, ``/api/library/preview`` for the paper's registry title
 before it is saved, ``/api/library/folders`` for the folder and label
 pickers) and
@@ -241,6 +243,8 @@ class ClipRequest(BaseModel):
     allow_oa: bool = True         # substitute an open-access copy behind paywalls
     save_copy: bool = True        # store the PDF server-side (else proxy on open)
     fetch_metadata: bool = True
+    web_fallback: bool = True     # no PDF → a page with its web source; False → the 400 (the
+                                  # extension then downloads it in the browser first)
 
 
 def _clip_web_page(ws: str, actor: str, conn, payload: ClipRequest, source_url: str, title: str,
@@ -306,6 +310,8 @@ def save_clip(ws: str, actor: str, payload: ClipRequest) -> dict:
         # its HTML would never pass the PDF check anyway.
         if not (source_url or title or (payload.selection or "").strip()):
             raise HTTPException(status_code=400, detail="nothing to save: no URL, title or selection")
+        if not payload.web_fallback:
+            raise HTTPException(status_code=400, detail="nothing here names a PDF")
         with connect_pages_db(ws) as conn:
             return _clip_web_page(ws, actor, conn, payload, source_url, title, folder, labels, doi, arxiv_id, "")
 
@@ -324,7 +330,9 @@ def save_clip(ws: str, actor: str, payload: ClipRequest) -> dict:
         #     sure it really delivers a PDF before any PDF page exists. A
         #     dead link never leaves a page with a broken attachment behind
         #     (same rule as openPdf) — the clip becomes a web-source page
-        #     instead, so nothing the user asked to keep is lost.
+        #     instead, so nothing the user asked to keep is lost; or, without
+        #     ``web_fallback``, the 400 goes back to the extension, which can
+        #     still try the browser's session.
         candidate = pdf_url or arxiv_id or doi or source_url
         try:
             # One cookie jar for the walk and the download, like a browser tab.
@@ -345,7 +353,8 @@ def save_clip(ws: str, actor: str, payload: ClipRequest) -> dict:
                             note = (note + " " if note else "") + \
                                 "Not stored: over your storage limit — the PDF is proxied on open."
         except HTTPException as e:
-            if e.status_code != 400 or not (source_url or title):
+            if e.status_code != 400 or not payload.web_fallback or not (source_url or title):
+                log.info(f"[clip] no PDF for {candidate}: {e.detail}")
                 raise
             log.info(f"[clip] no PDF for {candidate}: {e.detail} — saving as a web page")
             with connect_pages_db(ws) as conn:

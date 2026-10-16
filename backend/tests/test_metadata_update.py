@@ -23,6 +23,8 @@ def test_update_saves_meta_and_rebuilds_bibtex(guest):
     assert data["meta"]["title"] == "A Hand-Entered Title"
     assert data["meta"]["authors"] == ["Ada Lovelace", "Charles Babbage"]
     assert data["meta"]["source"] == "manual"
+    assert data["meta"]["at"].endswith("Z")  # when it was edited
+    assert data["meta"]["at"] not in data["bibtex"]  # a stamp, not a field of the entry
     assert "lovelace2026" in data["bibtex"]
     assert "Journal of Testing" in data["bibtex"]
 

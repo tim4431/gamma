@@ -135,7 +135,8 @@ export async function chatNavigationScenarios(env) {
       await until(async () => (await page.locator(".chatPanel").innerText()).includes("It is about chat navigation."));
       await input.fill("A draft question");
       const downloadEvent = page.waitForEvent("download");
-      await page.getByRole("button", { name: "Export chat context", exact: true }).click();
+      await page.getByRole("button", { name: "Export chat", exact: true }).click();
+      await page.getByRole("button", { name: "Export context", exact: true }).click();
       const download = await downloadEvent;
       assert(download.suggestedFilename().endsWith(" - context.md"), download.suggestedFilename());
       const text = await readFile(await download.path(), "utf8");
@@ -151,7 +152,7 @@ export async function chatNavigationScenarios(env) {
     }
   });
 
-  await step("chat navigation: Alt+click New chat discards the conversation; a plain click keeps it in History", async () => {
+  await step("chat navigation: Alt over New chat arms Discard, Alt+click discards the conversation; a plain click keeps it in History", async () => {
     const own = await alice.api("/api/pages", { method: "POST", body: { title: "Discarded chat" } });
     const historyCount = async () => (await alice.api(`/api/chat-history?bucket=${own.id}`)).sessions.length;
     const seed = (text) => alice.api(`/api/chats/${own.id}`, { method: "PUT", body: { messages: [
@@ -165,16 +166,44 @@ export async function chatNavigationScenarios(env) {
     try {
       const panel = page.locator(".chatPanel");
       const newChat = page.getByRole("button", { name: "New chat", exact: true });
+      const discard = page.getByRole("button", { name: "Discard chat", exact: true });
       await until(async () => (await panel.innerText()).includes("Throw this one away: answered."));
+      // Alt over the button shows the discard before the click (its name and
+      // the danger tint); releasing Alt or leaving puts New chat back.
+      await newChat.hover();
+      await page.keyboard.down("Alt");
+      await discard.waitFor();
+      assert(await discard.evaluate((el) => el.classList.contains("danger")), "the armed button is red");
+      await page.keyboard.up("Alt");
+      await newChat.waitFor();
+      await page.keyboard.down("Alt");
+      await discard.waitFor();
+      await panel.locator(".chatMessages").hover();
+      await newChat.waitFor();
+      await page.keyboard.up("Alt");
       await newChat.click({ modifiers: ["Alt"] });
       await until(async () => !(await panel.innerText()).includes("Throw this one away"), { what: "Alt+click empties the chat" });
       assertEq((await alice.api(`/api/chats/${own.id}`)).messages.length, 0, "the active conversation is cleared");
       assertEq(await historyCount(), 0, "nothing reaches History");
+      await newChat.hover();
+      await page.keyboard.down("Alt");
+      await page.evaluate(() => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done))));
+      assertEq(await discard.count(), 0, "an empty chat has nothing to discard");
+      await page.keyboard.up("Alt");
       await seed("Keep this one");
       await page.reload();
       await until(async () => (await panel.innerText()).includes("Keep this one: answered."));
       await newChat.click();
       await until(async () => (await historyCount()) === 1, { what: "a plain click archives" });
+      // The archived conversation exports from its History row's menu.
+      await page.getByRole("button", { name: "Chat history", exact: true }).click();
+      await page.locator(".chatHistRow", { hasText: "Keep this one" }).click({ button: "right" });
+      const downloadEvent = page.waitForEvent("download");
+      await page.getByRole("button", { name: "Export", exact: true }).click();
+      const download = await downloadEvent;
+      assertEq(download.suggestedFilename(), "Keep this one.md", "no pictures: the bare transcript");
+      const text = await readFile(await download.path(), "utf8");
+      assert(text.startsWith("# Keep this one\n") && text.includes("## AI\n\nKeep this one: answered."), text);
       assertNoProblems(page);
     } finally { await ctx.close(); }
   });

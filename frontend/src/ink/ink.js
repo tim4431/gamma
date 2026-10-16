@@ -9,6 +9,7 @@
 // are deltas after the first sample, p is 0..1000. Keep the codec here in
 // step with the backend's.
 import { getStroke } from "perfect-freehand";
+import { INK_COLORS, INK_HIGHLIGHT_ALPHA, INK_HIGHLIGHT_COLORS } from "../shared/model/palette.js";
 
 export const FORMAT = "gamma-ink";
 export const VERSION = 1;
@@ -62,44 +63,23 @@ function strokeId() {
 // The strip is a row of presets, Notability-style: each pen or highlighter
 // keeps its own colour and width ({id, kind: pen|highlighter, color, size}),
 // and the user edits, duplicates and removes them. Widths are pt at scale 1
-// (the options row shows them as dots); colours are hex — a highlighter
-// gets HIGHLIGHTER_OPACITY on top and multiplies onto the page.
+// (the options row shows them as dots); colours are hex, picked from the
+// account's palette (shared/model/palette.js: the ink set for a pen, the
+// wash set for a highlighter) or a custom one — a highlighter gets
+// HIGHLIGHTER_OPACITY on top and multiplies onto the page.
 export const PEN_SIZES = [0.6, 1, 1.4, 2, 2.8, 4, 5.6, 8];
 export const HIGHLIGHTER_SIZES = [5, 7, 10, 14, 18, 24, 32, 40];
-export const PEN_COLORS = ["#1f1f1f", "#6b7280", "#1d4ed8", "#0284c7", "#0f766e", "#15803d", "#65a30d",
-  "#ca8a04", "#ea580c", "#dc2626", "#db2777", "#7c3aed", "#92400e", "#ffffff"];
-export const HIGHLIGHTER_COLORS = ["#fde047", "#86efac", "#7dd3fc", "#f9a8d4", "#fdba74", "#c4b5fd", "#67e8f9", "#d4d4d8"];
-export const HIGHLIGHTER_OPACITY = 0.6;
-// The palette colour nearest to `hex` (#rgb or #rrggbb) by the "redmean"
-// weighted RGB distance — a palette colour maps to itself; null for what is
-// not a hex colour. The tool strip names a custom colour after it.
-export function nearestInkColor(hex) {
-  const rgb = (h) => {
-    const m = /^#?([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(String(h || "").trim());
-    if (!m) return null;
-    const v = m[1].length === 3 ? m[1].replace(/./g, "$&$&") : m[1];
-    return [0, 2, 4].map((i) => parseInt(v.slice(i, i + 2), 16));
-  };
-  const c = rgb(hex);
-  if (!c) return null;
-  let best = null, bestD = Infinity;
-  for (const p of [...PEN_COLORS, ...HIGHLIGHTER_COLORS]) {
-    const q = rgb(p), rm = (c[0] + q[0]) / 2;
-    const d = (2 + rm / 256) * (c[0] - q[0]) ** 2 + 4 * (c[1] - q[1]) ** 2 + (2 + (255 - rm) / 256) * (c[2] - q[2]) ** 2;
-    if (d < bestD) { best = p; bestD = d; }
-  }
-  return best;
-}
+export const HIGHLIGHTER_OPACITY = INK_HIGHLIGHT_ALPHA;
 // Cap on a stroke's nominal width (pt); scaling a selection stops here.
 export const MAX_STROKE_SIZE = 100;
 export const DEFAULT_TOOLS = [
-  { id: "pen1", kind: "pen", color: "#1f1f1f", size: 2 },
-  { id: "pen2", kind: "pen", color: "#1d4ed8", size: 2 },
-  { id: "pen3", kind: "pen", color: "#dc2626", size: 2 },
-  { id: "pen4", kind: "pen", color: "#15803d", size: 1.4 },
-  { id: "hl1", kind: "highlighter", color: "#fde047", size: 14 },
-  { id: "hl2", kind: "highlighter", color: "#86efac", size: 14 },
-  { id: "hl3", kind: "highlighter", color: "#f9a8d4", size: 14 },
+  { id: "pen1", kind: "pen", color: INK_COLORS[0], size: 2 },
+  { id: "pen2", kind: "pen", color: INK_COLORS[2], size: 2 },
+  { id: "pen3", kind: "pen", color: INK_COLORS[9], size: 2 },
+  { id: "pen4", kind: "pen", color: INK_COLORS[5], size: 1.4 },
+  { id: "hl1", kind: "highlighter", color: INK_HIGHLIGHT_COLORS[0], size: 14 },
+  { id: "hl2", kind: "highlighter", color: INK_HIGHLIGHT_COLORS[1], size: 14 },
+  { id: "hl3", kind: "highlighter", color: INK_HIGHLIGHT_COLORS[4], size: 14 },
 ];
 export const MAX_TOOLS = 12;
 const HEX_RE = /^#[0-9a-f]{6}$/i;
@@ -125,17 +105,25 @@ export function normalizeTools(list) {
     let id = typeof t.id === "string" && /^[A-Za-z0-9_-]{1,24}$/.test(t.id) ? t.id : toolId();
     while (seen.has(id)) id = toolId();
     seen.add(id);
+    // A preset's own opacity (the swatch's alpha when it was picked); left
+    // out, the kind's usual one applies (toolStyle).
+    const opacity = Number(t.opacity);
     out.push({ id, kind, color: t.color.toLowerCase(), size: Math.round(size * 100) / 100,
+      ...(Number.isFinite(opacity) && opacity >= 0.1 && opacity <= 1 && opacity !== defaultOpacity(kind)
+        ? { opacity: Math.round(opacity * 100) / 100 } : {}),
       ...(kind === "pen" && t.brush === "monoline" ? { brush: "monoline" } : {}) });
     if (out.length >= MAX_TOOLS) break;
   }
   return out.length ? out : DEFAULT_TOOLS.map((t) => ({ ...t }));
 }
+// A kind's opacity when a preset names none.
+export const defaultOpacity = (kind) => (kind === "highlighter" ? HIGHLIGHTER_OPACITY : 1);
 // What the layer draws with for a preset: {tool, color, size, opacity}.
 export function toolStyle(preset) {
+  const opacity = preset.opacity ?? defaultOpacity(preset.kind);
   return preset.kind === "highlighter"
-    ? { tool: "highlighter", color: preset.color, size: preset.size, opacity: HIGHLIGHTER_OPACITY }
-    : { tool: "pen", color: preset.color, size: preset.size, opacity: 1,
+    ? { tool: "highlighter", color: preset.color, size: preset.size, opacity }
+    : { tool: "pen", color: preset.color, size: preset.size, opacity,
       ...(preset.brush === "monoline" ? { brush: "monoline" } : {}) };
 }
 
@@ -143,7 +131,7 @@ export function toolStyle(preset) {
 // --- codec -----------------------------------------------------------------
 
 // samples: [{x, y, p?, t?}] with x/y in points and t in ms since t0.
-export function encodeStroke({ id, tool = "pen", brush, color = PEN_COLORS[0], size = 2, opacity = 1,
+export function encodeStroke({ id, tool = "pen", brush, color = INK_COLORS[0], size = 2, opacity = 1,
   pen = true, t0 = null, samples, ch = "xyp" }) {
   const pts = [];
   let px = 0, py = 0, pt = 0;
@@ -285,9 +273,10 @@ export function restyleStrokes(ink, ids, patch) {
     const sizes = sizesFor(s.tool);
     const size = Number.isFinite(patch.size)
       ? Math.round(Math.max(sizes[0], Math.min(sizes.at(-1), patch.size)) * 100) / 100 : s.size;
-    if (color === s.color && size === s.size) return s;
+    const opacity = Number.isFinite(patch.opacity) ? Math.round(Math.min(1, Math.max(0.1, patch.opacity)) * 100) / 100 : s.opacity;
+    if (color === s.color && size === s.size && opacity === s.opacity) return s;
     changed = true;
-    return { ...s, color, size };
+    return { ...s, color, size, opacity };
   });
   return changed ? { ...ink, strokes } : ink;
 }
@@ -492,21 +481,55 @@ export function boundsOf(ink, ids) {
 }
 
 // --- replay ----------------------------------------------------------------
-// A drawing as it was written. A stroke starts at its wall-clock `t0` plus
-// its first sample's `t` (a run the partial eraser cut out of a longer
-// stroke keeps the times it had), and its samples follow their `t`. Pauses,
-// between strokes and inside one, shrink to `pause`, and a replay longer
-// than `max` plays faster, so a page written over an hour replays in
-// seconds. Strokes play in the order they were drawn: by that start, the
-// file's order breaking ties; a stroke without timing counts as drawn right
-// after the stroke before it in the file, its samples spread over UNTIMED_MS.
+// A drawing as it was written, on one of two clocks (docs/dev/recording.md
+// "One clock for every replay"). The strokes' own clock is wall-clock
+// time: a stroke starts at its `t0` plus its first sample's `t` (a run the
+// partial eraser cut out of a longer stroke keeps the times it had) and
+// its samples follow their `t`; `strokeWalls` reads it, and `inkUntil`
+// draws the drawing as it stood at an instant on it — what a recording's
+// player drives from the audio. The compressed clock of a group's own
+// replay button is `inkTimeline`: the same strokes in the order they were
+// drawn, pauses between strokes and inside one shrunk to `pause` and the
+// whole scaled into `max`, so a page written over an hour replays in
+// seconds; a stroke without timing counts as drawn right after the stroke
+// before it in the file, its samples spread over UNTIMED_MS. `inkAtTime` is
+// `inkUntil` on that clock.
 export const REPLAY_PAUSE = 400;
 export const REPLAY_MAX = 15000;
 const UNTIMED_MS = 300;
 
-// → {duration, strokes: [{id, index, start, end, times}]} in ms from the
-// replay's start, in drawing order: `index` is the stroke's place in the
-// file, `times` each sample's time.
+const walls = new WeakMap();
+// Each sample's wall-clock ms, or null for a stroke no clock places (no
+// `t0`, or no `t` channel: imported foreign ink). Cached per stroke object.
+export function strokeWalls(stroke) {
+  if (walls.has(stroke)) return walls.get(stroke);
+  const samples = decodeStroke(stroke);
+  const timed = Number.isFinite(stroke.t0) && samples.length > 0 && samples.every((p) => p.t != null);
+  const out = timed ? samples.map((p) => stroke.t0 + p.t) : null;
+  walls.set(stroke, out);
+  return out;
+}
+
+const spans = new WeakMap();
+// [first start, last end] in wall-clock ms over the timed strokes, or null
+// when none is timed. Cached per drawing object.
+export function inkWallSpan(ink) {
+  if (!ink) return null;
+  if (spans.has(ink)) return spans.get(ink);
+  let out = null;
+  for (const stroke of ink.strokes || []) {
+    const ts = strokeWalls(stroke);
+    if (!ts) continue;
+    out = out ? [Math.min(out[0], ts[0]), Math.max(out[1], ts[ts.length - 1])] : [ts[0], ts[ts.length - 1]];
+  }
+  spans.set(ink, out);
+  return out;
+}
+
+// → {duration, strokes: [{id, index, start, end, times}], times} in ms from
+// the replay's start, in drawing order: `index` is the stroke's place in
+// the file, `times` each sample's time, and the map `times` the same per
+// id — inkUntil's table.
 export function inkTimeline(ink, { pause = REPLAY_PAUSE, max = REPLAY_MAX } = {}) {
   let before = -Infinity;
   const order = (ink?.strokes || []).map((stroke, index) => {
@@ -541,26 +564,40 @@ export function inkTimeline(ink, { pause = REPLAY_PAUSE, max = REPLAY_MAX } = {}
     }
     clock = max;
   }
-  return { duration: clock, strokes };
+  return { duration: clock, strokes, times: new Map(strokes.map((s) => [s.id, s.times])) };
 }
 
-// The drawing at replay time `t` (ms): the strokes begun by then, in the
-// order they were drawn, the one being written cut to the samples it had
-// (a prefix of its delta-coded `pts` is its first samples). The file itself
-// once the replay has ended.
-export function inkAtTime(ink, timeline, t) {
-  if (!ink || t >= timeline.duration) return ink;
-  const strokes = [];
-  for (const item of timeline.strokes) {
-    if (item.start > t) break;
-    const stroke = ink.strokes[item.index];
-    if (!stroke) continue;
-    if (t >= item.end) { strokes.push(stroke); continue; }
+// The drawing as it stood at instant `at`: `times` is a clock's table of
+// stroke id → each sample's instant on it (a timeline's), else the strokes'
+// own wall clock. The strokes begun by `at` are drawn in the order they
+// were begun, the one being written cut to the samples it had (a prefix of
+// its delta-coded `pts` is its first samples); a stroke the clock does not
+// place is drawn as it is, under the rest. → {ink, pending, latest, done}:
+// `pending` the ids not yet begun, `latest` the id begun last, `done`
+// whether every stroke is complete — `ink` is then the file itself.
+export function inkUntil(ink, at, times = null) {
+  if (!ink) return { ink, pending: [], latest: null, done: true };
+  const drawn = [], pending = [];
+  let latest = null, latestAt = -Infinity, done = true;
+  for (const stroke of ink.strokes || []) {
+    const ts = times ? times.get(stroke.id) : strokeWalls(stroke);
+    if (!ts?.length) { drawn.push({ stroke, at: -Infinity }); continue; }
+    if (ts[0] > at) { pending.push(stroke.id); done = false; continue; }
+    if (ts[0] >= latestAt) { latestAt = ts[0]; latest = stroke.id; }
+    if (ts[ts.length - 1] <= at) { drawn.push({ stroke, at: ts[0] }); continue; }
+    done = false;
     let k = 1;
-    while (k < item.times.length && item.times[k] <= t) k++;
-    strokes.push({ ...stroke, pts: stroke.pts.slice(0, k * (stroke.ch || "xy").length) });
+    while (k < ts.length && ts[k] <= at) k++;
+    drawn.push({ stroke: { ...stroke, pts: stroke.pts.slice(0, k * (stroke.ch || "xy").length) }, at: ts[0] });
   }
-  return { ...ink, strokes };
+  if (done) return { ink, pending, latest, done };
+  drawn.sort((a, b) => a.at - b.at);
+  return { ink: { ...ink, strokes: drawn.map((d) => d.stroke) }, pending, latest, done };
+}
+
+// The drawing at replay time `t` of `timeline` (inkTimeline's).
+export function inkAtTime(ink, timeline, t) {
+  return inkUntil(ink, t, timeline.times).ink;
 }
 
 // --- rendering -------------------------------------------------------------

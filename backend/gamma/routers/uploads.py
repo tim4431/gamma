@@ -22,6 +22,7 @@ from ..storage import (
     SANDBOXED_EXTENSIONS,
     display_filename,
     find_upload_file,
+    is_audio,
     is_pdf,
     pdf_url,
     store_file,
@@ -33,6 +34,9 @@ from ..storage import (
 # Link visitors (anyone-with-the-link edit shares) may paste images and files
 # like any editor, within the page's workspace quota, but only so many per IP.
 LINK_UPLOADS_PER_5_MIN = 60
+# The containers MediaRecorder writes (and their Ogg kin), checked by their
+# magic bytes on upload (storage.is_audio).
+RECORDING_EXTENSIONS = (".webm", ".m4a", ".ogg", ".opus")
 
 router = APIRouter(prefix="/api", tags=["uploads"])
 
@@ -148,7 +152,9 @@ def upload_file(request: Request, file: UploadFile = File(...)):
     declared type, same path as /upload-image). A PDF stored this way gets
     the same ``<hash>.pdf`` name the PDF ingest mints, so it can later be
     opened as a document page without a second upload (``POST
-    /blocks/by-doc/{hash}``). → ``{url, name, size, already_existed}``."""
+    /blocks/by-doc/{hash}``). A recording's segment (``.webm``, ``.m4a``,
+    ``.ogg``, ``.opus``) must open as that audio container. → ``{url, name,
+    size, already_existed}``."""
     ws = require_ws_writer(request)
     link_ratelimit(request, "upload", LINK_UPLOADS_PER_5_MIN, 300)
     name = display_filename(file.filename, "file")
@@ -168,6 +174,10 @@ def upload_file(request: Request, file: UploadFile = File(...)):
             parse_ink(contents)
         except InkError as e:
             raise HTTPException(status_code=400, detail=f"invalid ink file: {e}")
+    # a recording's segments are served inline to an <audio> element, so the
+    # extensions they come under are stored only when they are that container
+    if ext in RECORDING_EXTENSIONS and not is_audio(ext, contents):
+        raise HTTPException(status_code=400, detail="not a valid audio file")
     filename, already_existed = store_file(ws, contents, ext)
     return {"url": f"/api/uploads/{filename}", "name": name, "size": len(contents),
             "already_existed": already_existed}
@@ -271,7 +281,7 @@ def serve_upload(filename: str, request: Request):
     # so a given name can never serve different bytes — cache hard for a month.
     headers = {"Cache-Control": "public, max-age=2592000, immutable",
                "X-Content-Type-Options": "nosniff"}
-    # Only images, PDFs and plain text render on direct navigation; generic
+    # Only images, PDFs, plain text and audio render on direct navigation; generic
     # files (office, zip, …) download, and so do svg/html — scriptable in this
     # origin (stored XSS) — which are sandboxed too in case a browser renders
     # them anyway (storage.INLINE_EXTENSIONS / SANDBOXED_EXTENSIONS).
