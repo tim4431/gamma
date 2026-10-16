@@ -282,6 +282,16 @@ the highlights, so under them, as on the page.
 - `/GammaTextBox`: `{"v":1,"md":…,"box":…,"text":…}`, for a lossless
   re-import. `text` is the `/Contents` written, so the import can tell
   another viewer's edit from a reference label.
+- `/Zotero:Rect`, `/Zotero:Rotation`, `/Zotero:FontSize`, `/Zotero:Color`:
+  without them Zotero (7+) drops a `/FreeText` instead of importing it as
+  its text annotation (pdf-worker's `readRawAnnotation`;
+  [research/zotero-annotations.md](../research/zotero-annotations.md)).
+  The rect is the box as shown, `w × h` in points, unturned, around the
+  `/Rect`'s centre. The rotation is the page's: Zotero draws the text
+  turned by the page's rotation less this one, so it stands upright, and
+  its own writer rebuilds the same `/Rect` from the two. The colour is the
+  text's; Zotero would take `/C`, the fill, without it. With the `/NM`,
+  that is all Zotero needs; it shows the plain `/Contents` in its own font.
 - Not written: `/RC` and `/DS`, which could disagree with the appearance,
   and `/Q`, 0 by default. Nor `/RD`, since a rebuilt look would fill only
   inside it, or `/CL` and `/LE`, which are for callouts.
@@ -300,7 +310,9 @@ replies and hidden annotations are in
   as the other app showed it.
 - A foreign `/FreeText` is a fixed box over its text area, the `/Rect` less
   the `/RD` margins. Its size and colour come from `/DA`, its fill from `/C`,
-  its text from `/Contents`, else `/RC` reduced by `_rc_text`.
+  its text from `/Contents`, else `/RC` reduced by `_rc_text`. A Zotero
+  text annotation (`/Zotero:Rect`) may be turned, which a box is not: it is
+  that unturned rect upright, on its centre (`_zotero_rect`).
 - A `/Text` sticky note is a note-yellow auto box at its icon's top-left,
   sized by `measure`.
 - The key (`annotation_key`: page, subtype, the rounded corners of the
@@ -384,6 +396,9 @@ highlight, placed by the nearest-sheet rule.
   Markdown-looking text there renders as Markdown.
 - A `/Text` or `/FreeText` stored as a highlight block stays one, which the
   AI and the Logseq export read as an area highlight; there is no migration.
-- The Zotero note labels a box by its page only as the note's top block.
-  The Obsidian export does not say which sheet a box was on.
+- In Zotero a box is plain text in Zotero's font, size and colour: no
+  Markdown, math, fill or fixed width, and Zotero 6 drops it. The Zotero
+  note a box becomes without a PDF copy labels it by its page only as the
+  note's top block. The Obsidian export does not say which sheet a box was
+  on.
 - Other fonts, alignment, borders and rotated boxes: the model has none.

@@ -221,6 +221,74 @@ def _send(guest, data, preview=False, **form):
                       files={"file": ("lib.zip", data, "application/zip")}, data=form)
 
 
+def _zotero_annotated_pdf():
+    """The paper with one annotation of each kind Zotero has, keyed as its
+    pdf-worker writes them into an export with "Include Annotations"
+    (annotationToRaw, Zotero 9): a Zotero id on each, no /CA on the markup,
+    a text annotation's own box and turn in /Zotero:* keys."""
+    from PyPDF2 import PdfReader, PdfWriter
+    from PyPDF2.generic import ArrayObject, DictionaryObject, FloatObject, NameObject, NumberObject, TextStringObject
+
+    def value(v):
+        if hasattr(v, "write_to_stream"):
+            return v
+        if isinstance(v, tuple):
+            return ArrayObject(value(x) for x in v)
+        if isinstance(v, dict):
+            return DictionaryObject({NameObject(k): value(x) for k, x in v.items()})
+        if isinstance(v, str):
+            return NameObject(v) if v.startswith("/") else TextStringObject(v)
+        return NumberObject(v) if isinstance(v, int) else FloatObject(v)
+
+    def annot(subtype, key, rect, **keys):
+        return DictionaryObject({NameObject(k): value(v) for k, v in {
+            "/Type": "/Annot", "/Subtype": subtype, "/Rect": rect, "/F": 4,
+            "/NM": f"Zotero-{key}", "/Zotero:Key": key, **{f"/{k}": v for k, v in keys.items()}}.items()})
+
+    w = PdfWriter()
+    w.append(PdfReader(io.BytesIO(_annotated_pdf())))
+    del w.pages[0][NameObject("/Annots")]
+    for a in (
+        annot("/Highlight", "HLAAAAAA", (72, 716, 300, 732), QuadPoints=(72, 732, 300, 732, 72, 716, 300, 716),
+              C=(1, 0.831, 0), Contents="a highlight"),
+        annot("/Underline", "ULAAAAAA", (72, 716, 200, 732), QuadPoints=(72, 732, 200, 732, 72, 716, 200, 716),
+              C=(1, 0.4, 0.4), Contents="an underline"),
+        annot("/Text", "NTAAAAAA", (500, 700, 522, 722), C=(0.373, 0.698, 0.212), CA=1, Contents="a note"),
+        annot("/Square", "IMAAAAAA", (100, 300, 400, 500), BS={"/W": 2}, C=(0.18, 0.659, 0.898),
+              Contents="an image"),
+        annot("/Ink", "INAAAAAA", (98, 98, 302, 202), BS={"/S": "/N", "/Type": "/Border", "/W": 2},
+              InkList=((100, 100, 150, 150, 200, 120, 300, 200),), C=(0.635, 0.541, 0.898), CA=1),
+        annot("/FreeText", "TXAAAAAA", (100, 550, 300, 600), Contents="typed in Zotero", CA=1,
+              DA=TextStringObject("/Helvetica 14 Tf 0.898 0.431 0.933 rg"), **{
+                  "Zotero:Rect": (100, 550, 300, 600), "Zotero:Rotation": 0, "Zotero:FontSize": 14,
+                  "Zotero:Color": (0.898, 0.431, 0.933)}),
+    ):
+        w.add_annotation(page_number=0, annotation=a)
+    out = io.BytesIO()
+    w.write(out)
+    return out.getvalue()
+
+
+def test_each_kind_of_zotero_annotation_imports(guest):
+    """Zotero's highlight and underline are highlights (Gamma has no
+    underline), its image an area highlight, its ink handwriting, its text
+    and its note text boxes — each with its comment or text, its colour."""
+    rdf = RDF.replace("s41586-000-00000-0", "every-kind").replace("Attention is all you need", "Every kind")
+    d = _send(guest, _custom_zip(rdf, {"files/3/Vaswani - 2017 - Attention.pdf": _zotero_annotated_pdf()})).json()
+    assert d["annotations_imported"] == 6, d
+    paper = next(p for p in d["pages"] if p["title"] == "Every kind")
+    kids = {c["content"]: c["properties"] for c in
+            guest.get(f"/api/blocks/{paper['id']}/children").json()["children"] if c["properties"].get("imported_annot")}
+    assert "Attention" in kids["a highlight"]["quote"] and kids["a highlight"]["color"] == "#ffd40073"
+    assert "Attention" in kids["an underline"]["quote"]
+    assert kids["an image"]["pdf_position"]["area"] is True
+    assert kids["a note"]["text_box"]["bg"] == "#fff4b8"
+    box = kids["typed in Zotero"]["text_box"]
+    assert (box["x"], box["y"], box["w"], box["h"], box["size"], box["color"]) == (100, 192, 200, 50, 14, "#e56eee")
+    [ink] = [p for p in kids.values() if p.get("ink_url")]
+    assert ink["color"] == "#a28ae5" and ink["ink_strokes"] == 1
+
+
 def test_preview_is_read_only_and_predicts_upgrade(guest):
     from conftest import workspace_of
     from gamma.db import connect_pages_db, ws_uploads_dir

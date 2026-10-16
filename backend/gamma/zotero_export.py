@@ -25,11 +25,17 @@ wizard). Note Zotero CANNOT read the .zip itself — its wizard reports
 "unsupported format" for one; the .rdf must be extracted and picked, which is
 why the zip carries a README saying so.
 
-Highlights are deliberately absent here — like Zotero's own "Include
+Annotations are deliberately absent here — like Zotero's own "Include
 Annotations", they travel embedded inside the exported PDF copies (the
-endpoint burns them in with ``pdf_export.annotate_pdf``). A text box is
-the user's writing, so it is a note: one placed on a PDF page opens with
-its page, as a highlight's memo does.
+endpoint burns them in with ``pdf_export.annotate_pdf``): highlights, area
+notes, handwriting and text boxes, which Zotero reads as its highlight,
+image, ink and text annotations. A text box with no PDF copy to carry it is
+a note: one placed on a PDF page opens with its page, as a highlight's memo
+does.
+
+Keys: an item's ``rdf:about`` is the page's Zotero key or ``GAMMA_PAGE_KEY``
++ the page id; a note's is ``GAMMA_NOTE_KEY`` + the block id. Both stay the
+same from one export to the next, which is what the import upserts by.
 """
 
 import html as html_mod
@@ -52,6 +58,11 @@ _NS = {
 }
 for _p, _u in _NS.items():
     ET.register_namespace(_p, _u)
+
+# The keys of what Gamma exports: real Zotero names items "#item_<n>",
+# "urn:isbn:…" or by URL, so these prefixes never meet one.
+GAMMA_PAGE_KEY = "#gamma_page_"
+GAMMA_NOTE_KEY = "#gamma_note_"
 
 
 def _q(prefix: str, tag: str) -> str:
@@ -196,7 +207,7 @@ def build_rdf(items: list[dict]) -> str:
     ``folders`` are the collection paths it is in (each a list of names
     from the top), ``cite_key`` the citation key pinned on the page ("" for
     none), ``pdf_path`` the zip path relative to the .rdf (or None) and
-    ``notes`` a list of HTML strings. → the .rdf document text."""
+    ``notes`` a list of ``{key, html}``. → the .rdf document text."""
     root = ET.Element(_q("rdf", "RDF"))
 
     folder_paths = set()
@@ -273,11 +284,10 @@ def build_rdf(items: list[dict]) -> str:
             _sub(att, "dc", "title", img.get("title") or "Image")
             _sub(att, "link", "type", img.get("mime") or "application/octet-stream")
 
-        for i, html in enumerate(item.get("notes") or [], 1):
-            memo_key = f"#note_{n}_{i}"
-            _sub(el, "dcterms", "isReferencedBy", rdf_resource=memo_key)
-            memo = _sub(root, "bib", "Memo", rdf_about=memo_key)
-            _sub(memo, "rdf", "value", html)
+        for note in item.get("notes") or []:
+            _sub(el, "dcterms", "isReferencedBy", rdf_resource=note["key"])
+            memo = _sub(root, "bib", "Memo", rdf_about=note["key"])
+            _sub(memo, "rdf", "value", note["html"])
 
         for path in item.get("folders") or []:
             for i in range(len(path)):

@@ -481,7 +481,8 @@ text box's `text_box`, merged key by key ([text_boxes.md](text_boxes.md)
   [pdf_typesetting.md](pdf_typesetting.md)): the annotated PDF
   writes one `/Ink` per look bucket (colour × tool × size × opacity) with
   `/InkList` in user space, the mean drawn width as `/BS /W`, the note on
-  the first, an `/NM` for Zotero, and a private `/GammaInk` key carrying the
+  the first, an `/NM` Zotero needs to import it as ink (the Zotero export's
+  PDF copies carry it too), and a private `/GammaInk` key carrying the
   bucket's strokes so a Gamma re-import keeps pressure and time; the
   embedded-annotation importer reads `/Ink` (Gamma's or anyone's) into ink
   blocks and strips them like the other types; the Markdown export writes

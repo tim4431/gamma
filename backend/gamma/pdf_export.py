@@ -26,6 +26,8 @@ alphabet. Highlights stay id-less on purpose.
 
 Handwriting becomes /Ink and text boxes /FreeText (gamma/text_box.py), each
 with a private key holding Gamma's own record for a lossless re-import.
+Zotero imports both: the /Ink with its /NM id, the /FreeText as a text
+annotation through its ``/Zotero:*`` keys.
 """
 
 import hashlib
@@ -484,6 +486,18 @@ def _text_box_annotation(writer, glyphs, tb, rotation, crop, author, resolve_ref
         NameObject("/GammaTextBox"): TextStringObject(json.dumps(
             {"v": 1, "md": md, "box": box, "text": text}, ensure_ascii=False, separators=(",", ":"))),
     })
+    # Zotero 7+ reads a /FreeText as its own text annotation only with these
+    # keys (pdf-worker's readRawAnnotation drops one without them): the box
+    # as shown, unturned, around the drawn box's centre; the page's turn,
+    # since Zotero draws the text turned by the page's rotation less this
+    # one, so it stands upright as here; the size; the text colour, which
+    # Zotero would otherwise take from /C, the fill.
+    cx, cy = (ax + bx) / 2, (ay + by) / 2
+    annot[NameObject("/Zotero:Rect")] = ArrayObject(
+        FloatObject(round(v, 3)) for v in (cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2))
+    annot[NameObject("/Zotero:Rotation")] = NumberObject(rotation)
+    annot[NameObject("/Zotero:FontSize")] = FloatObject(box["size"])
+    annot[NameObject("/Zotero:Color")] = ArrayObject(FloatObject(round(v, 4)) for v in parse_css_color(box["color"])[:3])
     if box["bg"]:
         annot[NameObject("/C")] = ArrayObject(FloatObject(round(v, 4)) for v in parse_css_color(box["bg"])[:3])
     if rotation:

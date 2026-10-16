@@ -131,7 +131,8 @@ def test_extract_pdf_annotations_resolves_indirects():
     assert (pos["pageNumber"], pos["width"], pos["height"]) == (1, 612, 792)  # the page box, once
     # y flipped to top-left origin: 792 - 720 = 72
     assert abs(pos["boundingRect"]["y1"] - 72.0) < 0.01 and list(pos["boundingRect"]) == ["x1", "y1", "x2", "y2"]
-    assert a["color"].startswith("#ffe5") and len(a["color"]) == 9  # #rrggbbaa, the stored form
+    # #rrggbbaa, the stored form; 0.3 × 255 = 76.5 and 0.9 × 255 = 229.5 rounded
+    assert a["color"] == "#ffe64c73"
 
 
 # --- selection-centered chat context (gamma/ai_context.py) -------------------
