@@ -329,14 +329,14 @@ text box's `text_box`, merged key by key ([text_boxes.md](text_boxes.md)
   buttons; `InkTooltips` shows a button's title on hover or focus for the
   strip and the menus, since native titles are unreliable under Pencil
   hover. A press takes the tooltip away and keeps it away while the pointer
-  stays on that button, and a button whose menu stands open has none: a
-  tooltip must not flicker over what the press just opened. For the same
-  reason a menu a tooltip host holds belongs outside it — React hands a
-  portal's events to the host all the same, so every row the pointer
-  crossed would raise one — and opens on the press, not the click, so the
-  menu takes the tooltip's place in the same frame. A tip goes below its
-  button unless that is near the window's bottom; `above` keeps a strip's
-  tips on the side its menus open (the recording player's bar).
+  stays on that button, and a button with `aria-expanded="true"` gets none,
+  so no tooltip flickers over the menu the press just opened. A menu such a
+  button opens belongs outside the `InkTooltips` host: React bubbles a
+  portal's events to the host, so every row the pointer crossed would raise
+  a tooltip. It opens on the press, not the click, so the menu takes the
+  tooltip's place in the same frame (the recording player's `PlayerBar`).
+  A tip goes below its button unless that is near the window's bottom;
+  `above` keeps a strip's tips above, on the side its menus open.
   `InkCard` is the picture in the notes. For `markup/` the file
   exports `InkTooltips`, `inkColorName`, `ERASER_SIZES`, `ColorChoices` (a
   palette role's swatches plus a custom colour, for a pen preset's row and a
@@ -370,7 +370,7 @@ text box's `text_box`, merged key by key ([text_boxes.md](text_boxes.md)
     session (`fingerHint`, which a pen press also spends); App puts the
     hint on the status pill ([ui-design.md](ui-design.md#the-status-pill)).
   - Samples (`ink/inkInput.js`): `getCoalescedEvents()` where available
-    (Safari has none but delivers 120/240 Hz moves), hardware timestamps,
+    (Safari since 18.2; older Safari delivers 120/240 Hz moves without it), hardware timestamps,
     the pressure preference snapshotted at stroke start, the pointer-up
     position with the last contact pressure (up reports zero), repeated
     points dropped. The live outline gets the same endpoint treatment as
