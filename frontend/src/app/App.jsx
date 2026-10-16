@@ -43,6 +43,7 @@ import { CardLabels, KindToggle, ListFindBox, ListSearchElsewhere, PageCard, Sel
 import { createChatSession } from "../chat/chatSession";
 import { providerModels } from "../chat/modelPrefs";
 import { addPictures, isPdfPicture, pictureUrl, regionBox, regionPicture, round4 } from "../chat/chatPictures.js";
+import { MAX_CHAT_PASSAGES } from "../chat/passageBudget.js";
 // Agent tools whose applied action changes the open page's block tree
 // (handleAgentEvent reloads it and lights the block up).
 import { BLOCK_TOOLS } from "../chat/agentSteps.js";
@@ -2875,15 +2876,28 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // PDF passages the next chat question focuses on, as {text, page, box}
   // (pdf/pdfSelectionSpot.js — where it sits, so the server can place it
   // and picture a formula). Ctrl (additive) appends — whether from text
-  // selection or highlight clicks; plain replaces.
+  // selection or highlight clicks; plain replaces. A passage is kept whole:
+  // how much of it the message quotes is the chat's budget to decide, and
+  // its chip says so (chat/passageBudget.js). One past the most a message
+  // takes is refused with a word, never dropped quietly.
   const [pdfSelections, setPdfSelections] = useState([]);
+  // The viewer's mouseup listener, set up once, reads the set through this.
+  const pdfSelectionsRef = useRef(pdfSelections);
+  useEffect(() => { pdfSelectionsRef.current = pdfSelections; }, [pdfSelections]);
   function addPdfSelection(text, additive, spot) {
-    const part = (text || "").trim().slice(0, 4000);
+    const part = (text || "").trim();
     if (!part) return;
     const item = { text: part, page: spot?.page || 0, box: spot?.box || null };
-    setPdfSelections((prev) => additive
-      ? (prev.some((s) => s.text === part) || prev.length >= 6 ? prev : [...prev, item])
-      : [item]);
+    if (!additive) {
+      setPdfSelections([item]);
+      return;
+    }
+    const held = pdfSelectionsRef.current;
+    if (!held.some((s) => s.text === part) && held.length >= MAX_CHAT_PASSAGES) {
+      setStatus(t("A chat message takes at most {n} PDF passages — remove one to add another.", { n: MAX_CHAT_PASSAGES }));
+      return;
+    }
+    setPdfSelections((prev) => (prev.some((s) => s.text === part) || prev.length >= MAX_CHAT_PASSAGES ? prev : [...prev, item]));
   }
   // Note chips for the next chat message — blocks attached with Ctrl+click /
   // the ⋮⋮ menu's "Add to chat" ({kind: "block", id, text}; the server serves
@@ -2893,11 +2907,21 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // rewrites just that). Cleared on send, like pdfSelections; a page switch
   // drops them (their ids belong to the page).
   const [chatNotes, setChatNotes] = useState([]);
+  const chatNotesRef = useRef(chatNotes);
+  useEffect(() => { chatNotesRef.current = chatNotes; }, [chatNotes]);
+  // A block chip's text is only its preview: the server serves the block
+  // itself, with its sub-blocks, within the message's budget.
   const blockChip = (block) => ({ kind: "block", id: block.id, text: blockChipText(block).slice(0, 4000) });
+  const attachedBlocks = () => chatNotesRef.current.filter((n) => n.kind === "block");
   function addBlockToChat(block) {
     if (!block?.id || block.id === "root") return;
-    setChatNotes((prev) => prev.some((n) => n.kind === "block" && n.id === block.id)
-      ? prev : prev.length >= 12 ? prev : [...prev, blockChip(block)]);
+    const attached = attachedBlocks();
+    if (!attached.some((n) => n.id === block.id) && attached.length >= MAX_CHAT_PASSAGES) {
+      setStatus(t("A chat message takes at most {n} attached blocks — detach one to add another.", { n: MAX_CHAT_PASSAGES }));
+      return;
+    }
+    setChatNotes((prev) => (prev.some((n) => n.kind === "block" && n.id === block.id)
+      || prev.filter((n) => n.kind === "block").length >= MAX_CHAT_PASSAGES ? prev : [...prev, blockChip(block)]));
     setStatus(t("Block attached to your next chat message."));
   }
   // "Transcribe with AI" on a handwriting block: the block goes to the chat
@@ -2907,10 +2931,14 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   const [chatAsk, setChatAsk] = useState(null);
   function transcribeInk(block) {
     if (!block?.id) return;
-    // The block the request is about always goes: at 12 chips the oldest
-    // makes room.
-    setChatNotes((prev) => prev.some((n) => n.kind === "block" && n.id === block.id)
-      ? prev : [...prev.slice(-11), blockChip(block)]);
+    // The block the request is about always goes: with as many blocks
+    // attached as a message takes, the oldest makes room, and says so.
+    const attached = attachedBlocks();
+    if (!attached.some((n) => n.id === block.id)) {
+      const oldest = attached.length >= MAX_CHAT_PASSAGES ? attached[0] : null;
+      setChatNotes((prev) => [...prev.filter((n) => n !== oldest), blockChip(block)]);
+      if (oldest) setStatus(t("The oldest attached block was detached to make room."));
+    }
     showChat();
     setChatAsk({ id: Date.now(), text: t("Transcribe this handwriting into its caption.") });
   }
@@ -2930,8 +2958,13 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       return;
     }
     const note = { kind: "note", id: block.id, from: at.from, to: at.to, text };
-    setChatNotes((prev) => prev.some((n) => n.kind === "note" && n.id === note.id && n.from === note.from && n.to === note.to)
-      || prev.filter((n) => n.kind === "note").length >= 6 ? prev : [...prev, note]);
+    const same = (n) => n.kind === "note" && n.id === note.id && n.from === note.from && n.to === note.to;
+    const notes = (list) => list.filter((n) => n.kind === "note").length;
+    if (!chatNotesRef.current.some(same) && notes(chatNotesRef.current) >= MAX_CHAT_PASSAGES) {
+      setStatus(t("A chat message takes at most {n} note selections — remove one to add another.", { n: MAX_CHAT_PASSAGES }));
+      return;
+    }
+    setChatNotes((prev) => (prev.some(same) || notes(prev) >= MAX_CHAT_PASSAGES ? prev : [...prev, note]));
   }
   useEffect(() => { setChatNotes([]); }, [focusedBlockId]);
   // The open editor's selection, for the chat's Cursor chip, which becomes

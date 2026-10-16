@@ -1,10 +1,14 @@
 """An upload in parts (``POST /api/uploads/parts``, routers/uploads.py): a
-PDF too big for one request — a proxy in front of the server caps a
+file too big for one request — a proxy in front of the server caps a
 request's body (Cloudflare at 100 MB on its Free and Pro plans) — comes as
 the parts the client cuts it into, one request each, appended to one file
 in the store's partial directory (``storage.partial_dir``) and hashed as they
-land, and is stored whole at the end by a rename (``storage.store_pdf_path``),
-never a copy, so finishing takes no longer than a small upload does.
+land, and is stored whole at the end by a rename, never a copy, so
+finishing takes no longer than a small upload does. Its ``kind`` says how:
+``pdf`` (the default) as a document's PDF, like ``POST /uploads``
+(``storage.store_pdf_path``); ``file`` as any file a block references,
+under the extension of its name, like ``POST /upload-file``
+(``storage.store_file_path``) — a mirror pushes its large files this way.
 
 A session is the server's side of one such upload: its token, the bytes
 it holds, the running digest. The size and quota checks run when it is
@@ -49,6 +53,8 @@ class Session:
     size: int
     name: str
     path: Path
+    kind: str = "pdf"  # "pdf" or "file" (the module's docstring)
+    ext: str = ".pdf"  # what a "file" is stored under
     received: int = 0
     digest: "hashlib._Hash" = field(default_factory=hashlib.sha256)
     touched: float = field(default_factory=time.monotonic)
@@ -60,13 +66,24 @@ _sessions: dict[str, Session] = {}
 _lock = threading.Lock()
 
 
-def start(ws: str, size: int, name: str = "") -> Session:
+def start(ws: str, size: int, name: str = "", kind: str = "pdf") -> Session:
     """Open an upload of ``size`` bytes into the workspace: the per-file
     limit and the quota (413 / 507, ``check_upload_allowed``) are checked
-    here, before a byte travels. 400 for no size at all, 429 past
-    MAX_PER_WS open sessions in the workspace."""
+    here, before a byte travels, and a ``file``'s extension (400 for an
+    executable, or a drawing, which always fits one request). 400 for no
+    size at all, 429 past MAX_PER_WS open sessions in the workspace."""
     if size <= 0:
         raise HTTPException(status_code=400, detail="an upload needs a size")
+    if kind not in ("pdf", "file"):
+        raise HTTPException(status_code=400, detail="kind must be 'pdf' or 'file'")
+    ext = ".pdf"
+    if kind == "file":
+        try:
+            ext = storage.upload_extension(name)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        if ext == ".ink":
+            raise HTTPException(status_code=400, detail="a drawing is uploaded in one request")
     check_upload_allowed(ws, size)
     stale = []
     with _lock:
@@ -83,7 +100,7 @@ def start(ws: str, size: int, name: str = "") -> Session:
         path = partial / f"parts-{token}"
         with open(path, "xb"):
             pass
-        session = Session(token=token, ws=ws, size=size, name=name, path=path)
+        session = Session(token=token, ws=ws, size=size, name=name, path=path, kind=kind, ext=ext)
         _sessions[token] = session
     for s in stale:
         _close(s)
@@ -142,10 +159,13 @@ def write_part(path: Path, received: int, size: int, stream, digest=None) -> int
 
 
 def finish(session: Session) -> tuple[str, bool]:
-    """Store the assembled file as a PDF (``storage.store_pdf_path``) and
-    close the session: ``(doc_id, already_existed)`` like ``store_pdf``.
-    400 while bytes are missing (the session stays open) or when the file
-    is no PDF (the session is dropped, its file with it)."""
+    """Store the assembled file and close the session: a ``pdf`` as a PDF
+    → ``(doc_id, already_existed)`` like ``store_pdf``, a ``file`` →
+    ``(filename, already_existed)`` like ``store_file``. 400 while bytes
+    are missing (the session stays open), or when the file is not what its
+    extension says — a PDF without its header, a recording's container
+    without its magic bytes, as ``POST /upload-file`` checks (the session
+    is dropped, its file with it)."""
     with session.lock:
         if session.closed:
             raise HTTPException(status_code=404, detail="no such upload in progress")
@@ -154,12 +174,17 @@ def finish(session: Session) -> tuple[str, bool]:
                                 detail=f"{session.received} of {session.size} bytes received")
         _forget(session)
         with open(session.path, "rb") as f:
-            head = f.read(4)
-        if not storage.is_pdf(head):
+            head = f.read(16)
+        refused = ("not a valid PDF (missing %PDF header)" if session.ext == ".pdf" and not storage.is_pdf(head)
+                   else "not a valid audio file" if session.ext in storage.RECORDING_EXTENSIONS
+                   and not storage.is_audio(session.ext, head) else "")
+        if refused:
             session.path.unlink(missing_ok=True)
-            raise HTTPException(status_code=400, detail="not a valid PDF (missing %PDF header)")
-        doc_id = storage.digest_id(session.digest)
-        return storage.store_pdf_path(session.ws, session.path, session.size, doc_id)
+            raise HTTPException(status_code=400, detail=refused)
+        digest = storage.digest_id(session.digest)
+        if session.kind == "file":
+            return storage.store_file_path(session.ws, session.path, session.size, digest, session.ext)
+        return storage.store_pdf_path(session.ws, session.path, session.size, digest)
 
 
 def discard(session: Session) -> None:

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { areaPicturesNote, coverageNote, formatSpans, readSpans, trimmedNote, truncatedNote, unseenSpans } from "../src/chat/coverage.js";
+import { areaPicturesNote, coverageNote, formatSpans, readSpans, shortenedNote, trimmedNote, truncatedNote, unseenSpans } from "../src/chat/coverage.js";
 
 const reads = [
   { kind: "read", tool: "read_page", page_id: "a", pdf_pages: [3, 5] },
@@ -77,4 +77,24 @@ test("the per-reply pills: messages left out, a reply cut off", () => {
   assert.match(trimmedNote({ turns: 4 }).long, /4 oldest messages/);
   assert.equal(truncatedNote(false), null);
   assert.equal(truncatedNote(true).short, "Reply cut off at the output limit");
+});
+
+test("passages that went short say what was sent, and why", () => {
+  const n = (v) => v.toLocaleString();
+  assert.equal(shortenedNote(null), null);
+  assert.equal(shortenedNote({ items: [], budget: 60_000, asked: 60_000 }), null);
+  // One passage, cut by the budget the request asked for.
+  const one = shortenedNote({ budget: 12_000, asked: 12_000,
+    items: [{ kind: "pdf", n: 1, of: 1, kept: 12_000, total: 31_400 }] });
+  assert.equal(one.short, `PDF passage shortened: first ${n(12_000)} of ${n(31_400)} characters sent`);
+  assert.match(one.long, /Settings \/ AI \/ Chat \/ Context size/);
+  assert.equal(one.refused, true);
+  // Several, after the window fit shrank the budget: numbered, summed, the window to blame.
+  const many = shortenedNote({ budget: 8_000, asked: 60_000, items: [
+    { kind: "pdf", n: 2, of: 3, kept: 4_000, total: 9_000 },
+    { kind: "note", n: 1, of: 1, kept: 2_000, total: 2_500 },
+    { kind: "block", n: 1, of: 2, kept: 2_000, total: 7_000 }] });
+  assert.equal(many.short, `3 passages shortened: ${n(8_000)} of ${n(18_500)} characters sent`);
+  assert.match(many.long, new RegExp(`^PDF passage 2: first ${n(4_000)} of ${n(9_000)} characters\. Selected note text: .* Attached block: `));
+  assert.match(many.long, /model's window couldn't hold all of it/);
 });

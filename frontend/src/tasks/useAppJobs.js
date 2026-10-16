@@ -48,12 +48,8 @@ export function useAppJobs({
   // mine (null = the open one), which is left alone here.
   function runBackupImport(f, mode, target, after = {}) {
     const into = target || getCurrentWorkspace();
-    const form = new FormData();
-    form.append("file", f);
-    form.append("mode", mode);
-    form.append("ws", into);
     postPill("backup-upload", { msg: t("Uploading {file}…", { file: f.name }), spinner: true });
-    tasks.upload("restore", form, { name: `${mode === "merge" ? "Merge" : "Restore"} ${f.name}`.slice(0, 60),
+    tasks.upload("restore", f, { mode, ws: into }, { name: `${mode === "merge" ? "Merge" : "Restore"} ${f.name}`.slice(0, 60),
       meta: { pill: true, restoreInto: into, after } })
       .catch((err) => { if (!err.aborted) setStatus(t("Import failed: {msg}", { msg: err.message || "failed" })); })
       .finally(() => postPill("backup-upload", null));

@@ -6,8 +6,8 @@ gamma/ws_backup.py.
   restored or merged into one (``/import-data``). These answer when the work
   is done, for scripts. The web app starts the same work as background
   jobs (gamma/jobs.py, docs/dev/tasks.md): ``POST /api/jobs/workspace-export``,
-  ``/jobs/restore`` (an uploaded zip), ``/jobs/restore-snapshot`` and
-  ``/jobs/snapshot``.
+  ``/jobs/restore`` (an uploaded zip; ``/jobs/restore/parts`` for one in
+  parts), ``/jobs/restore-snapshot`` and ``/jobs/snapshot``.
 - ``router`` (``/api/workspaces/{ws}/backups``): the snapshots Settings →
   Backups manages — take one, list, download, restore in place, delete.
 
@@ -24,11 +24,11 @@ import zipfile
 from pathlib import Path
 
 from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 from starlette.background import BackgroundTask
 
-from .. import jobs, workspaces, ws_backup
+from .. import import_staging, jobs, upload_parts, workspaces, ws_backup
 from ..auth import require_user_id, requested_ws
 from ..db import account_id, connect_users_db, page_now, ws_dir
 from ..storage import display_filename
@@ -314,6 +314,97 @@ def start_restore(request: Request, file: UploadFile = File(...), mode: str = Fo
     except BaseException:
         zpath.unlink(missing_ok=True)
         raise
+
+
+# A zip larger than a proxy lets one request carry (Cloudflare caps a body
+# at 100 MB) comes in parts, as a PDF does (/uploads/parts' protocol), and is
+# staged like an import review's upload (gamma/import_staging.py): open →
+# the parts, in order → finish, which starts the job like /jobs/restore.
+
+class RestoreParts(BaseModel):
+    size: int
+    name: str = ""
+    mode: str = "replace"
+    ws: str = ""
+    user: str = ""
+
+
+def _staging_key(request: Request) -> str:
+    """The workspace a staged restore is bound to besides the account: the
+    tab's own, which each of its requests carries (the target is kept with
+    the upload and checked again at the finish)."""
+    return requested_ws(request) or request.state.default_ws or ""
+
+
+@transfers.post("/jobs/restore/parts")
+def open_restore_parts(payload: RestoreParts, request: Request):
+    """Open a restore's upload in parts → ``{token, part_bytes, received: 0}``.
+    Who may restore into the target is checked here, before a byte
+    travels; 507 when the upload would leave the disk with less than 1 GB."""
+    me = require_user_id(request)
+    _restorable(request, payload.ws or None, payload.user or None, payload.mode)
+    token = import_staging.open_parts(user_id=me, ws=_staging_key(request), size=payload.size,
+                                      filename=display_filename(payload.name, "backup.zip"), source="restore",
+                                      mode=payload.mode, restore_ws=payload.ws, restore_user=payload.user)
+    return {"token": token, "part_bytes": upload_parts.PART_BYTES, "received": 0}
+
+
+@transfers.post("/jobs/restore/parts/{token}")
+def put_restore_part(token: str, request: Request, part: UploadFile = File(...), offset: int = Form(...)):
+    """One part at byte ``offset`` → ``{received}``; at any other offset a
+    409 whose body carries ``received``, where the client goes on from."""
+    me = require_user_id(request)
+    try:
+        received = import_staging.append(token, me, _staging_key(request), offset, part.file)
+    except upload_parts.OffsetMismatch as e:
+        return JSONResponse({"detail": str(e), "received": e.received}, status_code=409)
+    return {"received": received}
+
+
+def _staged_restore(token: str, me: str, key: str) -> dict:
+    _, meta = import_staging.get(token, me, key, pending=True)
+    if meta.get("source") != "restore":
+        raise HTTPException(status_code=404, detail="no such restore upload")
+    return meta
+
+
+@transfers.post("/jobs/restore/parts/{token}/finish")
+def finish_restore_parts(token: str, request: Request):
+    """The whole zip is in: start its restore as a job → the job, like
+    /jobs/restore (400 while bytes are missing). The staged zip goes once
+    the job is over."""
+    me, key = require_user_id(request), _staging_key(request)
+    meta = _staged_restore(token, me, key)
+    target = _restorable(request, meta["restore_ws"] or None, meta["restore_user"] or None, meta["mode"])
+    import_staging.finish(token, me, key)
+    mode, filename = meta["mode"], meta["filename"]
+
+    def run(job):
+        try:
+            with import_staging.claim(token, me, key) as (staged, _):
+                return ws_backup.restore_zip(target, staged / "upload", mode, by=me, progress=job.progress)
+        finally:
+            try:
+                import_staging.discard(token, me, key)
+            except HTTPException:
+                pass  # already gone (expired)
+
+    try:
+        return jobs.start("restore", owner=me, ws=target, run=run, title=f"Restore {filename}",
+                          params={"ws": target, "name": _name_of(target), "mode": mode, "source": "upload",
+                                  "filename": filename, "size": meta["size"]})
+    except BaseException:
+        import_staging.discard(token, me, key)
+        raise
+
+
+@transfers.delete("/jobs/restore/parts/{token}")
+def discard_restore_parts(token: str, request: Request):
+    """Drop an unfinished restore upload (the stop button)."""
+    me, key = require_user_id(request), _staging_key(request)
+    _staged_restore(token, me, key)
+    import_staging.discard(token, me, key)
+    return {"ok": True}
 
 
 class SnapshotRestoreJob(BaseModel):

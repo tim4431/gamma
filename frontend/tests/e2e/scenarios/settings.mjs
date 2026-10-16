@@ -1,4 +1,5 @@
-import { Account, FAKE_AI_MODELS, Server, fakeAiModels, wanted } from "../harness.mjs";
+import { Account, FAKE_AI_MODELS, ROOT, Server, fakeAiModels, wanted } from "../harness.mjs";
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import http from "node:http";
 import path from "node:path";
@@ -1333,6 +1334,38 @@ export async function settingsScenarios(env) {
       const merged = (await user.api("/api/jobs")).jobs.find((job) => job.kind === "restore" && job.params.filename === "donor.zip");
       assertEq(merged?.state, "done");
       assertEq(merged.params.mode, "merge");
+    } finally { await ctx.close(); }
+  });
+
+  await step("settings: a backup past one request's size goes up in parts and merges as a job", async () => {
+    // A proxy in front of the server caps a request's body (Cloudflare at
+    // 100 MB): past 32 MiB the zip goes in parts (/jobs/restore/parts).
+    const donor = await user.api("/api/workspaces", { method: "POST", body: { name: "Big merge donor" } });
+    await user.api(`/api/blocks?ws=${donor.id}`, { method: "POST", body: { parent_id: "root", content: "Merged in parts" } });
+    const file = path.join(server.dir, "big-donor.zip");
+    fs.writeFileSync(file, Buffer.from(await (await user.api(`/api/export?ws=${donor.id}&uploads=0`, { raw: true })).arrayBuffer()));
+    // 40 MB the restore passes over: it reads pages.db, data.db and uploads/
+    const python = process.env.GAMMA_E2E_PYTHON || path.join(ROOT, "backend", "venv", process.platform === "win32" ? "Scripts/python.exe" : "bin/python");
+    execFileSync(python, ["-c", "import os, sys, zipfile; zipfile.ZipFile(sys.argv[1], 'a').writestr('padding.bin', os.urandom(40 << 20))", file]);
+    const { ctx, page } = await setup();
+    try {
+      const posts = [];
+      page.on("request", (request) => { if (request.method() === "POST") posts.push(new URL(request.url()).pathname); });
+      await openSettings(page);
+      await nav(page, "Workspaces").click();
+      await openRow(page).getByRole("button", { name: "Data", exact: true }).click();
+      const chooser = page.waitForEvent("filechooser");
+      await page.locator(".ctxMenuItem", { hasText: "Merge a backup into it…" }).click();
+      await (await chooser).setFiles(file);
+      const reloaded = page.waitForEvent("load", { timeout: 60000 });
+      await page.locator(".confirmModal").getByRole("button", { name: "Merge", exact: true }).click();
+      await reloaded;
+      assertEq(posts.filter((p) => /^\/api\/jobs\/restore\/parts\/[0-9a-f]+$/.test(p)).length, 2, "40 MB goes up as two parts");
+      assert(!posts.includes("/api/jobs/restore"), "never as one request");
+      await page.waitForSelector(".folderNewBtn");
+      await page.getByText("Merged in parts", { exact: true }).first().waitFor();
+      const merged = (await user.api("/api/jobs")).jobs.find((job) => job.kind === "restore" && job.params.filename === "big-donor.zip");
+      assertEq(merged?.state, "done");
     } finally { await ctx.close(); }
   });
 

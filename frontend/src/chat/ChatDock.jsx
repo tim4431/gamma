@@ -21,7 +21,8 @@ import { GRANTS_KEY, conversationId, declinedSummary, grantsIn, readGrants, wait
 import { MAX_CHAT_REFERENCES } from "./paperMentions";
 import { READ_TOOLS, WRITE_TOOLS, permState, toolsForKind } from "./chatSettings";
 import { addUsage, cachedPercent, contextUsed, conversationUsage, fmtTokens, liveUsage, usageDetail } from "./tokenUsage";
-import { areaPicturesNote, coverageNote, trimmedNote, truncatedNote } from "./coverage.js";
+import { areaPicturesNote, coverageNote, shortenedNote, trimmedNote, truncatedNote } from "./coverage.js";
+import { keptNote, keptTitle, passageShares } from "./passageBudget.js";
 import { recencySections } from "../library/PageOption";
 import { rankLibraryPages } from "../library/librarySearch";
 import { filedIn, pageAttachment } from "../library/libraryUtils";
@@ -81,10 +82,11 @@ function relAge(iso) {
 // tools read on their own ("pages 1–2 of 7 · read 3–5 with tools") and
 // which pages nobody saw; a selection says where the server placed it
 // ("p. 7 · Methods › Noise model") and whether a picture of it went along
-// (its text layer looked like a formula or table). Two more pills, per
+// (its text layer looked like a formula or table). Three more pills, per
 // reply: the oldest messages left out of a conversation the model can't
-// hold any more, and a reply cut off at the output limit (chat/coverage.js).
-function ContextCoverage({ items, actions, tools, trimmed, truncated }) {
+// hold any more, the selected passages and attached blocks that went short,
+// and a reply cut off at the output limit (chat/coverage.js).
+function ContextCoverage({ items, actions, tools, trimmed, shortened, truncated }) {
   const [open, setOpen] = useState(-1); // the pill whose explanation is unfolded
   const notes = (items || []).flatMap((c) => {
     const out = [];
@@ -107,7 +109,7 @@ function ContextCoverage({ items, actions, tools, trimmed, truncated }) {
     }
     return out;
   });
-  for (const extra of [trimmedNote(trimmed), truncatedNote(truncated)]) if (extra) notes.push(extra);
+  for (const extra of [trimmedNote(trimmed), shortenedNote(shortened), truncatedNote(truncated)]) if (extra) notes.push(extra);
   if (!notes.length) return null;
   // Pills like the agent's steps: a click unfolds the explanation under them.
   return (
@@ -284,7 +286,8 @@ const toolCallText = (a) => {
 // One chip in the composer's strip: a PDF passage, the cursor block, an
 // attached block or selected note text. Two lines: what it is, in words
 // (`label`, plus a muted `note` — the PDF page, or how to leave an automatic
-// one out), over a plain-text preview of the text (chat/chipText.js: the
+// one out — and `cut`, what the message keeps of a passage too long to go
+// whole), over a plain-text preview of the text (chat/chipText.js: the
 // markdown dropped, inline math typeset). `auto` marks context nobody
 // attached — it rides along because of where the cursor is — with a dashed
 // border; `kind` is the modifier class (isCursor / isBlock / isNote; none
@@ -305,13 +308,14 @@ function ChipPreview({ text }) {
   );
 }
 
-function SelChip({ kind, icon, label, note, auto = false, text, title, onRemove, removeTitle }) {
+function SelChip({ kind, icon, label, note, cut, auto = false, text, title, onRemove, removeTitle }) {
   const Glyph = SEL_CHIP_ICONS[icon];
   return (
     <div className={`chatSelChip${kind ? ` ${kind}` : ""}${auto ? " auto" : ""}`} title={title ?? text}>
       <div className="chatSelChipHead">
         <span className="chatSelChipLabel"><Glyph size={14} aria-hidden="true" />{label}</span>
         {note ? <span className="chatSelChipNote">· {note}</span> : null}
+        {cut ? <span className="chatSelChipNote cut">· {cut}</span> : null}
         <button type="button" className="uiClose uiCloseSm chatSelChipClose" onClick={onRemove} title={removeTitle} aria-label={removeTitle}><XIcon size={14} /></button>
       </div>
       <ChipPreview text={text} />
@@ -540,6 +544,14 @@ export default function ChatDock({
   const [cursorOff, setCursorOff] = useState(null);
   useEffect(() => { setCursorOff(null); }, [focusedNote?.id]);
   const cursorChip = focusedNote && focusedNote.id !== cursorOff ? focusedNote : null;
+  // What the message quotes of each passage it points at — the PDF passages,
+  // then the selected note text, the editor's first, sharing the
+  // single-paper budget the way the server cuts them (chat/passageBudget.js).
+  // A chip whose passage won't go whole says what it keeps.
+  const quotedShares = passageShares([...pdfSelections, cursorChip?.sel,
+    ...(chatNotes || []).filter((n) => n.kind === "note")], chatContextChars);
+  const keptOf = (p) => keptNote(quotedShares.get(p), p.text.length);
+  const keptHint = (p) => keptTitle(quotedShares.get(p), p.text.length, chatContextChars);
   // Empty-state intro and input placeholder for an agent-enabled home chat.
   const agentScopeName = organizeFolder ? t("this folder") : t("your library");
   const agentIntro = organizeFolder == null || !toolsEnabled ? null
@@ -1195,6 +1207,7 @@ export default function ChatDock({
     let approval = null; // its approval card ({"approval"} line), while the user decides
     const handoffs = []; // blocked papers this reply waits on ({"handoff"} lines)
     let trimmed = null; // {"trimmed": {turns}} — oldest messages left out to fit the window
+    let shortened = null; // {"shortened": {items, budget, asked}} — passages that went short
     let truncated = false; // {"truncated": true} — the reply hit the output limit
     let reasoning = null; // {"reasoning"} lines — the model's thinking, sent back on later turns
     const liveArgs = new Map(); // tool call id -> argument chars previewed so far (cumulative)
@@ -1209,6 +1222,7 @@ export default function ChatDock({
       ...(usage ? { usage } : {}),
       ...(lastRound ? { context_tokens: (lastRound.input || 0) + (lastRound.output || 0) } : {}),
       ...(trimmed ? { trimmed } : {}),
+      ...(shortened ? { shortened } : {}),
       ...(truncated ? { truncated: true } : {}),
       ...(reasoning ? { reasoning } : {}),
       ...extra,
@@ -1268,6 +1282,8 @@ export default function ChatDock({
             answered = ev.model;
           } else if (ev.trimmed) {
             trimmed = ev.trimmed;
+          } else if (ev.shortened) {
+            shortened = ev.shortened;
           } else if (ev.truncated) {
             truncated = true;
           } else if (ev.reasoning) {
@@ -1903,9 +1919,9 @@ export default function ChatDock({
                         ))}
                       </div>
                     ) : null}
-                    {!isUser && (m.context?.length || m.trimmed || m.truncated) ? (
+                    {!isUser && (m.context?.length || m.trimmed || m.shortened || m.truncated) ? (
                       <ContextCoverage items={m.context} actions={m.actions} tools={!!m.tools}
-                        trimmed={m.trimmed} truncated={m.truncated} />
+                        trimmed={m.trimmed} shortened={m.shortened} truncated={m.truncated} />
                     ) : null}
                     {!isUser && (m.actions?.length || (isResponding && m.step)) ? (
                       <AgentSteps actions={m.actions || []} running={isResponding ? m.step : null}
@@ -2055,7 +2071,8 @@ export default function ChatDock({
             {cursorChip ? (
               cursorChip.sel ? (
                 <SelChip kind="isCursor" icon="selection" auto label={t("Selection in this note")} text={cursorChip.sel.text}
-                  title={`${t("The text you selected in this note — the assistant changes only this part.")}\n\n${cursorChip.sel.text}`}
+                  cut={keptOf(cursorChip.sel)}
+                  title={[t("The text you selected in this note — the assistant changes only this part."), keptHint(cursorChip.sel), cursorChip.sel.text.slice(0, 2000)].filter(Boolean).join("\n\n")}
                   onRemove={() => setCursorOff(cursorChip.id)}
                   removeTitle={t("Don't send the selection with this message")} />
               ) : (
@@ -2069,8 +2086,8 @@ export default function ChatDock({
             {pdfSelections.map((s, i) => (
               <SelChip key={`p${i}`} text={s.text} icon="passage"
                 label={pdfSelections.length > 1 ? t("PDF passage {i}", { i: i + 1 }) : t("PDF passage")}
-                note={s.page ? t("p. {page}", { page: s.page }) : ""}
-                title={`${s.text}\n\n${t("Hold Ctrl while selecting in the PDF to add more passages")}`}
+                note={s.page ? t("p. {page}", { page: s.page }) : ""} cut={keptOf(s)}
+                title={[s.text.slice(0, 2000), keptHint(s), t("Hold Ctrl while selecting in the PDF to add more passages")].filter(Boolean).join("\n\n")}
                 onRemove={() => setPdfSelections((prev) => prev.filter((_, j) => j !== i))}
                 removeTitle={t("Remove this passage")} />
             ))}
@@ -2078,7 +2095,9 @@ export default function ChatDock({
               <SelChip key={`n${i}`} kind={n.kind === "block" ? "isBlock" : "isNote"} text={n.text}
                 icon={n.kind === "block" ? "block" : "selection"}
                 label={n.kind === "block" ? t("Attached block") : t("Selected note text")}
-                title={`${n.kind === "block" ? t("A note block attached with Ctrl+click or the ⋮⋮ menu — the assistant gets its text and id") : t("Note text selected with Ctrl held — the assistant changes only this part")}\n\n${n.text}`}
+                cut={n.kind === "note" ? keptOf(n) : ""}
+                title={[n.kind === "block" ? t("A note block attached with Ctrl+click or the ⋮⋮ menu — the assistant gets its text and id") : t("Note text selected with Ctrl held — the assistant changes only this part"),
+                  n.kind === "note" ? keptHint(n) : "", n.text.slice(0, 2000)].filter(Boolean).join("\n\n")}
                 onRemove={() => setChatNotes?.((prev) => prev.filter((_, j) => j !== i))}
                 removeTitle={n.kind === "block" ? t("Detach this block") : t("Remove this passage")} />
             ))}

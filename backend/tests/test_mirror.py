@@ -291,6 +291,67 @@ def test_files_travel_by_hash():
     assert remote.texts(page["id"])["imgblk"] == f"![pic]({img['url']})"
 
 
+def _recorded(monkeypatch):
+    """The paths the engine asks the remote for, recorded around the
+    in-process transport."""
+    seen, fetch = [], sync_engine.default_fetch
+
+    def recording(method, path, body, headers):
+        seen.append(f"{method} {path}")
+        return fetch(method, path, body, headers)
+
+    monkeypatch.setattr(sync_engine, "default_fetch", recording)
+    return seen
+
+
+def test_a_large_file_is_pushed_in_parts(monkeypatch):
+    """Past what one request carries through a proxy (Cloudflare caps a
+    body at 100 MB) a file goes over the remote's /api/uploads/parts, a
+    PDF as a PDF and another file as a file, stored under the same name."""
+    remote, local, _ = _pair()
+    monkeypatch.setattr(sync_engine, "PART_BYTES", 1000)
+    monkeypatch.setattr(sync_engine, "PUSH_PART_BYTES", 700)
+    page = remote.page("Parts")
+    _sync(local)
+    seen = _recorded(monkeypatch)
+    pdf = local.client.post("/api/uploads", files={"file": ("big.pdf", io.BytesIO(PDF + b"q" * 500), "application/pdf")}).json()
+    data = b"\x89PNG\r\n\x1a\n" + b"r" * 1800
+    img = local.client.post("/api/upload-file", files={"file": ("big.png", io.BytesIO(data), "image/png")}).json()
+    local.insert(page["id"], "partpdf", f"[big.pdf]({pdf['source_url']})")
+    local.insert(page["id"], "partimg", f"![big]({img['url']})")
+    assert _sync(local)["files_pushed"] == 2
+    assert (ws_uploads_dir(remote.ws) / f"{pdf['doc_id']}.pdf").read_bytes() == PDF + b"q" * 500
+    assert (ws_uploads_dir(remote.ws) / img["url"].rsplit("/", 1)[1]).read_bytes() == data
+    parts = [s for s in seen if s.startswith("POST /api/uploads/parts/") and not s.endswith("/finish")]
+    assert len(parts) == 3 + 3, seen  # 2,021 and 1,808 bytes in parts of 700
+    assert "POST /api/uploads" not in seen and "POST /api/upload-file" not in seen
+
+
+def test_a_remote_without_parts_for_files_takes_them_whole(monkeypatch):
+    """An older remote takes every upload in parts for a PDF (it echoes no
+    ``kind``): the engine drops that upload and sends the file whole."""
+    remote, local, _ = _pair()
+    monkeypatch.setattr(sync_engine, "PART_BYTES", 1000)
+    page = remote.page("Old remote")
+    _sync(local)
+    seen, fetch = [], sync_engine.default_fetch
+
+    def older(method, path, body, headers):
+        seen.append(f"{method} {path}")
+        status, out = fetch(method, path, body, headers)
+        if path == "/api/uploads/parts" and status == 200:
+            out = json.dumps({k: v for k, v in json.loads(out).items() if k != "kind"}).encode()
+        return status, out
+
+    monkeypatch.setattr(sync_engine, "default_fetch", older)
+    data = b"\x89PNG\r\n\x1a\n" + b"s" * 1800
+    img = local.client.post("/api/upload-file", files={"file": ("old.png", io.BytesIO(data), "image/png")}).json()
+    local.insert(page["id"], "oldimg", f"![old]({img['url']})")
+    assert _sync(local)["files_pushed"] == 1
+    assert (ws_uploads_dir(remote.ws) / img["url"].rsplit("/", 1)[1]).read_bytes() == data
+    assert "POST /api/upload-file" in seen and any(s.startswith("DELETE /api/uploads/parts/") for s in seen)
+
+
 def test_a_file_missing_from_the_copy_is_fetched_again():
     """A round cut short after a page landed but before its PDF did (or a
     file lost on disk) leaves a page that cannot open; the next round

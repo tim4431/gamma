@@ -110,6 +110,44 @@ def test_the_scan_stops_at_its_budget(owner, monkeypatch):
     assert r.json()["partial"] is True
 
 
+class _Uninterrupted:
+    """A connection SQLite never interrupts: only the scan's own clock check
+    (every 1,000 rows read) stops it, so where it stops is certain."""
+
+    def __init__(self, conn):
+        self.execute = conn.execute
+
+    def set_progress_handler(self, *_):
+        pass
+
+
+def test_a_scan_cut_short_goes_on_from_its_cursor(owner, monkeypatch):
+    """Out of time, the scan answers what it found and the cursor of the
+    last block it read; scans from each cursor on add up to the whole scan,
+    in order, nothing twice (blocks written at one timestamp too)."""
+    page = owner.post("/api/blocks", json={"parent_id": "root", "content": "Resume page"}).json()["id"]
+    r = owner.put(f"/api/blocks/{page}/children", json={"blocks": [
+        {"content": f"{'fine' if i % 100 == 0 else 'refined'} resume {i}"} for i in range(2500)]})
+    assert r.status_code == 200, r.text
+    pattern, runs = fuzzy_pattern("fine", False, True), literal_runs("fine", False)
+    with closing(connect_pages_db(workspace_of(USER))) as conn:
+        whole, partial, cursor = blocks_router._scan_blocks(conn, pattern, runs, False, 100)
+        assert not partial and cursor is None and len(whole) > 25
+        monkeypatch.setattr(blocks_router, "BLOCK_SEARCH_BUDGET_S", -1)
+        found, after, rounds = [], None, 0
+        while True:
+            rows, partial, cursor = blocks_router._scan_blocks(_Uninterrupted(conn), pattern, runs, False, 100,
+                                                               after=after)
+            found += rows
+            rounds += 1
+            if not cursor:
+                break
+            assert partial
+            after = blocks_router._after(cursor)
+    assert rounds > 2
+    assert [r[0] for r in found] == [r[0] for r in whole]
+
+
 def test_block_search_runs_in_the_threadpool():
     assert not inspect.iscoroutinefunction(blocks_router.block_search)
 

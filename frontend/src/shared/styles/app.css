@@ -2740,6 +2740,8 @@ mark.merge-del { background: color-mix(in srgb, var(--danger) 16%, transparent);
 }
 .searchResults { max-height: 50vh; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; }
 .searchHint { font-size: var(--fs-xs); color: var(--text-dim); padding: 8px 4px; }
+/* A group's "Show more" (library.css's load-more pill), tight to its rows. */
+.searchResults .loadMoreBtn { margin: 4px auto 6px; }
 .topbar .searchResult,
 .searchResult {
   background: none;
@@ -4121,6 +4123,8 @@ a.shareBrand:hover { background: var(--bg-hover); }
   flex-shrink: 0;
 }
 .chatSelChipNote { color: var(--text-dim); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* A passage too long to go whole: what the message keeps of it. */
+.chatSelChipNote.cut { color: var(--warn); }
 .chatSelChipText {
   overflow: hidden;
   text-overflow: ellipsis;

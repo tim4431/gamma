@@ -44,7 +44,7 @@ from .textnorm import normalize_text
 # The data-directory schema version this code expects (users.db
 # ``PRAGMA user_version``). Bump it together with a new step in
 # gamma/migrations.py — never without one, never without bumping.
-SCHEMA_VERSION = 38
+SCHEMA_VERSION = 39
 # A workspace's pages.db keeps a version of its own (its ``PRAGMA
 # user_version``): the newest step whose per-workspace part has run on it
 # (gamma/migrations.py WORKSPACE_STEPS). One stamped 0 is at this version:
@@ -323,6 +323,19 @@ USERS_SCHEMA = [
         value TEXT NOT NULL,
         updated_at TEXT NOT NULL,
         PRIMARY KEY (user_id, workspace_id, key)
+    )""",
+    # reminders_done = the reminders each account has dismissed
+    # (gamma/mentions.py): the reminder's key (mentions.reminder_key: its
+    # block, date and time), the workspace a listing last found it in (''
+    # until one has) and when it was dismissed. A listing drops the rows
+    # whose reminder is gone; the rest go with their workspace and their
+    # account.
+    """CREATE TABLE IF NOT EXISTS reminders_done (
+        user_id TEXT NOT NULL,
+        key TEXT NOT NULL,
+        workspace_id TEXT NOT NULL DEFAULT '',
+        done_at TEXT NOT NULL,
+        PRIMARY KEY (user_id, key)
     )""",
     # Server-wide admin-tunable settings (see gamma/server_settings.py) — a
     # tiny KV, global because limits like upload size apply to every user.
@@ -1109,7 +1122,10 @@ PROFILE_PREF_KEY = "profile"
 # on it, the base of the next three-way merge. Never served by /api/prefs.
 PROFILE_BASE_PREF_KEY = "profile-base"
 NOTICES_SEEN_PREF_KEY = "notices-seen"  # gamma/notices.py: {notice id: fingerprint seen}
-REMINDERS_DONE_PREF_KEY = "reminders-done"  # gamma/mentions.py: {reminder key: when it was done}
+# The dismissed reminders before step 39 moved them to users.db
+# ``reminders_done``: {reminder key: when it was done}, kept for the release
+# before, which reads them.
+REMINDERS_DONE_PREF_KEY = "reminders-done"
 USER_PREF_KEYS = frozenset({"ai-settings", "ai-provider", "translate-engines", "search-services",
                             PROFILE_PREF_KEY, PROFILE_BASE_PREF_KEY, NOTICES_SEEN_PREF_KEY,
                             REMINDERS_DONE_PREF_KEY})

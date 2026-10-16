@@ -3,10 +3,13 @@ Markdown export round-tripped, and the list-continuation parser rule both rely
 on."""
 
 import io
+import os
+import shutil
 import zipfile
 
 import pytest
 
+from gamma import markdown_import, markdown_zip_import as mzi
 from gamma.markdown_import import md_to_blocks
 from conftest import folder_names, label_names, login, make_folder, make_user
 
@@ -17,9 +20,9 @@ NOTION_DB = "Tasks 11112222333344445555666677778888"
 NOTION_ROW = "Write tests aaaabbbbccccddddeeeeffff00001111"
 
 
-def _zip(files: dict) -> io.BytesIO:
+def _zip(files: dict, compression=zipfile.ZIP_STORED) -> io.BytesIO:
     buf = io.BytesIO()
-    with zipfile.ZipFile(buf, "w") as zf:
+    with zipfile.ZipFile(buf, "w", compression) as zf:
         for name, data in files.items():
             zf.writestr(name, data if isinstance(data, bytes) else data.encode("utf-8"))
     buf.seek(0)
@@ -32,6 +35,17 @@ def _import(client, buf, folder="", name="notes.zip"):
                     data={"folder": folder})
     assert r.status_code == 200, r.text
     return r.json()
+
+
+def _preview(client, buf, folder=""):
+    r = client.post("/api/import/markdown-zip/preview",
+                    files={"file": ("notes.zip", buf.getvalue(), "application/zip")}, data={"folder": folder})
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+def _reasons(report):
+    return {w["title"]: w["reason"] for w in report["warnings"]}
 
 
 def _subtree(client, page_id):
@@ -153,6 +167,116 @@ def test_notion_wrapper_folder_and_part_zips_are_unpacked(guest):
     assert report["pages"][0]["folders"] == []
     assert report["pages"][0]["title"] == "Home"
     assert "folders" not in _subtree(guest, report["pages"][0]["id"])["properties"]
+
+
+def test_a_notion_database_keeps_every_row(guest):
+    """No row cap: every row, TABLE_ROWS to a table block (each under the
+    header, small enough to edit); columns past MAX_TABLE_COLS are named."""
+    rows = "".join(f"Every row {i},Done\n" for i in range(1200))
+    report = _import(guest, _zip({"Rows 0000aaaa1111bbbb2222cccc3333dddd.csv": "Name,Status\n" + rows}))
+    assert report["warnings"] == []
+    tables = [c["content"] for c in _subtree(guest, report["pages"][0]["id"])["children"]]
+    assert [t.count("\n") - 1 for t in tables] == [500, 500, 200]
+    assert all(t.startswith("| Name | Status |\n| --- | --- |\n") for t in tables)
+    assert tables[2].endswith("| Every row 1199 | Done |")
+
+    wide = ",".join(f"c{i}" for i in range(45)) + "\n" + ",".join("v" for _ in range(45)) + "\n"
+    report = _preview(guest, _zip({"Wide 0000aaaa1111bbbb2222cccc3333eeee.csv": wide}))
+    assert _reasons(report) == {"Wide 0000aaaa1111bbbb2222cccc3333eeee.csv": "5 columns past the first 40 are left out"}
+
+
+def test_csv_tables_split_by_rows_and_by_characters(monkeypatch):
+    data = ("Name,Note\n" + "".join(f"r{i},{'x' * 20}\n" for i in range(5))).encode()
+    monkeypatch.setattr(mzi, "TABLE_ROWS", 2)
+    md, cut = mzi._csv_to_markdown(data)
+    assert cut == 0
+    assert [t.count("\n") - 1 for t in md.split("\n\n")] == [2, 2, 1]
+    monkeypatch.setattr(mzi, "TABLE_ROWS", 500)
+    monkeypatch.setattr(mzi, "TABLE_CHARS", 60)   # a row is 29 characters
+    md, _ = mzi._csv_to_markdown(data)
+    assert [t.count("\n") - 1 for t in md.split("\n\n")] == [2, 2, 1]
+
+
+def test_a_zip_of_thousands_of_notes_is_reviewed_whole(guest):
+    """No cap on notes (it was 2,000): every one is in the review."""
+    report = _preview(guest, _zip({f"many/n{i}.md": f"one of many {i}\n" for i in range(2500)}))
+    assert len(report["pages"]) == 2500
+    assert report["warnings"] == []
+
+
+def test_a_note_past_the_block_cap_is_named_and_left_out(guest, monkeypatch):
+    """A note past MAX_BLOCKS is refused like one past 5 MB, in the review
+    and in the import, while the rest of the zip imports."""
+    monkeypatch.setattr(markdown_import, "MAX_BLOCKS", 50)
+    monkeypatch.setattr(mzi, "MAX_BLOCKS", 50)
+    buf = _zip({"capped/huge.md": "".join(f"- capped item {i}\n" for i in range(60)),
+                "capped/fine.md": "- a capped-test note that fits\n"})
+    reason = "has more than 50 blocks: not imported"
+    for report in (_preview(guest, buf), _import(guest, buf)):
+        assert [p["title"] for p in report["pages"]] == ["fine"]
+        assert _reasons(report) == {"huge.md": reason}
+    assert report["pages_created"] == 1
+
+
+def test_nested_zips_left_unopened_are_named(guest, monkeypatch):
+    """Zips inside the zip open to MAX_ZIP_DEPTH levels and up to
+    MAX_NESTED_ZIPS of them; each one left closed is named."""
+    deepest = _zip({"deepest.md": "nested too deep\n"})
+    part = _zip({"in-part.md": "nested part note\n", "deeper.zip": deepest.getvalue()})
+    export = _zip({"Part-1.zip": part.getvalue(), "in-export.md": "nested export note\n"})
+    outer = _zip({"Export.zip": export.getvalue(), "Other.zip": _zip({"other.md": "nested other\n"}).getvalue(),
+                  "broken.zip": b"no zip at all", "top.md": "nested top note\n"})
+    report = _preview(guest, outer)
+    assert sorted(p["title"] for p in report["pages"]) == ["in-export", "in-part", "other", "top"]
+    assert _reasons(report) == {
+        "deeper.zip": "a zip nested more than 2 deep is not opened: its notes are not imported",
+        "broken.zip": "not a readable zip: not opened"}
+
+    monkeypatch.setattr(mzi, "MAX_NESTED_ZIPS", 2)
+    report = _preview(guest, outer)
+    assert sorted(p["title"] for p in report["pages"]) == ["in-export", "in-part", "top"]
+    assert _reasons(report)["Other.zip"] == ("more than 2 zips inside the zip: this one is not opened, "
+                                             "its notes are not imported")
+
+
+def test_a_zip_bomb_is_not_read(guest):
+    """The guard instead of a size cap: an entry that unpacks to over
+    MAX_RATIO times its packed size is left unread, and an archive that
+    does so as a whole is refused. Big honest files pass (see below)."""
+    bomb = _zip({"bombed/note.md": "see ![[blob.png]]\n", "bombed/blob.png": b"\0" * (2 << 20)},
+                zipfile.ZIP_DEFLATED)
+    report = _import(guest, bomb)
+    assert report["pages_created"] == 1
+    reasons = _reasons(report)
+    assert reasons["bombed/blob.png"].startswith("unpacks to over 100 times its packed size")  # as in the zip
+    assert reasons["note.md"] == "Missing or unselected note or attachment: blob.png; the link is kept as written"
+
+    small_bombs = _zip({f"s{i}.md": "a" * (900 << 10) for i in range(3)}, zipfile.ZIP_DEFLATED)
+    r = guest.post("/api/import/markdown-zip", files={"file": ("b.zip", small_bombs.getvalue(), "application/zip")})
+    assert r.status_code == 413
+    assert "like a zip bomb" in r.json()["detail"]
+
+
+def test_big_files_are_checked_before_they_are_read(guest, monkeypatch):
+    """No total size cap: a bundled file past the per-file upload cap is
+    named without being read, and storing one needs the free disk a staged
+    upload needs; a nested zip that would fill the disk is refused (507)."""
+    monkeypatch.setattr(mzi, "workspace_quota", lambda ws: {"max_upload_mb": 1})
+    buf = _zip({"sized/pic note.md": "![[big.png]] and ![[small.png]]\n",
+                "sized/big.png": PNG + os.urandom(1 << 20), "sized/small.png": PNG + b"sized"})
+    report = _import(guest, buf)
+    assert _reasons(report) == {"big.png": "file too large (max 1 MB)"}
+    text = _subtree(guest, report["pages"][0]["id"])["children"][0]["content"]
+    assert text.startswith("![[big.png]] and ![](/api/uploads/")
+
+    real = shutil.disk_usage(mzi.config.DATA_DIR)
+    monkeypatch.setattr(mzi.shutil, "disk_usage", lambda path: real._replace(free=mzi.MIN_FREE_BYTES))
+    report = _import(guest, _zip({"full/disk note.md": "![[full.png]]\n", "full/full.png": PNG + b"full disk"}))
+    assert _reasons(report) == {"full.png": "the server's disk has no room for this file"}
+    r = guest.post("/api/import/markdown-zip",
+                   files={"file": ("p.zip", _zip({"Part-1.zip": _zip({"x.md": "x\n"}).getvalue()}).getvalue(),
+                                    "application/zip")})
+    assert r.status_code == 507
 
 
 @pytest.fixture

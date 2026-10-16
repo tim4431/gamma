@@ -4,7 +4,11 @@ import json
 from conftest import make_folder, workspace_of, guest_name
 import sqlite3
 
+import pytest
+
+from gamma import markdown_import
 from gamma.db import register_functions, ws_db_path
+from gamma.markdown_import import TooManyBlocks, md_to_blocks
 
 
 def test_markdown_upload_creates_nested_note_page(guest):
@@ -145,6 +149,45 @@ def test_markdown_blocks_endpoint_parses_without_storing(guest):
 def test_markdown_blocks_endpoint_caps_size(guest):
     r = guest.post("/api/markdown-blocks", json={"text": "x" * (5 * 1024 * 1024 + 10)})
     assert r.status_code == 413
+
+
+def test_md_to_blocks_counts_every_block_against_the_cap(monkeypatch):
+    """Nested blocks count; past MAX_BLOCKS the parse stops with
+    TooManyBlocks rather than returning a tree cut short."""
+    monkeypatch.setattr(markdown_import, "MAX_BLOCKS", 3)
+    tree = md_to_blocks("# a\n- b\n  - c")
+    assert tree[0]["children"][0]["children"][0]["content"] == "c"
+    with pytest.raises(TooManyBlocks, match="more than 3 blocks"):
+        md_to_blocks("# a\n- b\n  - c\n\npara")
+
+
+def test_a_long_document_imports_whole_and_one_past_the_cap_is_refused(guest, monkeypatch):
+    """6,000 blocks (past the 5,000 the parser used to keep) import whole;
+    a document past MAX_BLOCKS is refused with the reason, never cut short."""
+    text = "".join(f"- long-doc item {i}\n" for i in range(6000)).encode()
+    r = guest.post("/api/import/markdown", files={"file": ("long.md", text, "text/markdown")})
+    assert r.status_code == 200, r.text
+    assert r.json()["imported"] == 6000
+    page = guest.get(f"/api/blocks/{r.json()['block_id']}/subtree").json()["block"]
+    assert page["children"][-1]["content"] == "long-doc item 5999"
+
+    monkeypatch.setattr(markdown_import, "MAX_BLOCKS", 5999)
+    r = guest.post("/api/import/markdown", files={"file": ("longer.md", text + b"- one more\n", "text/markdown")})
+    assert r.status_code == 413
+    assert r.json()["detail"] == "Markdown file has more than 5,999 blocks"
+
+
+def test_markdown_blocks_splits_a_long_paste_whole_or_refuses_it(guest, monkeypatch):
+    """Paste as blocks: every block comes back, or a 413 (the editor keeps
+    the paste as text and says why) — never the first N."""
+    text = "\n".join(f"- pasted-long {i}" for i in range(6000))
+    r = guest.post("/api/markdown-blocks", json={"text": text})
+    assert r.status_code == 200, r.text
+    assert len(r.json()["blocks"]) == 6000
+    monkeypatch.setattr(markdown_import, "MAX_BLOCKS", 5999)
+    r = guest.post("/api/markdown-blocks", json={"text": text})
+    assert r.status_code == 413
+    assert r.json()["detail"] == "text has more than 5,999 blocks"
 
 
 def test_markdown_blocks_keeps_display_math_whole(guest):

@@ -109,6 +109,46 @@ def test_a_restore_cannot_be_stopped_once_it_swaps_the_databases(owner, monkeypa
     assert jobs.wait(started["id"])["state"] == "done"
 
 
+def test_a_backup_zip_in_parts_restores_as_a_job(owner, other):
+    """Past what a proxy lets one request carry, the zip comes in parts;
+    who may restore is checked before a byte travels and again at the
+    finish, which starts the job; the staged zip goes once it is over."""
+    from gamma import import_staging, jobs
+
+    ws = workspace_of("bj_owner")
+    make_page(owner, "Sent in parts")
+    data = owner.get("/api/export", params={"uploads": 0}).content
+    assert other.post("/api/jobs/restore/parts", json={"size": len(data), "mode": "merge", "ws": ws}).status_code == 404
+    assert owner.post("/api/jobs/restore/parts", json={"size": len(data), "mode": "swap", "ws": ws}).status_code == 400
+    opened = owner.post("/api/jobs/restore/parts", json={"size": len(data), "name": "b.zip", "mode": "merge", "ws": ws})
+    assert opened.status_code == 200, opened.text
+    token = opened.json()["token"]
+
+    def send(offset, chunk):
+        return owner.post(f"/api/jobs/restore/parts/{token}", data={"offset": str(offset)},
+                          files={"part": ("part", chunk, "application/octet-stream")})
+
+    half = len(data) // 2
+    assert send(0, data[:half]).json() == {"received": half}
+    assert send(0, data[:half]).json()["received"] == half  # a resent part: told where it stands (409)
+    assert owner.post(f"/api/jobs/restore/parts/{token}/finish").status_code == 400  # bytes missing
+    assert send(half, data[half:]).json() == {"received": len(data)}
+    # an upload still arriving starts no import either
+    assert owner.post("/api/jobs/import", json={"review_id": token, "selected": []}).status_code == 409
+    started = owner.post(f"/api/jobs/restore/parts/{token}/finish")
+    assert started.status_code == 200, started.text
+    job = jobs.wait(started.json()["id"])
+    assert job["state"] == "done", job["error"]
+    assert job["kind"] == "restore" and job["params"]["filename"] == "b.zip" and job["params"]["size"] == len(data)
+    assert job["result"]["mode"] == "merge"
+    with pytest.raises(Exception):
+        import_staging.get(token, job["owner"], ws, pending=True)
+    # a stopped upload is dropped
+    token = owner.post("/api/jobs/restore/parts", json={"size": 10, "mode": "merge", "ws": ws}).json()["token"]
+    assert owner.delete(f"/api/jobs/restore/parts/{token}").status_code == 200
+    assert owner.post(f"/api/jobs/restore/parts/{token}/finish").status_code == 404
+
+
 def test_what_the_backup_jobs_refuse(owner, other):
     ws = workspace_of("bj_owner")
     assert other.post("/api/jobs/snapshot", json={"workspaces": [ws]}).status_code == 404

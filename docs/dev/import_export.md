@@ -167,7 +167,10 @@ share one review flow: Upload → Review → Import → Summary.
   the job runs, and the job's row in Background tasks opens it again on that
   job (`{jobId}`, no file: the summary then shows the library column only).
   `ImportTree.jsx` renders one tree with its checkboxes (a folder toggles
-  its descendants); `importReview.js` owns selection, filters and tree
+  its descendants). A tree of more than 300 files (a vault) starts with its
+  folders closed, a closed folder's rows are made only once it opens, and
+  a list shows 300 files at a time, so 20,000 notes open and click as fast
+  as a few; `importReview.js` owns selection, filters and tree
   construction (filters only hide rows; hidden selections stay selected);
   `importApi.js` the upload, the job's body and the discard;
   `shared/lib/xhrUpload.js` the upload progress.
@@ -194,6 +197,15 @@ indented deeper after a blank line becomes a child block, which is how Notion
 exports a toggle's content. In mixed folder uploads, Markdown note pages and PDF pages
 are filed in the same subfolders; unsupported files are skipped.
 `POST /api/import/markdown` answers the page's `folders` (ids).
+
+A document past 5 MB, or past 200,000 blocks (`markdown_import.MAX_BLOCKS`),
+is refused with a 413 that says which, never cut short. A 5 MB file of real
+notes holds about 100,000 blocks (one of 50,000 parses in 0.2 s and imports
+in 2.5 s); only a file of nothing but very short lines gets past the block
+cap, and a 5 MB one of `- x` lines would be 1.3 million blocks, a minute and
+about a gigabyte to write. The editor's paste as blocks
+(`POST /api/markdown-blocks`) has the same two caps: a paste past them stays
+text, and the status line says so.
 
 ## Markdown zips: Obsidian vaults, Notion exports, Gamma exports, zipped notes
 
@@ -225,9 +237,12 @@ folder of notes, because they only differ in naming and link conventions
   and labels the chosen new notes need are made once, before any page is
   written (one committed batch per tree): an import that stops keeps them.
   A preview makes none. One common root directory (a zipped folder)
-  and Notion's `Export-<uuid>/` wrappers are dropped; Notion's `Part-N.zip`
-  members (big exports) are read in place; `.obsidian/`, `.trash/` and
-  `.canvas` files are skipped (a canvas is a warning).
+  and Notion's `Export-<uuid>/` wrappers are dropped; zips inside the zip
+  (Notion's `Part-N.zip` members of a big export) are read in place, each
+  spooled to a temporary file, to two levels deep and up to 500 of them
+  (`MAX_ZIP_DEPTH`, `MAX_NESTED_ZIPS`: each holds its file open until the
+  import ends), and a warning names every one left closed; `.obsidian/`,
+  `.trash/` and `.canvas` files are skipped (a canvas is a warning).
 - **Links**: a link to another note in the zip becomes a `[[page]]` mention
   of the page it produced — Markdown links (Notion's percent-encoded
   `[Sub](Parent%20<id>/Sub%20<id>.md)`, Gamma's `[label](Page-id.md)` and
@@ -254,8 +269,11 @@ folder of notes, because they only differ in naming and link conventions
   `%%comments%%` are removed in a vault (inline or block, never inside
   fences). Inline `#tags`, footnotes and task states pass through as text.
 - **Notion specifics**: a database `Name <id>.csv` becomes a page holding
-  the table (`_all.csv` preferred when both exist — it has every row; capped
-  at 500 rows × 40 columns) and its row pages `Name <id>/Row <id>.md` land in
+  the table (`_all.csv` preferred when both exist — it has every row). Every
+  row is kept, 500 rows (or 100,000 characters) to a table, each table a
+  block of its own under the header, so each renders and stays under a
+  block's 200,000 characters; columns past 40 are left out with a warning.
+  Its row pages `Name <id>/Row <id>.md` land in
   the folder of that name; `<aside>` callouts become `> [!info]` callouts;
   the row pages' `Property: value` lines stay as text.
 - **Gamma specifics**: the front matter's `source:` restores the PDF when it
@@ -280,11 +298,28 @@ folder of notes, because they only differ in naming and link conventions
   lands ([collab.md](collab.md) "The change feed"), and an import that
   fails half way keeps the batches it finished. (A transaction per page
   made big imports about twice as slow.)
+- **No size cap**: neither the zip nor its number of notes is capped; a note
+  past 5 MB or 200,000 blocks is a warning and not imported. What guards
+  the server instead is a zip-bomb rule, Apache POI's: an entry past 1 MiB
+  that unpacks to over 100 times its packed size (`MAX_RATIO`) is not read,
+  with a warning, and an archive that does so as a whole is refused (413).
+  Notes pack about 4:1 and photos or PDFs 1:1, a zip bomb about 1000:1. A
+  bundled file past the per-file upload cap is a warning without being
+  read, and a nested zip is spooled or a bundled file stored only while the
+  disk keeps `import_staging.MIN_FREE_BYTES` free (507 for the zip, a
+  warning for the file), as a staged upload must.
 
 The report's counts (`pages_created`, `pages_skipped`, `assets_stored`,
 `links_resolved`, `notion`) and warnings appear in the shared dialog. `pages`
 lists selected pages and their destinations, including pages already in the library. The same engine's `preview=True`
-mode parses notes and checks assets without writing uploads or blocks; optional
+mode reads notes and their links and checks assets without writing uploads or
+blocks; it parses a note into blocks only when it is long enough to pass the
+block cap, and reads no more of a bundled file than a PDF's header (a
+20,000-note vault: 4 s, a 7.8 MB answer, 0.7 MB gzipped). An import
+parses each new note twice, first for the blocks its links may target (their
+ids kept by place in the tree), then when it writes the page, so it never
+holds every note's tree at once (20,000 notes, 620,000 blocks: 100 s, at
+most 330 MB). Optional
 selection limits page creation and associated assets. Links to unselected new
 notes remain as written, with warnings. A selected note may still link to an
 already imported note. To make the round trip work the

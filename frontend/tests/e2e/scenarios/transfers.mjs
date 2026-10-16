@@ -256,6 +256,43 @@ open(os.path.join(root, 'files', '5', 'dataset.bin'), 'wb').write(os.urandom(40 
     } finally { await ctx.close(); }
   });
 
+  // No cap on a zip's notes; a review of more than 300 (ImportTree's
+  // OPEN_UP_TO) starts with its folders closed and makes a folder's rows
+  // only once it opens.
+  await step("transfer: a vault of hundreds of notes reviews with its folders closed and imports whole", async () => {
+    const { ctx, page } = await setup();
+    try {
+      const vault = path.join(server.dir, "Big vault.zip");
+      execFileSync(python, ["-c", `
+import sys, zipfile
+with zipfile.ZipFile(sys.argv[1], 'w', zipfile.ZIP_DEFLATED) as z:
+    for i in range(400):
+        z.writestr(f'Big vault/Topic {i % 4}/Vault note {i}.md', f'- point of vault note {i}\\n')
+`, vault], { cwd: ROOT });
+      await page.waitForSelector(".folderNewBtn");
+      const dialog = await openDialog(page, "Import");
+      await choice(dialog, "Markdown notes").click();
+      const chooser = page.waitForEvent("filechooser");
+      await choice(dialog, "Choose file…").click();
+      await (await chooser).setFiles(vault);
+      const review = page.getByRole("dialog", { name: "Review Markdown import", exact: true });
+      const target = review.getByRole("region", { name: "Library after import", exact: true });
+      await target.getByText("Topic 1", { exact: true }).waitFor();
+      assert((await review.innerText()).includes("400 of 400 items selected"));
+      assertEq(await review.locator(".importTreeFile").count(), 0, "both trees start closed");
+      await target.getByText("Topic 1", { exact: true }).click();
+      await until(async () => (await target.locator(".importTreeFile").count()) === 100, { what: "an opened folder shows its notes" });
+      await target.getByRole("checkbox", { name: "Select folder Topic 2", exact: true }).uncheck();
+      assert((await review.innerText()).includes("300 of 400 items selected"));
+      await choice(review, "Import to library").click();
+      const report = page.getByRole("dialog", { name: "Import complete", exact: true });
+      await report.waitFor();
+      assert((await report.innerText()).includes("300 new pages"));
+      await choice(report, "Done").click();
+      assertNoProblems(page);
+    } finally { await ctx.close(); }
+  });
+
   await step("transfer: Gamma export review imports only the selected page without reloading", async () => {
     const donorA = await bob.api("/api/blocks", { method: "POST", body: { parent_id: "root", content: "Selected Gamma review" } });
     const donorB = await bob.api("/api/blocks", { method: "POST", body: { parent_id: "root", content: "Excluded Gamma review" } });

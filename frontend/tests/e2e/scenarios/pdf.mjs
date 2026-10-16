@@ -603,6 +603,58 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
     assertNoProblems(page);
   });
 
+  await step("pdf: a passage longer than the message's budget says on its chip what goes, and the reply what went", async () => {
+    // A page of eight lines against the smallest single-paper budget (100
+    // characters, Settings → AI → Chat → Context size), in a context of its own.
+    const lines = Array.from({ length: 8 }, (_, i) => `Line ${i + 1} of a passage longer than its budget.`);
+    const up = await account.upload("/api/uploads", makePdf([lines]), "long-passage.pdf", "application/pdf");
+    const created = await account.api(`/api/blocks/by-doc/${up.doc_id}`, { method: "POST", body: { default_title: "Long passage", source_url: up.source_url } });
+    const { value: profile } = await account.api("/api/prefs/profile");
+    await account.api("/api/prefs/profile", { method: "PATCH", body: { set: { chatContextChars: 100 } } });
+    const longCtx = await account.context(browser);
+    try {
+      await fakeAiModels(longCtx);
+      const longPage = await openPage(longCtx, `${server.base}/?page=${created.id}&ws=${account.ws}`);
+      await waitForPdf(longPage, 1);
+      const requests = [];
+      await longPage.route("**/api/ai/chat", async (route) => {
+        const body = route.request().postDataJSON();
+        requests.push(body);
+        // What the server reports it cut (ai_context.passage_cuts).
+        const shortened = { budget: 100, asked: 100,
+          items: [{ kind: "pdf", n: 1, of: 1, kept: 100, total: body.selections[0].text.length }] };
+        await route.fulfill({ contentType: "application/x-ndjson",
+          body: `${JSON.stringify({ shortened })}\n${JSON.stringify({ delta: "A summary." })}\n` });
+      });
+      // The page's whole text layer, released inside the viewer.
+      const selected = await longPage.evaluate(() => {
+        const spans = [...document.querySelectorAll('[data-page="1"] .textLayer span')].filter((s) => s.firstChild?.nodeType === 3);
+        const last = spans[spans.length - 1];
+        const range = document.createRange();
+        range.setStart(spans[0].firstChild, 0);
+        range.setEnd(last.firstChild, last.firstChild.length);
+        window.getSelection().removeAllRanges();
+        window.getSelection().addRange(range);
+        last.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
+        return window.getSelection().toString().trim().length;
+      });
+      assert(selected > 300, `the page's text is selected (${selected} characters)`);
+      const chip = longPage.locator(".chatSelChips .chatSelChip").filter({ hasText: "PDF passage" });
+      await chip.locator(".chatSelChipNote.cut").getByText(`· first 100 of ${selected} characters`, { exact: true }).waitFor();
+      await longPage.locator("textarea.chatInputArea").fill("Summarize this");
+      await longPage.getByRole("button", { name: "Send", exact: true }).click();
+      await until(() => requests.length === 1, { what: "the chat request" });
+      assertEq(requests[0].selections[0].text.length, selected, "the whole passage goes; the server keeps what fits");
+      assertEq(requests[0].context_char_limit, 100);
+      await longPage.getByText(`PDF passage shortened: first 100 of ${selected} characters sent`).waitFor();
+      assertNoProblems(longPage);
+    } finally {
+      await longCtx.close();
+      await account.api("/api/prefs/profile", { method: "PUT", body: { value: profile || {} } });
+      await account.api(`/api/blocks/${created.id}`, { method: "DELETE" });
+    }
+  });
+
   await step("pdf: a PDF that went as text says why, and a notes-only page says nothing", async () => {
     // The server's report (ai_context.gather_inputs): the paper's file was
     // too large to attach; the notes page has no file to ask for.

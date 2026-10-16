@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { allItemIds, filterImportPages, selectItems, buildImportTree, treeItemIds, resultPages } from "../src/transfers/importReview.js";
+import { allItemIds, filterImportPages, selectItems, buildImportTree, treeItemIds, treeSize, resultPages } from "../src/transfers/importReview.js";
 
 test("filters preserve hidden selections; folder selection deduplicates items in multiple locations", () => {
   const pages = [
@@ -19,4 +19,15 @@ test("filters preserve hidden selections; folder selection deduplicates items in
   assert.deepEqual([...tree.folders.get("B").folders.keys()], ["C/D"]);
   assert.deepEqual(treeItemIds(tree.folders.get("B")), ["a", "alias", "b"]);
   assert.equal(resultPages({ pages: [{ id: "same", title: "First", created: true }, { id: "same", title: "First", created: false }] }).length, 1);
+});
+
+test("a tree's size counts the files in all its folders (ImportTree starts a big one closed)", () => {
+  const entries = [
+    { path: "vault/a.md", size: 1 }, { path: "vault/sub/b.md", size: 1 }, { path: "vault/sub/c.png", size: 1 },
+    { path: "vault/empty", directory: true }, { path: "top.md", size: 1 },
+  ];
+  const tree = buildImportTree(entries);
+  assert.equal(treeSize(tree), 4);
+  assert.equal(treeSize(tree.folders.get("vault")), 3);
+  assert.equal(treeSize(tree.folders.get("vault").folders.get("empty")), 0);
 });

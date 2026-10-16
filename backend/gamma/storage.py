@@ -199,6 +199,11 @@ def is_pdf(data: bytes) -> bool:
     return len(data) >= 4 and data[:4] == b"%PDF"
 
 
+# The containers MediaRecorder writes (and their Ogg kin), stored under these
+# extensions only when they are that container (``is_audio``).
+RECORDING_EXTENSIONS = (".webm", ".m4a", ".ogg", ".opus")
+
+
 def is_audio(ext: str, data: bytes) -> bool:
     """Whether ``data`` opens as the audio container its extension names,
     by the container's magic bytes: EBML for WebM, an ISO ``ftyp`` box for
@@ -498,6 +503,14 @@ def store_file(ws: str, data: bytes, ext: str) -> tuple[str, bool]:
     ``(filename, already_existed)``."""
     filename = f"{content_digest(data)}{ext}"
     return filename, _store(ws, filename, data)
+
+
+def store_file_path(ws: str, path: Path, size: int, digest: str, ext: str) -> tuple[str, bool]:
+    """:func:`store_file` for a file assembled on disk (an upload in parts,
+    gamma/upload_parts.py) whose content digest is ``digest``: stored as
+    ``<digest><ext>`` by a rename; ``path`` is consumed either way."""
+    filename = f"{digest}{ext}"
+    return filename, _store_path(ws, filename, path, size)
 
 
 def find_upload_file(filename: str, ws: str) -> Path | None:

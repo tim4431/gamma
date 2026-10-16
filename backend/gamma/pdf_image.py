@@ -1,23 +1,29 @@
-"""Uploaded PNG/JPEG → a PDF image XObject, without an imaging library.
+"""Uploaded pictures → PDF image XObjects.
 
 Note boxes can contain ``![](/api/uploads/…)`` refs, and an exported note that
 shows the URL instead of the picture is useless. Two paths:
 
-* JPEG — embedded verbatim as ``/DCTDecode``; only the SOF header is parsed for
-  the size and component count. Zero decoding cost.
-* PNG — 8-bit gray/RGB/palette images are *also* embedded verbatim, because
-  PDF's ``/Predictor 15`` FlateDecode is exactly PNG's row filtering. Anything
-  with an alpha channel (the common case for pasted screenshots) or 16 bits per
-  sample is unfiltered here and composited onto white, which is a pure-Python
-  pixel loop — hence ``MAX_PIXELS``.
+* Verbatim, at any size and no decoding cost: JPEG as ``/DCTDecode`` (only the
+  SOF header is parsed for the size and component count), and 8-bit
+  gray/RGB/palette PNG without transparency as ``/FlateDecode`` with
+  ``/Predictor 15``, which is exactly PNG's row filtering.
+* Decoded with Pillow: everything else. That is a PNG with an alpha channel
+  or a ``tRNS`` chunk (the common case for pasted screenshots), with 16-bit
+  or sub-byte samples, or interlaced, and GIF and WebP. The colour is
+  re-encoded as an 8-bit PNG and embedded the verbatim way, and transparency
+  becomes a soft mask (``/SMask``), so what is under the picture shows
+  through, as in the app: a note box's tint, not a white rectangle. A 25 MP
+  screenshot takes well under a second; memory, about 8 bytes a pixel while
+  it is decoded, is what ``MAX_DECODED_PIXELS`` bounds.
 
-Interlaced (Adam7) PNGs are rejected rather than deinterlaced; browsers don't
-produce them for clipboard pastes.
+A picture that can't be embedded (an SVG, a corrupt file) is logged with the
+reason, and the writers draw its alt text instead.
 """
 
+import io
 import struct
-import zlib
 
+from PIL import Image, UnidentifiedImageError
 from PyPDF2.generic import (
     ArrayObject,
     ByteStringObject,
@@ -30,9 +36,12 @@ from PyPDF2.generic import (
 from .logbuf import log
 from .markdown_export import UPLOAD_RE
 
-MAX_PIXELS = 2_500_000     # above this the pure-Python unfilter gets too slow
+# The largest picture the decoded path takes: an 8K screen is 33 MP, and
+# 40 MP is about 330 MB while decoded. The verbatim path has no cap.
+MAX_DECODED_PIXELS = 40_000_000
 _PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
 _SOF = {0xC0, 0xC1, 0xC2, 0xC3, 0xC5, 0xC6, 0xC7, 0xC9, 0xCA, 0xCB, 0xCD, 0xCE, 0xCF}
+_GRAY_MODES = {"1", "L", "LA", "I", "I;16"}
 
 
 def _stream(data: bytes, width: int, height: int, colorspace, bpc: int,
@@ -83,69 +92,20 @@ def _png_chunks(data: bytes):
         i += 8 + length + 4
 
 
-def _unfilter(raw: bytes, height: int, bpp: int, stride: int) -> bytearray:
-    """Undo PNG row filters. Sequential by construction — see MAX_PIXELS."""
-    out = bytearray()
-    prev = bytearray(stride)
-    pos = 0
-    for _ in range(height):
-        ftype = raw[pos]
-        cur = bytearray(raw[pos + 1:pos + 1 + stride])
-        pos += 1 + stride
-        if ftype == 1:
-            for i in range(bpp, stride):
-                cur[i] = (cur[i] + cur[i - bpp]) & 255
-        elif ftype == 2:
-            for i in range(stride):
-                cur[i] = (cur[i] + prev[i]) & 255
-        elif ftype == 3:
-            for i in range(stride):
-                left = cur[i - bpp] if i >= bpp else 0
-                cur[i] = (cur[i] + ((left + prev[i]) >> 1)) & 255
-        elif ftype == 4:
-            for i in range(stride):
-                a = cur[i - bpp] if i >= bpp else 0
-                b = prev[i]
-                c = prev[i - bpp] if i >= bpp else 0
-                p = a + b - c
-                pa, pb, pc = abs(p - a), abs(p - b), abs(p - c)
-                cur[i] = (cur[i] + (a if pa <= pb and pa <= pc else b if pb <= pc else c)) & 255
-        out += cur
-        prev = cur
-    return out
-
-
-def _to_rgb(samples: bytearray, width: int, height: int, ctype: int, depth: int) -> bytes:
-    """Decoded samples → packed RGB, alpha composited onto white."""
-    step = depth // 8
-    chans = {0: 1, 2: 3, 4: 2, 6: 4}[ctype]
-    stride = width * chans * step
-    out = bytearray(width * height * 3)
-    o = 0
-    for y in range(height):
-        row = y * stride
-        for x in range(width):
-            p = row + x * chans * step
-            if ctype in (0, 4):
-                g = samples[p]
-                r = b = g
-                alpha = samples[p + step] if ctype == 4 else 255
-            else:
-                r, g, b = samples[p], samples[p + step], samples[p + 2 * step]
-                alpha = samples[p + 3 * step] if ctype == 6 else 255
-            if alpha != 255:
-                inv = 255 - alpha
-                r = (r * alpha + 255 * inv) // 255
-                g = (g * alpha + 255 * inv) // 255
-                b = (b * alpha + 255 * inv) // 255
-            out[o] = r
-            out[o + 1] = g
-            out[o + 2] = b
-            o += 3
-    return bytes(out)
+def _flate_png(idat: bytes, width: int, height: int, space, colors: int) -> DecodedStreamObject:
+    """8-bit PNG image data as it is: /Predictor 15 makes the viewer undo
+    the PNG row filters."""
+    parms = DictionaryObject({
+        NameObject("/Predictor"): NumberObject(15),
+        NameObject("/Colors"): NumberObject(colors),
+        NameObject("/BitsPerComponent"): NumberObject(8),
+        NameObject("/Columns"): NumberObject(width),
+    })
+    return _stream(idat, width, height, space, 8, "/FlateDecode", parms)
 
 
 def _png(data: bytes):
+    """A PNG embedded verbatim, or None when it needs the decoded path."""
     header, idat, plte = None, bytearray(), None
     for tag, body in _png_chunks(data):
         if tag == b"IHDR":
@@ -154,59 +114,84 @@ def _png(data: bytes):
             idat += body
         elif tag == b"PLTE":
             plte = body
+        elif tag == b"tRNS":
+            return None             # transparency: the decoded path's soft mask
         elif tag == b"IEND":
             break
     if not header or not idat:
         return None
     width, height, depth, ctype, _comp, _filt, interlace = header
-    if interlace or width * height > MAX_PIXELS:
+    if interlace or depth != 8 or ctype not in (0, 2, 3) or (ctype == 3 and not plte):
         return None
+    if ctype == 3:
+        # ByteStringObject, NOT create_string_object: a text string gets
+        # re-encoded (UTF-16 once a byte isn't PDFDocEncodable), which
+        # scrambles the palette and paints the image a solid colour.
+        space = ArrayObject([NameObject("/Indexed"), NameObject("/DeviceRGB"),
+                             NumberObject(len(plte) // 3 - 1),
+                             ByteStringObject(plte)])
+    else:
+        space = NameObject("/DeviceGray" if ctype == 0 else "/DeviceRGB")
+    return _flate_png(bytes(idat), width, height, space, 3 if ctype == 2 else 1), width, height
 
-    if depth == 8 and ctype in (0, 2, 3):
-        # Verbatim: /Predictor 15 makes the viewer undo the PNG row filters.
-        colors = {0: 1, 2: 3, 3: 1}[ctype]
-        if ctype == 3:
-            if not plte:
-                return None
-            # ByteStringObject, NOT create_string_object: a text string gets
-            # re-encoded (UTF-16 once a byte isn't PDFDocEncodable), which
-            # scrambles the palette and paints the image a solid colour.
-            space = ArrayObject([NameObject("/Indexed"), NameObject("/DeviceRGB"),
-                                 NumberObject(len(plte) // 3 - 1),
-                                 ByteStringObject(plte)])
-        else:
-            space = NameObject("/DeviceGray" if ctype == 0 else "/DeviceRGB")
-        parms = DictionaryObject({
-            NameObject("/Predictor"): NumberObject(15),
-            NameObject("/Colors"): NumberObject(colors),
-            NameObject("/BitsPerComponent"): NumberObject(8),
-            NameObject("/Columns"): NumberObject(width),
-        })
-        return _stream(bytes(idat), width, height, space, 8, "/FlateDecode", parms), width, height
 
-    if depth not in (8, 16) or ctype not in (0, 2, 4, 6):
+def _idat(image) -> bytes:
+    """An "L" or "RGB" image's rows as a PNG stores them: filtered and deflated."""
+    buf = io.BytesIO()
+    image.save(buf, "PNG")
+    return b"".join(body for tag, body in _png_chunks(buf.getvalue()) if tag == b"IDAT")
+
+
+def _soft_mask(image):
+    """The alpha channel as an /SMask image, or None when the picture is
+    opaque everywhere."""
+    if "A" not in image.getbands():
         return None
-    chans = {0: 1, 2: 3, 4: 2, 6: 4}[ctype]
-    bpp = max(1, chans * depth // 8)
-    stride = width * chans * depth // 8
-    samples = _unfilter(zlib.decompress(bytes(idat)), height, bpp, stride)
-    rgb = _to_rgb(samples, width, height, ctype, depth)
-    return (_stream(zlib.compress(rgb, 6), width, height, NameObject("/DeviceRGB"),
-                    8, "/FlateDecode"), width, height)
+    alpha = image.getchannel("A")
+    if alpha.getextrema()[0] == 255:
+        return None
+    return _flate_png(_idat(alpha), alpha.width, alpha.height, NameObject("/DeviceGray"), 1)
+
+
+def _decoded(data: bytes):
+    """Any picture Pillow reads: its colour as 8-bit gray or RGB, and its
+    transparency as an /SMask."""
+    image = Image.open(io.BytesIO(data))
+    width, height = image.size              # read from the header, nothing decoded yet
+    if width * height > MAX_DECODED_PIXELS:
+        raise ValueError(f"{width}x{height} px is past MAX_DECODED_PIXELS")
+    image.load()
+    gray = image.mode in _GRAY_MODES
+    if image.mode in ("I", "I;16"):         # 16-bit gray: convert() would clip it, not scale it
+        image = image.point(lambda v: v / 257)
+    if "transparency" in image.info:        # a tRNS colour key or palette entry
+        image = image.convert("LA" if gray else "RGBA")
+    mask = _soft_mask(image)
+    # Rebound so the decoded RGBA is freed before the colour is encoded.
+    image = image.convert("L" if gray else "RGB")
+    stream = _flate_png(_idat(image), width, height,
+                        NameObject("/DeviceGray" if gray else "/DeviceRGB"), 1 if gray else 3)
+    if mask is not None:
+        stream[NameObject("/SMask")] = mask
+    return stream, width, height
 
 
 def image_xobject(path):
     """Image file → (XObject stream, pixel width, pixel height), or None when
-    the format isn't one we can embed. Never raises: a broken image must not
-    take the whole export down with it."""
+    it can't be embedded, which is logged with the reason. Never raises: a
+    broken image must not take the whole export down with it. A soft mask
+    is a direct stream in the result's ``/SMask``; ``XObjectStore`` makes it
+    an indirect object, as a PDF needs."""
+    name = getattr(path, "name", path)
     try:
         data = path.read_bytes()
-        if data[:8] == _PNG_MAGIC:
-            return _png(data)
-        if data[:2] == b"\xff\xd8":
-            return _jpeg(data)
+        verbatim = (_png(data) if data[:8] == _PNG_MAGIC
+                    else _jpeg(data) if data[:2] == b"\xff\xd8" else None)
+        return verbatim or _decoded(data)
+    except UnidentifiedImageError:
+        log.info(f"[pdf-image] unsupported image format: {name}")
     except Exception as e:
-        log.warning(f"[pdf-image] could not embed {getattr(path, 'name', path)}: {e}")
+        log.warning(f"[pdf-image] could not embed {name}: {e}")
     return None
 
 
@@ -237,10 +222,10 @@ class XObjectStore:
                 built = image_xobject(path)
                 if built:
                     stream, px_w, px_h = built
+                    if "/SMask" in stream:
+                        stream[NameObject("/SMask")] = self.writer._add_object(stream["/SMask"])
                     name = f"GmIm{len(self.refs)}"
                     self.refs[name] = self.writer._add_object(stream)
                     info = (name, px_w, px_h)
-                else:
-                    log.info(f"[pdf-image] unsupported image format: {match.group(1)}")
         self.by_src[src] = info
         return info

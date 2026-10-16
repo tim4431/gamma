@@ -23,14 +23,14 @@ highlight rects always agree with what's on screen.
 frontend still uses.
 """
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from .. import block_index, jobs, pdf_index, pdf_meta
 from ..ai_context import pdf_path as _pdf_path
 from ..auth import require_ws
 from ..block_index import fts_query
-from ..blocks_store import root_pages, write_lock
+from ..blocks_store import pages_in_scope, root_pages, write_lock
 from ..db import connect_data_db, connect_pages_db
 from ..json_response import OrjsonResponse
 from ..logbuf import log
@@ -40,6 +40,8 @@ from ..textnorm import normalize_text
 router = APIRouter(prefix="/api", tags=["search"])
 
 _MAX_PAGE_CHARS = 20000   # per page
+# A paper's hits listed before every other paper's best ones (/pdf-search).
+PDF_HITS_PER_PAPER = 3
 
 
 def _extract_pages(path) -> list[str]:
@@ -162,16 +164,32 @@ def library_search(request: Request, q: str = "", limit: int = 20, scope: str = 
 
 
 @router.get("/pdf-search")
-def pdf_search(request: Request, q: str = "", limit: int = 20):
+def pdf_search(request: Request, q: str = "", limit: int = 20, scope: str = "", cursor: str = "",
+               exclude: str = ""):
+    """The Ctrl+F panel's PDF group: hits in the library's papers, or in the
+    pages inside every folder and label of ``scope`` (comma-separated ids,
+    as /block-search takes them), leaving out the page ``exclude`` (the open
+    paper: the panel finds its matches with pdf.js). At most
+    PDF_HITS_PER_PAPER of one paper's hits come before every other paper's
+    best ones (``search_pdf``'s ``per_doc``). ``next`` is the ``cursor`` of
+    the following page (the hits listed so far), there when more follow."""
     ws = require_ws(request)
     q = (q or "").strip()
+    limit = max(1, min(int(limit or 20), 100))
+    if cursor and not cursor.isdigit():
+        raise HTTPException(status_code=400, detail="bad cursor")
+    offset = int(cursor or 0)
     if not q:
         return {"results": [], "indexing": 0}
 
     # Library papers: doc_id → page block (title + id to open)
     with connect_pages_db(ws) as conn:
+        pages = root_pages(conn)
+        if scope:
+            reach = pages_in_scope(conn, [s for s in scope.split(",") if s])
+            pages = {page_id: info for page_id, info in pages.items() if page_id in reach}
         docs = {info["doc_id"]: {"block_id": page_id, "title": info["title"]}
-                for page_id, info in root_pages(conn).items() if info["doc_id"]}
+                for page_id, info in pages.items() if info["doc_id"] and page_id != exclude}
     if not docs:
         return {"results": [], "indexing": 0}
 
@@ -179,7 +197,9 @@ def pdf_search(request: Request, q: str = "", limit: int = 20):
         missing = pdf_index.pdf_missing(conn, docs)  # never indexed or stale version
         if missing:
             _index_missing_async(ws, missing)
-        results = [{"block_id": docs[doc_id]["block_id"], "doc_id": doc_id,
-                    "title": docs[doc_id]["title"], "page": page, "snippet": snip}
-                   for doc_id, page, snip in pdf_index.search_pdf(conn, fts_query(q), limit, docs)]
-    return OrjsonResponse({"results": results, "indexing": len(missing)})
+        hits = pdf_index.search_pdf(conn, fts_query(q), limit + 1, docs, offset, PDF_HITS_PER_PAPER)
+    results = [{"block_id": docs[doc_id]["block_id"], "doc_id": doc_id,
+                "title": docs[doc_id]["title"], "page": page, "snippet": snip}
+               for doc_id, page, snip in hits[:limit]]
+    more = {"next": str(offset + limit)} if len(hits) > limit else {}
+    return OrjsonResponse({"results": results, "indexing": len(missing), **more})

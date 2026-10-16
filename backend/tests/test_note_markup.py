@@ -91,16 +91,146 @@ def test_png_rgb_is_embedded_verbatim(tmp_path):
     assert str(stream["/ColorSpace"]) == "/DeviceRGB"
 
 
-def test_png_with_alpha_is_decoded_onto_white(tmp_path):
+def _chunk(tag, data):
+    import struct
+    body = tag + data
+    return struct.pack(">I", len(data)) + body + struct.pack(">I", zlib.crc32(body))
+
+
+def _unpredicted(stream):
+    """A gray or RGB /Predictor 15 stream's samples, read back by Pillow
+    from the PNG its data is the image data of."""
+    import struct
+
+    from PIL import Image
+
+    w, h = int(stream["/Width"]), int(stream["/Height"])
+    ctype = 2 if str(stream["/ColorSpace"]) == "/DeviceRGB" else 0
+    png = (b"\x89PNG\r\n\x1a\n" + _chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, ctype, 0, 0, 0))
+           + _chunk(b"IDAT", stream.get_data()) + _chunk(b"IEND", b""))
+    return Image.open(io.BytesIO(png)).tobytes()
+
+
+def test_png_with_alpha_keeps_it_as_a_soft_mask(tmp_path):
     path = tmp_path / "a.png"
     path.write_bytes(_png(2, 2, ctype=6))
     stream, w, h = image_xobject(path)
     assert (w, h) == (2, 2)
-    assert "/DecodeParms" not in stream       # unfiltered here, not by the viewer
-    assert len(zlib.decompress(stream.get_data())) == 2 * 2 * 3
+    assert str(stream["/ColorSpace"]) == "/DeviceRGB"
+    mask = stream["/SMask"]
+    assert str(mask["/ColorSpace"]) == "/DeviceGray"
+    # Re-encoded as 8-bit PNG data, so both go in as /Predictor 15 streams.
+    assert int(stream["/DecodeParms"]["/Predictor"]) == 15
+    assert _unpredicted(mask) == bytes([4, 8]) * 2            # each pixel's alpha, as stored
+    assert _unpredicted(stream) == bytes([1, 2, 3, 5, 6, 7]) * 2
 
-    from gamma.pdf_image import MAX_PIXELS
-    assert MAX_PIXELS > 1_000_000            # a pasted screenshot must fit
+    from PIL import Image
+    Image.new("RGBA", (3, 2), (10, 20, 30, 255)).save(path)
+    stream, _, _ = image_xobject(path)
+    assert "/SMask" not in stream, "an alpha channel that is opaque everywhere needs no mask"
+
+
+def test_a_large_png_embeds_verbatim(tmp_path):
+    """The verbatim path costs nothing at any size: a 12 MP RGB PNG goes in
+    as its own IDAT bytes."""
+    from PIL import Image
+
+    from gamma.pdf_image import _png_chunks
+
+    path = tmp_path / "big.png"
+    Image.new("RGB", (4000, 3000), (10, 120, 200)).save(path)
+    stream, w, h = image_xobject(path)
+    assert (w, h) == (4000, 3000)
+    assert int(stream["/DecodeParms"]["/Predictor"]) == 15
+    assert stream.get_data() == b"".join(b for tag, b in _png_chunks(path.read_bytes()) if tag == b"IDAT")
+
+
+def _drawn_over_blue(path, scale):
+    """The picture at ``path`` through ``XObjectStore``, drawn to fill a page
+    painted blue, rendered back by pdfium."""
+    import pypdfium2 as pdfium
+    from PyPDF2 import PdfWriter
+    from PyPDF2.generic import DecodedStreamObject, DictionaryObject, IndirectObject, NameObject
+
+    from gamma.pdf_image import XObjectStore
+
+    writer = PdfWriter()
+    store = XObjectStore(writer, path.parent)
+    name, w, h = store.resolve(f"/api/uploads/{path.name}")
+    mask = store.refs[name].get_object().get("/SMask")
+    assert mask is None or isinstance(mask, IndirectObject), "a stream is only valid as an indirect object"
+    writer.add_blank_page(w, h)
+    page = writer.pages[0]                       # the writer's copy, not the one add_blank_page returns
+    content = DecodedStreamObject()
+    content.set_data(b"0 0 1 rg 0 0 %d %d re f %d 0 0 %d 0 0 cm /%s Do" % (w, h, w, h, name.encode()))
+    page[NameObject("/Contents")] = writer._add_object(content)
+    page[NameObject("/Resources")] = DictionaryObject({NameObject("/XObject"): DictionaryObject({
+        NameObject(f"/{name}"): store.refs[name]})})
+    out = io.BytesIO()
+    writer.write(out)
+    doc = pdfium.PdfDocument(out.getvalue())
+    try:
+        return doc[0].render(scale=scale).to_pil().convert("RGB")
+    finally:
+        doc.close()
+
+
+def test_a_large_screenshot_with_alpha_embeds_with_its_transparency(tmp_path):
+    """A pasted screenshot is RGBA and often past the old 2.5 MP cap: a
+    6 MP one embeds, and what is under it shows through where it is
+    transparent (a note box's tint), not a white rectangle."""
+    from PIL import Image
+
+    path = tmp_path / "ab12.png"
+    image = Image.new("RGBA", (3000, 2000), (0, 0, 0, 0))   # transparent right third
+    image.paste((220, 30, 30, 255), (0, 0, 1000, 2000))      # opaque red
+    image.paste((30, 200, 30, 128), (1000, 0, 2000, 2000))   # half-transparent green
+    image.save(path)
+
+    shown = _drawn_over_blue(path, scale=0.1)                # 300×200 px
+    def near(px, want):
+        return all(abs(a - b) <= 4 for a, b in zip(px, want))
+    assert near(shown.getpixel((50, 100)), (220, 30, 30))
+    assert near(shown.getpixel((150, 100)), (15, 100, 142))  # half green, half the blue page
+    assert near(shown.getpixel((250, 100)), (0, 0, 255))
+
+
+def test_the_decoded_path_takes_what_the_verbatim_one_cannot(tmp_path):
+    """16-bit samples are scaled (not clipped), a palette's tRNS entry
+    becomes a soft mask, and interlaced PNGs, GIF and WebP embed; an SVG and
+    a corrupt file are left for the alt text."""
+    import struct
+
+    from PIL import Image
+
+    def png(ctype, depth, rows, extra=b"", interlace=0):
+        """A 2×1 PNG; ``rows`` its filter-0 image data."""
+        return (b"\x89PNG\r\n\x1a\n"
+                + _chunk(b"IHDR", struct.pack(">IIBBBBB", 2, 1, depth, ctype, 0, 0, interlace)) + extra
+                + _chunk(b"IDAT", zlib.compress(rows)) + _chunk(b"IEND", b""))
+
+    path = tmp_path / "a.png"
+    path.write_bytes(png(0, 16, b"\x00" + struct.pack(">HH", 0x8000, 0xFFFF)))
+    assert _unpredicted(image_xobject(path)[0]) == bytes([127, 255])
+
+    path.write_bytes(png(3, 8, b"\x00\x00\x01",
+                         _chunk(b"PLTE", bytes([255, 0, 0, 0, 0, 255])) + _chunk(b"tRNS", b"\x00")))
+    stream, _, _ = image_xobject(path)
+    assert _unpredicted(stream) == bytes([255, 0, 0, 0, 0, 255])
+    assert _unpredicted(stream["/SMask"]) == bytes([0, 255])
+
+    # Adam7 puts a 2×1 image's pixels in passes 1 and 6, a row each.
+    path.write_bytes(png(0, 8, b"\x00\x0a" + b"\x00\x14", interlace=1))
+    assert _unpredicted(image_xobject(path)[0]) == bytes([10, 20])
+
+    for name, kwargs in (("a.gif", {}), ("a.webp", {"lossless": True})):
+        Image.new("RGB", (5, 4), (10, 120, 200)).save(tmp_path / name, **kwargs)
+        assert image_xobject(tmp_path / name)[1:] == (5, 4), name
+
+    (tmp_path / "a.svg").write_bytes(b'<svg xmlns="http://www.w3.org/2000/svg"/>')
+    assert image_xobject(tmp_path / "a.svg") is None
+    path.write_bytes(png(6, 8, b"")[:33] + _chunk(b"IDAT", b"not zlib") + _chunk(b"IEND", b""))
+    assert image_xobject(path) is None
 
 
 def test_unsupported_image_is_skipped(tmp_path):

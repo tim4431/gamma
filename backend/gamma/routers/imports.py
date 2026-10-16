@@ -33,7 +33,7 @@ from ..colors import DEFAULT_HIGHLIGHT, normalize_color
 from ..highlights import position as highlight_position
 from ..logbuf import log
 from ..ops import MAX_OPS, after_commit, apply_ops, commit_ops, ensure_filing, note_reload, props_patch
-from ..markdown_import import MAX_MARKDOWN_BYTES, md_to_blocks
+from ..markdown_import import MAX_MARKDOWN_BYTES, TooManyBlocks, md_to_blocks
 from ..markdown_zip_import import import_markdown_zip, markdown_page
 from ..ink import InkError, dumps as ink_dumps, from_pdf_ink, parse_ink, pdf_position as ink_position
 from ..pdf_text import GlyphPages, quote_under
@@ -466,11 +466,15 @@ def markdown_blocks(payload: MarkdownBlocksRequest, request: Request):
     """Parse markdown text into a ``{content, children}`` block tree — the
     editor's "paste as blocks" helper, same parser as the .md file import.
     Nothing is stored; the client inserts the tree through its normal
-    tree-edit/autosave path."""
+    tree-edit/autosave path. 413 past 5 MB or MAX_BLOCKS blocks: the paste
+    stays text."""
     require_user_id(request)
     if len(payload.text.encode("utf-8", errors="ignore")) > MAX_MARKDOWN_BYTES:
         raise HTTPException(status_code=413, detail="text exceeds 5 MB")
-    return {"blocks": md_to_blocks(payload.text)}
+    try:
+        return {"blocks": md_to_blocks(payload.text)}
+    except TooManyBlocks as exc:
+        raise HTTPException(status_code=413, detail=f"text has {exc}")
 
 
 # --- Annotations embedded in the PDF file itself ------------------------------

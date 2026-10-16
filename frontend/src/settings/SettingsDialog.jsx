@@ -738,7 +738,7 @@ function ContextSize({ value }) {
   const limits = [
     [FileTextIcon, t("Single paper"), t("Read from the open paper for one chat message"),
       value.chatContextChars, value.setChatContextChars,
-      t("{shared} When you ask about selected passages, this budget is spent around them (a grounding slice from the start plus text around each selection's page) instead of only the start of the paper.", { shared })],
+      t("{shared} The passages you select for a message are quoted up to this budget too, shared between them, and the blocks you attach get as much again.", { shared })],
     [PaperIcon, t("Metadata extraction"), t("Read while detecting identifiers and extracting fields"),
       value.metaContextChars, value.setMetaContextChars, shared],
     [BookIcon, t("Multi-paper total"), t("Shared evenly by every selected paper"),

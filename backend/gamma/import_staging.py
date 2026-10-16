@@ -11,6 +11,9 @@ proxy in front of the server lets one request carry, in parts
 (``open_parts``, ``append``, ``finish``: gamma/upload_parts.py's protocol,
 with the bytes held here). There is no size cap: an upload is refused
 (507) only when it would leave the disk with less than MIN_FREE_BYTES free.
+A backup zip restored as a job (routers/ws_backups.py) is staged here too
+when it comes in parts; ``meta`` is whatever the caller keeps with the
+upload (an import's source, folder and strip; a restore's mode and target).
 """
 import hashlib
 import json
@@ -67,10 +70,9 @@ def _new(size, metadata):
     return token, path
 
 
-def create(file, *, user_id, ws, source, folder, strip):
+def create(file, *, user_id, ws, **meta):
     """Stage an upload that came in one request (``file``, an UploadFile)."""
-    token, path = _new(file.size or 0, {"user": user_id, "ws": ws, "source": source, "folder": folder,
-                                        "strip": strip, "filename": file.filename})
+    token, path = _new(file.size or 0, {**meta, "user": user_id, "ws": ws, "filename": file.filename})
     try:
         with (path / "upload").open("wb") as dest:
             shutil.copyfileobj(file.file, dest, 1024 * 1024)
@@ -80,13 +82,13 @@ def create(file, *, user_id, ws, source, folder, strip):
     return token
 
 
-def open_parts(*, user_id, ws, source, folder, strip, filename, size):
+def open_parts(*, user_id, ws, filename, size, **meta):
     """Open an upload of ``size`` bytes that comes in parts → its token,
     the review's id once ``finish`` has run."""
     if size <= 0:
         raise HTTPException(status_code=400, detail="an upload needs a size")
-    token, path = _new(size, {"user": user_id, "ws": ws, "source": source, "folder": folder,
-                              "strip": strip, "filename": filename, "size": size, "pending": True})
+    token, path = _new(size, {**meta, "user": user_id, "ws": ws, "filename": filename,
+                              "size": size, "pending": True})
     (path / "upload").touch()
     return token
 

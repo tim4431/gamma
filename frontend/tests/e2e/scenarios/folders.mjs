@@ -235,4 +235,40 @@ export async function folderScenarios(env) {
       assertNoProblems(page);
     } finally { await ctx.close(); }
   });
+
+  // The search's folder chip goes to the server as its scope: a note in the
+  // folder is found though the newest 20 notes are all elsewhere. Each
+  // group pages with "Show more".
+  await step("folders: search keeps its notes to a folder chip on the server, and Show more pages them", async () => {
+    const deep = await user.folder("Deep");
+    const filed = await user.api("/api/pages", { method: "POST", body: { title: "Deep paper", folders: [deep] } });
+    await user.api("/api/blocks", { method: "POST", body: { parent_id: filed.id, content: "narwhalscope filed note" } });
+    const other = await user.api("/api/pages", { method: "POST", body: { title: "Loose notes" } });
+    await user.api(`/api/blocks/${other.id}/children`, { method: "PUT",
+      body: { blocks: Array.from({ length: 25 }, (_, i) => ({ content: `narwhalscope loose note ${i}` })) } });
+    const ctx = await user.context(browser);
+    const page = await openPage(ctx, `${server.base}/?ws=${user.ws}`);
+    const hits = page.locator(".searchPopover .searchResult", { hasText: "narwhalscope" });
+    const more = page.locator(".searchPopover .loadMoreBtn", { hasText: "Show more" });
+    try {
+      await page.click("button[aria-label='Search']");
+      const search = page.locator(".searchPopover .searchInput");
+      await search.fill("narwhalscope");
+      await until(async () => (await hits.count()) === 20, { what: "the first page of notes" });
+      await more.click();
+      await until(async () => (await hits.count()) === 26, { what: "the next page appended" });
+      assertEq(await more.count(), 0, "nothing more to show");
+
+      await search.fill("");
+      await search.fill("deep");
+      await page.locator(".searchLabelSuggest .categorySuggestionItem", { hasText: "Deep" }).waitFor();
+      await search.press("Tab");
+      await page.locator(".searchPopover .searchChip", { hasText: "Deep" }).waitFor();
+      await search.fill("narwhalscope");
+      await page.locator(".searchPopover .searchResult", { hasText: "narwhalscope filed note" }).waitFor();
+      await until(async () => (await hits.count()) === 1, { what: "only the folder's note" });
+      assertEq(await more.count(), 0, "the scope holds one note");
+      assertNoProblems(page);
+    } finally { await ctx.close(); }
+  });
 }

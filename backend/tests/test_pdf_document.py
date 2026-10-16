@@ -316,6 +316,35 @@ def test_pasted_images_are_embedded(guest):
     assert src not in _text(pdf)
 
 
+def test_a_large_screenshot_with_alpha_is_embedded(guest):
+    """A 6 MP RGBA screenshot, past the 2.5 MP the PNG decoder once took,
+    is drawn as the picture, not its alt text."""
+    import pypdfium2 as pdfium
+    from PIL import Image
+
+    from gamma.db import ws_uploads_dir
+
+    shot = Image.new("RGBA", (3000, 2000), (0, 0, 0, 0))
+    shot.paste((40, 90, 200, 255), (100, 100, 2900, 1900))
+    buf = io.BytesIO()
+    shot.save(buf, "PNG")
+    up = guest.post("/api/upload-image", files={"file": ("shot.png", buf.getvalue(), "image/png")})
+    assert up.status_code == 200, up.text
+    pdf = render_document([_page("Screenshot", None, [_block("b1", f"![a screenshot]({up.json()['url']})")])],
+                          uploads_dir=ws_uploads_dir(workspace_of(guest_name())))
+    assert "a screenshot" not in _text(pdf)
+    doc = pdfium.PdfDocument(pdf)
+    try:
+        page = doc[0]
+        (image,) = [o for o in page.get_objects(max_depth=1) if o.type == 3]
+        left, bottom, right, top = image.get_bounds()
+        x, y = (left + right) / 2, page.get_height() - (bottom + top) / 2
+        colour = page.render(scale=1).to_pil().convert("RGB").getpixel((round(x), round(y)))
+    finally:
+        doc.close()
+    assert all(abs(a - b) <= 4 for a, b in zip(colour, (40, 90, 200)))
+
+
 def test_unresolvable_image_falls_back_to_its_alt_text():
     pdf = render_document([_page("Missing", None,
                                  [_block("b1", "![the figure](/api/uploads/deadbeef.png)")])])

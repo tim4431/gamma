@@ -6,6 +6,7 @@ import base64
 import json
 import re
 import sqlite3
+import sys
 from urllib.request import Request as URLRequest
 
 from .ai_pictures import picture as _picture
@@ -28,12 +29,21 @@ from .textnorm import normalize_text
 
 
 MAX_ATTACH_PDF_BYTES = 15 * 1024 * 1024
-# Caps on the selected PDF passages a chat request may carry (the chat UI
-# holds the same six × 4000) — the prompt copy (final_prompt) and the
-# context locator (gather_inputs) both read them through request_selections.
-MAX_SELECTIONS = 6
-MAX_SELECTION_PASSAGE_CHARS = 4000
-MAX_SELECTION_CHARS = 24_000
+# What a message points at — the PDF passages it selected and the note text
+# it selected, quoted in the question (final_prompt), and the blocks it
+# attached, served as outlines (notes_focus_section) — is sized by the
+# single-paper budget the request carries (`context_char_limit`, Settings →
+# AI → Chat → Context size; 60,000 characters by default, a dozen dense PDF
+# pages): the quoted passages share one such budget, the attached blocks
+# another, each split by fair_shares. The chat's composer counts the same
+# way and says on a chip what it keeps (chat/passageBudget.js). A prompt the
+# model's window can't hold shrinks it, once every earlier turn is out
+# (routers/ai.py), never below MIN_PASSAGE_BUDGET. At most MAX_SELECTIONS
+# PDF passages, and as many attached blocks (MAX_CONTEXT_BLOCKS) and
+# attached note selections, plus the one selected in the open editor.
+MAX_SELECTIONS = 12
+DEFAULT_PASSAGE_BUDGET = 60_000
+MIN_PASSAGE_BUDGET = 4000
 
 # Renamed agent tools: old name → current. Saved chats replay their recorded
 # tool calls by name (build_messages), so a chat that ran before a rename
@@ -115,14 +125,62 @@ def request_selections(payload) -> list[dict]:
         passages = [{"text": p.strip(), "page": 0, "box": None}
                     for p in re.split(r"\n\s*---\s*\n", getattr(payload, "selection", "") or "")
                     if p.strip()]
-    kept, room = [], MAX_SELECTION_CHARS
-    for passage in passages[:MAX_SELECTIONS]:
-        text = passage["text"][:min(MAX_SELECTION_PASSAGE_CHARS, room)]
-        if not text:
-            break
-        kept.append({**passage, "text": text})
-        room -= len(text)
-    return kept
+    # Whole: what the question quotes of each is final_prompt's to cut
+    # (quoted_shares), and locating one needs only its start.
+    return passages[:MAX_SELECTIONS]
+
+
+def fair_shares(sizes: list[int], budget: int) -> list[int]:
+    """How much of each item a shared budget keeps: an item within an even
+    share keeps all of it, and what it leaves goes to the rest, again split
+    evenly. Nothing is dropped, and one long item can't starve the others.
+    The chat's composer computes the same (chat/passageBudget.js
+    ``fairShares``), so a chip says beforehand what the server keeps."""
+    shares = [0] * len(sizes)
+    left = max(0, budget)
+    order = sorted(range(len(sizes)), key=lambda i: sizes[i])
+    for done, i in enumerate(order):
+        shares[i] = min(max(0, sizes[i]), left // (len(order) - done))
+        left -= shares[i]
+    return shares
+
+
+def passage_budget(payload) -> int:
+    """The characters a message may quote of what it points at (see
+    MAX_SELECTIONS above): the request's single-paper budget."""
+    return int(getattr(payload, "context_char_limit", 0) or DEFAULT_PASSAGE_BUDGET)
+
+
+def quoted_shares(payload, budget: int | None = None) -> tuple[list[int], list[int]]:
+    """How many characters of each selected PDF passage and of each selected
+    note text the question quotes: one budget shared by all of them, in the
+    order the request lists them (PDF passages, then note selections)."""
+    passages, notes = request_selections(payload), request_note_selections(payload)
+    shares = fair_shares([len(p["text"]) for p in passages] + [len(s["text"]) for s in notes],
+                         budget or passage_budget(payload))
+    return shares[:len(passages)], shares[len(passages):]
+
+
+def passage_cuts(payload, budget: int | None = None) -> list[dict]:
+    """The quoted passages the budget cuts short, as the chat reports them:
+    ``{kind: "pdf" | "note", n, of, kept, total}`` (``n`` 1-based among the
+    ``of`` passages of its kind)."""
+    passages, notes = request_selections(payload), request_note_selections(payload)
+    pdf_kept, note_kept = quoted_shares(payload, budget)
+    return [{"kind": kind, "n": n, "of": len(texts), "kept": kept, "total": len(text)}
+            for kind, texts, shares in (("pdf", [p["text"] for p in passages], pdf_kept),
+                                        ("note", [s["text"] for s in notes], note_kept))
+            for n, (text, kept) in enumerate(zip(texts, shares), start=1) if kept < len(text)]
+
+
+def _quoted(text: str, kept: int) -> str:
+    """``text`` as the question quotes it: whole, or its first ``kept``
+    characters with a line saying how much is missing — the model must not
+    take a cut passage for the whole selection."""
+    if len(text) <= kept:
+        return text
+    return (f"{text[:kept]}\n…[cut here: the first {kept:,} of this passage's {len(text):,} "
+            "characters are quoted; the rest did not fit this message]")
 
 
 def _passage_heading(index: int, count: int, where: dict) -> str:
@@ -140,18 +198,22 @@ def _passage_heading(index: int, count: int, where: dict) -> str:
     return name + (f" ({'; '.join(bits)})" if bits else "") + ":"
 
 
-def final_prompt(payload, located: list | None = None) -> str:
+def final_prompt(payload, located: list | None = None, budget: int | None = None) -> str:
     """Append the selected PDF passage(s) and selected note text to a user's
-    current prompt. ``located`` is what the context builder learned about
-    each passage (``selection_context``: page, section, attached picture);
-    without it a passage is labelled with the page the viewer reported."""
+    current prompt, each within its share of ``budget`` (``quoted_shares``;
+    the request's own by default). ``located`` is what the context builder
+    learned about each passage (``selection_context``: page, section,
+    attached picture); without it a passage is labelled with the page the
+    viewer reported."""
     prompt = payload.prompt
     passages = request_selections(payload)
+    pdf_kept, note_kept = quoted_shares(payload, budget)
     if passages:
         blocks = []
         for i, passage in enumerate(passages):
             where = located[i] if located and i < len(located) else {"page": passage["page"]}
-            blocks.append(f'{_passage_heading(i, len(passages), where)}\n"""\n{passage["text"]}\n"""')
+            blocks.append(f'{_passage_heading(i, len(passages), where)}\n"""\n'
+                          f'{_quoted(passage["text"], pdf_kept[i])}\n"""')
         several = len(passages) > 1
         prompt = (
             f"{prompt}\n\n"
@@ -163,9 +225,8 @@ def final_prompt(payload, located: list | None = None) -> str:
     if selected:
         shown = "\n\n".join(
             f'{sel["label"]} (in block [{sel["block_id"]}]):\n"""\n'
-            + sel["text"][:MAX_NOTE_PASSAGE_CHARS]
-            + ("…" if len(sel["text"]) > MAX_NOTE_PASSAGE_CHARS else "") + '\n"""'
-            for sel in selected)
+            + _quoted(sel["text"], kept) + '\n"""'
+            for sel, kept in zip(selected, note_kept))
         several = len(selected) > 1
         prompt = (
             f"{prompt}\n\n"
@@ -179,12 +240,11 @@ def final_prompt(payload, located: list | None = None) -> str:
     return prompt
 
 
-# Caps for what a message may point at inside the notes: attached blocks
-# (chips), selected note text, and the size of each in the prompt.
-MAX_CONTEXT_BLOCKS = 12
-MAX_NOTE_SELECTIONS = 6
-MAX_NOTE_PASSAGE_CHARS = 4000
-MAX_BLOCK_SECTION_CHARS = 12_000
+# Caps on what a message may point at inside the notes: attached blocks
+# (chips), and selected note text — as many attached as PDF passages, plus
+# the selection in the open editor. Their size is passage_budget's.
+MAX_CONTEXT_BLOCKS = MAX_SELECTIONS
+MAX_NOTE_SELECTIONS = MAX_SELECTIONS + 1
 
 
 def request_note_selections(payload) -> list[dict]:
@@ -225,13 +285,19 @@ def handwriting_label(props: dict) -> str:
 
 
 def notes_focus_section(ws: str, payload, notes_seen: dict | None = None,
-                        crops: list | None = None) -> str:
+                        crops: list | None = None, budget: int | None = None,
+                        quoted: dict | None = None) -> str:
     """The user's pointer into their notes, as one context section: the
     block their cursor is on and the blocks they attached to this message,
     each as ``[id] text`` with its sub-blocks indented — the same id-labelled
     form ``read_block`` gives, so an agent can edit them straight away. Only
     blocks of the request's context pages are served (a chip from another
     page is silently dropped). Empty when there is nothing to point at.
+    The attached blocks' outlines share ``budget`` (the request's
+    ``passage_budget`` by default) by ``fair_shares``; one cut short is
+    reported in ``quoted["items"]`` (``{kind: "block", n, of, kept,
+    total}``), and ``quoted["wanted"]`` grows to the budget that would
+    cut none (gather_inputs).
     ``notes_seen`` receives ``{block_id: text}`` for every block shown in
     full — what an edit_block replace may start from (ai_tools.notes_seen).
     ``crops``, when given, receives the pictures of attached handwriting
@@ -255,7 +321,10 @@ def notes_focus_section(ws: str, payload, notes_seen: dict | None = None,
     out = []
     try:
         with connect_pages_db(ws) as conn:
-            def outline(block_id: str, budget: int) -> str | None:
+            def outline(block_id: str, budget: int, seen: dict | None) -> tuple[str, int] | None:
+                """The block's outline within ``budget`` characters, and
+                how many of them it shows; ``seen`` receives the blocks it
+                shows in full."""
                 if page_root_id(conn, block_id) not in pages:
                     return None
                 rows = fetch_subtree(conn, block_id)
@@ -300,26 +369,26 @@ def notes_focus_section(ws: str, payload, notes_seen: dict | None = None,
                             return
                         used += len(entry)
                         lines.append(entry)
-                        if notes_seen is not None:
-                            notes_seen[row[0]] = row[3] or ""
+                        if seen is not None:
+                            seen[row[0]] = row[3] or ""
                         walk(row[0], depth + 1, on_sheet or is_sheet(props_of(row)))
 
                 on_sheet = under_sheet(conn, block_id)
                 head = line(own, 0, on_sheet)
                 if len(head) > budget:
                     head = head[:budget] + "…"
-                elif notes_seen is not None:
-                    notes_seen[own[0]] = own[3] or ""
-                used = len(head)
+                elif seen is not None:
+                    seen[own[0]] = own[3] or ""
+                used = min(len(head), budget)
                 lines.append(head)
                 walk(block_id, 1, on_sheet or is_sheet(props_of(own)))
-                return "\n".join(lines)
+                return "\n".join(lines), used
 
             if focus and focus not in pages:
-                text = outline(focus, 1500)
-                if text:
+                shown = outline(focus, 1500, notes_seen)
+                if shown:
                     out.append("The user's cursor is on this note block (\"this block\", "
-                               "\"this note\", \"here\" mean it):\n" + text)
+                               "\"this note\", \"here\" mean it):\n" + shown[0])
             def ink_picture(block_id: str):
                 """An attached handwriting block's (or page of paper's)
                 picture (an ai_pictures dict); None for any other block."""
@@ -346,19 +415,32 @@ def notes_focus_section(ws: str, payload, notes_seen: dict | None = None,
                                 "ink", block_id=block_id)
 
             if chips:
-                shown = []
-                budget = MAX_BLOCK_SECTION_CHARS
+                # Each outline whole first, to size the shares by; one over
+                # its share is drawn again within it.
+                whole = []
                 for block_id in chips:
-                    if block_id in pages:
-                        continue
-                    text = outline(block_id, max(500, budget // max(1, len(chips))))
-                    if text and crops is not None:
+                    seen = {}
+                    full = None if block_id in pages else outline(block_id, sys.maxsize, seen)
+                    if full:
+                        whole.append((block_id, full, seen))
+                shares = fair_shares([size for _, (_, size), _ in whole], budget or passage_budget(payload))
+                if quoted is not None:
+                    quoted["wanted"] = max(quoted.get("wanted", 0), sum(size for _, (_, size), _ in whole))
+                shown = []
+                for n, ((block_id, (text, size), seen), share) in enumerate(zip(whole, shares), start=1):
+                    if share < size:
+                        text, kept = outline(block_id, share, notes_seen) or (text[:share], share)
+                        if quoted is not None:
+                            quoted.setdefault("items", []).append(
+                                {"kind": "block", "n": n, "of": len(whole), "kept": kept, "total": size})
+                    elif notes_seen is not None:
+                        notes_seen.update(seen)
+                    if crops is not None:
                         image = ink_picture(block_id)
                         if image:
                             crops.append(image)
                             text += "\n  (a picture of this handwriting is attached to the message)"
-                    if text:
-                        shown.append(text)
+                    shown.append(text)
                 if shown:
                     out.append("Note blocks the user attached to this message (ids in "
                                "brackets; edit them by id when asked to change them):\n"
@@ -490,7 +572,7 @@ def prompt_tokens(messages: list, system: str = "", tools: list | None = None,
 def build_messages(payload, context: str, with_tools: bool = False,
                    located: list | None = None, message_context: str = "",
                    drop_turns: int = 0, picture_lines: str = "",
-                   files: list | None = None) -> list[dict]:
+                   files: list | None = None, quote_budget: int | None = None) -> list[dict]:
     """Build common chat messages, injecting context once before a user turn.
 
     With ``with_tools`` (an agent chat), each saved reply's tool calls are
@@ -514,6 +596,8 @@ def build_messages(payload, context: str, with_tools: bool = False,
     ``files`` (the library PDFs a Full PDF chat sends, base64) ride with
     the document ``context`` as that turn's ``files``, so on every request
     of the conversation they sit at the same place in its head.
+    ``quote_budget`` is what the question's quoted passages share (the
+    request's ``passage_budget`` unless the window fit shrank it).
     """
     history = [h for h in (payload.history or []) if not h.get("error")]
     if drop_turns > 0:
@@ -562,7 +646,7 @@ def build_messages(payload, context: str, with_tools: bool = False,
         messages.append({"role": role, "content": content, **({"reasoning": thinking} if thinking else {}),
                          **({"files": list(files)} if head_turn and files else {}),
                          **({"images": list(sent["images"])} if sent and sent.get("images") else {})})
-    content = final_prompt(payload, located)
+    content = final_prompt(payload, located, quote_budget)
     head = f"{CONTEXT_INTRO}\n\n{context}" if context and not context_used else ""
     if message_context:
         head = (f"{head}\n\n---\n\n" if head else "") + f"{MESSAGE_CONTEXT_INTRO}\n\n{message_context}"
@@ -1470,7 +1554,8 @@ def page_report_section(connection, ws: str, page_id: str, pdf_budget: int,
 
 def gather_inputs(ws: str, payload, allow_native: bool,
                   crops: list | None = None,
-                  notes_seen: dict | None = None) -> tuple[list[str], str, list[dict], str, list[str]]:
+                  notes_seen: dict | None = None, quote_budget: int | None = None,
+                  quoted: dict | None = None) -> tuple[list[str], str, list[dict], str, list[str]]:
     """Collect the chat's context: native PDF attachments and the text
     sections for the request's pages.
 
@@ -1516,7 +1601,15 @@ def gather_inputs(ws: str, payload, allow_native: bool,
     ``notes_seen``, when given, receives ``{block_id: text}`` for every note
     block the context shows in full (``page_report_section``,
     ``notes_focus_section``) — the texts an agent's edit_block replace may
-    start from this turn."""
+    start from this turn.
+
+    ``quote_budget`` sizes what the message points at (``passage_budget``
+    by default; the window fit passes less): the quoted passages, the
+    attached blocks, and the text around the selected passages, which never
+    takes more. ``quoted``, when given, receives what that budget cut:
+    ``items`` (``passage_cuts`` and notes_focus_section's blocks — what the
+    chat reports) and ``wanted``, the smallest budget that would cut none
+    of them, the windows included."""
     pdf_b64s = []
     document_pdfs = []
     context_sections = []
@@ -1524,6 +1617,11 @@ def gather_inputs(ws: str, payload, allow_native: bool,
     coverage = []
     attach = payload.attach_pdf and allow_native
     none = {"partial": False, "chars": 0, "pages": 0, "pages_shown": 0}
+    quote_budget = quote_budget or passage_budget(payload)
+    if quoted is not None:
+        quoted.update(items=passage_cuts(payload, quote_budget),
+                      wanted=sum(len(p["text"]) for p in request_selections(payload))
+                      + sum(len(s["text"]) for s in request_note_selections(payload)))
 
     def report(title, page_id, doc_id, native, cover=None, notes=False, skipped=""):
         # Only a page with a PDF has a file to ask for: a notes-only page
@@ -1599,9 +1697,11 @@ def gather_inputs(ws: str, payload, allow_native: bool,
                     # message — only when the excerpt doesn't already hold
                     # the whole document; the passages are located either
                     # way (their page and section label the question).
+                    around = min(text_budget, SELECTION_WINDOW_CHARS * len(passages))
+                    if quoted is not None and not whole:
+                        quoted["wanted"] = max(quoted["wanted"], around)
                     windows, located = selection_context(
-                        ws, doc_id, passages, min(text_budget, SELECTION_WINDOW_CHARS * len(passages)),
-                        with_head=False)
+                        ws, doc_id, passages, min(around, quote_budget), with_head=False)
                     if crops is not None:
                         crops.extend(selection_crops(ws, doc_id, passages, located, title))
                     selected = {"selection": {"passages": located}}
@@ -1653,7 +1753,8 @@ def gather_inputs(ws: str, payload, allow_native: bool,
 
     # Where the user is pointing inside the notes (cursor block, attached
     # block chips) belongs to this message, right before the question.
-    focus_section = notes_focus_section(ws, payload, notes_seen=notes_seen, crops=crops)
+    focus_section = notes_focus_section(ws, payload, notes_seen=notes_seen, crops=crops,
+                                        budget=quote_budget, quoted=quoted)
     if focus_section:
         message_sections.append(focus_section)
 

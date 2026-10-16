@@ -49,9 +49,13 @@ from ..ai_tools import (
     tool_states,
 )
 from ..ai_context import (
+    MAX_NOTE_SELECTIONS,
+    MAX_SELECTIONS,
+    MIN_PASSAGE_BUDGET,
     build_messages as _build_messages,
     context_markdown,
     gather_inputs as _gather_inputs,
+    passage_budget,
     pdf_path as _pdf_path,
     prompt_tokens,
     render_selection_crop,
@@ -131,9 +135,10 @@ class AIChatRequest(BaseModel):
     # `selections` = [{text, page (1-based, where the viewer saw it start),
     # box ([x0, y0, x1, y1] fractions of that page, top-left origin)}]; the
     # older `selection` string ("---"-joined text, no positions) is read
-    # when it is empty (ai_context.request_selections).
+    # when it is empty (ai_context.request_selections). What the question
+    # quotes of them shares `context_char_limit` (ai_context.passage_budget).
     selection: str = ""
-    selections: list = Field(default_factory=list, max_length=12)
+    selections: list = Field(default_factory=list, max_length=MAX_SELECTIONS)
     # What the user pointed the message at inside the NOTES: the block their
     # cursor is on (the agent's "this block"), blocks they attached as chips
     # (ids — resolved server-side to id-labelled text so the agent can edit
@@ -142,7 +147,7 @@ class AIChatRequest(BaseModel):
     # without touching the rest of the block (ai_context.request_note_selections).
     focus_block_id: str = ""
     context_blocks: list = Field(default_factory=list)
-    note_selections: list = Field(default_factory=list, max_length=12)
+    note_selections: list = Field(default_factory=list, max_length=MAX_NOTE_SELECTIONS)
     attach_pdf: bool = False  # send the PDF itself instead of extracted text
     effort: str = ""      # reasoning effort; empty = provider default (param omitted)
     speed: str = ""       # service tier (ai_protocols.SPEED_ORDER); empty = the provider's usual
@@ -1561,6 +1566,27 @@ def _next_drop(drop: int, history: int) -> int:
     return min(history, max(drop + 2, drop * 2))
 
 
+def _smaller_quote(budget: int, wanted: int) -> int:
+    """The next smaller budget for what a message points at, once no earlier
+    turn is left to leave out: half of what it takes now (``wanted`` is the
+    budget that would cut none of it), never below MIN_PASSAGE_BUDGET. 0
+    when it can't give any more."""
+    taken = min(budget, wanted)
+    return max(MIN_PASSAGE_BUDGET, taken // 2) if taken > MIN_PASSAGE_BUDGET else 0
+
+
+def _shortened(payload, scope: dict) -> dict | None:
+    """The stream's ``{"shortened"}`` report: the passages and attached
+    blocks this message pointed at that went short (ai_context
+    gather_inputs' ``items``), the budget they shared, and the one the
+    request asked for — more when the window fit shrank it. None when
+    everything went whole."""
+    quoted = scope.get("quoted") or {}
+    if not quoted.get("items"):
+        return None
+    return {"items": quoted["items"], "budget": quoted["budget"], "asked": passage_budget(payload)}
+
+
 def _chat_scope(request: Request, ws: str, user_id: str, payload, runtime=None, entry=None, effort: str = "",
                 can_ask: bool = True) -> dict:
     """The tool scope of a chat request: what its tools reach and what the
@@ -1657,7 +1683,7 @@ def _request_pictures(ws: str, payload, scope: dict, pictures_ok: bool, budget: 
 
 
 def _chat_prompt(ws: str, payload, scope: dict, tools, allow_native: bool, drop: int = 0,
-                 pictures_ok: bool = True):
+                 pictures_ok: bool = True, quote_budget: int | None = None):
     """The request's turns, system prompt and native files, with the
     ``drop`` oldest history items left out — what /ai/chat sends and
     /ai/chat/context exports. Returns ``(pdf_b64s, messages, system,
@@ -1666,13 +1692,20 @@ def _chat_prompt(ws: str, payload, scope: dict, tools, allow_native: bool, drop:
     context's (selection crops, attached handwriting, area highlights),
     fitted to the request's budget in that order (gamma/ai_pictures.py);
     the turn's text names each one. ``pictures_ok`` false (a model that
-    reads text only) sends none and says how many were left out."""
+    reads text only) sends none and says how many were left out.
+    ``quote_budget`` sizes what the message points at (the request's
+    ``passage_budget`` unless the window fit shrank it); what it cut is
+    kept on the scope as ``quoted`` (ai_context.gather_inputs)."""
     crops = []
+    quote_budget = quote_budget or passage_budget(payload)
+    quoted = {"budget": quote_budget}
     pdf_b64s, context, coverage, message_context, document_pdfs = _gather_inputs(
-        ws, payload, allow_native, crops=crops if pictures_ok else None, notes_seen=scope.get("read_texts"))
+        ws, payload, allow_native, crops=crops if pictures_ok else None, notes_seen=scope.get("read_texts"),
+        quote_budget=quote_budget, quoted=quoted)
     # The tools and the agent prompt know what the context already holds
     # (read_page never repeats it; the prompt names the pages to read).
     scope["coverage"] = coverage
+    scope["quoted"] = quoted
     located = next((c["selection"]["passages"] for c in coverage if c.get("selection")), None)
     budget = payload.max_pictures  # the model's field clamps it (1 … MAX_BUDGET, default DEFAULT_BUDGET)
     own, own_left_out = _request_pictures(ws, payload, scope, pictures_ok, budget)
@@ -1696,7 +1729,7 @@ def _chat_prompt(ws: str, payload, scope: dict, tools, allow_native: bool, drop:
     # the uploaded ones with this message (the wires' pdf_b64s).
     messages = _build_messages(payload, context, with_tools=bool(tools), located=located,
                                message_context=message_context, drop_turns=drop, picture_lines=lines,
-                               files=document_pdfs)
+                               files=document_pdfs, quote_budget=quote_budget)
     # A custom prompt always applies; the built-in one only when there's a document
     documents = context or pdf_b64s or document_pdfs
     system = (payload.system or "").strip()[:8000] or (_SYSTEM_PROMPT if documents else "")
@@ -1810,8 +1843,10 @@ def ai_chat(payload: AIChatRequest, request: Request):
     # Set once the client is gone (Stop, a dropped connection; WatchedStream):
     # a tool call waiting on its approval card gives up, and nothing runs for it.
     stopped = threading.Event()
-    # The conversation the agent loop grows across tool rounds (agent mode).
-    state = {"drop": 0}
+    # The conversation the agent loop grows across tool rounds (agent mode);
+    # how many of the oldest turns are left out, and the budget for what the
+    # message points at, to fit the model's window.
+    state = {"drop": 0, "quote": passage_budget(payload)}
     count_usage = ai_usage.recorder("chat", entry, rt)
     cache_key = _cache_key(user_id, ws, payload)
     history_len = len([h for h in payload.history if isinstance(h, dict) and not h.get("error")])
@@ -1868,28 +1903,41 @@ def ai_chat(payload: AIChatRequest, request: Request):
     # window estimate (every picture is normalized to one size first).
     picture_cost = (ai_protocols.get(_wire_protocol(rt, entry, tools)) or ai_protocols.Protocol).picture_tokens
 
-    def prepared(allow_native, drop=0):
-        """_chat_prompt, keeping the coverage report and the pictures."""
-        pdf_b64s, messages, system, coverage, sent = _chat_prompt(ws, payload, scope, tools, allow_native, drop,
-                                                                  pictures_ok=pictures)
+    def prepared(allow_native):
+        """_chat_prompt at the state's drop and budget, keeping the coverage
+        report and the pictures."""
+        pdf_b64s, messages, system, coverage, sent = _chat_prompt(
+            ws, payload, scope, tools, allow_native, state["drop"], pictures_ok=pictures,
+            quote_budget=state["quote"])
         state["coverage"] = coverage
         state["images"] = sent
         return pdf_b64s, messages, system
 
+    def give_way() -> bool:
+        """Make the next attempt smaller: leave out more of the oldest turns
+        and, once none is left, quote less of what this message points at
+        (the selection is what the user asks about, so it goes last). False
+        when neither can give any more."""
+        if state["drop"] < history_len:
+            state["drop"] = _next_drop(state["drop"], history_len)
+            return True
+        smaller = _smaller_quote(state["quote"], scope["quoted"].get("wanted", 0))
+        if smaller:
+            state["quote"] = smaller
+        return bool(smaller)
+
     def fitted(allow_native):
-        """prepared(), with the oldest turns left out until the estimate fits
-        the model's window (when a source knows it) — before the provider
-        has to refuse the request."""
-        drop = state["drop"]
-        pdf_b64s, messages, system = prepared(allow_native, drop)
-        while (window and drop < history_len
-               and prompt_tokens(messages, system, tools, state["images"], picture_cost)
-               > window - cap - _ESTIMATE_SLACK):
-            drop = _next_drop(drop, history_len)
-            pdf_b64s, messages, system = prepared(allow_native, drop)
-        if drop != state["drop"]:
-            log.info(f"[ai_chat] {drop} oldest turns left out to fit the {window}-token window")
-            state["drop"] = drop
+        """prepared(), given way (give_way) until the estimate fits the
+        model's window (when a source knows it) — before the provider has to
+        refuse the request."""
+        was = (state["drop"], state["quote"])
+        pdf_b64s, messages, system = prepared(allow_native)
+        while (window and prompt_tokens(messages, system, tools, state["images"], picture_cost)
+               > window - cap - _ESTIMATE_SLACK and give_way()):
+            pdf_b64s, messages, system = prepared(allow_native)
+        if (state["drop"], state["quote"]) != was:
+            log.info(f"[ai_chat] {state['drop']} oldest turns left out, {state['quote']} chars for what "
+                     f"the message points at, to fit the {window}-token window")
         return pdf_b64s, messages, system
 
     def open_with_fallback(stream):
@@ -1900,7 +1948,8 @@ def ai_chat(payload: AIChatRequest, request: Request):
         rejected native parts and then succeeded as text is remembered, so
         later requests skip the wasted multi-MB upload. A prompt the
         provider calls too long is retried with more of the oldest turns
-        left out (a window no source knew, or an estimate that fell short)."""
+        left out, then with less of what the message points at (give_way;
+        a window no source knew, or an estimate that fell short)."""
         attempts = (False,) if entry["provider"] in _NATIVE_PDF_REJECTED else (True, False)
         for native in attempts:
             too_long = False
@@ -1913,11 +1962,11 @@ def ai_chat(payload: AIChatRequest, request: Request):
                     state.update(messages=messages, system=system, pdf_b64s=pdf_b64s)
                     return resp
                 except UpstreamError as e:
-                    if failure_kind(e) == "too_long" and state["drop"] < history_len:
+                    if failure_kind(e) == "too_long" and give_way():
                         too_long = True
-                        state["drop"] = _next_drop(state["drop"], history_len)
                         log.info(f"[ai_chat] prompt too long for the provider, retrying with "
-                                 f"{state['drop']} oldest turns left out")
+                                 f"{state['drop']} oldest turns left out, {state['quote']} chars for "
+                                 f"what the message points at")
                         continue
                     sent_files = pdf_b64s or any(m.get("files") for m in messages)
                     if not (native and sent_files and 400 <= e.status < 500
@@ -1962,6 +2011,10 @@ def ai_chat(payload: AIChatRequest, request: Request):
             if state["drop"]:
                 # Oldest turns left out to fit the window — the chat says so.
                 head += json.dumps({"trimmed": {"turns": state["drop"]}}) + "\n"
+            if shortened := _shortened(payload, scope):
+                # A passage or block the message pointed at went short: by
+                # the budget (the composer's chip said so) or to fit the window.
+                head += json.dumps({"shortened": shortened}) + "\n"
 
             if tools:
                 def agent_ndjson():
@@ -2026,20 +2079,24 @@ def ai_chat(payload: AIChatRequest, request: Request):
                 elif kind == "truncated":
                     truncated = True
                 # "progress" previews only matter to a live UI
+            shortened = _shortened(payload, scope)
             return {"response": "".join(parts), "actions": actions, "model": answered,
                     "context": state.get("coverage") or [],
                     **({"usage": usage} if usage else {}),
                     **({"truncated": True} if truncated else {}),
-                    **({"trimmed": {"turns": state["drop"]}} if state["drop"] else {})}
+                    **({"trimmed": {"turns": state["drop"]}} if state["drop"] else {}),
+                    **({"shortened": shortened} if shortened else {})}
         usage = []
         with open_with_fallback(False) as resp2:
             text = _read_reply(resp2, _protocol(rt, entry), usage.append)
         for u in usage:
             _served_speed(answered, u)
             count_usage(u)
+        shortened = _shortened(payload, scope)
         return {"response": text, "model": answered, "context": state.get("coverage") or [],
                 **({"usage": usage[0]} if usage else {}),
-                **({"trimmed": {"turns": state["drop"]}} if state["drop"] else {})}
+                **({"trimmed": {"turns": state["drop"]}} if state["drop"] else {}),
+                **({"shortened": shortened} if shortened else {})}
     except CallRefused as e:
         return _failure_response(e.status_code, e.detail, _failure_info(e, rt, entry))
     except HTTPException:

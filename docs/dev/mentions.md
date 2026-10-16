@@ -141,9 +141,13 @@ mentions under the old name, as plain text.
 **Who and where.** A reminder reminds the account its token names.
 `mentions.reminders_for` looks in every workspace the account can open.
 Each workspace gets one notes-index query, `block_fts MATCH '"remind"
-"<username>"'`, which reads at most 500 candidate blocks. The blocks' text
-is then read again with the regex, outside code (`reminders_in`). The
-query leaves out:
+"<username>"'`, which reads every block with both words in it, however
+many there are. The blocks' text is then read again with the regex,
+outside code (`reminders_in`). A workspace whose query fails (a damaged
+file, an upgrade that failed) is logged and left out, and the others are
+listed all the same. One workspace with 5,000 reminders beside as many
+other notes answers in about 50 ms, and 20,000 in about 200 ms. The listing
+leaves out:
 
 - a page in Recently deleted;
 - text past the index's `NOTES_INDEX_CHARS`;
@@ -175,11 +179,40 @@ hour on.
   first time "Remind me" is picked. The notification's tag keeps two tabs
   to one notification, and a click on it opens the note.
 
-**Done.** A dismissed reminder's key (`<block id>/<date>/<time>`) goes into
-the account-wide `reminders-done` pref (`db.REMINDERS_DONE_PREF_KEY`),
-which keeps the latest 500. Changing a reminder's time makes it a new
-reminder. `POST /api/reminders/done {keys, done}` writes the pref
-(`done: false` brings a reminder back), and it holds in every browser.
+**Done.** A dismissed reminder's key (`<block id>/<date>/<time>`) is a row
+of `users.db` `reminders_done`, with the account, the workspace a listing
+last found the reminder in and when it was dismissed. A block id has no
+`/`, and a block keeps its id through edits and moves, so a key names one
+reminder for as long as its text stays. Changing a reminder's time makes it
+a new reminder, and so does moving its text into another block.
+`POST /api/reminders/done {keys, done}` writes the rows, at most 100 keys a
+request (Dismiss all sends its keys 100 at a time), and `done: false`
+brings a reminder back. The rows hold in every browser.
+
+There is no cap on the marks. Each listing settles them instead
+(`mentions._settle`):
+
+- A mark takes the workspace its reminder was found in. A new one has none
+  until the next listing, and neither have those migration step 39 moved
+  from the old `reminders-done` pref.
+- A mark whose reminder the listing did not find is dropped when the
+  listing read its workspace whole: the block was deleted, or the reminder
+  edited away. A page in Recently deleted still holds its reminders, so
+  restoring it brings them back done. A mark with no workspace yet needs
+  every workspace read, and a mark made after the listing began is never
+  dropped by it.
+- A workspace that could not be read, or that the account can no longer
+  open, keeps its marks, so leaving a shared workspace and coming back
+  finds them.
+- The marks of a deleted workspace or account go with it.
+
+So the rows hold the dismissed reminders that still exist, and those of the
+workspaces out of reach. A block deleted and brought back under its own id
+after a listing has run (an undo) is not done any more. The marks are a
+table, not a pref: one is about 60 bytes of JSON, so the prefs' 64 KiB
+(`routers/prefs.py` `MAX_VALUE_BYTES`) would hold about a thousand, which
+a person who sets a reminder a day passes within three years.
+`GET /api/reminders` answers the done keys among the reminders it lists.
 
 **Not built.**
 
@@ -198,7 +231,11 @@ reminder. `POST /api/reminders/done {keys, done}` writes the pref
 - `backend/tests/test_mentions.py`: the people endpoint, reminders across a
   personal and a shared workspace (another person's, one in code, one in a
   workspace its person cannot open), a page in Recently deleted, the done
-  list per account.
+  list per account, 620 reminders all done, a reminder after 600 other
+  blocks the query matches, and which marks a listing drops: those of a
+  deleted block and a reminder edited away, but not those of a page in
+  Recently deleted, a workspace that failed or one the account left.
+  `backend/tests/test_migrations.py`: step 39's move of the old pref.
 - Browser: the `note-mentions` group (`tests/e2e/scenarios/noteMentions.mjs`).
   It covers the bare menu's sections, each pick's text and chip, a name no
   one has, Escape, Invite… opening the Share popover, and a reminder due in

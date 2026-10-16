@@ -152,10 +152,20 @@ tests cover both fallbacks.
 
 ### Images
 
-`gamma/pdf_image.py` embeds `![](/api/uploads/…)` refs as image XObjects — JPEG
-verbatim, 8-bit gray/RGB/palette PNG verbatim too (PDF's `/Predictor 15` IS PNG
-row filtering), alpha/16-bit PNG unfiltered in Python onto white (hence
-`MAX_PIXELS`). A palette's `/Indexed` lookup must be a `ByteStringObject`: as a
+`gamma/pdf_image.py` embeds `![](/api/uploads/…)` refs as image XObjects. JPEG
+goes in verbatim, and so does an 8-bit gray, RGB or palette PNG without
+transparency (PDF's `/Predictor 15` IS PNG row filtering), at any size and
+without decoding. Everything else is decoded with Pillow: a PNG with an alpha
+channel or a `tRNS` chunk (most pasted screenshots), 16-bit or sub-byte
+samples, an interlaced PNG, GIF and WebP. The colour is written back as an
+8-bit PNG and embedded the same verbatim way, and transparency becomes an
+`/SMask` (an indirect object, which `XObjectStore` makes), so a note box's
+tint shows through a transparent corner instead of a white rectangle. A 25 MP
+screenshot takes about 0.7 s and 200 MB while decoded; `MAX_DECODED_PIXELS`
+(40 MP) bounds that memory. A picture that can't be embedded (an SVG, a
+corrupt file, one past the cap) is logged with the reason and drawn as its
+alt text, or "image"; the export job's result lists only the pages it left
+out, not pictures. A palette's `/Indexed` lookup must be a `ByteStringObject`: as a
 text string PyPDF2 re-encodes it to UTF-16 and the picture comes out one flat
 colour.
 
@@ -167,8 +177,8 @@ every viewer has: Helvetica (WinAnsi), Symbol (Greek/math —
 itself; every `note_markup.SYMBOLS` value must be drawable by one of the three,
 which a test enforces), and a non-embedded STSong-Light CID font for CJK —
 plus the per-document Type 3 fonts above for typeset math and CJK outlines.
-Deliberately no reportlab/Pillow dependency. PyPDF2 leaves merged content
-inline in the page dict; it must be re-added as an indirect object or the file
-is unreadable. The document writer's page streams and every glyph program are
+Deliberately no reportlab dependency; Pillow only decodes pictures (above).
+PyPDF2 leaves merged content inline in the page dict; it must be re-added as
+an indirect object or the file is unreadable. The document writer's page streams and every glyph program are
 Flate-compressed (`flate_encode`); the overlay streams `merge_page` produces
 stay as PyPDF2 leaves them.

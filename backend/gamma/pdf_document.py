@@ -7,11 +7,12 @@ subtrees the export driver walks (a note page, a paper's notes, or a whole
 folder of them) and lays them out as a real PDF: title and metadata, nested
 bullets, headings, quotes, code, tables of pasted images, typeset math.
 
-No font file is embedded and no imaging or PDF-generation library is used:
+No font file is embedded and no PDF-generation library is used:
 ``pdf_typeset`` measures and draws with the fonts every viewer has built in,
 ``vector_text`` + ``pdf_glyphs`` turn LaTeX and CJK into Type 3 text built
 from glyph outlines, and ``pdf_image`` embeds the pasted uploads as image
-XObjects — the same machinery the note boxes use.
+XObjects (Pillow decodes only those that can't go in as they are) — the
+same machinery the note boxes use.
 
 Blocks carry markdown, so each block's content is parsed twice over: into
 *chunks* (headings, paragraphs, quotes, list items, todos, fenced code, rules,

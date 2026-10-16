@@ -38,6 +38,23 @@ its windows, so the conversation's opening changed with every selection
 and nothing could cache. Everything below is about the PDF part of a page
 and applies unchanged.
 
+The passages themselves are quoted in the question. Until October 2026 a
+passage was cut at 4,000 characters, six at most and 24,000 in all, with
+no word to anyone: a user who selected three pages and asked for a summary
+got one of the first 600 words. Now the selection gets the same
+single-paper budget as the head excerpt (`context_char_limit`, 60,000 by
+default), because it is the part of the paper the question is about. One
+budget is shared by the PDF passages and the selected note text
+(`passage_budget`, `fair_shares`), and the attached blocks share another of
+the same size. The windows around the passages never take more than it. A
+passage that doesn't fit is cut with a line saying so, its chip in the
+composer says beforehand what it keeps, and the reply's
+`{"shortened"}` pill says what went ("Selected PDF passages" in
+[ai.md](ai.md)). None of it touches the document part or the system
+prompt, so the cached head stays as it was. When the model's window can't
+hold the message, the pre-flight fit leaves out the earlier turns first and
+only then halves this budget ("Fitting the window" in [ai.md](ai.md)).
+
 ### With the PDF switch on
 
 The composer's PDF switch (`attach_pdf`) sends the page's PDF file

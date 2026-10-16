@@ -32,6 +32,7 @@ from ..blocks_store import (
     new_block_id,
     page_for_doc,
     page_root_id,
+    pages_in_scope,
     subtree_refs,
     trash_entry,
     valid_block_id,
@@ -86,16 +87,25 @@ class UBPutChildrenRequest(BaseModel):
 
 
 def _scan_blocks(conn, pattern, runs: list[str], case: bool, limit: int,
-                 reach: set | None = None) -> tuple[list, bool]:
+                 reach: set | None = None, pages: set | None = None,
+                 after: tuple | None = None) -> tuple[list, bool, str | None]:
     """The ``limit`` most recently edited blocks of the library (only ones
-    in ``reach`` when a share token limits what is seen) whose
-    text the fuzzy ``pattern`` matches, as ``(rows, partial)``. Its
+    in ``reach`` when a share token limits what is seen, only ones of the
+    ``pages`` when the search is scoped) whose
+    text the fuzzy ``pattern`` matches, as ``(rows, partial, cursor)``. Its
     separator-tolerant rules ("3000" hits "3,000-qubit") can't be SQL, but
     every match contains the query's literal ``runs``
     (textnorm.literal_runs), so SQLite drops the other blocks (outside the
     GIL) and Python runs the pattern over the candidates only, newest first,
     until it has ``limit``. Past BLOCK_SEARCH_BUDGET_S it stops with what it
-    found (``partial``)."""
+    found (``partial``).
+
+    The scan goes by ``(updated_at, rowid)``, newest first — a total order,
+    the index's own — so it can go on where an earlier one stopped
+    (``after``, that scan's ``cursor``) without listing a block twice or
+    passing one by. ``cursor`` is set when this scan stopped before the end:
+    at the last block listed when another match follows it, at the last
+    block read when the budget ran out (None when it read none)."""
     where, args = "", []
     for run in runs[:3]:
         if case:
@@ -104,49 +114,80 @@ def _scan_blocks(conn, pattern, runs: list[str], case: bool, limit: int,
         else:
             where += " AND content LIKE ? ESCAPE '\\'"
             args.append("%" + run.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%")
+    if pages is not None:
+        where += " AND page_id IN (SELECT value FROM json_each(?))"
+        args.append(json.dumps(list(pages)))
+    if after is not None:
+        where += " AND (updated_at, rowid) < (?, ?)"
+        args.extend(after)
     deadline = time.monotonic() + BLOCK_SEARCH_BUDGET_S
     conn.set_progress_handler(lambda: time.monotonic() > deadline, 10_000)
-    rows = []
+    rows, read, stopped = [], None, False
     try:
         for n, r in enumerate(conn.execute(
-                "SELECT id, content, kind FROM unified_blocks "
-                f"WHERE content != ''{where} AND {IN_LIBRARY} ORDER BY updated_at DESC", args)):
+                "SELECT id, content, kind, updated_at, rowid FROM unified_blocks "
+                f"WHERE content != ''{where} AND {IN_LIBRARY} ORDER BY updated_at DESC, rowid DESC", args)):
             if (reach is None or r[0] in reach) and pattern.search(r[1]):
+                if len(rows) >= limit:  # one more match: the next page has something
+                    return [x[:3] for x in rows], False, _cursor_of(rows[-1]) if rows else None
                 rows.append(r)
-                if len(rows) >= limit:
-                    break
+            read = r
             if n % 1000 == 999 and time.monotonic() > deadline:
-                return rows, True
+                stopped = True
+                break
     except sqlite3.OperationalError as e:
         if "interrupt" not in str(e):
             raise
-        return rows, True
+        stopped = True
     finally:
         conn.set_progress_handler(None, 0)
-    return rows, False
+    if not stopped:
+        return [x[:3] for x in rows], False, None
+    # Out of time: partial unless the page filled before it ran out.
+    return [x[:3] for x in rows], len(rows) < limit, _cursor_of(read) if read else None
+
+
+def _cursor_of(row) -> str:
+    """A scanned row's place in the scan order, as the ``cursor`` text."""
+    return f"{row[3]}|{row[4]}"
+
+
+def _after(cursor: str) -> tuple | None:
+    """A ``cursor`` back as ``(updated_at, rowid)``; None for none. 400 when
+    it is no cursor."""
+    if not cursor:
+        return None
+    at, _, rowid = cursor.rpartition("|")
+    if not at or not rowid.isdigit():
+        raise HTTPException(status_code=400, detail="bad cursor")
+    return at, int(rowid)
 
 
 @router.get("/block-search")
 def block_search(request: Request, q: str = "", ids: str = "", limit: int = 10,
-                 case: int = 0, whole: int = 0, regex: int = 0):
+                 case: int = 0, whole: int = 0, regex: int = 0, scope: str = "", cursor: str = ""):
     """Blocks by id (``ids``), recently edited ones (no ``q``), or the fuzzy
     notes search behind Ctrl+F and the [[ref]] popup (``case`` / ``whole``
-    word). ``partial`` when the scan ran out of time. A pattern of the
-    caller's (``regex``) is refused: one catastrophic regex holds the GIL,
-    and with it the whole server. Sync def: the scan runs in the
+    word). ``partial`` when the scan ran out of time. The search keeps to
+    the pages inside every folder and label of ``scope`` (comma-separated
+    ids: the panel's filter chips), and an answer that stopped before the
+    end carries ``next``, the ``cursor`` that goes on from there. A pattern
+    of the caller's (``regex``) is refused: one catastrophic regex holds the
+    GIL, and with it the whole server. Sync def: the scan runs in the
     threadpool."""
     if regex:
         raise HTTPException(status_code=400, detail="regex search is not supported")
     results = []
-    partial = False
+    partial, next_cursor = False, None
+    after = _after(cursor)
     # Through a share token: the blocks it reaches, silently — a ref chip or
     # link title in the share view resolves when its target is shared, and
     # nothing reveals whether anything else exists. Recently deleted is out
     # of everyone's reach: a [[ref]] to a trashed block resolves to nothing,
     # and no search lists one.
-    scope = share_scope(request)
+    share = share_scope(request)
     with connect_pages_db(resolve_ws(request)) as conn:
-        reach = scope.block_ids(conn) if scope is not None else None
+        reach = share.block_ids(conn) if share is not None else None
         if ids:
             id_list = [i.strip() for i in ids.split(",") if i.strip()]
             if not id_list:
@@ -169,13 +210,23 @@ def block_search(request: Request, q: str = "", ids: str = "", limit: int = 10,
             pattern = fuzzy_pattern(q, bool(case), bool(whole))
             if pattern is None:
                 return {"blocks": [], "error": "empty query"}
-            rows, partial = _scan_blocks(conn, pattern, literal_runs(q, bool(case)), bool(case), limit, reach)
+            pages = pages_in_scope(conn, [s for s in scope.split(",") if s]) if scope else None
+            if pages == set():
+                rows = []  # the filter chips reach no page
+            else:
+                rows, partial, next_cursor = _scan_blocks(conn, pattern, literal_runs(q, bool(case)), bool(case),
+                                                          limit, reach, pages, after)
         if reach is not None:
             rows = [r for r in rows if r[0] in reach]
         if not ids:
             rows = rows[:limit]
+        tail = {}
+        if partial:
+            tail["partial"] = True
+        if next_cursor:
+            tail["next"] = next_cursor
         if not rows:
-            return {"blocks": [], "partial": True} if partial else {"blocks": []}
+            return {"blocks": [], **tail}
 
         ancestors_by_id, page_root_by_id = ancestor_chains(conn, [r[0] for r in rows])
 
@@ -190,7 +241,7 @@ def block_search(request: Request, q: str = "", ids: str = "", limit: int = 10,
                 block["page_root_id"] = block_id
                 block["page_title"] = content
             results.append(block)
-    return OrjsonResponse({"blocks": results, "partial": True} if partial else {"blocks": results})
+    return OrjsonResponse({"blocks": results, **tail})
 
 
 # Route order matters: static-prefix routes must come before /{block_id}

@@ -12,6 +12,7 @@ UNINDEXED column) reads the whole table. So ``pdf_fts_rows`` maps each paper
 to the rowids of its rows, and everything that deletes or reads one paper
 goes through it."""
 
+import json
 import sqlite3
 from contextlib import contextmanager
 
@@ -163,25 +164,46 @@ def pdf_missing(data_conn: sqlite3.Connection, doc_ids) -> list[str]:
 
 
 def search_pdf(data_conn: sqlite3.Connection, match: str, limit: int,
-               docs) -> list[tuple[str, int, str]]:
-    """bm25-ranked ``(doc_id, page, snippet)`` hits for an FTS MATCH, limited
-    to the doc ids in ``docs`` (a scope — rows of papers deleted or out of
-    scope linger in the index and are skipped). A malformed MATCH is no
-    results, not an error."""
+               docs, offset: int = 0, per_doc: int = 0) -> list[tuple[str, int, str]]:
+    """bm25-ranked ``(doc_id, page, snippet)`` hits for an FTS MATCH in the
+    papers ``docs`` (a scope — rows of papers deleted or out of scope linger
+    in the index and are passed by), ``limit`` of them from the ``offset``-th
+    on. The scope is applied in SQL through ``pdf_fts_rows``, before the
+    ranking, so a narrow scope finds its own hits however many others
+    outrank them (``+rowid``: a constraint FTS5 would otherwise run as one
+    lookup per rowid). Ties keep the index's order, the same on every call,
+    so consecutive offsets neither repeat nor skip a hit.
+
+    With ``per_doc``, a paper's hits past its best ``per_doc`` wait until
+    every paper has listed its best ``per_doc`` (then each its next
+    ``per_doc``, and so on), so one long book can't fill a page of results.
+    The best ones come in rank order, so a first page stops reading early;
+    a page past them reads every hit. A malformed MATCH is no results, not
+    an error."""
     if not match or limit <= 0:
         return []
     ensure_schema(data_conn)
-    found = []
+    offset = max(0, offset)
+    sql = (f"SELECT doc_id, page, snippet(pdf_fts, 2, '', '', '…', {SNIPPET_TOKENS}) FROM pdf_fts "
+           "WHERE pdf_fts MATCH ? AND +rowid IN (SELECT fts_rowid FROM pdf_fts_rows "
+           "WHERE doc_id IN (SELECT value FROM json_each(?))) ORDER BY rank")
+    args = (match, json.dumps(list(docs)))
     try:
-        cur = data_conn.execute(
-            f"SELECT doc_id, page, snippet(pdf_fts, 2, '', '', '…', {SNIPPET_TOKENS}) FROM pdf_fts "
-            "WHERE pdf_fts MATCH ? ORDER BY rank LIMIT ?", (match, limit * 3))
-        for doc_id, page, snippet in cur:
-            if doc_id not in docs:
-                continue
-            found.append((doc_id, page, snippet))
-            if len(found) >= limit:
-                break
+        if per_doc <= 0:
+            return data_conn.execute(sql + " LIMIT ? OFFSET ?", (*args, limit, offset)).fetchall()
+        best, rest, seen = [], {}, {}
+        for hit in data_conn.execute(sql, args):
+            n = seen.get(hit[0], 0)
+            seen[hit[0]] = n + 1
+            if n < per_doc:
+                best.append(hit)
+                if len(best) >= offset + limit:
+                    break
+            else:
+                rest.setdefault(n // per_doc, []).append(hit)
+        else:
+            for tier in sorted(rest):
+                best += rest[tier]
+        return best[offset:offset + limit]
     except sqlite3.OperationalError:
-        pass
-    return found
+        return []

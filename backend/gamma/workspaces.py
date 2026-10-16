@@ -695,9 +695,9 @@ def _drop_final_copies(names) -> None:
 
 def delete(ws: str, *, by: str = "") -> dict:
     """Remove the workspace: its rows (memberships, shares, per-workspace
-    prefs) and its directory, after a final copy of it went to
-    backups/deleted/ (``keep_final_copies``; FinalCopyError and nothing
-    deleted when that fails). An account's last personal workspace is
+    prefs, the done marks of its reminders) and its directory, after a
+    final copy of it went to backups/deleted/ (``keep_final_copies``;
+    FinalCopyError and nothing deleted when that fails). An account's last personal workspace is
     refused; deleting its default moves the default to the oldest other
     personal one. Returns ``{warning, final_copy}``: a warning when the
     directory could not be removed (Windows file locks), and the copy's
@@ -741,6 +741,7 @@ def _delete_rows(conn, ws: str) -> None:
     delete_shares(conn, "workspace_id = ?", (ws,))
     # the prefs from before step 34 (later ones go with the workspace's pages.db)
     conn.execute("DELETE FROM user_prefs WHERE workspace_id = ?", (ws,))
+    conn.execute("DELETE FROM reminders_done WHERE workspace_id = ?", (ws,))
     conn.execute("DELETE FROM workspaces WHERE id = ?", (ws,))
 
 
@@ -858,6 +859,7 @@ def delete_account_workspaces(user_id: str) -> list[str]:
         for ws in deleted:
             _delete_rows(conn, ws)
         conn.execute("DELETE FROM user_prefs WHERE user_id = ?", (user_id,))
+        conn.execute("DELETE FROM reminders_done WHERE user_id = ?", (user_id,))
         conn.commit()
     for ws in deleted:
         remove_files(ws)
@@ -871,9 +873,9 @@ def delete_account(user_id: str, *, release_now: bool = False, by: str = "") -> 
     Gamma Cloud identity (its grant released — off the person's server
     list, refresh token revoked; in the background unless ``release_now``,
     which a CLI process that exits right after wants), integration tokens,
-    publisher sessions, prefs, the workspaces ``delete_account_workspaces``
-    removes, its background jobs and their files, its AI usage rows and the
-    users row. Each of those workspaces
+    publisher sessions, prefs, done reminders, the workspaces
+    ``delete_account_workspaces`` removes, its background jobs and their
+    files, its AI usage rows and the users row. Each of those workspaces
     is first copied to backups/deleted/ (``keep_final_copies``; a guest's
     keep nothing): FinalCopyError, and nothing deleted, when one cannot be.
     The one account deletion: the admin API, ``manage.py delete-user`` and
