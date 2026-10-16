@@ -11,7 +11,9 @@
 // xhrUpload (`aborted: true` after the stop button or `signal`), having
 // told the server to drop the unfinished upload. The web app's PDF ingest
 // (App.jsx resolvePdfSource) goes through here; the browser extension
-// speaks the protocol itself (extension/worker.js uploadBlob).
+// speaks the protocol itself (extension/worker.js uploadBlob). The import
+// review's upload (transfers/importApi.js) uses uploadInParts at
+// /import/review/parts.
 import { API, apiJson } from "./utils";
 import { xhrUpload } from "./xhrUpload";
 
@@ -25,7 +27,7 @@ export function uploadPdf(file, filename, options = {}) {
     form.append("file", file, filename);
     return xhrUpload(`${API}/uploads`, form, options);
   }
-  return uploadInParts(file, filename, options);
+  return uploadInParts(file, { url: `${API}/uploads/parts`, fields: { name: filename } }, options);
 }
 
 function stopped() {
@@ -41,7 +43,11 @@ const wait = (ms, signal) => new Promise((resolve, reject) => {
   signal?.addEventListener("abort", stop, { once: true });
 });
 
-async function uploadInParts(file, filename, { onProgress, onProcessing, onAbortable, signal } = {}) {
+// `file` over the protocol at `url`: POST url {size, ...fields} opens it,
+// POST url/{token} carries each part, POST url/{token}/finish answers with
+// the result; `discard(token)` is the URL a DELETE drops an unfinished one at.
+export async function uploadInParts(file, { url, fields = {}, discard = (token) => `${url}/${token}` },
+  { onProgress, onProcessing, onAbortable, signal } = {}) {
   if (signal?.aborted) throw stopped();
   const ctl = new AbortController();
   const stop = () => ctl.abort();
@@ -55,7 +61,7 @@ async function uploadInParts(file, filename, { onProgress, onProcessing, onAbort
   }).catch((err) => { throw err?.name === "AbortError" ? stopped() : err; });
   let token = "";
   try {
-    const opened = await post(`${API}/uploads/parts`, { size: file.size, name: filename });
+    const opened = await post(url, { size: file.size, ...fields });
     token = opened.token;
     const partBytes = Math.max(1, Math.min(PART_BYTES, opened.part_bytes || PART_BYTES));
     let offset = 0;
@@ -65,7 +71,7 @@ async function uploadInParts(file, filename, { onProgress, onProcessing, onAbort
       form.append("offset", String(offset));
       form.append("part", file.slice(offset, Math.min(offset + partBytes, file.size)), "part");
       try {
-        const reply = await xhrUpload(`${API}/uploads/parts/${token}`, form, {
+        const reply = await xhrUpload(`${url}/${token}`, form, {
           signal: ctl.signal,
           onProgress: (loaded) => onProgress?.(Math.min(offset + loaded, file.size), file.size),
         });
@@ -81,9 +87,9 @@ async function uploadInParts(file, filename, { onProgress, onProcessing, onAbort
       onProgress?.(offset, file.size);
     }
     onProcessing?.();
-    return await post(`${API}/uploads/parts/${token}/finish`);
+    return await post(`${url}/${token}/finish`);
   } catch (err) {
-    if (token) fetch(`${API}/uploads/parts/${token}`, { method: "DELETE", credentials: "include", keepalive: true }).catch(() => {});
+    if (token) fetch(discard(token), { method: "DELETE", credentials: "include", keepalive: true }).catch(() => {});
     throw err;
   } finally {
     signal?.removeEventListener("abort", stop);

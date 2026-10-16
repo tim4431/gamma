@@ -162,6 +162,25 @@ def _table_rows(conn) -> dict:
     return {t: sorted(map(repr, conn.execute(f"SELECT * FROM {t}").fetchall())) for t in tables}
 
 
+def test_an_admin_renames_themselves_and_sets_a_password(boss):
+    """The Users dialog's order for one save of both: the rename (sessions
+    keep working), then the password under the new name (sessions end)."""
+    from gamma.app import app
+
+    _make_user("self_old", "oldpw", is_admin=1)
+    me = _login("self_old", "oldpw")
+    r = me.post("/api/admin/users/self_old/rename", json={"new_username": "self_new"},
+                headers={"X-Gamma-User": "self_old"})
+    assert r.status_code == 200, r.text
+    r = me.put("/api/admin/users/self_new", json={"password": "newpw"}, headers={"X-Gamma-User": "self_new"})
+    assert r.status_code == 200, r.text
+    assert me.get("/api/session").json().get("user") in (None, "", "_public")  # the password ended the session
+    c = TestClient(app)
+    assert c.post("/api/login", json={"username": "self_old", "password": "oldpw"}).status_code == 401
+    assert c.post("/api/login", json={"username": "self_new", "password": "oldpw"}).status_code == 401
+    _login("self_new", "newpw")
+
+
 def test_a_rename_rewrites_no_row_but_the_name(boss):
     """Every row and file names an account by its id (docs/dev/user_db.md
     "Accounts are named by id"), so a rename is the users row's username and

@@ -1789,6 +1789,36 @@ export async function settingsScenarios(env) {
     } finally { await ctx.close(); }
   });
 
+  await step("settings: an admin's own new username and password saved together both take", async () => {
+    // The new password ends the account's sessions, the editor's own too,
+    // so the rename has to go first or it is sent signed out.
+    server.manage("create-user", "rename-self", "rename-self-pw");
+    server.manage("set-admin", "rename-self", "on");
+    const self = await new Account(server, "rename-self", "rename-self-pw").login();
+    const ctx = await self.context(browser);
+    await ctx.addInitScript(() => localStorage.setItem("gamma-ai-login-check", "off"));
+    try {
+      const page = await openPage(ctx, server.base);
+      await page.waitForSelector(".folderNewBtn");
+      await openSettings(page);
+      await nav(page, "Users").click();
+      const own = page.locator(".settingsPane .aiProvRow").filter({ has: page.locator(".aiProvName", { hasText: "rename-self" }) });
+      await own.getByRole("button", { name: "Edit", exact: true }).click();
+      const edit = page.getByRole("dialog", { name: "Edit rename-self", exact: true });
+      await edit.getByRole("textbox").first().fill("renamed-self");
+      await edit.locator('input[autocomplete="new-password"]').fill("renamed-self-pw");
+      const saved = page.waitForResponse((r) => r.request().method() === "PUT" && new URL(r.url()).pathname === "/api/admin/users/renamed-self");
+      await edit.getByRole("button", { name: "Save", exact: true }).click();
+      // the tab's identity follows the rename, so the password change after it is not refused as another account's
+      assertEq((await saved).status(), 200, "the password set under the new name");
+      const signIn = (username, password) => fetch(`${server.base}/api/login`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ username, password }),
+      }).then((r) => r.status);
+      assertEq(await signIn("renamed-self", "renamed-self-pw"), 200, "the new name with the new password");
+      assert(await signIn("rename-self", "rename-self-pw") !== 200, "the old name is gone");
+    } finally { await ctx.close(); }
+  });
+
   await step("settings: Server → Guests turns guest sign-in off, and saves the lifetime and demo mode", async () => {
     server.manage("set-admin", "settings-user", "on");
     const before = await user.api("/api/admin/settings");

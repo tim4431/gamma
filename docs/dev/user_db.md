@@ -470,7 +470,9 @@ track of the ones nothing uses.
   sweep below. The web client (`shared/lib/uploadParts.js`) resends a part
   the network lost from the byte the server says it holds and asks the
   server to drop an upload it stopped; the browser extension speaks the
-  same protocol (`extension/worker.js`).
+  same protocol (`extension/worker.js`), and so does the import review's
+  upload, into its staging rather than the store
+  ([import_export.md](import_export.md)).
 - **Dedup repairs.** A dedup hit compares the sizes and rewrites a copy an
   older write left short. For a PDF only when the stored bytes are the start
   of the new ones: a PDF whose embedded annotations were stripped keeps its

@@ -176,6 +176,47 @@ open(os.path.join(root, 'files', '3', 'Vaswani - 2017 - Attention.pdf'), 'wb').w
     } finally { await ctx.close(); }
   });
 
+  await step("transfer: an export past one request's size goes up in parts and imports", async () => {
+    const { ctx, page } = await setup();
+    try {
+      // A proxy in front of the server caps a request's body (Cloudflare at
+      // 100 MB): past 32 MiB the review's upload goes in parts.
+      const folder = path.join(server.dir, "Parts Review");
+      execFileSync(python, ["-c", `
+import os, sys
+sys.path.insert(0, 'backend/tests')
+from test_zotero_import import RDF, _annotated_pdf
+root = sys.argv[1]
+rdf = RDF.replace('s41586-000-00000-0', 'e2e-zotero-parts').replace('Attention is all you need', 'Parts PDF example')
+os.makedirs(os.path.join(root, 'files', '3'))
+os.makedirs(os.path.join(root, 'files', '5'))
+open(os.path.join(root, 'library.rdf'), 'w', encoding='utf-8').write(rdf)
+open(os.path.join(root, 'files', '3', 'Vaswani - 2017 - Attention.pdf'), 'wb').write(_annotated_pdf(b'E2E parts PDF'))
+open(os.path.join(root, 'files', '5', 'dataset.bin'), 'wb').write(os.urandom(40 << 20))
+`, folder], { cwd: ROOT });
+      await page.waitForSelector(".folderNewBtn");
+      const posts = [];
+      page.on("request", request => { if (request.method() === "POST") posts.push(new URL(request.url()).pathname); });
+      const dialog = await openDialog(page, "Import");
+      await choice(dialog, "Zotero library").click();
+      await choice(dialog, "Next").click();
+      const chooser = page.waitForEvent("filechooser");
+      await choice(dialog, "Choose folder…").click();
+      await (await chooser).setFiles(folder);
+      const review = page.getByRole("dialog", { name: "Review Zotero import", exact: true });
+      await review.getByRole("heading", { name: "Library after import", exact: true }).waitFor();
+      assertEq(posts.filter((p) => /^\/api\/import\/review\/parts\/[0-9a-f]+$/.test(p)).length, 2, "40 MB goes up as two parts");
+      assert(!posts.includes("/api/import/review"), "never as one request");
+      await choice(review, "Import to library").click();
+      const report = page.getByRole("dialog", { name: "Import complete", exact: true });
+      await report.waitFor();
+      assert(await report.getByRole("region", { name: "Library after import", exact: true })
+        .getByText("Parts PDF example", { exact: true }).isVisible());
+      await choice(report, "Done").click();
+      assertNoProblems(page);
+    } finally { await ctx.close(); }
+  });
+
   await step("transfer: shared Markdown upload progress, selection and persistent summary", async () => {
     const { ctx, page } = await setup();
     try {

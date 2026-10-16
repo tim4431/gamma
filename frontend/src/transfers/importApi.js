@@ -1,5 +1,6 @@
 import { API, apiJson } from "../shared/lib/utils";
 import { xhrUpload } from "../shared/lib/xhrUpload";
+import { PART_BYTES, uploadInParts } from "../shared/lib/uploadParts";
 import { t, T } from "../shared/i18n/i18n.js";
 import { zipFolder } from "./folderZip.js";
 
@@ -27,16 +28,23 @@ export async function requestImport({ source, file, folder = "", strip }, { sign
     ? await zipFolder(file, { signal, onProgress: (loaded, total) => onProgress?.({ phase: "packing", loaded, total }) })
     : file;
   const format = importFormat(source, upload);
-  const body = new FormData();
-  body.append("file", upload);
-  body.append("source", format.endpoint);
-  if (source !== "gamma") body.append("folder", folder);
-  if (source === "zotero") body.append("strip", String(Boolean(strip)));
-  return xhrUpload(`${API}/import/review`, body, {
+  const fields = { source: format.endpoint };
+  if (source !== "gamma") fields.folder = folder;
+  if (source === "zotero") fields.strip = Boolean(strip);
+  const options = {
     signal,
     onProgress: (loaded, total) => onProgress?.({ phase: "upload", loaded, total }),
     onProcessing: () => onProgress?.({ phase: "processing" }),
-  });
+  };
+  // Past one part, in parts: a proxy in front of the server caps a request's body.
+  if (upload.size > PART_BYTES) {
+    return uploadInParts(upload, { url: `${API}/import/review/parts`, fields: { name: upload.name, ...fields },
+      discard: (token) => `${API}/import/review/${encodeURIComponent(token)}` }, options);
+  }
+  const body = new FormData();
+  body.append("file", upload);
+  for (const [key, value] of Object.entries(fields)) body.append(key, String(value));
+  return xhrUpload(`${API}/import/review`, body, options);
 }
 
 // The import itself is a background job: tasks.start("import", importJobBody(…)).

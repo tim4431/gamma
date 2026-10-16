@@ -129,7 +129,12 @@ share one review flow: Upload → Review → Import → Summary.
   destination folder's id, `""` the library's top; 400 when it is no
   folder, `import_review.destination`) and `strip`.
   It stages the upload, runs the source's preview and returns the two trees
-  plus a `review_id`; `DELETE` discards it.
+  plus a `review_id`; `DELETE` discards it. An upload past 32 MiB comes in
+  parts instead (`POST /api/import/review/parts`, [api.md](api.md)), the
+  protocol of a PDF's upload in parts ([user_db.md](user_db.md) "Stored
+  files"), since a proxy in front of the server caps a request's body
+  (Cloudflare at 100 MB): the parts are appended to the staged upload, and
+  finishing answers with the preview, as the single request does.
 - The import itself is a background job ([tasks.md](tasks.md)):
   `POST /api/jobs/import` with `{review_id, selected: [...]}` imports from
   the staged upload against the current library, reporting each item; its
@@ -144,8 +149,11 @@ share one review flow: Upload → Review → Import → Summary.
   swept on the next upload). The import job holds a claim (`running/`
   mkdir; a `DELETE` meanwhile answers 409) while it reads the upload, and
   removes the review when it ends — done, failed or stopped. Staging has
-  its own 1 GB cap (`import_staging.MAX_BYTES`) and is not metered by the
-  account quota.
+  no size cap and is not metered by the account quota; an upload that would
+  leave the disk with less than 1 GB free is refused (507,
+  `import_staging.MIN_FREE_BYTES`). A review expires two hours after its
+  last activity (a part, a claim), so a long upload in parts does not run
+  out.
 - Selection ids are source ids (`page:<id>` / `chat:<id>` for a Gamma
   export, Zotero item keys, ...); duplicate Zotero records share
   `selection_ids`. `parse_selection` (`gamma/import_review.py`): `None`
@@ -337,7 +345,8 @@ No picker offers both at once: a browser's is a file or a folder picker
 dialogs. iPhone/iPad Safari has no folder picker, so there ".zip" is the
 button. A folder is packed into a ZIP in the page
 (`transfers/folderZip.js`: stored entries, one CRC pass over the files,
-progress as the "packing" phase), so the server only ever sees an archive;
+progress as the "packing" phase; ZIP64 records past 4 GB or 65,535 files),
+so the server only ever sees an archive;
 neither a pick nor a drop lists empty directories. A drop stops at the
 dialog, so the library behind never takes the folder's PDFs as uploads.
 Choosing or dropping the export opens the shared import review dialog. Its two trees show

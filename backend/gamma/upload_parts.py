@@ -110,26 +110,35 @@ def append(session: Session, offset: int, stream) -> int:
             raise HTTPException(status_code=404, detail="no such upload in progress")
         if offset != session.received:
             raise OffsetMismatch(session.received, offset)
-        room = min(PART_BYTES_MAX, session.size - session.received)
-        digest, written = session.digest.copy(), 0
-        with open(session.path, "r+b") as f:
-            f.seek(session.received)
-            while True:
-                chunk = stream.read(storage.SPOOL_CHUNK)
-                if not chunk:
-                    break
-                if written + len(chunk) > room:
-                    f.truncate(session.received)
-                    raise HTTPException(status_code=413, detail=(
-                        f"a part holds at most {PART_BYTES_MAX // MB} MB and never more than the announced size"))
-                f.write(chunk)
-                digest.update(chunk)
-                written += len(chunk)
-        if not written:
-            raise HTTPException(status_code=400, detail="an empty part")
+        digest = session.digest.copy()
+        written = write_part(session.path, session.received, session.size, stream, digest)
         session.digest, session.received = digest, session.received + written
         session.touched = time.monotonic()
         return session.received
+
+
+def write_part(path: Path, received: int, size: int, stream, digest=None) -> int:
+    """Write the part ``stream`` holds into ``path`` at byte ``received``,
+    feeding ``digest`` as it goes: shared with the import review's upload
+    in parts (gamma/import_staging.py). A part past PART_BYTES_MAX or past
+    the announced ``size`` is refused (413) and leaves the file as it was;
+    an empty one is a 400. Returns the bytes written."""
+    room = min(PART_BYTES_MAX, size - received)
+    written = 0
+    with open(path, "r+b") as f:
+        f.seek(received)
+        while chunk := stream.read(storage.SPOOL_CHUNK):
+            if written + len(chunk) > room:
+                f.truncate(received)
+                raise HTTPException(status_code=413, detail=(
+                    f"a part holds at most {PART_BYTES_MAX // MB} MB and never more than the announced size"))
+            f.write(chunk)
+            if digest is not None:
+                digest.update(chunk)
+            written += len(chunk)
+    if not written:
+        raise HTTPException(status_code=400, detail="an empty part")
+    return written
 
 
 def finish(session: Session) -> tuple[str, bool]:

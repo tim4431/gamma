@@ -18,11 +18,12 @@ from collections import Counter
 from pathlib import Path
 
 from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from fractional_indexing import generate_key_between, generate_n_keys_between
 
 from .. import bibtex as bibtex_mod
-from .. import import_staging, jobs
+from .. import import_staging, jobs, upload_parts
 from ..auth import actor_of, require_user_id, require_ws
 from ..db import connect_pages_db, page_now, safe_doc_id, ws_uploads_dir
 from ..blocks_store import (FOLDERS, LABELS, STORED_COLUMNS, create_page, existing_in, filing, folder_paths,
@@ -77,22 +78,77 @@ def _review_source(source):
     return sources[source]
 
 
+def _preview_staged(ws, user_id, token):
+    """The staged upload's preview with the review's ``review_id``; a
+    preview that fails discards the upload."""
+    try:
+        path, metadata = import_staging.get(token, user_id, ws)
+        preview, _ = _review_source(metadata["source"])
+        with (path / "upload").open("rb") as data:
+            report = preview(ws, data, metadata)
+        return {**report, "review_id": token}
+    except Exception:
+        import_staging.discard(token, user_id, ws)
+        raise
+
+
 @router.post("/import/review")
 def upload_import_review(request: Request, file: UploadFile = File(...), source: str = Form(...),
                          folder: str = Form(""), strip: bool = Form(False)):
     """Stage the upload and answer the source's preview with the review's
     ``review_id``: nothing is imported until ``POST /api/jobs/import``."""
     ws = require_ws(request, write=True)
-    preview, _ = _review_source(source)
+    _review_source(source)
     token = import_staging.create(file, user_id=request.state.user_id, ws=ws, source=source, folder=folder, strip=strip)
+    return _preview_staged(ws, request.state.user_id, token)
+
+
+# An upload larger than a proxy lets one request carry (Cloudflare caps a
+# body at 100 MB) comes in parts, as a PDF does (routers/uploads.py): open →
+# the parts, in order → finish, which answers like POST /import/review.
+
+class ImportParts(BaseModel):
+    source: str
+    size: int
+    name: str = ""
+    folder: str = ""
+    strip: bool = False
+
+
+@router.post("/import/review/parts")
+def open_import_review_parts(payload: ImportParts, request: Request):
+    """Open an import upload in parts → ``{token, part_bytes, received: 0}``;
+    the token becomes the review's ``review_id``."""
+    ws = require_ws(request, write=True)
+    _review_source(payload.source)
+    if payload.source == "gamma" and is_guest_workspace(ws):  # refused before the bytes travel
+        raise HTTPException(status_code=403, detail="a guest workspace cannot import backups")
+    token = import_staging.open_parts(user_id=request.state.user_id, ws=ws, source=payload.source,
+                                      folder=payload.folder, strip=payload.strip, filename=payload.name,
+                                      size=payload.size)
+    return {"token": token, "part_bytes": upload_parts.PART_BYTES, "received": 0}
+
+
+@router.post("/import/review/parts/{token}")
+def put_import_review_part(token: str, request: Request, part: UploadFile = File(...), offset: int = Form(...)):
+    """One part at byte ``offset`` → ``{received}``; at any other offset a
+    409 whose body carries ``received``, where the client goes on from."""
+    ws = require_ws(request, write=True)
     try:
-        path, metadata = import_staging.get(token, request.state.user_id, ws)
-        with (path / "upload").open("rb") as data:
-            report = preview(ws, data, metadata)
-        return {**report, "review_id": token}
-    except Exception:
-        import_staging.discard(token, request.state.user_id, ws)
-        raise
+        received = import_staging.append(token, request.state.user_id, ws, offset, part.file)
+    except upload_parts.OffsetMismatch as e:
+        return JSONResponse({"detail": str(e), "received": e.received}, status_code=409)
+    return {"received": received}
+
+
+@router.post("/import/review/parts/{token}/finish")
+def finish_import_review_parts(token: str, request: Request):
+    """The whole upload is in: answer its preview like POST /import/review
+    (400 while bytes are missing). ``DELETE /import/review/{token}`` drops
+    an unfinished one."""
+    ws = require_ws(request, write=True)
+    import_staging.finish(token, request.state.user_id, ws)
+    return _preview_staged(ws, request.state.user_id, token)
 
 
 @router.delete("/import/review/{token}")

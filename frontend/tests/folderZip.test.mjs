@@ -64,6 +64,23 @@ test("the folder packs into a stored zip whose entries read back", async () => {
   }
 });
 
+test("past 65,535 files the zip ends in ZIP64 records", async () => {
+  const count = 0x10000;
+  const zip = await zipFolder(folderPick(Array.from({ length: count }, (_, i) => picked(`Lib/${i}.txt`, ""))));
+  const bytes = new Uint8Array(await zip.arrayBuffer());
+  const view = new DataView(bytes.buffer);
+  const end = bytes.length - 22, locator = end - 20, record = locator - 56;
+  assert.equal(view.getUint32(end, true), 0x06054B50);
+  assert.equal(view.getUint16(end + 10, true), 0xFFFF, "the classic count points at ZIP64");
+  assert.equal(view.getUint32(locator, true), 0x07064B50);
+  assert.equal(Number(view.getBigUint64(locator + 8, true)), record);
+  assert.equal(view.getUint32(record, true), 0x06064B50);
+  assert.equal(Number(view.getBigUint64(record + 4, true)), 44);
+  assert.equal(Number(view.getBigUint64(record + 32, true)), count);
+  // the central directory ends where the ZIP64 record begins
+  assert.equal(Number(view.getBigUint64(record + 48, true)) + Number(view.getBigUint64(record + 40, true)), record);
+});
+
 test("packing stops when its signal fires", async () => {
   const ctl = new AbortController();
   ctl.abort();
