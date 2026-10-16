@@ -28,6 +28,7 @@ import { noteBadgeAnchor } from "./noteAnchor.js";
 import { useRecentIn } from "../guide/recent.js";
 import { DEFAULT_HIGHLIGHT, colorName, darkPageColor, darkPageLine, normalizeColor, pickerColors, swatchCss } from "../shared/model/palette.js";
 import { usePalette } from "../shared/ui/paletteContext.js";
+import { placeFloating, useFloatingPosition } from "../shared/ui/placement.js";
 import { t } from "../shared/i18n/i18n.js";
 import { TRANSLATE_PARALLEL_MAX } from "../app/prefDefs.js";
 import { ZOOM_MIN, clampZoom } from "../shared/model/zoom.js";
@@ -2355,28 +2356,15 @@ const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, scal
 
 // Fixed-position frame for the selection popup: under the selection, or
 // above it when the popup (a long translation) would run past the bottom of
-// the window; clamped inside the window horizontally. Re-measured whenever
-// the popup's size changes.
+// the window; kept inside the window. Placed again in the frame its size
+// changes (placement.js), so a growing translation never shows a frame of
+// itself still under the selection, past the window's bottom.
 function TipFrame({ anchor, children }) {
   const ref = useRef(null);
-  const [pos, setPos] = useState({ top: anchor.bottom + anchor.gap, left: anchor.left });
-  useLayoutEffect(() => {
-    const el = ref.current;
-    if (!el) return undefined;
-    const place = () => {
-      const { width, height } = el.getBoundingClientRect();
-      const below = anchor.bottom + anchor.gap;
-      const above = anchor.top - anchor.gap - height;
-      const top = below + height > window.innerHeight - 8 && above >= 8 ? above : below;
-      const left = Math.max(8, Math.min(anchor.left, window.innerWidth - width - 8));
-      setPos((p) => (p.top === top && p.left === left ? p : { top, left }));
-    };
-    place();
-    const ro = new ResizeObserver(place);
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, [anchor.top, anchor.bottom, anchor.left, anchor.gap]);
-  return <div ref={ref} style={{ position: "fixed", zIndex: 9999, top: pos.top, left: pos.left }}>{children}</div>;
+  const below = anchor.bottom + anchor.gap;
+  const pos = useFloatingPosition(ref, (el) => placeFloating(el.getBoundingClientRect(), { x: anchor.left, y: below, flipY: anchor.top - anchor.gap }),
+    [anchor.top, below, anchor.left]);
+  return <div ref={ref} style={{ position: "fixed", zIndex: 9999, ...(pos || { top: below, left: anchor.left, visibility: "hidden" }) }}>{children}</div>;
 }
 
 // Longest selection the popup translates (characters, after rejoining lines).

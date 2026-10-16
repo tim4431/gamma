@@ -15,6 +15,7 @@
 // sheet and its ring, the demo shield, a beacon, the scene, the demo
 // pointer, the card. docs/dev/onboarding.md, "Motion and layers".
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 import { ANCHORS, anchorElement } from "./anchors.js";
 import { keyText, resolveKey } from "./keys.js";
 import { mediaRatio } from "./media.js";
@@ -195,7 +196,11 @@ export default function GuideOverlay({ guide, keybindings }) {
   const anchor = (!inviting && live?.anchor) || step?.anchor || null;
 
   // Track the anchor's box: on change, resize, scroll and DOM mutations.
-  useEffect(() => {
+  // Measured before the step is painted, and a later move lands in the
+  // frame it is seen in (flushSync): the card is placed from this box, and
+  // one measured after the paint shows the new step's card a frame beside
+  // the last step's anchor first (shared/ui/placement.js).
+  useLayoutEffect(() => {
     if (!visible || !step) return undefined;
     if (!anchor) { setRect(null); setMissing(false); return undefined; }
     let raf = 0;
@@ -237,7 +242,7 @@ export default function GuideOverlay({ guide, keybindings }) {
         avoid: keep.length ? { top: Math.min(...keep.map((k) => k.top)), left: Math.min(...keep.map((k) => k.left)),
           right: Math.max(...keep.map((k) => k.right)), bottom: Math.max(...keep.map((k) => k.bottom)) } : null });
     };
-    const schedule = () => { if (!raf) raf = requestAnimationFrame(measure); };
+    const schedule = () => { if (!raf) raf = requestAnimationFrame(() => flushSync(measure)); };
     measure();
     if (!inviting && !finishing) anchorElement(anchor)?.scrollIntoView?.({ block: "nearest", inline: "nearest" });
     // The guide's own layers (a scene's shapes, the demo pointer) move no anchor.

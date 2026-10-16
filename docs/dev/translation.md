@@ -103,7 +103,8 @@ account pref, default on).
   it open (the viewer's selection sync ignores a selection anchored in
   `.plainTip`).
 - `TipFrame` flips the popup above the selection when it would run past the
-  window's bottom. Like the popup itself, it needs edit rights on the page.
+  window's bottom, in the frame a streaming translation grows it
+  ([ui-design.md](ui-design.md#menus-and-popups-open-in-place)). Like the popup itself, it needs edit rights on the page.
 
 **Machine-translation services.** "Translate with" also offers the services
 in `gamma/translate_engines.py`. The viewer then sends `model:

@@ -4,11 +4,12 @@
 // Enter keeps its own job). The catalog and matching live in editor/latexCompletion.js
 // (re-exported here); this file holds the two presentational components and
 // their placement. editor/BlockTree.jsx owns the state and key handling.
-import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
+import React, { useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 import katex from "katex";
 import { escapedAt } from "./latexInput";
 import { editBarSpace } from "./EditBar";
+import { useFloatingPosition } from "../shared/ui/placement.js";
 import { t } from "../shared/i18n/i18n.js";
 import { guideEvents } from "../guide/events.js";
 
@@ -42,8 +43,10 @@ const sampleFor = (c) => c.sample
 
 // Placement of a caret-anchored tip: measure its ACTUAL size after render (a
 // worst-case clamp against max-width shoved narrow tips far left of the
-// caret near the right window edge) and keep it inside the viewport.
-// useLayoutEffect runs pre-paint, so the off-screen first pass never shows.
+// caret near the right window edge) and keep it inside the viewport. It is
+// placed before it is painted, so the off-screen first pass never shows,
+// and again in the frame its size changes or the page scrolls
+// (useFloatingPosition, shared/ui/placement.js).
 //
 // The anchor is {left, top, bottom} of the caret, optionally with
 // getRect() for a fresh measurement. A `dock` rect ({left, right} of the
@@ -56,54 +59,30 @@ const sampleFor = (c) => c.sample
 // screen), then to the viewport edge.
 export function useCaretAnchored(anchor, preferAbove, deps) {
   const ref = useRef(null);
-  const [style, setStyle] = useState({ left: -9999, top: 0 });
-  useLayoutEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    let frame;
+  const pos = useFloatingPosition(ref, (el) => {
     const viewport = window.visualViewport;
-    const place = () => {
-      const x = viewport?.offsetLeft || 0, y = viewport?.offsetTop || 0;
-      const width = viewport?.width || window.innerWidth;
-      // the touch editing bar takes the bottom of the view (EditBar.jsx)
-      const height = (viewport?.height || window.innerHeight) - editBarSpace();
-      const rect = anchor.getRect?.() || anchor;
-      const dock = rect.dock && rect.dock.right - rect.dock.left >= 240 ? rect.dock : null;
-      el.style.setProperty("--caret-max-width",
-        `${Math.max(0, dock ? Math.min(dock.right - dock.left, width - 16) : width - 16)}px`);
-      el.style.setProperty("--caret-max-height", `${Math.max(0, height - 16)}px`);
-      const { width: w, height: h } = el.getBoundingClientRect();
-      const left = Math.max(x + 8, Math.min(dock ? dock.left : rect.left, x + width - w - 8));
-      const fits = (t) => t >= y + 8 && t + h <= y + height - 8;
-      const above = (b) => b - h - 6, below = (b) => b + 6;
-      const first = preferAbove ? above(rect.top) : below(rect.bottom);
-      const second = preferAbove ? below(rect.bottom) : above(rect.top);
-      const spans = rect.caretTop != null && (rect.caretTop !== rect.top || rect.caretBottom !== rect.bottom);
-      const candidates = [first, second,
-        ...(spans ? [above(rect.caretTop), below(rect.caretBottom)] : [])];
-      const desired = candidates.find(fits) ?? first;
-      const top = Math.max(y + 8, Math.min(desired, y + height - h - 8));
-      setStyle((prev) => prev.left === left && prev.top === top ? prev : { left, top });
-    };
-    const schedule = () => { cancelAnimationFrame(frame); frame = requestAnimationFrame(place); };
-    place();
-    const observer = new ResizeObserver(schedule);
-    observer.observe(el);
-    window.addEventListener("resize", schedule);
-    window.addEventListener("scroll", schedule, true);
-    viewport?.addEventListener("resize", schedule);
-    viewport?.addEventListener("scroll", schedule);
-    return () => {
-      cancelAnimationFrame(frame);
-      observer.disconnect();
-      window.removeEventListener("resize", schedule);
-      window.removeEventListener("scroll", schedule, true);
-      viewport?.removeEventListener("resize", schedule);
-      viewport?.removeEventListener("scroll", schedule);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [anchor.left, anchor.top, anchor.bottom, anchor.getRect, preferAbove, ...deps]);
-  return [ref, style];
+    const x = viewport?.offsetLeft || 0, y = viewport?.offsetTop || 0;
+    const width = viewport?.width || window.innerWidth;
+    // the touch editing bar takes the bottom of the view (EditBar.jsx)
+    const height = (viewport?.height || window.innerHeight) - editBarSpace();
+    const rect = anchor.getRect?.() || anchor;
+    const dock = rect.dock && rect.dock.right - rect.dock.left >= 240 ? rect.dock : null;
+    el.style.setProperty("--caret-max-width",
+      `${Math.max(0, dock ? Math.min(dock.right - dock.left, width - 16) : width - 16)}px`);
+    el.style.setProperty("--caret-max-height", `${Math.max(0, height - 16)}px`);
+    const { width: w, height: h } = el.getBoundingClientRect();
+    const left = Math.max(x + 8, Math.min(dock ? dock.left : rect.left, x + width - w - 8));
+    const fits = (t) => t >= y + 8 && t + h <= y + height - 8;
+    const above = (b) => b - h - 6, below = (b) => b + 6;
+    const first = preferAbove ? above(rect.top) : below(rect.bottom);
+    const second = preferAbove ? below(rect.bottom) : above(rect.top);
+    const spans = rect.caretTop != null && (rect.caretTop !== rect.top || rect.caretBottom !== rect.bottom);
+    const candidates = [first, second,
+      ...(spans ? [above(rect.caretTop), below(rect.caretBottom)] : [])];
+    const desired = candidates.find(fits) ?? first;
+    return { left, top: Math.max(y + 8, Math.min(desired, y + height - h - 8)) };
+  }, [anchor.left, anchor.top, anchor.bottom, anchor.getRect, preferAbove, ...deps], { follow: true });
+  return [ref, pos || { left: -9999, top: 0 }];
 }
 
 // A caret mark for the preview (LaTeX Workshop's hover preview draws one

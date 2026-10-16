@@ -443,7 +443,9 @@ first keeps its last look. The
 `check` workflow runs the suite on every PR and uploads those folders as the
 `e2e-failures` artifact. `harness.mjs` holds the server lifecycle, `Account` (session
 cookie + `X-Gamma-Workspace` for API seeding, browser contexts logged in as
-that account), `makePdf` (a small real PDF with a text layer), and `step()`.
+that account), `makePdf` (a small real PDF with a text layer), `step()`, and
+`assertOpensInPlace` (a menu or card read frame by frame: no frame of it
+where it then moves, [ui-design.md](ui-design.md#menus-and-popups-open-in-place)).
 
 The run is split into groups (`GROUPS` in `tests/e2e/select.mjs`, one per
 scenario file except `notes-pdf-share`, whose scenarios hand data along;
@@ -572,7 +574,8 @@ The scenarios live in `tests/e2e/scenarios/`:
   after `pointercancel` / lost capture. Chromium's native touch and pen,
   and synthetic Pencil events for Safari's handler order. Stylus latency
   and OS palm rejection still need a real tablet.
-- `inkEditing.mjs`: tap-to-select and the selection menu. Colour/width
+- `inkEditing.mjs`: tap-to-select and the selection menu, which opens and
+  grows in place, frame by frame. Colour/width
   edits keeping pressure and time, duplicate ids, selective delete, the
   Undo/Redo buttons, a finger lasso-move across groups in pen-only mode,
   swipe/hold arbitration, a pen resuming through a selection, menu
@@ -601,7 +604,7 @@ The scenarios live in `tests/e2e/scenarios/`:
   uploaded PDF through `gamma-guide-vars`, so no network), the user's
   highlight checks the next step off, finishing records "done", the menu
   restarts it, and Esc leaves a replay. `contextualGuide.mjs` (the AI chat
-  tour) and `triggeredGuide.mjs` (offers and hints): onboarding.md "Files".
+  tour, and each step's card opening beside its own anchor) and `triggeredGuide.mjs` (offers and hints): onboarding.md "Files".
 - `ipad.mjs`: the installed web app ([ipad.md](ipad.md)) — the manifest
   and its icons, `theme-color` following the theme, the standalone-mode
   block in the bundled stylesheet (`display-mode` cannot be emulated in

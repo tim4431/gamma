@@ -322,8 +322,10 @@ text box's `text_box`, merged key by key ([text_boxes.md](text_boxes.md)
   highlights and the text boxes) is the retained SVG plus a
   `desynchronized` canvas for the stroke in progress. `InkSelectionMenu`
   is a portalled `ContextMenu` (its controls sit outside the page's pointer
-  listeners); `useSelectionMenuAnchor` places it, measuring its height, and
-  places a text box's menu too. `InkTransformHandles` are the resize/rotate
+  listeners); `useSelectionMenuAnchor` gives it the selection's edges and
+  the band it stays in, and the menu, from its own measured height, picks
+  above or below before it is painted ([ui-design.md](ui-design.md#menus-and-popups-open-in-place)).
+  A text box's menu is placed the same way. `InkTransformHandles` are the resize/rotate
   buttons; `InkTooltips` shows a button's title on hover or focus for the
   strip and the menus, since native titles are unreliable under Pencil
   hover. A press takes the tooltip away and keeps it away while the pointer

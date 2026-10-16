@@ -10,7 +10,7 @@
 // from inkStore (drafts ahead of uploads, files behind block URLs); App owns
 // the tool state, the selection, the stroke history and the commits.
 import React, { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
-import { createPortal } from "react-dom";
+import { createPortal, flushSync } from "react-dom";
 import { ContextMenu } from "../shared/ui/Menus";
 import { getStroke } from "perfect-freehand";
 import {
@@ -758,7 +758,7 @@ export function ColorChoices({ colors, color, alpha, onColor }) {
 // A tip goes below its button unless that is near the window's bottom;
 // `above` puts every tip above, for a strip whose menus open upward (the
 // recording player's), so a tip and the menu its button opens share a side.
-export function InkTooltips({ children, contentRef, above = false, ...props }) {
+export function InkTooltips({ children, above = false, ...props }) {
   const id = useId(), [tip, setTip] = useState(null), active = useRef(null), timer = useRef(null), hushed = useRef(null);
   const clear = () => { clearTimeout(timer.current); active.current?.removeAttribute("aria-describedby"); active.current = null; setTip(null); };
   // A press takes the tooltip away and keeps it away while the pointer stays
@@ -788,7 +788,7 @@ export function InkTooltips({ children, contentRef, above = false, ...props }) {
         y: r.bottom + 8, above: above || r.bottom > window.innerHeight - 100, top: r.top - 8 });
     }, e.type === "focus" ? 0 : 250);
   };
-  return <><div {...props} ref={contentRef} onPointerOver={show} onPointerLeave={leave} onFocus={show} onBlur={clear}
+  return <><div {...props} onPointerOver={show} onPointerLeave={leave} onFocus={show} onBlur={clear}
     onPointerDownCapture={press}>{children}</div>
     {tip ? createPortal(<div id={id} role="tooltip" className="inkTooltip" style={{ left: tip.x, top: tip.above ? tip.top : tip.y,
       transform: tip.above ? "translateY(-100%)" : undefined }}>{tip.text}</div>, document.body) : null}</>;
@@ -809,55 +809,48 @@ function viewportOf(el) {
 // Where a selection's menu goes (the handwriting's, a text box's): above
 // the selection when it fits in the scroller the page is seen through (and
 // below the tool strip floating over its top), else below it, else
-// wherever it fits; null while the selection is off-screen.
-// It follows scrolls, resizes and its own height. `ref` is an element the
-// selection moves and scales with (observed for resizes); rectOf(its screen
-// rect) is the selection's screen rect, and `deps` what else moves it.
-// contentRef goes on an element inside the menu.
+// wherever it fits; null while the selection is off-screen. The anchor
+// says where and the ContextMenu, which knows its own height, picks the
+// side (placement.js); a height guessed here would put it on one side for
+// a frame and then the other.
+// It follows scrolls and resizes, in the frame they happen. `ref` is an
+// element the selection moves and scales with (observed for resizes);
+// rectOf(its screen rect) is the selection's screen rect, and `deps` what
+// else moves it. Spread the anchor on the ContextMenu.
 export function useSelectionMenuAnchor(ref, rectOf, deps) {
   const [anchor, setAnchor] = useState(null);
-  const contentRef = useRef(null);
-  const [menuHeight, setMenuHeight] = useState(96);
   const rectRef = useRef(rectOf);
   rectRef.current = rectOf;
-  useLayoutEffect(() => {
-    const el = contentRef.current?.closest(".ctxMenu");
-    if (!el) return;
-    const observer = new ResizeObserver(() => setMenuHeight(el.getBoundingClientRect().height));
-    observer.observe(el);
-    return () => observer.disconnect();
-  }, [!!anchor]);
   useLayoutEffect(() => {
     const el = ref.current;
     if (!el) return;
     const view = viewportOf(el);
-    const update = () => {
+    const update = (now) => {
       const viewport = view ? view.getBoundingClientRect()
         : { left: 0, top: 0, right: window.innerWidth, bottom: window.innerHeight };
       const bar = document.querySelector(".pdfInkBar")?.getBoundingClientRect();
       const roof = bar && bar.bottom > viewport.top && bar.top < viewport.bottom ? Math.max(viewport.top, bar.bottom) : viewport.top;
       const { left, top, right, bottom } = rectRef.current(el.getBoundingClientRect());
-      const y = top - menuHeight - 40 >= roof + 8 ? top - menuHeight - 40
-        : bottom + menuHeight + 40 <= viewport.bottom - 8 ? bottom + 40
-        : Math.max(roof + 8, Math.min(top - menuHeight - 40, viewport.bottom - menuHeight - 8));
-      const next = bottom < viewport.top || top > viewport.bottom || right < viewport.left || left > viewport.right
-        ? null : { x: Math.max(viewport.left + 8, left), y };
-      setAnchor((prev) => JSON.stringify(prev) === JSON.stringify(next) ? prev : next);
+      const next = bottom < viewport.top || top > viewport.bottom || right < viewport.left || left > viewport.right ? null
+        : { x: Math.max(viewport.left + 8, left), y: top - 40, anchorBottom: true, flipY: bottom + 40, bounds: { top: roof, bottom: viewport.bottom } };
+      const set = () => setAnchor((prev) => JSON.stringify(prev) === JSON.stringify(next) ? prev : next);
+      if (now) flushSync(set); else set();
     };
-    update();
-    const observer = new ResizeObserver(update);
+    update(false);
+    const again = () => update(true);
+    const observer = new ResizeObserver(again);
     observer.observe(el);
-    window.addEventListener("scroll", update, true);
-    window.addEventListener("resize", update);
-    return () => { observer.disconnect(); window.removeEventListener("scroll", update, true); window.removeEventListener("resize", update); };
-  }, [ref, menuHeight, ...deps]); // eslint-disable-line react-hooks/exhaustive-deps
-  return { anchor, contentRef };
+    window.addEventListener("scroll", again, true);
+    window.addEventListener("resize", again);
+    return () => { observer.disconnect(); window.removeEventListener("scroll", again, true); window.removeEventListener("resize", again); };
+  }, [ref, ...deps]); // eslint-disable-line react-hooks/exhaustive-deps
+  return anchor;
 }
 
 function InkSelectionMenu({ wrapRef, box, width, strokes, onAction, onClose }) {
   const [options, setOptions] = useState(null);
   const [x0, y0, x1, y1] = box;
-  const { anchor, contentRef } = useSelectionMenuAnchor(wrapRef, (r) => {
+  const anchor = useSelectionMenuAnchor(wrapRef, (r) => {
     const k = r.width / width;
     return { left: r.left + x0 * k, top: r.top + y0 * k, right: r.left + x1 * k, bottom: r.top + y1 * k };
   }, [width, x0, y0, x1, y1]);
@@ -866,8 +859,8 @@ function InkSelectionMenu({ wrapRef, box, width, strokes, onAction, onClose }) {
   const nudge = () => 12 * width / wrapRef.current.getBoundingClientRect().width;
   const kinds = [...new Set(strokes.map((s) => s.tool))];
   const palette = usePalette();
-  return <ContextMenu x={anchor.x} y={anchor.y} ignoreRef={wrapRef} onClose={onClose} className="inkEditMenu">
-    <InkTooltips contentRef={contentRef} role="toolbar" aria-label={t("Edit handwriting")} onPointerDown={(e) => e.stopPropagation()}>
+  return <ContextMenu {...anchor} ignoreRef={wrapRef} onClose={onClose} className="inkEditMenu">
+    <InkTooltips role="toolbar" aria-label={t("Edit handwriting")} onPointerDown={(e) => e.stopPropagation()}>
       <div className="inkEditRow">
         <button className={"ctlBtn" + (options === "color" ? " modeActive" : "")} aria-label={t("Color")} title={t("Color")} aria-expanded={options === "color"} onClick={() => setOptions(options === "color" ? null : "color")}><PaletteIcon aria-hidden="true" /></button>
         <button className={"ctlBtn" + (options === "width" ? " modeActive" : "")} aria-label={t("Width")} title={t("Width")} aria-expanded={options === "width"} onClick={() => setOptions(options === "width" ? null : "width")}><LineWidthIcon aria-hidden="true" /></button>

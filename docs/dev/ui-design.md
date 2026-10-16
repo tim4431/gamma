@@ -381,8 +381,9 @@ so one tap cannot toggle twice. Mouse and keyboard keep the plain click path.
 
 Every cursor-anchored menu is a `ContextMenu`. It measures itself and is
 clamped inside the viewport; `anchorRight` / `anchorBottom` take the point
-as its right or bottom edge. It stays hidden until it is placed, so a menu
-opening upward is never seen over its button first. Every row inside one
+as its right or bottom edge, `flipY` is the other side of what it opens
+from, taken when its own side has no room, and `bounds` a band it stays in
+([below](#menus-and-popups-open-in-place)). Every row inside one
 is a `MenuItem` (icon column, ellipsizing label, optional `trailing` node or
 `keys` — the row's shortcut, e.g. the page menu's Enter / F2 / Del —
 `danger` for destructive actions). Groups of rows are separated by
@@ -420,6 +421,41 @@ is what lets a diagonal move into the flyout pass over the rows below the
 trigger without closing it. The module is plain geometry plus a `useMenuAim`
 hook (`setTarget` / `guard` / `keep`) — any other menu surface can adopt it
 without going through `shared/ui/Menus.jsx`.
+
+### Menus and popups open in place
+
+A floating surface is first seen where it stays: never on one side of its
+anchor and then the other, never over its button and then above it, never
+grown in place and then moved. A surface placed from its own size knows
+that size only once it is laid out, so
+[placement.js](../../frontend/src/shared/ui/placement.js) holds the one way
+to place it:
+
+- `placeFloating(size, {x, y, anchorRight, anchorBottom, flipY, bounds})`
+  is the pure geometry (`tests/placement.test.mjs`): its own side of the
+  point, the other side (`flipY`) when its own has no room and that one
+  has, then inside the window and the `bounds` band.
+- `useFloatingPosition(ref, place, deps, {follow})` measures and places it
+  in a layout effect, before the browser paints it, and returns null until
+  then, while the surface stands hidden. When its size changes later (a row
+  of options opens, a translation streams in), the window's does, or, with
+  `follow`, the page scrolls, it is placed again in that same frame
+  (`flushSync`).
+
+The rule behind the second half: a state update from a ResizeObserver, a
+scroll listener, a `requestAnimationFrame` or a passive effect renders
+only after the browser has painted, so a position set there shows one
+frame of the surface where it stood. The side is chosen by the surface
+itself, from its measured size, never by a caller from a guessed one: the
+handwriting and text box menus give `ContextMenu` the selection's edges
+(`useSelectionMenuAnchor`) and it picks above or below. `ContextMenu`, the
+PDF selection popup (`TipFrame`) and the caret-anchored popups
+(`useCaretAnchored`: "/", `[[`, `@`, the LaTeX completion and preview) are
+built on it; the guide card's anchor is measured the same way
+(`GuideOverlay`). A surface placed in its event handler before it renders
+(the tooltips, the citation preview) or by CSS under its button (the
+popovers) has nothing to correct. The browser suite's
+`assertOpensInPlace` (harness.mjs) checks a surface frame by frame.
 
 ### Dialogs
 

@@ -1,7 +1,7 @@
 // Tours are manual, compact, and never submit a message or activate the mic.
 // The AI chat tour has steps per place (a paper, the library), each ending on
 // the user's own Send; with no AI connected it points at the setup card.
-import { FAKE_AI_MODELS } from "../harness.mjs";
+import { FAKE_AI_MODELS, assertOpensInPlace } from "../harness.mjs";
 
 export async function contextualGuideScenarios(env) {
   const { server, browser, alice, step, until, assert, assertEq, assertNoProblems, openPage, makePdf, flags } = env;
@@ -77,6 +77,24 @@ export async function contextualGuideScenarios(env) {
         await page.getByRole("button", { name: `Close ${title}`, exact: true }).waitFor();
         await page.keyboard.press("Escape"); // the menu, which reaches over the window's header
       }
+      assertNoProblems(page);
+    } finally { await ctx.close(); }
+  });
+  // A step's card is placed from its own anchor before it is painted: no
+  // frame of it beside the last step's anchor, then moving.
+  await step("guide: each step's card opens beside its own anchor", async () => {
+    const ctx = await alice.context(browser);
+    const page = await openPage(ctx, `${server.base}/?ws=${alice.ws}`);
+    try {
+      await page.waitForSelector(".folderNewBtn");
+      await page.click('[data-guide="header.account"]');
+      await page.click('[data-guide="account.tour"]');
+      await assertOpensInPlace(page, ".guideCard", () => page.click('[data-tour="add-paper"]'), { what: "the first step's card" });
+      let steps = 1;
+      while ((await page.locator(".guideCard .uiBtn.primary").textContent().catch(() => ""))?.trim() === "Next") {
+        await assertOpensInPlace(page, ".guideCard", () => page.click(".guideCard .uiBtn.primary"), { what: `step ${++steps}'s card` });
+      }
+      assert(steps >= 3, `the tour went through its steps (${steps})`);
       assertNoProblems(page);
     } finally { await ctx.close(); }
   });
