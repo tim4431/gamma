@@ -19,7 +19,7 @@
 // the colour a stored highlight or stroke already has. normalizeColor reads
 // the older `rgba(…)` strings too (migration step 37 rewrote them; an
 // older server or an old export can still send one).
-import { T } from "../i18n/i18n.js";
+import { T } from "../i18n/locales.js";
 
 // The wash colours are the four highlight colours Gamma always had; the
 // ink-highlight colours are those four and the four more the tool strip's

@@ -532,6 +532,25 @@ def cmd_status(args):
     return 0
 
 
+# Options whose value is free text. A page, folder or block id comes from
+# token_urlsafe, so about one in 64 begins with "-", which argparse reads as
+# another option ("--folder: expected one argument"): `--folder <id>` is
+# passed on as `--folder=<id>`, the one spelling argparse takes as given.
+VALUE_OPTIONS = ("--server", "--token", "--folder", "--watch")
+
+
+def glued(argv):
+    """``argv`` with each VALUE_OPTIONS value joined to its option by "=".
+    An option at the very end keeps its own missing-value error."""
+    out, rest = [], list(argv)
+    while rest:
+        arg = rest.pop(0)
+        if arg in VALUE_OPTIONS and rest:
+            arg = f"{arg}={rest.pop(0)}"
+        out.append(arg)
+    return out
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(prog="gamma_sync.py", description=__doc__.split("\n\n", 1)[0],
                                      formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -566,7 +585,7 @@ def main(argv=None) -> int:
     p.add_argument("dest")
     p.set_defaults(run=cmd_status)
 
-    args = parser.parse_args(argv)
+    args = parser.parse_args(glued(sys.argv[1:] if argv is None else argv))
     try:
         return args.run(args) or 0
     except SyncError as e:

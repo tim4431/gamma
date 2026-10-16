@@ -29,7 +29,7 @@
 import React from "react";
 import { TAGS } from "./locales.js";
 
-export { LANGUAGES, resolveLocale } from "./locales.js";
+export { LANGUAGES, T, resolveLocale } from "./locales.js";
 
 // Vite turns the glob call into lazy imports (the property itself never
 // exists at runtime, so it cannot be tested for); under plain node the call
@@ -94,10 +94,6 @@ export function tn(one, other, n, args) {
   if (typeof found === "string" && found) return fill(found, values);
   return fill(n === 1 ? one : other, values);
 }
-
-// Marks a string that stays English in its table; translated by `t()`
-// where it is rendered.
-export const T = (text) => text;
 
 // Dates in the interface language, not the browser's.
 export const fmtDate = (value, options) => new Intl.DateTimeFormat(localeTag(), options).format(value instanceof Date ? value : new Date(value));

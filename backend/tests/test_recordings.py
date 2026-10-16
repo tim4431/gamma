@@ -19,7 +19,7 @@ from gamma.markdown_export import render_readable
 from gamma.recording import fmt_duration, recording_label, transcript_paragraphs
 from gamma.storage import is_audio
 
-USER, PASSWORD = "rec_owner", "pw-rec-1"
+USER, PASSWORD = "rec_owner", "pw"
 T0 = 1_760_000_000_000  # wall-clock ms the first segment began
 # Two segments' files: an EBML header and bytes that tell them apart.
 WEBM_A = b"\x1a\x45\xdf\xa3\x9f\x42\x86\x81\x01" + b"A" * 300
