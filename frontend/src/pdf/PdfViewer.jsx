@@ -16,7 +16,7 @@ import { armedClasses, usePageTools } from "../markup/PageTools";
 import { KEEP_MARGIN, RENDER_MARGIN, ZOOM_SETTLE_MS, cropPage, installPageRaster } from "./pageRaster.js";
 import { installVerticalScrollSnap } from "./verticalScrollSnap.js";
 import { segmentPage, selectionParagraphs } from "./pdfTranslate";
-import { BACKFILL_DELAY_MS, chooseTransport, docIdOf, layoutFromManifest, rangeOpenOptions } from "./pdfSource";
+import { BACKFILL_DELAY_MS, chooseTransport, docIdOf, layoutFromManifest, rangeOpenOptions, typicalPageIndex } from "./pdfSource";
 import { normalizeChars } from "../shared/lib/textnorm";
 import { apiJson, copyText, withShare, withWorkspace } from "../shared/lib/utils";
 import { ChatMarkdown, useCopied } from "../shared/ui/Widgets";
@@ -464,7 +464,7 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
   const [forcePages, setForcePages] = useState(new Set());
   const pageHeightsRef = useRef([]); // viewport heights at scale 1, indexed 0..n-1
   const pageWidthsRef = useRef([]); // viewport widths at scale 1 — the zoom anchor's horizontal math needs them
-  const heightsExactRef = useRef(true); // false while a long doc's tail heights are page-1 estimates still refining
+  const heightsExactRef = useRef(true); // false while a long doc's tail heights are estimates still refining
   const lastScrollRef = useRef(0); // scrollTop as of the last scroll event — the pre-clamp value during a zoom commit
   const lastScrollLeftRef = useRef(0);
 
@@ -719,8 +719,9 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
     return () => { captureRef.current = null; };
   }, [pdfDoc, captureRef]);
   // Resolve scale: numeric value as-is, "page-width" computes a scale that
-  // fits the first page to the viewer width. Recomputed on viewer resize so
-  // it adapts to sidebar drags / phone rotation.
+  // fits the typical page (typicalPageIndex: the most common width, not
+  // page 1, which may be a cover of another size) to the viewer width.
+  // Recomputed on viewer resize so it adapts to sidebar drags / phone rotation.
   const [fitWidthScale, setFitWidthScale] = useState(1);
   const numericScale = parseFloat(pdfScaleValue);
   const isFitWidth = isNaN(numericScale);
@@ -731,10 +732,11 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
   useEffect(() => { onEffectiveScale?.(scale); }, [scale, onEffectiveScale]);
   useEffect(() => {
     if (!isFitWidth || !pdfDoc || !viewerRef.current) return;
-    // Page 1's width is in pageWidthsRef, measured before the doc was shown —
+    // The widths are in pageWidthsRef, measured before the doc was shown —
     // no async worker round trip per sidebar drag / rotation.
     const compute = () => {
-      const naturalW = pageWidthsRef.current[0];
+      const widths = pageWidthsRef.current;
+      const naturalW = widths[typicalPageIndex(widths)];
       const containerW = viewerRef.current?.clientWidth;
       if (naturalW > 0 && containerW > 0) setFitWidthScale(Math.max(ZOOM_MIN, containerW / naturalW));
     };
@@ -878,8 +880,9 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
           ({ heights, widths } = fromManifest);
         } else {
           // Measure the first pages (a worker round trip each) and estimate
-          // the rest from page 1, refined below. Kept small: this loop
-          // blocks first paint.
+          // the rest from the typical one among them — not page 1, which may
+          // be a cover of another size — refined below. Kept small: this
+          // loop blocks first paint.
           const measured = Math.min(n, EXACT);
           heights = []; widths = [];
           for (let i = 1; i <= measured; i++) {
@@ -890,7 +893,8 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
             } catch { heights.push(heights[0] || FALLBACK_H); widths.push(widths[0] || FALLBACK_W); }
             if (cancelled) { doc.destroy().catch(() => {}); return; }
           }
-          for (let i = heights.length; i < n; i++) { heights.push(heights[0] || FALLBACK_H); widths.push(widths[0] || FALLBACK_W); }
+          const typical = typicalPageIndex(widths);
+          for (let i = heights.length; i < n; i++) { heights.push(heights[typical] || FALLBACK_H); widths.push(widths[typical] || FALLBACK_W); }
         }
         const exact = !!fromManifest || n <= EXACT;
         commitDoc(url, doc, heights, widths, exact);

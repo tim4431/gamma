@@ -211,6 +211,46 @@ export async function pdfLoadScenarios({ server, browser, alice, makePdf, step, 
     await c.close();
   });
 
+  await step("pdf load: fit to width fits the text pages, not a cover of another size — from the manifest and measured", async () => {
+    // A scanned book's shape: a small cover image, then text pages 1.76×
+    // wider. Fit-width used to size to page 1, which put every text page past
+    // the viewer's edge. 40 pages, so without a manifest most widths are
+    // estimates from the eight measured ones.
+    const pdf = makePdf(Array.from({ length: 40 }, (_, i) => (i === 0
+      ? { lines: ["Cover"], box: [252, 366] }
+      : { lines: [`Text page ${i + 1}`], box: [444, 648] })));
+    const up = await account.upload("/api/uploads", pdf, "covered.pdf", "application/pdf");
+    const created = await account.api(`/api/blocks/by-doc/${up.doc_id}`, { method: "POST", body: { default_title: "Covered book", source_url: up.source_url } });
+    const url = `${server.base}/?page=${created.id}&ws=${account.ws}`;
+    const fits = async (p, how) => {
+      const v = await p.evaluate(() => {
+        const el = document.querySelector(".pdfViewer");
+        const w = (n) => document.querySelector(`[data-page="${n}"]`)?.getBoundingClientRect().width;
+        return { client: el.clientWidth, scroll: el.scrollWidth, cover: w(1), text: w(2), far: w(30) };
+      });
+      const seen = `${how}: ${JSON.stringify(v)}`;
+      assert(Math.abs(v.text - v.client) <= 1 && Math.abs(v.far - v.client) <= 1, `text pages fill the width — ${seen}`);
+      assert(v.scroll <= v.client, `no horizontal overflow — ${seen}`);
+      assert(Math.abs(v.cover - v.client * 252 / 444) <= 2, `the cover is narrower — ${seen}`);
+    };
+    const c = await account.context(browser);
+    try {
+      const p = await openPage(c, url); // fit-width is the default zoom
+      await waitPainted(p, 0);
+      await fits(p, "manifest");
+      assertNoProblems(p);
+      // A manifest that describes nothing: the viewer measures the first
+      // eight pages and estimates the rest.
+      await c.route("**/api/pdf-info/**", (route) => route.fulfill({ status: 200, contentType: "application/json", body: "{}" }));
+      const q = await openPage(c, url);
+      await waitPainted(q, 0);
+      await fits(q, "measured");
+      assertNoProblems(q);
+    } finally {
+      await c.close();
+    }
+  });
+
   let ctx3, p3;
   await step("pdf load: the reading position survives a reload of the large document", async () => {
     ctx3 = await account.context(browser);

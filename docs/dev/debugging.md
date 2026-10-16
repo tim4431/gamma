@@ -622,7 +622,8 @@ The scenarios live in `tests/e2e/scenarios/`:
   IndexedDB backfill, a warm reopen, a same-tab return; reports the per-phase
   `performance.mark("pdf-<phase>")` stamps and the bytes on the wire as each
   step's note, asserts only that it paints), then the behaviours: page boxes
-  from the manifest (a landscape page below the fold), the last-read page
+  from the manifest (a landscape page below the fold), fit-width sized to the
+  text pages past a small cover (with the manifest and measured), the last-read page
   after a reload, two large documents through the parsed-document cache, the
   anonymous share view by ranges ([pdf_loading.md](pdf_loading.md)).
   `npm run e2e -- --only "pdf load"`.

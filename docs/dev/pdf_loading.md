@@ -53,9 +53,13 @@ range requests asks once, not per chunk.
 `pdf/pdfSource.js` holds the pure decisions, unit-tested in
 `tests/pdfSource.test.mjs`: which URL is an upload (`docIdOf`), which
 transport to use (`chooseTransport`), the pdf.js options of a range open
-(`rangeOpenOptions`), and how a manifest becomes a page layout
+(`rangeOpenOptions`), how a manifest becomes a page layout
 (`layoutFromManifest`, refusing anything that does not describe a readable
-document). The viewer's load effect composes them:
+document), and which page stands for the document's size
+(`typicalPageIndex`: the widest of the pages sharing the most common width,
+to the point). Fit-width sizes to that page, not to page 1: a scanned book's
+cover is often an image of another size, and fitting it pushed every text page
+past the viewer's edge. The viewer's load effect composes them:
 
 1. **A parsed document from a recent visit** (`DOC_CACHE`, the last two
    `PDFDocumentProxy` objects with their layout) is committed as it is.
@@ -113,7 +117,9 @@ document). The viewer's load effect composes them:
    measure loop and the 50-page background refinement are skipped, which also
    removes the layout shifting under a scroll restore that the refinement
    caused. Without a manifest (proxy URLs, a failed read) the old path
-   measures and refines exactly as before. Bytes from the cache wait at most
+   measures the first eight pages, estimates the rest from the typical one
+   among them (`typicalPageIndex`, so a cover of another size does not set
+   the layout or the fit-width zoom) and refines in the background. Bytes from the cache wait at most
    250 ms for the manifest; measuring is still correct, only slower.
 
 **The worker.** pdf.js does its parsing in a Web Worker whose script is 1.3 MB.
