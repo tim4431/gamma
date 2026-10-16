@@ -51,9 +51,7 @@ enum PythonRuntime {
         try:
             os.makedirs(logs, exist_ok=True)
             with open(os.path.join(logs, "server.log"), "a", encoding="utf-8", errors="backslashreplace") as log:
-                log.write("
---- the server did not start ---
-" + text)
+                log.write("\\n--- the server did not start ---\\n" + text)
         except OSError:
             pass
         sys.stderr.write(text)
