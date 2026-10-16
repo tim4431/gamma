@@ -671,6 +671,17 @@ save path, workspaces, auth or rendering of URLs should add a step here; the
   shows the build and the update check. Backend code must log through
   `gamma/logbuf.py`'s `log` (never `print()`); use `log.warning` for what an
   admin should notice. Secrets are masked at insert time. Gone on restart.
+- **"Invalid HTTP request received from <peer>: …"** is uvicorn's warning for
+  bytes that are not HTTP/1.1, which `logbuf._InvalidRequestDetail` extends
+  with the TCP peer and what arrived: a TLS handshake (https:// sent to the
+  plain-HTTP port), HTTP/2 without TLS, a PROXY protocol header, or the first
+  line, with its query cut off, and the parser's complaint. A stream of TLS
+  handshakes means the port is reachable from the internet, where scanners
+  try https:// on every port: a raw TCP tunnel (FRP `type = "tcp"`) whose
+  remote port is open publicly next to the reverse proxy in front of it. The
+  peer is then the tunnel's local end, an address `FORWARDED_ALLOW_IPS` lists,
+  so anyone on that port can choose the client address rate limits count by.
+  Close the remote port to everything but the reverse proxy.
 - **Two request lines, on purpose.** The console carries uvicorn's access
   log for every request (`INFO: 127.0.0.1:… "GET /api/… HTTP/1.1" 200 OK`)
   except the Background tasks tray's answered `GET /api/jobs`, which comes

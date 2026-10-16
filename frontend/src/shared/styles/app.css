@@ -1353,7 +1353,6 @@ html[data-shell] .app { padding-bottom: env(safe-area-inset-bottom); }
 .plainTip {
   color: var(--text-primary);
   padding: 10px;
-  min-width: 260px;
   z-index: var(--z-tip);
 }
 
@@ -1361,7 +1360,6 @@ html[data-shell] .app { padding-bottom: env(safe-area-inset-bottom); }
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
-  margin-bottom: 10px;
 }
 
 .colorBtn {
@@ -1381,7 +1379,7 @@ html[data-shell] .app { padding-bottom: env(safe-area-inset-bottom); }
 /* The selection translator under the color row (PdfViewer SelTranslation):
    a fold-out header, then the selectable translated text. */
 .plainTip:has(.selTrans) { width: min(420px, calc(100vw - 16px)); }
-.selTrans { border-top: 1px solid var(--border-subtle); padding-top: 6px; }
+.selTrans { margin-top: 10px; border-top: 1px solid var(--border-subtle); padding-top: 6px; }
 .selTransHead { display: flex; align-items: center; gap: 4px; }
 .selTransToggle {
   flex: 1; min-width: 0;

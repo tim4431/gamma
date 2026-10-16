@@ -160,6 +160,13 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
   await step("pdf: a text selection makes a highlight (overlay + note row), persisted with its position", async () => {
     await selectPdfText(page, 1, "entanglement in Rydberg");
     await page.waitForSelector(".plainTip .colorBtn", { timeout: 5000 });
+    // The popup is as wide as its buttons, however many colours the palette has.
+    const [left, right] = await page.evaluate(() => {
+      const tip = document.querySelector(".plainTip").getBoundingClientRect();
+      const btns = [...document.querySelectorAll(".plainTip .colorRow > button")].map((b) => b.getBoundingClientRect());
+      return [Math.min(...btns.map((b) => b.left)) - tip.left, tip.right - Math.max(...btns.map((b) => b.right))];
+    });
+    assert(Math.abs(left - right) < 1, `the popup's space left of its buttons ${left}px, right ${right}px`);
     await page.locator(".plainTip .colorBtn").first().click();
     await page.waitForSelector('[data-page="1"] [data-hl-id]', { timeout: 5000 });
     await page.waitForSelector(".blockRow .blockQuote", { timeout: 5000 });
