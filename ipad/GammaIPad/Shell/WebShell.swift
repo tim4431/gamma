@@ -160,7 +160,11 @@ final class WebShell {
     @discardableResult
     static func hideKeyboardAccessoryBar(of webView: WKWebView) -> Bool {
         let prefix = "GammaNoAccessory_"
-        guard let content = webView.scrollView.subviews.first(where: { NSStringFromClass(type(of: $0)).hasPrefix("WKContent") }) else {
+        // Once given the subclass, the content view's class name starts with the prefix.
+        guard let content = webView.scrollView.subviews.first(where: {
+            let name = NSStringFromClass(type(of: $0))
+            return name.hasPrefix("WKContent") || name.hasPrefix(prefix + "WKContent")
+        }) else {
             return false
         }
         let base: AnyClass = type(of: content)
