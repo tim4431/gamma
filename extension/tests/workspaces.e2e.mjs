@@ -122,7 +122,7 @@ try {
   let done = new Promise((resolve) => { clipped = resolve; });
   await popup.locator("#save").click();
   await done;
-  await popup.locator("#result.ok").waitFor();
+  await popup.locator("#existing-msg.ok").waitFor();
   assert.deepEqual({ ws: clips.at(-1).ws, folder: clips.at(-1).folder }, { ws: "", folder: "f-home" },
     "a save into the default library names no workspace, as it always has");
   await popup.close();
@@ -141,10 +141,11 @@ try {
   done = new Promise((resolve) => { clipped = resolve; });
   await popup.locator("#save").click();
   await done;
-  await popup.locator("#result.ok").waitFor();
+  await popup.locator("#existing-msg.ok").waitFor();
   assert.deepEqual({ ws: clips.at(-1).ws, folder: clips.at(-1).folder }, { ws: "w-lab", folder: "f-lab" });
-  // The link back into the app opens that library.
-  await popup.locator("#result.ok a").click();
+  // The saved notice names that library, and the link back opens it.
+  assert.equal(await popup.locator("#existing-where").textContent(), "Saved to Lab");
+  await popup.locator("#open-existing").click();
   const opened = await context.waitForEvent("page");
   await opened.waitForLoadState("domcontentloaded");
   assert.equal(new URL(opened.url()).searchParams.get("ws"), "w-lab");

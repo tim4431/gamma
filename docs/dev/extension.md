@@ -30,7 +30,10 @@ install steps, unpacked included, in
    A page with no PDF at all still saves: it becomes a page of its own
    carrying the tab as `web_url` (see the pipeline below).
 4. **Already in the library** — ✓ badge; the popup offers *Open in Gamma*
-   and *Add to another folder…* instead of a duplicate save. When the
+   and *Add to another folder…* instead of a duplicate save. A save that
+   just finished shows the same block, with "Saved to your library" (plus
+   the server's note, in amber, when there was no PDF). The head already
+   names the paper, so the notice doesn't repeat the title. When the
    library page's title differs from the paper the tab resolved to, the
    notice says "Already in your library as “…”", so a stale metadata record
    on that page is visible rather than shown as this paper's title.
@@ -87,7 +90,7 @@ helpers — never re-implement it in the extension.
 | `detect.js` | content script (`document_idle`): identifier extraction, re-run on SPA URL changes; answers `get-detection` / `get-selection` / `fetch-pdf` (downloads a PDF from inside the page and relays it base64, with the answer's status, type and size — publisher bot checks that 403 the worker's fetch accept the page's own same-origin request) |
 | `api.js` | settings (`chrome.storage.sync`: `server, servers, workspaces, defaultFolders, folder, labels, allowOa, saveCopy, autoRefreshSessions`), `api()` fetch wrapper (`credentials: "include"`, the chosen workspace as `X-Gamma-Workspace`, JSON `detail` → `ApiError{status}`), `login/logout/whoAmI`, and the workspace and default folder (below) |
 | `publisherSessions.js` | Publisher-host validation and the connection flow (checks the active tab and account, then sends a snapshot to Gamma with the browser's `navigator.userAgent`); the automatic-refresh rule (`shouldAutoRefresh`, `REFRESH_AFTER` / `RETRY_AFTER`) and the status text (`describeSession`) — pure, tested in `tests/` |
-| `popup.html/js/css` | setup (no server) → offline (server unreachable, with Retry) → sign-in → main view; the footer shows a connection dot (green signed in / amber signed out / red unreachable) beside `host · user`, the publisher-session **cookie button** and an options gear (the app's SettingsIcon). The folder picker and label suggestions are plain-JS menus mirroring the app's MenuSelect/ctxMenu recipes; labels are the app's `categoryTag` chip input (comma/Enter commits a chip, Backspace removes, arrow keys + Enter pick a suggestion). A save remembers its folder (the worker, once it succeeds) but not its labels — each popup prefills only the options-page default labels. `popup.css` reads the app's design tokens and repeats `shared/styles/app.css`'s control recipes (buttons, fields, the switch, the menu surface, the focus ring) — keep those in step when the app's recipes change. *Copy the save log* (under the result, whenever the tab has one) copies the tab's last save log. `?tab=<id>` targets a specific tab when opened as a page (tests) |
+| `popup.html/js/css` | setup (no server) → offline (server unreachable, with Retry) → sign-in → main view; the footer shows a connection dot (green signed in / amber signed out / red unreachable) beside `host · user`, the publisher-session **cookie button** and an options gear (the app's SettingsIcon). The folder picker and label suggestions are plain-JS menus mirroring the app's MenuSelect/ctxMenu recipes; labels are the app's `categoryTag` chip input (comma/Enter commits a chip, Backspace removes, arrow keys + Enter pick a suggestion). A save remembers its folder (the worker, once it succeeds) but not its labels — each popup prefills only the options-page default labels. `popup.css` reads the app's design tokens and repeats `shared/styles/app.css`'s control recipes (buttons, fields, the switch, the menu surface, the focus ring) — keep those in step when the app's recipes change. *Clip selected text* and *Copy the save log* (whenever the tab has one) share one row of quiet links at the bottom, under the actions and any result; the log link copies the tab's last save log. `?tab=<id>` targets a specific tab when opened as a page (tests) |
 | `tokens.css`, `fonts/` | committed copies of the app's `shared/styles/tokens.css` and the Latin subset of Inter, like the desktop shell's ([ui-design.md](ui-design.md#the-desktop-shell-and-the-extension)): `npm run copy-tokens` in `frontend/` refreshes them, and `frontend/tests/themes.test.mjs` fails while a copy differs from its source |
 | `theme.js` | a classic script in the head of both pages, before the stylesheets: the app's pinned theme isn't knowable here, so it sets `data-theme` / `data-scheme` to Light or Dark from `prefers-color-scheme`, live |
 | `options.html/js` | server + host permission, account, saving defaults (the workspace and the folder picked from the signed-in account's libraries), *Copy recent saves* (the last five save logs) |
@@ -116,6 +119,15 @@ helpers — never re-implement it in the extension.
 content scripts, so the worker also derives a URL-only candidate on every tab
 load (`candidateFromUrl`, `from_url: true`) and merges it field-by-field under
 the content script's result; URL-looking tab titles are dropped there.
+
+A page Chrome prerenders into a tab shares the tab's id but isn't what the
+tab shows. Chrome's search warmup (`www.google.com/warmup.html`, titled
+"Warmup Page") and a site's speculation rules both do this. `detect.js`
+neither reports nor answers while `document.prerendering` is true, and it
+reports on `prerenderingchange` once the page is shown. The worker also
+drops a `detected` message whose `sender.documentLifecycle` isn't `active`.
+Without these checks, the warmup page replaced the paper's detection, and
+the popup showed "Warmup Page" with "No paper or PDF detected".
 
 Every detection triggers `GET /api/library/lookup` (skipped when signed out)
 and sets the badge: `PDF`/`arX`/`DOI` blue, `?` grey, `✓` green (in the
@@ -179,7 +191,7 @@ detection) and then each step with its time since the start: every
 type, size and where it ended, the upload's size and `doc_id`. The text is
 kept in the tab's state (`log`, gone when the tab navigates) and among the
 last five saves in session storage (`log:saves`, gone when the browser
-closes). The popup's *Copy the save log* (under the result, also after the
+closes). The popup's *Copy the save log* (at the bottom, also after the
 popup was reopened) copies the tab's last one; the options page's *Copy
 recent saves* copies all five, the shortcut's and the context menu's
 included, since those only notify. Each step also goes to the service
@@ -555,6 +567,14 @@ signed in to the same server works the same way.
   saved with its web source and a note saying so; the popup's *Copy the save
   log* copies the tab's log (which names each of those steps) and the options
   page's *Copy recent saves* both, newest first.
+- `node extension/tests/prerender.e2e.mjs` — a fake paper page whose
+  speculation rules prerender a "Warmup Page" with its own DOI. While the
+  warmup page is hidden, the tab's detection, the page's `get-detection`
+  answers and the popup's head stay the paper's. When the paper navigates
+  to it, the shown page reports its own DOI. Chromium never prerenders in a
+  tab Playwright is attached to (`PrerenderingDisabledByDevTools`), so this
+  test launches Playwright's Chromium itself. It uses DevTools only on the
+  extension's worker and popup.
 - `node extension/tests/workspaces.e2e.mjs` — full Chromium against a fake
   server whose `/api/session` lists three libraries (one read-only): both
   pickers offer the two writable ones, picking one stores it and refills

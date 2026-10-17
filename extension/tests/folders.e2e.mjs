@@ -84,7 +84,7 @@ try {
     const done = new Promise((resolve) => { clipped = resolve; });
     await popup.locator("#save").click();
     await done;
-    await popup.locator("#result.ok").waitFor();
+    await popup.locator("#existing-msg.ok").waitFor();
     await popup.close();
     return clips.at(-1);
   }

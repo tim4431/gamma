@@ -132,24 +132,34 @@ async function showMain(st) {
 
   renderHead(st);
 
-  // With one library there is nothing to name; with several, say which one
-  // holds the paper and offer the other ones under "Add to another…".
-  const several = (st.workspaces || []).length > 1;
-  $("existing-where").textContent = several ? `Already in ${workspaceName(st)}` : "Already in your library";
-  $("refile").textContent = several ? "Add to another folder or library…" : "Add to another folder…";
+  showExisting(st);
   $("dot").className = "dot " + (st.hit ? "ok" : c.kind === "none" ? "" : "on");
   show("existing", !!st.hit);
   show("found", !st.hit && c.kind !== "none");
   show("nothing", !st.hit && c.kind === "none");
-  show("clip-row", !c.is_pdf_tab);
+  show("clip", !c.is_pdf_tab);
   show("result", false);
   if (st.saving) { show("progress"); $("progress-text").textContent = st.saving; } else show("progress", false);
   if (st.error) { $("result").className = "msg err"; $("result").textContent = st.error; show("result"); }
-  show("log-row", !!st.log);
+  show("copy-log", !!st.log);
 
   await fillPickers(st);
   $("pub-auto").checked = st.settings.autoRefreshSessions !== false;
   await loadPublisher(st);
+}
+
+// The notice over "Open in Gamma", for a paper the look-up found or a save
+// just filed (`saved`, the save's answer). The head already names the paper,
+// so the notice says only where it is. With one library there is nothing to
+// name; with several, it names the one holding the paper and offers the
+// others under "Add to another…". A save's caveat (no PDF) follows in amber.
+function showExisting(st, saved = null) {
+  const several = (st.workspaces || []).length > 1;
+  const where = several ? workspaceName(st) : "your library";
+  $("existing-where").textContent = saved && !saved.existed ? `Saved to ${where}` : `Already in ${where}`;
+  $("existing-note").textContent = saved && saved.note ? ` ${saved.note}` : "";
+  $("existing-msg").className = "msg " + (saved && saved.note ? "warn" : "ok");
+  $("refile").textContent = several ? "Add to another folder or library…" : "Add to another folder…";
 }
 
 // The library saves go to: the chosen workspace, else the account's default.
@@ -444,14 +454,12 @@ async function doSave({ candidate, force } = {}) {
     if (origins.length) { try { await chrome.permissions.request({ origins }); } catch {} }
     const out = await send({ type: "save", tabId: tab.id, candidate: c, ...folder, labels, source_url: force ? (tab && tab.url) : undefined });
     show("progress", false);
-    const r = $("result");
-    r.className = "msg " + (out.note ? "warn" : "ok");
-    r.innerHTML = "";
-    r.appendChild(document.createTextNode((out.existed ? "Already in your library: " : "Saved: ") + (out.title || "") + (out.note ? ` — ${out.note} ` : " ")));
-    const a = document.createElement("a"); a.href = "#"; a.textContent = "Open in Gamma";
-    a.onclick = (e) => { e.preventDefault(); openPath(out.open_url); };
-    r.appendChild(a);
-    show("result");
+    // The paper is in the library now: the popup reads as it will when
+    // reopened on this tab.
+    state = { ...state, hit: out };
+    renderHead(state);
+    showExisting(state, out);
+    show("existing");
     show("found", false); show("nothing", false);
     $("dot").className = "dot ok";
   } catch (err) {
@@ -631,7 +639,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     if (!ch || !ch.newValue) return;
     const st = ch.newValue;
     if (st.saving) { show("progress"); $("progress-text").textContent = st.saving; }
-    if (st.log) show("log-row");
+    if (st.log) show("copy-log");
     // The registry preview lands after the popup opened — show it.
     if (st.preview && state && !state.preview && state.candidate && st.candidate
         && st.candidate.source_url === state.candidate.source_url) {
