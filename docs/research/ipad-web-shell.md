@@ -118,9 +118,10 @@ installed web app") carries over, with these differences:
   work as in the installed app.
 - **The keyboard.** A web view adds its own accessory bar (‹ › Done)
   above the keyboard, which Safari's app does not; the editing bar
-  (`editor/EditBar.jsx`) would sit on top of it. Hiding it takes the
+  (`editor/EditBar.jsx`) would sit on top of it. It is hidden with the
   known `inputAccessoryView` override on the content view, which
-  Capacitor and others ship. **Device check.**
+  Capacitor and others ship (`WebShell.hideKeyboardAccessoryBar`).
+  **Device check** that a device's WebKit behaves as the simulator's.
 - **Memory and canvases.** WebKit's canvas limits are already the web
   app's (`shared/lib/canvasSize.js`; `pdf/pageRaster.js` releases pages
   leaving the look-ahead on WebKit). A web content process has a memory

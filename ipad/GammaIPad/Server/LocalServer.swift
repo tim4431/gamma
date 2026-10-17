@@ -37,6 +37,8 @@ final class LocalServer: ObservableObject {
     private let defaults: UserDefaults
     private static let portKey = "gamma.local.port"
     private var rechecking = false
+    /// The address the interpreter was started for; `restart` keeps it.
+    private var address: URL?
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
@@ -49,13 +51,19 @@ final class LocalServer: ObservableObject {
         dataDirectory.appendingPathComponent("logs/server.log", isDirectory: false)
     }
 
+    /// The supervisor's state (gamma_ios.py STATE_FILE, `ServerState`).
+    var stateFile: URL {
+        dataDirectory.appendingPathComponent("logs/server.state", isDirectory: false)
+    }
+
     var url: URL? {
         if case let .running(url) = state { return url }
         return nil
     }
 
-    /// Starts the server unless it was started already. A failed start
-    /// stays failed: the interpreter runs once per launch (PythonRuntime).
+    /// Starts the server unless it was started already. The interpreter runs
+    /// once per launch (PythonRuntime); the server in it can be run again
+    /// (`restart`).
     func start() {
         guard state == .stopped else { return }
         state = .starting
@@ -66,6 +74,7 @@ final class LocalServer: ObservableObject {
             state = .failed("Gamma cannot make its data folder: \(error.localizedDescription)")
             return
         }
+        try? files.removeItem(at: stateFile) // the last launch's; this start writes its own
         guard let resources = Bundle.main.resourceURL,
               files.fileExists(atPath: resources.appendingPathComponent("python/app/gamma_ios.py").path),
               files.fileExists(atPath: resources.appendingPathComponent("python/frontend_dist/index.html").path) else {
@@ -105,15 +114,17 @@ final class LocalServer: ObservableObject {
             state = .failed("The server already ran in this session. Close Gamma and open it again.")
             return
         }
+        address = url
         Task { await waitUntilUp(url) }
     }
 
     /// The desktop's rule (sidecar.js start), every 250 ms, but with no
-    /// deadline: the interpreter cannot be started again in this process, so
-    /// giving up would only hide a server that answers later. A start that
-    /// takes long (the first one after an install, on an older iPad) is
-    /// marked slow after a minute and keeps being polled, every second from
-    /// then on; only the runtime's own exit (`onExit`) makes it fail.
+    /// deadline: giving up would only hide a server that answers later. A
+    /// start that takes long (the first one after an install, on an older
+    /// iPad) is marked slow after a minute and keeps being polled, every
+    /// second from then on. It fails when the supervisor says the server
+    /// stopped before it answered (`ServerState`: a port it could not
+    /// listen on, say), or on the runtime's own exit (`onExit`).
     private func waitUntilUp(_ url: URL) async {
         let slowAfter = Date().addingTimeInterval(60)
         while state == .starting {
@@ -124,6 +135,13 @@ final class LocalServer: ObservableObject {
                 }
                 return
             }
+            if let written = ServerState.read(stateFile), written.state == "stopped" {
+                if state == .starting {
+                    slowStart = false
+                    state = .failed(written.detail.isEmpty ? "The server stopped before it answered." : written.detail)
+                }
+                return
+            }
             if !slowStart, Date() > slowAfter { slowStart = true }
             try? await Task.sleep(nanoseconds: slowStart ? 1_000_000_000 : 250_000_000)
         }
@@ -131,9 +149,9 @@ final class LocalServer: ObservableObject {
 
     /// Asked when the app is active again (RootView). iOS can reclaim a
     /// suspended app's listening sockets, notably while the screen is locked
-    /// (Apple TN2277), and the interpreter cannot be started again in this
-    /// process, so a server that no longer answers is reported as failed with
-    /// what to do, rather than left behind a page that cannot load.
+    /// (Apple TN2277). A server that no longer answers is run again in the
+    /// same interpreter (`restart`), behind the start page for the moment
+    /// that takes, rather than left behind a page that cannot load.
     func recheck() {
         guard case let .running(url) = state, !rechecking else { return }
         rechecking = true
@@ -144,9 +162,36 @@ final class LocalServer: ObservableObject {
                 if attempt > 0 { try? await Task.sleep(nanoseconds: 1_000_000_000) }
                 if await Health.probe(url, timeout: 2) { return }
             }
-            if state == .running(url) {
-                state = .failed("The server stopped answering while Gamma was in the background.")
+            if state == .running(url) { restart() }
+        }
+    }
+
+    /// The server again: after a failed start (the pages' Try again) or when
+    /// it stopped answering (`recheck`). With the interpreter up,
+    /// `gamma_ios.restart` stops a server still running and runs a new one
+    /// on the same port, so the address, and what the web app keeps per
+    /// origin, stay. A start that failed before the interpreter (no free
+    /// port, no data folder) is tried from the beginning; one the
+    /// interpreter itself could not survive stays failed until the app is
+    /// opened again.
+    func restart() {
+        guard state != .starting else { return }
+        guard let url = address else {
+            state = .stopped
+            start()
+            return
+        }
+        state = .starting
+        slowStart = false
+        Task {
+            let asked = await Task.detached { PythonRuntime.restart() }.value
+            guard asked else {
+                if state == .starting {
+                    state = .failed("Python is not running in this app. Close Gamma and open it again.")
+                }
+                return
             }
+            await waitUntilUp(url)
         }
     }
 
@@ -305,6 +350,20 @@ enum LocalPorts {
             }
         }
         return bound ? Int(UInt16(bigEndian: address.sin_port)) : nil
+    }
+}
+
+/// What the supervisor in gamma_ios.py last wrote to `logs/server.state`:
+/// "starting", or "stopped" with why (a port it could not listen on, a
+/// server that ended). Read while the app waits for /api/health, so a start
+/// that failed is reported, with Try again, instead of polled for ever.
+struct ServerState: Decodable, Equatable {
+    let state: String
+    let detail: String
+
+    static func read(_ file: URL) -> ServerState? {
+        guard let data = try? Data(contentsOf: file) else { return nil }
+        return try? JSONDecoder().decode(ServerState.self, from: data)
     }
 }
 
