@@ -36,9 +36,9 @@ final class AppModel: ObservableObject {
     /// desktop caches its remotes' health.
     private static let probeInterval: TimeInterval = 30
 
-    init(defaults: UserDefaults = .standard, local: LocalServer? = nil) {
+    init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
-        self.local = local ?? LocalServer(defaults: defaults)
+        local = LocalServer(defaults: defaults)
         let saved = SavedServers.load(from: defaults)
         current = saved.current
         remotes = saved.remotes

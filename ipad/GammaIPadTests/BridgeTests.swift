@@ -53,17 +53,12 @@ final class BridgeTests: XCTestCase {
         XCTAssertEqual(out["samples"] as? [[Double]], [[10, 20.5, 0.4, 0], [11, 21, 0.5, 4.2]])
     }
 
-    func testAPencilGestureCarriesItsActionAndPlace() throws {
-        let out = try json(.pencil(gesture: .squeeze, action: "showInkAttributes", at: CGPoint(x: 100, y: 240)))
+    func testAPencilGestureCarriesItsAction() throws {
+        let out = try json(.pencil(gesture: .squeeze, action: "showInkAttributes"))
         XCTAssertEqual(out["type"] as? String, "pencil")
         XCTAssertEqual(out["gesture"] as? String, "squeeze")
         XCTAssertEqual(out["action"] as? String, "showInkAttributes")
-        XCTAssertEqual(out["at"] as? [String: Double], ["x": 100, "y": 240])
-    }
-
-    func testAGestureWithoutAHoverPoseSaysNull() throws {
-        let out = try json(.pencil(gesture: .tap, action: "switchEraser", at: nil))
-        XCTAssertTrue(out["at"] is NSNull, "null, not absent: the contract's shape")
+        XCTAssertEqual(Set(out.keys), ["type", "gesture", "action"])
     }
 
     func testTheUserScriptDeclaresTheHost() {

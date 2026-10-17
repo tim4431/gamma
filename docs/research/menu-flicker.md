@@ -18,7 +18,8 @@ too early: a frame runs its animation callbacks, then layout, then
 ResizeObserver callbacks, then paints. So it missed corrections made in the
 same frame and reported jumps that were never painted.
 
-The probe that counts samples from a ResizeObserver made during that frame.
+The probe that counts reads the page from a ResizeObserver made during
+that frame.
 Observers are called in the order they were made, so this one runs after
 the app's own, just before the paint. A jump is a visible element moving
 between two frames without changing its size or its text. A move together
@@ -76,7 +77,7 @@ still painted stale frames.
   `flushSync`, so it lands before that frame is painted.
 
 `ContextMenu`, `TipFrame` and `useCaretAnchored` are built on it. The
-selection menus no longer guess a height: they pass the selection's edges,
+selection menus pass the selection's edges instead of a guessed height,
 and the menu picks the side from its own measured size. Their scroll
 following uses `flushSync` too. The guide measures its anchor in a layout
 effect, and its frame-throttled re-measures commit with `flushSync`.

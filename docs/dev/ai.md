@@ -607,10 +607,10 @@ the reply cap (`ai_catalog.reply_cap`) and `_ESTIMATE_SLACK`, and leaves the old
 (`build_messages(drop_turns=)`: two, then doubling; the kept history opens
 on a question, the document context moves to the oldest kept one) until it
 fits. Once every earlier turn is out, what the message points at gives way
-(`give_way` in `ai_chat`): the budget its passages and attached blocks
-share halves (`_smaller_quote`, from what they take, not from the
-setting), never below `MIN_PASSAGE_BUDGET` (4,000 characters); a prompt
-that still doesn't fit goes as it is and the provider decides. The
+(`give_way` in `routers/ai.py`): the budget its passages and attached
+blocks share halves (`_smaller_quote`, from what they take, not from the
+setting), never below `MIN_PASSAGE_BUDGET` (4,000 characters). A prompt
+that still doesn't fit goes as it is, and the provider decides. The
 selection goes last because it is what the user is asking about. A provider
 that still answers `too_long` (no source knew the window, or the estimate
 fell short) is retried the same way. The stream says
@@ -777,7 +777,7 @@ dense PDF pages, where a page runs 3,000 to 5,000 characters. The question
 quotes the selected PDF passages and the selected note text within that one
 budget (`passage_budget`, `quoted_shares`). It is shared by `fair_shares`:
 a passage within an even share goes whole, and what it leaves is split
-evenly among the rest, so a long first passage can't starve the others and
+evenly among the rest. A long first passage can't starve the others, and
 none is dropped. A passage cut short ends in a line telling the model how
 much of it is quoted (`_quoted`). The attached blocks' outlines share
 another budget of the same size the same way (`notes_focus_section`,

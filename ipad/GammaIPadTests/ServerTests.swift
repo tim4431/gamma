@@ -65,7 +65,7 @@ final class LocalEnvironmentTests: XCTestCase {
         XCTAssertEqual(password.count, 12)
         let allowed = CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_")
         XCTAssertTrue(password.unicodeScalars.allSatisfy(allowed.contains))
-        XCTAssertEqual(LocalLogin.base64url(Data([0xfb, 0xff, 0xbf])), "-_-_")
+        XCTAssertEqual(Data([0xfb, 0xff, 0xbf]).base64URL, "-_-_")
     }
 
     func testThePythonPathsInTheBundle() throws {

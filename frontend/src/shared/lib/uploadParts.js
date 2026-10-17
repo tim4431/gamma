@@ -1,19 +1,20 @@
-// A PDF's upload: one multipart POST /api/uploads for a file of up to
-// PART_BYTES, else in parts — POST /api/uploads/parts opens it, the parts
-// follow one request each, finish stores the whole (gamma/upload_parts.py).
+// A file's upload (uploadFile): one multipart POST for a file of up to
+// PART_BYTES, else in parts — a POST opens it, the parts follow one request
+// each, finish stores the whole (gamma/upload_parts.py's protocol, spoken at
+// /api/uploads/parts, /api/import/review/parts and /api/jobs/restore/parts).
 // A proxy in front of the server caps a request's body (Cloudflare at
 // 100 MB) and a part stays well under that. Each part is an xhrUpload
 // reporting its bytes into the whole's progress; a part the network lost
 // is sent again from the byte the server says it holds (its 409 carries
 // `received`), up to RETRIES times in a row, while an answer from the
-// server (400, 413, 507) is final. Resolves to the same {doc_id,
-// source_url, size, already_existed} as the single request; rejects like
-// xhrUpload (`aborted: true` after the stop button or `signal`), having
-// told the server to drop the unfinished upload. The web app's PDF ingest
-// (App.jsx resolvePdfSource) goes through here; the browser extension
-// speaks the protocol itself (extension/worker.js uploadBlob). The import
-// review's upload (transfers/importApi.js) uses uploadInParts at
-// /import/review/parts.
+// server (400, 413, 507) is final. Resolves to what the single request
+// answers (a PDF's {doc_id, source_url, size, already_existed}); rejects
+// like xhrUpload (`aborted: true` after the stop button or `signal`),
+// having told the server to drop the unfinished upload. The web app's PDF
+// ingest (App.jsx resolvePdfSource, uploadPdf), the import review
+// (transfers/importApi.js) and a restore's zip (tasks/tasksApi.js) go
+// through here; the browser extension speaks the protocol itself
+// (extension/worker.js uploadBlob).
 import { API, apiJson } from "./utils";
 import { xhrUpload } from "./xhrUpload";
 
@@ -21,13 +22,22 @@ export const PART_BYTES = 32 * 1024 * 1024;
 const RETRIES = 3;
 const RETRY_WAIT_MS = 1500;
 
-export function uploadPdf(file, filename, options = {}) {
-  if (file.size <= PART_BYTES) {
-    const form = new FormData();
-    form.append("file", file, filename);
-    return xhrUpload(`${API}/uploads`, form, options);
+// `file` to the server: one multipart request to `url` (the file as `file`,
+// named `name`, plus the form `fields`) for a file of up to PART_BYTES, else
+// in parts at `parts` with {name, ...fields} (uploadInParts; `discard` as
+// there).
+export function uploadFile(file, { url, parts, fields = {}, name = file.name, discard }, options = {}) {
+  if (file.size > PART_BYTES) {
+    return uploadInParts(file, { url: parts, fields: { name, ...fields }, ...(discard ? { discard } : {}) }, options);
   }
-  return uploadInParts(file, { url: `${API}/uploads/parts`, fields: { name: filename } }, options);
+  const form = new FormData();
+  form.append("file", file, name);
+  for (const [key, value] of Object.entries(fields)) form.append(key, String(value));
+  return xhrUpload(url, form, options);
+}
+
+export function uploadPdf(file, filename, options = {}) {
+  return uploadFile(file, { url: `${API}/uploads`, parts: `${API}/uploads/parts`, name: filename }, options);
 }
 
 function stopped() {

@@ -42,7 +42,7 @@ ink layer still encodes and saves every stroke.
    cloned onto This iPad in the web app's settings
    ([Offline use](#offline-use-clones)).
 
-The Swift side holds no page, stroke, tool or token; the one secret it
+The Swift side holds no page, stroke, tool or token. The one secret it
 keeps is the local server's seeded password. The session is the web
 view's cookie (the default data store keeps it across launches), and
 the library is the server's, This iPad's included.
@@ -53,8 +53,8 @@ The web app is the one owner of the page. Native code is a window, an
 input device, a preview layer and, for This iPad, a process manager, and
 nothing in Swift knows what a block is. So a web feature reaches the iPad
 when the server has it (This iPad's at the app's next build), with no
-iPad work: the only thing the two halves share is the host contract
-below. The files are listed in [ipad/README.md](../../ipad/README.md).
+iPad work. The two halves share only the host contract below. The files
+are listed in [ipad/README.md](../../ipad/README.md).
 
 - **The window.** `ShellView` hosts one controller (`ShellController`),
   made once and kept: a new server or a retry loads into the same web
@@ -127,7 +127,7 @@ the queue, so nothing sent early is lost.
 | Message | Resolves | Meaning |
 |---|---|---|
 | `{type: "stroke", pointerId, samples: [[x, y, p, t], …]}` | `{committed}`, two frames later (React's commit and a paint) | The claimed stroke ended. x, y in viewport CSS px; p = force / maximum force, the lift keeping the last pressure; t = ms from the first sample, from the hardware timestamps, never going back. No samples: the system cancelled the touch, and the claim just ends |
-| `{type: "pencil", gesture: "tap"\|"squeeze", action, at: {x, y}\|null}` | at once | `action` is the system's preferred action: `switchEraser`, `switchPrevious`, `showColorPalette`, `showInkAttributes`, `runSystemShortcut` or `ignore`; `at` is the hover pose's place when known |
+| `{type: "pencil", gesture: "tap"\|"squeeze", action}` | at once | `action` is the system's preferred action: `switchEraser`, `switchPrevious`, `showColorPalette`, `showInkAttributes`, `runSystemShortcut` or `ignore` |
 
 Keeping it small is the point. A message is added in `Bridge.swift` and
 `host.js` together, and `version` tells the web which host it runs under.
@@ -162,21 +162,21 @@ claimed.
    still deciding (its touch events, pans, long presses: `canPrevent` is
    true, `canBePrevented` false) and cancels the web view's touch
    (`cancelsTouchesInView`). While it captures, it swallows fingers on the
-   screen (the palm) and draws the live line (`LiveStrokeView`: a plain
-   polyline at the tool's colour, width and opacity, extended by the
-   predicted touches).
+   screen (the palm). It also draws the live line (`LiveStrokeView`): a
+   plain polyline at the tool's colour, width and opacity, extended by the
+   predicted touches.
 5. **The page gives way on the reply.** On `{taken: true}` the layer drops
    its draft without saving (`handOver`), ignores that pointer's own
-   events, and treats fingers as palms until the stroke ends, whether or
-   not WebKit sends a `pointercancel`. So a stroke is never saved twice,
-   and the page never pans under the Pencil.
+   events, and treats fingers as palms until the stroke ends. It does not
+   wait for a `pointercancel`, which WebKit may not send. So a stroke is
+   never saved twice, and the page never pans under the Pencil.
 6. **The lift.** The shell sends `stroke` with the samples. The layer
-   converts them with the rect and zoom of the down, applies the
-   repeated-point rule of `appendInkSample`, and commits through the same
+   converts them with the rect and zoom of the down and applies the
+   repeated-point rule of `appendInkSample`. It commits through the same
    `encodeStroke` and `onStroke` as its own strokes (`ch: "xypt"`, `t0` the
    web's wall clock at the down). Undo, replay and saving are unchanged.
    The live line stays until the reply, which comes after the page has
-   painted the stroke, so the swap never blinks; a page that never
+   painted the stroke, so the swap never blinks. A page that never
    answers loses the line after three seconds.
 7. **Cancelled.** When the system cancels a captured touch, the line goes,
    and the shell sends `stroke` with no samples, which ends the claim and
@@ -187,8 +187,8 @@ page, which finishes it as in Safari. Pencil hover, pressure and tilt
 reach the page as Safari gives them.
 
 **Gestures.** `PencilGestures` (`UIPencilInteraction`) forwards the double
-tap and, on iPadOS 17.5 and later, the squeeze with its hover pose, as
-`pencil` with the system's preferred action. `App.jsx` maps it onto the
+tap and, on iPadOS 17.5 and later, the squeeze, as `pencil` with the
+system's preferred action. `App.jsx` maps it onto the
 markup toolbar's own handlers: `switchEraser` toggles the eraser,
 `switchPrevious` picks the previous preset, `showColorPalette` and
 `showInkAttributes` open the active tool's options row, and the rest do
@@ -199,15 +199,15 @@ nothing.
 Google refuses to sign in inside an embedded web view, so the page's own
 start (`/api/auth/cloud/start`) is taken over, as the desktop app does
 (`CloudSignIn.swift`; `desktop/lib/cloudSignIn.js`). The shell listens on
-`127.0.0.1:<port>`, posts `app-start` from inside the page (so a Link
-carries the page's session) with that return address and an S256 PKCE
-challenge, and opens the authorize URL in an
-`ASWebAuthenticationSession`. The server sends that browser back to the
-loopback address with a one-time result; the listener keeps it and
-redirects the sheet to `gamma-ipad://cloud-signin`, which closes it. The
-web view then posts `app-claim` with the verifier, which sets the session
-cookie where the web app runs. The server needs nothing new. A password
-sign-in is just the web app's login page.
+`127.0.0.1:<port>` and posts `app-start` from inside the page, so a Link
+carries the page's session, with that return address and an S256 PKCE
+challenge. It opens the authorize URL in an `ASWebAuthenticationSession`.
+The server sends that browser back to the loopback address with a
+one-time result. The listener keeps it and redirects the sheet to
+`gamma-ipad://cloud-signin`, which closes it. The web view then posts
+`app-claim` with the verifier, which sets the session cookie where the
+web app runs. The server needs nothing new. A password sign-in is the
+web app's login page.
 
 ### The local server
 
@@ -217,7 +217,7 @@ its window ([desktop/docs/architecture.md](../../desktop/docs/architecture.md#se
 The shell shows it like any other server: the web view loads its address,
 and the page is the web app that server serves. So the whole web app works
 with no connection, and the Swift side stays a process manager
-(`Server/LocalServer.swift`): it picks the data directory and the port,
+(`Server/LocalServer.swift`). It picks the data directory and the port,
 seeds the first account, starts the interpreter and says when the server
 answers. Nothing in it knows what the server holds.
 
@@ -415,8 +415,8 @@ crash in native code. A failed start shows its message and the log's last
 This iPad is a Gamma server like the desktop's local one. So the offline
 copies of another server's workspaces are Gamma's own clones (mirrors,
 [mirror.md](mirror.md)), made and resolved in the web app as the
-desktop's are ([desktop/docs/architecture.md](../../desktop/docs/architecture.md#clones)),
-and the Swift side keeps no sync state.
+desktop's are ([desktop/docs/architecture.md](../../desktop/docs/architecture.md#clones)).
+The Swift side keeps no sync state.
 
 The desktop makes a clone with one click on its switcher's *clone* chip.
 The iPad shell has no switcher, so a clone is made the way any Gamma
@@ -520,7 +520,8 @@ iPad at the app's next build, as the same code the other checks test.
 `ipad.yml` does not run for them, so a change that matters on the device
 (a pdfium import, a process spawned) is worth a manual dispatch.
 `bash ipad/scripts/build-python.sh --check` resolves every pin for both
-platforms without Xcode, on macOS or Linux.
+platforms without Xcode, on macOS or Linux; `check.yml` runs it on every
+pull request.
 
 ### Device checks
 
@@ -528,7 +529,7 @@ Only an iPad can show these, and none has been run yet:
 
 1. Whether WebKit sends the page a `pointercancel` once the recognizer
    begins, and whether preventing its recognizers stops a pan begun
-   meanwhile. The page no longer depends on the `pointercancel` (step 5),
+   meanwhile. The page does not depend on the `pointercancel` (step 5),
    but a scroll that starts before the claim would move the page.
 2. The claim's round trip under load, and the 10-point reach against the
    place WebKit reports for the `pointerdown`.
@@ -564,7 +565,7 @@ Only an iPad can show these, and none has been run yet:
   open, and a server whose socket was reclaimed needs the app closed and
   opened again. Restarting uvicorn inside the running interpreter, without
   running the server's startup again, would make that relaunch
-  unnecessary; it is not built.
+  unnecessary. It is not built.
 - **Retrying a failed start** without relaunching the app, for the same
   reason: the interpreter starts once per process.
 - **A store release.** The app is built from source with a developer's

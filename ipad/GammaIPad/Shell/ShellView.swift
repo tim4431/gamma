@@ -122,7 +122,6 @@ final class ShellController: UIViewController {
         }
         capture.surface = shell.webView
         container.addGestureRecognizer(capture)
-        gestures.surface = shell.webView
         container.addInteraction(gestures.interaction)
         view = container
     }

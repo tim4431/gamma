@@ -68,7 +68,7 @@ the frontend changes: editing a mirror is editing a workspace.
   remote's `/api/uploads/parts` (a PDF as `kind: pdf`, anything else as
   `kind: file`), read from disk a part at a time, since a proxy in front of
   the remote caps a request's body (Cloudflare at 100 MB); a remote that
-  does not echo the kind (an older server) gets it whole, as before. Every fetched tree's files are checked, not only the
+  does not echo the kind (an older server) gets it whole. Every fetched tree's files are checked, not only the
   changed blocks', and each round ends with a sweep for files the copy's
   pages name but lack (`missing_uploads`), so a round cut short after a
   page landed but before its PDF did heals by itself. A fetched file is
@@ -941,8 +941,8 @@ of `desktop/test/e2e.js`.
 ## Other consumers of the feed
 
 The iPad app keeps no copy of its own: it shows a server's web app, and
-its next phase runs the server itself on the device, which then mirrors
-like any other ([ipad.md](ipad.md)).
+the Gamma server it runs on the device keeps clones like any other
+([ipad.md](ipad.md#offline-use-clones)).
 
 The folder sync ([folder_sync.md](folder_sync.md)) keeps no copy of the
 workspace either: it writes one folder's pages to a directory

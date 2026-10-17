@@ -138,9 +138,9 @@ Mermaid returns its SVG as HTML: a label's `<br>`, `<img>` or `&nbsp;`
 is not XML. The renderer therefore reads the result with the HTML parser,
 as the page itself would (a parsed document is inert: nothing in it loads
 or runs), and writes it back with `XMLSerializer`. The preview, the download
-and the zoom all get the same well-formed SVG document. An XML parse
-would have put the browser's error page ("This page contains the following
-errors") into the drawing.
+and the zoom all get the same well-formed SVG document. An XML parse would
+put the browser's error page ("This page contains the following errors")
+into the drawing.
 
 Stale SVG geometry: Mermaid measures each label inside a `foreignObject`
 first sized up to 16384 px, shrinks the box and shifts its group, then lays

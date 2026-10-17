@@ -27,14 +27,14 @@ final class WebShell {
 
     private static let backgroundKey = "gamma.theme.background"
 
-    init(info: HostInfo = .current) {
+    init() {
         let configuration = WKWebViewConfiguration()
         // The default store keeps the server's session cookie (a year) across launches.
         configuration.websiteDataStore = .default()
         configuration.defaultWebpagePreferences.preferredContentMode = .desktop
         configuration.allowsInlineMediaPlayback = true // the recordings' player
         let bridge = Bridge()
-        bridge.install(in: configuration.userContentController, info: info)
+        bridge.install(in: configuration.userContentController, info: .current)
 
         let webView = WKWebView(frame: .zero, configuration: configuration)
         // Transparent until the page paints: the container shows the theme's colour.

@@ -22,7 +22,7 @@ Upstream built a SwiftUI app that combines PDFKit reading and text selection wit
 
 **Priority:** High. **Implemented upstream:** September 11.
 
-Upstream keeps a persistent download queue per account and server, with separate readiness for PDFs, notes, handwriting and recordings, and reopens a saved account without a network session ([offline behavior and limits](https://github.com/amogadget/Gamma/blob/2dbde2d/ipad/OFFLINE.md)). Here the iPad app kept a replica of one whole workspace, files included, and read and wrote it offline, with no per-page choice of what to download; that replica was removed (2026-10) when the app became a shell over the web app, and offline use moves to the backend running on the device ([dev/ipad.md](../dev/ipad.md)).
+Upstream keeps a persistent download queue per account and server, with separate readiness for PDFs, notes, handwriting and recordings, and reopens a saved account without a network session ([offline behavior and limits](https://github.com/amogadget/Gamma/blob/2dbde2d/ipad/OFFLINE.md)). Here the iPad app kept a replica of one whole workspace, files included, and read and wrote it offline, with no per-page choice of what to download; that replica was removed (2026-10) when the app became a shell over the web app, and offline use is a clone kept by the backend running on the device ([dev/ipad.md](../dev/ipad.md)).
 
 ### 3. Audio synchronized with handwriting: Note Replay
 
@@ -46,7 +46,7 @@ Native `AVAudioRecorder` writes AAC segments, finalizing on pause and rolling ov
 
 **Priority:** High–medium. **Implemented upstream:** September 10–11.
 
-Upstream persists atomic page snapshots together with an outbox before networking, retries with stable IDs, and stops on a revision conflict to offer local/remote choices ([GammaCache.swift](https://github.com/amogadget/Gamma/blob/2dbde2d/ipad/GammaIPad/Storage/GammaCache.swift)). Here the iPad's replica kept each page's snapshot and its unpushed edits in SQLite and synced by the desktop mirror's rules, until it was removed (2026-10): the iPad app is now an online shell, and its offline copy will be a clone of the backend on the device, with conflicts resolved in the web app's clone view; a browser tab's queued edits are still in memory ([dev/ipad.md](../dev/ipad.md), [collab.md](../dev/collab.md)).
+Upstream persists atomic page snapshots together with an outbox before networking, retries with stable IDs, and stops on a revision conflict to offer local/remote choices ([GammaCache.swift](https://github.com/amogadget/Gamma/blob/2dbde2d/ipad/GammaIPad/Storage/GammaCache.swift)). Here the iPad's replica kept each page's snapshot and its unpushed edits in SQLite and synced by the desktop mirror's rules, until it was removed (2026-10): the iPad app is a shell over the web app, and its offline copy is a clone kept by the backend on the device, with conflicts resolved in the web app's clone view; a browser tab's queued edits are still in memory ([dev/ipad.md](../dev/ipad.md), [collab.md](../dev/collab.md)).
 
 ### 6. Automatic AI model-catalog refresh
 
@@ -103,7 +103,7 @@ These are recommendations for future prioritization, not approved implementation
 
 - [ ] Evaluate automatic model-catalog refresh as a small addition, preserving explicit user model choices and current provider behavior.
 - [ ] Design audio blocks around this fork's existing vector ink and block operations, and drive the replay (built, without audio) from them.
-- [ ] Scope durable offline storage and conflict UX separately from native iPad UI work. Built for the iPad as a replica, then removed (2026-10); offline use moves to the backend on the device (phase 2 of [ipad-web-shell.md](ipad-web-shell.md)), and the browser has no durable queue.
+- [ ] Scope durable offline storage and conflict UX separately from native iPad UI work. Built for the iPad as a replica, then removed (2026-10); offline use is a clone kept by the backend on the device ([ipad-web-shell.md](ipad-web-shell.md)), and the browser has no durable queue.
 - [x] Evaluate a native iPad client using current workspace identities, permissions, and synchronization APIs. Since built: `ipad/`.
 - [ ] Revisit server previews only with a representative scan demonstrating a remaining first-paint bottleneck.
 - [ ] Keep MRC flattening deferred unless requirements justify revisiting the documented quality/storage tradeoff.

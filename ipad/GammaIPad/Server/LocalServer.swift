@@ -208,11 +208,15 @@ struct LocalLogin: Equatable {
     static func makePassword() -> String? {
         var bytes = [UInt8](repeating: 0, count: 9)
         guard SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes) == errSecSuccess else { return nil }
-        return base64url(Data(bytes))
+        return Data(bytes).base64URL
     }
+}
 
-    static func base64url(_ data: Data) -> String {
-        data.base64EncodedString()
+extension Data {
+    /// base64url without padding (RFC 4648 §5): the seeded password's and
+    /// the PKCE verifier's alphabet (CloudSignIn).
+    var base64URL: String {
+        base64EncodedString()
             .replacingOccurrences(of: "+", with: "-")
             .replacingOccurrences(of: "/", with: "_")
             .replacingOccurrences(of: "=", with: "")

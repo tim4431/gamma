@@ -40,7 +40,7 @@ There are three parts:
 
 | File | What it does |
 |---|---|
-| `App/GammaApp.swift` | The entry: the server picker until a server is chosen, then the shell, covered by a page of its own while the local server starts or when it could not; checks the local server again when the app is active again |
+| `App/GammaApp.swift` | The entry: the server picker until a server is chosen, then the shell, covered by a page of its own while the local server starts or when it could not. It checks the local server again when the app is active again |
 | `App/AppModel.swift` | The server shown, "This iPad" or another server by address, and the other servers, in `UserDefaults` |
 | `Views/ServersView.swift` | The server picker, at first launch and when the web app asks for it: "This iPad" (status, address, data size, the account, the log's tail after a failed start), the other servers with reachability dots, edit and remove, and an add form; also the page over the shell while the local server starts |
 | `Server/LocalServer.swift` | The local server: the port, the data directory (`Documents/Gamma/local`, visible in Files), the seeded account, the environment, the wait for `/api/health` |
@@ -91,7 +91,7 @@ In the app, open **This iPad**, or enter another server's address and
 sign in on its own page. The account menu's "Server…" row, or the
 "Server…" link on the sign-in page, brings the picker back. A server
 reached over plain `http` must be on the local network, because App
-Transport Security allows local networking only; use `https` otherwise.
+Transport Security allows local networking only. Use `https` otherwise.
 In a Debug build, Safari's Web Inspector on a Mac opens the page (Develop
 → your iPad).
 
@@ -128,9 +128,9 @@ bash ipad/scripts/build-python.sh --check   # only check that every pin resolves
   needs a 3.13; with another Python the script warns and ships source
   only.
 - **The web app** is rebuilt through `tools/build_frontend_if_needed.mjs`
-  when `frontend/` changed, which runs `npm run build` and so empties
-  `frontend/dist` for its duration (a dev server serving that folder on
-  the same Mac shows errors meanwhile). The script runs `npm ci` first
+  when `frontend/` changed. That runs `npm run build`, which empties
+  `frontend/dist` while it runs, so a dev server serving that folder on
+  the same Mac shows errors meanwhile. The script runs `npm ci` first
   when `node_modules` is missing or older than the lockfile, and adds
   Homebrew's folders to the `PATH`, which Xcode's build scripts lack.
   Without Node, a copy built before is kept with a warning.
@@ -161,8 +161,8 @@ what going without `pypdfium2` costs, is in
   Python step to have run.
 - Without a Mac: `backend/tests/test_ios_requirements.py` (the iOS
   requirements keep up with the server's), a unit test for `host.js`, and
-  the `ipad` browser group, which fakes the host and checks a claimed
-  stroke is saved (`cd frontend && npm run e2e -- --group ipad`).
+  the `ipad` browser group. The group fakes the host and checks that a
+  claimed stroke is saved (`cd frontend && npm run e2e -- --group ipad`).
 - How the recognizer lives among WebKit's own recognizers, and how the
   server fares on a real iPad, need a device. What each test covers and
   the list of device checks are in [docs/dev/ipad.md](../docs/dev/ipad.md#tests).

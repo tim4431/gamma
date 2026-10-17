@@ -131,18 +131,11 @@ struct PKCE {
 
     /// 32 random bytes: 43 characters, as the server's challenge check expects.
     static func newVerifier() -> String {
-        base64url(SymmetricKey(size: .bits256).withUnsafeBytes { Data($0) })
+        SymmetricKey(size: .bits256).withUnsafeBytes { Data($0) }.base64URL
     }
 
     static func challenge(for verifier: String) -> String {
-        base64url(Data(SHA256.hash(data: Data(verifier.utf8))))
-    }
-
-    static func base64url(_ data: Data) -> String {
-        data.base64EncodedString()
-            .replacingOccurrences(of: "+", with: "-")
-            .replacingOccurrences(of: "/", with: "_")
-            .replacingOccurrences(of: "=", with: "")
+        Data(SHA256.hash(data: Data(verifier.utf8))).base64URL
     }
 }
 

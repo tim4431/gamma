@@ -677,11 +677,12 @@ save path, workspaces, auth or rendering of URLs should add a step here; the
   plain-HTTP port), HTTP/2 without TLS, a PROXY protocol header, or the first
   line, with its query cut off, and the parser's complaint. A stream of TLS
   handshakes means the port is reachable from the internet, where scanners
-  try https:// on every port: a raw TCP tunnel (FRP `type = "tcp"`) whose
-  remote port is open publicly next to the reverse proxy in front of it. The
-  peer is then the tunnel's local end, an address `FORWARDED_ALLOW_IPS` lists,
-  so anyone on that port can choose the client address rate limits count by.
-  Close the remote port to everything but the reverse proxy.
+  try https:// on every port. The usual cause is a raw TCP tunnel (FRP
+  `type = "tcp"`) whose remote port is open publicly beside the reverse
+  proxy in front of it. The peer is then the tunnel's local end, an address
+  `FORWARDED_ALLOW_IPS` lists, so anyone on that port can choose the client
+  address rate limits count by. Close the remote port to everything but the
+  reverse proxy.
 - **Two request lines, on purpose.** The console carries uvicorn's access
   log for every request (`INFO: 127.0.0.1:… "GET /api/… HTTP/1.1" 200 OK`)
   except the Background tasks tray's answered `GET /api/jobs`, which comes

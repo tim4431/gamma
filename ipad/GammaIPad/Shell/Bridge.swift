@@ -129,14 +129,12 @@ enum HostMessage: Equatable {
     /// the viewport, p = force / maximum force, t = ms from the first sample.
     /// The web resolves once the stroke is painted.
     case stroke(pointerId: Int, samples: [[Double]])
-    /// A Pencil gesture with the system's preferred action (PencilGestures)
-    /// and the hover pose's location when the Pencil reports one.
-    case pencil(gesture: PencilGesture, action: String, at: CGPoint?)
+    /// A Pencil gesture with the system's preferred action (PencilGestures).
+    case pencil(gesture: PencilGesture, action: String)
 }
 
 extension HostMessage: Encodable {
-    private enum Keys: String, CodingKey { case type, pointerId, samples, gesture, action, at }
-    private struct Point: Encodable { let x, y: Double }
+    private enum Keys: String, CodingKey { case type, pointerId, samples, gesture, action }
 
     func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: Keys.self)
@@ -145,15 +143,10 @@ extension HostMessage: Encodable {
             try c.encode("stroke", forKey: .type)
             try c.encode(pointerId, forKey: .pointerId)
             try c.encode(samples, forKey: .samples)
-        case let .pencil(gesture, action, at):
+        case let .pencil(gesture, action):
             try c.encode("pencil", forKey: .type)
             try c.encode(gesture, forKey: .gesture)
             try c.encode(action, forKey: .action)
-            if let at {
-                try c.encode(Point(x: Double(at.x), y: Double(at.y)), forKey: .at)
-            } else {
-                try c.encodeNil(forKey: .at) // the contract says null, not absent
-            }
         }
     }
 }

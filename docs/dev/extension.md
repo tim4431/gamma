@@ -126,8 +126,8 @@ tab shows. Chrome's search warmup (`www.google.com/warmup.html`, titled
 neither reports nor answers while `document.prerendering` is true, and it
 reports on `prerenderingchange` once the page is shown. The worker also
 drops a `detected` message whose `sender.documentLifecycle` isn't `active`.
-Without these checks, the warmup page replaced the paper's detection, and
-the popup showed "Warmup Page" with "No paper or PDF detected".
+Without these checks the warmup page replaces the paper's detection, and
+the popup shows "Warmup Page" with "No paper or PDF detected".
 
 Every detection triggers `GET /api/library/lookup` (skipped when signed out)
 and sets the badge: `PDF`/`arX`/`DOI` blue, `?` grey, `✓` green (in the
