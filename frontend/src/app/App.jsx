@@ -3139,9 +3139,13 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     }
   }
 
+  // A DOI or arXiv id typed in place of the stored one is looked up by the
+  // save (the registry's record replaces the fields), which takes seconds.
+  const [metaSaving, setMetaSaving] = useState(false);
   async function saveMetaEdits() {
     const blockId = focusedBlockIdRef.current;
-    if (!blockId || !metaDraft) return;
+    if (!blockId || !metaDraft || metaSaving) return;
+    setMetaSaving(true);
     try {
       const data = await apiJson(`${API}/metadata/update`, {
         method: "POST",
@@ -3163,9 +3167,14 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         await renameTitle(data.meta.title);
       }
       fetchHomeBlocks(); // keep the library's meta fresh for DOI-link matching
-      setStatus(t("Metadata saved."));
+      const site = data.lookup?.registry === "arxiv" ? "arXiv" : "doi.org";
+      setStatus(!data.lookup ? t("Metadata saved.")
+        : data.lookup.found ? t("Metadata filled in from {site} ({id}).", { site, id: data.lookup.id })
+          : t("{site} has no record of {id}; saved as typed.", { site, id: data.lookup.id }));
     } catch (err) {
       setStatus(t("Metadata save failed: {message}", { message: err.message }));
+    } finally {
+      setMetaSaving(false);
     }
   }
   // The Source row's Verify: the user vouches for the record as it stands,
@@ -8688,7 +8697,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                         ) : null}
                         {metaDirty ? (
                           <div className="reportModalBtns">
-                            <button className="uiBtn primary" onClick={saveMetaEdits}>{t("Save metadata")}</button>
+                            <button className="uiBtn primary" disabled={metaSaving} onClick={saveMetaEdits}>
+                              {metaSaving ? t("Saving…") : t("Save metadata")}
+                            </button>
                           </div>
                         ) : null}
                       </div>

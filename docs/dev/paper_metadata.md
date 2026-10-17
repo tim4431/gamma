@@ -59,7 +59,10 @@ the number as `article-number` and no `page`. `_fetch_doi` and
 `_crossref_search` store plain text (`textnorm.plain_text`: tags dropped, a
 formula read as its text through `gamma/mathml.py`, entities decoded; the
 title then reads as the PDF prints it, `spin-1/2`, which is what the title
-match and the popover need), join `title: subtitle`, keep organisation
+match and the popover need; an isotope, which APS writes as an
+`<mmultiscripts>` whose mass number is a prescript after the element in the
+markup, reads `171Yb` as printed, and its BibTeX is `${}^{171}\mathrm{Yb}$`),
+join `title: subtitle`, keep organisation
 authors, take the article number as `pages` (`_csl_pages`), and turn the
 registry's work type into the record's item type. doi.org's own BibTeX
 carries the same markup, writes months no style defines (`Sept`, `July`)
@@ -114,10 +117,10 @@ before, so an older thesis record holds the university as its venue.
 AI output can be a plausible hallucination):
 
 - Identifiers with **URL-level trust** are accepted outright: the stored
-  `source_url`, the `web_url` the extension clipped from, and
+  `source_url`, the `web_url` the extension clipped from,
   detector-supplied `doi`/`arxiv_id` hints (`fetch_page_metadata` kwargs —
   `/api/clip` forwards what `detect.js` read off the publisher page's own
-  meta tags).
+  meta tags), and a DOI or arXiv id the user types into the popover (below).
 - A record found via the *text* counts as **confirmed** only when the
   registry's title appears in the PDF text (`_title_in_text` — normalized
   for case, ligatures, line-break hyphens; a title with a subtitle also
@@ -183,7 +186,18 @@ The fetch also kicks background search indexing for the paper
 document map and library-wide Ctrl+F shouldn't wait for the first search to
 discover it. `/api/metadata/update` saves hand-edited fields from the
 metadata popover (rebuilds BibTeX, source `manual`, invalidates the cached
-citation). The popover sends the Type row's choice as `meta.kind`; one not
+citation). A DOI or arXiv id that differs from the stored record's is
+looked up instead (`_typed_identifier_record`; pasted links are read with
+`clip.norm_doi`/`norm_arxiv`, and case does not count as a change): the
+registry's record and BibTeX replace the sent fields, source `doi` or
+`arxiv`, not flagged. A new DOI goes first and keeps the form's arXiv id;
+a new arXiv id alone takes arXiv's record, then the published DOI it
+names (`_published_record`). One that resolves nowhere leaves the fields
+as typed. The answer's `lookup` (`{registry, id, found}`) gives the
+popover's status line. So the way out of a wrong record (a supplement
+prints only cited papers' DOIs) is to type the right DOI and save; ↻
+re-reads the PDF and does not keep a typed DOI. The popover sends the
+Type row's choice as `meta.kind`; one not
 sent, or not an item type, keeps the stored type, so a conference paper
 stays an `@inproceedings` after its title is corrected. The type alone is not
 a record: blanking every field clears the metadata. In the popover, the DOI and arXiv rows carry an open-on-registry

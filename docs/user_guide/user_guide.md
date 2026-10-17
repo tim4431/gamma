@@ -221,6 +221,7 @@ The home page lists your pages, most recent first, with a **Recently viewed** st
 <img alt="The info button opens the metadata: title, authors, year and DOI fill in; a BibTeX row's Copy button is clicked" src="assets/metadata.svg" width="100%">
 
 - Title, authors, venue and year are filled in when a paper is added (arXiv, then DOI, then AI). The **(i) button** in the Notes title row shows and edits them, with **↻ refetch**.
+- A red **!** means nothing tied the record to this PDF: a supplement, for one, prints only the DOIs of papers it cites. Type the right DOI or arXiv id and press **Save metadata**: the rest of the fields fill in from doi.org or arXiv.
 - The share popover holds the **BibTeX** entry and a slide-ready citation, each with a copy button.
 - **Type** says what the paper is: journal article, conference paper, preprint, book chapter, book, thesis and so on, with the same names Zotero uses. It decides the BibTeX entry (a conference paper is an `@inproceedings`) and which fields the popover shows.
 - **Cite key** is the name LaTeX cites the paper by: made from author and year, or pinned by you. Zotero imports keep their keys.

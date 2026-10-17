@@ -127,3 +127,25 @@ After: the same export, normalized, and a corpus of awkward records (every
 special character, markup, MathML, accents, broken braces, unknown types,
 `%` in a URL) compile with no errors in all three runs. The one BibTeX
 warning left is an export entry with no author, a gap in its record.
+
+## Isotopes in a title (2026-10-16)
+
+A user's PDF of the supplemental material to Braverman et al., "Near-Unitary
+Spin Squeezing in ¹⁷¹Yb" (PRL 122, 223203), got the record of the paper its
+reference [2] cites (Kawasaki et al., PRA 99, 013437), flagged unconfirmed.
+
+- The supplement prints no DOI or arXiv id of its own. Every DOI in it is a
+  reference's, and APS reference lists carry no titles, so none confirmed;
+  the first one stood as the fallback.
+- The Crossref search on the text head did return PRL 122, 223203 (second
+  hit; the page-title query did not). Its title arrives as
+  `<mml:mmultiscripts><mml:mi>Yb</mml:mi><mml:mprescripts/><mml:none/><mml:mn>171</mml:mn></mml:mmultiscripts>`:
+  the mass number is a prescript, after the element in the markup and
+  before it on the page. `gamma/mathml.py` did not know `<mmultiscripts>`
+  and joined the children in markup order, `Yb171`, against the PDF's
+  `171Yb`, so the title match rejected the right paper. The same join put
+  `$\mathrm{Yb}171$` into the BibTeX.
+
+Decided: `<mmultiscripts>` reads prescripts first, as printed (`171Yb`),
+and becomes `{}^{171}\mathrm{Yb}`, the form `<msup><mi/>…` already took. A
+supplement then gets its paper's record, which is how a supplement is cited.

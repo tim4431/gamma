@@ -113,6 +113,32 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
     assertNoProblems(page);
   });
 
+  // A DOI typed in place of the stored one is looked up by the save, and the
+  // status line says what came of it. The suite's server asks no registry
+  // (GAMMA_METADATA_LOOKUP=off), so here doi.org knows nothing: the fields
+  // stay as typed. The found case is the backend's (test_metadata_update.py).
+  await step("pdf: a DOI typed into the popover is looked up when the record is saved", async () => {
+    const meta = { title: "Rydberg paper", authors: ["A. Writer"], year: "2026", doi: "10.1103/PhysRevA.99.013437",
+      source: "doi", unverified: true };
+    await account.api(`/api/blocks/${pageId}`, { method: "PUT", body: { properties: { meta } } });
+    await page.reload();
+    await waitForPdf(page, 1);
+    await page.click("button[aria-label='Paper metadata']");
+    const pop = page.locator(".metaPopover");
+    const doi = pop.locator(".metaRow").filter({ has: page.locator(".metaKey").getByText("DOI", { exact: true }) }).locator("input");
+    await doi.fill("https://doi.org/10.1103/PhysRevLett.122.223203");
+    await pop.getByRole("button", { name: "Save metadata", exact: true }).click();
+    await until(async () => (await page.textContent(".statusPill").catch(() => "") || "")
+      .includes("doi.org has no record of 10.1103/physrevlett.122.223203; saved as typed."), { what: "the lookup's status line" });
+    const saved = (await account.api(`/api/blocks/${pageId}`)).properties.meta;
+    assertEq(saved.source, "manual", "saved as typed");
+    assertEq(saved.title, "Rydberg paper");
+    assertEq(await page.locator(".metaWarnDot").count(), 0, "a hand edit clears the red !");
+    await page.click("button[aria-label='Paper metadata']");
+    await account.api("/api/metadata/update", { method: "POST", body: { block_id: pageId, meta: {} } });
+    assertNoProblems(page);
+  });
+
   // A stored entry may be invalid BibTeX (doi.org's one-line rendering with
   // a month no style defines, cached before the export normalized it). The
   // share popover copies the entry the .bib export prints, not the stored

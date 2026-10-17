@@ -1207,6 +1207,34 @@ def metadata_batch(payload: MetaBatchRequest, request: Request):
     return job
 
 
+def _typed_identifier_record(meta: dict, old: dict) -> tuple[dict | None, dict | None, str]:
+    """The registry record behind a DOI or arXiv id the user typed into the
+    popover, when it differs from the stored record's: ``(lookup, record,
+    bibtex)``. The DOI goes first, since its record is the one a bibliography
+    cites, and the arXiv id rides along on it; a new arXiv id alone goes
+    through arXiv, then the published DOI arXiv names. ``lookup`` says what
+    was asked and whether it answered (None when nothing changed); the record
+    is None when nothing answered."""
+    from .clip import norm_arxiv, norm_doi  # clip imports this module
+    doi, aid = norm_doi(meta.get("doi", "")), norm_arxiv(meta.get("arxiv_id", ""))
+    missed = None
+    for registry, ident, before in (("doi", doi, norm_doi(str(old.get("doi") or ""))),
+                                    ("arxiv", aid, norm_arxiv(str(old.get("arxiv_id") or "")))):
+        if not ident or ident == before:
+            continue
+        if registry == "doi":
+            rec, bib = _fetch_doi(ident)
+            if rec:
+                rec["arxiv_id"] = aid
+        else:
+            rec = _fetch_arxiv(ident)
+            rec, bib = _published_record(rec) if rec else (None, "")
+        if rec:
+            return {"registry": registry, "id": ident, "found": True}, rec, bib
+        missed = missed or {"registry": registry, "id": ident, "found": False}
+    return missed, None, ""
+
+
 class MetaUpdateRequest(StorableBody):
     block_id: str
     meta: dict = {}
@@ -1222,7 +1250,11 @@ def metadata_update(payload: MetaUpdateRequest, request: Request):
     invalidated. ``meta.kind`` is the item type the popover's Type row
     chose; one not sent (or not an item type) keeps the stored one. All-blank
     fields clear the cached metadata entirely, the pinned key with it — the
-    type alone is not a record."""
+    type alone is not a record. A DOI or arXiv id typed in place of the
+    stored one is looked up instead (``_typed_identifier_record``): its
+    registry record replaces the typed fields, trusted like a source URL's
+    identifier, and ``lookup`` in the answer says what was asked. One that
+    resolves nowhere leaves the fields as typed."""
     ws = require_ws(request, write=True)
     _, props = _load_page(ws, payload.block_id)  # 404 before validating the edit
     m = payload.meta or {}
@@ -1249,23 +1281,32 @@ def metadata_update(payload: MetaUpdateRequest, request: Request):
         _save_props(ws, payload.block_id, remove=stale + ("meta", "bibtex", "cite_key"),
                     actor=request.state.user_id)
         return {"meta": None, "bibtex": "", "cite_key": "", "source": "", "cached": False}
-    # The item type survives an edit that leaves it alone (a book stays
-    # @book). A hand edit is the user vouching for the record, so it is not
-    # "unverified".
-    kind = item_types.normalize(m.get("kind")) or item_types.normalize((props.get("meta") or {}).get("kind"))
-    if kind:
-        meta["kind"] = kind
+    lookup, record, bibtex = _typed_identifier_record(meta, props.get("meta") or {})
+    if record:
+        # The user named the paper, so its record needs no title check.
+        meta = {**record, "unverified": False}
+    else:
+        # The item type survives an edit that leaves it alone (a book stays
+        # @book). A hand edit is the user vouching for the record, so it is
+        # not "unverified".
+        kind = item_types.normalize(m.get("kind")) or item_types.normalize((props.get("meta") or {}).get("kind"))
+        if kind:
+            meta["kind"] = kind
     meta["at"] = page_now()  # when it was edited, as a lookup stamps when it looked
     # An unsent cite_key leaves the page's pin as it is; "" unpins.
     cite_key = (bibtex_mod.clean_key(payload.cite_key) if payload.cite_key is not None
                 else bibtex_mod.clean_key(props.get("cite_key") or ""))
-    bibtex = bibtex_mod.build_entry(meta, cite_key)
+    if not bibtex:
+        bibtex = bibtex_mod.build_entry(meta, cite_key)
+    elif cite_key:
+        bibtex = bibtex_mod.with_key(bibtex, cite_key)
     updates = {"meta": meta, "bibtex": bibtex}
     if cite_key:
         updates["cite_key"] = cite_key
     _save_props(ws, payload.block_id, updates, remove=stale + (() if cite_key else ("cite_key",)),
                 actor=request.state.user_id)
-    return {"meta": meta, "bibtex": bibtex, "cite_key": cite_key, "source": "manual", "cached": False}
+    return {"meta": meta, "bibtex": bibtex, "cite_key": cite_key, "source": meta["source"], "cached": False,
+            "lookup": lookup}
 
 
 class MetaVerifyRequest(BaseModel):
