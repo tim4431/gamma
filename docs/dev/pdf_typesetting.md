@@ -83,11 +83,28 @@ layer). The switches do not apply.
 
 `?notes=1` adds a second layer from `gamma/pdf_notes.py` — every non-empty note
 is *drawn on the page*, in the nearest patch of empty space, with a leader line
-back to its highlight. Free space comes from pdfium page-object bounds
-rasterized into an occupancy grid (display space, top-left origin, /Rotate
-applied — same frame the viewer stores rects in) with a summed-area table
-behind the candidate search; already-placed boxes are marked occupied so notes
-never collide.
+back to its highlight. Free space comes from MuPDF's drawing log of the page
+(a bbox device of the module's own, logging what `page.get_bboxlog()` logs:
+one box per drawing operation, form XObjects flattened into the page's
+space, invisible text skipped — except that a shading is bounded by the clip
+it is painted through, where `get_bboxlog` logs the whole plane, so a
+gradient-filled box counts as occupied) rasterized into an occupancy grid
+(display space, top-left origin, /Rotate applied — same frame the viewer
+stores rects in) with a summed-area table behind the candidate search;
+already-placed boxes are marked occupied so notes never collide. The log
+takes in the annotations' appearances, so what `annotate_pdf` wrote before
+`render_notes` ran counts as occupied too: the text boxes with either switch,
+the highlights and ink when the highlight layer is on (`highlights=0&notes=1`
+has none of them in the bytes, so there is nothing to keep clear of); pdfium's
+object walk saw only the content stream. The log comes in the unrotated
+page's space, its origin at the view box's corner and scaled by `/UserUnit`
+like `page.rect`; `_bbox_log` takes the unit out (`pdf_text.user_unit`), and
+`pdf_notes` maps it to user space against the view box `page_frame` found,
+not through `page.transformation_matrix`, which on a rotated page forgets a
+crop box's offset. The whole read holds `pdf_text._lock`, one
+short call per page (PyMuPDF is not thread-safe and holds the GIL in every
+call). A file MuPDF cannot open, or one that needs a password, gets its
+notes in the margins.
 
 Notes are markdown, so `gamma/note_markup.py` splits each one into text spans
 (`(TEXT, str, level)`, level ±1 = real super/subscript), inline-math spans,

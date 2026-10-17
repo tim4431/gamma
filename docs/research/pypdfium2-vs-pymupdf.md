@@ -198,3 +198,164 @@ manifest walk should take page sizes without loading pages.
 - Linux timings: everything here was measured on Windows.
 - CJK text extraction: the library's PDFs are Latin; the figure-heavy
   paper carries five CJK characters, which both read.
+- The stall on a running server: the 65% figure is one Python thread
+  spinning beside one render. What a real load feels, requests and
+  WebSockets while a book is walked page by page, was not measured.
+
+## Outcome (October 2026)
+
+The server moved to PyMuPDF (`pymupdf==1.28.2`; the iPad on Flet's
+1.27.2.3) the same month, against this note's answer. The two reasons:
+the fonts and the text extraction — MuPDF carries the base-14 fonts and
+Droid Sans Fallback inside the library, so a page whose fonts are not
+embedded renders and reads the same on every server with no system font
+to find, and its extraction knows each glyph's font and box — and iOS,
+where its wheel exists and pypdfium2's would have had to be built
+([pypdfium2-ios.md](pypdfium2-ios.md)). The read side kept the design
+"What a switch would cost" lists: one lock, taken per page on the long
+walks, explicit closes inside it, PyPDF2 only when a file cannot be
+opened at all; the finalizer net went, since PyMuPDF frees by reference
+count. Of this note's open items, the page-size walk is cheap in MuPDF as
+measured above (44 to 67 ms for the books), so `FPDF_GetPageSizeByIndexF`
+is moot; the GIL held inside every call is why the calls stay one page's
+work. `test_pdfium_lock.py` is `test_pdf_text_lock.py` now. How it reads:
+[dev/pdf_loading.md](../dev/pdf_loading.md),
+[dev/ai_context.md](../dev/ai_context.md) "Extraction lock",
+[dev/pdf_typesetting.md](../dev/pdf_typesetting.md) "Notes drawn on the
+page"; the iPad's side: [pymupdf-ios.md](pymupdf-ios.md).
+
+### Measured after the switch
+
+The same machine (Windows 11, 24 cores, Python 3.14.6), pypdfium2 5.11.0
+(pdfium 151.0.7920.0) against PyMuPDF 1.28.2 (MuPDF 1.28.2), PyPDF2 3.0.1
+and Pillow 12.3.0 under both — this time through the server's own code
+rather than raw calls: `dev`'s `pdf_text.py` and `pdf_notes.py` over
+pypdfium2 and this branch's over PyMuPDF, each imported in a process of
+its own from the same venv, the public API called as the routers call it,
+the page-text cache cleared before every run. Eight PDFs from the local
+library: two papers of the library's median size (17 pages and 8 pages,
+1.9 MB each), a 22-page image-heavy paper (14 MB), a 28-page figure-heavy
+paper (17.3 MB), a 32-page image-heavy paper (19.8 MB), a 293-page book
+(3.8 MB), and the two books of the table above (484 pages, 25.9 MB;
+1,310 pages, 19.5 MB). The library has no CJK file: a probe of the first
+three pages of all 103 found no CJK text beyond the five characters of
+the earlier comparison's 26-page figure-heavy paper, which the library
+holds twice. Median of three runs after a warm-up, one run for a
+whole-document walk over the 484- and 1,310-page books.
+
+Milliseconds, pdfium / MuPDF.
+
+| Workload | 17-page paper | 8-page paper | 22-page image-heavy | 28-page figure-heavy | 32-page image-heavy | 293-page book | 484-page book | 1,310-page book |
+|---|---|---|---|---|---|---|---|---|
+| open and count pages (`page_count`) | 0.3 / 0.6 | 0.5 / 0.6 | 0.9 / 1.1 | 0.7 / 1.3 | 0.9 / 0.9 | 2.4 / 0.9 | 4.6 / 22 | 0.7 / 9.7 |
+| page sizes, every page (`page_sizes`, the manifest walk) | 55 / 1.5 | 40 / 2.0 | 82 / 5.9 | 304 / 11 | 277 / 18 | 143 / 17 | 488 / 56 | 638 / 51 |
+| text, every page (`extract_pages`, the indexer's walk, no cache) | 65 / 64 | 53 / 53 | 107 / 111 | 357 / 327 | 311 / 236 | 273 / 282 | 747 / 906 | 1,586 / 1,040 |
+| text, 6,000 characters (`extract_text`, a chat's head read) | 8.7 / 9.0 | 22 / 24 | 18 / 20 | 37 / 39 | 14 / 15 | 7.1 / 9.4 | 10 / 33 | 7.1 / 15 |
+| glyph boxes, five pages (`GlyphPages`) | 33 / 84 | 122 / 274 | 103 / 235 | 121 / 256 | 190 / 243 | 27 / 77 | 18 / 58 | 6.3 / 21 |
+| occupancy, five pages (`pdf_notes`'s read into `_page_occupancy`) | 53 / 52 | 117 / 124 | 111 / 116 | 171 / 158 | 171 / 460 | 45 / 55 | 40 / 63 | 34 / 44 |
+| one note drawn on page 1 (`render_notes`, the PyPDF2 writer included) | 114 / 123 | 220 / 242 | 402 / 447 | 819 / 819 | 1,223 / 1,229 | 474 / 466 | — | 841 / 875 |
+| outline | 0.3 / 0.7 | 1.0 / 0.8 | 2.5 / 1.5 | 3.0 / 1.6 | 1.5 / 1.3 | 2.5 / 1.0 | 43 / 29 | 20 / 9.6 |
+| render page 1, longer side 1,568 px (`render_page`, the JPEG included) | 19 / 19 | 34 / 33 | 32 / 32 | 31 / 33 | 25 / 23 | 15 / 17 | 23 / 43 | 35 / 33 |
+| render a crop of page 1 | 11 / 12 | 17 / 18 | 18 / 17 | 18 / 22 | 16 / 14 | 7.8 / 10 | 9.6 / 27 | 10 / 17 |
+| render the middle page | 19 / 19 | 42 / 47 | 20 / 18 | 40 / 39 | 26 / 23 | 20 / 21 | 24 / 39 | 46 / 40 |
+
+What the numbers say:
+
+- **The manifest walk is where MuPDF wins**, `dev` never having taken
+  pdfium's size-by-index call: `page_sizes` is 8 to 37 times faster,
+  488 / 56 ms on the 484-page book and 638 / 51 on the 1,310-page one, as
+  the raw numbers above said; the server's turn of the lock per page and
+  its `/UserUnit` lookup cost nothing visible.
+- **Text is still a tie**, through the server's path as through the raw
+  calls: within 10% on five files, MuPDF a quarter faster on the 32-page
+  image-heavy paper and a third faster on the 1,310-page book, a fifth
+  slower on the 484-page book — the figures of the `iter_page_texts` row
+  above (747 / 1,041 and 1,559 / 1,052 then), so the lock's turn per page
+  and the cache's bookkeeping add nothing measurable. A chat's head read
+  is equal on the papers and slower under MuPDF on the books (10 / 33 and
+  7.1 / 15 ms), which is the open: MuPDF parses the page tree when it
+  opens (`page_count` 4.6 / 22 and 0.7 / 9.7), pdfium not until a page is
+  asked for, and every call that opens the file pays it.
+- **Rendering is a tie through the server's path.** The call opens the
+  file, renders, copies the pixels out and encodes the JPEG in Pillow; the
+  whole takes 15 to 46 ms, and on seven of the eight files the two are
+  within 3 ms of each other on the full page, on six of them within 5 ms
+  on the crop and the middle page as well, each ahead somewhere. pdfium's
+  lead on the raw render in the table above (1.3 to 2.8 times) is a few
+  milliseconds inside that. The exceptions are the 484-page book, whose
+  22 ms open MuPDF pays on every render (23 / 43 ms the page, 9.6 / 27
+  the crop), and the 1,310-page book's crop (10 / 17), its open 9.7 ms;
+  that book's full and middle page MuPDF renders faster all the same
+  (35 / 33, 46 / 40). The pictures come out the same size (the crop a
+  pixel or two larger under MuPDF, from rounding), the JPEGs within 6% of
+  each other in bytes.
+- **Glyph boxes: MuPDF 1.3 to 3.3 times slower, and the difference is
+  the wrapper, not the library.** The raw `rawdict` read of a paper's
+  first page takes 4.5 ms (5,559 characters); `_glyphs` takes 36 ms over
+  it, because it builds a `Rect` and multiplies it by the page matrix per
+  character, and PyMuPDF's geometry classes are Python objects, about
+  5 µs a glyph. A plain six-float transform would bring the row under
+  pdfium's.
+- **The occupancy read is equal on the papers** (within 10% on four),
+  pays MuPDF's open on the books (40 / 63 ms on the 484-page book, of
+  which the open is 4.6 / 22), and is 2.7 times slower on the 32-page
+  image-heavy paper (171 / 460 for five pages), where the bbox device
+  runs the page's content and pdfium only listed its objects.
+  `render_notes` itself is the same under both, within 11%, 114 ms to
+  1.2 s: PyPDF2's copy of the whole document is the cost and the one
+  page's occupancy a small part of it. The 484-page book is
+  AES-encrypted, and PyPDF2 3.0.1 refuses it without PyCryptodome under
+  both — the export's matter, not the reader's.
+- **The outline** comes faster from MuPDF where there is one (43 / 29 ms
+  for 529 entries, 20 / 9.6 for 46), its open included.
+- **The GIL.** Beside twenty renders of the 32-page paper's first page, a
+  Python thread spinning in a tight loop kept 97% of its idle rate under
+  pdfium and 82% under MuPDF (65% in the bare-render test above). The two
+  fractions are not comparable: each is taken over the time the twenty
+  renders took beside the spinner, and the spinner sets that time — a
+  thread that never blocks hands the GIL over only at the switch
+  interval, and pdfium's call returns to Python more often, so the
+  renders took 8 times longer beside it under pdfium (546 → 4,391 ms for
+  the twenty) and 4.6 times under MuPDF (479 → 2,201). The figure in the
+  same runs that does not depend on that window is the time the spinner
+  was shut out per render, (1 − fraction kept) × window / 20: 18 to 20 ms
+  of MuPDF's 24 ms call against 6 to 9 ms of pdfium's 27 — rough figures,
+  a rerun of the same spinner giving 12 to 25 and 15 to 21. A thread that
+  sleeps and wakes every millisecond, which is what an idle event loop
+  does, meets it as one stall, which a rerun repeats within 2 ms: beside
+  the same renders (which ran at full speed beside it) it saw a 15 ms gap
+  per render under MuPDF, the lock-held open, render and pixel copy end
+  to end, and 2 ms at most from that part under pdfium; Pillow's
+  `frombuffer` and `convert` add one 6 ms gap per render under both, the
+  JPEG encoder alone releasing the GIL. That is the 20 ms stall the
+  Threads section describes.
+- **Memory.** Python alone is 18.5 MB resident; pypdfium2's import adds
+  11.5 MB, PyMuPDF's 29.5 (131 and 124 ms); 73 / 92 MB after the
+  484-page book's text walk (peaks 105 / 124); 139 / 206 MB after every
+  workload on all eight files (peaks 236 / 293). PyMuPDF holds about
+  20 MB more through the imports and the walk and 67 MB more at the end.
+
+The text. Over the first three pages the difflib ratios are 0.93 to 1.00
+(1.00 on the three books' front matter), word counts within 5%, no U+FFFD
+from either, no ligature characters from either (the server's flags turn
+MuPDF's off). Three differences recur. The hyphen at a line's end: MuPDF
+keeps every one, "effi-" at the line's end and "cient" at the next's (72,
+28, 20 and 32 such lines on the four papers that have them); pdfium joined
+each into one word with U+0002 where the hyphen was ("effi\x02cient"),
+the only control characters in its text on those four, 72, 28, 20 and 33
+of them, none in MuPDF's — not the clean "transduction" the earlier test
+saw on another paper. The 17-page paper has no such lines but gives
+control codes from both libraries alike, three from pdfium (U+0001 to
+U+0003) and four from MuPDF (U+0000 to U+0003), all on its third page:
+the large brackets and parentheses of two displayed formulas, glyphs of
+TeX's CMEX10 with no Unicode mapping, whose raw codes both pass through.
+Lines: pdfium ends them in "\r\n", MuPDF in "\n", and MuPDF makes
+more of them (418 against 302 on the 32-page paper, 611 against 364 on the
+8-page one), a line of its own for each superscript and subscript,
+affiliation mark and index, where pdfium runs them inline, so a subscript
+can come out on the line before its base letter. Spacing: pdfium puts a
+space before an index ("x (i)") and, on an author line, a line break
+between a surname's affiliation mark and the comma after it ("Name1" ends
+one line, "," begins the next); MuPDF keeps "x(i)" and "Name1," but
+splits "=280" into "= 280". The CJK case stays unmeasured: the library
+has no CJK file.

@@ -1,4 +1,4 @@
-"""The quote of an imported highlight is the text under its quads: pdfium's
+"""The quote of an imported highlight is the text under its quads: PyMuPDF's
 glyph boxes (pdf_text.GlyphPages), a glyph counted when its centre is
 covered (pdf_text.quote_under). Guards the two failures of the reader this
 replaced, which matched one point per line: a highlight from a line's start
@@ -28,9 +28,10 @@ def _quad(x1, x2, line, below=2, above=8):
     return (x1, y2, x2, y2, x1, y1, x2, y1)
 
 
-def _pdf(highlights):
+def _pdf(highlights, boxes=b"/MediaBox [0 0 612 792]"):
     """One page of LINES in Courier, with a /Highlight per entry of
-    ``highlights``: ``(contents, [quad, ...])``."""
+    ``highlights``: ``(contents, [quad, ...])``. ``boxes`` is the page's
+    box entries (and /Rotate, when a test wants one)."""
     stream = b"BT /F1 %d Tf %d %d Td " % (SIZE, LEFT, TOP)
     stream += b" ".join(b"(%s) Tj 0 -%d Td" % (line.encode(), LEAD) for line in LINES) + b" ET"
     annots = []
@@ -44,7 +45,7 @@ def _pdf(highlights):
     refs = b" ".join(b"%d 0 R" % (6 + i) for i in range(len(annots)))
     objs = [b"<< /Type /Catalog /Pages 2 0 R >>",
             b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
-            b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R"
+            b"<< /Type /Page /Parent 2 0 R " + boxes + b" /Contents 4 0 R"
             b" /Resources << /Font << /F1 5 0 R >> >> /Annots [" + refs + b"] >>",
             b"<< /Length %d >>\nstream\n%s\nendstream" % (len(stream), stream),
             b"<< /Type /Font /Subtype /Type1 /BaseFont /Courier >>", *annots]
@@ -88,6 +89,25 @@ def test_a_highlight_quotes_the_text_under_its_quads():
     }
 
 
+def test_a_rotated_page_with_an_offset_page_box_quotes_the_same():
+    """/QuadPoints are in PDF user space whatever the page's /Rotate and
+    /CropBox, and so are the glyph boxes. MuPDF reads a page unrotated, in
+    a space whose origin is the page box's corner, and its transformation
+    matrix forgets that corner's offset on a rotated page (GlyphPages reads
+    the page with its rotation set to 0 for that reason): a highlight on a
+    rotated page with cropped margins, or on one whose media box does not
+    start at the origin, quotes the same text as on a plain page."""
+    end = _x(len(LINES[2]))
+    for boxes in (b"/MediaBox [0 0 612 792] /CropBox [36 40 576 756] /Rotate 90",
+                  b"/MediaBox [0 0 612 792] /CropBox [36 40 576 756] /Rotate 180",
+                  b"/MediaBox [0 0 612 792] /CropBox [36 40 576 756] /Rotate 270",
+                  b"/MediaBox [20 30 632 822] /Rotate 90"):
+        quotes = _quotes(_pdf([("whole line", [_quad(LEFT, end, 2)]),
+                               ("mid-line", [_quad(_x(11), end, 2)])], boxes))
+        assert quotes == {"whole line": "Line three is the one we highlight.",
+                          "mid-line": "is the one we highlight."}, boxes
+
+
 def test_without_glyphs_or_a_readable_file_the_highlight_imports_without_a_quote():
     pdf_bytes = _pdf([("plain", [_quad(LEFT, _x(10), 0)])])
     found = _extract_pdf_annotations(PdfReader(io.BytesIO(pdf_bytes)))
@@ -101,7 +121,7 @@ def test_without_glyphs_or_a_readable_file_the_highlight_imports_without_a_quote
 def test_quote_under_counts_a_glyph_by_its_centre_and_skips_read_as_one_space():
     def line(text, y):  # 10-wide glyphs on baseline y, boxes y-2..y+8
         return [(ch, (10 * i, y - 2, 10 * i + 10, y + 8)) for i, ch in enumerate(text)]
-    glyphs = (line("ab cd", 100) + [("\r", (50, 100, 50, 100)), ("\n", (50, 100, 50, 100))]  # pdfium's line break
+    glyphs = (line("ab cd", 100) + [("\r", (50, 100, 50, 100)), ("\n", (50, 100, 50, 100))]  # a generated line break: separators have no box
               + line("ef gh", 88) + [("e", (0, 76, 10, 86)), ("́", (10, 76, 10, 86))])
     # The whole first line and the second line's "gh": the line break and
     # the skipped "ef " read as one space.

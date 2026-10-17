@@ -97,7 +97,8 @@ therefore open the page but cannot highlight text.
 
 `PdfCitationOverlay` draws DOM `Range` rectangles from the real pdf.js text
 nodes (partial runs included) instead of estimating glyph widths or trusting
-PDFium offsets. The rectangles are percentages of the page, and a finished
+offsets into the server's extracted text (MuPDF's text is not pdf.js's).
+The rectangles are percentages of the page, and a finished
 text-layer render recomputes them after a zoom; stale document/render work is
 cancelled. The marks (`.pdfCitationMark`, the translation shimmer) ignore
 pointer input and never touch the annotation or note store. A click outside

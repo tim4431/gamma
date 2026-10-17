@@ -63,7 +63,7 @@ or says it is a manual look (**manual**).
 | # | Check | How |
 |---|---|---|
 | 4.1 | Page export in every mode returns 200 with content: `readable`, `notes-pdf`, `logseq-graph`, `zotero-rdf`, `gamma` | auto: *page exports in every mode* |
-| 4.2 | `notes-pdf` and `export-pdf` (annotated PDF) are real PDFs — the frozen bundle carries PyPDF2, pypdfium2's native lib and the ziamath/ziafont fonts | auto (same step; `%PDF` magic asserted) |
+| 4.2 | `notes-pdf` and `export-pdf` (annotated PDF) are real PDFs — the frozen bundle carries PyPDF2, PyMuPDF's native libraries and the ziamath/ziafont fonts | auto (same step; `%PDF` magic asserted) |
 | 4.3 | Markdown import creates a page | auto: *markdown import creates a page* |
 | 4.4 | Backup zip (*Export my data*) downloads through the browser download path into a file | auto: *backup zip downloads through the browser download path* |
 | 4.5 | Save dialog appears for downloads in the real app (tests bypass it via `GAMMA_SHELL_DOWNLOAD_DIR`) | manual |

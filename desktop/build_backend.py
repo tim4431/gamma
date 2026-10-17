@@ -55,9 +55,11 @@ def main():
         # uvicorn resolves loop/protocol classes from strings at runtime.
         "--collect-all", "uvicorn",
         "--collect-all", "websockets",  # uvicorn loads its websocket protocol lazily
-        # pypdfium2 ships its native library outside normal imports.
-        "--collect-all", "pypdfium2",
-        "--collect-all", "pypdfium2_raw",
+        # PyMuPDF's native libraries (MuPDF and its C++ wrapper) live in its
+        # package beside the extension module; collect-binaries takes them
+        # alone. collect-all would also copy the package's C headers, import
+        # libraries and .py sources, about 11 MB nothing reads at runtime.
+        "--collect-binaries", "pymupdf",
         # Math typesetting fonts (STIXTwoMath / DejaVuSans live in package data).
         "--collect-data", "ziamath",
         "--collect-data", "ziafont",

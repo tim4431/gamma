@@ -58,9 +58,11 @@ jobs:
           xcodegen generate
       # One architecture: install_python copies the standard library's
       # lib-$ARCHS folder (project.yml), and the runner is Apple Silicon.
-      # Besides the pure parts, one test starts the embedded interpreter and
-      # waits for the server's /api/health (LocalServerStartTests), so a
-      # broken bundle fails here and not on an iPad.
+      # Besides the pure parts, one test starts the embedded interpreter,
+      # waits for the server's /api/health, then uploads a PDF and asks for
+      # a page picture, which only PyMuPDF draws (LocalServerStartTests):
+      # a broken bundle, the MuPDF frameworks included, fails here and not
+      # on an iPad.
       - name: Unit tests on an iPad simulator
         working-directory: ipad
         run: |

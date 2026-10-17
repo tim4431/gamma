@@ -353,7 +353,7 @@ highlight, placed by the nearest-sheet rule.
 - `backend/tests/test_text_box_merge.py`: the merge through `/ops` and
   `PUT /blocks/{id}`, a writer with no base box, removal, the mirror's diff.
 - `backend/tests/test_text_box.py`: the `/FreeText` keys and their
-  geometry at every rotation, with a pypdfium2 pixel check, the layout and
+  geometry at every rotation, with a MuPDF pixel check, the layout and
   the round trip to 0.01 pt. Also edits in another viewer, foreign boxes,
   sticky notes and threads, replaced originals, the switches and the
   notebook PDF.
@@ -381,12 +381,10 @@ highlight, placed by the nearest-sheet rule.
 - Tables, images and to-dos look different on screen and in the PDF. On
   macOS the screen's Helvetica sits about 0.08 em higher than the PDF's.
 - The menu does not re-place itself when the strip opens, closes or grows.
-- The annotated PDF is checked with pdfium and pdf.js, not in Acrobat or
+- The annotated PDF is checked with MuPDF and pdf.js, not in Acrobat or
   macOS Preview, which may draw its own look from `/Contents`, `/DA`, `/C`.
 - A box's child notes, a sticky note's replies among them, are not in the
   annotated PDF: a FreeText's `/Contents` must be the text it shows.
-- With `notes=1`, a painted note can overlap a box: free space comes from
-  page objects, and annotations are not page objects.
 - With *Keep originals* (not the default), a box imported from the file and
   deleted here leaves its embedded original in the export: nothing records
   a deleted block. The default strips the original at import, so it goes.

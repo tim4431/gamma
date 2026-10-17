@@ -9,10 +9,10 @@ transport (one download or range requests) from the byte size
 
 Computed on a background thread when a PDF is stored (``schedule``), by the
 search indexer when it walks a document anyway, and on demand by the
-endpoint for anything that predates the table. A file pdfium cannot read is
-stored with ``pages = 0`` so it is not parsed again on every open. Rows of
-documents no page carries any more are purged with the text index
-(``pdf_index.purge_unused``)."""
+endpoint for anything that predates the table. A file neither PyMuPDF nor
+the PyPDF2 fallback can read is stored with ``pages = 0`` so it is not
+parsed again on every open. Rows of documents no page carries any more are
+purged with the text index (``pdf_index.purge_unused``)."""
 
 import json
 import threading
@@ -24,8 +24,8 @@ from .logbuf import log
 # Bump when the stored shape changes; older rows are recomputed lazily.
 VERSION = 1
 # Walks in progress, so a second caller for the same document joins the
-# first instead of queueing behind the pdfium lock; WAIT_S is the longest
-# such a caller waits.
+# first instead of queueing behind pdf_text's PyMuPDF lock; WAIT_S is the
+# longest such a caller waits.
 WAIT_S = 60
 _inflight: dict[tuple[str, str], threading.Event] = {}
 _inflight_lock = threading.Lock()
@@ -61,7 +61,7 @@ def ensure(ws: str, doc_id: str) -> dict | None:
     request handlers calling this are sync ``def`` (threadpool). A walk
     already running for the same document (the upload's background thread,
     another open) is joined, not repeated: the second caller waits for its
-    result instead of queueing a second pass behind the pdfium lock."""
+    result instead of queueing a second pass behind the PyMuPDF lock."""
     found = get(ws, doc_id)
     if found:
         return found

@@ -89,3 +89,15 @@ Without it the server falls back to PyPDF2 for text and renders nothing
 - App Store acceptance of a framework Python opens with `dlopen`, beyond
   Apple's forum answer and the iOS guide.
 - pdfium's font handling on iOS devices.
+
+## Outcome (October 2026)
+
+Step 5 came first: the server moved to PyMuPDF the same month, for
+MuPDF's built-in fonts and text extraction and for this ready wheel
+([pypdfium2-vs-pymupdf.md](pypdfium2-vs-pymupdf.md) has the comparison
+and its own outcome), so no pypdfium2 wheel was built. The wrapping step
+2 describes was built for MuPDF's two dylibs instead:
+[pymupdf-ios.md](pymupdf-ios.md) records the wheel's contents and the
+step, [dev/ipad.md](../dev/ipad.md#the-wheels) the iPad as it stands.
+The iOS facts above (frameworks only, `.fwork` markers for `.so` files, a
+`.dylib` left where it is) held and shaped that step.

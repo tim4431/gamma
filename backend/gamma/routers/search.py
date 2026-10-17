@@ -9,10 +9,12 @@ thousand PDFs; missing papers are indexed lazily by a background job the
 first time a search runs, and the response reports how many are still
 pending so the UI can hint that results are incomplete.
 
-Extraction prefers pypdfium2 (PDFium — proper word spacing and unicode) and
-falls back to PyPDF2. Text is stored in normalized form (see gamma.textnorm)
-so queries like "3000" hit "3,000-qubit"; queries are normalized the same way
-at search time. Bumping textnorm.INDEX_VERSION re-extracts the PDFs lazily.
+Extraction prefers PyMuPDF (MuPDF — proper word spacing and unicode) and
+falls back to PyPDF2 only when a file cannot be opened at all
+(gamma.pdf_text). Text is stored in normalized form (see gamma.textnorm) so
+queries like "3000" hit "3,000-qubit" and a word MuPDF leaves hyphenated
+across a line break is whole again; queries are normalized the same way at
+search time. Bumping textnorm.INDEX_VERSION re-extracts the PDFs lazily.
 
 Positions are deliberately NOT stored here: the frontend re-finds the matched
 text with pdf.js (the engine that renders the page) when a hit is opened, so

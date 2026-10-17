@@ -147,8 +147,8 @@ def test_a_large_png_embeds_verbatim(tmp_path):
 
 def _drawn_over_blue(path, scale):
     """The picture at ``path`` through ``XObjectStore``, drawn to fill a page
-    painted blue, rendered back by pdfium."""
-    import pypdfium2 as pdfium
+    painted blue, rendered back by PyMuPDF."""
+    import pymupdf
     from PyPDF2 import PdfWriter
     from PyPDF2.generic import DecodedStreamObject, DictionaryObject, IndirectObject, NameObject
 
@@ -168,9 +168,9 @@ def _drawn_over_blue(path, scale):
         NameObject(f"/{name}"): store.refs[name]})})
     out = io.BytesIO()
     writer.write(out)
-    doc = pdfium.PdfDocument(out.getvalue())
+    doc = pymupdf.open(stream=out.getvalue(), filetype="pdf")
     try:
-        return doc[0].render(scale=scale).to_pil().convert("RGB")
+        return doc[0].get_pixmap(matrix=pymupdf.Matrix(scale, scale), alpha=False).pil_image().convert("RGB")
     finally:
         doc.close()
 

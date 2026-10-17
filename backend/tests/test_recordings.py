@@ -244,15 +244,15 @@ def test_the_obsidian_export_embeds_the_audio(owner):
 
 
 def test_the_pdf_exports_take_a_recording(owner):
-    import pypdfium2 as pdfium
+    import pymupdf
     from PyPDF2 import PdfWriter
 
     page, rec_id, _ = _recording(owner, "Typeset")
     r = owner.get(f"/api/pages/{page}/export", params={"mode": "notes-pdf"})
     assert r.status_code == 200, r.text
-    doc = pdfium.PdfDocument(r.content)
+    doc = pymupdf.open(stream=r.content, filetype="pdf")
     try:
-        text = doc[0].get_textpage().get_text_bounded()
+        text = doc[0].get_text("text")
     finally:
         doc.close()
     assert "Recording" in text and "1:42 (audio not included in a PDF)" in text

@@ -66,7 +66,8 @@ targets:
     postBuildScripts:
       # XcodeGen puts this after Copy Bundle Resources and Embed Frameworks.
       # That order is fine: install_python signs each framework it makes
-      # itself, and the app is signed after every phase, over all of them.
+      # itself, as does the PyMuPDF step after it, and the app is signed
+      # after every phase, over all of them.
       - name: Install Python into the bundle
         shell: /bin/bash
         basedOnDependencyAnalysis: false
@@ -97,9 +98,10 @@ targets:
           # does not reliably copy it again when only files deep inside it
           # change, so an incremental build could ship old server code, wheels
           # or web app. rsync copies only what changed, and --delete also drops
-          # the .fwork markers of the last build, so the wheels' .so files come
-          # back and install_python turns them into frameworks again. The
-          # wheels for the platform built become python/app_packages.
+          # the .fwork markers of the last build, so the wheels' .so files and
+          # dylibs come back and install_python, then the PyMuPDF step after
+          # it, turn them into frameworks again. The wheels for the platform
+          # built become python/app_packages.
           mkdir -p "$python"
           rsync -a --delete "$resources/app/" "$python/app/"
           rsync -a --delete "$resources/frontend_dist/" "$python/frontend_dist/"
@@ -111,6 +113,103 @@ targets:
           # The standard library into python/lib, then every .so of it and of
           # the wheels into Frameworks/<module>.framework, as iOS requires.
           install_python Python.xcframework python/app_packages
+          # PyMuPDF's wheel carries MuPDF as two plain dylibs beside its
+          # extension modules (app_packages/pymupdf/libmupdf.dylib and
+          # libmupdfcpp.dylib). install_python converts .so files only, and iOS
+          # loads native code from signed frameworks alone, so each dylib
+          # becomes Frameworks/pymupdf.<lib>.framework/pymupdf.<lib>, named as
+          # install_python names a module's framework. That is the name the
+          # wheel already uses: mobile-forge gave the dylibs the install name
+          # @rpath/pymupdf.libmupdf.framework/pymupdf.libmupdf, and _mupdf.so,
+          # _extra.so and libmupdfcpp.dylib reference them so. The id and the
+          # references are set here all the same, from the id each dylib came
+          # with, so a wheel built with bare names would work too. A .fwork
+          # marker is left where each dylib was, as install_python leaves one
+          # for a .so: pymupdf's __init__ reads it and loads the framework's
+          # binary before it imports _extra, and the @rpath references also
+          # resolve on their own through the app's @executable_path/Frameworks,
+          # as @rpath/Python.framework/Python does for every extension module.
+          # The rsync above brings the dylibs back on each build, so this runs
+          # on each build; a wheel without them makes it a no-op
+          # (docs/research/pymupdf-ios.md).
+          frameworks="$CODESIGNING_FOLDER_PATH/Frameworks"
+          case "$PLATFORM_NAME" in
+            iphonesimulator) platform=iPhoneSimulator ;;
+            *) platform=iPhoneOS ;;
+          esac
+          old_ids=() new_ids=() made=0
+          for dylib in "$python"/app_packages/pymupdf/libmupdf*.dylib; do
+            [ -f "$dylib" ] || continue
+            lib=$(basename "$dylib" .dylib)
+            name="pymupdf.$lib"
+            folder="$frameworks/$name.framework"
+            echo "Creating framework for python/app_packages/pymupdf/$lib.dylib"
+            # otool -D prints the file's name, then its install name.
+            old_ids+=("$(otool -D "$dylib" | tail -n 1)")
+            new_ids+=("@rpath/$name.framework/$name")
+            made=$((made + 1))
+            mkdir -p "$folder"
+            mv "$dylib" "$folder/$name"
+            echo "Frameworks/$name.framework/$name" > "${dylib%.dylib}.fwork"
+            echo "python/app_packages/pymupdf/$lib.fwork" > "$folder/$name.origin"
+            cat > "$folder/Info.plist" <<EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>CFBundleDevelopmentRegion</key>
+            <string>en</string>
+            <key>CFBundleExecutable</key>
+            <string>$name</string>
+            <key>CFBundleIdentifier</key>
+            <string>$PRODUCT_BUNDLE_IDENTIFIER.$name</string>
+            <key>CFBundleInfoDictionaryVersion</key>
+            <string>6.0</string>
+            <key>CFBundleName</key>
+            <string>$name</string>
+            <key>CFBundlePackageType</key>
+            <string>FMWK</string>
+            <key>CFBundleShortVersionString</key>
+            <string>1.0</string>
+            <key>CFBundleVersion</key>
+            <string>1</string>
+            <key>CFBundleSupportedPlatforms</key>
+            <array>
+              <string>$platform</string>
+            </array>
+            <key>MinimumOSVersion</key>
+            <string>17.0</string>
+          </dict>
+          </plist>
+          EOF
+            install_name_tool -id "@rpath/$name.framework/$name" "$folder/$name"
+          done
+          # The references between the four binaries (libmupdfcpp needs
+          # libmupdf; the extension modules, now in the frameworks their .fwork
+          # markers name, need both), then a signature for each, since
+          # install_name_tool undoes the one a binary had. Signed as
+          # install_python signs its frameworks.
+          if [ "$made" -gt 0 ]; then
+            for fwork in "$python"/app_packages/pymupdf/*.fwork; do
+              binary="$CODESIGNING_FOLDER_PATH/$(cat "$fwork")"
+              i=0
+              while [ "$i" -lt "${#old_ids[@]}" ]; do
+                install_name_tool -change "${old_ids[$i]}" "${new_ids[$i]}" "$binary"
+                i=$((i + 1))
+              done
+              codesign --force --sign "$EXPANDED_CODE_SIGN_IDENTITY" ${OTHER_CODE_SIGN_FLAGS:-} \
+                -o runtime --timestamp=none --preserve-metadata=identifier,entitlements,flags \
+                --generate-entitlement-der "$(dirname "$binary")"
+            done
+          fi
+          # A dylib still lying loose in the bundle would fail at dlopen on a
+          # device and at App Store validation (ITMS-90171): better a failed
+          # build.
+          loose=$(find "$python/app_packages" -name '*.dylib' -type f)
+          if [ -n "$loose" ]; then
+            echo "error: dynamic libraries left loose in the bundle, which iOS does not load: $loose"
+            exit 1
+          fi
     info:
       path: GammaIPad/Info.plist
       properties:

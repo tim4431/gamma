@@ -581,7 +581,7 @@ def _blank_pdf(path, pages=2):
 
 
 def test_view_pdf_page_renders_a_picture_for_the_model(org, monkeypatch, tmp_path):
-    """view_pdf_page rasterizes one page through pdfium: the picture rides
+    """view_pdf_page rasterizes one page through PyMuPDF: the picture rides
     on the chip as `images` (the loop moves it to the tool result), the text
     names the page and the count, and bad pages/pages without a PDF refuse."""
     c, ids = org

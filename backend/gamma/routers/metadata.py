@@ -960,7 +960,7 @@ def fetch_page_metadata(ws: str, block_id: str, actor: str, prompt: str = "", mo
                     tail = ""
         # The paper is being set up — index it now (background) so search,
         # the AI document map and the library-wide Ctrl+F don't wait for the
-        # first search to discover it. After our own head extraction: pdfium
+        # first search to discover it. After our own head extraction: PyMuPDF
         # is serialized behind one lock and the lookup needs its text now.
         _ensure_indexed(ws, doc_id)
 

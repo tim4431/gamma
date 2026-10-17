@@ -26,20 +26,32 @@ Who writes it: `storage.store_pdf` (imports, a PDF the fetch handoff held),
 `/api/clip` schedule it on a background thread the moment the file lands, so
 the first open finds it ready; the search indexer computes it while it has
 the file open anyway; and the endpoint computes it on demand for anything
-older, in pdfium, in FastAPI's threadpool (the route is a sync `def`). A walk
+older, in PyMuPDF, in FastAPI's threadpool (the route is a sync `def`). A walk
 already running for the document is joined, not repeated, so opening a book
 right after uploading it waits for the upload's own walk instead of queueing
-a second one behind the pdfium lock.
+a second one behind the PDF reader's lock.
 
 Every manifest walk is `pdf_text.page_sizes`, behind the same lock as text
-extraction. The lock is taken per page (and once each for the open and the
-close), not for the whole document, so a manifest walk runs between the
-pages of a book the search indexer is reading. Every page it opens is closed
-explicitly, inside the lock: pypdfium2 objects sit in reference cycles, so a
-page merely dropped would be closed by the cyclic GC later, on another
-thread, outside the lock, which crashes the server (`pdf_text.py` has the
-story; its `_serialize_finalizers` is the net). A file pdfium cannot read is
-stored with `pages: 0` so it is not parsed again on every open. The endpoint
+extraction ([ai_context.md](ai_context.md) "Extraction lock" has the lock's
+story). Each size is `page.rect`, the page box with `/Rotate` applied,
+divided by the page's `/UserUnit`: MuPDF folds that key into `page.rect`,
+pdf.js's scale-1 viewport (4.4.168) does not, and the manifest must be in the
+viewer's points (`pdf_text.user_unit`). MuPDF has the box once the page is
+loaded, without running its content stream, so
+the walk is cheap: 67 ms over a 484-page book and 44 ms over a 1,310-page
+one, where pdfium, which parsed each page for it, took 584 and 923 ms
+([research/pypdfium2-vs-pymupdf.md](../research/pypdfium2-vs-pymupdf.md)).
+The lock is taken per page (and once each for the open and the close), not
+for the whole document, so a manifest walk runs between the pages of a book
+the search indexer is reading. Every page it loads is dropped, and the
+document closed, explicitly inside the lock: PyMuPDF frees its objects by
+reference count, so that is the end of them, and nothing is finalized later
+on another thread (pypdfium2 closed its objects from weakref finalizers the
+cyclic GC ran on whatever thread allocated next, which crashed the server
+when that was inside another thread's call; the net `pdf_text.py` held for
+it, `_serialize_finalizers`, is gone). A file neither PyMuPDF nor the PyPDF2
+fallback can read is stored with `pages: 0` so it is not parsed again on
+every open. The endpoint
 sends that answer `no-store` and a real one with a day of `private` caching
 (a doc id is a content hash, its manifest never changes).
 

@@ -4,6 +4,7 @@ and the ``notes-pdf`` export mode end to end."""
 import io
 
 from conftest import make_folder, make_page, require_math_renderer, workspace_of, guest_name
+from test_pdf_export import _object_kinds, _open
 
 from gamma.note_markup import MATH, TEXT
 from gamma.pdf_document import PAGE_H, chunks, inline, render_document
@@ -29,21 +30,9 @@ def _highlight(bid, quote, note="", page=3, children=()):
 
 
 def _text(pdf_bytes, page=1):
-    import pypdfium2 as pdfium
-
-    doc = pdfium.PdfDocument(pdf_bytes)
+    doc = _open(pdf_bytes)
     try:
-        return doc[page - 1].get_textpage().get_text_bounded()
-    finally:
-        doc.close()
-
-
-def _object_kinds(pdf_bytes, page=1):
-    import pypdfium2 as pdfium
-
-    doc = pdfium.PdfDocument(pdf_bytes)
-    try:
-        return [o.type for o in doc[page - 1].get_objects(max_depth=1)]
+        return doc[page - 1].get_text("text")
     finally:
         doc.close()
 
@@ -172,12 +161,10 @@ def test_render_document_needs_no_pdf_and_paginates():
     comes out as a document rather than one overflowing sheet."""
     long_block = _block("b1", "paragraph text " * 60)
     pdf = render_document([_page("Long note", None, [long_block] * 12)])
-    import pypdfium2 as pdfium
-
-    doc = pdfium.PdfDocument(pdf)
+    doc = _open(pdf)
     try:
         assert len(doc) > 1
-        heights = {round(float(doc[i].get_size()[1])) for i in range(len(doc))}
+        heights = {round(doc[i].rect.height) for i in range(len(doc))}
     finally:
         doc.close()
     assert heights == {round(PAGE_H)}
@@ -273,9 +260,11 @@ def test_math_and_cjk_are_selectable_type3_text(guest):
     require_math_renderer()
     assert "α" in text and "∑" in text, "math glyphs should extract as text"
     assert b"/Type3" in pdf
-    # The title rule and the fraction bar are the only paths left on the page.
+    # The title rule and the fraction bar are the only paths left on the page;
+    # the rest is text: the title, the fraction, and three runs each (prose,
+    # the glyphs, prose) of the inline line and the CJK line.
     kinds = _object_kinds(pdf)
-    assert kinds.count(2) <= 3 and kinds.count(1) >= 10
+    assert kinds.count("path") <= 3 and kinds.count("text") >= 8
     if vector_text.cjk_font() is not None:
         assert "公式" in text
 
@@ -312,14 +301,13 @@ def test_pasted_images_are_embedded(guest):
     src = up.json()["url"]
     pdf = render_document([_page("With a picture", None, [_block("b1", f"look:\n![shot]({src})")])],
                           uploads_dir=ws_uploads_dir(workspace_of(guest_name())))
-    assert 3 in _object_kinds(pdf), "the pasted image should be drawn as a page image"
+    assert "image" in _object_kinds(pdf), "the pasted image should be drawn as a page image"
     assert src not in _text(pdf)
 
 
 def test_a_large_screenshot_with_alpha_is_embedded(guest):
     """A 6 MP RGBA screenshot, past the 2.5 MP the PNG decoder once took,
     is drawn as the picture, not its alt text."""
-    import pypdfium2 as pdfium
     from PIL import Image
 
     from gamma.db import ws_uploads_dir
@@ -333,13 +321,12 @@ def test_a_large_screenshot_with_alpha_is_embedded(guest):
     pdf = render_document([_page("Screenshot", None, [_block("b1", f"![a screenshot]({up.json()['url']})")])],
                           uploads_dir=ws_uploads_dir(workspace_of(guest_name())))
     assert "a screenshot" not in _text(pdf)
-    doc = pdfium.PdfDocument(pdf)
+    doc = _open(pdf)
     try:
         page = doc[0]
-        (image,) = [o for o in page.get_objects(max_depth=1) if o.type == 3]
-        left, bottom, right, top = image.get_bounds()
-        x, y = (left + right) / 2, page.get_height() - (bottom + top) / 2
-        colour = page.render(scale=1).to_pil().convert("RGB").getpixel((round(x), round(y)))
+        (image,) = page.get_image_info()
+        x0, y0, x1, y1 = image["bbox"]      # page space, top-left origin: the render's pixels
+        colour = page.get_pixmap(alpha=False).pixel(round((x0 + x1) / 2), round((y0 + y1) / 2))
     finally:
         doc.close()
     assert all(abs(a - b) <= 4 for a, b in zip(colour, (40, 90, 200)))

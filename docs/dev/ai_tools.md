@@ -237,8 +237,9 @@ A model that reads text only is offered neither this nor `view_ink`
 (`PICTURE_TOOLS`, [ai.md](ai.md#other-services)).
 
 The model's eyes on a PDF: `page_id` + 1-based `pdf_page` rasterize that
-page through pdfium (`pdf_text.render_page`, under the same lock as every
-other pdfium walk) with its longer side at `RENDER_MAX_SIDE` px (1568 —
+page through MuPDF (`pdf_text.render_page`, under the same lock as every
+other PyMuPDF call, the picture encoded outside it) with its longer side at
+`RENDER_MAX_SIDE` px (1568 —
 past that providers downscale anyway), JPEG through Pillow when it is
 installed, else a PNG written in-process. The result text names the page,
 the document's page count and the picture's size; the picture itself rides
@@ -255,7 +256,7 @@ returned by the tool calls above, in call order"; `ai_protocols/base.py`
 The armed prompt tells the model when a picture is worth its tokens
 (missing or garbled extracted text, a figure, handwriting) and to say when
 an answer was read from one. A page without a PDF, a page number past the
-end (the count is named) and a file pdfium can't open are refused in text.
+end (the count is named) and a file MuPDF can't open are refused in text.
 Its chip is 👁 "Looked at p. N of …", carrying `page_id` + `pdf_page` and
 `picture`, the `GET /api/ai/page-image/{page_id}?page=N` URL the expanded
 chip shows; the result names the same URL for the model to embed in its
@@ -282,8 +283,9 @@ Nothing is drawn by hand. Both paths reuse an export
   strokes as vectors.
 - **A PDF page** is that page on its own with the groups written on it as
   the annotated export's `/Ink` annotations
-  (`pdf_export.page_with_ink`). pdfium generates their appearance when it
-  renders, so highlighters stay translucent over the text. Ink imported
+  (`pdf_export.page_with_ink`), written without an appearance stream;
+  MuPDF synthesizes one when it renders, so highlighters stay translucent
+  over the text. Ink imported
   from the PDF and still embedded in it (`pdf_export.still_embedded`) is
   not added twice. When the PDF
   is missing or PyPDF2 cannot copy the page (an encrypted file), the

@@ -412,8 +412,9 @@ def draw_spans(ops, x: float, base: float, spans, size: float,
     # Glyph-only drawings that follow each other on the line (a run of CJK
     # characters, each its own span so lines can break between them, or an
     # inline symbol beside them) are emitted as ONE text run at absolute
-    # positions: extractors then see the string they are, and pdfium's
-    # page-level text-flow heuristic isn't fed a scatter of one-glyph objects.
+    # positions: extractors then see the string they are, and MuPDF's
+    # page-level text-flow heuristic (characters into lines, lines into
+    # blocks) isn't fed a scatter of one-glyph objects.
     pending = []
 
     def flush():

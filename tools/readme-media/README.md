@@ -172,7 +172,7 @@ node tools/readme-media/check-media.mjs collab
 An isolated server with the curated export in a shared workspace, "Quantum
 lab": Alex owns it, Maya and Sam edit. The shot needs `fig1cd.png` in
 `artifacts/readme-media/collab/`, Fig. 1c–d of the atom-arrays paper (pages
-render with the backend's pypdfium2). Only Alex's window is captured, at a 130%
+render with the backend's PyMuPDF). Only Alex's window is captured, at a 130%
 interface size; Maya and Sam are real sessions in a second browser, so their
 carets, name tags, row chips and avatars are Gamma's own. Alex and Maya type
 two questions into one list block, Maya on its first line so Maya's name tag sits

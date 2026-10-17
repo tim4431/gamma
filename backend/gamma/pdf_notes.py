@@ -6,12 +6,13 @@ every viewer. This module additionally draws each note as a small box placed in
 the nearest patch of *empty* page space, with a leader line back to its
 highlight.
 
-Empty space comes from the page's own content: pdfium reports a bounding box
-for every text run / path / image, which we rasterize into a coarse occupancy
-grid (display space, top-left origin, one cell = ``CELL`` pt). A summed-area
-table over that grid answers "is this candidate rectangle free?" in O(1), so a
-few thousand candidate positions per note can be scored and the cheapest one
-near the highlight kept. Boxes already placed are marked occupied too, so notes
+Empty space comes from the page's own content: MuPDF logs a bounding box for
+everything the page draws (text runs, paths, images, shadings, the annotations
+already written into it), which we rasterize into a coarse occupancy grid
+(display space, top-left origin, one cell = ``CELL`` pt). A summed-area table
+over that grid answers "is this candidate rectangle free?" in O(1), so a few
+thousand candidate positions per note can be scored and the cheapest one near
+the highlight kept. Boxes already placed are marked occupied too, so notes
 never collide with each other.
 
 Everything is laid out in display space (x right, y down, /Rotate applied) —
@@ -365,27 +366,131 @@ def _anchor_rect(pos, disp_w, disp_h):
     return (min(xs), min(ys), max(xs), max(ys))
 
 
-def _page_occupancy(pdfium_page, to_display, disp_w, disp_h) -> _Space:
-    """Everything the page already draws, as a display-space occupancy grid."""
+_BoundsLog = None
+
+
+def _bounds_log_class():
+    """The device class, built on first use: PyMuPDF is imported lazily."""
+    global _BoundsLog
+    if _BoundsLog is not None:
+        return _BoundsLog
+    from pymupdf import mupdf
+
+    def rect(r):
+        return (r.x0, r.y0, r.x1, r.y1)
+
+    class BoundsLog(mupdf.FzDevice2):
+        """What ``Page.get_bboxlog`` logs, with one difference: a shading is
+        bounded by the clip in force when it is painted. A shading has no
+        extent of its own (an axial or radial gradient fills the plane):
+        ``sh`` paints the current clip, and a path filled with a shading
+        pattern is clipped to the path first, so ``get_bboxlog``'s entry for
+        a gradient-filled box is the whole plane and the box would count as
+        free. MuPDF's device layer keeps the clip stack whichever callbacks
+        are hooked, so only the drawing ones are."""
+
+        def __init__(self, out):
+            super().__init__()
+            self.out = out
+            for name in ("fill_path", "stroke_path", "fill_text", "stroke_text",
+                         "ignore_text", "fill_shade", "fill_image", "fill_image_mask"):
+                getattr(self, "use_virtual_" + name)()
+
+        def fill_path(self, ctx, path, even_odd, ctm, *_):
+            self.out.append(("fill-path", rect(mupdf.ll_fz_bound_path(path, None, ctm))))
+
+        def stroke_path(self, ctx, path, stroke, ctm, *_):
+            self.out.append(("stroke-path", rect(mupdf.ll_fz_bound_path(path, stroke, ctm))))
+
+        def fill_text(self, ctx, text, ctm, *_):
+            self.out.append(("fill-text", rect(mupdf.ll_fz_bound_text(text, None, ctm))))
+
+        def stroke_text(self, ctx, text, stroke, ctm, *_):
+            self.out.append(("stroke-text", rect(mupdf.ll_fz_bound_text(text, stroke, ctm))))
+
+        def ignore_text(self, ctx, text, ctm, *_):
+            self.out.append(("ignore-text", rect(mupdf.ll_fz_bound_text(text, None, ctm))))
+
+        def fill_image(self, ctx, image, ctm, *_):
+            self.out.append(("fill-image", rect(mupdf.ll_fz_transform_rect(mupdf.fz_unit_rect, ctm))))
+
+        def fill_image_mask(self, ctx, image, ctm, *_):
+            self.out.append(("fill-imgmask", rect(mupdf.ll_fz_transform_rect(mupdf.fz_unit_rect, ctm))))
+
+        def fill_shade(self, ctx, shade, ctm, *_):
+            bound = mupdf.ll_fz_bound_shade(shade, ctm)
+            clip = mupdf.fz_device_current_scissor(self).internal()
+            self.out.append(("fill-shade", rect(mupdf.ll_fz_intersect_rect(bound, clip))))
+
+    _BoundsLog = BoundsLog
+    return BoundsLog
+
+
+def _bbox_log(doc, index: int) -> list:
+    """The drawing log for page ``index``, ``[(kind, (x0, y0, x1, y1))]`` in
+    the unrotated page's space, in points: the page run through the module's
+    own device (``_bounds_log_class``) the way ``get_bboxlog`` runs it,
+    ``pdf_text.unrotated`` for the run (a run under PyMuPDF's derotation
+    matrix instead would be off: that matrix is built from the raw crop
+    box's size, wrong on a crop box larger than the media box, which MuPDF
+    clips, and on a /UserUnit page). MuPDF scales the log by the page's
+    /UserUnit as it does page.rect, and the view box ``page_frame`` finds,
+    which the step back to user space is spelled out against, is in points
+    (``pdf_text.user_unit``), so the run's matrix takes the unit out. ``[]``
+    without a document or when the page will not load. The page object lives
+    only inside this call: PyMuPDF frees it with the reference, so there is
+    nothing to close."""
+    if doc is None:
+        return []
+    try:
+        from pymupdf import mupdf
+        page = doc[index]
+        scale = 1 / pdf_text.user_unit(page)
+        out = []
+        dev = _bounds_log_class()(out)
+        with pdf_text.unrotated(page):
+            mupdf.fz_run_page(page.this, dev, mupdf.FzMatrix(scale, 0, 0, scale, 0, 0), mupdf.FzCookie())
+            mupdf.fz_close_device(dev)
+        return out
+    except Exception:
+        return []
+
+
+def _page_occupancy(bounds, crop, to_display, disp_w, disp_h) -> _Space:
+    """Everything the page already draws, as a display-space occupancy grid.
+
+    ``bounds`` is the page's bbox log: one entry per drawing operation, form
+    XObjects flattened into the page's space, and the annotations' appearances
+    among them. So what ``annotate_pdf`` wrote before ``render_notes`` ran
+    counts as occupied too: the text boxes with either export switch, the
+    highlights and ink when the highlight layer is on (the notes-only export
+    has none of them in the bytes to keep clear of); pdfium's object walk saw
+    only the content stream. Invisible text (an OCR layer) draws nothing
+    visible and is skipped. A shading's entry is the clip it was painted
+    through (``_bbox_log``), so a gradient-filled box counts as occupied, as
+    pdfium's path bounds made it.
+
+    The log's space is the unrotated page's: origin at the view box's top-left
+    corner, y down. The step back to user space is spelled out against the
+    view box ``page_frame`` found rather than taken from
+    ``page.transformation_matrix``, which on a rotated page PyMuPDF replaces
+    with a bare flip that loses the crop box's offset. From user space the
+    frame's ``to_display`` takes over, as it does for the highlight rects."""
     space = _Space(disp_w, disp_h)
     area = disp_w * disp_h
     boxes = []
-    if pdfium_page is not None:
-        # max_depth=1: a form XObject's own bounds already cover its contents,
-        # and nested objects' bounds are in the form's space, not the page's.
-        for obj in pdfium_page.get_objects(max_depth=1):
-            try:
-                l, b, r, t = obj.get_bounds()
-            except Exception:
-                continue
-            x0, y0 = to_display(l, t)
-            x1, y1 = to_display(r, b)
-            box = (min(x0, x1), min(y0, y1), max(x0, x1), max(y0, y1))
-            if (box[2] - box[0]) * (box[3] - box[1]) > 0.6 * area:
-                continue        # page-sized background fill, not content
-            boxes.append(box)
+    cx0, _cy0, _cx1, cy1 = crop
+    for kind, (x0, y0, x1, y1) in bounds:
+        if kind == "ignore-text":
+            continue
+        ax, ay = to_display(x0 + cx0, cy1 - y0)
+        bx, by = to_display(x1 + cx0, cy1 - y1)
+        box = (min(ax, bx), min(ay, by), max(ax, bx), max(ay, by))
+        if (box[2] - box[0]) * (box[3] - box[1]) > 0.6 * area:
+            continue        # page-sized background fill, not content
+        boxes.append(box)
     if not boxes:
-        # No object info (pdfium failed, or a scanned page): assume the usual
+        # No drawing info (PyMuPDF failed, or a scanned page): assume the usual
         # text block is busy so notes still land in the margins.
         boxes = [(disp_w * 0.07, disp_h * 0.05, disp_w * 0.93, disp_h * 0.95)]
     for box in boxes:
@@ -422,20 +527,27 @@ def render_notes(pdf_bytes: bytes, notes, uploads_dir=None) -> tuple[bytes, int]
     if not by_page:
         return pdf_bytes, 0
 
-    # pdfium is not thread-safe: the whole walk holds pdf_text's lock, and
-    # every page is closed explicitly (pdf_text.py explains why).
+    # PyMuPDF is not thread-safe (its documentation says so): the whole walk
+    # holds pdf_text's lock, and the document is closed inside it. Every call
+    # into it holds the GIL, so the reads are one short call per page.
     with pdf_text._lock:
         return _draw_notes(pdf_bytes, writer, by_page, uploads_dir)
 
 
-def _draw_notes(pdf_bytes, writer, by_page, uploads_dir):
+def _open(pdf_bytes):
+    """The document for the occupancy read, or None: the notes then go in the
+    margins. Opened through pdf_text, which keeps MuPDF's own console chatter
+    off and counts a file whose password the empty-password try did not
+    satisfy as unreadable, as it does for the text."""
     try:
-        import pypdfium2 as pdfium
-        doc = pdfium.PdfDocument(pdf_bytes)
+        return pdf_text._mupdf_open(pdf_bytes)
     except Exception as e:
-        log.warning(f"[pdf-notes] pdfium open failed ({e}); placing notes in the margins")
-        doc = None
+        log.warning(f"[pdf-notes] PyMuPDF open failed ({e}{pdf_text._mupdf_warnings()}); placing notes in the margins")
+        return None
 
+
+def _draw_notes(pdf_bytes, writer, by_page, uploads_dir):
+    doc = _open(pdf_bytes)
     images = XObjectStore(writer, uploads_dir)
     glyphs = GlyphFonts(writer)
     drawn = 0
@@ -444,18 +556,7 @@ def _draw_notes(pdf_bytes, writer, by_page, uploads_dir):
             # The frame the highlight rects are stored in, as the annotations use it.
             crop, rotation = page_frame(writer.pages[page_num - 1])
             (disp_w, disp_h), matrix, to_display = _frame(crop, rotation)
-
-            pdfium_page = None
-            if doc is not None:
-                try:
-                    pdfium_page = doc[page_num - 1]
-                except Exception:
-                    pdfium_page = None
-            try:
-                space = _page_occupancy(pdfium_page, to_display, disp_w, disp_h)
-            finally:
-                if pdfium_page is not None:
-                    pdfium_page.close()
+            space = _page_occupancy(_bbox_log(doc, page_num - 1), crop, to_display, disp_w, disp_h)
 
             placements = []
             for items, pos, color in entries:

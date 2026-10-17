@@ -556,7 +556,9 @@ only); `GAMMA_SHELL_NO_UPDATE=1` disables the updater.
   sets env before importing gamma, serves the bundled `frontend_dist`).
 - `build_backend.py` — PyInstaller onedir freeze into
   `dist-backend/gamma-server/` (collects uvicorn's string-resolved modules,
-  pypdfium2's native lib, ziamath/ziafont fonts, and `frontend/dist`).
+  PyMuPDF's native libraries — MuPDF and its C++ wrapper beside the
+  extension module, `--collect-binaries pymupdf`, about 40 MB of the bundle —
+  ziamath/ziafont fonts, and `frontend/dist`).
   Handles conda-based interpreters by adding `<base>/Library/bin` to the
   DLL search path.
 - `assets/icon.png` — app icon (512 px, the favicon mark; electron-builder

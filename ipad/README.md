@@ -138,11 +138,14 @@ bash ipad/scripts/build-python.sh --check   # only check that every pin resolves
 In the build, a post-build phase copies the server code, the web app and
 the platform's wheels into the bundle, then runs the support package's
 `install_python`, which adds the standard library and makes each native
-module a signed framework. Unsigned builds sign those ad hoc.
+module a signed framework. PyMuPDF's two MuPDF libraries come as plain
+dylibs, which `install_python` leaves where they are, so a step of our own
+makes them frameworks the same way
+([docs/research/pymupdf-ios.md](../docs/research/pymupdf-ios.md)).
+Unsigned builds sign all of those ad hoc.
 
 `python/requirements-ios.txt` is `backend/requirements.txt` with the
-changes an iOS wheel needs, each commented there; why each was made, and
-what going without `pypdfium2` costs, is in
+changes an iOS wheel needs, each commented there; why each was made is in
 [docs/dev/ipad.md "The wheels"](../docs/dev/ipad.md#the-wheels).
 
 ## Tests
@@ -157,8 +160,10 @@ what going without `pypdfium2` costs, is in
 
   It covers the pure parts (`BridgeTests`, `CloudSignInTests`,
   `PencilTests`, `ShellTests`, `ServerTests`), and `LocalServerStartTests`
-  starts the embedded server and waits for `/api/health`, so it needs the
-  Python step to have run.
+  starts the embedded server, waits for `/api/health`, then uploads a
+  one-page PDF and reads it back through the server, its page picture
+  included, which only PyMuPDF can draw: the bundle's MuPDF frameworks
+  are proved there. It needs the Python step to have run.
 - Without a Mac: `backend/tests/test_ios_requirements.py` (the iOS
   requirements keep up with the server's), a unit test for `host.js`, and
   the `ipad` browser group. The group fakes the host and checks that a
@@ -170,5 +175,5 @@ what going without `pypdfium2` costs, is in
   an unsigned device build on macOS: `.github/workflows/ipad.yml`
   ([docs/dev/github_actions.md](../docs/dev/github_actions.md#ipadyml)).
 
-What is not built yet (background running, a store release, pypdfium2)
-is listed in [docs/dev/ipad.md](../docs/dev/ipad.md#not-built-yet).
+What is not built yet (background running, a store release) is listed in
+[docs/dev/ipad.md](../docs/dev/ipad.md#not-built-yet).

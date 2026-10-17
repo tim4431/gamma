@@ -6,13 +6,13 @@
 # at the server's pin. backend/tests/test_ios_requirements.py fails when the
 # server gains a dependency this file does not decide on.
 #
-# Left out: pypdfium2 (no iOS wheel anywhere). Every pdfium import in the
-# server is guarded: gamma/pdf_text.py falls back to PyPDF2, so PDF text
-# still works with worse word spacing; exported notes go in the margins
-# (pdf_notes.py) and the Logseq export leaves out area-highlight images.
-# Page images for the AI and MCP are unavailable: pdf_text.render_page
-# answers (None, 0) without pdfium, so the AI's page and region pictures
-# (ai_tools, ai_pictures, ai_context) and MCP's view_pdf_page get none.
+# Nothing is left out. The PDF reader, PyMuPDF, has an iOS build on Flet's
+# index, so the server on the iPad reads PDFs as every other server does:
+# page text with each glyph's box (quotes drawn under the words), page and
+# region pictures for the AI and MCP, exported notes placed in a page's
+# free space, area pictures in the Logseq export, and the base-14 fonts
+# and a CJK fallback built into the library, so a PDF whose fonts are not
+# embedded renders without system fonts.
 
 fastapi==0.136.0
 # Flet's newest cp313 iOS build; 3.12.0 (the server's) has none.
@@ -30,6 +30,11 @@ bcrypt==5.0.0
 # server's 2.13.2 needs 2.46.2, and 2.14.x needs 2.50.x, which it has not).
 pydantic==2.13.4
 PyPDF2==3.0.1
+# Flet's newest iOS build; the server pins 1.28.2. The wheel carries MuPDF
+# as two dylibs beside the extension modules, which the app's post-build
+# step turns into frameworks of their own (ipad/project.yml,
+# docs/research/pymupdf-ios.md).
+PyMuPDF==1.27.2.3
 python-multipart==0.0.26
 fractional-indexing==0.1.3
 ziamath==0.13

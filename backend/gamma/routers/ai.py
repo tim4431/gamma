@@ -291,7 +291,7 @@ def _search_index_status(ws: str, doc_id: str) -> dict:
             "index_stale": bool(row and row[0] != INDEX_VERSION)}
 
 
-# Sync def: extraction runs in the threadpool (pdfium stops at the sample cap).
+# Sync def: extraction runs in the threadpool (PyMuPDF stops at the sample cap).
 @router.get("/pdf-text-status")
 def pdf_text_status(doc_id: str, request: Request, preview: int = 0):
     """Whether a doc's PDF yields extractable text and whether the search
@@ -334,7 +334,7 @@ def _region_box(box: str):
     return parsed
 
 
-# Sync def: pdfium renders in the threadpool.
+# Sync def: PyMuPDF renders in the threadpool.
 @router.get("/ai/selection-crop/{doc_id}")
 def selection_crop(doc_id: str, request: Request, page: int, box: str):
     """The picture of a selected region a chat message sent the model, drawn
@@ -376,7 +376,7 @@ def ai_picture_upload(request: Request, file: UploadFile = File(...)):
     return stored
 
 
-# Sync defs: pdfium renders in the threadpool.
+# Sync defs: PyMuPDF renders in the threadpool.
 @router.get("/ai/page-image/{page_id}")
 def page_image(page_id: str, request: Request, page: int, box: str = "", ink: int = 0):
     """A PDF page of the page ``page_id`` as a picture, or its region

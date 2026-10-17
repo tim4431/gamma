@@ -35,9 +35,13 @@ def _notes(ws, page_id):
 
 
 def _pdf_text(data):
-    import pypdfium2 as pdfium
-    doc = pdfium.PdfDocument(data)
-    return "\n".join(doc[i].get_textpage().get_text_range() for i in range(len(doc)))
+    """The text of every page, in order."""
+    import pymupdf
+    doc = pymupdf.open(stream=data, filetype="pdf")
+    try:
+        return "\n".join(page.get_text("text") for page in doc)
+    finally:
+        doc.close()
 
 
 def test_a_new_account_starts_with_the_welcome_page_and_its_pdf():

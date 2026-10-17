@@ -10,9 +10,9 @@ from gamma.pdf_export import annotate_pdf, parse_css_color
 PAGE_W, PAGE_H = 612, 792
 
 
-def _blank_pdf(pages=1, rotate=0, crop=None):
+def _blank_pdf(pages=1, rotate=0, crop=None, user_unit=None):
     from PyPDF2 import PdfWriter
-    from PyPDF2.generic import NameObject, RectangleObject
+    from PyPDF2.generic import NameObject, NumberObject, RectangleObject
 
     w = PdfWriter()
     for i in range(pages):
@@ -21,6 +21,8 @@ def _blank_pdf(pages=1, rotate=0, crop=None):
             w.pages[i][NameObject("/CropBox")] = RectangleObject(crop)
         if rotate:
             w.pages[i].rotate(rotate)
+        if user_unit:
+            w.pages[i][NameObject("/UserUnit")] = NumberObject(user_unit)
     buf = io.BytesIO()
     w.write(buf)
     return buf.getvalue()
@@ -30,6 +32,33 @@ def _blank_png(width, height):
     from gamma.logseq_graph_export import _encode_png
 
     return _encode_png(width, height, [bytes([200, 210, 220]) * width for _ in range(height)])
+
+
+def _page_drawing(content: bytes, shading=False, **blank):
+    """``_blank_pdf(**blank)`` with ``content`` as the page's content stream
+    and, with ``shading``, an axial gradient in its resources: ``/Sh0`` for
+    ``sh``, ``/P0`` as a shading pattern."""
+    import pymupdf
+
+    doc = pymupdf.open(stream=_blank_pdf(**blank), filetype="pdf")
+    try:
+        page = doc[0]
+        stream = doc.get_new_xref()
+        doc.update_object(stream, "<< >>")
+        doc.update_stream(stream, content)
+        doc.xref_set_key(page.xref, "Contents", f"{stream} 0 R")
+        if shading:
+            sh = doc.get_new_xref()
+            doc.update_object(sh, "<< /ShadingType 2 /ColorSpace /DeviceRGB /Coords [200 0 300 0]"
+                                  " /Function << /FunctionType 2 /Domain [0 1] /C0 [1 0 0] /C1 [0 0 1] /N 1 >>"
+                                  " /Extend [true true] >>")
+            pattern = doc.get_new_xref()
+            doc.update_object(pattern, f"<< /PatternType 2 /Shading {sh} 0 R >>")
+            doc.xref_set_key(page.xref, "Resources",
+                             f"<< /Shading << /Sh0 {sh} 0 R >> /Pattern << /P0 {pattern} 0 R >> >>")
+        return doc.tobytes()
+    finally:
+        doc.close()
 
 
 def _position(page=1, x1=100, y1=72, x2=300, y2=92, w=PAGE_W, h=PAGE_H, extra_rects=None):
@@ -322,27 +351,61 @@ def test_import_annotations_strip_rewrites_pdf(guest):
     assert subtypes == ["/Highlight", "/Square"]
 
 
-def _page_text(pdf_bytes, page=1):
-    import pypdfium2 as pdfium
+def _open(pdf_bytes):
+    """The PDF opened with MuPDF; close it when done."""
+    import pymupdf
 
-    doc = pdfium.PdfDocument(pdf_bytes)
+    return pymupdf.open(stream=pdf_bytes, filetype="pdf")
+
+
+def _page_text(pdf_bytes, page=1):
+    """The text of the page's own content. MuPDF reads the text in the
+    annotations' appearances too (a /FreeText box's), which is not what
+    the export painted, so they come off this in-memory copy first."""
+    doc = _open(pdf_bytes)
     try:
-        tp = doc[page - 1].get_textpage()
-        try:
-            return tp.get_text_bounded() or ""
-        finally:
-            tp.close()
+        pdf_page = doc[page - 1]
+        for annot in list(pdf_page.annots()):
+            pdf_page.delete_annot(annot)
+        return pdf_page.get_text("text")
+    finally:
+        doc.close()
+
+
+# What MuPDF logs a page drawing, by kind. A text entry is one run in one
+# font (not one per Tj, as pdfium counted), an image mask is an image, and
+# the clips and invisible text it also logs are not drawing.
+_KINDS = {"fill-text": "text", "stroke-text": "text", "fill-path": "path", "stroke-path": "path",
+          "fill-image": "image", "fill-imgmask": "image", "fill-shade": "shading"}
+
+
+def _object_kinds(pdf_bytes, page=1):
+    """The kind of each object drawn on the page, in drawing order: "text",
+    "path", "image" or "shading"."""
+    doc = _open(pdf_bytes)
+    try:
+        return [_KINDS[kind] for kind, _rect in doc[page - 1].get_bboxlog() if kind in _KINDS]
     finally:
         doc.close()
 
 
 def _text_boxes(pdf_bytes, page=1):
-    """(left, bottom, right, top) of every text object drawn on the page."""
-    import pypdfium2 as pdfium
+    """(left, bottom, right, top) in PDF user space of every run of text
+    drawn on the page, the annotations' appearances included."""
+    import pymupdf
 
-    doc = pdfium.PdfDocument(pdf_bytes)
+    from gamma import pdf_text
+
+    doc = _open(pdf_bytes)
     try:
-        return [o.get_bounds() for o in doc[page - 1].get_objects(max_depth=1) if o.type == 1]
+        pdf_page = doc[page - 1]
+        # The log comes in the unrotated page's space, and only there does
+        # the page's matrix take it back to user space whole (pdf_text.unrotated).
+        with pdf_text.unrotated(pdf_page):
+            to_user = ~pdf_page.transformation_matrix
+            log = pdf_page.get_bboxlog()
+        return [tuple(pymupdf.Rect(rect) * to_user) for kind, rect in log
+                if kind in ("fill-text", "stroke-text")]
     finally:
         doc.close()
 
@@ -390,6 +453,85 @@ def test_render_notes_on_rotated_page():
     assert "rotated note" in _page_text(out)
     for left, bottom, right, top in _text_boxes(out):
         assert 0 <= left and right <= PAGE_W and 0 <= bottom and top <= PAGE_H
+
+
+def _near(box, expected, tolerance=1.0):
+    return all(abs(a - b) < tolerance for a, b in zip(box, expected))
+
+
+def test_bbox_log_is_in_points_on_a_user_unit_page():
+    """MuPDF scales its drawing log by /UserUnit as it does page.rect; the
+    view box page_frame finds, which _page_occupancy maps the log back to
+    user space against, is in points. _bbox_log divides the unit out: a
+    rectangle drawn at user (50,60)-(150,90) on a /UserUnit 2 page logs
+    where an unscaled page's would, and marks the grid there, not twice as
+    far out (off the page, where nothing would have been marked)."""
+    from gamma.pdf_notes import _bbox_log, _frame, _page_occupancy
+
+    doc = _open(_page_drawing(b"50 60 100 30 re f", user_unit=2))
+    try:
+        [(kind, box)] = _bbox_log(doc, 0)
+    finally:
+        doc.close()
+    assert kind == "fill-path" and _near(box, (50, 702, 150, 732))
+    crop = (0, 0, PAGE_W, PAGE_H)
+    (disp_w, disp_h), _matrix, to_display = _frame(crop, 0)
+    space = _page_occupancy([(kind, box)], crop, to_display, disp_w, disp_h)
+    assert space.occupied(50, 702, 150, 732) > 0
+    assert space.occupied(400, 100, 500, 200) == 0
+
+
+def test_a_gradient_filled_box_counts_as_occupied():
+    """A shading has no extent of its own: ``sh`` paints the clip in force,
+    and a shading-pattern fill clips to its path first, so MuPDF's own bbox
+    log gives a gradient-filled box the whole plane, which the occupancy
+    read skips as a background fill. _bbox_log's device bounds the shading
+    by its clip instead: the box logs its own bounds (an unclipped ``sh``
+    still the plane), and a note anchored on it moves off it, exactly where
+    it goes for the same box filled flat, instead of sitting on the
+    gradient."""
+    from gamma.pdf_notes import _bbox_log, render_notes
+
+    dot = b"0 0 0 rg 20 20 5 5 re f "  # something far away: a page with an empty log falls back to the margins
+    pages = {
+        "flat": _page_drawing(dot + b"0.8 0.8 0.8 rg 200 200 100 100 re f"),
+        "pattern": _page_drawing(dot + b"/Pattern cs /P0 scn 200 200 100 100 re f", shading=True),
+        "clipped": _page_drawing(dot + b"q 200 200 100 100 re W n /Sh0 sh Q", shading=True),
+        "unclipped": _page_drawing(dot + b"/Sh0 sh", shading=True),
+        "none": _page_drawing(dot),
+    }
+
+    def log(name):
+        doc = _open(pages[name])
+        try:
+            return _bbox_log(doc, 0)[1:]  # after the dot's entry
+        finally:
+            doc.close()
+
+    box = (200, 492, 300, 592)  # user (200,200)-(300,300), top-left origin
+    for name, kind in (("flat", "fill-path"), ("pattern", "fill-shade"), ("clipped", "fill-shade")):
+        [(logged, bounds)] = log(name)
+        assert logged == kind and _near(bounds, box), name
+    [(kind, plane)] = log("unclipped")
+    assert kind == "fill-shade" and plane[0] < -1e9 and plane[2] > 1e9
+    assert log("none") == []
+
+    # The highlight sits on the box (a note on a figure's legend).
+    pos = _position(x1=210, y1=500, x2=290, y2=520)
+
+    def text_boxes(name):
+        out, drawn = render_notes(pages[name], [{"position": pos, "note": "the legend's note"}])
+        assert drawn == 1
+        return [tuple(round(v, 2) for v in b) for b in _text_boxes(out)]
+
+    def on_the_box(boxes):
+        return any(left < 300 and 200 < right and bottom < 300 and 200 < top
+                   for left, bottom, right, top in boxes)
+
+    assert on_the_box(text_boxes("none")), "with nothing drawn there, the box is where the note goes"
+    beside = text_boxes("flat")
+    assert beside and not on_the_box(beside)
+    assert text_boxes("pattern") == beside and text_boxes("clipped") == beside
 
 
 def test_export_pdf_notes_mode(guest):
@@ -454,7 +596,6 @@ def test_export_pdf_highlights_switch(guest):
 def test_render_notes_draws_math_and_images(guest):
     """A note is markdown with LaTeX and image refs, not plain text: the box
     typesets the math as vector paths and draws the picture, never the source."""
-    import pypdfium2 as pdfium
     from gamma.db import ws_uploads_dir
     from gamma.pdf_notes import render_notes
 
@@ -469,29 +610,23 @@ def test_render_notes_draws_math_and_images(guest):
     }], uploads_dir=ws_uploads_dir(workspace_of(guest_name())))
     assert drawn == 1
 
-    doc = pdfium.PdfDocument(out)
-    try:
-        page = doc[0]
-        text = page.get_textpage().get_text_bounded()
-        kinds = [o.type for o in page.get_objects(max_depth=1)]
-    finally:
-        doc.close()
+    text, kinds = _page_text(out), _object_kinds(out)
     assert "weight" in text and "over" in text
     assert "\\phi" not in text and "\\frac" not in text and src not in text
-    assert 3 in kinds, "the note's image should be drawn as a page image"
+    assert "image" in kinds, "the note's image should be drawn as a page image"
     # The glyphs are Type 3 text, so they extract as characters; the box
-    # chrome (4 paths) and the fraction bar are all that is drawn as paths.
+    # chrome (the leader line and its dot, the fill and the border: 4 paths)
+    # and the fraction bar are all that is drawn as paths.
     require_math_renderer()
     assert "ϕ" in text and "∑" in text, "math glyphs should extract as text"
     assert b"/Type3" in out
-    assert kinds.count(2) <= 6
+    assert kinds.count("path") <= 5
 
 
 def test_render_notes_draws_cjk_without_relying_on_the_viewer():
     """CJK goes in as outlines when a font is installed — the non-embedded CID
     font only works where the viewer can substitute one (pdf.js can't), which
     is how notes ended up as latin gibberish."""
-    import pypdfium2 as pdfium
     from gamma import vector_text
     from gamma.pdf_notes import render_notes
 
@@ -500,25 +635,19 @@ def test_render_notes_draws_cjk_without_relying_on_the_viewer():
         "note": "Bayes 公式是: ok",
     }])
     assert drawn == 1
-    doc = pdfium.PdfDocument(out)
-    try:
-        kinds = [o.type for o in doc[0].get_objects(max_depth=1)]
-        text = doc[0].get_textpage().get_text_bounded()
-    finally:
-        doc.close()
+    kinds, text = _object_kinds(out), _page_text(out)
     assert "Bayes" in text
     assert any("一" <= c <= "鿿" for c in text), "the characters stay text either way"
     if vector_text.cjk_font() is not None:
         # The outlines travel inside a Type 3 font: text, and no viewer font
         # needed. Only the 4 paths of box chrome remain.
         assert b"/Type3" in out
-        assert kinds.count(2) <= 4, "CJK glyphs should be text, not paths"
+        assert kinds.count("path") <= 4, "CJK glyphs should be text, not paths"
 
 
 def test_render_notes_falls_back_when_math_renderer_is_missing(monkeypatch):
     """Without ziamath the box must still say something sensible — the unicode
     approximation — rather than dropping the expression."""
-    import pypdfium2 as pdfium
     from gamma import pdf_notes, vector_text
 
     vector_text.math.cache_clear()
@@ -528,11 +657,7 @@ def test_render_notes_falls_back_when_math_renderer_is_missing(monkeypatch):
         "note": "ratio $\\frac{\\alpha}{\\beta}$ here",
     }])
     assert drawn == 1
-    doc = pdfium.PdfDocument(out)
-    try:
-        text = doc[0].get_textpage().get_text_bounded()
-    finally:
-        doc.close()
+    text = _page_text(out)
     assert "α/β" in text and "ratio" in text
 
 
