@@ -7,11 +7,11 @@
 // (mdScan.js) locate the nth rendered construct so the components can
 // address "their" source range without a position map from the renderer.
 import React, { useEffect, useRef, useState, useSyncExternalStore } from "react";
-import { createPortal } from "react-dom";
 import { parseTable, scanImages, scanTables, serializeTable } from "./mdScan";
 import { ContextMenu, MenuItem } from "../shared/ui/Menus";
 import { ObjectMenuButton, useObjectMenu } from "./MdObject";
 import { doublePress } from "../shared/ui/press.js";
+import { Lightbox } from "../shared/ui/Lightbox";
 import { ResizeGrips, useDragResize } from "../shared/ui/ResizeGrip";
 import { Segmented } from "../settings/SettingsKit";
 import { t } from "../shared/i18n/i18n.js";
@@ -184,12 +184,12 @@ export function tsvToMarkdown(text) {
 
 // ------------------------------------------------------------------ MdImage
 
-// A rendered ![alt](url), centred on its row: click zooms (lightbox), and
+// A rendered ![alt](url), centred on its row: click zooms (shared/ui/Lightbox), and
 // with onEdit a hover toolbar (caption / download / delete) plus a drag grip
 // on each side that writes the `|width` back into the source. The alt text doubles as a visible
 // caption, Obsidian-style — no new syntax. Spans only: images live inside <p>.
 export function MdImage({ src, alt, width, idx, onEdit }) {
-  const [lightbox, setLightbox] = useState(false);
+  const [zoomed, setZoomed] = useState(false);
   const [caption, setCaption] = useState(null); // null | draft text
   const imgRef = useRef(null);
   const { dragW, gripProps } = useDragResize({
@@ -203,13 +203,6 @@ export function MdImage({ src, alt, width, idx, onEdit }) {
     },
     onCommit: (w) => onEdit(idx, "width", w),
   });
-
-  useEffect(() => {
-    if (!lightbox) return;
-    const onKey = (e) => { if (e.key === "Escape") setLightbox(false); };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [lightbox]);
 
   const stop = (e) => e.stopPropagation();
   const w = dragW != null ? dragW : (width ? Number(width) : null);
@@ -232,13 +225,13 @@ export function MdImage({ src, alt, width, idx, onEdit }) {
           // Editable: the press selected the object (its frame) and a drag
           // moves it, so zoom is a double-click or double tap (or the
           // toolbar). Read-only: a click zooms.
-          onClick={onEdit ? undefined : (e) => { e.stopPropagation(); setLightbox(true); }}
-          {...doublePress(onEdit ? (e) => { e.stopPropagation(); setLightbox(true); } : null)}
+          onClick={onEdit ? undefined : (e) => { e.stopPropagation(); setZoomed(true); }}
+          {...doublePress(onEdit ? (e) => { e.stopPropagation(); setZoomed(true); } : null)}
         />
         {onEdit ? (
           <span className="mdImgTools" onMouseDown={stop} onClick={stop}>
             <button type="button" className="ctlBtn" title={t("Zoom")}
-              onClick={() => setLightbox(true)}><ZoomInIcon /></button>
+              onClick={() => setZoomed(true)}><ZoomInIcon /></button>
             <button type="button" className="ctlBtn" title={alt ? t("Edit caption") : t("Add caption")}
               onClick={() => setCaption(alt || "")}><CaptionIcon /></button>
             <a className="ctlBtn" title={t("Download")} href={src} download><DownloadIcon /></a>
@@ -268,18 +261,7 @@ export function MdImage({ src, alt, width, idx, onEdit }) {
       ) : alt ? (
         <span className="mdImgCaption">{alt}</span>
       ) : null}
-      {lightbox
-        ? createPortal(
-          <div
-            className="mdLightbox"
-            onMouseDown={stop}
-            onClick={(e) => { e.stopPropagation(); setLightbox(false); }}
-          >
-            <img src={src} alt={alt || ""} draggable={false} />
-            {alt ? <div className="mdLightboxCaption">{alt}</div> : null}
-          </div>,
-          document.body)
-        : null}
+      {zoomed ? <Lightbox src={src} alt={alt || ""} caption={alt} onClose={() => setZoomed(false)} /> : null}
     </span>
   );
 }

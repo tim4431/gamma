@@ -57,7 +57,7 @@ export function shownSvg(markup, { width, height, background = null }) {
 }
 
 // The first opaque background behind an element, as computed.
-function shownBackground(el) {
+export function shownBackground(el) {
   for (let node = el; node?.nodeType === 1; node = node.parentElement) {
     const color = getComputedStyle(node).backgroundColor;
     if (color && color !== "transparent" && !/^rgba\(.*,\s*0\)$/.test(color)) return color;

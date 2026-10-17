@@ -10026,7 +10026,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           </button>
           {openPopover === "user" ? (
             <MenuScope className="popover userPopover" data-guide="account.menu">
-              <div className="userCard" data-guide="account.card">
+              {/* The card is the way into your account: Settings → Account & sync. */}
+              <button type="button" className="userCard" data-guide="account.card"
+                onClick={() => openSettingsPane("account")} title={t("Account & sync")}>
                 <span className="userAvatar" aria-hidden="true">
                   {authUser.is_guest
                     ? <UserIcon size={20} />
@@ -10046,7 +10048,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                     {quotaInfo.quota_mb ? ` / ${fmtBytes(quotaInfo.quota_mb * 1024 * 1024)}` : ""}
                   </span>
                 ) : null}
-              </div>
+              </button>
               {authUser.is_guest ? (
                 <div className="popoverHint">{t("Your work stays until then, or until you log out; then the workspace is deleted with everything in it. Ask the admin for an account to keep your work.")}</div>
               ) : null}

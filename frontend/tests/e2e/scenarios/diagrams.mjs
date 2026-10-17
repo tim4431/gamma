@@ -110,6 +110,20 @@ const setTheme = (page, theme) => page.evaluate((value) => {
 
 export async function diagramScenarios(env) {
   const { server, browser, alice, step, until, assert, assertEq, assertNoProblems, openPage } = env;
+  // The open lightbox's picture: one SVG document, drawn, that fills the
+  // window (94% of its width or 90% of its height, shared/ui/Lightbox.jsx)
+  // at the figure's shape. Returns its markup.
+  async function zoomedDrawing(page, ratio) {
+    const img = page.locator(".lightbox img");
+    await img.waitFor();
+    await until(() => drawn(img), { what: "the zoomed drawing loads" });
+    const box = await img.boundingBox();
+    const { width, height } = page.viewportSize();
+    assert(Math.abs(box.width - width * 0.94) < 2 || Math.abs(box.height - height * 0.9) < 2,
+      `the zoomed drawing fills the window: ${box.width}x${box.height} in ${width}x${height}`);
+    if (ratio) assert(Math.abs(box.width / box.height - ratio) < 0.02, `the drawing keeps its shape: ${box.width}x${box.height}`);
+    return imageMarkup(img);
+  }
   await step("diagrams: mermaid in notes, slash command, source, SVG, themes and Markdown round trip", async () => {
     const imported = await alice.upload("/api/import/markdown", Buffer.from(
       [fence(flow), fence(sequence), fence("this is not a diagram"), "```js\nconst normal = 1;\n```"].join("\n\n"),
@@ -139,6 +153,14 @@ export async function diagramScenarios(env) {
       const download = await downloadEvent;
       const svg = await readFile(await download.path(), "utf8");
       assert(svg.includes("<svg") && svg.includes("Finish"), "SVG download contains the diagram");
+      // Zoom, like a note image's: the figure fills the window in a
+      // lightbox; a press on it closes it and reaches nothing underneath.
+      const shape = await first.locator(".diagramSvg > svg").boundingBox();
+      await first.getByRole("button", { name: "Zoom", exact: true }).click();
+      assert((await zoomedDrawing(page, shape.width / shape.height)).includes("Finish"), "the zoomed figure keeps its labels");
+      await page.locator(".lightbox").click();
+      await page.locator(".lightbox").waitFor({ state: "detached" });
+      assertEq(await page.locator(".blockEditorCm").count(), 0, "closing the zoom does not start editing");
 
       const initialTheme = await page.evaluate(() => document.documentElement.dataset.theme);
       for (const theme of initialTheme === "light" ? ["dark", "light"] : ["light", "dark"]) {
@@ -171,6 +193,7 @@ export async function diagramScenarios(env) {
       await page.locator(".diagramPreview").click();
       await page.locator(".mdObject-diagram.mdObjectSelected").waitFor();
       assertEq(await page.locator(".blockEditorCm").count(), 0, "a click on the diagram selects it instead of opening the editor");
+      assertEq(await page.locator(".lightbox").count(), 0, "a click in an editable note selects, the toolbar zooms");
       await page.locator(".diagramPreview").dblclick();
       await page.locator(".blockEditorCm .cm-content").waitFor();
       assert((await page.locator(".blockEditorCm .cm-content").innerText()).includes("flowchart"),
@@ -233,9 +256,27 @@ export async function diagramScenarios(env) {
         [fence("invalid diagram"), fence(sequence), fence(untrusted)].join("\n\n"));
       await until(async () => await page.locator(".diagramSvg > svg").count() === 3);
       await page.locator(".diagramError").waitFor();
-      assertEq(await page.locator(".diagramPreview").last().locator("a, script, [onerror], [onclick]").count(), 0,
+      const untrustedPreview = page.locator(".diagramPreview").last();
+      assertEq(await untrustedPreview.locator("a, script, [onerror], [onclick]").count(), 0,
         "diagram directives cannot enable links or unsafe HTML");
+      // A label's HTML (that <img>) comes out of Mermaid as HTML, not XML:
+      // the figure still draws whole, with no XML error in it, and zooms.
+      assert(!(await untrustedPreview.innerText()).includes("This page contains the following errors"), "no XML error in the figure");
+      assertEq(await untrustedPreview.locator("parsererror").count(), 0);
+      const untrustedSvg = untrustedPreview.locator(".diagramSvg > svg");
+      const untrustedShape = await untrustedSvg.boundingBox();
+      await untrustedSvg.click();
+      assert((await zoomedDrawing(page, untrustedShape.width / untrustedShape.height)).includes("Safe"), "the figure zooms whole");
+      await page.keyboard.press("Escape");
+      await page.locator(".lightbox").waitFor({ state: "detached" });
       assertEq(await page.locator(".diagramSvg > svg").first().getAttribute("id"), firstId, "streaming leaves completed SVG mounted");
+      // A reply's figure zooms on a click, on the card's background.
+      const figure = page.locator(".diagramSvg > svg").first();
+      const shape = await figure.boundingBox();
+      await figure.click();
+      const zoomed = await zoomedDrawing(page, shape.width / shape.height);
+      assert(zoomed.includes("Finish") && /<svg[^>]*background-color: rgb/.test(zoomed), "the zoomed flowchart on its page's colour");      await page.keyboard.press("Escape");
+      await page.locator(".lightbox").waitFor({ state: "detached" });
       assertNoProblems(page);
     } finally { await ctx.close(); }
   });
@@ -430,6 +471,12 @@ export async function diagramScenarios(env) {
       assertEq(await page.locator("[id='arrow']").count(), 0);
       assertEq(await page.locator(".diagramFigure svg").count(), 0);
       assertEq(await page.evaluate(() => window.svgRan), undefined);
+      // A click zooms the drawing: the same sanitized drawing on its white page.
+      await images.first().click();
+      const zoomed = await zoomedDrawing(page, 320 / 200);
+      assert(zoomed.includes('<marker id="arrow"') && zoomed.includes("background-color: rgb(255, 255, 255)") && !/script|onload/.test(zoomed),
+        `the zoomed drawing is the sanitized one, white: ${zoomed.slice(0, 200)}`);      await page.locator(".lightbox").click();
+      await page.locator(".lightbox").waitFor({ state: "detached" });
       const copied = await page.locator(".diagramCard").first().locator("xpath=..").evaluate(selectionCopy);
       assert(copied.startsWith("Two figures:") && copied.endsWith("Done.") && copied.split(`\n${svgFence(levels)}\n`).length === 3,
         `a copied reply keeps its svg fences: ${JSON.stringify(copied)}`);
