@@ -125,8 +125,9 @@ paths, resolved by name ([ai_tools.md](ai_tools.md)).
 
 In the app the trees arrive with the listing. App keeps them as `libTree`
 (`libraryTree` in [libraryUtils.js](../../frontend/src/library/libraryUtils.js):
-id → folder with its name, parent, position, pin, path and subfolders; id
-→ label), and every surface names folders and labels from it. A page
+id → folder with its name, parent, position, pin, creation time, path and
+subfolders; id → label), and every surface names folders and labels from
+it. A page
 row's `_folders` / `_labels` are the ids of its filing the trees have
 (`filedIn`: a dangling id shows nothing). `_folderChips` / `_labelChips`
 are the same as `{id, name}`, a folder named by its path. App writes the
@@ -164,7 +165,8 @@ flows, and its harness files pages by path through `Account.folder` /
 The root view is a recents feed of ALL pages, rendered incrementally (30 +
 IntersectionObserver load-more). Folders and files render as ONE merged sorted
 listing (list and grid): date sorts rank a folder by its most recent contained
-page, Title A–Z intermixes by name; a KindToggle picks what the listing shows —
+page, a folder with no page in it or below it by when it was made (the
+folder block's `created_at`), Title A–Z intermixes by name; a KindToggle picks what the listing shows —
 folders + files, folders only, files only, or **labels**.
 
 The sort choice (updated/created/viewed/title/custom, an iconed MenuSelect

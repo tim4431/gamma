@@ -7512,6 +7512,11 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         }
       }
     }
+    // A folder with no page in it or below it dates from its own making, so
+    // a new one lists with the recent work instead of sinking to the bottom.
+    for (const [id, folder] of libTree.folders) {
+      if (!m[id].count) m[id].updated = m[id].created = folder.created;
+    }
     return m;
   }, [libTree, pageBlocks, viewedAtById]);
   // Folder order for the context menu's "Move to folder" flyout: every
@@ -7577,8 +7582,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // top-level folders + EVERY page as a recents feed, loaded incrementally;
   // in "labels" mode → the labels in scope instead of folders and files;
   // inside a label → that label's pages only. Date sorts rank a container by
-  // its most recent content; an empty folder has no timestamps and sinks to
-  // the bottom. The custom order keeps the folders' own order (dragged by
+  // its most recent content; an empty folder by when it was made. The
+  // custom order keeps the folders' own order (dragged by
   // hand, placeFolders) ahead of the pages in the library's. The search box
   // doesn't drop anything: matches are floated to the top of the sort and
   // the rest are flagged for dimming.

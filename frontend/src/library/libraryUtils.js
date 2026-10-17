@@ -22,7 +22,7 @@ export const NO_LABEL_TITLE = t("No label");
 // carries both (GET /blocks/root/children's `folders` / `labels`: block
 // dicts with their `children`, in order). As lookups:
 //   folders  Map id → {id, name, parent ("" at the top), position, pinned,
-//            path: [names from the top], children: [ids, in order]}
+//            created, path: [names from the top], children: [ids, in order]}
 //   labels   Map id → {id, name}, in order
 //   top      the top-level folder ids, in order
 // A folder share's listing has the shared folder as its one top folder.
@@ -31,7 +31,7 @@ export function libraryTree({ folders, labels } = {}) {
   const walk = (nodes, parent, path) => nodes.map((node) => {
     const name = node.content || "";
     const folder = { id: node.id, name, parent, position: node.position || "",
-      pinned: node.properties?.pinned || "", path: [...path, name], children: [] };
+      pinned: node.properties?.pinned || "", created: node.created_at || "", path: [...path, name], children: [] };
     tree.folders.set(node.id, folder);
     folder.children = walk(node.children || [], node.id, folder.path);
     return node.id;

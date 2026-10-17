@@ -1,10 +1,11 @@
 import { Account, wanted } from "../harness.mjs";
 
 // Folders and labels are blocks (docs/dev/home_library.md "Folders and
-// labels"): New folder makes an empty folder that stays, a rename is one op
-// on the folder tree that touches no page, folders keep an order of their
-// own, deleting one unfiles its pages, the page header's label field makes
-// a label or picks a folder, and dragging a page files it by id.
+// labels"): New folder makes an empty folder that stays and lists first, a
+// rename is one op on the folder tree that touches no page, folders keep an
+// order of their own, deleting one unfiles its pages, the page header's
+// label field makes a label or picks a folder, and dragging a page files it
+// by id.
 export async function folderScenarios(env) {
   const { server, browser, step, openPage, assert, assertEq, assertNoProblems, until } = env;
   if (!wanted("folders")) return;
@@ -40,6 +41,11 @@ export async function folderScenarios(env) {
       assertEq((await tree("folders")).filter((f) => f.content === "Empty one").length, 1, "one folder block, empty");
       await page.reload();
       await row(page, "Empty one").waitFor();
+      // Recently modified (the default sort) dates an empty folder from its
+      // making: the newest thing here, it leads Lab and both papers.
+      const first = page.locator(".fileList > .folderRow:not(.folderNewBtn), .fileList > .fileRow").first();
+      await until(async () => (await first.textContent()).includes("Empty one"),
+        { what: "the new, empty folder leads the Recently modified listing" });
 
       const before = await pageOf(paper.id);
       await row(page, "Lab").click({ button: "right" });
