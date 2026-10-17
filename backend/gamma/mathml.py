@@ -96,6 +96,16 @@ def _tree(fragment: str) -> list:
     return root
 
 
+def _multiscripts(kids: list, render) -> tuple[str, list, list]:
+    """An <mmultiscripts> rendered as its base, the (sub, sup) pairs after
+    it and the pairs before it (past <mprescripts/>): APS writes an isotope,
+    ¹⁷¹Yb, as the base Yb with the prescript 171. <none/> renders empty."""
+    split = next((i for i, k in enumerate(kids) if not isinstance(k, str) and k[0] == "mprescripts"), len(kids))
+    out = [render(k).strip() for k in kids]
+    post, pre = out[1:split], out[split + 1:]
+    return out[0], list(zip(post[0::2], post[1::2])), list(zip(pre[0::2], pre[1::2]))
+
+
 def _tex_chars(text: str) -> str:
     out = []
     for c in text:
@@ -131,6 +141,15 @@ def _tex(node) -> str:
                       ".": r"\dot"}.get(parts[1])
             return f"{accent}{{{parts[0]}}}" if accent else f"\\overset{{{parts[1]}}}{{{parts[0]}}}"
         return parts[0]  # munder / munderover: the base
+    if name == "mmultiscripts" and kids:
+        base, post, pre = _multiscripts(kids, _tex)
+
+        def scripts(pairs) -> str:
+            return "".join((f"_{group(sub)}" if sub else "") + (f"^{group(sup)}" if sup else "")
+                           for sub, sup in pairs)
+        before, after = scripts(pre), scripts(post)
+        # Prescripts hang off an empty group, as {}^{87}\mathrm{Rb} does.
+        return ("{}" + before if before else "") + (group(base) if after else base) + after
     if name == "msqrt":
         return f"\\sqrt{{{''.join(parts)}}}"
     if name in ("mi", "mtext", "ms") and kids and isinstance(kids[0], str):
@@ -166,6 +185,10 @@ def _text(node) -> str:
         return parts[0] if parts else ""
     if name == "mfrac" and len(parts) >= 2:
         return f"{parts[0]}/{parts[1]}"
+    if name == "mmultiscripts" and kids:
+        # In reading order, prescripts first: the PDF prints "171Yb".
+        base, post, pre = _multiscripts(kids, _text)
+        return "".join(a + b for a, b in pre) + base + "".join(a + b for a, b in post)
     return "".join(parts)
 
 

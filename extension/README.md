@@ -71,10 +71,10 @@ Edge and other Chromium browsers load it the same way. Firefox needs a
   server can't fetch them itself, also from a publisher's PDF reader such as
   science.org's ePDF. Only when the browser can't either does the page save
   as a link to its web source.
-- A save went wrong? **Copy the save log** under the result (or *Copy recent
-  saves* on the options page, for the shortcut and the context menu) gives a
-  step-by-step report to paste into a bug report: what was detected, each
-  download tried and the server's answers.
+- A save went wrong? **Copy the save log** at the bottom of the popup (or
+  *Copy recent saves* on the options page, for the shortcut and the context
+  menu) gives a step-by-step report to paste into a bug report: what was
+  detected, each download tried and the server's answers.
 - Right-click: *Save link to Gamma*, *Save page to Gamma*, *Clip selection
   to Gamma* (a quoted block under the matching paper, else a "Web clips" page).
 - <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>S</kbd> saves the current page.

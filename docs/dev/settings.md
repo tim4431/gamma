@@ -222,7 +222,8 @@ for an `info` notice) sits on the account button, after the account menu's
 "Settings…", and after each dotted pane's sidebar button. The account
 button's hover title counts the notices ("Account & settings — 1 notice";
 its accessible name stays "Account & settings"), and the account menu shows
-one tinted row per notice under the identity card: `noticeText` (the
+one tinted row per notice under the identity card (itself a button into
+Account & sync): `noticeText` (the
 message translated with its params, or the server's title for a message
 this build does not know) and a link (`noticeAction`, "Review storage →")
 that opens the notice's pane. "Settings…" opens on `firstPane`; every other

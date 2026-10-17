@@ -65,7 +65,7 @@ final class LocalEnvironmentTests: XCTestCase {
         XCTAssertEqual(password.count, 12)
         let allowed = CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_")
         XCTAssertTrue(password.unicodeScalars.allSatisfy(allowed.contains))
-        XCTAssertEqual(LocalLogin.base64url(Data([0xfb, 0xff, 0xbf])), "-_-_")
+        XCTAssertEqual(Data([0xfb, 0xff, 0xbf]).base64URL, "-_-_")
     }
 
     func testThePythonPathsInTheBundle() throws {
@@ -91,6 +91,18 @@ final class HealthTests: XCTestCase {
         XCTAssertFalse(Health.isUp(status: 503, body: Data("<html>".utf8)))
         XCTAssertFalse(Health.isUp(status: 500, body: Data()))
         XCTAssertFalse(Health.isUp(status: 404, body: Data()))
+    }
+}
+
+final class ServerStateTests: XCTestCase {
+    func testTheSupervisorsFileIsReadAndAnythingElseIsNone() throws {
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent("server-\(UUID().uuidString).state")
+        defer { try? FileManager.default.removeItem(at: file) }
+        XCTAssertNil(ServerState.read(file), "no file yet")
+        try Data("{\"state\": \"stopped\", \"detail\": \"the server could not listen on its port\", \"at\": \"2026-10-16T10:00:00+00:00\"}".utf8).write(to: file)
+        XCTAssertEqual(ServerState.read(file), ServerState(state: "stopped", detail: "the server could not listen on its port"))
+        try Data("{\"state\": \"start".utf8).write(to: file)
+        XCTAssertNil(ServerState.read(file), "half a write (the supervisor renames a whole file into place, so this is not expected)")
     }
 }
 

@@ -40,22 +40,22 @@ There are three parts:
 
 | File | What it does |
 |---|---|
-| `App/GammaApp.swift` | The entry: the server picker until a server is chosen, then the shell, covered by a page of its own while the local server starts or when it could not; checks the local server again when the app is active again |
+| `App/GammaApp.swift` | The entry: the server picker until a server is chosen, then the shell, covered by a page of its own while the local server starts or when it could not. It checks the local server again when the app is active again |
 | `App/AppModel.swift` | The server shown, "This iPad" or another server by address, and the other servers, in `UserDefaults` |
 | `Views/ServersView.swift` | The server picker, at first launch and when the web app asks for it: "This iPad" (status, address, data size, the account, the log's tail after a failed start), the other servers with reachability dots, edit and remove, and an add form; also the page over the shell while the local server starts |
-| `Server/LocalServer.swift` | The local server: the port, the data directory (`Documents/Gamma/local`, visible in Files), the seeded account, the environment, the wait for `/api/health` |
-| `Server/PythonRuntime.swift` | The embedded CPython: configured and started once on a thread of its own, running `gamma_ios.main()` |
+| `Server/LocalServer.swift` | The local server: the port, the data directory (`Documents/Gamma/local`, visible in Files), the seeded account, the environment, the wait for `/api/health`, and the restart after a failed start or a socket iOS reclaimed |
+| `Server/PythonRuntime.swift` | The embedded CPython: configured and started once on a thread of its own, running `gamma_ios.main()`; `restart` reaches the supervisor in it through the GIL |
 | `Server/Keychain.swift` | The seeded account's password in the Keychain |
 | `Server/GammaIPad-Bridging-Header.h` | Python's C API for Swift |
 | `Shell/ShellView.swift` | The window: the web view, the live stroke over it, the Pencil layer on their container, a page of its own when the server cannot be reached |
-| `Shell/WebShell.swift` | The one `WKWebView`, set up once: desktop content mode, no bounce, no inset adjustment, inspectable in Debug builds, reloaded when the system ends its process; the silent sign-in to the local server |
+| `Shell/WebShell.swift` | The one `WKWebView`, set up once: desktop content mode, no bounce, no inset adjustment, no keyboard accessory bar, inspectable in Debug builds, reloaded when the system ends its process; the silent sign-in to the local server |
 | `Shell/Bridge.swift` | The message vocabulary as Codable types, the handler the page posts to, and `send` back. The only file that knows the protocol |
 | `Shell/Navigation.swift` | Other sites and `target=_blank` in a Safari view, downloads to the share sheet, the microphone for recordings, the Gamma Cloud start handed to `CloudSignIn` |
 | `Shell/CloudSignIn.swift` | The desktop app's Gamma Cloud sign-in (`app-start`, a loopback return, `app-claim`) through a system browser sheet |
 | `Pencil/PencilCapture.swift` | The recognizer that takes a Pencil touch once the web claims it, and the pure parts it uses (claim matching, sampling) |
 | `Pencil/LiveStrokeView.swift` | The stroke being drawn, as a plain line, until the web has painted it |
 | `Pencil/PencilGestures.swift` | The double tap and the squeeze, forwarded with the system's preferred action |
-| `python/gamma_ios.py` | The server's entry on the device: output to the log, then uvicorn on `127.0.0.1` at `GAMMA_PORT` |
+| `python/gamma_ios.py` | The server's entry on the device: output to the log, then uvicorn on `127.0.0.1` at `GAMMA_PORT` under a supervisor the app can ask to run it again |
 | `python/requirements-ios.txt` | The server's dependencies as the iPad installs them |
 | `scripts/build-python.sh` | Prepares Python, the wheels, the server code and the web app for the bundle (below) |
 | `project.yml` | The XcodeGen project, with the build phases that run the script and install Python into the bundle |
@@ -91,7 +91,7 @@ In the app, open **This iPad**, or enter another server's address and
 sign in on its own page. The account menu's "Server…" row, or the
 "Server…" link on the sign-in page, brings the picker back. A server
 reached over plain `http` must be on the local network, because App
-Transport Security allows local networking only; use `https` otherwise.
+Transport Security allows local networking only. Use `https` otherwise.
 In a Debug build, Safari's Web Inspector on a Mac opens the page (Develop
 → your iPad).
 
@@ -128,9 +128,9 @@ bash ipad/scripts/build-python.sh --check   # only check that every pin resolves
   needs a 3.13; with another Python the script warns and ships source
   only.
 - **The web app** is rebuilt through `tools/build_frontend_if_needed.mjs`
-  when `frontend/` changed, which runs `npm run build` and so empties
-  `frontend/dist` for its duration (a dev server serving that folder on
-  the same Mac shows errors meanwhile). The script runs `npm ci` first
+  when `frontend/` changed. That runs `npm run build`, which empties
+  `frontend/dist` while it runs, so a dev server serving that folder on
+  the same Mac shows errors meanwhile. The script runs `npm ci` first
   when `node_modules` is missing or older than the lockfile, and adds
   Homebrew's folders to the `PATH`, which Xcode's build scripts lack.
   Without Node, a copy built before is kept with a warning.
@@ -161,8 +161,8 @@ what going without `pypdfium2` costs, is in
   Python step to have run.
 - Without a Mac: `backend/tests/test_ios_requirements.py` (the iOS
   requirements keep up with the server's), a unit test for `host.js`, and
-  the `ipad` browser group, which fakes the host and checks a claimed
-  stroke is saved (`cd frontend && npm run e2e -- --group ipad`).
+  the `ipad` browser group. The group fakes the host and checks that a
+  claimed stroke is saved (`cd frontend && npm run e2e -- --group ipad`).
 - How the recognizer lives among WebKit's own recognizers, and how the
   server fares on a real iPad, need a device. What each test covers and
   the list of device checks are in [docs/dev/ipad.md](../docs/dev/ipad.md#tests).

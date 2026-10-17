@@ -123,8 +123,13 @@
              pdf_links: pdfLinks(), check: checkShown() };
   }
 
+  // A page Chrome prerenders into a tab — its search warmup
+  // (www.google.com/warmup.html) or a site's speculation rules — runs this
+  // script while the tab still shows another page: it says nothing, and
+  // answers nothing, until it is shown.
   let last = null;
   function run() {
+    if (document.prerendering) return;
     try {
       last = detect();
       chrome.runtime.sendMessage({ type: "detected", candidate: last }).catch(() => {});
@@ -156,6 +161,7 @@
   }
 
   chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+    if (document.prerendering) return;
     if (msg && msg.type === "get-detection") {
       if (!last || msg.fresh) { try { last = detect(); } catch { last = null; } }
       sendResponse(last);
@@ -168,6 +174,7 @@
   });
 
   run();
+  document.addEventListener("prerenderingchange", run, { once: true });
   // Single-page apps (OpenReview, publisher platforms) navigate without a reload.
   let lastHref = location.href;
   setInterval(() => {

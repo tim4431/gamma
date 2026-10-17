@@ -17,7 +17,7 @@ share host (app.gammapdf.com, share.gammapdf.com) is pinned to the
 
 | Workflow | File | Runs when | Produces |
 |---|---|---|---|
-| `check` | `check.yml` | every pull request to `main`, except one that only touches the account server or the website | pass/fail: brand asset consistency, backend pytest, frontend unit tests + build, the browser suite (3 parallel workers), extension unit tests + zip (~5 min) |
+| `check` | `check.yml` | every pull request to `main`, except one that only touches the account server or the website | pass/fail: brand asset consistency, the iPad's pins resolved, backend pytest, frontend unit tests + build, the browser suite (3 parallel workers), extension unit tests + zip (~5 min) |
 | `desktop` | `desktop.yml` | manual dispatch only (`release` skill) | Windows installer, macOS dmg + zip, Debian/Ubuntu deb, the update-feed files, the browser extension's `gamma-connector-<version>.zip` → GitHub Release `v<version>`; the MSIX artifact + a Microsoft Store submission when the secrets exist; a Docker tag `<version>` |
 | `chrome-store` | `chrome-store.yml` | dispatched by the desktop release (not a pre-release) when the `CWS_*` variables exist; daily at 09:17 UTC for a release the store skipped; manual dispatch with a tag | the release's Connector zip uploaded to the Chrome Web Store and submitted for review (API V2) |
 | `docker` | `docker.yml` | every push to `main` except one that only touches the account server or the website; dispatched by the desktop release with a version; manual dispatch from any branch (a `sha-<short>` image only) | `ghcr.io/tim4431/gamma:sha-<short>` on every run; `:latest` only from `main`; `:<version>` and `:<major.minor>` when dispatched with a version; linux/amd64 + arm64 |
@@ -189,7 +189,11 @@ store item that only the dashboard can create:
 
 ## `check.yml`
 
-Five parallel Ubuntu jobs on every PR to `main`: brand asset consistency,
+Six parallel Ubuntu jobs on every PR to `main`: brand asset consistency,
+the iPad's pins (`bash ipad/scripts/build-python.sh --check` under Python
+3.13: every pin of `ipad/python/requirements-ios.txt` resolves to iOS
+wheels for both platforms, so a pin that stops resolving fails here and
+not in `ipad.yml`'s macOS run, which a backend-only PR does not start),
 backend pytest (Python 3.12, `requirements.txt` + `requirements-dev.txt`,
 `-n auto` over pytest-xdist; the job is capped at 20 minutes and a single
 test at 300 s, after which it fails with every thread's stack instead of
@@ -217,7 +221,7 @@ One macOS job (`macos-15`, 50 minutes) for the iPad app, which carries
 the Gamma server and the built web app ([ipad.md](ipad.md#the-local-server)).
 It runs for the server's dependencies and the frontend's build helper as
 well as for `ipad/`, but not for backend or frontend code, which the other
-checks test; a change that matters on the device is dispatched by hand.
+checks test. A change that matters on the device is dispatched by hand.
 
 - Python 3.13 (`setup-python`), so pip's environment markers match the
   device's, and Node 22 with `npm ci` in `frontend/`.
@@ -232,12 +236,15 @@ checks test; a change that matters on the device is dispatched by hand.
   architecture's standard library) and `CODE_SIGNING_ALLOWED=NO`. Besides
   the pure parts, one test starts the embedded server and waits for its
   `/api/health`, so a broken bundle fails here and not on an iPad.
+- When that fails, a step prints the simulator's `server.log` (the data
+  directory's `logs/`, where a failed start's traceback is) and the raw
+  `xcodebuild` output around the failure, which `xcbeautify` leaves out.
 - `xcodebuild build -sdk iphoneos -configuration Release` makes an
   unsigned device build, with `CODE_SIGNING_ALLOWED=NO`.
 
 Nothing is signed or uploaded: running on an iPad takes a developer's own
 team, set in Xcode. The script's `--check` (every pin resolved for both
-platforms, no Xcode) runs on Linux too, but no workflow runs it.
+platforms, no Xcode) runs on Linux in `check.yml`, on every PR.
 
 ## `docker.yml`
 

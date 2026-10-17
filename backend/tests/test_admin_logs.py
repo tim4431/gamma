@@ -78,3 +78,48 @@ def test_the_console_access_log_leaves_out_answered_task_polls(client):
     assert shown("GET", "/api/jobs/abc", 200)
     assert shown("POST", "/api/jobs/metadata", 200)
     assert shown("GET", "/api/quota", 200)
+
+
+@pytest.mark.parametrize("http", ["httptools", "h11"])
+def test_an_invalid_request_says_who_sent_what(client, http):
+    """uvicorn's bare "Invalid HTTP request received." gains the sender and
+    the shape of what arrived (logbuf._InvalidRequestDetail), from a real
+    server with either parser. h11 waits for a line end before it parses,
+    so the bare TLS handshake only trips httptools (the Docker image's)."""
+    import socket
+    import threading
+    import time
+
+    import uvicorn
+
+    async def app(scope, receive, send):
+        pass
+
+    server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=0, http=http, lifespan="off", log_config=None))
+    thread = threading.Thread(target=server.run, daemon=True)
+    thread.start()
+    deadline = time.monotonic() + 10
+    while not server.started and time.monotonic() < deadline:
+        time.sleep(0.01)
+    port = server.servers[0].sockets[0].getsockname()[1]
+
+    def warning_for(payload):
+        after = tail()[-1]["seq"] if tail() else 0
+        with socket.create_connection(("127.0.0.1", port), timeout=5) as s:
+            s.sendall(payload)
+            assert s.recv(1024).startswith(b"HTTP/1.1 400")  # logged before the answer goes out
+        return next(e["msg"] for e in tail(after) if e["msg"].startswith("Invalid HTTP request received"))
+
+    try:
+        line = warning_for(b"GET /x?share=hunter2 HTTP/1.1\r\nHost: a\r\nBad Header\r\n\r\n")
+        assert line.startswith("Invalid HTTP request received from 127.0.0.1:")
+        assert "starts 'GET /x?...'" in line and "hunter2" not in line
+        assert line.endswith(")")  # the parser's own complaint
+        line = warning_for(b"PROXY TCP4 203.0.113.9 10.0.0.1 51234 9001\r\nGET / HTTP/1.1\r\n\r\n")
+        assert line.endswith(": a PROXY protocol header, which this server does not read")
+        if http == "httptools":
+            line = warning_for(b"\x16\x03\x01\x00\xa5\x01\x00\x00\xa1\x03\x03" + bytes(32))
+            assert line.endswith(": a TLS handshake (https:// sent to this plain-HTTP port)")
+    finally:
+        server.should_exit = True
+        thread.join(10)

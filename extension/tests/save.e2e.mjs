@@ -107,16 +107,16 @@ try {
     await popup.locator("#save").waitFor();
     await popup.locator(".chip", { hasText: "DOI" }).first().waitFor();  // no PDF advertised
     await popup.locator("#save").click();
-    await popup.locator("#result:not(.hidden)").waitFor();
-    await popup.locator("#log-row:not(.hidden)").waitFor();
+    await popup.locator("#existing:not(.hidden)").waitFor();
+    await popup.locator("#copy-log:not(.hidden)").waitFor();
     return { popup, tabId };
   }
 
   // The browser gets the PDF the server couldn't: the 400 first, then the
   // worker's fetch refused, the page's own fetch answered, the bytes uploaded.
   const open = await popupSave("open");
-  assert.match(await open.popup.locator("#result").getAttribute("class"), /\bok\b/);
-  assert.match(await open.popup.locator("#result").textContent(), /^Saved: /);
+  assert.match(await open.popup.locator("#existing-msg").getAttribute("class"), /\bok\b/);
+  assert.equal(await open.popup.locator("#existing-msg").textContent(), "Saved to your library.");
   assert.deepEqual(clips.map((c) => [c.web_fallback, c.doc_id || ""]), [[false, ""], [true, "up1"]]);
   assert.equal(clips[0].doi, "10.1234/open");
   assert.deepEqual(uploads, [true]);
@@ -143,9 +143,9 @@ try {
   // the browser tried too.
   clips.length = 0;
   const closed = await popupSave("closed");
-  assert.match(await closed.popup.locator("#result").getAttribute("class"), /\bwarn\b/);
-  assert.match(await closed.popup.locator("#result").textContent(),
-    /No PDF found — saved as a page with its web source\. Your browser couldn't download it either: /);
+  assert.match(await closed.popup.locator("#existing-msg").getAttribute("class"), /\bwarn\b/);
+  assert.match(await closed.popup.locator("#existing-msg").textContent(),
+    /^Saved to your library\. No PDF found — saved as a page with its web source\. Your browser couldn't download it either: /);
   assert.deepEqual(clips.map((c) => [c.web_fallback, c.doc_id || ""]), [[false, ""], [true, ""]]);
   assert.deepEqual(uploads, [true]);
 

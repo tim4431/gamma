@@ -85,8 +85,9 @@
       <div class="actions"><button id="save" class="uiBtn primary block">Save to Gamma</button></div>
     </div>
 
+    <!-- A paper in the library: found by the look-up, or just saved. -->
     <div id="existing" class="hidden">
-      <div class="msg ok"><span id="existing-where">Already in your library</span><span id="existing-as"></span>.</div>
+      <div id="existing-msg" class="msg ok"><span id="existing-where">Already in your library</span><span id="existing-as"></span>.<span id="existing-note"></span></div>
       <div class="actions">
         <button id="open-existing" class="uiBtn primary block">Open in Gamma</button>
         <button id="refile" class="linkBtn">Add to another folder…</button>
@@ -98,16 +99,14 @@
       <div class="actions"><button id="save-anyway" class="uiBtn block">Save this URL anyway</button></div>
     </div>
 
-    <!-- Clipping a selection is a side feature — a quiet text link, not a button. -->
-    <div id="clip-row" class="minor hidden">
-      <button id="clip" class="linkBtn quiet" type="button"></button>
-    </div>
-
     <div id="progress" class="progress hidden"><span class="spinner"></span><span id="progress-text"></span></div>
     <div id="result" class="msg hidden"></div>
-    <!-- What the tab's last save tried, step by step, for a bug report. -->
-    <div id="log-row" class="minor hidden">
-      <button id="copy-log" class="linkBtn quiet" type="button"></button>
+
+    <!-- Side features, quiet text links in one row: clipping a selection,
+         and what the tab's last save tried, step by step, for a bug report. -->
+    <div class="minor">
+      <button id="clip" class="linkBtn quiet hidden" type="button"></button>
+      <button id="copy-log" class="linkBtn quiet hidden" type="button"></button>
     </div>
 
     <!-- Publisher sessions: the footer's cookie button opens this drawer.

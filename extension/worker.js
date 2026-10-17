@@ -908,7 +908,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     switch (msg && msg.type) {
       case "detected": {
         const tabId = sender.tab && sender.tab.id;
-        if (tabId == null) return null;
+        // A prerendered page shares its tab's id but is not what it shows
+        // (detect.js waits until it is shown; this holds for older copies).
+        if (tabId == null || sender.documentLifecycle !== "active") return null;
         const st = await getTabState(tabId);
         const merged = mergeCandidates(msg.candidate, st.candidate && st.candidate.from_url ? st.candidate : candidateFromUrl(sender.tab.url, sender.tab.title));
         return setDetection(tabId, merged);

@@ -74,7 +74,7 @@ struct ServersView: View {
                             .foregroundStyle(.secondary)
                             .textSelection(.enabled)
                     }
-                    Text("Close Gamma and open it again to try once more.").font(.footnote)
+                    Button("Try again") { local.restart() }
                 }
             }
             if let login = local.login {
@@ -209,10 +209,11 @@ struct LocalStartView: View {
                 ContentUnavailableView {
                     Label("Gamma could not start on this iPad", systemImage: "exclamationmark.triangle")
                 } description: {
-                    Text(message + "\nClose Gamma and open it again to try once more. The server's log is in the server picker.")
+                    Text(message + "\nThe server's log is in the server picker.")
                 } actions: {
-                    Button("Choose a server") { model.choosingServer = true }
+                    Button("Try again") { local.restart() }
                         .buttonStyle(.borderedProminent)
+                    Button("Choose a server") { model.choosingServer = true }
                 }
             } else if local.slowStart {
                 VStack(spacing: 12) {

@@ -1,6 +1,6 @@
 # The iPad app as the web app, with a native pen
 
-Survey from 2026-10-16. Findings only; what was decided and built the same
+Survey from 2026-10-16. Findings only. What was decided and built the same
 day, and how it differs from this note, is at its end
 ([Decided and built](#decided-and-built-2026-10-16)). The question:
 the native iPad app (`ipad/`) draws its own library, notes, reader and
@@ -118,9 +118,10 @@ installed web app") carries over, with these differences:
   work as in the installed app.
 - **The keyboard.** A web view adds its own accessory bar (‹ › Done)
   above the keyboard, which Safari's app does not; the editing bar
-  (`editor/EditBar.jsx`) would sit on top of it. Hiding it takes the
+  (`editor/EditBar.jsx`) would sit on top of it. It is hidden with the
   known `inputAccessoryView` override on the content view, which
-  Capacitor and others ship. **Device check.**
+  Capacitor and others ship (`WebShell.hideKeyboardAccessoryBar`).
+  **Device check** that a device's WebKit behaves as the simulator's.
 - **Memory and canvases.** WebKit's canvas limits are already the web
   app's (`shared/lib/canvasSize.js`; `pdf/pageRaster.js` releases pages
   leaving the look-ahead on WebKit). A web content process has a memory
@@ -255,8 +256,8 @@ and, on an Apple Pencil Pro, the squeeze with its hover pose (iPadOS
 17.5) ([Apple: handling squeezes](https://developer.apple.com/documentation/applepencil/handling-squeezes-from-apple-pencil.md),
 [UIPencilHoverPose](https://developer.apple.com/documentation/uikit/uipencilhoverpose.md)).
 The host forwards the system's preferred action (switch to the eraser,
-the previous tool, show the palette, ignore) and the hover location; the
-web app gains those as page tool actions (`markup/PageTools.jsx`
+the previous tool, show the palette, ignore); the hover location is not
+sent, since nothing in the web app places anything by it. The web app gains those as page tool actions (`markup/PageTools.jsx`
 `actions`): the strip's eraser toggle, the previous preset, the ink menu
 opened at a point. Safari never gets these, so this is the one thing a
 native app adds that the installed web app cannot have.
@@ -430,8 +431,8 @@ that app with a Pencil layer.
 ### Decided and built (2026-10-16)
 
 Offline went A then C, and both were built the same day: the shell first,
-then the backend on the device, run as the desktop runs its sidecar, with
-offline copies as the mirror's clones made in the web app. The replica
+then the backend on the device, run as the desktop runs its sidecar.
+Offline copies are the mirror's clones, made in the web app. The replica
 and the JavaScriptCore bundle were removed, since neither phase uses
 them. The live stroke is the plain line (decision 2), the raster seam
 waits for a device (3), and decision 4 went with B. The mechanics are in

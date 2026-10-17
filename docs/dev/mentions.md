@@ -210,8 +210,8 @@ So the rows hold the dismissed reminders that still exist, and those of the
 workspaces out of reach. A block deleted and brought back under its own id
 after a listing has run (an undo) is not done any more. The marks are a
 table, not a pref: one is about 60 bytes of JSON, so the prefs' 64 KiB
-(`routers/prefs.py` `MAX_VALUE_BYTES`) would hold about a thousand, which
-a person who sets a reminder a day passes within three years.
+(`routers/prefs.py` `MAX_VALUE_BYTES`) would hold about a thousand. A
+person who sets a reminder a day passes that within three years.
 `GET /api/reminders` answers the done keys among the reminders it lists.
 
 **Not built.**

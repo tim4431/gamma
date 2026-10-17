@@ -42,7 +42,7 @@ ink layer still encodes and saves every stroke.
    cloned onto This iPad in the web app's settings
    ([Offline use](#offline-use-clones)).
 
-The Swift side holds no page, stroke, tool or token; the one secret it
+The Swift side holds no page, stroke, tool or token. The one secret it
 keeps is the local server's seeded password. The session is the web
 view's cookie (the default data store keeps it across launches), and
 the library is the server's, This iPad's included.
@@ -53,8 +53,8 @@ The web app is the one owner of the page. Native code is a window, an
 input device, a preview layer and, for This iPad, a process manager, and
 nothing in Swift knows what a block is. So a web feature reaches the iPad
 when the server has it (This iPad's at the app's next build), with no
-iPad work: the only thing the two halves share is the host contract
-below. The files are listed in [ipad/README.md](../../ipad/README.md).
+iPad work. The two halves share only the host contract below. The files
+are listed in [ipad/README.md](../../ipad/README.md).
 
 - **The window.** `ShellView` hosts one controller (`ShellController`),
   made once and kept: a new server or a retry loads into the same web
@@ -127,7 +127,7 @@ the queue, so nothing sent early is lost.
 | Message | Resolves | Meaning |
 |---|---|---|
 | `{type: "stroke", pointerId, samples: [[x, y, p, t], …]}` | `{committed}`, two frames later (React's commit and a paint) | The claimed stroke ended. x, y in viewport CSS px; p = force / maximum force, the lift keeping the last pressure; t = ms from the first sample, from the hardware timestamps, never going back. No samples: the system cancelled the touch, and the claim just ends |
-| `{type: "pencil", gesture: "tap"\|"squeeze", action, at: {x, y}\|null}` | at once | `action` is the system's preferred action: `switchEraser`, `switchPrevious`, `showColorPalette`, `showInkAttributes`, `runSystemShortcut` or `ignore`; `at` is the hover pose's place when known |
+| `{type: "pencil", gesture: "tap"\|"squeeze", action}` | at once | `action` is the system's preferred action: `switchEraser`, `switchPrevious`, `showColorPalette`, `showInkAttributes`, `runSystemShortcut` or `ignore` |
 
 Keeping it small is the point. A message is added in `Bridge.swift` and
 `host.js` together, and `version` tells the web which host it runs under.
@@ -162,21 +162,21 @@ claimed.
    still deciding (its touch events, pans, long presses: `canPrevent` is
    true, `canBePrevented` false) and cancels the web view's touch
    (`cancelsTouchesInView`). While it captures, it swallows fingers on the
-   screen (the palm) and draws the live line (`LiveStrokeView`: a plain
-   polyline at the tool's colour, width and opacity, extended by the
-   predicted touches).
+   screen (the palm). It also draws the live line (`LiveStrokeView`): a
+   plain polyline at the tool's colour, width and opacity, extended by the
+   predicted touches.
 5. **The page gives way on the reply.** On `{taken: true}` the layer drops
    its draft without saving (`handOver`), ignores that pointer's own
-   events, and treats fingers as palms until the stroke ends, whether or
-   not WebKit sends a `pointercancel`. So a stroke is never saved twice,
-   and the page never pans under the Pencil.
+   events, and treats fingers as palms until the stroke ends. It does not
+   wait for a `pointercancel`, which WebKit may not send. So a stroke is
+   never saved twice, and the page never pans under the Pencil.
 6. **The lift.** The shell sends `stroke` with the samples. The layer
-   converts them with the rect and zoom of the down, applies the
-   repeated-point rule of `appendInkSample`, and commits through the same
+   converts them with the rect and zoom of the down and applies the
+   repeated-point rule of `appendInkSample`. It commits through the same
    `encodeStroke` and `onStroke` as its own strokes (`ch: "xypt"`, `t0` the
    web's wall clock at the down). Undo, replay and saving are unchanged.
    The live line stays until the reply, which comes after the page has
-   painted the stroke, so the swap never blinks; a page that never
+   painted the stroke, so the swap never blinks. A page that never
    answers loses the line after three seconds.
 7. **Cancelled.** When the system cancels a captured touch, the line goes,
    and the shell sends `stroke` with no samples, which ends the claim and
@@ -187,8 +187,8 @@ page, which finishes it as in Safari. Pencil hover, pressure and tilt
 reach the page as Safari gives them.
 
 **Gestures.** `PencilGestures` (`UIPencilInteraction`) forwards the double
-tap and, on iPadOS 17.5 and later, the squeeze with its hover pose, as
-`pencil` with the system's preferred action. `App.jsx` maps it onto the
+tap and, on iPadOS 17.5 and later, the squeeze, as `pencil` with the
+system's preferred action. `App.jsx` maps it onto the
 markup toolbar's own handlers: `switchEraser` toggles the eraser,
 `switchPrevious` picks the previous preset, `showColorPalette` and
 `showInkAttributes` open the active tool's options row, and the rest do
@@ -199,15 +199,15 @@ nothing.
 Google refuses to sign in inside an embedded web view, so the page's own
 start (`/api/auth/cloud/start`) is taken over, as the desktop app does
 (`CloudSignIn.swift`; `desktop/lib/cloudSignIn.js`). The shell listens on
-`127.0.0.1:<port>`, posts `app-start` from inside the page (so a Link
-carries the page's session) with that return address and an S256 PKCE
-challenge, and opens the authorize URL in an
-`ASWebAuthenticationSession`. The server sends that browser back to the
-loopback address with a one-time result; the listener keeps it and
-redirects the sheet to `gamma-ipad://cloud-signin`, which closes it. The
-web view then posts `app-claim` with the verifier, which sets the session
-cookie where the web app runs. The server needs nothing new. A password
-sign-in is just the web app's login page.
+`127.0.0.1:<port>` and posts `app-start` from inside the page, so a Link
+carries the page's session, with that return address and an S256 PKCE
+challenge. It opens the authorize URL in an `ASWebAuthenticationSession`.
+The server sends that browser back to the loopback address with a
+one-time result. The listener keeps it and redirects the sheet to
+`gamma-ipad://cloud-signin`, which closes it. The web view then posts
+`app-claim` with the verifier, which sets the session cookie where the
+web app runs. The server needs nothing new. A password sign-in is the
+web app's login page.
 
 ### The local server
 
@@ -217,7 +217,7 @@ its window ([desktop/docs/architecture.md](../../desktop/docs/architecture.md#se
 The shell shows it like any other server: the web view loads its address,
 and the page is the web app that server serves. So the whole web app works
 with no connection, and the Swift side stays a process manager
-(`Server/LocalServer.swift`): it picks the data directory and the port,
+(`Server/LocalServer.swift`). It picks the data directory and the port,
 seeds the first account, starts the interpreter and says when the server
 answers. Nothing in it knows what the server holds.
 
@@ -240,7 +240,9 @@ answers. Nothing in it knows what the server holds.
 - **`ipad/python/gamma_ios.py`**, the entry, the iPad's
   `desktop/backend_entry.py`. It sends all output to the log, imports the
   server once the environment is final (`gamma/config.py` reads it at
-  import), and runs uvicorn on `127.0.0.1` at `GAMMA_PORT`.
+  import), and runs uvicorn on `127.0.0.1` at `GAMMA_PORT` under a
+  supervisor (`supervise`): a server that stops is run again when the app
+  asks (`restart`), on the same port.
 
 `Server/PythonRuntime.swift` runs one interpreter on a thread of its own
 (`gamma-server`). The thread has a 16 MiB stack, because a secondary
@@ -256,11 +258,15 @@ server's imports. The configuration follows the guide:
   `lib-dynload`, `python/app` and `python/app_packages`.
 
 The C API comes in through a bridging header. The interpreter is never
-finalized, and it cannot be started twice in one process. So a failed
-start stays failed until the app is opened again, and the pages say so.
-An uncaught `SystemExit` (uvicorn's way of saying it could not start)
-would end the whole app under `PyRun_SimpleString`, so the entry turns it
-into an ordinary error.
+finalized, and it cannot be started twice in one process. The server in
+it can be: `PythonRuntime.restart` takes the GIL on another thread and
+calls `gamma_ios.restart()`, which stops a server still running and has
+the supervisor run a new one ([Starting, and the log](#starting-and-the-log)).
+Only the entry's own end (an import that fails) stays failed until the
+app is opened again. An uncaught `SystemExit` there would end the whole
+app under `PyRun_SimpleString`, so the entry turns it into an ordinary
+error; inside the supervisor, uvicorn's `SystemExit` for a port it could
+not listen on is a failed start, reported and retried.
 
 #### The wheels
 
@@ -390,18 +396,30 @@ whichever server the window shows.
   counts as up by the desktop's rule: a 2xx, or the 503 with
   `data_directory_not_upgradable`, a server that is up and shows its own
   guidance ([migrations.md](migrations.md)).
-- **There is no deadline**, because the interpreter cannot be started
-  again in the process: giving up would only hide a server that answers
-  later. After a minute the start is marked slow (the first one after an
-  install, on an older iPad). The pages then say it can take a few
-  minutes, and the polling drops to once a second. Only the interpreter's
-  own end makes the start fail.
+- **There is no deadline**: giving up would only hide a server that
+  answers later. After a minute the start is marked slow (the first one
+  after an install, on an older iPad). The pages then say it can take a
+  few minutes, and the polling drops to once a second.
+- **A failed start** is what the supervisor reports. It writes
+  `<data>/logs/server.state` (`{state, detail, at}`, replaced whole):
+  `starting` when a server is about to run, `stopped` with why when one
+  ended without a restart asked for (a port it could not listen on, the
+  usual case). The app reads the file between health probes
+  (`ServerState`) and shows the detail with *Try again*, which calls
+  `LocalServer.restart`. The app removes the last launch's file before it
+  starts, and `restart()` writes `starting` before it returns, so an old
+  failure is never read as the new start's. A failure before the
+  interpreter (no free port, no data folder) is tried from the beginning;
+  the interpreter's own end stays failed.
 - **Back from the background.** iOS suspends the app, and the server with
   it, and can reclaim a suspended app's listening socket, notably while
   the screen is locked. When the app is active again, it asks
   `/api/health` up to three times, a second apart. A server that stays
-  silent is reported as stopped, with what to do (close the app and open
-  it again), rather than left behind a page that cannot load.
+  silent is run again in the same interpreter (`restart`), on the same
+  port, so the page's origin and what the web app keeps per origin stay;
+  the start page covers the shell for the moment that takes. The app's
+  lifespan (`gamma/app.py`: the sweeps, the backup schedule) ends with
+  the old server and runs with the new one.
 
 Everything the server prints goes to `<data>/logs/server.log`
 (`gamma_ios.py`). The file is appended across launches, and each start is
@@ -415,8 +433,8 @@ crash in native code. A failed start shows its message and the log's last
 This iPad is a Gamma server like the desktop's local one. So the offline
 copies of another server's workspaces are Gamma's own clones (mirrors,
 [mirror.md](mirror.md)), made and resolved in the web app as the
-desktop's are ([desktop/docs/architecture.md](../../desktop/docs/architecture.md#clones)),
-and the Swift side keeps no sync state.
+desktop's are ([desktop/docs/architecture.md](../../desktop/docs/architecture.md#clones)).
+The Swift side keeps no sync state.
 
 The desktop makes a clone with one click on its switcher's *clone* chip.
 The iPad shell has no switcher, so a clone is made the way any Gamma
@@ -478,10 +496,11 @@ from frameworks.
     (`BridgeTests`)
   - the cloud sign-in's requests and PKCE (`CloudSignInTests`)
   - claim matching and sampling (`PencilTests`)
-  - the address, navigation and colour rules (`ShellTests`)
+  - the address, navigation and colour rules, and the keyboard accessory
+    bar hidden on a real `WKWebView` (`ShellTests`)
   - the local server's port rule, environment, password shape, module
-    paths and health rule, and the saved servers, an earlier version's
-    keys included (`ServerTests`)
+    paths, health rule and state file, and the saved servers, an earlier
+    version's keys included (`ServerTests`)
 - `LocalServerStartTests` (in `ServerTests.swift`) starts the embedded
   server for real in the test host. It checks the bundle's layout first,
   so an unprepared build says what is missing. Then it waits up to three
@@ -493,6 +512,10 @@ from frameworks.
 - `backend/tests/test_ios_requirements.py`: every server dependency is in
   the iOS requirements or excluded with a reason, and nothing excluded is
   still listed.
+- `backend/tests/test_ios_entry.py`: `gamma_ios.py`'s supervisor with a
+  stand-in for uvicorn's server: a failed start is written to the state
+  file and retried on `restart()`, a restart of a running server stops it
+  and runs a new one without the state ever saying `stopped`.
 - `frontend/tests/host.test.mjs`: `host.js` with a fake `window` (the
   queue delivered, replies, unknown types, no host).
 - The `ipad` browser group's shell step (`tests/e2e/scenarios/ipad.mjs`)
@@ -520,7 +543,8 @@ iPad at the app's next build, as the same code the other checks test.
 `ipad.yml` does not run for them, so a change that matters on the device
 (a pdfium import, a process spawned) is worth a manual dispatch.
 `bash ipad/scripts/build-python.sh --check` resolves every pin for both
-platforms without Xcode, on macOS or Linux.
+platforms without Xcode, on macOS or Linux; `check.yml` runs it on every
+pull request.
 
 ### Device checks
 
@@ -528,7 +552,7 @@ Only an iPad can show these, and none has been run yet:
 
 1. Whether WebKit sends the page a `pointercancel` once the recognizer
    begins, and whether preventing its recognizers stops a pan begun
-   meanwhile. The page no longer depends on the `pointercancel` (step 5),
+   meanwhile. The page does not depend on the `pointercancel` (step 5),
    but a scroll that starts before the claim would move the page.
 2. The claim's round trip under load, and the 10-point reach against the
    place WebKit reports for the `pointerdown`.
@@ -536,9 +560,10 @@ Only an iPad can show these, and none has been run yet:
    refused by the page.
 4. Pointer events in the web view equal to Safari's: pressure, tilt,
    hover, coalesced and predicted events.
-5. The keyboard accessory bar under the editing bar, and the visual
-   viewport's keyboard behaviour the bar depends on ("Where it sits",
-   below).
+5. The keyboard without its accessory bar (`hideKeyboardAccessoryBar`,
+   tested on the simulator's WebKit) on a device's WebKit, and the visual
+   viewport's keyboard behaviour the editing bar depends on ("Where it
+   sits", below).
 6. Recording, exports through the share sheet, the file picker and the
    clipboard.
 7. The Gamma Cloud sheet: Google in `ASWebAuthenticationSession`, the
@@ -549,7 +574,8 @@ Only an iPad can show these, and none has been run yet:
 10. The local server's first start on a real iPad: how long it takes,
     and the memory of the server and the page's process together.
 11. The server after the background and a locked screen: whether iOS
-    reclaims its socket, and how often the recheck reports it stopped.
+    reclaims its socket, how often the recheck restarts it, and how long
+    the restart takes behind the start page.
 12. A device build signed with a real team: `install_python`'s
     frameworks loading on the device.
 13. The data directory in Files, and a restore from an encrypted backup
@@ -561,22 +587,20 @@ Only an iPad can show these, and none has been run yet:
 
 - **Background running.** iOS suspends the app soon after it leaves the
   screen, and the server with it. So a clone syncs only while the app is
-  open, and a server whose socket was reclaimed needs the app closed and
-  opened again. Restarting uvicorn inside the running interpreter, without
-  running the server's startup again, would make that relaunch
-  unnecessary; it is not built.
-- **Retrying a failed start** without relaunching the app, for the same
-  reason: the interpreter starts once per process.
+  open. A socket reclaimed meanwhile is replaced when the app is active
+  again ([Starting, and the log](#starting-and-the-log)); a sync round
+  while the app is in the background would take a `BGProcessingTask`,
+  and is not built.
 - **A store release.** The app is built from source with a developer's
   own team. CI signs and uploads nothing, and App Review has not been
   tried ([research/ipad-web-shell.md](../research/ipad-web-shell.md),
   risk 9).
-- **pypdfium2**, and with it what [The wheels](#the-wheels) lists.
+- **pypdfium2**, and with it what [The wheels](#the-wheels) lists. The
+  path to a wheel of our own is in
+  [research/pypdfium2-ios.md](../research/pypdfium2-ios.md).
 - **Moving data between servers.** Nothing moves a library from This iPad
   to another server or back, beyond clones and the web app's per-workspace
   Export and Import, as on the desktop.
-- **The keyboard accessory bar.** The web view's ‹ › Done bar is not
-  hidden, so it sits under the web app's editing bar.
 
 ## The installed web app
 

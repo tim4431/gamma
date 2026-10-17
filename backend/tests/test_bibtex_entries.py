@@ -57,6 +57,28 @@ def test_mathml_becomes_latex_math_and_plain_text():
     assert mathml.to_text("<math><msup><mi/><mn>87</mn></msup><mi>Rb</mi></math>") == "87Rb"
 
 
+# Braverman et al., PRL 122, 223203, as Crossref and doi.org send its title:
+# APS writes the isotope as an <mmultiscripts> whose mass number is a
+# prescript, after the base in the markup and before it on the page.
+CROSSREF_YB = ('Near-Unitary Spin Squeezing in \n<mml:math xmlns:mml="http://www.w3.org/1998/Math/MathML" '
+               'display="inline"><mml:mrow><mml:mmultiscripts><mml:mrow><mml:mi>Yb</mml:mi></mml:mrow>'
+               '<mml:mprescripts/><mml:none/><mml:mrow><mml:mn>171</mml:mn></mml:mrow></mml:mmultiscripts>'
+               '</mml:mrow></mml:math>')
+
+
+def test_isotope_prescripts_read_before_the_element():
+    assert plain_text(CROSSREF_YB) == "Near-Unitary Spin Squeezing in 171Yb"
+    assert latex_text(CROSSREF_YB) == "Near-Unitary Spin Squeezing in ${}^{171}\\mathrm{Yb}$"
+    # The supplement prints the title alone, with no DOI of its own: only
+    # the title ties the Crossref hit to it.
+    pdf = "[PDF page 1]\nNear-Unitary Spin Squeezing in 171Yb (Supplemental Material)\r\nBoris Braverman,1"
+    assert _title_in_text(plain_text(CROSSREF_YB), pdf)
+    # Prescripts and postscripts together, each pair sub before sup.
+    both = "<math><mmultiscripts><mi>U</mi><mn>2</mn><none/><mprescripts/><mn>92</mn><mn>235</mn></mmultiscripts></math>"
+    assert mathml.to_latex(both) == "{}_{92}^{235}U_2"
+    assert mathml.to_text(both) == "92235U2"
+
+
 def test_plain_text_reads_like_the_pdf():
     assert plain_text("<i>Planck</i>\n                    2018 results") == "Planck 2018 results"
     assert plain_text("CsPbCl<sub>3</sub> Nanocrystals") == "CsPbCl3 Nanocrystals"

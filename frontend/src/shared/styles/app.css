@@ -1127,7 +1127,8 @@ html[data-shell] .app { padding-bottom: env(safe-area-inset-bottom); }
   border-radius: var(--radius-sm);
   outline: none;
 }
-.mdLightbox {
+/* A zoomed picture (shared/ui/Lightbox.jsx): a note image, a diagram. */
+.lightbox {
   position: fixed;
   inset: 0;
   z-index: var(--z-lightbox);
@@ -1138,13 +1139,13 @@ html[data-shell] .app { padding-bottom: env(safe-area-inset-bottom); }
   background: rgba(0, 0, 0, 0.75);
   cursor: zoom-out;
 }
-.mdLightbox img {
-  max-width: 94vw;
+.lightbox img {
+  max-width: 94vw; /* Lightbox.jsx FIT_W, FIT_H */
   max-height: 90vh;
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-3);
 }
-.mdLightboxCaption { margin-top: 10px; font-size: var(--fs-sm); color: #ddd; }
+.lightboxCaption { margin-top: 10px; font-size: var(--fs-sm); color: #ddd; }
 .blockRendered .katex-display { margin: 6px 0; overflow-x: auto; overflow-y: hidden; }
 /* GFM task items: hide the list bullet, the checkbox is the marker. */
 .blockRendered li:has(> .mdTaskCheckbox) { list-style: none; margin-left: -18px; }
@@ -1353,7 +1354,6 @@ html[data-shell] .app { padding-bottom: env(safe-area-inset-bottom); }
 .plainTip {
   color: var(--text-primary);
   padding: 10px;
-  min-width: 260px;
   z-index: var(--z-tip);
 }
 
@@ -1361,7 +1361,6 @@ html[data-shell] .app { padding-bottom: env(safe-area-inset-bottom); }
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
-  margin-bottom: 10px;
 }
 
 .colorBtn {
@@ -1381,7 +1380,7 @@ html[data-shell] .app { padding-bottom: env(safe-area-inset-bottom); }
 /* The selection translator under the color row (PdfViewer SelTranslation):
    a fold-out header, then the selectable translated text. */
 .plainTip:has(.selTrans) { width: min(420px, calc(100vw - 16px)); }
-.selTrans { border-top: 1px solid var(--border-subtle); padding-top: 6px; }
+.selTrans { margin-top: 10px; border-top: 1px solid var(--border-subtle); padding-top: 6px; }
 .selTransHead { display: flex; align-items: center; gap: 4px; }
 .selTransToggle {
   flex: 1; min-width: 0;
@@ -2635,13 +2634,22 @@ mark.merge-del { background: color-mix(in srgb, var(--danger) 16%, transparent);
 .wsItemMeta { font-size: var(--fs-2xs); color: var(--text-muted); }
 .wsItemCheck { color: var(--accent-bright); flex-shrink: 0; }
 
-/* account card header inside the popover */
+/* account card header inside the popover; a button into Account & sync */
 .userCard {
   display: flex;
   align-items: center;
   gap: 11px;
-  padding: 2px 4px 6px;
+  width: 100%;
+  padding: 4px 6px 6px;
+  background: none;
+  border: none;
+  border-radius: var(--radius-sm);
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
 }
+.userCard:hover { background: var(--bg-hover); }
 .userAvatar {
   width: 40px;
   height: 40px;

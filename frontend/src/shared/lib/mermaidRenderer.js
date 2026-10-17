@@ -35,11 +35,17 @@ export function renderMermaid(source, theme, cancelled = () => false) {
       const render = () => mermaid.render(`gamma-mermaid-${++nextId}`, mermaidMath(source), host);
       const { svg } = await (staleSvgGeometry() ? withComputedBBox(host, render) : render());
       if (cancelled()) return null;
+      // Mermaid writes its SVG as HTML: a label's <br>, <img> or &nbsp; is no
+      // XML, and an XML parse would put the browser's error page into the
+      // drawing. Read it as the page does, as HTML (inert: nothing loads or
+      // runs in a parsed document), and write it back as XML, so the preview,
+      // the download and the zoom get one well-formed SVG document.
+      const root = new DOMParser().parseFromString(svg, "text/html").body.querySelector("svg");
+      if (!root) throw new Error("Mermaid returned no SVG.");
       // Strict mode disables callbacks, but Mermaid still emits URL anchors.
       // Keep previews and downloads inert, including diagrams from AI replies.
-      const svgDoc = new DOMParser().parseFromString(svg, "image/svg+xml");
-      for (const link of svgDoc.querySelectorAll("a")) link.replaceWith(...link.childNodes);
-      return new XMLSerializer().serializeToString(svgDoc.documentElement);
+      for (const link of root.querySelectorAll("a")) link.replaceWith(...link.childNodes);
+      return new XMLSerializer().serializeToString(root);
     } finally {
       host.remove();
     }

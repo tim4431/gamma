@@ -251,9 +251,9 @@ This is the only shape with native latency and an offline replica at
 once, and the most expensive: a host of its own for the shared JavaScript,
 two to four months, and a second native app to keep in step. Zotero's
 native Android app took two and a half years from repository to general
-release. The iPad no longer has this shape: its app dropped the replica
-and the bundle when it became a shell over the web app, with the server
-on the device for offline use, shape C here ([dev/ipad.md](../dev/ipad.md)).
+release. The iPad does not have this shape: its app is a shell over the
+web app with the server on the device for offline use, shape C here
+([dev/ipad.md](../dev/ipad.md)).
 
 ### E. The shapes not worth taking
 

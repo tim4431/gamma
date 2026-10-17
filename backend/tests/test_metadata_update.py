@@ -125,6 +125,121 @@ def test_failed_fetch_is_negative_cached_and_cleared_by_update(guest):
     assert props["meta"]["title"] == "Filled by hand"
 
 
+# --- a DOI or arXiv id typed by hand -------------------------------------------
+
+# A supplement's lookup kept the DOI of a paper its references cite.
+WRONG = {"title": "Geometrically asymmetric optical cavity for strong atom-photon coupling",
+         "authors": ["Akio Kawasaki", "Boris Braverman"], "year": "2019", "venue": "Physical Review A",
+         "volume": "99", "pages": "013437", "doi": "10.1103/PhysRevA.99.013437", "arxiv_id": "",
+         "kind": "journalArticle", "source": "doi", "unverified": True}
+PRL = {"title": "Near-Unitary Spin Squeezing in 171Yb", "authors": ["Boris Braverman", "Akio Kawasaki"],
+       "year": "2019", "venue": "Physical Review Letters", "volume": "122", "pages": "223203",
+       "doi": "10.1103/physrevlett.122.223203", "arxiv_id": "", "kind": "journalArticle", "source": "doi"}
+PRL_BIB = "@article{Braverman_2019,\n  title = {Near-Unitary Spin Squeezing in ${}^{171}\\mathrm{Yb}$}\n}"
+
+
+def _registry(monkeypatch, dois=None, arxiv=None):
+    """doi.org and arXiv as dicts; every lookup asked is recorded."""
+    from gamma.routers import metadata
+    asked = []
+
+    def fetch_doi(doi, with_bibtex=True):
+        asked.append(doi)
+        rec = (dois or {}).get(doi)
+        return (dict(rec), PRL_BIB) if rec else (None, "")
+
+    def fetch_arxiv(aid):
+        asked.append(f"arXiv:{aid}")
+        rec = (arxiv or {}).get(aid)
+        return dict(rec) if rec else None
+    monkeypatch.setattr(metadata, "_fetch_doi", fetch_doi)
+    monkeypatch.setattr(metadata, "_fetch_arxiv", fetch_arxiv)
+    return asked
+
+
+def _draft(meta, **over):
+    """The popover's form: the record's fields, authors comma-joined."""
+    keys = ("kind", "title", "venue", "year", "volume", "pages", "doi", "arxiv_id")
+    return {**{k: meta.get(k, "") for k in keys}, "authors": ", ".join(meta["authors"]), **over}
+
+
+def test_a_typed_doi_fills_the_record_from_the_registry(guest, monkeypatch):
+    asked = _registry(monkeypatch, {PRL["doi"]: PRL})
+    page = make_page(guest, "Supplement", properties={"meta": WRONG, "bibtex": "@article{Kawasaki_2019}"})
+    # Pasted as a link: the DOI in it is what is looked up.
+    r = guest.post("/api/metadata/update", json={
+        "block_id": page["id"], "cite_key": "brav19",
+        "meta": _draft(WRONG, doi="https://doi.org/10.1103/PhysRevLett.122.223203")})
+    assert r.status_code == 200, r.text
+    data = r.json()
+    assert asked == [PRL["doi"]]
+    assert data["lookup"] == {"registry": "doi", "id": PRL["doi"], "found": True}
+    # The registry's fields replace the typed ones, and the record is trusted.
+    meta = data["meta"]
+    assert meta["title"] == PRL["title"] and meta["venue"] == "Physical Review Letters"
+    assert meta["source"] == "doi" and data["source"] == "doi" and meta["unverified"] is False
+    assert meta["at"]
+    # The registrar's entry, under the pinned key.
+    assert data["bibtex"].startswith("@article{brav19,") and "${}^{171}\\mathrm{Yb}$" in data["bibtex"]
+    props = guest.get(f"/api/blocks/{page['id']}").json()["properties"]
+    assert props["meta"]["title"] == PRL["title"] and props["cite_key"] == "brav19"
+
+
+def test_an_edit_that_keeps_the_identifiers_looks_nothing_up(guest, monkeypatch):
+    asked = _registry(monkeypatch, {PRL["doi"]: PRL})
+    page = make_page(guest, "Title fix", properties={"meta": PRL})
+    # The same DOI in another case, and a title corrected by hand.
+    r = guest.post("/api/metadata/update", json={
+        "block_id": page["id"],
+        "meta": _draft(PRL, title="Near-unitary spin squeezing in Yb-171", doi="10.1103/PhysRevLett.122.223203")})
+    assert r.status_code == 200, r.text
+    assert asked == [] and r.json()["lookup"] is None
+    assert r.json()["meta"]["source"] == "manual"
+    assert r.json()["meta"]["title"] == "Near-unitary spin squeezing in Yb-171"
+
+
+def test_a_doi_nobody_knows_is_saved_as_typed(guest, monkeypatch):
+    asked = _registry(monkeypatch)
+    page = make_page(guest, "Unknown DOI", properties={"meta": WRONG})
+    r = guest.post("/api/metadata/update", json={
+        "block_id": page["id"], "meta": _draft(WRONG, doi="10.9999/no-such-paper")})
+    assert r.status_code == 200, r.text
+    data = r.json()
+    assert asked == ["10.9999/no-such-paper"]
+    assert data["lookup"] == {"registry": "doi", "id": "10.9999/no-such-paper", "found": False}
+    assert data["meta"]["source"] == "manual" and data["meta"]["doi"] == "10.9999/no-such-paper"
+    assert data["meta"]["title"] == WRONG["title"]
+
+
+def test_a_typed_arxiv_id_goes_through_arxiv_and_keeps_it(guest, monkeypatch):
+    preprint = {"title": "Near-unitary spin squeezing in 171Yb", "authors": ["Boris Braverman"], "year": "2019",
+                "venue": "arXiv:1901.10499", "volume": "", "pages": "", "doi": "", "arxiv_id": "1901.10499",
+                "kind": "preprint", "source": "arxiv"}
+    asked = _registry(monkeypatch, arxiv={"1901.10499": preprint})
+    page = make_page(guest, "Typed arXiv id")  # nothing found before: the form starts empty
+    r = guest.post("/api/metadata/update", json={
+        "block_id": page["id"], "meta": {"arxiv_id": "arXiv:1901.10499v2"}})
+    assert r.status_code == 200, r.text
+    data = r.json()
+    assert asked == ["arXiv:1901.10499"]
+    assert data["lookup"] == {"registry": "arxiv", "id": "1901.10499", "found": True}
+    assert data["meta"]["source"] == "arxiv" and data["meta"]["arxiv_id"] == "1901.10499"
+    assert data["meta"]["kind"] == "preprint"
+    assert data["bibtex"].startswith("@")  # no registrar entry: built from the record
+
+
+def test_a_typed_doi_keeps_the_arxiv_id_beside_it(guest, monkeypatch):
+    preprint = {**PRL, "venue": "arXiv:1901.10499", "doi": "", "arxiv_id": "1901.10499",
+                "kind": "preprint", "source": "arxiv"}
+    _registry(monkeypatch, {PRL["doi"]: PRL})
+    page = make_page(guest, "Preprint, now published", properties={"meta": preprint})
+    r = guest.post("/api/metadata/update", json={
+        "block_id": page["id"], "meta": _draft(preprint, doi=PRL["doi"])})
+    assert r.status_code == 200, r.text
+    meta = r.json()["meta"]
+    assert meta["venue"] == "Physical Review Letters" and meta["arxiv_id"] == "1901.10499"
+
+
 # --- the pinned citation key -------------------------------------------------
 
 def _meta(**over):

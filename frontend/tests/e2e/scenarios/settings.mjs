@@ -206,6 +206,22 @@ export async function settingsScenarios(env) {
     }
   });
 
+  await step("settings: the account menu's card opens Account & sync", async () => {
+    const { ctx, page } = await setup();
+    try {
+      await page.locator('[data-guide="header.account"]').click();
+      const card = page.locator('[data-guide="account.card"]');
+      await card.hover();
+      if (flags.keep) await page.locator('[data-guide="account.menu"]').screenshot({ path: `${server.dir}/account-card-hover.png`, animations: "disabled" });      await card.click();
+      await page.getByRole("dialog", { name: "Settings", exact: true }).waitFor();
+      await page.locator('.setNavAccount[aria-current="page"]').waitFor();
+      assertEq(await page.locator('[data-guide="account.menu"]').count(), 0, "the menu closes");
+      assertNoProblems(page);
+    } finally {
+      await ctx.close();
+    }
+  });
+
   await step("settings: Ctrl+, opens it; Ctrl+F goes to the settings search, Enter and the arrows pick a match", async () => {
     const { ctx, page } = await setup();
     try {

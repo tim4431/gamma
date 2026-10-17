@@ -3139,9 +3139,13 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     }
   }
 
+  // A DOI or arXiv id typed in place of the stored one is looked up by the
+  // save (the registry's record replaces the fields), which takes seconds.
+  const [metaSaving, setMetaSaving] = useState(false);
   async function saveMetaEdits() {
     const blockId = focusedBlockIdRef.current;
-    if (!blockId || !metaDraft) return;
+    if (!blockId || !metaDraft || metaSaving) return;
+    setMetaSaving(true);
     try {
       const data = await apiJson(`${API}/metadata/update`, {
         method: "POST",
@@ -3163,9 +3167,14 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         await renameTitle(data.meta.title);
       }
       fetchHomeBlocks(); // keep the library's meta fresh for DOI-link matching
-      setStatus(t("Metadata saved."));
+      const site = data.lookup?.registry === "arxiv" ? "arXiv" : "doi.org";
+      setStatus(!data.lookup ? t("Metadata saved.")
+        : data.lookup.found ? t("Metadata filled in from {site} ({id}).", { site, id: data.lookup.id })
+          : t("{site} has no record of {id}; saved as typed.", { site, id: data.lookup.id }));
     } catch (err) {
       setStatus(t("Metadata save failed: {message}", { message: err.message }));
+    } finally {
+      setMetaSaving(false);
     }
   }
   // The Source row's Verify: the user vouches for the record as it stands,
@@ -7503,6 +7512,11 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         }
       }
     }
+    // A folder with no page in it or below it dates from its own making, so
+    // a new one lists with the recent work instead of sinking to the bottom.
+    for (const [id, folder] of libTree.folders) {
+      if (!m[id].count) m[id].updated = m[id].created = folder.created;
+    }
     return m;
   }, [libTree, pageBlocks, viewedAtById]);
   // Folder order for the context menu's "Move to folder" flyout: every
@@ -7568,8 +7582,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // top-level folders + EVERY page as a recents feed, loaded incrementally;
   // in "labels" mode → the labels in scope instead of folders and files;
   // inside a label → that label's pages only. Date sorts rank a container by
-  // its most recent content; an empty folder has no timestamps and sinks to
-  // the bottom. The custom order keeps the folders' own order (dragged by
+  // its most recent content; an empty folder by when it was made. The
+  // custom order keeps the folders' own order (dragged by
   // hand, placeFolders) ahead of the pages in the library's. The search box
   // doesn't drop anything: matches are floated to the top of the sort and
   // the rest are flagged for dimming.
@@ -8688,7 +8702,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                         ) : null}
                         {metaDirty ? (
                           <div className="reportModalBtns">
-                            <button className="uiBtn primary" onClick={saveMetaEdits}>{t("Save metadata")}</button>
+                            <button className="uiBtn primary" disabled={metaSaving} onClick={saveMetaEdits}>
+                              {metaSaving ? t("Saving…") : t("Save metadata")}
+                            </button>
                           </div>
                         ) : null}
                       </div>
@@ -10015,7 +10031,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           </button>
           {openPopover === "user" ? (
             <MenuScope className="popover userPopover" data-guide="account.menu">
-              <div className="userCard" data-guide="account.card">
+              {/* The card is the way into your account: Settings → Account & sync. */}
+              <button type="button" className="userCard" data-guide="account.card"
+                onClick={() => openSettingsPane("account")} title={t("Account & sync")}>
                 <span className="userAvatar" aria-hidden="true">
                   {authUser.is_guest
                     ? <UserIcon size={20} />
@@ -10035,7 +10053,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                     {quotaInfo.quota_mb ? ` / ${fmtBytes(quotaInfo.quota_mb * 1024 * 1024)}` : ""}
                   </span>
                 ) : null}
-              </div>
+              </button>
               {authUser.is_guest ? (
                 <div className="popoverHint">{t("Your work stays until then, or until you log out; then the workspace is deleted with everything in it. Ask the admin for an account to keep your work.")}</div>
               ) : null}

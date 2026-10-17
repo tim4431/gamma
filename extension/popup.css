@@ -122,8 +122,9 @@ code, kbd { font-family: var(--font-mono); }
 .linkBtn.quiet { display: inline-flex; align-items: center; gap: 5px; color: var(--text-muted); font-size: var(--fs-xs); font-weight: 500; }
 .linkBtn.quiet:hover:not(:disabled) { color: var(--text-primary); text-decoration: none; }
 .linkBtn.quiet:disabled { opacity: 0.5; cursor: default; }
-/* Side actions under the main ones: one quiet link, centered. */
-.minor { display: flex; justify-content: center; padding: 0 16px 12px; margin-top: -4px; }
+/* Side actions under the main ones: quiet links, centered in one row. */
+.minor { display: flex; justify-content: center; flex-wrap: wrap; gap: 4px 18px; padding: 0 16px 12px; margin-top: -4px; }
+.minor:not(:has(> :not(.hidden))) { display: none; }
 .actions { padding: 8px 16px 14px; display: grid; gap: 8px; }
 
 /* Menu surface + rows — the app's ctxMenu / ctxMenuItem recipe. */

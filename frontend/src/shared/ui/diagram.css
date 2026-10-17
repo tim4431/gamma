@@ -16,6 +16,7 @@
    an SVG fence's image) fills it so a dragged width scales the whole
    drawing, like a sized note image. */
 .diagramFigure { position: relative; max-width: 100%; margin: 0 auto; }
+.diagramFigure.zoomable { cursor: zoom-in; }
 .diagramSvg > svg, .diagramImg { display: block; max-width: 100%; height: auto; margin: auto; }
 .diagramFigure.sized .diagramSvg > svg { width: 100% !important; max-width: none !important; }
 .diagramFigure.sized .diagramImg { width: 100%; }

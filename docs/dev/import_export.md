@@ -134,7 +134,7 @@ share one review flow: Upload → Review → Import → Summary.
   parts instead (`POST /api/import/review/parts`, [api.md](api.md)), the
   protocol of a PDF's upload in parts ([user_db.md](user_db.md) "Stored
   files"), since a proxy in front of the server caps a request's body
-  (Cloudflare at 100 MB): the parts are appended to the staged upload, and
+  (Cloudflare at 100 MB). The parts are appended to the staged upload, and
   finishing answers with the preview, as the single request does.
 - The import itself is a background job ([tasks.md](tasks.md)):
   `POST /api/jobs/import` with `{review_id, selected: [...]}` imports from
@@ -170,7 +170,7 @@ share one review flow: Upload → Review → Import → Summary.
   its descendants). A tree of more than 300 files (a vault) starts with its
   folders closed, a closed folder's rows are made only once it opens, and
   a list shows 300 files at a time, so 20,000 notes open and click as fast
-  as a few; `importReview.js` owns selection, filters and tree
+  as a few. `importReview.js` owns selection, filters and tree
   construction (filters only hide rows; hidden selections stay selected);
   `importApi.js` the upload, the job's body and the discard;
   `shared/lib/xhrUpload.js` the upload progress.
@@ -201,8 +201,8 @@ are filed in the same subfolders; unsupported files are skipped.
 A document past 5 MB, or past 200,000 blocks (`markdown_import.MAX_BLOCKS`),
 is refused with a 413 that says which, never cut short. A 5 MB file of real
 notes holds about 100,000 blocks (one of 50,000 parses in 0.2 s and imports
-in 2.5 s); only a file of nothing but very short lines gets past the block
-cap, and a 5 MB one of `- x` lines would be 1.3 million blocks, a minute and
+in 2.5 s). Only a file of nothing but very short lines gets past the block
+cap: a 5 MB one of `- x` lines would be 1.3 million blocks, a minute and
 about a gigabyte to write. The editor's paste as blocks
 (`POST /api/markdown-blocks`) has the same two caps: a paste past them stays
 text, and the status line says so.
@@ -272,7 +272,7 @@ folder of notes, because they only differ in naming and link conventions
   the table (`_all.csv` preferred when both exist — it has every row). Every
   row is kept, 500 rows (or 100,000 characters) to a table, each table a
   block of its own under the header, so each renders and stays under a
-  block's 200,000 characters; columns past 40 are left out with a warning.
+  block's 200,000 characters. Columns past 40 are left out with a warning.
   Its row pages `Name <id>/Row <id>.md` land in
   the folder of that name; `<aside>` callouts become `> [!info]` callouts;
   the row pages' `Property: value` lines stay as text.
@@ -304,16 +304,16 @@ folder of notes, because they only differ in naming and link conventions
   that unpacks to over 100 times its packed size (`MAX_RATIO`) is not read,
   with a warning, and an archive that does so as a whole is refused (413).
   Notes pack about 4:1 and photos or PDFs 1:1, a zip bomb about 1000:1. A
-  bundled file past the per-file upload cap is a warning without being
-  read, and a nested zip is spooled or a bundled file stored only while the
-  disk keeps `import_staging.MIN_FREE_BYTES` free (507 for the zip, a
-  warning for the file), as a staged upload must.
+  bundled file past the per-file upload cap is a warning and is not read.
+  A nested zip is spooled, and a bundled file stored, only while the disk
+  keeps `import_staging.MIN_FREE_BYTES` free (507 for the zip, a warning
+  for the file), as a staged upload must.
 
 The report's counts (`pages_created`, `pages_skipped`, `assets_stored`,
 `links_resolved`, `notion`) and warnings appear in the shared dialog. `pages`
 lists selected pages and their destinations, including pages already in the library. The same engine's `preview=True`
 mode reads notes and their links and checks assets without writing uploads or
-blocks; it parses a note into blocks only when it is long enough to pass the
+blocks. It parses a note into blocks only when it is long enough to pass the
 block cap, and reads no more of a bundled file than a PDF's header (a
 20,000-note vault: 4 s, a 7.8 MB answer, 0.7 MB gzipped). An import
 parses each new note twice, first for the blocks its links may target (their
@@ -462,12 +462,11 @@ exported folder itself is in no collection —, the whole path for one page),
 its labels' names as `dc:subject`. An item's `rdf:about` is
 `properties.zotero_key`, so keys survive a round trip, else
 `#gamma_page_<page id>`, and a Memo's is `#gamma_note_<block id>`
-(`GAMMA_PAGE_KEY`, `GAMMA_NOTE_KEY`): the same in every export, whatever
-else it holds. A key written once in an export goes to the page id the next
-time (a copied page keeps its Zotero key), as Zotero's translator keeps its
-own names unique. They used to be the page's place in the export
-(`#gamma_item_<n>`), so two pages exported one at a time had one key, and
-the import merged the second into the first and dropped it.
+(`GAMMA_PAGE_KEY`, `GAMMA_NOTE_KEY`): the same from one export to the
+next, whatever else the export holds, which is what the import upserts by.
+A Zotero key already written in the same export (a copied page keeps its
+Zotero key) gives way to the page id, as Zotero's translator keeps its own
+names unique.
 Attachment paths live in `z:path` like Zotero's own export — never an
 `rdf:resource` *element*, an RDF/XML syntax term that Zotero tolerates but
 strict parsers (rdflib) reject. The pipeline is verified against a live Zotero

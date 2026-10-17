@@ -108,6 +108,8 @@ def setup_logging():
     uvicorn_error = logging.getLogger("uvicorn.error")  # keeps its own console handlers
     if not any(isinstance(h, _BufferHandler) for h in uvicorn_error.handlers):
         uvicorn_error.addHandler(buffer_handler)
+    if not any(isinstance(f, _InvalidRequestDetail) for f in uvicorn_error.filters):
+        uvicorn_error.addFilter(_InvalidRequestDetail())
     access = logging.getLogger("uvicorn.access")
     if not any(isinstance(f, _QuietPolls) for f in access.filters):
         access.addFilter(_QuietPolls())
@@ -125,3 +127,50 @@ class _QuietPolls(logging.Filter):
             if method == "GET" and path == "/api/jobs" and isinstance(status, int) and status < 400:
                 return False
         return True
+
+
+_INVALID_REQUEST = "Invalid HTTP request received."
+
+
+class _InvalidRequestDetail(logging.Filter):
+    """Says who sent uvicorn's bare "Invalid HTTP request received." and what
+    it looked like. uvicorn logs it while handling the parser's error, inside
+    the protocol method that holds the connection and the bytes it read, so
+    they are read off the stack. A TLS handshake is the usual one: something
+    opened https:// on this plain-HTTP port, mostly scanners on an exposed
+    port."""
+
+    def filter(self, record):
+        if record.msg == _INVALID_REQUEST and not record.args:
+            try:
+                record.msg = _INVALID_REQUEST[:-1] + _invalid_request_detail()
+            except Exception:
+                pass
+        return True
+
+
+def _invalid_request_detail() -> str:
+    peer = data = None
+    frame = sys._getframe()
+    while frame is not None and data is None:
+        conn = frame.f_locals.get("self")
+        if type(conn).__module__.startswith("uvicorn.protocols.http"):
+            peer = peer or getattr(conn, "client", None)
+            if isinstance(frame.f_locals.get("data"), bytes):
+                data = frame.f_locals["data"]
+        frame = frame.f_back
+    detail = f" from {peer[0]}:{peer[1]}" if peer else ""
+    if not data:
+        return detail + "."
+    if data[:2] == b"\x16\x03":
+        return detail + ": a TLS handshake (https:// sent to this plain-HTTP port)"
+    if data.startswith(b"PRI * HTTP/2.0"):
+        return detail + ": HTTP/2 without TLS, which this server does not speak"
+    if data.startswith(b"PROXY "):
+        return detail + ": a PROXY protocol header, which this server does not read"
+    # The first line, its query left out (it can carry ?share= tokens), as a
+    # bytes repr without the b so control bytes show escaped.
+    line, query, _ = data.split(b"\n", 1)[0].rstrip(b"\r")[:80].partition(b"?")
+    detail += ": starts " + repr(line + b"?..." if query else line)[1:]
+    exc = sys.exc_info()[1]
+    return detail + (f" ({exc})" if exc and str(exc) else "")

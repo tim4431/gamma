@@ -1,3 +1,4 @@
+import ObjectiveC
 import UIKit
 import WebKit
 
@@ -27,14 +28,14 @@ final class WebShell {
 
     private static let backgroundKey = "gamma.theme.background"
 
-    init(info: HostInfo = .current) {
+    init() {
         let configuration = WKWebViewConfiguration()
         // The default store keeps the server's session cookie (a year) across launches.
         configuration.websiteDataStore = .default()
         configuration.defaultWebpagePreferences.preferredContentMode = .desktop
         configuration.allowsInlineMediaPlayback = true // the recordings' player
         let bridge = Bridge()
-        bridge.install(in: configuration.userContentController, info: info)
+        bridge.install(in: configuration.userContentController, info: .current)
 
         let webView = WKWebView(frame: .zero, configuration: configuration)
         // Transparent until the page paints: the container shows the theme's colour.
@@ -47,6 +48,7 @@ final class WebShell {
         #if DEBUG
         webView.isInspectable = true // Safari's Web Inspector from a Mac
         #endif
+        Self.hideKeyboardAccessoryBar(of: webView)
 
         self.webView = webView
         self.bridge = bridge
@@ -90,6 +92,7 @@ final class WebShell {
     /// web app restores itself as after any reload.
     private func recover() {
         loginDue = true
+        Self.hideKeyboardAccessoryBar(of: webView) // a new process may bring a new content view
         if webView.url == nil { retry() } else { webView.reload() }
     }
 
@@ -145,4 +148,48 @@ final class WebShell {
     static var savedBackground: UIColor? {
         UserDefaults.standard.string(forKey: backgroundKey).flatMap { UIColor(cssHex: $0) }
     }
+
+    // --- the keyboard's accessory bar ------------------------------------------------------
+
+    /// WebKit's content view shows an accessory bar (‹ › Done) over the
+    /// keyboard, which Safari does not, and the web app's editing bar
+    /// (editor/EditBar.jsx) would sit on it. The content view is given a
+    /// subclass made at run time whose `inputAccessoryView` is nil, the
+    /// technique Capacitor and Cordova ship. False when the content view was
+    /// not found (another WebKit); a second call on the same view is nothing.
+    @discardableResult
+    static func hideKeyboardAccessoryBar(of webView: WKWebView) -> Bool {
+        let prefix = "GammaNoAccessory_"
+        // Once given the subclass, the content view's class name starts with the prefix.
+        guard let content = webView.scrollView.subviews.first(where: {
+            let name = NSStringFromClass(type(of: $0))
+            return name.hasPrefix("WKContent") || name.hasPrefix(prefix + "WKContent")
+        }) else {
+            return false
+        }
+        let base: AnyClass = type(of: content)
+        let baseName = NSStringFromClass(base)
+        if baseName.hasPrefix(prefix) { return true }
+        let name = prefix + baseName
+        let subclass: AnyClass
+        if let existing = NSClassFromString(name) {
+            subclass = existing
+        } else {
+            guard let made = objc_allocateClassPair(base, name, 0),
+                  let method = class_getInstanceMethod(NoAccessoryView.self, #selector(getter: NoAccessoryView.inputAccessoryView)) else {
+                return false
+            }
+            class_addMethod(made, #selector(getter: UIResponder.inputAccessoryView),
+                            method_getImplementation(method), method_getTypeEncoding(method))
+            objc_registerClassPair(made)
+            subclass = made
+        }
+        object_setClass(content, subclass)
+        return true
+    }
+}
+
+/// The one method the content view's subclass gets (`hideKeyboardAccessoryBar`).
+private final class NoAccessoryView: NSObject {
+    @objc var inputAccessoryView: UIView? { nil }
 }

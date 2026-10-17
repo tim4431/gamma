@@ -1059,9 +1059,9 @@ export async function noteScenarios({ server, browser, alice, step, until, sleep
     const img = frameOf(picBlock.id, "image").locator("img.mdImg");
     await img.waitFor();
     await img.dblclick({ position: { x: 4, y: 190 } }); // the hover toolbar pill sits at the top
-    await p.locator(".mdLightbox").waitFor();
+    await p.locator(".lightbox").waitFor();
     await p.keyboard.press("Escape");
-    await p.locator(".mdLightbox").waitFor({ state: "detached" });
+    await p.locator(".lightbox").waitFor({ state: "detached" });
     await img.click({ position: { x: 4, y: 190 } });
     await p.waitForSelector(".mdObjectSelected");
     assertEq(await p.locator(".blockEditorCm").count(), 0, "pressing the picture selects it, no editor");

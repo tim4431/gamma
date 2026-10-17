@@ -30,8 +30,9 @@ because a diagram's body has no editing of its own: a picture zooms on
 double-click, a table edits the cell under the pointer. The toolbar and the
 resize grips keep their own double-clicks (`editor/MdObject.jsx`, object
 kind `"diagram"`). Hovering a diagram, or selecting a note's, shows its
-toolbar, the same flat icon buttons as a note image's strip: show source
-(`</>`), copy source, download SVG, and in a note the object menu's "⋯".
+toolbar, the same flat icon buttons as a note image's strip: zoom, show
+source (`</>`), copy source, download SVG, and in a note the object menu's
+"⋯". Zoom is there only while the drawing is shown.
 The menu's "Copy image" copies the figure as drawn (`shared/lib/copyImage.js`,
 shared with note pictures): its SVG at the shown size on the card's
 background, so a Mermaid figure keeps its theme's colours and a drawing its
@@ -50,6 +51,21 @@ image size). The figure hugs the drawing even without a stored size, so the
 grip always sits at its edge: a Mermaid figure reads the `max-width` cap
 Mermaid puts on its SVG, an SVG figure the width the sanitizer reports.
 Read-only views and chat replies show no grip.
+
+## Zoom
+
+The toolbar's zoom opens the figure in the lightbox note images use
+(`shared/ui/Lightbox.jsx`): over the page, closed by a click anywhere or
+Escape. In a chat reply or a read-only note, a click on the drawing zooms it
+as well, like a read-only note image; in an editable note that click
+selects the object. The zoomed picture is one SVG document made the way
+"Copy image" makes it (`shownSvg` and `shownBackground` in
+`shared/lib/copyImage.js`): the figure on the background it is shown on, so
+a Mermaid figure keeps its theme's page and a drawing its white one, sized
+by `lightboxFit` to fill 94% of the window's width or 90% of its height.
+Being a vector, it is sharp at that size. It is made from the markup the
+figure shows: Mermaid's SVG as the renderer serialized it, or an SVG
+fence's sanitized drawing.
 
 ## The fence layer
 
@@ -117,6 +133,14 @@ layout, suppressed automatic error diagrams, a 50,000-character limit and a
 500-edge limit are locked against diagram configuration overrides.
 SVG anchors are unwrapped after rendering, and Mermaid event bindings are never
 installed, so diagram links and callbacks stay inactive in previews/downloads.
+
+Mermaid returns its SVG as HTML: a label's `<br>`, `<img>` or `&nbsp;`
+is not XML. The renderer therefore reads the result with the HTML parser,
+as the page itself would (a parsed document is inert: nothing in it loads
+or runs), and writes it back with `XMLSerializer`. The preview, the download
+and the zoom all get the same well-formed SVG document. An XML parse would
+put the browser's error page ("This page contains the following errors")
+into the drawing.
 
 Stale SVG geometry: Mermaid measures each label inside a `foreignObject`
 first sized up to 16384 px, shrinks the box and shifts its group, then lays

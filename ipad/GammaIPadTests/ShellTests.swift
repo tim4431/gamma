@@ -1,8 +1,10 @@
+import WebKit
 import XCTest
 @testable import Gamma
 
 /// The shell's rules that need no web view: what the address field accepts,
-/// which navigations stay in the app, and the theme's colours.
+/// which navigations stay in the app, and the theme's colours. Then the one
+/// that needs a web view: the keyboard's accessory bar.
 final class ServerAddressTests: XCTestCase {
     func testABareHostMeansHTTPS() {
         XCTAssertEqual(ServerAddress.parse("  gamma.example.org \n"), URL(string: "https://gamma.example.org"))
@@ -77,5 +79,20 @@ final class CSSColorTests: XCTestCase {
         XCTAssertNil(rgba("red"))
         XCTAssertNil(rgba("#12345"))
         XCTAssertNil(rgba("#gggggg"))
+    }
+}
+
+final class KeyboardAccessoryTests: XCTestCase {
+    @MainActor
+    func testTheContentViewLosesItsAccessoryBar() throws {
+        let webView = WKWebView(frame: CGRect(x: 0, y: 0, width: 320, height: 240))
+        let content = try XCTUnwrap(webView.scrollView.subviews.first { NSStringFromClass(type(of: $0)).hasPrefix("WKContent") },
+                                    "WebKit's content view is the scroll view's child")
+        XCTAssertTrue(WebShell.hideKeyboardAccessoryBar(of: webView))
+        XCTAssertNil(content.inputAccessoryView)
+        XCTAssertTrue(NSStringFromClass(type(of: content)).hasPrefix("GammaNoAccessory_"))
+        XCTAssertTrue(WebShell.hideKeyboardAccessoryBar(of: webView), "a second call is harmless")
+        XCTAssertEqual(NSStringFromClass(type(of: content)).components(separatedBy: "GammaNoAccessory_").count, 2,
+                       "the subclass is made once, not nested")
     }
 }

@@ -75,7 +75,9 @@ def _props(block_id):
 
 def _filed(props):
     """A page's filing as a person reads it: ``(folder paths "a/b", label
-    names)``, in the page's order."""
+    names)``, in the page's order. The guest workspace is shared by the
+    whole run and a clip reuses a folder or label of the same name ignoring
+    case, so the names a test checks are ones no other module files under."""
     with connect_pages_db(workspace_of(guest_name())) as conn:
         paths, names = folder_paths(conn), label_names(conn)
     return (["/".join(paths[f]) for f in props.get("folders", [])],
@@ -86,8 +88,8 @@ def test_clip_url_creates_filed_page_and_stores_pdf(guest, upstream, meta_calls)
     url = "https://example.org/papers/clip-one.pdf"
     r = guest.post("/api/clip", json={
         "source_url": "https://example.org/papers/clip-one",
-        "pdf_url": url, "title": "  Clip   One  ", "folder_path": "reading/2026",
-        "labels": ["to-read"],
+        "pdf_url": url, "title": "  Clip   One  ", "folder_path": "clip-reading/2026",
+        "labels": ["clip-to-read"],
     })
     assert r.status_code == 200, r.text
     body = r.json()
@@ -100,7 +102,7 @@ def test_clip_url_creates_filed_page_and_stores_pdf(guest, upstream, meta_calls)
     assert title == "Clip One" and props["auto_title"] == "Clip One"
     assert props["source_url"] == url
     assert props["web_url"] == "https://example.org/papers/clip-one"
-    assert _filed(props) == (["reading/2026"], ["to-read"])
+    assert _filed(props) == (["clip-reading/2026"], ["clip-to-read"])
     assert body["folders"] == props["folders"] and body["labels"] == props["labels"]
     assert meta_calls == [(account_of(guest_name()), body["block_id"], "", "")]
 

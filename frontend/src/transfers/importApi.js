@@ -1,6 +1,5 @@
 import { API, apiJson } from "../shared/lib/utils";
-import { xhrUpload } from "../shared/lib/xhrUpload";
-import { PART_BYTES, uploadInParts } from "../shared/lib/uploadParts";
+import { uploadFile } from "../shared/lib/uploadParts";
 import { t, T } from "../shared/i18n/i18n.js";
 import { zipFolder } from "./folderZip.js";
 
@@ -36,15 +35,10 @@ export async function requestImport({ source, file, folder = "", strip }, { sign
     onProgress: (loaded, total) => onProgress?.({ phase: "upload", loaded, total }),
     onProcessing: () => onProgress?.({ phase: "processing" }),
   };
-  // Past one part, in parts: a proxy in front of the server caps a request's body.
-  if (upload.size > PART_BYTES) {
-    return uploadInParts(upload, { url: `${API}/import/review/parts`, fields: { name: upload.name, ...fields },
-      discard: (token) => `${API}/import/review/${encodeURIComponent(token)}` }, options);
-  }
-  const body = new FormData();
-  body.append("file", upload);
-  for (const [key, value] of Object.entries(fields)) body.append(key, String(value));
-  return xhrUpload(`${API}/import/review`, body, options);
+  // A large file goes in parts (shared/lib/uploadParts.js); an unfinished
+  // one is dropped where a review is.
+  return uploadFile(upload, { url: `${API}/import/review`, parts: `${API}/import/review/parts`, fields,
+    discard: (token) => `${API}/import/review/${encodeURIComponent(token)}` }, options);
 }
 
 // The import itself is a background job: tasks.start("import", importJobBody(…)).

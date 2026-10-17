@@ -9,9 +9,10 @@ import Foundation
 ///
 /// One interpreter, started once on a thread of its own and never
 /// finalized: `gamma_ios.main()` (ipad/python/gamma_ios.py) runs uvicorn
-/// and does not return while the server is up. An interpreter cannot be
-/// started a second time in one process, so a failed start stays failed
-/// until the app is opened again.
+/// under a supervisor and never returns. An interpreter cannot be started a
+/// second time in one process, but the server inside it can: `restart`
+/// asks the supervisor to run it again (after a failed start, or once iOS
+/// reclaimed its socket), on the same port.
 enum PythonRuntime {
     /// Where the build put Python in the app bundle (the run-script phase in
     /// ipad/project.yml and install_python): the standard library under
@@ -64,6 +65,30 @@ enum PythonRuntime {
 
     /// Read by the tests, which can start the server only when the app did not.
     @MainActor private(set) static var started = false
+
+    /// Whether the interpreter is up and the entry still runs, read from any
+    /// thread under `lock`: what `restart` needs to know. The entry's own end
+    /// (an import that failed) leaves nothing to restart.
+    private static let lock = NSLock()
+    nonisolated(unsafe) private static var interpreterUp = false
+    nonisolated(unsafe) private static var entryExited = false
+
+    /// Asks the server to run again in the interpreter it has
+    /// (`gamma_ios.restart`: a server still running is stopped, and a new one
+    /// listens on the same port), from any thread but the interpreter's own.
+    /// False when there is nothing to restart: the interpreter never came up,
+    /// or the entry itself ended (an import error), which only a new build
+    /// fixes. The call takes the GIL, so it waits for the server's thread to
+    /// yield it, which uvicorn's loop does at every tick.
+    nonisolated static func restart() -> Bool {
+        lock.lock()
+        let alive = interpreterUp && !entryExited
+        lock.unlock()
+        guard alive else { return false }
+        let state = PyGILState_Ensure()
+        defer { PyGILState_Release(state) }
+        return PyRun_SimpleStringFlags("import gamma_ios\ngamma_ios.restart()\n", nil) == 0
+    }
 
     /// Starts the interpreter with `environment` set first (gamma.config
     /// reads it at import). `onExit` hears why the server stopped, which it
@@ -145,9 +170,16 @@ enum PythonRuntime {
         status = Py_InitializeFromConfig(config)
         PyConfig_Clear(config)
         if PyStatus_Exception(status) != 0 { return describe(status, doing: "start") }
+        lock.lock()
+        interpreterUp = true
+        lock.unlock()
 
-        // Blocks while the server runs. The traceback of a failure is in the log.
+        // Blocks while the supervisor runs, which is for good unless the entry
+        // itself fails. The traceback of a failure is in the log.
         let result = PyRun_SimpleStringFlags(entry, nil)
+        lock.lock()
+        entryExited = true
+        lock.unlock()
         return result == 0 ? "The server stopped." : "The server stopped with an error."
     }
 

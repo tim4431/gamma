@@ -17,7 +17,7 @@ const [k1, k2] = [generateKeyBetween(null, null), generateKeyBetween(generateKey
 const listing = {
   folders: { seq: 4, children: [
     { id: "phys", content: "Physics", position: k1, properties: { pinned: "2026-09-01T00:00:00Z" }, children: [
-      { id: "qec", content: "QEC / codes, 2026", position: k1, properties: {}, children: [] },
+      { id: "qec", content: "QEC / codes, 2026", position: k1, properties: {}, created_at: "2026-10-01T09:00:00Z", children: [] },
     ] },
     { id: "bio", content: "Biology", position: k2, properties: {}, children: [] },
   ] },
@@ -37,8 +37,9 @@ test("libraryTree reads the folders by nesting and order, the labels flat", () =
   assert.deepEqual(siblingFolders(tree, "phys"), [tree.folders.get("qec")]);
   assert.deepEqual(siblingFolders(tree, "gone"), []);
   assert.deepEqual(tree.folders.get("qec"), { id: "qec", name: "QEC / codes, 2026", parent: "phys", position: k1,
-    pinned: "", path: ["Physics", "QEC / codes, 2026"], children: [] });
+    pinned: "", created: "2026-10-01T09:00:00Z", path: ["Physics", "QEC / codes, 2026"], children: [] });
   assert.equal(tree.folders.get("phys").pinned, "2026-09-01T00:00:00Z");
+  assert.equal(tree.folders.get("bio").created, "", "no created_at: no date of its own");
   assert.deepEqual([...tree.labels.values()].map((l) => l.name), ["llm", "Review"]);
   assert.equal(libraryTree().folders.size, 0, "no listing yet: empty trees");
 });
