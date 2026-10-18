@@ -151,8 +151,17 @@ final class SavedServersTests: XCTestCase {
 /// proves the start but not the reader: a server without PyMuPDF starts
 /// too (pdf_text falls back to PyPDF2, and the manifest's page count comes
 /// through that as well). A page picture proves it: render_page answers
-/// nothing without PyMuPDF, and page-image answers 404. The interpreter
-/// starts once per process, so this is one test.
+/// nothing without PyMuPDF, and page-image answers 404. The server is
+/// started with an account the test knows: the Keychain's, as the
+/// app's, or one the test seeds itself where the Keychain refuses
+/// (LocalServer's seed): the test host on CI is unsigned
+/// (CODE_SIGNING_ALLOWED=NO in ipad.yml) and has no Keychain
+/// entitlement, so the app's own path, a password made for the
+/// Keychain, gets nothing there. A fresh data directory thus has a
+/// password the test knows, and only a used one without a password in
+/// the Keychain makes the PDF part skip: a directory this test seeded
+/// on an unsigned host is one until deleted. The interpreter starts
+/// once per process, so this is one test.
 final class LocalServerStartTests: XCTestCase {
     @MainActor
     func testTheEmbeddedServerStartsAndAnswers() async throws {
@@ -174,10 +183,23 @@ final class LocalServerStartTests: XCTestCase {
         let suite = "gamma.tests.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
         defer { defaults.removePersistentDomain(forName: suite) }
-        let server = LocalServer(defaults: defaults)
+        // The account a fresh data directory is seeded with where the
+        // Keychain refuses the one LocalServer makes for it (LocalServer's
+        // seed): the unsigned test host on CI. Signed by Xcode, the test host
+        // keeps the app's path, a password in the Keychain, so the app on
+        // that simulator signs in silently and the next run of this test
+        // signs in again. A fixed password rather than a random one: it lives
+        // for one run on a throwaway simulator, on a server that listens on
+        // loopback only, and an unsigned host's simulator left with this
+        // directory has an account whose password is written here instead of
+        // nowhere (the server's log says only "(from GAMMA_ADMIN_PASSWORD)").
+        let seed = LocalLogin(username: LocalLogin.account, password: "start-test-pw")
+        let server = LocalServer(defaults: defaults, seed: seed)
         // Whether this start seeds the account (LocalServer.start): a data
-        // directory without users.db gets the password the Keychain keeps,
-        // and the server's login is nil only when the Keychain refused it.
+        // directory without users.db gets the Keychain's account, or the seed
+        // where the Keychain refuses, and the server's login is it. One with
+        // accounts keeps them, and the login is the Keychain's password for
+        // them, or nil.
         let fresh = !FileManager.default.fileExists(atPath: server.dataDirectory.appendingPathComponent("users.db").path)
         server.start()
 
@@ -208,15 +230,14 @@ final class LocalServerStartTests: XCTestCase {
             throw XCTSkip("the data directory cannot be upgraded by this build (data_directory_not_upgradable), so every API call answers 503 and the PDF part cannot run: delete the simulator's Documents/Gamma/local to run it")
         }
 
-        // The PDF part signs in as the seeded account. A fresh directory
-        // got the stored password, so none means the Keychain refused the
-        // write and the server seeded an account whose password only its
-        // log knows. An older directory (a developer's simulator that ran
-        // the app) keeps its accounts, and without the password stored for
-        // them nothing here can sign in.
+        // The PDF part signs in as the seeded account: a fresh directory's is
+        // one this test knows. An older directory (a developer's simulator
+        // that ran the app, or this test on an unsigned host) keeps its
+        // accounts, and without the password stored for them nothing here can
+        // sign in.
         guard let login = server.login else {
             if fresh {
-                XCTFail("the Keychain refused the seeded password, so nothing can sign in to read a PDF\n\(server.logTail())")
+                XCTFail("a fresh data directory is seeded with an account this test knows (the Keychain's, or the seed where the Keychain refuses), but the server has none\n\(server.logTail())")
                 return
             }
             throw XCTSkip("the data directory has its accounts already and the Keychain holds no password for them, so the PDF part cannot sign in: delete the simulator's Documents/Gamma/local to run it")

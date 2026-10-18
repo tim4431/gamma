@@ -131,15 +131,22 @@ one library.
   run against a fake bundle with stub `otool`, `install_name_tool` and
   `codesign`: the device and simulator plists, a second run with nothing
   to do, and the loose-dylib guard. Its real runs are CI's (`ipad.yml`,
-  on every pull request that touches `ipad/`). The build there exercises
-  `otool -D`'s two-line output (the id is read as the last line),
-  `install_name_tool` on the 57 MB library and on the modules
+  on every pull request that touches `ipad/`). One has run (PR #125,
+  run 39082405425, a macos-15 runner, a simulator): the build went
+  through `otool -D`'s two-line output (the id is read as the last
+  line), `install_name_tool` on the 57 MB library and on the modules
   `install_python` already signed, and `codesign` accepting the
   hand-written `Info.plist` with `--preserve-metadata=identifier` on a
-  binary that was never signed; `LocalServerStartTests` then uploads a
-  PDF to the embedded server and asks for a page picture, which only
-  MuPDF can draw ([dev/ipad.md "Tests"](../dev/ipad.md#tests)). A green
-  run is the simulator's confirmation. A device with a real team is not
+  binary that was never signed, and the embedded server started with
+  the wheel and the two frameworks in the bundle and answered
+  `/api/health`. That is the bundle and the start, not the reader: a
+  server without PyMuPDF starts too. The page picture
+  `LocalServerStartTests` asks for, which only MuPDF can draw
+  ([dev/ipad.md "Tests"](../dev/ipad.md#tests)), is still to be seen:
+  that run stopped before the sign-in, because the unsigned test host
+  could not keep the seeded password in the Keychain, and the test now
+  seeds the account itself where the Keychain refuses. A green run is
+  the simulator's confirmation. A device with a real team is not
   covered: it enforces the code signature of everything it loads, where
   the simulator does not, and nothing has run there.
 - App Store validation of the hand-made frameworks (ITMS-90171,

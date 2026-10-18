@@ -350,7 +350,9 @@ A data directory whose password the Keychain does not hold gets no silent
 sign-in: one restored from a backup without the Keychain, or one whose
 first write to the Keychain was refused. The person then signs in on the
 page. A password the server made itself, with no account seeded, is in
-its log.
+its log. A caller can hand `LocalServer` the account a first start seeds
+when the Keychain refuses one made for it; the app never does, only the
+test host, whose Keychain refuses it on CI ([Tests](#tests)).
 
 The shell signs in to the local server as the desktop does
 (`autoLoginScript` in `desktop/main.js`; `WebShell.swift`). After the
@@ -524,10 +526,19 @@ confirm: [research/pymupdf-ios.md](../research/pymupdf-ios.md).
     version's keys included (`ServerTests`)
 - `LocalServerStartTests` (in `ServerTests.swift`) starts the embedded
   server for real in the test host. It checks the bundle's layout first,
-  so an unprepared build says what is missing. Then it waits up to three
-  minutes for `/api/health`, signs in as the seeded account, uploads a
-  one-page PDF it builds, creates the page for it and reads the document
-  back: the manifest (`/api/pdf-info`, one page of 612 × 792 points) and
+  so an unprepared build says what is missing. It starts the server with
+  the account the app would, a password made for the Keychain, or, where
+  the Keychain refuses it, with an account it seeds itself
+  (`LocalServer`'s `seed`): CI's test host is unsigned
+  (`CODE_SIGNING_ALLOWED=NO`) and has no Keychain entitlement, so the
+  app's path gets nothing there and the server would seed an account
+  whose password only its log knows. A test host Xcode signed uses the
+  Keychain as the app does, so the app on that simulator signs in
+  silently afterwards and the test signs in again on its next run. Then
+  it waits up to three minutes for `/api/health`, signs in as that
+  account, uploads a one-page PDF it builds, creates the page for it and
+  reads the document back: the manifest (`/api/pdf-info`, one
+  page of 612 × 792 points) and
   a page picture (`/api/ai/page-image`, an `image/*` body). The picture
   is the proof that PyMuPDF's frameworks load and render: a server
   without PyMuPDF starts and counts pages all the same (`pdf_text` falls
@@ -538,8 +549,10 @@ confirm: [research/pymupdf-ios.md](../research/pymupdf-ios.md).
   skips when the app had already started its own server (a simulator
   whose last pick was This iPad), since an interpreter starts once per
   process, and skips the PDF part on a simulator whose data directory
-  has accounts the Keychain holds no password for, or that a newer build
-  upgraded (the server is up but answers every `/api` call with the
+  has accounts already and the Keychain holds no password for them (the
+  seed reaches nothing there; a directory the test itself seeded on an
+  unsigned host is one until deleted), or that a newer build upgraded
+  (the server is up but answers every `/api` call with the
   `data_directory_not_upgradable` 503).
 - `backend/tests/test_ios_requirements.py`: every server dependency is in
   the iOS requirements or excluded with a reason, and nothing excluded is

@@ -1,6 +1,6 @@
 {
   "name": "gamma-desktop",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "Gamma desktop shell: opens local and remote Gamma servers",
   "homepage": "https://github.com/tim4431/Gamma",
   "author": "Tim <tim4431@users.noreply.github.com>",

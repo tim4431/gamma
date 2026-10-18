@@ -137,7 +137,7 @@ def notebook_pdf(sheets: list[tuple[dict, list, list]], resolve_ref=None) -> byt
     from . import ink as inkmod
     from . import text_box
     from .pdf_glyphs import GlyphFonts
-    from .pdf_typeset import num
+    from .pdf_typeset import finalize_cid, num
 
     writer = PdfWriter()
     glyphs = GlyphFonts(writer)
@@ -157,6 +157,7 @@ def notebook_pdf(sheets: list[tuple[dict, list, list]], resolve_ref=None) -> byt
         if boxes:
             page[NameObject("/Resources")] = text_box.pdf_resources(fonts, glyphs)
     glyphs.finalize()
+    finalize_cid(writer)
     out = io.BytesIO()
     writer.write(out)
     return out.getvalue()

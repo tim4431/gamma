@@ -32,7 +32,8 @@ Prose is drawn with three fonts, all built into every PDF viewer: Helvetica for
 WinAnsi, the Symbol font for the Greek and math left over when the math
 renderer is unavailable (``\\phi`` → φ, ``\\sum`` → ∑), and a non-embedded
 STSong-Light CID font for CJK — viewers with Asian font support render that,
-others substitute, and the raw text is still in the annotation popup.
+others substitute, its ToUnicode map gives readers the text, and the raw text
+is still in the annotation popup.
 """
 
 import io
@@ -59,6 +60,7 @@ from .pdf_typeset import (
     LEADING,
     SYM,
     draw_spans,
+    finalize_cid,
     font_resources,
     line_metrics,
     num as _num,
@@ -319,7 +321,7 @@ def _stamp(writer, page_index: int, matrix, ops: list, xobjects, glyph_fonts):
     stream = DecodedStreamObject()
     stream.set_data(body)
     overlay[NameObject("/Contents")] = stream
-    fonts = font_resources(_FONTS)
+    fonts = font_resources(_FONTS, writer)
     fonts.update({NameObject("/" + name): ref for name, ref in glyph_fonts.items()})
     resources = DictionaryObject({NameObject("/Font"): fonts})
     if xobjects:
@@ -419,8 +421,11 @@ def _bounds_log_class():
 
         def fill_shade(self, ctx, shade, ctm, *_):
             bound = mupdf.ll_fz_bound_shade(shade, ctm)
-            clip = mupdf.fz_device_current_scissor(self).internal()
-            self.out.append(("fill-shade", rect(mupdf.ll_fz_intersect_rect(bound, clip))))
+            # The scissor wrapper stays in a name until the intersection is
+            # taken: .internal() points into it, and a temporary is freed at
+            # once (on Linux that read garbage; Windows happened to keep it).
+            scissor = mupdf.fz_device_current_scissor(self)
+            self.out.append(("fill-shade", rect(mupdf.ll_fz_intersect_rect(bound, scissor.internal()))))
 
     _BoundsLog = BoundsLog
     return BoundsLog
@@ -614,6 +619,7 @@ def _draw_notes(pdf_bytes, writer, by_page, uploads_dir):
     if not drawn:
         return pdf_bytes, 0
     glyphs.finalize()
+    finalize_cid(writer)
     out = io.BytesIO()
     writer.write(out)
     return out.getvalue(), drawn

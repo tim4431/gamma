@@ -35,13 +35,25 @@ final class LocalServer: ObservableObject {
     /// project.yml), with its log, as the desktop shows its data folder.
     let dataDirectory: URL
     private let defaults: UserDefaults
+    /// The account a first start seeds when the Keychain refuses the one
+    /// made for it (`start`). The app passes none. The test host passes one:
+    /// unsigned (CODE_SIGNING_ALLOWED=NO in ipad.yml), it has no Keychain
+    /// entitlement, so the Keychain refuses the password `LocalLogin.stored`
+    /// would make, and nothing could sign in to the server it starts. Where
+    /// the Keychain works (a test host Xcode signed) the seed is not used:
+    /// the account is the Keychain's, the app's own on that simulator. A
+    /// data directory with accounts already ignores the seed, as the
+    /// server ignores its environment's, so an override reaches nothing on
+    /// a used directory.
+    private let seed: LocalLogin?
     private static let portKey = "gamma.local.port"
     private var rechecking = false
     /// The address the interpreter was started for; `restart` keeps it.
     private var address: URL?
 
-    init(defaults: UserDefaults = .standard) {
+    init(defaults: UserDefaults = .standard, seed: LocalLogin? = nil) {
         self.defaults = defaults
+        self.seed = seed
         let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
         dataDirectory = documents.appendingPathComponent("Gamma/local", isDirectory: true)
     }
@@ -89,15 +101,16 @@ final class LocalServer: ObservableObject {
         }
         defaults.set(port, forKey: Self.portKey)
 
-        // The first start on an empty data directory seeds this account (the
-        // server's own seed otherwise, with a password only its log knows).
-        // Afterwards the server keeps the accounts it has and ignores the
-        // seed, so only a password stored for it is any use: a data directory
-        // without one (restored from a backup without the Keychain, or a
-        // Keychain that refused the first write) gets no silent sign-in and
-        // the person signs in on the page.
+        // The first start on an empty data directory seeds this account: one
+        // made for the Keychain, else the caller's (`seed`, the test host's,
+        // whose Keychain refuses), else the server's own, with a password
+        // only its log knows. Afterwards the server keeps the accounts it has
+        // and ignores the seed, so only a password stored for it is any use:
+        // a data directory without one (restored from a backup without the
+        // Keychain, or a Keychain that refused the first write) gets no
+        // silent sign-in and the person signs in on the page.
         let fresh = !files.fileExists(atPath: dataDirectory.appendingPathComponent("users.db").path)
-        let login = fresh ? LocalLogin.stored() : LocalLogin.existing()
+        let login = fresh ? (LocalLogin.stored() ?? seed) : LocalLogin.existing()
         self.login = login
         let environment = LocalEnvironment.make(
             dataDirectory: dataDirectory.path,

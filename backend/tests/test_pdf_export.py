@@ -3,6 +3,8 @@ annotation importer, note flattening, and the HTTP endpoint end to end."""
 
 import io
 
+import pytest
+
 from conftest import make_page, require_math_renderer, workspace_of, guest_name
 
 from gamma.pdf_export import annotate_pdf, parse_css_color
@@ -643,6 +645,51 @@ def test_render_notes_draws_cjk_without_relying_on_the_viewer():
         # needed. Only the 4 paths of box chrome remain.
         assert b"/Type3" in out
         assert kinds.count("path") <= 4, "CJK glyphs should be text, not paths"
+
+
+def test_render_notes_cjk_extracts_without_an_outline_font(monkeypatch):
+    """No CJK font to outline with (CI's runner, a bare server): the
+    characters go in through the non-embedded CID font. It carries a
+    ToUnicode map and the font descriptor the spec requires, so a reader
+    gets the text back from the file alone — MuPDF loads it without a
+    complaint, where a font with no descriptor was dropped for Helvetica
+    and its two-byte codes read one byte at a time."""
+    import pymupdf
+
+    from gamma import vector_text
+    from gamma.pdf_notes import render_notes
+
+    # glyphs() is cached per character: shaped outlines from other tests
+    # must not stand in for the font, nor its Nones stay behind for them.
+    vector_text.glyphs.cache_clear()
+    monkeypatch.setattr(vector_text, "cjk_font", lambda: None)
+    try:
+        out, drawn = render_notes(_blank_pdf(), [{
+            "position": _position(),
+            "note": "Bayes 公式是: ok",
+        }])
+    finally:
+        vector_text.glyphs.cache_clear()
+    assert drawn == 1
+    assert b"/Type3" not in out and b"/ToUnicode" in out
+    pymupdf.TOOLS.reset_mupdf_warnings()
+    text = _page_text(out)
+    assert "Bayes" in text and "公式是" in text
+    assert "missing font descriptor" not in (pymupdf.TOOLS.mupdf_warnings() or "")
+    # The map lists the three characters drawn, one bfchar each, never a
+    # bfrange over the plane: PyPDF2 reads it as those three (and the code
+    # width), where two whole-plane rows made it expand 63,000 entries a page.
+    from PyPDF2 import PdfReader
+    from PyPDF2._cmap import build_char_map
+    from PyPDF2.errors import PdfReadWarning
+
+    page = PdfReader(io.BytesIO(out)).pages[0]
+    fonts = page["/Resources"]["/Font"]
+    name = next(n for n in fonts if fonts[n].get("/Subtype") == "/Type0")
+    cmap = fonts[name]["/ToUnicode"].get_data()
+    assert b"beginbfchar" in cmap and b"bfrange" not in cmap
+    with pytest.warns(PdfReadWarning, match="UniGB-UCS2-H"):     # the encoding PyPDF2 lacks
+        assert build_char_map(name, 200.0, page)[3] == {-1: 2, "公": "公", "式": "式", "是": "是"}
 
 
 def test_render_notes_falls_back_when_math_renderer_is_missing(monkeypatch):

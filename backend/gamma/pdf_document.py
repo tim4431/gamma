@@ -51,6 +51,7 @@ from .pdf_typeset import (
     TEXT_COLOR,
     draw_spans,
     fill_rect,
+    finalize_cid,
     font_resources,
     line_metrics,
     merge,
@@ -603,6 +604,7 @@ class _Canvas:
         """Flush the pages into the writer and return its PDF bytes."""
         total = len(self.pages)
         self.glyphs.finalize()
+        finalize_cid(self.writer)
         glyph_fonts = self.glyphs.resources()
         for n, page in enumerate(self.pages):
             self._footer(page, n + 1, total)
@@ -616,7 +618,7 @@ class _Canvas:
             stream.set_data(body)
             # Streams must be indirect objects or the file is unreadable.
             pdf_page[NameObject("/Contents")] = self.writer._add_object(stream.flate_encode())
-            fonts = font_resources(sorted(page["fonts"]))
+            fonts = font_resources(sorted(page["fonts"]), self.writer)
             fonts.update({NameObject("/" + name): ref for name, ref in glyph_fonts.items()})
             resources = DictionaryObject({NameObject("/Font"): fonts})
             if page["xobjects"]:

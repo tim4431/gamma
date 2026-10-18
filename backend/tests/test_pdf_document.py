@@ -264,9 +264,17 @@ def test_math_and_cjk_are_selectable_type3_text(guest):
     # the rest is text: the title, the fraction, and three runs each (prose,
     # the glyphs, prose) of the inline line and the CJK line.
     kinds = _object_kinds(pdf)
-    assert kinds.count("path") <= 3 and kinds.count("text") >= 8
+    assert kinds.count("path") <= 3
     if vector_text.cjk_font() is not None:
-        assert "公式" in text
+        assert kinds.count("text") >= 8
+        assert "公式" in text, "through the Type 3 font's ToUnicode map"
+    else:
+        # No font to outline with (CI's runner): the CJK goes in through the
+        # non-embedded CID font, in the same text object as the prose around
+        # it, so MuPDF logs that line as one run, not three. The characters
+        # still come back — that font carries a ToUnicode map of its own.
+        assert kinds.count("text") >= 6
+        assert "公式" in text, "through the CID font's ToUnicode map"
 
 
 def test_type3_fonts_hold_each_glyph_once_and_map_back_to_unicode():
@@ -290,6 +298,38 @@ def test_type3_fonts_hold_each_glyph_once_and_map_back_to_unicode():
     proc = procs["/g1"].get_object().get_data()
     assert proc.split(b"\n")[0].endswith(b" d1") and proc.endswith(b"f")
     assert _text(pdf).count("x") == 3
+
+
+def test_cid_font_is_one_indirect_object_per_writer_and_lets_the_writer_go():
+    """The fallback CID font is one object per document, pointed at from
+    every page that names it, with its descriptor an indirect reference, as
+    ISO 32000-1 requires, and a ToUnicode map listing the characters drawn
+    with it, one bfchar each — and the table that remembers it must not keep
+    a finished writer (the whole document) in memory: an IndirectObject
+    refers back to its writer, so only object numbers are kept."""
+    import gc
+    import weakref
+
+    from PyPDF2 import PdfWriter
+    from PyPDF2.generic import IndirectObject
+
+    from gamma.pdf_typeset import CID, HELV, cid_used, finalize_cid, font_resources
+
+    writer = PdfWriter()
+    first = font_resources([HELV, CID], writer)
+    second = font_resources([CID], writer)
+    assert first.raw_get("/F2").idnum == second.raw_get("/F2").idnum
+    font = first["/F2"]
+    assert isinstance(font["/DescendantFonts"][0].raw_get("/FontDescriptor"), IndirectObject)
+    cid_used(writer, "公式")
+    finalize_cid(writer)
+    cmap = font["/ToUnicode"].get_data()
+    assert b"2 beginbfchar\n<516C> <516C>\n<5F0F> <5F0F>\nendbfchar" in cmap
+    assert b"bfrange" not in cmap
+    gone = weakref.ref(writer)
+    del writer, first, second, font
+    gc.collect()
+    assert gone() is None
 
 
 def test_pasted_images_are_embedded(guest):
