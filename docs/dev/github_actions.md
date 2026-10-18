@@ -4,7 +4,9 @@ Nine workflows live in `.github/workflows/`. A merge to `main` publishes
 only the Docker image and, when the site or its inputs changed, the website. The desktop app, with the browser extension on the same
 release, is released by dispatching `desktop.yml` — the `release` skill
 does that — and nothing is bumped or tagged by hand: versions are computed
-from the tags. The
+from the tags. The iPad app is released outside Actions: a Mac mini watches
+`main` for a commit message carrying an `ipad-test-release-NNN` marker and
+uploads a TestFlight build for it ([below](#the-ipad-testflight-release)). The
 account server (`cloud/`) and the website (`sites/`) are separate from all
 of that: each has its own check and its own publish (`cloud.yml`,
 `site.yml`), dispatched from any branch (the `build-cloud` / `build-site`
@@ -56,6 +58,8 @@ release skill ───▶ desktop.yml  meta: version = max(package.json, newest
                         └─▶ dispatch docker.yml -f version   ─▶ ghcr :<version> :<major.minor>
                         └─▶ dispatch chrome-store.yml -f tag ─▶ Chrome Web Store review (if CWS_* variables)
                         Windows leg: MSIX → msstore publish (if PARTNER_CENTER_* secrets)
+release-ipad ────▶ a commit marked ipad-test-release-NNN merged to main
+                   └─▶ the Mac mini (polls main every minute): build, test, sign → TestFlight
 ```
 
 ## Versions and tags
@@ -244,9 +248,30 @@ checks test. A change that matters on the device is dispatched by hand.
 - `xcodebuild build -sdk iphoneos -configuration Release` makes an
   unsigned device build, with `CODE_SIGNING_ALLOWED=NO`.
 
-Nothing is signed or uploaded: running on an iPad takes a developer's own
-team, set in Xcode. The script's `--check` (every pin resolved for both
+Nothing is signed or uploaded here: running on an iPad takes a developer's
+own team, set in Xcode, and the TestFlight upload is the Mac mini's
+(below). The script's `--check` (every pin resolved for both
 platforms, no Xcode) runs on Linux in `check.yml`, on every PR.
+
+### The iPad TestFlight release
+
+The signed build is made outside GitHub Actions, on a Mac mini that holds
+the team's signing identity. It checks `tim4431/gamma`'s `main` every
+minute; when a commit's message (subject or body) contains a marker
+`ipad-test-release-NNN` it has not seen, it checks that commit out, builds
+the app, runs the tests, signs it and uploads it to TestFlight. Nothing is
+dispatched by hand, and nothing is submitted to the App Store: that step
+stays manual in App Store Connect.
+
+- The three-digit `NNN` is a trigger ID, not the app's version
+  (`CFBundleShortVersionString` comes from `ipad/project.yml`). Each
+  release takes a new number; a marker that was already used is ignored,
+  so a retry after a failure takes a new number too.
+- A squash merge rewrites the commit message: the marker then has to be
+  kept in the squashed commit's title or body. The `merge` skill merges
+  with a merge commit, which keeps it.
+- The `release-ipad` skill finds the next number from `main`'s history and
+  walks through the commit and the merge.
 
 ## `docker.yml`
 

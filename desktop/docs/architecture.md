@@ -558,7 +558,10 @@ only); `GAMMA_SHELL_NO_UPDATE=1` disables the updater.
   `dist-backend/gamma-server/` (collects uvicorn's string-resolved modules,
   PyMuPDF's native libraries — MuPDF and its C++ wrapper beside the
   extension module, `--collect-binaries pymupdf`, about 40 MB of the bundle —
-  ziamath/ziafont fonts, and `frontend/dist`).
+  ziamath/ziafont fonts, and `frontend/dist`). certifi's CA bundle comes
+  along through its PyInstaller hook: on a Mac the frozen server's OpenSSL
+  looks for CAs under the build machine's python.org framework, so the
+  server verifies HTTPS with certifi's instead ([api.md](../../docs/dev/api.md)).
   Handles conda-based interpreters by adding `<base>/Library/bin` to the
   DLL search path.
 - `assets/icon.png` — app icon (512 px, the favicon mark; electron-builder

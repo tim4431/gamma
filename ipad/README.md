@@ -174,6 +174,9 @@ changes an iOS wheel needs, each commented there; why each was made is in
 - CI prepares the bundle, generates the project, runs the tests and makes
   an unsigned device build on macOS: `.github/workflows/ipad.yml`
   ([docs/dev/github_actions.md](../docs/dev/github_actions.md#ipadyml)).
+- TestFlight: a Mac mini signs and uploads a build for every commit on
+  `main` whose message carries a new `ipad-test-release-NNN` marker
+  ([docs/dev/github_actions.md](../docs/dev/github_actions.md#the-ipad-testflight-release)).
 
 What is not built yet (background running, a store release) is listed in
 [docs/dev/ipad.md](../docs/dev/ipad.md#not-built-yet).

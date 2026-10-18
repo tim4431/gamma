@@ -1,6 +1,6 @@
 ---
 name: release
-description: Release the desktop app and the browser extension from main by dispatching desktop.yml → GitHub Release v<next>, which carries the installers, the Gamma Connector zip and the AI plugins. A merge to main never does this on its own.
+description: Release the desktop app and the browser extension from main by dispatching desktop.yml → GitHub Release v<next>, which carries the installers, the Gamma Connector zip and the AI plugins. A merge to main never does this on its own. Not the iPad app — that is `release-ipad` (TestFlight).
 ---
 
 # Release from main
@@ -12,7 +12,9 @@ publishes the GitHub Release. Nothing is bumped or tagged by hand
 (`docs/dev/github_actions.md`; version rule: newest `v*` tag + patch, or
 `desktop/package.json`'s version when that floor is higher — raise it for
 a minor/major and merge first). The browser extension has no release of
-its own: its zip rides on the same release with the same version.
+its own: its zip rides on the same release with the same version. The iPad
+app is not on this release: it goes to TestFlight through a marked commit
+merged to `main` (the `release-ipad` skill).
 
 **Argument**: none needed. Optional `--dry` builds without publishing
 (`-f publish=false`), `--prerelease` marks the release as a pre-release.

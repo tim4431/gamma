@@ -1,9 +1,10 @@
 """Startup stays SDK-free; simultaneous first MCP calls share one transport;
 the app lifespan starts the background rounds and the walk over the
 workspaces behind on their migration steps, which the startup pass leaves
-alone."""
+alone; HTTPS is verified with certifi's CAs where OpenSSL finds none."""
 
 import os
+import ssl
 from pathlib import Path
 import subprocess
 import sys
@@ -144,3 +145,51 @@ def test_the_workspaces_behind_are_walked_in_the_background_not_at_startup(data_
 class _Closable:
     def close(self):
         pass
+
+
+def _without_ssl_cert_file(monkeypatch):
+    # setenv first so the undo also removes what the code under test sets
+    monkeypatch.setenv("SSL_CERT_FILE", "")
+    monkeypatch.delenv("SSL_CERT_FILE")
+
+
+def _verify_paths(cafile=None, capath=None):
+    return ssl.DefaultVerifyPaths(
+        cafile, capath, "SSL_CERT_FILE", "/Library/Frameworks/Python.framework/Versions/3.12/etc/openssl/cert.pem",
+        "SSL_CERT_DIR", "/Library/Frameworks/Python.framework/Versions/3.12/etc/openssl/certs")
+
+
+def test_https_is_verified_with_certifi_when_openssl_finds_no_cas(monkeypatch):
+    # The desktop app's frozen server on a Mac without python.org's Python:
+    # nothing at OpenSSL's built-in paths, and no Keychain for Python.
+    import certifi
+    from gamma import app as app_mod
+
+    _without_ssl_cert_file(monkeypatch)
+    monkeypatch.setattr(app_mod.sys, "platform", "darwin")
+    monkeypatch.setattr(app_mod.ssl, "get_default_verify_paths", _verify_paths)
+    app_mod._verify_https_with_certifi_when_no_cas()
+    assert os.environ["SSL_CERT_FILE"] == certifi.where()
+
+    # OpenSSL takes the variable when a context loads its default CAs, as
+    # urllib's does on every HTTPS connection.
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    context.set_default_verify_paths()
+    assert context.cert_store_stats()["x509_ca"] > 100
+
+
+def test_cas_that_exist_or_windows_keep_their_own(monkeypatch):
+    from gamma import app as app_mod
+
+    _without_ssl_cert_file(monkeypatch)
+    monkeypatch.setattr(app_mod.sys, "platform", "darwin")
+    for found in (_verify_paths(cafile="/opt/homebrew/etc/openssl@3/cert.pem"),
+                  _verify_paths(capath="/etc/ssl/certs")):
+        monkeypatch.setattr(app_mod.ssl, "get_default_verify_paths", lambda found=found: found)
+        app_mod._verify_https_with_certifi_when_no_cas()
+        assert "SSL_CERT_FILE" not in os.environ
+
+    monkeypatch.setattr(app_mod.sys, "platform", "win32")
+    monkeypatch.setattr(app_mod.ssl, "get_default_verify_paths", _verify_paths)
+    app_mod._verify_https_with_certifi_when_no_cas()
+    assert "SSL_CERT_FILE" not in os.environ

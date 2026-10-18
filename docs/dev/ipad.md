@@ -642,10 +642,13 @@ Only an iPad can show these, and none has been run yet:
   again ([Starting, and the log](#starting-and-the-log)); a sync round
   while the app is in the background would take a `BGProcessingTask`,
   and is not built.
-- **A store release.** The app is built from source with a developer's
-  own team. CI signs and uploads nothing, and App Review has not been
-  tried ([research/ipad-web-shell.md](../research/ipad-web-shell.md),
-  risk 9).
+- **A store release.** TestFlight builds exist: a Mac mini signs and
+  uploads one for every commit on `main` whose message carries a new
+  `ipad-test-release-NNN` marker
+  ([github_actions.md](github_actions.md#the-ipad-testflight-release); the
+  `release-ipad` skill). CI itself signs and uploads nothing, the App
+  Store submission is not automated, and App Review has not been tried
+  ([research/ipad-web-shell.md](../research/ipad-web-shell.md), risk 9).
 - **PyMuPDF on a device.** The framework step in `project.yml` was
   written and dry-run on Windows. On the simulator CI checks it: the
   start test ([Tests](#tests)) reads a PDF through the server, so a pull

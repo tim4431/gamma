@@ -13,3 +13,4 @@ ziamath==0.13
 cryptography==50.0.1
 mcp==1.30.0
 Pillow==12.3.0
+certifi==2026.07.22
