@@ -447,9 +447,10 @@ track of the ones nothing uses.
   a name chosen elsewhere: a clip, a mirror's pull, a restore, a stripped
   PDF, the AI chat's re-download) and `storage.put_path` (a file spooled
   to `.partial/` under such a name: the proxy's cache, an off-site pull).
-  `storage.find_upload_file` gives a stored file's path to read (pdfium,
-  the zip writers, the PDF exporters); code written against a directory of
-  files (the exporters, `ink.read_upload`, the PDF writers) gets
+  `storage.find_upload_file` gives a stored file's path to read
+  (`pdf_text`'s MuPDF reads, the zip writers, the PDF exporters); code
+  written against a directory of files (the exporters, `ink.read_upload`,
+  the PDF writers) gets
   `db.ws_uploads_dir(ws)`. The presence checks, the GC's listing and
   purge, the quota, the backup zips and a workspace's deletion call the
   store directly. A bucket only ever holds the files' off-site copies

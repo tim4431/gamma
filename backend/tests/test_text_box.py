@@ -14,7 +14,7 @@ from PyPDF2 import PdfReader, PdfWriter
 from PyPDF2.generic import (ArrayObject, DictionaryObject, FloatObject, NameObject, NumberObject, RectangleObject,
                             TextStringObject)
 
-from test_pdf_export import _page_text
+from test_pdf_export import _open, _page_text
 
 from gamma import notebook, text_box
 from gamma.pdf_export import annotate_pdf, highlight_note_text, page_frame, zotero_annot_key
@@ -71,23 +71,18 @@ def _reimported(pdf_bytes, edit):
 def _dark_box(pdf_bytes):
     """(left, top, right, bottom) in display points of the dark pixels a
     render with annotations paints, the page turned as a viewer shows it."""
-    import pypdfium2 as pdfium
-
-    doc = pdfium.PdfDocument(pdf_bytes)
+    doc = _open(pdf_bytes)
     try:
-        page = doc[0]
-        bitmap = page.render(scale=1, draw_annots=True)
-        buf, width, height = bytes(bitmap.buffer), bitmap.width, bitmap.height
-        stride, n = bitmap.stride, bitmap.n_channels
-        bitmap.close()
-        page.close()
+        # MuPDF renders the page as displayed: /Rotate applied, annotations drawn.
+        pix = doc[0].get_pixmap(alpha=False)
+        buf, width, height, stride, n = pix.samples, pix.width, pix.height, pix.stride, pix.n
     finally:
         doc.close()
     xs, ys = [], []
     for y in range(height):
         row = buf[y * stride:y * stride + width * n]
         for x in range(width):
-            if max(row[x * n:x * n + min(n, 3)]) < 128:
+            if max(row[x * n:x * n + 3]) < 128:
                 xs.append(x)
                 ys.append(y)
     return min(xs), min(ys), max(xs) + 1, max(ys) + 1
@@ -394,7 +389,7 @@ def test_the_export_writes_the_boxes_on_the_pdf(guest):
 
 
 def test_a_sheets_boxes_are_real_text_in_the_notebook_pdf(guest):
-    import pypdfium2 as pdfium
+    import pymupdf
 
     page = guest.post("/api/pages", json={"title": "Typed notebook"}).json()["id"]
     r = guest.post(f"/api/pages/{page}/ops", json={"client": "t", "ops": [
@@ -407,20 +402,29 @@ def test_a_sheets_boxes_are_real_text_in_the_notebook_pdf(guest):
     r = guest.get(f"/api/pages/{page}/export-pdf")
     assert r.status_code == 200, r.text
     assert r.headers["x-annotations-written"] == "1"
-    doc = pdfium.PdfDocument(r.content)
+    doc = _open(r.content)
     try:
         pdf_page = doc[0]
-        textpage = pdf_page.get_textpage()
-        text = textpage.get_text_bounded()
-        left, bottom, _right, top = textpage.get_charbox(0)
-        textpage.close()
-        pdf_page.close()
+        text = pdf_page.get_text("text")
+        # The first glyph, its box and baseline taken from MuPDF's page space
+        # (top-left origin) back to user space through the page's matrix.
+        raw = pdf_page.get_text("rawdict", flags=pymupdf.TEXTFLAGS_RAWDICT & ~pymupdf.TEXT_PRESERVE_IMAGES)
+        first = next(ch for block in raw["blocks"] if block["type"] == 0
+                     for line in block["lines"] for span in line["spans"] for ch in span["chars"])
+        to_user = ~pdf_page.transformation_matrix
+        left = (pymupdf.Rect(first["bbox"]) * to_user).x0
+        baseline = (pymupdf.Point(first["origin"]) * to_user).y
     finally:
         doc.close()
     assert text.strip() == "Typed on paper"
     height = notebook.normalize_paper(None)["height"]
     assert 72 + text_box.PAD <= left < 72 + text_box.PAD + 2
-    assert height - 100 - text_box.PAD - 16 * text_box.LINE < bottom < top < height - 100 - text_box.PAD
+    # The T stands on a baseline inside the first line, its cap height (0.72 em
+    # in Helvetica) under the line's top. MuPDF's glyph box is the font's
+    # ascent and descent, taller than the line, so the ink is placed by its
+    # baseline.
+    line_top = height - 100 - text_box.PAD
+    assert line_top - 16 * text_box.LINE < baseline < baseline + 0.72 * 16 < line_top
 
 
 _RECT = {"x1": 50.0, "y1": 60.0, "x2": 250.0, "y2": 160.0}

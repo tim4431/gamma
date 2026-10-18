@@ -240,7 +240,7 @@ def pdf_info(doc_id: str, request: Request):
     """The document manifest (``gamma/pdf_meta.py``): ``{doc_id, bytes,
     pages, dims: [[w, h], …]}`` in PDF points. Same access rule as the file
     itself. Sync def on purpose: a document nobody has measured yet is walked
-    in pdfium here, in the threadpool. A manifest is immutable per doc id
+    with PyMuPDF here, in the threadpool. A manifest is immutable per doc id
     (content-hash names), so it caches for a day; a failed read (pages 0)
     does not."""
     if not doc_id or not all(c in "0123456789abcdef" for c in doc_id):

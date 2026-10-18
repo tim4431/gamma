@@ -23,15 +23,22 @@ matrix so the glyphs still come out upright.
 Prose uses only fonts every PDF viewer has built in, so no font file is
 embedded: Helvetica in four styles (WinAnsi), Courier for code, Symbol for the
 Greek and math left over when the LaTeX renderer is unavailable, and a
-non-embedded STSong-Light CID font as the last resort for CJK. Math and CJK
-outlines go through ``pdf_glyphs`` as Type 3 fonts built per document.
+non-embedded STSong-Light CID font as the last resort for CJK — it carries a
+font descriptor and a ToUnicode map, so MuPDF and pdfium extract its text even
+where no viewer font draws it (pdf.js only with its CMap files, which Gamma's
+viewer does not load: there the characters are neither drawn nor extracted).
+Math and CJK outlines go through ``pdf_glyphs`` as Type 3 fonts built per
+document.
 """
 
+import weakref
 from collections import namedtuple
 
 from PyPDF2.generic import (
     ArrayObject,
+    DecodedStreamObject,
     DictionaryObject,
+    IndirectObject,
     NameObject,
     NumberObject,
     create_string_object,
@@ -184,8 +191,115 @@ def spans_width(spans, size: float) -> float:
     return sum(token_width(k, p, lv, size, st) for k, p, lv, st in spans)
 
 
-def font_resources(names) -> DictionaryObject:
-    """/Font resource dictionary for the given resource names."""
+# One CID font per writer, shared by every page that names it. Its ToUnicode
+# CMap is a stream, which must be indirect, and ISO 32000-1 (Table 117) wants
+# the font descriptor as an indirect reference too — PDF 2.0 dropped that
+# rule, but these files are written as 1.3. The table is keyed weakly and
+# holds only object numbers and the codes drawn: an IndirectObject refers
+# back to its writer, and as the value it would keep the key — the whole
+# document — alive for the life of the process.
+_CidFont = namedtuple("_CidFont", "font tounicode codes")
+_cid_fonts = weakref.WeakKeyDictionary()
+
+
+def _cid_code(ch: str) -> int:
+    """The two-byte code the CID font is handed for a character: its UCS-2
+    code (BMP only; anything beyond becomes a '?')."""
+    o = ord(ch)
+    return o if o < 0x10000 else 0x3F
+
+
+def _cid_cmap(codes) -> bytes:
+    """The CID font's ToUnicode CMap over the codes drawn with it. Its text
+    goes in through UniGB-UCS2-H, two bytes per character that ARE its UCS-2
+    code, so every entry maps a code to itself: a reader gets the characters
+    back from the file, not from a GB1-to-Unicode table of its own. The map
+    lists the characters drawn, not the plane as two bfrange rows: a bfrange
+    may not carry its destination's last byte past 255 (ISO 32000-1 9.10.3),
+    and PyPDF2 expands every code of a range into a dict entry — 63,000 of
+    them, 100 ms, for each page that names the font — where bfchar blocks
+    cost it nothing to read."""
+    body = [b"/CIDInit /ProcSet findresource begin", b"12 dict begin", b"begincmap",
+            b"/CIDSystemInfo << /Registry (Adobe) /Ordering (UCS) /Supplement 0 >> def",
+            b"/CMapName /Adobe-Identity-UCS def", b"/CMapType 2 def",
+            b"1 begincodespacerange", b"<0000> <FFFF>", b"endcodespacerange"]
+    codes = sorted(codes)
+    for i in range(0, len(codes), 100):          # 100 entries per block, per spec
+        chunk = codes[i:i + 100]
+        body.append(b"%d beginbfchar" % len(chunk))
+        body.extend(b"<%04X> <%04X>" % (code, code) for code in chunk)
+        body.append(b"endbfchar")
+    body += [b"endcmap", b"CMapName currentdict /CMap defineresource pop", b"end", b"end"]
+    return b"\n".join(body)
+
+
+def _cid_font(writer) -> _CidFont:
+    """The writer's CID font, added to it on first use: the non-embedded font
+    for anything the others can't hold (CJK), Adobe-GB1 through the standard
+    UniGB-UCS2-H CMap, no font file to ship. The descriptor (STSong-Light's
+    metrics, no /FontFile) is required by the spec, and MuPDF needs it:
+    without one it drops the font for Helvetica and reads the two-byte codes
+    one byte at a time. The ToUnicode stream starts out listing nothing and
+    is filled in by ``finalize_cid``."""
+    record = _cid_fonts.get(writer)
+    if record is not None:
+        return record
+    tounicode = DecodedStreamObject()
+    tounicode.set_data(_cid_cmap(()))
+    tounicode_ref = writer._add_object(tounicode)
+    descriptor = DictionaryObject({
+        NameObject("/Type"): NameObject("/FontDescriptor"),
+        NameObject("/FontName"): NameObject("/STSong-Light"),
+        NameObject("/Flags"): NumberObject(4),
+        NameObject("/FontBBox"): ArrayObject(NumberObject(v) for v in (-25, -254, 1000, 880)),
+        NameObject("/ItalicAngle"): NumberObject(0),
+        NameObject("/Ascent"): NumberObject(880),
+        NameObject("/Descent"): NumberObject(-120),
+        NameObject("/CapHeight"): NumberObject(700),
+        NameObject("/StemV"): NumberObject(80),
+    })
+    descendant = DictionaryObject({
+        NameObject("/Type"): NameObject("/Font"),
+        NameObject("/Subtype"): NameObject("/CIDFontType0"),
+        NameObject("/BaseFont"): NameObject("/STSong-Light"),
+        NameObject("/CIDSystemInfo"): DictionaryObject({
+            NameObject("/Registry"): create_string_object("Adobe"),
+            NameObject("/Ordering"): create_string_object("GB1"),
+            NameObject("/Supplement"): NumberObject(2),
+        }),
+        NameObject("/FontDescriptor"): writer._add_object(descriptor),
+        NameObject("/DW"): NumberObject(1000),
+    })
+    font = DictionaryObject({
+        NameObject("/Type"): NameObject("/Font"),
+        NameObject("/Subtype"): NameObject("/Type0"),
+        NameObject("/BaseFont"): NameObject("/STSong-Light"),
+        NameObject("/Encoding"): NameObject("/UniGB-UCS2-H"),
+        NameObject("/DescendantFonts"): ArrayObject([descendant]),
+        NameObject("/ToUnicode"): tounicode_ref,
+    })
+    record = _cid_fonts[writer] = _CidFont(writer._add_object(font).idnum, tounicode_ref.idnum, set())
+    return record
+
+
+def cid_used(writer, text: str):
+    """Record characters drawn with the CID font, for its ToUnicode map."""
+    _cid_font(writer).codes.update(map(_cid_code, text))
+
+
+def finalize_cid(writer):
+    """Write the CID font's ToUnicode map, every character drawn with it now
+    known. Call once, after the last draw and before the writer serialises;
+    a writer that never named the font has nothing to write."""
+    record = _cid_fonts.get(writer)
+    if record is not None:
+        writer.get_object(record.tounicode).set_data(_cid_cmap(record.codes))
+
+
+def font_resources(names, writer) -> DictionaryObject:
+    """/Font resource dictionary for the given resource names. ``writer`` is
+    the document's PdfWriter: the CID font lives in it, once, shared by every
+    page that names it."""
     fonts = DictionaryObject()
     for name in names:
         if name in _BASE14:
@@ -197,26 +311,7 @@ def font_resources(names) -> DictionaryObject:
             if name != SYM:      # Symbol carries its own built-in encoding
                 font[NameObject("/Encoding")] = NameObject("/WinAnsiEncoding")
         else:
-            # Non-embedded CID font for anything the others can't hold (CJK).
-            # Adobe-GB1 with the standard UniGB-UCS2-H CMap: no font file to ship.
-            descendant = DictionaryObject({
-                NameObject("/Type"): NameObject("/Font"),
-                NameObject("/Subtype"): NameObject("/CIDFontType0"),
-                NameObject("/BaseFont"): NameObject("/STSong-Light"),
-                NameObject("/CIDSystemInfo"): DictionaryObject({
-                    NameObject("/Registry"): create_string_object("Adobe"),
-                    NameObject("/Ordering"): create_string_object("GB1"),
-                    NameObject("/Supplement"): NumberObject(2),
-                }),
-                NameObject("/DW"): NumberObject(1000),
-            })
-            font = DictionaryObject({
-                NameObject("/Type"): NameObject("/Font"),
-                NameObject("/Subtype"): NameObject("/Type0"),
-                NameObject("/BaseFont"): NameObject("/STSong-Light"),
-                NameObject("/Encoding"): NameObject("/UniGB-UCS2-H"),
-                NameObject("/DescendantFonts"): ArrayObject([descendant]),
-            })
+            font = IndirectObject(_cid_font(writer).font, 0, writer)
         fonts[NameObject("/" + name)] = font
     return fonts
 
@@ -373,12 +468,8 @@ def sym(text: str) -> bytes:
 
 
 def hex_(text: str) -> bytes:
-    """UTF-16BE hex string for the CID font (BMP only)."""
-    out = bytearray(b"<")
-    for ch in text:
-        o = ord(ch)
-        out += b"%04X" % (o if o < 0x10000 else 0x3F)
-    return bytes(out + b">")
+    """Hex string for the CID font: each character's ``_cid_code``."""
+    return b"<" + b"".join(b"%04X" % _cid_code(ch) for ch in text) + b">"
 
 
 def runs(text: str, style: Style = PLAIN):
@@ -405,15 +496,17 @@ def draw_spans(ops, x: float, base: float, spans, size: float,
     returns the x it ended at. ``fonts`` collects the resource names actually
     used, ``links`` the ``(x0, y0, x1, y1, href)`` boxes of LINK spans so the
     caller can turn them into /Link annotations, and ``glyphs`` (the
-    document's ``pdf_glyphs.GlyphFonts``) draws math and CJK as Type 3 text —
-    required whenever the spans hold MATH (plain-text callers — bullets,
-    footers — may omit it)."""
+    document's ``pdf_glyphs.GlyphFonts``) draws math and CJK as Type 3 text
+    and names the writer whose CID font records what is drawn with it —
+    required whenever the spans hold MATH or CJK (ASCII-only callers —
+    bullets, footers — may omit it)."""
     ascent, height = line_metrics(spans, size)
     # Glyph-only drawings that follow each other on the line (a run of CJK
     # characters, each its own span so lines can break between them, or an
     # inline symbol beside them) are emitted as ONE text run at absolute
-    # positions: extractors then see the string they are, and pdfium's
-    # page-level text-flow heuristic isn't fed a scatter of one-glyph objects.
+    # positions: extractors then see the string they are, and MuPDF's
+    # page-level text-flow heuristic (characters into lines, lines into
+    # blocks) isn't fed a scatter of one-glyph objects.
     pending = []
 
     def flush():
@@ -456,6 +549,15 @@ def draw_spans(ops, x: float, base: float, spans, size: float,
                 fs = size_of(size, level)
                 shift = (-SUP_RISE * size if level == SUP
                          else SUB_DROP * size if level == SUB else 0)
+                if font == CID:
+                    # MuPDF reads a present ToUnicode map and nothing else,
+                    # so a character the map leaves out is not degraded but
+                    # gone from the extracted text: a CJK run with no writer
+                    # to record it in is a bug, not a fallback.
+                    if glyphs is None:
+                        raise ValueError("CJK drawn without the document's glyph fonts: "
+                                         "the CID font's ToUnicode map would miss it")
+                    cid_used(glyphs.writer, chunk)
                 body = (sym(chunk) if font == SYM else
                         hex_(chunk) if font == CID else esc(chunk))
                 ops.append(b"/%s %s Tf 1 0 0 -1 %s %s Tm %s Tj" % (

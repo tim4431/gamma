@@ -282,28 +282,30 @@ at the server's pin. Each change is commented in the file:
 | orjson | 3.12.0 | 3.11.9 | Flet's newest iOS build |
 | pydantic | 2.13.2 | 2.13.4 | pydantic pins its pydantic-core exactly, and Flet builds only some cores: 2.13.4's (2.46.4) is there, the server's (2.46.2) and 2.14's (2.50) are not |
 | cryptography | 50.0.1 | 43.0.1 | Flet's iOS build. The server uses only `cryptography.fernet`, the same in both. It links OpenSSL 3 without the legacy provider and imports only with `CRYPTOGRAPHY_OPENSSL_NO_LEGACY` set, which `gamma_ios.py` does before the server's imports |
-| pypdfium2 | 5.11.0 | left out | no iOS build anywhere |
+| PyMuPDF | 1.28.2 | 1.27.2.3 | Flet's newest iOS build (its recipe calls the 1.28 series a redesign, not a routine bump). Its two MuPDF dylibs become frameworks in the post-build step ([How the bundle is made](#how-the-bundle-is-made)) |
 
-The native wheels are pydantic-core, cryptography (with cffi), orjson,
-bcrypt, Pillow, and rpds-py (jsonschema's, through mcp); the rest is pure
-Python. `backend/tests/test_ios_requirements.py` fails when the server
+The native wheels are PyMuPDF (MuPDF and its C++ wrapper as two dylibs,
+and two extension modules), pydantic-core, cryptography (with cffi),
+orjson, bcrypt, Pillow, and rpds-py (jsonschema's, through mcp); the rest
+is pure Python. `backend/tests/test_ios_requirements.py` fails when the server
 gains a dependency the iOS file neither lists nor excludes with a reason,
 so each new one gets an iOS decision.
 
-Every pdfium import in the server is guarded, so without pypdfium2 each
-use falls back:
-
-- PDF text for search and the AI comes from PyPDF2 (`gamma/pdf_text.py`),
-  with worse word spacing. The viewer is pdf.js in the page and is
-  unaffected.
-- There are no page images: `pdf_text.render_page` answers none, so the
-  AI's page and region pictures and MCP's `view_pdf_page` go without.
-- A PDF's own highlights import without their quotes.
-- The annotated-PDF export puts the notes in the margins (`pdf_notes.py`),
-  and the Logseq export leaves out area-highlight images.
-
-A server change that imported pdfium unguarded would break This iPad's
-start. The start test ([Tests](#tests)) is what catches it.
+With PyMuPDF in the bundle the server on the iPad reads PDFs as every
+other server does: text with its glyph boxes for search, the AI and a
+highlight's quote (`gamma/pdf_text.py`), page and region pictures for the
+AI's `view_pdf_page` and `view_ink` and for MCP, the annotated-PDF
+export's notes placed in the page's free space (`pdf_notes.py`), the
+Logseq export's area-highlight pictures, and MuPDF's built-in fonts for a
+page whose fonts are not embedded. Before it, with pypdfium2 left out for
+want of an iOS wheel, each of those fell back
+([research/pypdfium2-ios.md](../research/pypdfium2-ios.md)). The imports
+stay guarded all the same, inside the functions that need them: a server
+without PyMuPDF starts, reads text and page sizes through PyPDF2, renders
+nothing, imports highlights without quotes and puts the notes in the
+margins, and the import's 70 ms and 30 MB are paid at the first PDF read,
+not at the start. The start test ([Tests](#tests)) is what catches a
+bundle whose frameworks do not load.
 
 #### Where the data lives
 
@@ -348,7 +350,9 @@ A data directory whose password the Keychain does not hold gets no silent
 sign-in: one restored from a backup without the Keychain, or one whose
 first write to the Keychain was refused. The person then signs in on the
 page. A password the server made itself, with no account seeded, is in
-its log.
+its log. A caller can hand `LocalServer` the account a first start seeds
+when the Keychain refuses one made for it; the app never does, only the
+test host, whose Keychain refuses it on CI ([Tests](#tests)).
 
 The shell signs in to the local server as the desktop does
 (`autoLoginScript` in `desktop/main.js`; `WebShell.swift`). After the
@@ -489,6 +493,25 @@ adds the standard library and turns each compiled module (`.so`) into a
 framework of its own, signed, since iOS loads an app's native code only
 from frameworks.
 
+`install_python` converts `.so` files only, and PyMuPDF's wheel carries
+MuPDF as two plain dylibs beside its extension modules
+(`python/app_packages/pymupdf/libmupdf.dylib`, 57 MB, and
+`libmupdfcpp.dylib`), which iOS does not load from there and App Store
+validation refuses. So a step of our own follows `install_python`: each
+dylib becomes `Frameworks/pymupdf.<lib>.framework/pymupdf.<lib>`, the name
+`install_python` would give a module's framework and the one the wheel's
+own install names already use, with an `Info.plist`, its install name set
+and the references in the four binaries rewritten (no-ops with this wheel,
+there for one built with bare names), a `.fwork` marker left where the
+dylib was (the wheel's `pymupdf/__init__.py` reads it and preloads the
+framework's binary), and each framework signed as `install_python` signs
+its own. The build fails if a `.dylib` is still loose under
+`app_packages`. The step runs on every build, since the copy before
+`install_python` is an `rsync --delete` that brings the dylibs back. The
+bundle grows by about 75 MB per platform. What the wheel holds, what
+`install_python` does and does not do, and what a Mac run must still
+confirm: [research/pymupdf-ios.md](../research/pymupdf-ios.md).
+
 ### Tests
 
 - `ipad/GammaIPadTests` (XCTest, on macOS in `ipad.yml`), the pure parts:
@@ -503,12 +526,34 @@ from frameworks.
     version's keys included (`ServerTests`)
 - `LocalServerStartTests` (in `ServerTests.swift`) starts the embedded
   server for real in the test host. It checks the bundle's layout first,
-  so an unprepared build says what is missing. Then it waits up to three
-  minutes for `/api/health`. It is CI's one check that the bundle runs: a
-  wrong layout, a broken framework conversion, a missing wheel or an
-  import error fails here instead of on an iPad. It skips when the app had
-  already started its own server (a simulator whose last pick was This
-  iPad), since an interpreter starts once per process.
+  so an unprepared build says what is missing. It starts the server with
+  the account the app would, a password made for the Keychain, or, where
+  the Keychain refuses it, with an account it seeds itself
+  (`LocalServer`'s `seed`): CI's test host is unsigned
+  (`CODE_SIGNING_ALLOWED=NO`) and has no Keychain entitlement, so the
+  app's path gets nothing there and the server would seed an account
+  whose password only its log knows. A test host Xcode signed uses the
+  Keychain as the app does, so the app on that simulator signs in
+  silently afterwards and the test signs in again on its next run. Then
+  it waits up to three minutes for `/api/health`, signs in as that
+  account, uploads a one-page PDF it builds, creates the page for it and
+  reads the document back: the manifest (`/api/pdf-info`, one
+  page of 612 × 792 points) and
+  a page picture (`/api/ai/page-image`, an `image/*` body). The picture
+  is the proof that PyMuPDF's frameworks load and render: a server
+  without PyMuPDF starts and counts pages all the same (`pdf_text` falls
+  back to PyPDF2) but answers 404 there. It is CI's one check that the
+  bundle runs: a wrong layout, a broken framework conversion, a missing
+  wheel or an import error fails here instead of on an iPad, and a call
+  that does not answer as expected fails with the server's log tail. It
+  skips when the app had already started its own server (a simulator
+  whose last pick was This iPad), since an interpreter starts once per
+  process, and skips the PDF part on a simulator whose data directory
+  has accounts already and the Keychain holds no password for them (the
+  seed reaches nothing there; a directory the test itself seeded on an
+  unsigned host is one until deleted), or that a newer build upgraded
+  (the server is up but answers every `/api` call with the
+  `data_directory_not_upgradable` 503).
 - `backend/tests/test_ios_requirements.py`: every server dependency is in
   the iOS requirements or excluded with a reason, and nothing excluded is
   still listed.
@@ -541,7 +586,8 @@ CI ([github_actions.md](github_actions.md#ipadyml)). A change to
 `ipad.yml` runs for it too. Other backend and frontend changes reach This
 iPad at the app's next build, as the same code the other checks test.
 `ipad.yml` does not run for them, so a change that matters on the device
-(a pdfium import, a process spawned) is worth a manual dispatch.
+(a PyMuPDF call the server did not make before, a native import, a process
+spawned) is worth a manual dispatch.
 `bash ipad/scripts/build-python.sh --check` resolves every pin for both
 platforms without Xcode, on macOS or Linux; `check.yml` runs it on every
 pull request.
@@ -577,7 +623,12 @@ Only an iPad can show these, and none has been run yet:
     reclaims its socket, how often the recheck restarts it, and how long
     the restart takes behind the start page.
 12. A device build signed with a real team: `install_python`'s
-    frameworks loading on the device.
+    frameworks loading on the device, and the two MuPDF frameworks the
+    post-build step makes: `import pymupdf`, then a PDF read through the
+    local server (its text, a page picture). The simulator's half of this
+    is CI's start test ([Tests](#tests)); a device enforces the code
+    signature of everything it loads, which the simulator does not, so
+    it stays a check of its own.
 13. The data directory in Files, and a restore from an encrypted backup
     bringing the password back with the data.
 14. A clone on This iPad syncing with another server, and Gamma Cloud
@@ -595,9 +646,13 @@ Only an iPad can show these, and none has been run yet:
   own team. CI signs and uploads nothing, and App Review has not been
   tried ([research/ipad-web-shell.md](../research/ipad-web-shell.md),
   risk 9).
-- **pypdfium2**, and with it what [The wheels](#the-wheels) lists. The
-  path to a wheel of our own is in
-  [research/pypdfium2-ios.md](../research/pypdfium2-ios.md).
+- **PyMuPDF on a device.** The framework step in `project.yml` was
+  written and dry-run on Windows. On the simulator CI checks it: the
+  start test ([Tests](#tests)) reads a PDF through the server, so a pull
+  request whose MuPDF frameworks do not load fails there. No device has
+  imported `pymupdf` from the bundle (device check 12), and App Store
+  validation has not seen the hand-made frameworks. What remains to
+  confirm is listed in [research/pymupdf-ios.md](../research/pymupdf-ios.md).
 - **Moving data between servers.** Nothing moves a library from This iPad
   to another server or back, beyond clones and the web app's per-workspace
   Export and Import, as on the desktop.

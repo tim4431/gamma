@@ -556,6 +556,7 @@ def annotate_pdf(pdf_bytes: bytes, highlights, author: str = "", ink=(),
     before anything is written, so the Gamma version stands alone.
     """
     from .pdf_glyphs import GlyphFonts
+    from .pdf_typeset import finalize_cid
 
     reader = ExportPdfReader(io.BytesIO(pdf_bytes))
     writer = PdfWriter()
@@ -603,6 +604,7 @@ def annotate_pdf(pdf_bytes: bytes, highlights, author: str = "", ink=(),
         written += 1
 
     glyphs.finalize()
+    finalize_cid(writer)
     out = io.BytesIO()
     writer.write(out)
     return out.getvalue(), written

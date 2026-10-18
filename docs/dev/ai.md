@@ -515,8 +515,9 @@ connection takes dictation (`Protocol.transcription` > 0, an OpenAI-protocol
 key, models picked or not). These are the entries `/api/ai/transcribe` picks
 from, and the composer's mic shows only then.
 
-PDF extraction (`gamma/pdf_text.py`) is serialized behind a lock — pdfium is
-not thread-safe and overlapping extractions fail both — and reads up to
+PDF extraction (`gamma/pdf_text.py`, through PyMuPDF) is serialized behind a
+lock — PyMuPDF is not thread-safe, by its own documentation
+([ai_context.md](ai_context.md) "Extraction lock") — and reads up to
 `MAX_PAGES` (5000, a runaway guard that logs when it bites; pages past it are
 invisible to search AND read_page, so keep it far above real documents).
 

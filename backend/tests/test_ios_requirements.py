@@ -16,11 +16,10 @@ SERVER = REPO / "backend" / "requirements.txt"
 IOS = REPO / "ipad" / "python" / "requirements-ios.txt"
 
 # Package → why the iPad goes without it. The server must still run
-# without each (its imports are guarded).
-EXCLUDED = {
-    "pypdfium2": ("no iOS wheel; gamma/pdf_text.py falls back to PyPDF2 for text, "
-                  "and page images for the AI and MCP (pdf_text.render_page) are unavailable"),
-}
+# without each (its imports are guarded). Empty since the PDF reader moved
+# from pypdfium2, which had no iOS wheel, to PyMuPDF, which Flet's index
+# builds for iOS.
+EXCLUDED = {}
 
 
 def _names(path):

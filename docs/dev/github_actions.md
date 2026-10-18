@@ -234,8 +234,10 @@ checks test. A change that matters on the device is dispatched by hand.
 - `xcodebuild test` runs on the newest iPad simulator the image has, with
   `ONLY_ACTIVE_ARCH=YES ARCHS=arm64` (`install_python` copies one
   architecture's standard library) and `CODE_SIGNING_ALLOWED=NO`. Besides
-  the pure parts, one test starts the embedded server and waits for its
-  `/api/health`, so a broken bundle fails here and not on an iPad.
+  the pure parts, one test starts the embedded server, waits for its
+  `/api/health`, then uploads a PDF and asks for a page picture, which
+  only PyMuPDF draws (`LocalServerStartTests`): a broken bundle, the
+  MuPDF frameworks included, fails here and not on an iPad.
 - When that fails, a step prints the simulator's `server.log` (the data
   directory's `logs/`, where a failed start's traceback is) and the raw
   `xcodebuild` output around the failure, which `xcbeautify` leaves out.

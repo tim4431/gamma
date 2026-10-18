@@ -203,26 +203,38 @@ message, and it doesn't stop fabrication — the tools are the better lever.
   case was a search hit on p.410 the agent then couldn't read: 32 tool calls of
   thrashing. The cap survives only as a runaway guard and logs when it bites.
   (`textnorm.INDEX_VERSION` bumped so old indexes rebuild lazily.)
-- **Extraction lock** (`pdf_text._lock`): pdfium is not thread-safe — two
-  overlapping extractions both die with "Failed to load page", even on
-  different files. Sync endpoints run in FastAPI's threadpool and the search
-  indexer runs in a background thread, so a chat could collide with its own
-  indexing, get the failure sentinel as context, and answer blind. Every
-  pdfium call is serialized behind one lock, and every pdfium object is
-  closed explicitly inside it, with pypdfium2's finalizers routed through
-  the same lock: a page left to the cyclic GC is closed on another thread
-  and takes the process down (`pdf_text.py`). The walks over every page
+- **Extraction lock** (`pdf_text._lock`): PyMuPDF's documentation says it is
+  not thread-safe (running it on several threads "may cause incorrect
+  behaviour or even crash Python itself"; pdfium, which read here before,
+  showed it: two overlapping extractions both died with "Failed to load
+  page", even on different files). Sync endpoints run in FastAPI's
+  threadpool and the search indexer runs in a background thread, so a chat
+  could collide with its own indexing, get the failure sentinel as context,
+  and answer blind. Every PyMuPDF call is serialized behind one lock
+  (`_MuPdfLock`), and every document is closed and every page dropped
+  explicitly inside it: PyMuPDF frees by reference count, so nothing is
+  finalized later on another thread (pypdfium2 closed its objects from
+  weakref finalizers the cyclic GC ran on whatever thread allocated next,
+  and needed them netted through the lock; that net,
+  `_serialize_finalizers`, is gone). The walks over every page
   take the lock per page, not per document, so a chat's extraction runs
   between the pages of a book being indexed instead of after it (measured:
   `/pdf-text-status` during a 5,000-page reindex, 5.6 s → 77 ms). The lock
   is handed over in turn: a bare `RLock` is unfair, and on Linux the walk
   took it back after each page before a waiting thread woke. So a fresh
   taker queues at a second lock (the "door") and holds it while it waits,
-  and the walk's next page lines up behind it.
+  and the walk's next page lines up behind it. One more fact about PyMuPDF
+  shapes the calls under the lock: it holds the GIL inside every call, so a
+  page's text or a render stalls the event loop — every request and every
+  WebSocket — for those milliseconds (pdfium, called through ctypes,
+  released it). That is why every call in `pdf_text` is one page's text,
+  size, glyphs or picture, never a pass over a whole document inside the
+  library.
 - **The page-text cache** (`pdf_text.iter_page_texts`): a chat reads the
   paper on every turn (the head excerpt, a selection's placement over the
   whole document, each `read_page` window from its start page), and a
-  pdfium walk takes seconds on a long book, under the lock, in the way of
+  MuPDF walk over a long book takes a second (1,041 and 1,052 ms for the
+  text of a 484- and a 1,310-page book), under the lock, in the way of
   the viewer's manifest walks and the indexer. A stored PDF never changes
   under its name (a content hash), so the text of a page, once extracted,
   is kept in the process. Per file it holds the pages read so far: a head

@@ -451,9 +451,10 @@ waits for a device (3), and decision 4 went with B. The mechanics are in
 - The server picker is declared by the host (`servers`) and sits on the
   pages shown before the library (the sign-in page, an unavailable
   workspace, a blocked share link) as well as in the account menu.
-- `pypdfium2` has no iOS build, so the server on the device reads PDF text
-  through PyPDF2 and renders no page images. Background running is not
-  built: the server stops while iOS suspends the app.
+- `pypdfium2` has no iOS build, so the server on the device read PDF text
+  through PyPDF2 and rendered no page images, until the server moved to
+  PyMuPDF, which has one ([pymupdf-ios.md](pymupdf-ios.md)). Background
+  running is not built: the server stops while iOS suspends the app.
 
 ## Sources
 

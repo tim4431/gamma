@@ -320,6 +320,6 @@ def pdf_resources(fonts: set, glyphs):
 
     from .pdf_typeset import font_resources
 
-    font_dict = font_resources(sorted(fonts))
+    font_dict = font_resources(sorted(fonts), glyphs.writer)
     font_dict.update({NameObject("/" + name): ref for name, ref in glyphs.resources().items()})
     return DictionaryObject({NameObject("/Font"): font_dict})

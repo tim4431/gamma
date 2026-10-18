@@ -54,7 +54,7 @@ function packagedBinary() {
   return hit;
 }
 
-// A valid one-page PDF with real text (PyPDF2/pypdfium2 must parse it: the
+// A valid one-page PDF with real text (PyPDF2/PyMuPDF must parse it: the
 // annotated-PDF export and the search index read it back). `comment`: a
 // highlight over the text carrying it, as another reader saves one.
 function minimalPdf(text, comment) {

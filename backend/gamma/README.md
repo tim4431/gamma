@@ -50,7 +50,7 @@ recording.py       audio recordings: the recording block's rules, its label and 
 block_index.py     the notes index (block_fts in pages.db, kept by triggers): its queries
 pdf_index.py       the PDF text index (pdf_fts in data.db): schema, writes, queries
 pdf_meta.py        a PDF's manifest for the viewer: bytes, page count, page sizes (data.db)
-pdf_text.py        PDF text extraction (pypdfium2, PyPDF2 fallback)
+pdf_text.py        PDF text extraction (PyMuPDF, PyPDF2 fallback)
 textnorm.py        search text normalization and fuzzy matching (both indexes, block search)
 
 # Jobs, notices and diagnostics

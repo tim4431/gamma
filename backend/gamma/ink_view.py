@@ -1,14 +1,15 @@
 """Handwriting as a picture for a vision model (docs/dev/ai_tools.md
 "view_ink"): a group's strokes drawn where they were written — on their PDF
-page or on their sheet of paper — rasterized by pdfium like view_pdf_page's
+page or on their sheet of paper — rasterized by MuPDF like view_pdf_page's
 page, whole or cropped to the handwriting.
 
 Nothing is drawn here. A sheet goes through the notebook export's one-page
 PDF (``notebook.notebook_pdf``: the paper painted, its text boxes typeset,
 the strokes as vectors);
 ink on a PDF page is that page alone with the strokes as the annotated
-export's ``/Ink`` annotations (``pdf_export.page_with_ink``), which pdfium
-draws when it renders. ``pdf_text.render_page`` rasterizes either.
+export's ``/Ink`` annotations (``pdf_export.page_with_ink``), which MuPDF
+draws when it renders (they carry no appearance stream; it synthesizes
+one). ``pdf_text.render_page`` rasterizes either.
 """
 
 from . import ink as inkmod

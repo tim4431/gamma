@@ -5,7 +5,7 @@ blocks riding with a message, and the renderer under both
 
 from types import SimpleNamespace
 
-import pypdfium2 as pdfium
+import pymupdf
 import pytest
 
 from gamma import ink as inkmod
@@ -38,10 +38,20 @@ def _pdf(path, pages=1):
 
 
 def _pixel(pdf_bytes, x, y):
-    page = pdfium.PdfDocument(pdf_bytes)[0]
-    bitmap = page.render(scale=1, rev_byteorder=True)
-    i = y * bitmap.stride + x * bitmap.n_channels
-    return tuple(bytes(bitmap.buffer)[i:i + 3])
+    """The RGB of pixel ``(x, y)`` of the first page rendered at 1 pt per pixel."""
+    doc = pymupdf.open(stream=pdf_bytes, filetype="pdf")
+    try:
+        return doc[0].get_pixmap(matrix=pymupdf.Matrix(1, 1), alpha=False).pixel(x, y)
+    finally:
+        doc.close()
+
+
+def _page_count(pdf_bytes):
+    doc = pymupdf.open(stream=pdf_bytes, filetype="pdf")
+    try:
+        return len(doc)
+    finally:
+        doc.close()
 
 
 @pytest.fixture(scope="module")
@@ -85,7 +95,7 @@ def test_page_with_ink_draws_the_strokes_on_that_page(tmp_path):
     path = _pdf(tmp_path / "two.pdf", pages=2)
     data, pages = page_with_ink(path, 2, [inkmod.parse_ink(_ink())])
     assert pages == 2 and data
-    assert len(pdfium.PdfDocument(data)) == 1  # the page alone
+    assert _page_count(data) == 1  # the page alone
     # The stroke runs corner to corner through the middle; the corner is paper.
     assert _pixel(data, 150, 200) == (255, 0, 0)
     assert _pixel(data, 290, 10) == (255, 255, 255)

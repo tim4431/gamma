@@ -494,7 +494,7 @@ text box's `text_box`, merged key by key ([text_boxes.md](text_boxes.md)
   and an attached handwriting block), drawn where it was written. A sheet
   goes through `notebook_pdf`, a PDF page through
   `pdf_export.page_with_ink` (that page alone with the groups as `/Ink`),
-  and pdfium rasterizes either ([ai_tools.md](ai_tools.md) "view_ink").
+  and MuPDF rasterizes either ([ai_tools.md](ai_tools.md) "view_ink").
 
 ## Not built yet
 

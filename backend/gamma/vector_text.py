@@ -6,9 +6,12 @@ Two things the note boxes can't draw with the base-14 fonts:
   for ``\\phi_j`` and hopeless for a fraction of two sums — which is exactly
   what a derivation note looks like. ``math()`` lays it out with ziamath.
 * **CJK.** The non-embedded STSong-Light CID font only renders where the viewer
-  can substitute an Asian font. pdf.js — what Gamma's own viewer uses — can't,
-  and paints the two-byte codes as latin gibberish. ``glyphs()`` uses the
-  outlines of an installed font instead, so they look the same in every viewer.
+  can substitute an Asian font, and only reads where the viewer has the
+  ``UniGB-UCS2-H`` CMap. pdf.js — what Gamma's own viewer uses — loads CMaps
+  only from a ``cMapUrl`` the viewer does not pass, so there the font fails to
+  load and its characters are neither drawn nor extracted; MuPDF and pdfium
+  read them through the font's ToUnicode map. ``glyphs()`` uses the outlines
+  of an installed font instead, so they look the same in every viewer.
 
 Both produce a :class:`Drawing`: the *glyph placements* (which glyph, standing
 for which character, where, at what size) and, separately, content-stream path

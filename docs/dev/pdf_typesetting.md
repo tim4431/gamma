@@ -83,11 +83,28 @@ layer). The switches do not apply.
 
 `?notes=1` adds a second layer from `gamma/pdf_notes.py` — every non-empty note
 is *drawn on the page*, in the nearest patch of empty space, with a leader line
-back to its highlight. Free space comes from pdfium page-object bounds
-rasterized into an occupancy grid (display space, top-left origin, /Rotate
-applied — same frame the viewer stores rects in) with a summed-area table
-behind the candidate search; already-placed boxes are marked occupied so notes
-never collide.
+back to its highlight. Free space comes from MuPDF's drawing log of the page
+(a bbox device of the module's own, logging what `page.get_bboxlog()` logs:
+one box per drawing operation, form XObjects flattened into the page's
+space, invisible text skipped — except that a shading is bounded by the clip
+it is painted through, where `get_bboxlog` logs the whole plane, so a
+gradient-filled box counts as occupied) rasterized into an occupancy grid
+(display space, top-left origin, /Rotate applied — same frame the viewer
+stores rects in) with a summed-area table behind the candidate search;
+already-placed boxes are marked occupied so notes never collide. The log
+takes in the annotations' appearances, so what `annotate_pdf` wrote before
+`render_notes` ran counts as occupied too: the text boxes with either switch,
+the highlights and ink when the highlight layer is on (`highlights=0&notes=1`
+has none of them in the bytes, so there is nothing to keep clear of); pdfium's
+object walk saw only the content stream. The log comes in the unrotated
+page's space, its origin at the view box's corner and scaled by `/UserUnit`
+like `page.rect`; `_bbox_log` takes the unit out (`pdf_text.user_unit`), and
+`pdf_notes` maps it to user space against the view box `page_frame` found,
+not through `page.transformation_matrix`, which on a rotated page forgets a
+crop box's offset. The whole read holds `pdf_text._lock`, one
+short call per page (PyMuPDF is not thread-safe and holds the GIL in every
+call). A file MuPDF cannot open, or one that needs a password, gets its
+notes in the margins.
 
 Notes are markdown, so `gamma/note_markup.py` splits each one into text spans
 (`(TEXT, str, level)`, level ±1 = real super/subscript), inline-math spans,
@@ -100,11 +117,12 @@ stripped.
 typesets LaTeX with ziamath, `glyphs()` shapes CJK per character with ziafont
 (a *plain .ttf* — ziafont can't open the .ttc collections most CJK font
 packages ship, hence `fonts-droid-fallback` in the Dockerfile; without it CJK
-falls back to the non-embedded CID font, which pdf.js renders as latin
-gibberish). Both return a `Drawing`: the **glyph placements** (which ziafont
-glyph, standing for which character, at which baseline point and size) and,
-separately, path ops for the non-glyph shapes (fraction bars, radical
-vincula, `\boxed{}` frames). ziamath is never asked for SVG — a flattened
+falls back to the non-embedded CID font, which MuPDF and pdfium read through
+its ToUnicode map but Gamma's own viewer neither draws nor extracts; see Fonts
+and content streams below). Both return a `Drawing`: the **glyph placements**
+(which ziafont glyph, standing for which character, at which baseline point
+and size) and, separately, path ops for the non-glyph shapes (fraction bars,
+radical vincula, `\boxed{}` frames). ziamath is never asked for SVG — a flattened
 `<path>` has lost the glyph's identity — but for its layout tree, which
 `_walk` traverses exactly as ziamath's own `draw()` would (`nodexy` offsets,
 phantoms skipped, stretched delimiters split into the MATH-assembly parts
@@ -175,8 +193,25 @@ Text is a hand-built content stream merged with `merge_page` using three fonts
 every viewer has: Helvetica (WinAnsi), Symbol (Greek/math —
 `pdf_typeset.SYMBOL` holds codes AND advance widths measured from the font
 itself; every `note_markup.SYMBOLS` value must be drawable by one of the three,
-which a test enforces), and a non-embedded STSong-Light CID font for CJK —
-plus the per-document Type 3 fonts above for typeset math and CJK outlines.
+which a test enforces), and a non-embedded STSong-Light CID font for CJK,
+the last resort when no outline font is installed — plus the per-document
+Type 3 fonts above for typeset math and CJK outlines. The CID font is one
+object per writer, shared by every page that names it, and carries a font
+descriptor and a ToUnicode map as indirect objects of their own (ISO 32000-1
+asks for the descriptor that way; PDF 2.0 no longer does). The map lists the
+characters drawn with the font — `draw_spans` records them, `finalize_cid`
+writes the map — one `bfchar` each, never a `bfrange` over the whole plane:
+the spec forbids a range that carries its destination's last byte past 255,
+and PyPDF2 expands every code of a range into a table entry, 63,000 for each
+page that names the font. With the two, MuPDF and pdfium read its text even
+where no viewer font draws it. pdf.js does not unless it is given its CMap
+files: the text is encoded through `UniGB-UCS2-H`, which pdf.js must load
+(`cMapUrl`) before the font loads at all, and without it the font fails and
+the characters are neither drawn nor extracted. Gamma's own viewer passes no
+`cMapUrl`, so there the fallback's CJK is simply absent, from the text layer
+and search too — the cure is an outline font on the server, not a viewer
+change. PyPDF2 3.0.1 does not read it either: it has no `UniGB-UCS2-H`
+encoding.
 Deliberately no reportlab dependency; Pillow only decodes pictures (above).
 PyPDF2 leaves merged content inline in the page dict; it must be re-added as
 an indirect object or the file is unreadable. The document writer's page streams and every glyph program are

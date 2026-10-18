@@ -12,7 +12,7 @@ actually wired to:
                                  so the ``hls__`` naming convention holds.
 - ``assets/<stem>.edn``        — highlight geometry (``{:highlights [...]}``).
 - ``assets/<stem>/<page>_<uuid>_<stamp>.png`` — area-highlight crops, rendered
-                                 with pypdfium2 (skipped silently if rendering
+                                 with PyMuPDF (skipped silently if rendering
                                  fails; the annotation block still exports).
 - ``logseq/config.edn``        — minimal marker so importers accept the folder.
 
@@ -229,52 +229,49 @@ def render_area_images(pdf_path, stem, highlights, scale=2.0):
         return []
     out = []
     try:
-        import pypdfium2 as pdfium
         from . import pdf_text
 
-        # pdfium is not thread-safe: the render holds pdf_text's lock and
-        # closes what it opens (pdf_text.py explains why).
+        # PyMuPDF is not thread-safe (its documentation says so): the render
+        # holds pdf_text's lock and closes the document inside it. Every call
+        # into it holds the GIL, so the work is one page's render at a time.
+        # The open goes through pdf_text, which keeps MuPDF's console chatter
+        # off and treats a file that needs a password as one that will not
+        # open.
         with pdf_text._lock:
-            _render_areas(pdfium, pdf_path, stem, areas, scale, out)
+            _render_areas(pdf_text, pdf_path, stem, areas, scale, out)
     except Exception:
         return out
     return out
 
 
-def _render_areas(pdfium, pdf_path, stem, areas, scale, out):
-    pdf = pdfium.PdfDocument(str(pdf_path))
+def _render_areas(pdf_text, pdf_path, stem, areas, scale, out):
+    pymupdf = pdf_text._pymupdf()
+    # A password-locked file raises here: no pictures, as for one that will not open.
+    pdf = pdf_text._mupdf_open(pdf_path)
     try:
         for h in areas:
-            page = None
             try:
-                page = pdf[h["page"] - 1]
-                bitmap = page.render(scale=scale, rev_byteorder=True)
-                try:
-                    buf = bytes(bitmap.buffer)
-                    W, H, stride, nch = bitmap.width, bitmap.height, bitmap.stride, bitmap.n_channels
-                finally:
-                    bitmap.close()
-                pos = h["position"]
-                br = pos["boundingRect"]
-                # br coords are relative to a capture-time render of size
-                # width×height — rescale into this bitmap's pixel grid.
-                sx, sy = W / (pos.get("width") or W), H / (pos.get("height") or H)
-                x1, x2 = sorted((int(br["x1"] * sx), int(br["x2"] * sx)))
-                y1, y2 = sorted((int(br["y1"] * sy), int(br["y2"] * sy)))
-                x1, y1 = max(0, x1), max(0, y1)
-                x2, y2 = min(W, max(x2, x1 + 1)), min(H, max(y2, y1 + 1))
-                rows = []
-                for y in range(y1, y2):
-                    row = buf[y * stride + x1 * nch : y * stride + x2 * nch]
-                    if nch == 4:  # RGBA → RGB
-                        row = b"".join(row[i : i + 3] for i in range(0, len(row), 4))
-                    rows.append(row)
-                png = _encode_png(x2 - x1, y2 - y1, rows)
-                out.append((f"assets/{stem}/{h['page']}_{h['uuid']}_{h['stamp']}.png", png))
+                png = _area_png(pymupdf, pdf[h["page"] - 1], h["position"], scale)
             except Exception:
                 continue
-            finally:
-                if page is not None:
-                    page.close()
+            out.append((f"assets/{stem}/{h['page']}_{h['uuid']}_{h['stamp']}.png", png))
     finally:
         pdf.close()
+
+
+def _area_png(pymupdf, page, pos, scale):
+    """One area highlight's crop of ``page``, as PNG bytes. The page is this
+    call's alone: PyMuPDF frees it with the reference, so there is nothing to
+    close. ``alpha=False`` gives three bytes a pixel, the PNG writer's format."""
+    pix = page.get_pixmap(matrix=pymupdf.Matrix(scale, scale), alpha=False)
+    buf, W, H, stride, nch = pix.samples, pix.width, pix.height, pix.stride, pix.n
+    br = pos["boundingRect"]
+    # br coords are relative to a capture-time render of size width×height —
+    # rescale into this pixmap's pixel grid.
+    sx, sy = W / (pos.get("width") or W), H / (pos.get("height") or H)
+    x1, x2 = sorted((int(br["x1"] * sx), int(br["x2"] * sx)))
+    y1, y2 = sorted((int(br["y1"] * sy), int(br["y2"] * sy)))
+    x1, y1 = max(0, x1), max(0, y1)
+    x2, y2 = min(W, max(x2, x1 + 1)), min(H, max(y2, y1 + 1))
+    rows = [buf[y * stride + x1 * nch : y * stride + x2 * nch] for y in range(y1, y2)]
+    return _encode_png(x2 - x1, y2 - y1, rows)

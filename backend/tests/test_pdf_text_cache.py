@@ -7,7 +7,7 @@ import os
 import pytest
 
 from gamma import pdf_text
-from test_pdfium_lock import _text_pdf
+from test_pdf_text_lock import _text_pdf
 
 
 @pytest.fixture(autouse=True)
@@ -19,7 +19,7 @@ def _fresh_cache():
 
 @pytest.fixture
 def opens(monkeypatch):
-    """How often the file was opened and how many pages pdfium read."""
+    """How often the file was opened and how many pages PyMuPDF read."""
     counts = {"open": 0, "pages": 0}
     real_open, real_read = pdf_text._open, pdf_text._read_page
 
@@ -51,7 +51,7 @@ def test_a_second_read_of_a_file_opens_nothing(tmp_path, opens):
 def test_a_head_read_fills_the_head_and_a_later_window_reads_only_the_rest(tmp_path, opens):
     path = tmp_path / "book.pdf"
     path.write_bytes(_text_pdf(10, "book"))
-    text, pages = pdf_text.extract_text_pages(str(path), 20)  # one page's text is 11 chars: two pages
+    text, pages = pdf_text.extract_text_pages(str(path), 20)  # one page's text is 12 chars with its newline: two pages
     assert pages == 2 and opens["pages"] == 2
     # The chat's next window starts at page 3: pages 3.. are read, 1 and 2 are not again.
     rest = list(pdf_text.iter_page_texts(str(path), start_page=3))

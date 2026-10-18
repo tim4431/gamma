@@ -41,11 +41,12 @@ SUPPORT_SHA256="22b96f3d0c3663225f078556b036d2ee6ce3ff98c885706585240681335c71ea
 # (nothing can be compiled for iOS here); the interpreter is CPython 3.13
 # (cp313 extensions, abi3 ones and pure "none" wheels all match). Flet's
 # index carries iOS builds of the native packages PyPI has none of
-# (pydantic-core, cryptography, orjson, rpds-py, cffi). Environment markers
-# are evaluated for the Python running pip, not for the target: on a Mac
-# (or Linux) that skips Windows-only ones like mcp's pywin32, as the device
-# does, and on Windows a full resolve fails on it. pip's python_version is
-# that Python's too, whatever --python-version says, hence python3.13 below.
+# (pydantic-core, cryptography, orjson, rpds-py, cffi, pymupdf). Environment
+# markers are evaluated for the Python running pip, not for the target: on
+# a Mac (or Linux) that skips Windows-only ones like mcp's pywin32, as the
+# device does, and on Windows a full resolve fails on it. pip's
+# python_version is that Python's too, whatever --python-version says,
+# hence python3.13 below.
 PIP_IOS_FLAGS=(
   --only-binary=:all:
   --python-version 3.13
@@ -185,7 +186,9 @@ install_support() {
 # One pip install per platform, each into its own folder. The stamp is the
 # hash of the requirements and the flags, so an edit to either reinstalls
 # and nothing else does; pip's cache makes a reinstall a copy, not a
-# download.
+# download. The wheels are kept as pip lays them out, loose dylibs
+# included (PyMuPDF's two MuPDF libraries): the post-build step in
+# project.yml makes each native file a framework inside the bundle.
 install_packages() {
   local want platform dest
   want=$( { cat "$requirements"; printf '%s\n' "${PIP_IOS_FLAGS[@]}"; } | shasum -a 256 | awk '{print $1}')

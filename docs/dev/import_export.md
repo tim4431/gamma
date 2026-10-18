@@ -47,12 +47,19 @@ media-box flip. A text box's `imported_annot` key
 same annotation carries, so such a block counts as there and nothing comes
 twice.
 
-A text highlight's quote is the text under its quads, read through pdfium
+A text highlight's quote is the text under its quads, read through MuPDF
 (`pdf_text.GlyphPages`, each page once, under the extraction lock;
-`pdf_text.quote_under`): a glyph counts when its centre lies in a quad, so
+`pdf_text.quote_under`). A glyph is a character of MuPDF's raw text
+dictionary with its box mapped back to PDF user space, the space the quads
+are in (the page is read unrotated for this: on a rotated page PyMuPDF's own
+transform forgets a cropped page box's offset); the box is the glyph's
+advance by the font's ascender and descender, so a thin "i" or "." has a
+centre as sound as any letter's, and after each of MuPDF's lines comes a
+line break without a box. A glyph counts when its centre lies in a quad, so
 a highlight that starts mid-line quotes from there, one across lines quotes
-both lines joined by a space, and a quad's edge never drags in the glyph it
-touches. A file pdfium can't open imports its highlights without quotes.
+both lines joined by a space (a word hyphenated across them keeps its
+hyphen, as MuPDF extracts it), and a quad's edge never drags in the glyph it
+touches. A file MuPDF can't open imports its highlights without quotes.
 PyPDF2's text visitor is no use for this: it reports each line at the
 position of the line after it, which once quoted the line above a highlight.
 
