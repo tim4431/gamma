@@ -3,7 +3,9 @@
 import asyncio
 import html
 import mimetypes
+import os
 import re
+import ssl
 import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -86,6 +88,30 @@ def _silence_windows_connection_reset():
             pass
 
     _ProactorBasePipeTransport._call_connection_lost = _quiet_call_connection_lost
+
+
+def _verify_https_with_certifi_when_no_cas():
+    """Point OpenSSL at certifi's CA bundle when its default places hold none.
+
+    The server's outbound HTTPS (urllib's default context: the AI providers,
+    the ChatGPT sign-in, Gamma Cloud) is verified against the CA file and
+    folder OpenSSL was built to look in; outside Windows Python reads no
+    system trust store, so the macOS Keychain never counts. The desktop
+    app's frozen server keeps the paths of the Python it was built with
+    (python.org's, under /Library/Frameworks), which a Mac without that
+    Python lacks, and every call then fails with CERTIFICATE_VERIFY_FAILED.
+    A CA file or folder that exists, built in or named by SSL_CERT_FILE /
+    SSL_CERT_DIR, is left alone. Setting the variable works from here on:
+    OpenSSL reads it whenever a context loads its default CAs."""
+    if sys.platform == "win32":  # Python loads the Windows store itself
+        return
+    paths = ssl.get_default_verify_paths()
+    if paths.cafile or paths.capath:
+        return
+    import certifi
+
+    os.environ["SSL_CERT_FILE"] = certifi.where()
+    log.info(f"[startup] no CA certificates at {paths.openssl_cafile}; verifying HTTPS with certifi's")
 
 
 def _upgrade_data_directory() -> dict | None:
@@ -289,6 +315,7 @@ async def every(seconds, fn, failed: str):
 def create_app() -> FastAPI:
     setup_logging()
     _silence_windows_connection_reset()
+    _verify_https_with_certifi_when_no_cas()
     log.info(f"[startup] Gamma {version.label()}")
     try:
         check_publish_config()

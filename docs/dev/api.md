@@ -112,6 +112,16 @@ else; in dev, Vite proxies `/api` → `127.0.0.1:9001`.
   non-http(s) schemes (`file:`, `ftp:`, …) and hosts that resolve to
   loopback/private/link-local/metadata addresses (SSRF), re-checking on every
   redirect.
+- Outbound HTTPS is urllib's default context, verified against the CAs
+  OpenSSL was built to find; outside Windows Python reads no system trust
+  store, so the macOS Keychain never counts. Where those paths hold
+  nothing, such as the desktop app's frozen server on a Mac without
+  python.org's Python, `create_app` points `SSL_CERT_FILE` at certifi's
+  bundle (`app._verify_https_with_certifi_when_no_cas`); otherwise every
+  call (the AI, the ChatGPT sign-in, Gamma Cloud) fails with
+  `CERTIFICATE_VERIFY_FAILED`. A proxy that re-signs HTTPS with a root
+  that is only in the Keychain still fails: give the server that root
+  with `SSL_CERT_FILE`.
 - Workspace ids and doc ids are validated (`db.safe_ws_id` / `db.safe_doc_id`,
   used by `ws_db_path` / `ws_uploads_dir`) before they
   become filesystem paths — no traversal.
