@@ -179,26 +179,27 @@ li + li { margin-top: 8px; }
 
 /* Feature rows */
 .features { padding-top: 24px; }
-.feature { display: grid; grid-template-columns: 5fr 7fr; gap: 48px; align-items: center; padding: 64px 0; }
+/* As wide as the hero's frame; the media takes two thirds of the row, on either side */
+.feature { width: min(1280px, 100% - 32px); display: grid; grid-template-columns: minmax(300px, 1fr) minmax(0, 2fr); gap: 48px; align-items: center; padding: 64px 0; }
+.feature--flip { grid-template-columns: minmax(0, 2fr) minmax(300px, 1fr); }
 .feature--flip .feature__text { order: 2; }
 .feature__text h2 { margin-bottom: 14px; }
 .feature__text > p { color: var(--text-2); margin-bottom: 14px; }
 .feature__text { min-width: 0; }
 .feature__text ul { color: var(--text-2); font-size: 15.5px; }
+.feature__text code { white-space: nowrap; }
 .feature__media { margin: 0; border-radius: var(--radius); overflow: hidden; border: 1px solid var(--line); box-shadow: var(--shadow); background: var(--surface); }
-.feature__media--plain { border: 0; box-shadow: none; background: none; }
 .feature__media img { width: 100%; }
 .feature--stack { display: block; }
 .feature__text--center { text-align: center; max-width: 68ch; margin: 0 auto 36px; }
 .feature__text--center > p { margin: 0 auto; }
-.illustration { display: block; margin: 0; border-radius: var(--radius); overflow: hidden; border: 1px solid var(--line); }
 .trio { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; margin-top: 20px; }
 .card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
 .card img { width: 100%; border-bottom: 1px solid var(--line); }
 .card h3 { margin: 16px 18px 6px; font-size: 17px; }
 .card p { margin: 0 18px 18px; font-size: 14.5px; color: var(--text-2); }
 @media (max-width: 900px) {
-  .feature { grid-template-columns: 1fr; gap: 28px; padding: 44px 0; }
+  .feature, .feature--flip { grid-template-columns: 1fr; gap: 28px; padding: 44px 0; }
   .feature--flip .feature__text { order: 0; }
   .trio { grid-template-columns: 1fr; }
 }
