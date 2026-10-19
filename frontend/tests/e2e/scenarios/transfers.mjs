@@ -217,6 +217,52 @@ open(os.path.join(root, 'files', '5', 'dataset.bin'), 'wb').write(os.urandom(40 
     } finally { await ctx.close(); }
   });
 
+  await step("transfer: a Zotero item's other attachments arrive on its page, under Attachments", async () => {
+    const { ctx, page } = await setup();
+    try {
+      const fixture = path.join(server.dir, "attachments.zip");
+      // The item's PDF is the page's document; a CSV and a web link go
+      // under its "Attachments" block, as in Zotero's item tree.
+      execFileSync(python, ["-c", `
+import sys, zipfile
+sys.path.insert(0, 'backend/tests')
+from test_zotero_import import RDF, _annotated_pdf, _file_att, _link_att, _with_attachments
+rdf = RDF.replace('s41586-000-00000-0', 'e2e-zotero-attachments').replace('Attention is all you need', 'Attachments example')
+rdf = _with_attachments(rdf, [_file_att('#data', 'files/4/data.csv', 'text/csv'),
+                              _link_att('#link', 'https://example.org/publisher', 'Publisher page')])
+with zipfile.ZipFile(sys.argv[1], 'w') as z:
+    z.writestr('Attach/library.rdf', rdf)
+    z.writestr('Attach/files/3/Vaswani - 2017 - Attention.pdf', _annotated_pdf(b'E2E attachments PDF'))
+    z.writestr('Attach/files/4/data.csv', 'a,b\\n1,2\\n')
+`, fixture], { cwd: ROOT });
+      await page.waitForSelector(".folderNewBtn");
+      const dialog = await openDialog(page, "Import");
+      await choice(dialog, "Zotero library").click();
+      await choice(dialog, "Next").click();
+      const chooser = page.waitForEvent("filechooser");
+      await choice(dialog, "or choose a .zip").click();
+      await (await chooser).setFiles(fixture);
+      const review = page.getByRole("dialog", { name: "Review Zotero import", exact: true });
+      const target = review.getByRole("region", { name: "Library after import", exact: true });
+      await target.waitFor();
+      const row = target.locator(".importTreeFile", { hasText: "Attachments example" });
+      assert((await row.innerText()).includes("2 attachments"), await row.innerText());
+      await choice(review, "Import to library").click();
+      const report = page.getByRole("dialog", { name: "Import complete", exact: true });
+      await report.waitFor();
+      assert((await report.innerText()).includes("2 attachments"), "the report counts them");
+      await choice(report, "Done").click();
+      const pages = (await alice.api("/api/blocks/root/children")).children;
+      const imported = pages.find((p) => p.content === "Attachments example");
+      await page.goto(`${server.base}/?page=${imported.id}&ws=${alice.ws}`);
+      await page.locator(".blockRow .fileChip", { hasText: "data.csv" }).waitFor();
+      assert(await page.getByRole("heading", { name: "Attachments", exact: true }).isVisible());
+      assert(await page.locator(".blockRow a", { hasText: "Publisher page" }).isVisible());
+      if (flags.keep) await page.screenshot({ path: `${server.dir}/zotero-attachments.png` });
+      assertNoProblems(page);
+    } finally { await ctx.close(); }
+  });
+
   await step("transfer: shared Markdown upload progress, selection and persistent summary", async () => {
     const { ctx, page } = await setup();
     try {

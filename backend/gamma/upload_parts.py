@@ -175,9 +175,7 @@ def finish(session: Session) -> tuple[str, bool]:
         _forget(session)
         with open(session.path, "rb") as f:
             head = f.read(16)
-        refused = ("not a valid PDF (missing %PDF header)" if session.ext == ".pdf" and not storage.is_pdf(head)
-                   else "not a valid audio file" if session.ext in storage.RECORDING_EXTENSIONS
-                   and not storage.is_audio(session.ext, head) else "")
+        refused = storage.content_refusal(session.ext, head)
         if refused:
             session.path.unlink(missing_ok=True)
             raise HTTPException(status_code=400, detail=refused)

@@ -19,12 +19,10 @@ from ..storage import (
     ALLOWED_IMAGE_TYPES,
     IMAGE_EXTENSIONS,
     INLINE_EXTENSIONS,
-    RECORDING_EXTENSIONS,
     SANDBOXED_EXTENSIONS,
+    content_refusal,
     display_filename,
     find_upload_file,
-    is_audio,
-    is_pdf,
     pdf_url,
     store_file,
     store_pdf_stream,
@@ -171,18 +169,15 @@ def upload_file(request: Request, file: UploadFile = File(...)):
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
     contents = file.file.read()
-    if ext == ".pdf" and not is_pdf(contents):
-        raise HTTPException(status_code=400, detail="not a valid PDF (missing %PDF header)")
+    refused = content_refusal(ext, contents[:16])
+    if refused:
+        raise HTTPException(status_code=400, detail=refused)
     if ext == ".ink":
         # the path a mirror pushes a drawing by: stored only when it is one
         try:
             parse_ink(contents)
         except InkError as e:
             raise HTTPException(status_code=400, detail=f"invalid ink file: {e}")
-    # a recording's segments are served inline to an <audio> element, so the
-    # extensions they come under are stored only when they are that container
-    if ext in RECORDING_EXTENSIONS and not is_audio(ext, contents):
-        raise HTTPException(status_code=400, detail="not a valid audio file")
     filename, already_existed = store_file(ws, contents, ext)
     return {"url": f"/api/uploads/{filename}", "name": name, "size": len(contents),
             "already_existed": already_existed}

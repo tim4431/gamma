@@ -70,6 +70,7 @@ export function importSummary(data) {
     (data.pdfs_stored || data.assets_stored || data.uploads_added) ? `${data.pdfs_stored || data.assets_stored || data.uploads_added} files stored` : "",
     data.annotations_imported ? `${data.annotations_imported} annotations` : "",
     data.notes_imported ? `${data.notes_imported} notes` : "",
+    data.attachments_imported ? `${data.attachments_imported} attachments` : "",
     data.chats_added ? `${data.chats_added} chats` : "",
     importWarnings(data).length ? `${importWarnings(data).length} warnings` : "",
   ].filter(Boolean).join(" · ");

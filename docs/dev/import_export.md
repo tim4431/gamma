@@ -363,7 +363,8 @@ collections→folders, nested as in Zotero, made below the destination
 folder (the optional `folder` form field, a folder id) where missing — an
 item in no collection lands in the destination itself —,
 tags→labels (by name, made where missing), notes→child blocks
-(`properties.zotero_note`), then runs the
+(`properties.zotero_note`), the item's other attachments→file chips and
+links under the page's "Attachments" block (below), then runs the
 shared `import_embedded_annotations` (reader annotations arrive inside the
 exported PDFs; `strip` follows the client's embedded-annotations preference).
 Zotero writes each of its kinds as a standard annotation
@@ -409,26 +410,46 @@ neither a pick nor a drop lists empty directories. A drop stops at the
 dialog, so the library behind never takes the folder's PDFs as uploads.
 Choosing or dropping the export opens the shared import review dialog. Its two trees show
 the archive (including empty directories and unused files) and the destination
-library (PDF/page, new/update, collection paths, notes). The active library
+library (PDF/page, new/update, collection paths, notes, attachments). The active library
 folder becomes the import's destination (its id). `POST /api/import/zotero/preview` accepts
 the same `file` and `folder`, requires workspace write access, and writes no
 pages or uploads. Both endpoints use `plan_zotero_archive`, so attachment
 resolution and warnings agree. The staged review flow reuses the upload,
 rechecks the current library, and leaves actual results and warnings in the dialog.
 
-- Inputs: standalone and inline PDF attachments, both MIME namespaces,
-  literal or resource paths. Lookup normalizes dot segments, percent
-  encoding and ZIP filename encodings. A URL in metadata is not an
-  attachment; an empty directory supplies no bytes.
-- `resolve_pdf_entry`: when the filename changed, only a unique PDF in the
-  same `files/<attachment-id>` directory is used; ambiguous or cross-item
-  matches are never guessed.
-- Extra PDFs of one item become extra pages in its collections, keyed
-  `<key>#pdf:<path>`. Reimporting a complete export attaches a recovered
-  PDF to an existing metadata-only page.
-- Warned: missing or invalid PDFs, unsupported or unlinked files, recovered
-  filenames, existing PDFs kept.
-- An export taken before Zotero finished writing it (`unwritten_pdf`).
+- Inputs: standalone and inline attachments of any kind, both MIME
+  namespaces, literal or resource paths. Lookup normalizes dot segments,
+  percent encoding and ZIP filename encodings. A URL in an item's metadata
+  is not an attachment, but a web-link attachment (a `z:Attachment` with a
+  URL and no `z:path`) is; an empty directory supplies no bytes. A
+  standalone attachment, one no item links, is an item of its own, titled
+  by its file name when it has no title.
+- `resolve_entry`: when the filename changed, only a unique file in the
+  same `files/<attachment-id>` directory is used, and for a PDF only a
+  unique PDF; ambiguous or cross-item matches are never guessed.
+- One page per item, as in Zotero's item tree. The item's first PDF that
+  is in the zip and is a PDF is the page's document. Its other attachments,
+  in the export's order, go under the page's `## Attachments` block
+  (`properties.zotero_attachments`), made after its notes the first time
+  one arrives: each file a file chip, `[name](/api/uploads/<hash>.<ext>)`,
+  stored as `POST /upload-file` stores it (`storage.content_refusal`, the
+  same refusals) and streamed from the zip, each web link a
+  `[title](url)` link; both carry the attachment's key as
+  `properties.zotero_attachment`. A PDF repeating the document's bytes is
+  no chip, and an executable or a `.ink` is not imported. A merge adds
+  only what the page lacks: by key, else by the stored file or URL a block
+  of the page names, so a Gamma export brought back adds nothing for the
+  images already in its notes. A file that cannot be stored (not what its
+  extension says, past the storage limits) is a warning, and the item and
+  its other attachments go on. The report counts `attachments_imported`,
+  the preview each page's `attachments`. Pages earlier imports made for
+  extra PDFs (keyed `<key>#pdf:<path>`) are left as they are; the chip for
+  such a PDF opens that page. Reimporting a complete export attaches a
+  recovered PDF to an existing metadata-only page.
+- Warned: missing or invalid PDFs, missing files, unsupported or unlinked
+  files, recovered filenames, existing PDFs kept, attachments that could
+  not be stored.
+- An export taken before Zotero finished writing it (`unwritten_file`).
   Zotero writes a `files/<id>/` path only for a file it has, makes the
   folders at once and writes the files after its export window closes: the
   RDF translator calls `saveFile` without awaiting it, and with "Include
