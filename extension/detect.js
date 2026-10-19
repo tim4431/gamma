@@ -1,26 +1,29 @@
 // Content script: does this page hold a paper? Reads the URL, the Highwire
 // citation_* meta tags (what Google Scholar reads), Dublin Core, JSON-LD and,
-// as a last resort, a DOI in the visible text. Sends the candidate to the
-// worker for the toolbar badge and answers the popup's "what did you find?".
-// Nothing leaves the browser until the user clicks Save.
+// as a last resort, the DOIs in the visible text and its doi.org links. Also
+// reads the page's citation record (pageRecord.js). Sends the candidate to
+// the worker for the toolbar badge and answers the popup's "what did you
+// find?". Nothing leaves the browser until the user clicks Save.
 
 (() => {
   const DOI_RE = /10\.\d{4,9}\/[^\s"'<>?#]+/;
 
+  function metaValues(name) {
+    return [...document.querySelectorAll(`meta[name="${name}" i], meta[property="${name}" i]`)]
+      .map((el) => (el.content || "").trim()).filter(Boolean);
+  }
+
   function meta(name) {
-    const el = document.querySelector(`meta[name="${name}" i], meta[property="${name}" i]`);
-    return (el && el.content || "").trim();
+    return metaValues(name)[0] || "";
   }
 
-  function cleanDoi(text) {
-    const m = (text || "").match(DOI_RE);
-    if (!m) return "";
-    try { return decodeURIComponent(m[0]).replace(/[.,;)\]]+$/, ""); } catch { return m[0]; }
-  }
-
-  // A DOI used as a URL path and the arXiv id: ids.js (loaded before this
-  // script) holds the rules, shared with the worker.
+  // The identifier rules — a DOI used as a URL path, a DOI's cleaning, the
+  // DOIs in a page's text, the arXiv id — are ids.js's and the page's
+  // citation record pageRecord.js's, loaded before this script; ids.js is
+  // shared with the worker.
   const doiFromPath = globalThis.gammaDoiFromPath;
+  const cleanDoi = globalThis.gammaCleanDoi;
+  const textDois = globalThis.gammaTextDois;
   const arxivFrom = globalThis.gammaArxivId;
 
   // "" stays "": resolved against the page, it would name the page itself.
@@ -110,16 +113,23 @@
     title = title.replace(/\s+/g, " ").trim();
 
     let kind = "none";
+    let doisInText = 0;
     if (pdfUrl) kind = "pdf";
     else if (arxivId) kind = "arxiv";
     else if (doi) kind = "doi";
     else {
-      // Last resort: a DOI somewhere in the visible text ("possible paper").
+      // Last resort: the DOIs in the visible text and the doi.org links. The
+      // one DOI there names the paper the page is about ("possible paper",
+      // which the server confirms against the PDF); several are references
+      // or a list of publications, and name none.
       const text = (document.body && document.body.innerText || "").slice(0, 30000);
-      const found = cleanDoi(text);
-      if (found) { doi = found; kind = "maybe"; }
+      const links = [...document.querySelectorAll('a[href*="doi.org/10."]')].slice(0, 300).map((a) => a.href);
+      const found = textDois(text, links);
+      doisInText = found.length;
+      if (found.length === 1) { doi = found[0]; kind = "maybe"; }
     }
     return { kind, source_url: href, pdf_url: pdfUrl, arxiv_id: arxivId, doi, title, is_pdf_tab: isPdf,
+             dois_in_text: doisInText, record: isPdf ? null : globalThis.gammaPageRecord(metaValues),
              pdf_links: pdfLinks(), check: checkShown() };
   }
 

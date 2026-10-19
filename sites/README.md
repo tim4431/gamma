@@ -78,8 +78,9 @@ cookies and no analytics, in line with the app's privacy policy.
 The header's **Log in** link and the `/login`, `/account` and `/signup`
 short links go to the Gamma Cloud account server at `account.gammapdf.com`
 ([docs/dev/cloud_accounts.md](../docs/dev/cloud_accounts.md)); the site
-itself has no accounts. The hero's **Try the demo** button, the header's
-**Demo** link and the `/demo` short link go to the public demo at
+itself has no accounts. The hero's **Star on GitHub** button, with a
+hand-drawn arrow pointing at it, goes to the repository. Its **Try the
+demo** button, the header's **Demo** link and the `/demo` short link go to the public demo at
 `demo.gammapdf.com`, a Gamma in demo mode where every visitor gets a
 throwaway guest workspace ([docs/dev/guests.md](../docs/dev/guests.md)).
 
@@ -143,10 +144,12 @@ needs two repository secrets:
 
 ## Editing the site
 
-- The front page's copy comes from the README and the Store listing
-  (`desktop/assets/store/listing.md`); keep the three in step when a feature
-  changes. Its "Guide:" line under each feature mirrors the README's
-  "→ Guide:" line and points into `/docs/`.
+- The front page's copy is a short version of the README and the Store
+  listing (`desktop/assets/store/listing.md`): per feature a heading and one
+  sentence or a few bullets of a few words, the detail left to the README and
+  the guide. Keep the three in step when a feature changes. Its "Guide:" line
+  under each feature mirrors the README's "→ Guide:" line and points into
+  `/docs/`.
 - Section order and tone follow the survey in
   [docs/research/website.md](../docs/research/website.md).
 - The page must work without `site.js` (it does: every link has a static

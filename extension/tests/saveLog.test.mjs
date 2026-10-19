@@ -33,6 +33,10 @@ test("a detection and a download's answer, each on a line", () => {
   assert.equal(describeCandidate(null), "nothing");
   assert.equal(describeCandidate({ kind: "pdf", pdf_url: "https://x.example/a.pdf", is_pdf_tab: true, from_url: true }),
     "pdf · doi — · arXiv — · pdf_url https://x.example/a.pdf · the tab is a PDF · from the URL only (no content script)");
+  assert.equal(describeCandidate({ kind: "maybe", doi: "10.1/x", dois_in_text: 1 }),
+    "maybe · doi 10.1/x (only in the page's text) · arXiv — · pdf_url —");
+  assert.equal(describeCandidate({ kind: "none", dois_in_text: 7, record: { kind: "thesis", authors: ["A"] } }),
+    "none · doi — · 7 DOIs in the page's text, none taken · arXiv — · pdf_url — · citation record: thesis, 1 author");
   assert.equal(describeResponse({ status: 403, type: "text/html; charset=UTF-8" }), "403 text/html");
   assert.equal(describeResponse({ status: 200, type: "application/pdf", size: 831_488, url: "https://a/x", landed: "https://a/x" }),
     "200 application/pdf · 812 KB");

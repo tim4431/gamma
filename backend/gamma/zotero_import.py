@@ -4,8 +4,9 @@ The source is Zotero's File → Export Library → "Zotero RDF" (with "Export
 Files" and "Export Notes"): a .rdf file plus a files/<n>/<name>.pdf tree, which
 the user zips and uploads. The RDF is item-centric — bibliographic elements
 (bib:Article, bib:Book, rdf:Description for preprints, …) reference
-z:Attachment elements (the files) via link:link and bib:Memo elements (the
-notes) via dcterms:isReferencedBy; z:Collection elements list their members
+z:Attachment elements (the files, a z:path each, and the web links, a URL
+and no z:path) via link:link and bib:Memo elements (the notes) via
+dcterms:isReferencedBy; z:Collection elements list their members
 (items AND child collections) via dcterms:hasPart. Annotations made in
 Zotero's reader are NOT in the RDF: "Include Annotations" embeds them into the
 exported PDF copies, where the existing embedded-annotations importer
@@ -13,7 +14,9 @@ exported PDF copies, where the existing embedded-annotations importer
 
 Collections map onto Gamma's folders (both are trees, both allow an item in
 several places; an item's ``folders`` are its collections' paths, each a list
-of collection names from the top), Zotero tags onto labels by name.
+of collection names from the top), Zotero tags onto labels by name. An
+item's first PDF becomes its page's document; its other attachments become
+file chips and links on that page (``plan_zotero_archive``'s ``extras``).
 """
 
 import html as html_mod
@@ -99,7 +102,11 @@ def _publisher(el) -> str:
 
 def parse_zotero_rdf(text: str) -> list[dict]:
     """→ one dict per bibliographic item:
-    {key, title, meta, tags, folders, pdf_paths, notes}. Includes standalone PDFs."""
+    {key, title, meta, tags, folders, attachments, pdf_paths, notes}.
+    ``attachments`` are the item's, in the export's order: ``{key, path,
+    pdf, title, url}``, ``path`` the file's z:path ("" for a web link),
+    ``url`` its URL; ``pdf_paths`` the PDFs' paths among them. A standalone
+    attachment (one no item links) is an item of its own."""
     root = ET.fromstring(text)
     attachments, memos, containers, collections = {}, {}, {}, {}
     raw_items = []
@@ -113,7 +120,9 @@ def parse_zotero_rdf(text: str) -> list[dict]:
         path = ((path_el.get(f"{_RDF}resource") or path_el.text or "")
                 if path_el is not None else "").strip()
         mime = (el.findtext(f"{_LINK}type") or el.findtext(f"{_DCT}type") or "").strip().lower()
-        attachments[about] = {"path": path, "pdf": mime == "application/pdf" or path.lower().endswith(".pdf")}
+        url = next((i for i in _identifiers(el) if i.lower().startswith(("http://", "https://"))), "")
+        attachments[about] = {"path": path, "pdf": mime == "application/pdf" or path.lower().endswith(".pdf"),
+                              "title": re.sub(r"\s+", " ", el.findtext(f"{_DC}title") or "").strip(), "url": url}
         attachment_elements[about] = el
     for el in root:
         about = el.get(f"{_RDF}about") or ""
@@ -167,7 +176,7 @@ def parse_zotero_rdf(text: str) -> list[dict]:
 
     linked = {key for _, el in raw_items for key in linked_attachments(el)}
     raw_items.extend((key, el) for key, el in attachment_elements.items()
-                     if key not in linked and attachments[key]["pdf"])
+                     if key not in linked and (attachments[key]["path"] or attachments[key]["url"]))
     items = []
     for about, el in raw_items:
         authors = []
@@ -234,12 +243,14 @@ def parse_zotero_rdf(text: str) -> list[dict]:
             if t and t not in tags:
                 tags.append(t)
 
-        pdf_paths = []
+        found, seen = [], set()
         keys = [about] if about in attachments else list(linked_attachments(el))
         for key in keys:
             att = attachments.get(key)
-            if att and att["path"] and att["pdf"] and att["path"] not in pdf_paths:
-                pdf_paths.append(att["path"])
+            where = att and (att["path"] or att["url"])
+            if where and where not in seen:
+                seen.add(where)
+                found.append({"key": key, **att})
 
         notes = []
         for ref in el.findall(f"{_DCT}isReferencedBy"):
@@ -249,6 +260,9 @@ def parse_zotero_rdf(text: str) -> list[dict]:
                 if note_text:
                     notes.append({"key": key, "text": note_text})
 
+        if not title and about in attachments:  # a standalone file without a title: its name
+            own = attachments[about]
+            title = posixpath.basename(own["path"].replace("\\", "/")) or own["url"]
         items.append({
             "key": about,
             "title": title or "Untitled",
@@ -256,7 +270,8 @@ def parse_zotero_rdf(text: str) -> list[dict]:
             "cite_key": _citation_key(el),
             "tags": tags,
             "folders": item_folders.get(about, []),
-            "pdf_paths": pdf_paths,
+            "attachments": found,
+            "pdf_paths": [a["path"] for a in found if a["path"] and a["pdf"]],
             "notes": notes,
         })
     return items
@@ -317,11 +332,12 @@ def _attachment_folders(base: str, path: str):
             yield posixpath.normpath(f"{base}/{parent}" if base else parent)
 
 
-def resolve_pdf_entry(name_map: dict, base: str, path: str) -> tuple[str | None, bool]:
-    """Exact path first; a renamed PDF may only match inside its attachment folder.
+def resolve_entry(name_map: dict, base: str, path: str, pdf: bool = True) -> tuple[str | None, bool]:
+    """Exact path first; a renamed file may only match inside its attachment
+    folder — a PDF only another PDF there.
 
     Never guess by basename across the archive: different items often use PDF.pdf.
-    A unique PDF in files/<attachment-id> is safe even after filename truncation
+    A unique file in files/<attachment-id> is safe even after filename truncation
     or a legacy ZIP encoding changed its spelling.
     """
     exact = find_zip_entry(name_map, base, path)
@@ -330,12 +346,13 @@ def resolve_pdf_entry(name_map: dict, base: str, path: str) -> tuple[str | None,
     candidates = set()
     for target in _attachment_folders(base, path):
         for name, real in name_map.items():
-            if posixpath.dirname(name) == target and name.lower().endswith(".pdf"):
+            if posixpath.dirname(name) == target and not real.endswith("/") and (
+                    not pdf or name.lower().endswith(".pdf")):
                 candidates.add(real)
     return (next(iter(candidates)), True) if len(candidates) == 1 else (None, False)
 
 
-def unwritten_pdf(name_map: dict, base: str, path: str) -> bool:
+def unwritten_file(name_map: dict, base: str, path: str) -> bool:
     """The export has its files/ tree but nothing in this attachment's
     folder. Zotero writes a files/<id>/ z:path only for a file it has and is
     copying — after its export reports done (the RDF translator doesn't
@@ -352,8 +369,17 @@ def unwritten_pdf(name_map: dict, base: str, path: str) -> bool:
 
 
 def plan_zotero_archive(zf) -> dict:
-    """Read-only plan shared by preview and import; PDF bytes stay in the ZIP."""
-    from .storage import content_digest, is_pdf
+    """Read-only plan shared by preview and import; file bytes stay in the ZIP.
+
+    Each item gets its document — the first of its PDFs that is in the zip
+    and is one (``pdf_entry``, ``digest``) — and its ``extras``: its other
+    attachments in the export's order, what its page holds under
+    "Attachments". An extra is a file (``{key, entry, name, ext}``, its
+    zip entry; a PDF also its ``digest``) or a web link (``{key, title,
+    url}``). A PDF that repeats the document's bytes, or an earlier extra's,
+    is left out; so is a file Gamma never stores (an executable, a drawing),
+    which the entries list as not imported."""
+    from .storage import content_digest, display_filename, is_pdf, upload_extension
 
     names = zip_name_map(zf)
     rdf_names = [n for n in names if n.lower().endswith(".rdf") and not n.startswith("__MACOSX/")]
@@ -365,54 +391,71 @@ def plan_zotero_archive(zf) -> dict:
     if not items:
         raise ValueError("no importable items in the export")
     warnings, planned, used = [], [], {names[rdf_name]}
-    unwritten = 0
+    unwritten = []  # per file Zotero had not written yet: whether it is a PDF
     for item in items:
-        problems, valid = [], []
-        for path in item["pdf_paths"]:
-            real, recovered = resolve_pdf_entry(names, base, path)
+        problems, found = [], []
+        for att in item["attachments"]:
+            path = att["path"]
+            if not path:
+                found.append({"key": att["key"], "title": att["title"], "url": att["url"]})
+                continue
+            what = "PDF" if att["pdf"] else "File"
+            real, recovered = resolve_entry(names, base, path, att["pdf"])
             if not real:
-                reason = f"PDF missing from ZIP: {path}"
-                if unwritten_pdf(names, base, path):
-                    unwritten += 1
+                reason = f"{what} missing from ZIP: {path}"
+                if unwritten_file(names, base, path):
+                    unwritten.append(att["pdf"])
                     reason += " (Zotero had not written it yet)"
                 problems.append({"title": item["title"], "path": path, "reason": reason})
                 continue
-            try:
-                data = zf.read(real)
-                if not is_pdf(data):
-                    raise ValueError("file is not a PDF")
-                digest = content_digest(data)
-            except Exception as exc:
-                problems.append({"title": item["title"], "path": real, "reason": f"Cannot import PDF: {exc}"})
-                continue
+            name = display_filename(posixpath.basename(real.replace("\\", "/")), "file")
+            if att["pdf"]:
+                try:
+                    data = zf.read(real)
+                    if not is_pdf(data):
+                        raise ValueError("file is not a PDF")
+                except Exception as exc:
+                    problems.append({"title": item["title"], "path": real, "reason": f"Cannot import PDF: {exc}"})
+                    continue
+                found.append({"key": att["key"], "entry": real, "name": name, "ext": ".pdf",
+                              "digest": content_digest(data)})
+            else:
+                try:
+                    ext = upload_extension(name)
+                except ValueError:  # an executable: listed as not imported
+                    continue
+                if ext == ".ink":  # a Gamma drawing comes in by its own route only
+                    continue
+                found.append({"key": att["key"], "entry": real, "name": name, "ext": ext})
             used.add(real)
-            valid.append((path, real, digest))
             if recovered:
                 problems.append({"title": item["title"], "path": real,
-                                 "reason": f"Filename differs from the export; matched the only PDF in its attachment folder: {real}"})
-        if not valid:
-            problems.append({"title": item["title"], "reason": "No PDF available in this ZIP. New pages contain metadata and notes only; existing PDFs are kept."})
+                                 "reason": f"Filename differs from the export; matched the only {what.lower()} in its attachment folder: {real}"})
+        document = next((f for f in found if f.get("digest")), None)
+        if not document:
+            problems.append({"title": item["title"], "reason": "No PDF available in this ZIP. New pages carry no PDF; existing PDFs are kept."})
+        digests = {document["digest"]} if document else set()
+        extras = []
+        for extra in found:
+            if extra is document or extra.get("digest") in digests:
+                continue
+            if extra.get("digest"):
+                digests.add(extra["digest"])
+            extras.append(extra)
         item["warnings"] = problems
-        item["pdf_entry"] = valid[0][1] if valid else None
-        item["digest"] = valid[0][2] if valid else None
+        item["pdf_entry"] = document["entry"] if document else None
+        item["digest"] = document["digest"] if document else None
+        item["extras"] = extras
         planned.append(item)
-        # A Gamma page has one PDF. Preserve additional PDFs as separate pages
-        # in the same collections, with stable keys on subsequent imports.
-        for path, real, digest in valid[1:]:
-            title = f"{item['title']} — {posixpath.basename(path.replace(chr(92), '/'))}"
-            extra = {**item, "key": f"{item['key']}#pdf:{path}", "title": title,
-                     "meta": {**item["meta"], "title": title}, "notes": [],
-                     "pdf_paths": [path], "pdf_entry": real, "digest": digest, "warnings": []}
-            planned.append(extra)
-            problems.append({"title": item["title"], "path": real,
-                             "reason": "Additional PDF imports as a separate page in the same folders."})
         warnings.extend(problems)
     if unwritten:
+        noun = "PDF" if all(unwritten) else "file"
+        n = len(unwritten)
         warnings.insert(0, {"title": "Zotero export not finished", "reason": (
-            f"{unwritten} {'PDFs were' if unwritten > 1 else 'PDF was'} not in the export folder yet. "
-            "Zotero keeps writing PDFs after its export window closes, one at a time with "
+            f"{n} {noun}{'s were' if n > 1 else ' was'} not in the export folder yet. "
+            "Zotero keeps writing files after its export window closes, PDFs one at a time with "
             "\"Include Annotations\". Wait until the folder stops growing, then import it "
-            "again: the pages imported now get their PDFs.")})
+            "again: the pages imported now get their files.")})
     entries = []
     for zi in zf.infolist():
         path = zi.filename.replace("\\", "/")

@@ -682,8 +682,13 @@
 }
 /* The search boxes carry their own ×; hide the browser's. */
 .settingsModal input[type="search"]::-webkit-search-cancel-button { -webkit-appearance: none; appearance: none; display: none; }
-.settingsUnsaved { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; border-top: 1px solid var(--border); padding: 16px 20px; font-size: var(--fs-sm); background: var(--bg-elevated); }
-.settingsUnsaved > span { flex: 1; min-width: 180px; }
+/* The unsaved-edits question (SubDialog, SettingsDialog): a tinted bar the
+   eye lands on, its two buttons always side by side — on the question's
+   line while it fits, else right-aligned under it. */
+.settingsUnsaved { display: flex; align-items: center; flex-wrap: wrap; gap: 10px 16px; border-top: 1px solid var(--danger-border); padding: 14px 20px; font-size: var(--fs-sm); font-weight: 600; background: var(--danger-bg); }
+.settingsUnsaved > span:first-child { flex: 1 1 220px; min-width: 0; }
+.settingsUnsavedBtns { display: flex; align-items: center; gap: 8px; margin-left: auto; flex-shrink: 0; }
+.settingsUnsavedBtns .uiBtn { white-space: nowrap; }
 .settingsPane [data-setting]:focus { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: var(--radius-sm); }
 
 /* Appearance: comparable palette sketches, then the page and interface controls. */

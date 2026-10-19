@@ -45,9 +45,11 @@ TAKE NOTES
   cell, and images can be captioned and resized in place.
 
 ORGANIZE AND SEARCH
-• Labels are flat tags (an author, a keyword) that filter with one click.
-• Folders are a topic hierarchy built from the paths you use, such as
-  qc/neutral-atom. One paper can live in several folders.
+• Labels are words you'll search for, such as pdh or a lab's name. One
+  click lists every paper that has one.
+• Folders are labels that nest, for a topic or a talk, such as
+  Quantum computing / Neutral atom or gm1. One paper can sit in several
+  folders without a copy.
 • Search finds titles, notes, highlights, and the full text of every PDF at
   once, with match-case, whole-word, and regex options. Opening a hit lights
   the matches up on the page.

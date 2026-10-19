@@ -40,7 +40,8 @@ export default function ImportTree({ node, library = false, selected, onSelect, 
         <FileIcon size={16} />
         <div className="importFileText"><span>{file.name}</span>
           {library ? <small>{file.action === "skip" ? t("Already in library") : file.action === "merge" ? (complete ? t("Updated") : t("Update existing page")) : (complete ? t("Imported") : t("New page"))}
-            {file.notes ? t(" · {notes} exported note{_s}", { notes: file.notes, _s: file.notes === 1 ? "" : "s" }) : ""}</small>
+            {file.notes ? t(" · {notes} exported note{_s}", { notes: file.notes, _s: file.notes === 1 ? "" : "s" }) : ""}
+            {file.attachments ? t(" · {n} attachment{_s}", { n: file.attachments, _s: file.attachments === 1 ? "" : "s" }) : ""}</small>
             : <small>{fmtBytes(file.size)}{file.status === "not_imported" ? t(" · Not imported") : ""}</small>}
           {library && file.warnings?.length ? <small className="importWarning">{file.warnings.map(w => w.reason).join(" ")}</small> : null}
         </div>

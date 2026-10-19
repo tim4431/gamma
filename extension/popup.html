@@ -95,16 +95,18 @@
     </div>
 
     <div id="nothing" class="hidden">
-      <div class="msg info">No paper or PDF detected on this page. You can still save the page's URL — Gamma will look for a PDF behind it.</div>
+      <div class="msg info" id="nothing-msg">No paper or PDF detected on this page. You can still save the page's URL — Gamma will look for a PDF behind it.</div>
       <div class="actions"><button id="save-anyway" class="uiBtn block">Save this URL anyway</button></div>
     </div>
 
     <div id="progress" class="progress hidden"><span class="spinner"></span><span id="progress-text"></span></div>
     <div id="result" class="msg hidden"></div>
 
-    <!-- Side features, quiet text links in one row: clipping a selection,
-         and what the tab's last save tried, step by step, for a bug report. -->
+    <!-- Side features, quiet text links in one row: saving the web page
+         rather than the paper its one DOI names, clipping a selection, and
+         what the tab's last save tried, step by step, for a bug report. -->
     <div class="minor">
+      <button id="save-page" class="linkBtn quiet hidden" type="button"></button>
       <button id="clip" class="linkBtn quiet hidden" type="button"></button>
       <button id="copy-log" class="linkBtn quiet hidden" type="button"></button>
     </div>

@@ -154,9 +154,7 @@ const inMillions = (tokens) => String(Math.max(0, Number(tokens) || 0) / ALLOWAN
 // gamma/ai_settings.py). An API key, write-only like an account's, or a
 // ChatGPT subscription signed in here (its e-mail shown to admins only),
 // each saying who may use it (every account, guests too, or the accounts
-// named). One of the admin's own connections becomes a shared one in one
-// click (Share one of mine → POST …/from-account). The allowance rows
-// meter them per account per day.
+// named). The allowance rows meter them per account per day.
 export function SharedAiProviderSettings({ setStatus, confirm }) {
   const base = `${API}/admin/ai-providers`;
   const [info, setInfo] = React.useState(null);
@@ -203,37 +201,6 @@ export function SharedAiProviderSettings({ setStatus, confirm }) {
       onConfirm: () => run(() => apiJson(`${base}/${encodeURIComponent(p.id)}`, { method: "DELETE" })),
     });
   }
-  // Share one of mine: the admin's own connections (GET /api/ai/settings
-  // without the shared rows), one of which becomes a shared entry — a key
-  // copied, a sign-in moved (gamma/ai_settings.py share_own_entry). The new
-  // entry is tested at once, like one connected here.
-  const [mine, setMine] = React.useState(null); // closed | {loading} | {providers} | {error}
-  const [sharing, setSharing] = React.useState("");
-  async function openMine() {
-    setMine({ loading: true });
-    try {
-      const d = await apiJson(`${API}/ai/settings`);
-      setMine({ providers: (d.providers || []).filter((p) => !p.shared) });
-    } catch (err) { setMine({ error: err.message }); }
-  }
-  async function shareOwn(p) {
-    setSharing(p.id);
-    try {
-      const before = new Set((info?.providers || []).map((x) => x.id));
-      const next = await apiJson(`${base}/from-account`, {
-        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ provider_id: p.id }),
-      });
-      setInfo(next);
-      setMine(null);
-      setStatus?.(t("Shared AI provider saved."));
-      const made = next.providers.find((x) => !before.has(x.id));
-      if (made) test(made);
-    } catch (err) {
-      setMine((m) => (m ? { ...m, error: err.message } : m));
-    } finally {
-      setSharing("");
-    }
-  }
   // The shared allowance: tokens per account (or guest) per rolling 24 h on
   // the shared entries, 0 = unlimited (docs/dev/guests.md). The box counts
   // in millions, the API in tokens. Only the changed field is sent; an
@@ -252,12 +219,9 @@ export function SharedAiProviderSettings({ setStatus, confirm }) {
   }
   const providers = info?.providers || [];
   return <>
-    <Section title={t("Shared AI provider")} action={info ? <>
-      <button className="uiBtn sm" title={t("Make one of your own connections a shared one, models included")} onClick={openMine}>
-        {t("Share one of mine")}
-      </button>
+    <Section title={t("Shared AI provider")} action={info ? (
       <button className="uiBtn sm" onClick={() => editor.startAdd("openai")}>{t("+ Add provider")}</button>
-    </> : null}>
+    ) : null}>
       {!info && !loadError ? <p className="setNotice">{t("Loading…")}</p> : null}
       {info && !providers.length ? <Empty icon={KeyIcon}>{t("No shared connection. Each account uses its own keys.")}</Empty> : null}
       {providers.map((provider) => {
@@ -302,36 +266,6 @@ export function SharedAiProviderSettings({ setStatus, confirm }) {
       <SubDialog draft={editor.aiKeysForm} title={editor.aiKeysForm.id ? t("Edit shared key") : t("Connect a shared AI service")}
         onClose={editor.close}>
         <ProviderForm value={editor} onCancel={editor.close} />
-      </SubDialog>
-    ) : null}
-    {mine ? (
-      <SubDialog title={t("Share one of my connections")} onClose={() => setMine(null)}>
-        <div className="settingsForm">
-          <p className="setNotice settingsNoMargin">
-            {t("One of your own connections (Settings → AI › Connections) becomes a shared one, with its models. An API key is copied, and yours stays yours. A ChatGPT sign-in moves to the server, since a sign-in can be refreshed from one place only; you keep using it as the shared connection.")}
-          </p>
-          {mine.loading ? <p className="setNotice">{t("Loading…")}</p> : null}
-          {mine.providers && !mine.providers.length ? (
-            <Empty icon={KeyIcon}>{t("You have no connection of your own yet. Add one under Settings → AI › Connections first.")}</Empty>
-          ) : null}
-          {(mine.providers || []).map((p) => {
-            const oauth = editor.isOauthProto(p.protocol);
-            const disconnected = oauth && !p.oauth_connected;
-            return (
-              <ProviderRow key={p.id} provider={p} oauth={oauth} protocol={editor.aiProtocolOf(p.protocol)}>
-                <button className="uiBtn sm primary" disabled={!!sharing || disconnected}
-                  title={disconnected ? t("Sign in again first") : oauth ? t("The sign-in moves to the server") : t("The key is copied; yours stays")}
-                  onClick={() => shareOwn(p)}>
-                  {sharing === p.id ? t("Sharing…") : oauth ? t("Move to server") : t("Copy to server")}
-                </button>
-              </ProviderRow>
-            );
-          })}
-          {mine.error ? <div className="settingsPaneHint aiKeysError" role="alert">{mine.error}</div> : null}
-          <div className="reportModalBtns">
-            <button className="uiBtn" onClick={() => setMine(null)}>{t("Close")}</button>
-          </div>
-        </div>
       </SubDialog>
     ) : null}
   </>;

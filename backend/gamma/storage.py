@@ -222,6 +222,20 @@ def is_audio(ext: str, data: bytes) -> bool:
     return False
 
 
+def content_refusal(ext: str, head: bytes) -> str:
+    """Why a file whose first bytes are ``head`` (16 are enough) may not be
+    stored under ``ext``, "" when it may: a ``.pdf`` must be a PDF (it lands
+    under the name the PDF ingest mints), a recording's extension the audio
+    container it names (it is served inline to an <audio> element). Every
+    writer of an arbitrary file asks: ``POST /upload-file``, an upload in
+    parts, the Zotero import's attachments."""
+    if ext == ".pdf" and not is_pdf(head):
+        return "not a valid PDF (missing %PDF header)"
+    if ext in RECORDING_EXTENSIONS and not is_audio(ext, head):
+        return "not a valid audio file"
+    return ""
+
+
 def digest_id(digest) -> str:
     """The stored name's stem of a SHA-256 ``digest`` (``hashlib``): its
     first DIGEST_CHARS hex characters."""

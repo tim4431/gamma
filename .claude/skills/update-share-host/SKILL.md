@@ -1,6 +1,6 @@
 ---
 name: update-share-host
-description: Pin the Gamma Cloud share host (app.gammapdf.com, share.gammapdf.com, the page hosts) to main's newest server image — the :sha-<short> tag a merge's docker.yml run pushed — through the account project's compose.override.yml on the VPS, and restart that one service. It runs main, like the demo; branch work reaches it through a merge.
+description: Pull main's newest server image (:latest) for the Gamma Cloud share host (app.gammapdf.com, share.gammapdf.com, the page hosts) — the share service of the account project on the VPS — and restart that one service, at once rather than waiting up to an hour for the project's Watchtower. It runs main, like the demo; branch work reaches it through a merge.
 ---
 
 # Updating the share host on the VPS
@@ -14,31 +14,31 @@ the page hosts `<username>-pages.gammapdf.com`
 ([cloud/deploy/README.md](../../../cloud/deploy/README.md) "The free share
 host").
 
-It runs `main`, like the demo and the NAS. The repository's
-`cloud/deploy/compose.yml` names `:latest` for it; the host pins the exact
-build in `compose.override.yml` beside it, a file holding only the share
-image, which `docker compose` loads by itself. This skill builds nothing: it
-takes `main`'s newest green `docker.yml` run and writes its tag there.
-Pinned rather than `:latest`, the share host changes only when deployed, and
-a rollback is one line. Branch work reaches it through the `merge` skill,
-run only on the user's yes. Workflows:
+It runs `main`'s `:latest`, like the demo and the NAS, and keeps itself
+current the same way: the project's `watchtower` service
+(`gamma-share-watchtower`, scope `share`, touching only containers labelled
+`com.centurylinklabs.watchtower.enable=true` with that scope) polls GHCR
+every hour and recreates `share` when a merge's `docker.yml` run has
+published a new `:latest`. This skill does that pull at once. It builds
+nothing; branch work reaches the share host through the `merge` skill, run
+only on the user's yes. Workflows:
 [docs/dev/github_actions.md](../../../docs/dev/github_actions.md#dockeryml).
 
 Rules:
 
-- Touch only `compose.override.yml` and the `share` service. Never restart
-  `account` or `caddy`, never `down` the project: they are the
-  `update-account-server` skill's. The project's `compose.yml` and
-  `Caddyfile` are that skill's too.
+- Touch only the `share` service and `compose.override.yml` (which exists
+  only as a rollback pin, below). Never restart `account` or `caddy`, never
+  `down` the project: they are the `update-account-server` skill's. The
+  project's `compose.yml` (the `watchtower` service and the `share` labels
+  included) and `Caddyfile` are that skill's too: if the host's copy lacks
+  `gamma-share-watchtower`, say so and point to its deploy-file step.
 - Never read out, copy off the host or overwrite `.env`, `share.env`,
   `data/` or `share-data/`.
 - Never commit, never merge on your own, and never dispatch `docker.yml` from
   here.
 
-In every command below, `<sha>` is the full `headSha` and `<tag>` is `sha-`
-plus its first 7 characters (`echo sha-${sha:0:7}`). The metadata action's
-`type=sha` truncates to 7; `git rev-parse --short` may print more and must not
-be used for the tag.
+In every command below, `<sha>` is the full `headSha` of the run being
+deployed.
 
 ## 1. What will ship
 
@@ -49,21 +49,29 @@ git fetch -q origin
 gh run list --workflow docker.yml --branch main --limit 3 --json databaseId,headSha,status,conclusion,url
 ```
 
-- `completed success` → its `headSha` is `<sha>`.
+- `completed success` → its `headSha` is `<sha>`. It can be older than
+  `origin/main` when the merges since touched only `cloud/` or `sites/`
+  (`paths-ignore`: no run, nothing in the image changed).
 - `queued` / `in_progress` → wait in the background with
-  `gh run watch <run-id> --exit-status`, then use it.
-- `completed failure` → report `gh run view <run-id> --log-failed` and stop.
+  `gh run watch <run-id> --exit-status` (about 10 minutes), then use it.
+- `completed failure` → report `gh run view <run-id> --log-failed` and stop:
+  `:latest` did not move and nothing changes on the host.
 
 ## 2. What runs now
 
 ```bash
-ssh root@69.63.206.178 "cd /root/Container/gamma-account && cat compose.override.yml 2>/dev/null; docker inspect --format '{{.Config.Image}} {{index .Config.Labels \"org.opencontainers.image.revision\"}}' \$(docker compose ps -q share)"
+ssh root@69.63.206.178 "cd /root/Container/gamma-account && cat compose.override.yml 2>/dev/null; docker compose ps share watchtower; docker inspect --format '{{.Config.Image}} {{index .Config.Labels \"org.opencontainers.image.revision\"}}' \$(docker compose ps -q share)"
 ```
 
-This prints the pinned image (keep it for rollback) and the running commit.
-If the revision equals `<sha>`, there is nothing to deploy: say so and stop.
-No `compose.override.yml` yet means the share host runs whatever image the
-host's `compose.yml` names: the first run of this skill creates the file.
+This prints any rollback pin, the image and the running commit (keep it for
+rollback). If the revision equals `<sha>` (Watchtower may have got there
+first), there is nothing to deploy: say so and stop.
+
+A `compose.override.yml` naming a `sha-` tag holds the share host on that
+build, and Watchtower with it (it follows the tag the container runs). Show
+it to the user: it was set on purpose (a rollback, or a data format held
+back, step 3). Remove it only on their yes (`mv compose.override.yml
+compose.override.yml.bak`); step 4 then brings `:latest`.
 
 ## 3. Does the data format move?
 
@@ -83,30 +91,21 @@ done
 The last line is the desktop release people run. All the same → go on. A
 higher number at `<sha>` than at the release means every publishing desktop
 app pauses ("Paused · update Gamma") until a desktop release carries that
-step: tell the user, suggest the `release` skill together with this deploy,
-and go on only on their yes.
+step. Watchtower deploys it within the hour anyway, so the `merge` skill is
+where this is asked first; here, tell the user and suggest the `release`
+skill. To hold the share host back until the release is out, pin the running
+build (step "Rollback", with its `sha-` tag) on their word.
 
-## 4. Pin the tag and restart
-
-One script on the host. It checks the tag format and that the image exists
-before touching anything, writes `compose.override.yml` (the old one kept as
-`compose.override.yml.bak`), checks the resolved image, then recreates the
-share host alone:
+## 4. Pull and restart
 
 ```bash
-ssh root@69.63.206.178 bash -s -- <tag> <<'EOF'
+ssh root@69.63.206.178 bash -s -- <sha> <<'EOF'
 set -eu
-TAG="$1"
-echo "$TAG" | grep -Eq '^sha-[0-9a-f]{7}$' || { echo "not a sha-<7 hex> tag: $TAG"; exit 1; }
 cd /root/Container/gamma-account
-docker pull -q "ghcr.io/tim4431/gamma:$TAG"
-[ -f compose.override.yml ] && cp compose.override.yml compose.override.yml.bak
-printf '%s\n' "# The share host's image: main's build, pinned by the update-share-host skill." \
-  "services:" "  share:" "    image: ghcr.io/tim4431/gamma:$TAG" > compose.override.yml
-if ! docker compose config share | grep -q "image: ghcr.io/tim4431/gamma:$TAG\$"; then
-  if [ -f compose.override.yml.bak ]; then cp compose.override.yml.bak compose.override.yml; else rm compose.override.yml; fi
-  echo "compose does not resolve the new tag; the override was put back"; exit 1
-fi
+[ ! -f compose.override.yml ] || { echo "a rollback pin is in place (step 2); nothing restarted"; exit 1; }
+docker compose pull -q share
+GOT=$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' ghcr.io/tim4431/gamma:latest)
+[ "$GOT" = "$1" ] || { echo ":latest is $GOT, not $1; nothing restarted"; exit 1; }
 docker compose up -d --no-deps share
 EOF
 ```
@@ -120,24 +119,47 @@ its log read before anything else.
 ## 5. Verify
 
 ```bash
-ssh root@69.63.206.178 "cd /root/Container/gamma-account && docker compose ps share && docker compose logs --tail 20 share"
+ssh root@69.63.206.178 "cd /root/Container/gamma-account && docker compose ps share watchtower && docker compose logs --tail 20 share && docker compose logs --tail 5 watchtower"
 ssh root@69.63.206.178 "cd /root/Container/gamma-account && docker inspect --format '{{index .Config.Labels \"org.opencontainers.image.revision\"}}' \$(docker compose ps -q share)"
 curl -s -o /dev/null -w "%{http_code}\n" https://app.gammapdf.com/                    # 200
 curl -s https://share.gammapdf.com/api/server-config | head -c 300                  # a JSON answer
 ```
 
 - `share` is `Up … (healthy)`; the image's healthcheck needs up to about
-  30 s after start. Its revision label equals `<sha>`.
+  30 s after start. Its revision label equals `<sha>`. `watchtower` is `Up`
+  and its log names its next scheduled run (a `client version … is too old`
+  there means `DOCKER_API_VERSION` is missing from the host's `compose.yml`).
 - A 502 means Caddy cannot reach `share`: read `docker compose logs share`
   first (a refused data directory, a failed migration).
 
-Report the old → new tag and commit (short sha + subject), the `docker.yml`
-run it came from, and anything unusual in the log (a migration step, errors).
+Report the old → new commit (short sha + subject), the `docker.yml` run it
+came from, and anything unusual in the log (a migration step, errors).
 
 ## Rollback
 
-Run step 4 again with the previous tag from step 2 (or
-`compose.override.yml.bak`). If the newer build already upgraded
+Every `main` build also stays in GHCR as `sha-<7 hex>`
+(`gh run list --workflow docker.yml --branch main --status success --limit 10 --json headSha,createdAt,url`;
+the tag is `sha-` plus the `headSha`'s first 7 characters, never
+`git rev-parse --short`, which may print more). With the user's agreement,
+pin one in `compose.override.yml`, a file holding only the share image,
+which `docker compose` loads by itself, so the project's `compose.yml` and
+secrets stay untouched:
+
+```bash
+ssh root@69.63.206.178 bash -s -- sha-<old> <<'EOF'
+set -eu
+TAG="$1"
+echo "$TAG" | grep -Eq '^sha-[0-9a-f]{7}$' || { echo "not a sha-<7 hex> tag: $TAG"; exit 1; }
+cd /root/Container/gamma-account
+docker pull -q "ghcr.io/tim4431/gamma:$TAG"
+printf '%s\n' "# A rollback pin for the share host (the update-share-host skill); remove it to follow :latest again." \
+  "services:" "  share:" "    image: ghcr.io/tim4431/gamma:$TAG" > compose.override.yml
+docker compose config share | grep -q "image: ghcr.io/tim4431/gamma:$TAG\$" || { rm compose.override.yml; echo "compose does not resolve the tag; pin removed"; exit 1; }
+docker compose up -d --no-deps share
+EOF
+```
+
+The pin holds until step 2 removes it. If the newer build already upgraded
 `share-data/`, the older one refuses it and keeps restarting: restore the
 snapshot the upgrade took in `share-data/backups/<time>-v<N>/`
 ([docs/dev/migrations.md](../../../docs/dev/migrations.md) "Running it"), only

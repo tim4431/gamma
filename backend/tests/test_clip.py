@@ -63,7 +63,7 @@ def upstream(monkeypatch):
 def meta_calls(monkeypatch):
     calls = []
     monkeypatch.setattr(clip_mod, "_start_metadata",
-                        lambda ws, actor, block_id, doi="", arxiv_id="": calls.append((actor, block_id, doi, arxiv_id)))
+                        lambda ws, actor, block_id: calls.append((actor, block_id)))
     return calls
 
 
@@ -104,17 +104,96 @@ def test_clip_url_creates_filed_page_and_stores_pdf(guest, upstream, meta_calls)
     assert props["web_url"] == "https://example.org/papers/clip-one"
     assert _filed(props) == (["clip-reading/2026"], ["clip-to-read"])
     assert body["folders"] == props["folders"] and body["labels"] == props["labels"]
-    assert meta_calls == [(account_of(guest_name()), body["block_id"], "", "")]
+    assert "web_meta" not in props  # the tab named nothing about the paper
+    assert meta_calls == [(account_of(guest_name()), body["block_id"])]
 
 
-def test_clip_forwards_detected_identifiers_to_metadata(guest, upstream, meta_calls):
+def test_clip_keeps_what_the_page_said_on_the_page(guest, upstream, meta_calls):
+    """The detector's identifiers and the page's citation record are kept on
+    the page (``web_meta``), cleaned, where every later lookup reads them:
+    the clip's own and the one the app starts when the page is opened."""
     r = guest.post("/api/clip", json={
-        "source_url": "https://journal.example/article",
-        "pdf_url": "https://journal.example/article-file.pdf",
-        "doi": "10.1234/abc.def",
+        "source_url": "https://repo.example/handle/42",
+        "pdf_url": "https://repo.example/bitstream/42/thesis.pdf",
+        "doi": "10.1234/ABC.def",
+        "record": {
+            "title": "  A   Thesis on Things ", "authors": ["Ada Lovelace", " ", "Charles Babbage"],
+            "year": "2015/09/11", "venue": "", "publisher": "Example University",
+            "isbn": "978-0-00-000000-1", "kind": "THESIS", "junk": "dropped",
+        },
     })
     assert r.status_code == 200, r.text
-    assert meta_calls[0][2] == "10.1234/abc.def"
+    _, props = _props(r.json()["block_id"])
+    assert props["web_meta"] == {
+        "title": "A Thesis on Things", "authors": ["Ada Lovelace", "Charles Babbage"], "year": "2015",
+        "publisher": "Example University", "kind": "thesis", "doi": "10.1234/abc.def",
+    }  # the ISBN fails its checksum, the empty venue and the unknown key are left out
+    assert meta_calls == [(account_of(guest_name()), r.json()["block_id"])]
+    # A later clip of the same paper from another page changes neither.
+    r2 = guest.post("/api/clip", json={"source_url": "https://mirror.example/x", "doi": "10.1234/abc.def",
+                                       "record": {"title": "Other", "authors": ["Someone"]}})
+    assert r2.json()["existed"] is True and r2.json()["block_id"] == r.json()["block_id"]
+    assert _props(r.json()["block_id"])[1]["web_meta"]["title"] == "A Thesis on Things"
+
+
+def test_a_doi_from_the_page_text_finds_the_paper_but_is_not_trusted(guest, upstream, meta_calls):
+    """A DOI the Connector only found in the page's text (``doi_from_text``)
+    finds that paper in the library and is what the server resolves, but it
+    is kept as ``text_doi``, a candidate the PDF must confirm, never as the
+    page's own ``doi``."""
+    url = "https://example.org/papers/text-doi.pdf"
+    r = guest.post("/api/clip", json={"pdf_url": url, "title": "Text DOI"})
+    block_id = r.json()["block_id"]
+    with sqlite3.connect(ws_db_path(workspace_of(guest_name()), "pages.db")) as conn:
+        _, props = _props(block_id)
+        props["meta"] = {"doi": "10.5555/news.1", "title": "Text DOI"}
+        conn.execute("UPDATE unified_blocks SET properties = ? WHERE id = ?", (json.dumps(props), block_id))
+        conn.commit()
+    news = {"source_url": "https://news.example/story", "title": "Scientists find a thing",
+            "doi": "10.5555/NEWS.1", "doi_from_text": True}
+    r2 = guest.post("/api/clip", json=news)
+    assert r2.status_code == 200, r2.text
+    assert r2.json()["existed"] is True and r2.json()["block_id"] == block_id
+    assert _props(block_id)[1]["web_meta"] == {"text_doi": "10.5555/news.1"}
+    # Not in the library and no PDF behind it: a page with its web source,
+    # whose lookup gets the DOI as a candidate only.
+    r3 = guest.post("/api/clip", json={**news, "source_url": "https://news.example/other", "doi": "10.5555/news.2"})
+    assert r3.status_code == 200, r3.text
+    assert r3.json()["doc_id"] == "" and r3.json()["existed"] is False
+    _, props = _props(r3.json()["block_id"])
+    assert props["web_meta"] == {"text_doi": "10.5555/news.2"}
+    assert meta_calls[-1] == (account_of(guest_name()), r3.json()["block_id"])
+    # A DOI in the address is the page's own, whatever the text says.
+    r4 = guest.post("/api/clip", json={"source_url": "https://pub.example/doi/10.5555/own.3", "title": "Own",
+                                       "doi": "10.5555/cited.4", "doi_from_text": True})
+    assert _props(r4.json()["block_id"])[1]["web_meta"] == {"doi": "10.5555/own.3", "text_doi": "10.5555/cited.4"}
+
+
+def test_a_web_page_with_a_citation_record_is_looked_up(guest, upstream, meta_calls):
+    """A page with no PDF and no identifier still names a work when its tags
+    carry a title and an author: its lookup starts. A title alone does not."""
+    r = guest.post("/api/clip", json={"source_url": "https://repo.example/item/7", "title": "Item 7",
+                                      "record": {"title": "Item 7", "authors": ["A. Author"], "year": "2020"}})
+    assert r.status_code == 200 and r.json()["doc_id"] == ""
+    assert meta_calls == [(account_of(guest_name()), r.json()["block_id"])]
+    r2 = guest.post("/api/clip", json={"source_url": "https://blog.example/post", "title": "Post",
+                                       "record": {"title": "Post"}})
+    assert r2.status_code == 200
+    assert _props(r2.json()["block_id"])[1]["web_meta"] == {"title": "Post"}
+    assert len(meta_calls) == 1
+
+
+def test_a_paper_found_without_a_record_gets_the_pages_and_a_lookup(guest, upstream, meta_calls):
+    """Found by its URL with no record yet (an earlier lookup failed): the
+    clip adds what the page said and starts the lookup again."""
+    url = "https://example.org/papers/no-record.pdf"
+    r = guest.post("/api/clip", json={"pdf_url": url, "title": "No record"})
+    meta_calls.clear()
+    r2 = guest.post("/api/clip", json={"source_url": "https://journal.example/no-record", "pdf_url": url,
+                                       "doi": "10.5555/no.record"})
+    assert r2.json()["existed"] is True and r2.json()["block_id"] == r.json()["block_id"]
+    assert _props(r.json()["block_id"])[1]["web_meta"] == {"doi": "10.5555/no.record"}
+    assert meta_calls == [(account_of(guest_name()), r.json()["block_id"])]
 
 
 def test_clip_dedups_by_doi_and_adds_folder(guest, upstream, meta_calls):
@@ -181,7 +260,8 @@ def test_clip_without_pdf_creates_web_page(guest, upstream, meta_calls):
     r3 = guest.post("/api/clip", json={"source_url": "https://pub.example/articles/deep-dive",
                                        "doi": "10.5555/paywalled.1"})
     assert r3.status_code == 200 and r3.json()["title"] == "deep-dive"
-    assert meta_calls == [(account_of(guest_name()), r3.json()["block_id"], "10.5555/paywalled.1", "")]
+    assert _props(r3.json()["block_id"])[1]["web_meta"] == {"doi": "10.5555/paywalled.1"}
+    assert meta_calls == [(account_of(guest_name()), r3.json()["block_id"])]
     # Nothing at all to save is still a 400.
     assert guest.post("/api/clip", json={}).status_code == 400
 
@@ -273,7 +353,8 @@ def test_clip_arxiv_html_page_with_old_style_id(guest, upstream, meta_calls):
     _, props = _props(body["block_id"])
     assert props["source_url"] == "https://arxiv.org/pdf/cond-mat/0402216"
     assert props["web_url"] == page
-    assert meta_calls == [(account_of(guest_name()), body["block_id"], "", "cond-mat/0402216")]
+    assert props["web_meta"] == {"arxiv_id": "cond-mat/0402216"}
+    assert meta_calls == [(account_of(guest_name()), body["block_id"])]
     for params in ({"arxiv_id": "cond-mat/0402216"}, {"url": "https://arxiv.org/abs/cond-mat/0402216v1"},
                    {"url": page}):
         lk = guest.get("/api/library/lookup", params=params)

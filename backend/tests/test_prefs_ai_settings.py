@@ -544,7 +544,6 @@ def test_shared_provider_admin_api_is_admin_session_only(alice, admin, shared):
                          ("put", f"/api/admin/ai-providers/{shared['id']}"),
                          ("delete", f"/api/admin/ai-providers/{shared['id']}")):
         assert getattr(alice, method)(path, **({} if method in ("get", "delete") else {"json": {}})).status_code == 403
-    assert alice.post("/api/admin/ai-providers/from-account", json={"provider_id": "x"}).status_code == 403
     # An admin's integration token is not an admin session.
     token = create_token(account_of("prefs_admin"), workspace_of("prefs_admin"), "script", 1)["token"]
     bearer = TestClient(app)
@@ -712,40 +711,6 @@ def test_the_old_guest_switch_becomes_each_entrys_access(admin):
         assert ai_settings.load_server_ai()["providers"][0]["access"] == {"who": "everyone", "users": [], "guests": False}
     finally:
         ai_settings.save_server_ai({"providers": []})
-
-
-def test_admin_shares_an_own_key_as_a_copy(admin):
-    """Share one of mine on an API-key entry: the shared entry is a copy
-    with the key, endpoint, models and test model; the account keeps its
-    own (a key may serve two entries — a sign-in moves instead,
-    test_shared_chatgpt.py)."""
-    from gamma import ai_settings
-    from gamma.server_settings import _get_raw
-    r = admin.post("/api/ai/providers", json={
-        "protocol": "anthropic", "name": "My key", "api_key": "sk-ant-mine-77778888",
-        "base_url": "https://claude.example.org", "models": "m-a, m-b", "test_model": "m-b"})
-    own = next(p for p in r.json()["providers"] if not p.get("shared") and p["name"] == "My key")
-    try:
-        r = admin.post("/api/admin/ai-providers/from-account", json={"provider_id": own["id"]})
-        assert r.status_code == 200, r.text
-        copy = r.json()["providers"][-1]
-        assert copy["id"].startswith("server:") and copy["shared"] is True
-        assert {k: copy[k] for k in ("name", "protocol", "base_url", "models", "test_model", "key_hint")} == {
-            "name": "My key", "protocol": "anthropic", "base_url": "https://claude.example.org",
-            "models": "m-a, m-b", "test_model": "m-b", "key_hint": "…8888"}
-        assert copy["access"] == {"who": "everyone", "users": [], "guests": False}
-        # The key went along, stored encrypted; the account keeps its own entry.
-        assert ai_settings.load_server_ai()["providers"][-1]["api_key"] == "sk-ant-mine-77778888"
-        assert "sk-ant-mine-77778888" not in _get_raw("ai_providers")
-        mine = admin.get("/api/ai/settings").json()["providers"]
-        assert any(p["id"] == own["id"] and not p.get("shared") for p in mine)
-        assert any(p["id"] == copy["id"] and p["shared"] for p in mine)
-        # An id that is none of the account's own, a shared one included.
-        assert admin.post("/api/admin/ai-providers/from-account", json={"provider_id": "nope"}).status_code == 404
-        assert admin.post("/api/admin/ai-providers/from-account", json={"provider_id": copy["id"]}).status_code == 404
-    finally:
-        ai_settings.save_server_ai({"providers": []})
-        admin.delete(f"/api/ai/providers/{own['id']}")
 
 
 def test_deleting_a_shared_entry_removes_it_everywhere(alice, admin, shared):

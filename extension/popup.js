@@ -137,6 +137,10 @@ async function showMain(st) {
   show("existing", !!st.hit);
   show("found", !st.hit && c.kind !== "none");
   show("nothing", !st.hit && c.kind === "none");
+  $("nothing-msg").textContent = nothingMessage(c);
+  // A "possible paper" saves the paper its one DOI names; this saves the
+  // page around it instead (a news story, a blog post).
+  show("save-page", c.kind === "maybe" && !st.saving);
   show("clip", !c.is_pdf_tab);
   show("result", false);
   if (st.saving) { show("progress"); $("progress-text").textContent = st.saving; } else show("progress", false);
@@ -146,6 +150,21 @@ async function showMain(st) {
   await fillPickers(st);
   $("pub-auto").checked = st.settings.autoRefreshSessions !== false;
   await loadPublisher(st);
+}
+
+// Why a page shows no paper, and what "Save this URL anyway" will keep.
+function nothingMessage(c) {
+  const anyway = "You can still save the page's URL — Gamma will look for a PDF behind it.";
+  if (c.record) return `No PDF or DOI on this page, but its citation tags name a work. Saving keeps the page with that record. ${anyway}`;
+  if (c.dois_in_text > 1) return `This page names ${c.dois_in_text >= 10 ? "many" : c.dois_in_text} papers by DOI, so none of them is taken as its own. ${anyway}`;
+  return `No paper or PDF detected on this page. ${anyway}`;
+}
+
+// The page itself, not the paper its one DOI names: what "Save the web page
+// instead" saves (the server makes a page with its web source).
+function pageCandidate(c) {
+  return { kind: "none", source_url: c.source_url || (tab && tab.url) || "", title: c.title || (tab && tab.title) || "",
+           record: c.record || null };
 }
 
 // The notice over "Open in Gamma", for a paper the look-up found or a save
@@ -314,14 +333,18 @@ async function doDisconnectPublisher(st, host, button) {
 // The head names the paper on THIS tab: the page's own title (meta tags),
 // else the registry record the worker previewed for the detected DOI /
 // arXiv id (a PDF tab has no meta tags), else the library page's title,
-// else the host. The identifier line shows what the detection rests on, the
-// third line the registry's authors · year · venue.
+// else the host. A "possible paper" is the paper its one DOI names, so the
+// registry's title goes first there: under the page's own title (a news
+// story's) the registry's authors would read as the story's. The identifier
+// line shows what the detection rests on, the third line the registry's
+// authors · year · venue.
 function renderHead(st) {
   const c = st.candidate || { kind: "none" };
   const pv = st.preview || null;
   const kindLabel = { pdf: "PDF", arxiv: "arXiv", doi: "DOI", maybe: "possible paper", none: "" }[c.kind] || "";
   const idText = c.arxiv_id ? `arXiv:${c.arxiv_id}` : c.doi ? `doi:${c.doi}` : "";
-  const title = c.title || (pv && pv.title) || (st.hit && st.hit.title)
+  const paperFirst = c.kind === "maybe" && pv && pv.title;
+  const title = (paperFirst ? pv.title : c.title || (pv && pv.title)) || (st.hit && st.hit.title)
     || (c.kind === "none" ? (tab && tab.title) || "This page" : hostOf(c.pdf_url || c.source_url));
   $("title").textContent = title;
   const sub = $("sub");
@@ -436,11 +459,11 @@ function chosenLabels() {
 
 // ---------- actions ----------
 
-async function doSave({ candidate, force } = {}) {
+async function doSave({ candidate, force, asPage = false } = {}) {
   const c = candidate || state.candidate;
   const folder = chosenFolder();  // the worker remembers it once the save succeeds
   const labels = chosenLabels();
-  $("save").disabled = true; $("save-anyway").disabled = true;
+  $("save").disabled = true; $("save-anyway").disabled = true; $("save-page").disabled = true;
   show("result", false);
   show("progress"); $("progress-text").textContent = "starting…";
   try {
@@ -452,11 +475,13 @@ async function doSave({ candidate, force } = {}) {
     const origins = [...new Set(fetchUrls.map((u) => { try { return originPattern(new URL(u).origin); } catch { return ""; } }))]
       .filter(Boolean);
     if (origins.length) { try { await chrome.permissions.request({ origins }); } catch {} }
-    const out = await send({ type: "save", tabId: tab.id, candidate: c, ...folder, labels, source_url: force ? (tab && tab.url) : undefined });
+    const out = await send({ type: "save", tabId: tab.id, candidate: c, ...folder, labels, asPage,
+                             source_url: force ? (tab && tab.url) : undefined });
     show("progress", false);
     // The paper is in the library now: the popup reads as it will when
-    // reopened on this tab.
-    state = { ...state, hit: out };
+    // reopened on this tab (as the web page, when that is what was saved).
+    state = { ...state, hit: out, ...(asPage ? { candidate: c, preview: null } : {}) };
+    show("save-page", state.candidate && state.candidate.kind === "maybe");
     renderHead(state);
     showExisting(state, out);
     show("existing");
@@ -469,7 +494,7 @@ async function doSave({ candidate, force } = {}) {
     show("result");
     if (err.status === 401) { state = await send({ type: "auth-changed" }); showLogin(state); }
   } finally {
-    $("save").disabled = false; $("save-anyway").disabled = false;
+    $("save").disabled = false; $("save-anyway").disabled = false; $("save-page").disabled = false;
   }
 }
 
@@ -611,7 +636,11 @@ document.addEventListener("DOMContentLoaded", async () => {
     if (e.key === "Escape") { show("label-menu", false); closeDrawer(); }
   });
   $("save").onclick = () => doSave();
-  $("save-anyway").onclick = () => doSave({ candidate: { kind: "none", source_url: tab.url, title: tab.title }, force: true });
+  $("save-anyway").onclick = () => doSave({ candidate: { kind: "none", source_url: tab.url, title: tab.title,
+                                                         record: (state.candidate && state.candidate.record) || null },
+                                             force: true });
+  $("save-page").onclick = () => doSave({ candidate: pageCandidate(state.candidate || {}), asPage: true });
+  $("save-page").append(icon("globe"), document.createTextNode("Save the web page instead"));
   $("open-existing").onclick = () => openPath(state.hit.open_url);
   $("refile").onclick = () => { show("existing", false); show("found"); };
   $("clip").onclick = doClip;

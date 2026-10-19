@@ -233,9 +233,8 @@ def _cloud() -> dict:
 # /api/ai/providers/{id}/test|usage and /api/ai/model-catalog, which take
 # that id from an admin. A ChatGPT sign-in is made (or reconnected) through
 # /ai-providers/chatgpt/start + status + complete, the account flow's helpers
-# with the state bound to ("server", admin); one of the admin's own entries
-# becomes a shared one through /ai-providers/from-account. Each entry
-# carries its ``access`` (who may use it), set on add or edit.
+# with the state bound to ("server", admin). Each entry carries its
+# ``access`` (who may use it), set on add or edit.
 
 def _shared_ai_view() -> dict:
     config = ai_settings.load_server_ai()
@@ -275,10 +274,6 @@ class SharedProviderRequest(AIProviderRequest):
     access: dict | None = None
 
 
-class ShareOwnRequest(BaseModel):
-    provider_id: str  # one of the admin's own entries (Settings → AI › Connections)
-
-
 @router.get("/ai-providers")
 def list_ai_providers(request: Request):
     require_admin(request)
@@ -301,16 +296,6 @@ def add_ai_provider(payload: SharedProviderRequest, request: Request):
     entry["access"] = (ai_settings.validated_access(payload.access) if payload.access is not None
                        else ai_settings.default_access())
     _add_shared(entry)
-    return _shared_ai_view()
-
-
-@router.post("/ai-providers/from-account")
-def share_own_ai_provider(payload: ShareOwnRequest, request: Request):
-    """Settings → Server's Share one of mine: the admin's own entry as a
-    shared one (ai_settings.share_own_entry: an API key is copied, a sign-in
-    moves), with the models it has and the default access."""
-    require_admin(request)
-    ai_settings.share_own_entry(request.state.user_id, payload.provider_id)
     return _shared_ai_view()
 
 

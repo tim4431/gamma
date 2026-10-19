@@ -373,28 +373,162 @@ def test_pdf_matching_never_guesses_across_items_or_ambiguous_folders():
     assert sum(e["status"] == "not_imported" for e in plan["entries"]) == 3
 
 
-def test_standalone_inline_and_additional_pdfs(guest):
+def _with_attachments(rdf, links, top=""):
+    """``rdf`` with more link:link attachments on its article (``links``,
+    inline z:Attachment elements) and more top-level elements (``top``)."""
+    rdf = rdf.replace('<link:link rdf:resource="#item_3"/>',
+                      '<link:link rdf:resource="#item_3"/>' + "".join(
+                          f"<link:link>{link}</link:link>" for link in links))
+    return rdf.replace("</rdf:RDF>", top + "</rdf:RDF>")
+
+
+def _file_att(about, path, mime, title=""):
+    return (f'<z:Attachment rdf:about="{about}"><z:itemType>attachment</z:itemType>'
+            f'<dc:title>{title}</dc:title><z:path rdf:resource="{path}"/>'
+            f'<link:type>{mime}</link:type></z:Attachment>')
+
+
+def _link_att(about, url, title):
+    return (f'<z:Attachment rdf:about="{about}"><z:itemType>attachment</z:itemType>'
+            f'<dc:identifier><dcterms:URI><rdf:value>{url}</rdf:value></dcterms:URI></dc:identifier>'
+            f'<dc:title>{title}</dc:title><z:linkMode>3</z:linkMode></z:Attachment>')
+
+
+def _attachments_of(guest, page_id):
+    """The page's "Attachments" block and the contents under it, in order."""
+    children = guest.get(f"/api/blocks/{page_id}/children").json()["children"]
+    headings = [c for c in children if c["properties"].get("zotero_attachments")]
+    if not headings:
+        return None, []
+    [heading] = headings
+    under = guest.get(f"/api/blocks/{heading['id']}/children").json()["children"]
+    return heading, under
+
+
+def test_other_attachments_sit_on_the_items_page(guest):
+    """As in Zotero's item tree: the item's first PDF is its page's
+    document, its other attachments — another PDF, a snapshot, a web link —
+    file chips and links under the page's "Attachments" block, in the
+    export's order. A standalone attachment is an item of its own."""
     rdf = RDF.replace("s41586-000-00000-0", "all-attachments").replace("Attention is all you need", "All attachments")
-    rdf = rdf.replace('<link:link rdf:resource="#item_3"/>', '''<link:link rdf:resource="#item_3"/>
-        <link:link><z:Attachment rdf:about="#inline">
-          <z:path>files/4/supplement</z:path><dcterms:type>application/pdf</dcterms:type>
-        </z:Attachment></link:link>''')
-    rdf = rdf.replace('</rdf:RDF>', '''<z:Attachment rdf:about="#standalone">
+    rdf = _with_attachments(rdf, [
+        '<z:Attachment rdf:about="#inline"><z:path>files/4/supplement</z:path>'
+        '<dcterms:type>application/pdf</dcterms:type></z:Attachment>',
+        _file_att("#snapshot", "files/6/Snapshot [1].html", "text/html", "Snapshot"),
+        _link_att("#link", "https://example.org/a page (v2)", "Publisher [page]"),
+        _file_att("#same-bytes", "files/8/copy.pdf", "application/pdf"),
+    ], top='''<z:Attachment rdf:about="#standalone">
         <z:itemType>attachment</z:itemType><dc:title>Standalone paper</dc:title>
         <z:path rdf:resource="files/5/standalone.pdf"/><dcterms:type>application/pdf</dcterms:type>
-        </z:Attachment></rdf:RDF>''')
-    data = _custom_zip(rdf, {"files/3/Vaswani - 2017 - Attention.pdf": _annotated_pdf(b"Primary"),
+        </z:Attachment>''' + _file_att("#data", "files/7/data.csv", "text/csv"))
+    primary = _annotated_pdf(b"Primary")
+    data = _custom_zip(rdf, {"files/3/Vaswani - 2017 - Attention.pdf": primary,
                             "files/4/supplement": _annotated_pdf(b"Supplement"),
-                            "files/5/standalone.pdf": _annotated_pdf(b"Standalone")})
+                            "files/6/Snapshot [1].html": b"<html>snapshot</html>",
+                            "files/8/copy.pdf": primary,  # the document's bytes again: no chip
+                            "files/5/standalone.pdf": _annotated_pdf(b"Standalone"),
+                            "files/7/data.csv": b"a,b\n1,2\n"})
     plan = _send(guest, data, preview=True).json()
-    assert sum(p["kind"] == "pdf" for p in plan["pages"]) == 3
-    supplement = next(p for p in plan["pages"] if p["source_path"] == "export/files/4/supplement")
-    assert supplement["folders"] == [["ML", "Transformers"]] and supplement["notes"] == 0
+    assert sum(p["kind"] == "pdf" for p in plan["pages"]) == 2
+    item = next(p for p in plan["pages"] if p["title"] == "All attachments")
+    assert item["attachments"] == 3 and item["folders"] == [["ML", "Transformers"]]
+    assert "export/files/4/supplement" in item["source_paths"]
+    assert "export/files/6/Snapshot [1].html" in item["source_paths"]
+    assert next(p for p in plan["pages"] if p["title"] == "data.csv")["attachments"] == 1
+    assert {e["path"]: e["status"] for e in plan["entries"]}["export/files/6/Snapshot [1].html"] == "imported"
+    assert not any("separate page" in w["reason"] or "not imported" in w["reason"] for w in plan["warnings"])
+
     result = _send(guest, data).json()
-    assert sum(p["kind"] == "pdf" for p in result["pages"]) == 3
-    assert result["skipped"] == []
+    assert result["skipped"] == [] and result["attachments_imported"] == 4
+    assert sum(p["kind"] == "pdf" for p in result["pages"]) == 2
+    page_id = next(p["id"] for p in result["pages"] if p["title"] == "All attachments")
+    heading, under = _attachments_of(guest, page_id)
+    assert heading["content"] == "## Attachments"
+    children = guest.get(f"/api/blocks/{page_id}/children").json()["children"]
+    order = [c["id"] for c in children]
+    note = next(c for c in children if c["properties"].get("zotero_note"))
+    assert order.index(heading["id"]) > order.index(note["id"])  # after the notes
+    assert [c["properties"]["zotero_attachment"] for c in under] == ["#inline", "#snapshot", "#link"]
+    supplement, snapshot, link = (c["content"] for c in under)
+    assert supplement.startswith("[supplement](/api/uploads/") and supplement.endswith(".pdf)")
+    assert snapshot.startswith("[Snapshot 1.html](/api/uploads/") and snapshot.endswith(".html)")
+    assert link == "[Publisher page](https://example.org/a%20page%20%28v2%29)"
+    stored = guest.get(snapshot[snapshot.index("(") + 1:-1])
+    assert stored.status_code == 200 and stored.content == b"<html>snapshot</html>"
+    standalone = next(p for p in result["pages"] if p["title"] == "data.csv")
+    assert [c["content"].split("](")[0] for c in _attachments_of(guest, standalone["id"])[1]] == ["[data.csv"]
+
     again = _send(guest, data).json()
     assert again["pages_created"] == 0 and again["annotations_imported"] == 0
+    assert again["attachments_imported"] == 0
+    assert [c["id"] for c in _attachments_of(guest, page_id)[1]] == [c["id"] for c in under]
+
+
+def test_attachments_added_later_join_the_pages_attachments(guest):
+    """A merge adds only the attachments the page lacks — by key, else by
+    the file a block of it names — under its "Attachments" block, which is
+    made the first time only."""
+    rdf = RDF.replace("s41586-000-00000-0", "later-attachments").replace("Attention is all you need", "Later")
+    files = {"files/3/Vaswani - 2017 - Attention.pdf": _annotated_pdf(b"Later primary")}
+    first = _send(guest, _custom_zip(rdf, files)).json()
+    page_id = next(p["id"] for p in first["pages"] if p["title"] == "Later")
+    assert first["attachments_imported"] == 0 and _attachments_of(guest, page_id) == (None, [])
+
+    files["files/4/one.txt"] = b"one"
+    one = _with_attachments(rdf, [_file_att("#one", "files/4/one.txt", "text/plain"),
+                                  _link_att("#site", "https://example.org/a b", "Site")])
+    assert _send(guest, _custom_zip(one, files)).json()["attachments_imported"] == 2
+    heading, under = _attachments_of(guest, page_id)
+    assert [c["content"].split("](")[0] for c in under] == ["[one.txt", "[Site"]
+
+    # Zotero renumbered both (new keys, the same file and URL) and added one
+    files["files/9/two.txt"] = b"two"
+    two = _with_attachments(rdf, [_file_att("#renumbered", "files/4/one.txt", "text/plain"),
+                                  _link_att("#site-again", "https://example.org/a b", "Site"),
+                                  _file_att("#two", "files/9/two.txt", "text/plain")])
+    assert _send(guest, _custom_zip(two, files)).json()["attachments_imported"] == 1
+    again, under = _attachments_of(guest, page_id)
+    assert again["id"] == heading["id"]
+    assert [c["content"].split("](")[0] for c in under] == ["[one.txt", "[Site", "[two.txt"]
+
+
+def test_an_attachment_that_cannot_be_stored_is_a_warning(guest, monkeypatch):
+    """A file that is not what its extension says, or one past the storage
+    limits, is left out with a warning; the item and its other attachments
+    go on. An executable is listed as not imported."""
+    from fastapi import HTTPException
+    from conftest import workspace_of
+    from gamma import storage
+
+    rdf = RDF.replace("s41586-000-00000-0", "refused-attachments").replace("Attention is all you need", "Refused")
+    rdf = _with_attachments(rdf, [_file_att("#audio", "files/4/talk.m4a", "audio/mp4"),
+                                  _file_att("#exe", "files/5/setup.exe", "application/octet-stream"),
+                                  _link_att("#link", "https://example.org/kept", "Kept")])
+    pdf = _annotated_pdf(b"Refused primary")
+    data = _custom_zip(rdf, {"files/3/Vaswani - 2017 - Attention.pdf": pdf,
+                            "files/4/talk.m4a": b"not audio at all",
+                            "files/5/setup.exe": b"MZ"})
+    plan = _send(guest, data, preview=True).json()
+    assert next(p for p in plan["pages"] if p["title"] == "Refused")["attachments"] == 2
+    assert {e["path"]: e["status"] for e in plan["entries"]}["export/files/5/setup.exe"] == "not_imported"
+    result = _send(guest, data).json()
+    assert result["skipped"] == [] and result["attachments_imported"] == 1
+    assert any(w["reason"] == "Attachment not imported: not a valid audio file" for w in result["warnings"])
+    page_id = next(p["id"] for p in result["pages"] if p["title"] == "Refused")
+    assert [c["content"] for c in _attachments_of(guest, page_id)[1]] == ["[Kept](https://example.org/kept)"]
+
+    def full(ws, nbytes):
+        raise HTTPException(status_code=507, detail="storage quota exceeded")
+
+    other = _annotated_pdf(b"Over quota primary")
+    storage.store_pdf(workspace_of(guest_name()), other)  # stored before: only the new file meets the limit
+    monkeypatch.setattr(storage, "check_upload_allowed", full)
+    over = _with_attachments(RDF.replace("s41586-000-00000-0", "over-quota"),
+                             [_file_att("#big", "files/6/big.csv", "text/csv")])
+    data = _custom_zip(over, {"files/3/Vaswani - 2017 - Attention.pdf": other, "files/6/big.csv": b"x,y\n"})
+    result = _send(guest, data).json()
+    assert result["skipped"] == [] and result["pages_created"] + result["pages_merged"] == 2
+    assert any(w["reason"] == "Attachment not imported: storage quota exceeded" for w in result["warnings"])
 
 
 def test_invalid_pdf_and_unsupported_file_are_visible(guest):

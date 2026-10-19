@@ -8,8 +8,9 @@ NAS). The service itself is described in
 
 ```
 deploy/
-  compose.yml          account, share + caddy (a VPS with a public address); caddy also on gamma-edge
-                       and gamma-fleet (the fleet agent is its own project, ../fleet/deploy/)
+  compose.yml          account, share + its watchtower, caddy (a VPS with a public address); caddy
+                       also on gamma-edge and gamma-fleet (the fleet agent is its own project,
+                       ../fleet/deploy/)
   Caddyfile            TLS for CADDY_HOST → account:9002; *.gammapdf.com → share / gamma-demo /
                        gamma-<label> (hosted servers)
   compose.tunnel.yml   layered on compose.yml: cloudflared instead of caddy
@@ -273,11 +274,16 @@ Restart the container after editing `.env` (`docker compose up -d`).
 ## The free share host
 
 The compose file also runs `share`: one Gamma in cloud mode
-(`ghcr.io/tim4431/gamma`), the shared server. It runs `main`, like the
-demo: the host's `compose.override.yml`, a file holding only the share
-image, pins `main`'s newest `sha-<short>` build, and the
-`update-share-host` skill writes it. Without one, the compose file's
-`:latest` applies. It
+(`ghcr.io/tim4431/gamma`), the shared server. It runs `main`'s `:latest`,
+like the demo, and keeps itself current the same way: the project's
+`watchtower` service polls GHCR every hour and recreates `share` when a
+merge has published a new image. It updates only containers labelled
+`com.centurylinklabs.watchtower.enable=true` with the scope `share` (the
+share host), never `account`, Caddy, the demo (whose Watchtower has the
+scope `demo`) or the fleet's servers. The `update-share-host` skill
+(`.claude/skills/`) does the same pull at once, after a merge. A
+`compose.override.yml` on the host naming a `sha-<short>` tag for `share`
+is a rollback pin, which holds Watchtower too until it is removed. It
 answers at three kinds of address ([docs/dev/cloud_accounts.md](../../docs/dev/cloud_accounts.md)
 "The share host" and "The entrance"):
 

@@ -19,11 +19,14 @@ export function formatBytes(n) {
 export function describeCandidate(c) {
   if (!c) return "nothing";
   const links = (c.pdf_links || []).length;
+  const record = c.record || null;
   return [
     c.kind || "none",
-    `doi ${c.doi || "—"}`,
+    `doi ${c.doi || "—"}${c.kind === "maybe" ? " (only in the page's text)" : ""}`,
+    c.dois_in_text > 1 ? `${c.dois_in_text} DOIs in the page's text, none taken` : "",
     `arXiv ${c.arxiv_id || "—"}`,
     `pdf_url ${c.pdf_url || "—"}`,
+    record ? `citation record: ${record.kind || "no type"}, ${(record.authors || []).length} author${(record.authors || []).length === 1 ? "" : "s"}` : "",
     c.is_pdf_tab ? "the tab is a PDF" : "",
     links ? `${links} PDF link${links === 1 ? "" : "s"} on the page` : "",
     c.from_url ? "from the URL only (no content script)" : "",

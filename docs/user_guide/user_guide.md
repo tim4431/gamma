@@ -14,7 +14,7 @@ Read papers, keep what you learn. This guide shows each part of Gamma in a short
 | [Outline and links between pages](#outline-and-links-between-pages) | Nesting, moving notes, `[[` links, `@` mentions and reminders |
 | [AI chat](#ai-chat) | Ask about the paper, with clickable citations; every AI service you can connect |
 | [The library agent](#the-library-agent) | Let the AI organize and edit, with your approval; what each tool does |
-| [Library](#library) | Folders, labels, Recently deleted |
+| [Library](#library) | Labels or folders and how to file a paper, Recently deleted |
 | [Search](#search) | Everything at once, Ctrl+P to jump |
 | [Metadata and citations](#metadata-and-citations) | Title, authors, BibTeX |
 | [Share a page](#share-a-page) | Links for viewers and editors |
@@ -203,10 +203,31 @@ The agent cannot delete pages, and an assistant connected from outside ([Assista
 
 The home page lists your pages, most recent first, with a **Recently viewed** strip on top.
 
-- **Folders** nest, and a paper can live in several at once. Drag a paper onto a folder to add it there; drop it on the back row to take it out.
-- **Labels** are flat tags. Type one into the row under a paper's title; the listing bar's **Labels** view shows each label as a folder, and its filter box finds a label by name.
+- **Labels** are words you'll search for. **Folders** are labels that nest, for a topic or a talk. Neither one copies a paper ([which to use](#labels-or-folders)).
 - **Select** like a file manager: click, Ctrl+click, Shift+click; double-click opens; right-click for rename, move, label, share, export, delete.
 - **Recently deleted** keeps a page for 30 days, with its notes and files.
+
+### Labels or folders?
+
+Neither one copies a paper, and a paper can have as many labels and folders as you like. The difference is how you'll come back to it.
+
+**A label is a word you'll search for.** A paper on PDH locking gets `pdh`. A paper from Vladan's lab on PGC cooling gets `vladan` and `pgc`. Labels are flat, so keep them short: a technique, an author, a lab, a keyword.
+
+- **Add one**: right-click the paper → **Add label** → **New label…**, or type it into the label row under the paper's title and press Enter. You can also drop a paper on a label in the **Labels** view.
+- **Find papers with it**: click a label chip to list its papers, or press **Ctrl+P** and type its name. In search, type it and press Tab to get a filter chip. The listing bar's **Labels** view shows every label, with how many papers have it.
+
+**A folder is a label that nests.** Use one for a topic you're studying or something you're preparing.
+
+- **A topic**: make **Quantum computing**, and inside it **Neutral atom**, **Superconducting qubits** and **Ion trap**. A paper filed in Neutral atom shows *Quantum computing / Neutral atom* next to its labels.
+- **A talk**: make **gm1** for one group meeting and **gm2** for the next. A paper you present at both sits in both folders. It is still one paper with one set of notes, whichever folder you open it from.
+- **Make one**: click **New folder** in the listing (inside a folder, this makes a subfolder), or right-click a folder → **New subfolder**.
+- **File a paper**: drag it onto the folder, or right-click it → **Move to folder**. Either way the paper keeps its other folders. Typing the folder's name into the label row works too. If you file a paper into a subfolder of a folder it is already in, it moves down into the subfolder instead of staying at both levels. To take it out, drop it on the back row, or use **Move to folder** → **Remove from**.
+- **Use it as a whole**: share the folder, export it with a `.bib` of its papers, or ask the AI about everything in it. Each of these includes the subfolders. A folder chip in search limits the results to that folder.
+- **Deleting a folder** never deletes its papers. They stay in their other folders, or at the library root.
+
+A simple test: if you'd type it into search, make it a label. If you'd open it and work through it, make it a folder.
+
+Coming from Zotero? A folder is a collection (subfolders are subcollections) and a label is a tag. A [Zotero import](#import-and-export) turns collections into folders and tags into labels, and a Zotero export turns them back. One difference: Zotero keeps an item in the parent collection when you add it to a subcollection, while Gamma moves it down into the subfolder.
 
 ## Search
 

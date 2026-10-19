@@ -40,7 +40,8 @@ from ..pdf_text import GlyphPages, quote_under
 from ..pdf_export import (TEXT_BOX_TYPES, _resolve, annotation_key, annotation_shown, display_size,
                           drop_annotations, first_rect, page_frame, pdf_point_to_viewer, reply_parent)
 from ..text_box import escape_markdown, markdown_of, measure, normalize_text_box, plain_text
-from ..storage import display_filename, find_upload_file, is_pdf, pdf_url, put_upload, store_file, store_pdf
+from ..storage import (SPOOL_CHUNK, Spool, content_refusal, display_filename, find_upload_file, is_pdf, pdf_url,
+                       put_upload, store_file, store_file_path, store_pdf)
 from ..logseq_import import (
     edn_highlight_position,
     edn_highlight_to_block,
@@ -1024,13 +1025,102 @@ def _zotero_paths(item, under_path):
     return [under_path + path for path in item["folders"]] or ([under_path] if under_path else [])
 
 
+# An item's other attachments sit on its page under this block, as in
+# Zotero's item tree: file chips and links, each marked with its Zotero key.
+ATTACHMENTS_HEADING = "## Attachments"
+ATTACHMENTS_PROP = "zotero_attachments"
+ATTACHMENT_KEY = "zotero_attachment"
+
+
+def _zotero_store_file(ws, zf, extra) -> str:
+    """Store one of an item's files as ``POST /upload-file`` would (under
+    its content hash and its name's extension, with the same refusals),
+    streamed from the zip so a large one is never in memory. → the stored
+    name. Raises ValueError for a file that is not what its extension says
+    and HTTPException (413/507) past the storage limits."""
+    spool = Spool(ws)
+    try:
+        with zf.open(extra["entry"]) as src:
+            while chunk := src.read(SPOOL_CHUNK):
+                spool.write(chunk)
+        spool.close()
+        with open(spool.path, "rb") as f:
+            refused = content_refusal(extra["ext"], f.read(16))
+        if refused:
+            raise ValueError(refused)
+    except BaseException:
+        spool.discard()
+        raise
+    filename, _ = store_file_path(ws, spool.path, spool.size, spool.doc_id(), extra["ext"])
+    return filename
+
+
+def _link_target(url: str) -> str:
+    """``url`` as a markdown link's target: no space or parenthesis bare."""
+    return url.replace(" ", "%20").replace("(", "%28").replace(")", "%29")
+
+
+def _markdown_link(text: str, url: str) -> str:
+    """``[text](url)``, the shape a file chip and a link block hold: no
+    brackets in the text (the frontend's file-chip markdown drops them too)."""
+    text = re.sub(r"[\[\]]", "", text or "").strip() or url
+    return f"[{text}]({_link_target(url)})"
+
+
+def _zotero_extras(conn, ws, zf, item, block_id, created, doc_id, report) -> tuple[list, str | None]:
+    """The item's ``extras`` as the blocks its page gets under
+    "Attachments": a file chip per file, stored here (outside any
+    transaction, like its PDF), and a link per web link. One the page holds
+    already is left out: by its Zotero key, else by the stored file or URL
+    a block of the page names — the page's own PDF included, and a Gamma
+    export brought back, whose note images are in its notes already. A file
+    that cannot be stored is a warning and the rest go on. Returns
+    ``(blocks, heading)``, each block ``{content, props}``; ``heading`` is
+    the page's "Attachments" block to add them under, None to make one."""
+    keys, heading, named = set(), None, []
+    if not created:
+        for bid, content, key, is_heading in conn.execute(
+                f"SELECT id, content, json_extract(properties,'$.{ATTACHMENT_KEY}'), "
+                f"json_extract(properties,'$.{ATTACHMENTS_PROP}') FROM unified_blocks WHERE page_id = ?",
+                (block_id,)):
+            named.append(content or "")
+            if key:
+                keys.add(key)
+            if is_heading and heading is None:
+                heading = bid
+    text = "\n".join(named)
+    blocks = []
+    for extra in item["extras"]:
+        if extra["key"] in keys or (doc_id and extra.get("digest") == doc_id):
+            continue
+        if "url" in extra:
+            if _link_target(extra["url"]) in text:
+                continue
+            content = _markdown_link(extra["title"], extra["url"])
+        else:
+            try:
+                url = f"/api/uploads/{_zotero_store_file(ws, zf, extra)}"
+            except Exception as e:
+                reason = e.detail if isinstance(e, HTTPException) else str(e)
+                report["warnings"].append({"title": item["title"], "path": extra["entry"],
+                                           "reason": f"Attachment not imported: {reason}"})
+                continue
+            if url in text:
+                continue
+            content = _markdown_link(extra["name"], url)
+        text += "\n" + content  # two attachments of one file make one chip
+        blocks.append({"content": content, "props": {ATTACHMENT_KEY: extra["key"]}})
+    return blocks, heading
+
+
 def _zotero_prepare(conn, ws, zf, item, dest, report) -> dict:
     """What the item makes of the library: the page it merges into (found
-    by PDF, else by Zotero key) or a new one, with the properties and the
-    notes it adds — filed in its collections' folders and labelled with its
-    tags, ``dest``'s ids for them (``_commit_zotero``) after a merged page's
-    own. Its PDF is stored here, outside any transaction, so a long import
-    never holds the workspace's write lock over file writes."""
+    by PDF, else by Zotero key) or a new one, with the properties, the
+    notes and the attachments it adds — filed in its collections' folders
+    and labelled with its tags, ``dest``'s ids for them (``_commit_zotero``)
+    after a merged page's own. Its files are stored here, outside any
+    transaction, so a long import never holds the workspace's write lock
+    over file writes."""
     digest = item["digest"]
     row = _zotero_existing_page(conn, item)
 
@@ -1086,8 +1176,9 @@ def _zotero_prepare(conn, ws, zf, item, dest, report) -> dict:
             if note_key:
                 existing.add(note_key)
         todo = [n for n in todo if n["key"] not in existing]
+    extras, heading = _zotero_extras(conn, ws, zf, item, block_id, created, props.get("doc_id"), report)
     return {"item": item, "row": row, "block_id": block_id, "old": old, "props": props,
-            "todo": todo, "created": created,
+            "todo": todo, "extras": extras, "heading": heading, "created": created,
             "folders": [dest["paths"][f] for f in filing(props, FOLDERS) if f in dest["paths"]]}
 
 
@@ -1098,6 +1189,7 @@ def _zotero_done(prep, report, uploads):
     item, props, created = prep["item"], prep["props"], prep["created"]
     report["pages_created" if created else "pages_merged"] += 1
     report["notes_imported"] += len(prep["todo"])
+    report["attachments_imported"] += len(prep["extras"])
     report["pages"].append({"id": prep["block_id"], "title": item["title"] if created else prep["row"][2],
                             "created": created, "kind": "pdf" if props.get("doc_id") else "page",
                             "folders": prep["folders"]})
@@ -1118,6 +1210,13 @@ def _zotero_merge(conn, ws, prep, report, uploads, actor):
     batch = ([{"op": "set", "id": block_id, "props": patch}] if patch else []) + [
         {"op": "insert", "id": new_block_id(), "parent": block_id,
          "content": note["text"], "props": {"zotero_note": note["key"]}} for note in prep["todo"]]
+    if prep["extras"]:
+        heading = prep["heading"]
+        if heading is None:
+            heading = new_block_id()
+            batch.append({"op": "insert", "id": heading, "parent": block_id,
+                          "content": ATTACHMENTS_HEADING, "props": {ATTACHMENTS_PROP: True}})
+        batch += [{"op": "insert", "id": new_block_id(), "parent": heading, **extra} for extra in prep["extras"]]
     for i in range(0, len(batch), MAX_OPS):
         after_commit(ws, conn, apply_ops(conn, block_id, batch[i:i + MAX_OPS], actor=actor))
     return _zotero_done(prep, report, uploads)
@@ -1144,13 +1243,25 @@ def _zotero_write_new(conn, staged, report, uploads, actor):
             conn.execute(
                 f"INSERT INTO unified_blocks ({STORED_COLUMNS}) VALUES (?,'root',?,?,?,?,?,?)",
                 (prep["block_id"], pos, item["title"], json.dumps(prep["props"]), now, now, prep["block_id"]))
-            todo = prep["todo"]
-            positions = generate_n_keys_between(None, None, n=len(todo)) if todo else []
+            todo, extras = prep["todo"], prep["extras"]
+            count = len(todo) + bool(extras)  # the notes, then the attachments' heading
+            positions = generate_n_keys_between(None, None, n=count) if count else []
             for note, note_pos in zip(todo, positions):
                 conn.execute(
                     f"INSERT INTO unified_blocks ({STORED_COLUMNS}) VALUES (?,?,?,?,?,?,?,?)",
                     (new_block_id(), prep["block_id"], note_pos, note["text"],
                      json.dumps({"zotero_note": note["key"]}), now, now, prep["block_id"]))
+            if extras:
+                heading = new_block_id()
+                conn.execute(
+                    f"INSERT INTO unified_blocks ({STORED_COLUMNS}) VALUES (?,?,?,?,?,?,?,?)",
+                    (heading, prep["block_id"], positions[-1], ATTACHMENTS_HEADING,
+                     json.dumps({ATTACHMENTS_PROP: True}), now, now, prep["block_id"]))
+                for extra, extra_pos in zip(extras, generate_n_keys_between(None, None, n=len(extras))):
+                    conn.execute(
+                        f"INSERT INTO unified_blocks ({STORED_COLUMNS}) VALUES (?,?,?,?,?,?,?,?)",
+                        (new_block_id(), heading, extra_pos, extra["content"],
+                         json.dumps(extra["props"]), now, now, prep["block_id"]))
             touch_page(conn, prep["block_id"], actor, now=now)
             written.append(prep)
         conn.commit()
@@ -1184,7 +1295,9 @@ def _preview_zotero(ws, data, meta):
     """What importing the Zotero export would make of the library, without
     storing a file, making a folder or changing a page (merges within the
     zip simulated). A page's ``folders`` are the paths (names from the top)
-    it would be filed in."""
+    it would be filed in, ``attachments`` how many of its items' other
+    attachments go under its "Attachments" block (ones a merged page holds
+    already counted too, as its ``notes`` are)."""
     with _open_zotero_zip(data) as zf:
         plan = _zotero_plan(zf)
     pages, by_digest, by_key, by_id = {}, {}, {}, {}
@@ -1219,16 +1332,20 @@ def _preview_zotero(ws, data, meta):
                 warnings.append(warning)
                 plan["warnings"].append(warning)
             prior = pages.get(target["id"])
+            sources = ([item["pdf_entry"]] if item["pdf_entry"] else []) + [
+                extra["entry"] for extra in item["extras"] if "entry" in extra]
             page = {"key": item["key"], "title": target["title"],
                     "folders": folders, "kind": kind, "action": "merge" if target["exists"] else "create",
                     "existing_id": target["id"] if target["exists"] else None, "source_path": item["pdf_entry"],
-                    "notes": len(item["notes"]), "tags": item["tags"], "warnings": warnings,
+                    "notes": len(item["notes"]), "attachments": len(item["extras"]),
+                    "tags": item["tags"], "warnings": warnings,
                     "selection_ids": [item["selection_id"]],
                     "missing": not bool(item["pdf_entry"]) or any("PDF missing from ZIP" in w["reason"] for w in warnings),
-                    "source_paths": [item["pdf_entry"]] if item["pdf_entry"] else []}
+                    "source_paths": sources}
             if prior:
                 page["warnings"] = prior["warnings"] + warnings
                 page["notes"] += prior["notes"]
+                page["attachments"] += prior["attachments"]
                 page["source_path"] = prior["source_path"] or item["pdf_entry"]
                 page["selection_ids"] = prior["selection_ids"] + page["selection_ids"]
                 page["source_paths"] = list(dict.fromkeys(prior["source_paths"] + page["source_paths"]))
@@ -1268,7 +1385,7 @@ def _commit_zotero(ws, actor, data, meta, selection, progress=jobs.no_progress):
         items = [i for i in plan["items"] if selection is None or i["selection_id"] in selection]
         uploads = ws_uploads_dir(ws)
         report = {"items": len(items), "pages_created": 0, "pages_merged": 0,
-                  "pdfs_stored": 0, "annotations_imported": 0, "notes_imported": 0,
+                  "pdfs_stored": 0, "annotations_imported": 0, "notes_imported": 0, "attachments_imported": 0,
                   "pages": [], "skipped": [], "warnings": selected_warnings(plan["warnings"], selection)}
         annot_jobs = []
         with connect_pages_db(ws) as conn:
