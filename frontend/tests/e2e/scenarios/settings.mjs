@@ -1936,8 +1936,10 @@ export async function settingsScenarios(env) {
       await dialog.getByRole("button", { name: "Remove lab-model", exact: true }).waitFor();
       await dialog.getByRole("button", { name: "Connect", exact: true }).click();
       await until(() => dialog.count().then((n) => n === 0));
-      await page.locator(".settingsPane .aiProvRow").filter({ hasText: "…7777" }).getByText(/working · lab-model/).waitFor();
-      assert(!await row(page, "Guests may use it").locator("input").isChecked(), "guests are off by default");
+      const sharedRow = page.locator(".settingsPane .aiProvRow").filter({ hasText: "…7777" });
+      await sharedRow.getByText(/working · lab-model/).waitFor();
+      // Who may use it: every account, no guests, unless the admin says otherwise.
+      await until(async () => (await sharedRow.innerText()).includes("every account"), { what: "the row says who may use it" });
       // The shared allowance: millions of tokens per account / guest per
       // day, stored in tokens; 0 = unlimited.
       const perAccount = row(page, "Allowance per account").locator("input");
@@ -1983,6 +1985,74 @@ export async function settingsScenarios(env) {
         await user.api(`/api/admin/ai-providers/${encodeURIComponent(p.id)}`, { method: "DELETE" });
       }
       await user.api("/api/admin/ai-providers", { method: "PUT", body: { allowance: { accounts: 0, guests: 0 } } });
+    }
+  });
+
+  await step("settings: who may use a shared connection — every account, guests too, or the accounts named — and Share one of mine", async () => {
+    // settings-user is an admin and settings-member exists since the steps above.
+    server.manage("create-user", "settings-outsider", "settings-outsider-pw");
+    const member = await new Account(server, "settings-member", "settings-member-pw").login();
+    const outsider = await new Account(server, "settings-outsider", "settings-outsider-pw").login();
+    const shared = (await user.api("/api/admin/ai-providers", { method: "POST",
+      body: { protocol: "openai", name: "Lab key", api_key: "sk-shared-access-e2e-5555", models: "lab-model" } })).providers.at(-1);
+    // The admin's own connection, shared from the dialog below.
+    const own = (await user.api("/api/ai/providers", { method: "POST",
+      body: { protocol: "anthropic", name: "My own key", api_key: "sk-ant-own-e2e-9999", models: "own-model" } }))
+      .providers.find((p) => p.name === "My own key");
+    const { ctx, page } = await setup();
+    try {
+      // The stored keys are made up: the model list and the probe are answered here.
+      await page.route("**/api/ai/model-catalog", (route) => route.fulfill({ json: { models: ["lab-model"] } }));
+      await page.route("**/api/ai/providers/*/test", (route) => route.fulfill({ json: { ok: true, model: "lab-model", latency_ms: 300 } }));
+      await openSettings(page);
+      await nav(page, "Server").click();
+      const labRow = page.locator(".settingsPane .aiProvRow").filter({ hasText: "Lab key" });
+      await until(async () => (await labRow.innerText()).includes("every account"), { what: "every account by default" });
+      assert((await outsider.api("/api/ai/models")).enabled, "every account has it to begin with");
+
+      // Only the accounts named: the picker names the member.
+      await labRow.getByRole("button", { name: "Manage", exact: true }).click();
+      const dialog = page.getByRole("dialog", { name: "Edit shared key", exact: true });
+      await dialog.getByRole("group", { name: "Access" }).getByRole("button", { name: "Selected accounts", exact: true }).click();
+      await dialog.getByText(/No account named yet/).waitFor();
+      await dialog.getByPlaceholder("Add an account…").fill("settings-mem");
+      await dialog.getByRole("option", { name: /settings-member/ }).click();
+      await dialog.getByRole("button", { name: "Remove settings-member", exact: true }).waitFor();
+      await dialog.getByRole("button", { name: "Save changes", exact: true }).click();
+      await until(() => dialog.count().then((n) => n === 0));
+      const accessOf = async () => (await user.api("/api/admin/ai-providers")).providers.find((p) => p.id === shared.id)?.access;
+      await until(async () => JSON.stringify(await accessOf()) === JSON.stringify({ who: "selected", users: ["settings-member"], guests: false }),
+        { what: "the access saved" });
+      await until(async () => (await labRow.innerText()).includes("settings-member"), { what: "the row names the account" });
+      assert((await member.api("/api/ai/models")).models.some((m) => m.provider === shared.id), "the named account has it");
+      assert(!(await outsider.api("/api/ai/models")).enabled, "an account not named has nothing");
+
+      // Accounts and guests.
+      await labRow.getByRole("button", { name: "Manage", exact: true }).click();
+      await dialog.getByRole("group", { name: "Access" }).getByRole("button", { name: "Accounts and guests", exact: true }).click();
+      await dialog.getByRole("button", { name: "Save changes", exact: true }).click();
+      await until(async () => (await accessOf())?.guests === true, { what: "guests admitted" });
+      await until(async () => (await labRow.innerText()).includes("every account and guests"), { what: "the row says guests too" });
+      assert((await outsider.api("/api/ai/models")).enabled, "every account again");
+
+      // Share one of mine: the admin's own key becomes a shared copy, tested at
+      // once; the admin's own entry stays.
+      await row(page, "Shared AI provider").getByRole("button", { name: "Share one of mine", exact: true }).click();
+      const mine = page.getByRole("dialog", { name: "Share one of my connections", exact: true });
+      await mine.locator(".aiProvRow").filter({ hasText: "My own key" }).getByRole("button", { name: "Copy to server", exact: true }).click();
+      await until(() => mine.count().then((n) => n === 0));
+      const copyRow = page.locator(".settingsPane .aiProvRow").filter({ hasText: "My own key" });
+      await copyRow.getByText(/working ·/).waitFor();
+      const copy = (await user.api("/api/admin/ai-providers")).providers.find((p) => p.name === "My own key");
+      assert(copy && copy.id.startsWith("server:") && copy.key_hint === "…9999" && copy.models === "own-model", "the shared copy carries the key and models");
+      assert((await user.api("/api/ai/settings")).providers.some((p) => p.id === own.id), "the admin keeps the own entry");
+      assertNoProblems(page);
+    } finally {
+      await ctx.close();
+      for (const p of (await user.api("/api/admin/ai-providers")).providers) {
+        await user.api(`/api/admin/ai-providers/${encodeURIComponent(p.id)}`, { method: "DELETE" });
+      }
+      await user.api(`/api/ai/providers/${encodeURIComponent(own.id)}`, { method: "DELETE" });
     }
   });
 

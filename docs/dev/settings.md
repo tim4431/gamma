@@ -503,11 +503,19 @@ account's list over `/api/ai/providers` in App). An entry is an API-key service 
 subscription signed in with the account form's steps
 (`/api/admin/ai-providers/chatgpt/*`; [ai.md](ai.md) "How a sign-in reaches
 the server"); the dialog is titled "Connect a
-shared AI service" and tests a new entry once it is saved. Each row has
-Test, Manage and delete,
-plus Usage (the subscription's windows) on a sign-in; "+ Add provider" is
-the section's action. A "Guests may use it" switch (default off) decides
-whether guests get them ([ai.md](ai.md) "Shared provider entries").
+shared AI service" and tests a new entry once it is saved. Its last step,
+**Who may use it**, is the shared form's own: three `IconChoices` tiles —
+Every account / Accounts and guests / Selected accounts — and, under the
+last, a `categoryTag` chip per named account with a compact
+`AccountPicker` to add one ([ai.md](ai.md) "Shared provider entries",
+*Access*; administrators always have access, the step's hint says so). Each
+row says who may use it on an Access line, and has Test, Manage and delete,
+plus Usage (the subscription's windows) on a sign-in. The section's actions
+are "+ Add provider" and **Share one of mine**, which opens "Share one of
+my connections": the admin's own connections as rows, each with Copy to
+server (a key) or Move to server (a sign-in; disabled while it is not
+connected), one click making it a shared entry with its models
+(`POST /api/admin/ai-providers/from-account`) that is tested at once.
 While at least one shared entry exists, two `UnitInput` rows set the shared
 allowance, **Allowance per account** and **Allowance per guest**: tokens per
 rolling 24 hours on the shared entries, 0 = unlimited, each saved on Enter

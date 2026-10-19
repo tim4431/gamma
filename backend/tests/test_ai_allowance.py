@@ -44,7 +44,14 @@ def shared(admin):
     try:
         yield r.json()["providers"][0]["id"]
     finally:
-        ai_settings.save_server_ai({"providers": [], "guests": False})
+        ai_settings.save_server_ai({"providers": []})
+
+
+def admit_guests(admin, provider_id, on):
+    """Open (or close) the shared entry ``provider_id`` to guest accounts."""
+    r = admin.put(f"/api/admin/ai-providers/{provider_id}",
+                  json={"access": {"who": "everyone", "guests": on}})
+    assert r.status_code == 200, r.text
 
 
 def forget_usage(user):
@@ -120,15 +127,14 @@ def set_allowance(admin, **allowance):
 def test_admin_round_trip_and_validation(admin, member, shared):
     from gamma.ai_settings import ALLOWANCE_MAX
     assert admin.get("/api/admin/ai-providers").json()["allowance"] == {"accounts": 0, "guests": 0}
-    # Partial: a key left out keeps its value; the guest switch rides along.
+    # Partial: a key left out keeps its value.
     assert set_allowance(admin, accounts=5000) == {"accounts": 5000, "guests": 0}
-    r = admin.put("/api/admin/ai-providers", json={"guests": True, "allowance": {"guests": 300}})
-    assert r.status_code == 200 and r.json()["guests"] is True
-    assert r.json()["allowance"] == {"accounts": 5000, "guests": 300}
+    assert set_allowance(admin, guests=300) == {"accounts": 5000, "guests": 300}
     assert admin.get("/api/admin/ai-providers").json()["allowance"] == {"accounts": 5000, "guests": 300}
-    # Only the switch: the allowance stays.
-    assert admin.put("/api/admin/ai-providers", json={"guests": False}).json()["allowance"] == \
-        {"accounts": 5000, "guests": 300}
+    # An entry's access is its own: the allowance stays.
+    admit_guests(admin, shared, True)
+    assert admin.get("/api/admin/ai-providers").json()["allowance"] == {"accounts": 5000, "guests": 300}
+    admit_guests(admin, shared, False)
     for bad in ({"accounts": -1}, {"accounts": "5"}, {"guests": 1.5}, {"accounts": True},
                 {"everyone": 5}, {"accounts": ALLOWANCE_MAX + 1}, [5]):
         assert admin.put("/api/admin/ai-providers", json={"allowance": bad}).status_code in (400, 422), bad
@@ -268,9 +274,10 @@ def test_guests_have_their_own_limit(admin, member, shared, upstream):
     assert session["is_guest"] is True
     forget_usage(name)
     try:
-        # Accounts unlimited, guests metered; the switch decides access at all.
-        r = admin.put("/api/admin/ai-providers", json={"guests": True, "allowance": {"guests": 300}})
-        assert r.status_code == 200
+        # Accounts unlimited, guests metered; the entry's access decides
+        # whether a guest gets it at all.
+        set_allowance(admin, guests=300)
+        admit_guests(admin, shared, True)
         assert member.get("/api/ai/models").json()["allowance"]["limit"] == 0  # unlimited, still reported
         assert guest.get("/api/ai/models").json()["allowance"] == {"limit": 300, "used": 0, "exhausted": False}
         spend(name, shared, 100)
@@ -280,8 +287,8 @@ def test_guests_have_their_own_limit(admin, member, shared, upstream):
         r = guest.post("/api/ai/chat", json={"prompt": "hi", "stream": True})
         assert r.status_code == 429 and "of 300 tokens" in r.json()["detail"]
         assert guest.get("/api/ai/usage").json()["allowance"]["exhausted"] is True
-        # Switched off: no shared entry applies, so nothing is reported either.
-        admin.put("/api/admin/ai-providers", json={"guests": False})
+        # Closed to guests: no shared entry applies, so nothing is reported either.
+        admit_guests(admin, shared, False)
         assert guest.get("/api/ai/models").json()["allowance"] is None
         assert guest.get("/api/ai/usage").json()["allowance"] is None
     finally:
