@@ -20,11 +20,15 @@ keys, token hashes; the sign-up settings, Turnstile keys included, are in
 `cloud.db`) and `.env` holds the SMTP and Google/GitHub OAuth credentials —
 never read them out, copy them off the host, or overwrite them. The same
 goes for `share.env` (the share host's client secret) and `share-data/`
-(its published pages). The `share` service runs `main`'s Gamma image, pinned
-in the host's `compose.override.yml` (which `docker compose` loads by
-itself): that file is the `update-share-host` skill's, so never edit,
-compare or copy it here. The `up -d` below leaves `share` running as it is
-unless a copied `compose.yml` changed its settings.
+(its published pages). The `share` service runs `main`'s Gamma image
+(`:latest`), kept current by the project's `watchtower` service, which
+touches only `share` (its labels and the scope `share`) and never
+`account`. Deploying `share` is the `update-share-host` skill's, and so is
+a `compose.override.yml` on the host (a rollback pin for `share`, which
+`docker compose` loads by itself): never edit, compare or copy it here.
+The `up -d` below leaves `share` running as it is unless a copied
+`compose.yml` changed its settings, and starts `watchtower` when a copied
+`compose.yml` first brings it.
 
 ## Publish from the branch
 

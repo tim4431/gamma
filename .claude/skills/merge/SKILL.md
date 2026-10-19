@@ -47,7 +47,25 @@ committed beyond `origin/main`, stop and say so.
    normal work on the branch, then re-run this skill. Do not merge over a
    red check.
 
-5. **Merge**: `gh pr merge <n> --merge`.
+5. **Merge**: `gh pr merge <n> --merge`. First, the data format: the
+   share host follows `main`'s `:latest` through its Watchtower, so a
+   merge reaches it within the hour, and every desktop app that publishes
+   there pauses ("Paused · update Gamma") while its release lacks a
+   workspace migration step the server has ([docs/dev/mirror.md](../../../docs/dev/mirror.md)
+   "The data format"). Compare the newest step on the branch with the
+   desktop release's:
+
+   ```bash
+   release=$(gh release view --json tagName -q .tagName); git fetch -q origin tag "$release"
+   for s in HEAD "$release"; do
+     echo "$s: $(git show $s:backend/gamma/migrations.py | sed -n '/^WORKSPACE_STEPS = \[/,/^\]/p' | grep -oE '^\s*\([0-9]+' | tr -d ' (' | tail -1)"
+   done
+   ```
+
+   A higher number on the branch → tell the user before merging, and
+   suggest the `release` skill right after (or holding the share host
+   back with the `update-share-host` skill's rollback pin until it is
+   out). Merge only on their yes.
 
 6. **Report**: a few seconds after the merge,
    `gh run list --limit 5 --json workflowName,status,event,url,databaseId`

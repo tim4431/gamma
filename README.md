@@ -72,8 +72,7 @@ Highlights and free notes are the same kind of block, so a paper's notes and a p
 
 <a href="./docs/user_guide/user_guide.md#library"><img alt="Gamma fills metadata when a paper is downloaded, organizes papers with folders and labels, searches titles, notes and PDF text, and follows references to other papers with Back returning to the previous reading position" src="./docs/assets/branding/gamma-library-light.svg" width="100%"></a>
 
-- **Folders** build themselves from the paths you use: drop a paper into `qc/neutral-atom` and you get **qc › neutral-atom**; storage stays flat, so one paper can live in several folders.
-- **Labels** are flat tags for facets like an author or a keyword — one click to filter by.
+- **Labels and folders** — a label is a word you'll search for; a folder is a label that nests, for a topic or a talk. One paper can sit in several folders without a copy ([which to use](#labels-or-folders)).
 - **Metadata** fills itself on open (arXiv → DOI → AI) and is editable; one click copies BibTeX or a slide-ready citation with real italics.
 
 <a href="./docs/user_guide/user_guide.md#search"><img alt="In an open paper Ctrl+F finds a word and steps through its matches in the page, then Ctrl+P finds the quantum computing label and opens its papers" src="./docs/assets/demos/demo-search.webp" width="100%"></a>
@@ -82,7 +81,17 @@ Highlights and free notes are the same kind of block, so a paper's notes and a p
 - **Jump anywhere** — `Ctrl+P` opens any page, folder or label as you type, typos forgiven; `Ctrl+Enter` there searches notes and PDFs, and `Ctrl+Shift+P` runs any command by name.
 - **Search everything** — `Ctrl+F` searches notes, highlights and the full text of every PDF at once; narrow with label and folder chips. Matching is forgiving: "3000" finds "3,000-qubit" across a line break.
 
-→ Guide: [Library](./docs/user_guide/user_guide.md#library) · [Search](./docs/user_guide/user_guide.md#search) · [Metadata and citations](./docs/user_guide/user_guide.md#metadata-and-citations)
+### Labels or folders?
+
+Neither one copies a paper, and a paper can have as many labels and folders as you like. The difference is how you'll come back to it.
+
+**A label is a word you'll search for.** A paper on PDH locking gets the label `pdh`. A paper from Vladan's lab on PGC cooling gets `vladan` and `pgc`. Labels are flat, so keep them short: a technique, an author, a lab, a keyword. Click one, or type it after `Ctrl+P`, to list every paper that has it.
+
+**A folder is a label that nests, for a topic or a talk.** If you're studying quantum computing, make a folder **Quantum computing** with **Neutral atom**, **Superconducting qubits** and **Ion trap** inside it. A paper filed in Neutral atom shows *Quantum computing / Neutral atom* next to its labels. If you're giving group meetings, make **gm1**, then **gm2**. A paper you present at both sits in both folders, and it is still one paper with one set of notes. You can also use a folder as a whole: share it, export its bibliography, or ask the AI about every paper in it.
+
+A simple test: if you'd type it into search, make it a label. If you'd open it and work through it, make it a folder.
+
+→ Guide: [Library](./docs/user_guide/user_guide.md#library) · [Labels or folders](./docs/user_guide/user_guide.md#labels-or-folders) · [Search](./docs/user_guide/user_guide.md#search) · [Metadata and citations](./docs/user_guide/user_guide.md#metadata-and-citations)
 
 ## Share and work together
 

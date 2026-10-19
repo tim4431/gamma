@@ -40,8 +40,11 @@ The demo runs `main`'s `:latest`, like the NAS, and keeps itself current
 the way the repository's `docker-compose.yml.example` does: the project's
 `watchtower` service polls GHCR every hour and recreates the demo
 when a merge has published a new image. It updates only containers labelled
-`com.centurylinklabs.watchtower.enable=true` (the demo), never the account
-project or the fleet's servers on the same host. The `update-demo-server`
+`com.centurylinklabs.watchtower.enable=true` with the scope `demo` (the
+demo), never the account project (whose own Watchtower, scope `share`,
+keeps the share host current) or the fleet's servers on the same host.
+Each needs its scope: an unscoped Watchtower updates every labelled
+container and stops every other Watchtower when it starts. The `update-demo-server`
 skill (`.claude/skills/`) does the same pull at once, after a merge.
 
 ## First deployment

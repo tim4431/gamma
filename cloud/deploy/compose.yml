@@ -10,9 +10,11 @@
 #            ./share-data and its settings in share.env (share.env.example).
 #            Reached only through caddy (no host port), whose
 #            X-Forwarded-For it believes on this project's network (its
-#            subnet pinned below). It runs main, like the demo: the host's
-#            compose.override.yml pins main's newest sha-<short> build
-#            (the update-share-host skill writes it); without one, :latest.
+#            subnet pinned below). It runs main's :latest, like the demo,
+#            kept current by the watchtower service below.
+#   watchtower  polls GHCR every hour and recreates `share` when a merge
+#            has published a new :latest, as demo/compose.yml does for the
+#            demo.
 #   caddy    TLS on the host's own 80/443 with its internal certificate
 #            (`tls internal`; Cloudflare holds the public one), for a host
 #            with a public address (a VPS). The DNS record for the hostname
@@ -46,9 +48,12 @@ services:
       - "127.0.0.1:9002:9002"
 
   share:
-    image: ghcr.io/tim4431/gamma:latest  # compose.override.yml pins the build on the host
+    image: ghcr.io/tim4431/gamma:latest
     restart: unless-stopped
     env_file: share.env
+    labels:
+      com.centurylinklabs.watchtower.enable: "true"
+      com.centurylinklabs.watchtower.scope: share
     environment:
       # Caddy (or the tunnel) reaches it over this project's network, whose
       # subnet is pinned below: its X-Forwarded-For is believed, anyone
@@ -58,6 +63,27 @@ services:
       - ./share-data:/data
     depends_on:
       - account
+
+  # Keeps the share host on main's newest image: Watchtower polls GHCR
+  # every hour, pulls a new :latest and recreates `share`, which upgrades
+  # ./share-data as it starts (snapshot first). It touches only containers
+  # with both labels above: never `account` (a branch build, also :latest)
+  # or caddy. The scope keeps it apart from the demo's Watchtower on this
+  # host: an unscoped one updates every labelled container and stops every
+  # other Watchtower when it starts. DOCKER_API_VERSION: the archived
+  # image's client defaults to an API that Docker 29 refuses. A
+  # compose.override.yml naming a sha-<short> tag for `share` is a rollback
+  # pin (the update-share-host skill): Watchtower follows the tag the
+  # container runs, and a sha- tag never moves.
+  watchtower:
+    container_name: gamma-share-watchtower
+    image: containrrr/watchtower
+    environment:
+      DOCKER_API_VERSION: "1.44"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    command: --cleanup --label-enable --scope share --interval 3600
+    restart: unless-stopped
 
   caddy:
     image: caddy:2-alpine

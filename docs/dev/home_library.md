@@ -2,9 +2,11 @@
 
 Folders, labels, the card surfaces, the recents strip, and cover snapshots.
 The **Organize your library** tour teaches this model once the library
-passes 20 pages: a label is anything you will look for later, a folder is a
-label that nests, and filing never copies the page
-([onboarding.md](onboarding.md)).
+passes 20 pages: a label is a word you will search for (`pdh`, `vladan`), a
+folder is a label that nests, for a topic or a talk (*Quantum computing /
+Neutral atom*, *gm1*), and one paper can sit in several folders without a
+copy ([onboarding.md](onboarding.md); for users, the user guide's
+[Labels or folders?](../user_guide/user_guide.md#labels-or-folders)).
 Code: [FileBrowser.jsx](../../frontend/src/library/FileBrowser.jsx),
 [libraryUtils.js](../../frontend/src/library/libraryUtils.js),
 [Menus.jsx](../../frontend/src/shared/ui/Menus.jsx), glue in App.jsx.

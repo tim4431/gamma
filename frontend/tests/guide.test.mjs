@@ -505,7 +505,7 @@ test("the Add, library and handwriting tours end where the new controls are", ()
   assert.deepEqual(add.filter((s) => factsMatch(s.requires, { phone: true })).map((s) => s.id).at(-1), "add-notebook",
     "the phone's View rows have no anchor");
   assert.deepEqual(TOURS.library.steps.map((s) => s.id),
-    ["lib-menu", "lib-filter", "lib-select", "lib-model", "lib-labels", "lib-recents", "lib-trash"]);
+    ["lib-menu", "lib-filter", "lib-select", "lib-find", "lib-model", "lib-labels", "lib-recents", "lib-trash"]);
   assert.equal(TOURS.handwriting.steps.at(-1).anchor, "ink.text", "the Text tool, last in the strip's tour");
 });
 

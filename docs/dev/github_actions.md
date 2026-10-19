@@ -11,11 +11,11 @@ account server (`cloud/`) and the website (`sites/`) are separate from all
 of that: each has its own check and its own publish (`cloud.yml`,
 `site.yml`), dispatched from any branch (the `build-cloud` / `build-site`
 skills), and a PR that touches only one of them skips `check`. The public
-demo (demo.gammapdf.com) runs `main`'s `:latest` like the NAS, and both
-pick up a merge's image by themselves through Watchtower; the Gamma Cloud
-share host (app.gammapdf.com, share.gammapdf.com) is pinned to the
-`:sha-<short>` tag a merge's `docker.yml` run pushes (the
-`update-demo-server`, `update-server` and `update-share-host` skills).
+demo (demo.gammapdf.com) and the Gamma Cloud share host
+(app.gammapdf.com, share.gammapdf.com) run `main`'s `:latest` like the
+NAS, and all three pick up a merge's image by themselves through
+Watchtower (the `update-demo-server`, `update-share-host` and
+`update-server` skills do it at once).
 
 | Workflow | File | Runs when | Produces |
 |---|---|---|---|
@@ -46,8 +46,8 @@ update-account-server ──▶ cloud.yml --ref <branch>: test → ghcr gamma-cl
                           then pull + restart on the VPS          ← no merge needed
 update-demo-server ──▶ pull main's :latest in the demo's project    ← after a merge, like update-server;
                                                                      Watchtower does it within the hour
-update-share-host ──▶ the same tag, pinned for the account project's share
-                      service in its compose.override.yml         ← after a merge, like update-server
+update-share-host ──▶ pull main's :latest for the share service   ← after a merge, like update-server;
+                      in the account project                         Watchtower does it within the hour
 update-needed ──▶ compares what each deployment runs with the code, then runs
                   update-account-server → update-demo-server → update-share-host
                   → update-server for the ones behind
@@ -295,20 +295,22 @@ fails unless the commit is already on `main`. The account server's and the
 fleet agent's images (`cloud.yml`, `fleet.yml`) are separate and still
 publish from any branch.
 
-The public demo runs `main`'s `:latest`, like the NAS: a Watchtower in each
-compose project polls GHCR every hour (the example's six, shortened) and
-recreates the container when a merge has published a new image, as in
-`docker-compose.yml.example`. The
-`update-demo-server` and `update-server` skills do the same pull at once
-([cloud/deploy/demo/README.md](../../cloud/deploy/demo/README.md),
-[guests.md](guests.md)). The share host follows `main` pinned instead,
-changing only when deployed: the `update-share-host` skill pins the
-`sha-<short>` tag of `main`'s newest green run for the account
-project's `share` service in the host's `compose.override.yml`, a file that
-holds only that image, so the project's secrets stay untouched. It stops for
-the user's yes when the build adds a workspace migration step that the
-desktop release lacks, since every publishing desktop app then pauses until
-a release carries it ([mirror.md](mirror.md) "The data format"). Setup notes: [docs/dev/debugging.md](debugging.md) and the memory
+The public demo and the share host run `main`'s `:latest`, like the NAS: a
+Watchtower in each compose project polls GHCR every hour (the example's
+six, shortened) and recreates the container when a merge has published a
+new image, as in `docker-compose.yml.example`. The two on the VPS each
+have a scope (`demo`, `share`), since an unscoped one updates every
+labelled container and stops every other Watchtower on the host. The
+`update-demo-server`, `update-share-host` and `update-server` skills do the
+same pull at once ([cloud/deploy/demo/README.md](../../cloud/deploy/demo/README.md),
+[cloud/deploy/README.md](../../cloud/deploy/README.md) "The free share
+host", [guests.md](guests.md)). A merge that adds a workspace migration
+step the desktop release lacks reaches the share host within the hour,
+and every publishing desktop app then pauses until a release carries it
+([mirror.md](mirror.md) "The data format"): the `merge` skill asks before
+merging one, and the `update-share-host` skill's rollback pin (a
+`compose.override.yml` naming a `sha-<short>` tag) can hold the share host
+back meanwhile. Setup notes: [docs/dev/debugging.md](debugging.md) and the memory
 note on GHCR.
 
 ## `cloud.yml`

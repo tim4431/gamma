@@ -3,10 +3,12 @@ import { T } from "../../shared/i18n/i18n.js";
 // App's `growingLibrary`) — past the folders hint, which arrives at ten and
 // says only how to move one page.
 //
-// The step that matters is `lib-model`: a label and a folder are the same
-// mechanism, and filing a paper never copies it. That is a model rather than
-// a control, so it is a centred card with the drawing and no anchor — which
-// also keeps it from being passed over. Around it, the listing bar's filter
+// The steps that matter are `lib-find` and `lib-model`: a label is a word
+// you will search for (pdh, vladan), a folder is a label that nests, for a
+// topic or a talk (Quantum computing / Neutral atom, gm1), and one paper can
+// sit in several. That is a model rather than a control, so they are centred
+// cards with no anchor, the second with the drawing — which also keeps them
+// from being passed over. Around them, the listing bar's filter
 // box and Select (filing many at once), and its Labels view, which shows
 // that model on screen. The later steps that point at controls that may be
 // missing are `optional`: a label view has no Labels toggle, and a library
@@ -34,9 +36,12 @@ export default {
     { id: "lib-select", anchor: "home.select", placement: "bottom",
       title: T("**Select** to file many at once"),
       body: T("{key:Mod}+click or {key:Shift}+click works too.") },
+    { id: "lib-find", anchor: null,
+      title: T("Label what you'll search for"),
+      body: T("*pdh*, *pgc*, *vladan*: click one to list every paper that carries it.") },
     { id: "lib-model", anchor: null, media: "labels-folders",
       title: T("A folder is a label that nests"),
-      body: T("Filing never copies: one paper can sit in many folders.") },
+      body: T("*Quantum computing / Neutral atom* for a topic, *gm1* for a talk. A paper can be in several.") },
     { id: "lib-labels", anchor: "home.labelsView", placement: "bottom", optional: true,
       title: T("**Labels** shows your labels as folders") },
     { id: "lib-recents", anchor: "home.recents", placement: "bottom", optional: true,

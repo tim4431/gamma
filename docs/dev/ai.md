@@ -233,16 +233,12 @@ key, or a ChatGPT subscription the admin signs in to from the same form:
 `POST /api/admin/ai-providers/chatgpt/start`, `status` and `complete`, the
 account flow's `begin_chatgpt_signin` / `redeem_chatgpt_signin` with the
 state bound to `("server", <admin>)`, so neither flow's state redeems on
-the other. `provider_id` on `complete` reconnects an entry. Or it is one of
-the admin's own entries shared (**Share one of mine**, `POST
-/api/admin/ai-providers/from-account {provider_id}`,
-`ai_settings.share_own_entry`): the new shared entry takes the fields,
-models and test model as they are and the default access. An API-key entry
-is copied and the admin keeps their own — a key may serve two entries. A
-sign-in entry *moves*: its tokens become the shared entry's and the
-account's entry goes, because OpenAI rotates the refresh token and two
-entries refreshing one grant would sign each other out; the admin keeps
-using it as the shared entry. The same helpers validate both lists
+the other. `provider_id` on `complete` reconnects an entry. An admin's own
+entry is never turned into a shared one in place: a key is pasted into the
+shared form again, and a sign-in is made again from it, because OpenAI
+rotates the refresh token, so two entries refreshing one grant would sign
+each other out (a copy is unsafe, and a move was dropped as not worth its
+own dialog). The same helpers validate both lists
 (`new_key_entry`, `update_entry`, `apply_provider_fields`, `mask_entry` in
 `ai_settings.py`).
 

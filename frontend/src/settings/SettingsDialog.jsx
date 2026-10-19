@@ -1140,12 +1140,14 @@ export default function SettingsDialog({
           </div>
           {pending ? <div className="settingsUnsaved" role="alertdialog" aria-label={t("Unsaved changes")}>
             <span>{t("You have unsaved edits. Keep editing or discard them to continue.")}</span>
-            <button className="uiBtn" autoFocus onClick={() => setPending(null)}>{t("Keep editing")}</button>
-            <button className="uiBtn danger" onClick={() => {
-              const action = pending;
-              drafts.current.forEach((discard) => discard()); drafts.current.clear();
-              setPending(null); action();
-            }}>{t("Discard changes")}</button>
+            <span className="settingsUnsavedBtns">
+              <button className="uiBtn" autoFocus onClick={() => setPending(null)}>{t("Keep editing")}</button>
+              <button className="uiBtn danger" onClick={() => {
+                const action = pending;
+                drafts.current.forEach((discard) => discard()); drafts.current.clear();
+                setPending(null); action();
+              }}>{t("Discard changes")}</button>
+            </span>
           </div> : null}
         </div>
       </div>

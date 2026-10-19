@@ -27,6 +27,7 @@ services:
       FORWARDED_ALLOW_IPS: ${EDGE_SUBNET:?set EDGE_SUBNET in .env to gamma-edge's subnet (docker network inspect gamma-edge)}
     labels:
       com.centurylinklabs.watchtower.enable: "true"
+      com.centurylinklabs.watchtower.scope: demo
     volumes:
       - ./data:/data
     networks:
@@ -36,10 +37,13 @@ services:
 
   # Keeps the demo on main's newest image: Watchtower polls GHCR every hour,
   # pulls a new :latest and recreates the demo, which upgrades ./data as it
-  # starts (snapshot first). Scoped by the label above rather than by
+  # starts (snapshot first). Chosen by the labels above rather than by
   # name, since a name argument also matches one character more (the fleet's
-  # gamma-<label> servers share this host). DOCKER_API_VERSION: the archived
-  # image's client defaults to an API that Docker 29 refuses.
+  # gamma-<label> servers share this host). The scope keeps it apart from
+  # the share host's Watchtower in the account project: an unscoped one
+  # updates every labelled container and stops every other Watchtower when
+  # it starts. DOCKER_API_VERSION: the archived image's client defaults to
+  # an API that Docker 29 refuses.
   watchtower:
     container_name: gamma-demo-watchtower
     image: containrrr/watchtower
@@ -47,7 +51,7 @@ services:
       DOCKER_API_VERSION: "1.44"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-    command: --cleanup --label-enable --interval 3600
+    command: --cleanup --label-enable --scope demo --interval 3600
     restart: unless-stopped
 
 networks:

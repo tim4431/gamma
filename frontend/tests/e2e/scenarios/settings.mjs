@@ -1988,17 +1988,13 @@ export async function settingsScenarios(env) {
     }
   });
 
-  await step("settings: who may use a shared connection — every account, guests too, or the accounts named — and Share one of mine", async () => {
+  await step("settings: who may use a shared connection — every account, guests too, or the accounts named", async () => {
     // settings-user is an admin and settings-member exists since the steps above.
     server.manage("create-user", "settings-outsider", "settings-outsider-pw");
     const member = await new Account(server, "settings-member", "settings-member-pw").login();
     const outsider = await new Account(server, "settings-outsider", "settings-outsider-pw").login();
     const shared = (await user.api("/api/admin/ai-providers", { method: "POST",
       body: { protocol: "openai", name: "Lab key", api_key: "sk-shared-access-e2e-5555", models: "lab-model" } })).providers.at(-1);
-    // The admin's own connection, shared from the dialog below.
-    const own = (await user.api("/api/ai/providers", { method: "POST",
-      body: { protocol: "anthropic", name: "My own key", api_key: "sk-ant-own-e2e-9999", models: "own-model" } }))
-      .providers.find((p) => p.name === "My own key");
     const { ctx, page } = await setup();
     try {
       // The stored keys are made up: the model list and the probe are answered here.
@@ -2035,24 +2031,12 @@ export async function settingsScenarios(env) {
       await until(async () => (await labRow.innerText()).includes("every account and guests"), { what: "the row says guests too" });
       assert((await outsider.api("/api/ai/models")).enabled, "every account again");
 
-      // Share one of mine: the admin's own key becomes a shared copy, tested at
-      // once; the admin's own entry stays.
-      await row(page, "Shared AI provider").getByRole("button", { name: "Share one of mine", exact: true }).click();
-      const mine = page.getByRole("dialog", { name: "Share one of my connections", exact: true });
-      await mine.locator(".aiProvRow").filter({ hasText: "My own key" }).getByRole("button", { name: "Copy to server", exact: true }).click();
-      await until(() => mine.count().then((n) => n === 0));
-      const copyRow = page.locator(".settingsPane .aiProvRow").filter({ hasText: "My own key" });
-      await copyRow.getByText(/working ·/).waitFor();
-      const copy = (await user.api("/api/admin/ai-providers")).providers.find((p) => p.name === "My own key");
-      assert(copy && copy.id.startsWith("server:") && copy.key_hint === "…9999" && copy.models === "own-model", "the shared copy carries the key and models");
-      assert((await user.api("/api/ai/settings")).providers.some((p) => p.id === own.id), "the admin keeps the own entry");
       assertNoProblems(page);
     } finally {
       await ctx.close();
       for (const p of (await user.api("/api/admin/ai-providers")).providers) {
         await user.api(`/api/admin/ai-providers/${encodeURIComponent(p.id)}`, { method: "DELETE" });
       }
-      await user.api(`/api/ai/providers/${encodeURIComponent(own.id)}`, { method: "DELETE" });
     }
   });
 

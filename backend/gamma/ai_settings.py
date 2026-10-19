@@ -14,8 +14,7 @@ the key itself). There is no env key.
 
 Admins may add SHARED entries (Settings → Server → Shared AI provider,
 /api/admin/ai-providers*): the same shape — an API key, or a ChatGPT
-sign-in made through /api/admin/ai-providers/chatgpt/*, or one of the
-admin's own entries shared (share_own_entry) — ids namespaced
+sign-in made through /api/admin/ai-providers/chatgpt/* — ids namespaced
 ``server:<id>`` so they never collide with an account's, each with an
 ``access`` saying who may use it ({"who": "everyone" | "selected", "users":
 [account ids], "guests": bool}). They live in the users.db `settings` KV
@@ -410,40 +409,6 @@ def shared_access(user_id: str) -> tuple[list, int]:
     return [e for e in config["providers"] if admitted(e)], limit
 
 
-def share_own_entry(user_id: str, provider_id: str) -> dict:
-    """The account's own entry ``provider_id`` made a shared one (Settings →
-    Server's Share one of mine), with the fields and models it has and the
-    default access. An API-key entry is copied: the account keeps its own,
-    a key may serve two entries. A sign-in entry moves: its tokens go to
-    the shared entry and the account's entry is removed, because OpenAI
-    rotates the refresh token and two entries refreshing one grant would
-    sign each other out. Returns the new shared entry. 404 for an id that
-    is none of the account's, 400 for a sign-in that is not connected."""
-    own = next((e for e in own_entries(user_id) if e.get("id") == provider_id), None)
-    if not own:
-        raise HTTPException(status_code=404, detail="provider not found")
-    oauth_entry = is_oauth_protocol(own.get("protocol"))
-    if not _has_credential(own):
-        raise HTTPException(status_code=400, detail="this sign-in is not connected — sign in again first, then share it"
-                            if oauth_entry else "this connection has no API key")
-    entry = {"id": new_server_provider_id(), "protocol": own.get("protocol"),
-             "name": (own.get("name") or "").strip(), "api_key": (own.get("api_key") or "").strip(),
-             "base_url": (own.get("base_url") or "").strip(), "models": (own.get("models") or "").strip(),
-             "test_model": (own.get("test_model") or "").strip(), "created_at": page_now(),
-             "access": default_access()}
-    if oauth_entry:
-        entry["oauth"] = dict(own["oauth"])
-
-    def add(config):
-        if len(config["providers"]) >= MAX_PROVIDERS:
-            raise HTTPException(status_code=400, detail="too many providers")
-        config["providers"].append(entry)
-    edit_server_ai(add)
-    if oauth_entry:
-        def drop(entries):
-            entries[:] = [e for e in entries if e.get("id") != provider_id]
-        update_provider_entries(user_id, drop)
-    return entry
 
 
 def _has_credential(entry: dict) -> bool:

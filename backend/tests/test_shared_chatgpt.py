@@ -84,44 +84,6 @@ def _stored_oauth(provider_id):
     return next(e for e in ai_settings.load_server_ai()["providers"] if e["id"] == provider_id)["oauth"]
 
 
-def test_an_admins_own_sign_in_moves_to_the_server(admin, member, monkeypatch):
-    """Share one of mine on a ChatGPT entry: the tokens become the shared
-    entry's and the admin's own entry goes (two entries refreshing one
-    grant would sign each other out), the e-mail and models with them."""
-    from gamma import ai_settings
-    _listing(monkeypatch)
-    monkeypatch.setattr(co, "_token_request", lambda form: _fake_tokens(email="me@example.com"))
-    state = admin.post("/api/ai/oauth/chatgpt/start").json()["state"]
-    r = admin.post("/api/ai/oauth/chatgpt/complete", json={
-        "state": state, "callback": f"http://localhost:1455/auth/callback?code=abc&state={state}", "name": "Mine"})
-    assert r.status_code == 200, r.text
-    own = next(p for p in r.json()["providers"] if p["protocol"] == "chatgpt")
-    assert own["models"] == "gpt-6-sol, gpt-6-terra"
-    try:
-        r = admin.post("/api/admin/ai-providers/from-account", json={"provider_id": own["id"]})
-        assert r.status_code == 200, r.text
-        moved = next(p for p in r.json()["providers"] if p["protocol"] == "chatgpt")
-        assert moved["id"].startswith("server:") and moved["oauth_connected"] is True
-        assert moved["account"] == "me@example.com" and moved["name"] == "Mine"
-        assert moved["models"] == "gpt-6-sol, gpt-6-terra"
-        assert moved["access"] == {"who": "everyone", "users": [], "guests": False}
-        # The account's list no longer holds it; the admin still has it, shared.
-        mine = admin.get("/api/ai/settings").json()["providers"]
-        assert [p["id"] for p in mine if p["protocol"] == "chatgpt"] == [moved["id"]]
-        assert mine[-1]["shared"] is True
-        # Every account's runtime offers it, through the stored tokens.
-        models = member.get("/api/ai/models").json()
-        assert any(m["provider"] == moved["id"] and m["model"] == "gpt-6-sol" for m in models["models"])
-        # A sign-in that is not connected can't be shared; a stranger's id is none of mine.
-        assert admin.post("/api/admin/ai-providers/from-account", json={"provider_id": own["id"]}).status_code == 404
-        assert member.post("/api/admin/ai-providers/from-account", json={"provider_id": own["id"]}).status_code == 403
-    finally:
-        ai_settings.save_server_ai({"providers": []})
-        for p in admin.get("/api/ai/settings").json()["providers"]:
-            if not p.get("shared"):
-                admin.delete(f"/api/ai/providers/{p['id']}")
-
-
 def test_admin_form_offers_the_sign_in_protocol(admin):
     body = admin.get("/api/admin/ai-providers").json()
     assert any(p["id"] == "chatgpt" and p["auth"] == "oauth" for p in body["protocols"])

@@ -271,8 +271,10 @@ export function SubDialog({ title, onClose, children, draft, className = "", clo
         <div className="settingsDialogContent" inert={confirmClose ? "" : undefined}>{children}</div>
         {confirmClose ? <div className="settingsUnsaved" role="alertdialog" aria-label={t("Unsaved changes")}>
           <span>{t("Discard your unsaved edits?")}</span>
-          <button className="uiBtn" autoFocus onClick={() => setConfirmClose(false)}>{t("Keep editing")}</button>
-          <button className="uiBtn danger" onClick={onClose}>{t("Discard changes")}</button>
+          <span className="settingsUnsavedBtns">
+            <button className="uiBtn" autoFocus onClick={() => setConfirmClose(false)}>{t("Keep editing")}</button>
+            <button className="uiBtn danger" onClick={onClose}>{t("Discard changes")}</button>
+          </span>
         </div> : null}
       </div>
     </div>
