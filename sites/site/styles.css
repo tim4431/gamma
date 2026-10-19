@@ -150,9 +150,13 @@ li + li { margin-top: 8px; }
 .hero__meta { margin-top: 18px; font-size: 14px; color: var(--muted); display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; }
 .hero__meta a { color: var(--text-2); }
 .dot { color: var(--line); }
-.chips { list-style: none; padding: 0; margin: 28px 0 0; display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; }
-.chips li { background: var(--accent-soft); color: var(--accent-ink); border-radius: 999px; padding: 6px 14px; font-size: 14px; font-weight: 500; margin: 0; }
-@media (prefers-color-scheme: dark) { .chips li { color: #f0d9a4; } }
+/* The hand-drawn arrow at the GitHub button, drawn in once after load */
+.cta__star { position: relative; display: inline-flex; }
+.pigtail { position: absolute; left: calc(100% + 2px); bottom: calc(50% - 11px); width: 92px; color: var(--accent); pointer-events: none; }
+.pigtail path { stroke-dasharray: 1; stroke-dashoffset: 1; animation: pigtail-draw 0.9s ease-out 0.6s forwards; }
+.pigtail path + path { animation-duration: 0.2s; animation-delay: 1.5s; }
+@keyframes pigtail-draw { to { stroke-dashoffset: 0; } }
+@media (max-width: 900px) { .pigtail { display: none; } }
 
 .frame {
   margin: 52px 0 0;
@@ -193,7 +197,6 @@ li + li { margin-top: 8px; }
 .card img { width: 100%; border-bottom: 1px solid var(--line); }
 .card h3 { margin: 16px 18px 6px; font-size: 17px; }
 .card p { margin: 0 18px 18px; font-size: 14.5px; color: var(--text-2); }
-.feature__note { margin-top: 28px; text-align: center; color: var(--text-2); font-size: 15px; max-width: 78ch; margin-inline: auto; }
 @media (max-width: 900px) {
   .feature { grid-template-columns: 1fr; gap: 28px; padding: 44px 0; }
   .feature--flip .feature__text { order: 0; }
@@ -307,6 +310,7 @@ li + li { margin-top: 8px; }
 @media (prefers-reduced-motion: reduce) {
   html { scroll-behavior: auto; }
   .btn { transition: none; }
+  .pigtail path { animation: none; stroke-dashoffset: 0; }
 }
 
 /* Documents rendered from the repository's Markdown (/docs, /privacy) */
