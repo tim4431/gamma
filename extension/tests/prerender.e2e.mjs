@@ -96,9 +96,17 @@ try {
     ws.send(JSON.stringify({ id, method, params, ...(sessionId ? { sessionId } : {}) }));
   });
   // Attaches to the first target `match` accepts; the result runs
-  // fn(arg) there and answers its (awaited) value.
-  async function attach(match) {
-    const target = await until("a target", async () => (await send("Target.getTargets")).targetInfos.find(match));
+  // fn(arg) there and answers its (awaited) value. `wake` runs once when
+  // the target is slow to appear. A browser started on a busy machine
+  // takes its time, so this waits 30 s.
+  async function attach(match, wake) {
+    const started = Date.now();
+    let woken = false;
+    const target = await until("a target", async () => {
+      const found = (await send("Target.getTargets")).targetInfos.find(match);
+      if (!found && wake && !woken && Date.now() - started > 5000) { woken = true; await wake(); }
+      return found;
+    }, 30000);
     const { sessionId } = await send("Target.attachToTarget", { targetId: target.targetId, flatten: true });
     return async (fn, arg) => {
       const { result, exceptionDetails } = await send("Runtime.evaluate", {
@@ -109,7 +117,11 @@ try {
     };
   }
 
-  const worker = await attach((t) => t.type === "service_worker" && /^chrome-extension:\/\/\w+\/worker\.js$/.test(t.url));
+  // An extension's worker stops when idle and starts again on an event: a
+  // page its content script runs on sends one (/api/session, which the
+  // test's tabs never look at).
+  const worker = await attach((t) => t.type === "service_worker" && /^chrome-extension:\/\/\w+\/worker\.js$/.test(t.url),
+    () => send("Target.createTarget", { url: `${origin}/api/session` }));
   await worker((server) => chrome.storage.sync.set({ server }), origin);
   const id = await worker(() => chrome.runtime.id);
   const tabId = await worker(async (url) => (await chrome.tabs.create({ url })).id, `${origin}/paper`);
