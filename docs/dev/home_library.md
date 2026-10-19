@@ -2,11 +2,12 @@
 
 Folders, labels, the card surfaces, the recents strip, and cover snapshots.
 The **Organize your library** tour teaches this model once the library
-passes 20 pages: a label is a word you will search for (`pdh`, `vladan`), a
-folder is a label that nests, for a topic or a talk (*Quantum computing /
-Neutral atom*, *gm1*), and one paper can sit in several folders without a
-copy ([onboarding.md](onboarding.md); for users, the user guide's
-[Labels or folders?](../user_guide/user_guide.md#labels-or-folders)).
+passes 20 pages: a label is a word you would search for, like a method or
+an author; a folder groups papers by topic or project and can hold other
+folders; and one paper can sit in several folders without a copy
+([onboarding.md](onboarding.md)). The user guide's
+[Labels or folders?](../user_guide/user_guide.md#labels-or-folders) gives
+the same model with research examples.
 Code: [FileBrowser.jsx](../../frontend/src/library/FileBrowser.jsx),
 [libraryUtils.js](../../frontend/src/library/libraryUtils.js),
 [Menus.jsx](../../frontend/src/shared/ui/Menus.jsx), glue in App.jsx.

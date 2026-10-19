@@ -213,7 +213,7 @@ Neither one copies a paper, and a paper can have as many labels and folders as y
 
 **A label is a word you'll search for.** A paper on PDH locking gets `pdh`. A paper from Vladan's lab on PGC cooling gets `vladan` and `pgc`. Labels are flat, so keep them short: a technique, an author, a lab, a keyword.
 
-- **Add one**: type it into the label row under the paper's title and press Enter, or right-click the paper → **Add label** → **New label…**. You can also drop a paper on a label in the **Labels** view.
+- **Add one**: right-click the paper → **Add label** → **New label…**, or type it into the label row under the paper's title and press Enter. You can also drop a paper on a label in the **Labels** view.
 - **Find papers with it**: click a label chip to list its papers, or press **Ctrl+P** and type its name. In search, type it and press Tab to get a filter chip. The listing bar's **Labels** view shows every label, with how many papers have it.
 
 **A folder is a label that nests.** Use one for a topic you're studying or something you're preparing.
@@ -226,6 +226,8 @@ Neither one copies a paper, and a paper can have as many labels and folders as y
 - **Deleting a folder** never deletes its papers. They stay in their other folders, or at the library root.
 
 A simple test: if you'd type it into search, make it a label. If you'd open it and work through it, make it a folder.
+
+Coming from Zotero? A folder is a collection (subfolders are subcollections) and a label is a tag. A [Zotero import](#import-and-export) turns collections into folders and tags into labels, and a Zotero export turns them back. One difference: Zotero keeps an item in the parent collection when you add it to a subcollection, while Gamma moves it down into the subfolder.
 
 ## Search
 

@@ -213,7 +213,7 @@ an amber **Tip** chip over one plain sentence that says why it helps, with
 | The notebook view | the notebook view is open (`notebookView`, state) | zoom and fit, the pen, the paper, Notes view (a drawing of the one page behind both views); after The PDF viewer, the paper and Notes view |
 | Pages to write on | a sheet of paper is made (`sheet.created`: a new notebook, **+**, `/note`, or writing low on the last sheet), in the notes view (`notebookView: false`: the notebook view has none of the steps' anchors) | (make one,) the sheet (a scene writing low on it while the next page's outline arrives under it), its pen, the notebook view (a drawing of the one page behind both views). The paper is the notebook view tour's to teach |
 | Background tasks | the account starts a job on the server (`job.started`, from the tasks store's `adopt`, so every kind counts); desktop only — the phone's tray row carries no anchor | the tray button (the job runs on the server and outlives the tab); a task's row with Clear finished, `optional`: a tour started from the menu may find no rows |
-| Organize your library | the library passes 20 pages (`growingLibrary`, state) — past the folders hint, which arrives at ten and only says how to move one page | a page card (a scene right-clicking it), the listing bar's filter box (a scene typing into it; Enter with no match searches inside notes and PDFs), Select (Ctrl+ or Shift+click too), two centred cards on what each is for — a label is a word you'll search for (*pdh*, *pgc*, *vladan*), then, with a drawing of one paper in several folders, a folder is a label that nests, for a topic or a talk (*Quantum computing / Neutral atom*, *gm1*) — the Labels view (the same model on screen), Recently viewed, Recently deleted; the last three are `optional`, so a label view or a library with nothing viewed passes over them |
+| Organize your library | the library passes 20 pages (`growingLibrary`, state) — past the folders hint, which arrives at ten and only says how to move one page | a page card (a scene right-clicking it), the listing bar's filter box (a scene typing into it; Enter with no match searches inside notes and PDFs), Select (Ctrl+ or Shift+click too), two centred cards on what each is for — labels help you find papers (words you'd search for, like a method or an author), then, with a drawing of one paper in several folders, folders group papers by topic, can hold other folders, and share a paper without copying it — the Labels view (the same model on screen), Recently viewed, Recently deleted; the last three are `optional`, so a label view or a library with nothing viewed passes over them |
 | Working together | another account or a link visitor comes onto the page (`peer.joined`; your own second tab or the desktop app beside the browser is nobody else) | the avatar stack (a face marks their block), undo |
 | Shared workspaces | the account belongs to a shared workspace (state) | the account menu's switcher and card |
 | hint: math keys | the live formula preview comes up (`math.previewed`); version 2 since Tab, not Enter, accepts a suggestion | the preview: Tab accepts or jumps on, `\` looks up a symbol |
@@ -1061,7 +1061,15 @@ frontend/tests/e2e/scenarios/triggeredGuide.mjs   offers and hints: tables (made
   `guide/media.js` — named from the step's `media`. Keep pointing at the
   real control (Illustrations).
 - Copy: a title of about six words, a body only when needed, never a
-  sentence that narrates what the scene or the demo shows.
+  sentence that narrates what the scene or the demo shows. Use the words a
+  newcomer would use ("find", "group", "move") rather than the model's
+  ("file", "nest", "refine").
+- Examples in tour copy are general, ones any user recognizes: a method, an
+  author, a topic, a project. Never one field's terms ("PDH locking",
+  "quantum computing", "gm1") or a real person's name, because a tour
+  speaks to everyone who uses Gamma. The user guide and the README may use
+  concrete research examples. The library tour leaves them to the guide's
+  [Labels or folders?](../user_guide/user_guide.md#labels-or-folders).
 - Renaming or removing a control: update the registry row; the tests name the
   affected steps.
 - Copy changes: edit the tour file or `welcome.md`. Bump `version` only when a

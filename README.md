@@ -91,6 +91,8 @@ Neither one copies a paper, and a paper can have as many labels and folders as y
 
 A simple test: if you'd type it into search, make it a label. If you'd open it and work through it, make it a folder.
 
+Coming from Zotero? A folder is a collection and a label is a tag. Importing or exporting a Zotero library keeps them that way.
+
 → Guide: [Library](./docs/user_guide/user_guide.md#library) · [Labels or folders](./docs/user_guide/user_guide.md#labels-or-folders) · [Search](./docs/user_guide/user_guide.md#search) · [Metadata and citations](./docs/user_guide/user_guide.md#metadata-and-citations)
 
 ## Share and work together

@@ -621,10 +621,10 @@ export async function triggeredGuideScenarios(env) {
       // The two model steps are centred cards with no anchor, so they are
       // the steps of this tour that can never be passed over.
       await page.waitForSelector('[data-guide-overlay="lib-find"] .guideCard.guideCardCentered');
-      assert((await page.textContent(".guideCard")).includes("pdh"), "what a label is for");
+      assert((await page.textContent(".guideCard")).includes("you'd search for"), "what a label is for");
       await primary(page).click();
       await page.waitForSelector('[data-guide-overlay="lib-model"] .guideCard.guideCardCentered .guideMedia[data-media="labels-folders"] svg');
-      assert((await page.textContent(".guideCard")).includes("be in several"), "what a folder actually is");
+      assert((await page.textContent(".guideCard")).includes("in several at once"), "what a folder actually is");
       await primary(page).click();
       // The same model on screen: the listing's Labels view.
       await page.waitForSelector('[data-guide-overlay="lib-labels"] .guideCard');
