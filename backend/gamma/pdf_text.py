@@ -479,6 +479,96 @@ def page_sizes(src) -> list[tuple[float, float]]:
         return []
 
 
+def _span_text(spans) -> str:
+    """A line's spans as its text, with a space where two spans stand a
+    space apart: many PDFs set each word as a span of its own and draw no
+    space character between them."""
+    out, prev = "", None
+    for span in spans:
+        text = span["text"]
+        if prev is not None and not out.endswith(" ") and not text.startswith(" "):
+            gap = span["bbox"][0] - prev["bbox"][2]
+            if gap > 0.15 * min(float(prev.get("size") or 0), float(span.get("size") or 0)):
+                out += " "
+        out += text
+        prev = span
+    return " ".join(out.split())
+
+
+def _largest_type_lines(page, max_chars: int) -> str:
+    """The lines of ``page`` set in its largest type, in reading order: the
+    title on most papers. Only horizontal lines count (arXiv stamps its id
+    up the left margin in bigger type), and lines with fewer than two
+    letters (a drop cap, a page number) carry no size; a line's size is
+    its largest letters', so a title line with a smaller italic word keeps
+    the title's. A size whose lines hold fewer than three words (a
+    journal's banner, an "ARTICLE" label) is passed over for the next size
+    down, three sizes at most. Lines within 3% of the chosen size count as
+    it; a journal header a half point smaller does not."""
+    lines = []  # (size, y, x, text)
+    for block in page.get_text("dict", flags=_TEXT_FLAGS).get("blocks", []):
+        if block.get("type") != 0:
+            continue
+        for line in block.get("lines", []):
+            cos, sin = line.get("dir") or (1, 0)
+            if cos < 0.99 or abs(sin) > 0.01:
+                continue
+            spans = [s for s in line.get("spans", []) if (s.get("text") or "").strip()]
+            text = _span_text(spans)
+            if sum(c.isalpha() for c in text) < 2:
+                continue
+            sizes = [float(s.get("size") or 0) for s in spans if any(c.isalpha() for c in s["text"])]
+            if not sizes:
+                continue
+            x, y = line.get("bbox", (0, 0, 0, 0))[:2]
+            lines.append((max(sizes), y, x, text))
+    sizes = sorted({round(size, 1) for size, _, _, _ in lines}, reverse=True)
+    tried, above = 0, float("inf")  # the sizes passed over are above `above`
+    while sizes and tried < 3:
+        size = sizes[0]
+        group = sorted((l for l in lines if size * 0.97 <= l[0] < above), key=lambda l: (round(l[1]), l[2]))
+        above = size * 0.97
+        sizes = [s for s in sizes if s < above]
+        tried += 1
+        if sum(len(re.findall(r"[^\W\d_]{2,}", l[3])) for l in group) < 3:
+            continue
+        out = ""
+        for _, _, _, text in group:
+            if out and len(out) + 1 + len(text) > max_chars:
+                break
+            out = f"{out} {text}".strip() if out else text[:max_chars]
+        return out
+    return ""
+
+
+def title_guess(src, max_chars: int = 300) -> str:
+    """The first page's largest-type lines (``_largest_type_lines``): what
+    a metadata lookup queries Crossref with before the text head, whose
+    reading order starts with a running header, a journal banner or a
+    "Downloaded from" line as often as with the title. "" when the file
+    cannot be read, has no pages or no text, or opened through PyPDF2,
+    which knows no sizes. Takes the lock like every other read."""
+    try:
+        kind, pdf = _open(src)
+    except Exception as e:  # noqa: BLE001 — a guess is never worth an error
+        log.warning(f"[pdf-text] title guess failed: {e}")
+        return ""
+    if kind == "pypdf2":
+        return ""
+    try:
+        with _lock:
+            empty = len(pdf) == 0
+        if empty:
+            return ""
+        return _read_page(pdf, 0, lambda page: _largest_type_lines(page, max_chars))
+    except Exception as e:  # noqa: BLE001
+        log.warning(f"[pdf-text] title guess failed: {e}")
+        return ""
+    finally:
+        with _lock:
+            pdf.close()
+
+
 def page_count(src) -> int:
     """How many pages a PDF has (0 = unreadable). No text extraction; a
     file in the page-text cache answers without being opened."""

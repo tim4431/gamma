@@ -14,9 +14,11 @@ install steps, unpacked included, in
 
 1. **Save a paper from its landing page.** arXiv abs or HTML, publisher page, DOI
    link, OpenReview… the toolbar badge shows `PDF` / `arX` / `DOI` (`?` for
-   a DOI merely found in the text). The popup shows the detected title, a
+   a page whose tags name no paper but whose text names one DOI: a news
+   story, a page without tags). The popup shows the detected title, a
    folder picker and labels → **Save to Gamma** → *Open in Gamma*
-   (`/?block=<id>`).
+   (`/?block=<id>`). On a `?` page, *Save the web page instead* saves the
+   story rather than the paper it names.
 2. **Save the PDF you are looking at.** The tab *is* a PDF, possibly behind
    an institutional login the server can't reach: the bytes are fetched with
    the browser's session → `POST /api/uploads` (in parts past 32 MiB:
@@ -85,7 +87,8 @@ helpers — never re-implement it in the extension.
 | `worker.js` | per-tab state in `chrome.storage.session` (`tab:<id>` → `{candidate, hit, preview, auth, saving, error, log, origin, ws}`), badge/icon, `lookup` + `preview`, the save pipeline and its log (`log:saves`, the last five), context menus, keyboard command, notifications, the publisher-session status cache + automatic refresh (`publisher:auto`, `publisher:attempts` in session storage), the tabs fetching for the chat (`handoffs`: tab id → request, `handoff:queue`), and the message API (`get-state`, `save`, `clip-selection`, `auth-changed`, `publisher-status`, `open`, and bridge.js's `connector-hello` / `connector-probe` / `connector-tab`) |
 | `handoff.js` | the chat-fetch rules: a tab's `/go` address → the request id (`handoffIdFrom`), whether the tab's paper can be the requested one (`sameWork`), which URLs to try in it (`harvestUrls`, a save's list too, with an Atypon reader's file: `readerPdfUrl`), which one to open in the tab when downloads fail (`nextToOpen`, `needsSignIn`, `signInUrl`), whether the tab shows a bot check (`checkPage`), and whether every background turn is taken (`backgroundBusy`, `MAX_BACKGROUND`, `NEEDS_YOU`) — pure, tested in `tests/` |
 | `bridge.js` | content script between the Gamma app and the worker: a `connector-probe` window message gets the worker's verdict on one request (`ok` / `signed-out` / `other-account` / `unreachable`), a `connector-tab` one (`open`, `show`, `close`) the worker's answer (`opened` / `queued` / `shown` / `none` / `closed`), and a `connector-hello` (no request) answers `connector-here` to the Connector's own server's app only — how Gamma knows not to suggest the extension to a browser that has it (`shared/lib/connector.js`, [onboarding.md](onboarding.md)); nothing to a page the worker gives no answer for; a question a second per request and kind |
-| `ids.js` | the identifier rules — a DOI used as a URL path (`gammaDoiFromPath`) and the arXiv id (`gammaArxivId`) — one file loaded by the content script and imported by the worker, tested in `tests/` |
+| `ids.js` | the identifier rules — a DOI used as a URL path (`gammaDoiFromPath`), a DOI cleaned of what a sentence or a link puts after it (`gammaCleanDoi`), the distinct DOIs a page prints or links to through doi.org (`gammaTextDois`), and the arXiv id (`gammaArxivId`) — one file loaded by the content script and imported by the worker, tested in `tests/` |
+| `pageRecord.js` | the page's own citation record (`gammaPageRecord`): the Highwire `citation_*` tags, Dublin Core and PRISM filling gaps, read as Zotero's Embedded Metadata translator reads them (below, "Detection") — a classic script before `detect.js`, pure, tested in `tests/` |
 | `saveLog.js` | a save's log (below, "The save log"): the header, each timed step, the detection and a download's answer as lines, the last five kept — pure, tested in `tests/` |
 | `detect.js` | content script (`document_idle`): identifier extraction, re-run on SPA URL changes; answers `get-detection` / `get-selection` / `fetch-pdf` (downloads a PDF from inside the page and relays it base64, with the answer's status, type and size — publisher bot checks that 403 the worker's fetch accept the page's own same-origin request) |
 | `api.js` | settings (`chrome.storage.sync`: `server, servers, workspaces, defaultFolders, folder, labels, allowOa, saveCopy, autoRefreshSessions`), `api()` fetch wrapper (`credentials: "include"`, the chosen workspace as `X-Gamma-Workspace`, JSON `detail` → `ApiError{status}`), `login/logout/whoAmI`, and the workspace and default folder (below) |
@@ -104,7 +107,8 @@ helpers — never re-implement it in the extension.
 
 ```js
 { kind: "pdf" | "arxiv" | "doi" | "maybe" | "none",
-  source_url, pdf_url, arxiv_id, doi, title, is_pdf_tab }
+  source_url, pdf_url, arxiv_id, doi, title, is_pdf_tab,
+  dois_in_text, record, pdf_links, check }
 ```
 
 | Signal | Yields |
@@ -113,9 +117,14 @@ helpers — never re-implement it in the extension.
 | a DOI used as a path — `doi.org/<doi>`, `/doi/…/10.…` (Atypon, Wiley), publisher PDF paths built on it (APS `/prl/pdf/<doi>`, Springer `/content/pdf/<doi>.pdf`, IOP `/article/<doi>/pdf`; the view/file suffix stripped by `ids.js`, the same rule as the server's `norm_doi`) — then `citation_doi`, `dc.identifier`, `prism.doi`, JSON-LD `*Article` identifiers | `doi` |
 | `contentType === application/pdf` / `.pdf` URL, `citation_pdf_url`, `<link rel=alternate type=application/pdf>` (a page advertising none has no `pdf_url` — never itself) | `pdf_url` |
 | `citation_title`, JSON-LD headline, `dc.title`, `og:title`, `document.title` | `title` |
-| DOI regex over the first 30 k chars of visible text (only when nothing else matched) | `kind: "maybe"` |
+| the distinct DOIs in the first 30 k chars of visible text and in the page's `doi.org` links (only when nothing else matched; `gammaTextDois`, case-insensitive, at most ten) | `kind: "maybe"` with that `doi` when there is exactly one; several are a reference list or a list of publications and name none (`kind: "none"`); the count is `dois_in_text` |
+| `citation_title` with `citation_author` (or `citation_authors`, else `dc.creator`), the date tags, `citation_journal_title` / `citation_conference_title` / `citation_inbook_title`, `citation_volume`, `citation_firstpage`/`lastpage`, `citation_publisher`, `citation_dissertation_institution`, `citation_technical_report_institution`, `citation_isbn` (`pageRecord.js`; none on a PDF tab) | `record`: `{title, authors, year, venue, volume, pages, publisher, isbn, kind}`, the item type by Embedded Metadata's rules (thesis, report, conference paper, chapter, journal article, book, most specific first), "Last, First" names turned around; `null` without a Highwire title and an author, so a blog post's Dublin Core makes none |
 
-`kind` priority: pdf > arxiv > doi > maybe. Chrome's PDF viewer runs no
+`kind` priority: pdf > arxiv > doi > maybe. A "maybe" DOI is the paper the
+page is about, the way Zotero's DOI translator takes a page's one DOI: the
+save sends it with `doi_from_text`, and the server finds that paper in the
+library and resolves its PDF with it but confirms its record against the
+PDF (below). Chrome's PDF viewer runs no
 content scripts, so the worker also derives a URL-only candidate on every tab
 load (`candidateFromUrl`, `from_url: true`) and merges it field-by-field under
 the content script's result; URL-looking tab titles are dropped there.
@@ -137,7 +146,16 @@ can take a second or two) and stores the record as `preview`. A popup that
 is already open re-renders its head from `storage.onChanged`. State is
 cleared when the tab navigates.
 
-The popup head shows the first of: the page's own title (meta tags), the
+A "possible paper" heads the popup with the registry's title of the paper
+its DOI names, since under the page's own title (a news story's) the
+registry's authors · year · venue would read as the story's; the save names
+the page by it too. *Save the web page instead*, a quiet link under the
+actions, saves the tab as a page with its web source (the clip without the
+DOI), and the tab then reads as that page. The "nothing found" notice says
+why: no paper at all, several DOIs naming none, or no PDF or DOI but
+citation tags naming a work, which *Save this URL anyway* sends along.
+
+The popup head otherwise shows the first of: the page's own title (meta tags), the
 previewed registry title, the library page's title, the host. The chip +
 identifier line says what the detection rests on, and the registry's
 authors · year · venue sit under it.
@@ -150,8 +168,8 @@ closing; progress is written to the tab state and the popup renders it):
 ```
 urls = what the browser could download itself (browserPdfUrls)
 PDF tab?  fetch bytes in the browser → %PDF check → POST /api/uploads → doc_id   (best-effort; past 32 MiB in parts, /api/uploads/parts)
-POST /api/clip { source_url, pdf_url, doi, arxiv_id, doc_id?, title, selection?, folder | folder_path, labels, allow_oa, save_copy,
-                 web_fallback: false while urls are left to try }
+POST /api/clip { source_url, pdf_url, doi, doi_from_text, arxiv_id, record, doc_id?, title, selection?, folder | folder_path,
+                 labels, allow_oa, save_copy, web_fallback: false while urls are left to try }
   └─ 400? → fetch bytes in the browser → POST /api/uploads → POST /api/clip with doc_id
             browser fails too → POST /api/clip { web_fallback: true } → the page with its web source
 → { block_id, doc_id, title, existed, open_url, folders, labels, note? }
@@ -242,12 +260,18 @@ stores the id and clears `folder`.
 Server side (`clip.py`, sync `def` — it downloads):
 
 1. **Dedup** — `find_page()` by DOI / arXiv id / URL against every root page:
-   `properties.meta.doi|arxiv_id` (from the metadata lookup), the
+   `properties.meta.doi|arxiv_id` (from the metadata lookup),
+   `properties.web_meta.doi|arxiv_id` (what an earlier clip's page said in
+   its tags, there before that clip's lookup lands and after one that
+   failed; never a DOI that page only printed in its text), the
    attachment's URL (`source_url`, else its stored copy's, so a tab on that
    URL finds its page; `blocks_store.page_attachment`), `web_url`, and the
    proxy-cache hash `sha256(url)[:24]`. A hit returns
    `existed: true` and still *adds* the folder/labels (soft link; a folder
-   above the new one is refined away).
+   above the new one is refined away), and the clip's `web_meta` when the
+   page has none; a page with no record yet gets its lookup started again.
+   A "maybe" DOI (`doi_from_text`) dedups too: it names the paper the save
+   is of.
 2. **Resolve** — `pdf.resolve_source()` (extracted from `/api/resolve-pdf`) on
    the best identifier: `pdf_url` > `arxiv_id` > `doi` > `source_url`. arXiv
    rewrite, `citation_pdf_url` sniff, Unpaywall when `allow_oa`.
@@ -274,7 +298,11 @@ Server side (`clip.py`, sync `def` — it downloads):
    `POST /api/blocks/by-doc`) with `default_title = citation_title`, so
    `auto_title` is set and the metadata lookup may still replace it (never a
    user rename). The tab URL is kept as `properties.web_url` when it differs
-   from the PDF URL — it feeds later lookups. The lookup and the insert run
+   from the PDF URL, and what the tab said about the paper as
+   `properties.web_meta` (`metadata.web_record`: the identifiers its tags
+   carried, a DOI only in its text as `text_doi`, its cleaned citation
+   `record`), in the filing's op batch; both feed every later lookup and
+   neither is overwritten by a later clip. The lookup and the insert run
    under the workspace's write lock (`blocks_store.write_lock`), and so do
    the web-page path's `find_web_page` and `/api/clip/note`'s "Web clips"
    page: a double-clicked Save, two tabs of one paper or a retry make one
@@ -291,13 +319,20 @@ Server side (`clip.py`, sync `def` — it downloads):
    any edit, also when the clip found the paper already saved. The answer's
    `folders` / `labels` are the page's filing, ids.
 6. **Metadata** — `metadata.fetch_page_metadata()` (extracted from
-   `/api/metadata/fetch`) in a daemon thread; the detector's `doi`/`arxiv_id`
-   ride along as trusted hints (they come from the publisher page's own meta
+   `/api/metadata/fetch`) in a daemon thread. It reads `web_meta` off the
+   page, as does the lookup the app starts when the page is opened, which
+   used to race this one without the detector's identifiers: those are
+   trusted like the URL's (they come from the publisher page's own meta
    tags, so the lookup resolves them directly instead of re-mining the PDF
-   text); arXiv/DOI paths need no AI provider. Skipped when `meta` already
-   exists or `fetch_metadata: false`. A web-page clip starts it only when a
-   DOI/arXiv id was detected (the lookup needs no PDF for those — a note about
-   a paywalled paper still gets its citation).
+   text), a `text_doi` must have its title in the PDF, and the citation
+   record stands when no registry confirms anything
+   ([paper_metadata.md](paper_metadata.md)); arXiv/DOI paths need no AI
+   provider. Skipped when `meta` already exists or `fetch_metadata: false`.
+   A web-page clip starts it only when the page names a work
+   (`web_names_a_work`: an identifier, a text DOI, or a record with a title
+   and an author; the lookup needs no PDF for those — a note about a
+   paywalled paper or a repository's thesis still gets its citation, a text
+   DOI's record flagged unconfirmed).
 
 Companions:
 
@@ -542,10 +577,13 @@ signed in to the same server works the same way.
   selection + re-clip dedup, `doc_id` path, `save_copy`, lookup by arXiv
   version / DOI / web_url, the preview with faked registries + its cache,
   `norm_doi` on publisher paths, `norm_arxiv` on HTML URLs and old-style ids,
-  an arXiv HTML page saving its PDF, folders, clip notes, 401s).
+  an arXiv HTML page saving its PDF, `web_meta` kept cleaned and never
+  overwritten, a text DOI that finds the paper but is kept as `text_doi`,
+  a web page whose record names a work starting its lookup, an existing
+  page without a record gaining one, folders, clip notes, 401s).
 - `extension/tests/*.test.mjs` (`node --test extension/tests/*.test.mjs`) —
-  the pure modules: `ids.js`, `publisherSessions.js`, `handoff.js` and
-  `saveLog.js`, plus
+  the pure modules: `ids.js`, `pageRecord.js`, `publisherSessions.js`,
+  `handoff.js` and `saveLog.js`, plus
   API settings, the default folder, folder paths, origin guards, and the
   chosen workspace (the header, a save's pin, a default folder per
   workspace, forgetting one the account can no longer write to). The
@@ -567,6 +605,14 @@ signed in to the same server works the same way.
   saved with its web source and a note saying so; the popup's *Copy the save
   log* copies the tab's log (which names each of those steps) and the options
   page's *Copy recent saves* both, newest first.
+- `node extension/tests/detect.e2e.mjs` — full Chromium against a fake
+  site and a fake server: a news story whose one DOI is in its text and its
+  doi.org link is a `?` "possible paper", headed with the previewed paper's
+  title and saved with `doi_from_text`; another story saved as the web page
+  instead (no DOI sent, the tab then reads as the page); a list of three
+  DOIs names none and says so; a repository's thesis page with tags but no
+  PDF or DOI sends its record through *Save this URL anyway*; a publisher
+  page's record rides along with its own DOI, not one it cites.
 - `node extension/tests/prerender.e2e.mjs` — a fake paper page whose
   speculation rules prerender a "Warmup Page" with its own DOI. While the
   warmup page is hidden, the tab's detection, the page's `get-detection`

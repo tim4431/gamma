@@ -674,7 +674,7 @@ async function keepLog(tabId, log) {
   if (tabId != null) await setTabState(tabId, { log: text });
 }
 
-async function savePaper({ tabId, candidate, folder, folder_path, labels, title, source_url }) {
+async function savePaper({ tabId, candidate, folder, folder_path, labels, title, source_url, asPage = false }) {
   const settings = await getSettings();
   // Where this save goes, start to end: its uploaded bytes and the clip
   // that files them must land in the same library even if the choice
@@ -683,10 +683,13 @@ async function savePaper({ tabId, candidate, folder, folder_path, labels, title,
   const cand = candidate || { kind: "none", source_url: source_url || "" };
   // A PDF tab has no title of its own; the registry record previewed for the
   // popup names the page right away (auto_title — the metadata lookup may
-  // still replace it, a user rename never is).
+  // still replace it, a user rename never is). A "possible paper" is the
+  // paper its one DOI names, not the page around it (a news story): that
+  // paper's title first.
   const st = tabId != null ? await getTabState(tabId) : {};
   const previewTitle = st.preview && st.preview.title || "";
-  const pageTitle = title != null ? title : (cand.title || previewTitle);
+  const pageTitle = title != null ? title
+    : cand.kind === "maybe" ? previewTitle || cand.title || "" : cand.title || previewTitle;
   const urls = browserPdfUrls(cand);
   const log = saveLog({ version: chrome.runtime.getManifest().version, browser: navigator.userAgent,
                         server: settings.server, workspace: pin.workspace, tab: cand.source_url || source_url || "",
@@ -719,9 +722,14 @@ async function savePaper({ tabId, candidate, folder, folder_path, labels, title,
     // shortcut and the context menu save into the default one, if the
     // library still has it (checkedDefaultFolder: a deleted one is forgotten).
     filing = folder != null ? { folder, folder_path: folder_path || "" } : await checkedDefaultFolder(settings);
+    // A DOI only found in the page's text is the paper's lead, not the
+    // page's word for it (doi_from_text): the server confirms its record
+    // against the PDF. The page's citation record (pageRecord.js) rides
+    // along; the server keeps both on the page for every later lookup.
     const payload = {
       source_url: cand.source_url || source_url || "",
       pdf_url: cand.pdf_url || "", doi: cand.doi || "", arxiv_id: cand.arxiv_id || "",
+      doi_from_text: cand.kind === "maybe", record: cand.record || {},
       title: pageTitle,
       ...filing,
       labels: labels != null ? labels : settings.labels,
@@ -772,7 +780,11 @@ async function savePaper({ tabId, candidate, folder, folder_path, labels, title,
     await rememberFolder(settings, filing).catch((err) => console.warn(`[gamma] couldn't remember the folder: ${err.message}`));
     await keepLog(tabId, log);
     if (tabId != null && sameLibrary({ origin: settings.server, ws: pin.workspace }, await getSettings())) {
-      await setTabState(tabId, { saving: "", hit: out, last: out, error: "", origin: settings.server, ws: pin.workspace });
+      // Saved as the web page rather than the paper it names: the tab now
+      // reads as that page, not the paper's preview.
+      const asSaved = asPage ? { candidate: cand, preview: null } : {};
+      await setTabState(tabId, { saving: "", hit: out, last: out, error: "", origin: settings.server, ws: pin.workspace,
+                                 ...asSaved });
     }
     return { ...out, ws: pin.workspace };
   } catch (err) {

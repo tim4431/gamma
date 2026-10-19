@@ -58,7 +58,7 @@ from ..ops import after_commit, apply_ops, ensure_filing
 from ..server_settings import can_store
 from .. import pdf_meta, storage
 from ..storage import DIGEST_CHARS, pdf_url as stored_pdf_url, put_upload, url_filename
-from .metadata import fetch_page_metadata, registry_record
+from .metadata import fetch_page_metadata, registry_record, web_names_a_work, web_record
 from .pdf import ARXIV_ID, download_pdf, resolve_source
 
 router = APIRouter(prefix="/api", tags=["clip"])
@@ -99,10 +99,12 @@ def find_page(conn, doi: str = "", arxiv_id: str = "", urls: tuple = ()) -> dict
     """Lookup BY ATTACHMENT: the page whose PDF attachment is this paper, by
     DOI, arXiv id, or any of its URLs — only pages carrying a ``doc_id`` are
     candidates (a clip dedups against files, not titles). Identifier matches
-    come from the metadata cache (properties.meta) and the source URL; URL
-    matches from the proxy-cache hash, the attachment's URL (the stored
-    source_url, else the stored copy's), or the web page the extension
-    saved it from (web_url)."""
+    come from the metadata cache (properties.meta), the identifiers the web
+    page it was saved from carried in its tags (properties.web_meta, there
+    before the lookup lands and after one that failed; never a DOI only
+    seen in that page's text) and the source URL; URL matches from the
+    proxy-cache hash, the attachment's URL (the stored source_url, else the
+    stored copy's), or the web page the extension saved it from (web_url)."""
     doi = (doi or "").lower()
     urls = tuple(u for u in urls if u)
     url_ids = {url_doc_id(u) for u in urls}
@@ -112,14 +114,16 @@ def find_page(conn, doi: str = "", arxiv_id: str = "", urls: tuple = ()) -> dict
     for row in rows:
         props = json.loads(row[4] or "{}")
         meta = props.get("meta") or {}
+        tags = props.get("web_meta") if isinstance(props.get("web_meta"), dict) else {}
         src = page_attachment(props)["url"]
         web = str(props.get("web_url") or "")
         if props.get("doc_id") in url_ids or (urls and (src in urls or web in urls)):
             return block_to_dict(row)
-        if doi and (str(meta.get("doi") or "").lower() == doi or doi in src.lower()
-                    or norm_doi(web) == doi):
+        if doi and (doi in (str(meta.get("doi") or "").lower(), str(tags.get("doi") or "").lower())
+                    or doi in src.lower() or norm_doi(web) == doi):
             return block_to_dict(row)
-        if arxiv_id and (norm_arxiv(str(meta.get("arxiv_id") or "")) == arxiv_id
+        if arxiv_id and (arxiv_id in (norm_arxiv(str(meta.get("arxiv_id") or "")),
+                                      norm_arxiv(str(tags.get("arxiv_id") or "")))
                          or norm_arxiv(src) == arxiv_id or norm_arxiv(web) == arxiv_id):
             return block_to_dict(row)
     return None
@@ -156,15 +160,17 @@ def _filing(ws: str, actor: str, payload: "ClipRequest") -> tuple[str, list[str]
     return payload.folder or folder_ids.get(tuple(names), ""), list(dict.fromkeys(label_ids[n] for n in labels))
 
 
-def _file_page(conn, ws: str, actor: str, block: dict, folder: str, labels: list[str]) -> dict:
+def _file_page(conn, ws: str, actor: str, block: dict, folder: str, labels: list[str],
+               extra: dict | None = None) -> dict:
     """File the page in the folder ``folder`` (an id, or "") with the labels
     ``labels`` (ids) — adding: the page keeps its other folders and labels
     (those that exist), and only a folder above the new one gives way
-    (filing into a subfolder refines, it does not duplicate). An op batch
-    like every write to a page — logged under ``actor`` and fanned out to
-    the page's open tabs."""
+    (filing into a subfolder refines, it does not duplicate) — and set the
+    properties in ``extra`` (``_remembered``) with them. An op batch like
+    every write to a page — logged under ``actor`` and fanned out to the
+    page's open tabs."""
     props = block.get("properties") or {}
-    patch = {}
+    patch = dict(extra or {})
     folders = filing(props, FOLDERS)
     if folder and folder not in folders:
         patch[FOLDERS] = refiled(conn, existing_in(conn, FOLDERS, folders), folder)
@@ -179,14 +185,29 @@ def _file_page(conn, ws: str, actor: str, block: dict, folder: str, labels: list
     return block
 
 
-def _start_metadata(ws: str, actor: str, block_id: str, doi: str = "", arxiv_id: str = "") -> None:
+def _remembered(block: dict, web_meta: dict, web_url: str = "") -> dict:
+    """What a clip adds to its page's properties: the tab it was saved from
+    (``web_url``; the caller passes "" when the tab is the PDF itself) and
+    what that tab said about the paper (``web_meta``, metadata.web_record),
+    each only where the page has none yet, so a later clip from another
+    page of the same paper changes neither."""
+    props = block.get("properties") or {}
+    patch = {}
+    if web_url and not props.get("web_url"):
+        patch["web_url"] = web_url
+    if web_meta and not props.get("web_meta"):
+        patch["web_meta"] = web_meta
+    return patch
+
+
+def _start_metadata(ws: str, actor: str, block_id: str) -> None:
     """Metadata lookup off the request: arXiv → DOI → AI fallback can take
-    seconds to minutes and the extension only needs the page id back. The
-    detector's doi/arxiv_id ride along as trusted hints — they come from the
-    publisher page's own meta tags, exactly what the lookup wants."""
+    seconds to minutes and the extension only needs the page id back. What
+    the web page said (``web_meta``) is on the page already, so this lookup
+    and the one the app starts on open read the same hints."""
     def run():
         try:
-            fetch_page_metadata(ws, block_id, actor, doi=doi, arxiv_id=arxiv_id)
+            fetch_page_metadata(ws, block_id, actor)
         except HTTPException as e:
             log.info(f"[clip] metadata for {block_id}: {e.detail}")
         except Exception as e:  # a failed lookup must not take the thread down noisily
@@ -233,7 +254,9 @@ class ClipRequest(BaseModel):
     source_url: str = ""          # the tab the user saved from (kept as properties.web_url)
     pdf_url: str = ""             # detector output; any may be empty
     doi: str = ""
+    doi_from_text: bool = False   # the DOI was only found in the page's text (detect.js kind "maybe")
     arxiv_id: str = ""
+    record: dict = {}             # the page's citation tags (pageRecord.js): title, authors, year, venue…
     doc_id: str = ""              # set when the PDF bytes were uploaded first (/api/uploads)
     title: str = ""               # citation_title / document.title
     selection: str = ""           # selected text on the tab; a web clip's first block
@@ -248,35 +271,49 @@ class ClipRequest(BaseModel):
 
 
 def _clip_web_page(ws: str, actor: str, conn, payload: ClipRequest, source_url: str, title: str,
-                   folder: str, labels: list[str], doi: str, arxiv_id: str, reason: str) -> dict:
+                   folder: str, labels: list[str], web_meta: dict, reason: str) -> dict:
     """The no-PDF outcome of a clip: a page carrying the tab as
-    ``properties.web_url`` (title from the tab, else the URL), the clipped
-    selection as its first block. Re-clipping the same URL finds that page
+    ``properties.web_url`` (title from the tab, else the URL) and what the
+    tab said about its paper as ``web_meta``, the clipped selection as its
+    first block. Re-clipping the same URL finds that page
     (``find_web_page``) and only files it / appends the new selection —
     looked up under the write lock, so two clips at once make one page."""
     now = page_now()
     write_lock(conn)
     existing = find_web_page(conn, source_url)
     if existing:
-        block = _file_page(conn, ws, actor, existing, folder, labels)
+        block = _file_page(conn, ws, actor, existing, folder, labels, _remembered(existing, web_meta))
         if (payload.selection or "").strip():
             after_commit(ws, conn, apply_ops(conn, block["id"], [{
                 "op": "insert", "id": new_block_id(), "parent": block["id"],
                 "content": _quote_content(payload.selection, source_url, title)}], actor=actor))
+        _maybe_start_metadata(ws, actor, payload, block)
         return _result(block, existed=True)
     props = {"web_url": source_url} if source_url else {}
+    if web_meta:
+        props["web_meta"] = web_meta
     block = create_page(conn, title or _web_title(source_url), props, actor=actor)
     if (payload.selection or "").strip():
         _insert_last(conn, block["id"], _quote_content(payload.selection, source_url, title), {}, now)
         touch_page(conn, block["id"], actor)
         conn.commit()
     block = _file_page(conn, ws, actor, block, folder, labels)
-    # A DOI/arXiv id found on the page still identifies the work — the
-    # lookup needs no PDF for those, so the note can cite even without one.
-    if payload.fetch_metadata and (doi or arxiv_id):
-        _start_metadata(ws, actor, block["id"], doi=doi, arxiv_id=arxiv_id)
+    # A DOI/arXiv id or a citation record found on the page still identifies
+    # the work — the lookup needs no PDF for those, so the note can cite even
+    # without one (a DOI only seen in the page's text is stored unconfirmed).
+    _maybe_start_metadata(ws, actor, payload, block)
     note = "No PDF found — saved as a page with its web source"
     return _result(block, existed=False, note=f"{note} ({reason})." if reason else note + ".")
+
+
+def _maybe_start_metadata(ws: str, actor: str, payload: ClipRequest, block: dict) -> None:
+    """Start the page's lookup when the clip asks for one, the page has no
+    record yet and something names a work: its PDF, an identifier, a DOI
+    from the web page's text or a citation record (``web_names_a_work``)."""
+    props = block.get("properties") or {}
+    if payload.fetch_metadata and not props.get("meta") and (
+            props.get("doc_id") or web_names_a_work(props.get("web_meta"))):
+        _start_metadata(ws, actor, block["id"])
 
 
 # Sync on purpose: resolving and downloading run in FastAPI's threadpool.
@@ -291,8 +328,16 @@ def save_clip(ws: str, actor: str, payload: ClipRequest) -> dict:
     Raises HTTPException like the route."""
     source_url = (payload.source_url or "").strip()
     pdf_url = (payload.pdf_url or "").strip()
-    doi = norm_doi(payload.doi) or norm_doi(pdf_url) or norm_doi(source_url)
+    url_doi = norm_doi(pdf_url) or norm_doi(source_url)
+    # A DOI the Connector found only in the page's text, the one DOI there
+    # (detect.js): it names the paper the page is about, so it finds that
+    # paper in the library and its PDF, but the record it resolves to is
+    # confirmed only by the PDF's text (the page may merely cite it).
+    text_doi = norm_doi(payload.doi) if payload.doi_from_text else ""
+    trusted_doi = url_doi if payload.doi_from_text else (norm_doi(payload.doi) or url_doi)
+    doi = trusted_doi or text_doi
     arxiv_id = norm_arxiv(payload.arxiv_id) or norm_arxiv(pdf_url) or norm_arxiv(source_url)
+    web_meta = web_record(payload.record, trusted_doi, arxiv_id, text_doi)
     title = _clean_title(payload.title)
     folder, labels = _filing(ws, actor, payload)
     note = ""
@@ -302,7 +347,8 @@ def save_clip(ws: str, actor: str, payload: ClipRequest) -> dict:
     with connect_pages_db(ws) as conn:
         existing = find_page(conn, doi, arxiv_id, (pdf_url, source_url))
         if existing:
-            block = _file_page(conn, ws, actor, existing, folder, labels)
+            block = _file_page(conn, ws, actor, existing, folder, labels, _remembered(existing, web_meta))
+            _maybe_start_metadata(ws, actor, payload, block)
             return _result(block, existed=True)
 
     if not (payload.doc_id or pdf_url or arxiv_id or doi):
@@ -313,7 +359,7 @@ def save_clip(ws: str, actor: str, payload: ClipRequest) -> dict:
         if not payload.web_fallback:
             raise HTTPException(status_code=400, detail="nothing here names a PDF")
         with connect_pages_db(ws) as conn:
-            return _clip_web_page(ws, actor, conn, payload, source_url, title, folder, labels, doi, arxiv_id, "")
+            return _clip_web_page(ws, actor, conn, payload, source_url, title, folder, labels, web_meta, "")
 
     if payload.doc_id:
         # 2a. The extension uploaded the bytes itself (its browser session got
@@ -359,7 +405,7 @@ def save_clip(ws: str, actor: str, payload: ClipRequest) -> dict:
             log.info(f"[clip] no PDF for {candidate}: {e.detail} — saving as a web page")
             with connect_pages_db(ws) as conn:
                 return _clip_web_page(ws, actor, conn, payload, source_url, title, folder, labels,
-                                      doi, arxiv_id, str(e.detail))
+                                      web_meta, str(e.detail))
 
     # 3. The page, filed and tagged.
     with connect_pages_db(ws) as conn:
@@ -368,17 +414,13 @@ def save_clip(ws: str, actor: str, payload: ClipRequest) -> dict:
         write_lock(conn)  # whether the PDF has a page, and its creation, as one step
         existed = page_for_doc(conn, doc_id) is not None
         block = get_or_create_doc_page(conn, doc_id, title, page_source, ws=ws, actor=actor)
-        props = dict(block.get("properties") or {})
-        if source_url and not props.get("web_url") and source_url != page_source:
-            props["web_url"] = source_url
-            after_commit(ws, conn, apply_ops(conn, block["id"], [
-                {"op": "set", "id": block["id"], "props": {"web_url": source_url}}], actor=actor))
-            block = {**block, "properties": props}
-        block = _file_page(conn, ws, actor, block, folder, labels)
+        # The tab feeds later lookups (``web_url``, ``web_meta``), set in the
+        # same op batch as the folder and labels.
+        web_url = source_url if source_url != page_source else ""
+        block = _file_page(conn, ws, actor, block, folder, labels, _remembered(block, web_meta, web_url))
 
     # 4. Metadata, off the request.
-    if payload.fetch_metadata and not (block.get("properties") or {}).get("meta"):
-        _start_metadata(ws, actor, block["id"], doi=doi, arxiv_id=arxiv_id)
+    _maybe_start_metadata(ws, actor, payload, block)
     return _result(block, existed=existed, note=note)
 
 

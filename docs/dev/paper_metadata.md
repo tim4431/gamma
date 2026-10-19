@@ -9,8 +9,8 @@ stored PDF. Code: `gamma/routers/metadata.py`, `gamma/routers/pdf.py`.
 the slide citation on the page block (`properties.meta` / `properties.bibtex`
 / `properties.ppt_cite`). The lookup chain, in order:
 
-1. **arXiv API** — id from the source URL or the PDF text (new- and old-style
-   ids). The record is a `preprint`, or a `journalArticle` when arXiv gives a
+1. **arXiv API** — id from the source URL, the web page's tags
+   (`web_meta`, below) or the PDF text (new- and old-style ids). The record is a `preprint`, or a `journalArticle` when arXiv gives a
    journal reference. When the arXiv record names the DOI of the published version, the
    registrar's record replaces the preprint's (`_published_record`: venue,
    volume, pages and doi.org's own BibTeX; the arXiv id stays on the record,
@@ -19,18 +19,57 @@ the slide citation on the page block (`properties.meta` / `properties.bibtex`
    (2016)") that would otherwise be typeset as the journal's name. Taken
    only when the registrar's title is the preprint's, never for arXiv's own
    `10.48550/` DOIs; the preprint record stands when doi.org has nothing.
-2. **DOI content negotiation** (doi.org) — every DOI in the source URL and
-   scan window, each with a glued-suffix trimmed variant. The CSL `type`
+2. **DOI content negotiation** (doi.org) — the DOI of the web page's tags,
+   every DOI in the source URL, then a DOI the web page only printed in its
+   text (`web_meta.text_doi`), then every DOI in the scan window, each with
+   a glued-suffix trimmed variant. The CSL `type`
    becomes the record's item type (below); a book, a chapter, a conference
    paper, a thesis or a report keeps its publisher, a book or a chapter its
    ISBN.
 3. **ISBN lookup** (books) — checksum-valid ISBNs *labelled* "ISBN" in the
    scan window or on the last page (copyright page, back cover), resolved via
    Open Library's books API, then Google Books. Both keyless.
-4. **Crossref bibliographic search** — queried with the page title first
-   (≥3 words; users title pages with the paper name), then the normalized
-   text head. Deterministic; keeps most publisher PDFs off the AI fallback.
-5. **AI extraction** — last resort, and its output is verified (below).
+4. **Crossref bibliographic search** — queried with the web page's record
+   (its title and first author), then the first page's largest type
+   (`pdf_text.title_guess`, below), then the page title (≥3 words; users
+   title pages with the paper name, an upload carries its file name), then
+   the normalized text head; a query asked once is not asked again.
+   Deterministic; keeps most publisher PDFs off the AI fallback.
+5. **The web page's record** — what the page the paper was saved from said
+   in its citation tags (`web_meta`, below), when no registry confirmed
+   anything: a thesis in a repository, a report, a conference paper
+   without a DOI. It beats a registry fallback nothing confirmed.
+6. **AI extraction** — last resort, and its output is verified (below).
+
+**What the web page said.** A Connector clip keeps what the tab said about
+its paper on the page as `properties.web_meta` (`metadata.web_record`,
+cleaned: bounded strings, at most 100 authors, a four-digit year, a
+checksum-valid ISBN, an item type by our names): `doi` and `arxiv_id` from
+the page's own tags or address, `text_doi` for a DOI the page only printed
+in its text (the Connector's "possible paper", sent with `doi_from_text`),
+and the citation record its Highwire tags carry (`title`, `authors`,
+`year`, `venue`, `volume`, `pages`, `publisher`, `isbn`, `kind`;
+[extension.md](extension.md#detection)). Every lookup reads it off the
+page, so the clip's own lookup and the one the app starts when the page is
+opened agree; the second used to run without the detector's identifiers,
+and whichever finished last stored its record. A later clip of the same
+paper from another page does not overwrite it. `/api/clip` also dedups on
+its identifiers ([extension.md](extension.md#the-save-pipeline)).
+
+**The largest type.** `pdf_text.title_guess` reads the first page's lines
+in the largest type that holds at least three words (a one-word "ARTICLE"
+banner is passed over for the next size down, three sizes at most), in
+reading order, up to 300 characters. Only horizontal lines count (arXiv
+stamps its id up the left margin in bigger type); a line's size is its
+largest letters', and lines within 3% of the chosen size count as it, so a
+journal header half a point smaller stays out; spans a gap apart are
+joined with a space, since many PDFs set each word as a span of its own.
+On the library's 66 PDFs with a registry-confirmed record (October 2026)
+it carried the record's title in 53 and was close in 57; the text head's
+first 500 characters held it in 59, but amid the running header and the
+authors, which is what the cleaner query is for. It misses a journal
+header set larger than the title (Elsevier's) and a title shorter than
+three words.
 
 The registry helpers (`_fetch_arxiv` / `_arxiv_search` — both parse Atom
 entries through `_arxiv_entry_meta` — `_fetch_doi`, `_crossref_search`) also
@@ -117,10 +156,17 @@ before, so an older thesis record holds the university as its venue.
 AI output can be a plausible hallucination):
 
 - Identifiers with **URL-level trust** are accepted outright: the stored
-  `source_url`, the `web_url` the extension clipped from,
-  detector-supplied `doi`/`arxiv_id` hints (`fetch_page_metadata` kwargs —
-  `/api/clip` forwards what `detect.js` read off the publisher page's own
-  meta tags), and a DOI or arXiv id the user types into the popover (below).
+  `source_url`, the `web_url` the extension clipped from, the `doi` and
+  `arxiv_id` of `web_meta` (what `detect.js` read off the publisher page's
+  own meta tags), and a DOI or arXiv id the user types into the popover
+  (below). A `web_meta.text_doi` is not: the page may only cite that paper,
+  so its record is confirmed by its title in the PDF like any text DOI, and
+  on a page with no PDF it is stored flagged.
+- The web page's citation record is trusted like the DOI its tags carry,
+  the same tags' word; it is the record only when no registry confirms one,
+  and with it the Crossref title search also accepts a hit whose title is
+  near-identical (≥0.92) with a compatible year, as for an AI title, which
+  is how a page with no PDF text finds its registry record.
 - A record found via the *text* counts as **confirmed** only when the
   registry's title appears in the PDF text (`_title_in_text` — normalized
   for case, ligatures, line-break hyphens; a title with a subtitle also
@@ -151,7 +197,7 @@ AI output can be a plausible hallucination):
 
 **Source and the unverified flag.** `meta.source` is `arxiv` / `doi` /
 `isbn` / `crossref` (search hit whose doi.org fetch failed) / `openlibrary`
-/ `googlebooks` / `ai` / `manual`. Every fetched record also stores
+/ `googlebooks` / `page` (the web page's record) / `ai` / `manual`. Every fetched record also stores
 `meta.unverified`: true when nothing tied it to *this* document — an AI
 record of a type a registry could confirm, or a DOI/ISBN fallback whose registry title
 isn't in the text (it may belong to a work the document cites). Unverified

@@ -275,7 +275,7 @@ const isUnverifiedPaperMeta = (source, kind, unverified = null) =>
 // header, the Settings → Library maintenance table (`short`). `warn` = cite with care.
 const META_SOURCE_NAMES = {
   arxiv: "arXiv", doi: "doi.org", crossref: "Crossref search", isbn: "ISBN lookup",
-  openlibrary: "Open Library", googlebooks: "Google Books", manual: "edited by hand",
+  openlibrary: "Open Library", googlebooks: "Google Books", page: "web page tags", manual: "edited by hand",
 };
 function metaSourceInfo(meta) {
   if (!meta?.source) return null;
@@ -299,10 +299,12 @@ function metaSourceInfo(meta) {
   const name = META_SOURCE_NAMES[meta.source] || meta.source;
   if (unverified) {
     return { label: t("{name} — unconfirmed", { name: name }), short: t("{name} ?", { name: name }), warn: true,
-             hint: T("Resolved from an identifier printed in the PDF, but the record's title isn't in the text — it may belong to a work this document cites. Verify before citing") };
+             hint: T("Resolved from an identifier printed in the PDF or on the web page it was saved from, but nothing tied the record to this document — it may belong to a work the document cites. Verify before citing") };
   }
   return { label: name, short: name, warn: false,
-           hint: meta.source === "manual" ? "Fields edited by hand" : `Registry record via ${name}` };
+           hint: meta.source === "manual" ? "Fields edited by hand"
+             : meta.source === "page" ? T("Read from the citation tags of the web page it was saved from")
+             : `Registry record via ${name}` };
 }
 
 const isPdfFile = (f) => f.type === "application/pdf" || /\.pdf$/i.test(f.name || "");

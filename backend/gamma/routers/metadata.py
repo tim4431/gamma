@@ -1,10 +1,12 @@
 """Paper metadata + citations.
 
-Lookup order: arXiv API (id from the source URL or the PDF text) → DOI via
-doi.org content negotiation (Crossref/DataCite) → ISBN printed in the PDF via
-Open Library / Google Books (books) → Crossref bibliographic search on the
-text head → AI extraction from the first pages as a last resort, itself
-cross-checked against Crossref and, for books, the book registries.
+Lookup order: arXiv API (id from the source URL, the web page's tags or the
+PDF text) → DOI via doi.org content negotiation (Crossref/DataCite) → ISBN
+printed in the PDF via Open Library / Google Books (books) → Crossref
+bibliographic search (the web page's title and author, the PDF's largest
+type, the page title, the text head) → the web page's own citation record →
+AI extraction from the first pages as a last resort, itself cross-checked
+against Crossref and, for books, the book registries.
 A registry record found via the *text* (not the source URL) is only trusted
 outright when its title actually appears in the PDF — the first DOI on page 1
 can belong to a cited paper, and AI output can be a plausible hallucination.
@@ -46,6 +48,7 @@ from ..logbuf import log
 from ..pdf_index import doc_chars
 from ..pdf_text import PDF_EXTRACT_FAILED
 from ..pdf_text import page_count as _page_count
+from ..pdf_text import title_guess as _title_guess
 from ..textnorm import INDEX_VERSION, normalize_text, plain_text
 from .ai import CITE_PROMPT, METADATA_PROMPT, _resolve_model
 from .pdf import ARXIV_ID, CONTACT_EMAIL
@@ -894,6 +897,82 @@ def metadata_status(request: Request):
     return {"papers": papers}
 
 
+# --- What the web page said ---------------------------------------------------
+# The Connector reads the page a paper is saved from (extension/detect.js,
+# pageRecord.js): the identifiers in its own tags (citation_doi,
+# citation_arxiv_id, a DOI in its address), a DOI it only found in its text,
+# and its citation record, the Highwire citation_* tags (Dublin Core where
+# those are missing) that Google Scholar and Zotero's Embedded Metadata
+# translator read. The clip keeps them on the page as
+# ``properties.web_meta`` (``web_record``), so every lookup of the page
+# reads them: the clip's own, the one the app starts when the page is
+# opened (which used to run beside it without the identifiers), a refetch.
+
+_WEB_FIELDS = ("title", "year", "venue", "volume", "pages", "publisher", "isbn")
+_WEB_AUTHORS_MAX = 100
+
+
+def web_record(record: dict | None, doi: str = "", arxiv_id: str = "", text_doi: str = "") -> dict:
+    """``properties.web_meta`` for a clip: the page's citation ``record``
+    cleaned (plain strings of bounded length, at most 100 authors, a
+    four-digit year, a checksum-valid ISBN, an item type by our names), the
+    identifiers its tags carried (``doi``, ``arxiv_id``, normalized by the
+    caller) and a DOI found only in its text (``text_doi``). {} when there
+    is nothing to keep."""
+    record = record if isinstance(record, dict) else {}
+    out = {}
+    for key in _WEB_FIELDS:
+        value = re.sub(r"\s+", " ", str(record.get(key) or "")).strip()[:500]
+        if value:
+            out[key] = value
+    year = re.search(r"\d{4}", out.pop("year", ""))
+    if year:
+        out["year"] = year.group()
+    isbn = re.sub(r"[^0-9Xx]", "", out.pop("isbn", "")).upper()
+    if _isbn_valid(isbn):
+        out["isbn"] = isbn
+    authors = record.get("authors") if isinstance(record.get("authors"), list) else []
+    names = [re.sub(r"\s+", " ", str(a)).strip()[:200] for a in authors[:_WEB_AUTHORS_MAX]]
+    if any(names):
+        out["authors"] = [n for n in names if n]
+    kind = item_types.normalize(record.get("kind"))
+    if kind:
+        out["kind"] = kind
+    for key, value in (("doi", doi), ("arxiv_id", arxiv_id)):
+        if value:
+            out[key] = value
+    if text_doi and text_doi.lower() != (doi or "").lower():
+        out["text_doi"] = text_doi
+    return out
+
+
+def _page_record(web: dict) -> dict | None:
+    """The web page's citation record as a metadata record (``source``
+    ``page``): None unless it names a title and an author, the least a
+    citation needs. The fields are the popover's; the identifiers are the
+    ones the page's tags carried."""
+    title = str(web.get("title") or "").strip()
+    authors = [str(a).strip() for a in (web.get("authors") or []) if str(a).strip()] \
+        if isinstance(web.get("authors"), list) else []
+    if not title or not authors:
+        return None
+    rec = {"title": title, "authors": authors, "source": "page"}
+    for key in ("year", "venue", "volume", "pages", "doi", "arxiv_id", "publisher", "isbn"):
+        rec[key] = str(web.get(key) or "").strip()
+    kind = item_types.normalize(web.get("kind"))
+    if kind:
+        rec["kind"] = kind
+    return rec
+
+
+def web_names_a_work(web) -> bool:
+    """Whether what a web page said (``web_meta``) names a work a lookup can
+    find without a PDF: an identifier from its tags, a DOI from its text,
+    or a citation record with a title and an author."""
+    web = web if isinstance(web, dict) else {}
+    return bool(web.get("doi") or web.get("arxiv_id") or web.get("text_doi") or _page_record(web))
+
+
 class MetaFetchRequest(BaseModel):
     block_id: str
     prompt: str = ""   # custom AI metadata-extraction prompt (empty = built-in)
@@ -915,14 +994,16 @@ def metadata_fetch(payload: MetaFetchRequest, request: Request):
 
 def fetch_page_metadata(ws: str, block_id: str, actor: str, prompt: str = "", model: str = "",
                         force: bool = False, context_char_limit: int = 6000,
-                        doi: str = "", arxiv_id: str = "",
                         cite_prompt: str = "", cite_model: str = "") -> dict:
     """The lookup behind POST /api/metadata/fetch, callable off-request (the
     extension's /api/clip runs it in a background thread). ``actor`` is the
     id of the account on whose behalf it runs — its AI providers do the AI
-    part, the op is logged under it. doi/arxiv_id are
-    caller-supplied hints — the extension's detector reads them off the
-    publisher page's own meta tags, so they are trusted like URL-derived ids.
+    part, the op is logged under it. What the web page the paper was saved
+    from said about it (``properties.web_meta``, ``web_record``) is read
+    from the page, so this lookup and the one the app starts when the page
+    is opened agree: its identifiers are trusted like URL-derived ones, a
+    DOI only found in its text is a candidate the PDF must confirm, and its
+    citation record stands when no registry confirms anything.
     A successful lookup also generates the slide citation (when AI is
     configured) so it is ready the moment the metadata is — not the first
     time someone opens the share popover. Raises HTTPException(404) when
@@ -936,10 +1017,15 @@ def fetch_page_metadata(ws: str, block_id: str, actor: str, prompt: str = "", mo
 
     doc_id = props.get("doc_id") or ""
     source_url = props.get("source_url") or ""
+    web = props.get("web_meta") if isinstance(props.get("web_meta"), dict) else {}
+    arxiv_id = str(web.get("arxiv_id") or "").strip()
+    text_doi = str(web.get("text_doi") or "").strip()
+    record = _page_record(web)
     # Identifier sources trusted without a title check: the stored source URL,
-    # the web page the extension clipped from, and the detector hints.
+    # the web page the extension clipped from, and the identifiers that page
+    # carried in its own tags.
     hints = "\n".join(filter(None, [
-        source_url, str(props.get("web_url") or ""), doi, arxiv_id]))
+        source_url, str(props.get("web_url") or ""), str(web.get("doi") or ""), arxiv_id]))
     # Raw head text (no excerpt label — this text feeds regexes and matching).
     # The scan window is decoupled from the AI-context pref (see SCAN_CHARS);
     # the AI later gets only the pref-sized head slice.
@@ -970,7 +1056,7 @@ def fetch_page_metadata(ws: str, block_id: str, actor: str, prompt: str = "", mo
     # Unconfirmed records are kept only until something confirmed shows up.
     confirmed = False
 
-    trusted_arxiv = (arxiv_id or "").strip() or _find_arxiv_id(hints, "")
+    trusted_arxiv = arxiv_id or _find_arxiv_id(hints, "")
     aid = trusted_arxiv or _find_arxiv_id("", text)
     if aid:
         meta = _fetch_arxiv(aid)
@@ -984,9 +1070,12 @@ def fetch_page_metadata(ws: str, block_id: str, actor: str, prompt: str = "", mo
         # on page 1, a previous article's trailer in an issue-clipped PDF), so
         # resolve candidates until one's registrar title appears in the text;
         # an unconfirmed resolution is only a fallback. The tail rides along
-        # so an own-DOI printed only in the end trailer is a candidate too.
+        # so an own-DOI printed only in the end trailer is a candidate too,
+        # and a DOI the web page only printed in its text goes first, under
+        # the same title check (it may be a work the page cites); with no
+        # PDF text to check it against it can only be the fallback.
         fallback = None
-        for cand_doi in _find_doi_candidates(hints, text + "\n" + tail):
+        for cand_doi in _find_doi_candidates(hints, "\n".join(filter(None, [text_doi, text, tail]))):
             m, b = _fetch_doi(cand_doi)
             if not m:
                 continue
@@ -1017,22 +1106,45 @@ def fetch_page_metadata(ws: str, block_id: str, actor: str, prompt: str = "", mo
 
     if not confirmed:
         # No trustworthy identifier — Crossref bibliographic search, accepted
-        # only when the hit's exact title appears in the PDF. Deterministic,
-        # and it keeps most publisher PDFs off the AI fallback. Queried with
-        # the page title first (users often title pages with the paper name;
-        # uploads may auto-carry a title-like filename), then the text head.
+        # only when the hit's exact title appears in the PDF, or, beside the
+        # web page's own record, when the titles are near-identical and the
+        # years agree. Deterministic, and it keeps most publisher PDFs off
+        # the AI fallback. Queried with the web page's title and first
+        # author (its own tags), the first page's largest type (the title on
+        # most papers, where the text head can open with a running header,
+        # a journal banner or a "Downloaded from" line), the page title
+        # (users title pages with the paper name; an upload carries its file
+        # name), then the text head.
         queries = []
-        page_title = re.sub(r"\.pdf$", "", (content or "").strip(), flags=re.I)
-        if text and len(page_title.split()) >= 3:
-            queries.append(page_title[:300])
+        if record:
+            queries.append(f"{record['title']} {record['authors'][0]}"[:300])
         if text:
+            path = _pdf_path(ws, doc_id) if doc_id else None
+            guess = _title_guess(str(path)) if path else ""
+            if len(guess.split()) >= 3:
+                queries.append(guess)
+            page_title = re.sub(r"\.pdf$", "", (content or "").strip(), flags=re.I)
+            if len(page_title.split()) >= 3:
+                queries.append(page_title[:300])
             queries.append(_norm_match(text[:1500])[:500])
+        asked = set()
         for q in queries:
-            cand = _pick_crossref_match(_crossref_search(q), text)
+            if _norm_match(q) in asked:
+                continue
+            asked.add(_norm_match(q))
+            cand = _pick_crossref_match(_crossref_search(q), text, ai_meta=record)
             if cand:
                 better, bib = _fetch_doi(cand["doi"])
                 meta, bibtex, confirmed = (better or cand), bib, True
                 break
+
+    if not confirmed and record:
+        # The web page's own record of the work: the tags its citation_doi
+        # comes from, so it is trusted like that DOI. It beats a registry
+        # fallback nothing confirmed and spares the AI call for works no
+        # registry knows: a thesis in a repository, a report, a conference
+        # paper without a DOI.
+        meta, bibtex, confirmed = dict(record), "", True
 
     rt = ai_runtime(actor)
     if not meta and rt["enabled"] and text:

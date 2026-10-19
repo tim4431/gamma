@@ -5,7 +5,7 @@ publisher PDFs without a page-1 identifier, and AI-extracted output is
 verified — fabricated identifiers are dropped instead of stored.
 """
 
-from conftest import workspace_of, make_page, guest_name
+from conftest import make_page
 
 from gamma.routers import metadata
 from gamma.routers.metadata import (
@@ -288,16 +288,137 @@ def test_title_match_reaches_past_6000_chars():
     assert _title_in_text(ZENO_TITLE, text)
 
 
-def test_detector_doi_hint_is_trusted(guest, monkeypatch):
-    """The extension's /api/clip forwards the DOI it read off the publisher
-    page's meta tags — trusted like a URL-derived id, no title match needed
-    (the text here contains neither the DOI nor the title)."""
-    page = _paper_page(guest, "scanned garbage with no identifiers at all", monkeypatch)
+def _clipped_page(guest, monkeypatch, web_meta, text=None, crossref=None):
+    """A page a clip made: what its web page said in ``web_meta``, a PDF
+    whose head is ``text`` (None: a page with its web source, no PDF), and
+    Crossref answering ``crossref(query)`` (nothing by default); returns
+    the page and the queries Crossref was asked."""
+    props = {"web_url": "https://repo.example/item", "web_meta": web_meta}
+    if text is not None:
+        props["doc_id"] = "d" * 24
+        monkeypatch.setattr(metadata, "_pdf_excerpt", lambda u, d, limit: (text, None, len(text)))
+        monkeypatch.setattr(metadata, "_ensure_indexed", lambda u, d: True)
+    monkeypatch.setattr(metadata, "ai_runtime", lambda u: {"enabled": False})
+    queries = []
+
+    def search(q, rows=5):
+        queries.append(q)
+        return crossref(q) if crossref else []
+    monkeypatch.setattr(metadata, "_crossref_search", search)
+    return make_page(guest, "Saved page", properties=props), queries
+
+
+def test_the_pages_tag_doi_is_trusted_by_every_lookup(guest, monkeypatch):
+    """The DOI the publisher page's tags carried is kept on the page
+    (web_meta), so the lookup the app starts when the page is opened trusts
+    it as the clip's own did — no title match needed (the text here holds
+    neither the DOI nor the title)."""
+    page, _ = _clipped_page(guest, monkeypatch, {"doi": "10.1000/zeno754"},
+                            text="scanned garbage with no identifiers at all")
     monkeypatch.setattr(metadata, "_fetch_doi",
                         lambda d: (ZENO_META, "@article{zeno}") if d == "10.1000/zeno754" else (None, ""))
-    out = metadata.fetch_page_metadata(workspace_of(guest_name()), page["id"], guest_name(), doi="10.1000/zeno754")
-    assert out["meta"]["title"] == ZENO_TITLE
-    assert out["source"] == "doi"
+    r = guest.post("/api/metadata/fetch", json={"block_id": page["id"]})
+    assert r.status_code == 200, r.text
+    assert r.json()["meta"]["title"] == ZENO_TITLE and r.json()["source"] == "doi"
+    assert r.json()["meta"]["unverified"] is False
+
+
+def test_a_doi_from_the_pages_text_is_confirmed_by_the_pdf(guest, monkeypatch):
+    """A DOI the web page only printed in its text is tried first, and
+    trusted only when its title is in the PDF."""
+    page, _ = _clipped_page(guest, monkeypatch, {"text_doi": "10.1000/real456"},
+                            text=PAGE_TEXT.replace("DOI: 10.1000/real456", ""))
+    monkeypatch.setattr(metadata, "_fetch_doi",
+                        lambda d: {"10.1000/cited123": (CITED_META, "@x"),
+                                   "10.1000/real456": (REAL_META, "@article{real}")}.get(d, (None, "")))
+    r = guest.post("/api/metadata/fetch", json={"block_id": page["id"]})
+    assert r.status_code == 200, r.text
+    assert r.json()["meta"]["doi"] == "10.1000/real456" and r.json()["meta"]["unverified"] is False
+
+
+def test_a_doi_from_the_pages_text_is_unconfirmed_without_its_title(guest, monkeypatch):
+    """The page merely cited that paper: its record is only a fallback,
+    flagged — with a PDF that does not carry its title, and on a page with
+    its web source and no PDF to check against."""
+    monkeypatch.setattr(metadata, "_fetch_doi",
+                        lambda d: (CITED_META, "@x") if d == "10.1000/cited123" else (None, ""))
+    for text in ("A blog post about films, citing nothing it prints.", None):
+        page, _ = _clipped_page(guest, monkeypatch, {"text_doi": "10.1000/cited123"}, text=text)
+        r = guest.post("/api/metadata/fetch", json={"block_id": page["id"]})
+        assert r.status_code == 200, r.text
+        assert r.json()["meta"]["doi"] == "10.1000/cited123"
+        assert r.json()["meta"]["unverified"] is True, text
+
+
+THESIS_RECORD = {
+    "title": "Trapped Ions in Cavities", "authors": ["Ada Lovelace"], "year": "2019",
+    "publisher": "Example University", "kind": "thesis",
+}
+
+
+def test_the_pages_record_stands_when_no_registry_knows_the_work(guest, monkeypatch):
+    """A thesis in a repository: no identifier, nothing in Crossref. The
+    page's own citation record is the record — typed, confirmed, no AI —
+    and its title and author were Crossref's first query."""
+    page, queries = _clipped_page(guest, monkeypatch, THESIS_RECORD, text="A thesis without identifiers. " * 20)
+    r = guest.post("/api/metadata/fetch", json={"block_id": page["id"]})
+    assert r.status_code == 200, r.text
+    meta = r.json()["meta"]
+    assert r.json()["source"] == "page" and meta["kind"] == "thesis" and meta["unverified"] is False
+    assert meta["title"] == "Trapped Ions in Cavities" and meta["publisher"] == "Example University"
+    assert r.json()["bibtex"].startswith("@phdthesis{") and "school = {Example University}" in r.json()["bibtex"]
+    assert queries[0] == "Trapped Ions in Cavities Ada Lovelace"
+    # A page with its web source and no PDF gets it too.
+    page, _ = _clipped_page(guest, monkeypatch, THESIS_RECORD)
+    r = guest.post("/api/metadata/fetch", json={"block_id": page["id"]})
+    assert r.status_code == 200 and r.json()["source"] == "page"
+
+
+def test_the_pages_record_beats_an_unconfirmed_doi(guest, monkeypatch):
+    """The only DOI in the PDF is a cited paper's: before, its record was
+    stored (flagged); the page's own record wins now."""
+    page, _ = _clipped_page(guest, monkeypatch, THESIS_RECORD,
+                            text="An intro citing earlier work doi:10.1000/cited123 and nothing else.")
+    monkeypatch.setattr(metadata, "_fetch_doi",
+                        lambda d: (CITED_META, "@x") if d == "10.1000/cited123" else (None, ""))
+    r = guest.post("/api/metadata/fetch", json={"block_id": page["id"]})
+    assert r.status_code == 200, r.text
+    assert r.json()["source"] == "page" and r.json()["meta"]["title"] == THESIS_RECORD["title"]
+
+
+def test_a_registry_record_beats_the_pages_record(guest, monkeypatch):
+    """Crossref knows the work: its record, found with the page's title and
+    author and accepted on a near-identical title and the same year (there
+    is no PDF text to find it in), replaces the page's."""
+    record = {"title": "Deterministic generation of multiparticle entanglement by quantum Zeno dynamics.",
+              "authors": ["G. Barontini"], "year": "2015", "venue": "Science"}
+    page, queries = _clipped_page(guest, monkeypatch, record,
+                                  crossref=lambda q: [dict(ZENO_META, source="crossref")])
+    monkeypatch.setattr(metadata, "_fetch_doi",
+                        lambda d: (ZENO_META, "@article{zeno}") if d == "10.1000/zeno754" else (None, ""))
+    r = guest.post("/api/metadata/fetch", json={"block_id": page["id"]})
+    assert r.status_code == 200, r.text
+    assert r.json()["source"] == "doi" and r.json()["meta"]["doi"] == "10.1000/zeno754"
+    assert queries == [f"{record['title']} G. Barontini"]
+
+
+def test_the_pdfs_largest_type_is_asked_before_the_text_head(guest, monkeypatch):
+    """The first page's largest-type lines (pdf_text.title_guess) are the
+    Crossref query after the page's record and before the page title and
+    the text head; a query asked once is not asked again."""
+    text = "Downloaded from https://journal.example on 1 May 2024 " * 30 + ZENO_TITLE
+    page = make_page(guest, ZENO_TITLE, properties={"doc_id": "d" * 24})
+    monkeypatch.setattr(metadata, "_pdf_excerpt", lambda u, d, limit: (text, None, len(text)))
+    monkeypatch.setattr(metadata, "_ensure_indexed", lambda u, d: True)
+    monkeypatch.setattr(metadata, "ai_runtime", lambda u: {"enabled": False})
+    monkeypatch.setattr(metadata, "_pdf_path", lambda ws, d: "paper.pdf")
+    monkeypatch.setattr(metadata, "_title_guess", lambda path: ZENO_TITLE.upper())
+    queries = []
+    monkeypatch.setattr(metadata, "_crossref_search", lambda q, rows=5: queries.append(q) or [])
+    r = guest.post("/api/metadata/fetch", json={"block_id": page["id"]})
+    assert r.status_code == 404
+    assert queries[0] == ZENO_TITLE.upper() and len(queries) == 2  # the page title is the same words
+    assert queries[1].startswith("downloaded from https journal example")
 
 
 def test_web_url_supplies_trusted_doi(guest, monkeypatch):
