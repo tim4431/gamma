@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { allItemIds, filterImportPages, selectItems, buildImportTree, treeItemIds, treeSize, resultPages } from "../src/transfers/importReview.js";
+import { allItemIds, filterImportPages, selectItems, buildImportTree, treeItemIds, treeSize, resultPages, importSummary } from "../src/transfers/importReview.js";
 
 test("filters preserve hidden selections; folder selection deduplicates items in multiple locations", () => {
   const pages = [
@@ -30,4 +30,9 @@ test("a tree's size counts the files in all its folders (ImportTree starts a big
   assert.equal(treeSize(tree), 4);
   assert.equal(treeSize(tree.folders.get("vault")), 3);
   assert.equal(treeSize(tree.folders.get("vault").folders.get("empty")), 0);
+});
+
+test("the summary counts the attachments a Zotero import put on its pages", () => {
+  assert.equal(importSummary({ pages_created: 1, notes_imported: 2, attachments_imported: 3 }),
+    "1 new page · 2 notes · 3 attachments");
 });

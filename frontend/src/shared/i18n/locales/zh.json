@@ -20,6 +20,7 @@
   " · shared by {owner}": " · 由 {owner} 分享",
   " · their default": " · 对方的默认工作区",
   " · your default": " · 你的默认工作区",
+  " · {n} attachment{_s}": " · {n} 个附件",
   " · {notes} exported note{_s}": " · 已导出 {notes} 条笔记",
   " — tap again for options": "——再次点按打开选项",
   " — your edits stay here and are pushed once the remote is reachable again.": "——你的编辑保留在本地，源可以访问后会推送过去。",

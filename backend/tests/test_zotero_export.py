@@ -184,6 +184,30 @@ def test_zotero_export_note_images(guest):
     assert "“quoted”" in hl_note and "see" in hl_note
 
 
+def test_exported_note_images_come_back_once(guest):
+    """A note's image rides the export as an item attachment. Brought back
+    into its own library it is in the notes already and adds nothing; into
+    another library it lands under the page's "Attachments", as a chip."""
+    page = _paper(guest, "zxm")
+    img_url = guest.post("/api/upload-image", files={"file": ("fig.png", _PNG, "image/png")}).json()["url"]
+    _put_children(guest, page["id"], [
+        {"id": "zxmn", "content": f"figure: ![fig]({img_url})", "properties": {}, "children": []}])
+    r = guest.get(f"/api/pages/{page['id']}/export", params={"mode": "zotero-rdf"})
+    kids = [c["id"] for c in guest.get(f"/api/blocks/{page['id']}/children").json()["children"]]
+    d = guest.post("/api/import/zotero", files={"file": ("lib.zip", io.BytesIO(r.content), "application/zip")}).json()
+    assert (d["pages_merged"], d["attachments_imported"]) == (1, 0)
+    assert [c["id"] for c in guest.get(f"/api/blocks/{page['id']}/children").json()["children"]] == kids
+
+    other = _other_library()
+    d = other.post("/api/import/zotero", files={"file": ("lib.zip", io.BytesIO(r.content), "application/zip")}).json()
+    assert (d["pages_created"], d["attachments_imported"]) == (1, 1)
+    children = other.get(f"/api/blocks/{d['pages'][0]['id']}/children").json()["children"]
+    [heading] = [c for c in children if c["properties"].get("zotero_attachments")]
+    [chip] = other.get(f"/api/blocks/{heading['id']}/children").json()["children"]
+    assert chip["content"] == f"[{img_url.rsplit('/', 1)[-1]}]({img_url})"
+    assert other.get(img_url).content == _PNG
+
+
 def test_zotero_export_puts_a_text_box_on_the_pdf_copy(guest):
     """A text box on a PDF page rides in the PDF copy as the /FreeText the
     annotated PDF writes, which Zotero 7+ imports as its text annotation —
