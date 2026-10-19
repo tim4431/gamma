@@ -14,18 +14,21 @@ the key itself). There is no env key.
 
 Admins may add SHARED entries (Settings → Server → Shared AI provider,
 /api/admin/ai-providers*): the same shape — an API key, or a ChatGPT
-sign-in made through /api/admin/ai-providers/chatgpt/* — ids namespaced
-``server:<id>`` so they never collide with an account's. They live in the
-users.db `settings` KV under `ai_providers` as
-{"providers": [...], "guests": bool, "allowance": {"accounts": N, "guests": N}},
+sign-in made through /api/admin/ai-providers/chatgpt/*, or one of the
+admin's own entries shared (share_own_entry) — ids namespaced
+``server:<id>`` so they never collide with an account's, each with an
+``access`` saying who may use it ({"who": "everyone" | "selected", "users":
+[account ids], "guests": bool}). They live in the users.db `settings` KV
+under `ai_providers` as
+{"providers": [...], "allowance": {"accounts": N, "guests": N}},
 each api_key and each sign-in's tokens Fernet-encrypted with the data
 directory's key (the cloud client secret's scheme); a shared sign-in's
 tokens are refreshed under that entry's own lock and written back to the
-KV. ai_runtime() offers them to every account after its own;
-guest accounts only while `guests` is on. The allowance meters them per
-account over a rolling 24 hours (tokens, 0 = unlimited; guests and other
-accounts each have their own limit): ai_runtime() reports it and marks the
-shared provider confs so ai_client.open_ai refuses a call once it is used up
+KV. ai_runtime() offers an account the entries whose access admits it,
+after its own (shared_access). The allowance meters them per account over
+a rolling 24 hours (tokens, 0 = unlimited; guests and other accounts each
+have their own limit): ai_runtime() reports it and marks the shared
+provider confs so ai_client.open_ai refuses a call once it is used up
 (docs/dev/guests.md).
 """
 
@@ -199,6 +202,32 @@ SERVER_ID_PREFIX = ai_usage.SHARED_PREFIX  # "server:"
 ALLOWANCE_MAX = 1_000_000_000
 _server_lock = threading.Lock()
 
+# Who may use a shared entry, its ``access``: {"who": "everyone" |
+# "selected", "users": [account ids], "guests": bool}. "everyone" is every
+# account, the guest accounts too when ``guests`` is on; "selected" is the
+# listed accounts alone (a guest is never one, and the list is kept only
+# under "selected"). An administrator always has access: the Server
+# section tests, lists the models of and asks usage of every shared entry
+# through the admin's own runtime.
+ACCESS_WHO = ("everyone", "selected")
+MAX_ACCESS_USERS = 500
+
+
+def default_access(guests: bool = False) -> dict:
+    return {"who": "everyone", "users": [], "guests": bool(guests)}
+
+
+def _clean_access(value, legacy_guests: bool = False) -> dict:
+    """A stored access object as a clean one. An entry without one was
+    written when access was one server-wide guest switch: it takes that
+    switch's value, so an upgrade changes nobody's access."""
+    if not isinstance(value, dict):
+        return default_access(legacy_guests)
+    who = value.get("who") if value.get("who") in ACCESS_WHO else "everyone"
+    users = value.get("users") if isinstance(value.get("users"), list) else []
+    users = [u for u in users if isinstance(u, str) and u][:MAX_ACCESS_USERS] if who == "selected" else []
+    return {"who": who, "users": users, "guests": who == "everyone" and value.get("guests") is True}
+
 
 def is_server_id(provider_id) -> bool:
     return str(provider_id or "").startswith(SERVER_ID_PREFIX)
@@ -222,11 +251,11 @@ def _allowance_limit(value) -> int:
 
 
 def load_server_ai() -> dict:
-    """The shared entries with their keys decrypted, the guest switch and the
-    allowance: {"providers": [...], "guests": bool, "allowance": {"accounts":
-    int, "guests": int}} (tokens per account per 24 h, 0 = unlimited). A key
-    or a sign-in that no longer decrypts (the data directory's key changed)
-    reads as none, with a warning."""
+    """The shared entries with their keys decrypted, each with its
+    ``access``, and the allowance: {"providers": [...], "allowance":
+    {"accounts": int, "guests": int}} (tokens per account per 24 h, 0 =
+    unlimited). A key or a sign-in that no longer decrypts (the data
+    directory's key changed) reads as none, with a warning."""
     try:
         value = json.loads(_get_raw(SERVER_AI_KEY) or "{}")
     except ValueError:
@@ -234,11 +263,14 @@ def load_server_ai() -> dict:
     if not isinstance(value, dict):
         value = {}
     entries = value.get("providers") if isinstance(value.get("providers"), list) else []
+    # Written before access was per entry: the one guest switch of that time.
+    legacy_guests = value.get("guests") is True
     out = []
     for e in entries:
         if not isinstance(e, dict) or not is_server_id(e.get("id")):
             continue
         e = dict(e)
+        e["access"] = _clean_access(e.get("access"), legacy_guests)
         stored = e.get("api_key") or ""
         try:
             e["api_key"] = cipher().decrypt(stored.encode("ascii")).decode("utf-8") if stored else ""
@@ -255,14 +287,15 @@ def load_server_ai() -> dict:
                 log.warning(f"shared AI provider {e.get('id')}: the stored sign-in cannot be decrypted (key changed?)")
         out.append(e)
     allowance = value.get("allowance") if isinstance(value.get("allowance"), dict) else {}
-    return {"providers": out, "guests": value.get("guests") is True,
+    return {"providers": out,
             "allowance": {k: _allowance_limit(allowance.get(k)) for k in ("accounts", "guests")}}
 
 
 def _sealed(entry: dict) -> dict:
-    """A shared entry as stored: the key and the sign-in's tokens encrypted."""
+    """A shared entry as stored: the key and the sign-in's tokens encrypted,
+    the access a clean object."""
     out = {**entry, "api_key": cipher().encrypt(entry["api_key"].encode("utf-8")).decode("ascii")
-           if entry.get("api_key") else ""}
+           if entry.get("api_key") else "", "access": _clean_access(entry.get("access"))}
     oauth = entry.get("oauth")
     if isinstance(oauth, dict) and oauth:
         out["oauth"] = cipher().encrypt(json.dumps(oauth).encode("utf-8")).decode("ascii")
@@ -275,7 +308,7 @@ def save_server_ai(config: dict) -> None:
     providers = [_sealed(e) for e in config.get("providers") or []]
     allowance = config.get("allowance") if isinstance(config.get("allowance"), dict) else {}
     _set_raw(SERVER_AI_KEY, json.dumps({
-        "providers": providers, "guests": bool(config.get("guests")),
+        "providers": providers,
         "allowance": {k: _allowance_limit(allowance.get(k)) for k in ("accounts", "guests")}}))
 
 
@@ -292,6 +325,49 @@ def validated_allowance(value) -> dict:
     return dict(value)
 
 
+def validated_access(value) -> dict:
+    """The access part of an admin request — {"who": "everyone" |
+    "selected", "users"?: [usernames], "guests"?: bool} — checked and in
+    its stored shape (the usernames as account ids). 400 on anything else,
+    a username that is no account's or a guest's included. Under
+    "everyone" the list is dropped, under "selected" the guest flag."""
+    if not isinstance(value, dict) or set(value) - {"who", "users", "guests"}:
+        raise HTTPException(status_code=400, detail='access takes "who", "users" and "guests"')
+    who = value.get("who", "everyone")
+    if who not in ACCESS_WHO:
+        raise HTTPException(status_code=400, detail='access.who is "everyone" or "selected"')
+    guests = value.get("guests", False)
+    if not isinstance(guests, bool):
+        raise HTTPException(status_code=400, detail="access.guests is true or false")
+    names = value.get("users", [])
+    if not isinstance(names, list) or not all(isinstance(n, str) for n in names):
+        raise HTTPException(status_code=400, detail="access.users is a list of usernames")
+    if who == "everyone":
+        return default_access(guests)
+    names = list(dict.fromkeys(n.strip() for n in names if n.strip()))
+    if len(names) > MAX_ACCESS_USERS:
+        raise HTTPException(status_code=400, detail=f"at most {MAX_ACCESS_USERS} accounts can be named")
+    ids = []
+    with connect_users_db() as conn:
+        for name in names:
+            row = conn.execute("SELECT id, is_guest FROM users WHERE username = ?", (name,)).fetchone()
+            if not row:
+                raise HTTPException(status_code=400, detail=f"no account is named {name}")
+            if row[1]:
+                raise HTTPException(status_code=400,
+                                    detail=f"{name} is a guest account — guests are admitted by the guest switch")
+            ids.append(row[0])
+    return {"who": "selected", "users": ids, "guests": False}
+
+
+def access_view(entry: dict, names: dict) -> dict:
+    """An entry's access as the admin's form shows it: the listed accounts
+    by username (``names`` = db.account_names of them; a deleted account is
+    left out)."""
+    access = _clean_access(entry.get("access"))
+    return {**access, "users": [names[u] for u in access["users"] if u in names]}
+
+
 def edit_server_ai(change) -> dict:
     """Read-modify-write the shared config under one lock: ``change(config)``
     mutates it in place (and may raise to abort). Returns the saved config."""
@@ -303,11 +379,12 @@ def edit_server_ai(change) -> dict:
 
 
 def shared_access(user_id: str) -> tuple[list, int]:
-    """The shared entries the account ``user_id`` (an id) may use — every
-    account may, a guest account only while the admin switch is on, an id
-    that is no account never — and the allowance limit that applies to it
-    (the guests' or the accounts', by the users row's ``is_guest``; 0 =
-    unlimited)."""
+    """The shared entries the account ``user_id`` (an id) may use, by each
+    entry's access — every account under "everyone", a guest account only
+    where ``guests`` is on, a listed account under "selected", an
+    administrator always, an id that is no account never — and the
+    allowance limit that applies to it (the guests' or the accounts', by
+    the users row's ``is_guest``; 0 = unlimited)."""
     if not user_id:
         return [], 0
     config = load_server_ai()
@@ -315,12 +392,58 @@ def shared_access(user_id: str) -> tuple[list, int]:
         return [], 0
     try:
         with connect_users_db() as conn:
-            row = conn.execute("SELECT is_guest FROM users WHERE id = ?", (user_id,)).fetchone()
+            row = conn.execute("SELECT is_guest, is_admin FROM users WHERE id = ?", (user_id,)).fetchone()
     except sqlite3.Error:
         row = None
-    if not row or (row[0] and not config["guests"]):
+    if not row:
         return [], 0
-    return config["providers"], config["allowance"]["guests" if row[0] else "accounts"]
+    is_guest, is_admin = bool(row[0]), bool(row[1])
+    limit = config["allowance"]["guests" if is_guest else "accounts"]
+    if is_admin and not is_guest:
+        return config["providers"], limit
+
+    def admitted(entry: dict) -> bool:
+        access = entry["access"]
+        if access["who"] == "selected":
+            return not is_guest and user_id in access["users"]
+        return access["guests"] if is_guest else True
+    return [e for e in config["providers"] if admitted(e)], limit
+
+
+def share_own_entry(user_id: str, provider_id: str) -> dict:
+    """The account's own entry ``provider_id`` made a shared one (Settings →
+    Server's Share one of mine), with the fields and models it has and the
+    default access. An API-key entry is copied: the account keeps its own,
+    a key may serve two entries. A sign-in entry moves: its tokens go to
+    the shared entry and the account's entry is removed, because OpenAI
+    rotates the refresh token and two entries refreshing one grant would
+    sign each other out. Returns the new shared entry. 404 for an id that
+    is none of the account's, 400 for a sign-in that is not connected."""
+    own = next((e for e in own_entries(user_id) if e.get("id") == provider_id), None)
+    if not own:
+        raise HTTPException(status_code=404, detail="provider not found")
+    oauth_entry = is_oauth_protocol(own.get("protocol"))
+    if not _has_credential(own):
+        raise HTTPException(status_code=400, detail="this sign-in is not connected — sign in again first, then share it"
+                            if oauth_entry else "this connection has no API key")
+    entry = {"id": new_server_provider_id(), "protocol": own.get("protocol"),
+             "name": (own.get("name") or "").strip(), "api_key": (own.get("api_key") or "").strip(),
+             "base_url": (own.get("base_url") or "").strip(), "models": (own.get("models") or "").strip(),
+             "test_model": (own.get("test_model") or "").strip(), "created_at": page_now(),
+             "access": default_access()}
+    if oauth_entry:
+        entry["oauth"] = dict(own["oauth"])
+
+    def add(config):
+        if len(config["providers"]) >= MAX_PROVIDERS:
+            raise HTTPException(status_code=400, detail="too many providers")
+        config["providers"].append(entry)
+    edit_server_ai(add)
+    if oauth_entry:
+        def drop(entries):
+            entries[:] = [e for e in entries if e.get("id") != provider_id]
+        update_provider_entries(user_id, drop)
+    return entry
 
 
 def _has_credential(entry: dict) -> bool:

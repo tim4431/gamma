@@ -12,6 +12,19 @@ import { T, t } from "../shared/i18n/i18n.js";
 // A provider's model list as stored: comma-separated names.
 export const modelList = (raw) => (raw || "").split(",").map((name) => name.trim()).filter(Boolean);
 
+// Who may use a shared entry (gamma/ai_settings.py "access"): every account,
+// every account and the guests too, or the accounts named — what a new
+// shared entry starts with, and the few words a Server section row says.
+export const DEFAULT_ACCESS = { who: "everyone", users: [], guests: false };
+
+export function accessSummary(access) {
+  const a = access || DEFAULT_ACCESS;
+  if (a.who !== "selected") return a.guests ? t("every account and guests") : t("every account");
+  const names = a.users || [];
+  if (!names.length) return t("no account yet — administrators only");
+  return names.length <= 3 ? names.join(", ") : t("{names} and {n} more", { names: names.slice(0, 2).join(", "), n: names.length - 2 });
+}
+
 // The ways to connect an AI service, as tiles: each protocol the server
 // offers (sign-in first, then the API-key ones in the server's order), then
 // "Other" for the named services and a custom endpoint. The chat's setup
@@ -105,8 +118,10 @@ const SIGN_IN_CLEARED = { oauthState: "", oauthCallback: "", oauthLocal: false, 
 // `onSaved()` hears every change `run` saved (the account refreshes its
 // model list and login check, the Server section says so);
 // `onConnected(entry, form)` hears a connection this dialog just made, once
-// it is saved with its models — both lists test it right away.
-export function useProviderEditor({ info, setInfo, base, signIn = `${base}/chatgpt`, onSaved, onConnected }) {
+// it is saved with its models — both lists test it right away. `shared`
+// (the Server section) gives every form an `access` — who may use the
+// entry — that is saved with it.
+export function useProviderEditor({ info, setInfo, base, signIn = `${base}/chatgpt`, onSaved, onConnected, shared = false }) {
   const [form, setForm] = React.useState(null);
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState("");
@@ -292,7 +307,8 @@ export function useProviderEditor({ info, setInfo, base, signIn = `${base}/chatg
       const next = await apiJson(`${base}${f.id ? `/${encodeURIComponent(f.id)}` : ""}`, {
         method: f.id ? "PUT" : "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ protocol: f.protocol, name: f.name.trim(), base_url: f.base_url.trim(), models: f.models.trim(),
-          test_model: (f.test_model || "").trim(), ...(f.api_key.trim() ? { api_key: f.api_key.trim() } : {}) }),
+          test_model: (f.test_model || "").trim(), ...(f.api_key.trim() ? { api_key: f.api_key.trim() } : {}),
+          ...(f.access ? { access: f.access } : {}) }),
       });
       made = f.id ? (f.fresh ? next.providers.find((p) => p.id === f.id) : null)
         : next.providers.find((p) => !(info?.providers || []).some((old) => old.id === p.id));
@@ -318,6 +334,7 @@ export function useProviderEditor({ info, setInfo, base, signIn = `${base}/chatg
       name: "", api_key: "", base_url: preset?.base_url || "", models: "", test_model: "",
       ...(service === "other" && !preset ? { custom: true } : {}),
       ...(fromChat ? { fromChat: true } : {}),
+      ...(shared ? { access: DEFAULT_ACCESS } : {}),
     });
   }
 
@@ -348,7 +365,11 @@ export function useProviderEditor({ info, setInfo, base, signIn = `${base}/chatg
     submitAiProvider: submit,
     run,
     startAdd,
-    startEdit: (p) => { setError(""); setForm({ id: p.id, protocol: p.protocol, name: p.name || "", api_key: "", base_url: p.base_url || "", models: p.models || "", test_model: p.test_model || "" }); },
+    startEdit: (p) => {
+      setError("");
+      setForm({ id: p.id, protocol: p.protocol, name: p.name || "", api_key: "", base_url: p.base_url || "", models: p.models || "",
+        test_model: p.test_model || "", ...(shared ? { access: p.access || DEFAULT_ACCESS } : {}) });
+    },
     close: () => { setForm(null); setError(""); },
   };
 }

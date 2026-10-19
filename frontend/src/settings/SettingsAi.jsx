@@ -13,10 +13,11 @@ import { cachedPercent, fmtTokens, usageDetail } from "../chat/tokenUsage";
 import { failureCopy, fixLabel } from "../chat/chatErrors";
 import { ModelPicker } from "./ModelPicker";
 import { UsageChart } from "./UsageChart.jsx";
-import { Section, SubDialog, Step, Field, CopyField, Empty, IconChoices, PercentMeter, Row, PasswordInput, Toggle, UnitInput } from "./SettingsKit";
+import { AccountPicker, Section, SubDialog, Step, Field, CopyField, Empty, IconChoices, PercentMeter, Row, PasswordInput, UnitInput } from "./SettingsKit";
 import { SECTION_PREFS } from "./sectionPrefs.js";
-import { aiServiceTiles, modelList, onThisMachine, serviceGroups, signInAddress, useProviderEditor } from "./providerEditor.js";
-import { ActivityIcon, CheckIcon, ExternalLinkIcon, GlobeIcon, KeyIcon, MicIcon, PaperIcon, RefreshIcon, SparklesIcon, Trash2Icon, UserIcon, XIcon } from "../shared/ui/Icons";
+import { useAccounts } from "./SettingsWorkspace";
+import { accessSummary, aiServiceTiles, modelList, onThisMachine, serviceGroups, signInAddress, useProviderEditor } from "./providerEditor.js";
+import { ActivityIcon, CheckIcon, ExternalLinkIcon, GlobeIcon, KeyIcon, MicIcon, PaperIcon, RefreshIcon, SparklesIcon, Trash2Icon, UserIcon, UsersIcon, XIcon } from "../shared/ui/Icons";
 import { T, getLocale, t, tn } from "../shared/i18n/i18n.js";
 
 // Spoken languages for dictation, by native name. The pick "" follows the
@@ -73,7 +74,7 @@ function ProviderUsage({ usage }) {
 // kind (chat/chatErrors.js), the provider's own words on hover. Only a row
 // with a radio is a <label>: without one, the label's control would be its
 // first button, and a click anywhere on the row would press it (Test).
-function ProviderRow({ provider, protocol, oauth, active = false, radio = null, test, usage, onFix, children }) {
+function ProviderRow({ provider, protocol, oauth, active = false, radio = null, test, usage, onFix, access = null, children }) {
   const Frame = radio ? "label" : "div";
   const models = modelList(provider.models);
   const failed = test && !test.busy && !test.ok && test.kind
@@ -107,6 +108,12 @@ function ProviderRow({ provider, protocol, oauth, active = false, radio = null, 
             ? models.map((model) => <span className="categoryTag" key={model}>{model}</span>)
             : <span className="aiKeysError">{onFix ? t("none picked — edit to choose") : t("none picked")}</span>}
         </span>
+        {access ? (
+          <span className="aiProvDesc aiProvModels">
+            <span className="aiProvModelsLabel">{t("Access")}</span>
+            {accessSummary(access)}
+          </span>
+        ) : null}
         {test ? (
           <span
             className={`aiProvDesc ${test.busy ? "" : test.ok ? "aiTestOk" : "aiKeysError"}`}
@@ -145,9 +152,11 @@ const inMillions = (tokens) => String(Math.max(0, Number(tokens) || 0) / ALLOWAN
 // Settings → Server → Shared AI provider (admins): connections every
 // account on the server may use next to its own (backend
 // gamma/ai_settings.py). An API key, write-only like an account's, or a
-// ChatGPT subscription signed in here (its e-mail shown to admins only);
-// guests get them only while the switch is on. The allowance rows meter
-// them per account per day.
+// ChatGPT subscription signed in here (its e-mail shown to admins only),
+// each saying who may use it (every account, guests too, or the accounts
+// named). One of the admin's own connections becomes a shared one in one
+// click (Share one of mine → POST …/from-account). The allowance rows
+// meter them per account per day.
 export function SharedAiProviderSettings({ setStatus, confirm }) {
   const base = `${API}/admin/ai-providers`;
   const [info, setInfo] = React.useState(null);
@@ -159,7 +168,7 @@ export function SharedAiProviderSettings({ setStatus, confirm }) {
     apiJson(base).then((v) => { if (active) setInfo(v); }).catch((err) => { if (active) setLoadError(err.message); });
     return () => { active = false; };
   }, [base]);
-  const editor = useProviderEditor({ info, setInfo, base, onSaved: () => setStatus?.(t("Shared AI provider saved.")),
+  const editor = useProviderEditor({ info, setInfo, base, shared: true, onSaved: () => setStatus?.(t("Shared AI provider saved.")),
     onConnected: (entry) => test(entry) });
   async function test(p) {
     setTests((prev) => ({ ...prev, [p.id]: { busy: true } }));
@@ -194,9 +203,37 @@ export function SharedAiProviderSettings({ setStatus, confirm }) {
       onConfirm: () => run(() => apiJson(`${base}/${encodeURIComponent(p.id)}`, { method: "DELETE" })),
     });
   }
-  const setGuests = (guests) => run(() => apiJson(base, {
-    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ guests }),
-  }));
+  // Share one of mine: the admin's own connections (GET /api/ai/settings
+  // without the shared rows), one of which becomes a shared entry — a key
+  // copied, a sign-in moved (gamma/ai_settings.py share_own_entry). The new
+  // entry is tested at once, like one connected here.
+  const [mine, setMine] = React.useState(null); // closed | {loading} | {providers} | {error}
+  const [sharing, setSharing] = React.useState("");
+  async function openMine() {
+    setMine({ loading: true });
+    try {
+      const d = await apiJson(`${API}/ai/settings`);
+      setMine({ providers: (d.providers || []).filter((p) => !p.shared) });
+    } catch (err) { setMine({ error: err.message }); }
+  }
+  async function shareOwn(p) {
+    setSharing(p.id);
+    try {
+      const before = new Set((info?.providers || []).map((x) => x.id));
+      const next = await apiJson(`${base}/from-account`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ provider_id: p.id }),
+      });
+      setInfo(next);
+      setMine(null);
+      setStatus?.(t("Shared AI provider saved."));
+      const made = next.providers.find((x) => !before.has(x.id));
+      if (made) test(made);
+    } catch (err) {
+      setMine((m) => (m ? { ...m, error: err.message } : m));
+    } finally {
+      setSharing("");
+    }
+  }
   // The shared allowance: tokens per account (or guest) per rolling 24 h on
   // the shared entries, 0 = unlimited (docs/dev/guests.md). The box counts
   // in millions, the API in tokens. Only the changed field is sent; an
@@ -215,16 +252,19 @@ export function SharedAiProviderSettings({ setStatus, confirm }) {
   }
   const providers = info?.providers || [];
   return <>
-    <Section title={t("Shared AI provider")} action={info ? (
+    <Section title={t("Shared AI provider")} action={info ? <>
+      <button className="uiBtn sm" title={t("Make one of your own connections a shared one, models included")} onClick={openMine}>
+        {t("Share one of mine")}
+      </button>
       <button className="uiBtn sm" onClick={() => editor.startAdd("openai")}>{t("+ Add provider")}</button>
-    ) : null}>
+    </> : null}>
       {!info && !loadError ? <p className="setNotice">{t("Loading…")}</p> : null}
       {info && !providers.length ? <Empty icon={KeyIcon}>{t("No shared connection. Each account uses its own keys.")}</Empty> : null}
       {providers.map((provider) => {
         const el = tests[provider.id];
         const oauth = editor.isOauthProto(provider.protocol);
         return (
-          <ProviderRow key={provider.id} provider={{ ...provider, shared: false }} oauth={oauth}
+          <ProviderRow key={provider.id} provider={{ ...provider, shared: false }} oauth={oauth} access={provider.access}
             protocol={editor.aiProtocolOf(provider.protocol)} test={el} usage={usage[provider.id]}
             onFix={() => editor.startEdit(provider)}>
             <button className="uiBtn sm" disabled={el?.busy}
@@ -244,11 +284,6 @@ export function SharedAiProviderSettings({ setStatus, confirm }) {
           </ProviderRow>
         );
       })}
-      {info ? (
-        <Toggle icon={UserIcon} label={t("Guests may use it")} checked={!!info.guests} onChange={setGuests}
-          hint={t("Off keeps guests without AI")}
-          title={t("Guest accounts are open to anyone who can reach this server; with this on, they spend the shared connections too, a shared ChatGPT subscription included.")} />
-      ) : null}
       {info && providers.length ? <>
         <Row icon={ActivityIcon} label={t("Allowance per account")} hint={t("Tokens a day on the shared keys; 0 = unlimited")}
           title={t("Input and output tokens each account may spend through the shared connections in any 24 hours, as the providers report them. An account's own keys are never counted.")}>
@@ -256,7 +291,7 @@ export function SharedAiProviderSettings({ setStatus, confirm }) {
             value={inMillions(info.allowance?.accounts)} onCommit={(raw) => commitAllowance("accounts", raw)} />
         </Row>
         <Row icon={UserIcon} label={t("Allowance per guest")} hint={t("Tokens a day for each guest; 0 = unlimited")}
-          title={t("The same allowance for guest accounts, which only use the shared keys while Guests may use it is on.")}>
+          title={t("The same allowance for guest accounts, on the shared connections whose access admits guests. Guest accounts are open to anyone who can reach this server.")}>
           <UnitInput unit={t("M tokens")} min={0} max={ALLOWANCE_MAX_M} step="any" label={t("Allowance per guest")}
             value={inMillions(info.allowance?.guests)} onCommit={(raw) => commitAllowance("guests", raw)} />
         </Row>
@@ -267,6 +302,36 @@ export function SharedAiProviderSettings({ setStatus, confirm }) {
       <SubDialog draft={editor.aiKeysForm} title={editor.aiKeysForm.id ? t("Edit shared key") : t("Connect a shared AI service")}
         onClose={editor.close}>
         <ProviderForm value={editor} onCancel={editor.close} />
+      </SubDialog>
+    ) : null}
+    {mine ? (
+      <SubDialog title={t("Share one of my connections")} onClose={() => setMine(null)}>
+        <div className="settingsForm">
+          <p className="setNotice settingsNoMargin">
+            {t("One of your own connections (Settings → AI › Connections) becomes a shared one, with its models. An API key is copied, and yours stays yours. A ChatGPT sign-in moves to the server, since a sign-in can be refreshed from one place only; you keep using it as the shared connection.")}
+          </p>
+          {mine.loading ? <p className="setNotice">{t("Loading…")}</p> : null}
+          {mine.providers && !mine.providers.length ? (
+            <Empty icon={KeyIcon}>{t("You have no connection of your own yet. Add one under Settings → AI › Connections first.")}</Empty>
+          ) : null}
+          {(mine.providers || []).map((p) => {
+            const oauth = editor.isOauthProto(p.protocol);
+            const disconnected = oauth && !p.oauth_connected;
+            return (
+              <ProviderRow key={p.id} provider={p} oauth={oauth} protocol={editor.aiProtocolOf(p.protocol)}>
+                <button className="uiBtn sm primary" disabled={!!sharing || disconnected}
+                  title={disconnected ? t("Sign in again first") : oauth ? t("The sign-in moves to the server") : t("The key is copied; yours stays")}
+                  onClick={() => shareOwn(p)}>
+                  {sharing === p.id ? t("Sharing…") : oauth ? t("Move to server") : t("Copy to server")}
+                </button>
+              </ProviderRow>
+            );
+          })}
+          {mine.error ? <div className="settingsPaneHint aiKeysError" role="alert">{mine.error}</div> : null}
+          <div className="reportModalBtns">
+            <button className="uiBtn" onClick={() => setMine(null)}>{t("Close")}</button>
+          </div>
+        </div>
       </SubDialog>
     ) : null}
   </>;
@@ -561,6 +626,10 @@ function ProviderForm({ value, onCancel }) {
         </details>
       </Step>
 
+      {aiKeysForm.access ? (
+        <AccessStep n={4} access={aiKeysForm.access} onChange={(access) => setAiKeysForm((form) => ({ ...form, access }))} />
+      ) : null}
+
       {aiKeysError ? <div className="settingsPaneHint aiKeysError">{aiKeysError}</div> : null}
       <div className="reportModalBtns">
         <button className="uiBtn" onClick={onCancel}>{t("Cancel")}</button>
@@ -571,6 +640,55 @@ function ProviderForm({ value, onCancel }) {
         </button>
       </div>
     </div>
+  );
+}
+
+// A shared entry's last step: who may use it (gamma/ai_settings.py
+// "access"). Three tiles like the share popover's audience — every
+// account, every account and the guests too, or the accounts named — and
+// under the last a chip per named account with an AccountPicker to add
+// one. Administrators always have access; the step says so.
+const ACCESS_TILES = [
+  { value: "accounts", label: T("Every account"), hint: T("everyone signed in here"), Icon: UsersIcon },
+  { value: "guests", label: T("Accounts and guests"), hint: T("guest visitors too"), Icon: GlobeIcon },
+  { value: "selected", label: T("Selected accounts"), hint: T("only the accounts you name"), Icon: UserIcon },
+];
+
+function AccessStep({ n, access, onChange }) {
+  const accounts = useAccounts();
+  const [round, setRound] = React.useState(0); // remounts the picker, emptied, after a pick
+  const users = access.users || [];
+  const tile = access.who === "selected" ? "selected" : access.guests ? "guests" : "accounts";
+  const pick = (next) => onChange(next === "selected"
+    ? { who: "selected", users, guests: false }
+    : { who: "everyone", users: [], guests: next === "guests" });
+  const add = (name) => {
+    if (!name || users.includes(name)) return;
+    onChange({ ...access, users: [...users, name] });
+    setRound((r) => r + 1);
+  };
+  const remove = (name) => onChange({ ...access, users: users.filter((u) => u !== name) });
+  return (
+    <Step n={n} title={t("Who may use it")} hint={t("Administrators always have access.")}>
+      <IconChoices label={t("Access")} value={tile} onChange={pick} options={ACCESS_TILES} />
+      {access.who === "selected" ? (
+        <Field label={t("Accounts")} hint={users.length ? null : t("No account named yet — only administrators can use this connection.")}>
+          {users.length ? (
+            <div className="aiModelChips">
+              {users.map((name) => (
+                <span className="categoryTag" key={name}>
+                  {name}
+                  <button className="uiClose uiCloseSm" title={t("Remove account")} aria-label={t("Remove {name}", { name })} onClick={() => remove(name)}>
+                    <XIcon size={14} />
+                  </button>
+                </span>
+              ))}
+            </div>
+          ) : null}
+          <AccountPicker key={round} accounts={accounts} exclude={users} value="" onChange={add} placeholder={t("Add an account…")} compact />
+        </Field>
+      ) : null}
+    </Step>
   );
 }
 

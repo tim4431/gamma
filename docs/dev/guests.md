@@ -114,10 +114,13 @@ way (`gamma/server_settings.py guest_settings`).
 
 The admin's shared provider entries (`gamma/ai_settings.py`, Settings →
 Server → Shared AI; an API key or a ChatGPT subscription the admin signs in
-to) are what "per-server AI access" means. Every account gets them after
-its own entries, the guest switch adds guests, and every account that is
-not a guest may add its own keys on top. The allowance meters the shared
-entries only, per account, over a rolling 24 hours:
+to, or one of the admin's own connections shared) are what "per-server AI
+access" means. Each entry says who may use it — every account, every
+account and the guests too, or the accounts named ([ai.md](ai.md) "Shared
+provider entries", *Access*); an account gets the entries that admit it
+after its own, and every account that is not a guest may add its own keys
+on top. The allowance meters the shared entries only, per account, over a
+rolling 24 hours:
 
 - the shared config (`settings` KV `ai_providers`) holds
   `"allowance": {"accounts": N, "guests": N}`: tokens (input + output as
@@ -127,7 +130,7 @@ entries only, per account, over a rolling 24 hours:
   `accounts` one. Settings → Server sets these in millions of tokens
   ([settings.md](settings.md) "Shared AI provider"); the API is in whole
   tokens;
-- `GET/PUT /api/admin/ai-providers` read and write it next to `guests`
+- `GET/PUT /api/admin/ai-providers` read and write it
   (`PUT {"allowance": {"accounts": N}}`, either key alone; anything but a
   whole number in range is a 400);
 - `ai_runtime(user)` reports `"allowance": {"limit", "used", "exhausted"}`

@@ -106,7 +106,7 @@ const entries = [
   e("server", t("Default quota"), t("Storage defaults"), t("Personal uploads per account; 0 = unlimited"), "administration storage quota limit space"),
   e("server", t("Default max upload"), t("Storage defaults"), t("Largest single file; Users can override per account"), "administration storage upload size limit file"),
   e("server", t("Shared workspaces"), null, t("Workspaces an admin makes for a team"), "administration new shared workspace members"),
-  e("server", t("Shared AI provider"), null, t("AI keys every account on this server can use"), "administration API key everyone lab members guests connection models"),
+  e("server", t("Shared AI provider"), null, t("AI keys every account on this server can use"), "administration API key everyone lab members guests connection models access who selected accounts share one of mine copy move ChatGPT subscription"),
   e("server", t("Allowance per account"), t("Shared AI provider"), t("Tokens a day on the shared keys; 0 = unlimited"), "administration shared AI tokens daily limit quota budget"),
   e("server", t("Allowance per guest"), t("Shared AI provider"), t("Tokens a day for each guest; 0 = unlimited"), "administration shared AI tokens daily limit quota budget guests"),
   e("server", t("Guest sign-in"), t("Guests"), t("The login page offers a throwaway account"), "administration guests visitors anonymous turn off disable try it login button"),

@@ -506,7 +506,7 @@ def shared(admin):
     try:
         yield r.json()["providers"][0]
     finally:
-        ai_settings.save_server_ai({"providers": [], "guests": False})
+        ai_settings.save_server_ai({"providers": []})
 
 
 def test_shared_provider_is_masked_and_encrypted_at_rest(admin, shared):
@@ -514,7 +514,9 @@ def test_shared_provider_is_masked_and_encrypted_at_rest(admin, shared):
     assert shared["id"].startswith("server:") and shared["shared"] is True
     assert shared["key_hint"] == "…4242" and shared["label"] == "Lab key"
     listed = admin.get("/api/admin/ai-providers").json()
-    assert SHARED_KEY not in str(listed) and listed["guests"] is False
+    assert SHARED_KEY not in str(listed) and "guests" not in listed
+    # Every account, no guests, unless the admin says otherwise.
+    assert shared["access"] == {"who": "everyone", "users": [], "guests": False}
     # A ChatGPT sign-in may be shared too (test_shared_chatgpt.py), through
     # its own sign-in flow rather than this key form.
     assert "chatgpt" in [p["id"] for p in listed["protocols"]]
@@ -542,6 +544,7 @@ def test_shared_provider_admin_api_is_admin_session_only(alice, admin, shared):
                          ("put", f"/api/admin/ai-providers/{shared['id']}"),
                          ("delete", f"/api/admin/ai-providers/{shared['id']}")):
         assert getattr(alice, method)(path, **({} if method in ("get", "delete") else {"json": {}})).status_code == 403
+    assert alice.post("/api/admin/ai-providers/from-account", json={"provider_id": "x"}).status_code == 403
     # An admin's integration token is not an admin session.
     token = create_token(account_of("prefs_admin"), workspace_of("prefs_admin"), "script", 1)["token"]
     bearer = TestClient(app)
@@ -614,17 +617,135 @@ def test_admin_tests_and_lists_models_of_a_shared_entry(admin, shared, monkeypat
     assert seen["url"] == "https://llm.example.org/v1/models" and seen["auth"] == f"Bearer {SHARED_KEY}"
 
 
-def test_guests_get_shared_entries_only_when_switched_on(guest, admin, shared):
+def test_a_shared_entry_admits_guests_only_when_its_access_says_so(guest, admin, shared):
+    sid = shared["id"]
     assert guest.get("/api/ai/models").json()["enabled"] is False
     assert guest.get("/api/ai/settings").json()["providers"] == []
-    r = admin.put("/api/admin/ai-providers", json={"guests": True})
-    assert r.status_code == 200 and r.json()["guests"] is True
+    r = admin.put(f"/api/admin/ai-providers/{sid}", json={"access": {"who": "everyone", "guests": True}})
+    assert r.status_code == 200, r.text
+    assert r.json()["providers"][0]["access"] == {"who": "everyone", "users": [], "guests": True}
     models = guest.get("/api/ai/models").json()
-    assert models["enabled"] is True and models["default"] == f"{shared['id']}:lab-model"
+    assert models["enabled"] is True and models["default"] == f"{sid}:lab-model"
     rows = guest.get("/api/ai/settings").json()
     assert rows["can_edit"] is False and rows["providers"][0]["key_hint"] == ""
-    assert admin.put("/api/admin/ai-providers", json={"guests": False}).json()["guests"] is False
+    assert "access" not in rows["providers"][0]  # who else may use it is the admin's to see
+    r = admin.put(f"/api/admin/ai-providers/{sid}", json={"access": {"who": "everyone", "guests": False}})
+    assert r.json()["providers"][0]["access"]["guests"] is False
     assert guest.get("/api/ai/models").json()["enabled"] is False
+
+
+def test_a_shared_entry_can_be_for_selected_accounts(alice, guest, admin, shared):
+    from conftest import drop_user, guest_name, login, make_user
+    sid = shared["id"]
+    make_user("prefs_bob", "pw")
+    bob = login("prefs_bob", "pw")
+    try:
+        assert bob.get("/api/ai/models").json()["enabled"] is True
+        r = admin.put(f"/api/admin/ai-providers/{sid}", json={"access": {"who": "selected", "users": ["prefs_alice"]}})
+        assert r.status_code == 200, r.text
+        assert r.json()["providers"][0]["access"] == {"who": "selected", "users": ["prefs_alice"], "guests": False}
+        assert alice.get("/api/ai/models").json()["default"] == f"{sid}:lab-model"
+        assert bob.get("/api/ai/models").json()["enabled"] is False
+        assert bob.get("/api/ai/settings").json()["providers"] == []
+        assert guest.get("/api/ai/models").json()["enabled"] is False
+        # The admin always has it: the Server section tests it and lists its
+        # models through the admin's own runtime.
+        assert sid in [m["provider"] for m in admin.get("/api/ai/models").json()["models"]]
+
+        # Named by username, kept by account id: a rename follows, a deleted
+        # account drops out of the view, a name listed twice counts once.
+        r = admin.put(f"/api/admin/ai-providers/{sid}",
+                      json={"access": {"who": "selected", "users": ["prefs_alice", "prefs_bob", "prefs_alice"]}})
+        assert r.json()["providers"][0]["access"]["users"] == ["prefs_alice", "prefs_bob"]
+        assert bob.get("/api/ai/models").json()["enabled"] is True
+        assert admin.post("/api/admin/users/prefs_bob/rename", json={"new_username": "prefs_bobby"}).status_code == 200
+        assert admin.get("/api/admin/ai-providers").json()["providers"][0]["access"]["users"] == ["prefs_alice", "prefs_bobby"]
+        assert bob.get("/api/ai/models").json()["enabled"] is True
+        drop_user("prefs_bobby")
+        assert admin.get("/api/admin/ai-providers").json()["providers"][0]["access"]["users"] == ["prefs_alice"]
+
+        # Checked: a shape, a known non-guest account per name.
+        for bad in ({"who": "nobody"}, {"who": "selected", "users": "prefs_alice"},
+                    {"who": "selected", "users": ["nobody-here"]}, {"who": "selected", "users": [guest_name()]},
+                    {"who": "everyone", "guests": "yes"}, {"role": "view"}, [1]):
+            assert admin.put(f"/api/admin/ai-providers/{sid}", json={"access": bad}).status_code in (400, 422), bad
+        assert admin.get("/api/admin/ai-providers").json()["providers"][0]["access"]["users"] == ["prefs_alice"]
+        # Back to everyone: the list goes; guests stay out until said so.
+        r = admin.put(f"/api/admin/ai-providers/{sid}", json={"access": {"who": "everyone", "users": ["prefs_alice"]}})
+        assert r.json()["providers"][0]["access"] == {"who": "everyone", "users": [], "guests": False}
+
+        # A new key entry takes its access on the add.
+        r = admin.post("/api/admin/ai-providers", json={
+            "protocol": "openai", "api_key": "sk-selected-key-0001", "models": "m",
+            "access": {"who": "selected", "users": ["prefs_alice"]}})
+        assert r.status_code == 200, r.text
+        assert r.json()["providers"][-1]["access"] == {"who": "selected", "users": ["prefs_alice"], "guests": False}
+        assert admin.post("/api/admin/ai-providers", json={
+            "protocol": "openai", "api_key": "sk-selected-key-0002", "access": {"who": "selected", "users": ["ghost"]}}).status_code == 400
+        admin.delete(f"/api/admin/ai-providers/{r.json()['providers'][-1]['id']}")
+    finally:
+        drop_user("prefs_bob")
+        drop_user("prefs_bobby")
+
+
+def test_the_old_guest_switch_becomes_each_entrys_access(admin):
+    """A config written before access was per entry has one server-wide
+    guest switch: every entry takes it, and the first save writes the
+    access down and drops the switch."""
+    from gamma import ai_settings
+    from gamma.server_settings import _get_raw, _set_raw
+    old = ai_settings._sealed({"id": "server:legacy1", "protocol": "openai", "name": "Old", "api_key": "sk-legacy-key-0001",
+                               "base_url": "", "models": "m", "created_at": "2025-01-01T00:00:00.000Z"})
+    old.pop("access")
+    try:
+        _set_raw("ai_providers", json.dumps({"providers": [old], "guests": True, "allowance": {"accounts": 7, "guests": 0}}))
+        config = ai_settings.load_server_ai()
+        assert "guests" not in config and config["allowance"]["accounts"] == 7
+        assert config["providers"][0]["access"] == {"who": "everyone", "users": [], "guests": True}
+        view = admin.get("/api/admin/ai-providers").json()
+        assert view["providers"][0]["access"]["guests"] is True and "guests" not in view
+        admin.put("/api/admin/ai-providers/server:legacy1", json={"name": "Older"})
+        raw = json.loads(_get_raw("ai_providers"))
+        assert "guests" not in raw and raw["providers"][0]["access"] == {"who": "everyone", "users": [], "guests": True}
+        # Without the switch, an entry lacking access is every account's, no guests.
+        _set_raw("ai_providers", json.dumps({"providers": [old]}))
+        assert ai_settings.load_server_ai()["providers"][0]["access"] == {"who": "everyone", "users": [], "guests": False}
+    finally:
+        ai_settings.save_server_ai({"providers": []})
+
+
+def test_admin_shares_an_own_key_as_a_copy(admin):
+    """Share one of mine on an API-key entry: the shared entry is a copy
+    with the key, endpoint, models and test model; the account keeps its
+    own (a key may serve two entries — a sign-in moves instead,
+    test_shared_chatgpt.py)."""
+    from gamma import ai_settings
+    from gamma.server_settings import _get_raw
+    r = admin.post("/api/ai/providers", json={
+        "protocol": "anthropic", "name": "My key", "api_key": "sk-ant-mine-77778888",
+        "base_url": "https://claude.example.org", "models": "m-a, m-b", "test_model": "m-b"})
+    own = next(p for p in r.json()["providers"] if not p.get("shared") and p["name"] == "My key")
+    try:
+        r = admin.post("/api/admin/ai-providers/from-account", json={"provider_id": own["id"]})
+        assert r.status_code == 200, r.text
+        copy = r.json()["providers"][-1]
+        assert copy["id"].startswith("server:") and copy["shared"] is True
+        assert {k: copy[k] for k in ("name", "protocol", "base_url", "models", "test_model", "key_hint")} == {
+            "name": "My key", "protocol": "anthropic", "base_url": "https://claude.example.org",
+            "models": "m-a, m-b", "test_model": "m-b", "key_hint": "…8888"}
+        assert copy["access"] == {"who": "everyone", "users": [], "guests": False}
+        # The key went along, stored encrypted; the account keeps its own entry.
+        assert ai_settings.load_server_ai()["providers"][-1]["api_key"] == "sk-ant-mine-77778888"
+        assert "sk-ant-mine-77778888" not in _get_raw("ai_providers")
+        mine = admin.get("/api/ai/settings").json()["providers"]
+        assert any(p["id"] == own["id"] and not p.get("shared") for p in mine)
+        assert any(p["id"] == copy["id"] and p["shared"] for p in mine)
+        # An id that is none of the account's own, a shared one included.
+        assert admin.post("/api/admin/ai-providers/from-account", json={"provider_id": "nope"}).status_code == 404
+        assert admin.post("/api/admin/ai-providers/from-account", json={"provider_id": copy["id"]}).status_code == 404
+    finally:
+        ai_settings.save_server_ai({"providers": []})
+        admin.delete(f"/api/ai/providers/{own['id']}")
 
 
 def test_deleting_a_shared_entry_removes_it_everywhere(alice, admin, shared):

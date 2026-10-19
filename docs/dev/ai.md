@@ -228,20 +228,33 @@ An admin can add provider entries for the whole server (Settings → Server →
 Shared AI provider, `/api/admin/ai-providers*`), so the members of a lab do
 not each need a key. A shared entry has an account entry's shape (`id, name,
 protocol, api_key, base_url, models, test_model, created_at`, plus `oauth`
-for a sign-in). It holds an API key, or a ChatGPT subscription the admin
-signs in to from the same form: `POST /api/admin/ai-providers/chatgpt/start`,
-`status` and `complete`, the account flow's `begin_chatgpt_signin` /
-`redeem_chatgpt_signin` with the state bound to `("server", <admin>)`, so
-neither flow's state redeems on the other. `provider_id` on `complete`
-reconnects an entry. The same helpers validate both lists (`new_key_entry`,
-`update_entry`, `apply_provider_fields`, `mask_entry` in `ai_settings.py`).
+for a sign-in) and an `access`, who may use it (below). It holds an API
+key, or a ChatGPT subscription the admin signs in to from the same form:
+`POST /api/admin/ai-providers/chatgpt/start`, `status` and `complete`, the
+account flow's `begin_chatgpt_signin` / `redeem_chatgpt_signin` with the
+state bound to `("server", <admin>)`, so neither flow's state redeems on
+the other. `provider_id` on `complete` reconnects an entry. Or it is one of
+the admin's own entries shared (**Share one of mine**, `POST
+/api/admin/ai-providers/from-account {provider_id}`,
+`ai_settings.share_own_entry`): the new shared entry takes the fields,
+models and test model as they are and the default access. An API-key entry
+is copied and the admin keeps their own — a key may serve two entries. A
+sign-in entry *moves*: its tokens become the shared entry's and the
+account's entry goes, because OpenAI rotates the refresh token and two
+entries refreshing one grant would sign each other out; the admin keeps
+using it as the shared entry. The same helpers validate both lists
+(`new_key_entry`, `update_entry`, `apply_provider_fields`, `mask_entry` in
+`ai_settings.py`).
 
 - **Stored** in the users.db `settings` KV under `ai_providers`:
-  `{providers: [...], guests: bool, allowance: {accounts, guests}}`, at most
+  `{providers: [...], allowance: {accounts, guests}}`, at most
   `MAX_PROVIDERS` (20) entries. Each `api_key` and each sign-in's `oauth`
   tokens are Fernet-encrypted with the data directory's key, like the cloud
   client secret (`publisher_sessions.cipher`). One that no longer decrypts
-  reads as none and logs a warning.
+  reads as none and logs a warning. A config written before access was per
+  entry carries one server-wide `guests` switch: `load_server_ai` gives
+  every entry without an `access` that switch's value (`_clean_access`),
+  and the first save writes the access down and drops the switch.
 - **Refreshed** under the entry's own lock (`_refreshed_server_oauth`):
   every account's requests refresh the same tokens, and OpenAI rotates the
   refresh token. Only the tokens are written back. The refresh backoff is
@@ -252,21 +265,43 @@ reconnects an entry. The same helpers validate both lists (`new_key_entry`,
 
 Ids are namespaced, `server:<id>`, so a shared entry's models
 (`server:<id>:<model>`) never collide with an account's; the registry marks
-them `shared: true`. `ai_runtime` (via `shared_access`) offers them to
-every account after its own entries. Guest accounts get them only while
-the admin switch `guests` is on (default off); a name that is not an account
-(a link visitor) never does. `GET /api/ai/settings` lists them after the
-account's own as read-only rows (`shared: true`); `/api/ai/providers/{id}`
-never edits or deletes them (404). An admin may name a shared id on the Test
-probe, the model catalog and a sign-in's subscription usage
-(`/api/ai/providers/{id}/usage`); that is how the Server section's form lists
-models and tests a saved entry. The login check (`/api/ai/health`) accepts
-any entry the account can use. Token usage stays per account: a member's
-calls through a shared entry are recorded on that member (provider id
-`server:<id>`), and there is no server-wide meter.
+them `shared: true`. `ai_runtime` (via `shared_access`) offers an account
+the entries whose access admits it, after its own entries; a name that is
+not an account (a link visitor) never gets one. `GET /api/ai/settings`
+lists them after the account's own as read-only rows (`shared: true`,
+without their `access`); `/api/ai/providers/{id}` never edits or deletes
+them (404). An admin may name a shared id on the Test probe, the model
+catalog and a sign-in's subscription usage (`/api/ai/providers/{id}/usage`);
+that is how the Server section's form lists models and tests a saved
+entry. The login check (`/api/ai/health`) accepts any entry the account can
+use. Token usage stays per account: a member's calls through a shared entry
+are recorded on that member (provider id `server:<id>`), and there is no
+server-wide meter.
+
+**Access.** Each entry's `access` is `{who: "everyone" | "selected", users:
+[account ids], guests: bool}`: under `everyone` every account, the guest
+accounts too when `guests` is on (default off — guest accounts are open to
+anyone who can reach the server); under `selected` the listed accounts
+alone, never a guest. Administrators always have every shared entry,
+whatever its access: the Server section tests, lists the models of and asks
+usage of an entry through the admin's own runtime, and the admin owns the
+credential anyway. The admin API takes and shows the list as usernames
+(`validated_access`: an unknown or guest username is a 400, a name listed
+twice counts once, at most `MAX_ACCESS_USERS` = 500; `access_view` resolves
+the stored ids back through `db.account_names`, so a rename follows and a
+deleted account drops out); it is stored as account ids. A `POST` takes the
+access with the new entry, a `PUT /{id}` with any other field; left out,
+an edit keeps the access and an add gives everyone but guests. The rows say
+it in a few words (`accessSummary` in `providerEditor.js`: "every
+account", "every account and guests", the names, or "no account yet —
+administrators only"), and the form's last step, **Who may use it**, sets
+it: three tiles like the share popover's audience (Every account / Accounts
+and guests / Selected accounts) and, under the last, a chip per named
+account with an `AccountPicker` to add one.
 
 **The allowance.** The admin may cap the tokens each account spends through
-the shared entries in a rolling 24 hours. Its limits, storage and Reset rule
+the shared entries in a rolling 24 hours (one limit for accounts, one for
+guests, whichever entries admit them). Its limits, storage and Reset rule
 are in [guests.md](guests.md) "The shared AI allowance". The one choke point
 is `ai_client.open_ai` (`call_ai` goes through it): `check_allowance`
 re-reads `ai_usage.shared_used` on every call and raises
