@@ -73,10 +73,14 @@ export function MarkupLayers({ surface, wrapRef, width, height, marks, active = 
       {readOnly && !marks.ink.length ? null : (
         <InkLayer pageNumber={surface} wrapRef={wrapRef} width={width} height={height} blocks={marks.ink}
           tool={ink.tool} penTool={ink.penTool} penOnly={ink.penOnly} pressure={ink.pressure} eraserMode={ink.eraserMode}
-          eraserSize={ink.eraserSize} lassoMode={ink.lassoMode} selection={marks.inkSelection} flash={marks.inkFlash}
-          onStroke={edit.onStroke} onErase={edit.onErase} onErasePartial={edit.onErasePartial} onSelect={edit.onSelect}
+          eraserSize={ink.eraserSize} eraserFilter={ink.eraserFilter} drawHold={ink.drawHold} scribble={ink.scribble}
+          fingerUndo={ink.fingerUndo} lassoMode={ink.lassoMode} selection={marks.inkSelection} flash={marks.inkFlash}
+          onStroke={edit.onStroke} onErase={edit.onErase} onErasePartial={edit.onErasePartial} onEraseEnd={edit.onEraseEnd}
+          onEraseMany={edit.onEraseMany} onSelect={edit.onSelect}
           onAction={edit.onAction} onMoveSelection={edit.onMoveSelection} onJump={text.armed ? undefined : actions.onJump}
-          onFingerScroll={edit.onFingerScroll} onInkFeatures={actions.onInkFeatures} />
+          onFingerScroll={edit.onFingerScroll} onHoldStatus={edit.onHoldStatus} onInkFeatures={actions.onInkFeatures}
+          // the finger chords step the block history while the Text tool has the page, so they stay wired then
+          onUndoGesture={readOnly ? undefined : actions.onUndoGesture} />
       )}
     </>
   );

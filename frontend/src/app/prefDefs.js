@@ -340,6 +340,21 @@ export const PREFS = {
   inkPenOnly: flag("gamma-ink-pen-only", BROWSER, COARSE),
   inkAutoPen: flag("gamma-ink-auto-pen", BROWSER, true),
   inkPressure: flag("gamma-ink-pressure", BROWSER, true),
+  // Two fingers tapped together undo, three redo (ink/fingerChords.js): a
+  // single chord, a double one, or nothing; on by default where a finger is
+  // the primary pointer, since a mouse has Ctrl+Z.
+  inkFingerUndo: pref("gamma-ink-finger-undo", BROWSER, COARSE ? "double" : "off", oneOf(["off", "tap", "double"])),
+  // The handwriting habits that follow the account (Settings → Reading &
+  // editing › Handwriting): a stroke held still at its end snaps to a line
+  // or a shape (ink/shapes.js); a fast back-and-forth with the pen erases
+  // the ink under it (ink/gestures.js; off until turned on); lifting the
+  // eraser tool returns to the tool armed before it; and what any erasure
+  // may remove — everything, pens only or highlighters only (ink.js
+  // eraserKeep).
+  inkDrawHold: flag("gamma-ink-draw-hold", ACCOUNT, true),
+  inkScribbleErase: flag("gamma-ink-scribble-erase", ACCOUNT, false),
+  inkEraserReturn: flag("gamma-ink-eraser-return", ACCOUNT, false),
+  inkEraserFilter: pref("gamma-ink-eraser-filter", ACCOUNT, "all", oneOf(["all", "pen", "highlighter"])),
   // The strip's tool presets: [{id, kind: pen|highlighter, color, size}],
   // the user's own row of pens and highlighters (ink.js DEFAULT_TOOLS).
   inkTools: pref("gamma-ink-tools", BROWSER, DEFAULT_TOOLS, json(normalizeTools)),

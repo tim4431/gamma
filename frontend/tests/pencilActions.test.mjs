@@ -1,7 +1,7 @@
 // node --test tests/  (from frontend/) — the Pencil's double tap and squeeze.
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { pencilAction } from "../src/ink/pencilActions.js";
+import { backTool, pencilAction } from "../src/ink/pencilActions.js";
 
 const tools = [{ id: "pen1", kind: "pen" }, { id: "pen2", kind: "pen" }, { id: "hl1", kind: "highlighter" }];
 const prefs = { tools, pen: "pen2" };
@@ -31,4 +31,14 @@ test("anything else is nothing", () => {
   assert.equal(pencilAction("ignore", prefs, { tool: "pen1" }), null);
   assert.equal(pencilAction({}, prefs, {}), null);
   assert.equal(pencilAction(null, {}, {}), null);
+});
+
+test("backTool is the tool armed before, else the stylus pen: the eraser's return reads it too", () => {
+  assert.equal(backTool(prefs, { tool: "eraser", previous: "pen1" }), "pen1");
+  assert.equal(backTool(prefs, { tool: "eraser", previous: "select" }), "select");
+  assert.equal(backTool(prefs, { tool: "eraser", previous: "eraser" }), "pen2", "the same tool is no way back");
+  assert.equal(backTool(prefs, { tool: "eraser", previous: "gone" }), "pen2", "a removed preset falls back to the pen");
+  assert.equal(backTool(prefs, { tool: "eraser", previous: null }), "pen2");
+  assert.equal(backTool({ tools, pen: "nope" }, { tool: "eraser" }), "pen1", "no stylus pen: the first preset");
+  assert.equal(backTool({}, {}), null);
 });

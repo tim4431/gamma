@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import {
-  DEFAULT_TOOLS, HIGHLIGHTER_OPACITY, MAX_TOOLS, VERSION, appendStroke, boundsOf, decodeStroke, encodeStroke, eraseAt, hitStrokes,
+  DEFAULT_TOOLS, HIGHLIGHTER_OPACITY, MAX_TOOLS, VERSION, appendStroke, boundsOf, decodeStroke, encodeStroke, eraseAt, eraserKeep, hitStrokes,
   inkBounds, newInk, normalizeTools, pdfPositionOf, removeStrokes, strokePath, strokeWidth, strokesInLasso, toolStyle,
   translateStrokes, transformStrokes, nearestInkStroke, restyleStrokes, duplicateStrokes, MAX_STROKES,
   mergeInk, serializeInk, inkProps, newCanvasInk, sameStroke,
@@ -505,4 +505,41 @@ test("replay: the drawing at a moment holds the strokes begun, the one being wri
   assert.deepEqual(decodeStroke(second.strokes[1]).map((p) => p.x), [0]);
   assert.equal(inkAtTime(ink, line, line.duration), ink);
   assert.equal(ink.strokes[0], a);                                  // the file is untouched
+});
+
+// --- the eraser filter (docs/dev/handwriting.md "Erasing") ------------------
+
+test("eraserKeep is the account's filter as one predicate; an unknown tool goes only under all", () => {
+  const pen = { tool: "pen" }, mono = { tool: "pen", brush: "monoline" }, hl = { tool: "highlighter" }, odd = { tool: "crayon" }, bare = {};
+  assert.deepEqual([pen, mono, hl, odd, bare].map(eraserKeep("all")), [true, true, true, true, true]);
+  assert.deepEqual([pen, mono, hl, odd, bare].map(eraserKeep("pen")), [true, true, false, false, true], "a stroke without a tool is a pen");
+  assert.deepEqual([pen, mono, hl, odd, bare].map(eraserKeep("highlighter")), [false, false, true, false, false]);
+  assert.deepEqual([pen, hl].map(eraserKeep(undefined)), [true, true], "no filter keeps everything");
+});
+
+test("hitStrokes and eraseAt take keep(stroke) and leave the strokes it refuses as they are", () => {
+  let ink = newInk(1, 612, 792);
+  ink = appendStroke(ink, encodeStroke({ id: "a", samples: samples() }));                           // a pen, (100,200)→(140,212)
+  ink = appendStroke(ink, encodeStroke({ id: "h", tool: "highlighter", size: 10, samples: samples() })); // a highlighter on top of it
+  assert.deepEqual(hitStrokes(ink, 120, 206, 2), ["a", "h"]);
+  assert.deepEqual(hitStrokes(ink, 120, 206, 2, eraserKeep("pen")), ["a"]);
+  assert.deepEqual(hitStrokes(ink, 120, 206, 2, eraserKeep("highlighter")), ["h"]);
+  const cut = eraseAt(ink, 120, 206, 3, eraserKeep("highlighter"));
+  assert.equal(cut.changed, true);
+  assert.equal(cut.ink.strokes[0], ink.strokes[0], "the pen stroke is the same object, so its caches survive");
+  assert.ok(cut.ink.strokes.slice(1).every((s) => s.tool === "highlighter" && s.from === "h"), "only the highlighter is cut");
+  assert.equal(eraseAt(ink, 120, 206, 3, () => false).changed, false, "a filter that refuses everything changes nothing");
+});
+
+test("a preset keeps its smoothing level and a highlighter's straightening; toolStyle carries them to the layer", () => {
+  const [pen, hl] = normalizeTools([{ ...DEFAULT_TOOLS[0], stabilize: 3, straight: "always" }, { ...DEFAULT_TOOLS[4], stabilize: 4.2, straight: "always" }]);
+  assert.equal(pen.stabilize, 3);
+  assert.equal("straight" in pen, false, "straightening is a highlighter's alone");
+  assert.deepEqual([hl.stabilize, hl.straight], [4, "always"]);
+  assert.deepEqual(normalizeTools([{ ...DEFAULT_TOOLS[0], stabilize: 0, straight: "off" }]), [{ ...DEFAULT_TOOLS[0] }], "0 and a pen's straight are left out");
+  assert.deepEqual(normalizeTools([{ ...DEFAULT_TOOLS[4], straight: "hold" }])[0], { ...DEFAULT_TOOLS[4] }, "hold is the default, left out");
+  assert.equal(normalizeTools([{ ...DEFAULT_TOOLS[4], stabilize: 9, straight: "maybe" }])[0].stabilize, undefined, "out of range is dropped");
+  assert.deepEqual(toolStyle(pen), { tool: "pen", color: pen.color, size: pen.size, opacity: 1, stabilize: 3 });
+  assert.deepEqual(toolStyle(hl), { tool: "highlighter", color: hl.color, size: hl.size, opacity: HIGHLIGHTER_OPACITY, stabilize: 4, straight: "always" });
+  assert.deepEqual(toolStyle(DEFAULT_TOOLS[4]), { tool: "highlighter", color: DEFAULT_TOOLS[4].color, size: 14, opacity: HIGHLIGHTER_OPACITY }, "a plain preset's style is as before");
 });

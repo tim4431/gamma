@@ -142,22 +142,31 @@ export function normalizeTools(list) {
     // A preset's own opacity (the swatch's alpha when it was picked); left
     // out, the kind's usual one applies (toolStyle).
     const opacity = Number(t.opacity);
+    // Smoothing (ink/stabilizer.js) 0–4, left out at 0; a highlighter's
+    // straightening, 'always' | 'off', left out at the default 'hold'.
+    const stabilize = Math.round(Number(t.stabilize));
     out.push({ id, kind, color: t.color.toLowerCase(), size: Math.round(size * 100) / 100,
       ...(Number.isFinite(opacity) && opacity >= 0.1 && opacity <= 1 && opacity !== defaultOpacity(kind)
         ? { opacity: Math.round(opacity * 100) / 100 } : {}),
-      ...(kind === "pen" && t.brush === "monoline" ? { brush: "monoline" } : {}) });
+      ...(kind === "pen" && t.brush === "monoline" ? { brush: "monoline" } : {}),
+      ...(Number.isFinite(stabilize) && stabilize >= 1 && stabilize <= 4 ? { stabilize } : {}),
+      ...(kind === "highlighter" && (t.straight === "always" || t.straight === "off") ? { straight: t.straight } : {}) });
     if (out.length >= MAX_TOOLS) break;
   }
   return out.length ? out : DEFAULT_TOOLS.map((t) => ({ ...t }));
 }
 // A kind's opacity when a preset names none.
 export const defaultOpacity = (kind) => (kind === "highlighter" ? HIGHLIGHTER_OPACITY : 1);
-// What the layer draws with for a preset: {tool, color, size, opacity}.
+// What the layer draws with for a preset: {tool, color, size, opacity},
+// with the preset's smoothing level and a highlighter's straightening when
+// it has them (the layer reads them; a stroke's style never carries them).
 export function toolStyle(preset) {
   const opacity = preset.opacity ?? defaultOpacity(preset.kind);
+  const input = { ...(preset.stabilize ? { stabilize: preset.stabilize } : {}) };
   return preset.kind === "highlighter"
-    ? { tool: "highlighter", color: preset.color, size: preset.size, opacity }
-    : { tool: "pen", color: preset.color, size: preset.size, opacity,
+    ? { tool: "highlighter", color: preset.color, size: preset.size, opacity, ...input,
+      ...(preset.straight ? { straight: preset.straight } : {}) }
+    : { tool: "pen", color: preset.color, size: preset.size, opacity, ...input,
       ...(preset.brush === "monoline" ? { brush: "monoline" } : {}) };
 }
 
@@ -391,9 +400,20 @@ function strokeEdgeDistance(s, x, y, radius) {
   return Math.max(0, best);
 }
 
-// Ids of the strokes an eraser at (x, y) with `radius` touches.
-export function hitStrokes(ink, x, y, radius) {
-  return (ink?.strokes || []).filter((s) => strokeEdgeDistance(s, x, y, radius) <= radius).map((s) => s.id);
+// The eraser filter (the account's inkEraserFilter) as one predicate: what
+// any erasure — the eraser tool, the pen's eraser end, a scribble — may
+// remove. 'all' keeps every stroke, 'pen' the pen tool of any brush,
+// 'highlighter' the highlighter; a stroke of an unknown tool goes only
+// under 'all'.
+export function eraserKeep(filter) {
+  if (!filter || filter === "all") return () => true;
+  return (s) => (s.tool || "pen") === filter;
+}
+
+// Ids of the strokes an eraser at (x, y) with `radius` touches; `keep(stroke)`
+// (optional) leaves the strokes it refuses out.
+export function hitStrokes(ink, x, y, radius, keep) {
+  return (ink?.strokes || []).filter((s) => (!keep || keep(s)) && strokeEdgeDistance(s, x, y, radius) <= radius).map((s) => s.id);
 }
 
 // Nearest stroke edge within `radius`: ink (band 1) wins over a
@@ -724,11 +744,13 @@ function restroke(stroke, samples) {
 
 // Partial eraser: cut every sample within `radius` (plus half the width)
 // of (x, y) out of the strokes it touches; each remaining run of at least
-// two samples becomes its own stroke. → {ink, changed}.
-export function eraseAt(ink, x, y, radius) {
+// two samples becomes its own stroke. → {ink, changed}. A stroke `keep`
+// (optional) refuses stays as it is, the same object.
+export function eraseAt(ink, x, y, radius, allow) {
   let changed = false;
   const strokes = [];
   for (const s of ink?.strokes || []) {
+    if (allow && !allow(s)) { strokes.push(s); continue; }
     const b = strokeBounds(s);
     if (!b || x < b[0] - radius || x > b[2] + radius || y < b[1] - radius || y > b[3] + radius) { strokes.push(s); continue; }
     const pts = decodeStroke(s);

@@ -18,18 +18,21 @@ import {
   ResizeIcon, StopIcon, TrashIcon,
 } from "../shared/ui/Icons";
 import {
-  MAX_STROKE_SIZE, boundsOf, byBand, encodeStroke, hitStrokes, inkBounds, inkFeatures, inkUntil,
+  MAX_STROKE_SIZE, boundsOf, byBand, encodeStroke, eraserKeep, hitStrokes, inkBounds, inkFeatures, inkUntil,
   nearestInkStroke, outlineOptions, sizesFor, strokeBand, strokePath, strokeWalls, strokesInLasso, svgPathFromPoints, transformPoint,
   unionBox,
 } from "./ink";
 import { finishStroke, strokeChannels, widthLaw } from "./finishStroke.js";
+import { recognise, refitShape, shapeSamples } from "./shapes.js";
+import { makeStabilizer } from "./stabilizer.js";
+import { makeChordDetector } from "./fingerChords.js";
 import { INK_COLORS, colorName, pickerColors, swatchCss } from "../shared/model/palette.js";
 import { usePalette } from "../shared/ui/paletteContext.js";
 import * as inkStore from "./inkStore";
 import * as playback from "../replay/playback.js";
 import { compressedClock } from "../replay/clock.js";
 import { frameOf, groupInScope, useGroupFrame } from "../replay/useFrame.js";
-import { appendInkSample, predictedInkSamples } from "./inkInput.js";
+import { appendInkSample, inkSample, predictedInkSamples } from "./inkInput.js";
 import { canvasSize } from "../shared/lib/canvasSize.js";
 import { nativeHost, onHostMessage, postToHost } from "../shared/lib/host.js";
 import { t, T } from "../shared/i18n/i18n.js";
@@ -79,6 +82,60 @@ if (nativeHost()?.ink) {
 // Whether a finger scrolling under an armed tool is still worth explaining
 // (onFingerScroll): once a session, and never once a pen has drawn.
 let fingerHint = true;
+// Draw and hold (shapes.js): the tip still for HOLD_MS fires the recogniser,
+// the timer restarting whenever it moves more than HOLD_MOVE css px, and only
+// once the stroke lasted HOLD_MIN_MS; held on, a move of REFIT_PX refits the
+// shape, and one of more than CANCEL_PX within CANCEL_MS of the snap cancels
+// it, so a stroke that merely paused goes on freehand.
+const HOLD_MS = 600, HOLD_MOVE = 3, HOLD_MIN_MS = 250, REFIT_PX = 6, CANCEL_PX = 12, CANCEL_MS = 150;
+const SNAP_BLUE = "rgb(80, 140, 255)"; // .inkSelRect's stroke
+// Two- and three-finger undo chords (fingerChords.js): one detector for the
+// document — several page layers must never count a contact twice — fed by
+// document-level listeners while at least one layer with an onUndoGesture is
+// mounted, so chords exist exactly where handwriting can be drawn. A touch on
+// a layer's surface names the host whose mode and handler the chord takes.
+const chordHosts = new Map(); // a layer's wrap element → its live ref
+let chordWiring = null;
+function wireChords() {
+  if (chordWiring) return;
+  let host = null;
+  const detector = makeChordDetector({ mode: "off", onChord: (kind) => host?.onUndoGesture?.(kind) });
+  const hostAt = (target) => {
+    for (const [el, ref] of chordHosts) if (el.contains(target)) return ref.current;
+    return null;
+  };
+  // The first contact on a layer names the host; one landing off every
+  // layer (the gutter, the strip) changes nothing, so it neither flips the
+  // mode mid-chord nor forgets the first chord of a double tap. A layer
+  // that is writing with a pen the detector cannot see (the native host
+  // owns the Pencil, so WebKit cancelled its pointer) makes the touches a
+  // palm.
+  const down = (e) => {
+    if (e.pointerType === "touch") {
+      const at = hostAt(e.target);
+      if (at) { host = at; detector.setMode(at.fingerUndo || "off"); }
+    }
+    detector.down(e);
+    if (e.pointerType === "touch" && host?.penBusy?.()) detector.palm();
+  };
+  const move = (e) => detector.move(e);
+  const up = (e) => detector.up(e);
+  const cancel = (e) => detector.cancel(e);
+  const reset = () => detector.reset();
+  document.addEventListener("pointerdown", down, true);
+  document.addEventListener("pointermove", move, true);
+  document.addEventListener("pointerup", up, true);
+  document.addEventListener("pointercancel", cancel, true);
+  window.addEventListener("blur", reset);
+  chordWiring = () => {
+    document.removeEventListener("pointerdown", down, true);
+    document.removeEventListener("pointermove", move, true);
+    document.removeEventListener("pointerup", up, true);
+    document.removeEventListener("pointercancel", cancel, true);
+    window.removeEventListener("blur", reset);
+    chordWiring = null;
+  };
+}
 // Drawings already checked for what this build cannot show (inkFeatures);
 // a drawing is told of once, through onInkFeatures.
 const featured = new WeakSet();
@@ -145,10 +202,17 @@ function seekToStroke(groups, hit) {
 // blocks: this page's ink blocks; selection: {page, items: [{id, ids}]};
 // flash: {id, nonce} outlines a group briefly.
 // onFingerScroll: a finger dragged with a tool armed and pen only on, and
-// scrolled instead of drawing.
+// scrolled instead of drawing. eraserFilter: what an erasure may remove
+// ('all' | 'pen' | 'highlighter', for the hover glyph and the scribble);
+// drawHold, scribble: the account's draw-and-hold and scribble-to-erase
+// flags; fingerUndo: 'off' | 'tap' | 'double'. onEraseEnd: the eraser tool
+// lifted; onEraseMany(page, [{gid, ids}]): a scribble's targets;
+// onUndoGesture('undo' | 'redo'): a finger chord; onHoldStatus({text, once}):
+// the pill a snapped stroke raises.
 export function InkLayer({ pageNumber, wrapRef, width, height, blocks, tool, penTool, penOnly, pressure, eraserMode,
-  eraserSize = 1, lassoMode = "free", selection, flash, onStroke, onErase, onErasePartial, onSelect, onAction, onMoveSelection, onJump,
-  onFingerScroll, onInkFeatures }) {
+  eraserSize = 1, eraserFilter = "all", drawHold = false, scribble = false, fingerUndo = "off", lassoMode = "free", selection, flash,
+  onStroke, onErase, onErasePartial, onEraseEnd, onEraseMany, onSelect, onAction, onMoveSelection, onJump,
+  onFingerScroll, onUndoGesture, onHoldStatus, onInkFeatures }) {
   useInkVersion();
   const canvasRef = useRef(null);
   const cursorRef = useRef(null);
@@ -157,6 +221,9 @@ export function InkLayer({ pageNumber, wrapRef, width, height, blocks, tool, pen
   const [transform, setTransform] = useState(null);
   useLayoutEffect(() => { setTransform(null); }, [selection]);
   const live = useRef({});
+  // Whether a pen is writing on this layer, the page's own stroke or one
+  // the native host took (the pointer effect sets it; the finger chords ask).
+  const penBusy = useRef(() => false);
 
   const groups = [];
   for (const b of blocks || []) {
@@ -195,8 +262,22 @@ export function InkLayer({ pageNumber, wrapRef, width, height, blocks, tool, pen
       selBox = unionBox(selBox, boundsOf(g.ink, item.ids));
     }
   }
-  live.current = { tool, penTool, penOnly, pressure, eraserMode, eraserSize, lassoMode, width, height, groups, selBox, replay,
-    onStroke, onErase, onErasePartial, onSelect, onMoveSelection, onJump, onFingerScroll };
+  live.current = { tool, penTool, penOnly, pressure, eraserMode, eraserSize, eraserFilter, drawHold, scribble, fingerUndo, lassoMode,
+    width, height, groups, selBox, replay, penBusy: () => penBusy.current(),
+    onStroke, onErase, onErasePartial, onEraseEnd, onEraseMany, onSelect, onMoveSelection, onJump, onFingerScroll, onUndoGesture, onHoldStatus };
+
+  // The finger chords: this layer is a host while it can undo (an editable
+  // surface); the document-level detector is wired while any host is.
+  useEffect(() => {
+    const el = wrapRef.current;
+    if (!el || !onUndoGesture) return undefined;
+    chordHosts.set(el, live);
+    wireChords();
+    return () => {
+      chordHosts.delete(el);
+      if (!chordHosts.size) chordWiring?.();
+    };
+  }, [wrapRef, !!onUndoGesture]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     const el = wrapRef.current;
@@ -206,6 +287,7 @@ export function InkLayer({ pageNumber, wrapRef, width, height, blocks, tool, pen
     // stroke arrives as a message, its own events are ignored, and fingers
     // stay palms until it ends.
     let hostOwned = null;
+    penBusy.current = () => drawing?.pointerType === "pen" || hostOwned != null;
     let pending = null; // A possible tap/hold; swipes retain native scrolling.
     const contacts = new Set();
     let hover = null;
@@ -226,6 +308,9 @@ export function InkLayer({ pageNumber, wrapRef, width, height, blocks, tool, pen
         : use.tool === "select" ? 12 : use.size * k;
       const cursor = cursorRef.current;
       cursor.dataset.tool = eraser ? "eraser" : use.tool;
+      // With an eraser filter on, the ring carries the kind it erases.
+      if (eraser && L.eraserFilter && L.eraserFilter !== "all") cursor.dataset.filter = L.eraserFilter;
+      else delete cursor.dataset.filter;
       Object.assign(cursor.style, { display: "block", left: `${x}px`, top: `${y}px`,
         width: `${Math.max(1, diameter)}px`, height: `${Math.max(1, diameter)}px` });
       el.classList.add("inkHovering");
@@ -262,8 +347,85 @@ export function InkLayer({ pageNumber, wrapRef, width, height, blocks, tool, pen
       const rect = el.getBoundingClientRect();
       const k = rect.width / L.width;                             // css px per pt
       const eraser = use.tool === "eraser" || !!(e.buttons & 32) || !!(e.buttons & 2);
-      return { use, eraser, rect, k, pointerType: e.pointerType,
+      // The eraser tool returns to the last tool on its lift (onEraseEnd);
+      // the pen's eraser end and barrel button never do.
+      return { use, eraser, eraseSource: use.tool === "eraser" ? "tool" : "barrel", rect, k, pointerType: e.pointerType,
         toPt: (ev) => ({ x: (ev.clientX - rect.left) / k, y: (ev.clientY - rect.top) / k }) };
+    };
+    // A pointer sample into the draw context: through the preset's
+    // stabilizer when it has one (the brush position comes back, or nothing
+    // while the pointer is within the string), else as it is. `ending` is
+    // the lift's pressure rule (inkInput.js); `lift` appends the
+    // stabilizer's catch-up to the lift point.
+    const pushSample = (d, s) => {
+      const previous = d.samples.at(-1);
+      if (previous && s.x === previous.x && s.y === previous.y && s.p === previous.p) return;
+      d.samples.push(s);
+    };
+    const takeSample = (d, ev, ending = false, lift = ending) => {
+      if (!d.stab) { appendInkSample(d, ev, ending); return; }
+      const s = inkSample(d, ev, ending);
+      if (lift) d.stab.finish(s).forEach((q) => pushSample(d, q));
+      else { const q = d.stab.push(s); if (q) pushSample(d, q); }
+    };
+    // Draw and hold. snapHold runs the recogniser over the stroke so far
+    // (lines only for a highlighter) and, on a hit, puts the shape on the
+    // draw context: the canvas then paints it instead of the trace (two
+    // frames in the selection blue), and the tip's further moves refit it
+    // from the snap's params, the tip's position at the snap as `from`.
+    // Under smoothing the samples end at the brush, which trails the tip by
+    // the string's length: the tip itself closes the recognised path, so a
+    // held line ends where the pen rests, not short of it.
+    const snapHold = (d, shift) => {
+      const tip = d.tip || d.samples.at(-1);
+      const path = d.stab && d.tip ? [...d.samples, { ...d.samples.at(-1), x: tip.x, y: tip.y }] : d.samples;
+      const hit = recognise(path, { k: d.k, kinds: d.kinds });
+      if (!hit) return false;
+      d.hold = { kind: hit.kind, params: hit.params, snap: hit.params, from: { x: tip.x, y: tip.y }, at: performance.now(),
+        flash: 2, shift, preview: null };
+      d.predicted = [];
+      clearTimeout(d.predictionTimer);
+      if (!d.raf) d.raf = requestAnimationFrame(paint);
+      return true;
+    };
+    const holdFire = (d) => {
+      d.holdTimer = 0;
+      if (drawing !== d || d.hold || d.samples.length < 2) return;
+      const a = d.samples[0], b = d.samples.at(-1);
+      if (Math.hypot(b.x - a.x, b.y - a.y) < Math.max(24 / d.k, 18)) return;
+      if (d.tail.at - d.startTime < HOLD_MIN_MS) return;
+      snapHold(d, false);
+    };
+    // Per move: refit or cancel a held shape, else (re)arm the timer when
+    // the tip moved; Shift with a mouse recognises at once.
+    const trackHold = (d, e) => {
+      const tip = d.tip;
+      if (d.hold) {
+        const h = d.hold;
+        const moved = Math.hypot(tip.x - h.from.x, tip.y - h.from.y) * d.k;
+        if (!h.shift && moved > CANCEL_PX && performance.now() - h.at <= CANCEL_MS) { d.hold = null; return; }
+        // Once the tip has gone REFIT_PX out, every move refits, so a tip
+        // coming back to the snap brings the shape back with it.
+        if (moved >= REFIT_PX) h.refitting = true;
+        if (h.refitting) {
+          h.params = refitShape(h.kind, h.snap, { pointer: tip, from: h.from, shift: !!e.shiftKey });
+          h.preview = null;
+        }
+        return;
+      }
+      if (!d.holdOn) return;
+      if (e.pointerType === "mouse" && e.shiftKey) {
+        const since = d.shiftAt ? Math.hypot(e.clientX - d.shiftAt.x, e.clientY - d.shiftAt.y) : Infinity;
+        if (since >= 4) {
+          d.shiftAt = { x: e.clientX, y: e.clientY };
+          if (snapHold(d, true)) return;
+        }
+      }
+      if (Math.hypot(e.clientX - d.tail.x, e.clientY - d.tail.y) > HOLD_MOVE) {
+        d.tail = { x: e.clientX, y: e.clientY, at: e.timeStamp };
+        clearTimeout(d.holdTimer);
+        d.holdTimer = setTimeout(() => holdFire(d), HOLD_MS);
+      }
     };
 
     const eraseUnder = (ctx, ev) => {
@@ -307,24 +469,49 @@ export function InkLayer({ pageNumber, wrapRef, width, height, blocks, tool, pen
         return;
       }
       const { use } = d;
+      // A held shape paints in the trace's place: an even line (the committed
+      // stroke is pen: false), the selection blue for its first two frames.
+      const hold = d.hold;
+      let flash = false;
+      if (hold) {
+        if (!hold.preview) hold.preview = shapeSamples(hold.kind, hold.params, { span: 0, p: 0.5 });
+        flash = hold.flash > 0;
+        if (flash) hold.flash--;
+      }
+      const samples = hold ? hold.preview : d.samples;
+      const color = flash ? SNAP_BLUE : use.color;
       if (use.tool === "highlighter") {
-        ctx.globalAlpha = use.opacity ?? 1;
-        ctx.globalCompositeOperation = "multiply";
-        ctx.strokeStyle = use.color;
+        ctx.globalAlpha = flash ? 0.95 : use.opacity ?? 1;
+        ctx.globalCompositeOperation = flash ? "source-over" : "multiply";
+        ctx.strokeStyle = color;
         ctx.lineWidth = use.size;
         ctx.lineCap = ctx.lineJoin = "round";
         ctx.beginPath();
-        d.samples.forEach((s, i) => (i ? ctx.lineTo(s.x, s.y) : ctx.moveTo(s.x, s.y)));
-        if (d.samples.length === 1) ctx.lineTo(d.samples[0].x + 0.01, d.samples[0].y);
+        samples.forEach((s, i) => (i ? ctx.lineTo(s.x, s.y) : ctx.moveTo(s.x, s.y)));
+        if (samples.length === 1) ctx.lineTo(samples[0].x + 0.01, samples[0].y);
         ctx.stroke();
       } else {
         // The same width law the committed stroke is baked with
         // (finishStroke.js), so the live line and the saved ink match.
-        ctx.fillStyle = use.color;
-        const pressure = d.law ? (s) => d.law(s) / 2 : () => 0.5;
-        const pts = getStroke([...d.samples, ...(d.predicted || [])].map((s) => [s.x, s.y, pressure(s)]),
+        ctx.fillStyle = color;
+        const pressure = d.law && !hold ? (s) => d.law(s) / 2 : () => 0.5;
+        const pts = getStroke([...samples, ...(hold ? [] : d.predicted || [])].map((s) => [s.x, s.y, pressure(s)]),
           outlineOptions({ size: use.size }));
         ctx.fill(new Path2D(svgPathFromPoints(pts)));
+      }
+      if (flash && !d.raf) d.raf = requestAnimationFrame(paint);
+      // At the longest string, a faint line from the brush to the pointer
+      // shows what the smoothing is doing.
+      if (!hold && d.level === 4 && d.tip && d.samples.length) {
+        const last = d.samples.at(-1);
+        ctx.globalAlpha = 0.4;
+        ctx.globalCompositeOperation = "source-over";
+        ctx.strokeStyle = "#888";
+        ctx.lineWidth = 1 / d.k;
+        ctx.beginPath();
+        ctx.moveTo(last.x, last.y);
+        ctx.lineTo(d.tip.x, d.tip.y);
+        ctx.stroke();
       }
     };
     const showCanvas = (ctx) => {
@@ -341,17 +528,25 @@ export function InkLayer({ pageNumber, wrapRef, width, height, blocks, tool, pen
       canvas.style.display = "none";
     };
 
-    // A finished stroke's samples (page units) through finishStroke
-    // (decimated, widths baked; later: straightened, or a scribble that
-    // erases) to the page's ink.
+    // A finished stroke's samples (page units) through finishStroke (the
+    // held shape, a straight highlight, a scribble that erases, else
+    // decimated with the widths baked) to the page's ink.
     const commitStroke = (d) => {
       if (!d.samples.length) return false;
       const L = live.current, { use } = d;
       const style = { tool: use.tool, brush: use.brush, color: use.color, size: use.size, opacity: use.opacity ?? 1, pen: d.pen };
-      const { commit, erase } = finishStroke(d.samples, { style, pen: d.pen });
-      for (const { gid, ids } of erase || []) if (ids.length) L.onErase?.(pageNumber, gid, ids);
+      const result = finishStroke(d.samples, { style, pen: d.pen, k: d.k,
+        hold: d.hold ? { kind: d.hold.kind, params: d.hold.params } : null, straight: use.straight,
+        scribble: !!L.scribble, groups: L.groups, keep: eraserKeep(L.eraserFilter) });
+      const { commit, erase, status } = result;
+      const look = result.style || style;
+      if (erase?.length) {
+        if (L.onEraseMany) L.onEraseMany(pageNumber, erase);
+        else for (const { gid, ids } of erase) if (ids.length) L.onErase?.(pageNumber, gid, ids);
+      }
+      if (status) L.onHoldStatus?.(status);
       if (!commit?.length) return !!erase?.length;
-      const stroke = encodeStroke({ ...style, t0: d.t0, samples: commit, ch: strokeChannels(style) });
+      const stroke = encodeStroke({ ...look, t0: d.t0, samples: commit, ch: strokeChannels(look) });
       L.onStroke?.(pageNumber, stroke, { width: L.width, height: L.height });
       return true;
     };
@@ -365,6 +560,7 @@ export function InkLayer({ pageNumber, wrapRef, width, height, blocks, tool, pen
       hostOwned = d.id;
       if (d.raf) cancelAnimationFrame(d.raf);
       clearTimeout(d.predictionTimer);
+      clearTimeout(d.holdTimer);
       hideCanvas();
     };
     // A pen stroke under a host that captures the Pencil: claim it (with
@@ -376,11 +572,14 @@ export function InkLayer({ pageNumber, wrapRef, width, height, blocks, tool, pen
     const claimForHost = (d, e) => {
       const claim = {
         taken: false,
+        // The host's raw samples go through the same stabilizer as the
+        // page's own; never a hold (the shell sends them at the lift only).
         commit: (samples) => {
           handOver(d);
           if (hostOwned === d.id) hostOwned = null;
-          const c = { ...d, samples: [], startTime: 0 };
-          for (const [x, y, p, t] of samples) appendInkSample(c, { clientX: x, clientY: y, pressure: p, timeStamp: t });
+          const c = { ...d, samples: [], startTime: 0, hold: null, tip: null, stab: d.level ? makeStabilizer(d.level, { k: d.k }) : null };
+          samples.forEach(([x, y, p, t], i) =>
+            takeSample(c, { clientX: x, clientY: y, pressure: p, timeStamp: t }, false, i === samples.length - 1));
           return commitStroke(c);
         },
       };
@@ -467,13 +666,25 @@ export function InkLayer({ pageNumber, wrapRef, width, height, blocks, tool, pen
           poly: [[pt.x, pt.y]], raf: 0 };
         return;
       }
-      L.onSelect?.(pageNumber, []);
       showCanvas(ctx);
       const pen = e.pointerType === "pen";
+      const level = ctx.use.stabilize || 0;
       drawing = { ...ctx, id: e.pointerId, mode: "stroke", samples: [], t0: Date.now(),
         startTime: e.timeStamp, pressure: live.current.pressure, pen, raf: 0,
-        law: widthLaw({ tool: ctx.use.tool, brush: ctx.use.brush, pen }) };
-      appendInkSample(drawing, e);
+        law: widthLaw({ tool: ctx.use.tool, brush: ctx.use.brush, pen }),
+        // smoothing (stabilizer.js) and draw-and-hold (shapes.js), both
+        // snapshotted at the down like the pressure preference
+        level, stab: level ? makeStabilizer(level, { k: ctx.k }) : null, tip: null,
+        hold: null, holdTimer: 0, holdOn: !!L.drawHold && !(ctx.use.tool === "highlighter" && ctx.use.straight === "off"),
+        kinds: ctx.use.tool === "highlighter" ? ["line"] : undefined,
+        tail: { x: e.clientX, y: e.clientY, at: e.timeStamp }, downAt: { x: e.clientX, y: e.clientY },
+        // A finger's stroke clears the selection once it has moved 8 css px
+        // (as a tap is told from a swipe), so a two-finger chord, whose
+        // first finger starts a stroke the second cancels, never clears the
+        // selection it is about to restore.
+        deselect: e.pointerType === "touch" };
+      if (!drawing.deselect) L.onSelect?.(pageNumber, []);
+      takeSample(drawing, e);
       if (drawing.pen && nativeHost()?.ink) claimForHost(drawing, e);
       paint();
     };
@@ -498,10 +709,18 @@ export function InkLayer({ pageNumber, wrapRef, width, height, blocks, tool, pen
           // A box is the rectangle from the start to the pointer, as a polygon.
           if (d.box) d.poly = [[d.start.x, d.start.y], [pt.x, d.start.y], [pt.x, pt.y], [d.start.x, pt.y]];
           else d.poly.push([pt.x, pt.y]);
-        } else appendInkSample(d, ev);
+        } else takeSample(d, ev);
       }
       if (d.mode === "stroke") {
-        d.predicted = predictedInkSamples(d, e);
+        d.tip = d.toPt(e);
+        if (d.deselect && Math.hypot(e.clientX - d.downAt.x, e.clientY - d.downAt.y) >= 8) {
+          d.deselect = false;
+          live.current.onSelect?.(pageNumber, []);
+        }
+        trackHold(d, e);
+        // No prediction under smoothing: the raw predicted positions would
+        // spike from the brush out to the pointer, the shake the line hides.
+        d.predicted = d.hold || d.stab ? [] : predictedInkSamples(d, e);
         clearTimeout(d.predictionTimer);
         if (d.predicted.length) d.predictionTimer = setTimeout(() => {
           if (drawing !== d) return;
@@ -534,8 +753,16 @@ export function InkLayer({ pageNumber, wrapRef, width, height, blocks, tool, pen
       try { el.releasePointerCapture(e.pointerId); } catch { /* already released */ }
       if (d.raf) cancelAnimationFrame(d.raf);
       clearTimeout(d.predictionTimer);
+      clearTimeout(d.holdTimer);
       const L = live.current;
-      if (d.mode === "erase") { if (!cancelled) swallowClick(); return; }
+      if (d.mode === "erase") {
+        if (cancelled) return;
+        swallowClick();
+        // The eraser tool lifted (whether or not it erased): App may return
+        // to the last tool. The pen's eraser end and barrel never do.
+        if (d.eraseSource === "tool") L.onEraseEnd?.();
+        return;
+      }
       if (d.mode === "move") {
         setDragOffset(null);
         if (!cancelled) {
@@ -564,7 +791,8 @@ export function InkLayer({ pageNumber, wrapRef, width, height, blocks, tool, pen
         return;
       }
       if (!d.samples.length) return;
-      appendInkSample(d, e, true);
+      if (d.deselect) { d.deselect = false; L.onSelect?.(pageNumber, []); }
+      takeSample(d, e, true);
       commitStroke(d);
     };
     // A claim the host did not take ends with the page's own pointer-up; a
@@ -637,6 +865,7 @@ export function InkLayer({ pageNumber, wrapRef, width, height, blocks, tool, pen
       clearPending();
       if (drawing?.raf) cancelAnimationFrame(drawing.raf);
       clearTimeout(drawing?.predictionTimer);
+      clearTimeout(drawing?.holdTimer);
       if (drawing) {
         try { el.releasePointerCapture(drawing.id); } catch { /* already released */ }
       }
@@ -644,7 +873,7 @@ export function InkLayer({ pageNumber, wrapRef, width, height, blocks, tool, pen
     };
   }, [wrapRef, pageNumber]);
 
-  useEffect(() => { refreshCursorRef.current?.(); }, [tool, penTool, eraserSize]);
+  useEffect(() => { refreshCursorRef.current?.(); }, [tool, penTool, eraserSize, eraserFilter]);
 
   if (!width || !height) return null;
   const flashGroup = flash && groups.find((g) => g.id === flash.id);
@@ -705,7 +934,12 @@ export function InkLayer({ pageNumber, wrapRef, width, height, blocks, tool, pen
         maxScale={Math.min(10, MAX_STROKE_SIZE / Math.max(...groups.flatMap((g) => g.ink.strokes.filter((s) => selectedIds.has(s.id)).map((s) => s.size))))}
         onPreview={setTransform} onCommit={(value) => onAction("transform", value)} /> : null}
       <canvas ref={canvasRef} className="inkCanvas" />
-      <div ref={cursorRef} className="inkCursor" aria-hidden="true"><span /></div>
+      <div ref={cursorRef} className="inkCursor" aria-hidden="true">
+        <span />
+        {/* the eraser filter's kind, inside the ring when a filter is on (data-filter) */}
+        <PenIcon className="inkCursorGlyph inkCursorGlyph-pen" size={9} />
+        <HighlightIcon className="inkCursorGlyph inkCursorGlyph-highlighter" size={9} />
+      </div>
     </>
   );
 }

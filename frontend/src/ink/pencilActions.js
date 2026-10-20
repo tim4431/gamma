@@ -9,13 +9,26 @@
 // the armed tool, previous: the tool armed before it, options: the options
 // row is open}. → {pick: id} (arm that tool; null is the hand),
 // {ui: {open, tool?, options}} (a patch of the strip's state), or null.
+
+// The tool to go back to: the one armed before the current one when it is
+// still on the strip and not the current one, else the pen a stylus writes
+// with (the last pen armed, else the first preset). The Pencil's
+// switchPrevious and the eraser's return to the last tool (App's inkBack)
+// both pick it.
+export function backTool(prefs = {}, state = {}) {
+  const tools = prefs.tools || [];
+  const pen = tools.find((x) => x.id === prefs.pen)?.id || tools[0]?.id || null;
+  const { tool = null, previous = null } = state;
+  const known = ["eraser", "select", "text"].includes(previous) || tools.some((x) => x.id === previous);
+  return known && previous !== tool ? previous : pen;
+}
+
 export function pencilAction(message, prefs = {}, state = {}) {
   const action = typeof message === "string" ? message : message?.action;
   const tools = prefs.tools || [];
   const pen = tools.find((x) => x.id === prefs.pen)?.id || tools[0]?.id || null;
-  const { tool = null, previous = null, options = false } = state;
-  const known = ["eraser", "select", "text"].includes(previous) || tools.some((x) => x.id === previous);
-  const back = known && previous !== tool ? previous : pen;
+  const { tool = null, options = false } = state;
+  const back = backTool(prefs, state);
   if (action === "switchEraser") return { pick: tool === "eraser" ? back : "eraser" };
   if (action === "switchPrevious") return { pick: back };
   if (action === "showColorPalette" || action === "showInkAttributes") {

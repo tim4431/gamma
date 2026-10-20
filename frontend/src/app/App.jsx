@@ -124,9 +124,9 @@ import { makeStableActions, useStableActions } from "../shared/lib/stableActions
 import { keepIfSame, sameMap, sameObject } from "../shared/lib/keepIfSame.js";
 import { isTextBox, normalizeTextBox } from "../markup/textBox.js";
 import { useTextBoxes } from "../markup/useTextBoxes";
-import { GROUP_SPLIT_BYTES, MAX_BYTES, MAX_STROKES, appendStroke, duplicateStrokes, eraseAt, inkBounds, inkBytes, inkProps, mergeInk, newCanvasInk, newInk, pdfPositionOf, removeStrokes, restyleStrokes, serializeInk, strokeBounds, strokeBytes, toolStyle, transformStrokes, translateStrokes } from "../ink/ink";
+import { GROUP_SPLIT_BYTES, MAX_BYTES, MAX_STROKES, appendStroke, duplicateStrokes, eraseAt, eraserKeep, inkBounds, inkBytes, inkProps, mergeInk, newCanvasInk, newInk, pdfPositionOf, removeStrokes, restyleStrokes, serializeInk, strokeBounds, strokeBytes, toolStyle, transformStrokes, translateStrokes } from "../ink/ink";
 import { stripKey } from "../ink/stripKeys.js";
-import { pencilAction } from "../ink/pencilActions.js";
+import { backTool, pencilAction } from "../ink/pencilActions.js";
 import { NotebookViewer, PaperMenu, readPlace, showPlace } from "../notebook/NotebookViewer";
 import { NoteSheetContext } from "../notebook/NoteSheet";
 import {
@@ -2540,6 +2540,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     oaFallback, setOaFallback, metaAutoFetch, setMetaAutoFetch, pdfSaveLocal, setPdfSaveLocal,
     embAnnots, setEmbAnnots, smoothWheel, setSmoothWheel,
     inkPenOnly, setInkPenOnly, inkAutoPen, setInkAutoPen, inkPressure, setInkPressure,
+    inkFingerUndo, setInkFingerUndo, inkDrawHold, setInkDrawHold, inkScribbleErase, setInkScribbleErase,
+    inkEraserReturn, setInkEraserReturn, inkEraserFilter, setInkEraserFilter,
     replayMode, setReplayMode, replayRate, setReplayRate, replayFollow, setReplayFollow, replayLeadIn, setReplayLeadIn,
     recordingTranscribe, setRecordingTranscribe,
     inkTools, setInkTools, inkEraserMode, setInkEraserMode, inkEraserSize, setInkEraserSize,
@@ -6512,11 +6514,37 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     }
     guideEvents.emit("ink.stroke");
   }
+  // The eraser filter (Settings › Handwriting › Erases, the eraser row's
+  // trio) is one predicate every erasure goes through here: the eraser
+  // tool's whole-stroke pass, its partial pass, the pen's eraser end and a
+  // scribble. The layer hands its candidates over unfiltered.
+  const inkKeep = eraserKeep(inkEraserFilter);
   function handleInkErase(page, blockId, ids) {
     if (readOnly) return;
     const before = inkOf(blockId);
     if (!before) return;
-    applyInk([{ id: blockId, page, before, after: removeStrokes(before, ids) }], { label: T("ink erasure") });
+    const allowed = new Set(before.strokes.filter((s) => ids.includes(s.id) && inkKeep(s)).map((s) => s.id));
+    if (!allowed.size) return;
+    applyInk([{ id: blockId, page, before, after: removeStrokes(before, [...allowed]) }], { label: T("ink erasure") });
+    guideEvents.emit("ink.erased");
+  }
+  // A scribble's targets ([{gid, ids}], ink/gestures.js scribbleTargets)
+  // go as one entry across their groups, with Undo on the pill.
+  function handleInkEraseMany(page, targets) {
+    if (readOnly) return;
+    const changes = [];
+    let n = 0;
+    for (const { gid, ids } of targets || []) {
+      const before = inkOf(gid);
+      if (!before) continue;
+      const allowed = before.strokes.filter((s) => ids.includes(s.id) && inkKeep(s)).map((s) => s.id);
+      if (!allowed.length) continue;
+      n += allowed.length;
+      changes.push({ id: gid, page, before, after: removeStrokes(before, allowed) });
+    }
+    if (!changes.length) return;
+    applyInk(changes, { label: T("ink scribble erase") });
+    undoableStatus(tn("Erased {n} stroke.", "Erased {n} strokes.", n), { ink: true });
     guideEvents.emit("ink.erased");
   }
   // The partial eraser fires per pointer move: successive cuts through one
@@ -6525,7 +6553,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     if (readOnly) return;
     const before = inkOf(blockId);
     if (!before) return;
-    const { ink: after, changed } = eraseAt(before, x, y, r);
+    const { ink: after, changed } = eraseAt(before, x, y, r, inkKeep);
     if (!changed) return;
     const h = inkHistRef.current;
     const last = h.undo[h.undo.length - 1]?.changes;
@@ -6923,6 +6951,55 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     else setInkUi((s) => ({ ...s, ...result.ui }));
   };
   useEffect(() => (nativeHost()?.pencil ? onHostMessage("pencil", ({ action }) => pencilRef.current(action)) : undefined), []);
+  // The tool to go back to: the one armed before the current one, else the
+  // stylus pen (the Pencil's switchPrevious picks the same).
+  const inkBack = () => backTool({ tools: inkTools, pen: inkUi.pen }, { tool: inkUi.tool, previous: inkPrevRef.current.previous });
+  // The eraser tool lifted (never the pen's eraser end or barrel, whose
+  // lift is the switch): with "Eraser returns to the last tool" on, back to
+  // the tool armed before it, the options row closed. The Pencil's squeeze
+  // toggles the eraser (pencilActions.js): with the return on, the lift
+  // re-arms the pen and the next squeeze arms the eraser again.
+  function handleInkEraseEnd() {
+    if (!inkEraserReturn || inkUi.tool !== "eraser" || readOnly) return;
+    pickInkTool(inkBack());
+  }
+  // The pill a snapped stroke raises ("Straightened.", "Shape: circle.",
+  // ink/finishStroke.js): Undo is one tap away every time; a `once` status
+  // (the first Always straightening of a highlighter) is said once a session.
+  const straightHintRef = useRef(true);
+  function handleHoldStatus(status) {
+    if (!status?.text) return;
+    if (status.once) {
+      if (!straightHintRef.current) return;
+      straightHintRef.current = false;
+    }
+    undoableStatus(status.text, { ink: true });
+  }
+  // Two fingers tapped together undo, three redo (ink/fingerChords.js):
+  // exactly what the strip's buttons do — the block history while the Text
+  // tool or a text box has it, else the stroke history; with nothing to
+  // undo, nothing. The first chord of a session says so, with Turn off.
+  const fingerUndoHintRef = useRef(true);
+  function handleUndoGesture(kind) {
+    if (readOnly) return;
+    const redo = kind === "redo";
+    if (boxUndo) { undoBlocks(redo); return; }
+    const h = inkHistRef.current;
+    if (!(redo ? h.redo : h.undo).length) return;
+    if (!inkUndo(redo)) return;
+    if (!fingerUndoHintRef.current) return;
+    fingerUndoHintRef.current = false;
+    setStatus(redo ? t("Three fingers redid a stroke.") : t("Two fingers undid a stroke."),
+      { label: t("Turn off"), run: () => setInkFingerUndo("off") });
+  }
+  // Turning scribble-to-erase on explains the gesture, once a session.
+  const scribbleHintRef = useRef(true);
+  const setScribbleErase = (on) => {
+    setInkScribbleErase(on);
+    if (!on || !scribbleHintRef.current) return;
+    scribbleHintRef.current = false;
+    setStatus(t("Scribble to erase is on: a fast, dense back-and-forth with the pen erases the strokes under it"));
+  };
   // The notes view opens at the reader's place on the sheets (tabScrollRef;
   // the notebook view takes it as `place`), unless a jump to a block is on its
   // way there. Read before that jump's effect spends it, applied once the
@@ -6949,7 +7026,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // selection, the selected box and the flashes on the surface they are on.
   const inkFeaturesToldRef = useRef(null); // the page whose newer-ink pill was shown
   const pageActions = useStableActions({
-    onStroke: handleInkStroke, onErase: handleInkErase, onErasePartial: handleInkErasePartial, onSelect: handleInkSelect,
+    onStroke: handleInkStroke, onErase: handleInkErase, onErasePartial: handleInkErasePartial, onEraseEnd: handleInkEraseEnd,
+    onEraseMany: handleInkEraseMany, onSelect: handleInkSelect, onUndoGesture: handleUndoGesture, onHoldStatus: handleHoldStatus,
     onAction: handleInkAction, onMoveSelection: handleInkMoveSelection, onJump: showInNotes, ...textBoxes.actions,
     onFingerScroll: () => setStatus(t("Fingers scroll while a pen draws"),
       { label: t("Draw with finger"), run: () => setInkPenOnly(false) }),
@@ -6964,11 +7042,12 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   const pageTools = useMemo(() => ({
     readOnly,
     ink: { tool: inkTool, penTool: inkPenTool, penOnly: inkPenOnly, pressure: inkPressure, eraserMode: inkEraserMode,
-      eraserSize: inkEraserSize, lassoMode: inkLassoMode },
+      eraserSize: inkEraserSize, eraserReturn: inkEraserReturn, eraserFilter: inkEraserFilter, drawHold: inkDrawHold,
+      scribble: inkScribbleErase, fingerUndo: inkFingerUndo, lassoMode: inkLassoMode },
     text: { armed: textArmed, style: textBoxStyle },
     actions: pageActions,
-  }), [readOnly, inkTool, inkPenTool, inkPenOnly, inkPressure, inkEraserMode, inkEraserSize, inkLassoMode, textArmed, textBoxStyle,
-    pageActions]);
+  }), [readOnly, inkTool, inkPenTool, inkPenOnly, inkPressure, inkEraserMode, inkEraserSize, inkEraserReturn, inkEraserFilter,
+    inkDrawHold, inkScribbleErase, inkFingerUndo, inkLassoMode, textArmed, textBoxStyle, pageActions]);
   // --- Recordings (docs/dev/recording.md) ---------------------------------------
   // The page's recording blocks and every block stamped with the moment it
   // was written, each list kept while its contents are the same, so the
@@ -7113,9 +7192,15 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     reportUndo(blockHistory.undo(redo, !!document.activeElement?.closest?.(".cm-editor")), redo);
   }
   // A change the pill offers to take back: its Undo runs the app.undo
-  // command, so the message names no key.
-  function undoableStatus(msg) {
-    setStatus(msg, { label: t("Undo"), run: () => { postPill("status", null); commandById("app.undo").run(appCmdRef.current); } });
+  // command (the block history), so the message names no key; a stroke
+  // edit (a snapped shape, a scribble erase) passes `ink` to step the
+  // stroke history instead, as the strip's Undo button does.
+  function undoableStatus(msg, { ink = false } = {}) {
+    setStatus(msg, { label: t("Undo"), run: () => {
+      postPill("status", null);
+      if (ink) inkUndo(false);
+      else commandById("app.undo").run(appCmdRef.current);
+    } });
   }
   bindingsRef.current = keybindings;
   appCmdRef.current = {
@@ -8267,7 +8352,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   const markupToolbar = (
     <MarkupToolbar
       tools={inkTools} active={inkUi.tool} options={inkUi.options}
-      eraserMode={inkEraserMode} eraserSize={inkEraserSize} lassoMode={inkLassoMode} textStyle={textBoxes.shownStyle}
+      eraserMode={inkEraserMode} eraserSize={inkEraserSize} eraserReturn={inkEraserReturn} eraserFilter={inkEraserFilter}
+      lassoMode={inkLassoMode} textStyle={textBoxes.shownStyle}
       onPick={pickInkTool} onTextStyle={textBoxes.restyle} blockHistory={boxUndo}
       onUndo={() => (boxUndo ? undoBlocks(false) : inkUndo(false))} onRedo={() => (boxUndo ? undoBlocks(true) : inkUndo(true))}
       // the block history keeps no count to disable its buttons by: a step with nothing to undo says so
@@ -8277,6 +8363,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       onEraser={(patch) => {
         if ("mode" in patch) setInkEraserMode(patch.mode);
         if ("size" in patch) setInkEraserSize(patch.size);
+        if ("filter" in patch) setInkEraserFilter(patch.filter);
+        if ("return" in patch) setInkEraserReturn(patch.return);
       }}
       onLasso={setInkLassoMode}
       onClose={() => setInkUi((s) => ({ ...s, open: false, tool: null, options: false }))}
@@ -11124,6 +11212,18 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           setInkAutoPen,
           inkPressure,
           setInkPressure,
+          inkFingerUndo,
+          setInkFingerUndo,
+          inkDrawHold,
+          setInkDrawHold,
+          inkScribbleErase,
+          setInkScribbleErase: setScribbleErase,
+          inkEraserReturn,
+          setInkEraserReturn,
+          inkEraserFilter,
+          setInkEraserFilter,
+          setInkTools,
+          confirm: setConfirmBox,
           replayLeadIn,
           setReplayLeadIn,
           recordingTranscribe,

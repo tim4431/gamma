@@ -6,6 +6,7 @@
 // backend/tests/test_ink.py; the chat's view_ink is test_ai_tools_ink.py.
 import { fakeAiModels } from "../harness.mjs";
 import { waitForPdf } from "./pdf.mjs";
+import { decodeStroke } from "../../../src/ink/ink.js";
 
 async function drawLine(page, from, to) {
   await page.mouse.move(from[0], from[1]);
@@ -582,6 +583,317 @@ export async function inkScenarios({ server, browser, alice, makePdf, step, unti
       await other.unroute(url);
       assertNoProblems(other);
     } finally { await ctx2.close(); }
+    assertNoProblems(page);
+  });
+
+  // --- milestone 1: the pen feel (docs/dev/handwriting.md "What the user sees") ---
+  const pathCount = () => page.locator('[data-page="1"] .inkLayer path').count();
+  const pillText = async () => (await page.locator(".statusPill").allInnerTexts().catch(() => [])).join(" | ");
+  // The strokes saved on the page, by id, over every group (a stroke joins
+  // the current group, so a new one is found by its id, not its block).
+  const savedStrokes = async () => {
+    const d = await account.api(`/api/blocks/${pageId}/subtree`);
+    const out = new Map();
+    for (const b of d.block.children) {
+      if (!b.properties?.ink_url?.endsWith(".ink")) continue;
+      for (const st of (await account.api(b.properties.ink_url)).strokes) out.set(st.id, st);
+    }
+    return out;
+  };
+  const newStrokes = (before, n, what) => until(async () => {
+    const fresh = [...(await savedStrokes()).values()].filter((st) => !before.has(st.id));
+    return fresh.length >= n ? fresh : null;
+  }, { what });
+  // The armed preset's options row: a tap on the armed tool opens it.
+  const openOptions = async () => {
+    await page.locator(".pdfInkBar .inkToolBtn.modeActive").click();
+    await page.waitForSelector(".pdfInkSub");
+  };
+  const armedLabel = () => page.locator(".pdfInkBar .inkToolBtn.modeActive").getAttribute("aria-label");
+  // The strip, open (the pen button toggles it, so only when it is closed).
+  const openStrip = async () => {
+    if (!(await page.locator(".pdfInkBar").count())) await page.click("button[aria-label='Handwriting tools']");
+    await page.waitForSelector(".pdfInkBar");
+  };
+  // Settings → Reading & editing, its rows, and back.
+  const openReadingSettings = async () => {
+    await page.locator('[data-guide="header.account"]').click();
+    await page.getByRole("button", { name: "Settings…", exact: true }).click();
+    const dialog = page.getByRole("dialog", { name: "Settings", exact: true });
+    await dialog.waitFor();
+    await page.getByRole("navigation", { name: "Settings categories" }).getByRole("button", { name: "Reading & editing", exact: true }).click();
+    return dialog;
+  };
+  const settingRow = (name) => page.locator(`.settingsPane [data-setting="${name}"]`).first();
+  const closeSettings = async (dialog) => {
+    await page.getByRole("button", { name: "Close settings", exact: true }).click();
+    await dialog.waitFor({ state: "hidden" });
+  };
+  // A pen stroke of synthetic pointer events on their own clock: points
+  // [x, y, ms] from the page's corner, the lift at the last point. The
+  // scribble and the smoothing read the samples' timing and spacing.
+  const penStroke = (points) => page.locator('[data-page="1"]').evaluate((el, points) => {
+    const box = el.getBoundingClientRect();
+    const send = (type, x, y, time) => {
+      const ev = new PointerEvent(type, { bubbles: true, cancelable: true, pointerType: "pen", pointerId: 95, isPrimary: true,
+        button: 0, buttons: type === "pointerup" ? 0 : 1, clientX: box.left + x, clientY: box.top + y, pressure: type === "pointerup" ? 0 : 0.5 });
+      Object.defineProperty(ev, "timeStamp", { value: 9000 + time });
+      el.dispatchEvent(ev);
+    };
+    points.forEach(([x, y, time], i) => send(i ? "pointermove" : "pointerdown", x, y, time));
+    const [x, y, time] = points[points.length - 1];
+    send("pointerup", x, y, time + 8);
+  }, points);
+  // A saved stroke's spread across the line, over its middle (the start and
+  // the lift are the pen's own points), in page points.
+  const spread = (st) => {
+    const a = decodeStroke(st);
+    const ys = a.filter((q) => Math.min(Math.abs(q.x - a[0].x), Math.abs(q.x - a.at(-1).x)) > 30).map((q) => q.y);
+    return Math.max(...ys) - Math.min(...ys);
+  };
+
+  await step("ink: Settings → Reading & editing has the account's Handwriting rows and this device's, and Undo with fingers is set to Double tap", async () => {
+    const dialog = await openReadingSettings();
+    const row = settingRow;
+    for (const name of ["Handwriting", "Reset presets", "Eraser returns to the last tool", "Erases", "Draw and hold", "Scribble to erase",
+      "This device", "Draws with", "Stylus draws right away", "Pressure-sensitive strokes", "Undo with fingers"]) {
+      assert(await row(name).count(), `the row "${name}" is in Reading & editing`);
+    }
+    const scope = (title) => page.locator(`.settingsPane .setSection[data-setting="${title}"] .setScope`).getAttribute("data-scope");
+    assertEq(await scope("Handwriting"), "account", "Handwriting follows the account");
+    assertEq(await scope("This device"), "browser", "This device stays with the browser");
+    assertEq(await row("Draw and hold").locator("input[type=checkbox]").isChecked(), true, "draw and hold is on by default");
+    assertEq(await row("Scribble to erase").locator("input[type=checkbox]").isChecked(), false, "scribble to erase is off by default");
+    assertEq(await row("Erases").getByRole("button", { name: "All", exact: true }).getAttribute("aria-pressed"), "true", "erases everything by default");
+    // a mouse's browser: finger undo is off until asked for
+    assertEq(await row("Undo with fingers").getByRole("button", { name: "Off", exact: true }).getAttribute("aria-pressed"), "true");
+    await row("Undo with fingers").getByRole("button", { name: "Double tap", exact: true }).click();
+    assertEq(await row("Undo with fingers").getByRole("button", { name: "Double tap", exact: true }).getAttribute("aria-pressed"), "true");
+    assertEq(await page.evaluate(() => localStorage.getItem("gamma-ink-finger-undo")), "double", "a browser preference");
+    // the search knows every row by its section
+    await page.getByRole("searchbox", { name: "Search settings" }).fill("fingers undo");
+    await page.locator(".settingsSearchResult").filter({ has: page.getByText("Undo with fingers", { exact: true }) }).first().waitFor();
+    await closeSettings(dialog);
+    assertNoProblems(page);
+  });
+
+  await step("ink: a pen held still at the end of a stroke snaps it to a straight line (pen: false, shape line) with Undo on the pill", async () => {
+    await openStrip();
+    await page.keyboard.press("1");
+    const saved = await savedStrokes();
+    const before = await pathCount();
+    await page.locator('[data-page="1"]').evaluate(async (el) => {
+      const box = el.getBoundingClientRect();
+      const send = (type, x, y, time) => {
+        const ev = new PointerEvent(type, { bubbles: true, cancelable: true,
+          pointerType: "pen", pointerId: 91, button: 0, buttons: type === "pointerup" ? 0 : 1,
+          clientX: box.left + x, clientY: box.top + y, pressure: type === "pointerup" ? 0 : 0.5 });
+        Object.defineProperty(ev, "timeStamp", { value: 5000 + time });
+        el.dispatchEvent(ev);
+      };
+      // a slightly wobbly 150 px line drawn over 300 ms, then the tip stays still
+      send("pointerdown", 100, 450, 0);
+      for (let i = 1; i <= 10; i++) send("pointermove", 100 + i * 15, 450 + (i % 2 ? 1.2 : -1.2), i * 30);
+      await new Promise((r) => setTimeout(r, 900)); // past the 600 ms hold
+      send("pointerup", 250, 450, 1200);
+    });
+    await until(async () => (await pathCount()) === before + 1, { what: "the snapped stroke drawn" });
+    const [st] = await newStrokes(saved, 1, "the held stroke saved");
+    assertEq(st.pen, false, "an even line");
+    assertEq(st.ch, "xyt", "no pressure channel on a snapped stroke");
+    assertEq(st.shape?.kind, "line", `the shape record (${JSON.stringify(st.shape)})`);
+    assertEq(st.pts.length, 6, "two samples");
+    assert(Math.abs(st.pts[4]) <= 1, `a line within 5° of horizontal is snapped level (dy ${st.pts[4]})`);
+    await until(async () => (await pillText()).includes("Straightened."), { what: "the Straightened pill" });
+    assert(await page.locator(".statusPill").getByRole("button", { name: "Undo", exact: true }).count(), "Undo is on the pill");
+    await page.locator(".statusPill").getByRole("button", { name: "Undo", exact: true }).click();
+    await until(async () => (await pathCount()) === before, { what: "the snap undone from the pill" });
+    assertNoProblems(page);
+  });
+
+  await step("ink: a highlighter preset set to Straight: Always flattens a wavy highlight to its chord", async () => {
+    await page.keyboard.press("h");
+    await openOptions();
+    const row = page.locator(".pdfInkSub");
+    assertEq(await row.getByRole("button", { name: "Hold", exact: true }).getAttribute("aria-pressed"), "true", "Hold is the default");
+    assertEq(await row.locator(".inkSmoothDot").count(), 5, "the Smoothing ladder: Off and four levels");
+    await row.getByRole("button", { name: "Always", exact: true }).click();
+    assertEq(await row.getByRole("button", { name: "Always", exact: true }).getAttribute("aria-pressed"), "true");
+    assert(JSON.parse(await page.evaluate(() => localStorage.getItem("gamma-ink-tools"))).some((t) => t.straight === "always"), "the preset keeps it");
+    await page.locator(".pdfInkBar .inkToolBtn.modeActive").click(); // closes the row
+    const saved = await savedStrokes();
+    const before = await pathCount();
+    box = await page.locator('[data-page="1"]').boundingBox();
+    await page.mouse.move(box.x + 100, box.y + 500);
+    await page.mouse.down();
+    for (let i = 1; i <= 20; i++) await page.mouse.move(box.x + 100 + i * 10, box.y + 500 + (i % 2 ? 3 : -3));
+    await page.mouse.up();
+    await until(async () => (await pathCount()) === before + 1, { what: "the highlight drawn" });
+    const [st] = await newStrokes(saved, 1, "the straight highlight saved");
+    assertEq(st.tool, "highlighter");
+    assertEq(st.pen, false);
+    assertEq(st.shape?.kind, "line", `the chord carries a line record (${JSON.stringify(st.shape)})`);
+    assertEq(st.pts.length, 6, "two samples, xyt");
+    assertEq(st.pts[4], 0, "snapped horizontal");
+    await until(async () => (await pillText()).includes("Straightened."), { what: "the first Always straightening says so" });
+    // back to Hold, so the presets are as they were
+    await openOptions();
+    await page.locator(".pdfInkSub").getByRole("button", { name: "Hold", exact: true }).click();
+    await page.locator(".pdfInkBar .inkToolBtn.modeActive").click();
+    assertNoProblems(page);
+  });
+
+  await step("ink: the eraser set to Highlighters leaves the pen stroke under its pass intact; the hover ring carries the kind", async () => {
+    const saved = await savedStrokes();
+    const before = await pathCount();
+    box = await page.locator('[data-page="1"]').boundingBox();
+    await page.keyboard.press("1");
+    await drawLine(page, [box.x + 100, box.y + 560], [box.x + 260, box.y + 560]);
+    await page.keyboard.press("h");
+    await drawLine(page, [box.x + 100, box.y + 560], [box.x + 260, box.y + 560]);
+    await until(async () => (await pathCount()) === before + 2, { what: "a pen stroke and a highlight over it" });
+    const drawn = await newStrokes(saved, 2, "both strokes saved");
+    const penStroke = drawn.find((st) => st.tool === "pen"), highlight = drawn.find((st) => st.tool === "highlighter");
+    assert(penStroke && highlight, "a pen stroke and a highlight");
+    await page.keyboard.press("e");
+    await openOptions();
+    const row = page.locator(".pdfInkSub");
+    assertEq(await row.getByRole("button", { name: "All", exact: true }).getAttribute("aria-pressed"), "true");
+    await row.getByRole("button", { name: "Highlighters", exact: true }).click();
+    await until(async () => (await account.api("/api/prefs/profile")).value?.inkEraserFilter === "highlighter", { what: "the filter is the account's" });
+    await page.mouse.move(box.x + 180, box.y + 540);
+    await until(() => page.locator('[data-page="1"] .inkCursor[data-filter="highlighter"]').count(), { what: "the hover ring shows the kind" });
+    await drawLine(page, [box.x + 180, box.y + 540], [box.x + 182, box.y + 580]);
+    await until(async () => (await pathCount()) === before + 1, { what: "the highlight gone" });
+    await until(async () => !(await savedStrokes()).has(highlight.id), { what: "the highlight gone from the file" });
+    assert((await savedStrokes()).has(penStroke.id), "the pen stroke under the pass stays");
+    await row.getByRole("button", { name: "All", exact: true }).click();
+    await until(async () => (await account.api("/api/prefs/profile")).value?.inkEraserFilter === "all", { what: "back to everything" });
+    await page.mouse.move(box.x + 300, box.y + 540);
+    await page.mouse.move(box.x + 302, box.y + 542);
+    await until(async () => (await page.locator('[data-page="1"] .inkCursor').count()) === 1
+      && (await page.locator('[data-page="1"] .inkCursor[data-filter]').count()) === 0, { what: "no glyph without a filter" });
+    assertNoProblems(page);
+  });
+
+  await step("ink: with Back to last tool on, lifting the eraser re-arms the preset used before it, its row closed", async () => {
+    await page.keyboard.press("2");
+    assert((await armedLabel()).includes("key 2"), "preset 2 armed");
+    await page.keyboard.press("e");
+    await openOptions();
+    const toggle = page.locator(".pdfInkSub").getByRole("button", { name: "Back to last tool", exact: true });
+    assertEq(await toggle.getAttribute("aria-pressed"), "false", "off by default");
+    await toggle.click();
+    await until(async () => (await account.api("/api/prefs/profile")).value?.inkEraserReturn === true, { what: "the return is the account's" });
+    box = await page.locator('[data-page="1"]').boundingBox();
+    await drawLine(page, [box.x + 400, box.y + 700], [box.x + 420, box.y + 720]); // over nothing: the return does not depend on erasing
+    await until(async () => (await armedLabel() || "").includes("key 2"), { what: "preset 2 armed again after the eraser lifted" });
+    assertEq(await page.locator(".pdfInkSub").count(), 0, "the options row is closed");
+    await page.keyboard.press("e");
+    await openOptions();
+    await page.locator(".pdfInkSub").getByRole("button", { name: "Back to last tool", exact: true }).click();
+    await until(async () => (await account.api("/api/prefs/profile")).value?.inkEraserReturn === false, { what: "turned off again" });
+    await page.keyboard.press("1");
+    assertNoProblems(page);
+  });
+
+  await step("ink: a two-finger double tap undoes the last stroke and says so once, with Turn off", async () => {
+    box = await page.locator('[data-page="1"]').boundingBox();
+    await drawLine(page, [box.x + 100, box.y + 620], [box.x + 240, box.y + 640]);
+    const before = await pathCount();
+    const chord = (ids, x, y) => page.locator('[data-page="1"]').evaluate(async (el, [ids, x, y]) => {
+      const box = el.getBoundingClientRect();
+      const send = (type, id, dx) => el.dispatchEvent(new PointerEvent(type, { bubbles: true, cancelable: true,
+        pointerType: "touch", pointerId: id, isPrimary: id === ids[0], button: 0, buttons: type === "pointerup" ? 0 : 1,
+        clientX: box.left + x + dx, clientY: box.top + y }));
+      ids.forEach((id, i) => send("pointerdown", id, i * 40));
+      await new Promise((r) => setTimeout(r, 40));
+      ids.forEach((id, i) => send("pointerup", id, i * 40));
+    }, [ids, x, y]);
+    await chord([201, 202], 300, 300);
+    await new Promise((r) => setTimeout(r, 120));
+    await chord([203, 204], 300, 300);
+    await until(async () => (await pathCount()) === before - 1, { what: "the stroke undone by the chord" });
+    await until(async () => (await pillText()).includes("Two fingers undid a stroke."), { what: "the first chord explains itself" });
+    await page.locator(".statusPill").getByRole("button", { name: "Turn off", exact: true }).click();
+    await until(async () => (await page.evaluate(() => localStorage.getItem("gamma-ink-finger-undo"))) === "off", { what: "Turn off sets the preference" });
+    await page.getByRole("button", { name: "Redo ink", exact: true }).click();
+    await until(async () => (await pathCount()) === before, { what: "redone from the strip" });
+    await chord([205, 206], 300, 300);
+    await new Promise((r) => setTimeout(r, 120));
+    await chord([207, 208], 300, 300);
+    await sleep(400);
+    assertEq(await pathCount(), before, "off: a chord undoes nothing");
+    assertNoProblems(page);
+  });
+
+  await step("ink: with Scribble to erase on, a fast back-and-forth with the pen erases the stroke under it as one undo step, and nothing is drawn", async () => {
+    let dialog = await openReadingSettings();
+    await settingRow("Scribble to erase").locator("input[type=checkbox]").check();
+    await until(async () => (await pillText()).includes("Scribble to erase is on"), { what: "turning it on explains the gesture" });
+    await closeSettings(dialog);
+    await until(async () => (await account.api("/api/prefs/profile")).value?.inkScribbleErase === true, { what: "the account's" });
+    await page.keyboard.press("1");
+    box = await page.locator('[data-page="1"]').boundingBox();
+    const saved = await savedStrokes();
+    const before = await pathCount();
+    await drawLine(page, [box.x + 100, box.y + 450], [box.x + 160, box.y + 450]);
+    await until(async () => (await pathCount()) === before + 1, { what: "a pen stroke to scratch out" });
+    const [victim] = await newStrokes(saved, 1, "the stroke saved");
+    // five passes over it, 70 px wide and 360 ms long: four sharp reversals, fast and dense
+    const scribble = [];
+    for (let pass = 0; pass < 5; pass++) for (let i = 0; i < 8; i++) {
+      const u = i / 8;
+      scribble.push([pass % 2 ? 165 - 70 * u : 95 + 70 * u, 450 + (pass % 2 ? 4 : -4) + (i % 2 ? 1 : -1), (pass * 8 + i) * 9]);
+    }
+    scribble.push([165, 454, 40 * 9]);
+    await penStroke(scribble);
+    await until(async () => (await pathCount()) === before, { what: "the stroke gone and the scribble not drawn" });
+    await until(async () => !(await savedStrokes()).has(victim.id), { what: "the stroke gone from the file" });
+    assertEq((await savedStrokes()).size, saved.size, "the scribble itself is not saved");
+    await until(async () => (await pillText()).includes("Erased 1 stroke."), { what: "the pill counts the erasure" });
+    await page.locator(".statusPill").getByRole("button", { name: "Undo", exact: true }).click();
+    await until(async () => (await pathCount()) === before + 1, { what: "the stroke back from the pill's Undo" });
+    await until(async () => (await savedStrokes()).has(victim.id), { what: "and back in the file" });
+    dialog = await openReadingSettings();
+    await settingRow("Scribble to erase").locator("input[type=checkbox]").uncheck();
+    await closeSettings(dialog);
+    await until(async () => (await account.api("/api/prefs/profile")).value?.inkScribbleErase === false, { what: "off again" });
+    assertNoProblems(page);
+  });
+
+  await step("ink: Smoothing 4 on a preset draws a shaky pen's zigzag as a calm line, where Smoothing off copies it", async () => {
+    await page.keyboard.press("1");
+    const zigzag = (y) => Array.from({ length: 61 }, (_, i) => [100 + i * 4, y + (i % 2 ? 5 : -5), i * 12]);
+    let saved = await savedStrokes();
+    let before = await pathCount();
+    await penStroke(zigzag(400));
+    await until(async () => (await pathCount()) === before + 1, { what: "the zigzag drawn with Smoothing off" });
+    const [raw] = await newStrokes(saved, 1, "the raw zigzag saved");
+    await openOptions();
+    const row = page.locator(".pdfInkSub");
+    assertEq(await row.locator(".inkSmoothing button").count(), 5, "Off and four levels");
+    assertEq(await row.getByRole("button", { name: "Smoothing off", exact: true }).getAttribute("aria-pressed"), "true", "off by default");
+    await row.getByRole("button", { name: "Smoothing 4 of 4", exact: true }).click();
+    assertEq(await row.getByRole("button", { name: "Smoothing 4 of 4", exact: true }).getAttribute("aria-pressed"), "true");
+    assertEq(JSON.parse(await page.evaluate(() => localStorage.getItem("gamma-ink-tools"))).find((t) => t.stabilize)?.stabilize, 4, "the preset keeps the level");
+    await page.locator(".pdfInkBar .inkToolBtn.modeActive").click(); // closes the row
+    saved = await savedStrokes();
+    before = await pathCount();
+    await penStroke(zigzag(420));
+    await until(async () => (await pathCount()) === before + 1, { what: "the zigzag drawn with Smoothing 4" });
+    const [smooth] = await newStrokes(saved, 1, "the smoothed stroke saved");
+    assert(spread(raw) > 5, `off: the line copies the shake (spread ${spread(raw).toFixed(2)} pt)`);
+    assert(spread(smooth) < 0.4 * spread(raw), `Smoothing 4: a calm line (spread ${spread(smooth).toFixed(2)} of ${spread(raw).toFixed(2)} pt)`);
+    // both strokes start at the pen's own point (the first sample passes through), 20 px apart; the
+    // smoothed one must end at the pen's lift, the same 20 px under the raw one's
+    const first = (st) => decodeStroke(st)[0], end = (st) => decodeStroke(st).at(-1);
+    const dy = first(smooth).y - first(raw).y;
+    assert(Math.abs(end(smooth).x - end(raw).x) < 1 && Math.abs(end(smooth).y - end(raw).y - dy) < 1,
+      `the smoothed line still reaches the lift point (ends ${JSON.stringify(end(smooth))} vs ${JSON.stringify(end(raw))}, starts ${dy.toFixed(2)} apart)`);
+    await openOptions();
+    await page.locator(".pdfInkSub").getByRole("button", { name: "Smoothing off", exact: true }).click();
+    await page.locator(".pdfInkBar .inkToolBtn.modeActive").click();
     assertNoProblems(page);
   });
 

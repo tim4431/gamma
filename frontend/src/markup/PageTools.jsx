@@ -6,12 +6,16 @@
 import { createContext, useContext } from "react";
 
 // {readOnly, ink: {tool, penTool, penOnly, pressure, eraserMode, eraserSize,
-// lassoMode}, text: {armed, style}, actions}. ink.tool is the armed tool and
+// eraserReturn, eraserFilter, drawHold, scribble, fingerUndo, lassoMode},
+// text: {armed, style}, actions}. ink.tool is the armed tool and
 // ink.penTool what a stylus writes with when nothing is armed; both are null
-// on a read-only page and while the Text tool is armed. text.armed: the Text
-// tool is armed; text.style: the style of new boxes ({size, color, bg}).
+// on a read-only page and while the Text tool is armed. eraserReturn,
+// drawHold and scribble are the account's flags, eraserFilter 'all' | 'pen'
+// | 'highlighter' and fingerUndo 'off' | 'tap' | 'double'. text.armed: the
+// Text tool is armed; text.style: the style of new boxes ({size, color, bg}).
 // actions carries the handlers: the ink ones (onStroke, onErase,
-// onErasePartial, onSelect, onAction, onMoveSelection, onFingerScroll),
+// onErasePartial, onEraseEnd, onEraseMany, onSelect, onAction,
+// onMoveSelection, onFingerScroll, onUndoGesture, onHoldStatus),
 // onJump (show a mark's block in the notes) and the text boxes'
 // (markup/useTextBoxes.js) — one object for App's life whose functions call
 // the latest handlers (shared/lib/stableActions.js), so the context value

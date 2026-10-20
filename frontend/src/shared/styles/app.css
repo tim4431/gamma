@@ -6362,6 +6362,11 @@ a.shareBrand:hover { background: var(--bg-hover); }
 .inkCursor span { position: absolute; left: 50%; top: 50%; width: 2px; height: 2px;
   transform: translate(-50%, -50%); border-radius: 50%; background: #222; box-shadow: 0 0 0 1px #fff; }
 .inkCursor[data-tool="eraser"] { background: #ffffff18; }
+/* The eraser filter's glyph inside the ring (a pen or a highlighter) when a filter is on. */
+.inkCursorGlyph { display: none; position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+  color: #222; filter: drop-shadow(0 0 1px #fff) drop-shadow(0 0 1px #fff); } /* ds-allow: drawn over the paper like the ring's centre mark above, not the UI theme */
+.inkCursor[data-filter="pen"] .inkCursorGlyph-pen, .inkCursor[data-filter="highlighter"] .inkCursorGlyph-highlighter { display: block; }
+.inkCursor[data-filter] span { display: none; }
 .inkTransformHandle {
   position: absolute; z-index: 7; width: 28px; height: 28px; padding: 5px;
   border-radius: 50%; border: 1px solid rgba(80, 140, 255, 0.95); background: var(--bg-elevated); color: var(--text-primary);
@@ -6476,6 +6481,10 @@ a.shareBrand:hover { background: var(--bg-hover); }
 .pdfInkBar .inkSizeBtn { width: calc(var(--ctl-icon-btn) - 2px); }
 .inkSizeDot { display: block; border-radius: var(--radius-full); margin: 0 auto; }
 .inkEraserDot { border: 1.5px solid currentColor; box-sizing: border-box; }
+/* A smoothing level: a hollow dot growing with the string's length. */
+.inkSmoothDot { border: 1.5px solid currentColor; box-sizing: border-box; opacity: 0.8; }
+/* Labelled groups in the options row: real boxes (display: contents would drop them, and their name, from Safari's accessibility tree). */
+.inkSmoothing, .inkStraight, .inkErases { display: inline-flex; align-items: center; gap: 2px; }
 /* Eraser / lasso mode choices: icon + word, a pill when active. */
 .pdfInkBar .inkSegBtn { width: auto; padding: 0 8px; gap: 5px; font-size: var(--fs-xs); border-radius: var(--radius-full); }
 /* The Text tool's sizes as their numbers; "no background" as a struck-out swatch. */

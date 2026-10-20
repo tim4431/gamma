@@ -11,7 +11,7 @@ import { ColorChoices, ERASER_SIZES, InkTooltips, inkColorName } from "../ink/In
 import { pickerColors } from "../shared/model/palette.js";
 import { usePalette } from "../shared/ui/paletteContext.js";
 import { TextStyleChoices } from "./TextBoxLayer";
-import { t } from "../shared/i18n/i18n.js";
+import { t, T } from "../shared/i18n/i18n.js";
 
 const SIZE_LABELS = [t("Small"), t("Medium"), t("Large")];
 
@@ -27,8 +27,25 @@ const SIZE_LABELS = [t("Small"), t("Medium"), t("Large")];
 // sets (and the selected box's). Undo / Redo step the stroke history, or
 // with `blockHistory` the page's block history (the Text tool armed, a box
 // selected or edited; App routes Ctrl+Z the same way).
-export function MarkupToolbar({ tools, active, options, eraserMode, eraserSize, lassoMode, textStyle, blockHistory,
-  onPick, onToggleOptions, onChangeTools, onEraser, onLasso, onTextStyle, onClose, onUndo, onRedo, canUndo, canRedo }) {
+// A preset's row also carries its Smoothing ladder (`stabilize` 0–4,
+// ink/stabilizer.js) and a highlighter's Straight trio (`straight`: hold /
+// always / off, ink/finishStroke.js). The eraser's row carries, after the
+// sizes, the account's Erases filter (`eraserFilter`) and the Back to last
+// tool toggle (`eraserReturn`), both through onEraser({filter} | {return}).
+const SMOOTHING = [0, 1, 2, 3, 4];
+const STRAIGHT = [
+  ["hold", T("Hold"), T("Straight highlighter — Hold: keep the pen still at the end of a stroke to straighten it")],
+  ["always", T("Always"), T("Straight highlighter — Always: every nearly straight highlight becomes a straight line on lift")],
+  ["off", T("Off"), T("Straight highlighter — Off: highlights stay as drawn")],
+];
+const ERASES = [
+  ["all", T("All"), null, T("Erases everything the eraser touches")],
+  ["pen", T("Pens"), PenIcon, T("Erases pen strokes only; highlights stay")],
+  ["highlighter", T("Highlighters"), HighlightIcon, T("Erases highlights only; pen strokes stay")],
+];
+
+export function MarkupToolbar({ tools, active, options, eraserMode, eraserSize, eraserReturn = false, eraserFilter = "all", lassoMode,
+  textStyle, blockHistory, onPick, onToggleOptions, onChangeTools, onEraser, onLasso, onTextStyle, onClose, onUndo, onRedo, canUndo, canRedo }) {
   const preset = tools.find((t) => t.id === active) || null;
   const tap = (id) => (id === active ? onToggleOptions() : onPick(id));
   // A press on the Text tool leaves the box being typed in focused, so a
@@ -113,6 +130,27 @@ export function MarkupToolbar({ tools, active, options, eraserMode, eraserSize, 
             </button>
           ))}
           <span className="pdfInkSep" />
+          {/* Smoothing: five hollow dots, Off and the four string lengths (ink/stabilizer.js). */}
+          <span className="inkSmoothing" role="group" aria-label={t("Smoothing")}>
+            {SMOOTHING.map((level) => {
+              const on = (preset.stabilize || 0) === level;
+              const label = level ? t("Smoothing {level} of 4", { level }) : t("Smoothing off");
+              return <button key={level} type="button" className={"ctlBtn inkSizeBtn" + (on ? " modeActive" : "")}
+                onClick={() => edit({ stabilize: level })} aria-pressed={on} aria-label={label}
+                title={level ? t("Smoothing {level} of 4: the pen pulls the line behind it, so a shaky hand draws a calm line", { level })
+                  : t("Smoothing off: the line follows the pen exactly")}>
+                <span className="inkSizeDot inkSmoothDot" style={{ width: 4 + level * 2, height: 4 + level * 2 }} />
+              </button>;
+            })}
+          </span>
+          {preset.kind === "highlighter" ? <>
+            <span className="pdfInkSep" />
+            <span className="inkStraight" role="group" aria-label={t("Straight highlighter")}>
+              {STRAIGHT.map(([value, label, title]) => seg((preset.straight || "hold") === value, t(label), null,
+                () => edit({ straight: value }), t(title)))}
+            </span>
+          </> : null}
+          <span className="pdfInkSep" />
           <button type="button" className="ctlBtn" onClick={duplicate} disabled={tools.length >= MAX_TOOLS}
             title={t("Duplicate: a second copy of this tool to give its own colour and width")} aria-label={t("Duplicate tool")}><CopyIcon size={16} /></button>
           <button type="button" className="ctlBtn" onClick={remove} disabled={tools.length <= 1}
@@ -132,6 +170,14 @@ export function MarkupToolbar({ tools, active, options, eraserMode, eraserSize, 
               <span className="inkSizeDot inkEraserDot" style={{ width: 6 + i * 4, height: 6 + i * 4 }} />
             </button>
           ))}
+          <span className="pdfInkSep" />
+          <span className="inkErases" role="group" aria-label={t("Erases")}>
+            {ERASES.map(([value, label, Icon, title]) => seg(eraserFilter === value, t(label), Icon ? <Icon size={14} /> : null,
+              () => onEraser({ filter: value }), t(title)))}
+          </span>
+          <span className="pdfInkSep" />
+          {seg(eraserReturn, t("Back to last tool"), <UndoIcon size={14} />, () => onEraser({ return: !eraserReturn }),
+            t("After erasing, return to the tool you had"))}
         </div>
       ) : null}
       {options && active === "select" ? (

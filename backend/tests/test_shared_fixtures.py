@@ -2,7 +2,9 @@
 tests/shared/*.json at the repository root. The node half is
 frontend/tests/textnorm.test.mjs, ink.test.mjs, finishStroke.test.mjs,
 notebook.test.mjs, mentions.test.mjs and textBox.test.mjs; a case added here fails whichever side drifts. The
-mirror's cases (synctree.json, textmerge.json) have only this Python side."""
+mirror's cases (synctree.json, textmerge.json) have only this Python side; the
+client's recognisers (inkshapes.json, inkscribble.json) have only the node
+side, and this side checks their shape."""
 
 import json
 from pathlib import Path
@@ -213,3 +215,103 @@ MENTIONS = _load("mentions.json")
 def test_mention_scan(case):
     from gamma import mentions
     assert mentions.scan(case["text"]) == case["tokens"]
+
+
+# tests/shared/inkshapes.json and inkscribble.json: the client's recognisers
+# (frontend/src/ink/shapes.js, gestures.js), which the server never runs;
+# this side pins the fixtures' shape, so a case the node tests read is well
+# formed, and that every shape a snapped stroke is stored with is one
+# parse_ink accepts (a recognised circle is written as an ellipse).
+INKSHAPES = _load("inkshapes.json")
+INKSCRIBBLE = _load("inkscribble.json")
+SHAPE_PARAMS = {
+    "line": {"x1", "y1", "x2", "y2"},
+    "arrow": {"x1", "y1", "x2", "y2", "head"},
+    "triangle": {"x1", "y1", "x2", "y2", "x3", "y3"},
+    "rect": {"cx", "cy", "w", "h", "angle"},
+    "polygon": {"cx", "cy", "r", "n", "angle"},
+    "circle": {"cx", "cy", "r"},
+    "ellipse": {"cx", "cy", "rx", "ry", "angle"},
+}
+
+
+def _check_samples(samples, timed=True):
+    """One stroke's samples as the fixtures write them: [x, y, p, t] in page
+    points to 0.01, p in 0..1, t integer ms from 0 and never going back."""
+    assert len(samples) >= 2
+    last_t = 0
+    for i, s in enumerate(samples):
+        assert len(s) == 4 and all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in s), s
+        x, y, p, t = s
+        assert round(x, 2) == x and round(y, 2) == y
+        assert 0 <= p <= 1
+        assert isinstance(t, int) and t >= last_t and (t == 0 if i == 0 else True), s
+        last_t = t
+
+
+def _stored_shape(expect):
+    """The shape record the client stores for a recognised shape (ink/finishStroke.js shapeRecord)."""
+    kind, params = expect["kind"], expect["params"]
+    if kind == "circle":
+        return {"kind": "ellipse", "params": {"cx": params["cx"], "cy": params["cy"], "rx": params["r"], "ry": params["r"], "angle": 0}}
+    return {"kind": kind, "params": dict(params)}
+
+
+def test_ink_fixture_notes_are_unique():
+    for fixture in (INKSHAPES, INKSCRIBBLE):
+        notes = [c["note"] for c in fixture["cases"]]
+        assert len(set(notes)) == len(notes)
+    kinds = {c["expect"]["kind"] for c in INKSHAPES["cases"] if c["expect"]}
+    assert kinds == set(SHAPE_PARAMS), "every kind the recogniser answers has a positive case"
+    assert sum(1 for c in INKSHAPES["cases"] if c["expect"] is None) >= 4, "letters and zigzags that must not recognise"
+    assert any(c["scribble"] for c in INKSCRIBBLE["cases"]) and any(not c["scribble"] for c in INKSCRIBBLE["cases"])
+
+
+@pytest.mark.parametrize("case", INKSHAPES["cases"], ids=[c["note"] for c in INKSHAPES["cases"]])
+def test_ink_shape_fixture(case):
+    assert set(case) == {"note", "k", "samples", "expect"}
+    assert case["k"] > 0
+    _check_samples(case["samples"])
+    expect = case["expect"]
+    if expect is None:
+        return
+    assert set(expect) <= {"kind", "params", "tol"} and {"kind", "params"} <= set(expect)
+    assert set(expect["params"]) == SHAPE_PARAMS[expect["kind"]], expect
+    assert expect.get("tol", 2) > 0
+    if expect["kind"] == "polygon":
+        assert isinstance(expect["params"]["n"], int) and 5 <= expect["params"]["n"] <= 8
+    # the stroke the client commits for it parses on the server, shape and all
+    shape = _stored_shape(expect)
+    ink = inkmod.parse_ink({"format": "gamma-ink", "version": 2, "space": INK_SPACE, "strokes": [
+        {"id": "s", "tool": "pen", "pen": False, "color": "#1f1f1f", "size": 1.6, "ch": "xyt",
+         "pts": [100, 100, 0, 1000, 500, 300], "shape": shape}]})
+    assert ink.strokes[0].shape.kind == shape["kind"] and ink.strokes[0].shape.params == shape["params"]
+    assert shape["kind"] in inkmod.SHAPE_KINDS
+
+
+@pytest.mark.parametrize("case", INKSCRIBBLE["cases"], ids=[c["note"] for c in INKSCRIBBLE["cases"]])
+def test_ink_scribble_fixture(case):
+    assert {"note", "k", "samples", "scribble"} <= set(case) <= {"note", "k", "samples", "scribble", "groups", "filter", "targets"}
+    assert case["k"] > 0 and isinstance(case["scribble"], bool)
+    _check_samples(case["samples"])
+    if "groups" not in case:
+        assert "filter" not in case and "targets" not in case
+        return
+    assert case["scribble"], "targets are only asked of a scribble"
+    assert case["filter"] in ("all", "pen", "highlighter")
+    ids_by_group = {}
+    for g in case["groups"]:
+        assert set(g) == {"gid", "strokes"} and g["gid"] not in ids_by_group
+        ids_by_group[g["gid"]] = [s["id"] for s in g["strokes"]]
+        for s in g["strokes"]:
+            assert {"id", "tool", "size", "samples"} <= set(s) <= {"id", "tool", "brush", "size", "samples"}
+            assert s["size"] > 0 and len(s["samples"]) >= 2 and all(len(xy) == 2 for xy in s["samples"])
+        assert len(set(ids_by_group[g["gid"]])) == len(ids_by_group[g["gid"]])
+    order = list(ids_by_group)
+    seen = []
+    for target in case["targets"]:
+        assert set(target) == {"gid", "ids"} and target["gid"] in ids_by_group and target["ids"]
+        seen.append(order.index(target["gid"]))
+        file_order = [i for i in ids_by_group[target["gid"]] if i in target["ids"]]
+        assert target["ids"] == file_order, "ids in file order"
+    assert seen == sorted(seen) and len(set(seen)) == len(seen), "groups in order, each once"
