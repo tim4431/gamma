@@ -216,6 +216,18 @@ does not hide it. When the two differ the round stops (`FormatMismatch`):
 - **A remote from before the check** names no `format`, and its rounds run
   as before. The check runs in the copy's engine, so it protects copies
   that run this release or a later one.
+- **Release T's step 40** (`ink_v2`, [migrations.md](migrations.md)) is a
+  format move of this kind: it rewrites every stroke file to `gamma-ink`
+  version 2 as a new content-addressed upload, deterministically, so a
+  pair that has run it on both sides agrees on every file's hash with
+  nothing to send ([handwriting.md](handwriting.md) "Upgrading version 1");
+  until then the pause above holds. A copy whose drawing a remote still
+  refuses (`400` on an `.ink` push, a remote of an older release the
+  format check did not reach) records one `file` conflict row for it and
+  pushes the block's other changes; the page is looked at again next round
+  (`_deferred_files`, from `_sync_page`, `_adopt_page` and `_push_whole`
+  alike) and the drawing goes once the remote takes it
+  (`sync_engine._push_files`, `_without_files`).
 
 ## One round, one page (`sync_engine._sync_page`)
 
@@ -304,7 +316,9 @@ each):
 
 Every decision the engine takes on its own is a row of `sync_conflicts`
 (`merged`, `diverged`, `dropped`, `kept_local_edit`, `restored_remote_edit`,
-`page_restored`, `page_restored_from_remote`) with the texts involved. A
+`page_restored`, `page_restored_from_remote`, and `file` for a drawing the
+remote refused: `mine` the file's name, `theirs` the remote's reason) with
+the texts involved. A
 `merged` row also keeps `base`, the text before either side edited it, so
 the resolver can show what each side changed. A `dropped` row's text is the
 removed block with what was under it as an indented list; its `base` names

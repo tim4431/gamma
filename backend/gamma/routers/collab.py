@@ -11,7 +11,7 @@ from fastapi import APIRouter, HTTPException, Request, WebSocket, WebSocketDisco
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse
 
-from .. import collab
+from .. import collab, version
 from ..auth import (ANONYMOUS_NAME, SESSION_COOKIE, actor_of, is_link_visitor, link_name, link_ratelimit,
                     note_share_miss, require_ws_writer, requested_ws, resolve_ws, session_lookup,
                     share_lookup, share_scope, workspace_access)
@@ -67,7 +67,10 @@ def post_ops(page_id: str, payload: OpsRequest, request: Request):
         body = {"detail": e.detail, **({"missing": e.missing} if e.missing else {}),
                 **({"conflict": e.conflict, "index": e.index} if e.conflict else {})}
         return JSONResponse(status_code=e.status, content=body)
-    return {"seq": result["seq"], "at": result["at"], "ops": result["ops"]}
+    out = {"seq": result["seq"], "at": result["at"], "ops": result["ops"]}
+    if "ink_conflict" in result:  # an ink merge's {clean, lost_ours, returned} (handwriting.md "Two writers")
+        out["ink_conflict"] = result["ink_conflict"]
+    return out
 
 
 @router.get("/pages/{page_id}/ops")
@@ -166,8 +169,10 @@ async def page_socket(sock: WebSocket, page_id: str):
             with connect_pages_db(ws) as conn:
                 return latest_seq(conn, page_id)
         seq = await run_in_threadpool(log_position)
+        # `build`: what the client's handwriting fence compares with the
+        # build it loaded under (docs/dev/handwriting.md "Client", the build fence).
         await sock.send_text(json.dumps({"t": "hello", "client": client, "color": peer.color, "seq": seq,
-                                         "peers": room.presence()}))
+                                         "peers": room.presence(), "build": version.build_info()}))
         await room.broadcast(json.dumps({"t": "join", "peer": peer.public()}), exclude=client)
         # Access once more now that the peer is in the room (after the hello,
         # which stays the first message a socket gets): a revoke that landed

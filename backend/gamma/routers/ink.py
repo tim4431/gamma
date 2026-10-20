@@ -5,7 +5,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
 
 from ..auth import require_ws_writer
-from ..ink import InkError, bounding_box, parse_ink, pdf_position
+from ..ink import UPDATE_GAMMA, InkError, InkVersionError, bounding_box, parse_ink, pdf_position
 from ..storage import store_file
 
 router = APIRouter(prefix="/api", tags=["ink"])
@@ -19,8 +19,11 @@ async def upload_ink(request: Request):
     strokes are identical bytes and dedup, and a client that names a file
     by its hash before uploading it names what the server stores.
     → ``{url, size, strokes, bbox, pdf_position, already_existed}``. A
-    workspace editor or an edit share (the block writers' rule). Async only
-    to read the body; the rest runs in the threadpool."""
+    version 1 file is refused with ``400 "update Gamma"`` (the one-time
+    upgrade converted every stored file; a client still writing version 1
+    is an old build). A workspace editor or an edit share (the block
+    writers' rule). Async only to read the body; the rest runs in the
+    threadpool."""
     body = await request.body()
     return await run_in_threadpool(_store_ink, request, body)
 
@@ -29,6 +32,8 @@ def _store_ink(request: Request, body: bytes) -> dict:
     ws = require_ws_writer(request)
     try:
         ink = parse_ink(body)
+    except InkVersionError:
+        raise HTTPException(status_code=400, detail=UPDATE_GAMMA)
     except InkError as e:
         raise HTTPException(status_code=400, detail=f"invalid ink file: {e}")
     filename, already_existed = store_file(ws, body, ".ink")

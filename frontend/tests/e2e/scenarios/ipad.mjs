@@ -234,13 +234,14 @@ export async function ipadScenarios({ server, browser, alice, makePdf, step, unt
       }, { what: "the host's stroke saved as an ink block" });
       const ink = await alice.api(block.properties.ink_url);
       const st = ink.strokes[0];
-      assertEq(st.ch, "xypt");
+      assertEq(st.ch, "xyptw");
       assert(st.pen === true && typeof st.t0 === "number", "a pen stroke with its wall clock");
-      assertEq(st.pts.length, 16, "four samples, the repeat dropped");
-      assertEq(JSON.stringify(st.pts.filter((_, i) => i % 4 === 2)), "[200,400,600,800]", "pressure");
-      assertEq(JSON.stringify(st.pts.filter((_, i) => i % 4 === 3)), "[0,4,4,4]", "time deltas");
-      const x = st.pts.filter((_, i) => i % 4 === 0).reduce((a, b) => a + b, 0) / 100;
-      const y = st.pts.filter((_, i) => i % 4 === 1).reduce((a, b) => a + b, 0) / 100;
+      assertEq(st.pts.length, 20, "four samples, the repeat dropped");
+      assertEq(JSON.stringify(st.pts.filter((_, i) => i % 5 === 2)), "[200,400,600,800]", "pressure");
+      assertEq(JSON.stringify(st.pts.filter((_, i) => i % 5 === 3)), "[0,4,4,4]", "time deltas");
+      assertEq(JSON.stringify(st.pts.filter((_, i) => i % 5 === 4)), "[700,200,200,200]", "the width baked by the web app, like its own strokes");
+      const x = st.pts.filter((_, i) => i % 5 === 0).reduce((a, b) => a + b, 0) / 100;
+      const y = st.pts.filter((_, i) => i % 5 === 1).reduce((a, b) => a + b, 0) / 100;
       assert(Math.abs(x - 130 / k) < 0.02 && Math.abs(y - 300 / k) < 0.02, `page units from the down's rect and zoom: ${x}, ${y}`);
       // The same pointer again, no longer claimed, commits nothing.
       assertEq(JSON.stringify(await page.evaluate(stroke, samples)), JSON.stringify({ committed: false }));

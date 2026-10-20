@@ -389,7 +389,9 @@ whose send fails leaves at once and the room announces its `leave` then
 stays with the others.
 Messages:
 
-- server → client: `hello {client, color, seq, peers}` on join; `join {peer}`
+- server → client: `hello {client, color, seq, peers, build}` on join (`build`
+  as `/api/session` reports it: the client's handwriting fence compares it
+  with the build the tab loaded under, [handwriting](handwriting.md)); `join {peer}`
   / `leave {client}`; `cursor {client, block, anchor, head}`; `ops {seq, at,
   actor, client, ops, cursor?}` for every applied batch (the sender's own
   included, it filters by client id; `cursor` is the writer's caret in the

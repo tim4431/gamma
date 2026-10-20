@@ -32,7 +32,7 @@ def _sheet(sid, parent, position, paper=None):
 
 
 def _canvas_ink(client, strokes, width=A4["width"], height=A4["height"]):
-    data = {"format": "gamma-ink", "version": 1, "space": {"kind": "canvas", "width": width, "height": height},
+    data = {"format": "gamma-ink", "version": 2, "space": {"kind": "canvas", "width": width, "height": height},
             "strokes": strokes}
     body = json.dumps(data, sort_keys=True, separators=(",", ":")).encode()
     r = client.post("/api/upload-ink", content=body, headers={"Content-Type": "application/json"})

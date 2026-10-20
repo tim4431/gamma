@@ -3,15 +3,156 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import {
-  DEFAULT_TOOLS, HIGHLIGHTER_OPACITY, MAX_TOOLS, appendStroke, boundsOf, decodeStroke, encodeStroke, eraseAt, hitStrokes,
+  DEFAULT_TOOLS, HIGHLIGHTER_OPACITY, MAX_TOOLS, VERSION, appendStroke, boundsOf, decodeStroke, encodeStroke, eraseAt, hitStrokes,
   inkBounds, newInk, normalizeTools, pdfPositionOf, removeStrokes, strokePath, strokeWidth, strokesInLasso, toolStyle,
   translateStrokes, transformStrokes, nearestInkStroke, restyleStrokes, duplicateStrokes, MAX_STROKES,
   mergeInk, serializeInk, inkProps, newCanvasInk, sameStroke,
   inkAtTime, inkTimeline, REPLAY_MAX, REPLAY_PAUSE,
+  DEFAULT_SIZE, STROKE_DEFAULTS, byBand, cloneStrokes, encodePoints, inkBytes, inkFeatures, strokeBand, strokeBounds, strokeBytes,
+  upgradeV1, withDefaults,
 } from "../src/ink/ink.js";
 
 const samples = (n = 5, x0 = 100, y0 = 200) =>
   Array.from({ length: n }, (_, i) => ({ x: x0 + 10 * i, y: y0 + 3 * i, p: 0.2 + 0.15 * i, t: 16 * i }));
+// A pressure pen's samples as finishStroke bakes them: w = 1 + (p − 0.5).
+const baked = (n = 5, x0 = 100, y0 = 200) => samples(n, x0, y0).map((s) => ({ ...s, w: Math.round((s.p + 0.5) * 1000) / 1000 }));
+const pen = (over = {}) => encodeStroke({ id: "pen", samples: baked(), ch: "xyptw", t0: 100, ...over });
+
+// --- the version 2 codec -----------------------------------------------------
+
+test("a new file is version 2; w and o are multipliers, written × 1000 as deltas after the first sample", () => {
+  assert.equal(VERSION, 2);
+  assert.equal(newInk(1, 612, 792).version, 2);
+  assert.equal(newCanvasInk(100, 100).version, 2);
+  const s = encodeStroke({ id: "a", ch: "xypw", samples: [{ x: 1, y: 2, p: 0.2, w: 0.7 }, { x: 2, y: 2, p: 0.5, w: 1 }, { x: 3, y: 2, p: 1, w: 1.5 }] });
+  assert.deepEqual(s.pts, [100, 200, 200, 700, 100, 0, 500, 300, 100, 0, 1000, 500]);
+  assert.deepEqual(decodeStroke(s).map((q) => [q.x, q.p, q.w]), [[1, 0.2, 0.7], [2, 0.5, 1], [3, 1, 1.5]]);
+  assert.equal("t" in decodeStroke(s)[0], false, "only the channels present are decoded");
+  const o = encodeStroke({ id: "o", ch: "xyo", samples: [{ x: 0, y: 0, o: 1 }, { x: 1, y: 0, o: 0.4 }] });
+  assert.deepEqual(o.pts, [0, 0, 1000, 100, 0, -600]);
+  assert.deepEqual(decodeStroke(o).map((q) => q.o), [1, 0.4]);
+  assert.deepEqual(encodePoints([{ x: 0, y: 0, w: 3 }, { x: 0, y: 0, w: -1 }], "xyw"), [0, 0, 2000, 0, 0, -2000], "w is capped to 0..2");
+  assert.deepEqual(decodeStroke({ ch: "xyw", pts: [0, 0, 2500] })[0].w, 2);
+});
+
+test("a letter the codec does not know rides along by stride and is written back in place", () => {
+  const foreign = { id: "f", ch: "xyqp", pts: [100, 200, 7, 500, 10, 0, 8, 600] };
+  const q = decodeStroke(foreign);
+  assert.deepEqual(q, [{ x: 1, y: 2, p: 0.5, rest: [7] }, { x: 1.1, y: 2, p: 0.6, rest: [8] }]);
+  assert.deepEqual(encodePoints(q, "xyqp"), foreign.pts);
+  assert.equal("rest" in decodeStroke(pen())[0], false, "no rest array without unknown letters");
+  // a cut keeps the stride: the pieces carry the letter and its values
+  const ink = { ...newInk(1, 612, 792), strokes: [{ ...foreign, ch: "xyqp", pts: encodePoints(
+    Array.from({ length: 9 }, (_, i) => ({ x: 100 + 10 * i, y: 200, p: 0.5, rest: [i] })), "xyqp") }] };
+  const cut = eraseAt(ink, 140, 200, 3);
+  assert.equal(cut.ink.strokes.length, 2);
+  assert.deepEqual(cut.ink.strokes.map((s) => decodeStroke(s).map((x) => x.rest[0])), [[0, 1, 2, 3], [5, 6, 7, 8]]);
+  assert.ok(cut.ink.strokes.every((s) => s.ch === "xyqp"));
+});
+
+test("the drawn width is size × w with w, else size: the whole rule", () => {
+  const s = pen({ size: 2 });
+  const [first, , , , last] = decodeStroke(s);
+  assert.ok(Math.abs(strokeWidth(s, first) - 1.4) < 1e-9 && Math.abs(strokeWidth(s, last) - 2.6) < 1e-9);
+  assert.equal(strokeWidth(encodeStroke({ size: 3, samples: samples() }), { p: 1 }), 3, "no w channel: the size");
+  const hl = encodeStroke({ tool: "highlighter", size: 8, samples: samples() });
+  assert.equal(strokeWidth(hl, decodeStroke(hl)[0]), 8);
+  const b = inkBounds({ strokes: [s] });
+  assert.ok(Math.abs(b[0] - (100 - 0.7)) < 1e-9 && Math.abs(b[2] - (140 + 1.3)) < 1e-9, "bounds use the baked width");
+  // a file may omit every key with a default: the width, bounds and outline still work, and withDefaults fills them
+  const bare = { id: "bare", pts: [30000, 40000, 500, 500] };
+  assert.equal(strokeWidth(bare, decodeStroke(bare)[0]), DEFAULT_SIZE);
+  assert.deepEqual(strokeBounds(bare), [300 - 0.8, 400 - 0.8, 305 + 0.8, 405 + 0.8]);
+  assert.ok(strokePath(bare).d.startsWith("M"));
+  const filled = withDefaults({ ...newInk(1, 612, 792), strokes: [bare, s] });
+  assert.deepEqual(filled.strokes[0], { ...bare, ...STROKE_DEFAULTS });
+  assert.equal(filled.strokes[1], s);
+  const complete = { ...newInk(1, 612, 792), strokes: [s] };
+  assert.equal(withDefaults(complete), complete, "nothing missing: the same object");
+});
+
+// tests/shared/inkv2.json: the version 1 upgrade, byte for byte, the same
+// bytes gamma/ink.py upgrade_v1 + dumps write.
+const V2 = JSON.parse(readFileSync(new URL("../../tests/shared/inkv2.json", import.meta.url), "utf8"));
+for (const c of V2.cases) {
+  test(`upgrade v1: ${c.note}`, () => {
+    assert.equal(serializeInk(upgradeV1(JSON.parse(c.v1))), c.v2);
+    assert.equal(serializeInk(upgradeV1(JSON.parse(c.v2))), c.v2, "idempotent on version 2");
+  });
+}
+test("upgradeV1 leaves anything but a version 1 object as the same object", () => {
+  const ink = newInk(1, 612, 792);
+  assert.equal(upgradeV1(ink), ink);
+  const newer = { ...ink, version: 3, strokes: [encodeStroke({ id: "a", ch: "xyp", samples: samples(2) })] };
+  assert.equal(upgradeV1(newer), newer, "a newer file is never rewritten to 2");
+  const odd = { ...ink, version: "1" };
+  assert.equal(upgradeV1(odd), odd, "a malformed version is left for the server to refuse");
+  const other = { format: "something", version: 1 };
+  assert.equal(upgradeV1(other), other);
+  assert.equal(upgradeV1(null), null);
+});
+
+test("bands: highlighters draw under ink; a tap prefers the ink above a highlighter", () => {
+  const hl = encodeStroke({ id: "hl", tool: "highlighter", size: 14, samples: samples(2) });
+  const under = encodeStroke({ id: "under", band: 0, samples: samples(2) });
+  const top = encodeStroke({ id: "top", tool: "highlighter", band: 1, size: 14, samples: samples(2) });
+  const ink = { ...newInk(1, 612, 792), strokes: [pen(), hl, under, top] };
+  assert.deepEqual([strokeBand(pen()), strokeBand(hl), strokeBand(under), strokeBand(top)], [1, 0, 0, 1]);
+  assert.deepEqual(byBand(ink.strokes).map((s) => s.id), ["hl", "under", "pen", "top"]);
+  const plain = [pen(), encodeStroke({ id: "b", samples: samples() })];
+  assert.equal(byBand(plain), plain, "nothing to reorder: the same array");
+  // a thin pen over a wide highlighter: the pen is what a tap near both means
+  const wide = encodeStroke({ id: "wide", tool: "highlighter", size: 20, samples: [{ x: 10, y: 10 }, { x: 100, y: 10 }] });
+  const thin = encodeStroke({ id: "thin", size: 0.6, samples: [{ x: 10, y: 10 }, { x: 100, y: 10 }] });
+  const groups = [{ id: "g", ink: { strokes: [thin, wide] } }];
+  assert.deepEqual(nearestInkStroke(groups, 50, 13, 5), { id: "g", ids: ["thin"] }, "inside the highlighter, 2.7 pt from the pen's edge");
+  assert.deepEqual(nearestInkStroke(groups, 50, 18, 5), { id: "g", ids: ["wide"] }, "out of the pen's reach");
+});
+
+test("pieces name their root, copies do not; unknown keys ride through every edit", () => {
+  const s = pen({ note: "mine", shape: { kind: "line", params: { x0: 0 } }, fill: { color: "#ff0000" }, nib: 30, dash: "dashed" });
+  const ink = { ...newInk(1, 612, 792), strokes: [s] };
+  const { ink: cut } = eraseAt(ink, 120, 206, 1);
+  assert.equal(cut.strokes.length, 2);
+  for (const piece of cut.strokes) {
+    assert.equal(piece.from, "pen");
+    assert.equal(piece.note, "mine");
+    assert.equal(piece.nib, 30);
+    assert.equal(piece.dash, "dashed");
+    assert.ok(!("shape" in piece) && !("fill" in piece), "a cut shape is just ink");
+    assert.equal(piece.ch, "xyptw");
+    assert.equal(piece.t0, 100);
+  }
+  const again = eraseAt(cut, 105, 201.5, 0.5).ink;
+  assert.ok(again.strokes.every((p) => p.from === "pen"), "a cut of a piece keeps the root");
+  const dup = duplicateStrokes(cut, cut.strokes.map((p) => p.id), 5, 5);
+  assert.ok(dup.ink.strokes.slice(2).every((c) => !("from" in c) && c.note === "mine"));
+  assert.ok(cloneStrokes(cut.strokes).every((c) => !("from" in c) && c.id !== cut.strokes[0].id));
+  assert.equal(restyleStrokes(ink, ["pen"], { color: "#dc2626" }).strokes[0].note, "mine");
+  assert.equal(translateStrokes(ink, ["pen"], 3, 3).strokes[0].note, "mine");
+  assert.deepEqual(transformStrokes(ink, ["pen"], { cx: 0, cy: 0, scale: 2 }).strokes[0].shape, s.shape);
+});
+
+test("inkFeatures lists what this build cannot show, null for a file it knows", () => {
+  assert.equal(inkFeatures({ ...newInk(1, 612, 792), strokes: [pen(), encodeStroke({ tool: "highlighter", samples: samples() })] }), null);
+  const odd = { ...newInk(1, 612, 792), version: 3, strokes: [
+    encodeStroke({ tool: "crayon", samples: samples() }), encodeStroke({ brush: "fountain", samples: samples(), glow: 1 }),
+    { id: "q", ch: "xyq", pts: [0, 0, 1] },
+  ] };
+  assert.deepEqual(inkFeatures(odd), { newer: true, tools: ["crayon"], brushes: ["fountain"], keys: ["glow"], letters: ["q"] });
+  assert.equal(inkFeatures(null), null);
+});
+
+test("inkBytes is the upload's exact size, summed per stroke and cached by object", () => {
+  const ink = { ...newInk(1, 612, 792), strokes: [pen(), encodeStroke({ id: "b", samples: samples(3) })] };
+  assert.equal(inkBytes(ink), serializeInk(ink).length);
+  // a null-valued key is not uploaded, so it is not counted either
+  const nulled = { ...ink, strokes: [{ ...ink.strokes[0], dash: null }, ink.strokes[1]] };
+  assert.equal(inkBytes(nulled), serializeInk(nulled).length);
+  assert.equal(inkBytes({ ...ink, strokes: [] }), serializeInk({ ...ink, strokes: [] }).length);
+  assert.equal(strokeBytes(ink.strokes[0]), strokeBytes(ink.strokes[0]));
+  assert.equal(inkBytes(null), 0);
+});
 
 test("selection transforms share an origin, preserve non-position channels and undo without mutation", () => {
   const stroke = encodeStroke({ id: "a", size: 2, ch: "xyptaz", t0: 100,
@@ -85,31 +226,23 @@ test("codec: deltas, pressure scale, exact round trip", () => {
   assert.equal(decodeStroke(s), back, "decoded samples are cached per stroke object");
 });
 
-test("width follows pressure for pens only", () => {
-  const pen = encodeStroke({ samples: samples() });
-  assert.ok(strokeWidth(pen, 1) > pen.size && strokeWidth(pen, 0) < pen.size);
-  const hl = encodeStroke({ tool: "highlighter", size: 8, samples: samples() });
-  assert.equal(strokeWidth(hl, 0), 8);
-  const mouse = encodeStroke({ pen: false, samples: samples() });
-  assert.equal(strokeWidth(mouse, 0.1), mouse.size);
-});
-
-test("monoline keeps pressure data but renders the same outline at any pressure", () => {
+test("monoline keeps pressure data and no width channel; a pen's outline follows its baked width", () => {
   const input = samples(9).map((s, i) => ({ ...s, p: (i + 1) / 10 }));
   const mono = encodeStroke({ id: "mono", brush: "monoline", samples: input, ch: "xypt", t0: 100 });
   assert.deepEqual(decodeStroke(mono), input);
-  assert.equal(strokeWidth(mono, 0), mono.size);
-  assert.equal(strokeWidth(mono, 1), mono.size);
+  for (const q of decodeStroke(mono)) assert.equal(strokeWidth(mono, q), mono.size);
   const hard = encodeStroke({ brush: "monoline", samples: input.map((s) => ({ ...s, p: 1 })) });
   assert.equal(strokePath(mono).d, strokePath(hard).d);
-  const softPen = encodeStroke({ samples: input.map((s) => ({ ...s, p: 0 })) });
-  const hardPen = encodeStroke({ samples: input.map((s) => ({ ...s, p: 1 })) });
+  const softPen = encodeStroke({ ch: "xypw", samples: input.map((s) => ({ ...s, p: 0, w: 0.5 })) });
+  const hardPen = encodeStroke({ ch: "xypw", samples: input.map((s) => ({ ...s, p: 1, w: 1.5 })) });
   assert.notEqual(strokePath(softPen).d, strokePath(hardPen).d);
-  assert.equal("brush" in softPen, false, "legacy strokes keep the same encoding");
+  const flat = encodeStroke({ ch: "xypw", samples: input.map((s) => ({ ...s, w: 1 })) });
+  assert.equal(strokePath(flat).d, strokePath(encodeStroke({ samples: input, pen: false })).d, "w of 1 everywhere draws the nominal size");
+  assert.equal("brush" in softPen, false, "a plain pen writes no brush");
   const ink = { ...newInk(1, 612, 792), strokes: [mono] };
   const cut = eraseAt(ink, 140, 212, 3);
   assert.equal(cut.ink.strokes.length, 2);
-  assert(cut.ink.strokes.every((s) => s.brush === "monoline" && s.ch === "xypt" && s.t0 === 100));
+  assert(cut.ink.strokes.every((s) => s.brush === "monoline" && s.ch === "xypt" && s.t0 === 100 && s.from === "mono"));
   assert.equal(duplicateStrokes(ink, [mono.id], 10, 10).ink.strokes[1].brush, "monoline");
   assert.equal(restyleStrokes(ink, [mono.id], { color: "#dc2626", size: 4 }).strokes[0].brush, "monoline");
 });
@@ -194,9 +327,17 @@ test("paths: pens are filled outlines, highlighters stroked polylines", () => {
   const hl = strokePath(encodeStroke({ tool: "highlighter", size: 12, samples: samples(3) }));
   assert.equal(hl.stroke, true);
   assert.equal(hl.width, 12);
+  assert.equal(hl.multiply, true);
   assert.equal(hl.d, "M100.00,200.00 L110.00,203.00 L120.00,206.00");
   const dot = strokePath(encodeStroke({ samples: samples(1) }));
   assert.ok(dot.d.length > 0, "a single tap still draws a dot");
+  // an unknown tool: a source-over polyline at its mean drawn width; dashes from the size
+  const odd = strokePath(encodeStroke({ tool: "crayon", size: 2, ch: "xypw", dash: "dashed", samples: baked(3) }));
+  assert.equal(odd.stroke, true);
+  assert.equal(odd.multiply, false);
+  assert.ok(Math.abs(odd.width - 2 * 0.85) < 1e-9);
+  assert.ok(odd.dash.split(" ").length === 2);
+  assert.equal(strokePath(encodeStroke({ tool: "pen", brush: "fountain", ch: "xypw", samples: baked(3) })).stroke, false, "an unknown brush draws as a pen from w");
 });
 
 test("tool presets: a stored list is validated, bad entries dropped, nothing left → the defaults", () => {
@@ -231,17 +372,46 @@ test("tool presets: a stored list is validated, bad entries dropped, nothing lef
 });
 
 // tests/shared/inkmerge.json: the same cases gamma/ink.py merge_ink passes
-// (backend/tests/test_shared_fixtures.py).
+// (backend/tests/test_shared_fixtures.py). A stroke is [id, v] or [id, v,
+// look]: v its geometry's version, look the keys over the default stroke.
 const MERGE = JSON.parse(readFileSync(new URL("../../tests/shared/inkmerge.json", import.meta.url), "utf8"));
+const MERGE_DEFAULT = { tool: "pen", color: "#1f1f1f", size: 1.6, opacity: 1, pen: true, ch: "xy" };
+const LOOK_KEYS = ["color", "size", "opacity", "brush", "dash", "nib", "band", "fill", "from", "tool", "pen"];
 const mergeFile = (strokes) => strokes === null ? null : { ...newInk(1, 612, 792),
-  strokes: strokes.map(([id, v]) => ({ id, tool: "pen", color: "#1f1f1f", size: 1.6, opacity: 1, pen: true, ch: "xy", pts: [100 + 100 * v, 100] })) };
+  strokes: strokes.map(([id, v, look]) => ({ id, ...MERGE_DEFAULT, ...(look || {}), pts: [100 + 100 * v, 100] })) };
+const mergeTriple = (s) => {
+  const look = {};
+  for (const k of LOOK_KEYS) if (s[k] != null && (k === "from" || JSON.stringify(s[k]) !== JSON.stringify(MERGE_DEFAULT[k]))) look[k] = s[k];
+  return Object.keys(look).length ? [s.id, (s.pts[0] - 100) / 100, look] : [s.id, (s.pts[0] - 100) / 100];
+};
 for (const c of MERGE.cases) {
   test(`ink merge: ${c.note}`, () => {
-    const { ink, clean } = mergeInk(mergeFile(c.base), mergeFile(c.ours), mergeFile(c.theirs));
-    assert.deepEqual(ink.strokes.map((s) => [s.id, (s.pts[0] - 100) / 100]), c.result);
+    const { ink, clean, lostOurs, returned } = mergeInk(mergeFile(c.base), mergeFile(c.ours), mergeFile(c.theirs),
+      c.base === null ? c.base_ids || null : null);
+    assert.deepEqual(ink.strokes.map(mergeTriple), c.result);
     assert.equal(clean, c.clean);
+    if (c.lost_ours) assert.deepEqual(lostOurs, c.lost_ours);
+    if (c.returned) assert.deepEqual(returned, c.returned);
   });
 }
+
+test("the merge keeps untouched strokes as the identical objects and ours' file-level extras", () => {
+  const a = pen({ id: "a" }), b = encodeStroke({ id: "b", samples: samples(3) });
+  const base = { ...newInk(1, 612, 792), strokes: [a, b] };
+  const theirs = { ...base, strokes: [a, b, encodeStroke({ id: "x", samples: samples(2) })] };
+  const ours = { ...base, origin: "tablet", strokes: [a, { ...b, color: "#dc2626" }] };
+  const r = mergeInk(base, ours, theirs);
+  assert.equal(r.ink.strokes[0], a);
+  assert.equal(r.ink.strokes[1], ours.strokes[1]);
+  assert.equal(r.ink.strokes[2], theirs.strokes[2]);
+  assert.equal(r.ink.origin, "tablet");
+  assert.equal(r.ink.version, 2);
+  assert.deepEqual([r.clean, r.lostOurs, r.returned], [true, [], []]);
+  // an explicit band at its default equals an omitted one
+  const same = mergeInk(base, { ...base, strokes: [{ ...a, band: 1 }, b] }, { ...base, strokes: [a, { ...b, color: "#2563eb" }] });
+  assert.equal(same.clean, true);
+  assert.equal(same.ink.strokes[1].color, "#2563eb");
+});
 
 test("the merged file keeps theirs' space and a stroke equals its copy", () => {
   const a = encodeStroke({ id: "a", samples: samples() });
@@ -258,7 +428,7 @@ test("serializeInk sorts keys at every level and drops empty ones, so equal stro
   const a = encodeStroke({ id: "a", samples: samples(2), t0: 5 });
   const one = serializeInk({ ...newInk(1, 612, 792), strokes: [a] });
   const shuffled = { strokes: [Object.fromEntries(Object.entries(a).reverse())], space: { height: 792, width: 612, page: 1, kind: "pdf-page" },
-    version: 1, format: "gamma-ink" };
+    version: 2, format: "gamma-ink" };
   assert.equal(serializeInk(shuffled), one);
   assert.ok(one.startsWith('{"format":"gamma-ink","space":{"height":792,"kind":"pdf-page","page":1,"width":612},"strokes":[{"ch":"xyp",'));
   assert.ok(!serializeInk({ ...newInk(1, 612, 792), strokes: [{ ...a, brush: undefined, t0: null }] }).includes("t0"));

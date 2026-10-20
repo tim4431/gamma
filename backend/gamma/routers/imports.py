@@ -499,7 +499,9 @@ _IMPORT_TYPES = _MARKUP_TYPES | _NOTE_TYPES | _AREA_TYPES | _INK_TYPES
 def _ink_from_annotation(obj, pnum: int, pw: float, ph: float, contents: str):
     """One /Ink annotation → an importer record carrying the parsed ink file
     (``kind: "ink"``). A Gamma export's ``/GammaInk`` private key restores
-    pressure and time; foreign ink is polylines at the annotation's width."""
+    pressure and time (a payload from before release T is a version 1 file,
+    which ``from_pdf_ink`` upgrades); foreign ink is polylines at the
+    annotation's width."""
     ink_list = [[float(_resolve(v)) for v in (_resolve(path) or [])]
                 for path in (_resolve(obj.get("/InkList")) or [])]
     bs = _resolve(obj.get("/BS")) or {}

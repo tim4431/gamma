@@ -76,7 +76,7 @@ export function MarkupLayers({ surface, wrapRef, width, height, marks, active = 
           eraserSize={ink.eraserSize} lassoMode={ink.lassoMode} selection={marks.inkSelection} flash={marks.inkFlash}
           onStroke={edit.onStroke} onErase={edit.onErase} onErasePartial={edit.onErasePartial} onSelect={edit.onSelect}
           onAction={edit.onAction} onMoveSelection={edit.onMoveSelection} onJump={text.armed ? undefined : actions.onJump}
-          onFingerScroll={edit.onFingerScroll} />
+          onFingerScroll={edit.onFingerScroll} onInkFeatures={actions.onInkFeatures} />
       )}
     </>
   );

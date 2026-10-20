@@ -13,7 +13,7 @@ from pydantic import BaseModel
 from ..auth import link_ratelimit, require_ws, require_ws_writer, resolve_ws, share_scope
 from .. import pdf_meta, upload_parts
 from ..db import connect_pages_db
-from ..ink import InkError, parse_ink
+from ..ink import UPDATE_GAMMA, InkError, InkVersionError, parse_ink
 from ..server_settings import workspace_quota
 from ..storage import (
     ALLOWED_IMAGE_TYPES,
@@ -173,9 +173,12 @@ def upload_file(request: Request, file: UploadFile = File(...)):
     if refused:
         raise HTTPException(status_code=400, detail=refused)
     if ext == ".ink":
-        # the path a mirror pushes a drawing by: stored only when it is one
+        # the path a mirror pushes a drawing by: stored only when it is a
+        # version 2 drawing (a version 1 one means the pusher must update)
         try:
             parse_ink(contents)
+        except InkVersionError:
+            raise HTTPException(status_code=400, detail=UPDATE_GAMMA)
         except InkError as e:
             raise HTTPException(status_code=400, detail=f"invalid ink file: {e}")
     filename, already_existed = store_file(ws, contents, ext)

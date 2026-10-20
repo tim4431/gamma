@@ -124,7 +124,9 @@ import { makeStableActions, useStableActions } from "../shared/lib/stableActions
 import { keepIfSame, sameMap, sameObject } from "../shared/lib/keepIfSame.js";
 import { isTextBox, normalizeTextBox } from "../markup/textBox.js";
 import { useTextBoxes } from "../markup/useTextBoxes";
-import { MAX_STROKES, appendStroke, duplicateStrokes, eraseAt, inkBounds, inkProps, mergeInk, newCanvasInk, newInk, pdfPositionOf, removeStrokes, restyleStrokes, serializeInk, strokeBounds, toolStyle, transformStrokes, translateStrokes } from "../ink/ink";
+import { GROUP_SPLIT_BYTES, MAX_BYTES, MAX_STROKES, appendStroke, duplicateStrokes, eraseAt, inkBounds, inkBytes, inkProps, mergeInk, newCanvasInk, newInk, pdfPositionOf, removeStrokes, restyleStrokes, serializeInk, strokeBounds, strokeBytes, toolStyle, transformStrokes, translateStrokes } from "../ink/ink";
+import { stripKey } from "../ink/stripKeys.js";
+import { pencilAction } from "../ink/pencilActions.js";
 import { NotebookViewer, PaperMenu, readPlace, showPlace } from "../notebook/NotebookViewer";
 import { NoteSheetContext } from "../notebook/NoteSheet";
 import {
@@ -133,6 +135,10 @@ import {
 } from "../notebook/notebook";
 import { generateKeyBetween } from "fractional-indexing";
 import * as inkStore from "../ink/inkStore";
+// What a pagehide flush may still send with `keepalive`: the browsers' 64
+// KiB in-flight cap, less the block's PUT beside the file and a margin
+// for non-ASCII text (a UTF-16 length undercounts its bytes).
+const KEEPALIVE_BYTES = 56 * 1024;
 import * as playback from "../replay/playback.js";
 import { recordingClock } from "../replay/clock.js";
 import { audioSource } from "../recording/audioSource.js";
@@ -1777,12 +1783,15 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // optional debug status bar, and posted to the pill. Messages ending in
   // "…"/"..." are in-progress; anything else is final. An `action`
   // ({label, run}) puts its button on the pill, which stays to be pressed.
-  const setStatus = useCallback((msg, action) => {
+  // `sticky`: the pill stays, as an error, until the next status replaces
+  // it (a save that will not succeed on a retry).
+  const setStatus = useCallback((msg, action, { sticky = false } = {}) => {
     const text = String(msg);
     setStatusRaw(text);
-    logSys(text);
+    logSys(text, sticky ? "error" : "");
     const ongoing = /(\.\.\.|…)\s*$/.test(text);
-    if (action) postPill("status", { msg: text, action }, { after: [8000, null] });
+    if (sticky) postPill("status", { msg: text, action: action || undefined, error: true });
+    else if (action) postPill("status", { msg: text, action }, { after: [8000, null] });
     else postPill("status", { msg: text, spinner: ongoing, final: !ongoing });
   }, [postPill, logSys]);
   const [loading, setLoading] = useState(false);
@@ -4078,6 +4087,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       if (pageId === focusedBlockIdRef.current) loadBlocksForBlock(pageId);
     },
     onStatus: (msg) => setStatus(msg),
+    onBuild: (build) => noteServerBuild(build),
     // Lasting, unlike the status line: edits waiting ("pending") stay up
     // until they are saved (and the pill with them); a dropped edit
     // ("rejected") stays a while.
@@ -6243,16 +6253,36 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     const p = inkTools.find((t) => t.id === inkUi.pen && t.kind === "pen") || inkTools.find((t) => t.kind === "pen") || inkTools[0];
     return toolStyle(p);
   }, [inkTools, inkUi.pen]);
+  // The build fence ("Two writers, one group", "Fences"): the server's build
+  // as this page loaded (the session's) against every socket hello; once
+  // they differ the server was updated under this bundle, and the page
+  // stops starting strokes and cuts until it is reloaded. Reads keep working.
+  const inkBuildRef = useRef(null);     // the names of the build seen first, or null
+  const inkStaleRef = useRef(false);
+  const [inkStale, setInkStale] = useState(false);
+  const noteServerBuild = useCallback((build) => {
+    // A build is named by its commit, its label or its version (the
+    // session's `build` carries all three, a socket's hello any of them):
+    // the same build shares at least one name with the one seen first.
+    const names = typeof build === "string" ? [build] : [build?.commit, build?.label, build?.version].filter((v) => typeof v === "string" && v);
+    if (!names.length) return;
+    if (!inkBuildRef.current) { inkBuildRef.current = new Set(names); return; }
+    if (inkStaleRef.current || names.some((n) => inkBuildRef.current.has(n))) return;
+    inkStaleRef.current = true;
+    setInkStale(true);
+    setStatus(t("Gamma was updated, reload to keep drawing"), { label: t("Reload"), run: () => window.location.reload() }, { sticky: true });
+  }, [setStatus]);
+  useEffect(() => { noteServerBuild(authUser?.build); }, [authUser?.build, noteServerBuild]);
   const inkTool = useMemo(() => {
     const t = inkUi.tool;
-    if (!t || readOnly) return null;
+    if (!t || readOnly || inkStale) return null;
     if (t === "eraser" || t === "select") return { tool: t };
     const p = inkTools.find((x) => x.id === t);
     return p ? toolStyle(p) : null;
-  }, [inkUi.tool, readOnly, inkTools]);
+  }, [inkUi.tool, readOnly, inkTools, inkStale]);
   // The Text tool (docs/dev/text_boxes.md) takes every pointer, a stylus's too.
   const textArmed = inkUi.tool === "text" && !readOnly;
-  const inkPenTool = inkAutoPen && !readOnly && !textArmed ? inkPen : null;
+  const inkPenTool = inkAutoPen && !readOnly && !textArmed && !inkStale ? inkPen : null;
   // Undo / Redo (the strip's buttons, Ctrl+Z while it is open) step the
   // block history for text boxes, the stroke history otherwise.
   const boxUndo = textArmed || !!textBoxes.sel;
@@ -6280,42 +6310,85 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     return next;
   }, [blocks]);
 
-  const flushInk = useCallback(async () => {
+  // What the server's merge dropped or brought back (the PUT answer's
+  // `ink_conflict`, "Two writers, one group"), on the pill.
+  function reportInkConflict(conflict) {
+    if (!conflict || conflict.clean) return;
+    const lost = conflict.lost_ours?.length || 0, back = conflict.returned?.length || 0;
+    if (lost) setStatus(t("Your change to {n} strokes was not applied: someone changed them since", { n: lost }));
+    else if (back) setStatus(t("{n} strokes someone erased came back", { n: back }));
+    else setStatus(t("Merged with changes made meanwhile"));
+  }
+  // `keepalive`: the page is going away (pagehide), so the requests outlive
+  // it. A browser carries at most 64 KiB of keepalive bodies at once and
+  // refuses a fetch that would pass it, so a file over KEEPALIVE_BYTES
+  // goes as a plain fetch, which may still land; and nothing is sure to
+  // run once the page is gone, so the block's PUT goes beside the upload,
+  // naming the file by its hash (inkStore names a draft's upload ahead),
+  // unless the server will have to merge it (the block names another
+  // file than the draft's base): then the upload must be there first.
+  const flushInk = useCallback(async ({ keepalive = false } = {}) => {
     clearTimeout(inkTimerRef.current);
     inkTimerRef.current = 0;
+    inkDirtySinceRef.current = 0;
     const json = { "Content-Type": "application/json" };
-    for (const { id, ink, base } of inkStore.dirtyDrafts()) {
+    const opts = keepalive ? { keepalive: true } : {};
+    for (const { id, ink, base, baseIds, upload } of inkStore.dirtyDrafts()) {
       try {
         const block = flattenBlocks(blocksRef.current).find((b) => b.id === id);
         // A group erased empty goes, unless its block holds a caption or
         // notes: those stay, with an empty drawing an undo can refill.
         if (!ink.strokes.length && !(block?.content || "").trim() && !block?.children?.length) {
-          await apiJson(`${API}/blocks/${id}`, { method: "DELETE" });
+          await apiJson(`${API}/blocks/${id}`, { method: "DELETE", ...opts });
           // Keep the empty draft until the tree observes the deletion; the
           // HTTP response can arrive before the corresponding socket op.
           inkStore.markDeleted(id, ink, block?.properties?.ink_url || "");
           continue;
         }
-        const r = await apiJson(`${API}/upload-ink`, { method: "POST", headers: json, body: serializeInk(ink) });
-        const saved = await apiJson(`${API}/blocks/${id}`, { method: "PUT", headers: json,
-          body: JSON.stringify({ properties: inkProps(ink, r.url), base_properties: { ink_url: base || "" } }) });
-        inkStore.markSaved(id, ink, r.url, saved?.properties?.ink_url || r.url);
+        const body = upload?.body || serializeInk(ink);
+        const post = () => apiJson(`${API}/upload-ink`, { method: "POST", headers: json, body,
+          ...(body.length <= KEEPALIVE_BYTES ? opts : {}) });
+        const put = (url) => apiJson(`${API}/blocks/${id}`, { method: "PUT", headers: json, ...opts,
+          body: JSON.stringify({ properties: inkProps(ink, url), base_properties: { ink_url: base || "" }, base_ids: baseIds || [] }) });
+        let url, saved;
+        if (keepalive && upload && (block?.properties?.ink_url || "") === (base || "")) {
+          url = upload.url;
+          [, saved] = await Promise.all([post(), put(url)]);
+        } else {
+          url = (await post()).url;
+          saved = await put(url);
+        }
+        inkStore.markSaved(id, ink, url, saved?.properties?.ink_url || url);
+        reportInkConflict(saved?.ink_conflict);
       } catch (err) {
-        // The block's insert may still be queued (404): try again shortly.
-        setStatus(t("Handwriting not saved yet: {err}", { err: err.message || err }));
-        if (!inkTimerRef.current) inkTimerRef.current = setTimeout(flushInk, 2000);
+        const status = err?.status || 0;
+        // A 5xx or a network error, or the block's insert still queued
+        // (404): try again shortly. Any other 4xx will not change on a
+        // retry: the draft stays, behind a pill that stays too.
+        if (retryableStatus(status) || status === 404) {
+          setStatus(t("Handwriting not saved yet: {err}", { err: err.message || err }));
+          if (!inkTimerRef.current) inkTimerRef.current = setTimeout(flushInk, 2000);
+        } else {
+          setStatus(t("Handwriting not saved: {err}", { err: err.message || err }), null, { sticky: true });
+        }
       }
     }
-  }, []);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  // 700 ms after the last edit, but never more than 5 s after the first
+  // unsaved one, so files land while writing goes on.
+  const inkDirtySinceRef = useRef(0);
   function scheduleInk() {
     clearTimeout(inkTimerRef.current);
-    inkTimerRef.current = setTimeout(flushInk, 700);
+    const now = Date.now();
+    if (!inkDirtySinceRef.current) inkDirtySinceRef.current = now;
+    inkTimerRef.current = setTimeout(flushInk, Math.max(0, Math.min(700, inkDirtySinceRef.current + 5000 - now)));
   }
   useEffect(() => {
     const flush = () => { if (inkTimerRef.current) flushInk(); };
-    window.addEventListener("pagehide", flush);
+    const leave = () => { if (inkTimerRef.current) flushInk({ keepalive: true }); };
+    window.addEventListener("pagehide", leave);
     document.addEventListener("visibilitychange", flush);
-    return () => { window.removeEventListener("pagehide", flush); document.removeEventListener("visibilitychange", flush); };
+    return () => { window.removeEventListener("pagehide", leave); document.removeEventListener("visibilitychange", flush); };
   }, [flushInk]);
   useEffect(() => () => {
     // Leaving a page: pending strokes still save (through the block API,
@@ -6342,6 +6415,12 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // block back first.
   function applyInk(changes, { record = true, label = t("ink stroke") } = {}) {
     if (!changes.length) return;
+    // The byte budget: an edit that would take a group past the server's
+    // cap is refused (one that shrinks a group over it is not).
+    if (changes.some((c) => inkBytes(c.after) > MAX_BYTES && inkBytes(c.after) > inkBytes(c.before))) {
+      setStatus(t("This group is full; split it or start a new one"));
+      return;
+    }
     for (const c of changes) playback.stop(c.id);
     const present = new Set(flattenBlocks(blocksRef.current).map((b) => b.id));
     const missing = changes.filter((c) => c.after.strokes.length && !present.has(c.id));
@@ -6375,16 +6454,22 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     if (!entry) { setStatus(redo ? t("Nothing to redo in handwriting.") : t("Nothing to undo in handwriting.")); return false; }
     // Entries are stored forward (before → after). Undo applies after →
     // before, redo before → after, each onto the group as it is NOW by
-    // stroke id (mergeInk), so strokes someone else drew meanwhile stay.
+    // stroke id (mergeInk), so strokes someone else drew meanwhile stay;
+    // what someone changed since is kept over the step, and the pill says so.
+    let kept = 0;
     applyInk(entry.changes.map((c) => {
       const [from, to] = redo ? [c.before, c.after] : [c.after, c.before];
       const now = inkOf(c.id) || from;
-      return { ...c, before: now, after: mergeInk(from, to, now).ink };
+      const merged = mergeInk(from, to, now);
+      if (!merged.clean) kept += Math.max(1, merged.lostOurs.length);
+      return { ...c, before: now, after: merged.ink };
     }), { record: false });
     (redo ? h.undo : h.redo).push(entry);
     setInkHistoryState({ undo: h.undo.length, redo: h.redo.length });
     setInkSelection(null);
-    setStatus(`${redo ? t("Redone") : t("Undone")}: ${entry.label} (page ${inkPageNumber(entry.changes[0].page)}).`);
+    const what = `${redo ? t("Redone") : t("Undone")}: ${entry.label}`, page = inkPageNumber(entry.changes[0].page);
+    setStatus(kept ? t("{what} (page {page}; {n} strokes someone changed since were kept).", { what, page, n: kept })
+      : `${what} (page ${page}).`);
     if (!redo) guideEvents.emit("ink.undone");
     return true;
   }
@@ -6398,7 +6483,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   }
   // `page`: a PDF page number, or a notebook sheet's id.
   async function handleInkStroke(page, stroke, size) {
-    if (readOnly || !focusedBlockId) return;
+    if (readOnly || !focusedBlockId || inkStale) return;
     let id = inkActiveRef.current?.page === page ? inkActiveRef.current.id : null;
     const existing = id ? flattenBlocks(blocksRef.current).find((b) => b.id === id && b.properties?.ink_url !== undefined) : null;
     if (!existing) id = makeId();
@@ -6408,8 +6493,15 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     const loaded = !inkStore.draft(id) && existing?.properties.ink_url
       ? await inkStore.loadInk(existing.properties.ink_url) : null;
     const onSheet = typeof page === "string";
-    const before = inkStore.draft(id)?.ink || loaded
-      || (onSheet ? newCanvasInk(size.width, size.height) : newInk(page, size.width, size.height));
+    const fresh = () => (onSheet ? newCanvasInk(size.width, size.height) : newInk(page, size.width, size.height));
+    let before = inkStore.draft(id)?.ink || loaded || fresh();
+    // A group past the split budget (or full of strokes) is left as it is:
+    // the stroke starts the page's next group, invisibly.
+    if (before.strokes.length && (inkBytes(before) + strokeBytes(stroke) > GROUP_SPLIT_BYTES || before.strokes.length >= MAX_STROKES)) {
+      id = makeId();
+      inkActiveRef.current = { page, id };
+      before = fresh();
+    }
     applyInk([{ id, page, before, after: appendStroke(before, stroke) }]);
     if (onSheet) {
       // Writing into the last quarter of the page's last sheet adds the next
@@ -6610,44 +6702,17 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   useEffect(() => {
     if (!inkUi.open) return;
     const onKey = (e) => {
-      const t = e.target;
-      if (isTextField(t)) return;
+      if (isTextField(e.target)) return;
       const K = inkKeysRef.current;
-      if ((e.ctrlKey || e.metaKey) && !e.altKey && ["z", "y"].includes(e.key.toLowerCase())) {
-        if (K.boxUndo) return;
-        e.preventDefault();
-        e.stopPropagation();
-        K.inkUndo(e.key.toLowerCase() === "y" || e.shiftKey);
-        return;
-      }
-      if (e.key === "Escape") {
-        if (K.hasBox) return;
-        if (K.hasSelection) setInkSelection(null);
-        else setInkUi((s) => ({ ...s, open: false, tool: null, options: false }));
-        return;
-      }
-      if ((e.key === "Delete" || e.key === "Backspace") && K.hasSelection) {
-        e.preventDefault();
-        K.deleteInkSelection();
-        return;
-      }
-      if (e.ctrlKey || e.metaKey || e.altKey) return;
-      const k = e.key.toLowerCase();
-      if (k === "e") K.pickInkTool("eraser");
-      else if (k === "l") K.pickInkTool("select");
-      else if (k === "t") K.pickInkTool("text");
-      else if (k === "v") K.pickInkTool(null);
-      else if (k === "p" || k === "h") {
-        // The next preset of that kind after the armed one, wrapping.
-        const kind = k === "p" ? "pen" : "highlighter";
-        const list = K.tools.filter((t) => t.kind === kind);
-        if (!list.length) return;
-        const i = list.findIndex((t) => t.id === K.tool);
-        K.pickInkTool(list[(i + 1) % list.length].id);
-      } else if (/^[1-9]$/.test(k)) {
-        const t = K.tools[Number(k) - 1];
-        if (t) K.pickInkTool(t.id);
-      }
+      const action = stripKey(e, K);
+      if (!action) return;
+      if (action.prevent) e.preventDefault();
+      if (action.stop) e.stopPropagation();
+      if (action.kind === "undo") K.inkUndo(action.redo);
+      else if (action.kind === "deselect") setInkSelection(null);
+      else if (action.kind === "close") setInkUi((s) => ({ ...s, open: false, tool: null, options: false }));
+      else if (action.kind === "delete") K.deleteInkSelection();
+      else if (action.kind === "pick") K.pickInkTool(action.id);
     };
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
@@ -6851,16 +6916,11 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   const pencilRef = useRef(null);
   pencilRef.current = (action) => {
     if (readOnly || !(((!!pdfUrl || notebook) && !viewerHidden) || nbSheets.length)) return;
-    const pen = inkTools.find((x) => x.id === inkUi.pen)?.id || inkTools[0].id;
-    const { previous } = inkPrevRef.current;
-    const known = ["eraser", "select", "text"].includes(previous) || inkTools.some((x) => x.id === previous);
-    const back = known && previous !== inkUi.tool ? previous : pen;
-    if (action === "switchEraser") pickInkTool(inkUi.tool === "eraser" ? back : "eraser");
-    else if (action === "switchPrevious") pickInkTool(back);
-    else if (action === "showColorPalette" || action === "showInkAttributes") {
-      // With the hand armed the Pencil writes with the stylus pen: its row.
-      setInkUi((s) => (s.tool ? { ...s, open: true, options: !s.options } : { ...s, open: true, tool: pen, options: true }));
-    }
+    const result = pencilAction(action, { tools: inkTools, pen: inkUi.pen },
+      { tool: inkUi.tool, previous: inkPrevRef.current.previous, options: inkUi.options });
+    if (!result) return;
+    if ("pick" in result) pickInkTool(result.pick);
+    else setInkUi((s) => ({ ...s, ...result.ui }));
   };
   useEffect(() => (nativeHost()?.pencil ? onHostMessage("pencil", ({ action }) => pencilRef.current(action)) : undefined), []);
   // The notes view opens at the reader's place on the sheets (tabScrollRef;
@@ -6887,11 +6947,19 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // per surface its marks (markup/MarkupLayers.jsx): a PDF page's ink groups
   // by their position's page, a sheet's by its id, its text boxes, with the lasso
   // selection, the selected box and the flashes on the surface they are on.
+  const inkFeaturesToldRef = useRef(null); // the page whose newer-ink pill was shown
   const pageActions = useStableActions({
     onStroke: handleInkStroke, onErase: handleInkErase, onErasePartial: handleInkErasePartial, onSelect: handleInkSelect,
     onAction: handleInkAction, onMoveSelection: handleInkMoveSelection, onJump: showInNotes, ...textBoxes.actions,
     onFingerScroll: () => setStatus(t("Fingers scroll while a pen draws"),
       { label: t("Draw with finger"), run: () => setInkPenOnly(false) }),
+    // A drawing with a pen style, a key or a channel this build does not
+    // know (ink.js inkFeatures) is drawn plainly: said once per page visit.
+    onInkFeatures: () => {
+      if (inkFeaturesToldRef.current === focusedBlockIdRef.current) return;
+      inkFeaturesToldRef.current = focusedBlockIdRef.current;
+      setStatus(t("Some handwriting here comes from a newer Gamma and is drawn plainly; update to see it as drawn"));
+    },
   });
   const pageTools = useMemo(() => ({
     readOnly,

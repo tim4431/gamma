@@ -175,7 +175,7 @@ def test_step_38_rebuilds_the_kind_column():
     assert conn.execute("SELECT sql FROM sqlite_master WHERE name = 'unified_blocks'").fetchone()[0] == ddl
     migrations._v38_recording_kind("", sqlite3.connect(":memory:"), None)  # a copy without the table
     assert (38, "recording_kind", migrations._v38_recording_kind) in migrations.WORKSPACE_STEPS
-    assert migrations.workspace_format() == 38
+    assert migrations.workspace_format() >= 38
 
 
 # --- what it reads as --------------------------------------------------------------------

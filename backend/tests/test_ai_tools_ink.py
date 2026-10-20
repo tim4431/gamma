@@ -22,7 +22,7 @@ PAGE_W, PAGE_H = 300.0, 400.0
 def _ink(kind="pdf-page", color="#ff0000", width=PAGE_W, height=PAGE_H,
          points=((40, 60), (260, 340))):
     space = {"kind": kind, "width": width, "height": height, **({"page": 1} if kind == "pdf-page" else {})}
-    return {"format": "gamma-ink", "version": 1, "space": space,
+    return {"format": "gamma-ink", "version": 2, "space": space,
             "strokes": [{"id": "s1", "color": color, "size": 6, "ch": "xy",
                          "pts": inkmod.encode_points([{"x": x, "y": y} for x, y in points], "xy")}]}
 

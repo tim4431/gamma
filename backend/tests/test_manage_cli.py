@@ -270,8 +270,10 @@ def test_offsite_and_litestream_config_run_before_the_schema_guard(tmp_path):
     backend = Path(__file__).resolve().parents[1]
 
     def run(*args, **extra):
-        return subprocess.run([sys.executable, "manage.py", *args], cwd=backend, capture_output=True, text=True,
-                              timeout=60, env={**env, **extra})
+        # UTF-8 on both ends: the child prints a curly quote, which a
+        # parent decoding with the console's locale (GBK) cannot read.
+        return subprocess.run([sys.executable, "manage.py", *args], cwd=backend, capture_output=True,
+                              encoding="utf-8", timeout=60, env={**env, "PYTHONIOENCODING": "utf-8", **extra})
 
     listed = run("offsite", "--list")
     assert listed.returncode == 2 and "The bucket cannot be used: no bucket is set" in listed.stdout, listed.stderr

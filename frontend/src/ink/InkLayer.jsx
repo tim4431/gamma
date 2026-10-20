@@ -18,9 +18,11 @@ import {
   ResizeIcon, StopIcon, TrashIcon,
 } from "../shared/ui/Icons";
 import {
-  MAX_STROKE_SIZE, boundsOf, encodeStroke, hitStrokes, inkBounds, inkUntil,
-  nearestInkStroke, outlineOptions, sizesFor, strokePath, strokeWalls, strokesInLasso, svgPathFromPoints, transformPoint, unionBox,
+  MAX_STROKE_SIZE, boundsOf, byBand, encodeStroke, hitStrokes, inkBounds, inkFeatures, inkUntil,
+  nearestInkStroke, outlineOptions, sizesFor, strokeBand, strokePath, strokeWalls, strokesInLasso, svgPathFromPoints, transformPoint,
+  unionBox,
 } from "./ink";
+import { finishStroke, strokeChannels, widthLaw } from "./finishStroke.js";
 import { INK_COLORS, colorName, pickerColors, swatchCss } from "../shared/model/palette.js";
 import { usePalette } from "../shared/ui/paletteContext.js";
 import * as inkStore from "./inkStore";
@@ -77,6 +79,9 @@ if (nativeHost()?.ink) {
 // Whether a finger scrolling under an armed tool is still worth explaining
 // (onFingerScroll): once a session, and never once a pen has drawn.
 let fingerHint = true;
+// Drawings already checked for what this build cannot show (inkFeatures);
+// a drawing is told of once, through onInkFeatures.
+const featured = new WeakSet();
 
 // The click a handled pointer-up would deliver to whatever lies under it
 // (a highlight rect, a link box) is not a click on that thing.
@@ -86,15 +91,22 @@ export function swallowClick() {
   setTimeout(() => document.removeEventListener("click", swallow, { capture: true }), 0);
 }
 
-export function Strokes({ ink, hide }) {
-  return ink.strokes.map((s) => {
+// A drawing's strokes as SVG paths: a pen's filled outline, a
+// highlighter's polyline multiplied onto the page, an unknown tool's
+// polyline. Band 0 (under) draws before band 1 (ink); `band` restricts the
+// drawing to one band, for a layer that interleaves several groups' bands.
+export function Strokes({ ink, hide, band }) {
+  const strokes = band == null ? byBand(ink.strokes) : ink.strokes.filter((s) => strokeBand(s) === band);
+  return strokes.map((s) => {
     if (hide?.has(s.id)) return null;
     const p = strokePath(s);
+    const color = s.color || INK_COLORS[0], opacity = s.opacity ?? 1;
     return p.stroke ? (
-      <path key={s.id} d={p.d} fill="none" stroke={s.color} strokeWidth={p.width} strokeOpacity={s.opacity}
-        strokeLinecap="round" strokeLinejoin="round" style={{ mixBlendMode: "multiply" }} />
+      <path key={s.id} d={p.d} fill="none" stroke={color} strokeWidth={p.width} strokeOpacity={opacity}
+        strokeLinecap="round" strokeLinejoin="round" strokeDasharray={p.dash}
+        style={p.multiply ? { mixBlendMode: "multiply" } : undefined} />
     ) : (
-      <path key={s.id} d={p.d} fill={s.color} fillOpacity={s.opacity} />
+      <path key={s.id} d={p.d} fill={color} fillOpacity={opacity} />
     );
   });
 }
@@ -103,16 +115,16 @@ export function Strokes({ ink, hide }) {
 // strokes begun so far, the one in progress cut short, and the ones not
 // yet reached faded (spotlight), left out (reveal) or drawn as they are
 // (static). Without a frame, the drawing as it is.
-export function ReplayStrokes({ ink, frame, hide }) {
-  if (!frame || frame.mode === "static") return <Strokes ink={ink} hide={hide} />;
+export function ReplayStrokes({ ink, frame, hide, band }) {
+  if (!frame || frame.mode === "static") return <Strokes ink={ink} hide={hide} band={band} />;
   const until = inkUntil(ink, frame.at, frame.times);
   const pending = new Set(frame.mode === "spotlight" ? until.pending : []);
   return (
     <>
       {pending.size ? (
-        <g className="inkPending"><Strokes ink={{ ...ink, strokes: ink.strokes.filter((s) => pending.has(s.id)) }} hide={hide} /></g>
+        <g className="inkPending"><Strokes ink={{ ...ink, strokes: ink.strokes.filter((s) => pending.has(s.id)) }} hide={hide} band={band} /></g>
       ) : null}
-      <Strokes ink={until.ink} hide={hide} />
+      <Strokes ink={until.ink} hide={hide} band={band} />
     </>
   );
 }
@@ -136,7 +148,7 @@ function seekToStroke(groups, hit) {
 // scrolled instead of drawing.
 export function InkLayer({ pageNumber, wrapRef, width, height, blocks, tool, penTool, penOnly, pressure, eraserMode,
   eraserSize = 1, lassoMode = "free", selection, flash, onStroke, onErase, onErasePartial, onSelect, onAction, onMoveSelection, onJump,
-  onFingerScroll }) {
+  onFingerScroll, onInkFeatures }) {
   useInkVersion();
   const canvasRef = useRef(null);
   const cursorRef = useRef(null);
@@ -149,8 +161,23 @@ export function InkLayer({ pageNumber, wrapRef, width, height, blocks, tool, pen
   const groups = [];
   for (const b of blocks || []) {
     const ink = inkStore.inkFor(b);
-    if (ink?.strokes?.length) groups.push({ id: b.id, ink });
+    if (!ink?.strokes?.length) continue;
+    groups.push({ id: b.id, ink });
   }
+  // A drawing from a newer build (a tool, a brush, a key or a channel
+  // this one does not know) draws plainly; say so, once per drawing. The
+  // handler sets the app's status, so it runs after the render, not in it.
+  const onInkFeaturesRef = useRef(onInkFeatures);
+  onInkFeaturesRef.current = onInkFeatures;
+  useEffect(() => {
+    if (!onInkFeaturesRef.current) return;
+    for (const g of groups) {
+      if (featured.has(g.ink)) continue;
+      featured.add(g.ink);
+      const features = inkFeatures(g.ink);
+      if (features) onInkFeaturesRef.current(features);
+    }
+  });
   // A replay this surface takes part in (replay/useFrame.js): one of its
   // groups' own, its sheet's, or a recording its handwriting was written
   // during; each group then draws as it stood at the replay's instant.
@@ -291,9 +318,12 @@ export function InkLayer({ pageNumber, wrapRef, width, height, blocks, tool, pen
         if (d.samples.length === 1) ctx.lineTo(d.samples[0].x + 0.01, d.samples[0].y);
         ctx.stroke();
       } else {
+        // The same width law the committed stroke is baked with
+        // (finishStroke.js), so the live line and the saved ink match.
         ctx.fillStyle = use.color;
-        const pts = getStroke([...d.samples, ...(d.predicted || [])].map((s) => [s.x, s.y, s.p]),
-          outlineOptions({ size: use.size, pen: d.pen, brush: use.brush }));
+        const pressure = d.law ? (s) => d.law(s) / 2 : () => 0.5;
+        const pts = getStroke([...d.samples, ...(d.predicted || [])].map((s) => [s.x, s.y, pressure(s)]),
+          outlineOptions({ size: use.size }));
         ctx.fill(new Path2D(svgPathFromPoints(pts)));
       }
     };
@@ -311,14 +341,17 @@ export function InkLayer({ pageNumber, wrapRef, width, height, blocks, tool, pen
       canvas.style.display = "none";
     };
 
-    // A finished stroke's samples (page units) to the page's ink.
+    // A finished stroke's samples (page units) through finishStroke
+    // (decimated, widths baked; later: straightened, or a scribble that
+    // erases) to the page's ink.
     const commitStroke = (d) => {
       if (!d.samples.length) return false;
       const L = live.current, { use } = d;
-      const stroke = encodeStroke({
-        tool: use.tool, brush: use.brush, color: use.color, size: use.size, opacity: use.opacity ?? 1, pen: d.pen,
-        t0: d.t0, samples: d.samples, ch: d.pen ? "xypt" : "xyt",
-      });
+      const style = { tool: use.tool, brush: use.brush, color: use.color, size: use.size, opacity: use.opacity ?? 1, pen: d.pen };
+      const { commit, erase } = finishStroke(d.samples, { style, pen: d.pen });
+      for (const { gid, ids } of erase || []) if (ids.length) L.onErase?.(pageNumber, gid, ids);
+      if (!commit?.length) return !!erase?.length;
+      const stroke = encodeStroke({ ...style, t0: d.t0, samples: commit, ch: strokeChannels(style) });
       L.onStroke?.(pageNumber, stroke, { width: L.width, height: L.height });
       return true;
     };
@@ -436,8 +469,10 @@ export function InkLayer({ pageNumber, wrapRef, width, height, blocks, tool, pen
       }
       L.onSelect?.(pageNumber, []);
       showCanvas(ctx);
+      const pen = e.pointerType === "pen";
       drawing = { ...ctx, id: e.pointerId, mode: "stroke", samples: [], t0: Date.now(),
-        startTime: e.timeStamp, pressure: live.current.pressure, pen: e.pointerType === "pen", raf: 0 };
+        startTime: e.timeStamp, pressure: live.current.pressure, pen, raf: 0,
+        law: widthLaw({ tool: ctx.use.tool, brush: ctx.use.brush, pen }) };
       appendInkSample(drawing, e);
       if (drawing.pen && nativeHost()?.ink) claimForHost(drawing, e);
       paint();
@@ -633,13 +668,14 @@ export function InkLayer({ pageNumber, wrapRef, width, height, blocks, tool, pen
   return (
     <>
       <svg className="inkLayer" viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none">
-        {groups.map((g) => (
-          <g key={g.id} data-ink-id={g.id}
+        {/* every group's band-0 strokes (highlighters) under every group's ink */}
+        {[0, 1].map((band) => groups.map((g) => (g.ink.strokes.some((s) => strokeBand(s) === band) ? (
+          <g key={`${g.id}:${band}`} data-ink-id={g.id}
             style={{ pointerEvents: armed || !onSelect ? "none" : "visiblePainted", cursor: "pointer" }}>
-            <ReplayStrokes ink={g.ink} frame={frame && groupInScope(replay, g.id, g.ink, pageNumber) ? frame : null}
+            <ReplayStrokes ink={g.ink} band={band} frame={frame && groupInScope(replay, g.id, g.ink, pageNumber) ? frame : null}
               hide={dragging ? selectedIds : null} />
           </g>
-        ))}
+        ) : null)))}
         {dragging ? (
           <g transform={previewTransform}>
             {groups.map((g) => (

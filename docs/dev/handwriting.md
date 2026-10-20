@@ -3,14 +3,20 @@
 Draw on a PDF page with a stylus, mouse or finger; the strokes become a
 block in the page's notes. The survey behind the shape, and how Notability
 does the same things, is in
-[research/handwriting.md](../research/handwriting.md). Code:
+[research/handwriting.md](../research/handwriting.md); what Notability and
+GoodNotes store, and why the file looks the way it does, in
+[research/ink-storage.md](../research/ink-storage.md). Code:
 `gamma/ink.py` + `gamma/routers/ink.py` (server), `frontend/src/ink/ink.js`,
+`ink/finishStroke.js`, `ink/stripKeys.js`, `ink/pencilActions.js`,
 `ink/inkStore.js`, `ink/InkLayer.jsx`, `ink/inkInput.js` (client), with the
 tool strip and the page plumbing it shares with text boxes in
 `markup/MarkupToolbar.jsx`, `markup/MarkupLayers.jsx` and
 `markup/PageTools.jsx`; tests `backend/tests/test_ink.py`,
-`frontend/tests/ink.test.mjs`, `frontend/tests/inkInput.test.mjs`,
-e2e `tests/e2e/scenarios/ink.mjs` and `inkEditing.mjs`. The same files are
+`frontend/tests/ink.test.mjs`, `finishStroke.test.mjs`,
+`stripKeys.test.mjs`, `pencilActions.test.mjs`, `inkInput.test.mjs`, the
+shared fixtures `tests/shared/inkv2.json`, `inkwidth.json` and
+`inkmerge.json` (read by `backend/tests/test_shared_fixtures.py` and the
+node tests), e2e `tests/e2e/scenarios/ink.mjs` and `inkEditing.mjs`. The same files are
 written on notebook sheets ([notebooks.md](notebooks.md)) and by the iPad
 app ([ipad.md](ipad.md)). Typed text on a page is
 [text_boxes.md](text_boxes.md).
@@ -149,13 +155,22 @@ app ([ipad.md](ipad.md)). Typed text on a page is
 
 ## Model
 
-Three brushes, no textures: pressure-sensitive pen, monoline and
-highlighter. A pen preset's options switch between Pen and Monoline; the
-style survives preset duplication and reload. Monoline shares the
-smooth outline renderer with pressure-based thinning disabled. Pressure and
-timing stay in the samples. Live canvas, retained SVG, eraser geometry and
-server exports all honor the style; partial erasing preserves it in each
-surviving piece.
+A stroke is a tool, a look and a polyline of samples. Two tools are
+known, `pen` (a filled outline) and `highlighter` (a stroked polyline,
+multiplied onto the page and drawn under the ink); one brush, `monoline`
+(a pen of constant width). Both are open strings in the file, so a later
+pen style is a new value and a renderer that does not know it draws the
+stroke plainly from its baked width (below, "Width"). Pressure, timing and
+tilt stay in the samples, raw; the width a pressure pen drew with is baked
+into the samples once, when the stroke is finished, as a multiplier of the
+stroke's nominal size. Live canvas, retained SVG, eraser geometry, hit
+tests and the server's exporters all draw from that baked width — there is
+no width formula in any of them — and partial erasing keeps it in every
+surviving piece. The storage shape is a deliberate copy of what the two
+reference apps store ([research/ink-storage.md](../research/ink-storage.md)):
+Notability's base width times a per-anchor fractional width with the raw
+force and tilt beside it, GoodNotes' explicit highlighter flag and
+parametric shape records.
 
 An ink group is a block with these properties (no schema change):
 
@@ -174,55 +189,188 @@ fetches files per page, and orphan cleanup, share-scoped serving, quota,
 the export bundlers and backups already understand `/api/uploads/`
 references in properties.
 
-## The stroke file (`gamma-ink` v1)
+## The stroke file (`gamma-ink` v2)
 
 Plain JSON (`application/json`), one per group:
 
 ```json
-{"format": "gamma-ink", "version": 1,
+{"format": "gamma-ink", "version": 2,
  "space": {"kind": "pdf-page", "page": 3, "width": 612, "height": 792},
  "strokes": [{"id": "k7Qm2x", "tool": "pen", "color": "#1f1f1f", "size": 1.6,
               "opacity": 1, "pen": true, "t0": 1757760000000,
-              "ch": "xypt", "pts": [12040, 30512, 620, 0, 18, -3, 700, 8]}]}
+              "ch": "xyptw", "pts": [12040, 30512, 620, 0, 1120, 18, -3, 700, 8, 80]}]}
 ```
 
-- `space`: `page` is 1-based; `width`/`height` the page as displayed at
-  scale 1 (pdf.js viewport: points, origin top-left, y down, rotation
-  applied) — the same frame highlight rects normalise to and the frame the
-  PDF writers map to user space. `{kind: "canvas", width, height}` is a
-  sheet of paper: points from its top-left corner, the sheet's size when
-  the group was drawn ([notebooks.md](notebooks.md)).
-- `ch` names the channels of each sample, InkML-style: `x` `y` always, then
-  any of `p` pressure, `t` time, `a` altitude, `z` azimuth. `pts` is one
-  flat integer array: x/y in 1/100 pt and t in ms are deltas after the
-  first sample, p is 0..1000, a/z degrees. ~300 bytes per stroke.
-- `tool`: `pen` (pressure-shaped outline) or `highlighter` (constant width,
-  multiplied onto the page). `pen: false` marks mouse/finger strokes (no
-  real pressure, drawn even). `size` is the nominal diameter in pt; drawn
-  width = `size × (1 + 0.5 × (p − 0.5))` for a real pen. `t0` is wall-clock
-  ms of the first sample — a client without timing omits `t`/`t0` rather
-  than inventing them. It is an integer: the iPad rounds its clock. The
-  replay reads both (see Client).
-- Limits (`gamma/ink.py`, enforced on upload): 5 000 strokes, 500 000
-  samples, 4 MB, finite numbers, unique stroke ids.
+**The file.** `format` is the literal `gamma-ink`; `version` is `2`
+(version 1 is what every file was before release T; "Upgrading version 1"
+below). `space` is where the strokes lie: `kind` is `pdf-page` or `canvas`
+(a literal; a third kind would be a version 3), `page` 1-based (required
+for a PDF page), `width`/`height` the page as displayed at scale 1 (pdf.js
+viewport: points, origin top-left, y down, rotation applied — the frame
+highlight rects normalise to and the frame the PDF writers map to user
+space); `{kind: "canvas", width, height}` is a sheet of paper, points from
+its top-left corner, the sheet's size when the group was drawn
+([notebooks.md](notebooks.md)). `strokes` is the list below. Any other key
+of the file or of `space` is kept verbatim by every reader and writer
+(parse, canonical bytes, merge, the exporters' `/GammaInk`), up to 16 KB of
+serialised extras per file; on a merge the result takes the writer's
+file-level extras (last writer by strokes, advisory only, since nothing
+writes one yet).
 
-For `tool: "pen"`, optional `brush: "monoline"` selects constant width.
-Omitting `brush` keeps the pressure behavior and serialized form;
-highlighters do not accept it. Older servers reject `brush`
-(`extra="forbid"`). The embedded Gamma payload in annotated PDF exports
-retains the brush for re-import.
+**A stroke.** Every key but `id` and `pts` has a default or is omitted,
+and the canonical bytes never write a key at its omission value:
 
-The codec lives twice by design (`ink.py` `decode_stroke`/`encode_points`,
-`ink/ink.js` `decodeStroke`/`encodeStroke`); the two test files pin the same
-sample bytes.
+| key | type | default / omitted when | meaning |
+|---|---|---|---|
+| `id` | `^[A-Za-z0-9_-]{1,32}$` | required; a client mints 8 chars | survives every edit (the merge's handle) |
+| `tool` | `^[a-z][a-z0-9-]{0,15}$` | `pen` | `pen` or `highlighter` are known; an unknown value draws as a round-capped polyline of the baked width, source-over at `opacity`, in its own export bucket; the eraser and the lasso take it like any stroke |
+| `brush` | `^[a-z][a-z0-9-]{0,15}$` | omitted | `monoline` is known (constant width, no `w`); an unknown brush draws exactly as a pen from `w`, so only texture is lost. Open on every tool: the server does not refuse one on a highlighter (it draws at its size, as any highlighter) |
+| `color` | `#rrggbb` or `rgb[a](…)`, ≤ 40 chars | `#1f1f1f` | |
+| `size` | number in (0, 100] | `1.6` | nominal diameter in pt, the anchor `w` multiplies; a width restyle changes `size` only, a resize scales it; the server refuses `size × max(w) > 100` |
+| `opacity` | number in (0, 1] | `1` | |
+| `pen` | bool | `true` | `false` marks a mouse or finger stroke (no real pressure, drawn even, no `w`) |
+| `t0` | int ≥ 0 | omitted | wall-clock ms of the first sample, never invented (a client without timing omits `t` and `t0`); the replay reads both |
+| `band` | `0` or `1` | the tool's default, `0` for a highlighter and `1` otherwise, and omitted when equal to it | `0` draws under, `1` draws as ink. Every layer draws band 0 first, then band 1 (`InkLayer`, `to_svg`, `pdf_path_ops`, the annotated PDF's `/Annots` order); a tap prefers band 1 within the radius (`nearestInkStroke`) |
+| `from` | a stroke id | omitted | the stroke this piece was cut from by the partial eraser. A cut of a piece keeps the root's id, so every piece names the original. Written by `restroke`, kept by every edit, dropped on paste and duplicate (`cloneStrokes`, `duplicateStrokes`: a copy is not a piece). Read by the merge only |
+| `shape` | `{kind, params}` | omitted | `kind` one of `line` `arrow` `rect` `ellipse` `triangle` `polygon` `curve`; `params` an object of at most 64 finite numbers (and booleans), the geometry an editor rebuilds `pts` from after a handle drag. The stroke **also carries its baked `pts`**, so hit test, bounds, eraser, lasso, replay and every exporter draw it as any stroke; a piece cut from a shape loses `shape` and `fill` |
+| `fill` | `{color: '#rrggbb', opacity}` | omitted; `opacity` in (0, 1], omitted at `0.25` | closed shapes only |
+| `dash` | `dashed` or `dotted` | omitted (solid) | dash geometry is derived from `size` at render time, never stored |
+| `nib` | int 0..179 | omitted | a calligraphy nib's angle in degrees |
+| `ch` | `^xy[a-z]*$`, no repeated letter, ≤ 12 chars | `xy` | the channels of each sample, below |
+| `pts` | non-empty list of ints, a multiple of `len(ch)` long | required | the samples, flat |
+| anything else | JSON to depth 3, finite numbers, keys `^[A-Za-z][A-Za-z0-9_]{0,31}$`, strings ≤ 1 KB, arrays ≤ 256 | — | kept verbatim through parse, canonical bytes, merge and every edit helper (`restroke`, `duplicateStrokes`, `cloneStrokes`, `translateStrokes`, `transformStrokes`, `restyleStrokes`); ≤ 1 KB serialised per stroke. A null-valued key is dropped |
 
-**The bytes of an upload** are the client's: `ink.js serializeInk` (keys
-sorted at every level, no whitespace, empty keys dropped). The server
-validates an upload and stores it as it came, named by the hash of those
-bytes. So the same strokes from a browser and the iPad are one file, and
-a client can name a file by its hash before the server has it. The
-server writes files of its own with `ink.dumps` (sorted keys) for a merge
-or an import.
+The server's models are pydantic with `extra="allow"` and one extras
+validator for the caps (`gamma/ink.py`); `json.loads` runs with a
+`parse_constant` that refuses `NaN` and `Infinity`, and `dumps` with
+`allow_nan=False`, because pydantic would keep a `NaN` extra and
+`JSON.parse` in every browser then fails on the file.
+
+**Channels.** `ch` names the channels of each sample, InkML-style, `x`
+`y` first and then any of the letters below in any order; `pts` is one
+flat integer array, `len(ch)` integers per sample, ~300 bytes a stroke.
+
+| letter | unit | encoding |
+|---|---|---|
+| `x` `y` | 1/100 pt | delta after the first sample |
+| `p` | pressure 0..1000 | absolute; decoded as `p / 1000` and clamped to 0..1 |
+| `t` | ms since `t0` | delta after the first sample |
+| `a` | altitude, degrees 0..90 | absolute |
+| `z` | azimuth, degrees 0..359 | absolute |
+| `w` | drawn-width multiplier × 1000 | delta after the first sample; the running sum is checked to 0..2000 (decoded 0..2.000, `1000` = the nominal size) |
+| `o` | drawn opacity × 1000 | delta; running sum 0..1000; **reserved**: written by nothing yet, read as `opacity × o` once a brush writes it |
+
+A letter neither codec knows is carried by stride: `decodeStroke` /
+`decode_stroke` put its integer in the sample's `rest` array, every reader
+ignores it, and both encoders copy `rest` back in place, so a cut on a copy
+that predates a letter keeps the stride and the file stays valid. The
+decoded sample is `{x, y, p?, t?, a?, z?, w?, o?, rest?}` — each key
+present when its channel is, `rest` when the list has a letter the codec
+does not know — with `w` and `o` as multipliers, so a decoded cache never
+depends on `size`; `tests/shared/inkwidth.json` pins the decoded values.
+
+**Width.** The drawn width at a sample is `size × w` when the stroke has
+the `w` channel, else `size`. That is the whole rule: there is no width
+formula in rendering, hit-testing, bounds, the exporters or the server
+(`strokeWidth(stroke, sample)` in `ink.js`, `stroke_width(stroke, sample)`
+in `ink.py`, both one line). Pressure-shaped strokes — tool `pen`, `pen`
+true, no `brush`, and later every pressure brush — always carry `w`, baked
+once on the client in `finishStroke.js` `bakeWidths`, the only place a
+brush law lives: the default pen's law is `w = 1 + (p − 0.5)`,
+perfect-freehand's on-screen value at thinning 0.5, capped to `[0, 2]`.
+Constant-width strokes (highlighter, monoline, `pen: false`) omit `w`.
+The raw `p`, `a`, `z` stay beside `w` (Notability keeps force and tilt
+beside its fractional widths), so a brush change re-bakes from them and a
+future law can re-map; the multiplier form means a width restyle touches
+`size` alone and `pts` stay byte-identical. perfect-freehand is driven from
+`w`: pressure = `w / 2` with thinning 1, so the outline's radius is
+`size × w / 2` and matches the baked width exactly; the live canvas runs
+the same function on the samples' live `w`, computed by the same law. The
+iPad shell sends raw samples and the web app bakes them like its own
+([ipad.md](ipad.md) "The pen").
+
+**Limits** (`gamma/ink.py`, enforced on upload): 5 000 strokes, 500 000
+samples, `MAX_BYTES` 6 MB, finite numbers, unique stroke ids, the extras
+caps, `size × max(w) ≤ 100`.
+
+**The bytes of an upload** are the client's: `ink.js serializeInk` — keys
+sorted at every level, no whitespace, null and undefined keys dropped,
+whole-number floats written as integers (`612`, never `612.0`). The server
+validates an upload and stores it as it came, named by the sha256 of those
+bytes (`routers/ink.py`, `storage.store_file`), so the same strokes from a
+browser, the iPad and the migration are one file, and a client can name a
+file by its hash before the server has it. The server writes files of its
+own with `ink.dumps` (the same canon, pinned equal to `serializeInk` on a
+fixture, non-ASCII text in an extra key written as UTF-8 on both sides,
+never `\u`-escaped) for a merge, an import or the upgrade step. The codec lives twice
+by design (`ink.py` `decode_stroke` / `encode_points`, `ink.js`
+`decodeStroke` / `encodeStroke`); `tests/shared/inkv2.json`,
+`inkwidth.json` and `inkmerge.json` pin both sides to the same bytes.
+
+**The byte budget** is the client's to keep: `applyInk` measures the
+group's bytes (`inkBytes`: exactly `serializeInk(ink).length`, summed
+from each stroke's canonical bytes and cached per stroke object, so an
+edit costs its changed strokes only) and refuses an edit that would
+cross `MAX_BYTES` with the pill "This group is full; split it or start a
+new one", and a new stroke that would push a group past 3 MB starts a new
+group block on the same surface instead (a group is "the page's current
+writing", so this is invisible). `finishStroke` decimates coalesced
+samples closer than 0.1 pt to the previous kept one before baking, so a
+240 Hz trace roughly halves with no visible change.
+
+### Upgrading version 1
+
+Release T upgraded every stored file once; nothing reads version 1 after
+it except one pure converter, `ink.upgrade_v1` (Python) and `upgradeV1`
+(JavaScript), deterministic and pinned byte for byte by
+`tests/shared/inkv2.json` (v1 input bytes and the exact v2 output). The
+law: `version` becomes 2; for every stroke whose tool is `pen` (or
+absent), `pen` is not `false`, `brush` is absent and `ch` has `p` but no
+`w`, `w` is appended to `ch` and each sample gains
+`w = 500 + clamp(p, 0, 1000)` — the multiplier `1 + (p / 1000 − 0.5)`
+times 1000 — absolute on the first sample and a delta after it; every
+other stroke (no `p`, monoline, highlighter, `pen: false`) and every other
+key is unchanged; a file without a `version` counts as 1; the output is
+the canon above. Anything that is not version 1 (version 2, a newer
+version, a malformed one) comes back as it is, so the converter can never
+rewrite a newer file down to 2; `parse_ink` judges it. The
+old law `size × (1 + 0.5 × (p − 0.5))` is gone from both languages: it was
+never what the screen drew (perfect-freehand at thinning 0.5 draws
+`1 + (p − 0.5)`), so a stroke drawn across the upgrade exports as it
+looked on screen, slightly heavier than the old exports.
+
+The converter runs in four places and nowhere else:
+
+- **Workspace migration step 40 `ink_v2`** (`migrations.WORKSPACE_STEPS`,
+  `db.SCHEMA_VERSION` 40, so `workspace_format()` moves and a mirror
+  pair pauses until both sides run it, [mirror.md](mirror.md) "The data
+  format"): for every block whose properties carry `ink_url` →
+  `/api/uploads/<sha>.ink`, read the file from the workspace's uploads;
+  a version 1 (or unversioned) file is converted, its `ink.dumps` bytes
+  written as a **new** upload named by their sha256 (the same naming as
+  `POST /api/upload-ink`), and the block's `ink_url` set to the new name
+  with `ink_strokes` and `pdf_position` untouched; the old file stays for
+  the orphan cleanup; a v2 file is skipped, so the step is re-runnable; a
+  file that cannot be read or converted is logged and its block left as
+  it is. Because the conversion is pure, every copy of a workspace — the
+  server, a desktop mirror, the iPad — produces the same hashes, and the
+  mirror's digest sync agrees once both have run it. It is the first step
+  that writes upload files, a documented exception to the migration rule
+  that uploads are never copied ([migrations.md](migrations.md) rule 4 and
+  step 40). `MAX_BYTES` moves from 4 to 6 MB with it.
+- **`POST /api/upload-ink`** and the mirror's `POST /api/upload-file`
+  refuse version 1 with `400 {detail: "update Gamma"}`: after the step
+  every writer is v2.
+- **The PDF importer** (`imports.py`, a `/GammaInk` payload inside an
+  annotated PDF exported before the upgrade) converts before it stores;
+  exports write the v2 strokes verbatim into `/GammaInk`.
+- **Backup restore** runs the step like any other (migration rule 7), so
+  a zip made before the upgrade comes back converted; `ws_backup` refuses
+  a zip stamped above `SCHEMA_VERSION`.
+- **`inkStore.loadInk`** on the client converts a v1 file it is served
+  (a copy that has not run the step yet) so it renders, and never
+  re-uploads it as v1: the next edit's upload is v2 and the stored file
+  is replaced by that write.
 
 ## Two writers, one group
 
@@ -230,61 +378,167 @@ A group's drawing merges like a block's text ([collab.md](collab.md)
 "same-block merge"), with strokes in place of spans. Stroke ids survive
 every edit, so they play the part text offsets play. A write names the
 file its strokes were drawn onto (`base_props: {ink_url}` on the op,
-`base_properties` on `PUT /blocks/{id}`). When the stored `ink_url` is
-another one, meaning someone else saved meanwhile, the server merges
-instead of replacing (`ops._Batch.merge_ink`, `ink.merge_ink`):
+`base_properties` on `PUT /blocks/{id}`) and may carry `base_ids`, the
+stroke ids of that file as the client loaded it. When the stored `ink_url`
+is another one, meaning someone else saved meanwhile, the server merges
+instead of replacing (`ops._Batch.merge_ink`, `ink.merge_ink`; the client's
+`mergeInk` is the same function, `tests/shared/inkmerge.json` pins both):
 
-- Where the stored drawing left a stroke as the base had it, the
-  writer's change applies in place: a restyle, a move, an erasure.
+- A stroke is compared as two halves. Its **geometry** is `pts`, `ch`,
+  `size` and `shape`; its **look** is everything else but `id` and `from`:
+  `color`, `opacity`, `brush`, `dash`, `nib`, `band`, `fill`, `tool`,
+  `pen`, `t0` and any extra key. A width restyle is therefore geometry, a
+  brush change (which re-bakes `w`) changes both halves, a move or a
+  resize geometry only.
+- Per id, three ways: a half changed by one side only is taken from that
+  side, so one writer's move and another's recolour compose; a half
+  changed by both (to different values, on any of its keys) takes the
+  stored (theirs) version and marks the merge unclean. A stroke neither
+  side touched is the identical object.
 - A stroke the writer added goes after the stroke before it that the
   result keeps, behind strokes the other side added there (theirs comes
-  first, as with text).
-- A stroke both changed keeps the stored version. A stroke one side
-  changed survives the other's erasure (an edit beats a delete). Either
-  makes the merge unclean.
-- A base file that is gone merges as a union by stroke id. A file that
-  cannot be read, or a result over the budgets, leaves the write as sent
-  (last writer wins).
+  first, as with text). One id added on both sides with different
+  content keeps theirs, unclean.
+- An edit beats a delete: a stroke one side erased and the other changed
+  (either half) stays, unclean. Both erasing it is clean.
+- **Pieces follow their parent.** A stroke with `from: X` that one side
+  added (its *parent* is the stroke of X's family — X or a piece naming
+  X — that this side no longer has) follows the parent's fate on the other
+  side: the parent unchanged there, the pieces stand and the parent goes;
+  its look changed there, the pieces take that look (and when the cutting
+  side had restyled them too, theirs' look wins, unclean); the parent
+  erased there, the pieces are erased too (an undo of the drawing wins
+  over a cut of it); its geometry changed there, or cut there as well,
+  theirs' version — the moved stroke, or theirs' pieces — stands and the
+  writer's pieces are dropped, unclean. So a cut against a restyle never
+  draws the ink twice, and a cut against an undo leaves nothing behind.
+  A piece whose parent the base never had is an ordinary addition. A
+  copy that writes no `from` (an older release T copy) gets the old
+  rule: its pieces are additions and its cut an erasure.
+- **A base file that is gone** merges by `base_ids` when the write
+  carries them: a stroke one side lacks whose id the base had is treated
+  as erased — deletions win both ways, since "the other side changed it"
+  cannot be judged without the base's content — and the merge is marked
+  unclean when such a deletion was applied; a stroke the base did not
+  have is an addition and stays. Without `base_ids` it is the old union by
+  id. The mirror avoids this mode by pushing the base file an op names
+  when the origin lacks it. A file that cannot be read, or a result over
+  the budgets, leaves the write as sent (last writer wins).
+
+The merge returns the file, `clean`, and two id lists: `lost_ours`, the
+writer's changes the result dropped (an edit or erasure theirs overrode,
+pieces that were dropped), and `returned`, the strokes theirs had erased
+that the writer's change brings back. `ops.merge_ink` puts
+`{clean, lost_ours, returned}` into the batch result — not the echo, so
+the op log, catch-up and mirrors never carry it — and `routers/blocks.py`
+copies it onto the `PUT` answer as `ink_conflict`. The writer's pill says
+"Your change to n strokes was not applied: someone changed them since"
+for `lost_ours`, "n strokes someone erased came back" for `returned`, and
+"Merged with changes made meanwhile" for an unclean answer with neither.
+Undo and redo collect the same flag (`inkUndo`): "Undone: … (n strokes
+someone changed since were kept)".
 
 The merged file is stored (`ink.dumps`) only when it is new. One stored
 already stays: the purge deletes only under the write lock the batch
 holds. The applied op names the merged file, with its stroke count and
 box. Merging a change that already landed adds nothing, so a mirror
 resends a lost ink push as it is (sync_engine `_unlanded`). A merge that
-changes nothing returns the side it equals, so a resend mints no copy.
+changes nothing returns the side it equals (the space compared on its
+known keys), so a resend mints no copy.
 
 The same function runs where a client applies another side's drawing
 itself:
 
 - the desktop mirror, through its local server's op path (its diffs
-  carry `base_props`, sync_tree `_set_op`);
+  carry `base_props`, sync_tree `_set_op`); a `400` on an `.ink` push is
+  recorded as a per-file `sync_conflicts` row and the page's other ops
+  land (sync_engine `_push_files`);
 - undo and redo in the browser and on the iPad, which apply an entry's
   change onto the group as it is now, so strokes someone else drew
   meanwhile stay.
 
-`tests/shared/inkmerge.json` pins the Python and JavaScript versions to
-the same cases. Keys other than `ink_url` stay last-writer-wins, except a
-text box's `text_box`, merged key by key ([text_boxes.md](text_boxes.md)
-"Merge").
+Keys other than `ink_url` stay last-writer-wins, except a text box's
+`text_box`, merged key by key ([text_boxes.md](text_boxes.md) "Merge").
+
+**Fences** — code, not data, for the copies the format pause does not
+reach:
+
+- `flushInk` keeps the 700 ms debounce, adds a 5 s maximum interval
+  while writing goes on (so files land during a session), uses `fetch`
+  with `keepalive` on `pagehide` — the upload and the block's `PUT` go
+  side by side then, the `PUT` naming the file by the hash `inkStore`
+  worked out when the draft changed (`nameLater`, idle time), since
+  nothing is sure to run once the page is gone; a file over
+  `KEEPALIVE_BYTES` (56 KiB, under the browsers' 64 KiB in-flight cap)
+  goes as a plain fetch instead, which may still land; and a draft the
+  server will have to merge (its block names another file than the
+  draft's base) keeps the upload-then-`PUT` order — and **stops retrying
+  on a 4xx**
+  (`collabSession.retryableStatus` decides): the draft is kept and a
+  persistent pill says "Handwriting not saved: <detail>". 5xx and network
+  errors keep the 2 s retry.
+- The page socket's hello and `whoami` carry the server's `build`; the
+  client compares it with its own at connect and on every reconnect and
+  on a mismatch shows "Gamma was updated, reload to keep drawing" and
+  refuses to start a stroke or a cut (reads keep working). A tab left
+  open across a server update, or the web app on an iPad home screen,
+  runs the old bundle until reloaded.
+- `ws_backup` refuses restoring a zip stamped above `SCHEMA_VERSION`;
+  `sync_engine` records a `400` on an `.ink` push per file instead of
+  failing the page; the byte budget and the decimation above.
 
 ## Client
 
-- `ink/ink.js` (pure): the codec, bounds (`strokeBounds`, `inkBounds`,
-  `boundsOf`, `unionBox`), `pdfPositionOf`, the stroke edits and the
-  rendering. `hitStrokes` is the whole-stroke eraser's test; `eraseAt` the
-  partial eraser, which re-encodes the surviving runs as new strokes;
-  `translateStrokes` only touches the first sample's two absolute integers;
-  `transformStrokes` scales/rotates selected XY samples around a shared
-  origin without changing the other encoded channels;
+- `ink/ink.js` (pure): the codec (`encodePoints` / `encodeStroke`,
+  `decodeStroke`, the known letters in `KNOWN_CHANNELS`), `strokeWidth`,
+  `strokeBand` / `byBand` (a drawing in band order), bounds (`strokeBounds`,
+  `inkBounds`, `boundsOf`, `unionBox`), `pdfPositionOf`, the stroke edits,
+  the merge and the rendering. `hitStrokes` is the whole-stroke eraser's
+  test; `eraseAt` the partial eraser, which re-encodes the surviving runs
+  as new strokes; `translateStrokes` only touches the first sample's two
+  absolute integers; `transformStrokes` scales/rotates selected XY samples
+  around a shared origin without changing the other encoded channels;
   `strokesInLasso` picks strokes with more than half their samples inside
-  the polygon. A pen stroke renders as perfect-freehand's outline in one
-  filled SVG path (page units; the layer's `viewBox` does the zoom), a
-  highlighter as a stroked polyline with `mix-blend-mode: multiply`. Paths
-  and decoded samples are cached per stroke object.
-  `nearestInkStroke` resolves a touch to the nearest stroke edge (topmost
-  stroke wins ties); `restyleStrokes` changes selected color/width, returning
-  the original object for a no-op; `duplicateStrokes` preserves original
-  samples and channels while assigning unique IDs to translated copies.
+  the polygon. A pen stroke (any brush) renders as perfect-freehand's
+  outline in one filled SVG path (page units; the layer's `viewBox` does
+  the zoom), driven by the baked `w` (`outlineOptions`, `outlinePressure`);
+  a highlighter as a stroked polyline with `mix-blend-mode: multiply`; an
+  unknown tool as a source-over polyline at its mean drawn width
+  (`strokePath`, with `dashArray` from `dash`). Paths, decoded samples and
+  bounds are cached per stroke object; `inkStore.adoptStrokes` keeps a
+  reloaded file's unchanged strokes as the objects already drawn, so a
+  merge's result reuses their outlines.
+  `nearestInkStroke` resolves a touch to the nearest stroke edge (a band-1
+  stroke wins over a band-0 one within the radius, then the topmost);
+  `restyleStrokes` changes selected colour or `size` (never `pts`),
+  returning the original object for a no-op; `duplicateStrokes` (through
+  `cloneStrokes`) preserves original samples and channels while assigning
+  unique ids to translated copies and dropping `from`. Every helper spreads
+  the stroke object, so unknown keys ride along; `restroke` (the partial
+  eraser's piece) keeps every key but `shape` and `fill`, mints an id and
+  writes `from`. `withDefaults` fills a loaded file's omitted stroke keys
+  (`STROKE_DEFAULTS`), and the helpers tolerate them anyway.
+  `upgradeV1` is the version 1 converter ("Upgrading version 1");
+  `inkFeatures(ink)` lists what a drawing carries that this build does not
+  know (tools, brushes, keys, letters, a newer version), null when
+  nothing; `inkBytes` / `strokeBytes` give a group's exact upload size,
+  cached per object, for the byte budget (`MAX_BYTES`,
+  `GROUP_SPLIT_BYTES`).
+- `ink/finishStroke.js` (pure): `finishStroke(samples, ctx) → {commit:
+  samples | null, erase: [{gid, ids}] | null, label}`, the one stage
+  between a lifted pen and the committed stroke: today `decimate` (0.1 pt)
+  then `bakeWidths` (the brush width table, `widthLaw(style)`, the only
+  place a width law lives; `strokeChannels(style)` is the `ch` a new
+  stroke is written with, `xyptw` for a pressure pen, `xypt` for a
+  monoline or a highlighter, `xyt` for a mouse or finger stroke);
+  draw-and-hold, scribble-to-erase and straightening are later stages of
+  the same function. `InkLayer`'s finish and the iPad `claim.commit` both
+  call it, and the live canvas draws the stroke in progress with the same
+  `widthLaw`, so the committed look matches the line under the pen.
+- `ink/stripKeys.js` (pure): `stripKey(event, state) → action | null`, the
+  strip's key table (matched by `e.code`), dispatched by App's existing
+  capture-phase handler. `ink/pencilActions.js` (pure): `pencilAction(message,
+  prefs, state)`, the Pencil double-tap and squeeze mapping App applies.
 - The replay (`ink.js`, pure;
   [recording.md](recording.md) "One clock for every replay"):
   - `strokeWalls(stroke)` is each sample's wall-clock ms (`t0` plus its
@@ -316,11 +570,21 @@ text box's `text_box`, merged key by key ([text_boxes.md](text_boxes.md)
 - `ink/inkStore.js`: files by URL, and per-block **drafts** — the strokes as
   edited here, ahead of upload. A draft wins over the block's file until
   the upload replaces `ink_url` with the draft's; a remote `ink_url` change
-  on a block with nothing unsaved drops the draft.
+  on a block with nothing unsaved drops the draft. `loadInk` runs
+  `upgradeV1` and `withDefaults` on what it fetches, so a version 1 file
+  (a copy that has not run the upgrade step) renders and, once edited,
+  uploads as version 2. A draft keeps its base's stroke ids (`baseIds`),
+  which the save sends as `base_ids`.
 - `ink/InkLayer.jsx`: `InkLayer` (one per surface: a PDF page, a sheet in
   the notebook view, a sheet among the notes; it draws after the
   highlights and the text boxes) is the retained SVG plus a
-  `desynchronized` canvas for the stroke in progress. `InkSelectionMenu`
+  `desynchronized` canvas for the stroke in progress. The SVG draws every
+  group's band-0 strokes first, then every group's band-1 strokes (two
+  `<g data-ink-id>` per group at most); `Strokes` alone, as in the notes
+  card, orders one drawing by band. A drawing `inkFeatures` finds
+  something in is reported once (`onInkFeatures`), and App puts one pill
+  per page visit on it: "Some handwriting here comes from a newer Gamma
+  and is drawn plainly; update to see it as drawn". `InkSelectionMenu`
   is a portalled `ContextMenu` (its controls sit outside the page's pointer
   listeners); `useSelectionMenuAnchor` gives it the selection's edges and
   the band it stays in, and the menu, from its own measured height, picks
@@ -417,29 +681,47 @@ text box's `text_box`, merged key by key ([text_boxes.md](text_boxes.md)
   selection (`inkSelection`) and the **stroke history** (`inkHistRef`:
   entries of `{changes: [{id, page, before, after}], label}`, one per action; a group whose
   block is gone is re-inserted when an entry brings strokes back). Every
-  edit funnels through `applyInk`, which updates the drafts, records the
-  entry and schedules `flushInk` (700 ms after the
-  last one, and on `pagehide` / `visibilitychange` / leaving the page).
+  edit funnels through `applyInk`, which checks the byte budget (an edit
+  that would grow a group past `MAX_BYTES` is refused with "This group is
+  full; split it or start a new one"), updates the drafts, records the
+  entry and schedules `flushInk` (700 ms after the last edit, at most 5 s
+  after the first unsaved one, and on `pagehide` — with `fetch`
+  `keepalive`, the `PUT` beside the upload, see "Fences" — /
+  `visibilitychange` / leaving the page). `handleInkStroke`
+  starts a new group on the same surface when the current one would pass
+  `GROUP_SPLIT_BYTES` (3 MB) or `MAX_STROKES` with the stroke.
   The flush uploads the draft (`POST /api/upload-ink`, the `serializeInk`
   bytes) and PATCHes the block through `PUT /api/blocks/{id}` with
-  `inkProps` (the url, count and position) and `base_properties: {ink_url}`,
-  the file the draft was edited from. That is a server-side writer, so the
+  `inkProps` (the url, count and position), `base_properties: {ink_url}`,
+  the file the draft was edited from, and `base_ids`, that file's stroke
+  ids. That is a server-side writer, so the
   change fans out over the page socket and reaches this tree like a
   remote op. Only the group's block itself (first stroke) is inserted
-  through the tree.
+  through the tree. The answer's `ink_conflict` goes on the pill
+  (`reportInkConflict`, "Two writers, one group").
   - A draft remembers its base (`inkStore` drafts: `{ink, dirty, url,
-    base}`). When the answer names another file than the upload, the
+    base, baseIds}`). When the answer names another file than the upload, the
     server merged someone else's strokes: `markSaved` loads the merged
     file and replaces the draft with it, with strokes drawn meanwhile
     merged on top.
+  - The build fence: `noteServerBuild` keeps the names of the server's
+    build as the session reported it (`/api/session` `build`: commit,
+    label, version) and compares every socket hello's `build` with them;
+    a build sharing none of the names sets `inkStale`, which disarms the
+    tools (`inkTool`, `inkPenTool` null) behind the sticky pill "Gamma
+    was updated, reload to keep drawing" with a Reload button. Taps,
+    selection and reading go on.
   - An empty group with no caption and no notes is deleted the same way.
     Its empty draft keeps masking the saved strokes until the tree sees
     the deletion (the HTTP response can land before the socket op).
     `inkStore.markDeleted` marks it clean only after a successful delete,
     so a failure retries. An empty group with a caption or notes is saved
     as an empty drawing instead.
-  - A failed flush (the block's insert may still be queued) retries after
-    two seconds.
+  - A failed flush retries after two seconds on a 5xx, a network error or
+    a 404 (the block's insert may still be queued behind the tree's save);
+    any other 4xx stops the retry and keeps the draft behind a sticky pill
+    (`setStatus(msg, null, {sticky: true})`, "Two writers, one group",
+    "Fences").
 - With the strip open, Ctrl+Z is the stroke history (a capture-phase key
   handler, so the page's block undo never sees it); with it closed, Ctrl+Z
   is the page's block history, which knows the group's block but not its
@@ -460,32 +742,41 @@ text box's `text_box`, merged key by key ([text_boxes.md](text_boxes.md)
 
 ## Server
 
-- `gamma/ink.py`: the pydantic schema and limits, the codec, `read_upload`
+- `gamma/ink.py`: the pydantic schema (`extra="allow"` with the caps) and
+  limits, the codec, `upgrade_v1` (the version 1 converter), `read_upload`
   (the parsed file behind a block's `ink_url`, None when unreadable — the
   exporters' one loader),
-  `stroke_polyline` (variable-width polylines every renderer draws from),
+  `stroke_width` (`size × w`, else `size`: no law), `stroke_polyline`
+  (variable-width polylines every renderer draws from, band 0 first),
   `bounding_box` / `pdf_position` (the shape is `gamma/highlights.py`'s),
   `to_svg`, `pdf_path_ops` (content-stream operators for the notes-as-PDF
   writer), `ink_buckets` and `from_pdf_ink`
-  for the `/Ink` interchange, `dumps` (canonical bytes: sorted keys, so the
-  same strokes dedup to one upload).
+  for the `/Ink` interchange, `dumps` (the canonical bytes, equal to the
+  client's `serializeInk`, so the same strokes dedup to one upload),
+  `merge_ink` (→ the file, `clean`, `lost_ours`, `returned`).
 - `POST /api/upload-ink` (`routers/ink.py`): the file as the JSON body,
   validated, stored as it came as `<hash of the bytes>.ink` with the usual
-  quota check → `{url, size, strokes, bbox, pdf_position, already_existed}`.
+  quota check → `{url, size, strokes, bbox, pdf_position, already_existed}`;
+  a version 1 file is refused with `400 "update Gamma"`.
   `POST /api/upload-file`, the route a mirror pushes files by, stores an
-  `.ink` only when it is a valid drawing. Editors and
+  `.ink` only when it is a valid version 2 drawing. Editors and
   edit shares (`require_ws_writer`). `.ink` is in `storage.FILE_MEDIA_TYPES`
   (`application/json`), so `GET /api/uploads/<hash>.ink` is the ordinary
   upload route with its share scoping and cache headers.
 - Interchange ([import_export.md](import_export.md),
   [pdf_typesetting.md](pdf_typesetting.md)): the annotated PDF
-  writes one `/Ink` per look bucket (colour × tool × size × opacity) with
-  `/InkList` in user space, the mean drawn width as `/BS /W`, the note on
-  the first, an `/NM` Zotero needs to import it as ink (the Zotero export's
-  PDF copies carry it too), and a private `/GammaInk` key carrying the
-  bucket's strokes so a Gamma re-import keeps pressure and time; the
-  embedded-annotation importer reads `/Ink` (Gamma's or anyone's) into ink
-  blocks and strips them like the other types; the Markdown export writes
+  writes one `/Ink` per look bucket (colour × tool × size × opacity;
+  every group's band-0 buckets before any band-1 one in a page's
+  `/Annots` — `_add_ink_annotations` sorts a page's annotations by band,
+  stably, since `/Ink` has no blend mode — the note carrier and the
+  Zotero `/NM` keeping the first-seen bucket index) with
+  `/InkList` in user space, the mean drawn width as `/BS /W` (from `w`),
+  the note on the first, an `/NM` Zotero needs to import it as ink (the
+  Zotero export's PDF copies carry it too), and a private `/GammaInk` key
+  carrying the bucket's v2 strokes verbatim so a Gamma re-import keeps
+  pressure, time and every key; the embedded-annotation importer reads
+  `/Ink` (Gamma's or anyone's) into ink blocks, converting a version 1
+  `/GammaInk` payload, and strips them like the other types; the Markdown export writes
   `![Handwriting (p.N)](assets/<hash>.svg)` with the SVG generated into the
   zip; the notes-as-PDF document draws the strokes as vectors under a
   "handwriting, p. N" line. The agent's `read_block` outline labels an ink
@@ -507,6 +798,9 @@ it was written). Audio recording to go with the replay is
 [recording.md](recording.md). Obsidian vault export writes an ink block's
 caption only. The Notability comparison in the research note lists what a
 closer pen experience still needs (draw-and-hold straightening, an eraser
-that returns to the last tool, the highlighter behind the ink, clipboard
-operations). The broader interaction survey is
+that returns to the last tool, clipboard operations); the highlighter
+drawn behind the ink is built (`band`). Live co-drawing is pinned as a
+presence message carrying raw samples and the style, drawn by peers
+through the same brush table, replaced by the committed stroke of the same
+id when its file lands. The broader interaction survey is
 [handwriting-interactions.md](../research/handwriting-interactions.md).

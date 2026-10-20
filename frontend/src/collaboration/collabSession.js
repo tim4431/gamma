@@ -889,6 +889,9 @@ export function createCollabSession({ clientId, api, openSocket, keepalivePost, 
         switch (msg.t) {
           case "hello": {
             setMe({ client: msg.client, color: msg.color, connected: true });
+            // The server's build, compared with the one this page loaded
+            // under (App: a tab left open across an update stops drawing).
+            if (msg.build != null) o().onBuild?.(msg.build);
             setPeers((msg.peers || []).filter((p) => p.client !== msg.client));
             // The tree was fetched before the socket opened (its seq came
             // with it); anything that landed in between is in the log.

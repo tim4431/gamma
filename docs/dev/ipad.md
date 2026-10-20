@@ -173,8 +173,13 @@ claimed.
 6. **The lift.** The shell sends `stroke` with the samples. The layer
    converts them with the rect and zoom of the down and applies the
    repeated-point rule of `appendInkSample`. It commits through the same
-   `encodeStroke` and `onStroke` as its own strokes (`ch: "xypt"`, `t0` the
-   web's wall clock at the down). Undo, replay and saving are unchanged.
+   `commitStroke` as its own strokes: `finishStroke` decimates the
+   samples and bakes the drawn width from their pressure (`w`, the brush
+   law in `ink/finishStroke.js`), then `encodeStroke` writes the stroke
+   with `strokeChannels(style)` (`ch: "xyptw"` for a pressure pen) and
+   `t0` the web's wall clock at the down, and `onStroke` saves it
+   ([handwriting.md](handwriting.md) "Width"). Undo, replay and saving
+   are unchanged.
    The live line stays until the reply, which comes after the page has
    painted the stroke, so the swap never blinks. A page that never
    answers loses the line after three seconds.

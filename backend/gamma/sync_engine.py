@@ -965,7 +965,16 @@ def missing_uploads(ws: str, pages=None) -> set[str]:
     return {n for n in upload_refs(blocks) if UPLOAD_NAME_RE.match(n) and n not in stored}
 
 
-def _push_files(ws: str, remote: Remote, names: set[str], report: dict) -> None:
+def _push_files(ws: str, remote: Remote, names: set[str], report: dict, *, page_id: str = "",
+                blocks: dict | None = None) -> set[str]:
+    """The files of ``names`` the remote lacks, uploaded. Returns the names
+    the remote refused as a drawing (a ``400`` on an ``.ink``: a file this
+    copy wrote in a shape the remote does not take — see ``_without_files``
+    for what then happens to the page's ops); each is one open
+    ``sync_conflicts`` row of kind ``file`` on the block that names it,
+    written once, and the page's other work goes on. Every other error
+    raises as before."""
+    refused: set[str] = set()
     for name in sorted(names):
         if not UPLOAD_NAME_RE.match(name) or not storage.exists(ws, name) or remote.head_ok(f"/api/uploads/{name}"):
             continue
@@ -977,14 +986,49 @@ def _push_files(ws: str, remote: Remote, names: set[str], report: dict) -> None:
         size = path.stat().st_size
         # past what the web client sends whole, in parts: a proxy in front of
         # the remote caps a request's body (Cloudflare at 100 MB)
-        out = remote.post_parts(name, path, size, progress) if size > PART_BYTES else None
-        if out is None:
-            out = remote.post_file("/api/uploads" if name.endswith(".pdf") else "/api/upload-file", name,
-                                   path.read_bytes(), progress=progress)
+        try:
+            out = remote.post_parts(name, path, size, progress) if size > PART_BYTES else None
+            if out is None:
+                out = remote.post_file("/api/uploads" if name.endswith(".pdf") else "/api/upload-file", name,
+                                       path.read_bytes(), progress=progress)
+        except RemoteError as e:
+            if e.status != 400 or not name.endswith(".ink"):
+                raise
+            refused.add(name)
+            block_id = next((bid for bid, b in (blocks or {}).items()
+                             if name in json.dumps(b.get("props") or {})), "")
+            with connect_pages_db(ws) as conn:
+                _conflict(conn, page_id, block_id, "file", mine=name, theirs=e.detail or "refused", once=True)
+            log.warning(f"[mirror] {ws}: the remote refused the drawing {name} ({e.detail}); its block's other "
+                        "changes go, the drawing waits in a conflict row")
+            continue
         got = (out or {}).get("source_url") or (out or {}).get("url") or ""
         if not got.endswith("/" + name):
             log.warning(f"[mirror] {ws}: uploaded {name} but the remote stored it as {got!r}")
         report["files_pushed"] += 1
+    return refused
+
+
+def _without_files(ops: list[dict], refused: set[str], blocks: dict) -> list[dict]:
+    """``ops`` minus the ink keys (``INK_KEYS``) of the blocks that name a
+    file the remote refused (``blocks``: this copy's tree): the block's
+    other changes land, and the drawing is pushed again the next round (the
+    same open row is not written twice). Run on what is sent and on the
+    remote's answer coming back, so the drawing never leaves this copy."""
+    if not refused:
+        return ops
+    held = {bid for bid, b in blocks.items()
+            if any(str((b.get("props") or {}).get("ink_url") or "").endswith("/" + n) for n in refused)}
+    out = []
+    for op in ops:
+        props = op.get("props")
+        if op["id"] in held and isinstance(props, dict) and any(k in props for k in INK_KEYS):
+            props = {k: v for k, v in props.items() if k not in INK_KEYS}
+            op = {**op, "props": props}
+            if op["op"] == "set" and not props and "content" not in op:
+                continue
+        out.append(op)
+    return out
 
 
 # --- one page ------------------------------------------------------------------------------
@@ -1593,15 +1637,16 @@ def _push_whole(ws: str, remote: Remote, page_id: str, local: dict, report: dict
     the create goes, marked ``pending`` create: a create whose answer is
     lost is not taken for a page the remote had (a link's adopt policy
     would replace this copy's page with it), and one that never landed is
-    sent again."""
+    sent again. A drawing the remote refused defers the page like
+    ``_sync_page`` does (``_deferred_files``), so it goes next round."""
     with connect_pages_db(ws) as conn:
         _store_state(conn, page_id, UNKNOWN_SEQ, {page_id: local[page_id]}, {"create": True})
     root = _create_remote_page(remote, page_id, local)
     with connect_pages_db(ws) as conn:
         _save_state(conn, page_id, UNKNOWN_SEQ, {page_id: root})
-    _push_files(ws, remote, upload_refs(local.values()), report)
+    refused = _push_files(ws, remote, upload_refs(local.values()), report, page_id=page_id, blocks=local)
     after = _send(ws, remote, page_id, UNKNOWN_SEQ, {page_id: root},
-                  diff({page_id: local[page_id]}, local, page_id, with_base=False))
+                  _without_files(diff({page_id: local[page_id]}, local, page_id, with_base=False), refused, local))
     with connect_pages_db(ws) as conn:
         _save_state(conn, page_id, UNKNOWN_SEQ, after)
     remote_after, seq = _remote_tree(remote, page_id)
@@ -1610,6 +1655,7 @@ def _push_whole(ws: str, remote: Remote, page_id: str, local: dict, report: dict
     _note(ws, page_id, action, local[page_id]["content"], stats=_whole(local, "add"),
           changes=_whole_changes(local, "add", page_id), report=report)
     report["pages_pushed"] += 1
+    _deferred_files(page_id, refused)
 
 
 def _delete_here(ws: str, page_id: str, local: dict, report: dict) -> None:
@@ -1819,7 +1865,11 @@ def _sync_page(ws: str, remote: Remote, page_id: str, *, remote_seq_hint: int | 
         # after a round cut short the remote may lack a file of a block that
         # is not pushed again — the page's own PDF above all
         files |= upload_refs(local_now.values())
-    _push_files(ws, remote, files, report)
+    refused = _push_files(ws, remote, files, report, page_id=page_id, blocks=local_now)
+    push_ops = _without_files(push_ops, refused, local_now)
+    if not push_ops:
+        _deferred_files(page_id, refused)
+        return
     try:
         after = _send(ws, remote, page_id, seq, remote_tree, push_ops)
     except RemoteError as e:
@@ -1835,8 +1885,9 @@ def _sync_page(ws: str, remote: Remote, page_id: str, *, remote_seq_hint: int | 
     remote_after, seq = _remote_tree(remote, page_id)
     if remote_after is None:
         return
-    # the remote's answer (re-keyed positions, its merges) lands here, merged over any typing since
-    settle = diff(local_now, remote_after, page_id)
+    # the remote's answer (re-keyed positions, its merges) lands here, merged
+    # over any typing since; a drawing the remote refused stays here
+    settle = _without_files(diff(local_now, remote_after, page_id), refused, local_now)
     if settle:
         _apply_local(ws, page_id, settle, remote_after)
     with connect_pages_db(ws) as conn:
@@ -1844,6 +1895,15 @@ def _sync_page(ws: str, remote: Remote, page_id: str, *, remote_seq_hint: int | 
     _note(ws, page_id, "pushed", local_now[page_id]["content"], stats=_stats(push_ops, remote_tree),
           changes=_changes(push_ops, remote_tree), report=report)
     report["pages_pushed"] += 1
+    _deferred_files(page_id, refused)
+
+
+def _deferred_files(page_id: str, refused: set[str]) -> None:
+    """A page whose drawing the remote refused is looked at again next
+    round (quietly, as a deferred page), so the drawing goes as soon as
+    the remote takes it, without waiting for another edit here."""
+    if refused:
+        raise PageDeferred(f"{page_id}: the remote refused {', '.join(sorted(refused))}; pushed again next round")
 
 
 def _adopt_page(ws: str, remote: Remote, page_id: str, local: dict, remote_tree: dict, seq: int,
@@ -1868,7 +1928,8 @@ def _adopt_page(ws: str, remote: Remote, page_id: str, local: dict, remote_tree:
         _dropped(conn, page_id, loser, winner, side)
     if policy == "mine":
         push_ops = diff(remote_tree, local, page_id, with_base=False)
-        _push_files(ws, remote, upload_refs(push_ops), report)
+        push_ops = _without_files(push_ops, _push_files(ws, remote, upload_refs(push_ops), report,
+                                                        page_id=page_id, blocks=local), local)
         after = _send(ws, remote, page_id, seq, remote_tree, push_ops)
         with connect_pages_db(ws) as conn:
             _save_state(conn, page_id, UNKNOWN_SEQ, after)  # landed: the base until the remote's answer is read

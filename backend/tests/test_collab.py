@@ -7,6 +7,7 @@ from fractional_indexing import generate_key_between
 from starlette.websockets import WebSocketDisconnect
 
 from conftest import account_of, fresh_client, guest_name, login, make_page, make_user, recv, recv_hello, workspace_of
+from gamma import version
 
 PNG = (b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00"
        b"\x1f\x15\xc4\x89\x00\x00\x00\nIDATx\x9cc\x00\x01\x00\x00\x05\x00\x01\r\n-\xb4\x00\x00\x00\x00IEND\xaeB`\x82")
@@ -256,6 +257,7 @@ def test_socket_hello_and_fanout(guest):
     with guest.websocket_connect(f"/api/ws/page/{page['id']}?client=aa") as a:
         hello = recv_hello(a)
         assert hello["client"] == "aa"
+        assert hello["build"] == version.build_info(), "the build the client's handwriting fence compares"
         assert [p["client"] for p in hello["peers"]] == ["aa"] and hello["peers"][0]["name"] == guest_name()
         with guest.websocket_connect(f"/api/ws/page/{page['id']}?client=bb") as b:
             hb = recv_hello(b)

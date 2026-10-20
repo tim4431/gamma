@@ -1,6 +1,7 @@
 // Handwriting (docs/dev/handwriting.md): the tool strip and its presets,
 // mouse strokes becoming an ink block with an .ink upload, persistence
-// across a reload, the eraser, the lasso, the notes card's jump + flash,
+// across a reload, the version 2 file a pressure stroke leaves and the
+// highlighter band under the ink, the eraser, the lasso, the notes card's jump + flash,
 // and a group's Transcribe with AI. /Ink in the annotated PDF is
 // backend/tests/test_ink.py; the chat's view_ink is test_ai_tools_ink.py.
 import { fakeAiModels } from "../harness.mjs";
@@ -345,15 +346,89 @@ export async function inkScenarios({ server, browser, alice, makePdf, step, unti
     }, { what: "sampled pen stroke saved" });
     const ink = await account.api(block.properties.ink_url);
     const st = ink.strokes[0];
-    assertEq(st.ch, "xypt");
-    assertEq(st.pts.length, 20, "five real samples, no prediction saved");
-    assertEq(JSON.stringify(st.pts.filter((_, i) => i % 4 === 2)), "[200,400,600,800,800]", "pressure including lift");
-    assertEq(JSON.stringify(st.pts.filter((_, i) => i % 4 === 3)), "[0,4,4,4,12]", "hardware time deltas");
-    const endpoint = st.pts.filter((_, i) => i % 4 === 0).reduce((a, b) => a + b, 0) / 100;
+    assertEq(ink.version, 2);
+    assertEq(st.ch, "xyptw");
+    assertEq(st.pts.length, 25, "five real samples, no prediction saved");
+    assertEq(JSON.stringify(st.pts.filter((_, i) => i % 5 === 2)), "[200,400,600,800,800]", "pressure including lift");
+    assertEq(JSON.stringify(st.pts.filter((_, i) => i % 5 === 3)), "[0,4,4,4,12]", "hardware time deltas");
+    assertEq(JSON.stringify(st.pts.filter((_, i) => i % 5 === 4)), "[700,200,200,200,0]", "the baked width, 1 + (p - 0.5), as deltas");
+    const endpoint = st.pts.filter((_, i) => i % 5 === 0).reduce((a, b) => a + b, 0) / 100;
     assert(Math.abs(endpoint - 140 / result.k) < 0.02, "the final pointer-up position is saved");
     await page.reload();
     await waitForPdf(page, 1);
     await page.waitForSelector(`[data-page="1"] [data-ink-id="${block.id}"] path`);
+    assertNoProblems(page);
+  });
+
+  await step("ink: a pressure stroke is stored as version 2 with its baked width; a highlighter draws under the ink", async () => {
+    // The file a pen stroke leaves (docs/dev/handwriting.md "The stroke file"):
+    // version 2, the drawn width baked into the w channel on the client
+    // (finishStroke.js bakeWidths: w = 1 + (p - 0.5) for the default pen),
+    // one stride per sample. Then a highlighter drawn over that stroke
+    // after a reload, in a group of its own, is painted before the pen's
+    // group: band 0 under every group's ink (InkLayer.jsx).
+    await page.click("button[aria-label='Handwriting tools']");
+    await page.keyboard.press("p");
+    const before = await account.api(`/api/blocks/${pageId}/subtree`);
+    const ids = new Set(before.block.children.map((b) => b.id));
+    await page.locator('[data-page="1"]').evaluate((el) => {
+      const box = el.getBoundingClientRect();
+      const send = (type, x, time, pressure) => {
+        const ev = new PointerEvent(type, { bubbles: true, cancelable: true,
+          pointerType: "pen", pointerId: 82, button: 0, buttons: type === "pointerup" ? 0 : 1,
+          clientX: box.left + x, clientY: box.top + 360, pressure });
+        Object.defineProperty(ev, "timeStamp", { value: 2000 + time });
+        el.dispatchEvent(ev);
+      };
+      send("pointerdown", 90, 0, 0.3);
+      send("pointermove", 110, 8, 0.5);
+      send("pointermove", 130, 16, 0.7);
+      send("pointerup", 150, 24, 0);
+    });
+    const penBlock = await until(async () => {
+      const d = await account.api(`/api/blocks/${pageId}/subtree`);
+      return d.block.children.find((b) => !ids.has(b.id) && b.properties?.ink_url);
+    }, { what: "pressure stroke saved" });
+    await page.reload();
+    await waitForPdf(page, 1);
+    await page.waitForSelector(`[data-page="1"] [data-ink-id="${penBlock.id}"] path`);
+    const ink = await account.api(penBlock.properties.ink_url);
+    assertEq(ink.format, "gamma-ink");
+    assertEq(ink.version, 2, "the client writes version 2");
+    const st = ink.strokes[0];
+    assert(/^xy[a-z]*$/.test(st.ch) && st.ch.includes("w"), `the baked width rides in ch (${st.ch})`);
+    assertEq(st.pts.length % st.ch.length, 0, "whole strides");
+    assertEq(st.pts.length / st.ch.length, 4, "one sample per pointer event, the lift included");
+    const p0 = st.pts[st.ch.indexOf("p")] / 1000, w0 = st.pts[st.ch.indexOf("w")] / 1000;
+    assertEq(p0, 0.3, "the first sample's pressure");
+    assert(Math.abs(w0 - (1 + (p0 - 0.5))) < 0.0005, `the first sample's width multiplier is 1 + (p - 0.5) (${w0})`);
+    assertEq(st.size * w0, st.size * 0.8, "the drawn width is size × w, no formula at render time");
+
+    // a highlighter across the pen stroke, after the reload: its own group
+    await page.click("button[aria-label='Handwriting tools']");
+    await page.keyboard.press("h");
+    assert((await page.locator(".pdfInkBar .inkToolBtn.modeActive").getAttribute("aria-label")).includes("highlighter"), "a highlighter preset is armed");
+    box = await page.locator('[data-page="1"]').boundingBox();
+    await drawLine(page, [box.x + 80, box.y + 360], [box.x + 160, box.y + 360]);
+    const hlBlock = await until(async () => {
+      const d = await account.api(`/api/blocks/${pageId}/subtree`);
+      return d.block.children.find((b) => !ids.has(b.id) && b.id !== penBlock.id && b.properties?.ink_url);
+    }, { what: "highlighter stroke saved in a group of its own" });
+    const hlInk = await account.api(hlBlock.properties.ink_url);
+    assertEq(hlInk.strokes[0].tool, "highlighter");
+    assert(!hlInk.strokes[0].ch.includes("w") && hlInk.strokes[0].band === undefined, "a highlighter carries no width channel and its band is the tool's default");
+    const order = await page.locator('[data-page="1"] .inkLayer').evaluate((svg, [penId, hlId]) => {
+      const groups = [...svg.querySelectorAll("g[data-ink-id]")];
+      const hl = groups.findIndex((g) => g.dataset.inkId === hlId);
+      const pen = groups.findIndex((g) => g.dataset.inkId === penId);
+      const hlPath = svg.querySelector(`g[data-ink-id="${hlId}"] path`);
+      const penPath = svg.querySelector(`g[data-ink-id="${penId}"] path`);
+      return { hl, pen, multiply: getComputedStyle(hlPath).mixBlendMode,
+        pathOrder: !!(hlPath.compareDocumentPosition(penPath) & Node.DOCUMENT_POSITION_FOLLOWING) };
+    }, [penBlock.id, hlBlock.id]);
+    assert(order.hl >= 0 && order.pen >= 0 && order.hl < order.pen, `the highlighter's group is painted before the pen's (${order.hl} < ${order.pen})`);
+    assert(order.pathOrder, "the highlighter path precedes the pen path");
+    assertEq(order.multiply, "multiply", "the highlighter multiplies onto the page");
     assertNoProblems(page);
   });
 
@@ -424,8 +499,8 @@ export async function inkScenarios({ server, browser, alice, makePdf, step, unti
       for (const b of d.block.children) {
         if (!b.properties?.ink_url) continue;
         const ink = await account.api(b.properties.ink_url);
-        if (ink.strokes.some((s) => s.pen && s.ch === "xypt" && s.pts.length >= 48 && s.pts[2] === 200
-          && s.pts.filter((_, i) => i % 4 === 2).includes(800))) return true;
+        if (ink.strokes.some((s) => s.pen && s.ch === "xyptw" && s.pts.length >= 60 && s.pts[2] === 200
+          && s.pts.filter((_, i) => i % 5 === 2).includes(800))) return true;
       }
       return false;
     }, { what: "native pen pressure uploaded" });
@@ -512,7 +587,7 @@ export async function inkScenarios({ server, browser, alice, makePdf, step, unti
 
   await step("ink: Transcribe with AI asks the chat about the group, with the group attached", async () => {
     const up = await account.api("/api/upload-ink", { method: "POST", body: {
-      format: "gamma-ink", version: 1, space: { kind: "pdf-page", page: 1, width: 612, height: 792 },
+      format: "gamma-ink", version: 2, space: { kind: "pdf-page", page: 1, width: 612, height: 792 },
       strokes: [{ id: "tr1", color: "#1f1f1f", size: 2, ch: "xy", pts: [10000, 60000, 3000, 400] }],
     } });
     const group = await account.api("/api/blocks", { method: "POST", body: {

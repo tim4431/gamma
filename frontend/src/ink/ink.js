@@ -1,22 +1,31 @@
 // Handwriting: the client half of gamma/ink.py (docs/dev/handwriting.md).
 // Pure — no React, no network — so it runs under node --test.
 //
-// An ink group is one `gamma-ink` file: strokes on one PDF page, in the
-// page's scale-1 frame (pdf.js viewport at scale 1: points, origin
+// An ink group is one `gamma-ink` version 2 file: strokes on one PDF page,
+// in the page's scale-1 frame (pdf.js viewport at scale 1: points, origin
 // top-left, rotation applied — the same frame highlight rects normalise
-// to). Samples are stored per stroke as one flat integer array, `ch`
-// naming the channels ("xy" + any of p/t/a/z); x, y (1/100 pt) and t (ms)
-// are deltas after the first sample, p is 0..1000. Keep the codec here in
-// step with the backend's.
+// to), or on a notebook sheet. Samples are stored per stroke as one flat
+// integer array, `ch` naming the channels ("xy" + any of p/t/a/z/w/o, and
+// letters this build does not know, carried by stride); x, y (1/100 pt),
+// t (ms) and w/o (× 1000) are deltas after the first sample, p is 0..1000
+// absolute. The drawn width is `size × w` (strokeWidth): the only width
+// rule, baked once by ink/finishStroke.js. Keep the codec here in step
+// with the backend's; tests/shared/inkv2.json, inkwidth.json and
+// inkmerge.json pin both.
 import { getStroke } from "perfect-freehand";
 import { INK_COLORS, INK_HIGHLIGHT_ALPHA, INK_HIGHLIGHT_COLORS } from "../shared/model/palette.js";
 
 export const FORMAT = "gamma-ink";
-export const VERSION = 1;
+export const VERSION = 2;
 export const COORD_UNIT = 100;
 export const PRESSURE_UNIT = 1000;
-export const THINNING = 0.5;      // width = size * (1 + THINNING * (p - 0.5)); mirrors ink.py
+export const WIDTH_UNIT = 1000;   // w and o: a multiplier × 1000
 export const MAX_STROKES = 5000;
+// The server's cap on one file (gamma/ink.py MAX_BYTES); applyInk refuses
+// an edit past it, and a stroke that would push a group past
+// GROUP_SPLIT_BYTES starts a new group instead.
+export const MAX_BYTES = 6 * 1024 * 1024;
+export const GROUP_SPLIT_BYTES = 3 * 1024 * 1024;
 
 export function newInk(page, width, height) {
   return { format: FORMAT, version: VERSION,
@@ -29,9 +38,11 @@ export function newCanvasInk(width, height) {
   return { format: FORMAT, version: VERSION, space: { kind: "canvas", width, height }, strokes: [] };
 }
 
-// The upload bytes of an ink file: keys sorted at every level and no
-// whitespace, so the same strokes are the same file on every client (the
-// server stores an upload as it came and names it by its hash).
+// The upload bytes of an ink file: keys sorted at every level, no
+// whitespace, null and undefined keys dropped (whole-number floats are
+// integers in JavaScript already), so the same strokes are the same file
+// on every client (the server stores an upload as it came and names it by
+// its hash; gamma/ink.py dumps writes the same bytes).
 export function serializeInk(ink) {
   const canon = (v) => {
     if (Array.isArray(v)) return v.map(canon);
@@ -43,6 +54,29 @@ export function serializeInk(ink) {
     return v;
   };
   return JSON.stringify(canon(ink));
+}
+
+// The bytes a group would upload — exactly `serializeInk(ink).length`,
+// summed per stroke (each stroke's canonical bytes plus its comma) over
+// the empty file's, and cached per object: strokes are shared between a
+// group's versions, so an edit costs its changed strokes only. The byte
+// budget's gauge.
+const strokeSizes = new WeakMap(), inkSizes = new WeakMap();
+export function strokeBytes(stroke) {
+  let n = strokeSizes.get(stroke);
+  if (n === undefined) { n = serializeInk(stroke).length + 1; strokeSizes.set(stroke, n); }
+  return n;
+}
+export function inkBytes(ink) {
+  if (!ink) return 0;
+  let n = inkSizes.get(ink);
+  if (n === undefined) {
+    n = serializeInk({ ...ink, strokes: [] }).length;
+    for (const s of ink.strokes || []) n += strokeBytes(s);
+    if (ink.strokes?.length) n -= 1;  // one comma fewer than strokes
+    inkSizes.set(ink, n);
+  }
+  return n;
 }
 
 // What a group's block carries for its file at `url`: the reference, the
@@ -130,45 +164,79 @@ export function toolStyle(preset) {
 
 // --- codec -----------------------------------------------------------------
 
-// samples: [{x, y, p?, t?}] with x/y in points and t in ms since t0.
-export function encodeStroke({ id, tool = "pen", brush, color = INK_COLORS[0], size = 2, opacity = 1,
-  pen = true, t0 = null, samples, ch = "xyp" }) {
-  const pts = [];
-  let px = 0, py = 0, pt = 0;
+// The letters both codecs know, after x and y; DELTA names the channels
+// written as a difference from the sample before. A letter not here is an
+// unknown channel: decodeStroke carries its integer in the sample's `rest`
+// array and encodePoints writes it back in place, so a cut on a copy that
+// predates the letter keeps the stride.
+export const KNOWN_CHANNELS = "xyptazwo";
+const DELTA = new Set(["x", "y", "t", "w", "o"]);
+const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+const clamp01 = (v) => clamp(v, 0, 1);
+const unknownLetters = (ch) => [...ch].filter((c) => !KNOWN_CHANNELS.includes(c));
+
+// samples: [{x, y, p?, t?, a?, z?, w?, o?, rest?}] with x/y in points, p
+// 0..1, t ms since t0, a/z degrees, w/o multipliers → the flat `pts`.
+export function encodePoints(samples, ch = "xy") {
+  const pts = [], prev = {};
   for (const s of samples) {
+    let r = 0;
     for (const c of ch) {
-      if (c === "x") { const v = Math.round(s.x * COORD_UNIT); pts.push(v - px); px = v; }
-      else if (c === "y") { const v = Math.round(s.y * COORD_UNIT); pts.push(v - py); py = v; }
-      else if (c === "p") pts.push(Math.round(Math.max(0, Math.min(1, s.p ?? 0.5)) * PRESSURE_UNIT));
-      else if (c === "t") { const v = Math.round(s.t || 0); pts.push(v - pt); pt = v; }
-      else if (c === "a") pts.push(Math.round(s.a || 0));
-      else if (c === "z") pts.push(Math.round(s.z || 0));
+      let v;
+      if (c === "x") v = Math.round(s.x * COORD_UNIT);
+      else if (c === "y") v = Math.round(s.y * COORD_UNIT);
+      else if (c === "p") v = Math.round(clamp01(s.p ?? 0.5) * PRESSURE_UNIT);
+      else if (c === "t") v = Math.round(s.t || 0);
+      else if (c === "a") v = Math.round(s.a || 0);
+      else if (c === "z") v = Math.round(s.z || 0);
+      else if (c === "w") v = Math.round(clamp(s.w ?? 1, 0, 2) * WIDTH_UNIT);
+      else if (c === "o") v = Math.round(clamp01(s.o ?? 1) * WIDTH_UNIT);
+      else v = Math.round(s.rest?.[r++] ?? 0);
+      if (DELTA.has(c)) { pts.push(v - (prev[c] || 0)); prev[c] = v; } else pts.push(v);
     }
   }
-  const out = { id: id || strokeId(), tool, color, size, opacity, pen, ch, pts };
-  if (tool === "pen" && brush === "monoline") out.brush = "monoline";
+  return pts;
+}
+
+// A stroke from its samples and its keys: the look (tool, brush, color,
+// size, opacity, pen), t0, and any other key (band, from, shape, fill,
+// dash, nib, extras) as given; null and undefined keys are left out.
+export function encodeStroke({ id, samples, ch = "xyp", tool = "pen", brush, color = INK_COLORS[0], size = 2, opacity = 1,
+  pen = true, t0 = null, ...rest }) {
+  const out = { id: id || strokeId(), tool, color, size, opacity, pen, ch, pts: encodePoints(samples, ch) };
+  for (const k of Object.keys(rest)) if (rest[k] != null) out[k] = rest[k];
+  if (brush) out.brush = brush;
   if (t0 != null) out.t0 = t0;
   return out;
 }
 
 const decoded = new WeakMap();
-// → [{x, y, p, t}] in points; p defaults to 0.5, t to null. Cached per stroke object.
+// → [{x, y, p?, t?, a?, z?, w?, o?, rest?}] in points, each key present
+// when its channel is: p 0..1, t ms since t0, a/z degrees, w and o as
+// multipliers (so a decoded cache never depends on size), `rest` the
+// integers of letters this build does not know. Cached per stroke object.
 export function decodeStroke(stroke) {
   const hit = decoded.get(stroke);
   if (hit) return hit;
   const { ch = "xy", pts = [] } = stroke;
-  const n = ch.length, out = [];
-  let x = 0, y = 0, t = 0;
+  const n = ch.length, out = [], run = {};
+  const foreign = unknownLetters(ch).length > 0;
   for (let i = 0; i + n <= pts.length; i += n) {
-    const s = { x: 0, y: 0, p: 0.5, t: null };
+    const s = { x: 0, y: 0 };
+    if (foreign) s.rest = [];
     for (let k = 0; k < n; k++) {
-      const c = ch[k], v = pts[i + k];
-      if (c === "x") { x += v; s.x = x / COORD_UNIT; }
-      else if (c === "y") { y += v; s.y = y / COORD_UNIT; }
-      else if (c === "p") s.p = Math.max(0, Math.min(1, v / PRESSURE_UNIT));
-      else if (c === "t") { t += v; s.t = t; }
+      const c = ch[k];
+      let v = pts[i + k];
+      if (DELTA.has(c)) v = run[c] = (run[c] || 0) + v;
+      if (c === "x") s.x = v / COORD_UNIT;
+      else if (c === "y") s.y = v / COORD_UNIT;
+      else if (c === "p") s.p = clamp01(v / PRESSURE_UNIT);
+      else if (c === "t") s.t = v;
       else if (c === "a") s.a = v;
       else if (c === "z") s.z = v;
+      else if (c === "w") s.w = clamp(v / WIDTH_UNIT, 0, 2);
+      else if (c === "o") s.o = clamp01(v / WIDTH_UNIT);
+      else s.rest.push(v);
     }
     out.push(s);
   }
@@ -176,9 +244,84 @@ export function decodeStroke(stroke) {
   return out;
 }
 
-export function strokeWidth(stroke, p) {
-  if (stroke.tool !== "pen" || stroke.pen === false || stroke.brush === "monoline") return stroke.size;
-  return stroke.size * (1 + THINNING * (p - 0.5));
+// A stroke's keys with a default, as the file may omit them (gamma/ink.py
+// Stroke); withDefaults fills them on a loaded file so every reader and
+// the menus see complete strokes (the same object when nothing is missing).
+export const DEFAULT_SIZE = 1.6;
+export const STROKE_DEFAULTS = { tool: "pen", color: INK_COLORS[0], size: DEFAULT_SIZE, opacity: 1, pen: true, ch: "xy" };
+export function withDefaults(ink) {
+  if (!ink?.strokes) return ink;
+  let changed = false;
+  const strokes = ink.strokes.map((s) => {
+    if (Object.keys(STROKE_DEFAULTS).every((k) => s[k] != null)) return s;
+    changed = true;
+    const out = { ...s };
+    for (const k of Object.keys(STROKE_DEFAULTS)) if (out[k] == null) out[k] = STROKE_DEFAULTS[k];
+    return out;
+  });
+  return changed ? { ...ink, strokes } : ink;
+}
+
+// The drawn width at a sample: size × w when the stroke carries w, else
+// size. The whole rule (gamma/ink.py stroke_width is the same line).
+export const strokeWidth = (stroke, sample) => (sample?.w != null ? (stroke.size ?? DEFAULT_SIZE) * sample.w : stroke.size ?? DEFAULT_SIZE);
+// Which layer a stroke draws on: 0 under (a highlighter's default), 1 as ink.
+export const strokeBand = (stroke) => stroke.band ?? (stroke.tool === "highlighter" ? 0 : 1);
+// Strokes in drawing order: every band-0 stroke, then the band-1 ones,
+// each band in file order.
+export function byBand(strokes) {
+  const under = [], over = [];
+  for (const s of strokes) (strokeBand(s) === 0 ? under : over).push(s);
+  return under.length ? [...under, ...over] : strokes;
+}
+
+// --- version 1 -------------------------------------------------------------
+
+// The one-time upgrade of a version 1 file (docs/dev/handwriting.md
+// "Upgrading version 1"; gamma/ink.py upgrade_v1 is the same function,
+// tests/shared/inkv2.json pins both byte for byte): version 2, and every
+// pressure pen (tool pen or absent, pen not false, no brush, p but no w)
+// gains w = 500 + clamp(p, 0, 1000), absolute first and deltas after. On
+// the raw parsed object, so no default is added; anything but a version
+// 1 file (version 2, a newer one, a malformed one) comes back as it is.
+// inkStore.loadInk runs it on a file a not-yet-upgraded copy serves;
+// nothing re-uploads version 1.
+export function upgradeV1(file) {
+  if (!file || file.format !== FORMAT || (file.version ?? 1) !== 1) return file;
+  const strokes = (file.strokes || []).map((s) => {
+    const ch = s.ch || "xy";
+    if ((s.tool ?? "pen") !== "pen" || s.pen === false || s.brush != null || !ch.includes("p") || ch.includes("w")) return s;
+    const n = ch.length, at = ch.indexOf("p"), pts = [];
+    let prev = 0;
+    for (let i = 0; i + n <= (s.pts || []).length; i += n) {
+      for (let k = 0; k < n; k++) pts.push(s.pts[i + k]);
+      const w = 500 + clamp(s.pts[i + at], 0, 1000);
+      pts.push(w - prev);
+      prev = w;
+    }
+    return { ...s, ch: ch + "w", pts };
+  });
+  return { ...file, version: 2, strokes };
+}
+
+// What a drawing carries that this build does not know: tools, brushes,
+// stroke keys and channel letters, or a newer file version — null when
+// nothing. The layer tells the user once (the strokes still draw plainly).
+const KNOWN_TOOLS = new Set(["pen", "highlighter"]);
+const KNOWN_BRUSHES = new Set(["monoline"]);
+const KNOWN_KEYS = new Set(["id", "tool", "brush", "color", "size", "opacity", "pen", "t0", "band", "from", "shape", "fill",
+  "dash", "nib", "ch", "pts"]);
+export function inkFeatures(ink) {
+  const tools = new Set(), brushes = new Set(), keys = new Set(), letters = new Set();
+  for (const s of ink?.strokes || []) {
+    if (s.tool && !KNOWN_TOOLS.has(s.tool)) tools.add(s.tool);
+    if (s.brush && !KNOWN_BRUSHES.has(s.brush)) brushes.add(s.brush);
+    for (const k of Object.keys(s)) if (!KNOWN_KEYS.has(k)) keys.add(k);
+    for (const c of unknownLetters(s.ch || "xy")) letters.add(c);
+  }
+  const newer = (ink?.version ?? 1) > VERSION;
+  if (!newer && !tools.size && !brushes.size && !keys.size && !letters.size) return null;
+  return { newer, tools: [...tools], brushes: [...brushes], keys: [...keys].sort(), letters: [...letters].sort() };
 }
 
 // --- geometry --------------------------------------------------------------
@@ -190,7 +333,7 @@ export function strokeBounds(stroke) {
   if (hit) return hit;
   let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
   for (const s of decodeStroke(stroke)) {
-    const r = strokeWidth(stroke, s.p) / 2;
+    const r = strokeWidth(stroke, s) / 2;
     x0 = Math.min(x0, s.x - r); y0 = Math.min(y0, s.y - r);
     x1 = Math.max(x1, s.x + r); y1 = Math.max(y1, s.y + r);
   }
@@ -242,7 +385,7 @@ function strokeEdgeDistance(s, x, y, radius) {
   let best = Infinity;
   for (let i = 0; i < pts.length; i++) {
     const a = pts[i], c = pts[Math.min(i + 1, pts.length - 1)];
-    const edge = Math.sqrt(segDist2(x, y, a.x, a.y, c.x, c.y)) - Math.max(strokeWidth(s, a.p), strokeWidth(s, c.p)) / 2;
+    const edge = Math.sqrt(segDist2(x, y, a.x, a.y, c.x, c.y)) - Math.max(strokeWidth(s, a), strokeWidth(s, c)) / 2;
     if (edge < best) best = edge;
   }
   return Math.max(0, best);
@@ -253,17 +396,25 @@ export function hitStrokes(ink, x, y, radius) {
   return (ink?.strokes || []).filter((s) => strokeEdgeDistance(s, x, y, radius) <= radius).map((s) => s.id);
 }
 
-// Nearest stroke edge, with the last-painted stroke winning ties. The
-// caller converts a screen-space touch tolerance into page units.
+// Nearest stroke edge within `radius`: ink (band 1) wins over a
+// highlighter (band 0) under it, then the last-painted stroke wins ties.
+// The caller converts a screen-space touch tolerance into page units.
 export function nearestInkStroke(groups, x, y, radius) {
-  let best = null, distance = radius;
+  let best = null, bestBand = -1, distance = radius;
   for (const g of groups) for (const s of g.ink.strokes) {
     const edge = strokeEdgeDistance(s, x, y, radius);
-    if (edge <= distance) { distance = edge; best = { id: g.id, ids: [s.id] }; }
+    if (edge > radius) continue;
+    const band = strokeBand(s);
+    if (band > bestBand || (band === bestBand && edge <= distance)) {
+      bestBand = band; distance = edge; best = { id: g.id, ids: [s.id] };
+    }
   }
   return best;
 }
 
+// A colour, width or opacity change of the selected strokes: `size` alone
+// changes for a width (the baked w multiplies it), never `pts`; every
+// other key rides along. The original object for a no-op.
 export function restyleStrokes(ink, ids, patch) {
   const selected = new Set(ids);
   let changed = false;
@@ -281,85 +432,232 @@ export function restyleStrokes(ink, ids, patch) {
   return changed ? { ...ink, strokes } : ink;
 }
 
-export function duplicateStrokes(ink, ids, dx, dy) {
-  const selected = new Set(ids), used = new Set(ink.strokes.map((s) => s.id));
-  const originals = ink.strokes.filter((s) => selected.has(s.id));
-  if (!originals.length || ink.strokes.length + originals.length > MAX_STROKES) return { ink, ids: [] };
-  const copies = originals.map((s) => {
+// Fresh-id copies of strokes (ids outside `used`), every key but `from`
+// kept: a copy is not a piece of anything. Paste and Duplicate.
+export function cloneStrokes(strokes, used = new Set()) {
+  return strokes.map(({ from, ...s }) => {
     let id;
     do { id = strokeId(); } while (used.has(id));
     used.add(id);
     return { ...s, id, pts: [...s.pts] };
   });
+}
+
+export function duplicateStrokes(ink, ids, dx, dy) {
+  const selected = new Set(ids), used = new Set(ink.strokes.map((s) => s.id));
+  const originals = ink.strokes.filter((s) => selected.has(s.id));
+  if (!originals.length || ink.strokes.length + originals.length > MAX_STROKES) return { ink, ids: [] };
+  const copies = cloneStrokes(originals, used);
   const copyIds = copies.map((s) => s.id);
   return { ink: translateStrokes({ ...ink, strokes: [...ink.strokes, ...copies] }, copyIds, dx, dy), ids: copyIds };
 }
 
-// Two strokes are the same when every field and sample is.
+// Deep equality over JSON values; a missing key equals a null one.
+function sameValue(x, y) {
+  if (x === y) return true;
+  if (Array.isArray(x) || Array.isArray(y)) {
+    if (!Array.isArray(x) || !Array.isArray(y) || x.length !== y.length) return false;
+    for (let i = 0; i < x.length; i++) if (!sameValue(x[i], y[i])) return false;
+    return true;
+  }
+  if (x && y && typeof x === "object" && typeof y === "object") {
+    for (const k of new Set([...Object.keys(x), ...Object.keys(y)])) if (!sameValue(x[k] ?? null, y[k] ?? null)) return false;
+    return true;
+  }
+  return (x ?? null) === (y ?? null);
+}
+
+// Two strokes are the same when every key and sample is.
 export function sameStroke(a, b) {
   if (a === b) return true;
   if (!a || !b) return false;
-  const keys = new Set([...Object.keys(a), ...Object.keys(b)]);
-  for (const k of keys) {
-    const x = a[k] ?? null, y = b[k] ?? null;
-    if (k === "pts") {
-      if (!Array.isArray(x) || !Array.isArray(y) || x.length !== y.length) return false;
-      for (let i = 0; i < x.length; i++) if (x[i] !== y[i]) return false;
-    } else if (x !== y) return false;
-  }
-  return true;
+  return sameValue(a, b);
 }
 
 const sameStrokes = (a, b) => a.length === b.length && a.every((s, i) => sameStroke(s, b[i]));
 
+// --- merge -----------------------------------------------------------------
+// A stroke is compared as two halves (docs/dev/handwriting.md "Two writers,
+// one group"): its GEOMETRY (pts, ch, size, shape) and its LOOK (every
+// other key but id and from, with the defaults filled in so an omitted key
+// equals its default value).
+const GEOM_KEYS = ["pts", "ch", "size", "shape"];
+const NOT_LOOK = new Set(["id", "from", ...GEOM_KEYS]);
+const geomOf = (s) => ({ pts: s.pts, ch: s.ch || "xy", size: s.size ?? DEFAULT_SIZE, shape: s.shape ?? null });
+function lookOf(s) {
+  const out = { tool: "pen", color: INK_COLORS[0], opacity: 1, pen: true };
+  for (const k of Object.keys(s)) if (!NOT_LOOK.has(k) && s[k] != null) out[k] = s[k];
+  out.band = strokeBand(s);
+  if (out.fill) out.fill = { color: out.fill.color, opacity: out.fill.opacity ?? 0.25 };
+  return out;
+}
+const sameGeom = (a, b) => sameValue(geomOf(a), geomOf(b));
+const sameLook = (a, b) => sameValue(lookOf(a), lookOf(b));
+// The stroke with `geom`'s geometry and `look`'s look, named as `id` (its id and from).
+function compose(id, geom, look) {
+  const out = {};
+  for (const k of Object.keys(look)) if (!NOT_LOOK.has(k) && look[k] != null) out[k] = look[k];
+  for (const k of GEOM_KEYS) if (geom[k] != null) out[k] = geom[k];
+  out.id = id.id;
+  if (id.from != null) out.from = id.from;
+  return out;
+}
+
+// The merged file: theirs' space, ours' file-level extras (last writer).
+function mergedFile(ours, theirs, strokes) {
+  const out = {};
+  for (const k of Object.keys(ours)) if (!["format", "version", "space", "strokes"].includes(k) && ours[k] != null) out[k] = ours[k];
+  return { ...out, format: FORMAT, version: VERSION, space: theirs.space, strokes };
+}
+
 // Apply the change base → ours to theirs (the group as stored now), stroke
 // by stroke: stroke ids survive every edit, so they play the part text
-// offsets play in the text merge. → {ink, clean}. Where theirs left a
-// stroke as the base had it, ours' change applies in place; a stroke ours
+// offsets play in the text merge. → {ink, clean, lostOurs, returned}:
+// `lostOurs` the ids of ours' changes the result dropped (an edit or
+// erasure theirs overrode, pieces that were dropped), `returned` the
+// strokes theirs had erased that ours' change brings back. Per id, a half
+// changed by one side only comes from that side, a half changed by both
+// takes theirs (unclean); an edit beats a delete (unclean); a stroke ours
 // added goes after the stroke before it that the result keeps, behind
-// strokes theirs added there; a stroke both changed keeps theirs' version,
-// and a stroke one side changed survives the other's erasure (either makes
-// the merge unclean). base null merges as a union by id. The same rule as
-// gamma/ink.py merge_ink; tests/shared/inkmerge.json pins both. Undo and
-// redo rebase through it too (the action's after → before onto now).
-export function mergeInk(base, ours, theirs) {
+// strokes theirs added there. Pieces (strokes with `from`) follow their
+// parent's fate on the other side: unchanged → they stand, restyled → they
+// take the look, erased → they go, moved or also cut → theirs' version
+// stands and ours' pieces are dropped. base null merges by `baseIds` (a
+// stroke one side lacks whose id the base had is erased) or, without them,
+// as a union by id. The same rule as gamma/ink.py merge_ink;
+// tests/shared/inkmerge.json pins both. Undo and redo rebase through it
+// too (the action's after → before onto now).
+export function mergeInk(base, ours, theirs, baseIds = null) {
   const bList = base?.strokes || [];
-  if (base && sameStrokes(theirs.strokes, bList)) return { ink: ours, clean: true };
-  if (sameStrokes(ours.strokes, bList) || sameStrokes(ours.strokes, theirs.strokes)) return { ink: theirs, clean: true };
-  const b = new Map(bList.map((s) => [s.id, s]));
+  if (base && sameStrokes(theirs.strokes, bList)) return { ink: ours, clean: true, lostOurs: [], returned: [] };
+  if (sameStrokes(ours.strokes, bList) || sameStrokes(ours.strokes, theirs.strokes)) return { ink: theirs, clean: true, lostOurs: [], returned: [] };
   const o = new Map(ours.strokes.map((s) => [s.id, s]));
+  const t = new Map(theirs.strokes.map((s) => [s.id, s]));
   let clean = true;
+  const lostOurs = [], returned = [];
+  const lose = (id) => { clean = false; if (!lostOurs.includes(id)) lostOurs.push(id); };
   const out = [];
-  for (const t of theirs.strokes) {
-    const was = b.get(t.id), mine = o.get(t.id);
-    if (!was) {
-      if (mine && !sameStroke(mine, t)) clean = false;
-      out.push(t);
-    } else if (!mine) {
-      if (!sameStroke(t, was)) { clean = false; out.push(t); }
-    } else if (sameStroke(mine, was) || sameStroke(t, mine)) out.push(t);
-    else if (sameStroke(t, was)) out.push(mine);
-    else { clean = false; out.push(t); }
+  // What a stroke of ours that is not in `out` becomes: the stroke to
+  // insert, or null to drop it (the default: an addition inserts itself).
+  const oursAs = new Map();
+  if (!base) {
+    const ids = new Set(baseIds || []);
+    for (const th of theirs.strokes) {
+      const mine = o.get(th.id);
+      if (mine) { if (!sameStroke(mine, th)) lose(th.id); out.push(th); }
+      else if (ids.has(th.id)) clean = false;      // ours erased it: deletions win
+      else out.push(th);
+    }
+    for (const s of ours.strokes) if (!t.has(s.id) && ids.has(s.id)) { lose(s.id); oursAs.set(s.id, null); }
+  } else {
+    const b = new Map(bList.map((s) => [s.id, s]));
+    // A side's pieces: strokes it added whose `from` names a base family
+    // (the root, or a piece of it) the side no longer has — parent id →
+    // the pieces cut from it.
+    const pieces = (side) => {
+      const byParent = new Map();
+      for (const s of side.values()) {
+        if (b.has(s.id) || s.from == null) continue;
+        for (const p of bList) {
+          if ((p.id === s.from || p.from === s.from) && !side.has(p.id)) {
+            if (!byParent.has(p.id)) byParent.set(p.id, []);
+            byParent.get(p.id).push(s);
+          }
+        }
+      }
+      return byParent;
+    };
+    const oursPieces = pieces(o), theirsPieces = pieces(t);
+    // A base stroke's fate on a side: same, look, geom, cut or erased.
+    const fate = (p, side, sidePieces) => {
+      const s = side.get(p.id);
+      if (!s) return sidePieces.has(p.id) ? "cut" : "erased";
+      if (sameStroke(s, p)) return "same";
+      return sameGeom(s, p) ? "look" : "geom";
+    };
+    // The pieces cut from `parent` take `look`'s look; when the cutting side
+    // restyled them too, theirs' look wins (unclean).
+    const restylePieces = (list, parent, look, cutIsOurs) => list.map((piece) => {
+      if (sameLook(piece, look)) return piece;
+      if (!sameLook(piece, parent)) {
+        if (cutIsOurs) { lose(piece.id); return compose(piece, piece, look); }
+        lose(parent.id);
+        return piece;
+      }
+      return compose(piece, piece, look);
+    });
+    const lostMoves = new Set();
+    for (const th of theirs.strokes) {
+      const was = b.get(th.id), mine = o.get(th.id);
+      if (!was) {
+        const parents = bList.filter((p) => theirsPieces.get(p.id)?.includes(th));
+        if (!parents.length) {                    // theirs' addition
+          if (mine && !sameStroke(mine, th)) lose(th.id);
+          out.push(th);
+          continue;
+        }
+        // theirs' piece: its parents' fate on ours decides
+        const fates = parents.map((p) => fate(p, o, oursPieces));
+        if (fates.includes("erased")) continue;   // an undo of the drawing beats the cut
+        if (fates.includes("geom")) {              // theirs' pieces stand, ours' move is lost
+          parents.forEach((p, i) => { if (fates[i] === "geom" && !lostMoves.has(p.id)) { lostMoves.add(p.id); lose(p.id); } });
+          out.push(th);
+          continue;
+        }
+        const i = fates.indexOf("look");
+        out.push(i < 0 ? th : restylePieces([th], parents[i], o.get(parents[i].id), false)[0]);
+        continue;
+      }
+      const fo = fate(was, o, oursPieces), ft = fate(was, t, theirsPieces);
+      if (fo === "same") { out.push(th); continue; }
+      if (fo === "erased") {                      // an edit beats a delete
+        if (ft !== "same") { lose(was.id); out.push(th); }
+        continue;
+      }
+      if (fo === "cut") {
+        const list = oursPieces.get(was.id);
+        if (ft === "geom") { for (const piece of list) { lose(piece.id); oursAs.set(piece.id, null); } out.push(th); }
+        else if (ft === "look") for (const piece of restylePieces(list, was, th, true)) oursAs.set(piece.id, piece);
+        continue;                                 // ft same: the pieces stand, the parent goes
+      }
+      // both still have it: half by half
+      const geomO = !sameGeom(mine, was), geomT = !sameGeom(th, was);
+      const lookO = !sameLook(mine, was), lookT = !sameLook(th, was);
+      let geom = th, look = th;
+      if (geomO && !geomT) geom = mine; else if (geomO && geomT && !sameGeom(mine, th)) lose(was.id);
+      if (lookO && !lookT) look = mine; else if (lookO && lookT && !sameLook(mine, th)) lose(was.id);
+      const merged = compose(th, geom, look);
+      out.push(sameStroke(merged, th) ? th : sameStroke(merged, mine) ? mine : merged);
+    }
+    // Base strokes theirs no longer has: ours' edit returns from theirs'
+    // erasure; ours' pieces go with it, or lose to theirs' cut.
+    for (const was of bList) {
+      if (t.has(was.id)) continue;
+      const fo = fate(was, o, oursPieces), ft = fate(was, t, theirsPieces);
+      if (fo === "look" || fo === "geom") {
+        if (ft === "erased") { clean = false; returned.push(was.id); oursAs.set(was.id, o.get(was.id)); }
+      } else if (fo === "cut") {
+        for (const piece of oursPieces.get(was.id)) { if (ft === "cut") lose(piece.id); oursAs.set(piece.id, null); }
+      }
+    }
   }
+  const inBase = new Set(bList.map((s) => s.id));
   const present = new Set(out.map((s) => s.id));
   let anchor = null;
   for (const s of ours.strokes) {
     if (present.has(s.id)) { anchor = s.id; continue; }
-    const was = b.get(s.id);
-    if (was) {
-      if (sameStroke(s, was)) continue;
-      clean = false;
-    }
+    const add = oursAs.has(s.id) ? oursAs.get(s.id) : inBase.has(s.id) || t.has(s.id) ? null : s;
+    if (!add) continue;
     let at = anchor ? out.findIndex((x) => x.id === anchor) + 1 : 0;
-    while (at < out.length && !b.has(out[at].id) && !o.has(out[at].id)) at++;
-    out.splice(at, 0, s);
+    while (at < out.length && !inBase.has(out[at].id) && !o.has(out[at].id)) at++;
+    out.splice(at, 0, add);
     present.add(s.id);
     anchor = s.id;
   }
   // a merge that changes nothing is that file itself (a change sent again)
-  if (sameStrokes(out, theirs.strokes)) return { ink: theirs, clean };
-  if (sameStrokes(out, ours.strokes) && JSON.stringify(ours.space) === JSON.stringify(theirs.space)) return { ink: ours, clean };
-  return { ink: { format: FORMAT, version: VERSION, space: theirs.space, strokes: out }, clean };
+  if (sameStrokes(out, theirs.strokes)) return { ink: theirs, clean, lostOurs, returned };
+  if (sameStrokes(out, ours.strokes) && JSON.stringify(ours.space) === JSON.stringify(theirs.space)) return { ink: ours, clean, lostOurs, returned };
+  return { ink: mergedFile(ours, theirs, out), clean, lostOurs, returned };
 }
 
 export function appendStroke(ink, stroke) {
@@ -393,7 +691,8 @@ export function transformPoint(x, y, { cx, cy, scale, angle }) {
 }
 
 // Uniform scaling/rotation around a shared page-space origin. Rewrite only
-// XY channels, preserving pressure, timing, tilt, IDs and other metadata.
+// XY channels, preserving pressure, timing, tilt, widths, IDs and other
+// metadata; the size scales with the selection.
 export function transformStrokes(ink, ids, { cx, cy, scale = 1, angle = 0 }) {
   if (![cx, cy, scale, angle].every(Number.isFinite) || scale <= 0 || (scale === 1 && angle === 0)) return ink;
   const selected = new Set(ids);
@@ -401,7 +700,7 @@ export function transformStrokes(ink, ids, { cx, cy, scale = 1, angle = 0 }) {
   const strokes = ink.strokes.map((s) => {
     if (!selected.has(s.id)) return s;
     changed = true;
-    const pts = s.pts.slice(), n = s.ch.length;
+    const pts = s.pts.slice(), n = (s.ch || "xy").length;
     let px = 0, py = 0;
     decodeStroke(s).forEach((p, i) => {
       const [tx, ty] = transformPoint(p.x, p.y, { cx, cy, scale, angle });
@@ -415,10 +714,12 @@ export function transformStrokes(ink, ids, { cx, cy, scale = 1, angle = 0 }) {
   return changed ? { ...ink, strokes } : ink;
 }
 
-// A stroke's samples → a stroke of the same look (fresh id).
+// A stroke's samples → a piece of it: every key but shape and fill (a cut
+// shape is just ink), a fresh id, and `from` naming the root stroke, so
+// every piece of a stroke names the original (the merge reads it).
 function restroke(stroke, samples) {
-  return encodeStroke({ tool: stroke.tool, brush: stroke.brush, color: stroke.color, size: stroke.size, opacity: stroke.opacity,
-    pen: stroke.pen !== false, t0: stroke.t0 ?? null, samples, ch: stroke.ch });
+  const { id, pts, shape, fill, from, ...keys } = stroke;
+  return encodeStroke({ ...keys, ch: stroke.ch || "xy", samples, from: from ?? id });
 }
 
 // Partial eraser: cut every sample within `radius` (plus half the width)
@@ -432,7 +733,7 @@ export function eraseAt(ink, x, y, radius) {
     if (!b || x < b[0] - radius || x > b[2] + radius || y < b[1] - radius || y > b[3] + radius) { strokes.push(s); continue; }
     const pts = decodeStroke(s);
     const keep = pts.map((q) => {
-      const tol = radius + strokeWidth(s, q.p) / 2;
+      const tol = radius + strokeWidth(s, q) / 2;
       return (q.x - x) ** 2 + (q.y - y) ** 2 > tol * tol;
     });
     if (keep.every(Boolean)) { strokes.push(s); continue; }
@@ -621,31 +922,46 @@ export function svgPathFromPoints(points) {
 }
 
 // Outline options in page units — thickness is size, so zoom scales ink
-// like ink on paper.
+// like ink on paper. perfect-freehand is driven from the baked width:
+// thinning 1 with pressure w / 2 gives the radius size × w / 2, exactly
+// the drawn width; a stroke without w draws its size.
 export function outlineOptions(stroke) {
-  return { size: stroke.size, thinning: stroke.pen === false || stroke.brush === "monoline" ? 0 : THINNING, smoothing: 0.5,
-    streamline: 0.4, simulatePressure: false, last: true };
+  return { size: stroke.size ?? DEFAULT_SIZE, thinning: 1, smoothing: 0.5, streamline: 0.4, simulatePressure: false, last: true };
 }
+export const outlinePressure = (sample) => (sample.w != null ? sample.w / 2 : 0.5);
 
 // samples → the filled outline path for a pen stroke.
 export function penOutline(samples, opts) {
-  return svgPathFromPoints(getStroke(samples.map((s) => [s.x, s.y, s.p ?? 0.5]), opts));
+  return svgPathFromPoints(getStroke(samples.map((s) => [s.x, s.y, outlinePressure(s)]), opts));
+}
+
+// A stroked path's dash pattern from `dash`, in units of its width (the
+// geometry is never stored); undefined for a solid line.
+export function dashArray(stroke, width = stroke.size) {
+  if (stroke.dash === "dashed") return `${(width * 3).toFixed(2)} ${(width * 2).toFixed(2)}`;
+  if (stroke.dash === "dotted") return `0.01 ${(width * 2).toFixed(2)}`;
+  return undefined;
 }
 
 const paths = new WeakMap();
-// The SVG rendering of a stroke: {d, fill} (pen: a filled outline) or
-// {d, stroke, width} (highlighter: a stroked polyline). Cached per object.
+// The SVG rendering of a stroke: {d, stroke: false} (a pen, any brush: a
+// filled outline from w) or {d, stroke: true, width, multiply, dash} (a
+// stroked polyline: the highlighter at its size, multiplied onto the page;
+// an unknown tool at its mean drawn width, source-over). Cached per object.
 export function strokePath(stroke) {
   const hit = paths.get(stroke);
   if (hit) return hit;
   const pts = decodeStroke(stroke);
+  const tool = stroke.tool || "pen";
   let out;
-  if (stroke.tool === "highlighter") {
+  if (tool === "pen") {
+    out = { d: penOutline(pts, outlineOptions(stroke)), stroke: false };
+  } else {
     const d = pts.map((s, i) => `${i ? "L" : "M"}${s.x.toFixed(2)},${s.y.toFixed(2)}`).join(" ")
       + (pts.length === 1 ? ` L${(pts[0].x + 0.01).toFixed(2)},${pts[0].y.toFixed(2)}` : "");
-    out = { d, stroke: true, width: stroke.size };
-  } else {
-    out = { d: penOutline(pts, outlineOptions(stroke)), stroke: false };
+    const width = tool === "highlighter" || !pts.length ? stroke.size ?? DEFAULT_SIZE
+      : pts.reduce((sum, s) => sum + strokeWidth(stroke, s), 0) / pts.length;
+    out = { d, stroke: true, width, multiply: tool === "highlighter", dash: dashArray(stroke, width) };
   }
   paths.set(stroke, out);
   return out;

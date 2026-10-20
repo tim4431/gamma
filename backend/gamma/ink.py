@@ -1,5 +1,5 @@
-"""Handwriting: the ``gamma-ink`` stroke file and the pure geometry every
-consumer shares (docs/dev/handwriting.md).
+"""Handwriting: the ``gamma-ink`` stroke file (version 2) and the pure
+geometry every consumer shares (docs/dev/handwriting.md).
 
 An ink group is a block whose ``properties.ink_url`` names one of these
 files (``uploads/<sha>.ink``, plain JSON). The file is the only source of
@@ -8,23 +8,28 @@ as displayed at scale 1 (pdf.js viewport: points, origin top-left, y down,
 rotation applied) — the same frame highlight rects normalise to, so the PDF
 writers map ink through the exact conversion they already use for rects.
 
-    {"format": "gamma-ink", "version": 1,
+    {"format": "gamma-ink", "version": 2,
      "space": {"kind": "pdf-page", "page": 3, "width": 612, "height": 792},
      "strokes": [{"id": "k7Qm2x", "tool": "pen", "color": "#1f1f1f",
                   "size": 1.6, "opacity": 1, "pen": true, "t0": 1757760000000,
-                  "ch": "xypt", "pts": [12040, 30512, 620, 0, 18, -3, 700, 8]}]}
+                  "ch": "xyptw", "pts": [12040, 30512, 620, 0, 1120, 18, -3, 700, 8, 80]}]}
 
 ``ch`` declares the channels of every sample (InkML's idea): ``x`` ``y``
-always, then any of ``p`` pressure, ``t`` time, ``a`` altitude, ``z``
-azimuth. ``pts`` is one flat integer array — x/y in 1/100 pt and t in ms
-are delta-encoded after the first sample, p is 0..1000, a/z degrees. The
-frontend's ``src/ink/ink.js`` is the mirror of the codec here; keep them in
-step.
+always, then any letters: ``p`` pressure, ``t`` time, ``a`` altitude, ``z``
+azimuth, ``w`` the baked drawn-width multiplier, ``o`` a baked opacity
+(reserved). ``pts`` is one flat integer array — x/y in 1/100 pt, t in ms,
+w and o in thousandths are delta-encoded after the first sample; p is
+0..1000, a/z degrees, absolute. A letter this code does not know is carried
+by stride and copied through. The drawn width at a sample is ``size × w``
+when the stroke has ``w``, else ``size``: there is no width law here. The
+frontend's ``src/ink/ink.js`` is the mirror of the codec; the shared
+fixtures under tests/shared pin both.
 """
 
 import json
 import math
 import re
+from dataclasses import dataclass, field
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
@@ -33,19 +38,91 @@ from .colors import parse_color as _parse_color
 from .highlights import position
 
 FORMAT = "gamma-ink"
-VERSION = 1
+VERSION = 2
 MAX_STROKES = 5000
 MAX_SAMPLES = 500_000
-MAX_BYTES = 4 * 1024 * 1024
+MAX_BYTES = 6 * 1024 * 1024
 COORD_UNIT = 100        # stored x/y are hundredths of a point
 PRESSURE_UNIT = 1000    # stored p is 0..1000
-THINNING = 0.5          # width = size * (1 + THINNING * (p - 0.5)); mirrors ink.js
-_CH_RE = re.compile(r"^xy(?!.*(.).*\1)[ptaz]*$")
+MULT_UNIT = 1000        # stored w / o are multipliers × 1000
+MAX_W = 2000            # the running w sum (0..2.000 decoded)
+MAX_O = 1000
+MAX_CH = 12
+EXTRA_BYTES_STROKE = 1024
+EXTRA_BYTES_FILE = 16 * 1024
+EXTRA_DEPTH = 3
+EXTRA_STRING = 1024
+EXTRA_ARRAY = 256
+SHAPE_PARAMS = 64
+DELTA_CH = frozenset("xytwo")      # delta-encoded after the first sample
+KNOWN_CH = frozenset("xyptazwo")
+TOOL_RE = r"^[a-z][a-z0-9-]{0,15}$"
+_CH_RE = re.compile(r"^(?!.*(.).*\1)xy[a-z]*$")
 _COLOR_RE = re.compile(r"^(#[0-9a-fA-F]{6}|rgba?\(\s*\d+\s*,\s*\d+\s*,\s*\d+\s*(,\s*[0-9.]+\s*)?\))$")
+_HEX_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
+_EXTRA_KEY_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]{0,31}$")
+_UPLOAD_RE = re.compile(r"/api/uploads/([0-9a-f]{24}\.ink)$")
+SHAPE_KINDS = ("line", "arrow", "rect", "ellipse", "triangle", "polygon", "curve")
+UPDATE_GAMMA = "update Gamma"  # the 400 detail for a version 1 upload: every writer is version 2 since release T
+
+
+class InkError(ValueError):
+    pass
+
+
+class InkVersionError(InkError):
+    """A version 1 (or unversioned) file where version 2 is required: the
+    writer has to update (``upgrade_v1`` is the one reader of it)."""
+
+
+# --- extras ----------------------------------------------------------------------
+
+def _check_extra(value, depth: int, where: str) -> None:
+    if value is None or isinstance(value, bool):
+        return
+    if isinstance(value, (int, float)):
+        if not math.isfinite(value):
+            raise ValueError(f"{where}: not a finite number")
+        return
+    if isinstance(value, str):
+        if len(value) > EXTRA_STRING:
+            raise ValueError(f"{where}: string over {EXTRA_STRING} chars")
+        return
+    if depth >= EXTRA_DEPTH:
+        raise ValueError(f"{where}: nested deeper than {EXTRA_DEPTH}")
+    if isinstance(value, list):
+        if len(value) > EXTRA_ARRAY:
+            raise ValueError(f"{where}: array over {EXTRA_ARRAY} items")
+        for v in value:
+            _check_extra(v, depth + 1, where)
+        return
+    if isinstance(value, dict):
+        for k, v in value.items():
+            if not isinstance(k, str) or not _EXTRA_KEY_RE.match(k):
+                raise ValueError(f"{where}: bad key {k!r}")
+            _check_extra(v, depth + 1, where)
+        return
+    raise ValueError(f"{where}: unsupported value")
+
+
+def _check_extras(model: BaseModel, budget: int, where: str) -> None:
+    """The caps on a model's unknown keys (handwriting.md "anything else"):
+    a null-valued key is dropped, the rest kept verbatim."""
+    extra = model.__pydantic_extra__
+    if not extra:
+        return
+    for k in [k for k, v in extra.items() if v is None]:
+        del extra[k]
+    for k, v in extra.items():
+        if not _EXTRA_KEY_RE.match(k):
+            raise ValueError(f"{where}: bad key {k!r}")
+        _check_extra(v, 1, f"{where}.{k}")
+    if extra and len(json.dumps(extra, separators=(",", ":"))) > budget:
+        raise ValueError(f"{where}: extra keys over {budget} bytes")
 
 
 class Space(BaseModel):
-    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+    model_config = ConfigDict(extra="allow", allow_inf_nan=False)
     kind: Literal["pdf-page", "canvas"] = "pdf-page"
     page: int | None = Field(default=None, ge=1)
     width: float = Field(gt=0, le=100_000)
@@ -55,26 +132,54 @@ class Space(BaseModel):
     def _page_for_pdf(self):
         if self.kind == "pdf-page" and self.page is None:
             raise ValueError("a pdf-page space needs a page number")
+        _check_extras(self, EXTRA_BYTES_FILE, "space")
         return self
 
 
-class Stroke(BaseModel):
+class Shape(BaseModel):
     model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+    kind: Literal["line", "arrow", "rect", "ellipse", "triangle", "polygon", "curve"]
+    params: dict[str, float | bool] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _finite(self):
+        if len(self.params) > SHAPE_PARAMS:
+            raise ValueError(f"shape params over {SHAPE_PARAMS}")
+        for k, v in self.params.items():
+            if not _EXTRA_KEY_RE.match(k):
+                raise ValueError(f"shape: bad param {k!r}")
+            if not isinstance(v, bool) and not math.isfinite(v):
+                raise ValueError("shape: not a finite number")
+        return self
+
+
+class Fill(BaseModel):
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+    color: str = Field(pattern=r"^#[0-9a-fA-F]{6}$")
+    opacity: float = Field(default=0.25, gt=0, le=1)
+
+
+class Stroke(BaseModel):
+    model_config = ConfigDict(extra="allow", allow_inf_nan=False)
     id: str = Field(min_length=1, max_length=32, pattern=r"^[A-Za-z0-9_-]+$")
-    tool: Literal["pen", "highlighter"] = "pen"
-    brush: Literal["monoline"] | None = None
+    tool: str = Field(default="pen", pattern=TOOL_RE)
+    brush: str | None = Field(default=None, pattern=TOOL_RE)
     color: str = Field(default="#1f1f1f", max_length=40)
     size: float = Field(default=1.6, gt=0, le=100)
     opacity: float = Field(default=1.0, gt=0, le=1)
     pen: bool = True
     t0: int | None = Field(default=None, ge=0)
-    ch: str = Field(default="xy", max_length=6)
+    band: Literal[0, 1] | None = None
+    from_: str | None = Field(default=None, alias="from", min_length=1, max_length=32, pattern=r"^[A-Za-z0-9_-]+$")
+    shape: Shape | None = None
+    fill: Fill | None = None
+    dash: Literal["dashed", "dotted"] | None = None
+    nib: int | None = Field(default=None, ge=0, le=179)
+    ch: str = Field(default="xy", max_length=MAX_CH)
     pts: list[int] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def _shape(self):
-        if self.brush is not None and self.tool != "pen":
-            raise ValueError("brush styles apply to pens only")
         if not _CH_RE.match(self.ch):
             raise ValueError(f"bad channel list {self.ch!r}")
         if not _COLOR_RE.match(self.color):
@@ -82,6 +187,19 @@ class Stroke(BaseModel):
         n = len(self.ch)
         if not self.pts or len(self.pts) % n:
             raise ValueError("pts length must be a positive multiple of the channel count")
+        for letter, cap in (("w", MAX_W), ("o", MAX_O)):
+            slot = self.ch.find(letter)
+            if slot < 0:
+                continue
+            total, peak = 0, 0
+            for i in range(slot, len(self.pts), n):
+                total += self.pts[i]
+                if not 0 <= total <= cap:
+                    raise ValueError(f"channel {letter} out of 0..{cap}")
+                peak = max(peak, total)
+            if letter == "w" and self.size * peak / MULT_UNIT > 100:
+                raise ValueError("size × max(w) over 100")
+        _check_extras(self, EXTRA_BYTES_STROKE, f"stroke {self.id}")
         return self
 
     @property
@@ -90,9 +208,9 @@ class Stroke(BaseModel):
 
 
 class InkFile(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="allow", allow_inf_nan=False)
     format: Literal["gamma-ink"]
-    version: Literal[1]
+    version: Literal[2]
     space: Space
     strokes: list[Stroke] = Field(default_factory=list, max_length=MAX_STROKES)
 
@@ -102,114 +220,177 @@ class InkFile(BaseModel):
             raise ValueError(f"more than {MAX_SAMPLES} samples")
         if len({s.id for s in self.strokes}) != len(self.strokes):
             raise ValueError("duplicate stroke ids")
+        _check_extras(self, EXTRA_BYTES_FILE, "file")
         return self
 
 
-class InkError(ValueError):
-    pass
+def _reject_constant(name: str):
+    raise InkError(f"not a finite number: {name}")
+
+
+def load_json(data: bytes | str) -> dict:
+    """``json.loads`` for an ink file: refuses NaN / Infinity (pydantic would
+    keep one in an extra key, and every browser's JSON.parse then fails on
+    the file) and anything that is not an object."""
+    try:
+        if isinstance(data, (bytes, bytearray)):
+            data = data.decode("utf-8")
+        obj = json.loads(data, parse_constant=_reject_constant)
+    except (UnicodeDecodeError, json.JSONDecodeError) as e:
+        raise InkError(str(e)) from e
+    if not isinstance(obj, dict):
+        raise InkError("an ink file is a JSON object")
+    return obj
 
 
 def parse_ink(data: bytes | str | dict) -> InkFile:
-    """Validate bytes/JSON into an InkFile; InkError on anything off."""
+    """Validate bytes/JSON into an InkFile; InkError on anything off,
+    InkVersionError for a version 1 file (``upgrade_v1`` first)."""
+    if isinstance(data, (bytes, bytearray)):
+        if len(data) > MAX_BYTES:
+            raise InkError(f"ink file over {MAX_BYTES // (1024 * 1024)} MB")
+        data = load_json(data)
+    elif isinstance(data, str):
+        data = load_json(data)
+    if isinstance(data, dict) and data.get("format") == FORMAT and data.get("version", 1) == 1:
+        raise InkVersionError("gamma-ink version 1: update Gamma")
     try:
-        if isinstance(data, (bytes, bytearray)):
-            if len(data) > MAX_BYTES:
-                raise InkError(f"ink file over {MAX_BYTES // (1024 * 1024)} MB")
-            data = json.loads(data.decode("utf-8"))
-        elif isinstance(data, str):
-            data = json.loads(data)
         return InkFile.model_validate(data)
-    except (UnicodeDecodeError, json.JSONDecodeError, ValidationError) as e:
+    except ValidationError as e:
         raise InkError(str(e)) from e
+
+
+_cache: dict = {}
+_CACHE_MAX = 64
 
 
 def read_upload(uploads_dir, url: str) -> InkFile | None:
     """The parsed file a block's ``ink_url`` (``/api/uploads/<sha>.ink``)
     names, or None when the reference, the file or its contents are off;
-    the exporters skip such a group."""
-    from .markdown_export import UPLOAD_RE
-    m = UPLOAD_RE.search(url or "")
+    the exporters skip such a group. Parsed files are kept in a small LRU
+    keyed by path and stat (the name is the content's hash), so a page's
+    exporters and merges parse each file once; callers never mutate what
+    they get."""
+    m = _UPLOAD_RE.search(url or "")
     path = uploads_dir / m.group(1) if (m and uploads_dir) else None
-    if not path or not path.is_file():
+    if not path:
         return None
     try:
-        return parse_ink(path.read_bytes())
-    except (InkError, OSError):
+        st = path.stat()
+    except OSError:
         return None
+    key = (str(path), st.st_mtime_ns, st.st_size)
+    hit = _cache.pop(key, None)
+    if hit is None:
+        try:
+            hit = parse_ink(path.read_bytes())
+        except (InkError, OSError):
+            return None
+    _cache[key] = hit
+    while len(_cache) > _CACHE_MAX:
+        del _cache[next(iter(_cache))]
+    return hit
 
 
 # --- codec -------------------------------------------------------------------
 
 def decode_stroke(stroke: Stroke) -> list[dict]:
-    """A stroke's samples in points: ``[{x, y, p, t, a, z}]`` — ``p`` 0..1
-    (0.5 when unrecorded), ``t`` ms since t0 or None, ``a``/``z`` degrees or
-    None."""
+    """A stroke's samples in points: ``[{x, y, p?, t?, a?, z?, w?, o?,
+    rest}]`` — ``p`` 0..1, ``t`` ms since t0, ``a``/``z`` degrees, ``w``
+    and ``o`` as multipliers, ``rest`` the integers of the channels this
+    code does not know, in order (``encode_points`` copies them back)."""
     ch, pts, n = stroke.ch, stroke.pts, len(stroke.ch)
     out = []
-    x = y = t = 0
+    acc = {c: 0 for c in ch if c in DELTA_CH}
     for i in range(0, len(pts), n):
-        row = pts[i:i + n]
-        rec = {"p": 0.5, "t": None, "a": None, "z": None}
-        for c, v in zip(ch, row):
+        rec: dict = {"rest": []}
+        for c, v in zip(ch, pts[i:i + n]):
+            if c in acc:
+                acc[c] += v
+                v = acc[c]
             if c == "x":
-                x += v
-                rec["x"] = x / COORD_UNIT
+                rec["x"] = v / COORD_UNIT
             elif c == "y":
-                y += v
-                rec["y"] = y / COORD_UNIT
+                rec["y"] = v / COORD_UNIT
             elif c == "p":
                 rec["p"] = max(0.0, min(1.0, v / PRESSURE_UNIT))
             elif c == "t":
-                t += v
-                rec["t"] = t
-            elif c == "a":
-                rec["a"] = v
-            elif c == "z":
-                rec["z"] = v
+                rec["t"] = v
+            elif c in ("a", "z"):
+                rec[c] = v
+            elif c in ("w", "o"):
+                rec[c] = v / MULT_UNIT
+            else:
+                rec["rest"].append(v)
         out.append(rec)
     return out
 
 
 def encode_points(samples: list[dict], ch: str = "xy") -> list[int]:
     """The inverse of :func:`decode_stroke` (the importer and tests use it):
-    ``samples`` carry ``x``/``y`` in points and the optional channels."""
+    ``samples`` carry ``x``/``y`` in points and the optional channels; a
+    letter not known here takes the next integer of the sample's ``rest``."""
     out = []
-    px = py = pt = 0
+    prev = {c: 0 for c in ch if c in DELTA_CH}
     for s in samples:
+        rest = iter(s.get("rest") or ())
         for c in ch:
-            if c == "x":
-                v = round(s["x"] * COORD_UNIT)
-                out.append(v - px)
-                px = v
-            elif c == "y":
-                v = round(s["y"] * COORD_UNIT)
-                out.append(v - py)
-                py = v
+            if c in ("x", "y"):
+                v = round(s[c] * COORD_UNIT)
             elif c == "p":
-                out.append(round(max(0.0, min(1.0, s.get("p", 0.5))) * PRESSURE_UNIT))
+                v = round(max(0.0, min(1.0, s.get("p", 0.5))) * PRESSURE_UNIT)
             elif c == "t":
                 v = int(s.get("t") or 0)
-                out.append(v - pt)
-                pt = v
-            elif c == "a":
-                out.append(int(s.get("a") or 0))
-            elif c == "z":
-                out.append(int(s.get("z") or 0))
+            elif c in ("a", "z"):
+                v = int(s.get(c) or 0)
+            elif c in ("w", "o"):
+                v = round((s.get(c) if s.get(c) is not None else 1.0) * MULT_UNIT)
+            else:
+                v = int(next(rest, 0))
+            if c in prev:
+                out.append(v - prev[c])
+                prev[c] = v
+            else:
+                out.append(v)
     return out
 
 
-def stroke_width(stroke: Stroke, p: float) -> float:
-    """Drawn diameter: pens follow pressure; monoline, highlighter and
-    mouse/finger strokes stay constant. The pressure samples are retained."""
-    if stroke.tool != "pen" or not stroke.pen or stroke.brush == "monoline":
-        return stroke.size
-    return stroke.size * (1 + THINNING * (p - 0.5))
+def stroke_width(stroke: Stroke, sample: dict) -> float:
+    """The drawn diameter at a decoded sample: ``size × w`` when the stroke
+    carries the ``w`` channel, else ``size``. The whole rule."""
+    return stroke.size * sample["w"] if "w" in sample else stroke.size
 
 
 def stroke_polyline(stroke: Stroke) -> list[tuple[float, float, float]]:
     """``[(x, y, width)]`` per sample — what every renderer here draws from
-    (Xournal++'s model: variable-width polylines)."""
-    return [(s["x"], s["y"], stroke_width(stroke, s["p"])) for s in decode_stroke(stroke)]
+    (Xournal++'s model: variable-width polylines). Read off the raw arrays,
+    no per-sample dicts."""
+    ch, pts, n, size = stroke.ch, stroke.pts, len(stroke.ch), stroke.size
+    xi, yi, wi = ch.index("x"), ch.index("y"), ch.find("w")
+    out = []
+    x = y = w = 0
+    for i in range(0, len(pts), n):
+        x += pts[i + xi]
+        y += pts[i + yi]
+        if wi >= 0:
+            w += pts[i + wi]
+            out.append((x / COORD_UNIT, y / COORD_UNIT, size * w / MULT_UNIT))
+        else:
+            out.append((x / COORD_UNIT, y / COORD_UNIT, size))
+    return out
+
+
+def band_of(stroke: Stroke) -> int:
+    """0 draws under, 1 as ink: the stored ``band`` or the tool's default."""
+    if stroke.band is not None:
+        return stroke.band
+    return 0 if stroke.tool == "highlighter" else 1
+
+
+def in_draw_order(strokes) -> list[Stroke]:
+    """Band 0 first, then band 1, each in file order: the order every
+    renderer draws in."""
+    return [s for s in strokes if band_of(s) == 0] + [s for s in strokes if band_of(s) == 1]
 
 
 def bounding_box(ink: InkFile) -> tuple[float, float, float, float] | None:
@@ -250,16 +431,17 @@ def _fmt(v: float) -> str:
 
 
 def to_svg(ink: InkFile, box=None, pad: float = 4.0) -> str:
-    """An SVG of the strokes cropped to ``box`` (default: the bounding box).
-    Pens draw one round-capped segment per sample pair at that pair's width;
-    highlighters one constant-width path with their opacity, multiplied onto
-    what lies beneath."""
+    """An SVG of the strokes cropped to ``box`` (default: the bounding box),
+    band 0 then band 1. Pens (and any tool this code does not know) draw
+    one round-capped segment per sample pair at that pair's baked width;
+    highlighters one constant-width path with their opacity, multiplied
+    onto what lies beneath."""
     box = box or bounding_box(ink) or (0, 0, 1, 1)
     x0, y0, x1, y1 = box[0] - pad, box[1] - pad, box[2] + pad, box[3] + pad
     w, h = max(1.0, x1 - x0), max(1.0, y1 - y0)
     parts = [f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="{_fmt(x0)} {_fmt(y0)} {_fmt(w)} {_fmt(h)}" '
              f'width="{_fmt(w)}" height="{_fmt(h)}">']
-    for stroke in ink.strokes:
+    for stroke in in_draw_order(ink.strokes):
         poly = stroke_polyline(stroke)
         r, g, b, a = parse_color(stroke.color)
         color = f"rgb({round(r * 255)},{round(g * 255)},{round(b * 255)})"
@@ -286,13 +468,14 @@ def to_svg(ink: InkFile, box=None, pad: float = 4.0) -> str:
 
 
 def pdf_path_ops(ink: InkFile, to_pdf, scale: float = 1.0) -> bytes:
-    """PDF content-stream operators drawing the strokes: ``to_pdf(x, y)``
-    maps a display-space point to user space (the notes-as-PDF writer
-    draws in a frame of its own). Highlighter opacity is baked into the
-    colour (no ExtGState needed) — over white that is the same shade."""
+    """PDF content-stream operators drawing the strokes, band 0 then band
+    1: ``to_pdf(x, y)`` maps a display-space point to user space (the
+    notes-as-PDF writer draws in a frame of its own). Highlighter opacity
+    is baked into the colour (no ExtGState needed) — over white that is the
+    same shade."""
     from .pdf_typeset import num
     ops = [b"q 1 J 1 j"]
-    for stroke in ink.strokes:
+    for stroke in in_draw_order(ink.strokes):
         poly = stroke_polyline(stroke)
         r, g, b, a = parse_color(stroke.color)
         a = min(a, stroke.opacity)
@@ -317,7 +500,8 @@ def pdf_path_ops(ink: InkFile, to_pdf, scale: float = 1.0) -> bytes:
 def ink_buckets(ink: InkFile) -> list[list[Stroke]]:
     """Strokes grouped by look (tool, colour, size, opacity), in first-seen
     order: one ``/Ink`` annotation per bucket, since the PDF annotation has
-    one width and one colour."""
+    one width and one colour. The bucket's index is its identity (the note
+    carrier, the Zotero ``/NM``); the writer orders band-0 buckets first."""
     buckets: dict[tuple, list[Stroke]] = {}
     for s in ink.strokes:
         buckets.setdefault((s.tool, s.color.lower(), round(s.size, 2), round(s.opacity, 3)), []).append(s)
@@ -329,13 +513,17 @@ def from_pdf_ink(ink_list, width_pt: float, color: str, opacity: float, page: in
     """An embedded ``/Ink`` annotation → an ink file dict. ``ink_list`` is the
     ``/InkList`` (paths of x y pairs in PDF user space, origin bottom-left);
     ``private_json`` is the ``/GammaInk`` string a Gamma export left behind,
-    which wins when it parses (it carries pressure and time)."""
+    which wins when it parses (it carries pressure and time); one written
+    before release T is a version 1 file and is upgraded first."""
     if private_json:
         try:
-            ink = parse_ink(private_json)
+            obj = load_json(private_json)
+            if obj.get("version", 1) == 1:
+                obj = upgrade_v1(obj)
+            ink = parse_ink(obj)
             if ink.space.kind == "pdf-page":
                 ink.space.page = page
-            return ink.model_dump(exclude_none=True)
+            return to_dict(ink)
         except InkError:
             pass
     strokes = []
@@ -352,55 +540,272 @@ def from_pdf_ink(ink_list, width_pt: float, color: str, opacity: float, page: in
             "strokes": strokes}
 
 
+# --- canonical bytes ---------------------------------------------------------------
+
+def to_dict(model: BaseModel) -> dict:
+    """A model as the JSON object it was parsed from: the keys that were set
+    (defaults never invented), ``from`` by its name, null keys dropped,
+    unknown keys verbatim."""
+    return model.model_dump(by_alias=True, exclude_unset=True, exclude_none=True)
+
+
+def _canon(value):
+    """Whole-number floats as integers, null keys dropped, at every level —
+    the client's ``serializeInk`` writes ``612``, never ``612.0``."""
+    if isinstance(value, bool) or value is None:
+        return value
+    if isinstance(value, float):
+        return int(value) if value.is_integer() else value
+    if isinstance(value, dict):
+        return {k: _canon(v) for k, v in value.items() if v is not None}
+    if isinstance(value, list):
+        return [_canon(v) for v in value]
+    return value
+
+
 def dumps(ink: InkFile | dict) -> bytes:
-    """Canonical bytes for a file the server writes itself (a merge, an
-    import): sorted keys, no whitespace. Uploads are stored as they came."""
-    data = ink.model_dump(exclude_none=True) if isinstance(ink, InkFile) else ink
-    return json.dumps(data, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    """Canonical bytes (equal to the client's ``serializeInk``): sorted keys
+    at every level, no whitespace, null keys dropped, whole floats as
+    integers, never NaN, non-ASCII text as UTF-8 (``JSON.stringify`` never
+    escapes it, so an extra key holding "café" hashes the same on both
+    sides). For the files the server writes itself — a merge, an import,
+    the upgrade step; uploads are stored as they came."""
+    data = to_dict(ink) if isinstance(ink, InkFile) else ink
+    return json.dumps(_canon(data), separators=(",", ":"), sort_keys=True, allow_nan=False,
+                      ensure_ascii=False).encode("utf-8")
+
+
+# --- version 1 → 2 ---------------------------------------------------------------
+
+def upgrade_v1(obj: dict) -> dict:
+    """The one reader of a version 1 file (handwriting.md "Upgrading version
+    1"), on the raw parsed object so no default is invented: ``version``
+    becomes 2; a stroke whose tool is ``pen`` (or absent), ``pen`` not
+    false, ``brush`` absent and ``ch`` has ``p`` but no ``w`` gains ``w``
+    (appended to ``ch``) with ``500 + clamp(p, 0, 1000)`` per sample,
+    absolute on the first and a delta after; everything else is kept. Any
+    other version (2, a newer one, a malformed one) comes back as it is:
+    the converter never rewrites what is not version 1, ``parse_ink``
+    judges it. Deterministic; the output's ``dumps`` is pinned by
+    tests/shared/inkv2.json."""
+    if not isinstance(obj, dict):
+        raise InkError("an ink file is a JSON object")
+    if obj.get("version", 1) != 1:
+        return obj
+    out = {k: v for k, v in obj.items() if k != "version"}
+    out["version"] = 2
+    strokes = obj.get("strokes")
+    if isinstance(strokes, list):
+        out["strokes"] = [_upgrade_stroke(s) for s in strokes]
+    return out
+
+
+def _upgrade_stroke(s):
+    if not isinstance(s, dict):
+        return s
+    ch = s.get("ch", "xy")
+    if (s.get("tool", "pen") != "pen" or s.get("pen", True) is False or s.get("brush") is not None
+            or not isinstance(ch, str) or "p" not in ch or "w" in ch or not isinstance(s.get("pts"), list)):
+        return s
+    pts, n, pi = s["pts"], len(ch), ch.index("p")
+    if n == 0 or len(pts) % n:
+        return s
+    new, prev = [], None
+    for i in range(0, len(pts), n):
+        row = pts[i:i + n]
+        p = row[pi]
+        w = 500 + max(0, min(1000, int(p) if isinstance(p, (int, float)) and math.isfinite(p) else 0))
+        new.extend(row)
+        new.append(w if prev is None else w - prev)
+        prev = w
+    return {**s, "ch": ch + "w", "pts": new}
 
 
 # --- three-way merge -------------------------------------------------------------
 
-def merge_ink(base: InkFile | None, ours: InkFile, theirs: InkFile) -> tuple[InkFile, bool]:
-    """Apply the change ``base → ours`` to ``theirs`` (the group as stored
-    now), stroke by stroke: stroke ids survive every edit, so they play the
-    part text offsets play in gamma/textmerge.py. Returns ``(ink, clean)``.
+@dataclass
+class MergeResult:
+    ink: InkFile
+    clean: bool
+    lost_ours: list = field(default_factory=list)   # the writer's changes the result dropped
+    returned: list = field(default_factory=list)    # strokes theirs had erased that come back
 
-    Where theirs left a stroke as the base had it, ours' change to it (a
-    restyle, a move, an erasure) applies in place. A stroke ours added goes
-    after the stroke before it in ours that the result keeps, behind any
-    strokes theirs added there (theirs comes first, as with text). A stroke
-    both changed keeps theirs' version, and a stroke one side changed
-    survives the other's erasure (an edit beats a delete); either makes the
-    merge unclean. ``base`` None (the file is gone) merges as a union by
-    stroke id. frontend/src/ink/ink.js ``mergeInk`` is the same rule;
-    tests/shared/inkmerge.json pins both."""
+    def __iter__(self):  # (ink, clean) for the callers that unpack two
+        yield self.ink
+        yield self.clean
+
+    def report(self) -> dict:
+        return {"clean": self.clean, "lost_ours": list(self.lost_ours), "returned": list(self.returned)}
+
+
+_GEOM_KEYS = ("pts", "ch", "size", "shape")
+_SKIP_LOOK = frozenset(("id", "from", "pts", "ch", "size", "shape"))
+
+
+def _geom(s: Stroke) -> tuple:
+    return (tuple(s.pts), s.ch, s.size, s.shape.model_dump() if s.shape else None)
+
+
+def _look(s: Stroke) -> tuple:
+    extra = s.__pydantic_extra__ or {}
+    return (s.tool, s.brush, s.color, s.opacity, s.pen, s.t0, band_of(s),
+            s.fill.model_dump() if s.fill else None, s.dash, s.nib,
+            json.dumps(extra, sort_keys=True, separators=(",", ":")) if extra else "")
+
+
+def _same(a: Stroke, b: Stroke) -> bool:
+    return _geom(a) == _geom(b) and _look(a) == _look(b) and a.from_ == b.from_
+
+
+def _compose(geom_src: Stroke, look_src: Stroke) -> Stroke:
+    """One stroke from another's geometry and a third's look (the id and
+    ``from`` are the same stroke's)."""
+    g, lk = to_dict(geom_src), to_dict(look_src)
+    d = {k: v for k, v in lk.items() if k not in _GEOM_KEYS}
+    for k in _GEOM_KEYS:
+        if k in g:
+            d[k] = g[k]
+    d["id"] = geom_src.id
+    if geom_src.from_ or look_src.from_:
+        d["from"] = geom_src.from_ or look_src.from_
+    else:
+        d.pop("from", None)
+    return Stroke.model_validate(d)
+
+
+def _with_look(target: Stroke, look_src: Stroke) -> Stroke:
+    """``target`` wearing ``look_src``'s look, its own id, ``from`` and geometry."""
+    lk = {k: v for k, v in to_dict(look_src).items() if k not in _SKIP_LOOK}
+    d = {k: v for k, v in to_dict(target).items() if k in _SKIP_LOOK}
+    return Stroke.model_validate({**d, **lk})
+
+
+def _family(base_strokes: list, root: str, side: dict) -> list:
+    """The base strokes of ``root``'s family (the stroke itself or a piece
+    naming it) that ``side`` no longer has: the parents a cut replaced."""
+    return [p for p in base_strokes if (p.id == root or p.from_ == root) and p.id not in side]
+
+
+def _pieces(side_file: InkFile, b: dict, base_strokes: list) -> dict:
+    """``{root id: [pieces]}`` of the strokes this side added as cuts of a
+    base stroke (``from`` naming a family the side no longer has whole)."""
+    out: dict = {}
+    for s in side_file.strokes:
+        if s.from_ and s.id not in b and _family(base_strokes, s.from_, {x.id for x in side_file.strokes}):
+            out.setdefault(s.from_, []).append(s)
+    return out
+
+
+def merge_ink(base: InkFile | None, ours: InkFile, theirs: InkFile, base_ids=None) -> MergeResult:
+    """Apply the change ``base → ours`` to ``theirs`` (the group as stored
+    now), stroke by stroke (handwriting.md "Two writers, one group"). A
+    stroke is two halves, its geometry (``pts``, ``ch``, ``size``,
+    ``shape``) and its look (everything else but ``id`` and ``from``): a
+    half one side changed is taken from it, a half both changed differently
+    takes theirs and marks the merge unclean. An edit beats a delete. A
+    piece (``from: X``) follows its parent's fate on the other side. With
+    ``base`` None and ``base_ids`` (the base's stroke ids) a stroke one
+    side lacks is erased; with neither it is a union by id. Returns the
+    file, ``clean``, ``lost_ours`` (ours' changes dropped) and ``returned``
+    (strokes theirs erased that come back). frontend/src/ink/ink.js
+    ``mergeInk`` is the same rule; tests/shared/inkmerge.json pins both."""
+    if base is None and base_ids is not None:
+        return _merge_by_ids(ours, theirs, set(base_ids))
     b_strokes = base.strokes if base is not None else []
-    if base is not None and theirs.strokes == b_strokes:
-        return ours, True
-    if ours.strokes == b_strokes or ours.strokes == theirs.strokes:
-        return theirs, True
+    if base is not None and _equal(theirs.strokes, b_strokes):
+        return MergeResult(ours, True)
+    if _equal(ours.strokes, b_strokes) or _equal(ours.strokes, theirs.strokes):
+        return MergeResult(theirs, True)
     b = {s.id: s for s in b_strokes}
     o = {s.id: s for s in ours.strokes}
-    clean = True
+    t = {s.id: s for s in theirs.strokes}
+    clean, lost, returned = True, [], []
+    our_pieces = _pieces(ours, b, b_strokes) if base is not None else {}
+    their_pieces = _pieces(theirs, b, b_strokes) if base is not None else {}
+
+    # the fate of ours' cuts, by root: what theirs did to the parents
+    fate: dict = {}      # root -> ("theirs" | "look" | "erased" | "stand", look source)
+    cut_parent: dict = {}  # parent id -> root, for the parents ours cut
+    for root, pieces in our_pieces.items():
+        states, look_src = set(), None
+        for p in _family(b_strokes, root, o):
+            cut_parent[p.id] = root
+            tp = t.get(p.id)
+            if tp is None:
+                states.add("cut" if root in their_pieces else "erased")
+            elif _geom(tp) != _geom(p):
+                states.add("geom")
+            elif _look(tp) != _look(p):
+                states.add("look")
+                look_src = look_src or tp
+            else:
+                states.add("stand")
+        if states & {"cut", "geom"}:
+            fate[root] = ("theirs", None)
+            clean = False
+        elif "look" in states:
+            fate[root] = ("look", look_src)
+        elif states == {"erased"}:
+            fate[root] = ("erased", None)
+        else:
+            fate[root] = ("stand", None)
+
+    # theirs' cuts: what ours did to their parents
+    consumed: set = set()  # base ids theirs cut whose fate is settled here (never returned by ours)
+    their_piece_look: dict = {}   # root -> ours' look to put on theirs' pieces
+    their_piece_drop: set = set()  # roots whose pieces go (ours erased the drawing)
+    for root, pieces in their_pieces.items():
+        states, look_src = set(), None
+        for p in _family(b_strokes, root, t):
+            consumed.add(p.id)
+            op = o.get(p.id)
+            if op is None:
+                states.add("cut" if root in our_pieces else "erased")
+            elif _geom(op) != _geom(p):
+                states.add("geom")
+                lost.append(p.id)
+            elif _look(op) != _look(p):
+                states.add("look")
+                look_src = look_src or op
+            else:
+                states.add("stand")
+        if "geom" in states:
+            clean = False
+        elif "look" in states:
+            their_piece_look[root] = look_src
+        elif states == {"erased"}:
+            their_piece_drop.add(root)
+
     out: list[Stroke] = []
-    for t in theirs.strokes:
-        was, mine = b.get(t.id), o.get(t.id)
+    for tp in theirs.strokes:
+        was, mine = b.get(tp.id), o.get(tp.id)
         if was is None:                  # theirs added it
-            if mine is not None and mine != t:
+            if tp.from_ in their_piece_drop and tp.id not in o:
+                continue                 # a piece of a drawing ours undid
+            if tp.from_ in their_piece_look and tp.id not in o:
+                out.append(_with_look(tp, their_piece_look[tp.from_]))
+                continue
+            if mine is not None and not _same(mine, tp):
                 clean = False
-            out.append(t)
+                lost.append(tp.id)
+            out.append(tp)
+        elif tp.id in cut_parent:        # ours cut it into pieces
+            if fate[cut_parent[tp.id]][0] == "theirs":
+                out.append(tp)           # theirs moved it: it stands, the pieces go
+            continue                     # the pieces replace it (wearing theirs' look)
         elif mine is None:               # ours erased it
-            if t != was:
+            if not _same(tp, was):
                 clean = False            # theirs changed it: it stays
-                out.append(t)
-        elif mine == was or t == mine:
-            out.append(t)
-        elif t == was:
+                lost.append(tp.id)
+                out.append(tp)
+        elif _same(mine, was) or _same(tp, mine):
+            out.append(tp)
+        elif _same(tp, was):
             out.append(mine)             # only ours changed it
         else:
-            clean = False                # both changed it: theirs stands
-            out.append(t)
+            out.append(_merge_halves(was, mine, tp, lost))
+            if lost and lost[-1] == tp.id:
+                clean = False
     present = {s.id for s in out}
     anchor = None
     for s in ours.strokes:
@@ -409,18 +814,96 @@ def merge_ink(base: InkFile | None, ours: InkFile, theirs: InkFile) -> tuple[Ink
             continue
         was = b.get(s.id)
         if was is not None:
-            if s == was:
-                continue                 # theirs erased a stroke ours kept as it was
+            if _same(s, was) or s.id in consumed:
+                continue                 # theirs erased (or cut) a stroke ours kept as it was
             clean = False                # ours changed what theirs erased: it comes back
+            returned.append(s.id)
+        elif s.from_ in fate:
+            kind, look_src = fate[s.from_]
+            if kind == "theirs":
+                lost.append(s.id)
+                continue
+            if kind == "erased":
+                continue
+            if kind == "look":
+                parent = next(p for p in b_strokes if p.id == s.from_ or p.from_ == s.from_)
+                if _look(s) != _look(parent):
+                    clean = False        # both restyled: theirs' look wins
+                    lost.append(s.id)
+                s = _with_look(s, look_src)
         at = next(i for i, x in enumerate(out) if x.id == anchor) + 1 if anchor else 0
         while at < len(out) and out[at].id not in b and out[at].id not in o:
             at += 1                      # theirs' own additions there come first
         out.insert(at, s)
         present.add(s.id)
         anchor = s.id
+    return _result(out, ours, theirs, clean, lost, returned)
+
+
+def _merge_halves(was: Stroke, mine: Stroke, tp: Stroke, lost: list) -> Stroke:
+    """Both sides changed one stroke: each half from the side that changed
+    it, theirs where both did (``lost`` then names the stroke)."""
+    g_o, g_t = _geom(mine) != _geom(was), _geom(tp) != _geom(was)
+    l_o, l_t = _look(mine) != _look(was), _look(tp) != _look(was)
+    conflict = (g_o and g_t and _geom(mine) != _geom(tp)) or (l_o and l_t and _look(mine) != _look(tp))
+    if conflict:
+        lost.append(tp.id)
+    geom_src = mine if g_o and not (g_t and _geom(mine) != _geom(tp)) else tp
+    look_src = mine if l_o and not (l_t and _look(mine) != _look(tp)) else tp
+    if geom_src is tp and look_src is tp:
+        return tp
+    if geom_src is mine and look_src is mine:
+        return mine
+    return _compose(geom_src, look_src)
+
+
+def _merge_by_ids(ours: InkFile, theirs: InkFile, base_ids: set) -> MergeResult:
+    """The base file is gone but its stroke ids are known: a stroke one side
+    lacks whose id the base had was erased by that side — deletions win
+    both ways — and the merge is unclean when one was applied; the rest is
+    the union by id."""
+    o = {s.id: s for s in ours.strokes}
+    t = {s.id: s for s in theirs.strokes}
+    clean, lost = True, []
+    out: list[Stroke] = []
+    for tp in theirs.strokes:
+        mine = o.get(tp.id)
+        if tp.id in base_ids and mine is None:
+            clean = False                # ours erased it
+            continue
+        if mine is not None and not _same(mine, tp):
+            clean = False
+            lost.append(tp.id)
+        out.append(tp)
+    present = {s.id for s in out}
+    anchor = None
+    for s in ours.strokes:
+        if s.id in present:
+            anchor = s.id
+            continue
+        if s.id in base_ids:
+            clean = False                # theirs erased it: it stays gone
+            lost.append(s.id)
+            continue
+        at = next(i for i, x in enumerate(out) if x.id == anchor) + 1 if anchor else 0
+        while at < len(out) and out[at].id not in base_ids and out[at].id not in o:
+            at += 1
+        out.insert(at, s)
+        present.add(s.id)
+        anchor = s.id
+    return _result(out, ours, theirs, clean, lost, [])
+
+
+def _equal(a: list, b: list) -> bool:
+    return len(a) == len(b) and all(x.id == y.id and _same(x, y) for x, y in zip(a, b))
+
+
+def _result(out: list, ours: InkFile, theirs: InkFile, clean: bool, lost: list, returned: list) -> MergeResult:
     # a merge that changes nothing is that file itself (a change sent again)
-    if out == theirs.strokes:
-        return theirs, clean
-    if out == ours.strokes and ours.space == theirs.space:
-        return ours, clean
-    return InkFile(format=FORMAT, version=VERSION, space=theirs.space, strokes=out), clean
+    if _equal(out, theirs.strokes):
+        return MergeResult(theirs, clean, lost, returned)
+    if _equal(out, ours.strokes) and ours.space == theirs.space:
+        return MergeResult(ours, clean, lost, returned)
+    merged = InkFile.model_validate({**to_dict(ours), "space": to_dict(theirs.space),
+                                     "strokes": [to_dict(s) for s in out]})
+    return MergeResult(merged, clean, lost, returned)
