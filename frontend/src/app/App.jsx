@@ -118,13 +118,14 @@ import { ReminderAlerts } from "./ReminderAlerts";
 import { dotTone, noticeAction, noticeText } from "./notices";
 import { useBlockHistory } from "../editor/blockHistory.js";
 import { useMarks } from "../markup/MarkupLayers";
-import { MarkupToolbar } from "../markup/MarkupToolbar";
+import { MarkupToolbar, inkToolName } from "../markup/MarkupToolbar";
+import { normalizeTools, sizesFor, visibleTools } from "../ink/ink";   // the strip's key handler, the preset writes and the visible presets
 import { PageToolsContext } from "../markup/PageTools";
 import { makeStableActions, useStableActions } from "../shared/lib/stableActions.js";
 import { keepIfSame, sameMap, sameObject } from "../shared/lib/keepIfSame.js";
 import { isTextBox, normalizeTextBox } from "../markup/textBox.js";
 import { useTextBoxes } from "../markup/useTextBoxes";
-import { GROUP_SPLIT_BYTES, MAX_BYTES, MAX_STROKES, appendStroke, duplicateStrokes, eraseAt, eraserKeep, inkBounds, inkBytes, inkProps, mergeInk, newCanvasInk, newInk, pdfPositionOf, removeStrokes, restyleStrokes, serializeInk, strokeBounds, strokeBytes, toolStyle, transformStrokes, translateStrokes } from "../ink/ink";
+import { GROUP_SPLIT_BYTES, MAX_BYTES, MAX_STROKES, appendStroke, appendStrokes, boundsOf, cloneStrokes, duplicateStrokes, eraseAt, eraserKeep, flipStrokes, inkBounds, inkBytes, inkProps, mergeInk, newCanvasInk, newInk, pdfPositionOf, removeStrokes, restyleStrokes, serializeInk, strokeBounds, strokeBytes, toolStyle, transformStrokes, translateStrokes, unionBox } from "../ink/ink";
 import { stripKey } from "../ink/stripKeys.js";
 import { backTool, pencilAction } from "../ink/pencilActions.js";
 import { NotebookViewer, PaperMenu, readPlace, showPlace } from "../notebook/NotebookViewer";
@@ -139,6 +140,24 @@ import * as inkStore from "../ink/inkStore";
 // KiB in-flight cap, less the block's PUT beside the file and a margin
 // for non-ASCII text (a UTF-16 length undercounts its bytes).
 const KEEPALIVE_BYTES = 56 * 1024;
+// The system clipboard's copy of the handwriting clipboard, best effort
+// (docs/dev/handwriting.md "Copy, cut and paste"): text/html a <div
+// data-gamma-ink> whose text is the gamma/ink JSON, text/plain the JSON. A
+// browser that refuses the write (no permission, no focus, plain http)
+// loses nothing: App's inkClipRef is what a paste reads.
+function writeInkClipboard(clip) {
+  try {
+    if (!navigator.clipboard?.write || typeof ClipboardItem === "undefined") return;
+    const json = JSON.stringify(clip);
+    const div = document.createElement("div");
+    div.setAttribute("data-gamma-ink", "");
+    div.textContent = json;
+    navigator.clipboard.write([new ClipboardItem({
+      "text/html": new Blob([div.outerHTML], { type: "text/html" }),
+      "text/plain": new Blob([json], { type: "text/plain" }),
+    })]).catch(() => {});
+  } catch { /* the ref stands */ }
+}
 import * as playback from "../replay/playback.js";
 import { recordingClock } from "../replay/clock.js";
 import { audioSource } from "../recording/audioSource.js";
@@ -2531,7 +2550,17 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // the account-scoped ones follow the account through its profile
   // (useProfileSync). A guest's account is thrown away, so theirs stay local.
   const appPrefs = useAppPrefs();
-  const profileSync = useProfileSync(appPrefs, authUser?.user && !authUser.is_guest && !shareMode ? authUser.user : "");
+  // The account's presets replaced this browser's own edited list on load
+  // (prefs.js `onReplaced`): one pill a session offers to push the local
+  // list instead (docs/dev/handwriting.md "Presets follow the account").
+  const inkAdoptAskedRef = useRef(false);
+  const profileSync = useProfileSync(appPrefs, authUser?.user && !authUser.is_guest && !shareMode ? authUser.user : "", {
+    onReplaced: ({ name, local }) => {
+      if (name !== "inkTools" || inkAdoptAskedRef.current) return;
+      inkAdoptAskedRef.current = true;
+      setStatus(t("Use this browser's pens instead?"), { label: t("Use this browser's"), run: () => appPrefs.setInkTools(local) });
+    },
+  });
   const {
     theme, setTheme, pdfDarkPage, setPdfDarkPage, uiScale, setUiScale, recentThumbs, setRecentThumbs,
     palette, setPalette,
@@ -2544,7 +2573,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     inkEraserReturn, setInkEraserReturn, inkEraserFilter, setInkEraserFilter,
     replayMode, setReplayMode, replayRate, setReplayRate, replayFollow, setReplayFollow, replayLeadIn, setReplayLeadIn,
     recordingTranscribe, setRecordingTranscribe,
-    inkTools, setInkTools, inkEraserMode, setInkEraserMode, inkEraserSize, setInkEraserSize,
+    inkTools, setInkTools: setInkToolsRaw, inkEraserMode, setInkEraserMode, inkEraserSize, setInkEraserSize,
     inkLassoMode, setInkLassoMode, textBoxStyle, setTextBoxStyle,
     translateEnabled, setTranslateEnabled,
     selTranslate, setSelTranslate, selTranslateAuto, setSelTranslateAuto,
@@ -3765,6 +3794,19 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   const [inkUi, setInkUi] = useState({ open: false, tool: null, options: false, pen: null });
   const [inkFlash, setInkFlash] = useState(null);
   const inkActiveRef = useRef(null);
+  // The handwriting clipboard (docs/dev/handwriting.md "Copy, cut and
+  // paste"): {type: "gamma/ink", version: 2, space, box: {x1, y1, x2, y2},
+  // strokes} — the file's space, the selection's box in points and the raw
+  // stroke objects. The ref is the one source a paste reads (a ClipboardItem
+  // is written beside it, best effort, for other apps); `inkClip` mirrors
+  // whether it holds strokes, for the command guards and the layers.
+  const inkClipRef = useRef(null);
+  const [inkClip, setInkClip] = useState(false);
+  // The PDF page in view and its size at scale 1 (PdfViewer's onPageInView:
+  // the page whose centre lies nearest the scroller's), where Ctrl+V and
+  // the pill's Paste land; a notebook pastes on nbCurrent.
+  const pageInViewRef = useRef(null);
+  const onPageInView = useCallback((page, size) => { pageInViewRef.current = { page, size }; }, []);
   const inkTimerRef = useRef(0);
   const prevInkRef = useRef({ json: "", value: [] });
   // Sheets: the open page's (for handlers that run after an await); in the
@@ -6249,12 +6291,23 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // The PATCH names the file the draft was edited from (base_properties):
   // when someone else changed the drawing meanwhile the server merges both
   // by stroke and answers with the merged file (gamma/ops.py merge_ink).
+  // Every write of the preset list is normalised (ink.js normalizeTools), so
+  // the list this browser keeps and pushes is the one the profile's pull
+  // reads back through the same function: a raw patch ({brush: "pen"}, a
+  // default opacity) would differ from its own read on the next pull and
+  // pass for another device's change. The updater form is the pill's Show.
+  const setInkTools = useCallback((next) => setInkToolsRaw((was) => normalizeTools(typeof next === "function" ? next(was) : next)),
+    [setInkToolsRaw]);
+  // The presets on the strip: the list without its hidden ones (ink.js
+  // visibleTools) — what the row, the key table, the stylus's pen and its
+  // backTool read; a hidden preset is out of all of them.
+  const inkVisible = useMemo(() => visibleTools(inkTools), [inkTools]);
   // The pen preset a stylus writes with when nothing is armed: the last pen
   // armed on the strip, else the first pen in the row.
   const inkPen = useMemo(() => {
-    const p = inkTools.find((t) => t.id === inkUi.pen && t.kind === "pen") || inkTools.find((t) => t.kind === "pen") || inkTools[0];
+    const p = inkVisible.find((t) => t.id === inkUi.pen && t.kind === "pen") || inkVisible.find((t) => t.kind === "pen") || inkVisible[0];
     return toolStyle(p);
-  }, [inkTools, inkUi.pen]);
+  }, [inkVisible, inkUi.pen]);
   // The build fence ("Two writers, one group", "Fences"): the server's build
   // as this page loaded (the session's) against every socket hello; once
   // they differ the server was updated under this bundle, and the page
@@ -6296,13 +6349,13 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       return { ...s, open: true, tool: id, options: keepOptions && !!id ? s.options : false, pen: k === "pen" ? id : s.pen };
     });
   }, [inkTools]);
-  const openInkStrip = () => pickInkTool(inkTools.find((t) => t.id === inkUi.pen)?.id || inkTools[0].id);
-  // A removed preset leaves the strip's hand armed.
+  const openInkStrip = () => pickInkTool(inkVisible.find((t) => t.id === inkUi.pen)?.id || inkVisible[0].id);
+  // A removed or hidden preset leaves the strip's hand armed.
   useEffect(() => {
-    if (inkUi.tool && !["eraser", "select", "text"].includes(inkUi.tool) && !inkTools.some((t) => t.id === inkUi.tool)) {
+    if (inkUi.tool && !["eraser", "select", "text"].includes(inkUi.tool) && !inkVisible.some((t) => t.id === inkUi.tool)) {
       setInkUi((s) => ({ ...s, tool: null, options: false }));
     }
-  }, [inkTools, inkUi.tool]);
+  }, [inkVisible, inkUi.tool]);
   const inkBlocks = useMemo(() => {
     const next = flattenBlocks(blocks).filter((b) => b.properties?.ink_url !== undefined)
       .map((b) => ({ id: b.id, properties: b.properties }));
@@ -6427,6 +6480,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     const present = new Set(flattenBlocks(blocksRef.current).map((b) => b.id));
     const missing = changes.filter((c) => c.after.strokes.length && !present.has(c.id));
     if (missing.length) {
+      // A block coming back is fresh: no base for its draft (inkStore.dropDraft).
+      for (const c of missing) inkStore.dropDraft(c.id);
       // A PDF page's group goes at the page's top level; a sheet's under
       // its sheet (`page` is then the sheet's id).
       setBlocks((prev) => missing.reduce((tree, c) => {
@@ -6619,7 +6674,181 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       }
       applyInk(changes, { label: T("ink duplication") });
       handleInkSelect(inkSelection.page, items);
+    } else if (action === "copy") copyInkSelection(false);
+    else if (action === "cut") copyInkSelection(true);
+    else if (action === "flip") {
+      const sel = selectedInk();
+      if (!sel) return;
+      const cx = (sel.box[0] + sel.box[2]) / 2, cy = (sel.box[1] + sel.box[3]) / 2;
+      editInkSelection((ink, ids) => flipStrokes(ink, ids, { cx, cy, axis: value?.axis }), T("ink flip"));
+    } else if (action === "split") splitInkSelection();
+    else if (action === "merge") mergeInkSelection();
+  }
+  // The selected strokes as the groups hold them, in selection order, with
+  // their union box and the first group's space; null with none.
+  function selectedInk() {
+    if (!inkSelection) return null;
+    const strokes = [];
+    let box = null, space = null;
+    for (const item of inkSelection.items) {
+      const ink = inkOf(item.id);
+      if (!ink) continue;
+      const want = new Set(item.ids);
+      const mine = ink.strokes.filter((s) => want.has(s.id));
+      if (!mine.length) continue;
+      strokes.push(...mine);
+      box = unionBox(box, boundsOf(ink, item.ids));
+      space = space || ink.space;
     }
+    return strokes.length ? { strokes, box, space } : null;
+  }
+  // Copy (Ctrl+C, the menu) keeps the selection on the handwriting
+  // clipboard; cut (Ctrl+X) deletes it as well, the entry "ink cut". The
+  // pill offers Paste, the way to paste without a keyboard.
+  function copyInkSelection(cut) {
+    if (readOnly) return false;
+    const sel = selectedInk();
+    if (!sel) return false;
+    const [x1, y1, x2, y2] = sel.box;
+    const clip = { type: "gamma/ink", version: 2, space: sel.space, box: { x1, y1, x2, y2 }, strokes: sel.strokes };
+    inkClipRef.current = clip;
+    setInkClip(true);
+    writeInkClipboard(clip);
+    const n = sel.strokes.length;
+    if (cut) {
+      editInkSelection(removeStrokes, T("ink cut"));
+      setInkSelection(null);
+    }
+    setStatus(cut ? tn("Cut {n} stroke.", "Cut {n} strokes.", n) : tn("Copied {n} stroke.", "Copied {n} strokes.", n),
+      { label: t("Paste"), run: () => pasteAtCentre() });
+    return true;
+  }
+  // Several strokes at once (a paste): they join the surface's current
+  // group when it can take them all under MAX_STROKES and GROUP_SPLIT_BYTES,
+  // else a new group takes them all — a paste is never split across groups
+  // — as one entry. → {id, ids} of the group they landed in, null when no
+  // group could hold them.
+  async function handleInkStrokes(page, strokes, size, label = T("ink paste")) {
+    if (readOnly || !focusedBlockId || inkStale || !strokes.length || !size) return null;
+    const onSheet = typeof page === "string";
+    const fresh = () => (onSheet ? newCanvasInk(size.width, size.height) : newInk(page, size.width, size.height));
+    const bytes = strokes.reduce((n, s) => n + strokeBytes(s), 0);
+    if (strokes.length > MAX_STROKES || inkBytes(fresh()) + bytes > MAX_BYTES) {
+      setStatus(t("Too much handwriting to paste into one note."));
+      return null;
+    }
+    let id = inkActiveRef.current?.page === page ? inkActiveRef.current.id : null;
+    const existing = id ? flattenBlocks(blocksRef.current).find((b) => b.id === id && b.properties?.ink_url !== undefined) : null;
+    if (!existing) id = makeId();
+    const loaded = existing && !inkStore.draft(id) && existing.properties.ink_url
+      ? await inkStore.loadInk(existing.properties.ink_url) : null;
+    let before = inkStore.draft(id)?.ink || loaded || fresh();
+    if (before.strokes.length && (inkBytes(before) + bytes > GROUP_SPLIT_BYTES || before.strokes.length + strokes.length > MAX_STROKES)) {
+      id = makeId();
+      before = fresh();
+    }
+    inkActiveRef.current = { page, id };
+    const { ink: after, ids } = appendStrokes(before, strokes);
+    applyInk([{ id, page, before, after }], { label });
+    return { id, ids };
+  }
+  // The clipboard's strokes onto `page` ({width, height} in points): fresh
+  // copies with the copied box's top-left at `at` and the box kept inside
+  // the surface (one too small for it keeps the top-left corner on), at
+  // the same point size whatever the surface. They become the selection,
+  // the lasso armed.
+  async function pasteInk(page, at, size) {
+    const clip = inkClipRef.current;
+    if (!clip?.strokes?.length || readOnly || !size) return;
+    const { box } = clip, w = box.x2 - box.x1, h = box.y2 - box.y1;
+    const x = Math.max(0, Math.min(size.width - w, at.x)), y = Math.max(0, Math.min(size.height - h, at.y));
+    const landed = await handleInkStrokes(page, cloneStrokes(clip.strokes, x - box.x1, y - box.y1), size);
+    if (!landed) return;
+    pickInkTool("select");
+    handleInkSelect(page, [{ id: landed.id, ids: landed.ids }]);
+  }
+  // Where a paste without a point goes: the notebook's current sheet, else
+  // the PDF page in view, with its size.
+  function pasteTarget() {
+    if (notebook) {
+      const sheet = nbSheetsRef.current.find((s) => s.id === nbCurrent) || nbSheetsRef.current.at(-1);
+      return sheet ? { page: sheet.id, size: { width: sheet.paper.width, height: sheet.paper.height } } : null;
+    }
+    const v = pageInViewRef.current;
+    return v && pdfUrl && !pdfHidden ? { page: v.page, size: v.size } : null;
+  }
+  // Ctrl+V, the pill's Paste and More → Paste handwriting: the copied box
+  // centred on the surface in view.
+  function pasteAtCentre() {
+    const target = pasteTarget(), clip = inkClipRef.current;
+    if (!target || !clip) return;
+    const { page, size } = target, w = clip.box.x2 - clip.box.x1, h = clip.box.y2 - clip.box.y1;
+    pasteInk(page, { x: (size.width - w) / 2, y: (size.height - h) / 2 }, size);
+  }
+  // Ctrl+D: the menu's Duplicate, the copies 12 screen pixels away (the
+  // selection rectangle's screen transform gives the page's scale).
+  function duplicateInkSelection() {
+    const k = document.querySelector(".inkSelRect")?.getScreenCTM?.()?.a || 1;
+    handleInkAction("duplicate", { dx: 12 / k, dy: 12 / k });
+  }
+  // Ctrl+A, More → Select all: every stroke of every group on the
+  // selection's surface, else the one in view, the lasso armed.
+  function selectAllInk() {
+    const page = inkSelection?.page ?? pasteTarget()?.page;
+    if (page == null) return false;
+    const items = (inkBySurface.get(page) || [])
+      .map((b) => ({ id: b.id, ids: (inkOf(b.id)?.strokes || []).map((s) => s.id) })).filter((item) => item.ids.length);
+    if (!items.length) return false;
+    pickInkTool("select");
+    handleInkSelect(page, items);
+    return true;
+  }
+  // New note from selection: the selected strokes leave their groups for a
+  // new ink block on the same surface, ids kept, as one entry across the
+  // groups and the new block (applyInk inserts it; undo empties it again,
+  // and flushInk deletes the empty block). A selection that already is a
+  // whole note of its own is left as it is.
+  function splitInkSelection() {
+    const sel = selectedInk();
+    if (!sel) return;
+    const page = inkSelection.page, changes = [];
+    for (const item of inkSelection.items) {
+      const before = inkOf(item.id);
+      if (!before) continue;
+      const after = removeStrokes(before, item.ids);
+      if (after.strokes.length !== before.strokes.length) changes.push({ id: item.id, page, before, after });
+    }
+    if (!changes.length) return;
+    if (changes.length === 1 && !changes[0].after.strokes.length) { setStatus(t("This handwriting is already a note of its own.")); return; }
+    const id = makeId(), src = changes[0].before;
+    changes.push({ id, page, before: { ...src, strokes: [] }, after: { ...src, strokes: sel.strokes } });
+    applyInk(changes, { label: T("ink split") });
+    handleInkSelect(page, [{ id, ids: sel.strokes.map((s) => s.id) }]);
+  }
+  // Merge into note: the selection's whole group appended to the surface's
+  // previous group (the nearest before it in page order, else the first
+  // after it) and this one emptied, one entry; a group whose block holds a
+  // caption or notes is refused, since its block would stay behind empty.
+  function mergeInkSelection() {
+    const sel = selectedInk();
+    if (!sel || inkSelection.items.length !== 1) return;
+    const page = inkSelection.page, from = inkSelection.items[0].id, source = inkOf(from);
+    if (!source || source.strokes.length !== sel.strokes.length) return;
+    const block = findBlock(blocksRef.current, from);
+    if ((block?.content || "").trim() || block?.children?.length) {
+      setStatus(t("Not merged: this note has a caption or notes under it."));
+      return;
+    }
+    const groups = (inkBySurface.get(page) || []).map((b) => b.id).filter((gid) => inkOf(gid)?.strokes?.length);
+    const at = groups.indexOf(from);
+    const targetId = at > 0 ? groups[at - 1] : groups.find((gid) => gid !== from);
+    const target = targetId ? inkOf(targetId) : null;
+    if (!target) return;
+    if (target.strokes.length + sel.strokes.length > MAX_STROKES) { setStatus(t("This group is full; split it or start a new one")); return; }
+    const { ink: after, ids } = appendStrokes(target, sel.strokes);
+    applyInk([{ id: targetId, page, before: target, after }, { id: from, page, before: source, after: { ...source, strokes: [] } }],
+      { label: T("ink merge") });
+    handleInkSelect(page, [{ id: targetId, ids }]);
   }
   // From the notes (a marker, an ink card): show an ink group or a text box
   // on its page and outline it. From the page (Show note, a read-only click
@@ -6715,35 +6944,79 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   }
   // Leaving the page closes its paper menu.
   useEffect(() => { setPaperMenu(false); setNbCurrent(""); }, [focusedBlockId]);
-  // The strip's keys while it is open: 1–9 arm the preset at that position,
-  // P / H step through the pens / highlighters, E the eraser, L the lasso,
-  // T the Text tool, V the hand, Esc drops the selection then closes,
-  // Delete removes the selection, and Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y step
-  // the STROKE history — registered in the capture phase so the page's
-  // block undo (a bubble listener on the window) never sees them. Text
-  // boxes are blocks: with the Text tool armed or a box selected, Ctrl+Z is
-  // left to the block undo, and Esc to the box (it lets go first). A focused
-  // text field keeps its own keys.
+  // The strip's keys while it is open (the table is ink/stripKeys.js): 1–9
+  // arm the visible preset at that position, P / H step through the pens /
+  // highlighters (Shift: backwards), [ / ] step the armed preset's width
+  // with a pill, E taps or holds the eraser ("Hold-E" below), L the lasso,
+  // T the Text tool, V the hand, Esc closes one layer at a time (the
+  // selection, the options row, the strip), Delete removes the selection,
+  // and Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y step the STROKE history — registered
+  // in the capture phase so the page's block undo (a bubble listener on the
+  // window) never sees them. Text boxes are blocks: with the Text tool armed
+  // or a box selected, Ctrl+Z is left to the block undo, and Esc to the box
+  // (it lets go first). A focused text field keeps its own keys, and an open
+  // menu or a preset drag keeps Escape (they close themselves).
+  // Hold-E: the keydown arms the eraser as a tap does and keeps {since,
+  // erased, selection, tool} — the lasso selection and the tool armed before;
+  // handleInkEraseEnd marks `erased`; the keyup after 300 ms or more with an
+  // erasing pass between picks that tool again and, when it is the lasso,
+  // restores the selection. A shorter press, or one that erased nothing,
+  // leaves the eraser armed (a tap with it already armed opens its row, as
+  // a tap on the button does). A window blur ends a hold.
   const inkKeysRef = useRef(null);
-  inkKeysRef.current = { inkUndo, deleteInkSelection, hasSelection: !!inkSelection, tools: inkTools, tool: inkUi.tool, pickInkTool,
-    boxUndo, hasBox: !!textBoxes.sel };
+  inkKeysRef.current = { inkUndo, deleteInkSelection, hasSelection: !!inkSelection, selection: inkSelection, tools: inkVisible,
+    allTools: inkTools, setInkTools, tool: inkUi.tool, pickInkTool, boxUndo, hasBox: !!textBoxes.sel, optionsOpen: inkUi.options };
+  const inkHoldRef = useRef(null);
   useEffect(() => {
     if (!inkUi.open) return;
+    const endHold = () => { inkHoldRef.current = null; };
     const onKey = (e) => {
-      if (isTextField(e.target)) return;
+      // A text field keeps its keys; a keyup is harmless and ends a hold
+      // whose E is let go after a click into a caption.
+      if (e.type !== "keyup" && isTextField(e.target)) return;
       const K = inkKeysRef.current;
-      const action = stripKey(e, K);
+      const action = stripKey(e, { ...K, eraserDown: inkHoldRef.current?.since ?? null });
       if (!action) return;
+      if (e.code === "Escape" && document.querySelector(".ctxMenu, .inkDragGhost")) return;
       if (action.prevent) e.preventDefault();
       if (action.stop) e.stopPropagation();
       if (action.kind === "undo") K.inkUndo(action.redo);
       else if (action.kind === "deselect") setInkSelection(null);
+      else if (action.kind === "closeOptions") setInkUi((s) => ({ ...s, options: false }));
       else if (action.kind === "close") setInkUi((s) => ({ ...s, open: false, tool: null, options: false }));
       else if (action.kind === "delete") K.deleteInkSelection();
       else if (action.kind === "pick") K.pickInkTool(action.id);
+      else if (action.kind === "width") {
+        const p = K.allTools.find((x) => x.id === K.tool);
+        if (!p) return;
+        const sizes = sizesFor(p.kind);
+        const size = sizes[Math.max(0, Math.min(sizes.length - 1, sizes.indexOf(p.size) + action.step))];
+        if (size !== p.size) K.setInkTools(K.allTools.map((x) => (x.id === p.id ? { ...x, size } : x)));
+        setStatus(t("{name} · {size} pt.", { name: inkToolName(p), size }));
+      } else if (action.kind === "eraser" && action.phase === "down") {
+        if (inkHoldRef.current) return;
+        inkHoldRef.current = { since: e.timeStamp, erased: false, selection: K.selection, tool: K.tool };
+        if (K.tool !== "eraser") K.pickInkTool("eraser");
+      } else if (action.kind === "eraser") {
+        const hold = inkHoldRef.current;
+        inkHoldRef.current = null;
+        if (!hold) return;
+        if (action.held >= 300 && hold.erased) {
+          if (hold.tool === "eraser") return;
+          K.pickInkTool(hold.tool);
+          if (hold.tool === "select" && hold.selection) setInkSelection(hold.selection);
+        } else if (hold.tool === "eraser") setInkUi((s) => ({ ...s, options: !s.options }));
+      }
     };
     window.addEventListener("keydown", onKey, true);
-    return () => window.removeEventListener("keydown", onKey, true);
+    window.addEventListener("keyup", onKey, true);
+    window.addEventListener("blur", endHold);
+    return () => {
+      window.removeEventListener("keydown", onKey, true);
+      window.removeEventListener("keyup", onKey, true);
+      window.removeEventListener("blur", endHold);
+      endHold();
+    };
   }, [inkUi.open]);
   // A selection belongs to the lasso tool: switching away drops it.
   useEffect(() => { if (inkUi.tool !== "select") setInkSelection(null); }, [inkUi.tool]);
@@ -6944,7 +7217,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   const pencilRef = useRef(null);
   pencilRef.current = (action) => {
     if (readOnly || !(((!!pdfUrl || notebook) && !viewerHidden) || nbSheets.length)) return;
-    const result = pencilAction(action, { tools: inkTools, pen: inkUi.pen },
+    const result = pencilAction(action, { tools: inkVisible, pen: inkUi.pen },
       { tool: inkUi.tool, previous: inkPrevRef.current.previous, options: inkUi.options });
     if (!result) return;
     if ("pick" in result) pickInkTool(result.pick);
@@ -6953,13 +7226,15 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   useEffect(() => (nativeHost()?.pencil ? onHostMessage("pencil", ({ action }) => pencilRef.current(action)) : undefined), []);
   // The tool to go back to: the one armed before the current one, else the
   // stylus pen (the Pencil's switchPrevious picks the same).
-  const inkBack = () => backTool({ tools: inkTools, pen: inkUi.pen }, { tool: inkUi.tool, previous: inkPrevRef.current.previous });
+  const inkBack = () => backTool({ tools: inkVisible, pen: inkUi.pen }, { tool: inkUi.tool, previous: inkPrevRef.current.previous });
   // The eraser tool lifted (never the pen's eraser end or barrel, whose
-  // lift is the switch): with "Eraser returns to the last tool" on, back to
-  // the tool armed before it, the options row closed. The Pencil's squeeze
-  // toggles the eraser (pencilActions.js): with the return on, the lift
-  // re-arms the pen and the next squeeze arms the eraser again.
+  // lift is the switch): a held E (inkHoldRef) learns a pass was made; with
+  // "Eraser returns to the last tool" on, back to the tool armed before it,
+  // the options row closed. The Pencil's squeeze toggles the eraser
+  // (pencilActions.js): with the return on, the lift re-arms the pen and
+  // the next squeeze arms the eraser again.
   function handleInkEraseEnd() {
+    if (inkHoldRef.current) inkHoldRef.current.erased = true;
     if (!inkEraserReturn || inkUi.tool !== "eraser" || readOnly) return;
     pickInkTool(inkBack());
   }
@@ -7029,6 +7304,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     onStroke: handleInkStroke, onErase: handleInkErase, onErasePartial: handleInkErasePartial, onEraseEnd: handleInkEraseEnd,
     onEraseMany: handleInkEraseMany, onSelect: handleInkSelect, onUndoGesture: handleUndoGesture, onHoldStatus: handleHoldStatus,
     onAction: handleInkAction, onMoveSelection: handleInkMoveSelection, onJump: showInNotes, ...textBoxes.actions,
+    // a held pen or mouse, or a right-click, asking for the clipboard at a page point
+    onPaste: (page, pt, size) => pasteInk(page, pt, size),
     onFingerScroll: () => setStatus(t("Fingers scroll while a pen draws"),
       { label: t("Draw with finger"), run: () => setInkPenOnly(false) }),
     // A drawing with a pen style, a key or a channel this build does not
@@ -7039,14 +7316,19 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       setStatus(t("Some handwriting here comes from a newer Gamma and is drawn plainly; update to see it as drawn"));
     },
   });
+  // The chords the selection menu's titles name ("Copy · Ctrl+C").
+  const inkKeys = useMemo(() => {
+    const label = (id) => { const chord = commandChord(id, keybindings); return chord ? chordLabel(chord) : ""; };
+    return { copy: label("ink.copy"), cut: label("ink.cut"), duplicate: label("ink.duplicate") };
+  }, [keybindings]);
   const pageTools = useMemo(() => ({
     readOnly,
     ink: { tool: inkTool, penTool: inkPenTool, penOnly: inkPenOnly, pressure: inkPressure, eraserMode: inkEraserMode,
       eraserSize: inkEraserSize, eraserReturn: inkEraserReturn, eraserFilter: inkEraserFilter, drawHold: inkDrawHold,
-      scribble: inkScribbleErase, fingerUndo: inkFingerUndo, lassoMode: inkLassoMode },
+      scribble: inkScribbleErase, fingerUndo: inkFingerUndo, lassoMode: inkLassoMode, clip: inkClip, keys: inkKeys },
     text: { armed: textArmed, style: textBoxStyle },
     actions: pageActions,
-  }), [readOnly, inkTool, inkPenTool, inkPenOnly, inkPressure, inkEraserMode, inkEraserSize, inkEraserReturn, inkEraserFilter,
+  }), [readOnly, inkTool, inkPenTool, inkPenOnly, inkPressure, inkEraserMode, inkEraserSize, inkEraserReturn, inkEraserFilter, inkClip, inkKeys,
     inkDrawHold, inkScribbleErase, inkFingerUndo, inkLassoMode, textArmed, textBoxStyle, pageActions]);
   // --- Recordings (docs/dev/recording.md) ---------------------------------------
   // The page's recording blocks and every block stamped with the moment it
@@ -7267,6 +7549,15 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     metadata: () => openMetaPopover(),
     attach: () => setOpenPopover((p) => (p === "attach" ? null : "attach")),
     reportProblem: () => { setOpenPopover(null); setReportOpen(true); },
+    // The handwriting group (docs/dev/handwriting.md "Copy, cut and paste"):
+    // the guards, and the actions the keys, the palette, the strip's More
+    // menu and the selection menu share.
+    inkOpen: inkUi.open, inkTool: !!inkTool, inkSelected: !!inkSelection && !readOnly, inkClip,
+    inkCopy: () => copyInkSelection(false),
+    inkCut: () => copyInkSelection(true),
+    inkPaste: () => { pasteAtCentre(); },
+    inkDuplicate: () => { duplicateInkSelection(); },
+    inkSelectAll: () => selectAllInk(),
   };
   // What the command palette lists right now: the app commands that apply,
   // then the block commands that work on the focused row without an editor.
@@ -8360,6 +8651,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       canUndo={boxUndo || inkHistoryState.undo > 0} canRedo={boxUndo || inkHistoryState.redo > 0}
       onToggleOptions={() => setInkUi((s) => ({ ...s, options: !s.options }))}
       onChangeTools={setInkTools}
+      // the More menu's command rows and the strip's pills; Handwriting settings… lands on the section
+      cmdCtx={appCmdRef.current} bindings={keybindings} onStatus={setStatus}
+      onOpenSettings={() => openSettingsPane("handwriting")}
       onEraser={(patch) => {
         if ("mode" in patch) setInkEraserMode(patch.mode);
         if ("size" in patch) setInkEraserSize(patch.size);
@@ -10748,6 +11042,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
               citation={pdfCitation?.pageId === focusedBlockId ? pdfCitation : null}
               hideEmbeddedAnnots={embAnnots === "hide"}
               smoothWheel={smoothWheel}
+              onPageInView={onPageInView}
               darkPage={pdfDarkPage}
               translateKey={`${translateLang}|${translateSendModel}`}
               translateParallel={translateParallel}

@@ -1042,7 +1042,7 @@ export default function SettingsDialog({
   React.useEffect(() => {
     if (!activePane) { setQuery(""); setPending(null); setMobileIndex(false); return; }
     const legacyTarget = { notes: t("Enter makes"), search: t("On the home page"), viewer: t("Imported annotations"),
-      context: t("Single paper"), "ai-advanced": t("Context size"), prompts: t("Prompts") }[activePane];
+      context: t("Single paper"), "ai-advanced": t("Context size"), prompts: t("Prompts"), handwriting: t("Reset presets") }[activePane];
     if (legacyTarget) setJump({ label: legacyTarget });
   }, [activePane]);
   // Looking at a pane resolves the notices pointing at it (app/useNotices.js).

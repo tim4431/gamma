@@ -6,8 +6,8 @@ Where every setting lives, and how the Settings dialog is built.
 
 | Layer | Storage | Examples |
 |---|---|---|
-| Per browser | `localStorage`, one `gamma-*` key per preference, all declared in `PREFS` ([frontend/src/app/prefDefs.js](../../frontend/src/app/prefDefs.js)) with scope `browser` — except `gamma-link-name`, the share view's display name for a visitor without an account, owned by `src/collaboration/linkName.js` because the fetch wrapper reads it outside React | what describes this device: the interface size (`gamma-ui-scale`, applied pre-paint by `index.html`), the status bar, the handwriting input rules, finger undo and the tool strip's presets, eraser and lasso choices (`gamma-ink-*`: `gamma-ink-pen-only`, `gamma-ink-auto-pen`, `gamma-ink-pressure`, `gamma-ink-finger-undo`, `gamma-ink-tools`, `gamma-ink-eraser`, `gamma-ink-eraser-size`, `gamma-ink-lasso`), the style of new text boxes (`gamma-text-box-style`) and how a recording plays back (`gamma-replay-mode`, `gamma-replay-rate`, `gamma-replay-follow`; its lead-in `gamma-replay-lead-in` and the automatic transcript `gamma-recording-transcribe` are the account's), the metadata and translation model picks and dictation (they name this server's provider entries, like the chat model `gamma-chat-model`), and whether a shown "Linked from" section is folded (`gamma-backlinks-collapsed`; whether it is shown at all is the account's `gamma-backlinks`); outside `PREFS`, diagnostics tracing (`gamma-debug-log`) |
-| Per account, profile | the account-wide `profile` prefs key (`/api/prefs/profile`, one JSON object keyed by preference name), every `PREFS` entry with scope `account`; each also keeps its `gamma-*` localStorage key as the instant-paint cache | appearance (theme — the pre-paint script in `index.html` reads `gamma-theme`, resolves System to light or dark the way App.jsx's theme effect does and sets `data-theme` with its `data-scheme`, so the first frame has the right tokens ([ui-design.md](ui-design.md#tokens)) — flip page colors, the colour palette (`palette`, the swatches highlights, pens and text boxes offer), whether tours are suggested, `suggestTours`, and which tours the account has seen, `tourProgress`, written by the guide and shown nowhere, [onboarding.md](onboarding.md#storage)), the interface language (`gamma-language`, read by `main.jsx` before the first render, [i18n.md](i18n.md)), reading and editing (imported annotations, smooth wheel scrolling, how search opens, the handwriting habits `gamma-ink-draw-hold`, `gamma-ink-scribble-erase`, `gamma-ink-eraser-return` and `gamma-ink-eraser-filter`), translation (button and language, selection translation, effort, parallel requests), the Enter key, library display and PDF fetching, the sync pill's scope (`syncPillScope`), chat behaviour (tools switch, per-kind tool permissions, reasoning effort, speed, the login connection check, tool limits, snapshot clearing), context budgets, prompts, keyboard shortcuts (`keybindings`: command id → chord or null, [hotkeys.md](hotkeys.md)) |
+| Per browser | `localStorage`, one `gamma-*` key per preference, all declared in `PREFS` ([frontend/src/app/prefDefs.js](../../frontend/src/app/prefDefs.js)) with scope `browser` — except `gamma-link-name`, the share view's display name for a visitor without an account, owned by `src/collaboration/linkName.js` because the fetch wrapper reads it outside React | what describes this device: the interface size (`gamma-ui-scale`, applied pre-paint by `index.html`), the status bar, the handwriting input rules, finger undo and the tool strip's eraser and lasso choices (`gamma-ink-*`: `gamma-ink-pen-only`, `gamma-ink-auto-pen`, `gamma-ink-pressure`, `gamma-ink-finger-undo`, `gamma-ink-eraser`, `gamma-ink-eraser-size`, `gamma-ink-lasso`; the presets themselves, `gamma-ink-tools`, are the account's), the style of new text boxes (`gamma-text-box-style`) and how a recording plays back (`gamma-replay-mode`, `gamma-replay-rate`, `gamma-replay-follow`; its lead-in `gamma-replay-lead-in` and the automatic transcript `gamma-recording-transcribe` are the account's), the metadata and translation model picks and dictation (they name this server's provider entries, like the chat model `gamma-chat-model`), and whether a shown "Linked from" section is folded (`gamma-backlinks-collapsed`; whether it is shown at all is the account's `gamma-backlinks`); outside `PREFS`, diagnostics tracing (`gamma-debug-log`) |
+| Per account, profile | the account-wide `profile` prefs key (`/api/prefs/profile`, one JSON object keyed by preference name), every `PREFS` entry with scope `account`; each also keeps its `gamma-*` localStorage key as the instant-paint cache | appearance (theme — the pre-paint script in `index.html` reads `gamma-theme`, resolves System to light or dark the way App.jsx's theme effect does and sets `data-theme` with its `data-scheme`, so the first frame has the right tokens ([ui-design.md](ui-design.md#tokens)) — flip page colors, the colour palette (`palette`, the swatches highlights, pens and text boxes offer), whether tours are suggested, `suggestTours`, and which tours the account has seen, `tourProgress`, written by the guide and shown nowhere, [onboarding.md](onboarding.md#storage)), the interface language (`gamma-language`, read by `main.jsx` before the first render, [i18n.md](i18n.md)), reading and editing (imported annotations, smooth wheel scrolling, how search opens, the handwriting habits `gamma-ink-draw-hold`, `gamma-ink-scribble-erase`, `gamma-ink-eraser-return` and `gamma-ink-eraser-filter`, and the tool strip's presets `gamma-ink-tools`), translation (button and language, selection translation, effort, parallel requests), the Enter key, library display and PDF fetching, the sync pill's scope (`syncPillScope`), chat behaviour (tools switch, per-kind tool permissions, reasoning effort, speed, the login connection check, tool limits, snapshot clearing), context budgets, prompts, keyboard shortcuts (`keybindings`: command id → chord or null, [hotkeys.md](hotkeys.md)) |
 | Session only | React state, nothing stored | the Ctrl+scroll text size of the notes list and the chat transcript (`useTextScale` in [Widgets.jsx](../../frontend/src/shared/ui/Widgets.jsx)) — resets on reload |
 | Per account, synced | `/api/prefs/{key}` (small JSON KV: the account-wide keys in `users.db` `user_prefs`, the others in the workspace's `pages.db` `workspace_prefs`, [user_db.md](user_db.md)) | per account AND workspace, kept in that workspace and left out of its exports and backups: open tabs (`open-tabs`), the recently-viewed queue (`recent-views`), reading positions (`read-pos`) — they name one workspace's pages (pins are no pref: a pinned page or folder carries `properties.pinned` on its block, [home_library.md](home_library.md) "Pinned"); account-wide: active AI key (`ai-provider`) and the preference profile (`profile`, previous row). Server wins on load, localStorage (keyed `user@workspace`) is the instant-paint cache. The recents-card cover thumbnails are workspace data, through their own `/api/page-snaps` store (`page_snaps` in the workspace's `data.db` — over the prefs size cap) |
 | Per account, seen notices | the account-wide `notices-seen` prefs key (`db.NOTICES_SEEN_PREF_KEY`), `{notice id: fingerprint}`, written only by `POST /api/notices/{id}/seen` (below, "Notices") | which release and which log error the account has already looked at |
@@ -329,7 +329,27 @@ Preferences:
   still to straighten a line or clean up a shape"); **Scribble to erase**
   (`Toggle`, `inkScribbleErase`, flag, default off; hint "A dense
   back-and-forth with the pen erases the ink under it"; the first switch
-  on shows a status pill explaining the gesture). **This device** (browser
+  on shows a status pill explaining the gesture). The presets themselves,
+  **`inkTools`**, are this section's too, edited on the strip rather than
+  here: scope `account`, codec `json(normalizeTools)` (`profileValue`
+  accepts an array), up to 12 presets, each `{id, kind, color, size}` with
+  its optional `opacity`, `brush`, `stabilize`, `straight` and `hidden:
+  true` (a preset taken off the strip through its ⋯ menu's *Hide*; omitted
+  when false) — and any other key a preset carries is kept verbatim as
+  long as the preset serialises under 512 bytes of UTF-8, so an older build editing
+  one preset never strips what a newer one wrote. Sign-in follows the
+  profile rules above: the server's list wins and an account without one
+  is seeded from the browser; when the server's list replaces a list this
+  browser had changed itself (not the defaults), `useProfileSync`'s
+  `onReplaced({name, local})` lets App ask once, on the account's first
+  pull, on the status pill, "Use this browser's pens instead?" with *Use
+  this browser's*, which sets the local list again and so pushes it (a
+  later pull that differs is another device's edit and applies without
+  asking). App writes the list through `normalizeTools` every time, so
+  the pushed value is the canonical one a pull reads back. The pen a stylus
+  writes with stays session state, and the eraser's mode and size and the
+  lasso mode stay browser preferences (`gamma-ink-eraser`,
+  `gamma-ink-eraser-size`, `gamma-ink-lasso`). **This device** (browser
   scope, the section the handwriting input rules moved to): two
   `IconChoices` tiles ("Draws with": pen only / pen and
   finger — the stored preference is `inkPenOnly`), the
@@ -339,9 +359,8 @@ Preferences:
   (`COARSE`, as `inkPenOnly`) and `off` elsewhere; hint "Two fingers undo,
   three redo"). Every row of both sections has a `settingsSearch.js`
   entry under its section's title (the three input rules now say "This
-  device"), and the Handwriting rows' preferences are listed in
-  `sectionPrefs.js` (`inkTools` joins them when presets follow the
-  account). **Search opens as**: on the
+  device"), and the Handwriting rows' preferences, `inkTools` among them, are
+  listed in `sectionPrefs.js`. **Search opens as**: on the
   home page and on a page (Full panel / Find bar).
 - **Language and Translation** (pane id `translation`,
   [SettingsTranslation.jsx](../../frontend/src/settings/SettingsTranslation.jsx)),

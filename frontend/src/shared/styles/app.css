@@ -6386,6 +6386,8 @@ a.shareBrand:hover { background: var(--bg-hover); }
 .inkEditRow .inkDeleteBtn { color: var(--danger); }
 .inkEditOptions { align-items: center; border-top: 1px solid var(--border); margin-top: 4px; }
 .inkEditOptions .ctlBtn, .inkEditOptions .colorBtn { min-width: 32px; min-height: 32px; }
+/* The selection menu's second row (More edits): the first row's targets. */
+.inkEditOptions.inkEditMore .ctlBtn { flex: 1; min-width: 36px; min-height: 36px; }
 :is(.pdfViewer.pdfDark, [data-theme="gamma-dark"] .pdfViewer) :is(.inkLayer, .inkCanvas, .textBoxBody) { filter: invert(1) hue-rotate(180deg); }
 /* The brief outline after a jump from the notes. */
 .inkFlash {
@@ -6414,9 +6416,9 @@ a.shareBrand:hover { background: var(--bg-hover); }
 }
 
 /* The tool strip (markup/MarkupToolbar.jsx): top-centre of the viewer,
-   the control-box surface laid flat. Row one is the tools (presets,
-   eraser, lasso, text, hand, close, undo/redo); the options row of the armed
-   tool opens under it. */
+   the control-box surface laid flat. Row one is the tools in five groups
+   (presets | eraser, lasso, text | hand | More, close | undo/redo); the
+   options row of the armed tool opens under it. */
 .pdfInkBar {
   position: absolute;
   z-index: calc(var(--z-dock) + 1);
@@ -6455,11 +6457,55 @@ a.shareBrand:hover { background: var(--bg-hover); }
   gap: 2px;
   padding: 3px 5px;
 }
+.pdfInkRow { position: relative; } /* the drop bar of a preset drag is placed in it */
 .pdfInkSub { border-top: 1px solid var(--border); padding: 4px 6px; }
-.pdfInkHistory { display: flex; flex: none; gap: 2px; margin-left: auto; }
+.pdfInkHistory { display: flex; flex: none; gap: 2px; }
 .pdfInkSep { width: 1px; height: 16px; background: var(--border); margin: 0 3px; }
-/* A preset: the icon with its colour bar underneath (the bar's height follows the width). */
-.pdfInkBar .inkToolBtn { position: relative; width: var(--ctl-icon-btn); height: calc(var(--ctl-icon-btn) + 2px); padding-bottom: 6px; }
+.pdfInkSepEnd { margin-left: auto; } /* the rule before Undo / Redo, which pins them to the right end */
+/* A preset: the icon with its colour bar underneath (the bar's height
+   follows the width). touch-action: none, since a held finger drags it
+   along the row (usePresetDrag) and the viewer never scrolls from a button. */
+.pdfInkBar .inkToolBtn { position: relative; width: var(--ctl-icon-btn); height: calc(var(--ctl-icon-btn) + 2px); padding-bottom: 6px; touch-action: none; }
+.pdfInkBar .inkToolBtn.inkDragging { opacity: 0.35; }
+/* The 2 px accent bar where a dragged preset will land, and the ghost of
+   the preset riding with the pointer (on the body: the strip is transformed). */
+.inkDropBar { position: absolute; width: 2px; border-radius: 1px; background: var(--accent); pointer-events: none; z-index: 1; }
+.inkDragGhost {
+  position: fixed;
+  z-index: var(--z-tip);
+  width: var(--ctl-icon-btn);
+  height: calc(var(--ctl-icon-btn) + 2px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding-bottom: 6px;
+  box-sizing: border-box;
+  transform: translate(-50%, -50%);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  box-shadow: var(--shadow-2);
+  pointer-events: none;
+  opacity: 0.9;
+}
+.inkDragGhost .inkToolInk { left: 6px; right: 6px; }
+/* A preset's options: three captioned sub-rows, Style, Color and Width
+   (the caption a 14 px line); on a phone the captions go, Style and Width
+   share one wrapping line and Color takes the next, so the open strip
+   stays low over the page. */
+.pdfInkSub.inkPresetOptions { flex-direction: column; align-items: stretch; gap: 2px; }
+.inkOptRow { display: flex; align-items: center; flex-wrap: wrap; gap: 2px; }
+.inkOptCaption { flex: none; min-width: 44px; font-size: var(--fs-xs); font-weight: 600; line-height: 14px; color: var(--text-secondary); }
+@media (max-width: 480px) {
+  .inkOptCaption { display: none; }
+  .pdfInkSub.inkPresetOptions { flex-direction: row; flex-wrap: wrap; align-items: center; justify-content: center; }
+  .inkOptStyle { order: 1; }
+  .inkOptWidth { order: 2; }
+  .inkOptColor { order: 3; flex-basis: 100%; justify-content: center; }
+  .pdfInkBar .inkSizeBtn { width: 24px; }
+  .pdfInkBar .inkSegBtn { padding: 0 6px; }
+}
 .inkToolInk {
   position: absolute;
   left: 6px;

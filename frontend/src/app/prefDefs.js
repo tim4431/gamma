@@ -355,9 +355,14 @@ export const PREFS = {
   inkScribbleErase: flag("gamma-ink-scribble-erase", ACCOUNT, false),
   inkEraserReturn: flag("gamma-ink-eraser-return", ACCOUNT, false),
   inkEraserFilter: pref("gamma-ink-eraser-filter", ACCOUNT, "all", oneOf(["all", "pen", "highlighter"])),
-  // The strip's tool presets: [{id, kind: pen|highlighter, color, size}],
-  // the user's own row of pens and highlighters (ink.js DEFAULT_TOOLS).
-  inkTools: pref("gamma-ink-tools", BROWSER, DEFAULT_TOOLS, json(normalizeTools)),
+  // The strip's tool presets: [{id, kind: pen|highlighter, color, size, …}],
+  // the user's own row of pens and highlighters (ink.js DEFAULT_TOOLS,
+  // normalizeTools), the account's: a browser that signs in takes the
+  // account's list, an account without one is seeded from the browser
+  // (useProfileSync), and a browser whose own edited list the account's
+  // replaced is offered a pill to push it. Which pen a stylus writes with
+  // stays session state; the eraser and lasso modes below stay this browser's.
+  inkTools: pref("gamma-ink-tools", ACCOUNT, DEFAULT_TOOLS, json(normalizeTools)),
   // "stroke" erases whole strokes, "partial" cuts through them; the size
   // is an S/M/L index (ink/InkLayer.jsx ERASER_SIZES).
   inkEraserMode: pref("gamma-ink-eraser", BROWSER, "stroke", oneOf(["stroke", "partial"])),

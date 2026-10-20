@@ -8,12 +8,12 @@
 // FIXED_KEY_ICONS covers commands.js's fixedKeys() rows.
 import {
   ArrowDownIcon, ArrowLeftIcon, ArrowUpIcon, BackspaceIcon, BoldIcon, BugIcon, ChevronDownIcon, ChevronRightIcon,
-  ChevronUpIcon, CodeIcon, CollapseIcon, CopyIcon, CornerDownLeftIcon, DatabaseIcon, DeleteLineIcon,
+  ChevronUpIcon, ClipboardIcon, CodeIcon, CollapseIcon, CopyIcon, CornerDownLeftIcon, DatabaseIcon, DeleteLineIcon, DuplicateIcon,
   DownloadIcon, ExpandIcon, ExportIcon, FilePlusIcon, FileTextIcon, FolderFilesIcon, HighlightIcon,
   ImportIcon, IndentIcon, InfoIcon, InsertAboveIcon, InsertBelowIcon, ItalicIcon, KeyboardIcon, LinkIcon,
   MarkdownIcon, MessageSquareIcon, OutdentIcon, OutlineIcon, PaperclipIcon, PaperIcon, PencilIcon, PlusIcon, QuoteMarkIcon,
-  RedoIcon, SearchIcon, SettingsIcon, SigmaIcon, SlashIcon, SquareCheckIcon, StrikethroughIcon, TerminalIcon,
-  TextCursorIcon, TextSearchIcon, Trash2Icon, UndoIcon, UsersIcon, XIcon,
+  RectSelectIcon, RedoIcon, ScissorsIcon, SearchIcon, SettingsIcon, SigmaIcon, SlashIcon, SquareCheckIcon, StrikethroughIcon,
+  TerminalIcon, TextCursorIcon, TextSearchIcon, Trash2Icon, UndoIcon, UsersIcon, XIcon,
 } from "../shared/ui/Icons";
 
 const COMMAND_ICONS = {
@@ -44,6 +44,11 @@ const COMMAND_ICONS = {
   "app.exportObsidian": FolderFilesIcon,
   "app.exportGamma": DatabaseIcon,
   "app.reportProblem": BugIcon,
+  "ink.copy": CopyIcon,
+  "ink.cut": ScissorsIcon,
+  "ink.paste": ClipboardIcon,
+  "ink.duplicate": DuplicateIcon,
+  "ink.selectAll": RectSelectIcon,
   "block.up": ChevronUpIcon,
   "block.down": ChevronDownIcon,
   "block.moveUp": ArrowUpIcon,

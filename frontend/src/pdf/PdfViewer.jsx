@@ -448,12 +448,48 @@ async function fetchPdfData(url, onLoadState, isCancelled) {
 // that box on position.pageNumber.
 // flashHighlightId: the highlight a jump just landed on, which pulses once
 // (.pdfHlFlash; App's triggerFlash sets it for about a second).
-function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef, onJump, onHighlightJump, onLinkHighlight, onSelectionFinished, onAreaSelection, onHighlightContext, searchRef, captureRef, onEffectiveScale, onZoomTo, findMarks, onExternalLink, onLinkContext, onBeforeLinkJump, onLoadState, retryRef, areaMode, hideEmbeddedAnnots, darkPage = false, translateKey = "", translateParallel = 3, onTranslate, translateCtlRef, onTranslateState, selTranslate = "", translateLangLabel = "", marks, flashHighlightId = null, smoothWheel = false }) {
+function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef, onJump, onHighlightJump, onLinkHighlight, onSelectionFinished, onAreaSelection, onHighlightContext, searchRef, captureRef, onEffectiveScale, onZoomTo, findMarks, onExternalLink, onLinkContext, onBeforeLinkJump, onLoadState, retryRef, areaMode, hideEmbeddedAnnots, darkPage = false, translateKey = "", translateParallel = 3, onTranslate, translateCtlRef, onTranslateState, selTranslate = "", translateLangLabel = "", marks, flashHighlightId = null, smoothWheel = false, onPageInView }) {
   const tools = usePageTools(), { ink, text } = tools;
   const viewerRef = useRef(null);
   const [pdfDoc, setPdfDoc] = useState(null);
   const [numPages, setNumPages] = useState(0);
   const [docSeq, setDocSeq] = useState(0); // bumped per document — keys the page tree so swaps are atomic
+  // The page in view (docs/dev/handwriting.md "Copy, cut and paste"): of the
+  // page boxes intersecting the scroller, the one whose centre lies nearest
+  // the scroller's centre, reported as onPageInView(pageNumber, {width,
+  // height} at scale 1) whenever it changes — the intersections from one
+  // observer over every page box, the nearest re-judged per scroll frame.
+  const onPageInViewRef = useRef(onPageInView);
+  onPageInViewRef.current = onPageInView;
+  useEffect(() => {
+    const root = viewerRef.current;
+    if (!root || !onPageInView || !numPages) return undefined;
+    const seen = new Map(); // page box → page number, while it intersects
+    let last = 0, raf = 0;
+    const report = () => {
+      raf = 0;
+      const r = root.getBoundingClientRect(), mid = r.top + r.height / 2;
+      let best = 0, dist = Infinity;
+      for (const [el, n] of seen) {
+        const b = el.getBoundingClientRect(), d = Math.abs((b.top + b.bottom) / 2 - mid);
+        if (d < dist) { dist = d; best = n; }
+      }
+      if (!best || best === last) return;
+      last = best;
+      onPageInViewRef.current?.(best, { width: pageWidthsRef.current[best - 1] || FALLBACK_W, height: pageHeightsRef.current[best - 1] || FALLBACK_H });
+    };
+    const schedule = () => { if (!raf) raf = requestAnimationFrame(report); };
+    const obs = new IntersectionObserver((entries) => {
+      for (const e of entries) {
+        if (e.isIntersecting) seen.set(e.target, Number(e.target.dataset.page));
+        else seen.delete(e.target);
+      }
+      schedule();
+    }, { root });
+    root.querySelectorAll(".pdfPageWrap[data-page]").forEach((el) => obs.observe(el));
+    root.addEventListener("scroll", schedule, { passive: true });
+    return () => { obs.disconnect(); root.removeEventListener("scroll", schedule); cancelAnimationFrame(raf); };
+  }, [numPages, docSeq, !!onPageInView]); // eslint-disable-line react-hooks/exhaustive-deps
   const [displayedUrl, setDisplayedUrl] = useState(""); // url of the document on screen (lags `url` during a load)
   const [skeletonUrl, setSkeletonUrl] = useState(""); // url whose manifest skeleton is on screen (page boxes, no document yet)
   const [retryNonce, setRetryNonce] = useState(0); // bumped by the host's Retry button to re-run a failed load

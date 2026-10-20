@@ -124,8 +124,16 @@ export function toolId() {
 export function sizesFor(kind) {
   return kind === "highlighter" ? HIGHLIGHTER_SIZES : PEN_SIZES;
 }
-// A stored list (localStorage, possibly hand-edited or from an older
-// build) → a valid preset list, or the defaults when nothing survives.
+// The keys a preset is known by here; any other key it carries is kept as
+// it is (below), so an older build that edits one preset never strips what
+// a newer one wrote — while the preset serialises under TOOL_MAX_BYTES.
+const KNOWN_TOOL_KEYS = new Set(["id", "kind", "color", "size", "opacity", "brush", "stabilize", "straight", "hidden"]);
+const TOOL_MAX_BYTES = 512;   // UTF-8 bytes of the preset's JSON, what the profile stores
+const utf8Bytes = (s) => new TextEncoder().encode(s).length;
+// A stored list (the account's profile, localStorage, possibly hand-edited
+// or from an older or newer build) → a valid preset list, or the defaults
+// when nothing survives. At least one preset stays visible: a list that
+// hides every one shows its first.
 export function normalizeTools(list) {
   const out = [];
   const seen = new Set();
@@ -143,17 +151,34 @@ export function normalizeTools(list) {
     // out, the kind's usual one applies (toolStyle).
     const opacity = Number(t.opacity);
     // Smoothing (ink/stabilizer.js) 0–4, left out at 0; a highlighter's
-    // straightening, 'always' | 'off', left out at the default 'hold'.
+    // straightening, 'always' | 'off', left out at the default 'hold'; a
+    // hidden preset (off the strip, still in the list), left out when shown.
     const stabilize = Math.round(Number(t.stabilize));
-    out.push({ id, kind, color: t.color.toLowerCase(), size: Math.round(size * 100) / 100,
+    const preset = { id, kind, color: t.color.toLowerCase(), size: Math.round(size * 100) / 100,
       ...(Number.isFinite(opacity) && opacity >= 0.1 && opacity <= 1 && opacity !== defaultOpacity(kind)
         ? { opacity: Math.round(opacity * 100) / 100 } : {}),
       ...(kind === "pen" && t.brush === "monoline" ? { brush: "monoline" } : {}),
       ...(Number.isFinite(stabilize) && stabilize >= 1 && stabilize <= 4 ? { stabilize } : {}),
-      ...(kind === "highlighter" && (t.straight === "always" || t.straight === "off") ? { straight: t.straight } : {}) });
+      ...(kind === "highlighter" && (t.straight === "always" || t.straight === "off") ? { straight: t.straight } : {}),
+      ...(t.hidden === true ? { hidden: true } : {}) };
+    // The keys this build does not know, verbatim and after the known ones,
+    // each only while the preset stays under the byte cap.
+    for (const [key, value] of Object.entries(t)) {
+      if (KNOWN_TOOL_KEYS.has(key) || value === undefined) continue;
+      if (utf8Bytes(JSON.stringify({ ...preset, [key]: value })) > TOOL_MAX_BYTES) continue;
+      preset[key] = value;
+    }
+    out.push(preset);
     if (out.length >= MAX_TOOLS) break;
   }
-  return out.length ? out : DEFAULT_TOOLS.map((t) => ({ ...t }));
+  if (!out.length) return DEFAULT_TOOLS.map((t) => ({ ...t }));
+  if (out.every((t) => t.hidden)) { const { hidden, ...first } = out[0]; out[0] = first; }
+  return out;
+}
+// The presets on the strip: the list without its hidden ones. What the
+// row, the key table (ink/stripKeys.js) and the stylus's backTool read.
+export function visibleTools(list) {
+  return list.some((t) => t.hidden) ? list.filter((t) => !t.hidden) : list;
 }
 // A kind's opacity when a preset names none.
 export const defaultOpacity = (kind) => (kind === "highlighter" ? HIGHLIGHTER_OPACITY : 1);
@@ -452,14 +477,19 @@ export function restyleStrokes(ink, ids, patch) {
   return changed ? { ...ink, strokes } : ink;
 }
 
-// Fresh-id copies of strokes (ids outside `used`), every key but `from`
-// kept: a copy is not a piece of anything. Paste and Duplicate.
-export function cloneStrokes(strokes, used = new Set()) {
+// Fresh-id copies of strokes (ids outside `used`), moved by (dx, dy)
+// points through the first sample's two absolutes, every key but `from`
+// kept — t0, p, t, w, shape, extras: a copy is not a piece of anything.
+// The copy every paste and Duplicate is made of.
+export function cloneStrokes(strokes, dx = 0, dy = 0, used = new Set()) {
+  const ex = Math.round((dx || 0) * COORD_UNIT), ey = Math.round((dy || 0) * COORD_UNIT);
   return strokes.map(({ from, ...s }) => {
     let id;
     do { id = strokeId(); } while (used.has(id));
     used.add(id);
-    return { ...s, id, pts: [...s.pts] };
+    const pts = [...s.pts];
+    if (pts.length >= 2) { pts[0] += ex; pts[1] += ey; }
+    return { ...s, id, pts };
   });
 }
 
@@ -467,9 +497,78 @@ export function duplicateStrokes(ink, ids, dx, dy) {
   const selected = new Set(ids), used = new Set(ink.strokes.map((s) => s.id));
   const originals = ink.strokes.filter((s) => selected.has(s.id));
   if (!originals.length || ink.strokes.length + originals.length > MAX_STROKES) return { ink, ids: [] };
-  const copies = cloneStrokes(originals, used);
-  const copyIds = copies.map((s) => s.id);
-  return { ink: translateStrokes({ ...ink, strokes: [...ink.strokes, ...copies] }, copyIds, dx, dy), ids: copyIds };
+  const copies = cloneStrokes(originals, dx, dy, used);
+  return { ink: { ...ink, strokes: [...ink.strokes, ...copies] }, ids: copies.map((s) => s.id) };
+}
+
+// `strokes` appended to a group as they are (a paste's fresh copies, a
+// merge's moved strokes, `from` and all); one whose id the group already
+// holds is given a fresh id, so a group never carries an id twice. → {ink,
+// ids} with the ids as they landed; the same object with nothing to add.
+export function appendStrokes(ink, strokes) {
+  if (!strokes?.length) return { ink, ids: [] };
+  const used = new Set((ink.strokes || []).map((s) => s.id));
+  const added = strokes.map((s) => {
+    let id = s.id;
+    if (!id || used.has(id)) { do { id = strokeId(); } while (used.has(id)); }
+    used.add(id);
+    return id === s.id ? s : { ...s, id };
+  });
+  return { ink: { ...ink, strokes: [...(ink.strokes || []), ...added] }, ids: added.map((s) => s.id) };
+}
+
+// The selected strokes mirrored about (cx, cy): axis 'h' rewrites every x
+// as 2cx − x (left to right), 'v' every y as 2cy − y (top to bottom), in
+// the samples alone — size, p, t, w, ids and channels stay — with a
+// `shape` record carried through the same reflection and a calligraphy
+// `nib` as (180 − nib) mod 180, the same on either flip (an undirected
+// angle reflects the same way about both axes). The centre is taken on the
+// 1/100 pt grid, so two flips give back the very integers. The same
+// object when nothing is selected.
+export function flipStrokes(ink, ids, { cx, cy, axis }) {
+  const h = axis === "h", v = axis === "v";
+  if ((!h && !v) || !Number.isFinite(h ? cx : cy)) return ink;
+  const selected = new Set(ids);
+  const twice = Math.round(2 * (h ? cx : cy) * COORD_UNIT);   // 2c, in 1/100 pt
+  const c = twice / COORD_UNIT / 2;
+  let changed = false;
+  const strokes = ink.strokes.map((s) => {
+    if (!selected.has(s.id) || (s.pts || []).length < 2) return s;
+    changed = true;
+    const ch = s.ch || "xy", n = ch.length, at = h ? 0 : 1, pts = s.pts.slice();
+    // the channel is delta-coded: the first value flips about 2c and every
+    // later difference changes sign
+    pts[at] = twice - pts[at];
+    for (let i = n + at; i < pts.length; i += n) pts[i] = -pts[i] || 0;
+    const out = { ...s, pts };
+    if (s.shape) out.shape = flipShape(s.shape, c, h);
+    if (Number.isFinite(s.nib)) out.nib = (180 - s.nib) % 180;
+    return out;
+  });
+  return changed ? { ...ink, strokes } : ink;
+}
+// A shape record reflected: x (or y) coordinates about c, an angle to
+// 180° − angle (horizontal) or −angle (vertical), re-normalised as
+// shapes.js returns them (a rectangle's into [−45°, 45°) with its sides
+// swapped across a quarter turn, an ellipse's into [0°, 180°), a polygon's
+// into [0°, 360° / n)).
+const mod = (a, m) => ((a % m) + m) % m;
+function flipShape(shape, c, h) {
+  const p = shape?.params;
+  if (!p || typeof p !== "object") return shape;
+  const out = { ...p };
+  const coords = h ? ["x1", "x2", "x3", "cx"] : ["y1", "y2", "y3", "cy"];
+  for (const k of coords) if (Number.isFinite(out[k])) out[k] = 2 * c - out[k];
+  if (Number.isFinite(out.angle)) {
+    let a = h ? 180 - out.angle : -out.angle;
+    if (shape.kind === "rect") {
+      a = mod(a + 45, 90) - 45;
+      if (Math.round(((h ? 180 - out.angle : -out.angle) - a) / 90) % 2) [out.w, out.h] = [out.h, out.w];
+    } else if (shape.kind === "polygon" && out.n > 0) a = mod(a, 360 / out.n);
+    else if (shape.kind === "ellipse") a = mod(a, 180);
+    out.angle = Math.round(a * 100) / 100;
+  }
+  return { ...shape, params: out };
 }
 
 // Deep equality over JSON values; a missing key equals a null one.

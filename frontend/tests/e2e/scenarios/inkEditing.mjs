@@ -1,4 +1,4 @@
-import { encodeStroke, newInk, decodeStroke } from "../../../src/ink/ink.js";
+import { encodeStroke, newInk, decodeStroke, strokeBounds } from "../../../src/ink/ink.js";
 import { waitForPdf } from "./pdf.mjs";
 import { assertOpensInPlace } from "../harness.mjs";
 
@@ -10,6 +10,19 @@ export async function inkEditingScenarios({ server, browser, alice, bob, makePdf
     const d = await alice.api(`/api/blocks/${pageId}/subtree`);
     const block = d.block.children.find((b) => b.id === id);
     return block?.properties?.ink_url ? alice.api(block.properties.ink_url) : null;
+  };
+  // Every ink block on the page with its file, in tree order (a paste or a
+  // split adds one, a merge or a cut emptying one removes it).
+  const inkBlocks = async () => {
+    const d = await alice.api(`/api/blocks/${pageId}/subtree`);
+    const out = [];
+    for (const b of d.block.children) if (b.properties?.ink_url) out.push({ id: b.id, ink: await alice.api(b.properties.ink_url) });
+    return out;
+  };
+  const moreRow = async () => {
+    const more = menu().getByRole("button", { name: "More", exact: true });
+    if (await more.getAttribute("aria-expanded") !== "true") await more.tap();
+    await menu().getByRole("button", { name: "Cut", exact: true }).waitFor();
   };
   const point = async (x, y) => page.locator('[data-page="1"]').evaluate((el, [x, y]) => {
     const rect = el.getBoundingClientRect(), k = rect.width / 612;
@@ -85,10 +98,21 @@ export async function inkEditingScenarios({ server, browser, alice, bob, makePdf
     await page.keyboard.press("Control+z");
     await page.getByText("Nothing to undo in handwriting.", { exact: true }).waitFor();
     assertEq(await page.locator(paths).count(), 2, "empty ink history does not fall through to note undo");
-    for (const name of ["Color", "Width", "Duplicate", "Select note", "Show note", "Delete"]) {
+    // Row one is fixed; More adds the second row, every button a 36 px target.
+    for (const name of ["Color", "Width", "Style", "Copy", "Duplicate", "More", "Delete"]) {
       const box = await menu().getByRole("button", { name, exact: true }).boundingBox();
       assert(box.width >= 36 && box.height >= 36, `${name} retains a touch target`);
     }
+    assert(await menu().getByRole("button", { name: "Style", exact: true }).isDisabled(), "pen styles wait for a later release");
+    assertEq(await menu().getByRole("button", { name: "More", exact: true }).getAttribute("aria-expanded"), "false");
+    await menu().getByRole("button", { name: "More", exact: true }).tap();
+    assertEq(await menu().getByRole("button", { name: "More", exact: true }).getAttribute("aria-expanded"), "true");
+    // (Merge into note: the selection is this note's whole drawing and the page has another)
+    for (const name of ["Cut", "Flip horizontal", "Flip vertical", "New note", "Merge into note", "Select note", "Show note"]) {
+      const box = await menu().getByRole("button", { name, exact: true }).boundingBox();
+      assert(box.width >= 36 && box.height >= 36, `${name} retains a touch target`);
+    }
+    assertEq(await menu().locator(".inkEditMore .ctlBtn").count(), 7, "at most seven buttons in the second row");
     await menu().getByRole("button", { name: "Duplicate", exact: true }).hover();
     await page.getByRole("tooltip").filter({ hasText: "Duplicate" }).waitFor();
     assertNoProblems(page);
@@ -135,6 +159,121 @@ export async function inkEditingScenarios({ server, browser, alice, bob, makePdf
     await page.getByRole("button", { name: "Undo ink", exact: true }).tap();
     await until(async () => (await stored())?.strokes.length === 1);
     assertEq(await page.locator(paths).count(), 2);
+    assertNoProblems(page);
+  });
+
+  await step("ink edit: Ctrl+C and Ctrl+V paste fresh ids at the page centre with the lasso armed; Ctrl+X cuts and pastes back", async () => {
+    // After the reload above the strip stands with the hand (session state);
+    // Ctrl+C needs only a selection, Ctrl+V the strip open with a tool armed.
+    if (!await page.locator(".pdfInkBar").count()) await page.getByRole("button", { name: "Handwriting tools", exact: true }).tap();
+    if (await page.locator(".pdfInkBar .inkToolBtn.modeActive").getAttribute("aria-label") === "Hand") {
+      await page.getByRole("button", { name: / pen · .* · key 1\b/ }).tap();
+    }
+    await tapInk();
+    const original = (await stored()).strokes[0];
+    await page.keyboard.press("Control+c");
+    await page.getByText("Copied 1 stroke.", { exact: true }).waitFor();
+    assertEq((await inkBlocks()).length, 2, "copy adds nothing");
+    await page.keyboard.press("Control+v");
+    // No group is current on the page (nothing was drawn here), so the paste
+    // starts one: a third ink block holding the copy.
+    await until(async () => (await inkBlocks()).length === 3, { what: "the paste lands in a group of its own" });
+    const added = (await inkBlocks()).find((b) => ![noteId, secondId].includes(b.id));
+    assertEq(added.ink.strokes.length, 1);
+    const pasted = added.ink.strokes[0];
+    assert(pasted.id !== "thin", "a pasted stroke gets a fresh id");
+    assertEq(JSON.stringify(decodeStroke(pasted).map((q) => [q.p, q.t])), JSON.stringify(decodeStroke(original).map((q) => [q.p, q.t])), "pressure and timing kept");
+    const b = strokeBounds(pasted);
+    assert(Math.abs((b[0] + b[2]) / 2 - 306) < 1 && Math.abs((b[1] + b[3]) / 2 - 396) < 1, `the copied box is centred on the page: ${b}`);
+    await menu().waitFor();
+    assert(/^Lasso/.test(await page.locator(".pdfInkBar .inkToolBtn.modeActive").getAttribute("aria-label")), "the pasted strokes are selected with the lasso");
+    await page.keyboard.press("Control+x");
+    await page.getByText("Cut 1 stroke.", { exact: true }).waitFor();
+    await until(async () => (await inkBlocks()).length === 2, { what: "the cut empties its group, whose block goes" });
+    await page.keyboard.press("Control+v");
+    await until(async () => (await inkBlocks()).length === 3, { what: "the cut strokes paste back" });
+    const again = (await inkBlocks()).find((b) => ![noteId, secondId].includes(b.id));
+    assert(again.ink.strokes[0].id !== pasted.id && again.ink.strokes[0].id !== "thin", "another fresh id");
+    await menu().waitFor();
+    await menu().getByRole("button", { name: "Delete", exact: true }).tap();
+    await until(async () => (await inkBlocks()).length === 2);
+    assertEq(await page.locator(paths).count(), 2);
+    assertNoProblems(page);
+  });
+
+  await step("ink edit: flip horizontal mirrors the samples about the centre; a second flip restores them", async () => {
+    await tapInk();
+    const before = (await stored()).strokes[0], box = strokeBounds(before), cx = (box[0] + box[2]) / 2;
+    await moreRow();
+    await menu().getByRole("button", { name: "Flip horizontal", exact: true }).tap();
+    await until(async () => JSON.stringify((await stored()).strokes[0].pts) !== JSON.stringify(before.pts), { what: "the flip is saved" });
+    const a = decodeStroke(before), f = decodeStroke((await stored()).strokes[0]);
+    assertEq(f.length, a.length);
+    assert(f.every((q, i) => Math.abs(q.x - (2 * cx - a[i].x)) < 0.02), "x mirrored about the box centre");
+    assert(f.every((q, i) => q.y === a[i].y && q.p === a[i].p && q.t === a[i].t), "y, pressure and timing untouched");
+    assertEq(await menu().count(), 1, "the selection stays");
+    await menu().getByRole("button", { name: "Flip horizontal", exact: true }).tap();
+    await until(async () => JSON.stringify((await stored()).strokes[0].pts) === JSON.stringify(before.pts), { what: "two flips are the identity" });
+    await page.getByRole("button", { name: "Undo ink", exact: true }).tap();
+    await page.getByText("Undone: ink flip (page 1).", { exact: true }).waitFor();
+    await until(async () => JSON.stringify((await stored()).strokes[0].pts) !== JSON.stringify(before.pts));
+    await page.getByRole("button", { name: "Undo ink", exact: true }).tap();
+    await until(async () => JSON.stringify((await stored()).strokes[0].pts) === JSON.stringify(before.pts));
+    assertNoProblems(page);
+  });
+
+  await step("ink edit: New note moves the selection into a block of its own, Merge into note folds it into the previous one, and undo restores both", async () => {
+    await tapInk();
+    await menu().getByRole("button", { name: "Duplicate", exact: true }).tap();
+    await until(async () => (await stored())?.strokes.length === 2);
+    const copyId = (await stored()).strokes[1].id;
+    await moreRow();
+    await menu().getByRole("button", { name: "New note", exact: true }).tap();
+    await until(async () => (await inkBlocks()).length === 3 && (await stored()).strokes.length === 1, { what: "a new ink block takes the copy" });
+    const fresh = (await inkBlocks()).find((b) => ![noteId, secondId].includes(b.id));
+    assertEq(fresh.ink.strokes.map((s) => s.id).join(), copyId, "the moved stroke keeps its id");
+    assertEq((await stored()).strokes[0].id, "thin", "the source keeps the rest");
+    // The new note is selected whole and the page has other notes.
+    await menu().waitFor();
+    await menu().getByRole("button", { name: "Merge into note", exact: true }).tap();
+    await until(async () => (await inkBlocks()).length === 2 && (await stored(secondId)).strokes.length === 2,
+      { what: "the strokes join the previous note and the emptied block goes" });
+    assertEq((await stored(secondId)).strokes[1].id, copyId);
+    await page.getByRole("button", { name: "Undo ink", exact: true }).tap();
+    await page.getByText("Undone: ink merge (page 1).", { exact: true }).waitFor();
+    await until(async () => (await inkBlocks()).length === 3 && (await stored(secondId)).strokes.length === 1,
+      { what: "undo brings the block and both groups back together" });
+    assertEq((await inkBlocks()).find((b) => b.id === fresh.id)?.ink.strokes[0].id, copyId);
+    await page.getByRole("button", { name: "Undo ink", exact: true }).tap();
+    await page.getByText("Undone: ink split (page 1).", { exact: true }).waitFor();
+    await until(async () => (await inkBlocks()).length === 2 && (await stored()).strokes.length === 2, { what: "undo of the split returns the copy" });
+    await page.getByRole("button", { name: "Undo ink", exact: true }).tap();
+    await until(async () => (await stored()).strokes.length === 1);
+    assertEq(await page.locator(paths).count(), 2);
+    assertNoProblems(page);
+  });
+
+  await step("ink edit: a right-click on blank page with a tool armed offers Paste here, which pastes at the point", async () => {
+    await page.getByRole("button", { name: / pen · .* · key 1\b/ }).tap();
+    await tapInk();
+    await page.keyboard.press("Control+c");
+    await page.getByText("Copied 1 stroke.", { exact: true }).waitFor();
+    const blank = await point(300, 500);
+    await page.mouse.click(blank.x, blank.y, { button: "right" });
+    await page.getByRole("button", { name: "Paste here", exact: true }).click();
+    await until(async () => (await inkBlocks()).length === 3, { what: "Paste here lands a group" });
+    const added = (await inkBlocks()).find((b) => ![noteId, secondId].includes(b.id));
+    const b = strokeBounds(added.ink.strokes[0]);
+    assert(Math.abs(b[0] - 300) < 1 && Math.abs(b[1] - 500) < 1, `the copied box's top-left lands at the point: ${b}`);
+    await menu().waitFor();
+    await menu().getByRole("button", { name: "Delete", exact: true }).tap();
+    await until(async () => (await inkBlocks()).length === 2);
+    // Over ink, or with the hand, the page keeps its own menu: no Paste here.
+    await page.getByRole("button", { name: "Hand", exact: true }).tap();
+    await page.mouse.click(blank.x, blank.y, { button: "right" });
+    assertEq(await page.getByRole("button", { name: "Paste here", exact: true }).count(), 0, "the hand offers no paste");
+    // (Escape with no menu open would close the strip, which the next steps use.)
+    if (await page.locator(".ctxMenu").count()) await page.keyboard.press("Escape");
     assertNoProblems(page);
   });
 
@@ -267,7 +406,10 @@ export async function inkEditingScenarios({ server, browser, alice, bob, makePdf
     await page.setViewportSize({ width: 740, height: 620 });
     await page.locator(".pdfViewer").evaluate((el) => { el.scrollTop = 0; });
     await tapInk();
-    await menu().getByRole("button", { name: "Width", exact: true }).tap();
+    // The tallest state: both rows and the colour row.
+    await moreRow();
+    await menu().getByRole("button", { name: "Color", exact: true }).tap();
+    await menu().getByRole("button", { name: "Red", exact: true }).waitFor();
     await until(async () => {
       const m = await page.locator(".inkEditMenu").boundingBox();
       const s = await page.locator(".inkSelectionHit").boundingBox();

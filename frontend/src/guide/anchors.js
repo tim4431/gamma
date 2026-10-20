@@ -78,6 +78,7 @@ export const ANCHORS = {
   "ink.eraser": { view: "ink", open: ["pdf.inkButton"], description: "The eraser tool" },
   "ink.lasso": { view: "ink", open: ["pdf.inkButton"], description: "The lasso: select strokes to move or delete" },
   "ink.text": { view: "ink", open: ["pdf.inkButton"], description: "The Text tool: click the page to type, or drag to set the width" },
+  "ink.more": { view: "ink", open: ["pdf.inkButton"], description: "More handwriting tools: paste, select all, settings" },
   "ink.selection": { view: "ink selection", description: "The box around selected handwriting: drag it to move, its handles resize and rotate" },
   "dock.notes": { view: "page", description: "The notes: docked beside a PDF, or filling the page without one" },
   "notes.editor": { view: "page", open: ["dock.notes"], description: "The active note editor" },

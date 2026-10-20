@@ -30,44 +30,112 @@ app ([ipad.md](ipad.md)). Typed text on a page is
 ## What the user sees
 
 - The pen button in the viewer's zoom column opens the **tool strip** at
-  the top of the page, laid out like Notability's: a row of **tool
-  presets** — each a pen or a highlighter with its own colour and width,
-  shown as the icon over a colour bar (four pens and three highlighters
-  to start) — then the eraser, the lasso, the Text tool (typed text
-  boxes, [text_boxes.md](text_boxes.md)), a hand (nothing armed: scroll
-  and select text), close, and Undo / Redo. Its accessible name is
-  "Markup tools". One tap arms a tool;
+  the top of the page, laid out like Notability's. Its first row is five
+  groups, each split from the next by a thin rule (`.pdfInkSep`): the
+  **tool presets** — each a pen or a highlighter with its own colour and
+  width, shown as the icon over a colour bar (four pens and three
+  highlighters to start) — then the eraser, the lasso and the Text tool
+  (typed text boxes, [text_boxes.md](text_boxes.md)); a hand (nothing
+  armed: scroll and select text); **More** (⋯, "More handwriting tools")
+  and close; and Undo / Redo pinned at the right end, always the last two
+  buttons. Its accessible name is "Markup tools". One tap arms a tool;
   **tapping the armed tool again opens its options row** under the strip.
-  For a preset that row is the palette — the colour groups the account
-  chose for pen presets or for highlighter presets (Settings → Appearance
-  › Colors, [settings.md](settings.md); by default the 14 dark "Pen"
-  colours and the eight light "Ink highlight" colours, the four text
-  highlight colours and four more) plus
-  a custom colour through the browser's picker — eight widths as dots, a
-  *Smoothing* ladder of five dots (Off, 1–4: the preset's `stabilize`,
-  "Smoothing" below), on a highlighter the *Straight* pills (Hold · Always
-  · Off, its `straight`, "Straight highlighter" below),
-  *Duplicate* (a copy right after it, armed and still open for editing)
-  and *Remove*; the change applies to that preset, so the row is the
-  user's own set of pens (up to 12, kept in localStorage,
-  `gamma-ink-tools`, each with the concrete hex it was given and, when a
+  Opening the strip arms the last pen used.
+- **More** opens a menu on the press (a `ContextMenu` of `MenuItem`s
+  rendered outside the strip's tooltip host, so it takes the tooltip's
+  place in the same frame): *Paste handwriting* (Ctrl+V; greyed, titled
+  "Copy or cut handwriting first", until the handwriting clipboard holds
+  strokes), *Select all handwriting on this page* (Ctrl+A), a divider,
+  and *Handwriting settings…* (Settings → Reading & editing, at the
+  Handwriting section). The first two rows are the catalog commands
+  `ink.paste` and `ink.selectAll` drawn as `CommandMenuItem`s, so a
+  rebound chord shows there too. Escape or a press outside closes it.
+  The button is `data-guide="ink.more"` for the guide.
+- **A preset's options row** is three captioned sub-rows (the caption a
+  14 px line in the small caption size, hidden under 480 px of viewport
+  width). **Style**: the pills *Pen* (width follows the stylus pressure)
+  and *Ballpoint* (an even line at every pressure; the stored brush is
+  still `monoline`, a word that never shows — the preset reads "Red
+  ballpoint pen · 4 pt · key 1"), then the *Smoothing* ladder of five
+  dots (Off, 1–4: the preset's `stabilize`, "Smoothing" below); on a
+  highlighter the *Straight* pills (Hold · Always · Off, its `straight`,
+  "Straight highlighter" below) stand where Pen · Ballpoint would.
+  **Color**: the palette — the colour groups the account chose for pen
+  presets or for highlighter presets (Settings → Appearance › Colors,
+  [settings.md](settings.md); by default the 14 dark "Pen" colours and
+  the eight light "Ink highlight" colours, the four text highlight
+  colours and four more) plus a custom colour through the browser's
+  picker. **Width**: eight widths as dots (titled "Width 4 pt · [ ]": the
+  bracket keys step them), then *Duplicate* (a copy right after it,
+  armed and still open for editing), *Remove* and a ⋯ button, the **Tool
+  menu**, which opens on the press like More: *Move left*, *Move right*
+  (greyed at the row's ends; the pill says "Blue pen is now key 3."),
+  *Duplicate*, *Hide*, *Hidden tools ▸* (a submenu naming each hidden
+  preset, "Blue pen · 2 pt", a tap brings it back; greyed, "No hidden
+  tools", with none), *Remove*, a divider, and *Reset this tool* (colour,
+  width and style back to the default pen or highlighter of its kind).
+  *Remove* and *Hide* (the button and the menu rows) are greyed at the
+  last visible preset, whether or not hidden ones remain: the row never
+  empties.
+  Every change applies to that preset, so the row is the user's own set
+  of pens (up to 12, the account's `inkTools`, "Presets follow the
+  account" below, each with the concrete hex it was given and, when a
   swatch brought one, its own `opacity` — a swatch's alpha; a preset
   without one draws at the kind's usual opacity, 0.6 for a highlighter
-  and 1 for a pen, `toolStyle`). Colours are
-  named in words, never hex codes: a preset reads "Pink highlighter · 14 pt
-  · key 7", and each swatch is titled and labelled by its name. Any colour,
-  a custom one or a changed swatch included, takes the name of the nearest
-  reference colour (`colorName` in `shared/model/palette.js`, redmean
-  distance). Keys while the strip
-  is open: `1`–`9` arm the preset
-  at that position, `P` / `H` step through the pens / highlighters, `E`
-  `L` `T` `V` the eraser / lasso / Text tool / hand, `Esc`, `Delete` (the
-  lasso selection), and **`Ctrl+Z` / `Ctrl+Shift+Z` step the strokes**
-  (each stroke or selection edit is one entry; the history is per visit
-  of the page). While the Text tool is armed or a text box is selected or
-  edited, `Ctrl+Z` is left to the block history, and `Esc` to a selected
-  or edited box.
-  Opening the strip arms the last pen used.
+  and 1 for a pen, `toolStyle`). Colours are named in words, never hex
+  codes: a preset reads "Pink highlighter · 14 pt · key 7", and each
+  swatch is titled and labelled by its name. Any colour, a custom one or
+  a changed swatch included, takes the name of the nearest reference
+  colour (`colorName` in `shared/model/palette.js`, redmean distance).
+  On a phone (480 px and under) Style and Width share one wrapping line
+  and Color takes the next, so the open strip never stands more than
+  about 110 px over the page.
+- **Reorder by dragging.** A preset button follows a mouse drag of 6 px,
+  or a finger or pen held 500 ms and then moved, along the row: a ghost
+  of the button rides with the pointer, a 2 px accent bar shows where it
+  will land, and the pill says "Drop to reorder." The drop writes the new
+  order (ids unchanged) and the number keys follow it; dropping outside
+  the strip, or Escape, leaves the order as it was, and a hold with no
+  movement is a plain tap that arms the tool. **Hide** takes a preset off
+  the row, out of the `1`–`9` / `P` / `H` cycles and away from the stylus
+  (a hidden pen is no longer the pen a stylus writes with; the next
+  visible pen is) (the pill: "Blue pen hidden." with *Show*); *Hidden tools* in any preset's ⋯ menu brings it
+  back where it was. Keys `1`–`9` always count the visible presets in
+  row order.
+- **Presets follow the account.** `inkTools` lives in the profile
+  ([settings.md](settings.md) "Reading & editing"): a browser that signs
+  in takes the account's list, and an account without one is seeded from
+  the browser. When the server's list differs from a list this browser
+  had changed itself (not the defaults), one pill asks "Use this
+  browser's pens instead?" with *Use this browser's*, which pushes the
+  local list; the pill appears on that first pull only (a later pull
+  that differs is another device's edit of the account's list, which
+  simply applies), and otherwise the account's pens stand. Every write
+  of the list goes through `normalizeTools` (App's `setInkTools`), so
+  what this browser keeps and pushes is exactly what a pull reads back. Which pen a stylus writes with stays session
+  state; the eraser's mode and size and the lasso mode stay this
+  browser's.
+- Keys while the strip is open (`ink/stripKeys.js`, matched by the
+  physical key, so a layout or Shift does not matter): `1`–`9` arm the
+  visible preset at that position, `P` / `H` step forward through the
+  pens / highlighters and `Shift+P` / `Shift+H` backward, `[` / `]` make
+  the armed preset thinner / thicker through its eight widths (the pill:
+  "Blue pen · 2.8 pt.", options row open or not; at the end of the ladder
+  the pill repeats the width), `L` `T` `V` the lasso / Text tool / hand,
+  `Delete` (the lasso selection), and **`Ctrl+Z` / `Ctrl+Shift+Z` step
+  the strokes** (each stroke or selection edit is one entry; the history
+  is per visit of the page). **`E` taps or holds**: a tap arms the eraser
+  and it stays armed (a second tap opens its row, as a tap on the button
+  does); held 300 ms or more while an erasing pass is made, letting go
+  returns to the tool armed before it, and a lasso selection made before
+  the hold comes back with the lasso. `Esc` closes one layer at a time: a
+  selected text box, then the ink selection, then an open options row,
+  then the strip. Ctrl+C / X / V / D / A are not strip keys but catalog
+  commands (`ink.copy`, `ink.cut`, `ink.paste`, `ink.duplicate`,
+  `ink.selectAll`, "Copy, cut and paste" below), so Settings → Keyboard
+  lists and rebinds them. While the Text tool is armed or a text box is
+  selected or edited, `Ctrl+Z` is left to the block history, and `Esc`
+  to a selected or edited box.
 - The **eraser**'s options row: *whole strokes* removes anything it
   touches, *partial* cuts through them (the pieces on either side become
   their own strokes), three sizes, then *Erases* (All · Pens ·
@@ -140,19 +208,65 @@ app ([ipad.md](ipad.md)). Typed text on a page is
   of movement, a second contact, a pen contact or a cancel drops the pending
   selection. With finger drawing on, armed tools draw at once; use Hand to
   tap-select.
-- The **selection menu** opens after a tap or a lasso: Color, Width,
-  Duplicate, Select note (every stroke of the selected ink blocks), Show
-  note (jump to the notes pane) and Delete. Edits apply at once and keep
-  pressure and time; a mixed pen/highlighter selection gets a width row per
-  kind. Duplicate offsets fresh-id copies by 12 screen pixels and selects
-  them; a full group refuses. One action across several blocks is one undo
-  entry. The menu follows scrolling and resizing, flips above or below the
-  selection and hides while the selection is off-screen. It keeps inside
-  the scroller the ink is seen through: the PDF viewer, the notebook
-  view, or the notes for a sheet among them, and below the strip when the
-  strip floats over the top of that scroller. A text box's menu is placed
-  the same way (`useSelectionMenuAnchor`). A blank tap or Escape
-  dismisses it.
+- The **selection menu** opens after a tap or a lasso ("Edit
+  handwriting"), up to two rows of 36 px buttons. The first row never
+  changes: Color, Width, Style (greyed, "Pen styles arrive in a later
+  release", until the brushes land), Copy, Duplicate, More and Delete.
+  **More** (⋯, `aria-expanded`) adds the second row, "More edits": Cut,
+  Flip horizontal, Flip vertical, New note, Merge into note (only when
+  the selection is one whole group and the page has another), Select note
+  (every stroke of the selected ink blocks) and Show note (jump to the
+  notes pane) — at most seven buttons in a row, a hard cap for every later
+  addition. Whether the second row is open is remembered for the session.
+  Color and Width open their option row under whichever rows show, one at
+  a time. Edits apply at once and keep pressure and time; a mixed
+  pen/highlighter selection gets a width row per kind. Duplicate offsets
+  fresh-id copies by 12 screen pixels and selects them; a full group
+  refuses. Flip mirrors the strokes about the selection box's centre,
+  widths and timing untouched, the box staying put; a second flip puts
+  them back. One action across several blocks is one undo entry, and
+  every action works without a keyboard; a button's title names the chord
+  where one exists ("Copy · Ctrl+C"). The menu follows scrolling and
+  resizing, flips above or below the selection and hides while the
+  selection is off-screen. It keeps inside the scroller the ink is seen
+  through: the PDF viewer, the notebook view, or the notes for a sheet
+  among them, and below the strip when the strip floats over the top of
+  that scroller; its tallest state (two rows and a colour row) fits a
+  740 × 620 viewport. A text box's menu is placed the same way
+  (`useSelectionMenuAnchor`). A blank tap or Escape dismisses it.
+- **Copy, cut and paste.** Copy (Ctrl+C, or the menu) keeps the selected
+  strokes on a handwriting clipboard — in memory for this tab, and as a
+  best-effort system clipboard item for other apps ("Client" below) —
+  and the pill says "Copied 3 strokes." with *Paste* beside it, the way
+  to paste without a keyboard. Cut (Ctrl+X) copies and deletes, "Cut 3
+  strokes." with *Paste*. Paste puts down fresh-id copies, keeping each
+  stroke's pressure, timing and baked width and dropping a piece's
+  `from`, with the copied box's top-left at the target and the box kept
+  inside the page; a different kind of surface (a sheet from a PDF page,
+  or back) takes them at the same point size. Three ways to say where:
+  **Ctrl+V** (or the pill, or More → Paste handwriting) centres the
+  copied box on the page nearest the viewport's centre (the sheet in view
+  on a notebook); a **pen or mouse held still** on the page for 600 ms with
+  a writing tool armed and something on the clipboard, before it has
+  drawn 2 css px, opens a one-row menu, *Paste here*, at the point; a
+  **right-click** on blank page with a tool armed opens the same row.
+  Fingers never open it: a resting palm must not paste. The pasted
+  strokes join the page's current group as one undo entry, "ink paste",
+  and become the selection with the lasso armed. Select all (Ctrl+A, or
+  More) selects every stroke on that page and arms the lasso. Duplicate
+  is Ctrl+D as well.
+- **New note from selection** (More → New note) moves the selected
+  strokes out of their blocks into a new ink block on the same page,
+  their ids kept, as one undo entry ("ink split"); a selection that is
+  already a whole note of its own is left as it is ("This handwriting is
+  already a note of its own."). **Merge into note** (shown when the
+  selection is one whole group and the page has another) appends this
+  group's strokes to the page's previous group — the nearest one before it
+  in the page's order, else the first after it — and empties
+  this one, whose block then goes when it holds no caption or notes; one
+  that does is left as it is and the pill says "Not merged: this note has
+  a caption or notes under it." Undo brings both groups and the block
+  back together.
 - A **finger drag inside the selection** moves it, even in pen-only mode
   (the dashed box is a `touch-action: none` hit surface; fingers outside it
   scroll). A pen with a writing tool clears the selection and writes. The
@@ -192,9 +306,12 @@ app ([ipad.md](ipad.md)). Typed text on a page is
   sections ([settings.md](settings.md) "Reading & editing"):
   **Handwriting**, the account's — *Reset presets* (with a confirm),
   *Eraser returns to the last tool*, *Erases*, *Draw and hold*, *Scribble
-  to erase* — and **This device**, this browser's — *Draws with*, *Stylus
-  draws right away*, *Pressure-sensitive strokes*, *Undo with fingers*.
-  Presets, smoothing and the straight highlighter are set on the strip.
+  to erase*; the presets themselves (`inkTools`) are the account's too,
+  though they are edited on the strip — and **This device**, this
+  browser's — *Draws with*, *Stylus draws right away*,
+  *Pressure-sensitive strokes*, *Undo with fingers*. Presets, smoothing
+  and the straight highlighter are set on the strip; More → *Handwriting
+  settings…* opens the section.
 - **A stylus draws right away** even with the strip closed (Settings →
   Reading & editing → This device; on by default), with the last pen
   preset armed on the strip. **Fingers never draw**
@@ -597,9 +714,24 @@ reach:
   `nearestInkStroke` resolves a touch to the nearest stroke edge (a band-1
   stroke wins over a band-0 one within the radius, then the topmost);
   `restyleStrokes` changes selected colour or `size` (never `pts`),
-  returning the original object for a no-op; `duplicateStrokes` (through
-  `cloneStrokes`) preserves original samples and channels while assigning
-  unique ids to translated copies and dropping `from`. Every helper spreads
+  returning the original object for a no-op; `cloneStrokes(strokes, dx,
+  dy, used?)` is the copy every paste and duplicate is made of: fresh ids
+  (none in `used`), `from` dropped, moved by `dx, dy` pt through the
+  first sample's two absolutes, every other key — `t0`, `p`, `t`, `w`,
+  `shape`, extras — kept; `duplicateStrokes` is it on a selection.
+  `appendStrokes(ink, strokes)` adds strokes to a group as they are (a
+  paste's copies, a merge's moved strokes, `from` and all), re-minting
+  only an id the group already holds, → `{ink, ids}` as they landed.
+  `flipStrokes(ink, ids, {cx, cy, axis})` mirrors the selected strokes
+  about `(cx, cy)` — `'h'` rewrites each `x` as `2cx − x`, `'v'` each `y`
+  as `2cy − y` — in the samples alone (size, `p`, `t`, `w`, ids and
+  channels stay), carries a `shape` record through the same reflection
+  (points and centres reflected, an angle `180° − angle` for a horizontal
+  flip and `−angle` for a vertical one, re-normalised as `recognise`
+  returns them) and a `nib` as `(180 − nib) mod 180` (the same on either
+  flip: an undirected angle reflects the same way about both axes), and
+  returns the same object when nothing changes; two flips are the
+  identity, a unit test pins it. Every helper spreads
   the stroke object, so unknown keys ride along; `restroke` (the partial
   eraser's piece) keeps every key but `shape` and `fill`, mints an id and
   writes `from`. `withDefaults` fills a loaded file's omitted stroke keys
@@ -798,7 +930,26 @@ reach:
   everything (window blur).
 - `ink/stripKeys.js` (pure): `stripKey(event, state) → action | null`, the
   strip's key table (matched by `e.code`), dispatched by App's existing
-  capture-phase handler. `ink/pencilActions.js` (pure): `pencilAction(message,
+  capture-phase handler, for the keydown and, for `E` alone, the keyup.
+  `state` is `{tools: the visible presets, tool, hasSelection, boxUndo,
+  hasBox, optionsOpen, eraserDown}` (the last the timeStamp of the `E`
+  keydown still held, or null, so the keyup's `held` is pure arithmetic).
+  A chord with Ctrl, Cmd or
+  Alt is not the strip's, except Ctrl+Z / Y and the AltGr pair (`ctrlKey
+  && altKey` together, a third-level letter on some layouts, treated as
+  no modifier). Actions: `{kind: "pick", id}` for `1`–`9` (the visible
+  list), `P` / `H` (forward; with Shift backward, wrapping), `L`, `T`,
+  `V`; `{kind: "width", step: ±1}` for `BracketLeft` / `BracketRight`
+  (App steps the armed preset through `sizesFor(kind)` and says
+  "{name} · {size} pt." on the pill, where `name` is the preset's colour
+  and kind in words); `{kind: "eraser", phase: "down" | "up", held}` for
+  `E` — `down` on a non-repeat keydown, `up` on the keyup with `held` the
+  ms since the down, so App decides tap or hold ("Hold-E" under App);
+  `{kind: "escape"}` resolved by App in order — `hasBox` leaves it to the
+  box (null), `hasSelection` → `deselect`, `optionsOpen` → `closeOptions`,
+  else `close`; `delete`; `undo`. Nothing with Mod-C / X / V / D / A: those
+  are catalog commands.
+- `ink/pencilActions.js` (pure): `pencilAction(message,
   prefs, state)`, the Pencil double-tap and squeeze mapping App applies, and
   `backTool(prefs, state)`, the tool to go back to (the one armed before,
   when it is still on the strip and not the current one, else the stylus
@@ -853,6 +1004,22 @@ reach:
   listeners); `useSelectionMenuAnchor` gives it the selection's edges and
   the band it stays in, and the menu, from its own measured height, picks
   above or below before it is painted ([ui-design.md](ui-design.md#menus-and-popups-open-in-place)).
+  Its first row is fixed — Color, Width, Style (`disabled`, title "Pen
+  styles arrive in a later release"), Copy, Duplicate, More (`ctlBtn`,
+  `MoreIcon`, aria-label "More", title "More edits", `aria-expanded`),
+  Delete — and More shows the `.inkEditOptions.inkEditMore` row (its
+  `aria-label` "More edits"): Cut, Flip horizontal (`FlipHIcon`), Flip
+  vertical (`FlipVIcon`), New note (`NotebookPenIcon`), Merge into note
+  (`MergeIcon`, rendered only when `canMerge`: the selected ids are
+  exactly one group's strokes and the surface has another group, which
+  the layer works out from `groups`), Select note, Show note; whether it
+  is open is a module-level flag, so it lasts the session. The Color and
+  Width rows render under the open rows, one at a time. Copy, Cut and
+  Duplicate take their title's chord from `ink.keys` on the context
+  (`"Copy · Ctrl+C"`; the label alone when unbound). `usePalette` is
+  called before the early return, so the hooks' order never changes. The
+  buttons dispatch `onAction(page, kind, arg)` with `copy`, `cut`, `flip`
+  `{axis: 'h' | 'v'}`, `split`, `merge` beside the older kinds.
   A text box's menu is placed the same way. `InkTransformHandles` are the resize/rotate
   buttons; `InkTooltips` shows a button's title on hover or focus for the
   strip and the menus, since native titles are unreliable under Pencil
@@ -942,6 +1109,24 @@ reach:
     `claim.commit` never reads a hold (the shell sends samples at the
     lift only). `commitStroke` passes `hold: d.hold` to `finishStroke`
     and the result's `status` to `onHoldStatus`.
+  - Paste here: with `ink.clip` (the clipboard holds strokes) and a pen
+    or highlighter preset armed, a pen or mouse down in stroke mode arms
+    the draw-and-hold timer with the chord floor at 0; when it fires
+    before the tip has moved 2 css px (600 ms still), the draft is
+    cancelled — nothing is committed — and a one-row `ContextMenu` (a
+    `MenuItem` *Paste here*, `ClipboardIcon`) opens at the point; its row
+    calls `onPaste(page, pt, {width, height})` with the point in page
+    points and the surface's size. The draft's `pasteArmed` flag and its
+    `travel` (the farthest the tip went from the down, css px) are what
+    `holdFire` reads, before the shape check; the lift that follows is
+    not a click (`pasteHold`). A finger
+    never starts it: the flag checks `pointerType`, so a resting palm
+    cannot paste. The wrapper's `contextmenu` listener opens the same row
+    for a mouse right-click when a tool is armed, no stroke is under the
+    pointer and the clipboard holds strokes, and `preventDefault`s only
+    then; otherwise the page's own menus run. Chord 0 against the hold's
+    `max(24 css px, 18 pt)` keeps the two timers apart: a tip that has
+    travelled cannot paste, one that has not cannot snap.
   - Erasing: the draw context records `eraseSource: 'tool' | 'barrel'`
     (the armed eraser, or the pen's eraser end / barrel button). `finish`
     in erase mode calls `onEraseEnd()` once per gesture for `'tool'`
@@ -972,15 +1157,50 @@ reach:
     has moved 8 css px, as the pending path defers a tap, so a chord never
     clears the selection it is about to restore.
 - `markup/` ([text_boxes.md](text_boxes.md) "Client"):
-  - `MarkupToolbar.jsx` `MarkupToolbar` is the strip: the presets, the
-    eraser, the lasso, the Text tool and their options rows (`.pdfInkSub`;
-    a preset's row carries the *Smoothing* five-dot ladder, `inkSizeBtn`
-    dots for `stabilize` 0–4, and a highlighter's the *Straight* trio
-    through the `seg` helper; the eraser's row, after the sizes, the
-    *Erases* trio and the *Back to last tool* toggle, `aria-pressed`,
-    title "After erasing, return to the tool you had"), the hand,
-    close and the history buttons, whose labels follow its `blockHistory`
-    flag.
+  - `MarkupToolbar.jsx` `MarkupToolbar` is the strip. Its first row
+    (`.pdfInkRow`) is five groups split by `.pdfInkSep`: the presets; the
+    eraser, the lasso and the Text tool; the hand; **More** and close; and
+    the history buttons last, whose labels follow its `blockHistory`
+    flag. Its menus share one hoisted `menu` state `{kind, x, y, id?}`
+    (`'more'`, or `'tool'` with the preset's id) rendered as a
+    `ContextMenu` **after** the `InkTooltips` element and opened on the
+    press (`onPointerDown` for button 0, `onClick` only for a keyboard's
+    `e.detail === 0`: the recording player's `menuButton`), never through
+    `MenuButton` or `ActionMenu`, which open on the click inside the host.
+    The More button (`ctlBtn`, `MoreIcon`, aria-label and title "More
+    handwriting tools", `aria-haspopup="menu"`, `aria-expanded`,
+    `data-guide="ink.more"`) lists `CommandMenuItem`s for `ink.paste`
+    (titled "Copy or cut handwriting first" while greyed) and
+    `ink.selectAll`, a `MenuDivider` and *Handwriting settings…*
+    (`SettingsIcon`, `onOpenSettings("reading", "Handwriting")`, which
+    App serves through the `handwriting` settings alias
+    (`settings/settingsNavigation.js`): the Reading & editing pane,
+    scrolled to the section's first row, *Reset presets*). A
+    preset's ⋯ (`ctlBtn`, `MoreIcon`, aria-label "Tool menu", title
+    "Move, hide, reset or remove this tool", `aria-haspopup`,
+    `aria-expanded`) lists Move left, Move right (each `disabled` at its
+    end of the visible row), Duplicate, Hide (`EyeOffIcon`), Hidden tools
+    (a `SubMenuItem` of the `hidden` presets by their names; `disabled`,
+    title "No hidden tools", with none), Remove (`danger`), a divider and
+    Reset this tool, each through `onChangeTools(list)` with the ids
+    kept. The options rows (`.pdfInkSub`): a preset's holds the three
+    captioned sub-rows (`.inkOptRow` with an `.inkOptCaption`), Style —
+    the Pen · Ballpoint pills through the `seg` helper (a highlighter's
+    *Straight* trio in their place) and the *Smoothing* five-dot ladder,
+    `inkSizeBtn` dots for `stabilize` 0–4 —, Color — the `ColorChoices` —
+    and Width — the eight dots, Duplicate, Remove, ⋯; the eraser's row,
+    after the sizes, the *Erases* trio and the *Back to last tool*
+    toggle, `aria-pressed`, title "After erasing, return to the tool you
+    had". Below 480 px the captions go and Style and Width wrap onto one
+    line. A preset button is `touch-action: none` and carries the drag
+    (`usePresetDrag`: a mouse past 6 px, or a touch or pen past `HOLD_MS`
+    500 ms from `shared/ui/press.js`, takes `setPointerCapture`, draws
+    the `.inkDragGhost` and the `.inkDropBar`, says "Drop to reorder." and
+    on release calls `onChangeTools` with the moved list and
+    `swallowClick`s the click; Escape or a release outside the strip
+    cancels; a hold that never moved is the button's ordinary click).
+    Hidden presets are filtered out (`visibleTools`) before the row and
+    the key lists see them.
   - `MarkupLayers.jsx` `<MarkupLayers>` is the one place a surface's layers
     mount (`PdfPage`, the notebook view's sheet, `NoteSheet`). It maps the
     tools and the surface's marks onto `InkLayer`'s props. A read-only
@@ -999,28 +1219,49 @@ reach:
     are the stroke, erase, select, action, move, jump and finger-scroll
     handlers (and the text boxes') plus `onEraseEnd()` (the tool eraser
     lifted), `onEraseMany(page, [{gid, ids}])` (a scribble's targets, one
-    entry across groups), `onUndoGesture('undo' | 'redo')` and
-    `onHoldStatus({text, once})`,
+    entry across groups), `onUndoGesture('undo' | 'redo')`,
+    `onHoldStatus({text, once})` and `onPaste(page, pt, {width, height})`
+    (a held pen or mouse, or a right-click, asking for the clipboard at a
+    page point, with the surface's size in points),
     ref-backed through `useStableActions`, so their identity never changes.
+    `ink` also carries `clip` (the clipboard holds strokes) and `keys`
+    (`{copy, cut, duplicate}`: the chord labels the selection menu puts
+    in its titles).
     `armedClasses(tools)` gives a surface's container its armed-tool
     classes (`inkArmed`, `inkTouchDraw`, `textArmed`).
 - `app/App.jsx` owns the tool state: `inkUi` (`open`, the armed `tool` — a
   preset id, `eraser`, `select`, `text` (the Text tool) or `null` for the
   hand — its `options` row,
   and `pen`, the last pen preset, which a stylus writes with when nothing
-  is armed) plus the prefs (`inkTools`, the preset list validated by
-  `ink/ink.js` `normalizeTools`, which keeps a preset's `stabilize` 0–4
-  as an integer, omitted at 0, and a highlighter's `straight` `'always' |
-  'off'`, omitted at `'hold'` and dropped from a pen — `toolStyle` carries
-  both onto the armed tool for the layer, never onto a stroke; the eraser's
-  mode and size; the lasso mode; the account's `inkDrawHold`,
+  is armed — resolved among the visible presets, so a hidden pen falls
+  back to the first visible one) plus the prefs (`inkTools`, the
+  account's preset list validated by `ink/ink.js` `normalizeTools` —
+  App's `setInkTools` runs every write through it, the updater form the
+  pill's *Show* passes included, so the stored and pushed list is the
+  canonical one — which keeps a preset's
+  `stabilize` 0–4 as an integer, omitted at 0, a highlighter's `straight`
+  `'always' | 'off'`, omitted at `'hold'` and dropped from a pen, a
+  `hidden: true` flag, omitted when false, and any other key a preset
+  carries, verbatim, so an older build that edits one preset never strips
+  what a newer one wrote — the known keys first and the rest only while
+  the preset serialises under 512 bytes of UTF-8, and a list that hides every
+  preset shows its first, so the row is never empty; `toolStyle` carries
+  smoothing and straightening onto the armed tool for the layer, never
+  onto a stroke, and `visibleTools(list)` is the list without the hidden
+  ones, what the strip, the key table and the stylus's `backTool` read; the
+  eraser's mode and size; the lasso mode; the account's `inkDrawHold`,
   `inkScribbleErase`, `inkEraserReturn` and `inkEraserFilter` and this
   browser's `inkFingerUndo`, [settings.md](settings.md) "Reading &
   editing"),
   the group the next stroke joins (`inkActiveRef`), the lasso
   selection (`inkSelection`) and the **stroke history** (`inkHistRef`:
   entries of `{changes: [{id, page, before, after}], label}`, one per action; a group whose
-  block is gone is re-inserted when an entry brings strokes back). Every
+  block is gone is re-inserted when an entry brings strokes back, its old
+  draft dropped first (`inkStore.dropDraft`): the block coming back is a
+  fresh one with no file, so its upload must name no base — a base left
+  from the deleted draft would make the server merge the strokes three
+  ways against the new block's empty drawing and count them as deleted).
+  Every
   edit funnels through `applyInk`, which checks the byte budget (an edit
   that would grow a group past `MAX_BYTES` is refused with "This group is
   full; split it or start a new one"), updates the drafts, records the
@@ -1093,6 +1334,96 @@ reach:
     stroke." / "Three fingers redid a stroke.", with a *Turn off* action
     that sets `inkFingerUndo` to `'off'` (`fingerUndoHint`, spent by the
     first chord).
+  - **The handwriting clipboard** is `inkClipRef`, `{type: "gamma/ink",
+    version: 2, space, box, strokes}`: the file's `space`, the selection's
+    `inkBounds` box `{x1, y1, x2, y2}` in points and the raw stroke objects
+    as the file holds them. Copy and cut fill it and, best effort, write a
+    `ClipboardItem` beside it — `text/html` a `<div data-gamma-ink>` whose
+    text is that JSON, `text/plain` the JSON — so another app or a later
+    build can read it; a browser that refuses the write loses nothing,
+    since the ref is the one source a paste reads (reading the system
+    clipboard back is not built). The ref does not survive a reload.
+  - `handleInkAction(page, kind, arg)` gained `copy`, `cut` (copy, then
+    `deleteInkSelection` with the entry `T("ink cut")`), `flip` (`{axis}`
+    → `flipStrokes` about the selection box's centre, `T("ink flip")`, the
+    selection kept), `split` (`T("ink split")`: the strokes leave their
+    groups and a new ink block on the same surface takes them, positioned
+    by `pdfPositionOf`, one entry whose changes name the old groups and
+    the new block, which `applyInk` inserts; undo removes it again) and
+    `merge` (`T("ink merge")`: the selection's whole group appended to the
+    page's previous group — `inkBySurface`'s order, the nearest before it,
+    else the first after — through `appendStrokes` and emptied; `flushInk`
+    deletes the empty block when it has no caption or children, and one
+    that has them is refused before anything moves, with "Not merged: this
+    note has a caption or notes under it."). The selection's strokes, box
+    and space come from `selectedInk()`. Copy
+    and cut raise `setStatus(tn("Copied {n} stroke.", "Copied {n}
+    strokes.", n) | tn("Cut {n} stroke.", "Cut {n} strokes.", n), {label:
+    t("Paste"), run: pasteAtCentre})`.
+  - `handleInkStrokes(page, strokes, size)` is `handleInkStroke` for
+    several strokes at once (`size` the surface in points, for a fresh
+    group's file): they join the surface's current group when it can
+    take them all under `MAX_STROKES` and `GROUP_SPLIT_BYTES`, else a new
+    group takes them all (a paste is never split across groups), through
+    `appendStrokes` as one entry, `T("ink paste")`; a set no group could
+    hold is refused with "Too much handwriting to paste into one note."
+    It returns `{id, ids}`, the group and the ids as they landed.
+  - `pasteInk(page, at, size)` makes the copies with `cloneStrokes(strokes,
+    dx, dy)`, `dx, dy` taking the clipboard box's top-left to `at` and then
+    clamped so the box stays inside the surface (on a surface too small
+    for it, its top-left corner stays on), hands them to
+    `handleInkStrokes`, selects them and arms the lasso. `pasteAtCentre()`
+    is it with the box centred on the surface in view (`pasteTarget()`):
+    `pageInViewRef`, fed by `PdfViewer`'s `onPageInView(pageNumber,
+    {width, height})` (one `IntersectionObserver` over the page boxes
+    keeps the intersecting ones, and per scroll frame the one whose centre
+    lies nearest the scroller's centre is reported when it changes, with
+    its size at scale 1), or `nbCurrent` with its paper on a notebook. The
+    commands, the pill's *Paste* and the More menu's row all run it; the
+    page's `onPaste(page, pt, size)` (a held pen or mouse, a right-click)
+    runs `pasteInk` at the point. `duplicateInkSelection()` (Ctrl+D) reads
+    the page's scale off the selection rectangle's screen transform for
+    the 12 px nudge; `selectAllInk()` takes the selection's surface, else
+    the one in view.
+  - The commands (`appCommands.js`, group `GROUP_HANDWRITING`
+    "Handwriting", after Library in `GROUPS`; [hotkeys.md](hotkeys.md)
+    "Widget keys"): `ink.copy` "Copy handwriting" Mod-c, `ink.cut` "Cut
+    handwriting" Mod-x, `ink.duplicate` "Duplicate handwriting" Mod-d
+    (the 12 screen-px nudge), when the lasso holds strokes
+    (`c.inkSelected`); `ink.paste` "Paste handwriting" Mod-v, when
+    `c.inkOpen && c.inkTool && c.inkClip` and
+    `window.getSelection().isCollapsed`; `ink.selectAll` "Select all
+    handwriting on this page" Mod-a, when `c.inkOpen && c.inkTool`, which
+    selects every stroke of every group on the surface in view and arms
+    the lasso. All five are `edits: true`; a `run` handed a key event
+    from a text field returns `false`, so the browser keeps its own copy
+    and paste there. `appCmdRef.current` carries `inkOpen`, `inkTool`,
+    `inkSelected` and `inkClip` for the guards. Icons in
+    `commandIcons.jsx`: `CopyIcon`, `ScissorsIcon`, `ClipboardIcon` (new
+    in `Icons.jsx`, with `FlipHIcon` and `FlipVIcon`), `CopyIcon`,
+    `RectSelectIcon`.
+  - **Hold-E**: the strip handler takes `stripKey`'s `eraser` action —
+    `down` arms the eraser as a tap does and keeps `inkHoldRef = {since,
+    erased: false, selection, tool}` (the lasso selection and the tool
+    armed before); `onEraseEnd` marks `erased`; `up` with `held ≥ 300`
+    and `erased` picks `tool` again and, when that is the lasso, restores
+    the snapshot; a shorter press, or one that erased nothing, leaves the
+    eraser armed; a window `blur` clears the hold.
+  - **Presets on the account**: `useProfileSync` reports, on the
+    account's first pull only, an account entry whose server value
+    replaced a local one that was neither the default nor equal to it
+    (`onReplaced({name, local})`; a later pull that differs is another
+    device's change and applies silently); for `inkTools` App raises
+    "Use this browser's pens instead?" with *Use this browser's*, whose
+    action sets `inkTools` to the local list (and so pushes it), once a
+    session.
+  - The strip's pills: *Move left* / *Move right* and a drop say "Blue
+    pen is now key 3." (or "Blue pen moved." past the ninth place), *Hide*
+    says "Blue pen hidden." with *Show*, `[` / `]` say "Blue pen · 2.8
+    pt." — the name is the preset's colour and kind in words, as the
+    button's label spells them (`inkToolName(preset)`, which
+    `MarkupToolbar.jsx` exports beside `moveTool(tools, id, slot)`, the
+    reorder a drop and Move left / right share).
 - With the strip open, Ctrl+Z is the stroke history (a capture-phase key
   handler, so the page's block undo never sees it); with it closed, Ctrl+Z
   is the page's block history, which knows the group's block but not its
@@ -1109,7 +1440,7 @@ reach:
   falls through to block undo. Undo and redo report the action and PDF page
   in the status pill (“Undone: ink width change (page 1).”); the labels
   distinguish drawing, erasure, partial erasure, move, colour, width,
-  duplicate and delete.
+  duplicate, delete, paste, cut, flip, split and merge.
 
 ## Server
 
@@ -1162,20 +1493,25 @@ reach:
 
 Dedicated shape tools (a shape comes only from draw-and-hold; a committed
 shape has no handles yet, though its `shape` record is written for them),
-shape recognition on the iPad app (the shell sends samples at the lift
-only, so no hold runs there), reordering presets
-by drag, syncing the preset row across devices (it is per browser),
-ballpoint / fountain / dashed pen styles, Xournal++ `.xopp` import,
+shape recognition and hold-to-paste on the iPad app (the shell sends
+samples at the lift only, so no hold runs there), pen styles beyond Pen
+and Ballpoint (the selection menu's Style button waits for the brush
+table, greyed "Pen styles arrive in a later release"), dashed and dotted
+strokes, reading handwriting back from the system clipboard (copy writes
+a `gamma/ink` item for other apps, but a paste reads only this tab's own
+clipboard, so nothing pastes across tabs yet), Xournal++ `.xopp` import,
 live co-drawing over presence, and a
 replay of erasures and edits (it shows the drawing as it is, in the order
 it was written). Audio recording to go with the replay is
 [recording.md](recording.md). Obsidian vault export writes an ink block's
 caption only. The Notability comparison in the research note lists what a
-closer pen experience still needs (clipboard operations, a snap of
+closer pen experience still needs (a snap of
 straight highlights to the PDF's text lines); draw-and-hold, smoothing,
 the straight highlighter, scribble-to-erase, the eraser's return and
-filter, finger undo and the highlighter
-drawn behind the ink (`band`) are built. Live co-drawing is pinned as a
+filter, finger undo, the highlighter
+drawn behind the ink (`band`), the handwriting clipboard, flips, note
+split and merge, presets on the account and their drag order are built.
+Live co-drawing is pinned as a
 presence message carrying raw samples and the style, drawn by peers
 through the same brush table, replaced by the committed stroke of the same
 id when its file lands. The broader interaction survey is

@@ -33,7 +33,7 @@ export const SECTION_PREFS = Object.freeze({
   reading: sections({
     PDFs: ["embAnnots", "smoothWheel", "oaFallback", "metaAutoFetch", "pdfSaveLocal"],
     Notes: ["backlinksVisible"],
-    Handwriting: ["inkEraserReturn", "inkEraserFilter", "inkDrawHold", "inkScribbleErase"],
+    Handwriting: ["inkTools", "inkEraserReturn", "inkEraserFilter", "inkDrawHold", "inkScribbleErase"],
     Recordings: ["replayLeadIn", "recordingTranscribe"],
     "Search opens as": ["searchDetailsHome", "searchDetailsPaper"],
   }),

@@ -129,6 +129,14 @@ export function markDeleted(id, ink, url) {
   const d = drafts.get(id);
   if (d?.ink === ink) drafts.set(id, { ...d, dirty: false, url, base: url, baseIds: [] });
 }
+// A block that comes back into the tree after its deletion (an undo of an
+// erasure, a cut, a merge) is a fresh block: its next draft starts from no
+// base. Left in place, the deleted draft's base (the old file) would make
+// the server merge the re-upload three ways against the new block's empty
+// drawing, and the strokes brought back would count as deleted there.
+export function dropDraft(id) {
+  drafts.delete(id);
+}
 // `upload`: the draft's bytes and name when they are worked out already
 // (nameLater), else null.
 export function dirtyDrafts() {

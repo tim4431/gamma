@@ -69,11 +69,19 @@ const perName = (values) => Object.fromEntries(ACCOUNT_PREFS.map((name) => [name
 // failed: {name: the value whose push failed}; awaitingAt: the server time of the last push
 const IDLE = { inflight: NONE, failed: {}, awaiting: NONE, awaitingAt: "" };
 
-export function useProfileSync(prefs, user) {
+// `onReplaced({name, local})`, when given, is told on the first pull of an
+// account (once per entry) of an entry whose server value replaced a local
+// one that was neither the default nor equal to it — the browser had its
+// own, and the account's won — so the caller can offer to push the local
+// value back (the strip's presets: "Use this browser's pens instead?"). A
+// later pull that differs is another device's change to a list this browser
+// took from the account, so it never asks.
+export function useProfileSync(prefs, user, { onReplaced } = {}) {
   const values = profileOf(prefs);
   const snap = JSON.stringify(values);
   const latest = useRef(null);
-  latest.current = { prefs, snap, user };
+  latest.current = { prefs, snap, user, onReplaced };
+  const replacedRef = useRef(new Set()); // the names onReplaced was told of since this account loaded
   const syncedRef = useRef(null); // the server's profile as last seen/sent; null = not loaded
   const confirmedRef = useRef(null); // {name: JSON} the server confirmed holding; null = not loaded
   const timerRef = useRef(null);
@@ -85,14 +93,24 @@ export function useProfileSync(prefs, user) {
   const [cloudChoice, setCloudChoice] = useState(false);
   const mark = (state, error = "") => setStatus((was) => (was.state === state && was.error === error ? was : { state, error }));
 
-  // The server's profile onto the settings, except the names in `keep`.
-  function apply(value, keep = NONE) {
+  // The server's profile onto the settings, except the names in `keep`;
+  // `first` on the account's first pull, the only one that can replace a
+  // value this browser had on its own.
+  function apply(value, keep = NONE, first = false) {
     const read = readProfile(value);
     const current = latest.current.prefs;
+    const replaced = [];
     for (const [name, v] of Object.entries(read)) {
       if (keep.has(name)) continue;
-      if (JSON.stringify(current[name]) !== JSON.stringify(v)) current[setterName(name)](v);
+      const local = JSON.stringify(current[name]);
+      if (local === JSON.stringify(v)) continue;
+      if (first && local !== JSON.stringify(PREFS[name].default) && !replacedRef.current.has(name)) {
+        replacedRef.current.add(name);
+        replaced.push({ name, local: current[name] });
+      }
+      current[setterName(name)](v);
     }
+    for (const entry of replaced) latest.current.onReplaced?.(entry);
     return JSON.stringify(read);
   }
 
@@ -173,7 +191,7 @@ export function useProfileSync(prefs, user) {
           // server's copy: it stays, and goes out as the next push.
           const was = JSON.parse(startSnap), now = JSON.parse(latest.current.snap);
           const keep = new Set(Object.keys(now).filter((name) => JSON.stringify(now[name]) !== JSON.stringify(was[name])));
-          syncedRef.current = apply(d.value, keep);
+          syncedRef.current = apply(d.value, keep, confirmedRef.current === null);
           settled = true;
         }
         confirmedRef.current = perName(read);
@@ -194,6 +212,7 @@ export function useProfileSync(prefs, user) {
   useEffect(() => {
     syncedRef.current = null;
     confirmedRef.current = null;
+    replacedRef.current = new Set();
     clearTimeout(timerRef.current);
     timerRef.current = null;
     setFlight(IDLE);

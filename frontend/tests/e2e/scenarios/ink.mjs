@@ -4,7 +4,7 @@
 // highlighter band under the ink, the eraser, the lasso, the notes card's jump + flash,
 // and a group's Transcribe with AI. /Ink in the annotated PDF is
 // backend/tests/test_ink.py; the chat's view_ink is test_ai_tools_ink.py.
-import { fakeAiModels } from "../harness.mjs";
+import { assertOpensInPlace, fakeAiModels } from "../harness.mjs";
 import { waitForPdf } from "./pdf.mjs";
 import { decodeStroke } from "../../../src/ink/ink.js";
 
@@ -37,6 +37,11 @@ export async function inkScenarios({ server, browser, alice, makePdf, step, unti
     assertEq((await page.$$(".pdfInkBar .inkToolInk")).length, 7, "the default presets: four pens, three highlighters");
     const buttons = await page.locator(".pdfInkRow button").evaluateAll((els) => els.map((el) => el.getAttribute("aria-label")));
     assertEq(JSON.stringify(buttons.slice(-2)), JSON.stringify(["Undo ink", "Redo ink"]), "history controls are last");
+    // Five groups split by rules: presets | eraser, lasso, text | hand | More, close | undo, redo.
+    const groups = await page.locator(".pdfInkRow").evaluate((row) => [...row.children].map((el) =>
+      el.classList.contains("pdfInkSep") ? "|" : el.classList.contains("pdfInkHistory") ? "history"
+        : el.hasAttribute("data-preset") ? "preset" : (el.getAttribute("aria-label") || "").split(" ")[0]).join(" "));
+    assertEq(groups, "preset preset preset preset preset preset preset | Eraser Lasso Text | Hand | More Close | history", "the row's five groups");
     box = await page.locator('[data-page="1"]').boundingBox();
     await drawLine(page, [box.x + 100, box.y + 150], [box.x + 250, box.y + 170]);
     await drawLine(page, [box.x + 100, box.y + 250], [box.x + 250, box.y + 280]);
@@ -132,61 +137,237 @@ export async function inkScenarios({ server, browser, alice, makePdf, step, unti
     assertNoProblems(page);
   });
 
-  await step("ink: a preset's options row sets its colour and width, duplicates and removes it; presets persist; the box lasso", async () => {
-    await page.keyboard.press("1");
-    await page.click(".pdfInkBar .inkToolBtn.modeActive");             // tap the armed preset again
-    await page.waitForSelector(".pdfInkSub[data-ink-options='tool']");
-    await page.click(".pdfInkSub button[aria-label='Red']");
-    await page.click(".pdfInkSub button[aria-label='Width 4 pt']");
-    await page.getByRole("button", { name: "Monoline", exact: true }).click();
-    assertEq(await page.getByRole("button", { name: "Monoline", exact: true }).getAttribute("aria-pressed"), "true");
-    assertEq(await page.locator(".pdfInkBar .inkToolBtn.modeActive").getAttribute("aria-label"),
-      "Red monoline pen · 4 pt · key 1 — tap again for options", "a preset is named in words, not a hex code");
-    await page.click(".pdfInkSub button[aria-label='Duplicate tool']");
-    await until(async () => (await page.$$(".pdfInkBar .inkToolInk")).length === 8, { what: "a duplicated preset" });
-    assert(await page.$(".pdfInkSub[data-ink-options='tool']"), "the copy stays open for editing");
-    if (flags.keep) await page.screenshot({ path: `${server.dir}/ink-presets.png` });
-    box = await page.locator('[data-page="1"]').boundingBox();
-    await drawLine(page, [box.x + 100, box.y + 400], [box.x + 250, box.y + 420]);
-    // The reload in an earlier step ended the group: this stroke is a new
-    // block. Its file carries the copy's look.
-    const red = await until(async () => {
-      const d = await account.api(`/api/blocks/${pageId}/subtree`);
-      for (const b of d.block.children || []) {
-        if (!b.properties?.ink_url?.endsWith(".ink")) continue;
-        const ink = await account.api(b.properties.ink_url);
-        const hit = ink.strokes.find((st) => st.color === "#dc2626");
-        if (hit) return hit;
-      }
-      return null;
-    }, { what: "a stroke in the copy's colour on the server" });
-    assertEq(red.size, 4, "the copy drew with its width");
-    assertEq(red.brush, "monoline", "the duplicated preset saved the monoline brush");
-    assertEq(red.tool, "pen", "…as a pen");
-    await page.click(".pdfInkSub button[aria-label='Remove tool']");
-    await until(async () => (await page.$$(".pdfInkBar .inkToolInk")).length === 7, { what: "the copy removed" });
-    assert(await page.$(".pdfInkBar .inkToolBtn.modeActive"), "a neighbour is armed after the removal");
-    // The edited first preset survives a reload (localStorage).
-    await page.reload();
-    await waitForPdf(page, 1);
+  await step("ink: a preset's options row sets its colour and width, duplicates and removes it; presets follow the account; the box lasso", async () => {
+    try {
+      await page.keyboard.press("1");
+      await page.click(".pdfInkBar .inkToolBtn.modeActive");             // tap the armed preset again
+      await page.waitForSelector(".pdfInkSub[data-ink-options='tool']");
+      assertEq(JSON.stringify(await page.locator(".pdfInkSub .inkOptCaption").allTextContents()), JSON.stringify(["Style", "Color", "Width"]),
+        "three captioned sub-rows");
+      await page.click(".pdfInkSub button[aria-label='Red']");
+      await page.click(".pdfInkSub button[aria-label='Width 4 pt']");
+      assertEq(await page.locator(".pdfInkSub button[aria-label='Width 4 pt']").getAttribute("title"), "Width 4 pt · [ ]", "a width dot names the bracket keys");
+      await page.getByRole("button", { name: "Ballpoint", exact: true }).click();
+      assertEq(await page.getByRole("button", { name: "Ballpoint", exact: true }).getAttribute("aria-pressed"), "true");
+      assertEq(await page.locator(".pdfInkBar .inkToolBtn.modeActive").getAttribute("aria-label"),
+        "Red ballpoint pen · 4 pt · key 1 — tap again for options", "a preset is named in words, not a hex code");
+      await page.click(".pdfInkSub button[aria-label='Duplicate tool']");
+      await until(async () => (await page.$$(".pdfInkBar .inkToolInk")).length === 8, { what: "a duplicated preset" });
+      assert(await page.$(".pdfInkSub[data-ink-options='tool']"), "the copy stays open for editing");
+      if (flags.keep) await page.screenshot({ path: `${server.dir}/ink-presets.png` });
+      box = await page.locator('[data-page="1"]').boundingBox();
+      await drawLine(page, [box.x + 100, box.y + 400], [box.x + 250, box.y + 420]);
+      // The reload in an earlier step ended the group: this stroke is a new
+      // block. Its file carries the copy's look.
+      const red = await until(async () => {
+        const d = await account.api(`/api/blocks/${pageId}/subtree`);
+        for (const b of d.block.children || []) {
+          if (!b.properties?.ink_url?.endsWith(".ink")) continue;
+          const ink = await account.api(b.properties.ink_url);
+          const hit = ink.strokes.find((st) => st.color === "#dc2626");
+          if (hit) return hit;
+        }
+        return null;
+      }, { what: "a stroke in the copy's colour on the server" });
+      assertEq(red.size, 4, "the copy drew with its width");
+      assertEq(red.brush, "monoline", "the duplicated Ballpoint preset saved the monoline brush");
+      assertEq(red.tool, "pen", "…as a pen");
+      await page.click(".pdfInkSub button[aria-label='Remove tool']");
+      await until(async () => (await page.$$(".pdfInkBar .inkToolInk")).length === 7, { what: "the copy removed" });
+      assert(await page.$(".pdfInkBar .inkToolBtn.modeActive"), "a neighbour is armed after the removal");
+      // The presets are the account's: the edited list reaches the profile,
+      // and a browser with no local copy takes it from there on load.
+      const profileTools = async () => (await account.api("/api/prefs/profile")).value?.inkTools || [];
+      await until(async () => {
+        const tools = await profileTools();
+        return tools.length === 7 && tools[0].color === "#dc2626" && tools[0].size === 4 && tools[0].brush === "monoline";
+      }, { what: "the edited presets in the account's profile" });
+      await page.evaluate(() => localStorage.removeItem("gamma-ink-tools"));
+      await page.reload();
+      await waitForPdf(page, 1);
+      await page.click("button[aria-label='Handwriting tools']");
+      await page.waitForSelector(".pdfInkBar");
+      await until(async () => (await page.$eval(".pdfInkBar .inkToolInk", (el) => getComputedStyle(el).backgroundColor)) === "rgb(220, 38, 38)",
+        { what: "the first preset's colour, back from the account" });
+      await page.keyboard.press("1");
+      await page.click(".pdfInkBar .inkToolBtn.modeActive");
+      assertEq(await page.getByRole("button", { name: "Ballpoint", exact: true }).getAttribute("aria-pressed"), "true",
+        "the first preset kept its brush across reload");
+      await page.getByRole("button", { name: "Pen", exact: true }).click();
+      assertEq(await page.getByRole("button", { name: "Pen", exact: true }).getAttribute("aria-pressed"), "true");
+      // The lasso's box mode: a dragged rectangle selects what it covers.
+      await page.keyboard.press("l");
+      await page.click(".pdfInkBar button[title^='Lasso']");
+      await page.waitForSelector(".pdfInkSub[data-ink-options='select']");
+      await page.click(".pdfInkSub button[aria-label='Box']");
+      box = await page.locator('[data-page="1"]').boundingBox();
+      await drawLine(page, [box.x + 80, box.y + 380], [box.x + 270, box.y + 440]);
+      await page.waitForSelector('[data-page="1"] .inkSelRect', { timeout: 5000 });
+      assertEq(await page.locator(".pdfInkSub").count(), 0, "a selection closes the options row");
+      await page.keyboard.press("Escape");                               // drops the selection
+      await until(async () => !(await page.$('[data-page="1"] .inkSelRect')), { what: "selection dropped" });
+      assert(await page.$(".pdfInkBar"), "the strip is still open");
+      await page.keyboard.press("Escape");                               // closes the strip
+      await until(async () => !(await page.$(".pdfInkBar")), { what: "strip closed" });
+    } finally {
+      // The presets back to the defaults — on the account, which every group
+      // on this worker shares, and in this browser — for the steps that follow.
+      // The browser's last change (Pen) pushes after a second: let it land
+      // first, or it would put the edited list back over the reset.
+      await until(async () => {
+        const first = ((await account.api("/api/prefs/profile")).value?.inkTools || [])[0];
+        return first && first.color === "#dc2626" && !first.brush;
+      }, { what: "the last preset change pushed" }).catch(() => {});
+      await account.api("/api/prefs/profile", { method: "PATCH", body: { set: { inkTools: null } } }).catch(() => {});
+      await page.evaluate(() => localStorage.removeItem("gamma-ink-tools")).catch(() => {});
+      await page.reload().catch(() => {});
+      await waitForPdf(page, 1).catch(() => {});
+    }
+    assertNoProblems(page);
+  });
+
+  await step("ink: More (⋯) opens its menu on the press, Escape closes the menu alone, and Handwriting settings… lands on the section", async () => {
     await page.click("button[aria-label='Handwriting tools']");
     await page.waitForSelector(".pdfInkBar");
-    assertEq(await page.$eval(".pdfInkBar .inkToolInk", (el) => getComputedStyle(el).backgroundColor), "rgb(220, 38, 38)",
-      "the first preset kept its colour");
+    const more = page.locator(".pdfInkBar button[aria-label='More handwriting tools']");
+    assertEq(await more.getAttribute("aria-haspopup"), "menu");
+    assertEq(await more.getAttribute("data-guide"), "ink.more");
+    await assertOpensInPlace(page, ".inkStripMenu", () => more.click(), { what: "the More menu" });
+    assertEq(await more.getAttribute("aria-expanded"), "true");
+    const menu = page.locator(".inkStripMenu");
+    const paste = menu.locator("[data-command='ink.paste']");
+    assert(await paste.isDisabled(), "nothing on the handwriting clipboard: Paste is greyed");
+    assertEq(await paste.getAttribute("title"), "Copy or cut handwriting first");
+    assertEq(await paste.textContent(), "Paste handwritingCtrl+V", "the command's label and its chord");
+    assert(!(await menu.locator("[data-command='ink.selectAll']").isDisabled()), "Select all applies with a tool armed");
+    assertEq(await menu.getByRole("button", { name: "Handwriting settings…", exact: true }).count(), 1);
+    await page.keyboard.press("Escape");
+    await until(async () => !(await page.$(".inkStripMenu")), { what: "the menu closed by Escape" });
+    assertEq(await page.locator(".pdfInkBar").count(), 1, "the strip stays open: Escape went to the menu");
+    assertEq(await more.getAttribute("aria-expanded"), "false");
+    await more.click();
+    await menu.getByRole("button", { name: "Handwriting settings…", exact: true }).click();
+    const dialog = page.getByRole("dialog", { name: "Settings", exact: true });
+    await dialog.waitFor();
+    await until(() => page.locator(".settingsPane [data-setting='Reset presets']").first().isVisible(), { what: "the Handwriting section in view" });
+    await page.getByRole("button", { name: "Close settings", exact: true }).click();
+    await dialog.waitFor({ state: "hidden" });
+    assertNoProblems(page);
+  });
+
+  await step("ink: Move right, Hide and Hidden tools in the Tool menu, and a mouse drag, reorder the presets; the number keys follow", async () => {
+    const armed = () => page.locator(".pdfInkBar .inkToolBtn.modeActive");
+    const name = async () => (await armed().getAttribute("aria-label")).split(" · ")[0];
+    const presets = () => page.locator(".pdfInkRow [data-preset]");
+    const presetName = async (i) => (await presets().nth(i).getAttribute("aria-label")).split(" · ")[0];
+    const pillText = async () => (await page.locator(".statusPill .pillText").textContent()) || "";
+    const toolMenu = async () => {
+      await page.locator(".pdfInkSub button[aria-label='Tool menu']").click();
+      await page.waitForSelector(".inkStripMenu");
+      return page.locator(".inkStripMenu");
+    };
+    const ids = async () => page.evaluate(() => JSON.parse(localStorage.getItem("gamma-ink-tools")).map((t) => t.id).join());
+    const order = await ids();
     await page.keyboard.press("1");
-    await page.click(".pdfInkBar .inkToolBtn.modeActive");
-    assertEq(await page.getByRole("button", { name: "Monoline", exact: true }).getAttribute("aria-pressed"), "true",
-      "the first preset kept its brush across reload");
-    await page.getByRole("button", { name: "Pen", exact: true }).click();
-    assertEq(await page.getByRole("button", { name: "Pen", exact: true }).getAttribute("aria-pressed"), "true");
-    // The lasso's box mode: a dragged rectangle selects what it covers.
-    await page.keyboard.press("l");
-    await page.click(".pdfInkBar button[title^='Lasso']");
-    await page.waitForSelector(".pdfInkSub[data-ink-options='select']");
-    await page.click(".pdfInkSub button[aria-label='Box']");
+    const first = await name();                                          // the first default pen, by its colour
+    await armed().click();                                               // its options row
+    await page.waitForSelector(".pdfInkSub[data-ink-options='tool']");
+    let menu = await toolMenu();
+    assert(await menu.getByRole("button", { name: "Move left", exact: true }).isDisabled(), "nothing to the left of key 1");
+    assert(await menu.getByRole("button", { name: "Hidden tools", exact: true }).isDisabled(), "no hidden tools yet");
+    await menu.getByRole("button", { name: "Move right", exact: true }).click();
+    await until(async () => (await pillText()).includes(`${first} is now key 2.`), { what: "the move's pill" });
+    assertEq(await presetName(1), first, "key 2 is the moved preset");
+    assert((await armed().getAttribute("aria-label")).includes("key 2"), "still armed, at key 2");
+    await page.keyboard.press("1");
+    assert((await name()) !== first, "key 1 arms the preset that moved up");
+    await page.keyboard.press("2");
+    assertEq(await name(), first, "key 2 arms the moved one");
+    await armed().click();
+    menu = await toolMenu();
+    await menu.getByRole("button", { name: "Move left", exact: true }).click();
+    await until(async () => (await pillText()).includes(`${first} is now key 1.`), { what: "moved back" });
+    assertEq(await ids(), order, "the ids never change");
+    // Hide: off the row and out of the keys, kept in the list; the pill offers Show; Hidden tools brings it back
+    menu = await toolMenu();
+    await menu.getByRole("button", { name: "Hide", exact: true }).click();
+    await until(async () => (await presets().count()) === 6, { what: "six presets on the row" });
+    assert((await pillText()).includes(`${first} hidden.`), "the pill names it");
+    assertEq(await page.locator(".statusPill").getByRole("button", { name: "Show", exact: true }).count(), 1, "Show is on the pill");
+    assert((await presetName(0)) !== first, "key 1 is the next preset");
+    assert((await armed().getAttribute("aria-label")).includes("key 1"), "its neighbour is armed");
+    assertEq(await page.evaluate(() => JSON.parse(localStorage.getItem("gamma-ink-tools")).filter((t) => t.hidden === true).length), 1, "kept in the list, hidden");
+    await armed().click();
+    menu = await toolMenu();
+    await menu.getByRole("button", { name: "Hidden tools", exact: true }).click();
+    await menu.getByRole("menu", { name: "Hidden tools" }).getByRole("button", { name: new RegExp(`^${first} · `) }).click();
+    await until(async () => (await presets().count()) === 7, { what: "seven presets again" });
+    assertEq(await presetName(0), first, "back where it was, at key 1");
+    assertEq(await ids(), order);
+    // A mouse drag: past 6 px the preset rides along as a ghost, a bar marks the slot, the drop writes the order
+    const from = await presets().nth(0).boundingBox(), third = await presets().nth(2).boundingBox();
+    await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(from.x + from.width / 2 + 12, from.y + from.height / 2, { steps: 3 });
+    await page.waitForSelector(".inkDragGhost");
+    assert(await page.$(".pdfInkRow .inkDropBar"), "the insertion bar shows");
+    assert((await pillText()).includes("Drop to reorder."), "the pill says what the drag does");
+    await page.mouse.move(third.x + third.width - 2, third.y + third.height / 2, { steps: 6 });   // past the third preset's centre: after it
+    await page.mouse.up();
+    await until(async () => (await pillText()).includes(`${first} is now key 3.`), { what: "the drop's pill" });
+    await until(async () => !(await page.$(".inkDragGhost")), { what: "the ghost gone" });
+    assertEq(await presetName(2), first, "the dragged preset at key 3");
+    assert(await page.$(".pdfInkSub[data-ink-options='tool']"), "the drop was no tap: the options row is as it was");
+    await page.keyboard.press("3");
+    assertEq(await name(), first, "key 3 arms it");
+    const back = await presets().nth(2).boundingBox(), front = await presets().nth(0).boundingBox();
+    await page.mouse.move(back.x + back.width / 2, back.y + back.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(front.x + 2, front.y + front.height / 2, { steps: 8 });
+    await page.mouse.up();
+    await until(async () => (await pillText()).includes(`${first} is now key 1.`), { what: "dragged back to the front" });
+    assertEq(await ids(), order, "the original order, the same ids");
+    assertNoProblems(page);
+  });
+
+  await step("ink: [ and ] step the armed preset's width with a pill; E held across an erasing pass returns to the tool before it, a lasso selection with it", async () => {
+    const armed = () => page.locator(".pdfInkBar .inkToolBtn.modeActive");
+    const pillText = async () => (await page.locator(".statusPill .pillText").textContent()) || "";
+    await page.keyboard.press("1");
+    const [first, width] = (await armed().getAttribute("aria-label")).split(" · ");
+    assertEq(width, "2 pt", "the first default pen");
+    await armed().click();
+    await page.waitForSelector(".pdfInkSub[data-ink-options='tool']");
+    await page.keyboard.press("Escape");
+    await until(async () => !(await page.$(".pdfInkSub")), { what: "Escape closed the options row" });
+    assert(await page.$(".pdfInkBar"), "…and left the strip open");
+    await page.keyboard.press("BracketRight");
+    await until(async () => (await pillText()).includes(`${first} · 2.8 pt.`), { what: "the width pill" });
+    assert((await armed().getAttribute("aria-label")).includes(" · 2.8 pt · "), "the preset is thicker, options row closed or not");
+    await page.keyboard.press("BracketLeft");
+    await until(async () => (await pillText()).includes(`${first} · 2 pt.`), { what: "thinner again" });
+    // A tap on E arms the eraser and it stays; E held while a pass is made goes back to the tool before it.
+    await page.keyboard.press("e");
+    assert((await armed().getAttribute("aria-label")).startsWith("Eraser"), "a tap arms the eraser");
+    await page.keyboard.press("1");
     box = await page.locator('[data-page="1"]').boundingBox();
-    await drawLine(page, [box.x + 80, box.y + 380], [box.x + 270, box.y + 440]);
+    await page.keyboard.down("e");
+    await until(async () => (await armed().getAttribute("aria-label")).startsWith("Eraser"), { what: "the eraser armed on the keydown" });
+    await sleep(350);
+    await drawLine(page, [box.x + 420, box.y + 700], [box.x + 440, box.y + 720]);   // a pass over nothing still counts
+    await page.keyboard.up("e");
+    await until(async () => (await armed().getAttribute("aria-label")).startsWith(first), { what: "back to the pen after the hold" });
+    // With the lasso: its selection comes back with it.
+    await page.keyboard.press("l");
+    await drawLine(page, [box.x + 80, box.y + 380], [box.x + 270, box.y + 440]);   // the box lasso, from the step before
     await page.waitForSelector('[data-page="1"] .inkSelRect', { timeout: 5000 });
+    await page.keyboard.down("e");
+    await until(async () => !(await page.$('[data-page="1"] .inkSelRect')), { what: "the eraser drops the selection" });
+    await sleep(350);
+    await drawLine(page, [box.x + 420, box.y + 700], [box.x + 440, box.y + 720]);
+    await page.keyboard.up("e");
+    await page.waitForSelector('[data-page="1"] .inkSelRect', { timeout: 5000 });
+    assert((await armed().getAttribute("aria-label")).startsWith("Lasso"), "the lasso is armed again, its selection restored");
     await page.keyboard.press("Escape");                               // drops the selection
     await until(async () => !(await page.$('[data-page="1"] .inkSelRect')), { what: "selection dropped" });
     await page.keyboard.press("Escape");                               // closes the strip

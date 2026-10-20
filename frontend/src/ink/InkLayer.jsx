@@ -11,11 +11,11 @@
 // the tool state, the selection, the stroke history and the commits.
 import React, { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { createPortal, flushSync } from "react-dom";
-import { ContextMenu } from "../shared/ui/Menus";
+import { ContextMenu, MenuItem } from "../shared/ui/Menus";
 import { getStroke } from "perfect-freehand";
 import {
-  CopyIcon, FileTextIcon, HighlightIcon, LineWidthIcon, PaletteIcon, PenIcon, PlayIcon, RectSelectIcon, RedoIcon,
-  ResizeIcon, StopIcon, TrashIcon,
+  ClipboardIcon, CopyIcon, DuplicateIcon, FileTextIcon, FlipHIcon, FlipVIcon, HighlightIcon, LineWidthIcon, MergeIcon, MoreIcon, NotebookPenIcon,
+  PaletteIcon, PenIcon, PlayIcon, RectSelectIcon, RedoIcon, ResizeIcon, ScissorsIcon, StopIcon, TrashIcon, BrushIcon,
 } from "../shared/ui/Icons";
 import {
   MAX_STROKE_SIZE, boundsOf, byBand, encodeStroke, eraserKeep, hitStrokes, inkBounds, inkFeatures, inkUntil,
@@ -88,6 +88,9 @@ let fingerHint = true;
 // shape, and one of more than CANCEL_PX within CANCEL_MS of the snap cancels
 // it, so a stroke that merely paused goes on freehand.
 const HOLD_MS = 600, HOLD_MOVE = 3, HOLD_MIN_MS = 250, REFIT_PX = 6, CANCEL_PX = 12, CANCEL_MS = 150;
+// The same timer, armed at the down when the clipboard holds strokes, opens
+// "Paste here" if the tip has not travelled PASTE_MOVE css px by then.
+const PASTE_MOVE = 2;
 const SNAP_BLUE = "rgb(80, 140, 255)"; // .inkSelRect's stroke
 // Two- and three-finger undo chords (fingerChords.js): one detector for the
 // document — several page layers must never count a contact twice — fed by
@@ -208,10 +211,15 @@ function seekToStroke(groups, hit) {
 // flags; fingerUndo: 'off' | 'tap' | 'double'. onEraseEnd: the eraser tool
 // lifted; onEraseMany(page, [{gid, ids}]): a scribble's targets;
 // onUndoGesture('undo' | 'redo'): a finger chord; onHoldStatus({text, once}):
-// the pill a snapped stroke raises.
+// the pill a snapped stroke raises. clip: the handwriting clipboard holds
+// strokes — a pen or mouse held still with a writing tool, or a mouse
+// right-click on blank page with a tool armed, then offers "Paste here",
+// which calls onPaste(page, pt, {width, height}); keys: {copy, cut,
+// duplicate}, the chord labels the selection menu's titles name.
 export function InkLayer({ pageNumber, wrapRef, width, height, blocks, tool, penTool, penOnly, pressure, eraserMode,
   eraserSize = 1, eraserFilter = "all", drawHold = false, scribble = false, fingerUndo = "off", lassoMode = "free", selection, flash,
-  onStroke, onErase, onErasePartial, onEraseEnd, onEraseMany, onSelect, onAction, onMoveSelection, onJump,
+  clip = false, keys,
+  onStroke, onErase, onErasePartial, onEraseEnd, onEraseMany, onSelect, onAction, onMoveSelection, onJump, onPaste,
   onFingerScroll, onUndoGesture, onHoldStatus, onInkFeatures }) {
   useInkVersion();
   const canvasRef = useRef(null);
@@ -219,6 +227,8 @@ export function InkLayer({ pageNumber, wrapRef, width, height, blocks, tool, pen
   const refreshCursorRef = useRef(null);
   const [dragOffset, setDragOffset] = useState(null);   // while moving the selection: {dx, dy} in pt
   const [transform, setTransform] = useState(null);
+  // The one-row "Paste here" menu: {x, y} on screen and `pt` on the page.
+  const [pasteMenu, setPasteMenu] = useState(null);
   useLayoutEffect(() => { setTransform(null); }, [selection]);
   const live = useRef({});
   // Whether a pen is writing on this layer, the page's own stroke or one
@@ -263,8 +273,9 @@ export function InkLayer({ pageNumber, wrapRef, width, height, blocks, tool, pen
     }
   }
   live.current = { tool, penTool, penOnly, pressure, eraserMode, eraserSize, eraserFilter, drawHold, scribble, fingerUndo, lassoMode,
-    width, height, groups, selBox, replay, penBusy: () => penBusy.current(),
-    onStroke, onErase, onErasePartial, onEraseEnd, onEraseMany, onSelect, onMoveSelection, onJump, onFingerScroll, onUndoGesture, onHoldStatus };
+    width, height, groups, selBox, replay, clip, penBusy: () => penBusy.current(),
+    onStroke, onErase, onErasePartial, onEraseEnd, onEraseMany, onSelect, onMoveSelection, onJump, onPaste, onFingerScroll, onUndoGesture,
+    onHoldStatus };
 
   // The finger chords: this layer is a host while it can undo (an editable
   // surface); the document-level detector is wired while any host is.
@@ -289,6 +300,7 @@ export function InkLayer({ pageNumber, wrapRef, width, height, blocks, tool, pen
     let hostOwned = null;
     penBusy.current = () => drawing?.pointerType === "pen" || hostOwned != null;
     let pending = null; // A possible tap/hold; swipes retain native scrolling.
+    let pasteHold = null; // the pointer whose hold opened "Paste here": its lift is not a click
     const contacts = new Set();
     let hover = null;
     const hideCursor = () => {
@@ -388,9 +400,27 @@ export function InkLayer({ pageNumber, wrapRef, width, height, blocks, tool, pen
       if (!d.raf) d.raf = requestAnimationFrame(paint);
       return true;
     };
+    // A pen or mouse held still from its down, before it drew PASTE_MOVE css
+    // px, with strokes on the clipboard: the draft goes (nothing commits)
+    // and "Paste here" opens at the point. Fingers never arm it (a resting
+    // palm must not paste); the click the lift would deliver is swallowed.
+    const pasteHere = (d) => {
+      if (drawing !== d) return;
+      drawing = null;
+      pasteHold = d.id;
+      try { el.releasePointerCapture(d.id); } catch { /* already released */ }
+      if (d.raf) cancelAnimationFrame(d.raf);
+      clearTimeout(d.predictionTimer);
+      hideCanvas();
+      setPasteMenu({ x: d.downAt.x, y: d.downAt.y, pt: d.toPt({ clientX: d.downAt.x, clientY: d.downAt.y }) });
+    };
     const holdFire = (d) => {
       d.holdTimer = 0;
-      if (drawing !== d || d.hold || d.samples.length < 2) return;
+      if (drawing !== d || d.hold) return;
+      // the paste hold: no travel, against the shape hold's chord — a tip
+      // that has travelled cannot paste, one that has not cannot snap
+      if (d.pasteArmed && d.travel <= PASTE_MOVE) { pasteHere(d); return; }
+      if (!d.holdOn || d.samples.length < 2) return;
       const a = d.samples[0], b = d.samples.at(-1);
       if (Math.hypot(b.x - a.x, b.y - a.y) < Math.max(24 / d.k, 18)) return;
       if (d.tail.at - d.startTime < HOLD_MIN_MS) return;
@@ -678,11 +708,14 @@ export function InkLayer({ pageNumber, wrapRef, width, height, blocks, tool, pen
         hold: null, holdTimer: 0, holdOn: !!L.drawHold && !(ctx.use.tool === "highlighter" && ctx.use.straight === "off"),
         kinds: ctx.use.tool === "highlighter" ? ["line"] : undefined,
         tail: { x: e.clientX, y: e.clientY, at: e.timeStamp }, downAt: { x: e.clientX, y: e.clientY },
+        // the paste hold (pasteHere): a pen or mouse, strokes on the clipboard
+        pasteArmed: !!L.clip && !!L.onPaste && e.pointerType !== "touch", travel: 0,
         // A finger's stroke clears the selection once it has moved 8 css px
         // (as a tap is told from a swipe), so a two-finger chord, whose
         // first finger starts a stroke the second cancels, never clears the
         // selection it is about to restore.
         deselect: e.pointerType === "touch" };
+      if (drawing.pasteArmed) { const d = drawing; d.holdTimer = setTimeout(() => holdFire(d), HOLD_MS); }
       if (!drawing.deselect) L.onSelect?.(pageNumber, []);
       takeSample(drawing, e);
       if (drawing.pen && nativeHost()?.ink) claimForHost(drawing, e);
@@ -713,6 +746,7 @@ export function InkLayer({ pageNumber, wrapRef, width, height, blocks, tool, pen
       }
       if (d.mode === "stroke") {
         d.tip = d.toPt(e);
+        d.travel = Math.max(d.travel || 0, Math.hypot(e.clientX - d.downAt.x, e.clientY - d.downAt.y));
         if (d.deselect && Math.hypot(e.clientX - d.downAt.x, e.clientY - d.downAt.y) >= 8) {
           d.deselect = false;
           live.current.onSelect?.(pageNumber, []);
@@ -800,6 +834,7 @@ export function InkLayer({ pageNumber, wrapRef, width, height, blocks, tool, pen
     const onUp = (e) => {
       if (e.pointerId === hostOwned) hostOwned = null;
       if (!hostClaims.get(e.pointerId)?.taken) hostClaims.delete(e.pointerId);
+      if (e.pointerId === pasteHold) { pasteHold = null; e.preventDefault(); swallowClick(); return; }
       finish(e, false);
     };
     const onCancel = (e) => { contacts.delete(e.pointerId); finish(e, true); hideCursor(); };
@@ -836,8 +871,19 @@ export function InkLayer({ pageNumber, wrapRef, width, height, blocks, tool, pen
     el.addEventListener("pointerup", onUp);
     el.addEventListener("pointercancel", onCancel);
     el.addEventListener("lostpointercapture", onCancel);
+    // A right-click on blank page with a tool armed and strokes on the
+    // clipboard opens "Paste here"; over ink, the selection or without a
+    // clipboard the page's own menus run (prevented only over a hit).
     const onContext = (e) => {
-      if (pending?.hit || e.target.closest?.(".inkSelectionHit")) e.preventDefault();
+      if (pending?.hit || e.target.closest?.(".inkSelectionHit")) { e.preventDefault(); return; }
+      const L = live.current;
+      if (e.button !== 2 || !L.tool || !L.clip || !L.onPaste || !L.width || drawing) return;
+      const rect = el.getBoundingClientRect(), k = rect.width / L.width;
+      const pt = { x: (e.clientX - rect.left) / k, y: (e.clientY - rect.top) / k };
+      if (nearestInkStroke(L.groups, pt.x, pt.y, 5 / k)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      setPasteMenu({ x: e.clientX, y: e.clientY, pt });
     };
     const onBlur = () => { hideCursor(); clearPending(true); contacts.clear(); if (drawing) finish({ pointerId: drawing.id }, true); };
     el.addEventListener("contextmenu", onContext);
@@ -928,7 +974,15 @@ export function InkLayer({ pageNumber, wrapRef, width, height, blocks, tool, pen
           width: `${(hitBox[2] - hitBox[0]) / width * 100}%`, height: `${(hitBox[3] - hitBox[1]) / height * 100}%` }} /> : null}
       {selBox && onAction && !dragging ? <InkSelectionMenu wrapRef={wrapRef} box={selBox} width={width}
         strokes={groups.flatMap((g) => g.ink.strokes.filter((s) => selectedIds.has(s.id)))}
+        canMerge={canMergeSelection(groups, selectedIds)} keys={keys}
         onAction={onAction} onClose={() => onSelect(pageNumber, [])} /> : null}
+      {pasteMenu && onPaste ? (
+        <ContextMenu x={pasteMenu.x} y={pasteMenu.y} className="inkPasteMenu" onClose={() => setPasteMenu(null)}>
+          <MenuItem icon={ClipboardIcon} onClick={() => { setPasteMenu(null); onPaste(pageNumber, pasteMenu.pt, { width, height }); }}>
+            {t("Paste here")}
+          </MenuItem>
+        </ContextMenu>
+      ) : null}
       {selBox && onAction ? <InkTransformHandles wrapRef={wrapRef} box={selBox} width={width} height={height}
         positions={handlePositions}
         maxScale={Math.min(10, MAX_STROKE_SIZE / Math.max(...groups.flatMap((g) => g.ink.strokes.filter((s) => selectedIds.has(s.id)).map((s) => s.size))))}
@@ -1117,8 +1171,34 @@ export function useSelectionMenuAnchor(ref, rectOf, deps) {
   return anchor;
 }
 
-function InkSelectionMenu({ wrapRef, box, width, strokes, onAction, onClose }) {
+// Whether the selection can be merged into another note: the selected ids
+// are exactly one group's strokes, and the surface has another group with
+// strokes (an emptied captioned block is not one, as App's merge sees it).
+function canMergeSelection(groups, selectedIds) {
+  if (!selectedIds.size) return false;
+  const full = groups.filter((g) => g.ink.strokes.length);
+  if (full.length < 2) return false;
+  const holders = full.filter((g) => g.ink.strokes.some((s) => selectedIds.has(s.id)));
+  return holders.length === 1 && holders[0].ink.strokes.length === selectedIds.size
+    && holders[0].ink.strokes.every((s) => selectedIds.has(s.id));
+}
+
+// Whether the selection menu's second row (More edits) stands open: kept
+// for the session, so a reader who works from it finds it open again.
+let moreOpen = false;
+
+// The selection's menu: two rows of 36 px buttons, at most seven each (a
+// hard cap for every later addition), the first fixed — Color, Width, Style
+// (greyed until the pen styles land), Copy, Duplicate, More, Delete — and
+// More adding the second: Cut, Flip horizontal, Flip vertical, New note,
+// Merge into note (`canMerge` only), Select note, Show note. The Color and
+// Width rows open under whichever rows show, one at a time. `keys` names
+// the chords the titles carry ("Copy · Ctrl+C"; the label alone unbound).
+function InkSelectionMenu({ wrapRef, box, width, strokes, canMerge = false, keys, onAction, onClose }) {
   const [options, setOptions] = useState(null);
+  const [more, setMoreState] = useState(moreOpen);
+  const setMore = (on) => { moreOpen = on; setMoreState(on); };
+  const palette = usePalette();
   const [x0, y0, x1, y1] = box;
   const anchor = useSelectionMenuAnchor(wrapRef, (r) => {
     const k = r.width / width;
@@ -1128,17 +1208,27 @@ function InkSelectionMenu({ wrapRef, box, width, strokes, onAction, onClose }) {
   // 12 screen pixels, in the page's points
   const nudge = () => 12 * width / wrapRef.current.getBoundingClientRect().width;
   const kinds = [...new Set(strokes.map((s) => s.tool))];
-  const palette = usePalette();
+  const withKey = (label, key) => (key ? `${label} · ${key}` : label);
   return <ContextMenu {...anchor} ignoreRef={wrapRef} onClose={onClose} className="inkEditMenu">
     <InkTooltips role="toolbar" aria-label={t("Edit handwriting")} onPointerDown={(e) => e.stopPropagation()}>
       <div className="inkEditRow">
         <button className={"ctlBtn" + (options === "color" ? " modeActive" : "")} aria-label={t("Color")} title={t("Color")} aria-expanded={options === "color"} onClick={() => setOptions(options === "color" ? null : "color")}><PaletteIcon aria-hidden="true" /></button>
         <button className={"ctlBtn" + (options === "width" ? " modeActive" : "")} aria-label={t("Width")} title={t("Width")} aria-expanded={options === "width"} onClick={() => setOptions(options === "width" ? null : "width")}><LineWidthIcon aria-hidden="true" /></button>
-        <button className="ctlBtn" aria-label={t("Duplicate")} title={t("Duplicate")} onClick={() => onAction("duplicate", { dx: nudge(), dy: nudge() })}><CopyIcon aria-hidden="true" /></button>
-        <button className="ctlBtn" aria-label={t("Select note")} title={t("Select all handwriting in this note")} onClick={() => onAction("select-note")}><RectSelectIcon aria-hidden="true" /></button>
-        <button className="ctlBtn" aria-label={t("Show note")} title={t("Show note")} onClick={() => onAction("show-note")}><FileTextIcon aria-hidden="true" /></button>
+        <button className="ctlBtn" aria-label={t("Style")} title={t("Pen styles arrive in a later release")} disabled><BrushIcon aria-hidden="true" /></button>
+        <button className="ctlBtn" aria-label={t("Copy")} title={withKey(t("Copy"), keys?.copy)} onClick={() => onAction("copy")}><CopyIcon aria-hidden="true" /></button>
+        <button className="ctlBtn" aria-label={t("Duplicate")} title={withKey(t("Duplicate"), keys?.duplicate)} onClick={() => onAction("duplicate", { dx: nudge(), dy: nudge() })}><DuplicateIcon aria-hidden="true" /></button>
+        <button className={"ctlBtn" + (more ? " modeActive" : "")} aria-label={t("More")} title={t("More edits")} aria-expanded={more} onClick={() => setMore(!more)}><MoreIcon aria-hidden="true" /></button>
         <button className="ctlBtn inkDeleteBtn" aria-label={t("Delete")} title={t("Delete selected handwriting")} onClick={() => onAction("delete")}><TrashIcon aria-hidden="true" /></button>
       </div>
+      {more ? <div className="inkEditOptions inkEditMore" aria-label={t("More edits")}>
+        <button className="ctlBtn" aria-label={t("Cut")} title={withKey(t("Cut"), keys?.cut)} onClick={() => onAction("cut")}><ScissorsIcon aria-hidden="true" /></button>
+        <button className="ctlBtn" aria-label={t("Flip horizontal")} title={t("Flip horizontal: mirror left to right")} onClick={() => onAction("flip", { axis: "h" })}><FlipHIcon aria-hidden="true" /></button>
+        <button className="ctlBtn" aria-label={t("Flip vertical")} title={t("Flip vertical: mirror top to bottom")} onClick={() => onAction("flip", { axis: "v" })}><FlipVIcon aria-hidden="true" /></button>
+        <button className="ctlBtn" aria-label={t("New note")} title={t("New note from the selected handwriting")} onClick={() => onAction("split")}><NotebookPenIcon aria-hidden="true" /></button>
+        {canMerge ? <button className="ctlBtn" aria-label={t("Merge into note")} title={t("Merge this note's handwriting into the previous note on this page")} onClick={() => onAction("merge")}><MergeIcon aria-hidden="true" /></button> : null}
+        <button className="ctlBtn" aria-label={t("Select note")} title={t("Select all handwriting in this note")} onClick={() => onAction("select-note")}><RectSelectIcon aria-hidden="true" /></button>
+        <button className="ctlBtn" aria-label={t("Show note")} title={t("Show note")} onClick={() => onAction("show-note")}><FileTextIcon aria-hidden="true" /></button>
+      </div> : null}
       {options === "color" ? <div className="inkEditOptions" aria-label={t("Selected ink color")}>
         {pickerColors(palette, kinds.every((k) => k === "highlighter") ? "highlighter" : "pen").map((c, i) =>
           <button key={c.hex + c.alpha + i} className="colorBtn inkSwatch" style={{ background: swatchCss(c) }} title={inkColorName(c.hex)} aria-label={inkColorName(c.hex)}

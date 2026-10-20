@@ -408,8 +408,11 @@ only the dropdown.
 A menu that lists commands lists their ids: `CommandMenuItem`
 (`app/CommandMenuItem.jsx`) draws a catalog command ([hotkeys.md](hotkeys.md))
 as a `MenuItem` with its label, its glyph (`app/commandIcons.jsx`) and the
-key this account gave it, greyed while its `when` fails, and runs it with
-the context its key runs it with. The View menu's Undo, Redo, Go to page and
+key this account gave it, greyed while its `when` fails (`disabledTitle`
+is the row's title then, the reason it does not apply), and runs it with
+the context its key runs it with; `onRun` is told afterwards (a menu that
+closes itself), any other prop is the row's, and an id the catalog does
+not know renders nothing. The View menu's Undo, Redo, Go to page and
 Command palette are such rows: the way to them without a keyboard.
 
 Submenus open on hover, and the hover-switching is guarded by

@@ -292,7 +292,8 @@ export async function settingsScenarios(env) {
       await until(async () => (await caps(del)) === "Ctrl Shift K", { what: "reset" });
       assertEq(await caps(ren), "F2", "the clash is gone with the reset");
       await page.getByRole("searchbox", { name: "Filter shortcuts" }).fill("duplicate");
-      await until(async () => (await page.locator(".keyboardPane .setRow").count()) === 2, { what: "filtered to the two duplicate rows" });
+      // Duplicate block above / below, and the handwriting group's Duplicate handwriting.
+      await until(async () => (await page.locator(".keyboardPane .setRow").count()) === 3, { what: "filtered to the three duplicate rows" });
       assertNoProblems(page);
     } finally { await ctx.close(); }
   });

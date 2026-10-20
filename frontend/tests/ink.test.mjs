@@ -9,7 +9,7 @@ import {
   mergeInk, serializeInk, inkProps, newCanvasInk, sameStroke,
   inkAtTime, inkTimeline, REPLAY_MAX, REPLAY_PAUSE,
   DEFAULT_SIZE, STROKE_DEFAULTS, byBand, cloneStrokes, encodePoints, inkBytes, inkFeatures, strokeBand, strokeBounds, strokeBytes,
-  upgradeV1, withDefaults,
+  upgradeV1, withDefaults, appendStrokes, flipStrokes,
 } from "../src/ink/ink.js";
 
 const samples = (n = 5, x0 = 100, y0 = 200) =>
@@ -542,4 +542,108 @@ test("a preset keeps its smoothing level and a highlighter's straightening; tool
   assert.deepEqual(toolStyle(pen), { tool: "pen", color: pen.color, size: pen.size, opacity: 1, stabilize: 3 });
   assert.deepEqual(toolStyle(hl), { tool: "highlighter", color: hl.color, size: hl.size, opacity: HIGHLIGHTER_OPACITY, stabilize: 4, straight: "always" });
   assert.deepEqual(toolStyle(DEFAULT_TOOLS[4]), { tool: "highlighter", color: DEFAULT_TOOLS[4].color, size: 14, opacity: HIGHLIGHTER_OPACITY }, "a plain preset's style is as before");
+});
+
+// --- the clipboard, flips and moving strokes between groups ---------------------
+
+test("cloneStrokes mints fresh ids, drops from, moves by (dx, dy) and keeps t0, pressure, time, width and shape", () => {
+  const s = pen({ from: "root", shape: { kind: "line", params: { x1: 100, y1: 200, x2: 140, y2: 212 } }, note: "mine" });
+  const used = new Set(["pen"]);
+  const [c] = cloneStrokes([s], 10, -5, used);
+  assert.notEqual(c.id, "pen");
+  assert.ok(used.has(c.id), "the id is recorded as used");
+  assert.ok(!("from" in c), "a copy is not a piece");
+  assert.deepEqual([c.t0, c.ch, c.note, c.shape, c.size], [100, "xyptw", "mine", s.shape, s.size]);
+  const before = decodeStroke(s), after = decodeStroke(c);
+  assert.deepEqual(after.map((q) => [q.x - 10, q.y + 5, q.p, q.t, q.w]), before.map((q) => [q.x, q.y, q.p, q.t, q.w]));
+  assert.deepEqual(decodeStroke(cloneStrokes([s])[0]).map((q) => [q.x, q.y]), before.map((q) => [q.x, q.y]), "no offset by default");
+  assert.notEqual(cloneStrokes([s])[0].pts, s.pts, "the samples are copied, never shared");
+});
+
+test("appendStrokes adds strokes as they are and re-mints only an id the group already holds", () => {
+  const a = pen(), b = pen({ id: "other", from: "pen" });
+  const ink = { ...newInk(1, 612, 792), strokes: [a] };
+  const { ink: out, ids } = appendStrokes(ink, [b, { ...a, color: "#dc2626" }]);
+  assert.equal(out.strokes.length, 3);
+  assert.equal(out.strokes[1], b, "a stroke with a free id is the same object, from and all");
+  assert.notEqual(ids[1], "pen", "a colliding id is re-minted");
+  assert.equal(out.strokes[2].color, "#dc2626");
+  assert.deepEqual(ids, out.strokes.slice(1).map((s) => s.id));
+  assert.equal(appendStrokes(ink, []).ink, ink, "nothing to add: the same object");
+});
+
+test("flipStrokes mirrors the samples about the centre, keeps everything else, and twice is the identity", () => {
+  const s = pen({ nib: 30, shape: { kind: "ellipse", params: { cx: 120, cy: 206, rx: 30, ry: 10, angle: 20 } } });
+  const h = encodeStroke({ id: "h", tool: "highlighter", samples: samples(4, 300, 400), ch: "xypt" });
+  const ink = { ...newInk(1, 612, 792), strokes: [s, h] };
+  const box = boundsOf(ink, ["pen"]);
+  const cx = (box[0] + box[2]) / 2, cy = (box[1] + box[3]) / 2;
+  const once = flipStrokes(ink, ["pen"], { cx, cy, axis: "h" });
+  assert.equal(once.strokes[1], h, "an unselected stroke is the same object");
+  const before = decodeStroke(s), after = decodeStroke(once.strokes[0]);
+  assert.equal(after.length, before.length);
+  after.forEach((q, i) => {
+    assert.ok(Math.abs(q.x - (2 * cx - before[i].x)) < 0.011, "x is reflected about the centre");
+    assert.deepEqual([q.y, q.p, q.t, q.w], [before[i].y, before[i].p, before[i].t, before[i].w], "y, pressure, time and width stay");
+  });
+  assert.deepEqual([once.strokes[0].id, once.strokes[0].size, once.strokes[0].ch, once.strokes[0].t0], ["pen", s.size, "xyptw", 100]);
+  assert.equal(once.strokes[0].nib, 150, "a nib reflects to 180 − nib");
+  const shape = once.strokes[0].shape.params;
+  assert.ok(Math.abs(shape.cx - (2 * cx - 120)) < 1e-9 && shape.cy === 206, "a shape's centre reflects with it");
+  assert.equal(shape.angle, 160, "an ellipse's angle becomes 180° − angle");
+  const twice = flipStrokes(once, ["pen"], { cx, cy, axis: "h" });
+  assert.deepEqual(twice.strokes[0].pts, s.pts, "two horizontal flips give back the very samples");
+  assert.equal(twice.strokes[0].nib, 30);
+  assert.ok(Math.abs(twice.strokes[0].shape.params.cx - 120) < 1e-9 && twice.strokes[0].shape.params.angle === 20);
+  const down = flipStrokes(ink, ["pen"], { cx, cy, axis: "v" });
+  decodeStroke(down.strokes[0]).forEach((q, i) => {
+    assert.ok(Math.abs(q.y - (2 * cy - before[i].y)) < 0.011);
+    assert.equal(q.x, before[i].x);
+  });
+  assert.equal(down.strokes[0].shape.params.angle, 160, "a vertical flip negates the angle, mod 180");
+  assert.deepEqual(flipStrokes(down, ["pen"], { cx, cy, axis: "v" }).strokes[0].pts, s.pts, "and twice vertically too");
+  assert.equal(flipStrokes(ink, ["none"], { cx, cy, axis: "h" }), ink, "nothing selected: the same object");
+  assert.equal(flipStrokes(ink, ["pen"], { cx, cy, axis: "x" }), ink, "an unknown axis: the same object");
+  // a rectangle's angle stays in [-45, 45) and a polygon's in [0, 360 / n)
+  const r = pen({ id: "r", shape: { kind: "rect", params: { cx: 10, cy: 10, w: 20, h: 8, angle: -45 } } });
+  const p = pen({ id: "p", shape: { kind: "polygon", params: { cx: 10, cy: 10, r: 5, n: 5, angle: 50 } } });
+  const shapes = flipStrokes({ ...ink, strokes: [r, p] }, ["r", "p"], { cx: 0, cy: 0, axis: "h" });
+  assert.deepEqual(shapes.strokes[0].shape.params, { cx: -10, cy: 10, w: 8, h: 20, angle: -45 }, "45° is −45° a quarter turn on, sides swapped");
+  assert.deepEqual(shapes.strokes[1].shape.params, { cx: -10, cy: 10, r: 5, n: 5, angle: 58 }, "180 − 50 = 130, mod 72");
+});
+
+// The preset list on the account (docs/dev/handwriting.md "Presets follow
+// the account"): a hidden flag, and keys this build does not know kept as
+// they are, under a byte cap per preset.
+import { visibleTools } from "../src/ink/ink.js";
+test("normalizeTools keeps a hidden flag and unknown keys per preset, capped at 512 bytes; visibleTools filters the hidden ones", () => {
+  const stored = [
+    { ...DEFAULT_TOOLS[0], hidden: true, dash: "dotted", nib: 45 },
+    { ...DEFAULT_TOOLS[1], hidden: false },
+    { ...DEFAULT_TOOLS[4], hidden: "yes", style: { kind: "marker" } },
+  ];
+  const [hidden, shown, hl] = normalizeTools(JSON.parse(JSON.stringify(stored)));
+  assert.deepEqual(hidden, { ...DEFAULT_TOOLS[0], hidden: true, dash: "dotted", nib: 45 }, "the known keys first, then the extras verbatim");
+  assert.deepEqual(Object.keys(hidden), ["id", "kind", "color", "size", "hidden", "dash", "nib"]);
+  assert.equal("hidden" in shown, false, "false is left out");
+  assert.equal("hidden" in hl, false, "only true hides");
+  assert.deepEqual(hl.style, { kind: "marker" }, "an object rides along");
+  assert.deepEqual(visibleTools([hidden, shown, hl]), [shown, hl]);
+  const plain = [shown, hl];
+  assert.equal(visibleTools(plain), plain, "the same list when nothing is hidden");
+  // the cap: an extra that would take the preset past 512 bytes is dropped, the next small one still fits
+  const big = normalizeTools([{ ...DEFAULT_TOOLS[0], blob: "x".repeat(600), tiny: 1 }])[0];
+  assert.equal("blob" in big, false);
+  assert.equal(big.tiny, 1);
+  assert.ok(JSON.stringify(big).length <= 512);
+  // the cap counts UTF-8 bytes (what the profile stores), not code units: 200 CJK characters are 600 bytes
+  const cjk = normalizeTools([{ ...DEFAULT_TOOLS[0], note: "\u4e2d".repeat(200), tiny: 1 }])[0];
+  assert.equal("note" in cjk, false);
+  assert.equal(cjk.tiny, 1);
+  // a list that hides every preset shows its first: the strip is never empty
+  const all = normalizeTools([{ ...DEFAULT_TOOLS[0], hidden: true }, { ...DEFAULT_TOOLS[1], hidden: true }]);
+  assert.deepEqual(all.map((t) => !!t.hidden), [false, true]);
+  assert.equal(visibleTools(all).length, 1);
+  // a round trip through JSON changes nothing
+  assert.deepEqual(normalizeTools(JSON.parse(JSON.stringify([hidden, shown, hl]))), [hidden, shown, hl]);
 });
