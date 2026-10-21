@@ -3,6 +3,7 @@
 // preference declares its key, default, codec and scope), plus the sync of
 // the account-scoped ones through the account's profile.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { keepaliveFetch } from "../shared/lib/keepalive.js";
 import { API, apiJson, usePersistedState } from "../shared/lib/utils";
 import { ACCOUNT_PREFS, PREFS, profileOf, readProfile, setterName } from "./prefDefs.js";
 
@@ -129,7 +130,13 @@ export function useProfileSync(prefs, user, { onReplaced } = {}) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ set: Object.fromEntries(changed) }),
     };
-    if (keepalive) { fetch(PROFILE_URL, { ...request, keepalive: true, credentials: "same-origin" }).catch(() => {}); return Promise.resolve(); }
+    // The page is going away: keepalive when the page's keepalive room has
+    // space for it at the normal priority (shared/lib/keepalive.js), since
+    // it is small and losing it costs only the last change of a setting.
+    if (keepalive) {
+      keepaliveFetch(PROFILE_URL, { ...request, credentials: "same-origin" }, { priority: "normal" }).catch(() => {});
+      return Promise.resolve();
+    }
     const sent = perName(JSON.parse(now));
     const confirmed = confirmedRef.current || {};
     const names = ACCOUNT_PREFS.filter((name) => sent[name] !== confirmed[name]);

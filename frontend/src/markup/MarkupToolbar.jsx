@@ -6,13 +6,14 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
   ChevronLeftIcon, ChevronRightIcon, DuplicateIcon, ErasePartialIcon, EraserIcon, EraseStrokeIcon, EyeIcon, EyeOffIcon, HandIcon,
-  HighlightIcon, HistoryIcon, LassoIcon, LineWidthIcon, MoreIcon, PenIcon, RectSelectIcon, RedoIcon, SettingsIcon, TrashIcon,
+  HighlightIcon, HistoryIcon, LassoIcon, MoreIcon, PenIcon, RectSelectIcon, RedoIcon, SettingsIcon, TrashIcon,
   TypeIcon, UndoIcon, XIcon,
 } from "../shared/ui/Icons";
 import { ContextMenu, MenuDivider, MenuItem, SubMenuItem } from "../shared/ui/Menus";
 import { CommandMenuItem } from "../app/CommandMenuItem.jsx";
 import { DEFAULT_TOOLS, MAX_TOOLS, defaultOpacity, sizesFor, toolId, visibleTools } from "../ink/ink";
 import { ColorChoices, ERASER_SIZES, InkTooltips, inkColorName, swallowClick } from "../ink/InkLayer";
+import { InkLineChoices, InkStyleMenu, InkStylePicker, brushValue } from "../ink/InkStylePicker.jsx";
 import { pickerColors } from "../shared/model/palette.js";
 import { usePalette } from "../shared/ui/paletteContext.js";
 import { TextStyleChoices } from "./TextBoxLayer";
@@ -24,8 +25,9 @@ const SIZE_LABELS = [t("Small"), t("Medium"), t("Large")];
 // (each pen / highlighter with its own colour and width), the eraser, the
 // lasso, the Text tool, a hand, More (⋯) and close, Undo / Redo last.
 // Tapping the armed tool again opens its options row — for a preset three
-// captioned sub-rows, Style (Pen · Ballpoint, or a highlighter's Straight
-// trio, then the Smoothing ladder), Color (palette + custom) and Width
+// captioned sub-rows, Style (a pen's Style picker — Pen, Ballpoint, Brush,
+// Pencil, ink/InkStylePicker.jsx — or a highlighter's Straight trio, then
+// the Line trio and the Smoothing ladder), Color (palette + custom) and Width
 // (eight dots, duplicate, remove and the Tool menu: move, hide, hidden
 // tools, reset); whole / partial + size for the eraser; freeform / box for
 // the lasso; size, colour and background of new text boxes for the Text
@@ -62,13 +64,18 @@ const ERASES = [
 const keepFocus = (e) => e.preventDefault();
 
 // A preset's name in words, the colour and the kind: "Blue pen", "Red
-// ballpoint pen", "Pink highlighter" — what its button, the Hidden tools
-// menu and the strip's pills call it. The stored brush is still
-// `monoline`, a word that never shows.
+// ballpoint pen", "Green brush pen", "Black pencil", "Pink highlighter" —
+// what its button, the Hidden tools menu and the strip's pills call it (the
+// line is not named). The stored brush is still `monoline`, a word that
+// never shows.
 export function inkToolName(preset) {
   const color = inkColorName(preset.color);
   if (preset.kind === "highlighter") return t("{color} highlighter", { color });
-  return preset.brush === "monoline" ? t("{color} ballpoint pen", { color }) : t("{color} pen", { color });
+  const brush = brushValue(preset.brush);
+  if (brush === "monoline") return t("{color} ballpoint pen", { color });
+  if (brush === "brush") return t("{color} brush pen", { color });
+  if (brush === "pencil") return t("{color} pencil", { color });
+  return t("{color} pen", { color });
 }
 // "Blue pen · 2 pt".
 const toolLabel = (preset) => t("{name} · {size} pt", { name: inkToolName(preset), size: preset.size });
@@ -194,7 +201,7 @@ export function MarkupToolbar({ tools, active, options, eraserMode, eraserSize, 
   // frame, rendered after the InkTooltips element so no row the pointer
   // crosses raises a strip tooltip over it. A click with no press behind
   // it (Enter, Space) toggles it too.
-  const [menu, setMenu] = useState(null);     // {kind: "more" | "tool", x, y}
+  const [menu, setMenu] = useState(null);     // {kind: "more" | "tool" | "style", x, y}
   const triggerRef = useRef(null);
   const closeMenu = useCallback(() => setMenu(null), []);
   const toggleMenu = (kind, button) => {
@@ -206,8 +213,10 @@ export function MarkupToolbar({ tools, active, options, eraserMode, eraserSize, 
     onPointerDown: (e) => { if (e.button === 0) toggleMenu(kind, e.currentTarget); },
     onClick: (e) => { if (e.detail === 0) toggleMenu(kind, e.currentTarget); },
   });
-  // The Tool menu belongs to the open options row of a preset.
-  useEffect(() => { if (menu?.kind === "tool" && !(options && preset)) setMenu(null); }, [menu?.kind, options, preset]);
+  // The Tool and Style menus belong to the open options row of a preset.
+  useEffect(() => {
+    if ((menu?.kind === "tool" || menu?.kind === "style") && !(options && preset)) setMenu(null);
+  }, [menu?.kind, options, preset]);
   const { props: dragProps, drag } = usePresetDrag({ tools, rowRef, onChangeTools, onStatus });
   // A press on the Text tool leaves the box being typed in focused, so a
   // tap on the armed tool opens the options row that restyles that box.
@@ -319,15 +328,18 @@ export function MarkupToolbar({ tools, active, options, eraserMode, eraserSize, 
       {options && preset ? (
         <div className="pdfInkSub inkPresetOptions" data-ink-options="tool" data-guide="ink.options">
           {row(t("Style"), "inkOptStyle", <>
-            {preset.kind === "pen" ? <>
-              {seg(preset.brush !== "monoline", t("Pen"), <PenIcon size={14} />, () => edit({ brush: "pen" }), t("Pen: width follows stylus pressure"))}
-              {seg(preset.brush === "monoline", t("Ballpoint"), <LineWidthIcon size={14} />, () => edit({ brush: "monoline" }), t("Ballpoint: an even line at every pressure"))}
-            </> : (
+            {preset.kind === "pen" ? (
+              // the Style picker: its menu opens on the press, after the InkTooltips host (`menu`)
+              <InkStylePicker brush={preset.brush} open={menu?.kind === "style"} onOpen={(button) => toggleMenu("style", button)} />
+            ) : (
               <span className="inkStraight" role="group" aria-label={t("Straight highlighter")}>
                 {STRAIGHT.map(([value, label, title]) => seg((preset.straight || "hold") === value, t(label), null,
                   () => edit({ straight: value }), t(title)))}
               </span>
             )}
+            <span className="pdfInkSep" />
+            {/* the line, pens and highlighters alike: the dash pattern follows the width */}
+            <InkLineChoices value={preset.dash ?? null} onLine={(dash) => edit({ dash })} />
             <span className="pdfInkSep" />
             {/* Smoothing: five hollow dots, Off and the four string lengths (ink/stabilizer.js). */}
             <span className="inkSmoothing" role="group" aria-label={t("Smoothing")}>
@@ -414,6 +426,10 @@ export function MarkupToolbar({ tools, active, options, eraserMode, eraserSize, 
           {t("Handwriting settings…")}
         </MenuItem>
       </ContextMenu>
+    ) : null}
+    {menu?.kind === "style" && preset?.kind === "pen" ? (
+      <InkStyleMenu x={menu.x} y={menu.y} value={brushValue(preset.brush)} ignoreRef={triggerRef}
+        onPick={(brush) => edit({ brush })} onClose={closeMenu} />
     ) : null}
     {menu?.kind === "tool" && preset ? (
       <ContextMenu x={menu.x} y={menu.y} ignoreRef={triggerRef} onClose={closeMenu} className="inkStripMenu">

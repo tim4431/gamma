@@ -82,6 +82,13 @@ def test_unknown_channel_letters_ride_along_by_stride():
     assert [d["o"] for d in inkmod.decode_stroke(o)] == [1.0, 0.5]
 
 
+def test_tilt_defaults_match_the_client_codec():
+    """A sample without tilt in a tilted stroke is written upright, a 90 and
+    z 0, and the altitude is clamped to 0..90 — as ink.js encodePoints does."""
+    samples = [{"x": 1, "y": 1, "a": 40, "z": 120}, {"x": 2, "y": 1}, {"x": 3, "y": 1, "a": 120.4, "z": 7.6}]
+    assert inkmod.encode_points(samples, "xyaz") == [100, 100, 40, 120, 100, 0, 90, 0, 100, 0, 90, 8]
+
+
 def test_bounding_box_and_pdf_position():
     ink = inkmod.parse_ink(_ink())
     x0, y0, x1, y1 = inkmod.bounding_box(ink)
@@ -134,7 +141,7 @@ def test_monoline_preserves_samples_and_constant_width_in_exports(guest):
     (lambda d: d["strokes"][0].__setitem__("shape", {"kind": "star", "params": {}}), "kind"),
     (lambda d: d["strokes"][0].__setitem__("shape", {"kind": "rect", "params": {str(i): 1 for i in range(65)}}), "64"),
     (lambda d: d["strokes"][0].__setitem__("fill", {"color": "red"}), "color"),
-    (lambda d: d["strokes"][0].__setitem__("pts", [100, 100, 500, 0, 2500]), "channel w"),  # w over 2.000
+    (lambda d: d["strokes"][0].__setitem__("pts", [100, 100, 500, 0, 4500]), "channel w"),  # w over 4.000
     (lambda d: d["strokes"][0].__setitem__("pts", [100, 100, 500, 0, -600]), "channel w"),  # w below 0
     (lambda d: d["strokes"][0].update(size=80, pts=[100, 100, 500, 0, 1500]), "max(w)"),   # 80 × 1.5 > 100
     (lambda d: d["strokes"][0].__setitem__("note", {"a": {"b": {"c": 1}}}), "deeper"),
@@ -151,6 +158,17 @@ def test_schema_rejects_bad_files(mutate, message):
     with pytest.raises(inkmod.InkError) as e:
         inkmod.parse_ink(data)
     assert message.lower() in str(e.value).lower()
+
+
+def test_a_slanted_pencil_fits_the_w_and_o_ranges():
+    """The pencil's widest, 3.5 times its size, is inside the w channel's
+    0..4.000; the drawn ceiling is still size × max(w) ≤ 100, and o is 0..1."""
+    stroke = {"id": "pc", "brush": "pencil", "size": 28.5, "ch": "xyptwo", "pts": [100, 100, 1000, 0, 3500, 1000]}
+    assert inkmod.parse_ink(_ink(strokes=[stroke])).strokes[0].brush == "pencil"
+    for change, message in (({"size": 29}, "max(w)"), ({"pts": [100, 100, 1000, 0, 3500, 1001]}, "channel o")):
+        with pytest.raises(inkmod.InkError) as e:
+            inkmod.parse_ink(_ink(strokes=[{**stroke, **change}]))
+        assert message in str(e.value)
 
 
 def test_nan_is_refused_at_parse_and_never_written():
@@ -252,6 +270,175 @@ def test_band_0_is_drawn_first_in_every_renderer():
     ops = inkmod.pdf_path_ops(ink, lambda x, y: (x, y)).decode()
     assert ops.index("1.00 0.88 0.40 RG") < ops.index("0.86 0.15 0.15 RG") < ops.index("0.12 0.12 0.12 RG") \
         < ops.index("0.15 0.39 0.92 RG")
+    # one band alone, for a writer drawing several groups band by band
+    under = inkmod.pdf_path_ops(ink, lambda x, y: (x, y), band=0).decode()
+    assert "1.00 0.88 0.40 RG" in under and "0.86 0.15 0.15 RG" in under and "0.12 0.12 0.12 RG" not in under
+    assert inkmod.pdf_path_ops(inkmod.parse_ink(_ink(strokes=[])), lambda x, y: (x, y)) == b""
+
+
+def _pencil(n=21, size=2.0, opacity=1.0, falling=False):
+    """A pencil line pressed harder and harder (or, ``falling``, lighter):
+    o = 0.15 + 0.85p crosses both band edges."""
+    ps = [i / (n - 1) for i in range(n)]
+    samples = [{"x": 10 + 2 * i, "y": 20, "p": p, "t": 8 * i, "w": 1 + (p - 0.5), "o": 0.15 + 0.85 * p}
+               for i, p in enumerate(ps[::-1] if falling else ps)]
+    return {"id": "pc", "brush": "pencil", "size": size, "opacity": opacity, "ch": "xyptwo",
+            "pts": inkmod.encode_points(samples, "xyptwo")}
+
+
+def test_pencil_bands_split_where_o_crosses_a_band_edge():
+    assert [inkmod.opacity_band(o) for o in (0.15, 0.33, 0.331, 0.66, 0.7, 1)] == [0.33, 0.33, 0.66, 0.66, 1, 1]
+    stroke = inkmod.parse_ink(_ink(strokes=[_pencil()])).strokes[0]
+    bands = inkmod.stroke_bands(stroke)
+    assert [band for band, _ in bands] == [0.33, 0.66, 1.0]
+    (_, light), (_, mid), (_, dark) = bands
+    # each run ends where the next begins, lerped by arc to the edge's opacity
+    assert light[0]["x"] == 10 and dark[-1]["x"] == 50
+    assert light[-1] == mid[0] and mid[-1] == dark[0]
+    assert light[-1]["o"] == pytest.approx(0.33) and mid[-1]["o"] == pytest.approx(0.66)
+    assert 18 < light[-1]["x"] < 20 and light[-1]["w"] == pytest.approx(1 + (light[-1]["p"] - 0.5), abs=2e-3)
+    # lighter and lighter crosses the edges the other way round
+    falling = inkmod.parse_ink(_ink(strokes=[_pencil(falling=True)])).strokes[0]
+    assert [band for band, _ in inkmod.stroke_bands(falling)] == [1.0, 0.66, 0.33]
+    # a stroke without o is one band, the whole stroke
+    plain = inkmod.parse_ink(_ink()).strokes[0]
+    assert inkmod.stroke_bands(plain) == [(1.0, inkmod.decode_stroke(plain))]
+
+
+def test_a_pencil_draws_three_shades_painted_once_each():
+    ink = inkmod.parse_ink(_ink(strokes=[_pencil()]))
+    svg = inkmod.to_svg(ink)
+    # one filled outline per band, untextured; the darkest band is opaque
+    assert svg.count("<path") == 3 and svg.count('fill="rgb(31,31,31)"') == 3
+    assert 'fill-opacity="0.33"' in svg and 'fill-opacity="0.66"' in svg and svg.count("fill-opacity") == 2
+    ops = inkmod.pdf_path_ops(ink, lambda x, y: (x, PAGE_H - y))
+    assert ops.count(b"\nf\n") == 3 and b"/GSink330 gs" in ops and b"/GSink660 gs" in ops
+    states = inkmod.pdf_path_resources(ops)
+    assert sorted(states) == ["/GSink330", "/GSink660"]
+    assert (float(states["/GSink330"]["/CA"]), float(states["/GSink330"]["/ca"])) == (0.33, 0.33)
+    # the preset's opacity scales every band; a translucent pen is one band at it
+    ops = inkmod.pdf_path_ops(inkmod.parse_ink(_ink(strokes=[_pencil(opacity=0.6)])), lambda x, y: (x, y))
+    assert sorted(inkmod.pdf_path_resources(ops)) == ["/GSink198", "/GSink396", "/GSink600"]
+    pale = inkmod.parse_ink(_ink(strokes=[{**_ink()["strokes"][0], "opacity": 0.5}]))
+    assert inkmod.to_svg(pale).count('fill-opacity="0.5"') == 1
+    ops = inkmod.pdf_path_ops(pale, lambda x, y: (x, y))
+    assert ops.count(b"/GSink500 gs") == 1 and ops.count(b"\nf\n") == 1 and b" l S" not in ops
+
+
+def test_dashed_strokes_draw_one_dashed_centreline():
+    """Dash geometry comes from the size: a pressure pen's dashes run along
+    its mean-width centreline, a highlighter's along its own."""
+    pen = {**_ink()["strokes"][0], "dash": "dashed"}            # size 2, w 0.7 … 1.3
+    marker = {"id": "hl", "tool": "highlighter", "color": "#ffe066", "size": 8, "opacity": 0.6, "dash": "dotted",
+              "ch": "xy", "pts": inkmod.encode_points(_samples(3, 300, 300), "xy")}
+    ink = inkmod.parse_ink(_ink(strokes=[pen, marker]))
+    svg = inkmod.to_svg(ink)
+    assert svg.count("<path") == 2
+    assert 'stroke-width="2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="4 4"' in svg
+    assert 'stroke-dasharray="0.8 16" style="mix-blend-mode:multiply"' in svg
+    ops = inkmod.pdf_path_ops(ink, lambda x, y: (x, PAGE_H - y)).decode()
+    pen_ops = ops[ops.index("0.12 0.12 0.12 RG"):]
+    assert pen_ops.startswith("0.12 0.12 0.12 RG 2.00 w [4 4] 0 d\n") and pen_ops.count(" l S") == 1
+    assert pen_ops.index(" S\n") < pen_ops.index("[] 0 d")
+    assert "/GSinkM600 gs 1.00 0.88 0.40 RG 8.00 w\n[0.8 16] 0 d" in ops
+    # the notes PDF scales the pattern with the drawing
+    assert b"[2 2] 0 d" in inkmod.pdf_path_ops(ink, lambda x, y: (x, y), scale=0.5)
+
+
+def test_highlighters_multiply_in_the_pdf_ops():
+    """With a graphics state the highlighter is translucent and multiplied
+    like the screen, not a pale opaque band over whatever lies beneath."""
+    ink = inkmod.parse_ink(_ink(strokes=[{"id": "hl", "tool": "highlighter", "color": "#ffe066", "size": 8,
+                                          "opacity": 0.6, "ch": "xy", "pts": [10000, 10000, 1000, 0]}]))
+    ops = inkmod.pdf_path_ops(ink, lambda x, y: (x, y))
+    assert b"q /GSinkM600 gs 1.00 0.88 0.40 RG 8.00 w" in ops and ops.rstrip().endswith(b"S\nQ\nQ")
+    state = inkmod.pdf_path_resources(ops)["/GSinkM600"]
+    assert (str(state["/BM"]), float(state["/CA"]), float(state["/ca"])) == ("/Multiply", 0.6, 0.6)
+    assert inkmod.pdf_path_resources(b"q 1 J 1 j\nQ") is None
+
+
+def test_stroke_outline_is_the_screen_outline_at_the_baked_width():
+    """perfect-freehand's outline, driven by w: its half-width is size × w / 2."""
+    def outline(samples, ch, size):
+        stroke = inkmod.parse_ink(_ink(strokes=[{"id": "o", "size": size, "ch": ch,
+                                                  "pts": inkmod.encode_points(samples, ch)}])).strokes[0]
+        return inkmod.stroke_outline(stroke)
+
+    # a single sample: perfect-freehand's dot, a capsule a hair long (it
+    # adds a point one unit on, a tenth of a point at the scale it runs at)
+    dot = outline([{"x": 50, "y": 60, "w": 1.5}], "xyw", 4)
+    assert len(dot) > 10 and all(2.85 < ((x - 50) ** 2 + (y - 60) ** 2) ** 0.5 < 3.15 for x, y in dot)
+    line = outline([{"x": 10 + i, "y": 40, "w": 1.2} for i in range(31)], "xyw", 2)
+    mid = [abs(y - 40) for x, y in line if 15 < x < 35]
+    assert mid and max(mid) == pytest.approx(1.2, abs=1e-6) and min(mid) == pytest.approx(1.2, abs=1e-6)
+    assert min(x for x, _ in line) == pytest.approx(8.8, abs=0.01) and max(x for x, _ in line) == pytest.approx(41.2, abs=0.01)
+    # two samples are given a midpoint, so the middle keeps the baked width
+    # (perfect-freehand's own two-point path would draw the size there)
+    pair = outline([{"x": 0, "y": 40, "w": 2}, {"x": 20, "y": 40, "w": 2}], "xyw", 2)
+    assert max(abs(y - 40) for x, y in pair if 5 < x < 15) == pytest.approx(2, abs=1e-6)
+    # without w a stroke is its size
+    flat = outline([{"x": 10 + i, "y": 40} for i in range(31)], "xy", 3)
+    assert max(abs(y - 40) for x, y in flat if 15 < x < 35) == pytest.approx(1.5, abs=1e-6)
+
+
+# perfect-freehand 1.2.2's getStroke on a stroke that turns back on itself,
+# at the client's outlineOptions (size 2): the outline the port must give.
+_PF_REVERSAL_IN = [(10, 10, 0.5), (15, 10, 0.6), (20, 10, 0.7), (25, 10, 0.7), (30, 10, 0.6), (25, 10.5, 0.5),
+                   (20, 10.5, 0.5), (15, 10.5, 0.4), (10, 10.5, 0.4)]
+_PF_REVERSAL_OUT = [
+    (10, 9), (13.3, 8.8), (17.722, 8.6), (22.525, 8.6), (27.459, 8.8), (27.746, 8.835), (28.016, 8.937),
+    (28.254, 9.102), (28.446, 9.318), (28.581, 9.575), (28.65, 9.855), (28.65, 10.145), (28.581, 10.426),
+    (28.446, 10.682), (28.254, 10.898), (28.016, 11.063), (27.746, 11.165), (27.459, 11.2), (26.033, 11.31),
+    (22.013, 11.442), (17.381, 11.28), (10.002, 11.3), (9.747, 11.259), (9.518, 11.138), (9.339, 10.951),
+    (9.23, 10.716), (9.201, 10.459), (9.256, 10.206), (9.389, 9.984), (9.586, 9.816), (9.826, 9.719),
+    (10.084, 9.704), (10.334, 9.773), (10.549, 9.918), (10.706, 10.123), (10.789, 10.369), (10.79, 10.627),
+    (10.708, 10.873), (10.552, 11.079), (10.338, 11.225), (10.088, 11.295), (9.83, 11.282), (9.589, 11.186),
+    (9.392, 11.019), (9.258, 10.798), (9.201, 10.545), (9.229, 10.288), (9.337, 10.053), (9.514, 9.864),
+    (9.743, 9.742), (9.998, 9.7), (9.998, 9.7), (17.368, 9.68), (21.955, 9.443), (25.639, 9.35), (27.459,
+    8.8), (27.746, 8.835), (28.016, 8.937), (28.254, 9.102), (28.446, 9.318), (28.581, 9.574), (28.65,
+    9.855), (28.65, 10.145), (28.581, 10.425), (28.446, 10.682), (28.254, 10.898), (28.016, 11.063),
+    (27.746, 11.165), (27.459, 11.2), (22.525, 11.4), (17.722, 11.4), (13.3, 11.2), (10, 11), (9.761,
+    10.971), (9.535, 10.885), (9.337, 10.748), (9.177, 10.568), (9.065, 10.355), (9.007, 10.12), (9.007,
+    9.879), (9.065, 9.645), (9.177, 9.432), (9.337, 9.251), (9.535, 9.115), (9.761, 9.029), (10, 9)
+]
+
+
+# the same with flat caps (start.cap and end.cap false), as a band run's cut ends
+_PF_REVERSAL_FLAT = [
+    (10, 9), (13.3, 8.8), (17.722, 8.6), (22.525, 8.6), (27.459, 8.8), (27.746, 8.835), (28.016, 8.937),
+    (28.254, 9.102), (28.446, 9.318), (28.581, 9.575), (28.65, 9.855), (28.65, 10.145), (28.581, 10.426),
+    (28.446, 10.682), (28.254, 10.898), (28.016, 11.063), (27.746, 11.165), (27.459, 11.2), (26.033, 11.31),
+    (22.013, 11.442), (17.381, 11.28), (10.002, 11.3), (10.002, 11.3), (10.002, 11.292), (9.998, 9.708),
+    (9.998, 9.7), (9.998, 9.7), (17.368, 9.68), (21.955, 9.443), (25.639, 9.35), (27.459, 8.8), (27.746,
+    8.835), (28.016, 8.937), (28.254, 9.102), (28.446, 9.318), (28.581, 9.574), (28.65, 9.855), (28.65,
+    10.145), (28.581, 10.425), (28.446, 10.682), (28.254, 10.898), (28.016, 11.063), (27.746, 11.165),
+    (27.459, 11.2), (22.525, 11.4), (17.722, 11.4), (13.3, 11.2), (10, 11), (10, 11), (10, 11.02), (10,
+    8.98), (10, 9)
+]
+
+
+@pytest.mark.parametrize("caps, want", [((True, True), _PF_REVERSAL_OUT), ((False, False), _PF_REVERSAL_FLAT)])
+def test_the_outline_port_is_perfect_freehand(caps, want):
+    got = inkmod._pf_outline(inkmod._pf_points(_PF_REVERSAL_IN, 2), 2, caps)
+    assert len(got) == len(want)
+    assert all(abs(x - u) < 6e-4 and abs(y - v) < 6e-4 for (x, y), (u, v) in zip(got, want))
+
+
+def test_bounding_box_reads_the_raw_arrays_as_the_polyline_does():
+    import random
+    rnd = random.Random(5)
+    strokes = []
+    for i in range(30):
+        ch = rnd.choice(["xy", "xyptw", "xyptazwo", "xypt"])
+        samples = [{"x": rnd.uniform(0, 600), "y": rnd.uniform(0, 780), "p": rnd.random(), "t": 4 * j,
+                    "a": rnd.randint(20, 90), "z": rnd.randint(0, 359), "w": rnd.uniform(0.2, 3.4),
+                    "o": rnd.uniform(0.15, 1)} for j in range(rnd.randint(1, 40))]
+        strokes.append({"id": f"s{i}", "size": rnd.uniform(0.5, 25), "ch": ch, "pts": inkmod.encode_points(samples, ch)})
+    ink = inkmod.parse_ink(_ink(strokes=strokes))
+    polys = [inkmod.stroke_polyline(s) for s in ink.strokes]
+    want = (min(x - w / 2 for p in polys for x, _, w in p), min(y - w / 2 for p in polys for _, y, w in p),
+            max(x + w / 2 for p in polys for x, _, w in p), max(y + w / 2 for p in polys for _, y, w in p))
+    assert inkmod.bounding_box(ink) == pytest.approx(want, abs=1e-9)
 
 
 # --- upload endpoint ----------------------------------------------------------------
@@ -547,7 +734,7 @@ def test_annots_come_band_0_first_and_keep_their_bucket_index():
     assert ids == ["h", "h2", "a", "b"]
 
 
-def _pdf_with_ink_annotation(gamma_ink: str | None = None):
+def _pdf_with_ink_annotation(gamma_ink: str | None = None, border=None):
     from PyPDF2 import PdfReader, PdfWriter
     from PyPDF2.generic import ArrayObject, DictionaryObject, FloatObject, NameObject, TextStringObject
 
@@ -557,7 +744,7 @@ def _pdf_with_ink_annotation(gamma_ink: str | None = None):
         NameObject("/Type"): NameObject("/Annot"), NameObject("/Subtype"): NameObject("/Ink"),
         NameObject("/Rect"): ArrayObject(FloatObject(v) for v in (10, 10, 60, 60)),
         NameObject("/InkList"): ArrayObject([ArrayObject(FloatObject(v) for v in (10, 10, 30, 40, 60, 60))]),
-        NameObject("/BS"): DictionaryObject({NameObject("/W"): FloatObject(3)}),
+        NameObject("/BS"): DictionaryObject({NameObject("/W"): FloatObject(3), **(border or {})}),
         NameObject("/C"): ArrayObject(FloatObject(v) for v in (0, 0, 1)),
     })
     if gamma_ink is not None:
@@ -578,6 +765,44 @@ def test_importer_reads_foreign_ink_without_private_key():
     assert s.size == 3 and s.color == "#0000ff" and s.pen is False
     pts = inkmod.decode_stroke(s)
     assert (pts[0]["x"], pts[0]["y"]) == (10, PAGE_H - 10) and pts[-1]["x"] == 60
+    assert s.dash is None
+
+
+def test_importer_reads_a_dashed_foreign_border_as_a_dashed_line():
+    """A foreign /Ink whose border style is dashed imports dashed, whatever
+    its /D array says: Gamma's pattern follows the width."""
+    from PyPDF2.generic import ArrayObject, FloatObject, NameObject
+    from gamma.routers.imports import _extract_pdf_annotations
+
+    dashed = {NameObject("/S"): NameObject("/D"), NameObject("/D"): ArrayObject([FloatObject(3), FloatObject(2)])}
+    for border in (dashed, {NameObject("/S"): NameObject("/D")}):
+        (found,) = _extract_pdf_annotations(_pdf_with_ink_annotation(border=border))
+        assert [s.dash for s in found["ink"].strokes] == ["dashed"]
+    (found,) = _extract_pdf_annotations(_pdf_with_ink_annotation(border={NameObject("/S"): NameObject("/S")}))
+    assert found["ink"].strokes[0].dash is None
+
+
+def test_dashed_ink_writes_a_dashed_border_and_comes_back_as_drawn():
+    """/BS /S /D /D [on off] from a bucket's first stroke; the bucket key
+    has no dash, so a dashed and a solid stroke of one look share a bucket,
+    and /GammaInk carries each stroke's own dash back."""
+    from PyPDF2 import PdfReader
+    from gamma.pdf_export import annotate_pdf
+    from gamma.routers.imports import _extract_pdf_annotations
+
+    a, b = _stroke("a", dash="dashed"), _stroke("b", 200)
+    c, d = _stroke("c", 300, color="#dc2626"), _stroke("d", 400, color="#dc2626", dash="dotted")
+    ink = inkmod.parse_ink(_ink(strokes=[a, b, c, d]))
+    assert [[s.id for s in bucket] for bucket in inkmod.ink_buckets(ink)] == [["a", "b"], ["c", "d"]]
+    out, written = annotate_pdf(_blank_pdf(), [], ink=[{"ink": ink, "note": "", "id": "blk"}])
+    assert written == 2
+    reader = PdfReader(io.BytesIO(out))
+    first, second = (x.get_object() for x in reader.pages[0]["/Annots"])
+    assert str(first["/BS"]["/S"]) == "/D" and [float(v) for v in first["/BS"]["/D"]] == [4, 4]
+    assert str(second["/BS"]["/S"]) == "/S" and "/D" not in second["/BS"]   # its first stroke is solid
+    found = _extract_pdf_annotations(reader)
+    assert [[(s.id, s.dash) for s in f["ink"].strokes] for f in found] == \
+        [[("a", "dashed"), ("b", None)], [("c", None), ("d", "dotted")]]
 
 
 def test_importer_upgrades_a_version_1_private_payload():
@@ -644,6 +869,19 @@ def test_markdown_export_bundles_an_svg_picture(guest):
     assert z.read(f"assets/{stem}.svg").startswith(b"<svg")
 
 
+def test_notebook_pdf_declares_the_states_its_ink_sets():
+    from PyPDF2 import PdfReader
+    from gamma.notebook import normalize_paper, notebook_pdf
+
+    ink = inkmod.parse_ink(_ink(strokes=[_pencil(), {"id": "hl", "tool": "highlighter", "color": "#ffe066", "size": 8,
+                                                     "opacity": 0.6, "ch": "xy", "pts": [10000, 10000, 1000, 0]}]))
+    pdf = notebook_pdf([(normalize_paper({"width": PAGE_W, "height": PAGE_H}), [], [ink])])
+    page = PdfReader(io.BytesIO(pdf)).pages[0]
+    assert sorted(page["/Resources"]["/ExtGState"]) == ["/GSink330", "/GSink660", "/GSinkM600"]
+    stream = page.get_contents().get_data()
+    assert stream.index(b"/GSinkM600 gs") < stream.index(b"/GSink330 gs")   # the highlighter goes under
+
+
 def test_notes_pdf_draws_the_strokes(guest):
     page, _ = _page_with_ink(guest, "Ink notes pdf")
     r = guest.get(f"/api/pages/{page['id']}/export?mode=notes-pdf")
@@ -653,3 +891,14 @@ def test_notes_pdf_draws_the_strokes(guest):
     stream = b"".join(p.get_contents().get_data() for p in reader.pages)
     assert b"1 J 1 j" in stream and stream.count(b" l S") == 4
     assert "handwriting, p. 2" in reader.pages[0].extract_text()
+    assert "/ExtGState" not in reader.pages[0]["/Resources"]      # an opaque pen sets no state
+    # a pencil's shades are graphics states the page declares
+    up = guest.post("/api/upload-ink", json=_ink(page=2, strokes=[_pencil()])).json()
+    pencil = make_page(guest, "Pencil notes pdf")
+    guest.put(f"/api/blocks/{pencil['id']}/children", json={"blocks": [
+        {"id": f"ink-{pencil['id']}", "content": "shaded", "children": [], "properties": {
+            "ink_url": up["url"], "pdf_position": up["pdf_position"], "ink_strokes": 1}}]})
+    r = guest.get(f"/api/pages/{pencil['id']}/export?mode=notes-pdf")
+    assert r.status_code == 200, r.text
+    page = PdfReader(io.BytesIO(r.content)).pages[0]
+    assert sorted(page["/Resources"]["/ExtGState"]) == ["/GSink330", "/GSink660"]

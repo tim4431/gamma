@@ -21,7 +21,8 @@ import { createContext, useContext } from "react";
 // arg) — style, transform, delete, duplicate, copy, cut, flip {axis},
 // split, merge, select-note, show-note —, onMoveSelection, onPaste(page,
 // pt, {width, height}): the clipboard at a page point, onFingerScroll,
-// onUndoGesture, onHoldStatus),
+// onUndoGesture, onHoldStatus, onInkLive(page, msg): a chunk of the
+// stroke in progress for the page's other peers, ink/inkLive.js),
 // onJump (show a mark's block in the notes) and the text boxes'
 // (markup/useTextBoxes.js) — one object for App's life whose functions call
 // the latest handlers (shared/lib/stableActions.js), so the context value

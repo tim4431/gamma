@@ -31,9 +31,11 @@ A change is pushed one second after it settles (a slider sends one request)
 as a `PATCH /api/prefs/profile` carrying only the entries that changed since
 the copy this tab last saw. A tab's stale value of another entry therefore
 never undoes a change synced in meanwhile. A pending push is flushed when
-the page is hidden, focus pulls at most every 15 seconds, and nothing is
-pushed before the first load succeeds. Signed-out visitors, guests and share
-views work from localStorage alone.
+the page is hidden (with `keepalive` when the page's keepalive room allows,
+at its normal priority: [collab.md](collab.md) "Keepalive"), focus pulls
+at most every 15 seconds, and nothing is pushed before the first load
+succeeds. Signed-out visitors, guests and share views work from
+localStorage alone.
 
 The profile carries no secrets; the provider entries and the active key
 never join it. An account linked to Gamma Cloud carries it to every Gamma

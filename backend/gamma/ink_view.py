@@ -5,11 +5,11 @@ page, whole or cropped to the handwriting.
 
 Nothing is drawn here. A sheet goes through the notebook export's one-page
 PDF (``notebook.notebook_pdf``: the paper painted, its text boxes typeset,
-the strokes as vectors);
-ink on a PDF page is that page alone with the strokes as the annotated
-export's ``/Ink`` annotations (``pdf_export.page_with_ink``), which MuPDF
-draws when it renders (they carry no appearance stream; it synthesizes
-one). ``pdf_text.render_page`` rasterizes either.
+the strokes as vectors); ink on a PDF page is that page alone with the
+strokes stamped into its content as the same vectors
+(``pdf_export.page_with_ink(..., vector=True)``: baked widths, tapers,
+dashes and the pencil's shades as drawn, highlighters multiplied onto the
+text under them). ``pdf_text.render_page`` rasterizes either.
 """
 
 from . import ink as inkmod
@@ -119,7 +119,7 @@ def picture(ws: str, conn, block_id: str, page_id: str, whole: bool = False) -> 
     data = b""
     if path:
         try:
-            data, pages = page_with_ink(path, page_no, inks)
+            data, pages = page_with_ink(path, page_no, inks, vector=True)
             if not data:
                 return {"error": f"error: the handwriting is on PDF page {page_no}, but the PDF has {pages} pages"}
         except Exception as e:  # an encrypted or broken file: the strokes alone still read
@@ -137,8 +137,8 @@ def _render(pdf: bytes, box):
 
 def page_with_handwriting(ws: str, conn, page_id: str, page_no: int, path=None):
     """PDF page ``page_no`` of the page ``page_id`` with every handwriting
-    group written on it, as one-page PDF bytes (``pdf_export.page_with_ink``)
-    — what a picture of "the page as the user sees it" is rendered from —
+    group stamped on it, as one-page PDF bytes (``pdf_export.page_with_ink``,
+    vector) — what a picture of "the page as the user sees it" is rendered from —
     or ``(b"", pages)`` when the page has no such PDF page; ``(None, 0)``
     for a page without a PDF file on this server (``path`` is that file
     when the caller has it already). Ink the PDF still embeds is drawn by
@@ -159,7 +159,7 @@ def page_with_handwriting(ws: str, conn, page_id: str, page_no: int, path=None):
         if ink is not None and ink.space.kind == "pdf-page" and ink.space.page == page_no:
             inks.append(ink)
     try:
-        return page_with_ink(path, page_no, inks)
+        return page_with_ink(path, page_no, inks, vector=True)
     except Exception as e:  # an encrypted or broken file: no handwriting, the page itself still renders
         log.warning(f"[ink-view] could not copy PDF page {page_no} of {page_id}: {e}")
         return b"", 0

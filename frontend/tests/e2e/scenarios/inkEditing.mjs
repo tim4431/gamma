@@ -103,7 +103,7 @@ export async function inkEditingScenarios({ server, browser, alice, bob, makePdf
       const box = await menu().getByRole("button", { name, exact: true }).boundingBox();
       assert(box.width >= 36 && box.height >= 36, `${name} retains a touch target`);
     }
-    assert(await menu().getByRole("button", { name: "Style", exact: true }).isDisabled(), "pen styles wait for a later release");
+    assertEq(await menu().getByRole("button", { name: "Style", exact: true }).getAttribute("aria-expanded"), "false", "the Style row is closed until asked for");
     assertEq(await menu().getByRole("button", { name: "More", exact: true }).getAttribute("aria-expanded"), "false");
     await menu().getByRole("button", { name: "More", exact: true }).tap();
     assertEq(await menu().getByRole("button", { name: "More", exact: true }).getAttribute("aria-expanded"), "true");
@@ -487,6 +487,65 @@ export async function inkEditingScenarios({ server, browser, alice, bob, makePdf
     assert(Math.abs(await tablet.evaluate(() => visualViewport.scale) - scale) < 0.01, "PDF pinch leaves browser chrome at its original scale");
     assertNoProblems(tablet);
     await tabletCtx.close();
+  });
+
+  await step("ink edit: the Style row restyles a selected pen to Brush (its widths baked again) and Dotted; a highlighter takes a line, never a brush", async () => {
+    // (the last step on this page: the highlighter it adds stays)
+    if (!await page.locator(".pdfInkBar").count()) await page.getByRole("button", { name: "Handwriting tools", exact: true }).tap();
+    await page.getByRole("button", { name: / pen · .* · key 1\b/ }).tap();
+    await page.locator(".pdfViewer").evaluate((el) => { el.scrollTop = 0; });
+    await tapInk();
+    const before = (await stored()).strokes[0];
+    assert(!before.brush && !before.ch.includes("w"), `a plain constant pen to start from (${before.ch})`);
+    const styleBtn = menu().getByRole("button", { name: "Style", exact: true });
+    await styleBtn.tap();
+    assertEq(await styleBtn.getAttribute("aria-expanded"), "true");
+    const row = menu().locator(".inkEditOptions", { has: page.locator(".inkLine") });
+    assertEq(await row.getAttribute("aria-label"), "Selected ink style");
+    for (const name of ["Style: Pen", "Solid", "Dashed", "Dotted"]) {
+      const box = await row.getByRole("button", { name, exact: true }).boundingBox();
+      assert(box.width >= 32 && box.height >= 32, `${name} keeps a 32 px target`);
+    }
+    assertEq(await row.getByRole("button", { name: "Solid", exact: true }).getAttribute("aria-pressed"), "true", "the stroke is solid");
+    // the picker's menu opens on the press, outside the menu's tooltip host, and a row of it keeps the selection
+    await row.getByRole("button", { name: "Style: Pen", exact: true }).click();
+    const styles = page.getByRole("menu", { name: "Pen style" });
+    assertEq(await styles.getByRole("menuitemradio", { name: "Pen", exact: true }).getAttribute("aria-checked"), "true");
+    await styles.getByRole("menuitemradio", { name: "Brush", exact: true }).click();
+    await until(async () => (await stored()).strokes[0].brush === "brush", { what: "the stroke restyled to Brush" });
+    const brushed = (await stored()).strokes[0];
+    assertEq(brushed.ch, "xyptw", "the Brush writes its baked widths");
+    const q = decodeStroke(brushed), mid = Math.floor(q.length / 2);
+    assert(q[0].w < q[mid].w && q.at(-1).w < q[mid].w, `tapered at both ends (${q[0].w}, ${q[mid].w}, ${q.at(-1).w})`);
+    assert(Math.abs(q[mid].w - 2 * q[mid].p) < 0.002, `2p in the middle, from the stored pressure (${q[mid].w} at p ${q[mid].p})`);
+    assertEq(JSON.stringify(q.map((s) => [s.x, s.y, s.p, s.t])), JSON.stringify(decodeStroke(before).map((s) => [s.x, s.y, s.p, s.t])),
+      "pressure, time and place untouched");
+    await menu().waitFor();
+    await until(async () => (await menu().getByRole("button", { name: "Style: Brush", exact: true }).count()) === 1, { what: "the picker names the Brush" });
+    await menu().getByRole("button", { name: "Dotted", exact: true }).tap();
+    await until(async () => (await stored()).strokes[0].dash === "dotted", { what: "the stroke dotted" });
+    assertEq((await stored()).strokes[0].brush, "brush", "the line leaves the brush");
+    assertEq(await menu().getByRole("button", { name: "Dotted", exact: true }).getAttribute("aria-pressed"), "true");
+    await page.getByRole("button", { name: "Undo ink", exact: true }).tap();
+    await page.getByText("Undone: ink line change (page 1).", { exact: true }).waitFor();
+    await until(async () => !("dash" in (await stored()).strokes[0]), { what: "the line undone" });
+    await page.getByRole("button", { name: "Undo ink", exact: true }).tap();
+    await page.getByText("Undone: ink style change (page 1).", { exact: true }).waitFor();
+    await until(async () => JSON.stringify((await stored()).strokes[0]) === JSON.stringify(before), { what: "the brush undone, the samples as they were" });
+    // a highlighter: its Style row has the Line trio and no Style picker
+    const hl = { ...newInk(1, 612, 792), strokes: [encodeStroke({ id: "hl", tool: "highlighter", color: "#fde047", size: 14, opacity: 0.6, ch: "xypt",
+      samples: Array.from({ length: 9 }, (_, i) => ({ x: 80 + i * 15, y: 330, p: 0.5, t: i * 8 })) })] };
+    const file = await alice.api("/api/upload-ink", { method: "POST", body: hl });
+    const hlId = (await alice.api("/api/blocks", { method: "POST", body: { parent_id: pageId, content: "Ink hl",
+      properties: { ink_url: file.url, pdf_position: file.pdf_position, ink_strokes: 1 } } })).id;
+    await until(async () => (await page.locator(paths).count()) === 3, { what: "the highlighter drawn" });
+    await tapInk(140, 330);
+    await menu().getByRole("button", { name: "Style", exact: true }).tap();
+    assertEq(await menu().locator(".inkStyleBtn").count(), 0, "a highlighter takes no brush");
+    await menu().getByRole("button", { name: "Dashed", exact: true }).tap();
+    await until(async () => (await stored(hlId))?.strokes[0].dash === "dashed", { what: "the highlighter dashed" });
+    await until(async () => (await page.locator(`${paths}[stroke-dasharray="28 28"]`).count()) === 1, { what: "drawn with its 2-width dashes" });
+    assertNoProblems(page);
   });
 
   if (ctx) await ctx.close();

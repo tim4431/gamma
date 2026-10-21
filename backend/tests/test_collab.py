@@ -2,6 +2,8 @@
 log and its catch-up read, the page websocket (presence + fan-out), and the
 server-side writers that must reach a page's room."""
 
+import json
+
 import pytest
 from fractional_indexing import generate_key_between
 from starlette.websockets import WebSocketDisconnect
@@ -335,6 +337,54 @@ def test_socket_cursor_rides_on_a_batch(guest):
         # a batch without one changes nothing about presence
         assert _ops(guest, page["id"], [{"op": "set", "id": "wsR", "content": "hi"}], client_id="aa").status_code == 200
         assert "cursor" not in recv(b, "ops")
+
+
+def test_socket_ink_live_is_relayed_to_the_others_and_never_logged(guest):
+    """A handwriting stroke in progress (docs/dev/collab.md "ink-live") is
+    presence: relayed to the room's other peers with the sender's client id,
+    never back to the sender, never into the op log."""
+    page = make_page(guest, "Socket ink-live page")
+    chunk = {"t": "ink-live", "page": 1, "g": None, "id": "k7Qm2x",
+             "style": {"tool": "pen", "brush": "brush", "size": 2, "color": "#1f1f1f", "opacity": 1, "pen": True},
+             "k": 1.5, "n": 0, "samples": [[120.4, 305.12, 0.62, 0, 71, 203], [121, 306, 0.64, 8, None, None]]}
+    with guest.websocket_connect(f"/api/ws/page/{page['id']}?client=aa") as a, \
+            guest.websocket_connect(f"/api/ws/page/{page['id']}?client=bb") as b:
+        seq = recv_hello(a)["seq"]
+        recv_hello(b)
+        a.send_json(chunk)
+        assert recv(b, "ink-live") == {**chunk, "client": "aa"}
+        # a chunk over the sample cap, or without a stroke id, goes nowhere;
+        # a forged client id is replaced by the sender's
+        a.send_json({**chunk, "n": 2, "samples": [[1, 2, None, 3, None, None]] * 65})
+        a.send_json({**chunk, "id": None})
+        a.send_json({**chunk, "client": "zz", "n": 2, "samples": [], "done": True})
+        last = recv(b, "ink-live", skip=("join", "leave", "cursor"))
+        assert (last["client"], last["n"], last["done"], last["samples"]) == ("aa", 2, True, [])
+        # the sender never hears its own: the next thing it gets is b's caret
+        b.send_json({"t": "cursor", "block": "", "anchor": -1, "head": -1})
+        assert recv(a, "cursor", skip=("join", "leave"))["client"] == "bb"
+        # nothing reached the op log
+        log = guest.get(f"/api/pages/{page['id']}/ops", params={"since": seq}).json()
+        assert log["seq"] == seq and log["batches"] == []
+        # a later joiner is not replayed the stroke
+        with guest.websocket_connect(f"/api/ws/page/{page['id']}?client=cc") as c:
+            assert "ink-live" not in json.dumps(recv_hello(c))
+            a.send_json({"t": "cursor", "block": "", "anchor": -1, "head": -1})
+            assert recv(c, "cursor", skip=("join", "leave"))["client"] == "aa"
+
+
+def test_socket_ink_live_from_a_viewer_is_dropped(owner):
+    page = make_page(owner, "Viewer ink-live page")
+    token = _share(owner, page["id"], audience="anyone", role="view")
+    anon = fresh_client()
+    with owner.websocket_connect(f"/api/ws/page/{page['id']}?client=ow") as o:
+        recv_hello(o)
+        with anon.websocket_connect(f"/api/ws/page/{page['id']}?client=vw&share={token}") as v:
+            recv_hello(v)
+            v.send_json({"t": "ink-live", "page": 1, "id": "abc", "n": 0, "samples": [[1, 2, None, 0, None, None]],
+                         "style": {"tool": "pen", "size": 2, "color": "#000000", "opacity": 1, "pen": False}})
+            v.send_json({"t": "cursor", "block": "", "anchor": -1, "head": -1})
+            assert recv(o, "cursor", skip=("join", "leave"))["client"] == "vw"
 
 
 def test_socket_server_side_writers_reach_the_room(guest):

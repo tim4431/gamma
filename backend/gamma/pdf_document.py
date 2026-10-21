@@ -339,7 +339,7 @@ class _Canvas:
 
     # -- page bookkeeping --
     def _new_page(self):
-        self.pages.append({"ops": [], "fonts": {HELV}, "xobjects": {}, "links": []})
+        self.pages.append({"ops": [], "fonts": {HELV}, "xobjects": {}, "links": [], "ink": False})
         self.y = MARGIN_TOP
 
     @property
@@ -468,6 +468,7 @@ class _Canvas:
         top = self.y
         self.page["ops"].append(inkmod.pdf_path_ops(
             ink_file, lambda px, py: (x + (px - box[0]) * scale, top + (py - box[1]) * scale), scale))
+        self.page["ink"] = True
         self.y += h + IMAGE_GAP
         return True
 
@@ -602,6 +603,7 @@ class _Canvas:
     # -- output --
     def write(self):
         """Flush the pages into the writer and return its PDF bytes."""
+        from . import ink as inkmod
         total = len(self.pages)
         self.glyphs.finalize()
         finalize_cid(self.writer)
@@ -624,6 +626,10 @@ class _Canvas:
             if page["xobjects"]:
                 resources[NameObject("/XObject")] = DictionaryObject(
                     {NameObject("/" + name): ref for name, ref in page["xobjects"].items()})
+            if page["ink"]:                      # the graphics states its handwriting sets
+                states = inkmod.pdf_path_resources(body)
+                if states:
+                    resources[NameObject("/ExtGState")] = states
             pdf_page[NameObject("/Resources")] = resources
             self._link_annotations(n, page["links"])
         self._bookmarks()

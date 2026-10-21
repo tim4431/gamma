@@ -3,7 +3,7 @@
 // view's sheets and NoteSheet each render <MarkupLayers>. The tools come
 // from PageToolsContext, the surface's marks from App's Map (useMarks).
 import { useMemo, useRef } from "react";
-import { InkLayer, Strokes } from "../ink/InkLayer";
+import { InkLayer, Strokes, useHasWet } from "../ink/InkLayer";
 import { usePageTools } from "./PageTools";
 import { TextBoxLayer } from "./TextBoxLayer";
 
@@ -62,15 +62,17 @@ export function useMarks({ ink, inkSelection, inkFlash, boxes, boxSel, boxFlash 
 // sheet's handwriting), with no ink layer meanwhile. `active`: the surface
 // is near the view (a PDF page within its viewer's look-ahead); one that is
 // not and carries no marks mounts nothing — each layer listens on the
-// window and the document, and a book has hundreds of pages.
+// window and the document, and a book has hundreds of pages. A read-only
+// surface mounts it for peers' strokes in progress too (useHasWet).
 export function MarkupLayers({ surface, wrapRef, width, height, marks, active = true }) {
   const { readOnly, ink, text, actions } = usePageTools();
+  const wet = useHasWet(surface);
   const edit = readOnly || text.armed ? {} : actions;
   if (!active && !marks.ink.length && !marks.boxes.length) return null;
   return (
     <>
       <TextBoxLayer surface={surface} wrapRef={wrapRef} width={width} height={height} marks={marks} />
-      {readOnly && !marks.ink.length ? null : (
+      {readOnly && !marks.ink.length && !wet ? null : (
         <InkLayer pageNumber={surface} wrapRef={wrapRef} width={width} height={height} blocks={marks.ink}
           tool={ink.tool} penTool={ink.penTool} penOnly={ink.penOnly} pressure={ink.pressure} eraserMode={ink.eraserMode}
           eraserSize={ink.eraserSize} eraserFilter={ink.eraserFilter} drawHold={ink.drawHold} scribble={ink.scribble}
@@ -80,6 +82,7 @@ export function MarkupLayers({ surface, wrapRef, width, height, marks, active = 
           onEraseMany={edit.onEraseMany} onSelect={edit.onSelect} onPaste={edit.onPaste}
           onAction={edit.onAction} onMoveSelection={edit.onMoveSelection} onJump={text.armed ? undefined : actions.onJump}
           onFingerScroll={edit.onFingerScroll} onHoldStatus={edit.onHoldStatus} onInkFeatures={actions.onInkFeatures}
+          onInkLive={edit.onInkLive}
           // the finger chords step the block history while the Text tool has the page, so they stay wired then
           onUndoGesture={readOnly ? undefined : actions.onUndoGesture} />
       )}

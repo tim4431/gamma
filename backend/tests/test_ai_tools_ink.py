@@ -39,11 +39,42 @@ def _pdf(path, pages=1):
 
 def _pixel(pdf_bytes, x, y):
     """The RGB of pixel ``(x, y)`` of the first page rendered at 1 pt per pixel."""
+    return _raster(pdf_bytes)(x, y)
+
+
+def _raster(pdf_bytes):
+    """The first page rendered at 1 pt per pixel, as ``pixel(x, y) → (r, g, b)``."""
     doc = pymupdf.open(stream=pdf_bytes, filetype="pdf")
     try:
-        return doc[0].get_pixmap(matrix=pymupdf.Matrix(1, 1), alpha=False).pixel(x, y)
+        pix = doc[0].get_pixmap(matrix=pymupdf.Matrix(1, 1), alpha=False)
     finally:
         doc.close()
+    return pix.pixel
+
+
+def _text_pdf(path, text="Handwriting", at=(40, 100), size=40):
+    """A one-page PDF with a line of black text, its baseline at ``at``."""
+    doc = pymupdf.open()
+    doc.new_page(width=PAGE_W, height=PAGE_H).insert_text(at, text, fontsize=size)
+    doc.save(str(path))
+    doc.close()
+    return path
+
+
+def _drawing(*strokes):
+    return inkmod.parse_ink({"format": "gamma-ink", "version": 2,
+                             "space": {"kind": "pdf-page", "page": 1, "width": PAGE_W, "height": PAGE_H},
+                             "strokes": list(strokes)})
+
+
+def _line(sid, y, x0=20, x1=280, step=2.0, ch="xy", **look):
+    """A horizontal stroke at ``y``; ``look`` keys that are channels
+    (p, w, o) are callables of the fraction along it."""
+    channels = {k: look.pop(k) for k in ("p", "w", "o") if k in look}
+    n = int((x1 - x0) / step) + 1
+    samples = [{"x": x0 + step * i, "y": y, "t": 8 * i, **{k: f(i / (n - 1)) for k, f in channels.items()}}
+               for i in range(n)]
+    return {"id": sid, "ch": ch, "pts": inkmod.encode_points(samples, ch), **look}
 
 
 def _page_count(pdf_bytes):
@@ -100,6 +131,94 @@ def test_page_with_ink_draws_the_strokes_on_that_page(tmp_path):
     assert _pixel(data, 150, 200) == (255, 0, 0)
     assert _pixel(data, 290, 10) == (255, 255, 255)
     assert page_with_ink(path, 3, []) == (b"", 2)
+
+
+def test_the_vector_page_stamps_the_strokes_into_its_content(tmp_path):
+    path = _pdf(tmp_path / "two.pdf", pages=2)
+    data, pages = page_with_ink(path, 2, [inkmod.parse_ink(_ink())], vector=True)
+    assert pages == 2 and _page_count(data) == 1
+    assert _pixel(data, 150, 200) == (255, 0, 0) and _pixel(data, 290, 10) == (255, 255, 255)
+    doc = pymupdf.open(stream=data, filetype="pdf")
+    try:
+        assert list(doc[0].annots()) == []          # drawn, not annotated
+    finally:
+        doc.close()
+    assert page_with_ink(path, 2, [], vector=True)[0]   # nothing to stamp: the page as it is
+
+
+@pytest.mark.parametrize("rotation", [0, 90, 180, 270])
+def test_stamped_strokes_land_where_they_were_drawn_on_a_turned_page(rotation):
+    """The stamp maps display space through the page's frame, as /Ink does."""
+    import io
+    from PyPDF2 import PdfWriter
+    from PyPDF2.generic import NameObject, NumberObject
+
+    writer = PdfWriter()
+    writer.add_blank_page(width=PAGE_W, height=PAGE_H)
+    if rotation:
+        writer.pages[0][NameObject("/Rotate")] = NumberObject(rotation)
+    buf = io.BytesIO()
+    writer.write(buf)
+    shown = (PAGE_H, PAGE_W) if rotation in (90, 270) else (PAGE_W, PAGE_H)
+    ink = inkmod.parse_ink({"format": "gamma-ink", "version": 2,
+                            "space": {"kind": "pdf-page", "page": 1, "width": shown[0], "height": shown[1]},
+                            "strokes": [_line("pen", 40, x0=30, x1=80, color="#ff0000", size=6),
+                                        _line("hl", 90, x0=30, x1=80, tool="highlighter", color="#0000ff",
+                                              size=10, opacity=0.5)]})
+    pixel = _raster(page_with_ink(buf.getvalue(), 1, [ink], vector=True)[0])
+    assert pixel(55, 40) == (255, 0, 0) and pixel(55, 60) == (255, 255, 255)
+    r, g, b = pixel(55, 90)
+    assert b == 255 and 120 < r == g < 136                    # blue at half strength, multiplied
+
+
+def test_text_under_a_highlighter_stays_legible(tmp_path):
+    """The highlighter multiplies onto the page's text: every glyph pixel
+    under it stays dark, and the paper around them turns yellow."""
+    path = _text_pdf(tmp_path / "text.pdf")
+    bare = _raster(page_with_ink(path, 1, [], vector=True)[0])
+    glyphs = [(x, y) for x in range(40, 280) for y in range(74, 100) if max(bare(x, y)) < 60]
+    assert len(glyphs) > 300
+    marker = _line("hl", 88, x0=30, tool="highlighter", color="#ffe066", size=30, opacity=0.6)
+    lit = _raster(page_with_ink(path, 1, [_drawing(marker)], vector=True)[0])
+    assert all(max(lit(x, y)) < 80 for x, y in glyphs)
+    r, g, b = lit(32, 88)                      # paper under the highlighter, left of the text
+    assert r > 240 and b < 200 and lit(32, 160) == (255, 255, 255)
+
+
+def test_a_pen_stays_over_a_highlighter_drawn_after_it(tmp_path):
+    """Band 0 is drawn first across the page's groups, as on screen."""
+    path = _pdf(tmp_path / "blank.pdf")
+    pen = _line("pen", 200, color="#0000ff", size=6)
+    marker = {**_line("hl", 0, x0=150, x1=150), "tool": "highlighter", "color": "#ffe066", "size": 30,
+              "pts": inkmod.encode_points([{"x": 150, "y": 100}, {"x": 150, "y": 300}], "xy")}
+    data, _ = page_with_ink(path, 1, [_drawing(pen), _drawing(marker)], vector=True)
+    assert _pixel(data, 150, 200) == (0, 0, 255)                # the crossing: the pen on top
+    r, g, b = _pixel(data, 150, 150)
+    assert r > 240 and b < 200                                  # the highlighter itself
+
+
+def test_a_pencil_shows_its_three_shades(tmp_path):
+    """o = 0.15 + 0.85p from no pressure to full: the light, middle and
+    dark bands each read as their own grey."""
+    path = _pdf(tmp_path / "blank.pdf")
+    pencil = _line("pc", 200, x0=30, x1=270, ch="xyptwo", brush="pencil", color="#000000", size=6,
+                   p=lambda f: f, w=lambda f: 1 + (f - 0.5), o=lambda f: 0.15 + 0.85 * f)
+    shade = _raster(page_with_ink(path, 1, [_drawing(pencil)], vector=True)[0])
+    light, mid, dark = (shade(x, 200)[0] for x in (55, 130, 240))   # o 0.33, 0.66, 1 bands
+    assert light == pytest.approx(255 * 0.67, abs=4) and mid == pytest.approx(255 * 0.34, abs=4) and dark < 4
+
+
+def test_a_dashed_stroke_renders_with_gaps(tmp_path):
+    """A dashed pressure pen of size 4: dashes 8 pt on, 8 off along its
+    centreline (round caps eat 4 pt of every gap)."""
+    path = _pdf(tmp_path / "blank.pdf")
+    dashed = _line("d", 300, ch="xyptw", color="#000000", size=4, dash="dashed", p=lambda f: 0.5, w=lambda f: 1.0)
+    pixel = _raster(page_with_ink(path, 1, [_drawing(dashed)], vector=True)[0])
+    ink = [max(pixel(x, 300)) < 128 for x in range(10, 290)]
+    runs = sum(1 for a, b in zip([False] + ink, ink) if b and not a)
+    assert runs == 17 and not all(ink)
+    solid = _raster(page_with_ink(path, 1, [_drawing({**dashed, "dash": None})], vector=True)[0])
+    assert all(max(solid(x, 300)) < 128 for x in range(20, 281))
 
 
 def test_crop_box_pads_grows_and_stays_on_the_page():

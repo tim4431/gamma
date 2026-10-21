@@ -499,9 +499,11 @@ _IMPORT_TYPES = _MARKUP_TYPES | _NOTE_TYPES | _AREA_TYPES | _INK_TYPES
 def _ink_from_annotation(obj, pnum: int, pw: float, ph: float, contents: str):
     """One /Ink annotation → an importer record carrying the parsed ink file
     (``kind: "ink"``). A Gamma export's ``/GammaInk`` private key restores
-    pressure and time (a payload from before release T is a version 1 file,
-    which ``from_pdf_ink`` upgrades); foreign ink is polylines at the
-    annotation's width."""
+    pressure, time and the dash (a payload from before release T is a
+    version 1 file, which ``from_pdf_ink`` upgrades); foreign ink is
+    polylines at the annotation's width, dashed when its border style is
+    (``/BS /S /D``, whatever its ``/D`` array: the pattern follows the
+    width, as Gamma draws every dash)."""
     ink_list = [[float(_resolve(v)) for v in (_resolve(path) or [])]
                 for path in (_resolve(obj.get("/InkList")) or [])]
     bs = _resolve(obj.get("/BS")) or {}
@@ -509,6 +511,7 @@ def _ink_from_annotation(obj, pnum: int, pw: float, ph: float, contents: str):
         width = float(_resolve(bs.get("/W", 1)))
     except (TypeError, ValueError):
         width = 1.0
+    dash = "dashed" if str(_resolve(bs.get("/S")) or "") == "/D" else None
     color = "#1f1f1f"
     c = _resolve(obj.get("/C"))
     try:
@@ -523,7 +526,7 @@ def _ink_from_annotation(obj, pnum: int, pw: float, ph: float, contents: str):
     private = _resolve(obj.get("/GammaInk"))
     try:
         ink = parse_ink(from_pdf_ink(ink_list, width, color, alpha, pnum, pw, ph,
-                                     str(private) if private else None))
+                                     str(private) if private else None, dash=dash))
     except InkError as e:
         log.warning(f"[pdf-annots] skipping unreadable ink on p.{pnum}: {e}")
         return None

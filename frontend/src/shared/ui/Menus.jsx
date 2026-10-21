@@ -16,6 +16,11 @@ import { t } from "../../shared/i18n/i18n.js";
 // Every ContextMenu publishes its submenu state so the rows inside it — at
 // any nesting depth — can open/close flyouts without the caller wiring state.
 const MenuCtx = createContext(null);
+// A ContextMenu opened from inside another's rows (rendered in its React
+// tree, such as the handwriting selection menu's Style picker) is a part of
+// it: it registers its element here, a press inside it never dismisses the
+// menu it came from, and Escape closes it first.
+const NestCtx = createContext(null);
 
 // How far a flyout rides above its trigger row so their first items line up.
 const SUB_TOP_NUDGE = -4;
@@ -35,6 +40,15 @@ const SUB_TOP_NUDGE = -4;
 // outside-pointerdown dismissal.
 function ContextMenu({ x, y, onClose, className = "", anchorRight = false, anchorBottom = false, flipY, bounds, ignoreRef, children }) {
   const ref = useRef(null);
+  const parent = useContext(NestCtx);
+  const nested = useRef(new Set());
+  const [nest] = useState(() => ({ add: (el) => nested.current.add(el), remove: (el) => nested.current.delete(el) }));
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!parent || !el) return undefined;
+    parent.add(el);
+    return () => parent.remove(el);
+  }, [parent]);
   // Placed from its measured size before it is painted, and again in the
   // frame its size changes (placement.js). Until it is first placed it is
   // laid out where it stands but not shown: a menu opening upward stands
@@ -46,9 +60,11 @@ function ContextMenu({ x, y, onClose, className = "", anchorRight = false, ancho
     function onDown(e) {
       if (!ref.current || ref.current.contains(e.target)) return;
       if (ignoreRef?.current && ignoreRef.current.contains(e.target)) return;
+      for (const el of nested.current) if (el.contains(e.target)) return;
       onClose();
     }
-    function onKey(e) { if (e.key === "Escape") { e.stopPropagation(); onClose(); } }
+    // A menu opened from this one takes Escape first.
+    function onKey(e) { if (e.key === "Escape" && !nested.current.size) { e.stopPropagation(); onClose(); } }
     // Capture phase so we see the click before it lands on other handlers,
     // and Escape before a dialog or popover around the menu does: it closes
     // only the menu.
@@ -67,7 +83,7 @@ function ContextMenu({ x, y, onClose, className = "", anchorRight = false, ancho
       style={pos ? { left: pos.left, top: pos.top } : { left: x, top: y, visibility: "hidden" }}
       onContextMenu={(e) => e.preventDefault()}
     >
-      {children}
+      <NestCtx.Provider value={nest}>{children}</NestCtx.Provider>
     </MenuScope>,
     document.body,
   );

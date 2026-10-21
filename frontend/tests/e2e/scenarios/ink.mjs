@@ -2,11 +2,17 @@
 // mouse strokes becoming an ink block with an .ink upload, persistence
 // across a reload, the version 2 file a pressure stroke leaves and the
 // highlighter band under the ink, the eraser, the lasso, the notes card's jump + flash,
-// and a group's Transcribe with AI. /Ink in the annotated PDF is
+// the pen styles and lines, a Brush preset's held line at constant width
+// (in the Markdown export's SVG too), a group's Transcribe with AI, and the draft
+// journal bringing back what a crashed tab never saved. /Ink in the annotated PDF is
 // backend/tests/test_ink.py; the chat's view_ink is test_ai_tools_ink.py.
-import { assertOpensInPlace, fakeAiModels } from "../harness.mjs";
+import { PYTHON, assertOpensInPlace, fakeAiModels } from "../harness.mjs";
 import { waitForPdf } from "./pdf.mjs";
 import { decodeStroke } from "../../../src/ink/ink.js";
+import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
+import fs from "node:fs";
+import path from "node:path";
 
 async function drawLine(page, from, to) {
   await page.mouse.move(from[0], from[1]);
@@ -147,8 +153,17 @@ export async function inkScenarios({ server, browser, alice, makePdf, step, unti
       await page.click(".pdfInkSub button[aria-label='Red']");
       await page.click(".pdfInkSub button[aria-label='Width 4 pt']");
       assertEq(await page.locator(".pdfInkSub button[aria-label='Width 4 pt']").getAttribute("title"), "Width 4 pt · [ ]", "a width dot names the bracket keys");
-      await page.getByRole("button", { name: "Ballpoint", exact: true }).click();
-      assertEq(await page.getByRole("button", { name: "Ballpoint", exact: true }).getAttribute("aria-pressed"), "true");
+      // the Style picker: its menu opens on the press, the four styles in order, the current one checked
+      const picker = page.locator(".pdfInkSub .inkStyleBtn");
+      assertEq(JSON.stringify([await picker.getAttribute("aria-label"), await picker.getAttribute("aria-expanded")]), JSON.stringify(["Style: Pen", "false"]));
+      await picker.click();
+      const styles = page.getByRole("menu", { name: "Pen style" });
+      assertEq(JSON.stringify(await styles.getByRole("menuitemradio").allTextContents()), JSON.stringify(["Pen", "Ballpoint", "Brush", "Pencil"]),
+        "Pen · Ballpoint · Brush · Pencil");
+      assertEq(await styles.getByRole("menuitemradio", { name: "Pen", exact: true }).getAttribute("aria-checked"), "true");
+      assertEq(await styles.locator(".inkBrushPreview").count(), 4, "each row led by a stroke in its look");
+      await styles.getByRole("menuitemradio", { name: "Ballpoint", exact: true }).click();
+      await page.locator(".pdfInkSub").getByRole("button", { name: "Style: Ballpoint", exact: true }).waitFor();
       assertEq(await page.locator(".pdfInkBar .inkToolBtn.modeActive").getAttribute("aria-label"),
         "Red ballpoint pen · 4 pt · key 1 — tap again for options", "a preset is named in words, not a hex code");
       await page.click(".pdfInkSub button[aria-label='Duplicate tool']");
@@ -191,10 +206,11 @@ export async function inkScenarios({ server, browser, alice, makePdf, step, unti
         { what: "the first preset's colour, back from the account" });
       await page.keyboard.press("1");
       await page.click(".pdfInkBar .inkToolBtn.modeActive");
-      assertEq(await page.getByRole("button", { name: "Ballpoint", exact: true }).getAttribute("aria-pressed"), "true",
+      assertEq(await page.locator(".pdfInkSub .inkStyleBtn").getAttribute("aria-label"), "Style: Ballpoint",
         "the first preset kept its brush across reload");
-      await page.getByRole("button", { name: "Pen", exact: true }).click();
-      assertEq(await page.getByRole("button", { name: "Pen", exact: true }).getAttribute("aria-pressed"), "true");
+      await page.locator(".pdfInkSub .inkStyleBtn").click();
+      await page.getByRole("menu", { name: "Pen style" }).getByRole("menuitemradio", { name: "Pen", exact: true }).click();
+      await page.locator(".pdfInkSub").getByRole("button", { name: "Style: Pen", exact: true }).waitFor();
       // The lasso's box mode: a dragged rectangle selects what it covers.
       await page.keyboard.press("l");
       await page.click(".pdfInkBar button[title^='Lasso']");
@@ -1078,6 +1094,219 @@ export async function inkScenarios({ server, browser, alice, makePdf, step, unti
     assertNoProblems(page);
   });
 
+  // --- milestone 3: pen styles and lines (docs/dev/handwriting.md "The brush table", "Dash geometry") ---
+  // A stylus stroke of synthetic pointer events on their own clock: points
+  // [x, y, ms, pressure, altitude°, azimuth°] from the page's corner (the
+  // tilt optional, as altitudeAngle / azimuthAngle), the lift at the last.
+  const stylusStroke = (points) => page.locator('[data-page="1"]').evaluate((el, points) => {
+    const box = el.getBoundingClientRect();
+    const send = (type, [x, y, time, pressure, alt, az]) => {
+      const ev = new PointerEvent(type, { bubbles: true, cancelable: true, pointerType: "pen", pointerId: 97, isPrimary: true,
+        button: 0, buttons: type === "pointerup" ? 0 : 1, clientX: box.left + x, clientY: box.top + y, pressure: type === "pointerup" ? 0 : pressure });
+      Object.defineProperty(ev, "timeStamp", { value: 30000 + time });
+      if (alt != null) {
+        Object.defineProperty(ev, "altitudeAngle", { value: alt * Math.PI / 180 });
+        Object.defineProperty(ev, "azimuthAngle", { value: (az || 0) * Math.PI / 180 });
+      }
+      el.dispatchEvent(ev);
+    };
+    points.forEach((p, i) => send(i ? "pointermove" : "pointerdown", p));
+    const last = points[points.length - 1];
+    send("pointerup", [last[0], last[1], last[2] + 8, 0, last[4], last[5]]);
+  }, points);
+  // The armed preset's Style picker, a style from its menu.
+  const pickStyle = async (name) => {
+    await page.locator(".pdfInkSub .inkStyleBtn").click();
+    await page.getByRole("menu", { name: "Pen style" }).getByRole("menuitemradio", { name, exact: true }).click();
+    await page.locator(".pdfInkSub").getByRole("button", { name: `Style: ${name}`, exact: true }).waitFor();
+  };
+  const lineRow = () => page.locator(".pdfInkSub").getByRole("group", { name: "Line", exact: true });
+  // The group (block id) a saved stroke is in, and the last path drawn for that group.
+  const groupOf = async (strokeId) => {
+    const d = await account.api(`/api/blocks/${pageId}/subtree`);
+    for (const b of d.block.children) {
+      if (!b.properties?.ink_url?.endsWith(".ink")) continue;
+      if ((await account.api(b.properties.ink_url)).strokes.some((st) => st.id === strokeId)) return b.id;
+    }
+    return null;
+  };
+  const lastPath = (gid) => page.locator(`[data-page="1"] .inkLayer g[data-ink-id="${gid}"] path`).last();
+  // The presets are the account's, which the scenarios after these share:
+  // wait until preset 1 is a solid plain pen there again.
+  const presetsPushed = () => until(async () => {
+    const first = ((await account.api("/api/prefs/profile")).value?.inkTools || [])[0];
+    return !first || (!first.brush && !first.dash);
+  }, { what: "preset 1 a solid plain pen on the account again" }).catch(() => {});
+
+  await step("ink: the Style picker's Brush bakes a tapered pressure stroke; Dashed cuts it into dashes and dashes an even line; Shift+[ ] step the style", async () => {
+    await openStrip();
+    await page.keyboard.press("1");
+    try {
+      await openOptions();
+      await pickStyle("Brush");
+      assert((await armedLabel()).includes(" brush pen · "), `the preset is named a brush pen (${await armedLabel()})`);
+      await page.locator(".pdfInkBar .inkToolBtn.modeActive").click();   // closes the row
+      let saved = await savedStrokes();
+      // a 120 px line at even pressure, a sample every 4 px: tapered in and out
+      await stylusStroke(Array.from({ length: 31 }, (_, i) => [150 + 4 * i, 480, i * 8, 0.6]));
+      const [brush] = await newStrokes(saved, 1, "the brush stroke saved");
+      assertEq(JSON.stringify([brush.brush, brush.ch, brush.pen]), JSON.stringify(["brush", "xyptw", true]));
+      const ws = decodeStroke(brush).map((q) => q.w), mid = ws[Math.floor(ws.length / 2)];
+      assert(ws[0] < mid && ws.at(-1) < mid, `tapered at both ends (${ws[0]}, ${mid}, ${ws.at(-1)})`);
+      assert(Math.abs(mid - 1.2) < 0.002, `2p in the middle (${mid})`);
+      // Dashed: stored as the stroke's line, drawn as outlined dashes (several subpaths in its one path)
+      await openOptions();
+      assertEq(await lineRow().getByRole("button", { name: "Solid", exact: true }).getAttribute("aria-pressed"), "true", "solid by default");
+      await lineRow().getByRole("button", { name: "Dashed", exact: true }).click();
+      assertEq(await lineRow().getByRole("button", { name: "Dashed", exact: true }).getAttribute("aria-pressed"), "true");
+      await page.locator(".pdfInkBar .inkToolBtn.modeActive").click();
+      saved = await savedStrokes();
+      await stylusStroke(Array.from({ length: 31 }, (_, i) => [150 + 4 * i, 520, i * 8, 0.6]));
+      const [dashed] = await newStrokes(saved, 1, "the dashed brush stroke saved");
+      assertEq(JSON.stringify([dashed.brush, dashed.dash]), JSON.stringify(["brush", "dashed"]));
+      const gid = await groupOf(dashed.id);
+      await until(async () => ((await lastPath(gid).getAttribute("d")) || "").split("M").length - 1 >= 2, { what: "the dashed stroke drawn as its dashes" });
+      // an even line (a mouse Ballpoint) takes the pattern as a stroke-dasharray, two widths on, two off
+      await openOptions();
+      await pickStyle("Ballpoint");
+      await page.locator(".pdfInkBar .inkToolBtn.modeActive").click();
+      saved = await savedStrokes();
+      box = await page.locator('[data-page="1"]').boundingBox();
+      await drawLine(page, [box.x + 150, box.y + 560], [box.x + 270, box.y + 560]);
+      const [even] = await newStrokes(saved, 1, "the dashed ballpoint stroke saved");
+      assertEq(JSON.stringify([even.brush, even.dash, even.pen, even.ch]), JSON.stringify(["monoline", "dashed", false, "xyt"]));
+      await until(async () => (await lastPath(await groupOf(even.id)).getAttribute("stroke-dasharray")) === `${2 * even.size} ${2 * even.size}`,
+        { what: "the even line stroked with its dashes" });
+      // Shift+] / Shift+[ step the armed pen's style, wrapping, with the width's pill
+      await page.keyboard.press("Shift+BracketRight");
+      await until(async () => (await armedLabel()).includes(" brush pen · "), { what: "Shift+] steps Ballpoint to Brush" });
+      await until(async () => (await pillText()).includes("brush pen · "), { what: "the pill names the style" });
+      await page.keyboard.press("Shift+BracketLeft");
+      await page.keyboard.press("Shift+BracketLeft");
+      await until(async () => { const label = await armedLabel(); return / pen · /.test(label) && !/ballpoint|brush|pencil/.test(label); },
+        { what: "back to the plain pen" });
+      await page.keyboard.press("Shift+BracketLeft");
+      await until(async () => (await armedLabel()).includes(" pencil · "), { what: "Shift+[ wraps from Pen to Pencil" });
+    } finally {
+      // preset 1 back to a solid plain pen, for the steps (and scenarios) after
+      if (!(await page.locator(".pdfInkSub").count())) await openOptions().catch(() => {});
+      if (await page.locator(".pdfInkSub .inkStyleBtn").count()) {
+        if ((await page.locator(".pdfInkSub .inkStyleBtn").getAttribute("aria-label")) !== "Style: Pen") await pickStyle("Pen").catch(() => {});
+        await lineRow().getByRole("button", { name: "Solid", exact: true }).click().catch(() => {});
+      }
+      if (await page.locator(".pdfInkSub").count()) await page.locator(".pdfInkBar .inkToolBtn.modeActive").click().catch(() => {});
+      await presetsPushed();
+    }
+    assertNoProblems(page);
+  });
+
+  await step("ink: a Brush preset's held straight line is stored at constant width (its brush kept, shape line, xyt) and the Markdown export's SVG draws it at the preset's size", async () => {
+    await openStrip();
+    await page.keyboard.press("1");
+    try {
+      await openOptions();
+      await pickStyle("Brush");
+      await page.locator(".pdfInkBar .inkToolBtn.modeActive").click();   // closes the row
+      const size = Number((await armedLabel()).match(/· ([\d.]+) pt/)?.[1]);
+      assert(size > 0, `the preset's size from its label (${await armedLabel()})`);
+      const saved = await savedStrokes();
+      const before = await pathCount();
+      // a slightly wobbly 150 px stylus line drawn over 300 ms, then the tip still past the 600 ms hold
+      await page.locator('[data-page="1"]').evaluate(async (el) => {
+        const box = el.getBoundingClientRect();
+        const send = (type, x, y, time) => {
+          const ev = new PointerEvent(type, { bubbles: true, cancelable: true, pointerType: "pen", pointerId: 99, isPrimary: true,
+            button: 0, buttons: type === "pointerup" ? 0 : 1, clientX: box.left + x, clientY: box.top + y, pressure: type === "pointerup" ? 0 : 0.6 });
+          Object.defineProperty(ev, "timeStamp", { value: 50000 + time });
+          el.dispatchEvent(ev);
+        };
+        send("pointerdown", 120, 690, 0);
+        for (let i = 1; i <= 10; i++) send("pointermove", 120 + i * 15, 690 + (i % 2 ? 1.2 : -1.2), i * 30);
+        await new Promise((r) => setTimeout(r, 900));
+        send("pointerup", 270, 690, 1200);
+      });
+      await until(async () => (await pathCount()) === before + 1, { what: "the snapped Brush line drawn" });
+      const [st] = await newStrokes(saved, 1, "the held Brush line saved");
+      assertEq(JSON.stringify([st.brush, st.pen, st.ch, st.shape?.kind]), JSON.stringify(["brush", false, "xyt", "line"]),
+        "a shape is constant width: the brush key kept, no w channel");
+      assertEq(st.size, size, "the preset's size");
+      const ends = decodeStroke(st);
+      assertEq(ends.length, 2, "two samples");
+      // The Markdown export draws each group with the server's to_svg: the line's one segment is the size wide, not the taper's 0.1 × size.
+      const gid = await groupOf(st.id);
+      const group = (await account.api(`/api/blocks/${pageId}/subtree`)).block.children.find((b) => b.id === gid);
+      const svgName = group.properties.ink_url.split("/").pop().replace(/\.ink$/, ".svg");
+      const res = await account.api(`/api/pages/${pageId}/export?mode=readable&pdf=0`, { raw: true });
+      assert(res.ok, `the Markdown export answers ${res.status}`);
+      const zipPath = path.join(server.dir, "ink-brush-shape.zip");
+      fs.writeFileSync(zipPath, Buffer.from(await res.arrayBuffer()));
+      const svg = execFileSync(PYTHON, ["-c", "import sys, zipfile; sys.stdout.write(zipfile.ZipFile(sys.argv[1]).read('assets/' + sys.argv[2]).decode())",
+        zipPath, svgName]).toString();
+      const near = (a, b) => Math.abs(a - b) < 0.011;
+      const segments = [...svg.matchAll(/<path d="M(-?[\d.]+) (-?[\d.]+) L(-?[\d.]+) (-?[\d.]+)" stroke-width="([\d.]+)"\/>/g)]
+        .map((m) => m.slice(1).map(Number))
+        .filter(([x1, y1, x2, y2]) => near(x1, ends[0].x) && near(y1, ends[0].y) && near(x2, ends[1].x) && near(y2, ends[1].y));
+      assertEq(segments.length, 1, `the line is one segment of the group's SVG (${svgName})`);
+      assert(near(segments[0][4], size), `drawn ${segments[0][4]} pt wide, the preset's ${size} pt (a hairline would be ${0.1 * size})`);
+    } finally {
+      if (!(await page.locator(".pdfInkSub").count())) await openOptions().catch(() => {});
+      if (await page.locator(".pdfInkSub .inkStyleBtn").count()) await pickStyle("Pen").catch(() => {});
+      if (await page.locator(".pdfInkSub").count()) await page.locator(".pdfInkBar .inkToolBtn.modeActive").click().catch(() => {});
+      await presetsPushed();
+    }
+    assertNoProblems(page);
+  });
+
+  await step("ink: a tilted Pencil stores its tilt and shading (a/z and o), fills its shades with the grain, and its hover footprint leans", async () => {
+    await openStrip();
+    await page.keyboard.press("1");
+    try {
+      await openOptions();
+      await pickStyle("Pencil");
+      await page.locator(".pdfInkBar .inkToolBtn.modeActive").click();
+      // the hover footprint: an ellipse turned the way the pencil leans
+      const hover = await page.locator('[data-page="1"]').evaluate((el) => {
+        const box = el.getBoundingClientRect();
+        const ev = new PointerEvent("pointermove", { bubbles: true, pointerType: "pen", pointerId: 98, buttons: 0,
+          clientX: box.left + 300, clientY: box.top + 600 });
+        Object.defineProperty(ev, "altitudeAngle", { value: 40 * Math.PI / 180 });
+        Object.defineProperty(ev, "azimuthAngle", { value: 120 * Math.PI / 180 });
+        el.dispatchEvent(ev);
+        const c = el.querySelector(".inkCursor");
+        return { brush: c.dataset.brush, w: parseFloat(c.style.width), h: parseFloat(c.style.height), transform: c.style.transform };
+      });
+      assertEq(hover.brush, "pencil");
+      assert(hover.w > hover.h && hover.transform.includes("rotate(120deg)"), `a leaning ellipse (${JSON.stringify(hover)})`);
+      const saved = await savedStrokes();
+      // pressure rising 0.3 → 0.9 at an altitude of 40°, the azimuth 120°: wider than upright, darker as it presses
+      await stylusStroke(Array.from({ length: 25 }, (_, i) => [150 + 5 * i, 640, i * 8, 0.3 + 0.025 * i, 40, 120]));
+      const [pencil] = await newStrokes(saved, 1, "the pencil stroke saved");
+      assertEq(JSON.stringify([pencil.brush, pencil.ch]), JSON.stringify(["pencil", "xyptazwo"]));
+      const q = decodeStroke(pencil);
+      assert(q.every((s) => s.a === 40 && s.z === 120), "the tilt as integer degrees on every sample");
+      const law = (s) => (1 + (s.p - 0.5)) * (1 + 2 * (1 - 40 / 90));
+      assert(q.every((s) => Math.abs(s.w - Math.round(law(s) * 1000) / 1000) < 0.0011), "w from pressure and tilt");
+      assert(q.every((s) => Math.abs(s.o - Math.round((0.15 + 0.85 * s.p) * 1000) / 1000) < 0.0011), "o from pressure");
+      assert(q[0].o < q.at(-1).o, "darker as it presses");
+      // drawn in shades of the grain: up to three paths, each filled with the layer's pattern for its colour
+      const gid = await groupOf(pencil.id);
+      const fills = await until(async () => {
+        const out = await page.locator(`[data-page="1"] .inkLayer g[data-ink-id="${gid}"] path[fill^="url(#inkGrain"]`).evaluateAll((els) =>
+          els.map((p) => [p.getAttribute("fill"), p.getAttribute("fill-opacity")]));
+        return out.length >= 2 ? out : null;
+      }, { what: "the pencil's shades drawn with the grain" });
+      assert(new Set(fills.map(([, o]) => o)).size >= 2, `the shades differ (${JSON.stringify(fills)})`);
+      const pattern = fills[0][0].slice(5, -1);
+      assertEq(await page.locator(`[data-page="1"] .inkLayer defs pattern[id="${pattern}"] image`).count(), 1, "one grain pattern in the layer's defs");
+    } finally {
+      if (!(await page.locator(".pdfInkSub").count())) await openOptions().catch(() => {});
+      if (await page.locator(".pdfInkSub .inkStyleBtn").count()) await pickStyle("Pen").catch(() => {});
+      if (await page.locator(".pdfInkSub").count()) await page.locator(".pdfInkBar .inkToolBtn.modeActive").click().catch(() => {});
+      await presetsPushed();
+    }
+    assertNoProblems(page);
+  });
+
   await step("ink: Transcribe with AI asks the chat about the group, with the group attached", async () => {
     const up = await account.api("/api/upload-ink", { method: "POST", body: {
       format: "gamma-ink", version: 2, space: { kind: "pdf-page", page: 1, width: 612, height: 792 },
@@ -1108,6 +1337,107 @@ export async function inkScenarios({ server, browser, alice, makePdf, step, unti
       assertEq(sent.length, 1, "sent once");
       assertNoProblems(tpage);
     } finally { await tctx.close(); }
+  });
+
+  await step("ink: strokes a crashed tab never saved come back on the next visit from the draft journal and are saved — also when the block names their lost upload — and Discard on the pill takes them off again", async () => {
+    // The journal is this browser's IndexedDB: a browser profile of its own, and a paper per case.
+    const jctx = await account.context(browser);
+    const paperFor = async (title) => {
+      const up = await account.upload("/api/uploads", makePdf([[title, "and its unsaved stroke"]]), "journal.pdf", "application/pdf");
+      const paper = await account.api(`/api/blocks/by-doc/${up.doc_id}`, { method: "POST", body: { default_title: title, source_url: up.source_url } });
+      return { id: paper.id, url: `${server.base}/?page=${paper.id}&ws=${account.ws}` };
+    };
+    const groups = async (paper) => ((await account.api(`/api/blocks/${paper.id}/subtree`)).block.children || [])
+      .filter((b) => b.properties && "ink_url" in b.properties);
+    // the stroke ids the paper's saved files hold
+    const savedIds = async (paper) => {
+      const out = [];
+      for (const b of await groups(paper)) {
+        if (!b.properties.ink_url?.endsWith(".ink")) continue;
+        const file = await account.api(b.properties.ink_url).catch(() => null);
+        out.push(...(file?.strokes || []).map((s) => s.id));
+      }
+      return out;
+    };
+    // the journal's entries: their bytes
+    const journal = (p) => p.evaluate(() => new Promise((resolve) => {
+      const req = indexedDB.open("gamma-ink-journal", 1);
+      req.onupgradeneeded = () => { try { req.result.createObjectStore("drafts"); } catch { /* there already */ } };
+      req.onerror = () => resolve([]);
+      req.onsuccess = () => {
+        const db = req.result;
+        try {
+          const all = db.transaction("drafts", "readonly").objectStore("drafts").getAll();
+          all.onsuccess = () => { db.close(); resolve(all.result.map((e) => e.bytes)); };
+          all.onerror = () => { db.close(); resolve([]); };
+        } catch { db.close(); resolve([]); }
+      };
+    }));
+    const idsOf = (bytes) => JSON.parse(bytes).strokes.map((s) => s.id);
+    // A visit whose uploads never land: a stroke, kept by the journal, and the tab crashes
+    // (no pagehide, so nothing more is sent). → the entry's bytes.
+    const unsavedVisit = async (paper) => {
+      const tab = await openPage(jctx, paper.url);
+      await tab.route("**/api/upload-ink", (route) => route.abort());
+      await waitForPdf(tab, 1);
+      await tab.click("button[aria-label='Handwriting tools']");
+      await tab.waitForSelector(".pdfInkBar .inkToolBtn.modeActive .inkToolInk");
+      const b = await tab.locator('[data-page="1"]').boundingBox();
+      await drawLine(tab, [b.x + 120, b.y + 200], [b.x + 260, b.y + 230]);
+      const bytes = await until(async () => {
+        const all = await journal(tab);
+        return all.length === 1 && idsOf(all[0]).length === 1 ? all[0] : null;
+      }, { what: "the unsaved stroke in the draft journal" });
+      await until(async () => (await tab.locator(".statusPill").allInnerTexts().catch(() => [])).join(" ").includes("Handwriting not saved yet"),
+        { what: "the save failing" });
+      await until(async () => (await groups(paper)).length === 1, { what: "the group's block in the tree on the server" });
+      assertEq(JSON.stringify(await savedIds(paper)), "[]", "no stroke saved on the server");
+      const cdp = await jctx.newCDPSession(tab);
+      const crashed = new Promise((resolve) => tab.once("crash", resolve));
+      cdp.send("Page.crash").catch(() => {});   // never answered: the renderer goes at once
+      await Promise.race([crashed, sleep(5000)]);
+      assert(tab.isClosed() || await tab.evaluate(() => false).catch(() => true), "the tab crashed");
+      await Promise.race([tab.close().catch(() => {}), sleep(5000)]);
+      return bytes;
+    };
+    // The next visit: the strokes are back, drawn and saved, with Discard on the pill.
+    const restoredVisit = async (paper, bytes, allow = []) => {
+      const tab = await openPage(jctx, paper.url);
+      await waitForPdf(tab, 1);
+      const pill = tab.locator(".statusPill", { hasText: "Unsaved handwriting from a previous visit was restored." });
+      await pill.waitFor();
+      await until(async () => (await tab.$$('[data-page="1"] .inkLayer path')).length === 1, { what: "the restored stroke drawn" });
+      await until(async () => JSON.stringify(await savedIds(paper)) === JSON.stringify(idsOf(bytes)),
+        { what: "the restored stroke saved on the server", timeout: 15000 });
+      assertEq((await groups(paper)).length, 1, "into the group it was drawn in");
+      await until(async () => (await journal(tab)).length === 0, { what: "the journal entry gone once the save landed" });
+      return { tab, pill };
+    };
+    try {
+      // a lost connection: the block still names no file
+      const plain = await paperFor("Journal paper");
+      const bytes = await unsavedVisit(plain);
+      assertEq((await groups(plain))[0].properties.ink_url, "", "the block names no file yet");
+      const { tab } = await restoredVisit(plain, bytes);
+      assertNoProblems(tab);
+      await tab.close();
+      // The pagehide flush sends the block's PUT beside the upload, naming the file by its hash
+      // ("Fences"); a PUT that landed while the upload did not leaves the block naming a file the
+      // server lacks, which the entry's bytes are (inkStore lostUpload). That PUT, as it lands:
+      const lostPaper = await paperFor("Lost upload paper");
+      const lostBytes = await unsavedVisit(lostPaper);
+      const lost = `/api/uploads/${createHash("sha256").update(lostBytes, "utf8").digest("hex").slice(0, 24)}.ink`;
+      const block = (await groups(lostPaper))[0];
+      await account.api(`/api/blocks/${block.id}`, { method: "PUT", body: { properties: { ...block.properties, ink_url: lost, ink_strokes: 1 } } });
+      assert(!(await account.api(lost).then(() => true, () => false)), `the server lacks ${lost}`);
+      const again = await restoredVisit(lostPaper, lostBytes);
+      // Discard takes the restored stroke off again, and that is saved too
+      await again.pill.getByRole("button", { name: "Discard", exact: true }).click();
+      await until(async () => (await again.tab.$$('[data-page="1"] .inkLayer path')).length === 0, { what: "the restored stroke discarded" });
+      await until(async () => (await savedIds(lostPaper)).length === 0, { what: "the discard saved", timeout: 15000 });
+      // the block's missing file answers 404 when the page first loads it, a designed "no"
+      assertNoProblems(again.tab, [`GET ${lost} -> 404`]);
+    } finally { await jctx.close(); }
   });
 
   if (ctx) await ctx.close();

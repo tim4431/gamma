@@ -6341,7 +6341,7 @@ a.shareBrand:hover { background: var(--bg-hover); }
    click over a link. */
 .pdfViewer.inkArmed .pdfPageWrap { cursor: crosshair; }
 .pdfViewer.inkTouchDraw .pdfPageWrap { touch-action: none; }
-.inkLayer, .inkCanvas {
+.inkLayer, .inkCanvas, .inkWetCanvas {
   position: absolute;
   left: 0;
   top: 0;
@@ -6350,7 +6350,8 @@ a.shareBrand:hover { background: var(--bg-hover); }
   pointer-events: none;
 }
 .inkLayer { z-index: 6; overflow: visible; }
-.inkCanvas { z-index: 6; display: none; }
+/* The stroke in progress; peers' strokes in progress (ink-live) have a canvas of their own under it. */
+.inkCanvas, .inkWetCanvas { z-index: 6; display: none; }
 .pdfViewer .pdfPageWrap.inkHovering, .pdfPageWrap.inkHovering .textLayer { cursor: none; }
 /* Drawn over an arbitrary PDF page, so fixed white/black like the lasso,
    not theme tokens. */
@@ -6366,6 +6367,8 @@ a.shareBrand:hover { background: var(--bg-hover); }
 .inkCursorGlyph { display: none; position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
   color: #222; filter: drop-shadow(0 0 1px #fff) drop-shadow(0 0 1px #fff); } /* ds-allow: drawn over the paper like the ring's centre mark above, not the UI theme */
 .inkCursor[data-filter="pen"] .inkCursorGlyph-pen, .inkCursor[data-filter="highlighter"] .inkCursorGlyph-highlighter { display: block; }
+/* A brush pen's footprint is a teardrop (a pencil's leaning ellipse is set inline from its tilt). */
+.inkCursor[data-brush="brush"] { border-radius: 50% 50% 50% 0; }
 .inkCursor[data-filter] span { display: none; }
 .inkTransformHandle {
   position: absolute; z-index: 7; width: 28px; height: 28px; padding: 5px;
@@ -6388,7 +6391,9 @@ a.shareBrand:hover { background: var(--bg-hover); }
 .inkEditOptions .ctlBtn, .inkEditOptions .colorBtn { min-width: 32px; min-height: 32px; }
 /* The selection menu's second row (More edits): the first row's targets. */
 .inkEditOptions.inkEditMore .ctlBtn { flex: 1; min-width: 36px; min-height: 36px; }
-:is(.pdfViewer.pdfDark, [data-theme="gamma-dark"] .pdfViewer) :is(.inkLayer, .inkCanvas, .textBoxBody) { filter: invert(1) hue-rotate(180deg); }
+/* The selection's Style row: the Style picker and the Line trio as the strip's pills. */
+.inkEditOptions .inkSegBtn { width: auto; padding: 0 8px; gap: 5px; font-size: var(--fs-xs); border-radius: var(--radius-full); }
+:is(.pdfViewer.pdfDark, [data-theme="gamma-dark"] .pdfViewer) :is(.inkLayer, .inkCanvas, .inkWetCanvas, .textBoxBody) { filter: invert(1) hue-rotate(180deg); }
 /* The brief outline after a jump from the notes. */
 .inkFlash {
   fill: none;
@@ -6530,7 +6535,13 @@ a.shareBrand:hover { background: var(--bg-hover); }
 /* A smoothing level: a hollow dot growing with the string's length. */
 .inkSmoothDot { border: 1.5px solid currentColor; box-sizing: border-box; opacity: 0.8; }
 /* Labelled groups in the options row: real boxes (display: contents would drop them, and their name, from Safari's accessibility tree). */
-.inkSmoothing, .inkStraight, .inkErases { display: inline-flex; align-items: center; gap: 2px; }
+.inkSmoothing, .inkStraight, .inkErases, .inkLine { display: inline-flex; align-items: center; gap: 2px; }
+/* The pen's Style picker (ink/InkStylePicker.jsx): a short stroke drawn in
+   the brush's look, its name and a chevron, a pill like the trios beside
+   it; the rows of its menu lead with the same stroke. */
+.ctlBtn.inkStyleBtn { width: auto; padding: 0 6px 0 8px; gap: 5px; font-size: var(--fs-xs); border-radius: var(--radius-full); }
+.inkStyleBtn .inkBrushPreview, .inkStyleMenu .inkBrushPreview { flex: none; color: var(--text-primary); }
+.inkStyleMenu .ctxMenuIcon { width: 28px; }
 /* Eraser / lasso mode choices: icon + word, a pill when active. */
 .pdfInkBar .inkSegBtn { width: auto; padding: 0 8px; gap: 5px; font-size: var(--fs-xs); border-radius: var(--radius-full); }
 /* The Text tool's sizes as their numbers; "no background" as a struck-out swatch. */

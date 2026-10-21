@@ -139,10 +139,13 @@ async def page_socket(sock: WebSocket, page_id: str):
     seq, peers}`` on join, ``join {peer}`` / ``leave {client}``, ``cursor
     {client, block, anchor, head}``, ``ops {seq, actor, client, at, ops}``
     for every applied batch, ``reload`` for changes ops can't express (a
-    restore included), ``trashed`` when the page went to Recently deleted.
-    Client → server: ``cursor {block, anchor, head}`` only — writes are
-    ``POST /pages/{id}/ops``. Closed with 4403 when access is refused or
-    revoked (``collab.revalidate``), 4409 when the same tab joined again.
+    restore included), ``trashed`` when the page went to Recently deleted,
+    ``ink-live {client, …}`` a peer's handwriting stroke in progress.
+    Client → server: ``cursor {block, anchor, head}`` and ``ink-live``
+    (relayed to the others when the sender may edit, never stored:
+    ``collab.ink_live``) — writes are ``POST /pages/{id}/ops``. Closed
+    with 4403 when access is refused or revoked (``collab.revalidate``),
+    4409 when the same tab joined again.
     The database reads (the access check, the log position) run in worker
     threads; the room itself lives on the loop. A client gone at any point
     of the handshake (navigated away as the socket opened) is an ordinary
@@ -198,6 +201,11 @@ async def page_socket(sock: WebSocket, page_id: str):
                 await room.broadcast(json.dumps({
                     "t": "cursor", "client": client, "block": peer.block,
                     "anchor": peer.anchor, "head": peer.head}), exclude=client)
+            elif msg.get("t") == "ink-live":
+                # a stroke in progress, relayed to the others and kept nowhere
+                text = collab.ink_live(msg, peer)
+                if text is not None:
+                    await room.broadcast(text, exclude=client)
     except (WebSocketDisconnect, RuntimeError, ValueError, TypeError):
         pass
     finally:

@@ -101,22 +101,101 @@ def test_ink_upgrade_v1(case):
 INKWIDTH = _load("inkwidth.json")
 
 
+def _width_file(stroke):
+    return inkmod.parse_ink({"format": "gamma-ink", "version": 2,
+                             "space": {"kind": "canvas", "width": 10, "height": 10}, "strokes": [stroke]})
+
+
 @pytest.mark.parametrize("row", INKWIDTH["rows"], ids=[r["note"] for r in INKWIDTH["rows"]])
 def test_ink_width(row):
-    """The drawn width is size × w (or size without the channel): the
-    server reads the baked multiplier and knows no law."""
-    stroke = {"id": "a", "tool": row["tool"], "pen": row["pen"], "size": row["size"], "ch": "xy", "pts": [100, 100]}
+    """The drawn width is size × w (or size without the channel) and the
+    drawn opacity opacity × o (or opacity): the server reads the baked
+    multipliers and knows no law. A multi-sample row is encoded with the
+    multipliers the client baked: its w slots are the row's w_encs, the
+    polyline's widths size × ws — or, a row without ws (a stroke with a
+    shape record, constant width whatever its brush), no w channel and the
+    size at every sample."""
+    stroke = {"id": "a", "tool": row["tool"], "pen": row["pen"], "size": row["size"], "opacity": 0.8}
     if row["brush"]:
         stroke["brush"] = row["brush"]
-    if row["w_enc"] is not None:
-        stroke.update(ch="xyw", pts=[100, 100, row["w_enc"]])
-    ink = inkmod.parse_ink({"format": "gamma-ink", "version": 2,
-                            "space": {"kind": "canvas", "width": 10, "height": 10}, "strokes": [stroke]})
-    s = ink.strokes[0]
-    sample = inkmod.decode_stroke(s)[0]
+    if row.get("shape"):
+        stroke["shape"] = row["shape"]
+    if "samples" in row:
+        pressure, shaded, ws = any(s[2] is not None for s in row["samples"]), "os" in row, row["ws"]
+        ch = "xy" + ("p" if pressure else "") + "t" + ("w" if ws else "") + ("o" if shaded else "")
+        samples = [{"x": x, "y": y, "t": t, **({"w": ws[i]} if ws else {}), **({"p": p} if pressure else {})}
+                   for i, (x, y, p, t, _a) in enumerate(row["samples"])]
+        for sample, o in zip(samples, row.get("os") or []):
+            sample["o"] = o
+        stroke.update(ch=ch, pts=inkmod.encode_points(samples, ch))
+        if ws:
+            assert stroke["pts"][ch.index("w")::len(ch)] == row["w_encs"]
+        else:
+            assert row["w_encs"] is None
+        s = _width_file(stroke).strokes[0]
+        widths = [row["size"] * w for w in ws] if ws else [row["size"]] * len(samples)
+        assert [w for _, _, w in inkmod.stroke_polyline(s)] == pytest.approx(widths)
+        sample = inkmod.decode_stroke(s)[row["at"]]
+    else:
+        ch, pts = "xy", [100, 100]
+        for letter in ("w", "o"):
+            if row.get(f"{letter}_enc") is not None:
+                ch, pts = ch + letter, pts + [row[f"{letter}_enc"]]
+        stroke.update(ch=ch, pts=pts)
+        s = _width_file(stroke).strokes[0]
+        sample = inkmod.decode_stroke(s)[0]
+        assert inkmod.stroke_polyline(s)[0][2] == pytest.approx(row["width"], abs=1e-6)
     assert sample.get("w") == row["w"]
+    assert sample.get("o") == row.get("o")
     assert inkmod.stroke_width(s, sample) == pytest.approx(row["width"], abs=1e-6)
-    assert inkmod.stroke_polyline(s)[0][2] == pytest.approx(row["width"], abs=1e-6)
+    assert inkmod.stroke_opacity(s, sample) == pytest.approx(0.8 * (row.get("o") or 1))
+
+
+INKDASH = _load("inkdash.json")
+
+
+@pytest.mark.parametrize("row", INKDASH["patterns"], ids=[r["note"] for r in INKDASH["patterns"]])
+def test_ink_dash_pattern(row):
+    """The dash table is the client's: the pattern from the nominal size
+    alone, the SVG dasharray and the PDF d operator. The server strokes a
+    pressure stroke's dashes along its mean-width centreline, so it writes
+    a dasharray where the client's outlined runs need none."""
+    ch = "xyptw" if row["w"] else "xypt"
+    samples = [{"x": 10 + 5 * i, "y": 20, "p": 0.5, "t": 10 * i, "w": 1.0 + 0.1 * i} for i in range(3)]
+    stroke = {"id": "d", "size": row["size"], "ch": ch, "pts": inkmod.encode_points(samples, ch)}
+    if row["dash"]:
+        stroke["dash"] = row["dash"]
+    ink = inkmod.parse_ink({"format": "gamma-ink", "version": 2, "space": INK_SPACE, "strokes": [stroke]})
+    svg, ops = inkmod.to_svg(ink), inkmod.pdf_path_ops(ink, lambda x, y: (x, y)).decode()
+    pattern = inkmod.dash_pattern(ink.strokes[0])
+    if row["on"] is None:
+        assert pattern is None and "stroke-dasharray" not in svg and "] 0 d" not in ops
+        return
+    assert pattern == (pytest.approx(row["on"]), pytest.approx(row["off"]))
+    dasharray = f'{row["on"]:g} {row["off"]:g}'
+    assert row["dasharray"] in (None, dasharray) and f'stroke-dasharray="{dasharray}"' in svg
+    assert row["pdf"] in ops and ops.index(row["pdf"]) < ops.index(" S\n") < ops.index("[] 0 d")
+
+
+def _rounded(samples):
+    return [{k: round(v, 3) for k, v in s.items()} for s in samples]
+
+
+def test_ink_dash_runs():
+    """The on-runs of a dashed pressure stroke by arc length with their
+    boundary samples lerped — the run splitting the pencil's bands use."""
+    case = INKDASH["runs"]
+    stroke = inkmod.Stroke.model_validate({"id": "r", "size": case["size"], "dash": case["dash"], "pts": [0, 0]})
+    assert inkmod.dash_pattern(stroke) == (case["on"], case["off"])
+    assert [_rounded(run) for run in inkmod.dash_runs(stroke, case["samples"])] == [r["samples"] for r in case["runs"]]
+    # dotted: one dot at the middle of each on-run, size × w across (the
+    # runs are shorter than the sample spacing, so the middle is their ends' mean)
+    case = INKDASH["dots"]
+    stroke = stroke.model_copy(update={"dash": case["dash"]})
+    runs = inkmod.dash_runs(stroke, case["samples"])
+    middles = [{k: (run[0][k] + run[-1][k]) / 2 for k in ("x", "y", "w")} for run in runs]
+    assert [{**_rounded([m])[0], "diameter": round(case["size"] * m["w"], 3)} for m in middles] == \
+        [{k: d[k] for k in ("x", "y", "w", "diameter")} for d in case["dots"]]
 
 
 PAPER = _load("paper.json")

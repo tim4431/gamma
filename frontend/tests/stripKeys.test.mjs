@@ -58,11 +58,15 @@ test("E is a tap or a hold: the keydown arms, repeats are nothing, the keyup say
   assert.equal(stripKey(key("KeyE", { ctrlKey: true }), state()), null);
 });
 
-test("the bracket keys step the armed preset's width", () => {
+test("the bracket keys step the armed preset's width; with Shift its pen style", () => {
   assert.deepEqual(stripKey(key("BracketLeft"), state()), { kind: "width", step: -1 });
   assert.deepEqual(stripKey(key("BracketRight"), state()), { kind: "width", step: 1 });
-  assert.deepEqual(stripKey(key("BracketRight", { shiftKey: true }), state()), { kind: "width", step: 1 }, "matched by the physical key");
+  assert.deepEqual(stripKey(key("BracketRight", { shiftKey: true }), state()), { kind: "brush", step: 1 }, "Shift+] is the next style");
+  assert.deepEqual(stripKey(key("BracketLeft", { shiftKey: true }), state()), { kind: "brush", step: -1 }, "Shift+[ the one before");
+  assert.deepEqual(stripKey(key("BracketLeft", { shiftKey: true, ctrlKey: true, altKey: true }), state()), { kind: "brush", step: -1 },
+    "matched by the physical key: AltGr is no modifier");
   assert.equal(stripKey(key("BracketRight", { metaKey: true }), state()), null);
+  assert.equal(stripKey(key("BracketRight", { metaKey: true, shiftKey: true }), state()), null, "a chord is someone else's");
 });
 
 test("digits arm the preset at that position, from the row or the keypad", () => {

@@ -16,20 +16,25 @@ writers map ink through the exact conversion they already use for rects.
 
 ``ch`` declares the channels of every sample (InkML's idea): ``x`` ``y``
 always, then any letters: ``p`` pressure, ``t`` time, ``a`` altitude, ``z``
-azimuth, ``w`` the baked drawn-width multiplier, ``o`` a baked opacity
-(reserved). ``pts`` is one flat integer array — x/y in 1/100 pt, t in ms,
-w and o in thousandths are delta-encoded after the first sample; p is
-0..1000, a/z degrees, absolute. A letter this code does not know is carried
-by stride and copied through. The drawn width at a sample is ``size × w``
-when the stroke has ``w``, else ``size``: there is no width law here. The
-frontend's ``src/ink/ink.js`` is the mirror of the codec; the shared
-fixtures under tests/shared pin both.
+azimuth, ``w`` the baked drawn-width multiplier, ``o`` the baked opacity
+multiplier (the pencil writes it). ``pts`` is one flat integer array — x/y
+in 1/100 pt, t in ms, w and o in thousandths are delta-encoded after the
+first sample; p is 0..1000, a/z degrees, absolute. A letter this code does
+not know is carried by stride and copied through. The drawn width at a
+sample is ``size × w`` when the stroke has ``w``, else ``size``, and the
+drawn opacity ``opacity × o``, else ``opacity``: there is no width or
+opacity law here (the client's finishStroke.js bakes both). The frontend's
+``src/ink/ink.js`` is the mirror of the codec and of the dash table; the
+shared fixtures under tests/shared pin both.
 """
 
+import bisect
 import json
 import math
 import re
 from dataclasses import dataclass, field
+from itertools import accumulate
+from operator import add, sub
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
@@ -45,7 +50,7 @@ MAX_BYTES = 6 * 1024 * 1024
 COORD_UNIT = 100        # stored x/y are hundredths of a point
 PRESSURE_UNIT = 1000    # stored p is 0..1000
 MULT_UNIT = 1000        # stored w / o are multipliers × 1000
-MAX_W = 2000            # the running w sum (0..2.000 decoded)
+MAX_W = 4000            # the running w sum (0..4.000 decoded; a slanted pencil reaches 3.5)
 MAX_O = 1000
 MAX_CH = 12
 EXTRA_BYTES_STROKE = 1024
@@ -63,6 +68,11 @@ _HEX_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
 _EXTRA_KEY_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]{0,31}$")
 _UPLOAD_RE = re.compile(r"/api/uploads/([0-9a-f]{24}\.ink)$")
 SHAPE_KINDS = ("line", "arrow", "rect", "ellipse", "triangle", "polygon", "curve")
+# A stroke's dash as (on, off) in sizes — never stored, derived from the
+# nominal size at render time (DASH in ink.js; tests/shared/inkdash.json).
+DASH = {"dashed": (2.0, 2.0), "dotted": (0.1, 2.0)}
+# The shades a pencil is drawn in: ``o`` quantised up to one of these.
+OPACITY_BANDS = (0.33, 0.66, 1.0)
 UPDATE_GAMMA = "update Gamma"  # the 400 detail for a version 1 upload: every writer is version 2 since release T
 
 
@@ -341,8 +351,10 @@ def encode_points(samples: list[dict], ch: str = "xy") -> list[int]:
                 v = round(max(0.0, min(1.0, s.get("p", 0.5))) * PRESSURE_UNIT)
             elif c == "t":
                 v = int(s.get("t") or 0)
-            elif c in ("a", "z"):
-                v = int(s.get(c) or 0)
+            elif c == "a":   # a sample without tilt in a tilted stroke is upright (ink.js encodePoints)
+                v = round(max(0.0, min(90.0, s["a"] if s.get("a") is not None else 90.0)))
+            elif c == "z":
+                v = round(s["z"]) if s.get("z") is not None else 0
             elif c in ("w", "o"):
                 v = round((s.get(c) if s.get(c) is not None else 1.0) * MULT_UNIT)
             else:
@@ -359,6 +371,12 @@ def stroke_width(stroke: Stroke, sample: dict) -> float:
     """The drawn diameter at a decoded sample: ``size × w`` when the stroke
     carries the ``w`` channel, else ``size``. The whole rule."""
     return stroke.size * sample["w"] if "w" in sample else stroke.size
+
+
+def stroke_opacity(stroke: Stroke, sample: dict) -> float:
+    """The drawn opacity at a decoded sample: ``opacity × o`` when the
+    stroke carries the ``o`` channel, else ``opacity``. The whole rule."""
+    return stroke.opacity * sample["o"] if "o" in sample else stroke.opacity
 
 
 def stroke_polyline(stroke: Stroke) -> list[tuple[float, float, float]]:
@@ -395,17 +413,28 @@ def in_draw_order(strokes) -> list[Stroke]:
 
 def bounding_box(ink: InkFile) -> tuple[float, float, float, float] | None:
     """(x0, y0, x1, y1) in points around every stroke, width included;
-    None for an empty file."""
+    None for an empty file. Read off the raw arrays — the running sums of
+    x, y and w — with no per-sample objects: the upload route computes it
+    on every flush."""
     x0 = y0 = math.inf
     x1 = y1 = -math.inf
-    for stroke in ink.strokes:
-        for x, y, w in stroke_polyline(stroke):
-            r = w / 2
-            x0, y0 = min(x0, x - r), min(y0, y - r)
-            x1, y1 = max(x1, x + r), max(y1, y + r)
+    half = COORD_UNIT / MULT_UNIT / 2    # a w integer → a radius in coordinate units, per point of size
+    for s in ink.strokes:
+        ch, pts, n = s.ch, s.pts, len(s.ch)
+        xs = list(accumulate(pts[ch.index("x")::n]))
+        ys = list(accumulate(pts[ch.index("y")::n]))
+        wi = ch.find("w")
+        if wi < 0:
+            r = s.size * COORD_UNIT / 2
+            sx0, sx1, sy0, sy1 = min(xs) - r, max(xs) + r, min(ys) - r, max(ys) + r
+        else:
+            rs = list(map((s.size * half).__mul__, accumulate(pts[wi::n])))
+            sx0, sx1 = min(map(sub, xs, rs)), max(map(add, xs, rs))
+            sy0, sy1 = min(map(sub, ys, rs)), max(map(add, ys, rs))
+        x0, y0, x1, y1 = min(x0, sx0), min(y0, sy0), max(x1, sx1), max(y1, sy1)
     if x0 is math.inf:
         return None
-    return (x0, y0, x1, y1)
+    return (x0 / COORD_UNIT, y0 / COORD_UNIT, x1 / COORD_UNIT, y1 / COORD_UNIT)
 
 
 def pdf_position(ink: InkFile) -> dict | None:
@@ -424,38 +453,369 @@ def parse_color(value: str) -> tuple[float, float, float, float]:
     return _parse_color(value) or (0.12, 0.12, 0.12, 1.0)
 
 
+# --- the drawn look: dashes, opacity bands, outlines -----------------------------
+
+def dash_pattern(stroke: Stroke) -> tuple[float, float] | None:
+    """``(on, off)`` in points for a dashed or dotted stroke — ``DASH`` times
+    its nominal ``size``, never the drawn width — or None for a solid one."""
+    rule = DASH.get(stroke.dash) if stroke.dash else None
+    return (rule[0] * stroke.size, rule[1] * stroke.size) if rule else None
+
+
+def opacity_band(o: float) -> float:
+    """``o`` quantised up to 0.33, 0.66 or 1: the three shades a pencil is
+    drawn in (``opacityBand`` in ink.js)."""
+    low, mid, top = OPACITY_BANDS
+    return low if o <= low else mid if o <= mid else top
+
+
+def _arcs(samples: list[dict]) -> list[float]:
+    """The arc length at each sample, from 0."""
+    out, total = [0.0], 0.0
+    for a, b in zip(samples, samples[1:]):
+        total += math.hypot(b["x"] - a["x"], b["y"] - a["y"])
+        out.append(total)
+    return out
+
+
+_LERPED = ("x", "y", "p", "t", "w", "o")
+
+
+def _at(samples: list[dict], arcs: list[float], at: float) -> dict:
+    """The sample at arc length ``at``: x, y, p, t, w and o linear in the
+    arc between the samples around it, the other channels (a, z, unknown
+    letters) those of the sample before."""
+    i = bisect.bisect_left(arcs, at)
+    if i == 0:
+        return dict(samples[0])
+    if i >= len(samples):
+        return dict(samples[-1])
+    a, b = samples[i - 1], samples[i]
+    span = arcs[i] - arcs[i - 1]
+    f = (at - arcs[i - 1]) / span if span else 1.0
+    out = dict(a)
+    for k in _LERPED:
+        if k in a and k in b:
+            out[k] = a[k] + (b[k] - a[k]) * f
+    return out
+
+
+def _cut(samples: list[dict], arcs: list[float], lo: float, hi: float) -> list[dict]:
+    """The run of ``samples`` from arc ``lo`` to ``hi``: the samples strictly
+    inside, and one lerped at each end (``_at``) — the run splitting the
+    dashes and the pencil's bands share, as the client's eraser cuts."""
+    inside = samples[bisect.bisect_right(arcs, lo):bisect.bisect_left(arcs, hi)]
+    return [_at(samples, arcs, lo), *inside, _at(samples, arcs, hi)]
+
+
+def dash_runs(stroke: Stroke, samples: list[dict] | None = None) -> list[list[dict]]:
+    """A dashed or dotted stroke's on-runs by arc length, phase 0 at its
+    first sample: ``[k (on + off), k (on + off) + on)`` clipped to its
+    length, each a run of ``_cut``; a run of zero length is skipped. A
+    solid stroke, or one of zero length, is one run. The client's
+    ``dashRuns``: tests/shared/inkdash.json pins the two, and with them
+    the run splitting the pencil's bands are cut with."""
+    samples = decode_stroke(stroke) if samples is None else samples
+    pattern = dash_pattern(stroke)
+    arcs = _arcs(samples)
+    if not pattern or not arcs[-1]:
+        return [samples]
+    on, off = pattern
+    out, k = [], 0
+    while k * (on + off) < arcs[-1]:
+        lo = k * (on + off)
+        hi = min(lo + on, arcs[-1])
+        if hi > lo:
+            out.append(_cut(samples, arcs, lo, hi))
+        k += 1
+    return out
+
+
+def stroke_bands(stroke: Stroke, samples: list[dict] | None = None) -> list[tuple[float, list[dict]]]:
+    """The stroke cut into runs of one opacity band, in drawing order:
+    ``[(band, run)]``, ``o`` quantised up (``opacity_band``), with a sample
+    lerped where ``o`` crosses a band's edge (``_cut``) — the pencil's
+    shading. A stroke without ``o`` is one run at band 1."""
+    samples = decode_stroke(stroke) if samples is None else samples
+    if not samples or "o" not in samples[0]:
+        return [(1.0, samples)]
+    arcs = _arcs(samples)
+    band = opacity_band(samples[0]["o"])
+    out, lo = [], 0.0
+    for i in range(1, len(samples)):
+        o0, o1 = samples[i - 1]["o"], samples[i]["o"]
+        if opacity_band(o1) == band:
+            continue
+        # the band edges this segment crosses, in the order it crosses them
+        edges = [e for e in OPACITY_BANDS[:-1] if min(o0, o1) <= e < max(o0, o1)]
+        for edge in (edges if o1 > o0 else edges[::-1]):
+            at = arcs[i - 1] + (arcs[i] - arcs[i - 1]) * (edge - o0) / (o1 - o0)
+            if at > lo:
+                out.append((band, _cut(samples, arcs, lo, at)))
+            lo = at
+            band = OPACITY_BANDS[OPACITY_BANDS.index(edge) + 1] if o1 > o0 else edge
+    if not out:
+        return [(band, samples)]
+    if arcs[-1] > lo:
+        out.append((band, _cut(samples, arcs, lo, arcs[-1])))
+    return out
+
+
+# perfect-freehand 1.2.2 (MIT, Steve Ruiz) — the client's outline — at its
+# ``outlineOptions``: thinning 1, smoothing 0.5, streamline 0.4, no
+# simulated pressure, no tapers, round caps, ``last``. Run at ten times the
+# page's scale: its one absolute constant, the 3 units at the end of a path
+# whose points it drops, would otherwise blot a dash or a band run shorter
+# than 3 pt into a disc about its length across.
+_PF_SCALE = 10.0
+_PF_T = 0.15 + (1 - 0.4) * 0.85      # getStrokePoints' step toward each point at streamline 0.4
+_PF_PI = math.pi + 1e-4
+
+
+def _pf_rotate(p, c, r):
+    s, k = math.sin(r), math.cos(r)
+    x, y = p[0] - c[0], p[1] - c[1]
+    return (x * k - y * s + c[0], x * s + y * k + c[1])
+
+
+def _pf_points(pts: list, size: float) -> list:
+    """getStrokePoints over ``(x, y, pressure)`` — never two of them: the
+    caller adds a midpoint, since perfect-freehand's two-point path drops
+    their pressure — → ``[point, pressure, vector, running length]``."""
+    if len(pts) == 1:
+        x, y, p = pts[0]
+        pts = [pts[0], (x + 1, y + 1, p)]
+    x, y, p = pts[0]
+    out = [[(x, y), p, (1.0, 1.0), 0.0]]
+    prev, running, reached, last = (x, y), 0.0, False, len(pts) - 1
+    for i in range(1, len(pts)):
+        x, y, p = pts[i]
+        pt = (x, y) if i == last else (prev[0] + (x - prev[0]) * _PF_T, prev[1] + (y - prev[1]) * _PF_T)
+        if pt == prev:
+            continue
+        running += math.hypot(pt[1] - prev[1], pt[0] - prev[0])
+        if i < last and not reached:
+            if running < size:
+                continue
+            reached = True
+        dx, dy = prev[0] - pt[0], prev[1] - pt[1]
+        ln = math.hypot(dx, dy)
+        out.append([pt, p, (dx / ln, dy / ln), running])
+        prev = pt
+    out[0][2] = out[1][2] if len(out) > 1 else (0.0, 0.0)
+    return out
+
+
+def _pf_outline(points: list, size: float, caps: tuple = (True, True)) -> list:
+    """getStrokeOutlinePoints at the options above (the radius is ``size ×
+    pressure`` at thinning 1): the outline polygon's points. ``caps`` are
+    ``start.cap`` and ``end.cap``: a flat end is where a run meets the
+    next."""
+    total = points[-1][3]
+    min_dist = (size * 0.5) ** 2
+    left, right = [], []
+    radius = first_radius = None
+    prev_vec = points[0][2]
+    pl = pr = tl = tr = points[0][0]
+    prev_sharp = False
+    n = len(points)
+    for i, (point, pressure, vec, running) in enumerate(points):
+        if i < n - 1 and total - running < 3:
+            continue
+        radius = size * (0.5 - (0.5 - pressure))
+        if first_radius is None:
+            first_radius = radius
+        radius = max(0.01, radius)
+        next_vec = points[i + 1][2] if i < n - 1 else vec
+        next_dpr = vec[0] * next_vec[0] + vec[1] * next_vec[1] if i < n - 1 else 1.0
+        prev_dpr = vec[0] * prev_vec[0] + vec[1] * prev_vec[1]
+        sharp, next_sharp = prev_dpr < 0 and not prev_sharp, next_dpr < 0
+        if sharp or next_sharp:          # a sharp corner: a half-turn of points around it
+            ox, oy = prev_vec[1] * radius, -prev_vec[0] * radius
+            step, t = 1 / 13, 0.0
+            while t <= 1:
+                tl = _pf_rotate((point[0] - ox, point[1] - oy), point, _PF_PI * t)
+                left.append(tl)
+                tr = _pf_rotate((point[0] + ox, point[1] + oy), point, _PF_PI * -t)
+                right.append(tr)
+                t += step
+            pl, pr = tl, tr
+            if next_sharp:
+                prev_sharp = True
+            continue
+        prev_sharp = False
+        if i == n - 1:
+            ox, oy = vec[1] * radius, -vec[0] * radius
+            left.append((point[0] - ox, point[1] - oy))
+            right.append((point[0] + ox, point[1] + oy))
+            continue
+        lx, ly = next_vec[0] + (vec[0] - next_vec[0]) * next_dpr, next_vec[1] + (vec[1] - next_vec[1]) * next_dpr
+        ox, oy = ly * radius, -lx * radius
+        tl = (point[0] - ox, point[1] - oy)
+        if i <= 1 or (pl[0] - tl[0]) ** 2 + (pl[1] - tl[1]) ** 2 > min_dist:
+            left.append(tl)
+            pl = tl
+        tr = (point[0] + ox, point[1] + oy)
+        if i <= 1 or (pr[0] - tr[0]) ** 2 + (pr[1] - tr[1]) ** 2 > min_dist:
+            right.append(tr)
+            pr = tr
+        prev_vec = vec
+    first = points[0][0]
+    last = points[-1][0] if n > 1 else (first[0] + 1, first[1] + 1)
+    if n == 1:                           # a dot
+        dx, dy = first[1] - last[1], -(first[0] - last[0])
+        ln = math.hypot(dx, dy)
+        r = -(first_radius or radius)
+        start = (first[0] + dx / ln * r, first[1] + dy / ln * r)
+        dots, step = [], 1 / 13
+        t = step
+        while t <= 1:
+            dots.append(_pf_rotate(start, first, _PF_PI * 2 * t))
+            t += step
+        return dots
+    start_cap, step = [], 1 / 13
+    if caps[0]:
+        t = step
+        while t <= 1:
+            start_cap.append(_pf_rotate(right[0], first, _PF_PI * t))
+            t += step
+    else:
+        cx, cy = left[0][0] - right[0][0], left[0][1] - right[0][1]
+        start_cap = [(first[0] - cx * f, first[1] - cy * f) for f in (0.5, 0.51)] + \
+                    [(first[0] + cx * f, first[1] + cy * f) for f in (0.51, 0.5)]
+    vx, vy = points[-1][2]
+    dx, dy = -vy, vx
+    end_cap, step = [], 1 / 29
+    if caps[1]:
+        start = (last[0] + dx * radius, last[1] + dy * radius)
+        t = step
+        while t < 1:
+            end_cap.append(_pf_rotate(start, last, _PF_PI * 3 * t))
+            t += step
+    else:
+        end_cap = [(last[0] + dx * radius * f, last[1] + dy * radius * f) for f in (1, 0.99)] + \
+                  [(last[0] - dx * radius * f, last[1] - dy * radius * f) for f in (0.99, 1)]
+    return left + end_cap + right[::-1] + start_cap
+
+
+def stroke_outline(stroke: Stroke, samples: list[dict] | None = None,
+                   caps: tuple = (True, True)) -> list[tuple[float, float]]:
+    """The filled outline polygon of a pen stroke — or of ``samples``, a run
+    of it, with ``caps`` round at the ends that are the stroke's own and
+    flat where it meets the next run, as the client's ``runOutline`` — as
+    the screen draws it: perfect-freehand's ``getStroke`` driven by pressure
+    ``w / 2`` (0.5 without ``w``), so its radius is ``size × w / 2``, the
+    baked width, and no law is involved. Points in page units."""
+    samples = decode_stroke(stroke) if samples is None else samples
+    if not samples:
+        return []
+    if len(samples) == 2:
+        samples = [samples[0], _at(samples, [0.0, 1.0], 0.5), samples[1]]
+    k = _PF_SCALE
+    pts = [(s["x"] * k, s["y"] * k, s["w"] / 2 if "w" in s else 0.5) for s in samples]
+    size = stroke.size * k
+    return [(x / k, y / k) for x, y in _pf_outline(_pf_points(pts, size), size, caps)]
+
+
 # --- renderers ------------------------------------------------------------------
 
 def _fmt(v: float) -> str:
     return f"{v:.2f}".rstrip("0").rstrip(".")
 
 
+def _svg_line(xys) -> str:
+    """A centreline path; a single point is a tiny segment, so its round
+    caps draw a dot."""
+    xys = list(xys)
+    d = "M" + " L".join(f"{_fmt(x)} {_fmt(y)}" for x, y in xys)
+    return d + (f" L{_fmt(xys[0][0] + 0.01)} {_fmt(xys[0][1])}" if len(xys) == 1 else "")
+
+
+def _svg_outline(points) -> str:
+    """An outline as the client draws it (``svgPathFromPoints``): a closed
+    path of quadratic curves through the points' midpoints."""
+    if len(points) < 3:
+        return ""
+    d = [f"M{points[0][0]:.2f} {points[0][1]:.2f} Q"]
+    for (ax, ay), (bx, by) in zip(points, points[1:] + points[:1]):
+        d.append(f"{ax:.2f} {ay:.2f} {(ax + bx) / 2:.2f} {(ay + by) / 2:.2f}")
+    return " ".join(d) + "Z"
+
+
+def _band_outlines(stroke: Stroke, samples: list[dict]) -> list[tuple[float, list]]:
+    """The outlines of ``stroke_bands`` gathered per band, lightest first:
+    each band is one filled path, painted once, so it never darkens where
+    the stroke crosses itself, and a run's cut ends are flat, so two bands
+    meet without overlapping."""
+    runs = stroke_bands(stroke, samples)
+    out: dict = {}
+    for i, (band, run) in enumerate(runs):
+        out.setdefault(band, []).append(stroke_outline(stroke, run, (i == 0, i == len(runs) - 1)))
+    return sorted(out.items())
+
+
+def _drawn_as(stroke: Stroke, alpha: float) -> str:
+    """How the exporters draw a stroke: ``marker`` (a highlighter's
+    multiplied centreline), ``dashed`` (one dashed centreline at the mean
+    drawn width), ``bands`` (a filled outline per opacity band: a pencil,
+    or a translucent pen, which stroked segments would darken where they
+    overlap) or ``segments`` (an opaque solid pen's round-capped segments,
+    each at its baked width)."""
+    if stroke.tool == "highlighter":
+        return "marker"
+    if stroke.dash:
+        return "dashed"
+    return "bands" if alpha < 1 or "o" in stroke.ch else "segments"
+
+
+def _mean(values) -> float:
+    values = list(values)
+    return sum(values) / len(values) if values else 1.0
+
+
 def to_svg(ink: InkFile, box=None, pad: float = 4.0) -> str:
     """An SVG of the strokes cropped to ``box`` (default: the bounding box),
-    band 0 then band 1. Pens (and any tool this code does not know) draw
-    one round-capped segment per sample pair at that pair's baked width;
-    highlighters one constant-width path with their opacity, multiplied
-    onto what lies beneath."""
+    band 0 then band 1. An opaque solid pen (and any tool this code does
+    not know) draws one round-capped segment per sample pair at that pair's
+    baked width; a translucent one, and a pencil, one filled outline per
+    opacity band (``stroke_bands``, ``stroke_outline``) at ``fill-opacity``
+    band × opacity, untextured; a dashed stroke one centreline path at its
+    mean drawn width and opacity with ``stroke-dasharray``; a highlighter
+    one constant-width path with its opacity, multiplied onto what lies
+    beneath."""
     box = box or bounding_box(ink) or (0, 0, 1, 1)
     x0, y0, x1, y1 = box[0] - pad, box[1] - pad, box[2] + pad, box[3] + pad
     w, h = max(1.0, x1 - x0), max(1.0, y1 - y0)
     parts = [f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="{_fmt(x0)} {_fmt(y0)} {_fmt(w)} {_fmt(h)}" '
              f'width="{_fmt(w)}" height="{_fmt(h)}">']
     for stroke in in_draw_order(ink.strokes):
-        poly = stroke_polyline(stroke)
         r, g, b, a = parse_color(stroke.color)
         color = f"rgb({round(r * 255)},{round(g * 255)},{round(b * 255)})"
-        opacity = min(a, stroke.opacity)
-        if stroke.tool == "highlighter":
-            d = "M" + " L".join(f"{_fmt(x)} {_fmt(y)}" for x, y, _ in poly)
-            if len(poly) == 1:
-                d += f" L{_fmt(poly[0][0] + 0.01)} {_fmt(poly[0][1])}"
-            parts.append(f'<path d="{d}" fill="none" stroke="{color}" stroke-width="{_fmt(stroke.size)}" '
-                         f'stroke-opacity="{_fmt(opacity)}" stroke-linecap="round" stroke-linejoin="round" '
-                         'style="mix-blend-mode:multiply"/>')
+        alpha = min(a, stroke.opacity)
+        pattern = dash_pattern(stroke)
+        dash = f' stroke-dasharray="{_fmt(pattern[0])} {_fmt(pattern[1])}"' if pattern else ""
+        kind = _drawn_as(stroke, alpha)
+        if kind == "marker":
+            parts.append(f'<path d="{_svg_line((x, y) for x, y, _ in stroke_polyline(stroke))}" fill="none" '
+                         f'stroke="{color}" stroke-width="{_fmt(stroke.size)}" stroke-opacity="{_fmt(alpha)}" '
+                         f'stroke-linecap="round" stroke-linejoin="round"{dash} style="mix-blend-mode:multiply"/>')
             continue
-        parts.append(f'<g fill="none" stroke="{color}" stroke-linecap="round" stroke-linejoin="round"'
-                     + (f' stroke-opacity="{_fmt(opacity)}"' if opacity < 1 else "") + ">")
+        if kind == "dashed":
+            samples = decode_stroke(stroke)
+            alpha *= _mean(s["o"] for s in samples if "o" in s)
+            parts.append(f'<path d="{_svg_line((s["x"], s["y"]) for s in samples)}" fill="none" stroke="{color}" '
+                         f'stroke-width="{_fmt(_mean(stroke_width(stroke, s) for s in samples))}"'
+                         + (f' stroke-opacity="{_fmt(alpha)}"' if alpha < 1 else "")
+                         + f' stroke-linecap="round" stroke-linejoin="round"{dash}/>')
+            continue
+        if kind == "bands":
+            for band, outlines in _band_outlines(stroke, decode_stroke(stroke)):
+                d = " ".join(p for outline in outlines if (p := _svg_outline(outline)))
+                parts.append(f'<path d="{d}" fill="{color}"'
+                             + (f' fill-opacity="{_fmt(band * alpha)}"' if band * alpha < 1 else "") + "/>")
+            continue
+        poly = stroke_polyline(stroke)
+        parts.append(f'<g fill="none" stroke="{color}" stroke-linecap="round" stroke-linejoin="round">')
         if len(poly) == 1:
             x, y, wd = poly[0]
             parts.append(f'<path d="M{_fmt(x)} {_fmt(y)} L{_fmt(x + 0.01)} {_fmt(y)}" stroke-width="{_fmt(wd)}"/>')
@@ -467,32 +827,112 @@ def to_svg(ink: InkFile, box=None, pad: float = 4.0) -> str:
     return "".join(parts)
 
 
-def pdf_path_ops(ink: InkFile, to_pdf, scale: float = 1.0) -> bytes:
-    """PDF content-stream operators drawing the strokes, band 0 then band
-    1: ``to_pdf(x, y)`` maps a display-space point to user space (the
-    notes-as-PDF writer draws in a frame of its own). Highlighter opacity
-    is baked into the colour (no ExtGState needed) — over white that is the
-    same shade."""
+def _gs(alpha: float, multiply: bool = False) -> bytes:
+    """The ``gs`` operator ``pdf_path_ops`` sets a drawn opacity with. The
+    state is in its name — ``/GSink<α × 1000>`` (``/CA`` and ``/ca``) and
+    ``/GSinkM<α × 1000>`` (also ``/BM /Multiply``) — so
+    ``pdf_path_resources`` declares it from the ops alone."""
+    return b"/GSink%s%d gs" % (b"M" if multiply else b"", max(0, min(1000, round(alpha * 1000))))
+
+
+_GS_RE = re.compile(rb"/GSink(M?)(\d{1,4}) gs")
+
+
+def _pdf_line(pts, num) -> bytes:
+    return (b"%s %s m " % (num(pts[0][0]), num(pts[0][1]))
+            + b" ".join(b"%s %s l" % (num(x), num(y)) for x, y in pts[1:] or pts[:1]))
+
+
+def _pdf_outline(points, to_pdf) -> bytes:
+    """An outline as one closed subpath: the client's quadratic curves
+    through the midpoints, each as the cubic PDF draws. The points are
+    mapped first: ``to_pdf`` is affine, so the curves map exactly."""
+    if len(points) < 3:
+        return b""
+    pts = [to_pdf(x, y) for x, y in points]
+    cur = pts[0]
+    out = [f"{cur[0]:.2f} {cur[1]:.2f} m"]
+    for (ax, ay), (bx, by) in zip(pts, pts[1:] + pts[:1]):
+        ex, ey = (ax + bx) / 2, (ay + by) / 2
+        out.append(f"{cur[0] + (ax - cur[0]) * 2 / 3:.2f} {cur[1] + (ay - cur[1]) * 2 / 3:.2f} "
+                   f"{ex + (ax - ex) * 2 / 3:.2f} {ey + (ay - ey) * 2 / 3:.2f} {ex:.2f} {ey:.2f} c")
+        cur = (ex, ey)
+    return (" ".join(out) + " h").encode()
+
+
+def pdf_path_ops(ink: InkFile, to_pdf, scale: float = 1.0, band: int | None = None) -> bytes:
+    """PDF content-stream operators drawing the strokes, band 0 then band 1
+    (``band`` keeps one, for a writer drawing several groups band by band);
+    ``b""`` when nothing is left to draw. ``to_pdf(x, y)`` maps a
+    display-space point to user space (the notes-as-PDF writer draws in a
+    frame of its own) and ``scale`` the widths. An opaque solid pen is a
+    round-capped segment per sample pair at its baked width; a translucent
+    pen, and a pencil, one filled outline per opacity band under the
+    ExtGState of its opacity (``/GSink<α>``, ``/CA`` and ``/ca``); a dashed
+    stroke one path at its mean drawn width between ``[on off] 0 d`` and
+    ``[] 0 d``; a highlighter its centreline under ``/GSinkM<α>``, which
+    multiplies like the screen. A writer embedding the ops declares the
+    states they set with ``pdf_path_resources``."""
     from .pdf_typeset import num
+    strokes = [s for s in in_draw_order(ink.strokes) if band is None or band_of(s) == band]
+    if not strokes:
+        return b""
     ops = [b"q 1 J 1 j"]
-    for stroke in in_draw_order(ink.strokes):
-        poly = stroke_polyline(stroke)
+    for stroke in strokes:
         r, g, b, a = parse_color(stroke.color)
-        a = min(a, stroke.opacity)
-        if a < 1:
-            r, g, b = (c * a + (1 - a) for c in (r, g, b))
-        ops.append(b"%s %s %s RG" % (num(r), num(g), num(b)))
-        if stroke.tool == "highlighter":
-            pts = [to_pdf(x, y) for x, y, _ in poly]
-            ops.append(b"%s w" % num(stroke.size * scale))
-            ops.append(b"%s %s m " % (num(pts[0][0]), num(pts[0][1]))
-                       + b" ".join(b"%s %s l" % (num(x), num(y)) for x, y in pts[1:] or [pts[0]]) + b" S")
+        alpha = min(a, stroke.opacity)
+        rgb = b"%s %s %s" % (num(r), num(g), num(b))
+        pattern = dash_pattern(stroke)
+        dash = b"[%s %s] 0 d" % tuple(_fmt(v * scale).encode() for v in pattern) if pattern else b""
+        kind = _drawn_as(stroke, alpha)
+        if kind == "marker":
+            line = _pdf_line([to_pdf(x, y) for x, y, _ in stroke_polyline(stroke)], num) + b" S"
+            ops.append(b"q %s %s RG %s w" % (_gs(alpha, multiply=True), rgb, num(stroke.size * scale)))
+            ops += [dash, line, b"[] 0 d", b"Q"] if dash else [line, b"Q"]
             continue
+        if kind == "dashed":
+            samples = decode_stroke(stroke)
+            alpha *= _mean(s["o"] for s in samples if "o" in s)
+            width = _mean(stroke_width(stroke, s) for s in samples) * scale
+            line = _pdf_line([to_pdf(s["x"], s["y"]) for s in samples], num) + b" S"
+            body = [b"%s RG %s w %s" % (rgb, num(width), dash), line, b"[] 0 d"]
+            ops += [b"q " + _gs(alpha), *body, b"Q"] if alpha < 1 else body
+            continue
+        if kind == "bands":
+            for band_alpha, outlines in _band_outlines(stroke, decode_stroke(stroke)):
+                shape = [p for outline in outlines if (p := _pdf_outline(outline, to_pdf))]
+                if not shape:
+                    continue
+                body = [rgb + b" rg", *shape, b"f"]
+                ops += [b"q " + _gs(band_alpha * alpha), *body, b"Q"] if band_alpha * alpha < 1 else body
+            continue
+        ops.append(rgb + b" RG")
+        poly = stroke_polyline(stroke)
         for (ax, ay, aw), (bx, by, bw) in zip(poly, poly[1:] or poly):
             (px, py), (qx, qy) = to_pdf(ax, ay), to_pdf(bx, by)
             ops.append(b"%s w %s %s m %s %s l S" % (num((aw + bw) / 2 * scale), num(px), num(py), num(qx), num(qy)))
     ops.append(b"Q")
     return b"\n".join(ops)
+
+
+def pdf_path_resources(ops: bytes):
+    """The ``/ExtGState`` dictionary declaring every graphics state ``ops``
+    sets — the output of ``pdf_path_ops``, or a whole content stream that
+    holds it — or None when it sets none. The name carries the state
+    (``_gs``)."""
+    from PyPDF2.generic import DictionaryObject, FloatObject, NameObject
+    found = sorted({(m.group(1), int(m.group(2))) for m in _GS_RE.finditer(ops)})
+    if not found:
+        return None
+    out = DictionaryObject()
+    for multiply, alpha in found:
+        value = f"{alpha / 1000:g}"      # a string, or PyPDF2 writes the float's every binary digit
+        state = DictionaryObject({NameObject("/Type"): NameObject("/ExtGState"),
+                                  NameObject("/CA"): FloatObject(value), NameObject("/ca"): FloatObject(value)})
+        if multiply:
+            state[NameObject("/BM")] = NameObject("/Multiply")
+        out[NameObject(f"/GSink{multiply.decode()}{alpha}")] = state
+    return out
 
 
 # --- PDF /Ink interchange --------------------------------------------------------
@@ -509,12 +949,15 @@ def ink_buckets(ink: InkFile) -> list[list[Stroke]]:
 
 
 def from_pdf_ink(ink_list, width_pt: float, color: str, opacity: float, page: int,
-                 page_w: float, page_h: float, private_json: str | None = None) -> dict:
+                 page_w: float, page_h: float, private_json: str | None = None,
+                 dash: str | None = None) -> dict:
     """An embedded ``/Ink`` annotation → an ink file dict. ``ink_list`` is the
     ``/InkList`` (paths of x y pairs in PDF user space, origin bottom-left);
     ``private_json`` is the ``/GammaInk`` string a Gamma export left behind,
-    which wins when it parses (it carries pressure and time); one written
-    before release T is a version 1 file and is upgraded first."""
+    which wins when it parses (it carries pressure, time and the true dash
+    of every stroke); one written before release T is a version 1 file and
+    is upgraded first. ``dash`` is a foreign annotation's border style
+    (``"dashed"`` for a ``/BS /S /D``), given to each of its strokes."""
     if private_json:
         try:
             obj = load_json(private_json)
@@ -534,6 +977,7 @@ def from_pdf_ink(ink_list, width_pt: float, color: str, opacity: float, page: in
             continue
         strokes.append({"id": f"i{n}", "tool": "pen", "pen": False, "color": color,
                         "size": max(0.2, min(100.0, width_pt or 1.0)), "opacity": max(0.05, min(1.0, opacity)),
+                        **({"dash": dash} if dash in DASH else {}),
                         "ch": "xy", "pts": encode_points(samples, "xy")})
     return {"format": FORMAT, "version": VERSION,
             "space": {"kind": "pdf-page", "page": page, "width": page_w, "height": page_h},
@@ -638,17 +1082,21 @@ class MergeResult:
         return {"clean": self.clean, "lost_ours": list(self.lost_ours), "returned": list(self.returned)}
 
 
-_GEOM_KEYS = ("pts", "ch", "size", "shape")
-_SKIP_LOOK = frozenset(("id", "from", "pts", "ch", "size", "shape"))
+# A stroke's geometry: its samples and what they were made for. ``brush``
+# is geometry too, since a brush change bakes the ``w`` in ``pts`` again:
+# the key travels with the widths baked for it, so a merge never pairs one
+# brush with another's widths.
+_GEOM_KEYS = ("pts", "ch", "size", "shape", "brush")
+_SKIP_LOOK = frozenset(("id", "from", *_GEOM_KEYS))
 
 
 def _geom(s: Stroke) -> tuple:
-    return (tuple(s.pts), s.ch, s.size, s.shape.model_dump() if s.shape else None)
+    return (tuple(s.pts), s.ch, s.size, s.shape.model_dump() if s.shape else None, s.brush)
 
 
 def _look(s: Stroke) -> tuple:
     extra = s.__pydantic_extra__ or {}
-    return (s.tool, s.brush, s.color, s.opacity, s.pen, s.t0, band_of(s),
+    return (s.tool, s.color, s.opacity, s.pen, s.t0, band_of(s),
             s.fill.model_dump() if s.fill else None, s.dash, s.nib,
             json.dumps(extra, sort_keys=True, separators=(",", ":")) if extra else "")
 
@@ -700,15 +1148,16 @@ def merge_ink(base: InkFile | None, ours: InkFile, theirs: InkFile, base_ids=Non
     """Apply the change ``base → ours`` to ``theirs`` (the group as stored
     now), stroke by stroke (handwriting.md "Two writers, one group"). A
     stroke is two halves, its geometry (``pts``, ``ch``, ``size``,
-    ``shape``) and its look (everything else but ``id`` and ``from``): a
-    half one side changed is taken from it, a half both changed differently
-    takes theirs and marks the merge unclean. An edit beats a delete. A
-    piece (``from: X``) follows its parent's fate on the other side. With
-    ``base`` None and ``base_ids`` (the base's stroke ids) a stroke one
-    side lacks is erased; with neither it is a union by id. Returns the
-    file, ``clean``, ``lost_ours`` (ours' changes dropped) and ``returned``
-    (strokes theirs erased that come back). frontend/src/ink/ink.js
-    ``mergeInk`` is the same rule; tests/shared/inkmerge.json pins both."""
+    ``shape``, ``brush``) and its look (everything else but ``id`` and
+    ``from``): a half one side changed is taken from it, a half both
+    changed differently takes theirs and marks the merge unclean. An edit
+    beats a delete. A piece (``from: X``) follows its parent's fate on the
+    other side. With ``base`` None and ``base_ids`` (the base's stroke ids)
+    a stroke one side lacks is erased; with neither it is a union by id.
+    Returns the file, ``clean``, ``lost_ours`` (ours' changes dropped) and
+    ``returned`` (strokes theirs erased that come back).
+    frontend/src/ink/ink.js ``mergeInk`` is the same rule;
+    tests/shared/inkmerge.json pins both."""
     if base is None and base_ids is not None:
         return _merge_by_ids(ours, theirs, set(base_ids))
     b_strokes = base.strokes if base is not None else []

@@ -119,7 +119,8 @@ import { dotTone, noticeAction, noticeText } from "./notices";
 import { useBlockHistory } from "../editor/blockHistory.js";
 import { useMarks } from "../markup/MarkupLayers";
 import { MarkupToolbar, inkToolName } from "../markup/MarkupToolbar";
-import { normalizeTools, sizesFor, visibleTools } from "../ink/ink";   // the strip's key handler, the preset writes and the visible presets
+import { BRUSH_ORDER, normalizeTools, sizesFor, visibleTools } from "../ink/ink";   // the strip's key handler, the preset writes and the visible presets
+import { restyleBrush } from "../ink/finishStroke.js";   // the selection's brush change, which bakes the widths again
 import { PageToolsContext } from "../markup/PageTools";
 import { makeStableActions, useStableActions } from "../shared/lib/stableActions.js";
 import { keepIfSame, sameMap, sameObject } from "../shared/lib/keepIfSame.js";
@@ -136,10 +137,9 @@ import {
 } from "../notebook/notebook";
 import { generateKeyBetween } from "fractional-indexing";
 import * as inkStore from "../ink/inkStore";
-// What a pagehide flush may still send with `keepalive`: the browsers' 64
-// KiB in-flight cap, less the block's PUT beside the file and a margin
-// for non-ASCII text (a UTF-16 length undercounts its bytes).
-const KEEPALIVE_BYTES = 56 * 1024;
+import * as inkLive from "../ink/inkLive";
+import { planFlush } from "../ink/inkFlush";
+import { KEEPALIVE_CAP, available as keepaliveRoom, bodyBytes, keepaliveFetch } from "../shared/lib/keepalive.js";
 // The system clipboard's copy of the handwriting clipboard, best effort
 // (docs/dev/handwriting.md "Copy, cut and paste"): text/html a <div
 // data-gamma-ink> whose text is the gamma/ink JSON, text/plain the JSON. A
@@ -2076,14 +2076,15 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       const body = JSON.stringify({ value: readPosRef.current });
       if (body === readPosSentRef.current) { dbg("read-pos flush skipped (server current)"); return; }
       dbg("read-pos flushed (blur/pagehide)");
+      // keepalive when the page's keepalive room has space for it at the
+      // normal priority (shared/lib/keepalive.js): small, and recoverable
       try {
-        fetch(`${API}/prefs/read-pos`, {
+        keepaliveFetch(`${API}/prefs/read-pos`, {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
           body,
-          keepalive: true,
           credentials: "same-origin",
-        }).catch(() => {});
+        }, { priority: "normal" }).catch(() => {});
       } catch {}
     }
     // Focus flaps (alt-tabbing through windows) must not hammer the server:
@@ -4141,9 +4142,16 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       else postPill("save", msg ? { msg, error: true } : null);
     },
     onGone: (pageId, gone) => { if (pageId === focusedBlockIdRef.current) setPageGone(gone); },
+    // a peer's handwriting stroke in progress: a wet stroke on its surface's layer
+    onInkLive: (msg) => inkLive.receiveInkLive(msg),
   });
   const collabRef = useRef(collab);
   collabRef.current = collab;
+  // Live co-drawing (ink/inkLive.js): a peer's wet strokes go when the peer
+  // leaves the page (or the socket closes, which empties the peers), and
+  // every wet stroke goes with the page.
+  useEffect(() => { inkLive.keepWetOf(collab.peers.map((p) => p.client)); }, [collab.peers]);
+  useEffect(() => () => inkLive.clearWet(), [focusedBlockId]);
   // Set while the tree's transition effect hands a tree to the session: a
   // load there may apply held-back batches at once, inside React's commit.
   const committingRef = useRef(false);
@@ -6374,46 +6382,102 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     else if (back) setStatus(t("{n} strokes someone erased came back", { n: back }));
     else setStatus(t("Merged with changes made meanwhile"));
   }
-  // `keepalive`: the page is going away (pagehide), so the requests outlive
-  // it. A browser carries at most 64 KiB of keepalive bodies at once and
-  // refuses a fetch that would pass it, so a file over KEEPALIVE_BYTES
-  // goes as a plain fetch, which may still land; and nothing is sure to
-  // run once the page is gone, so the block's PUT goes beside the upload,
-  // naming the file by its hash (inkStore names a draft's upload ahead),
-  // unless the server will have to merge it (the block names another
-  // file than the draft's base): then the upload must be there first.
-  const flushInk = useCallback(async ({ keepalive = false } = {}) => {
+  // The strokes this tab sent live (ink/inkLive.js liveLedger) that no
+  // saved file holds yet: one an edit takes away first gets a `drop`
+  // (applyInk), since no file will land it on the peers' pages.
+  const inkLiveSentRef = useRef(null);
+  if (!inkLiveSentRef.current) inkLiveSentRef.current = inkLive.liveLedger();
+  // The flush's keepalive requests on their way, by drawing: the upload,
+  // the PUT and an empty group's DELETE, each until it settles, so a later
+  // flush of the same drawing (pagehide after the flush on going hidden)
+  // sends only what is not on its way already (ink/inkFlush.js planFlush).
+  // Their bytes are the page's keepalive ledger's (shared/lib/keepalive.js).
+  const inkFlightRef = useRef(null);
+  if (!inkFlightRef.current) inkFlightRef.current = { uploads: new Map(), puts: new Map(), deletes: new Map() };
+  // Every dirty group's requests start at once, none waiting for another
+  // group's: nothing is sure to run once a closing page is gone, so a loop
+  // waiting for each group would send the first alone. `keepalive`: the
+  // page may be going away (hidden, or pagehide), so the requests outlive
+  // it — those of the groups planFlush fits, group by group in order, into
+  // the page's keepalive room at ink's priority, the lowest (64 KiB of
+  // keepalive bodies in flight at most, or the browser refuses the fetch;
+  // the page's edits and its small requests come first); the rest go as
+  // plain fetches, which a closing page may cut off, and the draft journal
+  // (inkStore) brings what they carried back on the next visit.
+  // `leaving`: the page is going away (pagehide) and nothing is sure to run
+  // once it is gone, so the block's PUT goes beside the upload, naming the
+  // file by its hash (inkStore names a draft's upload ahead), unless the
+  // server will have to merge it (the block names another file than the
+  // draft's base): then the upload must be there first. Only then: a peer
+  // the PUT's op reaches before the upload has landed finds no file. Every
+  // PUT is told to the journal before it goes (inkStore.markSending), since
+  // its answer may never come.
+  const flushInk = useCallback(async ({ keepalive = false, leaving = false } = {}) => {
     clearTimeout(inkTimerRef.current);
     inkTimerRef.current = 0;
     inkDirtySinceRef.current = 0;
     const json = { "Content-Type": "application/json" };
-    const opts = keepalive ? { keepalive: true } : {};
-    for (const { id, ink, base, baseIds, upload } of inkStore.dirtyDrafts()) {
+    const flight = inkFlightRef.current;
+    const flat = flattenBlocks(blocksRef.current);
+    const groups = inkStore.dirtyDrafts().map((d) => {
+      const block = flat.find((b) => b.id === d.id);
+      // A group erased empty goes, unless its block holds a caption or
+      // notes: those stay, with an empty drawing an undo can refill.
+      if (!d.ink.strokes.length && !(block?.content || "").trim() && !block?.children?.length) {
+        return { ...d, block, remove: true, inFlight: flight.deletes.has(d.ink) ? "delete" : null };
+      }
+      const body = d.upload?.body || serializeInk(d.ink);
+      const putBody = (url) => JSON.stringify({ properties: inkProps(d.ink, url), base_properties: { ink_url: d.base || "" }, base_ids: d.baseIds || [] });
+      return { ...d, block, body, putBody,
+        uploadBytes: bodyBytes(body, KEEPALIVE_CAP),
+        // sized with the upload's name, or with one as long when it is not named yet
+        putBytes: bodyBytes(putBody(d.upload?.url || ""), KEEPALIVE_CAP) + (d.upload ? 0 : inkStore.UPLOAD_NAME_CHARS),
+        beside: leaving && !!d.upload && (block?.properties?.ink_url || "") === (d.base || ""),
+        inFlight: flight.puts.has(d.ink) ? "put" : flight.uploads.has(d.ink) ? "upload" : null };
+    });
+    // A request: through the page's keepalive ledger when the plan gave
+    // its group keepalive (`ka`) and the ledger still has room for its body
+    // at ink's priority — a PUT that waited for its upload's answer is
+    // asked again then — and `track` (flight.uploads, .puts or .deletes)
+    // holds it by drawing until it settles; else a plain fetch.
+    const go = (ka, track, ink, bytes, request) => {
+      if (!ka || bytes > keepaliveRoom("low")) return request();
+      const sent = request({ keepalive: "low" });
+      track.set(ink, sent);
+      return sent.finally(() => { if (track.get(ink) === sent) track.delete(ink); });
+    };
+    const save = async ({ id, ink, block, body, putBody, uploadBytes, upload, beside }, { send, keepalive: ka }) => {
+      if (!send) return;
       try {
-        const block = flattenBlocks(blocksRef.current).find((b) => b.id === id);
-        // A group erased empty goes, unless its block holds a caption or
-        // notes: those stay, with an empty drawing an undo can refill.
-        if (!ink.strokes.length && !(block?.content || "").trim() && !block?.children?.length) {
-          await apiJson(`${API}/blocks/${id}`, { method: "DELETE", ...opts });
+        if (send === "delete") {
+          await go(ka, flight.deletes, ink, 0, (o) => apiJson(`${API}/blocks/${id}`, { method: "DELETE" }, o));
           // Keep the empty draft until the tree observes the deletion; the
           // HTTP response can arrive before the corresponding socket op.
           inkStore.markDeleted(id, ink, block?.properties?.ink_url || "");
-          continue;
+          return;
         }
-        const body = upload?.body || serializeInk(ink);
-        const post = () => apiJson(`${API}/upload-ink`, { method: "POST", headers: json, body,
-          ...(body.length <= KEEPALIVE_BYTES ? opts : {}) });
-        const put = (url) => apiJson(`${API}/blocks/${id}`, { method: "PUT", headers: json, ...opts,
-          body: JSON.stringify({ properties: inkProps(ink, url), base_properties: { ink_url: base || "" }, base_ids: baseIds || [] }) });
+        const post = () => go(ka, flight.uploads, ink, uploadBytes,
+          (o) => apiJson(`${API}/upload-ink`, { method: "POST", headers: json, body }, o));
+        const put = (url) => {
+          const sent = putBody(url);
+          return go(ka, flight.puts, ink, bodyBytes(sent),
+            (o) => apiJson(`${API}/blocks/${id}`, { method: "PUT", headers: json, body: sent }, o));
+        };
+        // a PUT answered with an error did not land: the journal forgets it
+        const sendPut = (url) => put(url).catch((err) => { if (err?.status) inkStore.markUnsent(id, url); throw err; });
         let url, saved;
-        if (keepalive && upload && (block?.properties?.ink_url || "") === (base || "")) {
+        if (send === "put" || beside) {
+          // the PUT beside the upload: this flush's, or the one on its way
           url = upload.url;
-          [, saved] = await Promise.all([post(), put(url)]);
+          inkStore.markSending(id, url);
+          [, saved] = await Promise.all([send === "put" ? flight.uploads.get(ink) : post(), sendPut(url)]);
         } else {
           url = (await post()).url;
-          saved = await put(url);
+          await inkStore.markSending(id, url);
+          saved = await sendPut(url);
         }
         inkStore.markSaved(id, ink, url, saved?.properties?.ink_url || url);
+        inkLiveSentRef.current.saved(ink);
         reportInkConflict(saved?.ink_conflict);
       } catch (err) {
         const status = err?.status || 0;
@@ -6427,7 +6491,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           setStatus(t("Handwriting not saved: {err}", { err: err.message || err }), null, { sticky: true });
         }
       }
-    }
+    };
+    // a flush the page will live past asks for no keepalive room
+    const plan = planFlush(groups, keepalive ? keepaliveRoom("low") : -Infinity);
+    await Promise.all(groups.map((g, i) => save(g, plan[i])));
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
   // 700 ms after the last edit, but never more than 5 s after the first
   // unsaved one, so files land while writing goes on.
@@ -6439,8 +6506,15 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     inkTimerRef.current = setTimeout(flushInk, Math.max(0, Math.min(700, inkDirtySinceRef.current + 5000 - now)));
   }
   useEffect(() => {
-    const flush = () => { if (inkTimerRef.current) flushInk(); };
-    const leave = () => { if (inkTimerRef.current) flushInk({ keepalive: true }); };
+    // Going to the background flushes at once, with requests that outlive
+    // the page (a phone may freeze or end a hidden tab without a pagehide).
+    // A closing tab fires visibilitychange before pagehide, so pagehide
+    // flushes every draft still unsaved again, its PUT beside its upload:
+    // the first flush's requests may not be past their first step. A
+    // drawing that flush is uploading with keepalive sends its PUT alone,
+    // beside that upload (planFlush).
+    const flush = () => { if (inkTimerRef.current) flushInk({ keepalive: document.visibilityState === "hidden" }); };
+    const leave = () => { if (inkTimerRef.current || inkStore.dirtyDrafts().length) flushInk({ keepalive: true, leaving: true }); };
     window.addEventListener("pagehide", leave);
     document.addEventListener("visibilitychange", flush);
     return () => { window.removeEventListener("pagehide", leave); document.removeEventListener("visibilitychange", flush); };
@@ -6451,6 +6525,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     // a fresh group.
     if (inkTimerRef.current) flushInk();
     inkActiveRef.current = null;
+    inkLiveSentRef.current.clear();
     playback.stop();
     recorderStore.stop();
     inkHistRef.current = { undo: [], redo: [] };
@@ -6495,6 +6570,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     }
     const byId = new Map(flattenBlocks(blocksRef.current).map((b) => [b.id, b]));
     for (const c of changes) inkStore.setDraft(c.id, c.after, byId.get(c.id)?.properties?.ink_url || "");
+    // a stroke sent live and taken away before any save held it: its wet stroke goes from the peers' pages
+    for (const { id, page } of inkLiveSentRef.current.removed(changes)) handleInkLive(page, { id, drop: true });
     if (record) {
       const h = inkHistRef.current;
       h.undo.push({ changes, label });
@@ -6524,7 +6601,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     (redo ? h.undo : h.redo).push(entry);
     setInkHistoryState({ undo: h.undo.length, redo: h.redo.length });
     setInkSelection(null);
-    const what = `${redo ? t("Redone") : t("Undone")}: ${entry.label}`, page = inkPageNumber(entry.changes[0].page);
+    // a label is kept in English (T) and translated here; one made with t() already stays as it is
+    const what = `${redo ? t("Redone") : t("Undone")}: ${t(entry.label)}`, page = inkPageNumber(entry.changes[0].page);
     setStatus(kept ? t("{what} (page {page}; {n} strokes someone changed since were kept).", { what, page, n: kept })
       : `${what} (page ${page}).`);
     if (!redo) guideEvents.emit("ink.undone");
@@ -6647,7 +6725,11 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   }
   function handleInkAction(action, value) {
     if (readOnly || !inkSelection) return;
-    if (action === "style") editInkSelection((ink, ids) => restyleStrokes(ink, ids, value), value.color ? t("ink color change") : t("ink width change"));
+    // A brush change bakes the selected pens' widths again (null: the plain
+    // pen); a line change sets or clears their dash; else a colour or a width.
+    if (action === "style" && "brush" in value) editInkSelection((ink, ids) => restyleBrush(ink, ids, value.brush), T("ink style change"));
+    else if (action === "style" && "dash" in value) editInkSelection((ink, ids) => restyleStrokes(ink, ids, { dash: value.dash }), T("ink line change"));
+    else if (action === "style") editInkSelection((ink, ids) => restyleStrokes(ink, ids, value), value.color ? t("ink color change") : t("ink width change"));
     else if (action === "transform") editInkSelection((ink, ids) => transformStrokes(ink, ids, value), value.angle ? t("ink rotation") : t("ink resize"));
     else if (action === "delete") deleteInkSelection();
     else if (action === "select-note") {
@@ -6947,7 +7029,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // The strip's keys while it is open (the table is ink/stripKeys.js): 1–9
   // arm the visible preset at that position, P / H step through the pens /
   // highlighters (Shift: backwards), [ / ] step the armed preset's width
-  // with a pill, E taps or holds the eraser ("Hold-E" below), L the lasso,
+  // with a pill, Shift+[ / ] an armed pen's style through BRUSH_ORDER (Pen,
+  // Ballpoint, Brush, Pencil, wrapping; the same pill naming the style), E
+  // taps or holds the eraser ("Hold-E" below), L the lasso,
   // T the Text tool, V the hand, Esc closes one layer at a time (the
   // selection, the options row, the strip), Delete removes the selection,
   // and Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y step the STROKE history — registered
@@ -6993,6 +7077,15 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         const size = sizes[Math.max(0, Math.min(sizes.length - 1, sizes.indexOf(p.size) + action.step))];
         if (size !== p.size) K.setInkTools(K.allTools.map((x) => (x.id === p.id ? { ...x, size } : x)));
         setStatus(t("{name} · {size} pt.", { name: inkToolName(p), size }));
+      } else if (action.kind === "brush") {
+        const p = K.allTools.find((x) => x.id === K.tool);
+        if (!p || p.kind !== "pen") return;   // a highlighter has no styles
+        const n = BRUSH_ORDER.length, at = Math.max(0, BRUSH_ORDER.indexOf(p.brush ?? null));
+        const brush = BRUSH_ORDER[(at + action.step + n) % n];
+        const { brush: _was, ...rest } = p;
+        const next = brush ? { ...rest, brush } : rest;
+        K.setInkTools(K.allTools.map((x) => (x.id === p.id ? next : x)));
+        setStatus(t("{name} · {size} pt.", { name: inkToolName(next), size: p.size }));
       } else if (action.kind === "eraser" && action.phase === "down") {
         if (inkHoldRef.current) return;
         inkHoldRef.current = { since: e.timeStamp, erased: false, selection: K.selection, tool: K.tool };
@@ -7250,6 +7343,46 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     }
     undoableStatus(status.text, { ink: true });
   }
+  // A chunk of the stroke in progress for the page's other peers
+  // (ink/inkLive.js, docs/dev/collab.md "ink-live"), out on the page socket.
+  // `g` names the group the stroke joins once that group's block has a file
+  // (null before the first flush), worked out at the stroke's first chunk.
+  const inkLiveGroupRef = useRef({ id: null, g: null });
+  function handleInkLive(page, msg) {
+    if (readOnly || inkStale || !msg?.id) return;
+    let { id, g } = inkLiveGroupRef.current;
+    if (id !== msg.id) {
+      const active = inkActiveRef.current;
+      const block = active?.page === page ? flattenBlocks(blocksRef.current).find((b) => b.id === active.id) : null;
+      g = block?.properties?.ink_url ? block.id : null;
+      inkLiveGroupRef.current = { id: msg.id, g };
+    }
+    collabRef.current?.sendInkLive?.({ ...msg, page, g });
+    inkLiveSentRef.current.sent(msg.id, page, !!msg.drop);
+  }
+  // Handwriting a closed tab left unsaved, restored from the draft journal
+  // (ink/inkStore.js onInkRestored): its draft saves like an edit, and the
+  // pill offers Discard — the restored change taken back (restored → the
+  // file it was laid over, applied onto the group as it is now, as an undo
+  // is) as one undoable entry. Only while the group is on this page.
+  const inkRestoreRef = useRef(null);
+  inkRestoreRef.current = {
+    schedule: () => scheduleInk(),
+    discard: (id, restored, prior) => {
+      const block = flattenBlocks(blocksRef.current).find((b) => b.id === id);
+      const now = block ? inkOf(id) : null;
+      if (!now) return;
+      const after = mergeInk(restored, prior, now).ink;
+      if (after === now) return;
+      const page = now.space?.kind === "canvas" ? block.parentId : now.space?.page;
+      applyInk([{ id, page, before: now, after }], { label: T("ink restore discarded") });
+    },
+  };
+  useEffect(() => inkStore.onInkRestored(({ id, ink, prior }) => {
+    inkRestoreRef.current.schedule();
+    setStatus(t("Unsaved handwriting from a previous visit was restored."),
+      { label: t("Discard"), run: () => inkRestoreRef.current.discard(id, ink, prior) });
+  }), [setStatus]);
   // Two fingers tapped together undo, three redo (ink/fingerChords.js):
   // exactly what the strip's buttons do — the block history while the Text
   // tool or a text box has it, else the stroke history; with nothing to
@@ -7306,6 +7439,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     onAction: handleInkAction, onMoveSelection: handleInkMoveSelection, onJump: showInNotes, ...textBoxes.actions,
     // a held pen or mouse, or a right-click, asking for the clipboard at a page point
     onPaste: (page, pt, size) => pasteInk(page, pt, size),
+    onInkLive: handleInkLive,
     onFingerScroll: () => setStatus(t("Fingers scroll while a pen draws"),
       { label: t("Draw with finger"), run: () => setInkPenOnly(false) }),
     // A drawing with a pen style, a key or a channel this build does not

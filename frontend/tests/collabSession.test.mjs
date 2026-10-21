@@ -6,7 +6,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { applyOps } from "../src/shared/model/blockOps.js";
-import { MAX_RETRY_MS, RETRY_MS, createCollabSession } from "../src/collaboration/collabSession.js";
+import { MAX_OPS, MAX_RETRY_MS, RETRY_MS, createCollabSession } from "../src/collaboration/collabSession.js";
 import { mergeTextBox } from "../src/markup/textBox.js";
 
 const ME = "this-client";
@@ -147,6 +147,52 @@ test("retries never give up, ever longer apart; the edits stay for pagehide", as
   assert.equal(h.keepalive[0].body.batch, h.calls[0].body.batch);
 });
 
+// The bodies the hook claims of the page's keepalive room (usePageCollab,
+// shared/lib/keepalive.js) are the very ones pagehide sends.
+test("pendingKeepaliveBodies is what pagehide sends, unsent: each page's batch out under its id, then its queue in batches of MAX_OPS", async (t) => {
+  const h = setup(t, async () => { throw new Error("offline"); });
+  // page a: a set and 1200 new blocks — the first MAX_OPS out (their POST failed, a retry armed), the rest queued
+  const many = Array.from({ length: 1200 }, (_, i) => block(`n${i}`));
+  h.edit([block("a", "mine"), { ...block("b"), position: "a1" }, ...many]);
+  await h.session.flush();
+  assert.equal(h.calls.length, 1);
+  // page b: an edit queued, not sent yet (page a keeps its session)
+  h.load("page-b", [block("c")]);
+  h.edit([block("c", "c1")]);
+  const pending = h.session.pendingKeepaliveBodies();
+  assert.deepEqual(h.session.pendingKeepaliveBodies(), pending, "reading them again gives the same bodies, the same batch ids");
+  assert.equal(h.keepalive.length, 0, "and sends nothing");
+  assert.equal(h.session.hasPending(), true);
+  const parsed = pending.map(({ path, body }) => ({ path, body: JSON.parse(body) }));
+  assert.deepEqual(parsed.map((b) => [b.path, b.body.ops.length]), [
+    ["/pages/page-a/ops", MAX_OPS], ["/pages/page-a/ops", MAX_OPS], ["/pages/page-a/ops", 1201 - 2 * MAX_OPS], ["/pages/page-b/ops", 1],
+  ]);
+  assert.equal(parsed[0].body.batch, h.calls[0].body.batch, "the batch out under its own id");
+  assert.deepEqual(parsed[0].body.ops, h.calls[0].body.ops);
+  assert.equal(new Set(parsed.map((b) => b.body.batch)).size, 4, "every batch its own id");
+  assert.ok(parsed.every((b) => b.body.client === ME));
+  // pagehide sends every one of them, as they were read
+  h.session.pagehide();
+  assert.deepEqual(h.keepalive, parsed);
+  assert.deepEqual(h.keepalive.flatMap((b) => b.body.ops.map((op) => op.id)),
+    ["a", ...many.map((n) => n.id), "c"], "every edit, in order");
+  // what is left to send is the batch out alone (until its answer); the ids pagehide used are spent
+  assert.deepEqual(h.session.pendingKeepaliveBodies().map((b) => JSON.parse(b.body).batch), [parsed[0].body.batch]);
+  h.edit([block("c", "c2")]);
+  await h.session.flush();
+  assert.ok(!parsed.some((b) => b.body.batch === h.calls.at(-1).body.batch), "a later batch takes a fresh id");
+});
+
+test("pagehide leaves a page in Recently deleted alone: its edits wait, unsent and unclaimed", async (t) => {
+  const h = setup(t, async () => { throw new Error("offline"); });
+  h.edit([block("a", "mine"), block("b")]);
+  h.session.gone("page-a", { id: "trash-1" });
+  assert.deepEqual(h.session.pendingKeepaliveBodies(), []);
+  h.session.pagehide();
+  assert.deepEqual(h.keepalive, []);
+  assert.equal(h.session.hasPending(), true, "the edits stay for when the page is restored");
+});
+
 test("a rejected batch is dropped and the page reloads", async (t) => {
   const h = setup(t, async () => { const e = new Error("invalid position"); e.status = 400; throw e; });
   h.edit([block("a", "mine"), block("b")]);
@@ -246,6 +292,23 @@ test("presence: join, leave, a standalone cursor and the caret on a batch", (t) 
   assert.deepEqual([h.peers[0].block, h.peers[0].anchor, h.peers[0].rev], ["b", 5, 2]);
   h.message({ t: "leave", client: "p2" });
   assert.deepEqual(h.peers, []);
+});
+
+test("ink-live: a stroke in progress goes out on the open socket only, and a peer's reaches onInkLive", (t) => {
+  const h = setup(t, async () => ({}));
+  const got = [];
+  h.options.onInkLive = (msg) => got.push(msg);
+  h.message({ t: "hello", client: ME, color: 0, seq: 0, peers: [] });
+  const chunk = { page: 1, g: null, id: "k7Qm2x", style: { tool: "pen", size: 2, color: "#1f1f1f", opacity: 1, pen: true }, k: 1, n: 0, samples: [[1, 2, 0.5, 0, null, null]] };
+  assert.equal(h.session.sendInkLive(chunk), true);
+  assert.deepEqual(h.socket().sent, [{ ...chunk, t: "ink-live" }]);
+  assert.equal(h.timers.size, 0, "never queued or retried");
+  h.socket().readyState = 3;
+  assert.equal(h.session.sendInkLive({ ...chunk, n: 1 }), false, "dropped while the socket is down");
+  assert.equal(h.socket().sent.length, 1);
+  h.message({ t: "ink-live", client: "p2", ...chunk });
+  assert.deepEqual(got, [{ t: "ink-live", client: "p2", ...chunk }]);
+  assert.deepEqual(h.peers, [], "presence is untouched");
 });
 
 test("our caret goes out throttled, rides on a batch while edits are queued, and is not repeated", async (t) => {

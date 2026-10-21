@@ -130,9 +130,11 @@ def notebook_pdf(sheets: list[tuple[dict, list, list]], resolve_ref=None) -> byt
     normalized. The paper is painted, the text boxes typeset on it as real
     text (``resolve_ref`` reads their references, ``text_box.pdf_ops``),
     and the handwriting drawn over them as vectors (the page is the
-    drawing, so every viewer and printer shows it as written)."""
+    drawing, so every viewer and printer shows it as written): every
+    group's band 0 before any group's band 1, with the graphics states the
+    strokes set (``ink.pdf_path_resources``) among the page's resources."""
     from PyPDF2 import PdfWriter
-    from PyPDF2.generic import DecodedStreamObject, NameObject
+    from PyPDF2.generic import DecodedStreamObject, DictionaryObject, NameObject
 
     from . import ink as inkmod
     from . import text_box
@@ -149,13 +151,18 @@ def notebook_pdf(sheets: list[tuple[dict, list, list]], resolve_ref=None) -> byt
         for content, box in boxes:
             ops, _w, _h = text_box.pdf_ops(content, box, w, glyphs, fonts, resolve_ref)
             body.append(b"q 1 0 0 1 %s %s cm\n%s\nQ" % (num(box["x"]), num(box["y"]), ops))
-        body += [inkmod.pdf_path_ops(ink, lambda x, y: (x, y)) for ink in inks]
+        body += [inkmod.pdf_path_ops(ink, lambda x, y: (x, y), band=band) for band in (0, 1) for ink in inks]
         body.append(b"Q")
+        content = b"\n".join(part for part in body if part)
         stream = DecodedStreamObject()
-        stream.set_data(b"\n".join(body))
+        stream.set_data(content)
         page[NameObject("/Contents")] = writer._add_object(stream.flate_encode())
-        if boxes:
-            page[NameObject("/Resources")] = text_box.pdf_resources(fonts, glyphs)
+        resources = text_box.pdf_resources(fonts, glyphs) if boxes else DictionaryObject()
+        states = inkmod.pdf_path_resources(content)
+        if states:
+            resources[NameObject("/ExtGState")] = states
+        if resources:
+            page[NameObject("/Resources")] = resources
     glyphs.finalize()
     finalize_cid(writer)
     out = io.BytesIO()

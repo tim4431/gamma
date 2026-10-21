@@ -31,8 +31,9 @@ test("a new file is version 2; w and o are multipliers, written × 1000 as delta
   const o = encodeStroke({ id: "o", ch: "xyo", samples: [{ x: 0, y: 0, o: 1 }, { x: 1, y: 0, o: 0.4 }] });
   assert.deepEqual(o.pts, [0, 0, 1000, 100, 0, -600]);
   assert.deepEqual(decodeStroke(o).map((q) => q.o), [1, 0.4]);
-  assert.deepEqual(encodePoints([{ x: 0, y: 0, w: 3 }, { x: 0, y: 0, w: -1 }], "xyw"), [0, 0, 2000, 0, 0, -2000], "w is capped to 0..2");
-  assert.deepEqual(decodeStroke({ ch: "xyw", pts: [0, 0, 2500] })[0].w, 2);
+  assert.deepEqual(encodePoints([{ x: 0, y: 0, w: 3.5 }, { x: 0, y: 0, w: -1 }, { x: 0, y: 0, w: 5 }], "xyw"), [0, 0, 3500, 0, 0, -3500, 0, 0, 4000],
+    "w is capped to 0..4 (the pencil's slant reaches 3.5)");
+  assert.deepEqual(decodeStroke({ ch: "xyw", pts: [0, 0, 4500] })[0].w, 4);
 });
 
 test("a letter the codec does not know rides along by stride and is written back in place", () => {
@@ -553,11 +554,14 @@ test("cloneStrokes mints fresh ids, drops from, moves by (dx, dy) and keeps t0, 
   assert.notEqual(c.id, "pen");
   assert.ok(used.has(c.id), "the id is recorded as used");
   assert.ok(!("from" in c), "a copy is not a piece");
-  assert.deepEqual([c.t0, c.ch, c.note, c.shape, c.size], [100, "xyptw", "mine", s.shape, s.size]);
+  assert.deepEqual([c.t0, c.ch, c.note, c.size], [100, "xyptw", "mine", s.size]);
+  assert.deepEqual(c.shape, { kind: "line", params: { x1: 110, y1: 195, x2: 150, y2: 207 } }, "the shape's params move with the samples");
   const before = decodeStroke(s), after = decodeStroke(c);
   assert.deepEqual(after.map((q) => [q.x - 10, q.y + 5, q.p, q.t, q.w]), before.map((q) => [q.x, q.y, q.p, q.t, q.w]));
-  assert.deepEqual(decodeStroke(cloneStrokes([s])[0]).map((q) => [q.x, q.y]), before.map((q) => [q.x, q.y]), "no offset by default");
-  assert.notEqual(cloneStrokes([s])[0].pts, s.pts, "the samples are copied, never shared");
+  const [still] = cloneStrokes([s]);
+  assert.deepEqual(decodeStroke(still).map((q) => [q.x, q.y]), before.map((q) => [q.x, q.y]), "no offset by default");
+  assert.equal(still.shape, s.shape, "and no offset keeps the shape record itself");
+  assert.notEqual(still.pts, s.pts, "the samples are copied, never shared");
 });
 
 test("appendStrokes adds strokes as they are and re-mints only an id the group already holds", () => {
@@ -612,6 +616,129 @@ test("flipStrokes mirrors the samples about the centre, keeps everything else, a
   assert.deepEqual(shapes.strokes[1].shape.params, { cx: -10, cy: 10, r: 5, n: 5, angle: 58 }, "180 − 50 = 130, mod 72");
 });
 
+// --- a shape record follows the samples -----------------------------------------
+// (docs/dev/handwriting.md "Client": the params an editor rebuilds `pts`
+// from go through every edit that moves the samples)
+import { shapeSamples } from "../src/ink/shapes.js";
+import { transformPoint } from "../src/ink/ink.js";
+
+const segmentGap = (p, a, b) => {
+  const dx = b.x - a.x, dy = b.y - a.y, len2 = dx * dx + dy * dy;
+  const u = len2 ? Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / len2)) : 0;
+  return Math.hypot(p.x - (a.x + u * dx), p.y - (a.y + u * dy));
+};
+// How far apart two polylines lie: the farthest any sample of either is
+// from the other's path.
+function polylineGap(a, b) {
+  const from = (pts, path) => Math.max(...pts.map((p) => Math.min(...path.slice(1).map((q, i) => segmentGap(p, path[i], q)))));
+  return Math.max(from(a, b), from(b, a));
+}
+// A shape as finishStroke commits it: its dense samples, pen false, xyt, the record beside them.
+const SHAPES = {
+  line: { x1: 100, y1: 200, x2: 180.5, y2: 230.25 },
+  arrow: { x1: 100, y1: 200, x2: 220, y2: 240, head: 18 },
+  triangle: { x1: 100, y1: 300, x2: 160, y2: 220, x3: 210, y3: 310 },
+  rect: { cx: 150, cy: 250, w: 80, h: 40, angle: 20 },
+  polygon: { cx: 150, cy: 250, r: 40, n: 6, angle: 10 },
+  circle: { cx: 150, cy: 250, r: 30 },
+  ellipse: { cx: 150, cy: 250, rx: 50, ry: 20, angle: 160 },
+};
+const shaped = (kind, params) => encodeStroke({ id: kind, ch: "xyt", pen: false, samples: shapeSamples(kind, params, { span: 300 }), shape: { kind, params } });
+
+test("a shape record follows every geometry edit: rebuilt from its params after a move, a resize and turn, a copy or a flip, it lies on the moved samples", () => {
+  const edits = {
+    "a move": (ink, id) => translateStrokes(ink, [id], 12.34, -7.5).strokes[0],
+    "scale 1.5 and rotate 30°": (ink, id) => transformStrokes(ink, [id], { cx: 140, cy: 240, scale: 1.5, angle: Math.PI / 6 }).strokes[0],
+    "a turn the other way, smaller": (ink, id) => transformStrokes(ink, [id], { cx: 0, cy: 0, scale: 0.75, angle: -1.1 }).strokes[0],
+    "a copy with an offset": (ink) => cloneStrokes(ink.strokes, 25.5, 40)[0],
+    "a duplicate": (ink, id) => { const d = duplicateStrokes(ink, [id], -10, 5); return d.ink.strokes.find((s) => s.id === d.ids[0]); },
+    "a horizontal flip": (ink, id) => flipStrokes(ink, [id], { cx: 133.33, cy: 0, axis: "h" }).strokes[0],
+    "a vertical flip": (ink, id) => flipStrokes(ink, [id], { cx: 0, cy: 251.7, axis: "v" }).strokes[0],
+  };
+  for (const [kind, params] of Object.entries(SHAPES)) {
+    const s = shaped(kind, params);
+    const ink = { ...newInk(1, 612, 792), strokes: [s] };
+    assert.ok(polylineGap(shapeSamples(kind, params), decodeStroke(s)) < 0.01, `${kind}: the samples are the shape's to begin with`);
+    for (const [name, edit] of Object.entries(edits)) {
+      const out = edit(ink, kind);
+      assert.equal(out.shape.kind, kind);
+      const gap = polylineGap(shapeSamples(kind, out.shape.params), decodeStroke(out));
+      assert.ok(gap <= 0.5, `${kind} after ${name}: rebuilt from ${JSON.stringify(out.shape.params)}, ${gap.toFixed(3)} pt from the moved samples`);
+    }
+  }
+});
+
+test("a shape record's params stay in the recogniser's ranges after a turn, and the edits that change nothing keep it", () => {
+  const ink = { ...newInk(1, 612, 792), strokes: Object.entries(SHAPES).map(([kind, params]) => shaped(kind, params)) };
+  const turned = transformStrokes(ink, Object.keys(SHAPES), { cx: 140, cy: 240, scale: 1.5, angle: Math.PI / 6 });
+  const params = Object.fromEntries(turned.strokes.map((s) => [s.shape.kind, s.shape.params]));
+  const [cx, cy] = transformPoint(150, 250, { cx: 140, cy: 240, scale: 1.5, angle: Math.PI / 6 }).map((v) => Math.round(v * 100) / 100);
+  assert.deepEqual(params.rect, { cx, cy, w: 60, h: 120, angle: -40 }, "20° + 30° is −40° a quarter turn on: the sides swap, times 1.5");
+  assert.equal(params.polygon.angle, 40, "a hexagon's 10° + 30°, in [0°, 60°)");
+  assert.equal(params.polygon.n, 6, "the side count as it is");
+  assert.equal(params.ellipse.angle, 10, "an ellipse's 160° + 30°, in [0°, 180°)");
+  assert.deepEqual([params.ellipse.rx, params.ellipse.ry, params.circle.r, params.arrow.head], [75, 30, 45, 27], "the lengths times the scale");
+  assert.ok(!("angle" in params.circle), "a circle has no angle to turn");
+  // unselected strokes, and edits that move nothing, keep the very objects
+  const one = transformStrokes(ink, ["rect"], { cx: 0, cy: 0, scale: 2 });
+  assert.ok(one.strokes.every((s, i) => s.shape.kind === "rect" || s === ink.strokes[i]));
+  assert.equal(translateStrokes(ink, ["rect"], 0, 0.001), ink, "a move under the grid moves nothing");
+  assert.equal(transformStrokes(ink, ["rect"], { cx: 0, cy: 0 }), ink);
+  const turnedLine = transformStrokes(ink, ["line"], { cx: 100, cy: 200, scale: 1, angle: Math.PI / 2 }).strokes[0].shape.params;
+  assert.deepEqual(turnedLine, { x1: 100, y1: 200, x2: 69.75, y2: 280.5 }, "a quarter turn about its first end");
+});
+
+test("a curve's points follow the samples; a record of a kind this build does not know is dropped by an edit, the stroke kept", () => {
+  const pts = [{ x: 100, y: 200 }, { x: 130, y: 180 }, { x: 170, y: 220 }, { x: 200, y: 200 }];
+  const params = Object.fromEntries(pts.flatMap((p, i) => [[`x${i + 1}`, p.x], [`y${i + 1}`, p.y]]));
+  const curve = encodeStroke({ id: "c", ch: "xy", pen: false, samples: pts, shape: { kind: "curve", params: { ...params, closed: false } } });
+  const odd = encodeStroke({ id: "o", ch: "xy", pen: false, samples: pts, shape: { kind: "spiral", params: { cx: 150, cy: 200, turns: 3 } },
+    fill: { color: "#ff0000", opacity: 0.25 }, note: "mine" });
+  const ink = { ...newInk(1, 612, 792), strokes: [curve, odd] };
+  const edits = [
+    translateStrokes(ink, ["c", "o"], 5, 6),
+    transformStrokes(ink, ["c", "o"], { cx: 150, cy: 200, scale: 1.5, angle: Math.PI / 6 }),
+    { ...ink, strokes: cloneStrokes(ink.strokes, -4, 8) },
+    flipStrokes(ink, ["c", "o"], { cx: 150, cy: 0, axis: "h" }),
+  ];
+  for (const out of edits) {
+    const [c, o] = out.strokes;
+    const moved = decodeStroke(c);
+    moved.forEach((q, i) => {
+      assert.ok(Math.abs(c.shape.params[`x${i + 1}`] - q.x) < 0.011 && Math.abs(c.shape.params[`y${i + 1}`] - q.y) < 0.011, "each point with its sample");
+    });
+    assert.equal(c.shape.params.closed, false, "a flag as it is");
+    assert.ok(!("shape" in o), "an unknown kind's params cannot follow: the record goes");
+    assert.deepEqual([o.fill, o.note, o.ch], [odd.fill, "mine", "xy"], "the stroke keeps everything else");
+  }
+});
+
+test("a key a record leaves out follows too: an arrow's head drawn by default is written on a resize, an angle of 0 on a turn or a flip", () => {
+  const bare = {
+    arrow: { x1: 100, y1: 200, x2: 260, y2: 230 },      // its head drawn as min(length / 4, 24) = 24
+    rect: { cx: 150, cy: 250, w: 80, h: 40 },
+    polygon: { cx: 150, cy: 250, r: 40, n: 5 },
+    ellipse: { cx: 150, cy: 250, rx: 50, ry: 20 },
+  };
+  const edits = {
+    "scale 1.5 and rotate 30°": (ink, id) => transformStrokes(ink, [id], { cx: 140, cy: 240, scale: 1.5, angle: Math.PI / 6 }).strokes[0],
+    "a resize": (ink, id) => transformStrokes(ink, [id], { cx: 0, cy: 0, scale: 2 }).strokes[0],
+    "a horizontal flip": (ink, id) => flipStrokes(ink, [id], { cx: 133.33, cy: 0, axis: "h" }).strokes[0],
+  };
+  for (const [kind, params] of Object.entries(bare)) {
+    const ink = { ...newInk(1, 612, 792), strokes: [shaped(kind, params)] };
+    for (const [name, edit] of Object.entries(edits)) {
+      const out = edit(ink, kind);
+      const gap = polylineGap(shapeSamples(kind, out.shape.params), decodeStroke(out));
+      assert.ok(gap <= 0.5, `${kind} after ${name}: rebuilt from ${JSON.stringify(out.shape.params)}, ${gap.toFixed(3)} pt from the moved samples`);
+    }
+  }
+  const resized = transformStrokes({ ...newInk(1, 612, 792), strokes: [shaped("arrow", bare.arrow)] }, ["arrow"], { cx: 0, cy: 0, scale: 2 });
+  assert.equal(resized.strokes[0].shape.params.head, 48, "the head it was drawn with, times the scale");
+  const moved = translateStrokes({ ...newInk(1, 612, 792), strokes: [shaped("rect", bare.rect), shaped("arrow", bare.arrow)] }, ["rect", "arrow"], 5, 5);
+  assert.ok(moved.strokes.every((s) => !("angle" in s.shape.params) && !("head" in s.shape.params)), "a move writes neither");
+});
+
 // The preset list on the account (docs/dev/handwriting.md "Presets follow
 // the account"): a hidden flag, and keys this build does not know kept as
 // they are, under a byte cap per preset.
@@ -624,7 +751,7 @@ test("normalizeTools keeps a hidden flag and unknown keys per preset, capped at 
   ];
   const [hidden, shown, hl] = normalizeTools(JSON.parse(JSON.stringify(stored)));
   assert.deepEqual(hidden, { ...DEFAULT_TOOLS[0], hidden: true, dash: "dotted", nib: 45 }, "the known keys first, then the extras verbatim");
-  assert.deepEqual(Object.keys(hidden), ["id", "kind", "color", "size", "hidden", "dash", "nib"]);
+  assert.deepEqual(Object.keys(hidden), ["id", "kind", "color", "size", "dash", "hidden", "nib"], "dash is known, nib an extra");
   assert.equal("hidden" in shown, false, "false is left out");
   assert.equal("hidden" in hl, false, "only true hides");
   assert.deepEqual(hl.style, { kind: "marker" }, "an object rides along");
@@ -646,4 +773,253 @@ test("normalizeTools keeps a hidden flag and unknown keys per preset, capped at 
   assert.equal(visibleTools(all).length, 1);
   // a round trip through JSON changes nothing
   assert.deepEqual(normalizeTools(JSON.parse(JSON.stringify([hidden, shown, hl]))), [hidden, shown, hl]);
+});
+
+// --- pen styles and lines (docs/dev/handwriting.md "The brush table", "Dash geometry") ----
+import { BRUSH_ORDER, KNOWN_BRUSHES, bandRuns, dashArray, dashDots, dashPattern, dashRuns, opacityBand, strokeOpacity } from "../src/ink/ink.js";
+
+test("normalizeTools keeps a pen's known brush and a line on pens and highlighters; toolStyle carries both to the stroke", () => {
+  const [brush, pencil, plain, odd, hl, hlBrush] = normalizeTools([
+    { ...DEFAULT_TOOLS[0], brush: "brush", dash: "dashed" },
+    { ...DEFAULT_TOOLS[1], brush: "pencil", dash: "wavy" },
+    { ...DEFAULT_TOOLS[2], brush: "pen", dash: null },
+    { ...DEFAULT_TOOLS[3], brush: "fountain" },
+    { ...DEFAULT_TOOLS[4], dash: "dotted" },
+    { ...DEFAULT_TOOLS[5], brush: "pencil" },
+  ]);
+  assert.deepEqual([brush.brush, brush.dash], ["brush", "dashed"]);
+  assert.deepEqual([pencil.brush, "dash" in pencil], ["pencil", false], "an unknown line is dropped");
+  assert.ok(!("brush" in plain) && !("dash" in plain), "'pen' is the absent key, and solid has no dash");
+  assert.equal("brush" in odd, false, "an unknown brush is dropped: this build could not bake it");
+  assert.deepEqual([hl.dash, "brush" in hlBrush], ["dotted", false], "a highlighter takes a line, never a brush");
+  assert.deepEqual(toolStyle(brush), { tool: "pen", color: brush.color, size: brush.size, opacity: 1, brush: "brush", dash: "dashed" });
+  assert.deepEqual(toolStyle(hl), { tool: "highlighter", color: hl.color, size: hl.size, opacity: HIGHLIGHTER_OPACITY, dash: "dotted" });
+  assert.deepEqual(normalizeTools(JSON.parse(JSON.stringify([brush, pencil, hl]))), [brush, pencil, hl], "a round trip changes nothing");
+  assert.deepEqual(BRUSH_ORDER, [null, "monoline", "brush", "pencil"]);
+  assert.deepEqual([...KNOWN_BRUSHES], ["monoline", "brush", "pencil"]);
+  assert.equal(inkFeatures({ ...newInk(1, 612, 792), strokes: [pen({ brush: "brush" }), pen({ id: "q", brush: "pencil", dash: "dotted" })] }), null,
+    "the brushes and the lines are this build's own");
+});
+
+test("restyleStrokes sets or clears a line on every selected tool, ignores other values and is the same object for a no-op", () => {
+  const a = pen(), h = encodeStroke({ id: "h", tool: "highlighter", size: 14, samples: samples(3) });
+  const ink = { ...newInk(1, 612, 792), strokes: [a, h] };
+  const dashed = restyleStrokes(ink, ["pen", "h"], { dash: "dashed" });
+  assert.deepEqual(dashed.strokes.map((s) => s.dash), ["dashed", "dashed"]);
+  assert.equal(dashed.strokes[0].pts, a.pts, "the samples stay: a look change");
+  assert.equal(restyleStrokes(dashed, ["pen", "h"], { dash: "dashed" }), dashed, "already dashed: no entry");
+  const solid = restyleStrokes(dashed, ["pen"], { dash: null });
+  assert.equal("dash" in solid.strokes[0], false, "null clears the key");
+  assert.equal(solid.strokes[1], dashed.strokes[1]);
+  assert.equal(restyleStrokes(ink, ["pen"], { dash: "wavy" }), ink, "an unknown line is ignored");
+  assert.equal(restyleStrokes(ink, ["pen"], { brush: "pencil" }), ink, "a brush change is restyleBrush's (finishStroke.js)");
+  assert.equal(restyleStrokes(ink, ["pen"], { dash: null }), ink, "solid already");
+});
+
+import { restyleBrush } from "../src/ink/finishStroke.js";
+test("restyleBrush on a stroke with a shape record changes its brush key alone: it stays constant width, no w and no o", () => {
+  const line = { kind: "line", params: { x1: 100, y1: 200, x2: 180, y2: 200 } };
+  const shaped = encodeStroke({ id: "s", brush: "brush", pen: false, size: 3, shape: line, t0: 5, ch: "xyt",
+    samples: [{ x: 100, y: 200, t: 0 }, { x: 180, y: 200, t: 144 }] });
+  const ink = { ...newInk(1, 612, 792), strokes: [shaped, pen({ id: "f" })] };
+  const pencil = restyleBrush(ink, ["s", "f"], "pencil");
+  const [s, f] = pencil.strokes;
+  assert.deepEqual([s.brush, s.ch, s.shape, s.pen, s.size, s.t0], ["pencil", "xyt", line, false, 3, 5], "the key changes, the channels do not");
+  assert.deepEqual(decodeStroke(s), decodeStroke(shaped), "the same samples");
+  assert.ok(decodeStroke(s).every((q) => q.w === undefined && q.o === undefined && strokeWidth(s, q) === 3), "the size end to end");
+  assert.equal(f.ch, "xyptwo", "a freehand pen selected with it is baked for the pencil");
+  const plain = restyleBrush(pencil, ["s"], null).strokes[0];
+  assert.deepEqual(["brush" in plain, plain.ch, plain.shape], [false, "xyt", line], "the plain pen drops the key, and nothing is baked either");
+  assert.equal(restyleBrush(ink, ["s"], "brush"), ink, "already a Brush: the same drawing");
+  // a shape an older build baked the Brush's tapers for (both ends at the floor) loses them
+  const tapered = { ...shaped, ch: "xytw", pts: encodePoints([{ x: 100, y: 200, t: 0, w: 0.1 }, { x: 180, y: 200, t: 144, w: 0.1 }], "xytw") };
+  const even = restyleBrush({ ...ink, strokes: [tapered] }, ["s"], "brush").strokes[0];
+  assert.deepEqual([even.brush, even.ch, even.pts], ["brush", "xyt", shaped.pts]);
+});
+
+// tests/shared/inkdash.json: the same patterns and runs gamma/ink.py draws
+// (backend/tests/test_shared_fixtures.py).
+const DASHES = JSON.parse(readFileSync(new URL("../../tests/shared/inkdash.json", import.meta.url), "utf8"));
+const close = (a, b, what) => assert.ok(Math.abs(a - b) < 0.0006, `${what}: ${a} vs ${b}`);
+for (const row of DASHES.patterns) {
+  test(`dash pattern: ${row.note}`, () => {
+    const pattern = dashPattern({ dash: row.dash || undefined, size: row.size });
+    if (row.on == null) assert.equal(pattern, null);
+    else { close(pattern[0], row.on, "on"); close(pattern[1], row.off, "off"); }
+    // a stroke of that look: a stroked path takes the dasharray; a pressure stroke none, it is cut into runs
+    const look = { id: "d", size: row.size, ...(row.dash ? { dash: row.dash } : {}) };
+    const hl = row.size >= 5;
+    const stroke = row.w ? encodeStroke({ ...look, ch: "xyptw", samples: baked(4) })
+      : encodeStroke({ ...look, tool: hl ? "highlighter" : "pen", brush: hl ? undefined : "monoline", ch: "xypt", samples: samples(4) });
+    assert.equal(strokePath(stroke).dash ?? null, row.dasharray);
+    if (row.dasharray) assert.equal(dashArray(stroke), row.dasharray);
+  });
+}
+test("dash runs: a dashed pressure stroke is cut by arc length from phase 0, its boundaries lerped (inkdash.json runs)", () => {
+  const { runs } = DASHES;
+  const got = dashRuns(runs.samples, { dash: runs.dash, size: runs.size });
+  assert.equal(got.length, runs.runs.length);
+  got.forEach((run, i) => {
+    assert.equal(run.length, runs.runs[i].samples.length, `run ${i} sample count`);
+    run.forEach((s, j) => { for (const k of ["x", "y", "p", "t", "w"]) close(s[k], runs.runs[i].samples[j][k], `run ${i} sample ${j} ${k}`); });
+  });
+  // tilt is copied from the sample before a boundary
+  const tilted = runs.samples.map((s, i) => ({ ...s, a: 40 + i, z: 100 + i }));
+  const cut = dashRuns(tilted, { dash: "dashed", size: 2 })[1][0];
+  assert.deepEqual([cut.a, cut.z], [41, 101]);
+  // a solid stroke and a dot are one run
+  assert.deepEqual(dashRuns(runs.samples, { size: 2 }), [runs.samples]);
+  assert.deepEqual(dashRuns([runs.samples[0]], { dash: "dashed", size: 2 }), [[runs.samples[0]]]);
+});
+test("dash dots: a dotted pressure stroke is a dot at each on-run's middle, its diameter size × w there (inkdash.json dots)", () => {
+  const { dots } = DASHES;
+  const got = dashDots(dots.samples, { dash: dots.dash, size: dots.size });
+  assert.equal(got.length, dots.dots.length);
+  got.forEach((q, i) => {
+    close(q.arc, dots.dots[i].arc, `dot ${i} arc`);
+    close(q.x, dots.dots[i].x, `dot ${i} x`);
+    close(q.w, dots.dots[i].w, `dot ${i} w`);
+    close(dots.size * q.w, dots.dots[i].diameter, `dot ${i} diameter`);
+  });
+});
+
+test("strokePath draws a dashed pressure stroke as its runs, a dotted one as dots, a dashed Ballpoint as a dashed centreline", () => {
+  const long = Array.from({ length: 11 }, (_, i) => ({ x: 100 + 4 * i, y: 200, p: 0.5, t: 8 * i, w: 1 }));
+  const solid = strokePath(encodeStroke({ id: "s", size: 2, ch: "xyptw", samples: long }));
+  const dashed = strokePath(encodeStroke({ id: "d", size: 2, dash: "dashed", ch: "xyptw", samples: long }));
+  const dotted = strokePath(encodeStroke({ id: "o", size: 2, dash: "dotted", ch: "xyptw", samples: long }));
+  const subpaths = (d) => d.split("M").length - 1;
+  assert.equal(subpaths(solid.d), 1);
+  assert.equal(subpaths(dashed.d), 5, "40 pt in 4 + 4 pt dashes: five outlined runs in one path");
+  assert.equal(subpaths(dotted.d), 10, "a dot every 4.2 pt");
+  assert.ok(dotted.d.includes("a1.00,1.00"), "each dot a circle of radius size × w / 2");
+  assert.ok([solid, dashed, dotted].every((p) => p.stroke === false && p.dash === undefined));
+  const ball = strokePath(encodeStroke({ id: "b", size: 2, brush: "monoline", dash: "dashed", ch: "xypt", samples: samples() }));
+  assert.deepEqual([ball.stroke, ball.width, ball.dash, ball.multiply], [true, 2, "4 4", false]);
+  assert.equal(strokePath(encodeStroke({ id: "b2", size: 2, brush: "monoline", ch: "xypt", samples: samples() })).stroke, false,
+    "a solid Ballpoint keeps its outline");
+});
+
+test("the pencil: its shades are up to three paths, o quantised up to 0.33 / 0.66 / 1, cut where o crosses a band", () => {
+  assert.deepEqual([0.15, 0.33, 0.34, 0.66, 0.7, 1, undefined].map(opacityBand), [0.33, 0.33, 0.66, 0.66, 1, 1, 1]);
+  const ramp = [{ x: 0, y: 0, o: 0.2, w: 1 }, { x: 10, y: 0, o: 0.8, w: 2 }, { x: 20, y: 0, o: 0.8, w: 2 }];
+  const runs = bandRuns(ramp);
+  assert.deepEqual(runs.map((r) => r.band), [0.33, 0.66, 1]);
+  close(runs[0].samples.at(-1).x, 10 * (0.33 - 0.2) / 0.6, "the first cut where o reaches 0.33");
+  close(runs[1].samples[0].x, runs[0].samples.at(-1).x, "the next run starts at the cut");
+  close(runs[1].samples.at(-1).x, 10 * (0.66 - 0.2) / 0.6, "and ends where o reaches 0.66");
+  close(runs[1].samples.at(-1).w, 1 + (0.66 - 0.2) / 0.6, "the cut lerps w too");
+  assert.deepEqual(runs[2].samples.slice(1), ramp.slice(1));
+  assert.deepEqual(bandRuns([{ x: 0, y: 0 }, { x: 1, y: 0 }]).map((r) => r.band), [1], "no o: one run at full strength");
+  // a pencil stroke's path: bands, the grain marked; a mouse pencil is even, still grain
+  const s = encodeStroke({ id: "p", size: 2, brush: "pencil", ch: "xyptwo",
+    samples: ramp.map((q, i) => ({ ...q, p: 0.2 + 0.3 * i, t: 8 * i })) });
+  const path = strokePath(s);
+  assert.deepEqual(path.bands.map((b) => b.alpha), [0.33, 0.66, 1]);
+  assert.ok(path.grain && path.stroke === false && path.bands.every((b) => b.d.startsWith("M")));
+  const mouse = strokePath(encodeStroke({ id: "m", size: 2, brush: "pencil", pen: false, ch: "xyt", samples: samples() }));
+  assert.deepEqual([!!mouse.bands, mouse.grain, mouse.stroke], [false, true, false]);
+  assert.equal(strokePath(pen()).grain, false);
+  // the one opacity rule: opacity × o
+  assert.equal(strokeOpacity({ opacity: 0.5 }, { o: 0.4 }), 0.2);
+  assert.equal(strokeOpacity({ opacity: 0.5 }, {}), 0.5);
+  assert.equal(strokeOpacity({}, { o: 0.4 }), 0.4);
+});
+
+import { outlineOptions, runOutline } from "../src/ink/ink.js";
+// The box around an outline path's points.
+const pathBox = (d) => {
+  const pts = [...d.matchAll(/(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)/g)].map((m) => [Number(m[1]), Number(m[2])]);
+  return [Math.min(...pts.map((p) => p[0])), Math.min(...pts.map((p) => p[1])), Math.max(...pts.map((p) => p[0])), Math.max(...pts.map((p) => p[1]))];
+};
+
+test("a dash or a shade is outlined at its drawn width whatever its length: ten times the page's scale, a two-sample run with its midpoint (gamma/ink.py stroke_outline)", () => {
+  // a 0.8 pt pen's 1.6 pt dash: 0.8 pt across with round ends, never a disc as wide as the dash is long
+  const [x0, y0, x1, y1] = pathBox(runOutline([{ x: 0, y: 0, w: 1 }, { x: 0.8, y: 0, w: 1 }, { x: 1.6, y: 0, w: 1 }], outlineOptions({ size: 0.8 })));
+  assert.ok(Math.abs(y1 - y0 - 0.8) < 0.05, `0.8 pt across (${y0} … ${y1})`);
+  assert.ok(Math.abs(x0 + 0.4) < 0.05 && Math.abs(x1 - 2) < 0.05, `round ends half a width past the run (${x0} … ${x1})`);
+  // a dash of two lerped ends: size × w all along, its end cap included (perfect-freehand alone draws
+  // the points it puts between two at pressure 0.5, the nominal size)
+  const two = pathBox(runOutline([{ x: 0, y: 0, w: 1.5 }, { x: 4, y: 0, w: 1.5 }], outlineOptions({ size: 2 })));
+  assert.ok(Math.abs(two[2] - 5.5) < 0.05 && Math.abs(two[3] - 1.5) < 0.05, `the end cap at size × w / 2 = 1.5 (${two})`);
+  // so a thin dashed pressure stroke keeps to its line
+  const line = Array.from({ length: 21 }, (_, i) => ({ x: 100 + 1.2 * i, y: 200, p: 0.5, t: 8 * i, w: 1 }));
+  const thin = strokePath(encodeStroke({ id: "t", size: 0.8, dash: "dashed", ch: "xyptw", samples: line }));
+  const box = pathBox(thin.d);
+  assert.ok(box[1] > 199.55 && box[3] < 200.45, `a 0.8 pt dashed line stays 0.8 pt tall (${box})`);
+  // and so does one short enough for a single dash (longer than on, shorter than on + off)
+  const short = Array.from({ length: 9 }, (_, i) => ({ x: 100 + 0.3 * i, y: 200, p: 0.5, t: 8 * i, w: 1 }));
+  const one = strokePath(encodeStroke({ id: "u", size: 0.8, dash: "dashed", ch: "xyptw", samples: short }));
+  const ob = pathBox(one.d);
+  assert.equal(one.d.split("M").length - 1, 1, "one dash");
+  assert.ok(ob[1] > 199.55 && ob[3] < 200.45, `a one-dash 0.8 pt line stays 0.8 pt tall (${ob})`);
+  assert.ok(Math.abs(ob[0] - 99.6) < 0.05 && Math.abs(ob[2] - 102) < 0.05, `the dash is 1.6 pt with round ends (${ob})`);
+});
+
+test("a band run of no length is left out, as the server leaves it out (stroke_bands)", () => {
+  // o meets the 0.33 edge right at the first sample, then rises: the whole stroke is the middle shade
+  const up = bandRuns([{ x: 0, y: 0, o: 0.33, w: 1 }, { x: 10, y: 0, o: 0.5, w: 1 }]);
+  assert.deepEqual(up.map((r) => r.band), [0.66]);
+  // and falls to an edge at the last sample: no dot of the lighter shade at the end
+  const down = bandRuns([{ x: 0, y: 0, o: 0.5, w: 1 }, { x: 10, y: 0, o: 0.33, w: 1 }]);
+  assert.deepEqual(down.map((r) => r.band), [0.66]);
+  // a stroke of no length is one run, in its last sample's band
+  assert.deepEqual(bandRuns([{ x: 5, y: 5, o: 0.2 }, { x: 5, y: 5, o: 0.9 }]).map((r) => [r.band, r.samples.length]), [[1, 2]]);
+  assert.deepEqual(bandRuns([]), []);
+});
+
+// --- the caches: keyed by the pts array (docs/dev/handwriting.md "Client", Caches) ---
+
+import { cachedStrokePath as cachedPath, strokePlaceholder as placeholderOf } from "../src/ink/ink.js";
+
+test("caches: a colour restyle and a clone with the same pts arrays reuse the polygon; a move or a new size builds it again", () => {
+  const ink = { ...newInk(1, 612, 792), strokes: [pen({ id: "a" }), pen({ id: "b", samples: baked(6, 300, 400) })] };
+  const before = ink.strokes.map((s) => strokePath(s));
+  const box = strokeBounds(ink.strokes[0]), dec = decodeStroke(ink.strokes[0]);
+  // a recolour is a new stroke object around the same pts array
+  const recoloured = restyleStrokes(ink, ["a"], { color: "#2463eb" });
+  assert.notEqual(recoloured.strokes[0], ink.strokes[0]);
+  assert.equal(recoloured.strokes[0].pts, ink.strokes[0].pts);
+  assert.equal(strokePath(recoloured.strokes[0]), before[0], "the same polygon object after a colour restyle");
+  assert.equal(strokeBounds(recoloured.strokes[0]), box);
+  assert.equal(decodeStroke(recoloured.strokes[0]), dec);
+  // a clone of the drawing whose strokes keep their pts arrays (a merge's composed strokes, withDefaults)
+  const clone = { ...ink, strokes: ink.strokes.map((s) => ({ ...s })) };
+  assert.deepEqual(clone.strokes.map((s) => strokePath(s)), before);
+  assert.ok(clone.strokes.every((s, i) => strokePath(s) === before[i]), "the same polygon objects after a clone with identical pts");
+  // a deep copy has new arrays: nothing to reuse until inkStore.adoptStrokes hands the arrays back
+  const parsed = JSON.parse(JSON.stringify(ink));
+  assert.equal(cachedPath(parsed.strokes[0]), undefined);
+  assert.notEqual(strokePath(parsed.strokes[0]), before[0]);
+  assert.equal(strokePath(parsed.strokes[0]).d, before[0].d, "built again, to the same outline");
+  // a move writes new pts; a width restyle keeps them but changes what the outline is built from
+  const moved = translateStrokes(ink, ["a"], 5, 0);
+  assert.notEqual(strokePath(moved.strokes[0]), before[0]);
+  assert.equal(strokePath(moved.strokes[1]), before[1], "the stroke not moved is untouched");
+  const wider = restyleStrokes(ink, ["a"], { size: 4 });
+  assert.equal(wider.strokes[0].pts, ink.strokes[0].pts);
+  assert.notEqual(strokePath(wider.strokes[0]), before[0]);
+  assert.notDeepEqual(strokeBounds(wider.strokes[0]), box);
+  assert.equal(decodeStroke(wider.strokes[0]), dec, "the decoded samples do not depend on the size");
+  // back to the old size: the first polygon again, from the same array
+  assert.equal(strokePath(restyleStrokes(wider, ["a"], { size: ink.strokes[0].size }).strokes[0]), before[0]);
+  // a line restyle builds again (a dashed pressure stroke is cut into runs)
+  const dashed = restyleStrokes(ink, ["a"], { dash: "dashed" });
+  assert.equal(dashed.strokes[0].pts, ink.strokes[0].pts);
+  assert.notEqual(strokePath(dashed.strokes[0]), before[0]);
+});
+
+test("caches: cachedStrokePath only looks, and a placeholder is the samples as a polyline at the mean width", () => {
+  const s = pen({ id: "lazy", samples: baked(4, 10, 10) });
+  assert.equal(cachedPath(s), undefined, "nothing built yet");
+  const p = placeholderOf(s);
+  assert.equal(p.stroke, true);
+  assert.match(p.d, /^M10\.00,10\.00 L20\.00,13\.00 L30\.00,16\.00 L40\.00,19\.00$/);
+  const widths = decodeStroke(s).map((q) => strokeWidth(s, q));
+  assert.ok(Math.abs(p.width - widths.reduce((a, b) => a + b, 0) / widths.length) < 1e-9);
+  assert.equal(placeholderOf({ ...s }), p, "kept per pts array too");
+  assert.equal(cachedPath(s), undefined, "a placeholder is not the outline");
+  const built = strokePath(s);
+  assert.equal(cachedPath(s), built);
+  assert.equal(cachedPath({ ...s, color: "#000000" }), built);
 });

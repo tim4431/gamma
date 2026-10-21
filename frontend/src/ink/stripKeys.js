@@ -7,7 +7,9 @@
 // {kind: "undo", redo} · {kind: "deselect"} · {kind: "closeOptions"} ·
 // {kind: "close"} · {kind: "delete"} · {kind: "pick", id} (a preset id,
 // "select", "text", or null for the hand) · {kind: "width", step: ±1} (the
-// armed preset thinner or thicker) · {kind: "eraser", phase: "down" | "up",
+// armed preset thinner or thicker) · {kind: "brush", step: ±1} (the same
+// keys with Shift: the armed pen's style back or forward through Pen,
+// Ballpoint, Brush, Pencil) · {kind: "eraser", phase: "down" | "up",
 // held} (E: `down` on a non-repeat keydown, `up` on the keyup with `held`
 // the ms since the down, so App decides tap or hold); `prevent` and `stop`
 // say what to do with the event.
@@ -47,7 +49,9 @@ export function stripKey(e, state = {}) {
   if (code === "KeyL") return { kind: "pick", id: "select" };
   if (code === "KeyT") return { kind: "pick", id: "text" };
   if (code === "KeyV") return { kind: "pick", id: null };
-  if (code === "BracketLeft" || code === "BracketRight") return { kind: "width", step: code === "BracketLeft" ? -1 : 1 };
+  if (code === "BracketLeft" || code === "BracketRight") {
+    return { kind: e.shiftKey ? "brush" : "width", step: code === "BracketLeft" ? -1 : 1 };
+  }
   if (code === "KeyP" || code === "KeyH") {
     // The next preset of that kind after the armed one, wrapping; with
     // Shift the one before it.

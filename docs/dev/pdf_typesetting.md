@@ -50,7 +50,9 @@ a line: the nearest sheet wins.
 Handwriting blocks (`ink_url`) become `/Ink` annotations: one per look
 bucket (colour × tool × size × opacity) of the group, `/InkList` polylines
 mapped through the same rect → user-space conversion, `/BS /W` the mean
-drawn width, the caption on the first, an `/NM`, and a private `/GammaInk`
+drawn width, `/BS /S /D /D [on off]` when the bucket's first stroke is
+dashed or dotted (the pattern its size's, [handwriting.md](handwriting.md)
+"Dash geometry"), the caption on the first, an `/NM`, and a private `/GammaInk`
 string holding the bucket's `gamma-ink` strokes for a lossless re-import.
 Same skip rule as highlights for ink still embedded in the file.
 

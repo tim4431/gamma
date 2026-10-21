@@ -281,11 +281,19 @@ Nothing is drawn by hand. Both paths reuse an export
 - **A sheet** (a `canvas` group, or the sheet itself) is the notebook
   export's one-page PDF, `notebook.notebook_pdf`: the paper painted and the
   strokes as vectors.
-- **A PDF page** is that page on its own with the groups written on it as
-  the annotated export's `/Ink` annotations
-  (`pdf_export.page_with_ink`), written without an appearance stream;
-  MuPDF synthesizes one when it renders, so highlighters stay translucent
-  over the text. Ink imported
+- **A PDF page** is that page on its own with the groups stamped on it
+  (`pdf_export.page_with_ink(…, vector=True)`): every stroke is drawn as
+  vectors into the copied page's content through `ink.pdf_path_ops`,
+  exactly as the notes-as-PDF export draws it, so the model sees the
+  looks as drawn — every brush with its baked widths and tapers, dashes,
+  the pencil's three shades (its grain excepted) — in the layers' order,
+  every group's highlighters under every group's pens. A highlighter is
+  multiplied onto the page through a graphics state, so the text under
+  it stays as dark as it was; `/Ink` annotations, which a viewer draws
+  over the page's content, could neither keep it under the ink nor leave
+  the text under it at full contrast. `backend/tests/test_ai_tools_ink.py`
+  renders text under a highlighter and asserts every glyph pixel stays
+  dark. Ink imported
   from the PDF and still embedded in it (`pdf_export.still_embedded`) is
   not added twice. When the PDF
   is missing or PyPDF2 cannot copy the page (an encrypted file), the
