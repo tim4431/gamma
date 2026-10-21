@@ -78,7 +78,7 @@ export function MarkupLayers({ surface, wrapRef, width, height, marks, active = 
           eraserSize={ink.eraserSize} eraserFilter={ink.eraserFilter} drawHold={ink.drawHold} scribble={ink.scribble}
           fingerUndo={ink.fingerUndo} lassoMode={ink.lassoMode} selection={marks.inkSelection} flash={marks.inkFlash}
           clip={!!ink.clip} keys={ink.keys} hoverPreview={ink.hoverPreview !== false}
-          onStroke={edit.onStroke} onErase={edit.onErase} onErasePartial={edit.onErasePartial} onEraseEnd={edit.onEraseEnd}
+          onStroke={edit.onStroke} onEraseAlong={edit.onEraseAlong} onEraseEnd={edit.onEraseEnd}
           onEraseMany={edit.onEraseMany} onSelect={edit.onSelect} onPaste={edit.onPaste}
           onAction={edit.onAction} onMoveSelection={edit.onMoveSelection} onJump={text.armed ? undefined : actions.onJump}
           onFingerScroll={edit.onFingerScroll} onHoldStatus={edit.onHoldStatus} onInkFeatures={actions.onInkFeatures}

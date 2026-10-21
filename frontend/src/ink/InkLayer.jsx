@@ -18,7 +18,7 @@ import {
   PaletteIcon, PenIcon, PlayIcon, RectSelectIcon, RedoIcon, ResizeIcon, ScissorsIcon, StopIcon, TrashIcon, BrushIcon,
 } from "../shared/ui/Icons";
 import {
-  MAX_STROKE_SIZE, boundsOf, byBand, cachedStrokePath, dashDots, dashPattern, dashRuns, encodeStroke, eraserKeep, hitStrokes, isDash,
+  MAX_STROKE_SIZE, boundsOf, byBand, cachedStrokePath, dashDots, dashPattern, dashRuns, encodeStroke, eraserKeep, isDash,
   inkBounds, inkFeatures, inkUntil, lerpSample, nearestInkStroke, opacityBand, outlineOptions, outlinePressure, runOutline,
   sizesFor, strokeBand, strokeId, strokeMaxWidth, strokePath, strokePlaceholder, strokeWalls, strokesInLasso, svgPathFromPoints,
   transformPoint, unionBox,
@@ -696,8 +696,12 @@ function samplesBox(samples, pad) {
 // scrolled instead of drawing. eraserFilter: what an erasure may remove
 // ('all' | 'pen' | 'highlighter', for the hover glyph and the scribble);
 // drawHold, scribble: the account's draw-and-hold and scribble-to-erase
-// flags; fingerUndo: 'off' | 'tap' | 'double'. onEraseEnd: the eraser tool
-// lifted; onEraseMany(page, [{gid, ids}]): a scribble's targets;
+// flags; fingerUndo: 'off' | 'tap' | 'double'. onEraseAlong(page, path, r,
+// {mode, pass}): the eraser swept `path` (page points, from where the last
+// call ended) with radius r (page units), once a frame and at the lift,
+// `mode` 'partial' | 'stroke' and `pass` the id the gesture's calls share;
+// onEraseEnd: the eraser tool lifted; onEraseMany(page, [{gid, ids}]): a
+// scribble's targets;
 // onUndoGesture('undo' | 'redo'): a finger chord; onHoldStatus({text, once}):
 // the pill a snapped stroke raises. clip: the handwriting clipboard holds
 // strokes — a pen or mouse held still with a writing tool, or a mouse
@@ -714,7 +718,7 @@ function samplesBox(samples, pad) {
 export function InkLayer({ pageNumber, wrapRef, width, height, blocks, tool, penTool, penOnly, pressure, eraserMode,
   eraserSize = 1, eraserFilter = "all", drawHold = false, scribble = false, fingerUndo = "off", lassoMode = "free", selection, flash,
   clip = false, keys, hoverPreview = true,
-  onStroke, onErase, onErasePartial, onEraseEnd, onEraseMany, onSelect, onAction, onMoveSelection, onJump, onPaste,
+  onStroke, onEraseAlong, onEraseEnd, onEraseMany, onSelect, onAction, onMoveSelection, onJump, onPaste,
   onFingerScroll, onUndoGesture, onHoldStatus, onInkFeatures, onInkLive, onHaptic }) {
   useInkVersion();
   const canvasRef = useRef(null);
@@ -776,7 +780,7 @@ export function InkLayer({ pageNumber, wrapRef, width, height, blocks, tool, pen
   }
   live.current = { tool, penTool, penOnly, pressure, eraserMode, eraserSize, eraserFilter, drawHold, scribble, fingerUndo, lassoMode,
     width, height, groups, selBox, replay, clip, hoverPreview, penBusy: () => penBusy.current(),
-    onStroke, onErase, onErasePartial, onEraseEnd, onEraseMany, onSelect, onMoveSelection, onJump, onPaste, onFingerScroll, onUndoGesture,
+    onStroke, onEraseAlong, onEraseEnd, onEraseMany, onSelect, onMoveSelection, onJump, onPaste, onFingerScroll, onUndoGesture,
     onHoldStatus, onInkLive, onHaptic };
   useWetStrokes(pageNumber, wrapRef, wetRef, live);
   // Dense pages ("dense pages" above): culling past IDLE_STROKES strokes on
@@ -998,15 +1002,31 @@ export function InkLayer({ pageNumber, wrapRef, width, height, blocks, tool, pen
       }
     };
 
-    const eraseUnder = (ctx, ev) => {
-      const { x, y } = ctx.toPt(ev);
-      const L = live.current;
-      const r = (ERASER_SIZES[L.eraserSize] ?? ERASER_SIZES[1]) / ctx.k;
-      for (const g of L.groups) {
-        if (L.eraserMode === "partial") { L.onErasePartial?.(pageNumber, g.id, x, y, r); continue; }
-        const ids = hitStrokes(g.ink, x, y, r);
-        if (ids.length) L.onErase?.(pageNumber, g.id, ids);
+    // The eraser's pass. `d.sweep` is the path it swept since the last
+    // flush, from the point that flush ended at (the down point before the
+    // first), so the flushes join into one path; every coalesced position
+    // goes in. App gets it once an animation frame, at the lift and, for
+    // what was swept already, at a cancel, as one onEraseAlong over every
+    // group of the page (ink.js eraseAlong / hitStrokesAlong test the
+    // capsules between the points, so a fast eraser leaves nothing it
+    // crossed). The mode and the radius are the down's, and `pass`, minted
+    // there, makes the gesture one undo entry.
+    const sweepAdd = (d, events) => {
+      for (const ev of events) {
+        const p = d.toPt(ev), last = d.sweep[d.sweep.length - 1];
+        if (p.x !== last.x || p.y !== last.y) d.sweep.push(p);
       }
+    };
+    const sweepFlush = (d) => {
+      if (d.raf) { cancelAnimationFrame(d.raf); d.raf = 0; }
+      if (d.swept && d.sweep.length < 2) return;
+      const path = d.sweep;
+      d.swept = true;
+      d.sweep = [path[path.length - 1]];
+      live.current.onEraseAlong?.(pageNumber, path, d.radius, { mode: d.eraseMode, pass: d.pass });
+    };
+    const sweepLater = (d) => {
+      if (!d.raf) d.raf = requestAnimationFrame(() => { d.raf = 0; if (drawing === d) sweepFlush(d); });
     };
 
     // The live canvas's context in page units. `dirty` (a box in page
@@ -1161,10 +1181,7 @@ export function InkLayer({ pageNumber, wrapRef, width, height, blocks, tool, pen
         scribble: !!L.scribble, groups: L.groups, keep: eraserKeep(L.eraserFilter) });
       const { commit, erase, status } = result;
       const look = result.style || style;
-      if (erase?.length) {
-        if (L.onEraseMany) L.onEraseMany(pageNumber, erase);
-        else for (const { gid, ids } of erase) if (ids.length) L.onErase?.(pageNumber, gid, ids);
-      }
+      if (erase?.length) L.onEraseMany?.(pageNumber, erase);
       if (status) L.onHoldStatus?.(status);
       if (!commit?.length) return !!erase?.length;
       const stroke = encodeStroke({ ...look, id: d.liveId, t0: d.t0, samples: commit, ch: strokeChannels(look, commit) });
@@ -1323,8 +1340,9 @@ export function InkLayer({ pageNumber, wrapRef, width, height, blocks, tool, pen
       e.stopPropagation();
       try { el.setPointerCapture(e.pointerId); } catch { /* capture is a nicety */ }
       if (ctx.eraser) {
-        drawing = { ...ctx, id: e.pointerId, mode: "erase" };
-        eraseUnder(ctx, e);
+        drawing = { ...ctx, id: e.pointerId, mode: "erase", pass: strokeId(), raf: 0, sweep: [ctx.toPt(e)], swept: false,
+          eraseMode: L.eraserMode === "partial" ? "partial" : "stroke", radius: (ERASER_SIZES[L.eraserSize] ?? ERASER_SIZES[1]) / ctx.k };
+        sweepLater(drawing);
         return;
       }
       if (ctx.use.tool === "select") {
@@ -1373,7 +1391,12 @@ export function InkLayer({ pageNumber, wrapRef, width, height, blocks, tool, pen
       const d = drawing;
       if (!d || e.pointerId !== d.id) return;
       e.preventDefault();
-      if (d.mode === "erase") { eraseUnder(d, e); return; }
+      if (d.mode === "erase") {
+        const events = e.getCoalescedEvents?.() || [];
+        sweepAdd(d, events.length ? events : [e]);
+        sweepLater(d);
+        return;
+      }
       if (d.mode === "move") {
         const pt = d.toPt(e);
         d.dx = pt.x - d.start.x;
@@ -1437,6 +1460,10 @@ export function InkLayer({ pageNumber, wrapRef, width, height, blocks, tool, pen
       clearTimeout(d.holdTimer);
       const L = live.current;
       if (d.mode === "erase") {
+        // the rest of the pass: to the lift's own point, or at a cancel as
+        // far as it had gone
+        if (!cancelled) sweepAdd(d, [e]);
+        sweepFlush(d);
         if (cancelled) return;
         swallowClick();
         // The eraser tool lifted (whether or not it erased): App may return

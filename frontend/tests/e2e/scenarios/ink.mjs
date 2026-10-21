@@ -8,7 +8,7 @@
 // backend/tests/test_ink.py; the chat's view_ink is test_ai_tools_ink.py.
 import { PYTHON, assertOpensInPlace, fakeAiModels } from "../harness.mjs";
 import { waitForPdf } from "./pdf.mjs";
-import { decodeStroke } from "../../../src/ink/ink.js";
+import { decodeStroke, encodeStroke, newInk, strokeWidth } from "../../../src/ink/ink.js";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
@@ -141,6 +141,144 @@ export async function inkScenarios({ server, browser, alice, makePdf, step, unti
     await page.keyboard.press("Delete");
     await until(async () => (await page.$$('[data-page="1"] .inkLayer path')).length === 2, { what: "selection deleted" });
     assertNoProblems(page);
+  });
+
+  await step("ink: the partial eraser swept in three long jumps cuts every stroke it crosses at its edge, in two groups, one Ctrl+Z restores them all and Ctrl+Shift+Z brings the pass back", async () => {
+    // A page of its own with two seeded groups, in a context of its own (the
+    // eraser's mode is this browser's): pens, a held straight line of two
+    // samples, a fast mouse stroke whose samples lie 40 pt apart and a
+    // highlighter, all running down the page, and one stroke the pass never
+    // comes near.
+    const up = await account.upload("/api/uploads", makePdf([["A page to sweep"]]), "sweep.pdf", "application/pdf");
+    const doc = await account.api(`/api/blocks/by-doc/${up.doc_id}`, { method: "POST", body: { default_title: "Fast eraser", source_url: up.source_url } });
+    const down = (from, to, gap) => Array.from({ length: Math.round((to - from) / gap) + 1 }, (_, i) => from + i * gap);
+    const t0 = 1757760000000;
+    const groups = {
+      a: [
+        encodeStroke({ id: "held", ch: "xyt", pen: false, size: 2, t0, samples: [{ x: 300, y: 80, t: 0 }, { x: 300, y: 420, t: 600 }],
+          shape: { kind: "line", params: { x1: 300, y1: 80, x2: 300, y2: 420 } } }),
+        encodeStroke({ id: "sparse", ch: "xyt", pen: false, size: 2, t0, samples: down(80, 420, 40).map((y, i) => ({ x: 200 + 6 * Math.sin(i), y, t: 8 * i })) }),
+        encodeStroke({ id: "pressed", ch: "xyptw", size: 1.4, t0, samples: down(80, 420, 2).map((y, i) => {
+          const p = 0.5 + 0.3 * Math.sin(i / 9);
+          return { x: 430, y, p, t: 4 * i, w: Math.round((p + 0.5) * 1000) / 1000 };
+        }) }),
+      ],
+      b: [
+        encodeStroke({ id: "marker", tool: "highlighter", color: "#fde047", ch: "xy", pen: false, size: 10, opacity: 0.6,
+          samples: down(80, 420, 20).map((y) => ({ x: 370, y })) }),
+        encodeStroke({ id: "plain", ch: "xyt", pen: false, size: 2, t0, samples: down(80, 420, 5).map((y, i) => ({ x: 240, y, t: 4 * i })) }),
+        encodeStroke({ id: "aside", ch: "xyt", pen: false, size: 2, t0, samples: [{ x: 100, y: 600, t: 0 }, { x: 200, y: 600, t: 100 }] }),
+      ],
+    };
+    const ids = {};
+    for (const [name, strokes] of Object.entries(groups)) {
+      const file = await account.api("/api/upload-ink", { method: "POST", body: { ...newInk(1, 612, 792), strokes } });
+      ids[name] = (await account.api("/api/blocks", { method: "POST", body: { parent_id: doc.id, content: `Group ${name}`,
+        properties: { ink_url: file.url, pdf_position: file.pdf_position, ink_strokes: strokes.length } } })).id;
+    }
+    const stored = async () => {
+      const d = await account.api(`/api/blocks/${doc.id}/subtree`);
+      const out = {};
+      for (const [name, id] of Object.entries(ids)) {
+        const b = d.block.children.find((c) => c.id === id);
+        out[name] = b?.properties?.ink_url ? (await account.api(b.properties.ink_url)).strokes : [];
+      }
+      return out;
+    };
+    const crossed = ["held", "sparse", "pressed", "marker", "plain"];
+    const sweepCtx = await account.context(browser);
+    try {
+      const tab = await openPage(sweepCtx, `${server.base}/?page=${doc.id}&ws=${account.ws}`);
+      await waitForPdf(tab, 1);
+      await until(async () => (await tab.locator('[data-page="1"] .inkLayer path').count()) === 6, { what: "the seeded strokes drawn" });
+      await tab.click("button[aria-label='Handwriting tools']");
+      await tab.waitForSelector(".pdfInkBar");
+      await tab.keyboard.press("e");
+      await tab.click(".pdfInkBar button[title^='Eraser']");          // the armed tool again: its options row
+      await tab.waitForSelector(".pdfInkSub[data-ink-options='eraser']");
+      await tab.click(".pdfInkSub button[aria-label='Partial']");
+      // A zigzag of three jumps across the page, 470 pt or more each, one
+      // pointer move per jump and a frame between them: no position the
+      // pointer reports lies near a stroke, and each jump is a flush of its own.
+      const rect = await tab.locator('[data-page="1"]').evaluate((el) => {
+        const r = el.getBoundingClientRect();
+        return { left: r.left, top: r.top, k: r.width / 612 };
+      });
+      const corners = [[60, 130], [550, 200], [80, 290], [560, 380]].map(([x, y]) => [Math.round(rect.left + x * rect.k), Math.round(rect.top + y * rect.k)]);
+      const sweep = corners.map(([x, y]) => ({ x: (x - rect.left) / rect.k, y: (y - rect.top) / rect.k }));   // as the layer reads them
+      const radius = 9 / rect.k;                                         // the middle eraser, 9 css px
+      assert(corners.slice(1).every(([x, y], i) => Math.hypot(x - corners[i][0], y - corners[i][1]) > 200), "jumps of over 200 px");
+      const frame = () => tab.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+      await tab.mouse.move(...corners[0]);
+      await tab.mouse.down();
+      for (const corner of corners.slice(1)) { await frame(); await tab.mouse.move(...corner); }
+      await tab.mouse.up();
+      const cut = await until(async () => {
+        const s = await stored();
+        const all = [...s.a, ...s.b];
+        return crossed.every((id) => !all.some((st) => st.id === id)) ? s : null;
+      }, { what: "every stroke the pass crossed cut in the stored files" });
+      const all = [...cut.a, ...cut.b];
+      for (const id of crossed) assertEq(all.filter((st) => st.from === id).length, 4, `${id}, crossed three times, is in four pieces`);
+      assert(cut.b.some((st) => st.id === "aside"), "the stroke the pass never came near stands");
+      // No stored sample lies inside the swept band: each is at least the
+      // radius plus its own half-width from the path. The pieces' new ends
+      // lie at that edge.
+      const toPath = (q) => Math.min(...sweep.slice(1).map((b, i) => {
+        const a = sweep[i], dx = b.x - a.x, dy = b.y - a.y;
+        const t = Math.max(0, Math.min(1, ((q.x - a.x) * dx + (q.y - a.y) * dy) / (dx * dx + dy * dy)));
+        return Math.hypot(a.x + t * dx - q.x, a.y + t * dy - q.y);
+      }));
+      for (const st of all) for (const q of decodeStroke(st)) {
+        const need = radius + strokeWidth(st, q) / 2, d = toPath(q);
+        assert(d >= need - 0.05, `a sample of ${st.from || st.id} at (${q.x}, ${q.y}) lies ${(need - d).toFixed(2)} pt inside the swept band`);
+      }
+      for (const st of all.filter((s) => s.from === "held")) {
+        const q = decodeStroke(st);
+        for (const end of [q[0], q[q.length - 1]].filter((e) => e.y !== 80 && e.y !== 420)) {
+          assert(Math.abs(toPath(end) - (radius + 1)) < 0.05, `the held line cut at the eraser's edge (${toPath(end).toFixed(3)} vs ${(radius + 1).toFixed(3)} pt)`);
+        }
+      }
+      // The pass, three flushes over two groups, is one undo entry: one
+      // Ctrl+Z brings every stroke back as it was, and there is nothing
+      // before it.
+      await tab.keyboard.press("Control+z");
+      await tab.getByText("Undone: partial ink erasure (page 1).", { exact: true }).waitFor();
+      const back = await until(async () => {
+        const s = await stored();
+        const names = (list) => list.map((st) => st.id).sort().join();
+        return names(s.a) === "held,pressed,sparse" && names(s.b) === "aside,marker,plain" ? s : null;
+      }, { what: "one Ctrl+Z restored both groups" });
+      for (const [name, strokes] of Object.entries(groups)) {
+        for (const st of strokes) {
+          assertEq(JSON.stringify(back[name].find((x) => x.id === st.id).pts), JSON.stringify(st.pts), `${st.id} back as it was`);
+        }
+      }
+      // Ctrl+Shift+Z brings the whole pass back, every piece of both groups
+      // as it was cut (the entry's `after` per group is the last flush's).
+      await tab.keyboard.press("Control+Shift+z");
+      await tab.getByText("Redone: partial ink erasure (page 1).", { exact: true }).waitFor();
+      const ids = (list) => list.map((st) => st.id).sort().join();
+      const redone = await until(async () => {
+        const s = await stored();
+        return ids(s.a) === ids(cut.a) && ids(s.b) === ids(cut.b) ? s : null;
+      }, { what: "Ctrl+Shift+Z brought the pass back in both groups" });
+      for (const name of Object.keys(groups)) {
+        for (const st of cut[name]) {
+          assertEq(JSON.stringify(redone[name].find((x) => x.id === st.id).pts), JSON.stringify(st.pts), `${st.from || st.id} as it was cut`);
+        }
+      }
+      await tab.keyboard.press("Control+z");
+      await until(async () => {
+        const s = await stored();
+        return ids(s.a) === "held,pressed,sparse" && ids(s.b) === "aside,marker,plain";
+      }, { what: "Ctrl+Z after the redo restored both groups again" });
+      await tab.keyboard.press("Control+z");
+      await tab.getByText("Nothing to undo in handwriting.", { exact: true }).waitFor();
+      assertNoProblems(tab);
+    } finally {
+      await sweepCtx.close();
+    }
   });
 
   await step("ink: a preset's options row sets its colour and width, duplicates and removes it; presets follow the account; the box lasso", async () => {

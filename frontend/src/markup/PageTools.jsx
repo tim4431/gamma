@@ -18,8 +18,9 @@ import { createContext, useContext } from "react";
 // duplicate}, the chord labels the selection menu puts in its titles (""
 // when unbound). text.armed: the Text tool is armed; text.style: the style
 // of new boxes ({size, color, bg}).
-// actions carries the handlers: the ink ones (onStroke, onErase,
-// onErasePartial, onEraseEnd, onEraseMany, onSelect, onAction(page, kind,
+// actions carries the handlers: the ink ones (onStroke, onEraseAlong(page,
+// path, r, {mode, pass}): the path the eraser swept since its last call,
+// onEraseEnd, onEraseMany, onSelect, onAction(page, kind,
 // arg) — style, transform, delete, duplicate, copy, cut, flip {axis},
 // split, merge, select-note, show-note —, onMoveSelection, onPaste(page,
 // pt, {width, height}): the clipboard at a page point, onFingerScroll,
