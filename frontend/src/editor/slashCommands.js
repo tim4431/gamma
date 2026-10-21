@@ -2,7 +2,8 @@
 // start of a word opens a list of insertions (headings, to-do, equations,
 // code, table, a new page, a sheet of paper, ...). Pure, so
 // tests/slashCommands.test.mjs pins the ranking; editor/SlashMenu.jsx holds
-// the popup and the icons, editor/BlockTree.jsx the trigger, keys and state.
+// the popup and the icons, editor/useSlashMenu.js the trigger, keys and state
+// (a note row's and a comment's field).
 import { TEXT_COLORS, colorSpan } from "./mdMarks.js";
 import { TEXT_INSERTS, replaceRange } from "./slashInserts.js";
 import { makeBlockId } from "../shared/model/blockModel.js";
@@ -15,7 +16,8 @@ import { t, T } from "../shared/i18n/i18n.js";
 // replace that range with their insertion (the text-only ones are
 // slashInserts.js's, which the iPad app runs too). A command that `needs`
 // one of the editor's abilities is offered only where the editor has it
-// (filterSlashCommands' `can`).
+// (filterSlashCommands' `can`): a comment's field writes text only, so it
+// has none of them.
 const I = TEXT_INSERTS;
 
 // The bare "/" list's sections, in this order; a typed query is one ranked
@@ -86,6 +88,7 @@ export const SLASH_COMMANDS = [
   {
     name: "image", group: "insert", icon: "image", label: T("Image"), hint: T("Upload a picture from this device"),
     keywords: ["picture", "photo", "upload", "figure", "img"],
+    needs: "image",
     run: (ctx) => { replaceRange(ctx, ""); ctx.pickImage(); },
   },
   {
@@ -101,6 +104,7 @@ export const SLASH_COMMANDS = [
   {
     name: "embed", group: "link", icon: "embed", label: T("Embed note"), hint: T("Another block shown here, kept in sync"),
     keywords: ["transclude", "include", "block", "synced"],
+    needs: "embed",
     run: (ctx) => { replaceRange(ctx, "![["); ctx.openRefPopup(); },
   },
   {
@@ -195,8 +199,9 @@ export function slashMatch(c, q) {
 }
 
 // The rows for a "/" query. `can`: the abilities this editor has
-// ({newPage, sheet}); a command that needs one it lacks is left out (a
-// share's editor makes no library page). The bare "/" lists every command
+// ({newPage, sheet, image, embed}); a command that needs one it lacks is
+// left out (a share's editor makes no library page, a comment no upload
+// and no embed). The bare "/" lists every command
 // but the colors, in catalog order; a query ranks its matches by tier, then
 // cost, then catalog order, each row carrying its `match`.
 export function filterSlashCommands(query, can = {}) {

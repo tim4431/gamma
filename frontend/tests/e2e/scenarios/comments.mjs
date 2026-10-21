@@ -9,7 +9,7 @@
 // reading only; ?thread= opening the thread, and a note thread's copied
 // link opening it through a folder share; a reply left unsent kept in its
 // field; the field as a note's editor ([[ links, @ people, $…$ with its
-// preview, Shift+Enter and Enter); on a phone, a note's thread link
+// preview, Enter and Shift+Enter, the "/" menu); on a phone, a note's thread link
 // bringing the notes over the PDF; the selection popup opening at the
 // pointer, its Comment making a highlight drawn as a commented passage, and
 // an abandoned one leaving none.
@@ -84,7 +84,7 @@ export async function commentScenarios({ server, browser, makePdf, step, until, 
     assertEq(await A.locator(".mentionMenu .refPopupHead").allInnerTexts().then((h) => h.join("|")), "People", "no date or page answers the name");
     await A.keyboard.press("Enter");
     await A.keyboard.type("please check");
-    await A.keyboard.press("Enter");
+    await A.keyboard.press("Shift+Enter");
     await until(async () => (await threads()).some((th) => th.block_id === "cmnote1"
       && th.comments[0].body === "Is this sourced? @cm-ben please check" && th.comments[0].author === "cm-ann"), { what: "the thread is stored" });
     await until(async () => (await control(A, "The first claim").innerText()) === "1", { what: "the row counts its open thread" });
@@ -101,7 +101,7 @@ export async function commentScenarios({ server, browser, makePdf, step, until, 
     await sleep(700);
     for (let i = 0; i < 5; i++) await B.keyboard.press("Shift+ArrowLeft");
     await B.keyboard.type("appendix");
-    await B.keyboard.press("Enter");
+    await B.keyboard.press("Shift+Enter");
     await until(async () => (await popover(A).innerText()).includes("Yes, see the appendix"), { what: "the reply shows live in the open popover", timeout: 10000 });
     // The emptied field's history starts afresh: an undo brings back none of the sent text.
     await until(async () => (await fieldText(replyB)) === "", { what: "the reply field empties" });
@@ -152,7 +152,7 @@ export async function commentScenarios({ server, browser, makePdf, step, until, 
     assertEq(await popover(A).locator(".commentPopTitle").innerText(), "Comments on this page");
     await focused(field(popover(A).locator(".commentNew")), "ready to write");
     await A.keyboard.type("Overall: good");
-    await A.keyboard.press("Enter");
+    await A.keyboard.press("Shift+Enter");
     await until(async () => (await threads()).some((th) => th.block_id === pg.id && th.comments[0].body === "Overall: good"), { what: "stored on the page's root" });
     await until(async () => (await A.locator(".pageCommentBtn").innerText()) === "1", { what: "the title control counts it" });
     await closePopover(A);
@@ -226,7 +226,7 @@ export async function commentScenarios({ server, browser, makePdf, step, until, 
       await popover(V).locator(".commentNewBtn").click();
       await focused(field(popover(V).locator(".commentNew")), "the viewer's field takes the focus");
       await V.keyboard.type("A viewer's question");
-      await V.keyboard.press("Enter");
+      await V.keyboard.press("Shift+Enter");
       await until(async () => (await threads()).some((th) => th.comments[0].author === "cm-vic" && th.comments[0].body === "A viewer's question"), { what: "the viewer's thread is stored" });
       assertNoProblems(V);
     } finally {
@@ -289,7 +289,7 @@ export async function commentScenarios({ server, browser, makePdf, step, until, 
     }
   });
 
-  await step("comments: the field is a note's editor: [[ links a page, Escape closes only the picker, @ names a person, $…$ previews, Shift+Enter breaks the line and Enter sends", async () => {
+  await step("comments: the field is a note's editor: [[ links a page, Escape closes only the picker, @ names a person, $…$ previews, Enter breaks the line and Shift+Enter sends", async () => {
     await openControl(A, "The second claim");
     await popover(A).locator(".commentNewBtn").click();
     const box = field(popover(A).locator(".commentNew"));
@@ -322,15 +322,15 @@ export async function commentScenarios({ server, browser, makePdf, step, until, 
     await A.keyboard.press("Enter");
     await menu.waitFor({ state: "detached" });
     await box.locator(".cmMentionChip", { hasText: "@cm-ben" }).waitFor();
-    // Shift+Enter breaks the line; inside $…$ the live preview shows
-    await A.keyboard.press("Shift+Enter");
+    // Enter breaks the line; inside $…$ the live preview shows
+    await A.keyboard.press("Enter");
     await popover(A).waitFor(); // not sent
     await A.keyboard.type("Bound: $\\sqrt{x");
     await A.locator(".mathPreviewTip .katex").waitFor();
     await shot(A, "w6-latex-preview");
     await A.keyboard.type("}$"); // over the closers the field put in
     await A.locator(".mathPreviewTip").waitFor({ state: "detached" });
-    await A.keyboard.press("Enter");
+    await A.keyboard.press("Shift+Enter");
     let body = "";
     await until(async () => {
       const th = (await threads()).find((x) => x.block_id === "cmnote2" && x.comments[0].body.startsWith("See "));
@@ -347,6 +347,96 @@ export async function commentScenarios({ server, browser, makePdf, step, until, 
     assertEq(await sent.locator(".mentionChip").innerText(), "@cm-ben");
     await sent.scrollIntoViewIfNeeded();
     await shot(A, "w6-sent-comment");
+    await closePopover(A);
+    assertNoProblems(A);
+  });
+
+  await step("comments: the field's \"/\" menu writes text only: /h2 makes a heading, a list continues, the Equation block previews; the small send button's title names Shift+Enter", async () => {
+    await openControl(A, "The first claim");
+    await popover(A).locator(".commentNewBtn").click();
+    const box = field(popover(A).locator(".commentNew"));
+    await focused(box, "the new field takes the focus");
+    const send = popover(A).locator(".commentNew .commentSend");
+    assertEq(await send.getAttribute("title"), "Comment (Shift+Enter)", "the title names the key");
+    assertEq(await send.getAttribute("aria-label"), "Comment", "the name is the plain action");
+    const reply = popover(A).locator(".commentThread .commentSend").first();
+    assertEq(await reply.getAttribute("title"), "Send reply (Shift+Enter)");
+    const size = await send.evaluate((el) => [el.getBoundingClientRect().width, el.getBoundingClientRect().height, el.querySelector("svg").getBoundingClientRect().width]);
+    assertEq(size.join(), "24,24,12", "a 24px circle with a 12px arrow");
+    // the bare "/": the commands that write text, none that make a page, a sheet, an upload or an embed
+    await A.keyboard.type("/");
+    const menu = A.locator(".slashMenu");
+    await menu.waitFor();
+    const labels = (await menu.locator(".slashMenuLabel").allInnerTexts()).map((s) => s.trim());
+    for (const gone of ["New page", "Handwritten note", "Image", "Embed note"]) assert(!labels.includes(gone), `no ${gone}: ${labels.join("|")}`);
+    for (const kept of ["Heading 1", "Heading 2", "Heading 3", "To-do", "Bulleted list", "Numbered list", "Quote", "Callout", "Divider",
+      "Inline equation", "Equation block", "Table", "Code block", "Mermaid diagram", "Today's date", "Link to note", "Highlight text"]) {
+      assert(labels.includes(kept), `${kept} is offered: ${labels.join("|")}`);
+    }
+    await shot(A, "w9-slash-menu");
+    await A.keyboard.press("Escape");
+    await menu.waitFor({ state: "detached" });
+    assert(await popover(A).isVisible(), "Escape closed the menu, not the popover");
+    await A.keyboard.press("Backspace");
+    // /h2 and Enter: the line is a heading
+    await A.keyboard.type("/h2");
+    await until(async () => (await menu.locator(".slashMenuItem.selected .slashMenuLabel").innerText().catch(() => "")) === "Heading 2", { what: "/h2 picks Heading 2" });
+    await A.keyboard.press("Enter");
+    await menu.waitFor({ state: "detached" });
+    await A.keyboard.type("Findings");
+    // one line: the button stands on it
+    const line = await box.locator(".cm-line").first().evaluate((el) => el.getBoundingClientRect().top + el.getBoundingClientRect().height / 2);
+    const mid = await send.evaluate((el) => el.getBoundingClientRect().top + el.getBoundingClientRect().height / 2);
+    assert(Math.abs(line - mid) <= 4, `the button on the text's line: ${mid} by ${line}`);
+    if (flags?.keep) {
+      // a screenshot draws no native tooltip: the title, drawn where it shows
+      await send.hover();
+      await send.evaluate((b) => {
+        const r = b.getBoundingClientRect(), tip = document.createElement("div");
+        tip.id = "e2eTitle";
+        tip.textContent = b.title;
+        Object.assign(tip.style, { position: "fixed", left: `${r.left - 60}px`, top: `${r.bottom + 8}px`, zIndex: 99999, font: "12px system-ui",
+          padding: "2px 6px", background: "#fff", color: "#000", border: "1px solid #767676", boxShadow: "1px 1px 2px rgba(0,0,0,.2)" });
+        document.body.append(tip);
+      });
+      await shot(A, "w9-send-button");
+      await A.evaluate(() => document.getElementById("e2eTitle")?.remove());
+      await box.click();
+      await A.keyboard.press("Control+End");
+    }
+    // Enter breaks the line; a list continues, an empty item ends it
+    await A.keyboard.press("Enter");
+    await A.keyboard.type("/bullet");
+    await until(async () => (await menu.locator(".slashMenuItem.selected .slashMenuLabel").innerText().catch(() => "")) === "Bulleted list", { what: "/bullet" });
+    await A.keyboard.press("Enter");
+    await A.keyboard.type("first point");
+    await A.keyboard.press("Enter");
+    await A.keyboard.type("second point");
+    await A.keyboard.press("Enter");
+    await A.keyboard.press("Enter");
+    await A.keyboard.press("Enter");
+    assert(await box.isVisible(), "Enter sent nothing");
+    // the Equation block: $$x$$ with the x chosen, typed over with the live preview
+    await A.keyboard.type("/equation");
+    await until(async () => (await menu.locator(".slashMenuItem.selected .slashMenuLabel").innerText().catch(() => "")) === "Equation block", { what: "/equation" });
+    await A.keyboard.press("Enter");
+    await A.keyboard.type("E = mc^2");
+    await A.locator(".mathPreviewTip .katex").waitFor();
+    await shot(A, "w9-equation-preview");
+    await A.keyboard.press("Shift+Enter");
+    let body = "";
+    await until(async () => {
+      const th = (await threads()).find((x) => x.block_id === "cmnote1" && x.comments[0].body.startsWith("## "));
+      body = th?.comments[0].body || "";
+      return !!body;
+    }, { what: "the comment is stored" });
+    assertEq(body, "## Findings\n- first point\n- second point\n\n$$E = mc^2$$", "the heading, the list and the equation");
+    const sent = popover(A).locator(".commentBody", { hasText: "Findings" });
+    await sent.locator("h2", { hasText: "Findings" }).waitFor();
+    assertEq(await sent.locator("ul > li").count(), 2, "the list's two items");
+    await sent.locator(".katex").waitFor();
+    await sent.scrollIntoViewIfNeeded();
+    await shot(A, "w9-sent-comment");
     await closePopover(A);
     assertNoProblems(A);
   });
@@ -371,7 +461,7 @@ export async function commentScenarios({ server, browser, makePdf, step, until, 
     await focused(field(popover(A).locator(".commentNew")), "ready to write");
     // (the highlight was made a moment ago: the comment waits for its block to be saved)
     await A.keyboard.type("Which paper is this?");
-    await A.keyboard.press("Enter");
+    await A.keyboard.press("Shift+Enter");
     const badge = A.locator('[data-page="1"] .pdfNoteBadge.hasThread');
     await badge.waitFor({ timeout: 10000 });
     await closePopover(A);
@@ -429,7 +519,7 @@ export async function commentScenarios({ server, browser, makePdf, step, until, 
     const hl = made[0];
     await A.keyboard.type("Cite the original MPS paper");
     await shot(A, "w7-composer-on-fresh-highlight");
-    await A.keyboard.press("Enter");
+    await A.keyboard.press("Shift+Enter");
     await until(async () => (await ann.api(`/api/pages/${reviewed}/comments?state=all`)).threads
       .some((x) => x.block_id === hl && x.comments[0].body === "Cite the original MPS paper"), { what: "the comment is stored on the new highlight" });
     await closePopover(A);

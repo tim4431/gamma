@@ -436,9 +436,9 @@ most `min(70vh, 640px)` tall and 380 px wide (the window's width less
 16 px on a narrower screen). One
 capture-phase pointerdown closes it, except one inside it, on its anchor
 (which toggles it), or in `[data-popover], .ctxMenu, .refPopup,
-.mathPreviewTip, .latexAcPopup` (its "⋯" menu, a field's `[[` picker and @
-menu, its LaTeX preview and completion, which draw above it at
-`--z-refpopup`). Escape closes it and gives the focus back to the
+.slashMenu, .mathPreviewTip, .latexAcPopup` (its "⋯" menu, a field's `[[`
+picker, @ menu and "/" menu, its LaTeX preview and completion, which draw
+above it at `--z-refpopup`). Escape closes it and gives the focus back to the
 control. Closing it loses no unsent text (below). It lists the block's open threads oldest first, then a resolved
 one only when it was asked for (a deep link, the window's Resolved tab) or
 "Show n resolved threads". A new request to write on the block whose
@@ -453,7 +453,18 @@ a link to a block outside the page getting its label from App's reference
 cache, which `onFetchRefs` fills when the threads arrive; the
 popover hands it a link handler that keeps its identity and calls App's
 latest, since `BlockMarkdown`'s memo leaves handlers out), and
-"edited" once changed. Its "⋯" (`MenuButton`) has Edit and Delete for its
+"edited" once changed. A popover draws its first 2,000 characters of text
+at once (`comments.js` `laterComments`, a `$$…$$` equation counting 100
+more), counted from where it opens: from its top, or, through a deep link
+or an Inbox jump, from the thread it scrolls to, then the threads below
+it, then those above it, the nearest first. It draws each comment after
+them as it comes within a screen of the view (an IntersectionObserver on
+`.commentPopBody`, the render in a transition), with a box of about its
+height (`estimatedLines`) in its place until then. A comment written or
+shown after the popover opened is drawn at once. A thread of twelve long
+comments full of math (300 equations) otherwise built every equation
+before the popover showed: about 900 ms in one task, against about 80 ms
+now. Its "⋯" (`MenuButton`) has Edit and Delete for its
 author (Delete for the workspace's owner too) and Copy link. "New comment"
 starts another thread. A link visitor without an account reads, with "Sign
 in to comment" (the share's sign-in gate) in place of the fields.
@@ -471,24 +482,40 @@ people, dates and page links, no "Remind" rows, since the reminder scan
 reads notes only, and no "Invite…"); inside `$…$` and `$$…$$` the live
 preview, the `\command` and `\begin{}` completion, the Tab hop and the `$`
 and bracket pairing of [latex_editing.md](latex_editing.md)
-(`editor/useMathUi.js`). App hands the pickers `links` (`pages`, the open
+(`editor/useMathUi.js`); "/" opens the note's command menu
+(`editor/useSlashMenu.js`, the hook a note row uses: typed only, never
+inside math or a code fence). A comment offers the commands that write
+text: headings, to-do, the lists, quote, callout, divider, the two
+equations, table, code block, Mermaid diagram, today's date, "Link to
+note" (which opens the field's own `[[` picker), highlight and the colours.
+The commands that make a page or a sheet, upload a picture or embed a note
+`need` an ability the field does not pass (`slashCommands.js`
+`filterSlashCommands`' `can`: the field passes none, a note row passes
+`image` and `embed` always, `newPage` and `sheet` when App gives it their
+handlers). A command's text replaces the field's in one edit, which the
+field's undo takes back. App hands the pickers `links` (`pages`, the open
 page as `rootId`, `lookupBlock`, `refCache`, `onCacheRef`) through the
-popover. Left out: the "/" menu, the outliner's keys, "Paste as", image and
-file upload, sheets, embeds, presence carets and object drags. The keys:
-`sendsOnEnter` and `composing` (`chat/enterKey.js`) decide Return as in
-the chat (Enter sends, Shift+Enter breaks the line; on an on-screen
-keyboard Return breaks it and the button sends), except inside a code
-fence or `$$…$$`, where Return breaks the line as in a note and Ctrl/⌘+Enter
-sends. A line break continues a list or a quote (`mdLines.enterPlan`).
-While a picker or the completion is open it takes ↑ ↓ Enter Tab and Escape
-first. The field keeps its own undo history (`ownHistory`), so Ctrl/⌘+Z
+popover. Left out: the outliner's keys, "Paste as", image and file upload,
+sheets, embeds, presence carets and object drags. The keys:
+`sendsOnShiftEnter` and `composing` (`chat/enterKey.js`) decide Return.
+Enter breaks the line as in a note, continuing a list or a quote
+(`mdLines.enterPlan`) outside a code fence or `$$…$$`; Shift+Enter and
+Ctrl/⌘+Enter send. On an on-screen keyboard Return breaks the line, Shift
+or not, and the button sends (Ctrl/⌘+Enter still sends from a tablet's
+keyboard). An edit's Save follows the same rule. The send button's hover
+title names the key (`"{label} ({hint})"` with `chordLabel("Shift-Enter")`:
+"Comment (Shift+Enter)", "⇧↩" on a Mac; on an on-screen keyboard
+`chordLabel("Mod-Enter")`, the key that sends there); its accessible name
+is the plain action. While a picker, the "/" menu or the completion is open it takes ↑ ↓
+Enter Tab and Escape first. The field keeps its own undo history (`ownHistory`), so Ctrl/⌘+Z
 stays out of the page's block history; F2 stays with it too. The history
 starts afresh when the field's text is set from outside (emptied on
 sending, put back when a send fails), so an undo never brings back part of
 a sent comment. The field sits in one rounded box (`.commentBox`, which
 takes the focus ring) with the round send button at its right, the chat
-composer's `chatCircleBtn`, as Notion has it: on the text's line while the
-text is one line, at its last line once it wraps. The text is in the
+composer's `chatCircleBtn` at the compact size of a line of text
+(`--ctl-icon-btn-xs`, 24 px, with a 12 px arrow), as Notion has it: on the
+text's line while the text is one line, at its last line once it wraps. The text is in the
 rendered comment's type and grows up to 40vh, then scrolls. The field is focused a frame after
 mounting, since the popover stands hidden until it is placed and a hidden
 field takes no focus. An edit's field has Cancel and Save in a bar under
@@ -758,7 +785,12 @@ has notifications; the iPad's WKWebView has none, and the row says so.
   refetch keeping what reads the same, a new thread and a reply shown once,
   an edit, a delete with the server's tombstone rules, resolve and reopen,
   who may edit and delete, the 9+ badge, the anchor's one line, the thread
-  link, the commented-passage rule and the abandoned Comment highlight.
+  link, the commented-passage rule, the abandoned Comment highlight, which
+  comments a popover draws later and the height of the box standing in for
+  one. `frontend/tests/enterKey.test.mjs`: `sendsOnShiftEnter`, on a
+  keyboard and an on-screen one. `frontend/tests/slashCommands.test.mjs`:
+  the commands a comment's field offers, without a page, a sheet, an
+  upload or an embed.
   `frontend/tests/selectionTip.test.mjs`: the selection popup's anchor from
   the release point, and its placement from it. `frontend/tests/refLists.test.mjs`: the typed `[[query`, a picked
 row's edit and the hand-typed title's. `frontend/tests/inboxText.test.mjs`: the sentence of each kind, the
@@ -781,8 +813,14 @@ row's edit and the hand-typed title's. `frontend/tests/inboxText.test.mjs`: the 
   picker, Escape closing only the picker, the picked page a chip in the
   field and its title in the sent comment, "@" and a name picking a person
   whose chip shows, `$\sqrt{x` showing the live preview while the caret is
-  inside, Shift+Enter breaking the line and Enter sending, the sent comment
-  showing KaTeX; the viewer commenting
+  inside, Enter breaking the line and Shift+Enter sending, the sent comment
+  showing KaTeX; the "/" menu offering the commands that write text and
+  none of New page, Handwritten note, Image and Embed note, Escape closing
+  only the menu, `/h2` and Enter making a heading, a bulleted list
+  continuing on Enter, the Equation block's `$$` with the live preview, the
+  sent comment showing an h2, the list and KaTeX, and the send button a
+  24 px circle with a 12 px arrow on the text's line, titled "Comment
+  (Shift+Enter)" and "Send reply (Shift+Enter)"; the viewer commenting
   from a read-only row; the visitor reading with "Sign in to comment";
   `?thread=` opening the thread; a note thread's Copy link in a folder
   share, opened, showing the thread; a highlight's thread from its menu and
@@ -790,7 +828,7 @@ row's edit and the hand-typed title's. `frontend/tests/inboxText.test.mjs`: the 
   bringing up the notes with the note under the popover; a mouse selection's
   popup opening in place within 40px of the release point, its colours, the
   line and then Comment and Link; Comment making a highlight with its
-  popover and the field focused, the comment sent with Enter, and the
+  popover and the field focused, the comment sent with Shift+Enter, and the
   highlight's rects drawn with the 2px line of its colour; a second Comment
   left with Escape leaving no highlight. `tests/e2e/select.mjs` runs it for `frontend/src/comments/`
   (with `collab` and `inbox`), the editor and the PDF viewer,

@@ -40,9 +40,10 @@ import { blockStartInSource, gapInSource, renderedGaps, sourceOffsetAtPoint } fr
 import { highlightCode, makeCopyButton } from "./codeHighlight";
 import { fenceInnerAt } from "./fences.js";
 import { enterPlan, pastePlacements, quoteMarksAt } from "./mdLines.js";
-import { filterSlashCommands, SlashMenuPopup } from "./SlashMenu";
+import { SlashMenuPopup } from "./SlashMenu";
 import { RefPickerPopup } from "./RefPicker";
 import { useRefPicker } from "./useRefPicker.js";
+import { useSlashMenu } from "./useSlashMenu.js";
 import { mentionMarkdown } from "./mentions.js";
 import { useMentionMenu } from "./useMentionMenu.js";
 import { MentionChip, MentionContext, MentionMenuPopup } from "./MentionMenu";
@@ -922,10 +923,47 @@ const BlockRow = React.memo(function BlockRow({
   });
   // Live LaTeX aids (preview + \command autocomplete) — the shared hook.
   const { mathUi, setMathUi, mathAcIdx, updateMathUi, acceptCompletion, acKey, tabJumpKey } = useMathUi();
-  // "/" command menu: { start, query, items, anchor }. Opened only by TYPING
-  // the slash (caret moves just keep or close it), suppressed inside math.
-  const [slashMenu, setSlashMenu] = useState(null);
-  const [slashIdx, setSlashIdx] = useState(0);
+  // "/" command menu (useSlashMenu.js): every command a note can run; the
+  // text goes in through the row's own text path, the caret a frame later.
+  const slash = useSlashMenu({
+    editorRef: ref, refPicker,
+    can: { newPage: !!onNewPage, sheet: !!onInsertSheet, image: true, embed: true },
+    setText: (newVal, selStart, selEnd) => {
+      const ta = ref.current;
+      onChangeText(block.id, newVal);
+      requestAnimationFrame(() => {
+        try { ta.setSelectionRange(selStart, selEnd ?? selStart); } catch (_) {}
+        ta.focus();
+        updateMathUi(ta, false);
+      });
+    },
+    onRun: (c, value, start) => { if (c.name === "table") noteTableMade(block.id, value, start); },
+    actions: (value, start, cursor) => ({
+      // "/note": the block becomes a sheet of paper when nothing else is in
+      // it, else a sheet goes in after it (App's onInsertSheet).
+      insertSheet: () => onInsertSheet(block.id, value.slice(0, start) + value.slice(cursor)),
+      // "/page": its [[link]] is in the text already. The chip knows its
+      // label before the page exists (an unknown id would be asked about,
+      // and called missing); App's onNewPage makes the page and opens it.
+      newPage: (id) => {
+        onCacheRef?.(id, { content: t("Untitled"), page_title: t("Untitled") });
+        onNewPage(id, block.id);
+      },
+      // The file dialog blurs the editor (which exits edit mode), so the
+      // upload appends to the value captured here, with "/image" removed.
+      pickImage: () => {
+        const base = value.slice(0, start) + value.slice(cursor);
+        const inp = document.createElement("input");
+        inp.type = "file";
+        inp.accept = "image/*";
+        inp.onchange = async () => {
+          const url = await uploadImage(inp.files?.[0]);
+          if (url) onChangeText(block.id, (base ? base + "\n" : "") + `![](${url})`);
+        };
+        inp.click();
+      },
+    }),
+  });
   // "@" mention menu (useMentionMenu.js): a picked reminder wakes the
   // reminders, "Invite…" opens the Share popover — inside the key press or
   // click, the gesture a notification prompt needs.
@@ -957,80 +995,12 @@ const BlockRow = React.memo(function BlockRow({
 
   function acceptLatexAc(c) { acceptCompletion(ref.current, c); }
 
-  // "/" trigger: a slash starting a word, with the query typed so far after
-  // it. Recomputed on edits (typing=true, may open) and caret moves
-  // (typing=false, only keeps an already-open menu on the same trigger).
-  function updateSlashMenu(ta, typing) {
-    const cursor = ta.selectionStart;
-    if (cursor !== ta.selectionEnd) { setSlashMenu(null); return; }
-    const m = ta.value.slice(0, cursor).match(/(?:^|\s)\/([a-zA-Z0-9-]*)$/);
-    if (!m || findMathAtCursor(ta.value, cursor) || fenceInnerAt(ta.value, cursor)) { setSlashMenu(null); return; }
-    const start = cursor - m[1].length - 1;
-    const items = filterSlashCommands(m[1], { newPage: !!onNewPage, sheet: !!onInsertSheet });
-    if (!items.length) { setSlashMenu(null); return; }
-    const anchor = ta.caretCoords(start);
-    setSlashMenu((prev) => {
-      if (!typing && prev?.start !== start) return null;
-      return { start, query: m[1], items, anchor };
-    });
-    if (typing) setSlashIdx(0);
-  }
-
   // What a block command runs with (blockCommands.js): the row's keydown
   // dispatches with it, and the editing bar builds one per press.
   const commandContext = () => ({
     block, tree: getTree?.(), view, folded: collapsed, readOnly, editor: ref.current,
     row: { onHop, onMoveBlock, onDuplicate, onDelete, onEnterSibling, onIndent, onOutdent, onToggle, onAddToChat, onMoveToPage, onComment },
   });
-
-  function runSlashCommand(c) {
-    const ta = ref.current;
-    if (!ta || !slashMenu) return;
-    const start = slashMenu.start;
-    const value = ta.value;
-    const cursor = ta.selectionStart;
-    setSlashMenu(null);
-    if (c.name === "table") noteTableMade(block.id, value, start);
-    c.run({
-      value,
-      start,
-      cursor,
-      setText: (newVal, selStart, selEnd) => {
-        onChangeText(block.id, newVal);
-        requestAnimationFrame(() => {
-          try { ta.setSelectionRange(selStart, selEnd ?? selStart); } catch (_) {}
-          ta.focus();
-          updateMathUi(ta, false);
-        });
-      },
-      openRefPopup: () => {
-        requestAnimationFrame(() => refPicker.open(ta.caretCoords(Math.max(0, ta.selectionStart - 2))));
-      },
-      // "/note": the block becomes a sheet of paper when nothing else is in
-      // it, else a sheet goes in after it (App's onInsertSheet).
-      insertSheet: () => onInsertSheet(block.id, value.slice(0, start) + value.slice(cursor)),
-      // "/page": its [[link]] is in the text already. The chip knows its
-      // label before the page exists (an unknown id would be asked about,
-      // and called missing); App's onNewPage makes the page and opens it.
-      newPage: (id) => {
-        onCacheRef?.(id, { content: t("Untitled"), page_title: t("Untitled") });
-        onNewPage(id, block.id);
-      },
-      // The file dialog blurs the editor (which exits edit mode), so the
-      // upload appends to the value captured here, with "/image" removed.
-      pickImage: () => {
-        const base = value.slice(0, start) + value.slice(cursor);
-        const inp = document.createElement("input");
-        inp.type = "file";
-        inp.accept = "image/*";
-        inp.onchange = async () => {
-          const url = await uploadImage(inp.files?.[0]);
-          if (url) onChangeText(block.id, (base ? base + "\n" : "") + `![](${url})`);
-        };
-        inp.click();
-      },
-    });
-  }
 
   useEffect(() => {
     registerRef(block.id, ref);
@@ -1581,19 +1551,19 @@ const BlockRow = React.memo(function BlockRow({
                 onCaret?.(block.id, e.target.selectionStart, e.target.selectionEnd);
                 refPicker.onEdit(e);
                 updateMathUi(e.target, true);
-                updateSlashMenu(e.target, true);
+                slash.update(e.target, true);
                 atPicker.update(e.target, true);
                 setPasteMenu(null);
               }}
               onSelect={(e) => {
                 onCaret?.(block.id, e.target.selectionStart, e.target.selectionEnd);
-                updateMathUi(e.target, false); updateSlashMenu(e.target, false); atPicker.update(e.target, false);
+                updateMathUi(e.target, false); slash.update(e.target, false); atPicker.update(e.target, false);
                 setPasteMenu(null);
               }}
               onBlur={() => {
                 onStartEdit(block.id, false);
                 setMathUi(null);
-                setSlashMenu(null);
+                slash.close();
                 atPicker.close();
                 setPasteMenu(null);
                 setTimeout(refPicker.close, 120);
@@ -1609,13 +1579,7 @@ const BlockRow = React.memo(function BlockRow({
                   if (e.key === "Escape") { e.preventDefault(); setPasteMenu(null); return; }
                 }
                 if (refPicker.keyDown(e)) return;
-                if (slashMenu) {
-                  const n = slashMenu.items.length;
-                  if (e.key === "ArrowDown") { e.preventDefault(); setSlashIdx((i) => Math.min(i + 1, n - 1)); return; }
-                  if (e.key === "ArrowUp") { e.preventDefault(); setSlashIdx((i) => Math.max(i - 1, 0)); return; }
-                  if (e.key === "Enter" || e.key === "Tab") { e.preventDefault(); runSlashCommand(slashMenu.items[slashIdx]); return; }
-                  if (e.key === "Escape") { e.preventDefault(); setSlashMenu(null); return; }
-                }
+                if (slash.keyDown(e)) return;
                 if (atPicker.keyDown(e)) return;
                 // The \command completion's keys (useMathUi.js acKey).
                 if (acKey(e, ref.current)) return;
@@ -1797,9 +1761,8 @@ const BlockRow = React.memo(function BlockRow({
         </>
       ) : null}
       {!readOnly && editing ? <EditBar context={commandContext} onUndo={onUndo} /> : null}
-      {!readOnly && editing && slashMenu ? (
-        <SlashMenuPopup items={slashMenu.items} selected={slashIdx} anchor={slashMenu.anchor} onPick={runSlashCommand}
-          grouped={!slashMenu.query} commands guide="editor.slashMenu" event="slash.opened" />
+      {!readOnly && editing && slash.popup ? (
+        <SlashMenuPopup {...slash.popup} guide="editor.slashMenu" event="slash.opened" />
       ) : null}
       {!readOnly && editing && atPicker.shown ? (
         <MentionMenuPopup rows={atPicker.atMenu.rows} selected={atPicker.selected} anchor={atPicker.atMenu.anchor}

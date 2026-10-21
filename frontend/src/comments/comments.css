@@ -178,11 +178,17 @@
 /* Over the note editor's own size and overflow; the border and the focus
    ring are the box's (app.css), so the field draws none. */
 .commentField.blockEditorCm {
-  min-height: var(--ctl-btn-sm);
+  min-height: var(--ctl-icon-btn-xs);
   max-height: 40vh;
   overflow-y: auto;
 }
-.commentBox .uiBtn.chatCircleBtn.commentSend { align-self: flex-end; }
+/* The send button is the compact circle of a line of text, standing on
+   the field's last line. */
+.commentBox .uiBtn.chatCircleBtn.commentSend {
+  align-self: flex-end;
+  width: var(--ctl-icon-btn-xs);
+  height: var(--ctl-icon-btn-xs);
+}
 .commentField.blockEditorCm .cm-scroller {
   font-size: var(--fs-md);
   line-height: var(--lh-ui);

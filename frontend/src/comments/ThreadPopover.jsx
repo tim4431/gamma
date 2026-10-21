@@ -7,8 +7,9 @@
 // (shared/ui/lazy.jsx). It is placed from its measured size before it is
 // painted (shared/ui/placement.js) and follows its anchor as the page
 // scrolls; one capture-phase pointerdown outside it closes it, but not one
-// in a menu or popup it opened.
-import React, { useCallback, useEffect, useRef, useState } from "react";
+// in a menu or popup it opened. Past its first screens of text, a comment
+// is drawn as it nears the view (comments.js laterComments).
+import React, { startTransition, useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useFloatingPosition, placeFloating } from "../shared/ui/placement.js";
 import { ContextMenu, MenuButton, MenuItem } from "../shared/ui/Menus";
@@ -19,7 +20,7 @@ import { fmtDate, t, tn, T } from "../shared/i18n/i18n.js";
 import { formatRelativeTime } from "../library/libraryUtils";
 import { touchTyping } from "../shared/lib/pointer.js";
 import { CommentComposer, hasDraft } from "./CommentComposer";
-import { canDeleteComment, canEditComment, isEdited, isOpen, popoverThreads } from "./comments.js";
+import { canDeleteComment, canEditComment, estimatedLines, isEdited, isOpen, laterComments, popoverThreads } from "./comments.js";
 
 const TITLES = {
   note: T("Comments on this note"),
@@ -35,9 +36,40 @@ function anchorRect(target) {
   return el ? el.getBoundingClientRect() : null;
 }
 
+// A comment's text, rendered as a note is. One the popover put off
+// (`later`) is drawn once it comes within a screen of the popover's view,
+// in a transition, so scrolling stays smooth; until then a box of about its
+// height stands in.
+function CommentText({ comment, later, labelsFor, onBlockRefClick }) {
+  const ref = useRef(null);
+  const [near, setNear] = useState(!later);
+  useEffect(() => {
+    if (near) return undefined;
+    const el = ref.current;
+    const io = new IntersectionObserver((entries) => {
+      if (!entries.some((e) => e.isIntersecting)) return;
+      io.disconnect();
+      startTransition(() => setNear(true));
+    }, { root: el.closest(".commentPopBody"), rootMargin: "100% 0px" });
+    io.observe(el);
+    return () => io.disconnect();
+  }, [near]);
+  if (!near) {
+    return <div ref={ref} className="blockRendered commentBody" aria-busy="true"
+      style={{ minHeight: `calc(${estimatedLines(comment.body)}em * var(--lh-ui))` }} />;
+  }
+  return (
+    <div className="blockRendered commentBody">
+      <BlockMarkdown content={comment.body} blockId={`comment:${comment.id}`} refLabels={labelsFor(comment.body)}
+        onBlockRefClick={onBlockRefClick} />
+    </div>
+  );
+}
+
 // `resolve`, on a thread's first comment only: {open, onClick}, the
-// Resolve (or Reopen) button on its author line, beside the "⋯".
-function Comment({ comment, me, owner, canComment, people, labelsFor, field, onBlockRefClick, onEdit, onDelete, onCopyLink, resolve = null }) {
+// Resolve (or Reopen) button on its author line, beside the "⋯". `later`:
+// the ids of the comments drawn as they near the view.
+function Comment({ comment, me, owner, canComment, people, labelsFor, later, field, onBlockRefClick, onEdit, onDelete, onCopyLink, resolve = null }) {
   const [menu, setMenu] = useState(null);
   const [editing, setEditing] = useState(() => hasDraft(`edit:${comment.id}`)); // an edit left unsaved
   const mayEdit = canComment && canEditComment(comment, me);
@@ -72,10 +104,7 @@ function Comment({ comment, me, owner, canComment, people, labelsFor, field, onB
         ) : comment.deleted ? (
           <div className="commentDeleted">{t("Comment deleted")}</div>
         ) : (
-          <div className="blockRendered commentBody">
-            <BlockMarkdown content={comment.body} blockId={`comment:${comment.id}`} refLabels={labelsFor(comment.body)}
-              onBlockRefClick={onBlockRefClick} />
-          </div>
+          <CommentText comment={comment} later={later.has(comment.id)} labelsFor={labelsFor} onBlockRefClick={onBlockRefClick} />
         )}
       </div>
       {menu ? (
@@ -131,6 +160,9 @@ export default function ThreadPopover({ target, threads, kind = "note", me, owne
   const shown = popoverThreads(threads, { focus: target.threadId, withResolved });
   const resolvedCount = (threads || []).filter((th) => !isOpen(th)).length;
   const hiddenResolved = (threads || []).filter((th) => !isOpen(th) && !shown.includes(th)).length;
+  // The comments shown at opening past its first screens of text, which are
+  // drawn as they near the view; one written or shown since is drawn at once.
+  const [later] = useState(() => laterComments(shown, { focus: target.threadId }));
   // App keys the popover by its block: another block's is a fresh one. A
   // new request on this block to write (the handle menu's Comment,
   // Mod-Shift-M) opens "New comment" and puts the focus in it.
@@ -163,7 +195,7 @@ export default function ThreadPopover({ target, threads, kind = "note", me, owne
   }, [target.blockId, target.anchor], { follow: true });
 
   // A press anywhere else closes it; not one in a menu, a popup or another
-  // popover (its own "⋯" menu, a field's [[ and @ pickers, its LaTeX
+  // popover (its own "⋯" menu, a field's [[, @ and "/" menus, its LaTeX
   // preview and completion), nor on its anchor, which toggles.
   const closeRef = useRef(onClose);
   closeRef.current = onClose;
@@ -171,7 +203,7 @@ export default function ThreadPopover({ target, threads, kind = "note", me, owne
     const down = (e) => {
       const el = e.target;
       if (ref.current?.contains(el)) return;
-      if (el.closest?.("[data-popover], .ctxMenu, .refPopup, .mathPreviewTip, .latexAcPopup")) return;
+      if (el.closest?.("[data-popover], .ctxMenu, .refPopup, .slashMenu, .mathPreviewTip, .latexAcPopup")) return;
       if (target.anchor?.contains(el)) return;
       closeRef.current(false);
     };
@@ -183,7 +215,7 @@ export default function ThreadPopover({ target, threads, kind = "note", me, owne
   // What every comment field takes besides its own props.
   const field = { blockId: target.blockId, links, labelsFor };
   const common = {
-    me, owner, people, labelsFor, field, onBlockRefClick: refClick, onEdit, onDelete, onCopyLink, onEscape: escape,
+    me, owner, people, labelsFor, later, field, onBlockRefClick: refClick, onEdit, onDelete, onCopyLink, onEscape: escape,
   };
   return createPortal(
     <div

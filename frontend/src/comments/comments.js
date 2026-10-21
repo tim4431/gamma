@@ -60,6 +60,47 @@ export function popoverThreads(blockThreads, { focus = "", withResolved = false 
   return (blockThreads || []).filter((th) => isOpen(th) || withResolved || th.id === focus);
 }
 
+// How much text a popover draws at once, from its top (laterComments).
+export const EAGER_TEXT = 2000;
+// What a $$…$$ equation counts for beside its characters: it stands on
+// lines of its own.
+const DISPLAY_WEIGHT = 100;
+const displayCount = (body) => Math.floor(((body || "").match(/\$\$/g) || []).length / 2);
+
+// The comments of `threads` (the popover's, in its order) that it draws
+// later, as each nears its view (ThreadPopover.jsx): those past the first
+// `budget` characters of text, a display equation counting DISPLAY_WEIGHT
+// more. The text is counted from where the popover opens: from the top, or
+// from the `focus` thread it scrolls to (a deep link, an Inbox jump), then
+// the threads below it, then those above it, the nearest first. A thread of
+// many long comments full of math would otherwise build every equation
+// before the popover shows.
+export function laterComments(threads, { focus = "", budget = EAGER_TEXT } = {}) {
+  const list = threads || [];
+  const at = Math.max(0, list.findIndex((th) => th.id === focus));
+  const order = [
+    ...list.slice(at).map((th) => th.comments),
+    ...list.slice(0, at).reverse().map((th) => [...th.comments].reverse()),
+  ];
+  const later = new Set();
+  let left = budget;
+  for (const comments of order) {
+    for (const comment of comments) {
+      if (left <= 0) later.add(comment.id);
+      left -= (comment.body || "").length + DISPLAY_WEIGHT * displayCount(comment.body);
+    }
+  }
+  return later;
+}
+
+// About how many lines a comment's text takes in the popover, for the box
+// that stands in for it until it is drawn: its lines, wrapped at about 45
+// characters, and two more for each display equation.
+export function estimatedLines(body) {
+  const lines = (body || "").split("\n").reduce((n, line) => n + Math.max(1, Math.ceil(line.length / 45)), 0);
+  return lines + 2 * displayCount(body);
+}
+
 // `next` with each thread that reads the same as one in `prev` replaced by
 // that one, so a refetch that changed nothing keeps every thread's identity
 // (and the folded maps their entries: keepIfSame upstream).

@@ -279,7 +279,7 @@ Comments are a conversation about a note, a highlight or a page. They sit beside
 - **On a passage of the PDF**: select it and click the speech bubble after the colors. The passage is highlighted and the comment field opens beside it; close it without sending and the highlight goes again. A passage with comments and no note is underlined in its color.
 - **On a highlight**: right-click it in the PDF and choose **Comment**. A badge in the accent color then marks it on the page; click the badge to read the comments.
 - **On the page**: the speech bubble beside the title.
-- **Write** in the field under a thread: `@` mentions someone, and Enter sends as in the chat. **Resolve** a thread once it is settled and **Reopen** it later. The **⋯** on a comment edits or deletes your own, and **Copy link** gives a link that opens the page at that thread.
+- **Write** in the field under a thread. It is a note's editor: `@` mentions someone, `[[` links a page or note, `$…$` writes math, and `/` opens the command menu with the commands that write text (headings, lists, to-dos, quotes, callouts, equations, tables, code, diagrams, the date, colors). **Enter** breaks the line, continuing a list as in a note, and **Shift+Enter** (or Ctrl+Enter) sends; the send button's hint names the key. On an on-screen keyboard Return breaks the line and the button sends. **Resolve** a thread once it is settled and **Reopen** it later. The **⋯** on a comment edits or deletes your own, and **Copy link** gives a link that opens the page at that thread.
 - **View → Comments** opens the Comments window: the page's threads, **Open** or **Resolved**, the latest first. A click goes to the thread. On a phone it is under **More**.
 - **Who can comment**: anyone signed in who can open the page, viewers too, and people a share link lets in. Without an account, a share link shows the comments with **Sign in to comment**.
 - Deleting a note hides its comments, and undoing the delete within seven days brings them back. Backups and Gamma zips keep comments; offline copies, published pages and the other export formats leave them out.
@@ -412,7 +412,7 @@ Account menu → **Settings**, or **Ctrl+,**; the card with your name at the top
 | F2 / Del | Rename / delete the selected page |
 | Ctrl+Z / Ctrl+Y (or Ctrl+Shift+Z) | Undo / redo |
 | Alt+← | Back through link jumps |
-| Enter / Shift+Enter | Line break / new note (swappable); in search: next / previous match; in chat: send / newline |
+| Enter / Shift+Enter | Line break / new note (swappable); in search: next / previous match; in chat: send / newline; in a comment: newline / send |
 | Tab / Shift+Tab | Indent / outdent a note; accept a filter chip; hop `{}` arguments or table cells |
 | ↑ / ↓ | On a note's first / last line: move into the note above / below |
 | ← / → | At the text's edge: collapse / expand the note's children |
@@ -422,7 +422,7 @@ Account menu → **Settings**, or **Ctrl+,**; the card with your name at the top
 | Ctrl+K | Link the selection (URL from the clipboard) |
 | Ctrl+Shift+. | Quote or unquote the selected lines |
 | Ctrl+Shift+M | Comment on the note being edited |
-| `/` · `[[` · `@` | Command menu · page link · in a note, mention a date, person or page; in chat, attach a paper |
+| `/` · `[[` · `@` | Command menu (in a comment, the commands that write text) · page link · in a note or a comment, mention a date, person or page; in chat, attach a paper |
 | Ctrl+wheel | Zoom the PDF at the cursor |
 | Ctrl+drag on the page | Capture a region for the chat, and an optional area highlight |
 | Ctrl+click a highlight | Quote it into the chat |

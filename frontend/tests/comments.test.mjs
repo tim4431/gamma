@@ -5,7 +5,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   abandonedCommentHighlight, addComment, anchorSnippet, canDeleteComment, canEditComment, commentOnlyHighlight, deleteComment,
-  editComment, findComment, foldThreads, isEdited, keepThreads, popoverThreads, resolveThread, shortCount, threadLink, threadsIn,
+  EAGER_TEXT, editComment, estimatedLines, findComment, foldThreads, isEdited, keepThreads, laterComments, popoverThreads, resolveThread, shortCount, threadLink, threadsIn,
   upsertThread,
 } from "../src/comments/comments.js";
 
@@ -171,4 +171,35 @@ test("the selection popup's Comment highlight goes again only when nothing is on
   assert.equal(abandonedCommentHighlight({ id: "h1", hasNote: false }, [resolved]), false, "a thread, even resolved, keeps it");
   assert.equal(abandonedCommentHighlight({ id: "h1", hasNote: true }, []), false, "a note keeps it");
   assert.equal(abandonedCommentHighlight(undefined, []), false, "already gone");
+});
+
+test("a popover draws its first screens of text at once and the rest as they near its view", () => {
+  const long = (id, thread, body) => ({ ...c(id, thread, "ann", "2026-10-02T00:00:00.000000Z"), body });
+  const prose = "x".repeat(900);
+  const threads = [
+    th("t1", "b1", "2026-10-01T00:00:00.000000Z", [long("t1", "t1", prose), long("r1", "t1", prose), long("r2", "t1", prose), long("r3", "t1", "short")]),
+    th("t2", "b1", "2026-10-03T00:00:00.000000Z", [long("t2", "t2", "short")]),
+  ];
+  assert.deepEqual([...laterComments(threads)], ["r3", "t2"], "past the first 2000 characters");
+  assert.deepEqual([...laterComments(threads, { budget: 1000 })], ["r2", "r3", "t2"]);
+  // from the thread it scrolls to: that one, those below it, then those above it, the nearest first
+  assert.deepEqual([...laterComments(threads, { focus: "t2", budget: 1000 })], ["t1"], "counted from the thread it scrolls to");
+  assert.deepEqual([...laterComments(threads, { focus: "t1", budget: 1000 })], ["r2", "r3", "t2"],
+    "a long thread it scrolls to is drawn from its top, the rest as it nears");
+  assert.deepEqual([...laterComments(threads, { focus: "gone" })], ["r3", "t2"], "a thread it does not show counts from the top");
+  assert.equal(laterComments([th("t3", "b1", "2026-10-01T00:00:00.000000Z", [c("t3", "t3", "ann", "2026-10-01T00:00:00.000000Z")])]).size, 0,
+    "a short thread is drawn whole");
+  // a display equation counts for more than its characters
+  const math = "$$\\sum_k k$$ ".repeat(10);
+  assert.ok(math.length < EAGER_TEXT);
+  const mathy = [th("t4", "b1", "2026-10-01T00:00:00.000000Z", [long("t4", "t4", math.repeat(2)), long("r4", "t4", "short")])];
+  assert.deepEqual([...laterComments(mathy)], ["r4"]);
+});
+
+test("the box standing in for a comment is about as tall as its text", () => {
+  assert.equal(estimatedLines("one line"), 1);
+  assert.equal(estimatedLines("one\ntwo\n\nfour"), 4);
+  assert.equal(estimatedLines("y".repeat(100)), 3, "wrapped at about 45 characters");
+  assert.equal(estimatedLines("before $$x^2$$ after"), 3, "two more lines for a display equation");
+  assert.equal(estimatedLines(""), 1);
 });
