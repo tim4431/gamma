@@ -853,9 +853,12 @@ export async function inkScenarios({ server, browser, alice, makePdf, step, unti
     const dialog = await openReadingSettings();
     const row = settingRow;
     for (const name of ["Handwriting", "Reset presets", "Eraser returns to the last tool", "Erases", "Draw and hold", "Scribble to erase",
-      "This device", "Draws with", "Stylus draws right away", "Pressure-sensitive strokes", "Undo with fingers"]) {
+      "This device", "Draws with", "Stylus draws right away", "Pressure-sensitive strokes", "Undo with fingers", "Hover preview"]) {
       assert(await row(name).count(), `the row "${name}" is in Reading & editing`);
     }
+    // the Apple Pencil's gestures and haptics are the iPad app's alone (ipad.mjs shows them under its host)
+    assertEq(await row("Apple Pencil").count(), 0, "no Apple Pencil section in a browser");
+    assertEq(await row("Hover preview").locator("input[type=checkbox]").isChecked(), true, "the hover preview is on by default");
     const scope = (title) => page.locator(`.settingsPane .setSection[data-setting="${title}"] .setScope`).getAttribute("data-scope");
     assertEq(await scope("Handwriting"), "account", "Handwriting follows the account");
     assertEq(await scope("This device"), "browser", "This device stays with the browser");
@@ -1301,6 +1304,45 @@ export async function inkScenarios({ server, browser, alice, makePdf, step, unti
     } finally {
       if (!(await page.locator(".pdfInkSub").count())) await openOptions().catch(() => {});
       if (await page.locator(".pdfInkSub .inkStyleBtn").count()) await pickStyle("Pen").catch(() => {});
+      if (await page.locator(".pdfInkSub").count()) await page.locator(".pdfInkBar .inkToolBtn.modeActive").click().catch(() => {});
+      await presetsPushed();
+    }
+    assertNoProblems(page);
+  });
+
+  await step("ink: the hover footprint dashes a dashed preset's ring; with Hover preview off every pen shows a plain ring", async () => {
+    await openStrip();
+    await page.keyboard.press("1");
+    // a pen hovering over the page (no buttons): the footprint as it is drawn
+    const hover = () => page.locator('[data-page="1"]').evaluate((el) => {
+      const box = el.getBoundingClientRect();
+      el.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, pointerType: "pen", pointerId: 96, buttons: 0,
+        clientX: box.left + 320, clientY: box.top + 620 }));
+      const c = el.querySelector(".inkCursor");
+      return { brush: c.dataset.brush ?? null, dash: c.dataset.dash ?? null, border: getComputedStyle(c).borderTopStyle };
+    });
+    try {
+      await openOptions();
+      await pickStyle("Brush");
+      await lineRow().getByRole("button", { name: "Dotted", exact: true }).click();
+      await page.locator(".pdfInkBar .inkToolBtn.modeActive").click();   // closes the row
+      assertEq(JSON.stringify(await hover()), JSON.stringify({ brush: "brush", dash: "dotted", border: "dotted" }), "a dotted brush pen's teardrop");
+      const dialog = await openReadingSettings();
+      await settingRow("Hover preview").locator("input[type=checkbox]").uncheck();
+      assertEq(await page.evaluate(() => localStorage.getItem("gamma-ink-hover-preview")), "0", "a browser preference");
+      await closeSettings(dialog);
+      assertEq(JSON.stringify(await hover()), JSON.stringify({ brush: null, dash: null, border: "solid" }), "the plain ring");
+    } finally {
+      const dialog = await openReadingSettings().catch(() => null);
+      if (dialog) {
+        await settingRow("Hover preview").locator("input[type=checkbox]").check().catch(() => {});
+        await closeSettings(dialog).catch(() => {});
+      }
+      if (!(await page.locator(".pdfInkSub").count())) await openOptions().catch(() => {});
+      if (await page.locator(".pdfInkSub .inkStyleBtn").count()) {
+        await pickStyle("Pen").catch(() => {});
+        await lineRow().getByRole("button", { name: "Solid", exact: true }).click().catch(() => {});
+      }
       if (await page.locator(".pdfInkSub").count()) await page.locator(".pdfInkBar .inkToolBtn.modeActive").click().catch(() => {});
       await presetsPushed();
     }

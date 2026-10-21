@@ -251,6 +251,12 @@ targets:
     platform: iOS
     sources:
       - path: GammaIPadTests
+      # The shared ink fixtures the Swift ports are held to (InkWidthTests,
+      # HeldShapeTests), the files the web's and the server's tests read.
+      - path: ../tests/shared/inkwidth.json
+        buildPhase: resources
+      - path: ../tests/shared/inkhold.json
+        buildPhase: resources
     dependencies:
       - target: GammaIPad
     settings:

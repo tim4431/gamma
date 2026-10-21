@@ -19,6 +19,7 @@ import { DEFAULT_PICTURE_BUDGET, MAX_PICTURE_BUDGET } from "../chat/chatPictures
 import { PERMISSION_KEYS, defaultPerm, normalizePerm } from "../chat/chatSettings.js";
 import { normalizeTourProgress } from "../guide/triggers.js";
 import { DEFAULT_TOOLS, normalizeTools } from "../ink/ink.js";
+import { PENCIL_CHOICES, SQUEEZE_HOLDS } from "../ink/pencilActions.js";
 import { textStyle } from "../markup/textBox.js";
 import { LANGUAGES } from "../shared/i18n/locales.js";
 import { normalizeChord } from "../shared/lib/hotkeys.js";
@@ -344,6 +345,18 @@ export const PREFS = {
   // single chord, a double one, or nothing; on by default where a finger is
   // the primary pointer, since a mouse has Ctrl+Z.
   inkFingerUndo: pref("gamma-ink-finger-undo", BROWSER, COARSE ? "double" : "off", oneOf(["off", "tap", "double"])),
+  // The hover footprint shows the armed preset's look (its brush, its dash,
+  // a pencil's lean), else a plain ring at its width.
+  inkHoverPreview: flag("gamma-ink-hover-preview", BROWSER, true),
+  // In the iPad app (Settings → Reading & editing › Apple Pencil, shown
+  // under its host): what the Pencil's double tap and squeeze do
+  // (ink/pencilActions.js) — the system's preferred action by default, else
+  // one of the strip's own; the squeeze also has a tool armed only while it
+  // is held — and whether a snap, a lasso's selection and a gesture's tool
+  // switch tick in an Apple Pencil Pro.
+  inkPencilTap: pref("gamma-ink-pencil-tap", BROWSER, "system", oneOf(PENCIL_CHOICES)),
+  inkPencilSqueeze: pref("gamma-ink-pencil-squeeze", BROWSER, "system", oneOf([...PENCIL_CHOICES, ...SQUEEZE_HOLDS])),
+  inkHaptics: flag("gamma-ink-haptics", BROWSER, true),
   // The handwriting habits that follow the account (Settings → Reading &
   // editing › Handwriting): a stroke held still at its end snaps to a line
   // or a shape (ink/shapes.js); a fast back-and-forth with the pen erases

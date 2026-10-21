@@ -91,7 +91,7 @@ export const RULES = [
   ["frontend/src/editor/MentionMenu.jsx", ["note-mentions", "notes-pdf-share"]],
   ["frontend/src/editor/**", ["notes-pdf-share", "diagrams", "files", "collab", "transfers", "mcp", "guide", "triggered-guide", "textbox", "touch"]],
   ["frontend/src/chat/**", CHAT],
-  ["frontend/src/settings/**", ["settings", "i18n", "mirror", "cloud-sign-in", "mcp", "publish", "triggered-guide"]],
+  ["frontend/src/settings/**", ["settings", "i18n", "mirror", "cloud-sign-in", "mcp", "publish", "triggered-guide", "ipad"]], // ipad: Apple Pencil, under its host
   ["frontend/src/collaboration/MirrorPopover.jsx", ["mirror", "publish"]],
   ["frontend/src/collaboration/MergeResolver.jsx", ["mirror"]],
   ["frontend/src/collaboration/**", ALL], // the page's live session carries every edit

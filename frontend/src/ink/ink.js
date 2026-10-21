@@ -675,12 +675,14 @@ export function flipStrokes(ink, ids, { cx, cy, axis }) {
 // of a rectangle, a polygon or an ellipse (0) on a turn. A record of
 // a kind this build does not know goes (undefined): its params may be
 // geometry it cannot carry, and stale ones would rebuild the wrong `pts`.
+// Also how a held shape crosses between page points and the iPad host's
+// viewport css px (hostInk.js shapeToHost, shapeFromHost).
 const SHAPE_RECORDS = new Set(["line", "arrow", "triangle", "rect", "polygon", "circle", "ellipse", "curve"]);
 const SHAPE_LENGTHS = ["w", "h", "r", "rx", "ry", "head"];
 const SHAPE_TURNED = new Set(["rect", "polygon", "ellipse"]);
 const mod = (a, m) => ((a % m) + m) % m;
 const onGrid = (v) => Math.round(v * 100) / 100 || 0;
-function mapShape(shape, { point, scale = 1, turn = null }) {
+export function mapShape(shape, { point, scale = 1, turn = null }) {
   if (!SHAPE_RECORDS.has(shape?.kind)) return undefined;
   const p = shape.params;
   if (!p || typeof p !== "object") return shape;

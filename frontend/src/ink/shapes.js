@@ -1,12 +1,26 @@
 // The draw-and-hold recogniser (docs/dev/handwriting.md "Draw and hold" and
 // "Client"): a stroke held still at its end becomes a line, an arrow, a
 // triangle, a rectangle, a regular polygon, a circle or an ellipse. Pure,
-// over decoded page-pt samples; InkLayer asks it when its hold timer fires,
-// finishStroke commits its answer through `shapeSamples`, and a continued
-// hold refits the snap through `refitShape`. Corners come from ShortStraw
-// (Wolin, Eoff, Hammond 2008), the round shapes from the central moments
-// (Xournal++'s circle recogniser). Fixture: tests/shared/inkshapes.json.
+// over decoded page-pt samples; InkLayer asks it when its hold timer fires
+// (or the iPad host's `hold` comes), finishStroke commits its answer through
+// `shapeSamples`, and a continued hold refits the snap through `refitShape`
+// (under the host, by `followHold`, the rule its shell runs too). Corners
+// come from ShortStraw (Wolin, Eoff, Hammond 2008), the round shapes from
+// the central moments (Xournal++'s circle recogniser). Fixtures:
+// tests/shared/inkshapes.json, and inkhold.json for the hold's own rules.
 import { t } from "../shared/i18n/i18n.js";
+
+// Draw and hold's numbers, one table for the layer and the iPad host, whose
+// Swift constants mirror it (docs/dev/ipad.md "The pen"): the tip still for
+// HOLD_MS fires the recogniser, the timer starting again whenever the tip
+// lands more than HOLD_MOVE css px from where it last started, and only
+// once the stroke had lasted HOLD_MIN_MS by then; held on, a tip REFIT_PX
+// css px from where it snapped refits the shape, and one more than
+// CANCEL_PX from it within CANCEL_MS of the snap drops it, so a stroke that
+// merely paused goes on freehand. The same timer, armed at the down while
+// the clipboard holds strokes, opens "Paste here" if the tip has not
+// travelled PASTE_MOVE css px by then.
+export const HOLD_MS = 600, HOLD_MOVE = 3, HOLD_MIN_MS = 250, REFIT_PX = 6, CANCEL_PX = 12, CANCEL_MS = 150, PASTE_MOVE = 2;
 
 // Thresholds. Those in css px divide by k; the rest are points or ratios.
 const MIN_EXTENT_PX = 24;        // a stroke smaller than this on screen …
@@ -509,6 +523,44 @@ export function refitShape(kind, params, { pointer, from, shift = false }) {
   if (kind === "circle") return rounded({ cx: params.cx, cy: params.cy, r: params.r * s });
   if (kind === "ellipse") return rounded(normaliseEllipse({ cx: params.cx, cy: params.cy, rx: params.rx * s, ry: params.ry * s, angle: (params.angle || 0) + deg }));
   return params;
+}
+
+// --- the iPad host's hold ---------------------------------------------------------
+// The shell owns the Pencil, so it keeps the hold's timer itself and sends
+// the samples so far when it fires (docs/dev/ipad.md "The pen"); these two
+// rules are the ones its Swift side runs over the same samples
+// (StrokeRecorder's anchor, ShapeHold), held to tests/shared/inkhold.json.
+// Samples are [{x, y, t}] in the host's viewport css px, t in ms from the
+// first sample.
+
+// The stillness anchor: the index of the latest sample that landed more
+// than HOLD_MOVE from the anchor before it, the first sample to start with.
+// The hold fires HOLD_MS after the anchor's sample.
+export function stillSince(samples) {
+  let anchor = 0;
+  for (let i = 1; i < (samples?.length || 0); i++) {
+    const a = samples[anchor], s = samples[i];
+    if (Math.hypot(s.x - a.x, s.y - a.y) > HOLD_MOVE) anchor = i;
+  }
+  return anchor;
+}
+
+// The shape a hold comes to by the end of `samples` (the whole stroke):
+// `hold` is {kind, params, from: {x, y}, n, tSnap} — the snap's params,
+// the last sample the hold carried, how many it carried, and the anchor's
+// t + HOLD_MS. Of the samples from index n on, one more than CANCEL_PX from
+// `from` while t − tSnap ≤ CANCEL_MS drops the shape (null: the stroke is
+// freehand); once one has been REFIT_PX from `from`, the shape is the snap
+// refit to the last sample (refitShape, no Shift); else it is the snap.
+export function followHold(hold, samples) {
+  const { kind, params, from, n, tSnap } = hold;
+  let refit = false;
+  for (let i = n; i < samples.length; i++) {
+    const s = samples[i], moved = Math.hypot(s.x - from.x, s.y - from.y);
+    if (moved > CANCEL_PX && s.t - tSnap <= CANCEL_MS) return null;
+    if (moved >= REFIT_PX) refit = true;
+  }
+  return refit ? refitShape(kind, params, { pointer: samples[samples.length - 1], from }) : params;
 }
 
 // The kind's name for the "Shape: circle." pill.

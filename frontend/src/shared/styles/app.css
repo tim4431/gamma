@@ -6369,6 +6369,10 @@ a.shareBrand:hover { background: var(--bg-hover); }
 .inkCursor[data-filter="pen"] .inkCursorGlyph-pen, .inkCursor[data-filter="highlighter"] .inkCursorGlyph-highlighter { display: block; }
 /* A brush pen's footprint is a teardrop (a pencil's leaning ellipse is set inline from its tilt). */
 .inkCursor[data-brush="brush"] { border-radius: 50% 50% 50% 0; }
+/* A dashed or dotted preset's ring is dashed or dotted: the dark line carries the pattern, over a light halo. */
+.inkCursor[data-dash] { border-color: #222; box-shadow: 0 0 0 1px #ffffffc0; } /* ds-allow: drawn over the paper like the ring above, not the UI theme */
+.inkCursor[data-dash="dashed"] { border-style: dashed; }
+.inkCursor[data-dash="dotted"] { border-style: dotted; }
 .inkCursor[data-filter] span { display: none; }
 .inkTransformHandle {
   position: absolute; z-index: 7; width: 28px; height: 28px; padding: 5px;

@@ -11,9 +11,13 @@ import { t } from "../shared/i18n/i18n.js";
 // workspace's Manage page or a row's menu — the `target` that is on the pane
 // itself. tests/settingsSearch.test.mjs checks every target against its
 // pane's source. An admin-only section of a pane everyone has (Backups ›
-// Off-site copies) is wrapped in `admin()`.
+// Off-site copies) is wrapped in `admin()`, a setting shown only under a
+// native host with a capability (Reading & editing › Apple Pencil, in the
+// iPad app) in `hostOnly(flags, entry)`, a flag or the list of flags its row
+// is shown under.
 const e = (pane, label, section, hint, keywords, target) => ({ pane, label, section, hint, keywords, target: target || label });
 const admin = (entry) => ({ ...entry, admin: true });
+const hostOnly = (flags, entry) => ({ ...entry, host: [].concat(flags) });
 const entries = [
   e("server", t("Public server URL"), t("Assistant connections"), t("The address assistants use to reach Gamma; HTTPS unless localhost"), "public address HTTPS remote proxy OAuth MCP assistant sign-in"),
   e("appearance", t("Theme"), null, t("System, light, dark and five more"), "dark light gamma amber gold sepia solarized gray system colors"),
@@ -45,6 +49,11 @@ const entries = [
   e("reading", t("Stylus draws right away"), t("This device"), t("Without opening the tools first"), "handwriting pen ink"),
   e("reading", t("Pressure-sensitive strokes"), t("This device"), t("Pen strokes thicken with pressure"), "handwriting pen ink width"),
   e("reading", t("Undo with fingers"), t("This device"), t("Two fingers undo, three redo"), "handwriting undo redo two three finger tap double tap gesture touch ink"),
+  e("reading", t("Hover preview"), t("This device"), t("The footprint over the page shows the pen's style"), "handwriting hover cursor footprint ring brush pencil dashed dotted pen ink"),
+  hostOnly("pencil", e("reading", t("Double tap"), t("Apple Pencil"), t("What a double tap on the Pencil does"), "Apple Pencil iPad double tap gesture eraser last previous tool options undo stylus")),
+  hostOnly("pencil", e("reading", t("Squeeze"), t("Apple Pencil"), t("What squeezing Apple Pencil Pro does"), "Apple Pencil Pro iPad squeeze gesture hold eraser last previous tool options undo stylus")),
+  // the row sits in the Apple Pencil section, which shows only under `pencil`
+  hostOnly(["pencil", "haptics"], e("reading", t("Haptics"), t("Apple Pencil"), t("A tick in Apple Pencil Pro when a shape snaps, the lasso selects or the tool changes"), "Apple Pencil Pro iPad haptic feedback vibration tick snap")),
   e("reading", t("Lead-in"), t("Recordings"), t("How far before a written moment a tap plays from"), "audio recording replay seconds before playback tap seek"),
   e("reading", t("Transcribe recordings"), t("Recordings"), t("Write the spoken words under a recording when it ends"), "audio transcript speech to text whisper automatic"),
   e("reading", t("On the home page"), t("Search opens as"), t("Full panel: grouped result lists"), "search panel find bar expand results"),
@@ -126,13 +135,16 @@ export const SETTINGS_SEARCH = entries;
 // Every word of the query must appear in the entry's label, synonyms, hint
 // or section; entries whose label holds every word come first, then the
 // rest, each group in table order. An `admin` entry is offered only while
-// the Server pane is, which the dialog shows to admins alone.
-export function searchSettings(query, allowedPanes) {
+// the Server pane is, which the dialog shows to admins alone; a `hostOnly`
+// one only under a native host (`host`, shared/lib/host.js nativeHost())
+// that has every one of its flags.
+export function searchSettings(query, allowedPanes, { host = null } = {}) {
   const words = query.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean);
   if (!words.length) return [];
   const has = (text) => words.every((word) => text.toLocaleLowerCase().includes(word));
   const isAdmin = allowedPanes.includes("server");
   const found = entries.filter((entry) => allowedPanes.includes(entry.pane) && (!entry.admin || isAdmin)
+    && (!entry.host || entry.host.every((flag) => !!host?.[flag]))
     && has(`${entry.label} ${entry.keywords} ${entry.hint || ""} ${entry.section || ""}`));
   return [...found.filter((entry) => has(entry.label)), ...found.filter((entry) => !has(entry.label))];
 }

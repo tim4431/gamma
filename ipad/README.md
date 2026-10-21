@@ -49,12 +49,15 @@ There are three parts:
 | `Server/GammaIPad-Bridging-Header.h` | Python's C API for Swift |
 | `Shell/ShellView.swift` | The window: the web view, the live stroke over it, the Pencil layer on their container, a page of its own when the server cannot be reached |
 | `Shell/WebShell.swift` | The one `WKWebView`, set up once: desktop content mode, no bounce, no inset adjustment, no keyboard accessory bar, inspectable in Debug builds, reloaded when the system ends its process; the silent sign-in to the local server |
-| `Shell/Bridge.swift` | The message vocabulary as Codable types, the handler the page posts to, and `send` back. The only file that knows the protocol |
+| `Shell/Bridge.swift` | The message vocabulary as Codable types, the handler the page posts to, and `send` back (`ask` when the shell needs the answer, as for `hold`). The only file that knows the protocol |
 | `Shell/Navigation.swift` | Other sites and `target=_blank` in a Safari view, downloads to the share sheet, the microphone for recordings, the Gamma Cloud start handed to `CloudSignIn` |
 | `Shell/CloudSignIn.swift` | The desktop app's Gamma Cloud sign-in (`app-start`, a loopback return, `app-claim`) through a system browser sheet |
-| `Pencil/PencilCapture.swift` | The recognizer that takes a Pencil touch once the web claims it, and the pure parts it uses (claim matching, sampling) |
-| `Pencil/LiveStrokeView.swift` | The stroke being drawn, as a plain line, until the web has painted it |
-| `Pencil/PencilGestures.swift` | The double tap and the squeeze, forwarded with the system's preferred action |
+| `Pencil/PencilCapture.swift` | The recognizer that takes a Pencil touch once the web claims it, the hold timer, and the pure parts it uses (claim matching, sampling with the tilt and the stillness anchor, when a hold is asked) |
+| `Pencil/LiveStrokeView.swift` | The stroke being drawn, in the claim's look (a ribbon from the force, a dash, a multiplied highlighter, smoothing through the lazy brush) or as the held shape, until the web has painted it |
+| `Pencil/InkWidth.swift` | The brush table of the web's `ink/finishStroke.js`, ported: the width and opacity laws the ribbon is drawn with, held to `tests/shared/inkwidth.json` |
+| `Pencil/HeldShape.swift` | A shape from the web's answer to `hold`: its outline, its refit as the pen moves, and the rule that drops it (`ShapeHold`), held to `tests/shared/inkhold.json` |
+| `Pencil/PencilGestures.swift` | The double tap and the squeeze, with its phases, forwarded with the system's preferred action; where the Pencil hovered for each, for its tick |
+| `Pencil/PencilHaptics.swift` | The web's `haptic`, played as a light impact, in an Apple Pencil Pro from iPadOS 17.5 |
 | `python/gamma_ios.py` | The server's entry on the device: output to the log, then uvicorn on `127.0.0.1` at `GAMMA_PORT` under a supervisor the app can ask to run it again |
 | `python/requirements-ios.txt` | The server's dependencies as the iPad installs them |
 | `scripts/build-python.sh` | Prepares Python, the wheels, the server code and the web app for the bundle (below) |
@@ -159,7 +162,9 @@ changes an iOS wheel needs, each commented there; why each was made is in
   ```
 
   It covers the pure parts (`BridgeTests`, `CloudSignInTests`,
-  `PencilTests`, `ShellTests`, `ServerTests`), and `LocalServerStartTests`
+  `PencilTests`, `InkWidthTests`, `ShellTests`, `ServerTests`; the ink
+  fixtures they read, `tests/shared/inkwidth.json` and `inkhold.json`,
+  are resources of the test bundle), and `LocalServerStartTests`
   starts the embedded server, waits for `/api/health`, then uploads a
   one-page PDF and reads it back through the server, its page picture
   included, which only PyMuPDF can draw: the bundle's MuPDF frameworks

@@ -11,11 +11,18 @@
 //                NORMAL_RESERVE kept for the normal senders.
 // A sender with no other copy claims what it will send at pagehide
 // (registerKeepaliveClaim); a claim is read only when a lower priority asks
-// for room, never on an edit. A request that does not fit its room goes as
-// a plain fetch, which a closing page may cut off but the browser never
-// refuses; one with no body always fits. A request's bytes count until its
-// answer's body is in, as the browser counts them. The core is pure
-// (createKeepaliveLedger over an injected fetch), so
+// for room, once a task however often it asks, never on an edit. A request
+// that does not fit its room goes as a plain fetch, which a closing page may
+// cut off but the browser never refuses; one with no body always fits. A
+// request's bytes count until its answer's body is in, as the browser counts
+// them. A lower priority's request from before can still hold room the
+// edits need once they have grown (a drawing uploading since the tab was
+// last hidden): then the edits go with keepalive and as a plain copy at
+// once (keepaliveFetch). No request is aborted to make room: a browser frees
+// an aborted keepalive request's share a task later (Chromium) or once its
+// answer is in (WebKit), never in the task that needs it, so the request it
+// was freed for would be refused (docs/research/keepalive-abort.md). The
+// core is pure (createKeepaliveLedger over an injected fetch), so
 // tests/keepalive.test.mjs pins the policy; the page's own ledger and its
 // wrappers are at the end.
 
@@ -71,35 +78,71 @@ export function createKeepaliveLedger({ cap = KEEPALIVE_CAP, reserve = NORMAL_RE
   const send = transport || ((url, init) => globalThis.fetch(url, init));
   let inFlight = 0;
   const claims = new Map();   // key → fn() → bytes
-  const claimed = () => {
-    let n = 0;
-    for (const fn of claims.values()) {
+  // Each claim's bytes, read once a task: the page edits' claim serializes
+  // their whole queue, and one flush asks for room once per request. The
+  // reads are forgotten in a microtask, so the next task (an edit typed
+  // since) reads afresh, and at once when a claim is registered or dropped
+  // or a critical request goes (it spends what its sender claimed).
+  let memo = null;   // key → bytes
+  const claimOf = (key, fn) => {
+    if (!memo) {
+      const m = memo = new Map();
+      queueMicrotask(() => { if (memo === m) memo = null; });
+    }
+    if (!memo.has(key)) {
       let bytes = 0;
       try { bytes = fn(); } catch { /* a claim that fails claims nothing */ }
-      if (Number.isFinite(bytes) && bytes > 0) n += bytes;
+      memo.set(key, Number.isFinite(bytes) && bytes > 0 ? bytes : 0);
     }
+    return memo.get(key);
+  };
+  const claimed = () => {
+    let n = 0;
+    for (const [key, fn] of claims) n += claimOf(key, fn);
     return n;
   };
+  let criticalInFlight = 0;   // of inFlight, the critical requests'
   // The body bytes a request of `priority` may carry with keepalive now;
   // never below 0, so a request with no body (a DELETE) always fits: it
   // takes no room, and the browser never refuses it.
   function available(priority = "normal") {
-    const room = cap - inFlight;
-    if (priority === "critical") return room;
-    const rest = room - claimed() - (priority === "low" ? reserve : 0);
-    return Math.max(0, rest);
+    let room = cap - inFlight;
+    if (priority !== "critical") room -= claimed() + (priority === "low" ? reserve : 0);
+    return Math.max(0, room);
   }
-  // fetch(url, init) with keepalive when the body fits the priority's room
-  // (its bytes then count until the answer's body is in, or the request
-  // fails), else as a plain fetch; an init's own `keepalive` is not asked.
-  // → the fetch's promise.
+  // fetch(url, init) with keepalive when the body fits the priority's room,
+  // else as a plain fetch; an init's own `keepalive` is not asked. A
+  // critical request short of room only because lower priorities' requests
+  // hold it goes both ways at once: with keepalive, which a browser leaving
+  // the page for another lets through (a navigation or a reload no longer
+  // counts the page's requests from before) and a closing tab refuses, and
+  // as the plain copy it would be otherwise; its batch id makes the copy
+  // that lands second a replay. → the fetch's promise (the keepalive
+  // copy's, or the plain copy's when that one fails).
   function keepaliveFetch(url, init = {}, { priority = "normal" } = {}) {
+    if (priority === "critical") memo = null;
     const { keepalive: _asked, ...plain } = init || {};
     const bytes = bodyBytes(plain.body, cap);
-    if (!(bytes <= available(priority))) return send(url, plain);
+    if (bytes <= available(priority)) return counted(url, plain, bytes, priority);
+    if (priority !== "critical" || !(bytes <= cap - criticalInFlight)) return send(url, plain);
+    const sent = counted(url, plain, bytes, priority);
+    const copy = Promise.resolve(send(url, plain));
+    copy.catch(() => { /* the keepalive copy's answer stands for it */ });
+    return Promise.resolve(sent).catch(() => copy);
+  }
+  // fetch(url, init) with keepalive, its bytes counted until the answer's
+  // body is in, or the request fails.
+  function counted(url, plain, bytes, priority) {
+    const critical = priority === "critical";
     inFlight += bytes;
+    if (critical) criticalInFlight += bytes;
     let settled = false;
-    const release = () => { if (!settled) { settled = true; inFlight -= bytes; } };
+    const release = () => {
+      if (settled) return;
+      settled = true;
+      inFlight -= bytes;
+      if (critical) criticalInFlight -= bytes;
+    };
     // The browser counts the request until its answer's body is in, a
     // moment after the fetch's promise (the headers): the ledger holds the
     // bytes as long, reading a copy of the answer to its end.
@@ -118,11 +161,15 @@ export function createKeepaliveLedger({ cap = KEEPALIVE_CAP, reserve = NORMAL_RE
   // held off the lower priorities' room. → the unregister function.
   function registerClaim(key, fn) {
     claims.set(key, fn);
-    return () => { if (claims.get(key) === fn) claims.delete(key); };
+    memo = null;
+    return () => { if (claims.get(key) === fn) unregisterClaim(key); };
+  }
+  function unregisterClaim(key) {
+    claims.delete(key);
+    memo = null;
   }
   return {
-    available, fetch: keepaliveFetch, registerClaim,
-    unregisterClaim: (key) => { claims.delete(key); },
+    available, fetch: keepaliveFetch, registerClaim, unregisterClaim,
     get inFlight() { return inFlight; },
   };
 }

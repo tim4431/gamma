@@ -7,22 +7,26 @@ import { createContext, useContext } from "react";
 
 // {readOnly, ink: {tool, penTool, penOnly, pressure, eraserMode, eraserSize,
 // eraserReturn, eraserFilter, drawHold, scribble, fingerUndo, lassoMode,
-// clip, keys}, text: {armed, style}, actions}. ink.tool is the armed tool and
-// ink.penTool what a stylus writes with when nothing is armed; both are null
-// on a read-only page and while the Text tool is armed. eraserReturn,
-// drawHold and scribble are the account's flags, eraserFilter 'all' | 'pen'
-// | 'highlighter' and fingerUndo 'off' | 'tap' | 'double'. ink.clip: the
-// handwriting clipboard holds strokes (a held pen or a right-click may then
-// offer Paste here); ink.keys: {copy, cut, duplicate}, the chord labels the
-// selection menu puts in its titles ("" when unbound). text.armed: the
-// Text tool is armed; text.style: the style of new boxes ({size, color, bg}).
+// clip, keys, hoverPreview}, text: {armed, style}, actions}. ink.tool is the
+// armed tool and ink.penTool what a stylus writes with when nothing is
+// armed; both are null on a read-only page and while the Text tool is
+// armed. eraserReturn, drawHold and scribble are the account's flags,
+// eraserFilter 'all' | 'pen' | 'highlighter', fingerUndo 'off' | 'tap' |
+// 'double' and hoverPreview (the hover footprint in the preset's look) this
+// browser's. ink.clip: the handwriting clipboard holds strokes (a held pen
+// or a right-click may then offer Paste here); ink.keys: {copy, cut,
+// duplicate}, the chord labels the selection menu puts in its titles (""
+// when unbound). text.armed: the Text tool is armed; text.style: the style
+// of new boxes ({size, color, bg}).
 // actions carries the handlers: the ink ones (onStroke, onErase,
 // onErasePartial, onEraseEnd, onEraseMany, onSelect, onAction(page, kind,
 // arg) — style, transform, delete, duplicate, copy, cut, flip {axis},
 // split, merge, select-note, show-note —, onMoveSelection, onPaste(page,
 // pt, {width, height}): the clipboard at a page point, onFingerScroll,
 // onUndoGesture, onHoldStatus, onInkLive(page, msg): a chunk of the
-// stroke in progress for the page's other peers, ink/inkLive.js),
+// stroke in progress for the page's other peers, ink/inkLive.js,
+// onHaptic(kind, at): a held shape or a pen lasso's selection, for the
+// iPad host's haptics),
 // onJump (show a mark's block in the notes) and the text boxes'
 // (markup/useTextBoxes.js) — one object for App's life whose functions call
 // the latest handlers (shared/lib/stableActions.js), so the context value

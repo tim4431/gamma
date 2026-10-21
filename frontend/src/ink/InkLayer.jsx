@@ -18,7 +18,7 @@ import {
   PaletteIcon, PenIcon, PlayIcon, RectSelectIcon, RedoIcon, ResizeIcon, ScissorsIcon, StopIcon, TrashIcon, BrushIcon,
 } from "../shared/ui/Icons";
 import {
-  MAX_STROKE_SIZE, boundsOf, byBand, cachedStrokePath, dashDots, dashPattern, dashRuns, encodeStroke, eraserKeep, hitStrokes,
+  MAX_STROKE_SIZE, boundsOf, byBand, cachedStrokePath, dashDots, dashPattern, dashRuns, encodeStroke, eraserKeep, hitStrokes, isDash,
   inkBounds, inkFeatures, inkUntil, lerpSample, nearestInkStroke, opacityBand, outlineOptions, outlinePressure, runOutline,
   sizesFor, strokeBand, strokeId, strokeMaxWidth, strokePath, strokePlaceholder, strokeWalls, strokesInLasso, svgPathFromPoints,
   transformPoint, unionBox,
@@ -26,7 +26,10 @@ import {
 import { brushOpacities, brushWidths, finishStroke, strokeChannels, widthLaw } from "./finishStroke.js";
 import { GRAIN_PX, GRAIN_UNITS, grainImage, grainUri } from "./grain.js";
 import { InkLineChoices, InkStyleMenu, InkStylePicker, brushValue } from "./InkStylePicker.jsx";
-import { recognise, refitShape, shapeSamples } from "./shapes.js";
+import {
+  CANCEL_MS, CANCEL_PX, HOLD_MIN_MS, HOLD_MOVE, HOLD_MS, PASTE_MOVE, REFIT_PX, followHold, recognise, refitShape, shapeSamples, stillSince,
+} from "./shapes.js";
+import { claimTool, hostEvent, shapeFromHost, shapeToHost } from "./hostInk.js";
 import { makeStabilizer } from "./stabilizer.js";
 import { makeChordDetector } from "./fingerChords.js";
 import { INK_COLORS, colorName, pickerColors, swatchCss } from "../shared/model/palette.js";
@@ -67,34 +70,45 @@ const ABOVE_PASSIVE_INK = "[data-hl-id], .pdfNoteAnchor, .pdfLinkBox, .textBox";
 // Under a native host that captures the Pencil (shared/lib/host.js), a pen
 // stroke is claimed at its down: the host takes the touch and draws the live
 // line itself, then hands the finished samples back, and they commit here as
-// the browser's own stroke would. The claims by pointer id: {commit, taken}.
-// A taken claim always ends with a `stroke` message: the host sends one
-// with no samples when the system cancels the touch.
+// the browser's own stroke would (docs/dev/ipad.md "The pen"). The claims
+// by pointer id: {taken, commit(samples, held), hold(samples), held}. A
+// taken claim always ends with a `stroke` message: the host sends one with
+// no samples when the system cancels the touch, or after the page took a
+// hold; `held` is the `n` of the hold whose shape the host drew.
 const hostClaims = new Map();
 if (nativeHost()?.ink) {
-  onHostMessage("stroke", async ({ pointerId, samples }) => {
+  onHostMessage("stroke", async ({ pointerId, samples, held }) => {
     const claim = hostClaims.get(pointerId);
     hostClaims.delete(pointerId);
     // No samples: the system cancelled the touch, and the claim just ends.
-    const committed = !!claim?.commit(samples || []);
+    const committed = !!claim?.commit(samples || [], held);
     // The reply drops the host's live line: wait for React's commit and a
     // paint, so the stroke never blinks out between the two.
     await new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done)));
     return { committed };
   });
+  // Draw and hold under a host that says when its captured Pencil stays
+  // still: the claim answers from the samples so far, at once ({} for a
+  // pointer it no longer holds). Without `hold` nothing is recognised.
+  if (nativeHost().hold) {
+    onHostMessage("hold", ({ pointerId, samples }) => hostClaims.get(pointerId)?.hold(Array.isArray(samples) ? samples : []) ?? {});
+  }
+}
+// Whether a stroke is in progress anywhere: a layer's pointer drawing (a
+// stroke, an erasure, a lasso, a move) or a claim the host holds. App's
+// Pencil gestures wait for it (pencilActions.js), so a double tap under the
+// moving pen never undoes the stroke before it.
+const busyLayers = new Set();
+export function inkBusy() {
+  if (hostClaims.size) return true;
+  for (const busy of busyLayers) if (busy()) return true;
+  return false;
 }
 // Whether a finger scrolling under an armed tool is still worth explaining
 // (onFingerScroll): once a session, and never once a pen has drawn.
 let fingerHint = true;
-// Draw and hold (shapes.js): the tip still for HOLD_MS fires the recogniser,
-// the timer restarting whenever it moves more than HOLD_MOVE css px, and only
-// once the stroke lasted HOLD_MIN_MS; held on, a move of REFIT_PX refits the
-// shape, and one of more than CANCEL_PX within CANCEL_MS of the snap cancels
-// it, so a stroke that merely paused goes on freehand.
-const HOLD_MS = 600, HOLD_MOVE = 3, HOLD_MIN_MS = 250, REFIT_PX = 6, CANCEL_PX = 12, CANCEL_MS = 150;
-// The same timer, armed at the down when the clipboard holds strokes, opens
-// "Paste here" if the tip has not travelled PASTE_MOVE css px by then.
-const PASTE_MOVE = 2;
+// Draw and hold's timer and slops are shapes.js's (HOLD_MS and the rest),
+// one table for this layer and the iPad host.
 const SNAP_BLUE = "rgb(80, 140, 255)"; // .inkSelRect's stroke
 // Two- and three-finger undo chords (fingerChords.js): one detector for the
 // document — several page layers must never count a contact twice — fed by
@@ -693,11 +707,15 @@ function samplesBox(samples, pad) {
 // onInkLive(page, msg): a chunk of the stroke in progress for the page's
 // other peers (inkLive.js; App sends it on the page socket); their strokes
 // in progress on this surface, the wet strokes, come from inkLive's store.
+// hoverPreview: the hover footprint shows the preset's look (this browser's
+// inkHoverPreview), else a plain ring at its width. onHaptic(kind, at): a
+// pen stroke snapped to a shape ('snap') or a pen lasso selected strokes
+// ('select'), at a point in viewport css px — the iPad host's tick.
 export function InkLayer({ pageNumber, wrapRef, width, height, blocks, tool, penTool, penOnly, pressure, eraserMode,
   eraserSize = 1, eraserFilter = "all", drawHold = false, scribble = false, fingerUndo = "off", lassoMode = "free", selection, flash,
-  clip = false, keys,
+  clip = false, keys, hoverPreview = true,
   onStroke, onErase, onErasePartial, onEraseEnd, onEraseMany, onSelect, onAction, onMoveSelection, onJump, onPaste,
-  onFingerScroll, onUndoGesture, onHoldStatus, onInkFeatures, onInkLive }) {
+  onFingerScroll, onUndoGesture, onHoldStatus, onInkFeatures, onInkLive, onHaptic }) {
   useInkVersion();
   const canvasRef = useRef(null);
   const wetRef = useRef(null);
@@ -757,9 +775,9 @@ export function InkLayer({ pageNumber, wrapRef, width, height, blocks, tool, pen
     }
   }
   live.current = { tool, penTool, penOnly, pressure, eraserMode, eraserSize, eraserFilter, drawHold, scribble, fingerUndo, lassoMode,
-    width, height, groups, selBox, replay, clip, penBusy: () => penBusy.current(),
+    width, height, groups, selBox, replay, clip, hoverPreview, penBusy: () => penBusy.current(),
     onStroke, onErase, onErasePartial, onEraseEnd, onEraseMany, onSelect, onMoveSelection, onJump, onPaste, onFingerScroll, onUndoGesture,
-    onHoldStatus, onInkLive };
+    onHoldStatus, onInkLive, onHaptic };
   useWetStrokes(pageNumber, wrapRef, wetRef, live);
   // Dense pages ("dense pages" above): culling past IDLE_STROKES strokes on
   // the surface, outlines built in idle time, and past RASTER_STROKES the
@@ -801,6 +819,9 @@ export function InkLayer({ pageNumber, wrapRef, width, height, blocks, tool, pen
     // stay palms until it ends.
     let hostOwned = null;
     penBusy.current = () => drawing?.pointerType === "pen" || hostOwned != null;
+    // inkBusy: anything this layer is drawing, or a stroke the host draws for it
+    const busy = () => drawing != null || hostOwned != null;
+    busyLayers.add(busy);
     let pending = null; // A possible tap/hold; swipes retain native scrolling.
     let pasteHold = null; // the pointer whose hold opened "Paste here": its lift is not a click
     const contacts = new Set();
@@ -825,12 +846,16 @@ export function InkLayer({ pageNumber, wrapRef, width, height, blocks, tool, pen
       // With an eraser filter on, the ring carries the kind it erases.
       if (eraser && L.eraserFilter && L.eraserFilter !== "all") cursor.dataset.filter = L.eraserFilter;
       else delete cursor.dataset.filter;
-      // A pen's footprint follows its brush: a round dot, a teardrop for a
-      // brush pen, and for a pencil an ellipse leaning the way the pencil
-      // does when the pointer reports tilt, as wide as the pencil's law
-      // draws at that slant (finishStroke.js).
-      const brush = !eraser && use.tool === "pen" ? brushValue(use.brush) : null;
+      // With Hover preview on, a pen's footprint follows its brush: a round
+      // dot, a teardrop for a brush pen, and for a pencil an ellipse leaning
+      // the way the pencil does when the pointer reports tilt, as wide as the
+      // pencil's law draws at that slant (finishStroke.js); a dashed or
+      // dotted preset's ring is dashed or dotted. Off, a plain round ring.
+      const look = !eraser && L.hoverPreview !== false;
+      const brush = look && use.tool === "pen" ? brushValue(use.brush) : null;
       if (brush) cursor.dataset.brush = brush; else delete cursor.dataset.brush;
+      const dash = look && (use.tool === "pen" || use.tool === "highlighter") && isDash(use.dash) ? use.dash : null;
+      if (dash) cursor.dataset.dash = dash; else delete cursor.dataset.dash;
       const tilt = brush === "pencil" && e.pointerType === "pen" ? penTilt(e) : null;
       const major = tilt ? use.size * k * widthLaw({ tool: "pen", brush: "pencil" })({ p: 0.5, a: tilt.a }) : diameter;
       const minor = tilt ? major * Math.max(0.4, Math.sin(tilt.a * Math.PI / 180)) : diameter;
@@ -899,17 +924,19 @@ export function InkLayer({ pageNumber, wrapRef, width, height, blocks, tool, pen
     // from the snap's params, the tip's position at the snap as `from`.
     // Under smoothing the samples end at the brush, which trails the tip by
     // the string's length: the tip itself closes the recognised path, so a
-    // held line ends where the pen rests, not short of it.
+    // held line ends where the pen rests, not short of it. A pen's snap
+    // ticks under the iPad host (onHaptic, at the tip on screen).
+    const holdPath = (d, tip) => (d.stab && tip ? [...d.samples, { ...d.samples.at(-1), x: tip.x, y: tip.y }] : d.samples);
     const snapHold = (d, shift) => {
       const tip = d.tip || d.samples.at(-1);
-      const path = d.stab && d.tip ? [...d.samples, { ...d.samples.at(-1), x: tip.x, y: tip.y }] : d.samples;
-      const hit = recognise(path, { k: d.k, kinds: d.kinds });
+      const hit = recognise(holdPath(d, d.tip), { k: d.k, kinds: d.kinds });
       if (!hit) return false;
       d.hold = { kind: hit.kind, params: hit.params, snap: hit.params, from: { x: tip.x, y: tip.y }, at: performance.now(),
         flash: 2, shift, preview: null };
       d.predicted = [];
       clearTimeout(d.predictionTimer);
       if (!d.raf) d.raf = requestAnimationFrame(paint);
+      if (d.pen) live.current.onHaptic?.("snap", { x: d.rect.left + tip.x * d.k, y: d.rect.top + tip.y * d.k });
       return true;
     };
     // A pen or mouse held still from its down, before it drew PASTE_MOVE css
@@ -1159,32 +1186,79 @@ export function InkLayer({ pageNumber, wrapRef, width, height, blocks, tool, pen
       hideCanvas();
       liveEnd(d);
     };
+    // The host's raw samples ([x, y, p, t] or [x, y, p, t, a, z], viewport
+    // css px and ms from the first) as the pointer path samples its own,
+    // with the rect and zoom of the down (hostInk.js hostEvent: the tilt
+    // back to radians): a draw context of their own, through the preset's
+    // stabilizer, the lift's catch-up at the last sample when `lift`.
+    const hostDraft = (d, samples, lift) => {
+      const c = { ...d, samples: [], startTime: 0, hold: null, tip: null, stab: d.level ? makeStabilizer(d.level, { k: d.k }) : null };
+      samples.forEach((s, i) => takeSample(c, hostEvent(s), false, lift && i === samples.length - 1));
+      return c;
+    };
     // A pen stroke under a host that captures the Pencil: claim it (with
-    // where it went down, which tells the host which touch it is) and keep
-    // drawing the draft until the host answers. Taken, the draft goes and
-    // the host's samples commit instead; left, the stroke ends here. The
-    // host's samples are viewport CSS px and ms from the first, sampled as
-    // the pointer path samples, with the rect and zoom of the down.
+    // where it went down, which tells the host which touch it is, and the
+    // tool in the preset's look, hostInk.js claimTool) and keep drawing the
+    // draft until the host answers. Taken, the draft goes and the host's
+    // samples commit instead; left, the stroke ends here.
     const claimForHost = (d, e) => {
+      const at = { left: d.rect.left, top: d.rect.top, k: d.k };
       const claim = {
         taken: false,
-        // The host's raw samples go through the same stabilizer as the
-        // page's own; never a hold (the shell sends them at the lift only).
-        commit: (samples) => {
+        // The shape a hold snapped to, as the host was told it: {kind,
+        // params, from, n, tSnap} in css px (docs/dev/ipad.md "The pen").
+        held: null,
+        // The host's Pencil has stayed still (its `hold`, the samples so
+        // far): with strokes on the clipboard and the pen never 2 css px
+        // from its first sample, the claim ends here and Paste here opens
+        // where it went down ({cancel}: the host drops its line); with draw
+        // and hold on, a chord of max(24 css px, 18 pt) and the stroke
+        // HOLD_MIN_MS old at the stillness anchor, the recogniser runs as
+        // the layer's own hold does, and a shape is kept on the claim and
+        // answered in css px for the host to draw and refit. Else nothing;
+        // a claim keeps one shape (later holds answer nothing).
+        hold: (samples) => {
+          if (!claim.taken || claim.held || hostClaims.get(d.id) !== claim || !samples.length) return {};
+          const pts = samples.map(([x, y, , t]) => ({ x, y, t }));
+          const first = pts[0], last = pts[pts.length - 1];
+          if (d.pasteArmed && pts.every((q) => Math.hypot(q.x - first.x, q.y - first.y) <= PASTE_MOVE)) {
+            hostClaims.delete(d.id);
+            if (hostOwned === d.id) hostOwned = null;
+            pasteHold = d.id;
+            setPasteMenu({ x: d.downAt.x, y: d.downAt.y, pt: d.toPt({ clientX: d.downAt.x, clientY: d.downAt.y }) });
+            return { cancel: true };
+          }
+          const still = stillSince(pts);
+          if (!d.holdOn || Math.hypot(last.x - first.x, last.y - first.y) < Math.max(24, 18 * d.k) || pts[still].t < HOLD_MIN_MS) return {};
+          const c = hostDraft(d, samples, false);
+          const hit = recognise(holdPath(c, d.toPt({ clientX: last.x, clientY: last.y })), { k: d.k, kinds: d.kinds });
+          const shape = hit && shapeToHost(hit, at);
+          if (!shape) return {};
+          claim.held = { kind: shape.kind, params: shape.params, from: { x: last.x, y: last.y }, n: samples.length, tSnap: pts[still].t + HOLD_MS };
+          live.current.onHaptic?.("snap", { x: last.x, y: last.y });
+          return { shape: { kind: shape.kind, params: shape.params } };
+        },
+        // The lift: the host's samples commit as the layer's own would. A
+        // shape the claim kept, when the host drew it (`held`, the `n` of
+        // its hold: a lift that came before the host had the answer drew
+        // the freehand line, and names none), goes through the samples
+        // after the hold in the host's own space (shapes.js followHold, the
+        // rule the shell drew by), to page points for finishStroke's hold
+        // stage; dropped there, the stroke is freehand.
+        commit: (samples, held) => {
           handOver(d);
           if (hostOwned === d.id) hostOwned = null;
-          const c = { ...d, samples: [], startTime: 0, hold: null, tip: null, stab: d.level ? makeStabilizer(d.level, { k: d.k }) : null };
-          samples.forEach(([x, y, p, t], i) =>
-            takeSample(c, { clientX: x, clientY: y, pressure: p, timeStamp: t }, false, i === samples.length - 1));
+          const c = hostDraft(d, samples, true);
+          const kept = claim.held && held === claim.held.n ? claim.held : null;
+          const params = kept && samples.length ? followHold(kept, samples.map(([x, y, , t]) => ({ x, y, t }))) : null;
+          const shape = params && shapeFromHost({ kind: kept.kind, params }, at);
+          if (shape) c.hold = { kind: shape.kind, params: shape.params };
           return commitStroke(c);
         },
       };
       hostClaims.set(d.id, claim);
       const drop = () => { if (hostClaims.get(d.id) === claim) hostClaims.delete(d.id); };
-      const { use } = d;
-      // size: the width on screen, in CSS px (the host's points)
-      postToHost({ type: "claim", pointerId: d.id, at: { x: e.clientX, y: e.clientY },
-        tool: { kind: use.tool, color: use.color, size: use.size * d.k, opacity: use.opacity ?? 1 } })
+      postToHost({ type: "claim", pointerId: d.id, at: { x: e.clientX, y: e.clientY }, tool: claimTool(d.look || d.use, { k: d.k }) })
         .then((reply) => {
           if (hostClaims.get(d.id) !== claim) return; // the page already ended it
           if (!reply?.taken) { drop(); return; }
@@ -1194,6 +1268,8 @@ export function InkLayer({ pageNumber, wrapRef, width, height, blocks, tool, pen
     };
 
     const onDown = (e) => {
+      // the touch whose hold opened Paste here is over once its pointer goes down again
+      if (e.pointerId === pasteHold) pasteHold = null;
       if (e.target.closest?.(NOT_INK)) { hideCursor(); return; }
       showCursor(e);
       const L = live.current;
@@ -1393,6 +1469,7 @@ export function InkLayer({ pageNumber, wrapRef, width, height, blocks, tool, pen
           }
         }
         L.onSelect?.(pageNumber, items);
+        if (items.length && d.pointerType === "pen") L.onHaptic?.("select", { x: e.clientX, y: e.clientY });
         return;
       }
       if (!d.samples.length) { liveEnd(d); return; }
@@ -1464,6 +1541,7 @@ export function InkLayer({ pageNumber, wrapRef, width, height, blocks, tool, pen
     document.addEventListener("pointercancel", trackUp, true);
     window.addEventListener("blur", onBlur);
     return () => {
+      busyLayers.delete(busy);
       el.removeEventListener("touchstart", onTouch, true);
       el.removeEventListener("touchmove", onTouch, true);
       el.removeEventListener("pointerdown", onDown, true);
@@ -1492,7 +1570,7 @@ export function InkLayer({ pageNumber, wrapRef, width, height, blocks, tool, pen
     };
   }, [wrapRef, pageNumber]);
 
-  useEffect(() => { refreshCursorRef.current?.(); }, [tool, penTool, eraserSize, eraserFilter]);
+  useEffect(() => { refreshCursorRef.current?.(); }, [tool, penTool, eraserSize, eraserFilter, hoverPreview]);
 
   if (!width || !height) return null;
   const flashGroup = flash && groups.find((g) => g.id === flash.id);

@@ -1,10 +1,14 @@
 // node --test tests/  (from frontend/) — the draw-and-hold recogniser over
-// tests/shared/inkshapes.json, the polyline a shape commits as, and the
-// refit under a continued hold.
+// tests/shared/inkshapes.json, the polyline a shape commits as, the refit
+// under a continued hold, and the iPad host's hold rules over
+// tests/shared/inkhold.json (the Swift side runs the same cases).
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
-import { SHAPE_KINDS, recognise, refitShape, shapeName, shapeSamples } from "../src/ink/shapes.js";
+import {
+  CANCEL_MS, CANCEL_PX, HOLD_MIN_MS, HOLD_MOVE, HOLD_MS, PASTE_MOVE, REFIT_PX, SHAPE_KINDS, followHold, recognise, refitShape,
+  shapeName, shapeSamples, stillSince,
+} from "../src/ink/shapes.js";
 
 const FIX = JSON.parse(readFileSync(new URL("../../tests/shared/inkshapes.json", import.meta.url), "utf8"));
 const decode = (rows) => rows.map(([x, y, p, t]) => ({ x, y, p, t }));
@@ -133,4 +137,51 @@ test("refitShape: closed shapes scale about their centre and rotate with the poi
 test("shapeName names every kind (English under node), and SHAPE_KINDS lists the recogniser's answers", () => {
   assert.deepEqual(SHAPE_KINDS.map(shapeName), ["line", "arrow", "triangle", "rectangle", "polygon", "circle", "ellipse"]);
   assert.equal(shapeName("blob"), "blob");
+});
+
+// tests/shared/inkhold.json: the hold under the iPad host, the rules its
+// shell runs over the same samples (StrokeRecorder, ShapeHold, HeldShape).
+const HOLD = JSON.parse(readFileSync(new URL("../../tests/shared/inkhold.json", import.meta.url), "utf8"));
+const point = ([x, y]) => ({ x, y });
+// every number within 0.011 (a 1/100 rounding either side), n exactly, the same keys; null exactly
+function sameParams(got, want, what) {
+  if (want === null) { assert.equal(got, null, what); return; }
+  assert.ok(got, `${what}: a shape`);
+  assert.deepEqual(Object.keys(got).sort(), Object.keys(want).sort(), `${what}: the same keys`);
+  for (const [key, v] of Object.entries(want)) {
+    if (key === "n") assert.equal(got[key], v, `${what}: n`);
+    else assert.ok(Math.abs(got[key] - v) <= 0.011, `${what}: ${key} ${got[key]} vs ${v}`);
+  }
+}
+
+test("the hold's numbers are the ones the fixture and the iPad shell are written for", () => {
+  assert.deepEqual([HOLD_MS, HOLD_MOVE, HOLD_MIN_MS, REFIT_PX, CANCEL_PX, CANCEL_MS, PASTE_MOVE], [600, 3, 250, 6, 12, 150, 2]);
+  assert.ok(HOLD.still.length && HOLD.follow.length && HOLD.refit.length);
+});
+
+for (const c of HOLD.still) {
+  test(`stillSince: ${c.note}`, () => assert.equal(stillSince(decode(c.samples)), c.stillSince));
+}
+for (const c of HOLD.follow) {
+  test(`followHold: ${c.note}`, () => {
+    const hold = { ...c.hold, from: point(c.hold.from) };
+    // the hold as the web keeps it: the anchor's t + HOLD_MS, n samples, the last of them `from`
+    const carried = decode(c.samples.slice(0, c.hold.n));
+    assert.equal(c.hold.tSnap, carried[stillSince(carried)].t + HOLD_MS, "tSnap is the anchor's t + HOLD_MS");
+    assert.deepEqual(hold.from, { x: carried.at(-1).x, y: carried.at(-1).y }, "from is the last sample the hold carried");
+    sameParams(followHold(hold, decode(c.samples)), c.expect, c.note);
+  });
+}
+for (const c of HOLD.refit) {
+  test(`refitShape (the host's refit): ${c.note}`, () => {
+    sameParams(refitShape(c.kind, c.params, { pointer: point(c.pointer), from: point(c.from) }), c.expect, c.note);
+  });
+}
+
+test("stillSince: no samples is the first index; followHold never reads the samples the hold carried", () => {
+  assert.equal(stillSince([]), 0);
+  const hold = { kind: "line", params: { x1: 0, y1: 0, x2: 100, y2: 0 }, from: { x: 100, y: 0 }, n: 2, tSnap: 900 };
+  // the second sample is 100 px from `from` within the window, but it is one the hold carried
+  assert.deepEqual(followHold(hold, [{ x: 0, y: 0, t: 0 }, { x: 0, y: 0, t: 850 }]), hold.params);
+  assert.equal(followHold(hold, [{ x: 0, y: 0, t: 0 }, { x: 100, y: 0, t: 300 }, { x: 113, y: 0, t: 950 }]), null);
 });

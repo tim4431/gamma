@@ -1,9 +1,9 @@
 // node --test tests/keepalive.test.mjs (from frontend/) — the page's one
 // keepalive ledger (shared/lib/keepalive.js, docs/dev/collab.md
 // "Keepalive"): how a body is counted, the room of each priority, the
-// claims, the release, and a closing tab's requests over a model of the
-// browser's 64 KiB rule. The e2e cannot drive a pagehide, so this is the
-// proof.
+// claims (read once a task), the release, and a closing tab's requests over
+// a model of the browser's 64 KiB rule. The e2e cannot drive a pagehide, so
+// this is the proof.
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { planFlush } from "../src/ink/inkFlush.js";
@@ -16,7 +16,10 @@ const settle = async () => { for (let i = 0; i < 10; i++) await Promise.resolve(
 // The browser as the fetch spec has it: a keepalive request whose body would
 // take the page's keepalive bodies in flight past 64 KiB is refused (a
 // network error; nothing is sent). Every request stays on its way until the
-// test answers or fails it.
+// test answers or fails it. `leave()`: the page goes to another (a
+// navigation, a reload), and the browser no longer counts its requests from
+// before, as Chromium and WebKit were measured to (a closing tab still
+// counts them: docs/research/keepalive-abort.md).
 function browser() {
   const b = { inFlight: 0, sent: [], refused: [] };
   b.fetch = (url, init = {}) => {
@@ -27,15 +30,16 @@ function browser() {
     }
     let resolve, reject;
     const promise = new Promise((a, r) => { resolve = a; reject = r; });
-    const req = { url, init, bytes, keepalive: !!init.keepalive, done: false };
-    if (req.keepalive) b.inFlight += bytes;
-    const end = () => { if (!req.done && req.keepalive) b.inFlight -= bytes; req.done = true; };
+    const req = { url, init, bytes, keepalive: !!init.keepalive, counted: !!init.keepalive, done: false };
+    if (req.counted) b.inFlight += bytes;
+    const end = () => { if (req.counted) b.inFlight -= bytes; req.counted = false; req.done = true; };
     req.answer = (value = { ok: true }) => { end(); resolve(value); };
     req.fail = (err = new TypeError("Failed to fetch")) => { end(); reject(err); };
     b.sent.push(req);
     return promise;
   };
   b.of = (url) => b.sent.filter((r) => r.url === url);
+  b.leave = () => { for (const r of b.sent) if (r.counted) { b.inFlight -= r.bytes; r.counted = false; } };
   return b;
 }
 
@@ -79,7 +83,7 @@ test("the three priorities: critical has the cap less what is in flight, normal 
   assert.equal(ledger.available("critical"), 49 * KiB);
 });
 
-test("a claim is read only when a lower priority asks for room — never when it is registered or a critical request goes — and unregistered holds nothing", () => {
+test("a claim is read only when a lower priority asks for room — never when it is registered or a critical request goes — and unregistered holds nothing", async () => {
   const b = browser();
   const ledger = createKeepaliveLedger({ fetch: b.fetch });
   let reads = 0;
@@ -90,8 +94,9 @@ test("a claim is read only when a lower priority asks for room — never when it
   assert.equal(reads, 0, "a critical request and the critical room read nothing");
   assert.equal(ledger.available("normal"), 14 * KiB);
   assert.equal(reads, 1);
+  await settle();
   ledger.fetch("/api/prefs/read-pos", { method: "PUT", body: text(KiB) }, { priority: "normal" });
-  assert.equal(reads, 2, "each ask reads the claim afresh");
+  assert.equal(reads, 2, "an ask in a later task reads the claim afresh");
   unclaim();
   assert.equal(ledger.available("low"), 33 * KiB - NORMAL_RESERVE, "an unregistered claim holds nothing");
   assert.equal(reads, 2);
@@ -110,6 +115,41 @@ test("a claim is read only when a lower priority asks for room — never when it
   // claims past what is left leave the lower priorities no room, never less than none
   ledger.registerClaim("page-edits", () => 60 * KiB);
   assert.deepEqual(["critical", "normal", "low"].map((p) => ledger.available(p)), [33 * KiB, 0, 0]);
+});
+
+test("a claim is read once a task: a flush asking for room before every request reads it once; the next task reads it afresh, and so does an ask after a claim is registered or dropped or a critical request goes", async () => {
+  const b = browser();
+  const ledger = createKeepaliveLedger({ fetch: b.fetch });
+  let reads = 0, claim = 10 * KiB;
+  ledger.registerClaim("page-edits", () => { reads++; return claim; });
+  // App's flushInk on going hidden: the plan's ask, then each request's own and its fetch's; the reading position
+  assert.equal(ledger.available("low"), KEEPALIVE_CAP - 10 * KiB - NORMAL_RESERVE);
+  for (let i = 0; i < 4; i++) {
+    if (2 * KiB <= ledger.available("low")) ledger.fetch("/api/upload-ink", { method: "POST", body: text(2 * KiB) }, { priority: "low" });
+  }
+  ledger.fetch("/api/prefs/read-pos", { method: "PUT", body: text(KiB) }, { priority: "normal" });
+  assert.deepEqual([reads, b.sent.filter((r) => r.keepalive).length], [1, 5], "ten asks, one read");
+  // an edit queued since is not seen in the task that read the claim...
+  claim = 20 * KiB;
+  assert.equal(ledger.available("normal"), KEEPALIVE_CAP - 9 * KiB - 10 * KiB);
+  assert.equal(reads, 1);
+  // ...and is in the next
+  await Promise.resolve();
+  assert.equal(ledger.available("normal"), KEEPALIVE_CAP - 9 * KiB - 20 * KiB);
+  assert.equal(reads, 2);
+  // a claim registered beside it, or dropped, is read at once, and the claims beside it with it
+  const unclaim = ledger.registerClaim("other", () => 4 * KiB);
+  assert.equal(ledger.available("normal"), KEEPALIVE_CAP - 9 * KiB - 24 * KiB);
+  assert.equal(reads, 3);
+  unclaim();
+  assert.equal(ledger.available("normal"), KEEPALIVE_CAP - 9 * KiB - 20 * KiB);
+  assert.equal(reads, 4);
+  // a critical request spends what its sender claimed: it reads nothing, and the next ask reads afresh
+  claim = 0;
+  ledger.fetch("/api/pages/p/ops", { method: "POST", body: text(20 * KiB) }, { priority: "critical" });
+  assert.equal(reads, 4);
+  assert.equal(ledger.available("normal"), KEEPALIVE_CAP - 29 * KiB);
+  assert.equal(reads, 5);
 });
 
 test("a keepalive request's bytes count until it settles, answered (with no body to read) or failed; the caller gets the fetch's own answer; one that throws at once counts nothing", async () => {
@@ -249,6 +289,58 @@ test("closing a tab: handwriting flushes on going hidden, and the edits' POST on
   const huge = await closeTab({ edits: [KEEPALIVE_CAP + 1], drafts: [40] });
   assert.deepEqual([huge.posts[0].keepalive, huge.b.of("/api/upload-ink")[0].keepalive], [false, true]);
   assert.deepEqual(huge.b.refused, []);
+});
+
+test("a handwriting request from an earlier flush still on its way when the edits have grown past their room: the edits go with keepalive and as a plain copy at once, and nothing is aborted for them", async () => {
+  // browsers free an aborted keepalive request's share a task later (Chromium) or once its answer is in
+  // (WebKit), so a keepalive sent at once in the room an abort freed would be refused: the ledger never aborts
+  for (const leaving of ["a closing tab", "a navigation"]) {
+    const b = browser();
+    const ledger = createKeepaliveLedger({ fetch: b.fetch });
+    let queued = [];
+    ledger.registerClaim("page-edits", () => keepaliveShare(queued));
+    // the tab goes to the background with nothing queued: a 50 KiB drawing goes with keepalive
+    ledger.fetch("/api/upload-ink", { method: "POST", body: text(50 * KiB) }, { priority: "low" });
+    await settle();
+    // back on the page, 20 KiB is pasted; then the page goes while the upload is still on its way
+    queued = [text(20 * KiB)];
+    if (leaving === "a navigation") b.leave();
+    const answer = ledger.fetch("/api/pages/p/ops", { method: "POST", body: queued[0] }, { priority: "critical" });
+    const [upload] = b.of("/api/upload-ink");
+    assert.deepEqual([upload.keepalive, upload.done, "signal" in upload.init], [true, false, false], `${leaving}: the upload goes on`);
+    const posts = b.of("/api/pages/p/ops");
+    if (leaving === "a closing tab") {
+      assert.deepEqual(b.refused.map((r) => r.url), ["/api/pages/p/ops"], "the browser refuses the keepalive copy...");
+      assert.deepEqual(posts.map((r) => r.keepalive), [false], "...and the plain copy goes, as it would alone");
+      posts[0].answer({ seq: 7 });
+      assert.deepEqual(await answer, { seq: 7 }, "the caller gets the plain copy's answer");
+    } else {
+      assert.deepEqual(b.refused, []);
+      assert.deepEqual(posts.map((r) => r.keepalive), [true, false], "the browser takes the keepalive copy, and the plain one goes beside it");
+      posts[0].answer({ seq: 7 });
+      posts[1].fail();   // cut off with the page: the keepalive copy's answer stands
+      assert.deepEqual(await answer, { seq: 7 }, "the caller gets the keepalive copy's answer");
+    }
+    upload.answer();
+    await settle();
+    assert.equal(ledger.inFlight, 0, `${leaving}: every copy released`);
+  }
+});
+
+test("a critical request short of room because of the critical requests on their way goes plain alone: the browser counts those wherever the page goes", async () => {
+  const b = browser();
+  const ledger = createKeepaliveLedger({ fetch: b.fetch });
+  ledger.fetch("/api/upload-ink", { method: "POST", body: text(10 * KiB) }, { priority: "low" });
+  // pagehide: two batches of edits, the second past the cap beside the first (it claimed nothing)
+  ledger.fetch("/api/pages/p/ops", { method: "POST", body: text(40 * KiB) }, { priority: "critical" });
+  ledger.fetch("/api/pages/p/ops", { method: "POST", body: text(30 * KiB) }, { priority: "critical" });
+  // one that the critical requests leave room for, but not the drawing: both ways
+  ledger.fetch("/api/pages/q/ops", { method: "POST", body: text(20 * KiB) }, { priority: "critical" });
+  assert.deepEqual(b.of("/api/pages/p/ops").map((r) => r.keepalive), [true, false]);
+  assert.deepEqual([b.of("/api/pages/q/ops").map((r) => r.keepalive), b.refused.map((r) => r.bytes)], [[false], [20 * KiB]]);
+  for (const r of b.sent) r.answer();
+  await settle();
+  assert.deepEqual([ledger.inFlight, b.inFlight], [0, 0]);
 });
 
 test("closing a tab: the edits' claim is held off handwriting's room, so a drawing that would crowd them out goes plain", async () => {

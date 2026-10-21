@@ -785,7 +785,10 @@ gives a request the room of its priority:
 
 A sender with no other copy claims what it will send at pagehide
 (`registerKeepaliveClaim(key, fn)`, `fn() → bytes`), and a claim is read
-only when a `normal` or `low` request asks for room, never on an edit.
+only when a `normal` or `low` request asks for room, never on an edit,
+and once a task: the ledger keeps each claim's bytes until a microtask
+(a flush asks before every request it sends), and reads them afresh at
+once after a claim is registered or dropped or a `critical` request goes.
 `usePageCollab` claims `page-edits`. The session's
 `pendingKeepaliveBodies()` is what `pagehide()` sends, read without
 sending it: per page with unsaved edits (not one in Recently deleted), the
@@ -799,11 +802,30 @@ profile and the reading position flush at the first, the edits at the
 second, and their POST goes with keepalive whenever the edits alone fit
 the cap.
 
+The claim holds what the edits needed when a lower priority asked. A
+tab hidden with a drawing to save sends it with keepalive; back on the
+page, the edits can grow past the room that upload leaves them while it
+is still on its way, and the tab can close before it is answered. Then
+the edits' POST goes both ways at once: with keepalive, and as the plain
+copy it would be otherwise. `keepaliveFetch` does this for a `critical`
+request whose body fits beside the critical requests on their way but
+not beside everything; its batch id makes the copy that lands second a
+replay. Measured in Chromium and WebKit, a page leaving for another (a
+navigation, a reload) no longer counts its keepalive requests from
+before, so the keepalive copy goes; a closing tab refuses it, and the
+plain copy is what is left, as before. No request is aborted to make
+room: both browsers keep an aborted keepalive request going and free its
+share a task later (Chromium) or once it is answered (WebKit), so a
+keepalive sent in the abort's own task is refused
+([research/keepalive-abort.md](../research/keepalive-abort.md)).
+
 `keepaliveFetch(url, init, {priority})` sends with keepalive when the
 body (`bodyBytes`: a string's UTF-8, a Blob's size, a buffer's bytes; a
 body whose length is not known before it goes counts as too long) fits
 the priority's room, else as a plain fetch, which a closing page may cut
-off but the browser never refuses. `available(priority)` is the room, for
+off but the browser never refuses (a `critical` request short of room
+only because lower priorities hold it goes both ways, above).
+`available(priority)` is the room, for
 a planner (`ink/inkFlush.js`), never below 0: a request with no body (a
 `DELETE`) always goes with keepalive, since it takes none and the browser
 never refuses it. `apiJson(url, init, {keepalive: priority})` sends
@@ -892,10 +914,11 @@ drive a pagehide.
   below.
 - `frontend/tests/keepalive.test.mjs`: the page's keepalive ledger
   ("Keepalive") — body bytes, each priority's room (never below 0, so a
-  body-less request always fits), claims read lazily, release once the
-  answer's body is in or the request fails, a plain fetch for what does
-  not fit, and a closing tab's requests over a model of the browser's
-  64 KiB rule.
+  body-less request always fits), claims read lazily and once a task,
+  release once the answer's body is in or the request fails, a plain
+  fetch for what does not fit, the edits sent both ways when a drawing
+  from an earlier flush holds their room (nothing aborted for them), and
+  a closing tab's requests over a model of the browser's 64 KiB rule.
 - `frontend/tests/collabRobustness.test.mjs`: the refused-batch paths
   (conflict, signed out, refused for good), every op on a deleted block
   dropped in one round trip, a delete racing a move into it, a rescue not
@@ -936,8 +959,11 @@ drive a pagehide.
   before it closes with edits unsaved. Keepalive saves on tab close are best
   effort: the edits come first in the page's 64 KiB of keepalive bodies
   ("Keepalive"), but a batch past that goes as a plain fetch the closing
-  page may cut off, so edits past 64 KiB may be lost, and an outage
-  followed by confirming the close, or a crash, still loses them.
+  page may cut off, so edits past 64 KiB may be lost, and so may edits
+  that grew past their room while a drawing's upload from an earlier
+  flush was still on its way, when the tab closes (leaving for another
+  page takes their keepalive copy). An outage followed by confirming the
+  close, or a crash, still loses them.
 - A remote delete of a block with our text edit in flight applies at once;
   the edit then comes back as a rescue only if our base still held the
   block, else it is dropped with the block (the screen already showed the

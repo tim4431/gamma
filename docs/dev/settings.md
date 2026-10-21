@@ -6,7 +6,7 @@ Where every setting lives, and how the Settings dialog is built.
 
 | Layer | Storage | Examples |
 |---|---|---|
-| Per browser | `localStorage`, one `gamma-*` key per preference, all declared in `PREFS` ([frontend/src/app/prefDefs.js](../../frontend/src/app/prefDefs.js)) with scope `browser` — except `gamma-link-name`, the share view's display name for a visitor without an account, owned by `src/collaboration/linkName.js` because the fetch wrapper reads it outside React | what describes this device: the interface size (`gamma-ui-scale`, applied pre-paint by `index.html`), the status bar, the handwriting input rules, finger undo and the tool strip's eraser and lasso choices (`gamma-ink-*`: `gamma-ink-pen-only`, `gamma-ink-auto-pen`, `gamma-ink-pressure`, `gamma-ink-finger-undo`, `gamma-ink-eraser`, `gamma-ink-eraser-size`, `gamma-ink-lasso`; the presets themselves, `gamma-ink-tools`, are the account's), the style of new text boxes (`gamma-text-box-style`) and how a recording plays back (`gamma-replay-mode`, `gamma-replay-rate`, `gamma-replay-follow`; its lead-in `gamma-replay-lead-in` and the automatic transcript `gamma-recording-transcribe` are the account's), the metadata and translation model picks and dictation (they name this server's provider entries, like the chat model `gamma-chat-model`), and whether a shown "Linked from" section is folded (`gamma-backlinks-collapsed`; whether it is shown at all is the account's `gamma-backlinks`); outside `PREFS`, diagnostics tracing (`gamma-debug-log`) |
+| Per browser | `localStorage`, one `gamma-*` key per preference, all declared in `PREFS` ([frontend/src/app/prefDefs.js](../../frontend/src/app/prefDefs.js)) with scope `browser` — except `gamma-link-name`, the share view's display name for a visitor without an account, owned by `src/collaboration/linkName.js` because the fetch wrapper reads it outside React | what describes this device: the interface size (`gamma-ui-scale`, applied pre-paint by `index.html`), the status bar, the handwriting input rules, finger undo, the hover preview, the tool strip's eraser and lasso choices and, in the iPad app, what the Apple Pencil's gestures do and its haptics (`gamma-ink-*`: `gamma-ink-pen-only`, `gamma-ink-auto-pen`, `gamma-ink-pressure`, `gamma-ink-finger-undo`, `gamma-ink-hover-preview`, `gamma-ink-eraser`, `gamma-ink-eraser-size`, `gamma-ink-lasso`, `gamma-ink-pencil-tap`, `gamma-ink-pencil-squeeze`, `gamma-ink-haptics`; the presets themselves, `gamma-ink-tools`, are the account's), the style of new text boxes (`gamma-text-box-style`) and how a recording plays back (`gamma-replay-mode`, `gamma-replay-rate`, `gamma-replay-follow`; its lead-in `gamma-replay-lead-in` and the automatic transcript `gamma-recording-transcribe` are the account's), the metadata and translation model picks and dictation (they name this server's provider entries, like the chat model `gamma-chat-model`), and whether a shown "Linked from" section is folded (`gamma-backlinks-collapsed`; whether it is shown at all is the account's `gamma-backlinks`); outside `PREFS`, diagnostics tracing (`gamma-debug-log`) |
 | Per account, profile | the account-wide `profile` prefs key (`/api/prefs/profile`, one JSON object keyed by preference name), every `PREFS` entry with scope `account`; each also keeps its `gamma-*` localStorage key as the instant-paint cache | appearance (theme — the pre-paint script in `index.html` reads `gamma-theme`, resolves System to light or dark the way App.jsx's theme effect does and sets `data-theme` with its `data-scheme`, so the first frame has the right tokens ([ui-design.md](ui-design.md#tokens)) — flip page colors, the colour palette (`palette`, the swatches highlights, pens and text boxes offer), whether tours are suggested, `suggestTours`, and which tours the account has seen, `tourProgress`, written by the guide and shown nowhere, [onboarding.md](onboarding.md#storage)), the interface language (`gamma-language`, read by `main.jsx` before the first render, [i18n.md](i18n.md)), reading and editing (imported annotations, smooth wheel scrolling, how search opens, the handwriting habits `gamma-ink-draw-hold`, `gamma-ink-scribble-erase`, `gamma-ink-eraser-return` and `gamma-ink-eraser-filter`, and the tool strip's presets `gamma-ink-tools`), translation (button and language, selection translation, effort, parallel requests), the Enter key, library display and PDF fetching, the sync pill's scope (`syncPillScope`), chat behaviour (tools switch, per-kind tool permissions, reasoning effort, speed, the login connection check, tool limits, snapshot clearing), context budgets, prompts, keyboard shortcuts (`keybindings`: command id → chord or null, [hotkeys.md](hotkeys.md)) |
 | Session only | React state, nothing stored | the Ctrl+scroll text size of the notes list and the chat transcript (`useTextScale` in [Widgets.jsx](../../frontend/src/shared/ui/Widgets.jsx)) — resets on reload |
 | Per account, synced | `/api/prefs/{key}` (small JSON KV: the account-wide keys in `users.db` `user_prefs`, the others in the workspace's `pages.db` `workspace_prefs`, [user_db.md](user_db.md)) | per account AND workspace, kept in that workspace and left out of its exports and backups: open tabs (`open-tabs`), the recently-viewed queue (`recent-views`), reading positions (`read-pos`) — they name one workspace's pages (pins are no pref: a pinned page or folder carries `properties.pinned` on its block, [home_library.md](home_library.md) "Pinned"); account-wide: active AI key (`ai-provider`) and the preference profile (`profile`, previous row). Server wins on load, localStorage (keyed `user@workspace`) is the instant-paint cache. The recents-card cover thumbnails are workspace data, through their own `/api/page-snaps` store (`page_snaps` in the workspace's `data.db` — over the prefs size cap) |
@@ -355,14 +355,36 @@ Preferences:
   scope, the section the handwriting input rules moved to): two
   `IconChoices` tiles ("Draws with": pen only / pen and
   finger — the stored preference is `inkPenOnly`), the
-  stylus-draws-right-away and pressure switches, and **Undo with fingers**
+  stylus-draws-right-away and pressure switches, **Undo with fingers**
   (`Segmented` Off / Tap / Double tap, `inkFingerUndo`, `oneOf(["off",
   "tap", "double"])`, default `double` where the primary pointer is coarse
   (`COARSE`, as `inkPenOnly`) and `off` elsewhere; hint "Two fingers undo,
-  three redo"). Every row of both sections has a `settingsSearch.js`
+  three redo"), and **Hover preview** (`Toggle`, `inkHoverPreview`, flag,
+  default on; hint "The footprint over the page shows the pen's style";
+  off, a mouse or a hovering pen shows a plain round ring,
+  [handwriting.md](handwriting.md) "What the user sees"). **Apple
+  Pencil** (browser scope) shows only in the iPad app
+  (`nativeHost()?.pencil`, [ipad.md](ipad.md) "The pen"): **Double tap**
+  (`MenuSelect`, `inkPencilTap`, `oneOf(["system", "eraser", "previous",
+  "options", "undo", "none"])`, default `system`: System setting · Switch
+  to eraser · Switch to last tool · Show tool options · Undo · Nothing;
+  hint "What a double tap on the Pencil does"), **Squeeze** (`MenuSelect`,
+  `inkPencilSqueeze`, the same values and `holdEraser`, `holdPrevious` —
+  Eraser while held · Last tool while held, offered only under
+  `nativeHost()?.pencilPhases` or while one is the stored choice — default
+  `system`; hint "What squeezing
+  Apple Pencil Pro does") and, under `nativeHost()?.haptics`,
+  **Haptics** (`Toggle`, `inkHaptics`, flag, default on; hint "A tick in
+  Apple Pencil Pro when a shape snaps, the lasso selects or the tool
+  changes"). Its choices are `MenuSelect`s: the settings pane is no
+  `InkTooltips` host, and six or eight choices are too many for a
+  `Segmented`. Every row of these sections has a `settingsSearch.js`
   entry under its section's title (the three input rules now say "This
-  device"), and the Handwriting rows' preferences, `inkTools` among them, are
-  listed in `sectionPrefs.js`. **Search opens as**: on the
+  device"; an Apple Pencil row is listed only under a host with the flags
+  its row shows under, `hostOnly(flags, entry)` beside `admin()`: *Haptics*
+  under `pencil` and `haptics`), and the Handwriting
+  rows' preferences, `inkTools` among them, are listed in
+  `sectionPrefs.js`. **Search opens as**: on the
   home page and on a page (Full panel / Find bar).
 - **Language and Translation** (pane id `translation`,
   [SettingsTranslation.jsx](../../frontend/src/settings/SettingsTranslation.jsx)),
@@ -629,7 +651,11 @@ pane itself that the jump focuses. Every query word must appear in the
 label, synonyms, hint or section. Entries whose label holds them all come
 first; inaccessible management pages are filtered out, and so is an
 admin-only section of a pane everyone has (Backups › Off-site copies,
-marked `admin()` in the catalog) unless the Server pane is offered. A result is a
+marked `admin()` in the catalog) unless the Server pane is offered, and a
+setting only a native host shows (Reading & editing › Apple Pencil, marked
+`hostOnly(flags, entry)`, a flag or a list) unless `nativeHost()` has every
+one of them (the dialog passes it as `searchSettings(query, panes,
+{host})`). A result is a
 row-like button: the pane's icon, the label with the query marked, the
 hint, and "Pane › Section" on the right. Past six results they group under
 one caption per pane. Picking one opens the pane and focuses the matching

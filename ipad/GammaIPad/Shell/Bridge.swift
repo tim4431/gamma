@@ -5,8 +5,8 @@ import WebKit
 // The web half is frontend/src/shared/lib/host.js; both are described in
 // docs/dev/ipad.md "The host contract". The vocabulary is kept small on
 // purpose: a web feature reaches the iPad without touching it, and a new
-// message is added here and in host.js together, with `version` telling the
-// web which host it runs under.
+// message is added here and in host.js together, with a flag in HostInfo
+// saying what the web may rely on (`version` only names the build).
 
 /// What the shell declares as `window.gammaNative` before the bundle runs.
 struct HostInfo: Encodable, Equatable {
@@ -15,8 +15,21 @@ struct HostInfo: Encodable, Equatable {
     var version: String
     /// The host captures claimed Pencil strokes.
     var ink = true
+    /// What of the claim's look the live line draws (LiveStrokeView): the
+    /// width from the Pencil's force by the brush, the dash, a highlighter
+    /// multiplied onto the page, the smoothing, and the Pencil brush's width
+    /// from the tilt. A look not listed is drawn as the plain line, and the
+    /// page claims the stroke all the same.
+    var inkLooks = ["pressure", "dash", "blend", "stabilize", "pencil"]
+    /// The host sends `hold` when a captured Pencil stays still (PencilCapture).
+    var hold = true
     /// The host forwards the Pencil's double tap and squeeze.
     var pencil = true
+    /// A squeeze's start and cancel come too (`squeeze`), and its end says
+    /// so (`pencil` with `phase`).
+    var pencilPhases = true
+    /// The host plays `haptic` (PencilHaptics).
+    var haptics = true
     /// The host has a server picker (the web shows a "Server…" row).
     var servers = true
 
@@ -46,32 +59,97 @@ struct HostInfo: Encodable, Equatable {
     }
 }
 
-/// The tool a claimed stroke draws with, as the web's ink layer has it.
+/// The tool a claimed stroke draws with, as the web's ink layer has it, in
+/// its preset's look (frontend/src/ink/hostInk.js claimTool; docs/dev/ipad.md
+/// "The host contract"). `kind`, `color` and `size` are required. Each look
+/// key is left out at its default and read leniently: a value the shell
+/// cannot read is dropped, never the claim, so a newer page's claim still
+/// draws here, as its plain line at the least.
 struct InkTool: Decodable, Equatable {
-    enum Kind: String, Decodable { case pen, highlighter }
+    /// Anything but a highlighter draws as a pen.
+    enum Kind: String { case pen, highlighter }
+    /// A pen's brush (finishStroke.js BRUSHES; InkWidth): absent, or a brush
+    /// the shell does not know, is the plain Pen.
+    enum Brush: String { case pen, monoline, brush, pencil }
+    /// The ruler's line, reserved: decoded, not drawn yet. CSS px and degrees.
+    struct Snap: Decodable, Equatable {
+        var x0: Double
+        var y0: Double
+        var angle: Double
+    }
+
     var kind: Kind
     /// "#rrggbb".
     var color: String
     /// The line's width on screen, in CSS px (= points: the viewport is at scale 1).
     var size: Double
     var opacity: Double
+    var brush: Brush
+    /// The stroke reads the Pencil's pressure (false: *Pressure-sensitive
+    /// strokes* off, and only a Brush still varies, by its speed law).
+    var pressure: Bool
+    /// The dash, `[on, off]` in CSS px (ink.js DASH × size × zoom); nil for a solid line.
+    var dash: [Double]?
+    /// Multiplied onto the page (a highlighter's `blend: "multiply"`).
+    var multiply: Bool
+    /// The smoothing, 0 (none) to 4: the lazy brush's string (LazyBrush.radii).
+    var stabilize: Int
+    var snap: Snap?
 
-    init(kind: Kind, color: String, size: Double, opacity: Double = 1) {
+    init(kind: Kind, color: String, size: Double, opacity: Double = 1, brush: Brush = .pen, pressure: Bool = true,
+         dash: [Double]? = nil, multiply: Bool = false, stabilize: Int = 0, snap: Snap? = nil) {
         self.kind = kind
         self.color = color
         self.size = size
         self.opacity = opacity
+        self.brush = brush
+        self.pressure = pressure
+        self.dash = dash
+        self.multiply = multiply
+        self.stabilize = stabilize
+        self.snap = snap
     }
 
-    private enum Keys: String, CodingKey { case kind, color, size, opacity }
+    private enum Keys: String, CodingKey { case kind, color, size, opacity, brush, pressure, dash, blend, stabilize, snap }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: Keys.self)
-        self.init(kind: try c.decode(Kind.self, forKey: .kind),
+        let kind = try c.decode(String.self, forKey: .kind)
+        // The look: each key on its own, through `try?`, so a bad value is dropped.
+        let brush = (try? c.decodeIfPresent(String.self, forKey: .brush)).flatMap { Brush(rawValue: $0) } ?? .pen
+        let pressure = (try? c.decodeIfPresent(Bool.self, forKey: .pressure)) ?? true
+        // A dash is two lengths, both finite and above 0.
+        let dash = (try? c.decodeIfPresent([Double].self, forKey: .dash)).flatMap { pattern -> [Double]? in
+            let usable = pattern.count == 2 && pattern.allSatisfy { $0.isFinite && $0 > 0 }
+            return usable ? pattern : nil
+        }
+        let blend = try? c.decodeIfPresent(String.self, forKey: .blend)
+        // A level is a number, rounded and held to 0…4.
+        let level = (try? c.decodeIfPresent(Double.self, forKey: .stabilize)).flatMap { value -> Int? in
+            guard value.isFinite else { return nil }
+            return Int(min(4, max(0, value.rounded())))
+        }
+        self.init(kind: kind == "highlighter" ? .highlighter : .pen,
                   color: try c.decode(String.self, forKey: .color),
                   size: try c.decode(Double.self, forKey: .size),
-                  opacity: try c.decodeIfPresent(Double.self, forKey: .opacity) ?? 1)
+                  opacity: try c.decodeIfPresent(Double.self, forKey: .opacity) ?? 1,
+                  brush: brush,
+                  pressure: pressure,
+                  dash: dash,
+                  multiply: blend == "multiply",
+                  stabilize: level ?? 0,
+                  snap: try? c.decodeIfPresent(Snap.self, forKey: .snap))
     }
+}
+
+/// What a `haptic` is for (PencilHaptics plays each as a light tick).
+enum HapticKind: String {
+    /// A held stroke snapped to a shape.
+    case snap
+    /// A pen lasso selected strokes.
+    case select
+    /// A Pencil gesture switched the tool; also a kind the shell does not know.
+    case tool
 }
 
 /// Web → native: `window.webkit.messageHandlers.gamma.postMessage(msg)`.
@@ -84,12 +162,15 @@ enum WebMessage: Equatable {
     case theme(bg: String, scheme: Scheme)
     /// Show the server picker.
     case servers
+    /// Play a tick (PencilHaptics), sent once per event. `at` is where, in
+    /// viewport CSS px, when the page says.
+    case haptic(kind: HapticKind, at: CGPoint?)
 
     enum Scheme: String, Decodable { case light, dark }
 }
 
 extension WebMessage: Decodable {
-    private enum Keys: String, CodingKey { case type, pointerId, at, tool, bg, scheme }
+    private enum Keys: String, CodingKey { case type, pointerId, at, tool, bg, scheme, kind }
     private struct Point: Decodable { let x, y: Double }
 
     init(from decoder: Decoder) throws {
@@ -104,6 +185,10 @@ extension WebMessage: Decodable {
             self = .theme(bg: try c.decode(String.self, forKey: .bg), scheme: try c.decode(Scheme.self, forKey: .scheme))
         case "servers":
             self = .servers
+        case "haptic":
+            let kind = (try? c.decodeIfPresent(String.self, forKey: .kind)).flatMap { HapticKind(rawValue: $0) } ?? .tool
+            let at = (try? c.decodeIfPresent(Point.self, forKey: .at)).map { CGPoint(x: $0.x, y: $0.y) }
+            self = .haptic(kind: kind, at: at)
         default:
             throw DecodingError.dataCorruptedError(forKey: .type, in: c, debugDescription: "unknown message \(type)")
         }
@@ -123,38 +208,98 @@ extension WebMessage: Decodable {
 
 enum PencilGesture: String, Encodable { case tap, squeeze }
 
+/// A squeeze's phase (iPadOS 17.5, an Apple Pencil Pro): its start and its
+/// cancel come as `squeeze`, its end as `pencil` (PencilGestures).
+enum SqueezePhase: String, Encodable { case began, ended, cancelled }
+
 /// Native → web: `window.gammaNative.receive(msg)`, awaited.
 enum HostMessage: Equatable {
-    /// The finished stroke: `[x, y, p, t]` per sample, x and y in CSS px of
-    /// the viewport, p = force / maximum force, t = ms from the first sample.
-    /// The web resolves once the stroke is painted.
-    case stroke(pointerId: Int, samples: [[Double]])
-    /// A Pencil gesture with the system's preferred action (PencilGestures).
-    case pencil(gesture: PencilGesture, action: String)
+    /// The finished stroke: `[x, y, p, t, a, z]` per sample (StrokeRecorder),
+    /// x and y in CSS px of the viewport, p = force / maximum force, t = ms
+    /// from the first sample, a and z the Pencil's altitude and azimuth in
+    /// degrees. No samples: the system cancelled the touch, or the page took
+    /// the hold. `held` is the `n` of the hold whose shape the line was drawn
+    /// as (ShapeHold), nil when none was: the page commits a shape only for
+    /// that hold, so a lift that came before the page's answer stays the
+    /// freehand line it was drawn as. The web resolves once the stroke is
+    /// painted.
+    case stroke(pointerId: Int, samples: [[Double]], held: Int? = nil)
+    /// The captured Pencil has held still (PencilCapture): the samples so
+    /// far, as `stroke` sends them. Asked (`Bridge.ask`): the page answers at
+    /// once with a shape, a cancel or nothing (HoldReply).
+    case hold(pointerId: Int, samples: [[Double]])
+    /// A Pencil gesture with the system's preferred action (PencilGestures):
+    /// a double tap, or a squeeze's end, which says `phase: "ended"` (a
+    /// squeeze without it, from an older shell, is a quick squeeze).
+    case pencil(gesture: PencilGesture, action: String, phase: SqueezePhase? = nil)
+    /// A squeeze's start (.began) or its cancel (.cancelled, in place of its
+    /// `pencil`): a type of its own, so a page that predates it ignores both.
+    case squeeze(phase: SqueezePhase, action: String)
 }
 
 extension HostMessage: Encodable {
-    private enum Keys: String, CodingKey { case type, pointerId, samples, gesture, action }
+    private enum Keys: String, CodingKey { case type, pointerId, samples, held, gesture, action, phase }
 
     func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: Keys.self)
         switch self {
-        case let .stroke(pointerId, samples):
+        case let .stroke(pointerId, samples, held):
             try c.encode("stroke", forKey: .type)
             try c.encode(pointerId, forKey: .pointerId)
             try c.encode(samples, forKey: .samples)
-        case let .pencil(gesture, action):
+            try c.encodeIfPresent(held, forKey: .held)
+        case let .hold(pointerId, samples):
+            try c.encode("hold", forKey: .type)
+            try c.encode(pointerId, forKey: .pointerId)
+            try c.encode(samples, forKey: .samples)
+        case let .pencil(gesture, action, phase):
             try c.encode("pencil", forKey: .type)
             try c.encode(gesture, forKey: .gesture)
+            try c.encode(action, forKey: .action)
+            try c.encodeIfPresent(phase, forKey: .phase)
+        case let .squeeze(phase, action):
+            try c.encode("squeeze", forKey: .type)
+            try c.encode(phase, forKey: .phase)
             try c.encode(action, forKey: .action)
         }
     }
 }
 
+/// The page's answer to `hold`, as `Bridge.ask` hands it over (the value
+/// its promise resolved with, as Foundation types): `{shape: {kind, params}}`
+/// to snap to that shape (HeldShape, viewport CSS px), `{cancel: true}` when
+/// the page took the hold (*Paste here*), and anything else, `{}` included,
+/// nothing. A cancel wins over a shape; a shape of an unknown kind, or with
+/// params it cannot be drawn from, is nothing.
+enum HoldReply: Equatable {
+    case shape(HeldShape)
+    case cancel
+    case nothing
+
+    init(reply: Any?) {
+        guard let reply = reply as? [String: Any] else {
+            self = .nothing
+            return
+        }
+        if let cancel = reply["cancel"] as? Bool, cancel {
+            self = .cancel
+            return
+        }
+        guard let body = reply["shape"], JSONSerialization.isValidJSONObject(body),
+              let data = try? JSONSerialization.data(withJSONObject: body),
+              let shape = try? JSONDecoder().decode(HeldShape.self, from: data) else {
+            self = .nothing
+            return
+        }
+        self = .shape(shape)
+    }
+}
+
 /// The handler WebKit calls (handler name `gamma`, page content world) and
-/// the way back (`send`). Messages are taken only from the server's own main
-/// frame: nothing else is loaded in the shell's web view, and nothing else
-/// should be able to claim the Pencil.
+/// the way back (`send`, and `ask` when the shell needs the answer). Messages
+/// are taken only from the server's own main frame: nothing else is loaded
+/// in the shell's web view, and nothing else should be able to claim the
+/// Pencil.
 @MainActor
 final class Bridge: NSObject, WKScriptMessageHandlerWithReply {
     static let handlerName = "gamma"
@@ -198,6 +343,17 @@ final class Bridge: NSObject, WKScriptMessageHandlerWithReply {
         } catch {
             return false
         }
+    }
+
+    /// Delivers `message` and hands back what the web's promise resolved
+    /// with, as Foundation types (`{}` when it resolved with nothing, as a
+    /// page without a listener for the type does), or nil when it could not
+    /// be delivered or the web rejected it.
+    func ask(_ message: HostMessage) async -> Any? {
+        guard let webView, let data = try? JSONEncoder().encode(message),
+              let json = String(data: data, encoding: .utf8) else { return nil }
+        return try? await webView.callAsync("return (await window.gammaNative.receive(JSON.parse(json))) ?? {};",
+                                            arguments: ["json": json], in: .page)
     }
 }
 

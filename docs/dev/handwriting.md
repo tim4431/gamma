@@ -9,7 +9,7 @@ GoodNotes store, and why the file looks the way it does, in
 `gamma/ink.py` + `gamma/routers/ink.py` (server), `frontend/src/ink/ink.js`,
 `ink/finishStroke.js`, `ink/shapes.js`, `ink/gestures.js`,
 `ink/stabilizer.js`, `ink/fingerChords.js`, `ink/stripKeys.js`,
-`ink/pencilActions.js`, `ink/inkStore.js`, `ink/inkJournal.js`,
+`ink/pencilActions.js`, `ink/hostInk.js`, `ink/inkStore.js`, `ink/inkJournal.js`,
 `ink/inkFlush.js`, `ink/inkLive.js`, `ink/grain.js`,
 `ink/InkStylePicker.jsx`, `ink/InkLayer.jsx`, `ink/inkInput.js` (client),
 with the
@@ -18,14 +18,17 @@ tool strip and the page plumbing it shares with text boxes in
 `markup/PageTools.jsx`; tests `backend/tests/test_ink.py`,
 `frontend/tests/ink.test.mjs`, `finishStroke.test.mjs`, `shapes.test.mjs`,
 `gestures.test.mjs`, `stabilizer.test.mjs`, `fingerChords.test.mjs`,
-`stripKeys.test.mjs`, `pencilActions.test.mjs`, `inkInput.test.mjs`,
+`stripKeys.test.mjs`, `pencilActions.test.mjs`, `hostInk.test.mjs`, `inkInput.test.mjs`,
 `inkLive.test.mjs`, `inkJournal.test.mjs`, `inkFlush.test.mjs` (and the benchmark
 `tests/bench/inkCache.bench.mjs`, not part of `npm test`), the
 shared fixtures `tests/shared/inkv2.json`, `inkwidth.json`, `inkdash.json`
 and `inkmerge.json` (read by `backend/tests/test_shared_fixtures.py` and the
-node tests) and `inkshapes.json`, `inkscribble.json` (the recognisers run in
+node tests, `inkwidth.json` by the iPad app's `InkWidthTests` too) and
+`inkshapes.json`, `inkscribble.json` (the recognisers run in
 the node tests only, the server never recognises; the Python side checks
-the fixtures' shape and that every stored `shape` record parses), e2e `tests/e2e/scenarios/ink.mjs`
+the fixtures' shape and that every stored `shape` record parses) and
+`inkhold.json` (the hold's stillness and refit rule, run by the node tests
+and the iPad app's XCTest), e2e `tests/e2e/scenarios/ink.mjs`
 and `inkEditing.mjs` (the draft journal's restore in `ink.mjs` too), and the live stroke in `collab.mjs`. The same files are
 written on notebook sheets ([notebooks.md](notebooks.md)) and by the iPad
 app ([ipad.md](ipad.md)). Typed text on a page is
@@ -201,9 +204,12 @@ app ([ipad.md](ipad.md)). Typed text on a page is
   the same way. Its `t` is spread over the time the stroke took, and it
   carries a `shape` record ("The stroke file"); the pill says
   "Straightened." or "Shape: circle." with
-  Undo one tap away, every time. On the iPad app the shell owns the pen
-  and sends samples at the lift only, so nothing is recognised there yet
-  ([ipad.md](ipad.md)): a shape is never recognised at commit time
+  Undo one tap away, every time. In the iPad app the shell owns the pen,
+  so it tells the page when the Pencil has held still (`hold`,
+  [ipad.md](ipad.md) "The pen"): the page recognises the shape then, the
+  shell draws it under the pen and refits it by the same rules, and the
+  lift commits it as here. Under a shell that does not send `hold`
+  nothing is recognised: a shape is never recognised at commit time
   without the live preview.
 - **Smoothing** (a preset's `stabilize`, 0–4, Off by default): the pen
   tip pulls the line behind it on a string of 3, 6, 10 or 16 css px (the
@@ -286,8 +292,9 @@ app ([ipad.md](ipad.md)). Typed text on a page is
   copied box on the page nearest the viewport's centre (the sheet in view
   on a notebook); a **pen or mouse held still** on the page for 600 ms with
   a writing tool armed and something on the clipboard, before it has
-  drawn 2 css px, opens a one-row menu, *Paste here*, at the point; a
-  **right-click** on blank page with a tool armed opens the same row.
+  drawn 2 css px, opens a one-row menu, *Paste here*, at the point (in
+  the iPad app through the shell's `hold`, so not under an older shell);
+  a **right-click** on blank page with a tool armed opens the same row.
   Fingers never open it: a resting palm must not paste. The pasted
   strokes join the page's current group as one undo entry, "ink paste",
   and become the selection with the lasso armed. Select all (Ctrl+A, or
@@ -316,12 +323,16 @@ app ([ipad.md](ipad.md)). Typed text on a page is
   handles keep their screen size and follow the live preview. Pressure,
   timing, tilt and stroke ids are untouched.
 - **Hover feedback:** a mouse or hovering pen shows the tool's footprint
-  around a centre mark: a round dot for a pen, a ballpoint or a
-  highlighter, a teardrop for a brush pen, and for a pencil an ellipse
-  that leans the way the pencil does when the pointer reports tilt (a
-  round dot otherwise). Pen and highlighter widths follow the zoom; the
-  eraser radius stays in screen pixels, like the erasure. Tool and menu
-  buttons show their description on hover or keyboard focus.
+  around a centre mark. With *Hover preview* on (this device's
+  `inkHoverPreview`, on by default) the footprint is the armed preset's
+  look: a round dot for a pen, a ballpoint or a highlighter, a teardrop
+  for a brush pen, for a pencil an ellipse that leans the way the pencil
+  does when the pointer reports tilt (a round dot otherwise), and the
+  ring dashed or dotted when the preset's line is. Off, every pen and
+  highlighter shows a plain round ring at its width. Pen and highlighter
+  widths follow the zoom; the eraser radius stays in screen pixels, like
+  the erasure. Tool and menu buttons show their description on hover or
+  keyboard focus.
 - **The pencil** draws graphite: the line is filled with a fine grain,
   darker where the pencil pressed harder (three shades on the page) and
   wider where it leaned; under the pen the live line is stamped from
@@ -374,14 +385,17 @@ app ([ipad.md](ipad.md)). Typed text on a page is
     It works wherever handwriting can be drawn, strip open or not; with
     nothing to undo it does nothing. The first chord of a session says
     "Two fingers undid a stroke." with a *Turn off* action.
-- **Settings** for handwriting sit under Reading & editing in two
-  sections ([settings.md](settings.md) "Reading & editing"):
+- **Settings** for handwriting sit under Reading & editing
+  ([settings.md](settings.md) "Reading & editing"):
   **Handwriting**, the account's — *Reset presets* (with a confirm),
   *Eraser returns to the last tool*, *Erases*, *Draw and hold*, *Scribble
   to erase*; the presets themselves (`inkTools`) are the account's too,
-  though they are edited on the strip — and **This device**, this
+  though they are edited on the strip — **This device**, this
   browser's — *Draws with*, *Stylus draws right away*,
-  *Pressure-sensitive strokes*, *Undo with fingers*. Presets, smoothing
+  *Pressure-sensitive strokes*, *Undo with fingers*, *Hover preview* —
+  and, in the iPad app only, **Apple Pencil**, this browser's too:
+  *Double tap* and *Squeeze*, what the Pencil's gestures do
+  ([ipad.md](ipad.md) "The pen"), and *Haptics*. Presets, smoothing
   and the straight highlighter are set on the strip; More → *Handwriting
   settings…* opens the section.
 - **A stylus draws right away** even with the strip closed (Settings →
@@ -1008,7 +1022,8 @@ reach:
     `style` `{tool, brush, color, size, opacity}` the preset's look;
     `pen` a stylus drew it; `k` css px per pt (the layer's scale, for
     thresholds given in screen pixels); `hold` the layer's live hold
-    result at the lift, `{kind, params} | null`; `straight` the
+    result at the lift, `{kind, params} | null` (under the iPad host, the
+    shape the claim kept, followed through the final samples); `straight` the
     highlighter preset's `'hold' | 'always' | 'off'` (`undefined` reads
     as `'hold'`); `scribble` whether scribble-to-erase is on; `groups` the
     page's groups, `[{id, ink}]`, and `keep(stroke) → bool` the eraser
@@ -1155,6 +1170,24 @@ reach:
     `recognise` would return it. (`from` is an addition to the planned
     `{pointer, shift}`: without the snap position a pure refit cannot
     tell a scale from a rotation.)
+  - The hold's numbers, one table for the layer and the iPad host (whose
+    Swift constants mirror it): `HOLD_MS` 600, `HOLD_MOVE` 3 css px (a tip
+    that moves farther starts the timer again), `HOLD_MIN_MS` 250,
+    `REFIT_PX` 6, `CANCEL_PX` 12, `CANCEL_MS` 150 and `PASTE_MOVE` 2.
+  - `stillSince(samples) → index` (fixture `tests/shared/inkhold.json`,
+    which the iPad app's XCTest runs too): the stillness anchor of `[{x,
+    y}]` in css px, the latest sample more than `HOLD_MOVE` from the
+    anchor before it, the first sample to start with. A hold fires
+    `HOLD_MS` after the anchor's sample, so the snap's time is that
+    sample's `t` + `HOLD_MS`.
+  - `followHold(hold, samples) → params | null` (the same fixture): the
+    shape a hold under the iPad host comes to, the rule the shell runs
+    too (`ShapeHold`), over `hold = {kind, params, from, n, tSnap}` and
+    the stroke's `[{x, y, t}]`, all in the host's css px. Of the samples
+    from index `n` on, the first one more than `CANCEL_PX` from `from`
+    while `t − tSnap ≤ CANCEL_MS` drops the shape (null); once one has
+    been `REFIT_PX` from `from` the answer is `refitShape(kind, params,
+    {pointer: the last sample, from})`, else `params`.
   - `shapeName(kind) → string`: the kind's translated name for the
     "Shape: circle." pill.
 - `ink/gestures.js` (pure; fixture `tests/shared/inkscribble.json`): the
@@ -1251,11 +1284,44 @@ reach:
   box (null), `hasSelection` → `deselect`, `optionsOpen` → `closeOptions`,
   else `close`; `delete`; `undo`. Nothing with Mod-C / X / V / D / A: those
   are catalog commands.
-- `ink/pencilActions.js` (pure): `pencilAction(message,
-  prefs, state)`, the Pencil double-tap and squeeze mapping App applies, and
+- `ink/pencilActions.js` (pure): `pencilAction(message, prefs, state)`,
+  the Pencil's double tap and squeeze as App applies them, and
   `backTool(prefs, state)`, the tool to go back to (the one armed before,
   when it is still on the strip and not the current one, else the stylus
-  pen), which the Pencil's switchPrevious and App's `inkBack` both read.
+  pen), which the gestures' *Switch to last tool* and App's `inkBack`
+  both read.
+  - `message`: `{gesture: 'tap' | 'squeeze', action, phase?: 'began' |
+    'ended' | 'cancelled'}` — the host's `pencil`, and its `squeeze` as
+    the gesture `squeeze`; a bare action string reads as a tap. A squeeze
+    in any other phase (a later shell's `changed`) answers null.
+  - `prefs`: `{tools, pen, tap, squeeze}`, the last two this browser's
+    `inkPencilTap` and `inkPencilSqueeze`. `'system'` (the default) maps
+    the system's action: `switchEraser` → `'eraser'`, `switchPrevious` →
+    `'previous'`, `showColorPalette` and `showInkAttributes` →
+    `'options'`, anything else → `'none'`. `'eraser'` toggles the eraser
+    against `backTool`, `'previous'` picks `backTool`, `'options'` opens
+    the armed tool's row (with the hand armed, the stylus pen's),
+    `'undo'` undoes and `'none'` does nothing; a squeeze also takes
+    `'holdEraser'` and `'holdPrevious'`.
+  - `state`: `{tool, previous, options, busy, squeeze, now}` — `busy` a
+    stroke or a claim in progress (`InkLayer.jsx` `inkBusy()`), `squeeze`
+    the squeeze App holds open (`{since, ignored, hold: {tool, used} |
+    null}`, or null), `now` in ms.
+  - The answer: `{pick: id}` (arm it; null is the hand), `{ui: patch}`
+    (the strip's state), `{undo: true}`, `{began: {ignored, pick?}}` (a
+    squeeze started; `pick`, only for a hold choice not ignored, is the
+    tool to arm while held, what the choice's toggle would arm: the
+    eraser, or `backTool` with the eraser armed already, so a short
+    squeeze toggles back; `backTool` for `'holdPrevious'`), `{release: {pick}}`
+    (a held squeeze ended or was cancelled: back to `pick`, the tool armed
+    when it began, null the hand) or `{release: {stay: true}}` (after a
+    squeeze under `SQUEEZE_TAP_MS`, 300, that neither erased nor drew: the
+    tool it armed stays), or null. A message without `phase` acts at
+    once, a hold choice as its toggle (`'eraser'`, `'previous'`);
+    `began` answers for every choice, so its end can tell; `ended` acts
+    for the other choices only after a `began` that was not ignored;
+    `cancelled` acts only for a hold. While `busy` nothing acts but a
+    hold's end, and a `began` comes back `ignored`.
 - The replay (`ink.js`, pure;
   [recording.md](recording.md) "One clock for every replay"):
   - `strokeWalls(stroke)` is each sample's wall-clock ms (`t0` plus its
@@ -1544,10 +1610,53 @@ reach:
     snapParams, {pointer, from, shift: e.shiftKey})`; a move of more than 12 css px
     within 150 ms of the snap clears `d.hold` and the freehand trace
     resumes. Shift with a mouse (`pointerType === "mouse"`) recognises at
-    once. The timer is cleared in `handOver`, `finish` and `cancel`;
-    `claim.commit` never reads a hold (the shell sends samples at the
-    lift only). `commitStroke` passes `hold: d.hold` to `finishStroke`
-    and the result's `status` to `onHoldStatus`.
+    once. The timer is cleared in `handOver`, `finish` and `cancel`.
+    `commitStroke` passes `hold: d.hold` to `finishStroke` and the
+    result's `status` to `onHoldStatus`. A pen stroke that snaps calls
+    `onHaptic('snap', tip)`, the tip in viewport CSS px, which App sends
+    on only under a host.
+  - The iPad host (`nativeHost().ink`, [ipad.md](ipad.md) "The pen"): a
+    pen down claims the stroke (`claimForHost`) with the claim's tool,
+    `claimTool(look, {k})` (`ink/hostInk.js`, below); the claim is
+    `{taken, commit(samples, held), hold(samples), held}` in the module's
+    `hostClaims`. Under `nativeHost().hold` the module also answers
+    `hold` through the claim's `hold`: a claim not taken, or one keeping
+    a shape already, answers `{}`; with `pasteArmed` and every sample
+    within `PASTE_MOVE` of the first, the claim ends there (out of
+    `hostClaims`, `hostOwned` cleared, its pointer `pasteHold`), *Paste
+    here* opens at the down, and the answer is `{cancel: true}`; with
+    `holdOn`, a chord of at least `max(24 css px, 18 pt)` and
+    `HOLD_MIN_MS` from the first sample to the anchor (`stillSince`),
+    `recognise` runs over the samples in page points (`hostEvent`, the
+    draw context's `toPt`, its `kinds`; through the preset's stabilizer,
+    the last sample closing the path, as the layer's own `snapHold` does
+    with its tip), and a hit is kept as `held =
+    {kind, params, from: the last sample, n: the samples' count, tSnap:
+    the anchor's t + HOLD_MS}`, all in css px (`shapeToHost`), and
+    answered `{shape: {kind, params}}`, with `onHaptic('snap', from)`;
+    anything else answers `{}`. `commit` replays the samples through
+    `hostEvent` (the tilt from degrees) and the stabilizer, as before,
+    and with `held`, when the host's `stroke` names that hold (its `held`
+    is `held.n`: the shell drew the shape), gives the draw context `hold:
+    shapeFromHost(…)` of `followHold(held, samples)` (none when that is
+    null) for `finishStroke`'s hold stage; a `stroke` naming no hold (its
+    lift came before the shell had the answer, and it drew the freehand
+    line) commits freehand. Under a host without `hold` nothing
+    answers, so a captured stroke is never recognised.
+  - `ink/hostInk.js` (pure): the iPad shell's side of a stroke.
+    `claimTool(look, {k}) → tool`: `{kind, color, size: size × k,
+    opacity}` and the look — `brush` for a pen of a known brush other
+    than the plain Pen, `pressure: false` when the look reads no
+    pressure, `dash` as `dashPattern(look)` × k (css px), `blend:
+    'multiply'` for a highlighter, `stabilize` when the preset smooths;
+    each left out at its default. `hostEvent(sample) → {clientX,
+    clientY, pressure, timeStamp, altitudeAngle?, azimuthAngle?}`: a host
+    sample, `[x, y, p, t]` or `[x, y, p, t, a, z]`, as the pointer event
+    `inkSample` reads, the degrees turned to radians, so `penTilt` rounds
+    and drops an upright pencil as it does a browser's. `shapeToHost(shape,
+    {left, top, k})` and `shapeFromHost(shape, {left, top, k})`: a shape
+    record between page points and viewport css px (`ink.js` `mapShape`:
+    points moved, lengths scaled, angles kept, on the 1/100 grid).
   - Paste here: with `ink.clip` (the clipboard holds strokes) and a pen
     or highlighter preset armed, a pen or mouse down in stroke mode arms
     the draw-and-hold timer with the chord floor at 0; when it fires
@@ -1575,6 +1684,13 @@ reach:
     the hover ring draws a small pen or highlighter glyph when
     `ink.eraserFilter` is not `'all'` (the `.inkCursor`'s `data-filter`
     shows the matching `.inkCursorGlyph` in the centre mark's place).
+  - The hover footprint (`showCursor`): the `.inkCursor` takes the armed
+    tool's `data-tool`, and with `ink.hoverPreview` on a pen's
+    `data-brush` (the teardrop), a pencil's leaning ellipse from
+    `penTilt` (the pencil's width law at that slant, turned by the
+    azimuth) and the preset's `data-dash` (`dashed` or `dotted`, the
+    ring's border style); off, a round ring at the preset's width. The
+    eraser's ring and glyph are the same either way.
   - Finger chords: `wireChords` installs one module-level
     `makeChordDetector` (the `hostClaims` pattern: a singleton, so several
     page layers never double-fire) behind its own four document capture
@@ -1792,18 +1908,20 @@ reach:
   - `PageTools.jsx` `PageToolsContext` carries the tools to every layer:
     `{readOnly, ink: {tool, penTool, penOnly, pressure, eraserMode,
     eraserSize, eraserReturn, eraserFilter, drawHold, scribble,
-    fingerUndo, lassoMode}, text, actions}` — `eraserReturn`, `drawHold`
-    and `scribble` the account flags, `eraserFilter` `'all' | 'pen' |
-    'highlighter'`, `fingerUndo` `'off' | 'tap' | 'double'`. The actions
+    fingerUndo, lassoMode, hoverPreview}, text, actions}` —
+    `eraserReturn`, `drawHold` and `scribble` the account flags,
+    `eraserFilter` `'all' | 'pen' | 'highlighter'`, `fingerUndo` `'off' |
+    'tap' | 'double'`, `hoverPreview` this browser's flag. The actions
     are the stroke, erase, select, action, move, jump and finger-scroll
     handlers (and the text boxes') plus `onEraseEnd()` (the tool eraser
     lifted), `onEraseMany(page, [{gid, ids}])` (a scribble's targets, one
     entry across groups), `onUndoGesture('undo' | 'redo')`,
     `onHoldStatus({text, once})`, `onPaste(page, pt, {width, height})`
     (a held pen or mouse, or a right-click, asking for the clipboard at a
-    page point, with the surface's size in points) and `onInkLive(page,
-    msg)` (a chunk of the stroke in progress for the page socket, "Wet
-    strokes" above),
+    page point, with the surface's size in points), `onHaptic(kind, at)`
+    (a snap or a pen lasso's selection, for the iPad host's haptics) and
+    `onInkLive(page, msg)` (a chunk of the stroke in progress for the
+    page socket, "Wet strokes" above),
     ref-backed through `useStableActions`, so their identity never changes.
     The peers' strokes in progress are not marks: a layer reads them from
     `ink/inkLive.js` for its own surface ("Wet strokes" above).
@@ -1841,8 +1959,9 @@ reach:
   ones, what the strip, the key table and the stylus's `backTool` read; the
   eraser's mode and size; the lasso mode; the account's `inkDrawHold`,
   `inkScribbleErase`, `inkEraserReturn` and `inkEraserFilter` and this
-  browser's `inkFingerUndo`, [settings.md](settings.md) "Reading &
-  editing"),
+  browser's `inkFingerUndo`, `inkHoverPreview`, `inkPencilTap`,
+  `inkPencilSqueeze` and `inkHaptics`, [settings.md](settings.md)
+  "Reading & editing"),
   the group the next stroke joins (`inkActiveRef`), the lasso
   selection (`inkSelection`) and the **stroke history** (`inkHistRef`:
   entries of `{changes: [{id, page, before, after}], label}`, one per action; a group whose
@@ -1907,9 +2026,34 @@ reach:
   - `inkBack()` is the previous distinct tool, else the stylus pen
     (`pencilActions.js` `backTool` over `inkPrevRef`); `onEraseEnd` with
     `inkEraserReturn` on and the eraser armed picks it with the options
-    row closed. The Pencil's squeeze toggles the eraser; with the return
-    on, the lift re-arms the pen and the next squeeze arms the eraser
-    again.
+    row closed, except while a held squeeze is open (`squeezeRef`'s
+    `hold`: its release goes back). A squeeze that toggles the eraser
+    still toggles it; with the return on, the lift re-arms the pen and the
+    next squeeze arms the eraser again.
+  - **The Pencil's gestures** (`pencilRef`, listening to the host's
+    `pencil` and `squeeze` under `nativeHost().pencil`, on a page that
+    takes ink): each goes through `pencilAction(message, {tools, pen,
+    tap: inkPencilTap, squeeze: inkPencilSqueeze}, {tool, previous,
+    options, busy: inkBusy(), squeeze: squeezeRef.current, now})`.
+    `{pick}` runs `pickInkTool`, `{ui}` patches `inkUi`, `{undo}` runs
+    `inkUndo(false)` (the strip's Undo: the stroke history, or the block
+    history under `boxUndo`), `{began}` opens `squeezeRef` (`{since,
+    ignored, hold}`; a `pick` is armed, with the tool before and the
+    lasso's selection kept in `hold`), `{release}` picks back (the
+    selection restored when that is the lasso, as `selectionStill(selection)`
+    has it: without the strokes erased meanwhile, none when nothing is
+    left; `stay` keeps the tool the squeeze armed), and an `ended` or
+    `cancelled` closes `squeezeRef` whatever the answer. An erase pass
+    (`handleInkEraseEnd`) or a committed stroke while a hold is open
+    marks it `used`. A host `squeeze` is taken only in its `began` and
+    `cancelled` phases.
+  - **Haptics** (`hostHaptic(kind, at)`, the page tools' `onHaptic`):
+    `postToHost({type: "haptic", kind, at?})` when `nativeHost().haptics`
+    and this browser's `inkHaptics` are on — `tool` for a gesture's pick
+    that changed the armed tool (an `{ui}` or an `{undo}` plays nothing),
+    and, from the layer, `select` for a pen lasso that selected (at its
+    lift) and `snap` for a held shape (at the tip), both in viewport CSS
+    px.
   - `handleInkEraseMany(page, targets)` deletes the targets across their
     groups as one entry, `T("ink scribble erase")`, and raises
     `undoableStatus(tn("Erased {n} stroke.", "Erased {n} strokes.", n),
@@ -2023,8 +2167,9 @@ reach:
     erased: false, selection, tool}` (the lasso selection and the tool
     armed before); `onEraseEnd` marks `erased`; `up` with `held ≥ 300`
     and `erased` picks `tool` again and, when that is the lasso, restores
-    the snapshot; a shorter press, or one that erased nothing, leaves the
-    eraser armed; a window `blur` clears the hold.
+    what is left of the snapshot (`selectionStill`); a shorter press, or
+    one that erased nothing, leaves the eraser armed; a window `blur`
+    clears the hold.
   - **Presets on the account**: `useProfileSync` reports, on the
     account's first pull only, an account entry whose server value
     replaced a local one that was neither the default nor equal to it
@@ -2181,14 +2326,14 @@ reach:
 
 Dedicated shape tools (a shape comes only from draw-and-hold; a committed
 shape has no handles yet, though its `shape` record is written for them),
-shape recognition and hold-to-paste on the iPad app (the shell sends
-samples at the lift only, so no hold runs there), the calligraphy pen
+the calligraphy pen
 (the Style picker's fifth row; `nib` is stored and preserved but nothing
-writes it), a fill on closed shapes (`fill` likewise), the pencil's grain
+writes it, and the iPad shell's claim does not carry it), a fill on
+closed shapes (`fill` likewise), the pencil's grain
 in exports and the AI picture (they draw its shades as plain bands), the
-brush and pencil looks on the iPad shell's native live line (the
-committed stroke is right, the wet one is a plain line until the shell
-reads the claim's brush), live co-drawing of a stroke the iPad shell
+pencil's grain and a dashed pressure line's widths on the iPad shell's
+native live line (it draws the pencil untextured and a dashed line at an
+even width until the web's stroke replaces it), live co-drawing of a stroke the iPad shell
 captures (its samples reach the page only at the lift, so peers see it
 when its file lands), reading handwriting back from the system
 clipboard (copy writes a `gamma/ink` item for other apps, but a paste
@@ -2206,5 +2351,7 @@ drawn behind the ink (`band`), the handwriting clipboard, flips, note
 split and merge, presets on the account and their drag order, the Pen /
 Ballpoint / Brush / Pencil styles, dashed and dotted lines, the
 selection's Style row, live co-drawing over presence, the dense-page
-floor and the draft journal are built. The broader interaction survey is
+floor, the draft journal, and in the iPad app draw-and-hold, hold to
+paste, the preset's look on the live line, the Pencil's tilt, the
+gesture choices and the haptics are built. The broader interaction survey is
 [handwriting-interactions.md](../research/handwriting-interactions.md).

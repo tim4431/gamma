@@ -10,6 +10,8 @@ import {
 } from "./SettingsKit";
 import { SECTION_PREFS } from "./sectionPrefs.js";
 import { DEFAULT_TOOLS } from "../ink/ink.js";
+import { SQUEEZE_HOLDS } from "../ink/pencilActions.js";
+import { nativeHost } from "../shared/lib/host.js";
 import { DEFAULT_PICTURE_BUDGET, MAX_PICTURE_BUDGET } from "../chat/chatPictures.js";
 import { EFFORT_ORDER, SPEED_ORDER } from "../chat/modelPrefs.js";
 import { AppearanceSettings } from "./SettingsAppearance";
@@ -36,6 +38,7 @@ import {
   DatabaseIcon,
   EraserIcon,
   EraseStrokeIcon,
+  EyeIcon,
   LineWidthIcon,
   FileTextIcon,
   ImageIcon,
@@ -50,9 +53,11 @@ import {
   ListIcon,
   MessageSquareIcon,
   MicIcon,
+  MinimizeIcon,
   MoveVerticalIcon,
   OutlineIcon,
   PaperIcon,
+  PencilIcon,
   PenIcon,
   RectSelectIcon,
   RefreshIcon,
@@ -107,6 +112,15 @@ const DRAW_WITH = [
   { value: "pen", label: T("Pen only"), hint: T("fingers scroll and zoom"), Icon: PenIcon },
   { value: "any", label: T("Pen and finger"), hint: T("for screens without a stylus"), Icon: HandIcon },
 ];
+// What the Apple Pencil's double tap and squeeze do in the iPad app
+// (prefDefs.js inkPencilTap, inkPencilSqueeze; ink/pencilActions.js): the
+// system's choice, or one of the strip's own. The two hold choices are the
+// squeeze's alone, and need a shell that sends its start (pencilPhases).
+const PENCIL_GESTURES = [
+  ["system", T("System setting")], ["eraser", T("Switch to eraser")], ["previous", T("Switch to last tool")],
+  ["options", T("Show tool options")], ["undo", T("Undo")], ["none", T("Nothing")],
+];
+const SQUEEZE_WHILE_HELD = [["holdEraser", T("Eraser while held")], ["holdPrevious", T("Last tool while held")]];
 
 function ViewerSettings({ value }) {
   return (
@@ -245,7 +259,16 @@ function ViewerSettings({ value }) {
           <Segmented value={value.inkFingerUndo} onChange={value.setInkFingerUndo}
             options={[["off", T("Off")], ["tap", T("Tap")], ["double", T("Double tap")]]} />
         </Row>
+        <Toggle
+          icon={EyeIcon}
+          label={t("Hover preview")}
+          hint={t("The footprint over the page shows the pen's style")}
+          title={t("A mouse or a hovering pen shows the armed pen's footprint over the page in its style: a teardrop for a brush pen, an ellipse that leans with a tilted pencil, a dashed or dotted ring for a dashed or dotted line. Off shows a plain round ring at the pen's width.")}
+          checked={value.inkHoverPreview}
+          onChange={value.setInkHoverPreview}
+        />
       </Section>
+      <PencilSettings value={value} />
       <Section title={t("Recordings")} scope="account" prefs={SECTION_PREFS.reading["Recordings"]}>
         <Row
           icon={MicIcon}
@@ -266,6 +289,48 @@ function ViewerSettings({ value }) {
         />
       </Section>
     </>
+  );
+}
+
+// The Apple Pencil's gestures and haptics, this browser's: only in the iPad
+// app, whose shell forwards the gestures (nativeHost().pencil) and plays the
+// haptics (nativeHost().haptics). Its choices are MenuSelects: the settings
+// pane has no InkTooltips host, and six or eight choices are too many for
+// a Segmented.
+function PencilSettings({ value }) {
+  const host = nativeHost();
+  if (!host?.pencil) return null;
+  const holds = !!host.pencilPhases || SQUEEZE_HOLDS.includes(value.inkPencilSqueeze);
+  return (
+    <Section title={t("Apple Pencil")} scope="browser">
+      <Row
+        icon={PencilIcon}
+        label={t("Double tap")}
+        hint={t("What a double tap on the Pencil does")}
+        title={t("A double tap on the Apple Pencil's flat side. System setting does what the iPad's Apple Pencil settings ask for: the eraser, the last tool or the tool's options.")}
+      >
+        <MenuSelect label={t("Double tap")} value={value.inkPencilTap} onChange={value.setInkPencilTap} options={PENCIL_GESTURES} />
+      </Row>
+      <Row
+        icon={MinimizeIcon}
+        label={t("Squeeze")}
+        hint={t("What squeezing Apple Pencil Pro does")}
+        title={t("Squeezing an Apple Pencil Pro. System setting does what the iPad's Apple Pencil settings ask for. While held arms the eraser or the last tool only while you squeeze, and the tool you had comes back when you let go; a quick squeeze that draws nothing leaves it armed.")}
+      >
+        <MenuSelect label={t("Squeeze")} value={value.inkPencilSqueeze} onChange={value.setInkPencilSqueeze}
+          options={holds ? [...PENCIL_GESTURES, ...SQUEEZE_WHILE_HELD] : PENCIL_GESTURES} />
+      </Row>
+      {host.haptics ? (
+        <Toggle
+          icon={ZapIcon}
+          label={t("Haptics")}
+          hint={t("A tick in Apple Pencil Pro when a shape snaps, the lasso selects or the tool changes")}
+          title={t("Apple Pencil Pro ticks in your hand when a held stroke snaps to a shape, when the lasso selects strokes, and when a Pencil gesture switches the tool.")}
+          checked={value.inkHaptics}
+          onChange={value.setInkHaptics}
+        />
+      ) : null}
+    </Section>
   );
 }
 
@@ -1078,7 +1143,7 @@ export default function SettingsDialog({
     return () => previous?.focus?.();
   }, [!!activePane]);
   if (!activePane) return null;
-  const results = searchSettings(query, allowed.map(([id]) => id));
+  const results = searchSettings(query, allowed.map(([id]) => id), { host: nativeHost() });
 
   const aiValue = { ...ai, aiInfo: prompts.aiInfo };
   const paperValue = { ...papers, chatModelName: (ai.aiModels || []).find((m) => m.id === ai.chatModel)?.model };

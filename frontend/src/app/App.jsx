@@ -129,6 +129,7 @@ import { useTextBoxes } from "../markup/useTextBoxes";
 import { GROUP_SPLIT_BYTES, MAX_BYTES, MAX_STROKES, appendStroke, appendStrokes, boundsOf, cloneStrokes, duplicateStrokes, eraseAt, eraserKeep, flipStrokes, inkBounds, inkBytes, inkProps, mergeInk, newCanvasInk, newInk, pdfPositionOf, removeStrokes, restyleStrokes, serializeInk, strokeBounds, strokeBytes, toolStyle, transformStrokes, translateStrokes, unionBox } from "../ink/ink";
 import { stripKey } from "../ink/stripKeys.js";
 import { backTool, pencilAction } from "../ink/pencilActions.js";
+import { inkBusy } from "../ink/InkLayer";
 import { NotebookViewer, PaperMenu, readPlace, showPlace } from "../notebook/NotebookViewer";
 import { NoteSheetContext } from "../notebook/NoteSheet";
 import {
@@ -2572,6 +2573,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     inkPenOnly, setInkPenOnly, inkAutoPen, setInkAutoPen, inkPressure, setInkPressure,
     inkFingerUndo, setInkFingerUndo, inkDrawHold, setInkDrawHold, inkScribbleErase, setInkScribbleErase,
     inkEraserReturn, setInkEraserReturn, inkEraserFilter, setInkEraserFilter,
+    inkHoverPreview, setInkHoverPreview, inkPencilTap, setInkPencilTap, inkPencilSqueeze, setInkPencilSqueeze, inkHaptics, setInkHaptics,
     replayMode, setReplayMode, replayRate, setReplayRate, replayFollow, setReplayFollow, replayLeadIn, setReplayLeadIn,
     recordingTranscribe, setRecordingTranscribe,
     inkTools, setInkTools: setInkToolsRaw, inkEraserMode, setInkEraserMode, inkEraserSize, setInkEraserSize,
@@ -6619,6 +6621,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // `page`: a PDF page number, or a notebook sheet's id.
   async function handleInkStroke(page, stroke, size) {
     if (readOnly || !focusedBlockId || inkStale) return;
+    // a stroke drawn while a squeeze holds its tool makes that squeeze no toggle
+    if (squeezeRef.current?.hold) squeezeRef.current.hold.used = true;
     let id = inkActiveRef.current?.page === page ? inkActiveRef.current.id : null;
     const existing = id ? flattenBlocks(blocksRef.current).find((b) => b.id === id && b.properties?.ink_url !== undefined) : null;
     if (!existing) id = makeId();
@@ -6722,6 +6726,16 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   function deleteInkSelection() {
     editInkSelection(removeStrokes, t("ink deletion"));
     setInkSelection(null);
+  }
+  // A selection kept aside while a held E or squeeze armed another tool,
+  // as it stands now: without the strokes erased meanwhile, null when none
+  // is left.
+  function selectionStill(selection) {
+    const items = (selection?.items || []).map((item) => {
+      const have = new Set((inkOf(item.id)?.strokes || []).map((s) => s.id));
+      return { ...item, ids: item.ids.filter((id) => have.has(id)) };
+    }).filter((item) => item.ids.length);
+    return items.length ? { ...selection, items } : null;
   }
   function handleInkAction(action, value) {
     if (readOnly || !inkSelection) return;
@@ -7044,11 +7058,12 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // erased, selection, tool} — the lasso selection and the tool armed before;
   // handleInkEraseEnd marks `erased`; the keyup after 300 ms or more with an
   // erasing pass between picks that tool again and, when it is the lasso,
-  // restores the selection. A shorter press, or one that erased nothing,
-  // leaves the eraser armed (a tap with it already armed opens its row, as
-  // a tap on the button does). A window blur ends a hold.
+  // restores what is left of the selection (selectionStill). A shorter
+  // press, or one that erased nothing, leaves the eraser armed (a tap with
+  // it already armed opens its row, as a tap on the button does). A window
+  // blur ends a hold.
   const inkKeysRef = useRef(null);
-  inkKeysRef.current = { inkUndo, deleteInkSelection, hasSelection: !!inkSelection, selection: inkSelection, tools: inkVisible,
+  inkKeysRef.current = { inkUndo, deleteInkSelection, selectionStill, hasSelection: !!inkSelection, selection: inkSelection, tools: inkVisible,
     allTools: inkTools, setInkTools, tool: inkUi.tool, pickInkTool, boxUndo, hasBox: !!textBoxes.sel, optionsOpen: inkUi.options };
   const inkHoldRef = useRef(null);
   useEffect(() => {
@@ -7097,7 +7112,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         if (action.held >= 300 && hold.erased) {
           if (hold.tool === "eraser") return;
           K.pickInkTool(hold.tool);
-          if (hold.tool === "select" && hold.selection) setInkSelection(hold.selection);
+          if (hold.tool === "select" && hold.selection) setInkSelection(K.selectionStill(hold.selection));
         } else if (hold.tool === "eraser") setInkUi((s) => ({ ...s, options: !s.options }));
       }
     };
@@ -7297,9 +7312,20 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   const viewerHidden = !notebook && pdfHidden;
   useEffect(() => { if (!notebook) setPaperMenu(false); }, [notebook]);
   // The Pencil's double tap and squeeze, forwarded by the iPad app's shell
-  // with the system's preferred action (shared/lib/host.js): the eraser
-  // toggle and the previous tool on the strip, and the armed tool's options
-  // row for the palette and the ink attributes; only where a page takes ink.
+  // (docs/dev/ipad.md "Gestures"; the host's `pencil`, and `squeeze` for a
+  // squeeze's start and cancel): each goes through pencilAction with this
+  // browser's choice for the gesture (Settings → Reading & editing › Apple
+  // Pencil; the system's preferred action by default) — a tool armed, the
+  // armed tool's options row, the strip's Undo — only where a page takes
+  // ink, and none while a stroke or a claim is in progress (InkLayer.jsx
+  // inkBusy). A held squeeze (squeezeRef: {since, ignored, hold: {tool,
+  // used, selection} | null}, from its start to its end or cancel) arms its
+  // tool while it is held and goes back to the tool before at its end,
+  // restoring what is left of the lasso's selection, unless it was a short
+  // one that neither erased nor drew (handleInkEraseEnd and handleInkStroke
+  // mark it used). A `squeeze` is a start or a cancel; in any other phase
+  // (a later shell's) it does nothing.
+  // Each tool a gesture switches to ticks in an Apple Pencil Pro.
   const inkPrevRef = useRef({ tool: null, previous: null });
   useEffect(() => {
     const r = inkPrevRef.current;
@@ -7307,27 +7333,73 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     if (r.tool) r.previous = r.tool;
     r.tool = inkUi.tool;
   }, [inkUi.tool]);
+  const squeezeRef = useRef(null);
   const pencilRef = useRef(null);
-  pencilRef.current = (action) => {
-    if (readOnly || !(((!!pdfUrl || notebook) && !viewerHidden) || nbSheets.length)) return;
-    const result = pencilAction(action, { tools: inkVisible, pen: inkUi.pen },
-      { tool: inkUi.tool, previous: inkPrevRef.current.previous, options: inkUi.options });
+  pencilRef.current = (message) => {
+    const ending = message.gesture === "squeeze" && (message.phase === "ended" || message.phase === "cancelled");
+    const open = squeezeRef.current;
+    if (ending) squeezeRef.current = null;
+    // the end of a held squeeze always goes back, wherever the page is now
+    if (!(ending && open?.hold) && (readOnly || !(((!!pdfUrl || notebook) && !viewerHidden) || nbSheets.length))) return;
+    const now = performance.now();
+    const result = pencilAction(message, { tools: inkVisible, pen: inkUi.pen, tap: inkPencilTap, squeeze: inkPencilSqueeze },
+      { tool: inkUi.tool, previous: inkPrevRef.current.previous, options: inkUi.options, busy: inkBusy(), squeeze: open, now });
     if (!result) return;
-    if ("pick" in result) pickInkTool(result.pick);
-    else setInkUi((s) => ({ ...s, ...result.ui }));
+    // a held squeeze's tool, armed and given back (the same tool is no switch)
+    const hold = (id) => {
+      if (id === inkUi.tool) return;
+      pickInkTool(id);
+      hostHaptic("tool");
+    };
+    if (result.began) {
+      const held = "pick" in result.began;
+      squeezeRef.current = { since: now, ignored: result.began.ignored,
+        hold: held ? { tool: inkUi.tool, used: false, selection: inkSelection } : null };
+      if (held) hold(result.began.pick);
+    } else if (result.release) {
+      if (result.release.stay) return;
+      hold(result.release.pick);
+      if (result.release.pick === "select" && open?.hold?.selection) setInkSelection(selectionStill(open.hold.selection));
+    } else if (result.undo) {
+      // the strip's Undo: the block history while a text box has it, else the stroke history
+      if (boxUndo) undoBlocks(false); else inkUndo(false);
+    } else if ("pick" in result) {
+      if (result.pick !== inkUi.tool) hostHaptic("tool");
+      pickInkTool(result.pick);
+    } else setInkUi((s) => ({ ...s, ...result.ui }));
   };
-  useEffect(() => (nativeHost()?.pencil ? onHostMessage("pencil", ({ action }) => pencilRef.current(action)) : undefined), []);
+  useEffect(() => {
+    if (!nativeHost()?.pencil) return undefined;
+    const offPencil = onHostMessage("pencil", (msg) => { pencilRef.current(msg || {}); });
+    const offSqueeze = onHostMessage("squeeze", (msg) => {
+      if (msg?.phase === "began" || msg?.phase === "cancelled") pencilRef.current({ ...msg, gesture: "squeeze" });
+    });
+    return () => { offPencil(); offSqueeze(); };
+  }, []);
+  // A tick in an Apple Pencil Pro (the host's `haptic`): a gesture's tool
+  // switch ('tool'), and from the ink layer a pen lasso that selected
+  // ('select') and a held shape ('snap') at a point in viewport css px;
+  // only under a host that plays them, with this browser's Haptics on.
+  function hostHaptic(kind, at) {
+    if (!nativeHost()?.haptics || !inkHaptics) return;
+    const point = at && Number.isFinite(at.x) && Number.isFinite(at.y)
+      ? { at: { x: Math.round(at.x * 100) / 100, y: Math.round(at.y * 100) / 100 } } : {};
+    postToHost({ type: "haptic", kind, ...point }).catch(() => {});
+  }
   // The tool to go back to: the one armed before the current one, else the
   // stylus pen (the Pencil's switchPrevious picks the same).
   const inkBack = () => backTool({ tools: inkVisible, pen: inkUi.pen }, { tool: inkUi.tool, previous: inkPrevRef.current.previous });
   // The eraser tool lifted (never the pen's eraser end or barrel, whose
   // lift is the switch): a held E (inkHoldRef) learns a pass was made; with
   // "Eraser returns to the last tool" on, back to the tool armed before it,
-  // the options row closed. The Pencil's squeeze toggles the eraser
-  // (pencilActions.js): with the return on, the lift re-arms the pen and
-  // the next squeeze arms the eraser again.
+  // the options row closed — except while a held squeeze is open, whose
+  // end goes back instead (squeezeRef; the pass marks it used). A squeeze
+  // that toggles the eraser (pencilActions.js) still toggles it: with the
+  // return on, the lift re-arms the pen and the next squeeze arms the
+  // eraser again.
   function handleInkEraseEnd() {
     if (inkHoldRef.current) inkHoldRef.current.erased = true;
+    if (squeezeRef.current?.hold) { squeezeRef.current.hold.used = true; return; }
     if (!inkEraserReturn || inkUi.tool !== "eraser" || readOnly) return;
     pickInkTool(inkBack());
   }
@@ -7440,6 +7512,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     // a held pen or mouse, or a right-click, asking for the clipboard at a page point
     onPaste: (page, pt, size) => pasteInk(page, pt, size),
     onInkLive: handleInkLive,
+    // a held shape or a pen lasso's selection, ticking in an Apple Pencil Pro under the iPad host
+    onHaptic: (kind, at) => hostHaptic(kind, at),
     onFingerScroll: () => setStatus(t("Fingers scroll while a pen draws"),
       { label: t("Draw with finger"), run: () => setInkPenOnly(false) }),
     // A drawing with a pen style, a key or a channel this build does not
@@ -7459,11 +7533,12 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     readOnly,
     ink: { tool: inkTool, penTool: inkPenTool, penOnly: inkPenOnly, pressure: inkPressure, eraserMode: inkEraserMode,
       eraserSize: inkEraserSize, eraserReturn: inkEraserReturn, eraserFilter: inkEraserFilter, drawHold: inkDrawHold,
-      scribble: inkScribbleErase, fingerUndo: inkFingerUndo, lassoMode: inkLassoMode, clip: inkClip, keys: inkKeys },
+      scribble: inkScribbleErase, fingerUndo: inkFingerUndo, lassoMode: inkLassoMode, clip: inkClip, keys: inkKeys,
+      hoverPreview: inkHoverPreview },
     text: { armed: textArmed, style: textBoxStyle },
     actions: pageActions,
   }), [readOnly, inkTool, inkPenTool, inkPenOnly, inkPressure, inkEraserMode, inkEraserSize, inkEraserReturn, inkEraserFilter, inkClip, inkKeys,
-    inkDrawHold, inkScribbleErase, inkFingerUndo, inkLassoMode, textArmed, textBoxStyle, pageActions]);
+    inkDrawHold, inkScribbleErase, inkFingerUndo, inkLassoMode, inkHoverPreview, textArmed, textBoxStyle, pageActions]);
   // --- Recordings (docs/dev/recording.md) ---------------------------------------
   // The page's recording blocks and every block stamped with the moment it
   // was written, each list kept while its contents are the same, so the
@@ -11643,6 +11718,14 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           setInkPressure,
           inkFingerUndo,
           setInkFingerUndo,
+          inkHoverPreview,
+          setInkHoverPreview,
+          inkPencilTap,
+          setInkPencilTap,
+          inkPencilSqueeze,
+          setInkPencilSqueeze,
+          inkHaptics,
+          setInkHaptics,
           inkDrawHold,
           setInkDrawHold,
           inkScribbleErase,
