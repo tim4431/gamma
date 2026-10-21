@@ -13,9 +13,10 @@
 // a comment on the open page also sends `comments`).
 //
 // Items load when the panel opens, 50 at a time ("Show older"). Marks show
-// at once; an answer to a request sent before the latest mark is dropped,
-// so a poll never undoes a mark on its way, and a listing dropped that way
-// is asked again once the marks have settled. A refused mark puts back the
+// at once; an answer to a request sent before the latest mark, or while a
+// mark was on its way (the server may have answered it before the mark was
+// stored), is dropped, so a poll never undoes a mark, and a count or
+// listing dropped that way is asked again once the marks have settled. A refused mark puts back the
 // rows and the count it changed (unless a later mark has changed them
 // since), then looks again. With `notify` (the browser pref
 // inboxSystemNotifications) and the browser's permission, a fresh unread
@@ -62,8 +63,14 @@ export function useInbox({ enabled, open, notify = false, onOpen, onStatus }) {
   // look again once the last of them settles.
   const recheck = useRef(false);
 
-  const takeCount = useCallback((n, gen) => {
-    if (gen !== markGen.current || marking.current || typeof n !== "number") return false;
+  // What a request knew when it was sent: the marks sent so far, and whether
+  // one was still on its way. An answer is stale when a mark was sent after
+  // it, when one is on its way now, or when one was on its way as it went
+  // out: the server may have answered it before that mark was stored.
+  const stamp = () => ({ gen: markGen.current, busy: marking.current > 0 });
+  const stale = (s) => s.gen !== markGen.current || s.busy || marking.current > 0;
+  const takeCount = useCallback((n, s) => {
+    if (stale(s) || typeof n !== "number") return false;
     known.current = n;
     setUnread(n);
     return true;
@@ -72,10 +79,10 @@ export function useInbox({ enabled, open, notify = false, onOpen, onStatus }) {
   // A fresh unread item rings once per browser (the tag keeps two tabs to one).
   const ring = useCallback(async () => {
     if (!cb.current.notify || !canRing()) return;
-    const gen = markGen.current;
+    const sent = stamp();
     let got;
     try { got = await apiJson(`${API}/inbox?filter=unread&limit=10`); } catch { return; }
-    takeCount(got.unread, gen); // a listing's count, as everywhere
+    takeCount(got.unread, sent); // a listing's count, as everywhere
     const rung = rungIds();
     const fresh = itemsToRing(got.items, rung);
     if (!fresh.length) return;
@@ -89,17 +96,17 @@ export function useInbox({ enabled, open, notify = false, onOpen, onStatus }) {
   // The listing of the shown tab, its first page over what is held.
   const fetchList = useCallback(async function load() {
     const filter = listRef.current.filter;
-    const gen = markGen.current;
+    const sent = stamp();
     try {
       const got = await apiJson(`${API}/inbox?filter=${filter}&limit=${PAGE}`);
       if (listRef.current.filter !== filter) return; // the new tab's listing is on its way
-      if (gen !== markGen.current || marking.current) {
+      if (stale(sent)) {
         // older than a mark: asked again once the marks have settled
         if (marking.current) recheck.current = true;
         else load();
         return;
       }
-      takeCount(got.unread, gen);
+      takeCount(got.unread, sent);
       setList((cur) => {
         if (cur.filter !== filter) return cur;
         const { items, more } = mergeListing(cur.items, got, cur.more);
@@ -112,11 +119,17 @@ export function useInbox({ enabled, open, notify = false, onOpen, onStatus }) {
   }, [takeCount]);
 
   const fetchCount = useCallback(async () => {
-    const gen = markGen.current;
+    const sent = stamp();
     try {
       const got = await apiJson(`${API}/inbox/unread`);
       const before = known.current;
-      if (takeCount(got.unread, gen) && got.unread > before) ring();
+      if (takeCount(got.unread, sent)) {
+        if (got.unread > before) ring();
+      } else if (marking.current) {
+        recheck.current = true; // asked again once the marks have settled
+      } else if (sent.busy && sent.gen === markGen.current) {
+        fetchCount(); // sent while a mark was on its way: ask again now it is stored
+      }
     } catch {
       // stays as it was: the next poll asks again
     }
@@ -180,11 +193,11 @@ export function useInbox({ enabled, open, notify = false, onOpen, onStatus }) {
     const { filter, items } = listRef.current;
     if (!items.length) return;
     const before = items[items.length - 1].at;
-    const gen = markGen.current;
+    const sent = stamp();
     try {
       const got = await apiJson(`${API}/inbox?filter=${filter}&limit=${PAGE}&before=${encodeURIComponent(before)}`);
       if (listRef.current.filter !== filter) return;
-      takeCount(got.unread, gen);
+      takeCount(got.unread, sent);
       setList((cur) => {
         const seen = new Set(cur.items.map((i) => i.id));
         return { ...cur, items: [...cur.items, ...(got.items || []).filter((i) => !seen.has(i.id))], more: !!got.more };
@@ -222,7 +235,8 @@ export function useInbox({ enabled, open, notify = false, onOpen, onStatus }) {
         got = await apiJson(`${API}/inbox/mark`, post({ ids: ids.slice(i, i + MARK_BATCH), ...change }));
       }
       marking.current -= 1;
-      if (got) takeCount(got.unread, gen);
+      // the mark's own answer counts once it is the latest and the last on its way
+      if (got) takeCount(got.unread, { gen, busy: false });
       settled();
       return true;
     } catch (err) {

@@ -604,9 +604,10 @@ on the open page also sends `comments`, and a return to the tab fires both
 focus and `visibilitychange`. Every listing (the rings' one too) and every
 mark answers `unread`, and the bell takes the count from each of them: the
 bare count still includes items the listing archives on its way. An
-answer to a request sent before the latest mark is dropped, so a poll
-never undoes a mark on its way; a listing dropped that way is asked again
-once the marks have settled. A poll that changes nothing keeps the held
+answer to a request sent before the latest mark, or sent while a mark was
+on its way (the server may have answered it before storing the mark), is
+dropped, so a poll never undoes a mark; a count or listing dropped that way
+is asked again once the marks have settled. A poll that changes nothing keeps the held
 listing, so the open panel does not render again every 5 s.
 
 **The bell.** `InboxButton` sits in `topbarActions` before the account
