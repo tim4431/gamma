@@ -111,6 +111,15 @@ components with their placement (`useCaretAnchored`, also used by the "/"
 menu). `editor/BlockTree.jsx` computes the preview's docked anchor from the
 editor's box and the span's first/last lines.
 
+KaTeX's fonts (`katex.min.css`, imported by `shared/styles/app.css`) use
+`font-display: block`: a glyph stays invisible until its face has loaded,
+and the browser fetches each face only when a formula first needs it, so the
+first formula in a view (a comment's thread, the preview) would appear piece
+by piece as its faces arrive. `shared/lib/katexFonts.js` asks for the faces
+most formulas use (Main in three styles, Math italic, Size1 to Size4, AMS)
+once, while the browser is idle 0.8 s after startup (`main.jsx`), so the
+first formula draws whole.
+
 Validation (from `frontend`):
 
 ```sh
