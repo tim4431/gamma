@@ -9,7 +9,12 @@ import "@fontsource-variable/inter/wght-italic.css";
 import "./shared/styles/app.css";
 import "./library/library.css";
 import "./settings/settings.css";
-import { warmKatexFontsWhenIdle } from "./shared/lib/katexFonts.js";
+import { warmKatexFonts } from "./shared/lib/katexFonts.js";
+
+// The formulas' fonts start loading now, beside the app's code, so the first
+// formula shown (a comment's thread, the LaTeX preview) draws whole rather
+// than piece by piece as its faces arrive (shared/lib/katexFonts.js).
+warmKatexFonts();
 
 // iPadOS defaults to "Request Desktop Website", where Safari reports
 // (hover: hover) and (pointer: fine) exactly like a Mac — so no media query
@@ -36,7 +41,4 @@ loadLocale(locale)
         <App />
       </React.StrictMode>
     );
-    // The formulas' fonts, fetched while idle so the first one shown (a
-    // comment's thread, the LaTeX preview) draws whole (shared/lib/katexFonts.js).
-    warmKatexFontsWhenIdle();
   });

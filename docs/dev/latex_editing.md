@@ -117,8 +117,9 @@ and the browser fetches each face only when a formula first needs it, so the
 first formula in a view (a comment's thread, the preview) would appear piece
 by piece as its faces arrive. `shared/lib/katexFonts.js` asks for the faces
 most formulas use (Main in three styles, Math italic, Size1 to Size4, AMS)
-once, while the browser is idle 0.8 s after startup (`main.jsx`), so the
-first formula draws whole.
+once, at startup (`main.jsx`, as soon as the styles are in), so they load
+beside the app's own code and a formula shown the moment its page has
+drawn still draws whole.
 
 Validation (from `frontend`):
 
