@@ -120,20 +120,35 @@ function Comment({ comment, me, owner, canComment, people, labelsFor, later, fie
   );
 }
 
-function Thread({ thread, focused, canComment, me, people, onResolve, onReply, ...rest }) {
+// A thread shows its reply field once it is the active one, as in Notion: a
+// press on it (not on one of its buttons, links or fields) or the link that
+// opened the popover at it makes it active. A thread holding an unsent
+// reply keeps its field, so a draft is never hidden.
+function Thread({ thread, focused, active, onActivate, canComment, me, people, onResolve, onReply, ...rest }) {
   const open = isOpen(thread);
   const ref = useRef(null);
   useEffect(() => {
     if (focused) ref.current?.scrollIntoView({ block: "nearest" });
   }, [focused]);
+  const replying = canComment && open && (active || hasDraft(`reply:${thread.id}`));
+  const canActivate = canComment && open && !active;
+  const activate = (e) => {
+    if (!canActivate || e.target.closest?.("button, a, input, textarea, .cm-editor, .ctxMenu")) return;
+    onActivate(thread.id);
+  };
   return (
-    <section ref={ref} className={`commentThread${open ? "" : " resolved"}${focused ? " focused" : ""}`} data-thread-id={thread.id}>
+    <section ref={ref} className={`commentThread${open ? "" : " resolved"}${focused ? " focused" : ""}${active ? " active" : ""}${canActivate ? " canReply" : ""}`}
+      data-thread-id={thread.id}
+      onClick={activate}
+      tabIndex={canActivate ? 0 : undefined}
+      aria-label={canActivate ? t("Reply to this thread") : undefined}
+      onKeyDown={(e) => { if (canActivate && e.target === e.currentTarget && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); onActivate(thread.id); } }}>
       {thread.comments.map((c, i) => (
         <Comment key={c.id} comment={c} me={me} canComment={canComment} people={people} {...rest}
           resolve={i === 0 && canComment ? { open, onClick: () => onResolve(thread.id, open) } : null} />
       ))}
-      {canComment && open ? (
-        <CommentComposer {...rest.field} people={people} me={me} draftKey={`reply:${thread.id}`} placeholder={t("Reply…")} submitLabel={t("Send reply")}
+      {replying ? (
+        <CommentComposer {...rest.field} autoFocus={active} people={people} me={me} draftKey={`reply:${thread.id}`} placeholder={t("Reply…")} submitLabel={t("Send reply")}
           onSubmit={(body) => onReply(thread.id, body)} onEscape={rest.onEscape} />
       ) : null}
       {open ? null : (
@@ -163,6 +178,10 @@ export default function ThreadPopover({ target, threads, kind = "note", me, owne
   // The comments shown at opening past its first screens of text, which are
   // drawn as they near the view; one written or shown since is drawn at once.
   const [later] = useState(() => laterComments(shown, { focus: target.threadId }));
+  // The thread whose reply field shows: the one a link opened the popover
+  // at, then the one last pressed.
+  const [activeThread, setActiveThread] = useState(target.threadId || "");
+  useEffect(() => { if (target.threadId) setActiveThread(target.threadId); }, [target.threadId]);
   // App keys the popover by its block: another block's is a fresh one. A
   // new request on this block to write (the handle menu's Comment,
   // Mod-Shift-M) opens "New comment" and puts the focus in it.
@@ -237,6 +256,7 @@ export default function ThreadPopover({ target, threads, kind = "note", me, owne
       <div className="commentPopBody">
         {shown.map((th) => (
           <Thread key={th.id} thread={th} focused={th.id === target.threadId} canComment={canComment}
+            active={th.id === activeThread} onActivate={setActiveThread}
             onResolve={onResolve} onReply={(threadId, body) => onAdd(target.blockId, body, threadId)} {...common} />
         ))}
         {hiddenResolved ? (

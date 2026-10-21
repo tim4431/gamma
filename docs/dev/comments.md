@@ -443,8 +443,11 @@ control. Closing it loses no unsent text (below). It lists the block's open thre
 one only when it was asked for (a deep link, the window's Resolved tab) or
 "Show n resolved threads". A new request to write on the block whose
 popover is open (the handle menu's Comment, Ctrl/⌘+Shift+M) opens "New
-comment" in it and puts the focus there. Each thread shows its comments and a
-reply field. Its first comment's author line carries the thread's Resolve
+comment" in it and puts the focus there. Each thread shows its comments;
+its reply field shows, focused, once the thread is the active one, as in
+Notion: a press on the thread (not on one of its buttons, links or fields),
+Enter or Space on it, or the link that opened the popover at it makes it
+active, and a thread holding an unsent reply keeps its field. Its first comment's author line carries the thread's Resolve
 (a check mark) or Reopen button beside the "⋯"; a resolved thread says
 who resolved it at its foot, where the reply field was. A comment shows its author's avatar (`PeerAvatar`,
 `nameColor`), name, time and text rendered as a note is (`BlockMarkdown`

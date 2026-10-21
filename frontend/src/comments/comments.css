@@ -97,6 +97,18 @@
   border-bottom: 1px solid var(--border);
 }
 .commentThread.resolved { opacity: 0.8; }
+/* A thread one may reply to shows its field once pressed: until then it
+   reads as something to press. */
+.commentThread.canReply {
+  cursor: pointer;
+  margin: 0 calc(-1 * var(--space-2));
+  padding-inline: var(--space-2);
+  padding-top: var(--space-2);
+  border-radius: var(--radius-md);
+  transition: background var(--dur-fast) ease;
+}
+.commentThread.canReply:hover { background: var(--bg-hover); }
+.commentThread.canReply:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .commentThread.focused { animation: commentLanded 1.2s ease-out; border-radius: var(--radius-md); }
 @keyframes commentLanded {
   0%, 25% { background: var(--accent-bg); }

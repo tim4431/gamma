@@ -58,6 +58,14 @@ export async function commentScenarios({ server, browser, makePdf, step, until, 
   const fieldText = (f) => f.evaluate((el) => (el.querySelector(".cm-placeholder") ? "" : el.innerText.trim()));
   // The composer takes the focus a frame after the popover is placed.
   const focused = (f, what) => until(async () => f.evaluate((el) => el === document.activeElement).catch(() => false), { what });
+  // A thread's reply field shows once the thread is pressed (as in Notion):
+  // a press on its first comment's text, then its field.
+  const openReply = async (scope) => {
+    await scope.locator(".commentThread .commentBody").first().click();
+    const f = field(scope.locator(".commentThread"));
+    await f.first().waitFor();
+    return f;
+  };
   // --keep: the field's widgets, for the record
   const shot = async (page, name) => {
     if (flags?.keep) await page.screenshot({ path: `${server.dir}/${name}.png`, animations: "disabled" });
@@ -93,8 +101,9 @@ export async function commentScenarios({ server, browser, makePdf, step, until, 
     // Ben's tab hears of it from the page's room.
     await until(async () => (await control(B, "The first claim").innerText().catch(() => "")) === "1", { what: "the count reaches the other tab", timeout: 10000 });
     await openControl(B, "The first claim");
-    const replyB = field(popover(B).locator(".commentThread"));
-    await replyB.click();
+    assertEq(await field(popover(B).locator(".commentThread")).count(), 0, "no reply field until the thread is pressed");
+    const replyB = await openReply(popover(B));
+    await focused(replyB, "the pressed thread's reply field takes the focus");
     // a word typed over, apart from the typing before it: an edit whose
     // undo would put text back
     await B.keyboard.type("Yes, see the annex");
@@ -199,19 +208,20 @@ export async function commentScenarios({ server, browser, makePdf, step, until, 
 
   await step("comments: a reply left unsent is still in its field when the popover opens again", async () => {
     await openControl(A, "The first claim");
-    const reply = field(popover(A).locator(".commentThread"));
+    const reply = await openReply(popover(A));
     await reply.click();
     await A.keyboard.type("Half a thought");
     await A.keyboard.press("Escape");
     await popover(A).waitFor({ state: "detached" });
     await openControl(A, "The first claim");
+    // a thread holding a draft shows its field without a press
     assertEq(await fieldText(reply), "Half a thought", "the draft is back");
     await reply.click();
     await A.keyboard.press("Control+A");
     await A.keyboard.press("Backspace");
     await closePopover(A);
     await openControl(A, "The first claim");
-    assertEq(await fieldText(reply), "", "an emptied field keeps no draft");
+    assertEq(await reply.count(), 0, "an emptied field keeps no draft, so the thread shows no field until pressed");
     await closePopover(A);
     assertNoProblems(A);
   });
@@ -359,8 +369,6 @@ export async function commentScenarios({ server, browser, makePdf, step, until, 
     const send = popover(A).locator(".commentNew .commentSend");
     assertEq(await send.getAttribute("title"), "Comment (Shift+Enter)", "the title names the key");
     assertEq(await send.getAttribute("aria-label"), "Comment", "the name is the plain action");
-    const reply = popover(A).locator(".commentThread .commentSend").first();
-    assertEq(await reply.getAttribute("title"), "Send reply (Shift+Enter)");
     const size = await send.evaluate((el) => [el.getBoundingClientRect().width, el.getBoundingClientRect().height, el.querySelector("svg").getBoundingClientRect().width]);
     assertEq(size.join(), "24,24,12", "a 24px circle with a 12px arrow");
     // the bare "/": the commands that write text, none that make a page, a sheet, an upload or an embed
@@ -437,6 +445,10 @@ export async function commentScenarios({ server, browser, makePdf, step, until, 
     await sent.locator(".katex").waitFor();
     await sent.scrollIntoViewIfNeeded();
     await shot(A, "w9-sent-comment");
+    // a reply's button names its key too, once its thread is pressed
+    await openReply(popover(A));
+    const reply = popover(A).locator(".commentThread .commentSend").first();
+    assertEq(await reply.getAttribute("title"), "Send reply (Shift+Enter)");
     await closePopover(A);
     assertNoProblems(A);
   });
