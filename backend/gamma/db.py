@@ -11,8 +11,8 @@ Two kinds of database (docs/dev/user_db.md):
   directory behind it is upgraded by ``gamma/migrations.py`` before the
   server serves anything, one ahead of it is refused.
 - per workspace, under ``workspaces/<id>/``: ``pages.db`` (the block tree,
-  the op and change logs, the AI chats, the notes index, each account's
-  prefs that name its pages) and ``data.db``
+  the op and change logs, the AI chats, the comments, the notes index,
+  each account's prefs that name its pages) and ``data.db``
   (only what can be deleted and rebuilt: the PDF index and manifests,
   cover snapshots). Their statements are ``CREATE ... IF NOT EXISTS``
   applied when a connection opens. pages.db carries its own version (its
@@ -44,7 +44,7 @@ from .textnorm import normalize_text
 # The data-directory schema version this code expects (users.db
 # ``PRAGMA user_version``). Bump it together with a new step in
 # gamma/migrations.py — never without one, never without bumping.
-SCHEMA_VERSION = 39
+SCHEMA_VERSION = 40
 # A workspace's pages.db keeps a version of its own (its ``PRAGMA
 # user_version``): the newest step whose per-workspace part has run on it
 # (gamma/migrations.py WORKSPACE_STEPS). One stamped 0 is at this version:
@@ -301,12 +301,14 @@ USERS_SCHEMA = [
     "CREATE UNIQUE INDEX IF NOT EXISTS idx_shares_page ON shares(workspace_id, page_id) WHERE page_id != ''",
     "CREATE UNIQUE INDEX IF NOT EXISTS idx_shares_folder ON shares(workspace_id, folder) WHERE folder != ''",
     # The people a share link invites, each with their own role ("view" or
-    # "edit") whatever the link's general access says. The rows go with
-    # their share and with their account.
+    # "edit") whatever the link's general access says, and when they were
+    # invited (`added_at`, '' on the rows from before step 40). The rows go
+    # with their share and with their account.
     """CREATE TABLE IF NOT EXISTS share_users (
         token TEXT NOT NULL,
         user_id TEXT NOT NULL,
         role TEXT NOT NULL,
+        added_at TEXT NOT NULL DEFAULT '',
         PRIMARY KEY (token, user_id)
     )""",
     # Small JSON values that follow the ACCOUNT (docs/dev/settings.md):
@@ -337,6 +339,35 @@ USERS_SCHEMA = [
         done_at TEXT NOT NULL,
         PRIMARY KEY (user_id, key)
     )""",
+    # inbox_items = each account's Inbox (docs/dev/comments.md "The
+    # inbox"): one row per event that concerns the account (`user_id`, the
+    # recipient) — `kind` mention / comment_mention / reply / resolved /
+    # shared / invited, `actor` who did it (an account id), where it
+    # happened (the workspace, page, block, thread and comment; '' where
+    # the kind has none; a folder share's folder in `block_id`),
+    # `share_token` when the recipient reaches the page only through a
+    # share, `snippet` (at most 200 characters of the text at the time),
+    # `at`, and the recipient's `read_at` / `archived_at`. Written when the
+    # event happens; no unique index, the producers dedupe.
+    """CREATE TABLE IF NOT EXISTS inbox_items (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        actor TEXT NOT NULL,
+        workspace_id TEXT NOT NULL,
+        page_id TEXT NOT NULL DEFAULT '',
+        block_id TEXT NOT NULL DEFAULT '',
+        thread_id TEXT NOT NULL DEFAULT '',
+        comment_id TEXT NOT NULL DEFAULT '',
+        share_token TEXT NOT NULL DEFAULT '',
+        snippet TEXT NOT NULL DEFAULT '',
+        at TEXT NOT NULL,
+        read_at TEXT,
+        archived_at TEXT
+    )""",
+    "CREATE INDEX IF NOT EXISTS idx_inbox_user ON inbox_items(user_id, at)",
+    "CREATE INDEX IF NOT EXISTS idx_inbox_unread ON inbox_items(user_id) WHERE read_at IS NULL AND archived_at IS NULL",
+    "CREATE INDEX IF NOT EXISTS idx_inbox_comment ON inbox_items(comment_id) WHERE comment_id != ''",
     # Server-wide admin-tunable settings (see gamma/server_settings.py) — a
     # tiny KV, global because limits like upload size apply to every user.
     """CREATE TABLE IF NOT EXISTS settings (
@@ -498,6 +529,39 @@ CHATS_SCHEMA = [
     )""",
     "CREATE INDEX IF NOT EXISTS chat_history_bucket ON chat_history (bucket, updated_at)",
 ]
+# comments = the threads people leave on a note, a page (its root block) or
+# a highlight (its block) — gamma/comments.py, docs/dev/comments.md. A
+# thread is its root comment (`thread_id` = its own `id`) and the replies
+# that name it. `block_id` is the anchor; `page_id` the page it was on when
+# last written, a hint for the purges (a live read joins unified_blocks).
+# `author` an account id, `author_name` its username at write time (shown
+# once the id no longer resolves). `updated_at` moves on a body edit only;
+# `resolved_at` / `resolved_by` are on the root only; `deleted_at` marks a
+# root deleted while it still has replies (a tombstone); `orphaned_at` is
+# set when the anchor block is deleted, cleared when it comes back, and
+# the sweep deletes the row seven days on. Never part of a block, so no
+# block reader has to skip them; a comment write touches no page.
+COMMENTS_SCHEMA = [
+    """CREATE TABLE IF NOT EXISTS comments (
+        id TEXT PRIMARY KEY,
+        thread_id TEXT NOT NULL,
+        block_id TEXT NOT NULL,
+        page_id TEXT NOT NULL,
+        author TEXT NOT NULL,
+        author_name TEXT NOT NULL DEFAULT '',
+        body TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        resolved_at TEXT,
+        resolved_by TEXT,
+        deleted_at TEXT,
+        orphaned_at TEXT
+    )""",
+    "CREATE INDEX IF NOT EXISTS idx_comments_block ON comments(block_id)",
+    "CREATE INDEX IF NOT EXISTS idx_comments_thread ON comments(thread_id, created_at)",
+    "CREATE INDEX IF NOT EXISTS idx_comments_page ON comments(page_id)",
+    "CREATE INDEX IF NOT EXISTS idx_comments_orphaned ON comments(orphaned_at) WHERE orphaned_at IS NOT NULL",
+]
 _CHAT_COLUMNS = {"chats": "bucket, messages, updated_at, title",
                  "chat_history": "id, bucket, title, messages, created_at, updated_at"}
 
@@ -632,6 +696,7 @@ PAGES_SCHEMA = [
     "CREATE UNIQUE INDEX IF NOT EXISTS idx_page_ops_batch ON page_ops(page_id, client, batch_id) WHERE batch_id != ''",
     WORKSPACE_PREFS_SCHEMA,
     *CHATS_SCHEMA,
+    *COMMENTS_SCHEMA,
     *BLOCK_FTS_SCHEMA,
 ]
 

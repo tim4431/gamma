@@ -18,7 +18,7 @@ const settle = async () => { for (let i = 0; i < 20; i++) await Promise.resolve(
 // A session over fakes; `api(path, init)` answers the HTTP calls. Timers
 // never fire on their own: h.fire() runs whatever is armed.
 function setup(t, api, { canWrite = true, connect = true } = {}) {
-  const h = { calls: [], remote: [], reloads: [], status: [], notices: [], keepalive: [], sockets: [], timers: new Map(), peers: [], me: null };
+  const h = { calls: [], remote: [], reloads: [], status: [], notices: [], keepalive: [], sockets: [], timers: new Map(), peers: [], me: null, comments: [], inbox: 0 };
   let timerId = 0;
   const options = {
     pageId: "page-a", canWrite,
@@ -26,6 +26,7 @@ function setup(t, api, { canWrite = true, connect = true } = {}) {
     onReload: (page) => h.reloads.push(page),
     onStatus: (text) => h.status.push(text),
     onSaveNotice: (text, kind) => h.notices.push([kind, text]),
+    onComments: (msg) => h.comments.push(msg),
   };
   h.session = createCollabSession({
     clientId: ME,
@@ -39,6 +40,7 @@ function setup(t, api, { canWrite = true, connect = true } = {}) {
     opts: () => options,
     onPeers: (p) => { h.peers = p; },
     onMe: (m) => { h.me = m; },
+    onInbox: () => { h.inbox += 1; },
     timers: { set: (fn, ms) => { h.timers.set(++timerId, { fn, ms }); return timerId; }, clear: (id) => h.timers.delete(id) },
   });
   h.options = options;
@@ -459,4 +461,18 @@ test("a text box: an older batch acked while its page was away, read from the lo
   h.message({ t: "hello", client: ME, seq: 2, peers: [] });
   await settle();
   assert.deepEqual(h.tree[0].properties.text_box, { ...BOX, x: 50, bg: "#fff4b8" });
+});
+
+test("the room's comments nudge and every hello refetch the page's threads; an inbox nudge is the account's, on any page", async (t) => {
+  const h = setup(t, async () => ({ seq: 0, batches: [] }));
+  h.message({ t: "hello", client: ME, color: 0, seq: 0, peers: [] });
+  h.message({ t: "comments", block_id: "a", thread_id: "c1" });
+  assert.deepEqual(h.comments, [null, { t: "comments", block_id: "a", thread_id: "c1" }]);
+  h.message({ t: "inbox" });
+  assert.equal(h.inbox, 1);
+  h.load("page-b", [block("p")]); // navigated away while the socket is still the old page's
+  h.message({ t: "comments", block_id: "a", thread_id: "c2" });
+  h.message({ t: "inbox" });
+  assert.equal(h.comments.length, 2, "another page's comments are not this page's");
+  assert.equal(h.inbox, 2, "the inbox nudge still counts");
 });

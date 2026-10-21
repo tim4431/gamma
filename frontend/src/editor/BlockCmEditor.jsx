@@ -6,12 +6,12 @@
 // moving the caret into it (arrow keys, or clicking the rendered chip)
 // expands it back to source.
 import React, { useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef } from "react";
-import { Annotation, Compartment, EditorState, Prec, StateEffect, StateField } from "@codemirror/state";
+import { Annotation, Compartment, EditorState, Prec, StateEffect, StateField, Transaction } from "@codemirror/state";
 import {
   Decoration, EditorView, WidgetType, keymap,
   placeholder as cmPlaceholder,
 } from "@codemirror/view";
-import { standardKeymap } from "@codemirror/commands";
+import { history, historyKeymap, redo, standardKeymap, undo } from "@codemirror/commands";
 import { findMathAtCursor, renderKatex } from "./LatexEditor";
 import { editBarSpace } from "./EditBar";
 import { emptyLeftPair, escapedAt, leftDelimiterEdit, rightDelimiterAt } from "./latexInput";
@@ -929,9 +929,12 @@ const typingAids = EditorView.contentAttributes.compute(["doc", "selection"], (s
 });
 
 // `pinScroll`: opening scrolls nothing (keepUnderPointer), for an editor
-// drawn where its text was, in the same type (a text box's).
+// drawn where its text was, in the same type (a text box's). `ownHistory`:
+// the editor keeps its own undo history (a comment's field, whose text is
+// no block), and `ariaLabel` names its text box; both are read when it
+// mounts, as `placeholder` is.
 const BlockCmEditor = React.forwardRef(function BlockCmEditor({
-  value, onChange, onSelect, onKeyDown, onBlur, onPaste, onUndo,
+  value, onChange, onSelect, onKeyDown, onBlur, onPaste, onUndo, ownHistory = false, ariaLabel,
   placeholder, autoFocus, clickPos, pinScroll = false, dataBlockId, className, refLabels, mentions, remoteCursors,
   onObjectDrag, onObjectDragOver, onObjectDrop,
 }, forwardedRef) {
@@ -945,6 +948,10 @@ const BlockCmEditor = React.forwardRef(function BlockCmEditor({
   decoCtx.mentions = mentions;
   decoCtx.objectDrag = onObjectDrag;
   const chipCompartment = useRef(new Compartment()).current;
+  // An own history in a compartment, so that a text replaced from outside
+  // starts it afresh (see the sync below).
+  const historyCompartment = useRef(new Compartment()).current;
+  const ownHistoryRef = useRef(ownHistory);
 
   const api = useMemo(() => ({
     get value() { return viewRef.current ? viewRef.current.state.doc.toString() : ""; },
@@ -982,9 +989,11 @@ const BlockCmEditor = React.forwardRef(function BlockCmEditor({
       doc: value || "",
       extensions: [
         EditorView.lineWrapping,
-        // No history() here: undo is the page's one block history
-        // (blockHistory.js) — Ctrl+Z bubbles to the window listener, which
-        // restores the block's text and hands the caret back.
+        // No history() for a block's text: undo is the page's one block
+        // history (blockHistory.js) — Ctrl+Z bubbles to the window
+        // listener, which restores the block's text and hands the caret
+        // back. An editor with `ownHistory` keeps its own.
+        ...(ownHistory ? [historyCompartment.of(history()), keymap.of(historyKeymap)] : []),
         // Our keydown runs before CM's keymaps so Enter/Tab/etc. keep the
         // outliner semantics from blockTree; anything not preventDefault-ed
         // falls through to the default editing keymap.
@@ -1004,7 +1013,7 @@ const BlockCmEditor = React.forwardRef(function BlockCmEditor({
           // edit CodeMirror's DOM behind its back. Its B and I keys, and the
           // Format menu over a selection, arrive as format* input types: they
           // run the commands Ctrl+B / I / Shift+X run, in every editor.
-          beforeinput: (e) => {
+          beforeinput: (e, view) => {
             const format = FORMAT_INPUTS[e.inputType];
             if (format) {
               e.preventDefault();
@@ -1012,6 +1021,11 @@ const BlockCmEditor = React.forwardRef(function BlockCmEditor({
               return true;
             }
             if (e.inputType !== "historyUndo" && e.inputType !== "historyRedo") return false;
+            if (ownHistory) {
+              e.preventDefault();
+              (e.inputType === "historyRedo" ? redo : undo)(view);
+              return true;
+            }
             if (!cbRef.current.onUndo) return false;
             e.preventDefault();
             cbRef.current.onUndo(e.inputType === "historyRedo");
@@ -1032,6 +1046,7 @@ const BlockCmEditor = React.forwardRef(function BlockCmEditor({
         // catalog is the one place a key is declared (docs/dev/hotkeys.md).
         keymap.of(standardKeymap),
         cmPlaceholder(placeholder || ""),
+        ...(ariaLabel ? [EditorView.contentAttributes.of({ "aria-label": ariaLabel })] : []),
         chipCompartment.of(inlineRenderField(decoCtx)),
         remoteCursorField,
         EditorView.updateListener.of((u) => {
@@ -1131,6 +1146,9 @@ const BlockCmEditor = React.forwardRef(function BlockCmEditor({
   // External value changes (a remote edit, an undo restore, programmatic
   // inserts) sync in as the minimal prefix/suffix replacement — the caret
   // maps through instead of jumping; self-originated edits arrive equal.
+  // An own history starts afresh on them: a sent comment's field emptying
+  // is no edit to undo, and the typing before it belongs to the sent text
+  // (dropping history() and adding it back gives it a new, empty state).
   useEffect(() => {
     const view = viewRef.current;
     if (!view) return;
@@ -1144,8 +1162,12 @@ const BlockCmEditor = React.forwardRef(function BlockCmEditor({
     while (tail < max - head && cur.charCodeAt(cur.length - 1 - tail) === next.charCodeAt(next.length - 1 - tail)) tail++;
     view.dispatch({
       changes: { from: head, to: cur.length - tail, insert: next.slice(head, next.length - tail) },
-      annotations: externalSync.of(true),
+      annotations: [externalSync.of(true), Transaction.addToHistory.of(false)],
     });
+    if (ownHistoryRef.current) {
+      view.dispatch({ effects: historyCompartment.reconfigure([]) });
+      view.dispatch({ effects: historyCompartment.reconfigure(history()) });
+    }
   }, [value]);
 
   // Peers' carets in this block.

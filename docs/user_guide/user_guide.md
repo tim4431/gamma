@@ -5,7 +5,7 @@ Read papers, keep what you learn. This guide shows each part of Gamma in a short
 | Section | What it covers |
 |---|---|
 | [Getting started](#getting-started) | Sign in, add a paper, read it |
-| [Highlight and annotate](#highlight-and-annotate) | Highlights, comments, area screenshots |
+| [Highlight and annotate](#highlight-and-annotate) | Highlights and their notes, area screenshots |
 | [Draw and type on the page](#draw-and-type-on-the-page) | Pens, the lasso, text boxes |
 | [Record audio](#record-audio) | A lecture in step with your notes; tap anything to hear that moment |
 | [Notebooks](#notebooks) | Sheets of paper to write on |
@@ -19,6 +19,7 @@ Read papers, keep what you learn. This guide shows each part of Gamma in a short
 | [Metadata and citations](#metadata-and-citations) | Title, authors, BibTeX |
 | [Share a page](#share-a-page) | Links for viewers and editors |
 | [Workspaces](#workspaces) | Personal and shared libraries, editing together |
+| [Comments and inbox](#comments-and-inbox) | Threads on notes, highlights and pages; mentions, replies and shares in one inbox |
 | [Offline copies](#offline-copies) | A synced copy on your laptop or iPad |
 | [Gamma Connector](#gamma-connector) | Save papers from the browser |
 | [Assistants](#assistants) | Codex, Claude Code, DeepSeek Harness and other MCP clients; the tools they get |
@@ -34,17 +35,17 @@ Read papers, keep what you learn. This guide shows each part of Gamma in a short
 
 1. **Sign in** with the account your administrator gave you, or **Continue as guest** where the server allows it (a guest workspace is deleted after a while; the button says when).
 2. **Add a paper**: press **+** and paste any link (arXiv, DOI, a publisher page). Gamma finds the PDF. Or upload PDFs, or drag files and folders into the window.
-3. **Read it.** The paper opens with a Notes panel beside it. Select text to highlight, type under the highlight to comment. Everything else builds on that.
+3. **Read it.** The paper opens with a Notes panel beside it. Select text to highlight, type under the highlight to add a note. Everything else builds on that.
 
 A new account starts with a **Welcome** page to practise on. **Tours** in the account menu walk you through each part on the real controls.
 
 ## Highlight and annotate
 
-<img alt="One line of a paper is selected and turns yellow, appears as a block in the notes with a comment typed under it; then a circle is drawn around a figure and becomes an ink block" src="assets/annotate.svg" width="100%">
+<img alt="One line of a paper is selected and turns yellow, appears as a block in the notes with a note typed under it; then a circle is drawn around a figure and becomes an ink block" src="assets/annotate.svg" width="100%">
 
-- **Highlight**: select text, pick one of four colors. The highlight becomes a note block, ready for your comment.
+- **Highlight**: select text, pick one of four colors. The highlight becomes a note block, ready for your note.
 - **Area screenshot**: hold **Ctrl** and drag a rectangle. The region goes to the AI chat as an image, and a color keeps it as an area highlight.
-- **Click a highlight** to jump to its note; click the note to jump back. **Right-click** to recolor, link or delete.
+- **Click a highlight** to jump to its note; click the note to jump back. **Right-click** to recolor, link, comment on or delete it.
 - Highlights made in other PDF apps are imported when the paper is added.
 - **Zoom** with Ctrl+wheel or pinch; **dark pages** in Settings → Appearance.
 
@@ -254,7 +255,7 @@ Coming from Zotero? A folder is a collection (subfolders are subcollections) and
 The **link button** in the top bar shares the open page.
 
 - **Share** makes the link. **Copy link** carries the workspace, so a teammate lands in the right library.
-- **Who has access**: invite people by name, each with **View** or **Edit**.
+- **Who has access**: invite people by name, each with **View** or **Edit**. They find the page in their Inbox.
 - **General access**: anyone with the link, signed-in users, or invited people only, with View or Edit for that audience.
 - Editors edit alongside you with live cursors. **Stop sharing** ends the link.
 - **Share a folder** the same way: the link opens every page filed in it.
@@ -270,6 +271,27 @@ A workspace is a separate library. The account menu lists yours and switches bet
 - Edits and cursors appear live; two people in the same block merge by span.
 - Open tabs, pinned folders and reading positions follow your account across devices.
 
+## Comments and inbox
+
+Comments are a conversation about a note, a highlight or a page. They sit beside the notes and change none of them, and everyone who can open the page can read them.
+
+- **On a note**: hover it and click the speech bubble at the right of its row, choose **Comment** in the ⋮⋮ handle menu, or press **Ctrl+Shift+M** while you edit it. A note with open comments shows how many on the bubble.
+- **On a highlight**: right-click it in the PDF and choose **Comment**. A badge in the accent color then marks it on the page; click the badge to read the comments.
+- **On the page**: the speech bubble beside the title.
+- **Write** in the field under a thread: `@` mentions someone, and Enter sends as in the chat. **Resolve** a thread once it is settled and **Reopen** it later. The **⋯** on a comment edits or deletes your own, and **Copy link** gives a link that opens the page at that thread.
+- **View → Comments** opens the Comments window: the page's threads, **Open** or **Resolved**, the latest first. A click goes to the thread. On a phone it is under **More**.
+- **Who can comment**: anyone signed in who can open the page, viewers too, and people a share link lets in. Without an account, a share link shows the comments with **Sign in to comment**.
+- Deleting a note hides its comments, and undoing the delete within seven days brings them back. Backups and Gamma zips keep comments; offline copies, published pages and the other export formats leave them out.
+
+The **bell** in the top bar is your **Inbox** (on a phone, **More → Inbox**). Its number counts what you have not read yet, across every workspace and share you can open.
+
+- It tells you when someone mentions you in a note or a comment, replies in a thread you wrote in or were mentioned in, resolves a thread you started, shares a page or a folder with you, or adds you to a workspace.
+- **Unread**, **All** and **Archived** sort the items; **Mark all read** clears the count. Each item's buttons mark it read or unread and archive it or move it back.
+- **Click an item** to go there: the page opens at the note, with the thread showing for a comment, in another workspace or through the share link when that is how you reach it. An invitation opens its workspace.
+- An item whose page, note or comment is gone, or that you can no longer open, moves to **Archived** by itself.
+- **Inbox notifications** in Settings → Appearance also shows new items as system notifications on that device while Gamma is open (not in the iPad app).
+- Guest accounts have no Inbox, and mentions typed in an offline copy tell no one.
+
 ## Offline copies
 
 <img alt="A note typed on a laptop syncs through the lab server to a phone; the laptop goes offline, a second note waits with a dot on the sync pill, and travels when the connection returns" src="assets/sync.svg" width="100%">
@@ -277,7 +299,7 @@ A workspace is a separate library. The account menu lists yours and switches bet
 Your library lives on your server. For the train or a lab without Wi-Fi, keep an **offline copy**: a workspace on a Gamma on your own laptop that holds a full copy and keeps the two in step.
 
 - **Desktop app**: open the server, open the workspace switcher, click **clone** on the workspace's row.
-- Pages, highlights, ink, files, folders and labels travel; chats and reading positions stay per device.
+- Pages, highlights, ink, files, folders and labels travel; comments stay on each server, and chats and reading positions on each device.
 - Edits made offline go with the next sync. Edits to the same words show a **merge chip**: pick local, remote or merged.
 - The **sync pill** in the page header shows the state and opens the log and settings.
 - **Update both sides.** When an update changes how Gamma stores a library, a copy and its server on different versions pause, and the sync pill says which one to update. Edits made meanwhile wait and go once both are updated.
@@ -367,7 +389,7 @@ Account menu → **Settings**, or **Ctrl+,**; the card with your name at the top
 | Pane | What's there |
 |---|---|
 | Account & sync | Your account, storage, the Gamma Cloud link, settings sync |
-| Appearance | Theme, dark PDF pages, library cards, interface size |
+| Appearance | Theme, dark PDF pages, library cards, interface size, Inbox notifications |
 | Reading & editing | Imported annotations, open-access fallback, handwriting, how search opens |
 | Language and Translation | Interface language, what translates and into what |
 | Keyboard | Every shortcut, rebindable; what Enter makes |
@@ -398,6 +420,7 @@ Account menu → **Settings**, or **Ctrl+,**; the card with your name at the top
 | Ctrl+B / Ctrl+I / Ctrl+E / Ctrl+Shift+X / Ctrl+Shift+H | Bold / italic / code / strike / highlight |
 | Ctrl+K | Link the selection (URL from the clipboard) |
 | Ctrl+Shift+. | Quote or unquote the selected lines |
+| Ctrl+Shift+M | Comment on the note being edited |
 | `/` · `[[` · `@` | Command menu · page link · in a note, mention a date, person or page; in chat, attach a paper |
 | Ctrl+wheel | Zoom the PDF at the cursor |
 | Ctrl+drag on the page | Capture a region for the chat, and an optional area highlight |

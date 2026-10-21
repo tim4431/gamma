@@ -102,7 +102,7 @@
 }
 /* Rows that fill their list draw the ring inside, where the list can't
    clip it and it doesn't overlap the next row. */
-:is(.ctxMenuItem, .popoverItem, .searchResult, .chatMentionOption, .settingsNavBtn, .backlinkPage, .backlinkItem):focus-visible {
+:is(.ctxMenuItem, .popoverItem, .searchResult, .chatMentionOption, .settingsNavBtn, .backlinkPage, .backlinkItem, .commentsPanelRow):focus-visible {
   outline-offset: -2px;
 }
 /* Fields: the accent as border plus a soft halo, on click and keyboard
@@ -123,7 +123,7 @@
   .metaInput,
   .mdImgCaptionInput
 ):focus-visible,
-:is(.homeFindBox, .searchInputWrap, .pdfPageWidget, .chatComposer):focus-within {
+:is(.homeFindBox, .searchInputWrap, .pdfPageWidget, .chatComposer, .commentField):focus-within {
   outline: none;
   border-color: var(--accent);
   box-shadow: 0 0 0 3px var(--accent-bg);

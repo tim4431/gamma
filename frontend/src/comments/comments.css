@@ -1,0 +1,235 @@
+/* Comments (docs/dev/comments.md "In the app"): the row control, the page
+   title's, the PDF badge's variant, the thread popover and the Comments
+   window. Loaded with the startup bundle (useComments.js imports it), since
+   the rows need their control's rules before any popover opens. */
+
+/* --- The row control (editor/BlockTree.jsx BlockRow) -----------------------
+   A ctlBtn after the body, beside the ×: shown with its count while the
+   block has open threads, else revealed with the row like the ×. Hidden, it
+   takes no press; where nothing hovers it is always there. */
+.blockRow .commentCtl {
+  align-self: flex-start;
+  flex-shrink: 0;
+  width: auto;
+  min-width: var(--ctl-icon-btn-xs);
+  height: var(--ctl-icon-btn-xs);
+  margin-top: 1px;
+  padding: 0 var(--space-2);
+  gap: var(--space-1);
+  font-size: var(--fs-2xs);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--dur-fast), background var(--dur-fast) ease, color var(--dur-fast) ease;
+}
+.blockRow:hover .commentCtl,
+.blockRow.focused .commentCtl,
+.blockRow .commentCtl:focus-visible,
+.blockRow .commentCtl.has,
+.blockRow .commentCtl.on {
+  opacity: 1;
+  pointer-events: auto;
+}
+.blockRow .commentCtl.has { color: var(--accent); }
+@media (hover: none) {
+  .blockRow .commentCtl { opacity: 1; pointer-events: auto; }
+}
+
+/* The page's own thread: a page action beside the title's buttons, with its
+   count when the page has open threads. */
+.pageActionBtn.pageCommentBtn { width: auto; min-width: var(--ctl-icon-btn); padding: 0 var(--space-2); gap: var(--space-1); }
+.pageActionBtn.pageCommentBtn.has { color: var(--accent); }
+.pageCommentCount { font-size: var(--fs-2xs); font-weight: 600; font-variant-numeric: tabular-nums; }
+
+/* A highlight with threads (pdf/PdfViewer.jsx NoteBadge): the badge in the
+   accent, whether or not the highlight has a note. */
+.pdfNoteBadge.hasThread {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+/* its tip's line counting them, under the note */
+.pdfNoteTipThreads { font-size: var(--fs-xs); color: var(--text-muted); }
+.pdfNoteTipThreads:not(:first-child) { margin-top: var(--space-2); }
+
+/* --- The thread popover (ThreadPopover.jsx) -------------------------------- */
+.popover.commentPopover {
+  position: fixed;
+  right: auto;
+  top: 0;
+  z-index: var(--z-popover);
+  box-sizing: border-box;
+  width: min(380px, calc(100vw - 16px));
+  max-height: min(70vh, 640px);
+  padding: 0;
+  gap: 0;
+  overflow: hidden;
+}
+.commentPopHead {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-3) var(--space-2) var(--space-5);
+  border-bottom: 1px solid var(--border);
+}
+.commentPopTitle {
+  flex: 1;
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.commentPopBody {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.commentThread {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding-bottom: var(--space-4);
+  border-bottom: 1px solid var(--border);
+}
+.commentThread.resolved { opacity: 0.8; }
+.commentThread.focused { animation: commentLanded 1.2s ease-out; border-radius: var(--radius-md); }
+@keyframes commentLanded {
+  0%, 25% { background: var(--accent-bg); }
+  100% { background: transparent; }
+}
+/* a resolved thread says so at its foot, where its reply field was */
+.commentThreadState { font-size: var(--fs-xs); color: var(--text-muted); }
+.commentItem {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+}
+.commentItem > .peerAvatar { flex-shrink: 0; margin-top: 2px; border: none; }
+.commentMain { flex: 1; min-width: 0; }
+.commentMeta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: var(--ctl-icon-btn-xs);
+  font-size: var(--fs-xs);
+  color: var(--text-muted);
+}
+.commentMeta .rowMenuBtn { width: var(--ctl-icon-btn-xs); height: var(--ctl-icon-btn-xs); }
+/* Resolve / Reopen on the thread's first author line, beside the "⋯": always
+   shown (it is the thread's main action), quiet until pointed at. */
+.commentMeta .commentResolve {
+  width: var(--ctl-icon-btn-xs);
+  height: var(--ctl-icon-btn-xs);
+  flex-shrink: 0;
+  color: var(--text-muted);
+}
+.commentMeta .commentResolve:hover { color: var(--accent); }
+.commentMetaSpacer { flex: 1; }
+.commentAuthor { font-weight: 600; color: var(--text-primary); }
+.commentEdited { font-style: italic; }
+.commentBody.blockRendered {
+  font-size: var(--fs-md);
+  line-height: var(--lh-ui);
+  cursor: auto;
+  overflow-wrap: anywhere;
+}
+.commentBody > :first-child { margin-top: 0; }
+.commentBody > :last-child { margin-bottom: 0; }
+.commentDeleted { font-size: var(--fs-sm); font-style: italic; color: var(--text-muted); }
+.commentShowResolved, .commentNewBtn { align-self: flex-start; gap: var(--space-2); }
+.commentSignIn {
+  display: flex;
+  justify-content: center;
+  padding: var(--space-3) 0;
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+}
+
+/* The composer (CommentComposer.jsx): the note editor in a bordered field
+   that grows with the text up to 40vh and then scrolls, in the rendered
+   comment's type; the send button under its right end. */
+.commentComposer { display: flex; flex-direction: column; gap: var(--space-2); }
+.commentField {
+  box-sizing: border-box;
+  width: 100%;
+  padding: var(--space-3) var(--space-4);
+  cursor: text;
+  background: var(--bg-field);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-md);
+}
+/* Over the note editor's own size and overflow. The border stays on
+   .commentField alone, so the focus ring's border wins over it. */
+.commentField.blockEditorCm {
+  min-height: var(--ctl-btn-sm);
+  max-height: 40vh;
+  overflow-y: auto;
+}
+.commentField.blockEditorCm .cm-scroller {
+  font-size: var(--fs-md);
+  line-height: var(--lh-ui);
+  overflow-wrap: anywhere;
+}
+.commentField.blockEditorCm .cm-placeholder { font-style: normal; }
+.commentComposerBar { display: flex; align-items: center; gap: var(--space-3); }
+.commentComposerSpacer { flex: 1; }
+.commentTooLong { font-size: var(--fs-xs); color: var(--danger); }
+.commentSend.uiBtn.sm { min-width: var(--ctl-btn-sm); }
+
+/* --- The Comments window (CommentsPanel.jsx) ------------------------------- */
+.commentsPanel {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-3);
+}
+.commentsPanelRow {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  width: 100%;
+  padding: var(--space-4) var(--space-5);
+  text-align: left;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+.commentsPanelRow:hover { background: var(--bg-hover); }
+.commentsPanelRow.resolved { color: var(--text-muted); }
+.commentsPanelAnchor {
+  font-size: var(--fs-xs);
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  border-left: 2px solid var(--border-light);
+  padding-left: var(--space-3);
+}
+.commentsPanelFirst { display: flex; align-items: flex-start; gap: var(--space-3); min-width: 0; }
+.commentsPanelFirst > .peerAvatar { flex-shrink: 0; border: none; }
+.commentsPanelText {
+  min-width: 0;
+  font-size: var(--fs-md);
+  line-height: var(--lh-ui);
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.commentsPanelMeta {
+  display: flex;
+  gap: var(--space-4);
+  font-size: var(--fs-xs);
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}

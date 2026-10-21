@@ -1,0 +1,396 @@
+// Comments (docs/dev/comments.md "In the app"): two editors and a viewer in
+// a shared workspace, and a visitor through a share link with no account.
+// A thread on a note from its row control (the popover opening in place,
+// the @ menu of people), the reply showing live in the other tab; resolve,
+// and the Comments window's Resolved tab bringing it back to reopen; the
+// page's own thread and a highlight's, with the PDF badge; edit and delete
+// one's own; Ctrl+Shift+M from an open editor and Escape back to the
+// control; a viewer commenting from a read-only row; the link visitor
+// reading only; ?thread= opening the thread, and a note thread's copied
+// link opening it through a folder share; a reply left unsent kept in its
+// field; the field as a note's editor ([[ links, @ people, $…$ with its
+// preview, Shift+Enter and Enter); on a phone, a note's thread link
+// bringing the notes over the PDF.
+import { editRow } from "./notes.mjs";
+import { selectPdfText, waitForPdf } from "./pdf.mjs";
+import { Account, assertOpensInPlace, sleep, wanted } from "../harness.mjs";
+
+export async function commentScenarios({ server, browser, makePdf, step, until, assert, assertEq, assertNoProblems, openPage, flags }) {
+  if (!wanted("comments")) return;
+  for (const [name, pw] of [["cm-ann", "cm-ann-pw"], ["cm-ben", "cm-ben-pw"], ["cm-vic", "cm-vic-pw"]]) {
+    server.manage("create-user", name, pw);
+  }
+  const out = server.manage("create-workspace", "Comment lab", "cm-ann", "shared");
+  const wsId = (out.match(/workspace (\S+)/) || [])[1];
+  assert(wsId, `shared workspace id from: ${out}`);
+  server.manage("set-member", wsId, "cm-ben", "editor");
+  server.manage("set-member", wsId, "cm-vic", "viewer");
+  const login = async (name) => {
+    const a = await new Account(server, name, `${name}-pw`).login();
+    a.ws = wsId;
+    return a;
+  };
+  const ann = await login("cm-ann");
+  const ben = await login("cm-ben");
+  const vic = await login("cm-vic");
+
+  const pg = await ann.api("/api/pages", { method: "POST", body: { title: "Review draft" } });
+  const appendix = await ann.api("/api/pages", { method: "POST", body: { title: "Appendix tables" } });
+  await ann.api(`/api/pages/${pg.id}/ops`, { method: "POST", body: { client: "e2e", ops: [
+    { op: "insert", id: "cmnote1", parent: pg.id, position: "a0", content: "The first claim" },
+    { op: "insert", id: "cmnote2", parent: pg.id, position: "a1", content: "The second claim" },
+  ] } });
+  const url = `${server.base}/?ws=${wsId}&page=${pg.id}`;
+  const threads = async () => (await ann.api(`/api/pages/${pg.id}/comments?state=all`)).threads;
+  const rowOf = (page, text) => page.locator(".blockRow", { hasText: text }).first();
+  const control = (page, text) => rowOf(page, text).locator(".commentCtl");
+  const popover = (page) => page.locator(".commentPopover");
+  const openControl = async (page, text) => {
+    await rowOf(page, text).hover();
+    await control(page, text).click();
+    await popover(page).waitFor();
+  };
+  // A comment's field is the note editor: its text box is the .cm-content.
+  const field = (scope) => scope.locator(".commentField .cm-content");
+  // its text (its empty line shows the placeholder)
+  const fieldText = (f) => f.evaluate((el) => (el.querySelector(".cm-placeholder") ? "" : el.innerText.trim()));
+  // The composer takes the focus a frame after the popover is placed.
+  const focused = (f, what) => until(async () => f.evaluate((el) => el === document.activeElement).catch(() => false), { what });
+  // --keep: the field's widgets, for the record
+  const shot = async (page, name) => {
+    if (flags?.keep) await page.screenshot({ path: `${server.dir}/${name}.png`, animations: "disabled" });
+  };
+  const closePopover = async (page) => {
+    await popover(page).locator(".commentPopHead .uiClose").click();
+    await popover(page).waitFor({ state: "detached" });
+  };
+
+  const ctxA = await ann.context(browser);
+  const ctxB = await ben.context(browser);
+  const A = await openPage(ctxA, url);
+  const B = await openPage(ctxB, url);
+  await rowOf(A, "The first claim").waitFor();
+  await rowOf(B, "The first claim").waitFor();
+
+  await step("comments: a note's row control opens its popover in place; a thread with an @mention; the reply shows live in the other tab", async () => {
+    await rowOf(A, "The first claim").hover();
+    await assertOpensInPlace(A, ".commentPopover", () => control(A, "The first claim").click(), { what: "the thread popover" });
+    await focused(field(popover(A).locator(".commentNew")), "the new comment's field takes the focus");
+    await A.keyboard.type("Is this sourced? @cm-b");
+    const selected = A.locator(".mentionMenu .refPopupItem.selected .refPopupText");
+    await until(async () => (await selected.innerText().catch(() => "")) === "cm-ben", { what: "the @ menu offers the person" });
+    assertEq(await A.locator(".mentionMenu .refPopupHead").allInnerTexts().then((h) => h.join("|")), "People", "no date or page answers the name");
+    await A.keyboard.press("Enter");
+    await A.keyboard.type("please check");
+    await A.keyboard.press("Enter");
+    await until(async () => (await threads()).some((th) => th.block_id === "cmnote1"
+      && th.comments[0].body === "Is this sourced? @cm-ben please check" && th.comments[0].author === "cm-ann"), { what: "the thread is stored" });
+    await until(async () => (await control(A, "The first claim").innerText()) === "1", { what: "the row counts its open thread" });
+    assertEq(await popover(A).locator(".commentBody .mentionChip").innerText(), "@cm-ben", "the mention renders as a chip");
+
+    // Ben's tab hears of it from the page's room.
+    await until(async () => (await control(B, "The first claim").innerText().catch(() => "")) === "1", { what: "the count reaches the other tab", timeout: 10000 });
+    await openControl(B, "The first claim");
+    const replyB = field(popover(B).locator(".commentThread"));
+    await replyB.click();
+    // a word typed over, apart from the typing before it: an edit whose
+    // undo would put text back
+    await B.keyboard.type("Yes, see the annex");
+    await sleep(700);
+    for (let i = 0; i < 5; i++) await B.keyboard.press("Shift+ArrowLeft");
+    await B.keyboard.type("appendix");
+    await B.keyboard.press("Enter");
+    await until(async () => (await popover(A).innerText()).includes("Yes, see the appendix"), { what: "the reply shows live in the open popover", timeout: 10000 });
+    // The emptied field's history starts afresh: an undo brings back none of the sent text.
+    await until(async () => (await fieldText(replyB)) === "", { what: "the reply field empties" });
+    await B.keyboard.press("Control+Z");
+    assertEq(await fieldText(replyB), "", "an undo after sending restores nothing");
+    await closePopover(B);
+    assertNoProblems(A); assertNoProblems(B);
+  });
+
+  await step("comments: Resolve takes the thread off the row; the window's Resolved tab holds it, and Reopen brings it back", async () => {
+    await popover(A).locator('.commentResolve[aria-label="Resolve"]').click();
+    await until(async () => (await threads()).find((th) => th.block_id === "cmnote1")?.resolved_by === "cm-ann", { what: "resolved on the server" });
+    await until(async () => !(await control(A, "The first claim").evaluate((el) => el.classList.contains("has"))), { what: "the row's count goes" });
+    await closePopover(A);
+
+    await A.getByRole("button", { name: "View", exact: true }).click();
+    await A.locator(".menuPopover .ctxMenuItem", { hasText: "Comments" }).click();
+    await A.keyboard.press("Escape"); // the View menu closes
+    const panel = A.locator(".commentsPanel");
+    await panel.waitFor();
+    await panel.locator(".setEmpty", { hasText: "No open comments on this page." }).waitFor();
+    await A.locator(".dockWindow:has(.commentsPanel) .segGroup button", { hasText: "Resolved (1)" }).click();
+    const item = panel.locator(".commentsPanelRow", { hasText: "The first claim" });
+    await item.waitFor();
+    assert((await item.innerText()).includes("1 reply"), "the row counts the reply");
+    await item.click();
+    await popover(A).locator(".commentThread.resolved", { hasText: "Resolved by cm-ann" }).waitFor();
+    await popover(A).locator('.commentResolve[aria-label="Reopen"]').click();
+    await until(async () => (await control(A, "The first claim").innerText()) === "1", { what: "reopened: the count is back" });
+    await closePopover(A);
+    await A.locator(".dockWindow:has(.commentsPanel) .segGroup button", { hasText: "Open (1)" }).click();
+    await panel.locator(".commentsPanelRow", { hasText: "The first claim" }).waitFor();
+    assertNoProblems(A);
+  });
+
+  await step("comments: Ctrl+Shift+M from an open editor starts a thread; Escape closes it and gives the control the focus", async () => {
+    await editRow(A, "The second claim");
+    await A.keyboard.press("Control+Shift+M");
+    await focused(field(popover(A).locator(".commentNew")), "the field takes the focus");
+    await A.keyboard.press("Escape");
+    await popover(A).waitFor({ state: "detached" });
+    assertEq(await A.evaluate(() => document.activeElement?.dataset.commentFor || ""), "cmnote2", "the focus is on the row's control");
+    assertNoProblems(A);
+  });
+
+  await step("comments: the page's own thread, from the title row's control", async () => {
+    await assertOpensInPlace(A, ".commentPopover", () => A.locator(".pageCommentBtn").click(), { what: "the page's thread popover" });
+    assertEq(await popover(A).locator(".commentPopTitle").innerText(), "Comments on this page");
+    await focused(field(popover(A).locator(".commentNew")), "ready to write");
+    await A.keyboard.type("Overall: good");
+    await A.keyboard.press("Enter");
+    await until(async () => (await threads()).some((th) => th.block_id === pg.id && th.comments[0].body === "Overall: good"), { what: "stored on the page's root" });
+    await until(async () => (await A.locator(".pageCommentBtn").innerText()) === "1", { what: "the title control counts it" });
+    await closePopover(A);
+    await A.locator(".commentsPanelRow", { hasText: "This page" }).waitFor();
+    assertNoProblems(A);
+  });
+
+  await step("comments: edit and delete one's own; another person's comment offers neither", async () => {
+    await ann.api(`/api/pages/${pg.id}/comments`, { method: "POST", body: { block_id: "cmnote2", body: "Ann's remark, with a tpyo" } });
+    await ben.api(`/api/pages/${pg.id}/comments`, { method: "POST", body: { block_id: "cmnote2", body: "Ben's remark" } });
+    await until(async () => (await control(A, "The second claim").innerText().catch(() => "")) === "2", { what: "both threads counted", timeout: 10000 });
+    // Ben sees Copy link only on Ann's comment.
+    await until(async () => (await control(B, "The second claim").innerText().catch(() => "")) === "2", { what: "ben sees both", timeout: 10000 });
+    await openControl(B, "The second claim");
+    const annsInB = popover(B).locator(".commentItem", { hasText: "Ann's remark" });
+    await annsInB.hover();
+    await annsInB.locator(".rowMenuBtn").click();
+    assertEq((await B.locator(".ctxMenu .ctxMenuItem").allInnerTexts()).map((s) => s.trim()).join("|"), "Copy link", "no Edit or Delete on another's");
+    await B.keyboard.press("Escape");
+    await closePopover(B);
+
+    await openControl(A, "The second claim");
+    const mine = popover(A).locator(".commentItem", { hasText: "Ann's remark" });
+    await mine.hover();
+    await mine.locator(".rowMenuBtn").click();
+    await A.locator(".ctxMenu .ctxMenuItem", { hasText: "Edit" }).click();
+    const edit = field(mine);
+    await edit.waitFor();
+    await focused(edit, "the edit field takes the focus");
+    assertEq(await fieldText(edit), "Ann's remark, with a tpyo", "the field holds the comment's text");
+    await A.keyboard.press("Control+A");
+    await A.keyboard.type("Ann's remark, with a typo fixed");
+    await mine.getByRole("button", { name: "Save", exact: true }).click();
+    await until(async () => (await threads()).some((th) => th.comments.some((c) => c.body === "Ann's remark, with a typo fixed")), { what: "the edit is stored" });
+    await mine.locator(".commentEdited").waitFor();
+    await mine.hover();
+    await mine.locator(".rowMenuBtn").click();
+    await A.locator(".ctxMenu .ctxMenuItem", { hasText: "Delete" }).click();
+    await until(async () => !(await threads()).some((th) => th.comments.some((c) => c.body.startsWith("Ann's remark"))), { what: "the delete is stored" });
+    await until(async () => (await control(A, "The second claim").innerText()) === "1", { what: "one thread left" });
+    await closePopover(A);
+    assertNoProblems(A); assertNoProblems(B);
+  });
+
+  await step("comments: a reply left unsent is still in its field when the popover opens again", async () => {
+    await openControl(A, "The first claim");
+    const reply = field(popover(A).locator(".commentThread"));
+    await reply.click();
+    await A.keyboard.type("Half a thought");
+    await A.keyboard.press("Escape");
+    await popover(A).waitFor({ state: "detached" });
+    await openControl(A, "The first claim");
+    assertEq(await fieldText(reply), "Half a thought", "the draft is back");
+    await reply.click();
+    await A.keyboard.press("Control+A");
+    await A.keyboard.press("Backspace");
+    await closePopover(A);
+    await openControl(A, "The first claim");
+    assertEq(await fieldText(reply), "", "an emptied field keeps no draft");
+    await closePopover(A);
+    assertNoProblems(A);
+  });
+
+  await step("comments: a viewer comments from a read-only row", async () => {
+    const ctx = await vic.context(browser);
+    const V = await openPage(ctx, url);
+    try {
+      await rowOf(V, "The second claim").waitFor();
+      assertEq(await V.locator(".dragHandle").count(), 0, "the rows are read-only");
+      await openControl(V, "The second claim");
+      await popover(V).locator(".commentNewBtn").click();
+      await focused(field(popover(V).locator(".commentNew")), "the viewer's field takes the focus");
+      await V.keyboard.type("A viewer's question");
+      await V.keyboard.press("Enter");
+      await until(async () => (await threads()).some((th) => th.comments[0].author === "cm-vic" && th.comments[0].body === "A viewer's question"), { what: "the viewer's thread is stored" });
+      assertNoProblems(V);
+    } finally {
+      await ctx.close();
+    }
+  });
+
+  await step("comments: a visitor through a link with no account reads the threads and is asked to sign in", async () => {
+    const { token } = await ann.api(`/api/share/${pg.id}`, { method: "POST" });
+    const ctx = await browser.newContext({ viewport: { width: 1280, height: 860 } });
+    const S = await openPage(ctx, `${server.base}/?share=${token}`);
+    try {
+      await until(async () => (await control(S, "The first claim").innerText().catch(() => "")) === "1", { what: "the count shows in the share view" });
+      await openControl(S, "The first claim");
+      await popover(S).locator(".commentBody", { hasText: "Yes, see the appendix" }).waitFor();
+      assertEq(await popover(S).locator(".commentField").count(), 0, "no field to write in");
+      assertEq(await popover(S).locator(".commentResolve").count(), 0, "no Resolve");
+      await popover(S).getByRole("button", { name: "Sign in to comment" }).waitFor();
+      assertNoProblems(S);
+    } finally {
+      await ctx.close();
+    }
+  });
+
+  await step("comments: ?thread= opens the page at the thread", async () => {
+    const thread = (await threads()).find((th) => th.block_id === "cmnote1");
+    const ctx = await ben.context(browser);
+    const D = await openPage(ctx, `${server.base}/?ws=${wsId}&page=${pg.id}&block=cmnote1&thread=${thread.id}`);
+    try {
+      await popover(D).locator(`.commentThread[data-thread-id="${thread.id}"]`).waitFor({ timeout: 10000 });
+      assert((await popover(D).innerText()).includes("Yes, see the appendix"), "the thread's reply is there");
+      assertNoProblems(D);
+    } finally {
+      await ctx.close();
+    }
+  });
+
+  await step("comments: a note thread's Copy link in a folder share opens that page at the thread", async () => {
+    await ann.file(pg.id, { folders: ["Review folder"] });
+    const { token } = await ann.api(`/api/share/folder/${await ann.folder("Review folder")}`, { method: "POST" });
+    const thread = (await threads()).find((th) => th.block_id === "cmnote1");
+    const ctx = await browser.newContext({ viewport: { width: 1280, height: 860 }, permissions: ["clipboard-read", "clipboard-write"] });
+    try {
+      const S = await openPage(ctx, `${server.base}/?share=${token}&page=${pg.id}`);
+      await openControl(S, "The first claim");
+      const first = popover(S).locator(".commentItem", { hasText: "Is this sourced?" });
+      await first.hover();
+      await first.locator(".rowMenuBtn").click();
+      await S.locator(".ctxMenu .ctxMenuItem", { hasText: "Copy link" }).click();
+      let link = "";
+      await until(async () => (link = await S.evaluate(() => navigator.clipboard.readText()).catch(() => "")).includes("thread="), { what: "the link is copied" });
+      const q = new URL(link).searchParams;
+      assertEq([q.get("share"), q.get("page"), q.get("block"), q.get("thread")].join("|"), [token, pg.id, "cmnote1", thread.id].join("|"), "the share's link to the note's thread");
+      const L = await openPage(ctx, link);
+      await popover(L).locator(`.commentThread[data-thread-id="${thread.id}"]`).waitFor({ timeout: 10000 });
+      assert((await popover(L).innerText()).includes("Yes, see the appendix"), "the thread's reply is there");
+      assertNoProblems(S); assertNoProblems(L);
+    } finally {
+      await ctx.close();
+    }
+  });
+
+  await step("comments: the field is a note's editor: [[ links a page, Escape closes only the picker, @ names a person, $…$ previews, Shift+Enter breaks the line and Enter sends", async () => {
+    await openControl(A, "The second claim");
+    await popover(A).locator(".commentNewBtn").click();
+    const box = field(popover(A).locator(".commentNew"));
+    await focused(box, "the new field takes the focus");
+    // its own undo: Ctrl+Z takes back the field's typing, not a note's
+    await A.keyboard.type("Oops");
+    await A.keyboard.press("Control+Z");
+    assertEq(await fieldText(box), "", "the typing is undone");
+    assertEq(await rowOf(A, "The second claim").count(), 1, "the notes are as they were");
+    // [[ and part of a title: the note's link picker, at the "[["
+    await A.keyboard.type("See [[Appen");
+    const picker = A.locator(".refPopup:not(.mentionMenu)");
+    const pickedRow = picker.locator(".refPopupItem.selected .refPopupText");
+    await until(async () => (await pickedRow.innerText().catch(() => "")) === "Appendix tables", { what: "the link picker offers the page" });
+    await shot(A, "w6-link-picker");
+    await A.keyboard.press("Escape");
+    await picker.waitFor({ state: "detached" });
+    assert(await popover(A).isVisible(), "Escape closed the picker, not the popover");
+    assertEq(await fieldText(box), "See [[Appen", "the typed text stays");
+    await A.keyboard.type("d"); // typing on opens it again
+    await until(async () => (await pickedRow.innerText().catch(() => "")) === "Appendix tables", { what: "the picker is back" });
+    await A.keyboard.press("Enter");
+    // @ and a name: the note's @ menu at the caret, without reminders
+    await A.keyboard.type(" for @cm-b");
+    // the link, once the caret has left it, is its page's chip
+    await box.locator(".cmRefChip", { hasText: "Appendix tables" }).waitFor();
+    const menu = A.locator(".mentionMenu");
+    await until(async () => (await menu.locator(".refPopupItem.selected .refPopupText").innerText().catch(() => "")) === "cm-ben", { what: "the @ menu offers the person" });
+    await shot(A, "w6-mention-menu");
+    await A.keyboard.press("Enter");
+    await menu.waitFor({ state: "detached" });
+    await box.locator(".cmMentionChip", { hasText: "@cm-ben" }).waitFor();
+    // Shift+Enter breaks the line; inside $…$ the live preview shows
+    await A.keyboard.press("Shift+Enter");
+    await popover(A).waitFor(); // not sent
+    await A.keyboard.type("Bound: $\\sqrt{x");
+    await A.locator(".mathPreviewTip .katex").waitFor();
+    await shot(A, "w6-latex-preview");
+    await A.keyboard.type("}$"); // over the closers the field put in
+    await A.locator(".mathPreviewTip").waitFor({ state: "detached" });
+    await A.keyboard.press("Enter");
+    let body = "";
+    await until(async () => {
+      const th = (await threads()).find((x) => x.block_id === "cmnote2" && x.comments[0].body.startsWith("See "));
+      body = th?.comments[0].body || "";
+      return !!body;
+    }, { what: "the comment is stored" });
+    assertEq(body, `See [[${appendix.id}]] for @cm-ben \nBound: $\\sqrt{x}$`, "the link, the mention, the line break and the math");
+    // the new comment's field closes and the button to start one is back
+    await box.waitFor({ state: "detached" });
+    await popover(A).locator(".commentNewBtn").waitFor();
+    const sent = popover(A).locator(".commentBody", { hasText: "Bound:" });
+    await sent.locator(".katex").waitFor();
+    assertEq(await sent.locator(".blockRefChip").innerText(), "Appendix tables", "the link shows the page's title");
+    assertEq(await sent.locator(".mentionChip").innerText(), "@cm-ben");
+    await sent.scrollIntoViewIfNeeded();
+    await shot(A, "w6-sent-comment");
+    await closePopover(A);
+    assertNoProblems(A);
+  });
+
+  await step("comments: a highlight's thread, from its menu; the PDF badge shows it and opens it", async () => {
+    const pdf = makePdf([["A paper about tensor networks", "and matrix product states"]]);
+    const up = await ann.upload("/api/uploads", pdf, "review.pdf", "application/pdf");
+    const paper = await ann.api(`/api/blocks/by-doc/${up.doc_id}`, { method: "POST", body: { default_title: "Reviewed paper", source_url: up.source_url } });
+    await A.goto(`${server.base}/?ws=${wsId}&page=${paper.id}`);
+    await waitForPdf(A, 1);
+    await selectPdfText(A, 1, "tensor networks");
+    await A.waitForSelector(".plainTip .colorBtn", { timeout: 5000 });
+    await A.locator(".plainTip .colorBtn").first().click();
+    const mark = A.locator('[data-page="1"] [data-hl-id]').first();
+    await mark.waitFor({ timeout: 10000 });
+    await mark.click({ button: "right" });
+    await A.locator(".ctxMenu").getByRole("button", { name: "Comment", exact: true }).click();
+    await popover(A).waitFor();
+    assertEq(await popover(A).locator(".commentPopTitle").innerText(), "Comments on this highlight");
+    await focused(field(popover(A).locator(".commentNew")), "ready to write");
+    // (the highlight was made a moment ago: the comment waits for its block to be saved)
+    await A.keyboard.type("Which paper is this?");
+    await A.keyboard.press("Enter");
+    const badge = A.locator('[data-page="1"] .pdfNoteBadge.hasThread');
+    await badge.waitFor({ timeout: 10000 });
+    await closePopover(A);
+    await badge.click();
+    await popover(A).locator(".commentBody", { hasText: "Which paper is this?" }).waitFor();
+    assertNoProblems(A);
+
+    // On a phone the page opens on its PDF: a note's thread link brings the notes up under it.
+    await ann.api(`/api/pages/${paper.id}/ops`, { method: "POST", body: { client: "e2e", ops: [
+      { op: "insert", id: "cmnote3", parent: paper.id, content: "A note on the paper" }] } });
+    const { thread } = await ann.api(`/api/pages/${paper.id}/comments`, { method: "POST", body: { block_id: "cmnote3", body: "Seen on a phone" } });
+    const ctx = await ben.context(browser, { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+    try {
+      const P = await openPage(ctx, `${server.base}/?ws=${wsId}&page=${paper.id}&block=cmnote3&thread=${thread.id}`);
+      await popover(P).locator(".commentBody", { hasText: "Seen on a phone" }).waitFor({ timeout: 10000 });
+      await P.locator(".phonePanel:not(.phonePanelHidden) .blockRow", { hasText: "A note on the paper" }).waitFor();
+      assert(await P.locator(".phonePanel:not(.phonePanelHidden) .blockRow", { hasText: "A note on the paper" }).isVisible(), "the note shows under its thread");
+      assertNoProblems(P);
+    } finally {
+      await ctx.close();
+    }
+  });
+
+  await ctxA.close();
+  await ctxB.close();
+}

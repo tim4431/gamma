@@ -74,7 +74,13 @@ else; in dev, Vite proxies `/api` → `127.0.0.1:9001`.
   `POST /upload-image`, `POST /upload-file` — each of which confines the touched blocks to the
   shared pages (no new pages, no deleting/moving a page itself, no changes to
   a page root's properties — so a folder edit share can never re-file pages
-  into or out of its folder). Everything else stays session-only.
+  into or out of its folder). Comment writes take `auth.require_commenter`
+  instead: any member (viewers too) and any signed-in account a share
+  admits, view or edit, confined to the shared pages; never a link visitor
+  or a read-scope token ([comments.md](comments.md) "Who may comment"). A
+  share visitor therefore sees the usernames of the people who wrote or
+  resolved comments on the shared page, as presence shows them. Everything
+  else stays session-only.
 - **Link visitors.** An `anyone` + `edit` share makes the link itself the
   key: whoever opens it edits the page, without an account. Such a writer
   (no session, or a guest account — `auth.is_link_visitor`) is recorded
@@ -185,7 +191,7 @@ else; in dev, Vite proxies `/api` → `127.0.0.1:9001`.
 - A hosted container whose plan made it read-only answers every POST, PUT,
   PATCH and DELETE under `/api/` with 423 `{detail, read_only: true}`,
   except sign-in and sign-out, the export jobs, `/pages/by-docs`, marking
-  notices seen and `/admin/hosted/sync` (`hosted.READ_ONLY_ALLOWED`,
+  notices seen, the Inbox's marks (`/inbox/…`) and `/admin/hosted/sync` (`hosted.READ_ONLY_ALLOWED`,
   [cloud_accounts.md](cloud_accounts.md) "Hosted containers").
 
 ## Endpoints
@@ -346,7 +352,27 @@ op-log position the tree reflects (the live session catches up from it).
 | GET | `/sync/folders` | the folder tree for a client resolving a typed path: `{folders: [{id, path: [names]}]}` in tree order ([folder_sync.md](folder_sync.md)) |
 | GET | `/sync/folders/{id}` | the folder as files, what the gamma-sync client compares with its last round (`gamma/folder_sync.py`): `{folder: {id, path}, cursor, dirs: [{id, path}], pages: [{id, title, stem, doc_id, pdf, pdf_size, notes, version}]}` — every folder below as a directory path, every page filed in it or below once, under its first folder below it, its PDF (`pdf`, null when none is stored) and its notes (`notes`) sharing the stem; `version` changes whenever the notes file would; `cursor` the change log's newest seq. `root` is the whole library; 404 for an id that is no folder |
 | GET | `/sync/folders/{id}/notes?pages=` | the notes files of up to 200 of the folder's pages (ids, comma-separated; pages outside it left out): `{pages: {id: {markdown, attachments, version}}}` — the vault page with `gamma_id` first in its front matter, the PDF linked as the file beside it, uploads rewritten to `attachments/<name>` relative to the note, `attachments` the names to fetch from `/uploads/` |
-| WS | `/ws/page/{id}[?ws=&share=&client=]` | the page's live channel (or a tree's, `folders` / `labels`, members only): `hello` / `join` / `leave` / `cursor` presence, every applied `ops` batch (with the writer's `cursor` when the batch carried one), `reload`; the client only ever sends `cursor`. Auth like HTTP (session cookie + `?ws=` (else the default workspace) or share token, resolved in the handler — the middleware doesn't run for websockets); viewers join too. Closed with 4403 when access is refused, or revoked while open (a share changed or stopped, a member removed — `collab.revalidate`), and with 4409 when the same tab (`client`) joins again on a newer socket |
+| WS | `/ws/page/{id}[?ws=&share=&client=]` | the page's live channel (or a tree's, `folders` / `labels`, members only): `hello` / `join` / `leave` / `cursor` presence, every applied `ops` batch (with the writer's `cursor` when the batch carried one), `reload`, `comments {block_id, thread_id}` (Comments below) and `inbox` (no fields: something new in the Inbox of this socket's account, [comments.md](comments.md) "Live delivery"); the client only ever sends `cursor`. Auth like HTTP (session cookie + `?ws=` (else the default workspace) or share token, resolved in the handler — the middleware doesn't run for websockets); viewers join too. Closed with 4403 when access is refused, or revoked while open (a share changed or stopped, a member removed — `collab.revalidate`), and with 4409 when the same tab (`client`) joins again on a newer socket |
+
+### Comments (`routers/comments.py`, `gamma/comments.py`) — see [comments.md](comments.md)
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/pages/{id}/comments?state=open\|resolved\|all` | the page's threads, oldest first → `{threads: [{id, block_id, page_id, resolved_at, resolved_by, created_at, last_at, comments: [{id, thread_id, author, body, created_at, updated_at, deleted}]}]}`: a thread on a note, a highlight or the page itself (`block_id` the page's id); `author` and `resolved_by` are usernames (`author` the name stored with the comment once its account is gone, `resolved_by` `""`); a tombstone (a first comment deleted while it has replies) has `deleted: true` and no body; comments whose block was deleted are left out. Any member; a share visitor for a page in the share's reach. 404 for a page in Recently deleted or gone, 400 for another `state` |
+| POST | `/pages/{id}/comments` | `{id?, block_id, body, thread_id?, client?}` → 201 `{comment, thread}`: a new thread on `block_id` (a block of the page, or the page), or with `thread_id` a reply (a root on that block). 400 for a block outside the page, a `thread_id` that is no root there, an empty text or a malformed `id`; 413 past 20,000 characters. `id` is the client's: a comment of that id by the same author on the same page is answered as stored, nothing written twice; 409 when another author's has it or it is on another page, 404 when it is hidden since. Who may: `auth.require_commenter` (Auth model above). Writes no block and touches no page |
+| PATCH | `/comments/{id}` | `{body, client?}` → `{comment}`: its author only (403); 404 for a hidden comment or a tombstone |
+| DELETE | `/comments/{id}?client=` | → `{deleted: true}`: its author's, or any for the workspace's owner signed in (an integration token deletes its own only); a first comment that has replies stays as a tombstone, and the last reply under a tombstone takes it along |
+| POST | `/comments/{id}/resolve` | `{resolved: bool, client?}` on a thread's first comment (400 for a reply) → `{thread}`; anyone who may comment on the page |
+
+Every write publishes `{t: "comments", block_id, thread_id}` to the page's room, to every tab but the writer's (`client`). It then tells the people it concerns in their Inbox (below).
+
+### Inbox (`routers/inbox.py`, `gamma/inbox.py`) — see [comments.md](comments.md) "The inbox"
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/inbox?filter=unread\|all\|archived&before=<at>&limit=50` | `{items: [{id, kind, actor, workspace_id, workspace_name, page_id, page_title, block_id, thread_id, comment_id, share_token, snippet, at, read_at, archived_at}], unread, more}`: the account's items across every workspace and share, newest first. `kind` is `mention`, `comment_mention`, `reply`, `resolved`, `shared` or `invited`; `actor` a username (`""` once gone); `share_token` is set when the account reaches the page only through a share (one that names it, or the one the event came through; the way in as it is now); `page_title` is a folder share's folder name, and `""` once the account can no longer read the page; `all` leaves out the archived ones; `before` is the `at` the last listing ended on, and one moment is never split across two listings (`limit` at most 100). The items that lead nowhere any more (page in Recently deleted or gone, block or comment gone, a note that names the account no more, access lost) are archived first. 400 for another `filter` |
+| GET | `/inbox/unread` | `{unread}`: the count of unread, unarchived items, what the bell shows |
+| POST | `/inbox/mark` | `{ids?: [id] (at most 100), all?: true, read?: bool, archived?: bool}` → `{unread}`: mark the items (or every one) read or unread, archived or back; a stamp already set is kept. 400 without items or a mark |
+
+All three are for a signed-in account's session: 401 without one, 403 for a guest or an integration token. `/inbox/mark` passes a read-only hosted server's gate.
 
 ### Pages (`pages.py`) — page first, PDF as an action on it
 | Method | Path | Purpose |
@@ -650,7 +676,7 @@ Starting a job answers 429 when the account already has 20 queued or running, 50
 | POST | `/oauth/register`; GET `/oauth/authorize`; POST `/oauth/token` | dynamic client registration, the authorization redirect, the PKCE code exchange (no `/api` prefix) |
 | POST | `/mcp` | the Streamable HTTP MCP endpoint (bearer token or OAuth access token; no `/api` prefix, browser origins refused) |
 
-A manual token (`gamma_…`, not an OAuth one) is also accepted on every `/api/*` route as `Authorization: Bearer` (`auth.py`): the request runs as the account behind it, in the token's workspace only (`?ws=` / the header may only repeat it — 403 otherwise), writes only with the `write` scope (403 "this token is read-only"), never as an admin, and never on an ACCOUNT-level endpoint: everything behind `auth.require_user` / `require_user_id` alone — the AI provider entries (whose base URL decides where the stored key goes), models, usage and ChatGPT sign-in, translation keys, `/prefs/*` (the profile and keybindings included), `/session`, `/workspaces/*` and backups, export and import, backup tasks, publisher sessions, the chat's fetch handoffs, cloud sign-in, integration tokens and mirrors — answers 403 "an integration token cannot do this — sign in" whatever the token's scope. A token reaches only what resolves a workspace (`require_ws` / `resolve_ws` / `require_ws_writer`: blocks, pages and their ops, uploads, the change feed, search, chats, cover snapshots, shares, `POST /ai/chat`); `/notices` answers it `[]`. `auth.can_write` is the same rule for an endpoint that offers less instead of refusing: `POST /ai/chat` through a read token (or for a workspace viewer) arms the reading tools only.
+A manual token (`gamma_…`, not an OAuth one) is also accepted on every `/api/*` route as `Authorization: Bearer` (`auth.py`): the request runs as the account behind it, in the token's workspace only (`?ws=` / the header may only repeat it — 403 otherwise), writes only with the `write` scope (403 "this token is read-only"), never as an admin, and never on an ACCOUNT-level endpoint: everything behind `auth.require_user` / `require_user_id` alone — the AI provider entries (whose base URL decides where the stored key goes), models, usage and ChatGPT sign-in, translation keys, `/prefs/*` (the profile and keybindings included), `/session`, `/workspaces/*` and backups, export and import, backup tasks, publisher sessions, the chat's fetch handoffs, cloud sign-in, integration tokens and mirrors — answers 403 "an integration token cannot do this — sign in" whatever the token's scope. A token reaches only what resolves a workspace (`require_ws` / `resolve_ws` / `require_ws_writer`: blocks, pages and their ops, uploads, the change feed, search, chats, cover snapshots, shares, `POST /ai/chat`); `/notices` answers it `[]`, and `/inbox*` 403. `auth.can_write` is the same rule for an endpoint that offers less instead of refusing: `POST /ai/chat` through a read token (or for a workspace viewer) arms the reading tools only.
 
 ### Mirrors (`routers/mirrors.py`, prefix `/api/mirrors`) — see [mirror.md](mirror.md)
 

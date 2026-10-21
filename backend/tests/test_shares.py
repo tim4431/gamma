@@ -382,6 +382,35 @@ def test_invited_people_get_in_with_their_own_role(bob, carol, dave, anon):
                      json={"blocks": []}).status_code == 403
 
 
+def test_an_invitation_keeps_when_it_was_made(bob, carol, dave):
+    """``share_users.added_at``: set when someone is invited, kept by every
+    later save that keeps them; only the people a save adds hear of it
+    (a ``shared`` Inbox item)."""
+    from gamma.db import connect_users_db
+    page = make_page(bob, "Dated invitations")
+    token = _share(bob, page["id"], audience="list", users=[{"name": "carol_share", "role": "view"}])["token"]
+
+    def rows():
+        with connect_users_db() as conn:
+            return dict(conn.execute("SELECT user_id, added_at FROM share_users WHERE token = ?", (token,)).fetchall())
+
+    def told(name):
+        with connect_users_db() as conn:
+            return conn.execute("SELECT COUNT(*) FROM inbox_items WHERE kind = 'shared' AND user_id = ? "
+                                "AND share_token = ?", (account_of(name), token)).fetchone()[0]
+
+    first = rows()
+    assert list(first) == [account_of("carol_share")] and first[account_of("carol_share")]
+    bob.put(f"/api/share-settings/{page['id']}", json={"users": [{"name": "carol_share", "role": "edit"},
+                                                                {"name": "dave_share", "role": "view"}]})
+    second = rows()
+    assert second[account_of("carol_share")] == first[account_of("carol_share")]
+    assert second[account_of("dave_share")] >= first[account_of("carol_share")]
+    assert (told("carol_share"), told("dave_share")) == (1, 1)
+    bob.put(f"/api/share-settings/{page['id']}", json={"audience": "anyone"})  # the people as they were
+    assert rows() == second and (told("carol_share"), told("dave_share")) == (1, 1)
+
+
 def test_invitations_name_the_account_not_its_name(bob, anon):
     """An invitation is a share_users row by account id: the dialog shows the
     username, a deleted account's invitation goes with it (an account made

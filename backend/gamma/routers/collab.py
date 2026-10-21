@@ -14,7 +14,7 @@ from fastapi.responses import JSONResponse
 from .. import collab
 from ..auth import (ANONYMOUS_NAME, SESSION_COOKIE, actor_of, is_link_visitor, link_name, link_ratelimit,
                     note_share_miss, require_ws_writer, requested_ws, resolve_ws, session_lookup,
-                    share_lookup, share_scope, workspace_access)
+                    share_lookup, share_scope, share_via, workspace_access)
 from ..blocks_store import is_op_page
 from ..db import connect_pages_db
 from ..json_response import OrjsonResponse
@@ -62,7 +62,7 @@ def post_ops(page_id: str, payload: OpsRequest, request: Request):
     try:
         result = commit_ops(ws, page_id, ops, actor=actor_of(request),
                             client=payload.client[:32], share_scoped=scope is not None,
-                            cursor=cursor, batch_id=payload.batch[:64])
+                            cursor=cursor, batch_id=payload.batch[:64], via=share_via(request))
     except OpError as e:
         body = {"detail": e.detail, **({"missing": e.missing} if e.missing else {}),
                 **({"conflict": e.conflict, "index": e.index} if e.conflict else {})}

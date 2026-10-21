@@ -11,7 +11,8 @@ holds the websocket peers
 cursor; ``publish`` sends a message to every peer and is safe to call from
 the event loop AND from threadpool code (the sync AI chat endpoint runs the
 agent's tools there): sends are always scheduled on the loop the sockets
-live on.
+live on. ``publish_account`` sends to one account's sockets in every room
+(the Inbox's content-free nudge).
 
 Presence is never persisted. Document changes never travel over the socket
 towards the server — writes are ``POST /api/pages/{id}/ops`` (gamma/ops.py),
@@ -155,6 +156,32 @@ def publish(ws: str, page_id: str, message: dict, exclude: str = "") -> None:
         _schedule(room.broadcast(json.dumps(message), exclude))
     except Exception as e:  # never let a fan-out failure break the write
         log.warning(f"[collab] publish failed: {e}")
+
+
+def publish_account(user_id: str, message: dict) -> None:
+    """Send ``message`` to every open page socket of the account
+    ``user_id``, in any room of any workspace (a member's, or one it came
+    to through a share link): the Inbox's content-free ``{t: "inbox"}``.
+    The peers are read now; one coroutine on the sockets' loop sends, and
+    a peer whose send fails leaves its room, as in ``Room.broadcast``.
+    Safe from anywhere; a no-op when the account has no socket open."""
+    if not user_id:
+        return
+    targets = [(room, peer) for room in list(_rooms.values()) for peer in list(room.peers.values())
+               if peer.account == user_id]
+    if not targets:
+        return
+    try:
+        _schedule(_send_each(targets, json.dumps(message)))
+    except Exception as e:  # never let a nudge break the write
+        log.warning(f"[collab] account nudge failed: {e}")
+
+
+async def _send_each(targets: list, text: str) -> None:
+    results = await asyncio.gather(*(peer.ws.send_text(text) for _room, peer in targets), return_exceptions=True)
+    for (room, peer), res in zip(targets, results):
+        if isinstance(res, BaseException) and leave(room, peer):
+            publish(room.key[0], room.key[1], {"t": "leave", "client": peer.client})
 
 
 def publish_ops(ws: str, result: dict) -> None:

@@ -106,7 +106,7 @@ def _purge_expired(ws: str, now: datetime) -> tuple[list[str], datetime | None]:
 _due: dict[str, tuple[tuple, datetime | None]] = {}
 
 
-def _stamp(ws: str) -> tuple | None:
+def files_stamp(ws: str) -> tuple | None:
     """``(pages.db mtime, its WAL's mtime and size)``; None without a pages.db."""
     try:
         db = (ws_dir(ws) / "pages.db").stat()
@@ -127,7 +127,7 @@ def sweep(*, now: datetime | None = None) -> dict[str, list[str]]:
     now = now or datetime.now(timezone.utc)
     out = {}
     for ws in workspace_ids():
-        stamp = _stamp(ws)
+        stamp = files_stamp(ws)
         if stamp is None:
             _due.pop(ws, None)
             continue
@@ -136,7 +136,7 @@ def sweep(*, now: datetime | None = None) -> dict[str, list[str]]:
             continue
         try:
             gone, next_expiry = _purge_expired(ws, now)
-            _due[ws] = (_stamp(ws) or stamp, next_expiry)
+            _due[ws] = (files_stamp(ws) or stamp, next_expiry)
         except Exception as e:  # noqa: BLE001 — one workspace never stops the sweep
             _due.pop(ws, None)
             log.warning(f"[trash] workspace {ws}: {e}")

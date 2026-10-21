@@ -9,7 +9,7 @@ from fastapi.responses import JSONResponse
 from fractional_indexing import generate_key_between
 from pydantic import BaseModel
 
-from ..auth import actor_of, require_ws, require_ws_writer, resolve_ws, share_scope
+from ..auth import actor_of, require_ws, require_ws_writer, resolve_ws, share_scope, share_via
 from ..blocks_store import (
     BLOCK_COLUMNS,
     FOLDERS,
@@ -38,7 +38,7 @@ from ..blocks_store import (
     valid_block_id,
     write_lock,
 )
-from .. import cloud_auth, trash, upload_gc
+from .. import cloud_auth, comments, trash, upload_gc
 from ..db import connect_pages_db, page_now
 from ..json_response import OrjsonResponse
 from ..markdown_export import build_tree
@@ -481,7 +481,7 @@ def _ops(ws: str, page_id: str, ops: list[dict], request: Request, scope) -> dic
                 raise HTTPException(status_code=403, detail="not accessible via this share link")
     try:
         return commit_ops(ws, page_id, ops, actor=actor_of(request),
-                          share_scoped=scope is not None)
+                          share_scoped=scope is not None, via=share_via(request))
     except OpError as e:
         raise HTTPException(status_code=e.status, detail=e.detail)
 
@@ -611,9 +611,12 @@ def ub_put_children(block_id: str, payload: UBPutChildrenRequest, request: Reque
     """Replace all children of a block with the provided nested tree (bulk
     paths — a duplicated page, tests; the editor sends ops), in one
     transaction: a tree that cannot be written (an id another block
-    already has: 409) leaves the old children in place. The page's room is
-    told to reload. Never the library itself: ``root``'s children are the
-    pages, created and deleted one by one."""
+    already has: 409) leaves the old children in place. The threads of the
+    old children that do not come back are hidden as on a delete
+    (``comments.orphan``); the rows written show theirs again, a share
+    editor's only those this page held (``comments.place``). The page's room is told to reload. Never the
+    library itself: ``root``'s children are the pages, created and deleted
+    one by one."""
     if block_id == "root":
         raise HTTPException(status_code=400, detail="cannot replace the children of root")
     now = page_now()
@@ -629,7 +632,8 @@ def ub_put_children(block_id: str, payload: UBPutChildrenRequest, request: Reque
             page_id = page_root_id(conn, block_id)
             if page_id is None:
                 raise HTTPException(status_code=404, detail="block not found")  # in Recently deleted
-            old_refs = subtree_refs(r for r in fetch_subtree(conn, block_id) if r[0] != block_id)
+            old_rows = [r for r in fetch_subtree(conn, block_id) if r[0] != block_id]
+            old_refs = subtree_refs(old_rows)
             delete_children(conn, block_id)
             try:
                 conn.executemany(
@@ -638,6 +642,10 @@ def ub_put_children(block_id: str, payload: UBPutChildrenRequest, request: Reque
                       r["properties"], r["created_at"], r["updated_at"], page_id) for r in rows])
             except sqlite3.IntegrityError:
                 raise HTTPException(status_code=409, detail="a block id in the tree is already taken")
+            # the old children that did not come back hide their threads; the rows written show theirs
+            new_ids = {r["id"] for r in rows}
+            comments.orphan(conn, [r[0] for r in old_rows if r[0] not in new_ids], now)
+            comments.place(conn, new_ids, page_id, any_page=scope is None)
             conn.execute("UPDATE unified_blocks SET updated_at = ? WHERE id = ?", (now, block_id))
             new_refs = set().union(*(upload_refs(r["content"], r["properties"]) for r in rows))
             upload_gc.claim(conn, new_refs - old_refs)

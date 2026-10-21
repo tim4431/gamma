@@ -1,7 +1,9 @@
 # LaTeX editing
 
-These aids apply inside `$...$` and `$$...$$` in notes and editable embedded
-notes. Ordinary prose and fenced code retain their usual typing behavior.
+These aids apply inside `$...$` and `$$...$$` in notes, editable embedded
+notes and a comment's field ([comments.md](comments.md) "The composer"),
+which share `editor/useMathUi.js`. Ordinary prose and fenced code retain
+their usual typing behavior.
 
 `BlockCmEditor.jsx` auto-pairs `$`: the first press inserts `$|$` (the bar is
 the caret), and a second press inside that freshly created pair makes `$$|$$`.

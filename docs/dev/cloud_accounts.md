@@ -1385,6 +1385,9 @@ is logged). The rule is `hosted.read_only()` plus one documented tuple,
   the workspace backups and the server snapshots);
 - `/api/pages/by-docs`: a read the file chips send as a POST;
 - `/api/notices/…/seen`, so a seen notice stays seen;
+- everything under `/api/inbox/`: marking Inbox items read or archived
+  is the account's own bookkeeping ([comments.md](comments.md) "The
+  inbox"); a comment is content and is refused like any write;
 - `/api/admin/hosted/sync`, the admin's Sync now, which is how a paid-up
   server comes back without waiting for the hour.
 

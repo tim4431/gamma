@@ -46,7 +46,7 @@ from contextlib import closing
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import config, integrity, jobs, pdf_index, storage, upload_gc
+from . import comments, config, integrity, jobs, pdf_index, storage, upload_gc
 from .backups import snapshot_db
 from .blocks_store import (BLOCK_COLUMNS, FOLDERS, IN_LIBRARY, LABELS, PATH_SEP, STORED_COLUMNS, TRASH, TREES,
                            delete_subtree, existing_in, fetch_subtree, filing, folder_paths, last_child_position,
@@ -471,8 +471,9 @@ def _announce(ws: str, pages: list[str] | None = None) -> None:
 
 def _review_import(ws, tdir, upload_names):
     """Plan the same additive merge, using only the extracted (normalized)
-    snapshot. A chat is a bucket's conversations, the active one and its
-    history: with its page when the bucket is one of the backup's pages,
+    snapshot. A page entry's ``comments`` counts the comments its blocks
+    carry (they come with it). A chat is a bucket's conversations, the
+    active one and its history: with its page when the bucket is one of the backup's pages,
     else an entry of its own (the library's chat, or a folder's). An entry's
     ``folders`` are the paths (lists of names) it is filed under — the
     workspace's page's when it has the page —, its ``_tree`` the backup's
@@ -520,7 +521,7 @@ def _review_import(ws, tdir, upload_names):
                         for name in sorted(missing)]
             shown = live_paths if destination_id else paths
             tree = {f for i in filing(props, FOLDERS) for f in above(i)} | set(filing(props, LABELS))
-            pages.append({"id": destination_id or row[0], "title": title,
+            pages.append({"id": destination_id or row[0], "title": title, "comments": comments.count_on(src, ids),
                           "folders": [shown[i] for i in filing(destination_props, FOLDERS) if i in shown],
                           "selection_ids": [selection_id], "kind": "pdf" if destination_props.get("doc_id") else "page",
                           "action": "skip" if destination_id else "create",
@@ -614,30 +615,33 @@ def _validate(tdir: Path) -> None:
             raise BackupError(f"{dbname} in the zip is damaged ({check[:200]}); nothing was restored")
 
 
-def _fresh_ids(rows, taken: set) -> list[list]:
+def _fresh_ids(rows, taken: set) -> tuple[list[list], dict[str, str]]:
     """A page's rows (``fetch_subtree``'s: the root first, every parent
     before its children) ready to insert as ``STORED_COLUMNS``, each in the
-    page of the root. A block whose id the workspace already uses — it lives
-    on another page now — gets a new id and its children follow it there,
-    so nothing is grafted under a live block; a row whose parent is not part
-    of the copy is left out."""
-    remap, inside, out = {}, set(), []
+    page of the root, and the remap: ``{the backup's id: the id it gets}``
+    for every row kept. A block whose id the workspace already uses — it
+    lives on another page now — gets a new id and its children follow it
+    there, so nothing is grafted under a live block; a row whose parent is
+    not part of the copy is left out (and out of the remap)."""
+    remap, fresh_ids, inside, out = {}, {}, set(), []
     for i, row in enumerate(rows):
         vals = list(row)  # BLOCK_COLUMNS: the stored columns
-        vals[1] = remap.get(vals[1], vals[1])
+        vals[1] = fresh_ids.get(vals[1], vals[1])
         if i and vals[1] not in inside:
             continue
+        theirs = vals[0]
         if vals[0] in taken:
             fresh = new_block_id()
             while fresh in taken:
                 fresh = new_block_id()
-            remap[vals[0]] = fresh
+            fresh_ids[vals[0]] = fresh
             vals[0] = fresh
         vals[7] = out[0][0] if out else vals[0]  # page_id
         taken.add(vals[0])
         inside.add(vals[0])
+        remap[theirs] = vals[0]
         out.append(vals)
-    return out
+    return out, remap
 
 
 def _merge(ws: str, tdir: Path, by: str) -> dict:
@@ -656,13 +660,17 @@ def _merge(ws: str, tdir: Path, by: str) -> dict:
     The backup's folders and labels join the workspace's trees first
     (``_merge_trees``), and the pages it adds are filed under the
     workspace's ids for them (an id that is no folder or label of the
-    workspace is dropped), the folder chats moved with their folders.
+    workspace is dropped), the folder chats moved with their folders. An
+    added page's comments come with it (``comments.copy_rows``: on the
+    blocks' ids as ``_fresh_ids`` remapped them, a comment id the
+    workspace has minted afresh); ``comments_added`` counts them, and a
+    trashed copy that gives way takes its own with it.
     Nothing in the backup's data.db is touched."""
     from fractional_indexing import generate_n_keys_between
 
     from . import ops
 
-    pages_skipped = chats_added = 0
+    pages_skipped = chats_added = comments_added = 0
     added, untrashed, grew = [], [], []
     snap = tdir / "pages.db"
     if snap.exists():
@@ -687,14 +695,18 @@ def _merge(ws: str, tdir: Path, by: str) -> dict:
                     keys = generate_n_keys_between(last_child_position(dst, "root"), None, n=len(new_roots))
                     for row, key in zip(new_roots, keys):
                         if row[0] in in_trash:  # only in Recently deleted: the backup's version replaces it
-                            taken.difference_update(r[0] for r in fetch_subtree(dst, row[0]))
+                            trashed = [r[0] for r in fetch_subtree(dst, row[0])]
+                            taken.difference_update(trashed)
                             delete_subtree(dst, row[0])
+                            comments.purge(dst, row[0], trashed)
                             untrashed.append(row[0])
-                        rows = _fresh_ids(fetch_subtree(src, row[0]), taken)
+                        rows, remap = _fresh_ids(fetch_subtree(src, row[0]), taken)
                         rows[0][2] = key  # append after the existing root pages
                         rows[0][4] = _refiled(dst, rows[0][4], mapping)
                         dst.executemany(f"INSERT INTO unified_blocks ({STORED_COLUMNS}) "
                                         "VALUES (?, ?, ?, ?, ?, ?, ?, ?)", rows)
+                        comments_added += comments.copy_rows(dst, comments.rows_of_pages(src, [row[0]]),
+                                                             blocks=remap)
                         ops.log_reload(dst, row[0], by, after=backup_seqs.get(row[0], 0))
                         added.append(row[0])
                 for tree in grew:
@@ -711,7 +723,7 @@ def _merge(ws: str, tdir: Path, by: str) -> dict:
     if added or grew:
         _announce(ws, added + grew)
     return {"pages_added": len(added), "pages_skipped": pages_skipped, "chats_added": chats_added,
-            "from_trash": len(untrashed)}
+            "comments_added": comments_added, "from_trash": len(untrashed)}
 
 
 def _merge_trees(src, dst, taken: set) -> tuple[dict, list[str]]:

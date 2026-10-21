@@ -120,7 +120,9 @@ the frontend changes: editing a mirror is editing a workspace.
 
 Not synced: preferences (reading positions, open tabs, recents — they are
 per account and per server), the AI chats (in pages.db beside the pages,
-but no round reads them; "Limits and next steps"),
+but no round reads them; "Limits and next steps"), the comments (in
+pages.db beside the pages too: each server keeps its own, and a comment
+write moves no change feed, [comments.md](comments.md)),
 cover snapshots, search indexes (the copy keeps its own: the notes index
 follows the copy's own writes, the PDF index is extracted again).
 
@@ -967,6 +969,12 @@ feed.
   (or push) after such a restore puts the copies right.
 - A mirror of a mirror works but doubles the delay; a workspace mirrored
   from two servers into one copy is refused (one remote per copy).
+- Comments do not travel, nor do publications or the share host carry
+  them: each server keeps its own threads ([comments.md](comments.md)).
+  A comment's author is an account id of its server, which the other side
+  cannot name, so syncing them needs the author's name carried along, as
+  the Gamma export does (`author_name`). The sync popover says so
+  ("Comments stay on each server: a sync carries none.").
 - The AI chats do not travel. They are rows in pages.db beside the pages
   (schema version 28), keyed by a block id (a page's or a folder's) or
   `home`. Syncing them is a follow-up: a conversation per bucket, last writer wins by its `updated_at`

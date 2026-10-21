@@ -34,6 +34,12 @@ workspace's files), `db.SCHEMA_VERSION` and `db.WS_VERSION_BASE`,
    A workspace part also moves `migrations.workspace_format()`, the shape
    two servers syncing a workspace compare: a clone and its origin pause
    until both run the step ([mirror.md](mirror.md) "The data format").
+   An additive table in a workspace's `pages.db` or `data.db` (a new
+   table, nothing existing changed) needs its `CREATE ... IF NOT EXISTS`
+   statement in `db.PAGES_SCHEMA` / `DATA_SCHEMA` only, with no workspace
+   part and no format bump: every connection applies those statements
+   when it opens a file (`db._open_ws_db`), and so do a new workspace, a
+   restored copy and the Gamma export. The release's versions row says so.
 3. **The runner goes first.** `migrations.ensure_current()` is the first
    thing `app.create_app` does, before any table is opened. A data
    directory that is *ahead* of the binary (`NewerDataError`), older than
@@ -173,6 +179,7 @@ has (rule 2).
 | 36 | `folder_links_remote` | A global part only. `folder_links` in step 35's frozen shape wherever release 0.2.16 shaped it otherwise: that release created the table with `workspace_id` a foreign key to `workspaces` and without `remote_url`, `token`, `token_id`, and added the columns as its own step 36, so its data is stamped 36 already. The release after folded the columns into step 35, dropped the foreign key (a link to another server's workspace cannot satisfy it) and, by mistake, the version with it, which made that data "newer" than the code and showed its users the blocked page. This step makes 36 current again: a 0.2.16 directory is simply current (its foreign key stays, inert, since no connection turns `foreign_keys` on), and a directory at 35 gets the table created if missing, each missing column added, and a table that has the foreign key rebuilt without it, rows kept. Re-runnable. No workspace is touched. The lesson: a version a commit has reached is never lowered, even on `dev`; fold steps together only before the first commit that carries them |
 | 38 | `recording_kind` | A workspace part only (`users.db` gains just its stamp). The generated `kind` gains its `recording` case (a `recording` object in the properties, after `sheet`: [api.md](api.md) "The block dict", `gamma/recording.py`): `normalize.block_columns` finds the stored definition outdated and drops and adds `kind` again, with `doc_id` after it and their indexes, as steps 29 and 30 did. That normalizer commits its rebuild itself, ahead of the stamp; a rerun finds the current definition and changes nothing. Nothing is stamped or touched: the column is derived |
 | 39 | `reminders_done` | A global part only. `users.db` gains `reminders_done` ([mentions.md](mentions.md) "Reminders"), a row per reminder an account has dismissed, created from the step's frozen statement (`_V39_REMINDERS_DONE`). It replaces the account-wide `reminders-done` pref, one JSON object `{key: when}` that kept only the latest 500: each account's pref becomes its rows under workspace `''`, which the account's next listing of its reminders fills in. Re-runnable: a row there already is kept (`INSERT OR IGNORE`). The pref rows stay for the release before (rule 6), and the next release's global step deletes them. No workspace is touched |
+| 40 | `comments_inbox` | A global part only. `users.db` gains `inbox_items` with its three indexes ([comments.md](comments.md) "The inbox"; per recipient and time, the unread rows, the comment), and `share_users` gains `added_at` (`''` on the invitations already there), from the step's frozen statements (`_V40_INBOX_ITEMS`, `_V40_SHARE_USERS_ADDED_AT`). Re-runnable: the table and indexes are `IF NOT EXISTS`, the column is added only where `_columns()` lacks it. The workspaces' `comments` table ([comments.md](comments.md) "Threads") is additive: it comes from `db.PAGES_SCHEMA` as each `pages.db` opens (rule 2), so the step has no workspace part and `workspace_format()` stays at 38: clones and publications keep syncing across the upgrade. No workspace is touched |
 
 ## Backups (`gamma/backups.py`)
 

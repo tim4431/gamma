@@ -1,0 +1,95 @@
+/* The Inbox (inbox/, docs/dev/comments.md "In the app" › "The Inbox"): the
+   bell's count, the More sheet row's count, and the panel under the bell.
+   Loaded with the app (InboxButton.jsx imports it), since the bell is in
+   the topbar. */
+
+/* The unread count on the bell's corner, after .navBackBadge; `.inline`
+   after a menu row's label. */
+.inboxBadge {
+  position: absolute;
+  top: -3px;
+  right: -3px;
+  min-width: 15px;
+  height: 15px;
+  padding: 0 3px;
+  border-radius: var(--radius-full);
+  background: var(--accent-fill);
+  color: var(--on-accent);
+  font-size: var(--fs-2xs);
+  font-weight: 600;
+  line-height: 15px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+}
+.inboxBadge.inline { position: static; margin-left: auto; flex-shrink: 0; }
+.topbar .inboxBtn { position: relative; }
+.phoneBottomBar .iconBtn > .inboxBadge { top: 1px; right: auto; left: calc(50% + 4px); }
+
+.inboxPopover {
+  width: min(420px, calc(100vw - 24px));
+  max-height: min(72vh, 600px);
+  overflow: hidden;
+}
+.inboxHead { display: flex; align-items: center; justify-content: space-between; gap: var(--space-4); min-height: var(--ctl-btn-sm); }
+.inboxTabs { display: flex; padding: 0 var(--space-2); }
+.inboxList { display: flex; flex-direction: column; gap: var(--space-1); min-height: 0; overflow-y: auto; }
+.inboxList .popoverSection { padding: var(--space-4) 6px var(--space-1); }
+.inboxList .setEmpty { padding: 18px 12px; }
+.inboxLoading { padding: var(--space-4); }
+.inboxMore { align-self: center; margin: var(--space-2) 0; }
+
+/* A row: the avatar, what happened over the words and when, the actions
+   (shown on hover and focus, always under a touch screen), and a dot while
+   unread. */
+.inboxRow {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-4);
+  padding: 6px 6px 6px var(--space-5);
+  border-radius: var(--radius-sm);
+}
+.inboxRow:hover { background: var(--bg-hover); }
+.inboxRow > .peerAvatar { flex-shrink: 0; margin-top: 1px; border: none; }
+.inboxMain {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text-secondary);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.inboxSentence { font-size: var(--fs-sm); line-height: 1.35; overflow-wrap: anywhere; }
+.inboxRow.unread .inboxSentence { color: var(--text-primary); font-weight: 600; }
+.inboxSnippet {
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  font-size: var(--fs-xs);
+  color: var(--text-muted);
+  border-left: 2px solid var(--border-light);
+  padding-left: var(--space-3);
+}
+.inboxMeta { display: flex; flex-wrap: wrap; gap: var(--space-3); font-size: var(--fs-2xs); color: var(--text-muted); }
+.inboxWs { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.inboxWs::after { content: "·"; margin-left: var(--space-3); }
+.inboxActions { flex-shrink: 0; opacity: 0; transition: opacity var(--dur-fast) ease; }
+.inboxRow:is(:hover, :focus-within) .inboxActions { opacity: 1; }
+@media (hover: none) { .inboxActions { opacity: 1; } }
+.inboxDot {
+  position: absolute;
+  top: 13px;
+  left: var(--space-1);
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+}
