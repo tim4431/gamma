@@ -31,6 +31,19 @@ export function foldThreads(threads) {
   return { byBlock, counts };
 }
 
+// A PDF highlight drawn as a commented passage (a light wash and an
+// underline, PdfViewer): `h` (App's highlight object) has no note of its
+// own (`hasNote`: no text, no child note) and at least one open thread.
+export const commentOnlyHighlight = (h) => !!h && !h.hasNote && (h.threadCount || 0) > 0;
+
+// Whether a highlight made by the selection popup's Comment is left with
+// nothing on it once its popover closes, and so is taken away again, as an
+// abandoned comment in Notion leaves no mark: no note (`h.hasNote`) and no
+// thread (`blockThreads`, open or resolved). One already gone (`h` null)
+// is not.
+export const abandonedCommentHighlight = (h, blockThreads) =>
+  !!h && !h.hasNote && !(blockThreads || []).length;
+
 const byCreated = (a, b) => (a.created_at < b.created_at ? -1 : a.created_at > b.created_at ? 1 : 0);
 const byLatest = (a, b) => (a.last_at > b.last_at ? -1 : a.last_at < b.last_at ? 1 : byCreated(a, b));
 

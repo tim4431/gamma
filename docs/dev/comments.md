@@ -509,16 +509,45 @@ of a field focused meanwhile stays where it is.
 since a comment changes no note; [hotkeys.md](hotkeys.md)), which the
 command palette offers on a read-only page too: the palette leaves out
 only the `edits` commands there, as the keys do. The
-highlight menu's Comment on the PDF. The page title row's control, for the
+highlight menu's Comment on the PDF. The selection popup's Comment (below).
+The page title row's control, for the
 page's own thread (on its root block), which share visitors get too.
+
+**Comment on a selection.** The PDF selection popup (`PlainTip`) offers
+Comment, the first of its tools, where the reader may comment on the page
+and annotate it (`selComment`: `commentsOn && canComment`, and the
+viewer's `onSelectionFinished`, which a read-only page leaves out). A
+press makes the highlight by the swatches' path (`handleSelConfirm` →
+`onSelectionFinished` with `{comment: true}`), in the palette's first
+highlight colour, without opening its note for typing (`addHighlight`'s
+`edit: false`). `commentOnNewHighlight` then waits for the highlight's
+first rect to be drawn and opens the thread popover from it with "New
+comment" focused, as the highlight menu's Comment does. App keeps that
+highlight in `freshCommentRef` while its popover is open; when the popover
+closes, or another block's takes its place, a highlight with no note and
+no thread (`abandonedCommentHighlight`, `comments/comments.js`) is deleted
+through the tree, as the highlight menu's Delete does: an abandoned
+comment leaves no mark, as in Notion. An unsent comment does not keep it.
+Nor does it leave an undo step: when the deletion takes the tree back to
+the newest undo entry's (`blockHistory.takesBack`, nothing else edited
+since), it is made with `foldBlocks`, which takes the making's entry away
+as a text box left empty does ([text_boxes.md](text_boxes.md)); otherwise it is an
+edit of its own. `freshCommentRef` lives in memory, so a full page load
+while that popover is open (a reload, a closed tab) keeps the empty
+highlight; an in-app page or tab switch closes the popover and deletes it.
 
 **The PDF.** A highlight with open threads gets the note badge
 (`NoteBadge`) whether or not it has a note, drawn in the accent
-(`.hasThread`). Its tip gives the note, then the count. A click (a tap
+(`.hasThread`). Its tip gives the note, then the count. A highlight with
+open threads and no note (`commentOnlyHighlight`: no text, no child note)
+is drawn as Notion draws a commented passage: a lighter wash of its colour
+over a 2px line in a strong tone of the same hue (`--hl-dark-line`, which
+a flipped page draws too); a linked one keeps the link's blue line, and
+one with a note, or with no open thread, its plain fill. A click (a tap
 too) jumps as before and opens the thread popover from the badge
 (`PdfViewer`'s `onHighlightThread(id, badge)`). The count rides on the
 highlight objects (`threadCount`), which the viewer's per-page memo
-compares.
+compares beside `hasNote`.
 
 **The Comments window.** Dock window `comments` (`renderWindow`, a
 `LazyBoundary` whose fallback is the empty `DockWindow`), shown while
@@ -728,7 +757,9 @@ has notifications; the iPad's WKWebView has none, and the row says so.
   refetch keeping what reads the same, a new thread and a reply shown once,
   an edit, a delete with the server's tombstone rules, resolve and reopen,
   who may edit and delete, the 9+ badge, the anchor's one line, the thread
-  link. `frontend/tests/refLists.test.mjs`: the typed `[[query`, a picked
+  link, the commented-passage rule and the abandoned Comment highlight.
+  `frontend/tests/selectionTip.test.mjs`: the selection popup's anchor from
+  the release point, and its placement from it. `frontend/tests/refLists.test.mjs`: the typed `[[query`, a picked
 row's edit and the hand-typed title's. `frontend/tests/inboxText.test.mjs`: the sentence of each kind, the
   snippet, the tabs, the days, the jump of each kind (in place, another
   workspace, through a share, a folder, an invitation), a listing's first
@@ -755,7 +786,12 @@ row's edit and the hand-typed title's. `frontend/tests/inboxText.test.mjs`: the 
   `?thread=` opening the thread; a note thread's Copy link in a folder
   share, opened, showing the thread; a highlight's thread from its menu and
   its PDF badge; on a phone, a note's thread link on a page with a PDF
-  bringing up the notes with the note under the popover. `tests/e2e/select.mjs` runs it for `frontend/src/comments/`
+  bringing up the notes with the note under the popover; a mouse selection's
+  popup opening in place within 40px of the release point, its colours, the
+  line and then Comment and Link; Comment making a highlight with its
+  popover and the field focused, the comment sent with Enter, and the
+  highlight's rects drawn with the 2px line of its colour; a second Comment
+  left with Escape leaving no highlight. `tests/e2e/select.mjs` runs it for `frontend/src/comments/`
   (with `collab` and `inbox`), the editor and the PDF viewer,
   `routers/comments.py`, `gamma/inbox.py`, and `gamma/comments.py` with
   `notes-pdf-share`, `collab` and `transfers` too, since every block

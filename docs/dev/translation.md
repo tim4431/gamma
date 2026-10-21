@@ -84,7 +84,8 @@ halts/retries/re-shows free until a restart. Duplicate paragraphs within a
 request go upstream once. Caps: 200 texts / 60k chars per request.
 
 **Selection translation.** The text-selection popup (`PlainTip` in
-`pdf/PdfViewer.jsx`, the highlight colors + link) carries a 文A button
+`pdf/PdfViewer.jsx`: the highlight colors, a line, then Comment and the
+link) carries a 文A button, last,
 when Settings → Translation › "Translate a selection" is on (`selTranslate`,
 account pref, default on).
 
@@ -100,10 +101,12 @@ account pref, default on).
   as the popup opens.
 - The popup is keyed by the selection, so a new selection starts over and
   aborts the previous request. A click or selection inside the popup keeps
-  it open (the viewer's selection sync ignores a selection anchored in
-  `.plainTip`).
-- `TipFrame` flips the popup above the selection when it would run past the
-  window's bottom, in the frame a streaming translation grows it
+  it open and where it is (the viewer's selection sync ignores a mouse
+  release in `.plainTip` and a selection anchored there).
+- `TipFrame` opens the popup by the point where the mouse was released
+  (under the selection for a touch or keyboard selection, or a release far
+  from it; `pdf/selectionTip.js`) and flips it above when it would run past
+  the window's bottom, in the frame a streaming translation grows it
   ([ui-design.md](ui-design.md#menus-and-popups-open-in-place)). Like the popup itself, it needs edit rights on the page.
 
 **Machine-translation services.** "Translate with" also offers the services

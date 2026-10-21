@@ -10,7 +10,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { applyOps, seedPositions } from "../src/shared/model/blockOps.js";
 import {
-  boxChange, classifyTransition, createHistory, describeTransition, observeTree, rebaseHistory, rebaseText, undoStep,
+  boxChange, classifyTransition, createHistory, describeTransition, observeTree, rebaseHistory, rebaseText, takesBackNewest, undoStep,
 } from "../src/editor/blockHistory.js";
 
 const N = (id, content = id, children = [], extra = {}) => ({ id, content, properties: {}, children, ...extra });
@@ -191,6 +191,26 @@ test("a block made and folded away again leaves nothing to undo, and the redo st
   assert.deepEqual(p.texts(), ["ab"]);
   assert.equal(p.undo().description, "note text edit: “ab”");
   assert.equal(p.undo(), false);
+});
+
+test("a highlight made for a comment and abandoned leaves no step; once something else was edited it is a step of its own", () => {
+  // App's selection-popup Comment: the highlight goes again when its
+  // popover closes with nothing written, folded only when takesBackNewest
+  const H = N("h", "quote", [], { properties: { pdf_position: { pageNumber: 1 } } });
+  const p = page([N("a")]);
+  p.edit([{ ...p.tree[0], content: "ab" }]);
+  p.edit([...p.tree, H]);
+  const without = [p.tree[0]];
+  assert.equal(takesBackNewest(p.s, without), true);
+  p.fold(without);
+  assert.equal(p.s.undo.length, 1, "only the typing is left to undo");
+  assert.equal(p.undo().description, "note text edit: “ab”");
+
+  const q = page([N("a")]);
+  q.edit([...q.tree, H]);
+  q.edit([{ ...q.tree[0], content: "a2" }, q.tree[1]]);
+  assert.equal(takesBackNewest(q.s, [q.tree[0]]), false, "the newest entry holds the highlight");
+  assert.equal(takesBackNewest(createHistory([N("a")]), [N("a")]), false, "an empty stack has nothing to take back");
 });
 
 test("a run of changes to one text box undoes as one step, as a run of typing does", () => {

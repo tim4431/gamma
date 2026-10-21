@@ -1377,6 +1377,16 @@ html[data-shell] .app { padding-bottom: env(safe-area-inset-bottom); }
   box-shadow: 0 0 0 2px var(--border);
 }
 
+/* The selection popup's line between its colours and its tools (Comment,
+   Link, Translate): a swatch tall, with room either side of it. */
+.plainTip .tipDivider {
+  align-self: center;
+  width: 1px;
+  height: 22px;
+  margin: 0 var(--space-1);
+  background: var(--border);
+}
+
 /* The selection translator under the color row (PdfViewer SelTranslation):
    a fold-out header, then the selectable translated text. */
 .plainTip:has(.selTrans) { width: min(420px, calc(100vw - 16px)); }

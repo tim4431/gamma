@@ -25,6 +25,8 @@ import { lastPointer } from "../shared/lib/pointer.js";
 import { PdfCitationOverlay } from "./PdfCitationOverlay";
 import { citationRuns, runChars } from "./pdfCitation.js";
 import { noteBadgeAnchor } from "./noteAnchor.js";
+import { nearRelease, tipAnchor } from "./selectionTip.js";
+import { commentOnlyHighlight } from "../comments/comments.js";
 import { useRecentIn } from "../guide/recent.js";
 import { DEFAULT_HIGHLIGHT, colorName, darkPageColor, darkPageLine, normalizeColor, pickerColors, swatchCss } from "../shared/model/palette.js";
 import { usePalette } from "../shared/ui/paletteContext.js";
@@ -448,7 +450,9 @@ async function fetchPdfData(url, onLoadState, isCancelled) {
 // that box on position.pageNumber.
 // flashHighlightId: the highlight a jump just landed on, which pulses once
 // (.pdfHlFlash; App's triggerFlash sets it for about a second).
-function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef, onJump, onHighlightJump, onLinkHighlight, onSelectionFinished, onAreaSelection, onHighlightContext, onHighlightThread, searchRef, captureRef, onEffectiveScale, onZoomTo, findMarks, onExternalLink, onLinkContext, onBeforeLinkJump, onLoadState, retryRef, areaMode, hideEmbeddedAnnots, darkPage = false, translateKey = "", translateParallel = 3, onTranslate, translateCtlRef, onTranslateState, selTranslate = "", translateLangLabel = "", marks, flashHighlightId = null, smoothWheel = false }) {
+// selComment: the selection popup offers Comment (the reader may comment on
+// the page); a press reaches onSelectionFinished with {comment: true}.
+function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef, onJump, onHighlightJump, onLinkHighlight, onSelectionFinished, onAreaSelection, onHighlightContext, onHighlightThread, searchRef, captureRef, onEffectiveScale, onZoomTo, findMarks, onExternalLink, onLinkContext, onBeforeLinkJump, onLoadState, retryRef, areaMode, hideEmbeddedAnnots, darkPage = false, translateKey = "", translateParallel = 3, onTranslate, translateCtlRef, onTranslateState, selTranslate = "", translateLangLabel = "", selComment = false, marks, flashHighlightId = null, smoothWheel = false }) {
   const tools = usePageTools(), { ink, text } = tools;
   const viewerRef = useRef(null);
   const [pdfDoc, setPdfDoc] = useState(null);
@@ -1485,10 +1489,16 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
   // pending selectionchange timer below.
   useEffect(() => {
     if (!canAnnotate) return;
-    function onMouseUp() {
-      setTimeout(syncSelPopup, 10);
+    // A mouse selection's popup opens where the button was released, when
+    // that is near the selection (pdf/selectionTip.js). A press inside the
+    // popup (Translate, the translation's header and copy button keep it
+    // open) leaves it where it is: rebuilt from that release, it would move.
+    function onMouseUp(e) {
+      if (document.querySelector(".plainTip")?.contains(e.target)) return;
+      const point = { x: e.clientX, y: e.clientY };
+      setTimeout(() => syncSelPopup(point), 10);
     }
-    function syncSelPopup() {
+    function syncSelPopup(point = null) {
       // "No text selected" must not dismiss an area popup — the drag that
       // created it ends in a mouseup with an empty selection by design.
       const keepArea = (p) => (p && p.kind === "area" ? p : null);
@@ -1537,8 +1547,9 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
         const pageRect = pageEl.getBoundingClientRect();
         const pageW = parseFloat(pageEl.style.width) || pageEl.offsetWidth || 1;
         const pageH = parseFloat(pageEl.style.height) || pageEl.offsetHeight || 1;
+        const rect = { top: r.top, left: r.left, width: r.width, bottom: r.bottom };
         setSelPopup({
-          text, rect: { top: r.top, left: r.left, width: r.width, bottom: r.bottom }, lineRects, pageNumber,
+          text, rect, point: nearRelease(point, rect), lineRects, pageNumber,
           pageLeft: pageRect.left, pageTop: pageRect.top, pageW, pageH,
         });
       }
@@ -1553,7 +1564,7 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
     function onSelectionChange() {
       if (lastPointer() === "mouse") return;
       clearTimeout(selTimer);
-      selTimer = setTimeout(syncSelPopup, 350);
+      selTimer = setTimeout(() => syncSelPopup(), 350);
     }
     document.addEventListener("mouseup", onMouseUp);
     document.addEventListener("selectionchange", onSelectionChange);
@@ -1683,12 +1694,11 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
       ))}
       </div>
       {selPopup && onSelectionFinished && (
-        <TipFrame anchor={selPopup.kind === "area"
-          ? { top: selPopup.tip.top, bottom: selPopup.tip.top, left: selPopup.tip.left, gap: 0 }
-          : { top: selPopup.rect.top, bottom: selPopup.rect.bottom, left: selPopup.rect.left, gap: 8 }}>
+        <TipFrame anchor={tipAnchor(selPopup)}>
           {/* keyed by the selection: a new one starts with no translation */}
           <PlainTip key={selPopup.kind === "area" ? "area" : selPopup.text}
             onConfirm={handleSelConfirm} onLink={() => handleSelConfirm("", null, { link: true })}
+            onComment={selComment ? (color) => handleSelConfirm("", color, { comment: true }) : null}
             translate={selTranslate && selPopup.kind !== "area" && selPopup.text && onTranslate ? {
               text: selPopup.text, auto: selTranslate === "auto", langLabel: translateLangLabel,
               run: (...args) => cbRef.current.onTranslate?.(...args),
@@ -2277,6 +2287,10 @@ const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, scal
         const storedW = h.position.width || 1;
         const storedH = h.position.height || 1;
         const isLink = !!h.linkTarget;
+        // A passage with comments and no note reads as Notion's commented
+        // text: a lighter wash under a 2px line in a strong tone of its
+        // colour (--hl-dark-line, which a flipped page also draws).
+        const commented = !isLink && commentOnlyHighlight(h);
         // Area notes (Ctrl+drag rectangles) draw as an outline with a faint
         // wash — a solid multiply fill would tint the figure underneath.
         const isArea = !!h.position?.area;
@@ -2306,7 +2320,11 @@ const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, scal
               boxSizing: "border-box", borderRadius: 3,
               border: "2px solid var(--hl-line, var(--hl))",
               background: "color-mix(in srgb, var(--hl) 25%, transparent)",
+            } : commented ? {
+              background: "color-mix(in srgb, var(--hl) 55%, transparent)",
+              borderBottom: "2px solid var(--hl-line, var(--hl-dark-line))", borderRadius: 1,
             } : { background: "var(--hl)" }),
+            ...(commented && isArea ? { border: "2px solid var(--hl-line, var(--hl-dark-line))" } : {}),
             ...(isLink ? (isArea
               ? { border: "2px solid rgba(70, 130, 255, 0.9)" }
               : { borderBottom: "2px solid rgba(70, 130, 255, 0.9)", borderRadius: 1 }) : {}),
@@ -2386,8 +2404,9 @@ const SEL_TRANSLATE_MAX = 5000;
 // null} — run is the page translator's request, so the same model/engine,
 // language and server cache apply. Auto starts it on open; the button starts
 // it, then folds/unfolds the result.
-function PlainTip({ onConfirm, onLink, translate }) {
+function PlainTip({ onConfirm, onLink, onComment, translate }) {
   const palette = usePalette();
+  const colors = pickerColors(palette, "highlight");
   const [trans, setTrans] = useState(null); // {status: "loading"|"done"|"error", text, open}
   const ctlRef = useRef(null);
   const source = useMemo(() => (translate ? selectionParagraphs(translate.text) : ""), [translate?.text]);
@@ -2415,7 +2434,7 @@ function PlainTip({ onConfirm, onLink, translate }) {
   return (
     <div className="plainTip">
       <div className="colorRow">
-        {pickerColors(palette, "highlight").map((c, i) => (
+        {colors.map((c, i) => (
           <button
             key={c.hex + c.alpha + i}
             className="colorBtn"
@@ -2427,6 +2446,19 @@ function PlainTip({ onConfirm, onLink, translate }) {
             aria-label={t("Highlight in {color}", { color: t(colorName(c)) })}
           />
         ))}
+        {/* the colours, then the tools */}
+        {onComment || onLink || translate ? <span className="tipDivider" aria-hidden="true" /> : null}
+        {onComment ? (
+          <button
+            className="colorBtn linkTipBtn"
+            onMouseDown={(e) => { keep(e); onComment(colors[0]); }}
+            type="button"
+            title={t("Comment on this passage")}
+            aria-label={t("Comment on this passage")}
+          >
+            <MessageSquareIcon size={14} />
+          </button>
+        ) : null}
         {onLink ? (
           <button
             className="colorBtn linkTipBtn"

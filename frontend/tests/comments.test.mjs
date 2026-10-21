@@ -4,8 +4,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  addComment, anchorSnippet, canDeleteComment, canEditComment, deleteComment, editComment, findComment, foldThreads,
-  isEdited, keepThreads, popoverThreads, resolveThread, shortCount, threadLink, threadsIn, upsertThread,
+  abandonedCommentHighlight, addComment, anchorSnippet, canDeleteComment, canEditComment, commentOnlyHighlight, deleteComment,
+  editComment, findComment, foldThreads, isEdited, keepThreads, popoverThreads, resolveThread, shortCount, threadLink, threadsIn,
+  upsertThread,
 } from "../src/comments/comments.js";
 
 const c = (id, thread, author, at, extra = {}) => ({
@@ -153,4 +154,21 @@ test("threadLink names the page, the block (not twice for a page thread) and the
   // a note's thread in a share view: the folder share opens `page`, the thread its block
   assert.equal(threadLink("https://g.example", { pageId: "p", blockId: "b", threadId: "t" }, { share: "tok" }),
     "https://g.example/?share=tok&page=p&block=b&thread=t");
+});
+
+test("a highlight with open threads and no note draws as a commented passage", () => {
+  assert.equal(commentOnlyHighlight({ hasNote: false, threadCount: 1 }), true);
+  assert.equal(commentOnlyHighlight({ hasNote: true, threadCount: 2 }), false, "a note keeps the plain fill");
+  assert.equal(commentOnlyHighlight({ hasNote: false }), false, "no open thread (none, or all resolved)");
+  assert.equal(commentOnlyHighlight(null), false);
+});
+
+test("the selection popup's Comment highlight goes again only when nothing is on it", () => {
+  const resolved = th("t9", "h1", "2026-10-01T00:00:00.000000Z", [c("t9", "t9", "ann", "2026-10-01T00:00:00.000000Z")],
+    { resolved_at: "2026-10-02T00:00:00.000000Z", resolved_by: "ann" });
+  assert.equal(abandonedCommentHighlight({ id: "h1", hasNote: false }, undefined), true);
+  assert.equal(abandonedCommentHighlight({ id: "h1", hasNote: false }, []), true);
+  assert.equal(abandonedCommentHighlight({ id: "h1", hasNote: false }, [resolved]), false, "a thread, even resolved, keeps it");
+  assert.equal(abandonedCommentHighlight({ id: "h1", hasNote: true }, []), false, "a note keeps it");
+  assert.equal(abandonedCommentHighlight(undefined, []), false, "already gone");
 });

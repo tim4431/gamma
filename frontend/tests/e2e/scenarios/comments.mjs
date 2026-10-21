@@ -10,9 +10,11 @@
 // link opening it through a folder share; a reply left unsent kept in its
 // field; the field as a note's editor ([[ links, @ people, $…$ with its
 // preview, Shift+Enter and Enter); on a phone, a note's thread link
-// bringing the notes over the PDF.
+// bringing the notes over the PDF; the selection popup opening at the
+// pointer, its Comment making a highlight drawn as a commented passage, and
+// an abandoned one leaving none.
 import { editRow } from "./notes.mjs";
-import { selectPdfText, waitForPdf } from "./pdf.mjs";
+import { dragSelectPdfText, selectPdfText, waitForPdf } from "./pdf.mjs";
 import { Account, assertOpensInPlace, sleep, wanted } from "../harness.mjs";
 
 export async function commentScenarios({ server, browser, makePdf, step, until, assert, assertEq, assertNoProblems, openPage, flags }) {
@@ -349,10 +351,12 @@ export async function commentScenarios({ server, browser, makePdf, step, until, 
     assertNoProblems(A);
   });
 
+  let reviewed = ""; // the paper the highlight steps comment on
   await step("comments: a highlight's thread, from its menu; the PDF badge shows it and opens it", async () => {
     const pdf = makePdf([["A paper about tensor networks", "and matrix product states"]]);
     const up = await ann.upload("/api/uploads", pdf, "review.pdf", "application/pdf");
     const paper = await ann.api(`/api/blocks/by-doc/${up.doc_id}`, { method: "POST", body: { default_title: "Reviewed paper", source_url: up.source_url } });
+    reviewed = paper.id;
     await A.goto(`${server.base}/?ws=${wsId}&page=${paper.id}`);
     await waitForPdf(A, 1);
     await selectPdfText(A, 1, "tensor networks");
@@ -389,6 +393,79 @@ export async function commentScenarios({ server, browser, makePdf, step, until, 
     } finally {
       await ctx.close();
     }
+  });
+
+  await step("comments: the selection popup opens at the pointer; its Comment makes a commented highlight, and an abandoned one leaves none", async () => {
+    // (A is on the reviewed paper from the step above, its badge's popover open)
+    if (await popover(A).count()) await closePopover(A);
+    const tip = A.locator(".plainTip");
+    const marks = () => A.evaluate(() => [...new Set([...document.querySelectorAll('[data-page="1"] [data-hl-id]')].map((el) => el.dataset.hlId))]);
+    const before = await marks();
+    let release = null;
+    await assertOpensInPlace(A, ".plainTip", async () => { release = await dragSelectPdfText(A, 1, "matrix product"); }, { what: "the selection popup" });
+    const r = await tip.evaluate((el) => { const b = el.getBoundingClientRect(); return { left: b.left, top: b.top }; });
+    assert(Math.hypot(r.left - release.x, r.top - release.y) < 40,
+      `the popup opens by the pointer: its corner (${r.left}, ${r.top}), the release (${release.x}, ${release.y})`);
+    // the colours, the line, then the tools: Comment, Link
+    const row = await tip.evaluate((el) => [...el.querySelector(".colorRow").children].map((c) => ({
+      kind: c.classList.contains("tipDivider") ? "line" : c.classList.contains("linkTipBtn") ? "tool" : "colour",
+      label: c.getAttribute("aria-label") || c.getAttribute("title") || "", left: c.getBoundingClientRect().left, right: c.getBoundingClientRect().right,
+    })));
+    const line = row.findIndex((c) => c.kind === "line");
+    assert(line > 0 && row.slice(0, line).every((c) => c.kind === "colour") && row.slice(line + 1).every((c) => c.kind === "tool"),
+      `colours | tools: ${row.map((c) => c.kind).join(" ")}`);
+    assert(row[line - 1].right < row[line].left && row[line].right < row[line + 1].left, "the line sits between them");
+    assertEq(row[line + 1].label, "Comment on this passage", "Comment is the first tool");
+    assert(row[line + 2].label.startsWith("Link this reference"), `then Link: ${row[line + 2].label}`);
+    await shot(A, "w7-popup-at-pointer");
+
+    // Comment: the highlight, its popover with the new comment's field focused
+    await tip.getByRole("button", { name: "Comment on this passage" }).click();
+    await popover(A).waitFor();
+    assertEq(await popover(A).locator(".commentPopTitle").innerText(), "Comments on this highlight");
+    await focused(field(popover(A).locator(".commentNew")), "the new comment's field takes the focus");
+    const made = (await marks()).filter((id) => !before.includes(id));
+    assertEq(made.length, 1, "one new highlight");
+    const hl = made[0];
+    await A.keyboard.type("Cite the original MPS paper");
+    await shot(A, "w7-composer-on-fresh-highlight");
+    await A.keyboard.press("Enter");
+    await until(async () => (await ann.api(`/api/pages/${reviewed}/comments?state=all`)).threads
+      .some((x) => x.block_id === hl && x.comments[0].body === "Cite the original MPS paper"), { what: "the comment is stored on the new highlight" });
+    await closePopover(A);
+    // a highlight with comments and no note: a lighter wash over a 2px line of its colour
+    const look = await A.locator(`[data-hl-id="${hl}"]`).first().evaluate((el) => {
+      const cs = getComputedStyle(el);
+      return { width: cs.borderBottomWidth, style: cs.borderBottomStyle, line: cs.borderBottomColor };
+    });
+    assertEq(look.width, "2px", "the underline");
+    assertEq(look.style, "solid");
+    assert(!/70, 130, 255/.test(look.line), `the highlight's own colour, not the link's blue: ${look.line}`);
+    assert(await A.locator('[data-page="1"] .pdfNoteBadge.hasThread').count() >= 2, "its badge shows the thread");
+    await A.locator(`[data-hl-id="${hl}"]`).first().scrollIntoViewIfNeeded();
+    await shot(A, "w7-commented-highlight");
+
+    // A second Comment left with nothing typed (Escape): no highlight stays.
+    const kept = await marks();
+    await dragSelectPdfText(A, 1, "A paper about");
+    await tip.waitFor();
+    await tip.getByRole("button", { name: "Comment on this passage" }).click();
+    await popover(A).waitFor();
+    await focused(field(popover(A).locator(".commentNew")), "ready to write");
+    await until(async () => (await marks()).length === kept.length + 1, { what: "the second highlight drawn" });
+    await A.keyboard.press("Escape");
+    await popover(A).waitFor({ state: "detached" });
+    await until(async () => (await marks()).length === kept.length, { what: "the abandoned highlight is taken away" });
+    assertEq((await marks()).sort().join(), kept.sort().join(), "the same highlights as before");
+    // Nor any undo step: the first Ctrl+Z takes back the commented
+    // highlight made before it, not an empty one; redo brings that back.
+    await A.keyboard.press("Control+z");
+    await until(async () => !(await marks()).includes(hl), { what: "the undo takes back the commented highlight" });
+    assertEq((await marks()).length, kept.length - 1, "no empty highlight comes back");
+    await A.keyboard.press("Control+Shift+z");
+    await until(async () => (await marks()).includes(hl), { what: "the redo brings it back" });
+    assertEq((await marks()).sort().join(), kept.sort().join(), "the highlights as before the undo");
+    assertNoProblems(A);
   });
 
   await ctxA.close();

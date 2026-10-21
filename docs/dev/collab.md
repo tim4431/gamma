@@ -460,7 +460,8 @@ focus, and `peers` / `me` as React state. The session owns:
   (`diffTrees`) and the ops queued. The mark sits on the tree value itself
   (a `WeakMap` of tree → `"load"` / `"remote"` / `"fold"`), read once by
   the transition that commits it. `"fold"` (`foldBlocks`, a text box's
-  measured size) is diffed and sent like any edit but joins the undo
+  measured size, an abandoned Comment highlight's removal) is diffed and
+  sent like any edit but joins the undo
   entry before it. It is never a flag set beside `setBlocks`: such a
   flag outlived a load React skipped (nothing changed) or was set by an
   effect running before the autosave one, and the edit committed with it

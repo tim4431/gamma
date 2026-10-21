@@ -193,7 +193,7 @@ import {
 } from "../library/libraryUtils";
 import { createLibraryMatcher } from "../library/librarySearch";
 import { useComments } from "../comments/useComments";
-import { shortCount, threadLink } from "../comments/comments.js";
+import { abandonedCommentHighlight, shortCount, threadLink } from "../comments/comments.js";
 import { useInbox } from "../inbox/useInbox";
 import { InboxBadge, InboxButton } from "../inbox/InboxButton";
 import { inboxJump, isUnread } from "../inbox/inboxText.js";
@@ -4155,6 +4155,23 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     const el = pop.anchor?.isConnected ? pop.anchor : document.querySelector(`[data-comment-for="${CSS.escape(pop.blockId)}"]`);
     el?.focus();
   }
+  // The selection popup's Comment: the highlight it just made ({id,
+  // opened}), whose popover opens on it, from the passage once that is
+  // drawn, with "New comment" focused. When the popover closes with
+  // nothing on the highlight it is deleted again (the effect after
+  // `highlights`).
+  const freshCommentRef = useRef(null);
+  function commentOnNewHighlight(id) {
+    freshCommentRef.current = { id, opened: false };
+    let frames = 0;
+    const open = () => {
+      if (freshCommentRef.current?.id !== id) return;
+      const el = document.querySelector(`[data-hl-id="${CSS.escape(id)}"]`);
+      if (!el && ++frames < 30) { requestAnimationFrame(open); return; }
+      openThread(id, el, { compose: true, toggle: false });
+    };
+    requestAnimationFrame(open);
+  }
   // A thread of this page, from the Comments window or a deep link: its
   // block scrolled to, flashed, and the popover open on the thread. A
   // note's thread brings the notes over a phone's PDF tab (showInNotes), so
@@ -6358,19 +6375,24 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     }
   }
 
-  function addHighlight(highlight) {
-    if (readOnly) return;
+  // Returns the new highlight's id. `edit` false: its note is not opened
+  // for typing (a comment is written instead).
+  function addHighlight(highlight, { edit = true } = {}) {
+    if (readOnly) return "";
     const withId = { ...highlight, id: highlight.id || makeId() };
     const nextBlocks = addHighlightAsBlock(blocks, withId);
     // Open the new block immediately so the user can type the note without
     // an extra click. addHighlightAsBlock appends at the top level.
-    startEditing(withId.id);
-    pendingFocusRef.current = withId.id;
+    if (edit) {
+      startEditing(withId.id);
+      pendingFocusRef.current = withId.id;
+    }
     scrollToBlock(withId.id);
     setBlocks(nextBlocks);
     // autosave effect will persist
     setStatus(t("Highlight saved."));
     guideEvents.emit("highlight.created", { id: withId.id, kind: withId.position?.area ? "area" : "text" });
+    return withId.id;
   }
 
   // --- Handwriting ----------------------------------------------------------
@@ -7970,6 +7992,25 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     prevHighlightsRef.current = { json, value: next };
     return next;
   }, [blocks, treeBlocks, comments.countByBlock]);
+  // The selection popup's Comment highlight (commentOnNewHighlight): its
+  // popover open marks it opened; once that popover is closed, or another
+  // block's took its place, a highlight with no note and no thread is
+  // deleted through the tree, as the highlight menu's Delete does. When
+  // nothing else was edited since it was made, the deletion is folded into
+  // its making (blockHistory takesBack): the undo history is as before the
+  // Comment press, as a text box left empty leaves none.
+  useEffect(() => {
+    const fresh = freshCommentRef.current;
+    if (!fresh) return;
+    if (threadPop?.blockId === fresh.id) { fresh.opened = true; return; }
+    if (!fresh.opened) return;
+    freshCommentRef.current = null;
+    if (readOnly || !findBlock(blocks, fresh.id)) return;
+    if (abandonedCommentHighlight(highlights.find((h) => h.id === fresh.id), comments.threadsByBlock.get(fresh.id))) {
+      const remove = (prev) => (findBlock(prev, fresh.id) ? removeBlockTree(prev, fresh.id) : prev);
+      (blockHistory.takesBack(remove(blocks)) ? foldBlocks : setBlocks)(remove);
+    }
+  }, [threadPop]); // eslint-disable-line react-hooks/exhaustive-deps
   // Kept by identity while the colours are the same (highlights are rebuilt
   // from the tree on every edit): a row prop of every block.
   const highlightColorsPrev = useRef({});
@@ -10925,6 +10966,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
               onHighlightThread={commentsOn ? (hlId, anchor) => openThread(hlId, anchor, { toggle: false }) : undefined}
               onAreaSelection={(sel) => addChatPicture(regionPicture("area", focusedBlockId, sel.pageNumber,
                 regionBox({ boundingRect: sel.rect, width: sel.width, height: sel.height })))}
+              // the selection popup's Comment: a highlight with its thread popover open on it
+              selComment={commentsOn && canComment}
               onSelectionFinished={readOnly ? undefined : (position, content, hideTip, extras) => {
                 if (extras?.link) {
                   setLinkDialog({ position, content });
@@ -10932,14 +10975,15 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                   hideTip?.();
                   return;
                 }
-                addHighlight({
+                const id = addHighlight({
                   content: content || { text: "" },
                   position,
                   comment: { text: extras?.commentText || "" },
                   // the popup's swatch is a palette colour; a highlight stores it at the wash alpha
                   color: highlightColor(extras?.color) || DEFAULT_HIGHLIGHT,
-                });
+                }, { edit: !extras?.comment });
                 hideTip?.();
+                if (extras?.comment && id) commentOnNewHighlight(id);
               }}
             />
           ) : notebook ? (

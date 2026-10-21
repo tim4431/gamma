@@ -43,7 +43,7 @@ A new account starts with a **Welcome** page to practise on. **Tours** in the ac
 
 <img alt="One line of a paper is selected and turns yellow, appears as a block in the notes with a note typed under it; then a circle is drawn around a figure and becomes an ink block" src="assets/annotate.svg" width="100%">
 
-- **Highlight**: select text, pick one of four colors. The highlight becomes a note block, ready for your note.
+- **Highlight**: select text, and pick one of four colors in the bar that opens beside the pointer. The highlight becomes a note block, ready for your note. The tools after the colors comment on the passage, link it to a paper and translate it.
 - **Area screenshot**: hold **Ctrl** and drag a rectangle. The region goes to the AI chat as an image, and a color keeps it as an area highlight.
 - **Click a highlight** to jump to its note; click the note to jump back. **Right-click** to recolor, link, comment on or delete it.
 - Highlights made in other PDF apps are imported when the paper is added.
@@ -276,6 +276,7 @@ A workspace is a separate library. The account menu lists yours and switches bet
 Comments are a conversation about a note, a highlight or a page. They sit beside the notes and change none of them, and everyone who can open the page can read them.
 
 - **On a note**: hover it and click the speech bubble at the right of its row, choose **Comment** in the ⋮⋮ handle menu, or press **Ctrl+Shift+M** while you edit it. A note with open comments shows how many on the bubble.
+- **On a passage of the PDF**: select it and click the speech bubble after the colors. The passage is highlighted and the comment field opens beside it; close it without sending and the highlight goes again. A passage with comments and no note is underlined in its color.
 - **On a highlight**: right-click it in the PDF and choose **Comment**. A badge in the accent color then marks it on the page; click the badge to read the comments.
 - **On the page**: the speech bubble beside the title.
 - **Write** in the field under a thread: `@` mentions someone, and Enter sends as in the chat. **Resolve** a thread once it is settled and **Reopen** it later. The **⋯** on a comment edits or deletes your own, and **Copy link** gives a link that opens the page at that thread.
