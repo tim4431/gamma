@@ -126,7 +126,7 @@ import { makeStableActions, useStableActions } from "../shared/lib/stableActions
 import { keepIfSame, sameMap, sameObject } from "../shared/lib/keepIfSame.js";
 import { isTextBox, normalizeTextBox } from "../markup/textBox.js";
 import { useTextBoxes } from "../markup/useTextBoxes";
-import { GROUP_SPLIT_BYTES, MAX_BYTES, MAX_STROKES, appendStroke, appendStrokes, boundsOf, cloneStrokes, duplicateStrokes, eraseAt, eraserKeep, flipStrokes, inkBounds, inkBytes, inkProps, mergeInk, newCanvasInk, newInk, pdfPositionOf, removeStrokes, restyleStrokes, serializeInk, strokeBounds, strokeBytes, toolStyle, transformStrokes, translateStrokes, unionBox } from "../ink/ink";
+import { GROUP_SPLIT_BYTES, MAX_BYTES, MAX_STROKES, appendStroke, appendStrokes, boundsOf, cloneStrokes, duplicateStrokes, eraseAlong, eraserKeep, flipStrokes, hitStrokesAlong, inkBounds, inkBytes, inkProps, mergeInk, newCanvasInk, newInk, pdfPositionOf, removeStrokes, restyleStrokes, serializeInk, strokeBounds, strokeBytes, toolStyle, transformStrokes, translateStrokes, unionBox } from "../ink/ink";
 import { stripKey } from "../ink/stripKeys.js";
 import { backTool, pencilAction } from "../ink/pencilActions.js";
 import { NotebookViewer, PaperMenu, readPlace, showPlace } from "../notebook/NotebookViewer";
@@ -6542,14 +6542,16 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // Every ink edit goes through here: the drafts change, the action lands
   // on the stroke history, the upload is scheduled. A group whose block is
   // not in the tree (undone away, or erased empty and deleted) gets its
-  // block back first.
-  function applyInk(changes, { record = true, label = t("ink stroke") } = {}) {
-    if (!changes.length) return;
+  // block back first. `pass` marks the entry as an eraser pass's, which the
+  // pass's later flushes fold into (handleInkEraseAlong). → whether the
+  // edit applied (the byte budget may refuse it).
+  function applyInk(changes, { record = true, label = t("ink stroke"), pass = null } = {}) {
+    if (!changes.length) return false;
     // The byte budget: an edit that would take a group past the server's
     // cap is refused (one that shrinks a group over it is not).
     if (changes.some((c) => inkBytes(c.after) > MAX_BYTES && inkBytes(c.after) > inkBytes(c.before))) {
       setStatus(t("This group is full; split it or start a new one"));
-      return;
+      return false;
     }
     for (const c of changes) playback.stop(c.id);
     const present = new Set(flattenBlocks(blocksRef.current).map((b) => b.id));
@@ -6574,12 +6576,13 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     for (const { id, page } of inkLiveSentRef.current.removed(changes)) handleInkLive(page, { id, drop: true });
     if (record) {
       const h = inkHistRef.current;
-      h.undo.push({ changes, label });
+      h.undo.push(pass ? { changes, label, pass } : { changes, label });
       if (h.undo.length > 200) h.undo.shift();
       h.redo = [];
       setInkHistoryState({ undo: h.undo.length, redo: h.redo.length });
     }
     scheduleInk();
+    return true;
   }
   function inkUndo(redo) {
     if (readOnly) return false;
@@ -6648,19 +6651,11 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     guideEvents.emit("ink.stroke");
   }
   // The eraser filter (Settings › Handwriting › Erases, the eraser row's
-  // trio) is one predicate every erasure goes through here: the eraser
-  // tool's whole-stroke pass, its partial pass, the pen's eraser end and a
-  // scribble. The layer hands its candidates over unfiltered.
+  // trio) is one predicate every erasure goes through here: the eraser's
+  // sweep, whole strokes or partial, from the tool or the pen's eraser end
+  // and barrel, and a scribble. The layer hands over where the eraser went
+  // and a scribble's candidates; what goes is decided here.
   const inkKeep = eraserKeep(inkEraserFilter);
-  function handleInkErase(page, blockId, ids) {
-    if (readOnly) return;
-    const before = inkOf(blockId);
-    if (!before) return;
-    const allowed = new Set(before.strokes.filter((s) => ids.includes(s.id) && inkKeep(s)).map((s) => s.id));
-    if (!allowed.size) return;
-    applyInk([{ id: blockId, page, before, after: removeStrokes(before, [...allowed]) }], { label: T("ink erasure") });
-    guideEvents.emit("ink.erased");
-  }
   // A scribble's targets ([{gid, ids}], ink/gestures.js scribbleTargets)
   // go as one entry across their groups, with Undo on the pill.
   function handleInkEraseMany(page, targets) {
@@ -6680,19 +6675,41 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     undoableStatus(tn("Erased {n} stroke.", "Erased {n} strokes.", n), { ink: true });
     guideEvents.emit("ink.erased");
   }
-  // The partial eraser fires per pointer move: successive cuts through one
-  // group fold into the same history entry, so Ctrl+Z undoes the pass.
-  function handleInkErasePartial(page, blockId, x, y, r) {
-    if (readOnly) return;
-    const before = inkOf(blockId);
-    if (!before) return;
-    const { ink: after, changed } = eraseAt(before, x, y, r, inkKeep);
-    if (!changed) return;
-    const h = inkHistRef.current;
-    const last = h.undo[h.undo.length - 1]?.changes;
-    const fold = last && last.length === 1 && last[0].id === blockId && last[0].after === before && last[0].pass;
-    applyInk([{ id: blockId, page, before: fold ? last[0].before : before, after, pass: true }], { record: !fold, label: T("partial ink erasure") });
-    if (fold) last[0].after = after;
+  // The eraser's sweep, which the layer hands over once an animation frame
+  // and at the lift: `path` the page points it crossed since the last
+  // flush, `r` its radius in points. Every group of the surface is cut along
+  // it (`mode` 'partial', ink.js eraseAlong) or loses the strokes it touched
+  // ('stroke', hitStrokesAlong), through the eraser filter, as one applyInk
+  // a flush. The flushes of one pass (`pass`, minted at the down) fold into
+  // one history entry, across groups: a group the entry holds takes the
+  // new `after`, another joins it, so Ctrl+Z undoes the whole pass. A group
+  // whose drawing changed meanwhile (a save that merged someone's strokes)
+  // starts a new entry instead, so undoing the pass never takes theirs.
+  function handleInkEraseAlong(page, path, r, { mode, pass } = {}) {
+    if (readOnly || !path?.length) return;
+    const partial = mode === "partial", changes = [];
+    for (const block of inkBySurface.get(page) || []) {
+      const before = inkOf(block.id);
+      if (!before?.strokes?.length) continue;
+      let after = before;
+      if (partial) after = eraseAlong(before, path, r, inkKeep).ink;
+      else {
+        const ids = hitStrokesAlong(before, path, r, inkKeep);
+        if (ids.length) after = removeStrokes(before, ids);
+      }
+      if (after !== before) changes.push({ id: block.id, page, before, after });
+    }
+    if (!changes.length) return;
+    const h = inkHistRef.current, last = h.undo[h.undo.length - 1];
+    const held = (c) => last.changes.find((x) => x.id === c.id);
+    const fold = !!pass && last?.pass === pass && changes.every((c) => !held(c) || held(c).after === c.before);
+    if (!applyInk(changes, { record: !fold, label: partial ? T("partial ink erasure") : T("ink erasure"), pass })) return;
+    if (fold) {
+      for (const c of changes) {
+        const entry = held(c);
+        if (entry) entry.after = c.after; else last.changes.push({ ...c });
+      }
+    }
     guideEvents.emit("ink.erased");
   }
   function handleInkSelect(page, items) {
@@ -7434,7 +7451,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // selection, the selected box and the flashes on the surface they are on.
   const inkFeaturesToldRef = useRef(null); // the page whose newer-ink pill was shown
   const pageActions = useStableActions({
-    onStroke: handleInkStroke, onErase: handleInkErase, onErasePartial: handleInkErasePartial, onEraseEnd: handleInkEraseEnd,
+    onStroke: handleInkStroke, onEraseAlong: handleInkEraseAlong, onEraseEnd: handleInkEraseEnd,
     onEraseMany: handleInkEraseMany, onSelect: handleInkSelect, onUndoGesture: handleUndoGesture, onHoldStatus: handleHoldStatus,
     onAction: handleInkAction, onMoveSelection: handleInkMoveSelection, onJump: showInNotes, ...textBoxes.actions,
     // a held pen or mouse, or a right-click, asking for the clipboard at a page point

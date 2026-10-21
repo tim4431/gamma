@@ -47,7 +47,8 @@ test("a letter the codec does not know rides along by stride and is written back
     Array.from({ length: 9 }, (_, i) => ({ x: 100 + 10 * i, y: 200, p: 0.5, rest: [i] })), "xyqp") }] };
   const cut = eraseAt(ink, 140, 200, 3);
   assert.equal(cut.ink.strokes.length, 2);
-  assert.deepEqual(cut.ink.strokes.map((s) => decodeStroke(s).map((x) => x.rest[0])), [[0, 1, 2, 3], [5, 6, 7, 8]]);
+  // each new end, 3.8 pt from the eraser, takes the letter of the sample nearer it (the one under the eraser)
+  assert.deepEqual(cut.ink.strokes.map((s) => decodeStroke(s).map((x) => x.rest[0])), [[0, 1, 2, 3, 4], [4, 5, 6, 7, 8]]);
   assert.ok(cut.ink.strokes.every((s) => s.ch === "xyqp"));
 });
 
@@ -297,16 +298,21 @@ test("translate moves only the named strokes, by editing two integers", () => {
 test("partial eraser cuts a stroke into the pieces outside the eraser", () => {
   let ink = newInk(1, 612, 792);
   ink = appendStroke(ink, encodeStroke({ id: "a", samples: samples(9) }));   // x = 100 … 180
-  const { ink: cut, changed } = eraseAt(ink, 140, 212, 3);                   // hits the middle sample (140, 212)
+  const { ink: cut, changed } = eraseAt(ink, 140, 212, 3);                   // over the middle sample (140, 212)
   assert.equal(changed, true);
   assert.equal(cut.strokes.length, 2);
   const [p, q] = cut.strokes.map(decodeStroke);
-  assert.deepEqual([p[0].x, p[p.length - 1].x], [100, 130]);
-  assert.deepEqual([q[0].x, q[q.length - 1].x], [150, 180]);
+  // the pieces end at the eraser's edge, its radius plus the half-width (3 + 1) from its centre
+  const edge = (s) => Math.hypot(s.x - 140, s.y - 212);
+  assert.deepEqual([p[0].x, q[q.length - 1].x], [100, 180]);
+  assert.ok(Math.abs(edge(p[p.length - 1]) - 4) < 0.02 && Math.abs(edge(q[0]) - 4) < 0.02, "cut at the edge, not at the last sample outside");
+  assert.deepEqual([p[p.length - 2].x, q[1].x], [130, 150], "the samples outside stand");
   assert.ok(cut.strokes.every((s) => s.id !== "a" && s.tool === "pen" && s.size === 2), "pieces keep the look, get fresh ids");
   assert.equal(eraseAt(ink, 400, 400, 3).changed, false, "a miss changes nothing");
-  // a piece of one sample is dropped
-  assert.equal(eraseAt(ink, 110, 203, 3).ink.strokes.length, 1);
+  // over the second sample: the stretch before it is kept up to the edge, 6.4 pt of line
+  const early = eraseAt(ink, 110, 203, 3).ink.strokes.map(decodeStroke);
+  assert.equal(early.length, 2);
+  assert.ok(Math.abs(Math.hypot(early[0][1].x - 110, early[0][1].y - 203) - 4) < 0.02);
 });
 
 test("lasso selects strokes with most samples inside the polygon", () => {

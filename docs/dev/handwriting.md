@@ -16,11 +16,12 @@ with the
 tool strip and the page plumbing it shares with text boxes in
 `markup/MarkupToolbar.jsx`, `markup/MarkupLayers.jsx` and
 `markup/PageTools.jsx`; tests `backend/tests/test_ink.py`,
-`frontend/tests/ink.test.mjs`, `finishStroke.test.mjs`, `shapes.test.mjs`,
-`gestures.test.mjs`, `stabilizer.test.mjs`, `fingerChords.test.mjs`,
-`stripKeys.test.mjs`, `pencilActions.test.mjs`, `inkInput.test.mjs`,
-`inkLive.test.mjs`, `inkJournal.test.mjs`, `inkFlush.test.mjs` (and the benchmark
-`tests/bench/inkCache.bench.mjs`, not part of `npm test`), the
+`frontend/tests/ink.test.mjs`, `inkErase.test.mjs`, `finishStroke.test.mjs`,
+`shapes.test.mjs`, `gestures.test.mjs`, `stabilizer.test.mjs`,
+`fingerChords.test.mjs`, `stripKeys.test.mjs`, `pencilActions.test.mjs`,
+`inkInput.test.mjs`, `inkLive.test.mjs`, `inkJournal.test.mjs`,
+`inkFlush.test.mjs` (and the benchmarks `tests/bench/inkCache.bench.mjs`
+and `inkErase.bench.mjs`, not part of `npm test`), the
 shared fixtures `tests/shared/inkv2.json`, `inkwidth.json`, `inkdash.json`
 and `inkmerge.json` (read by `backend/tests/test_shared_fixtures.py` and the
 node tests) and `inkshapes.json`, `inkscribble.json` (the recognisers run in
@@ -170,7 +171,15 @@ app ([ipad.md](ipad.md)). Typed text on a page is
   the **tool** eraser returns to the tool armed before it with the options
   row closed, whether or not the pass erased anything; the pen's eraser
   end and barrel never switch tools, since lifting them is the switch, and
-  a gesture ended by `pointercancel` does not return). The
+  a gesture ended by `pointercancel` does not return). The partial
+  eraser cuts exactly at its edge along the whole path it swept, however
+  fast it moves: a stroke it crossed between two of the positions the
+  pointer reported, or between two of the stroke's own samples (a fast
+  mouse stroke, a held straight line of two samples), is cut there too,
+  each piece ending where the eraser's edge met the ink, and a scrap
+  shorter than half the line's width goes with the rest. A pass, from
+  the press to the lift, is one undo entry even across groups, whichever
+  mode erased. The
   **lasso**'s row: *freeform* circles strokes (more than half their
   samples inside), *box* drags a rectangle; the dashed box then moves by
   dragging and deletes with `Delete`. Both work across groups on the page.
@@ -877,9 +886,44 @@ reach:
   `decodeStroke`, the known letters in `KNOWN_CHANNELS`), `strokeWidth`,
   `strokeBand` / `byBand` (a drawing in band order), bounds (`strokeBounds`,
   `inkBounds`, `boundsOf`, `unionBox`), `pdfPositionOf`, the stroke edits,
-  the merge and the rendering. `hitStrokes` is the whole-stroke eraser's
-  test; `eraseAt` the partial eraser, which re-encodes the surviving runs
-  as new strokes; `translateStrokes` only touches the first sample's two
+  the merge and the rendering. **The eraser** works on the path it
+  swept: `eraseAlong(ink, path, radius, allow)` is the partial eraser
+  along `path` (page points, consecutive points the capsules of the
+  radius, one point a disk), cutting every stroke where its centre line
+  comes within the radius plus the drawn half-width there (`strokeWidth`
+  / 2, linear between two samples). The test runs along each segment
+  between two samples, against each capsule (`underCapsule`): the
+  distance from a point moving along a segment to a segment is convex,
+  and less a linear half-width it stays convex, so their common part is
+  one interval of the segment, found from a point inside it (where the two
+  segments cross, or an end of one against the other, else a
+  golden-section search) by a bisection to each side to 0.001 pt, ending
+  just outside the edge; boxes (the stroke's, each capsule's, each
+  segment's) rule out nearly every pair first, and an overlap shallower
+  than the file's 0.01 pt grid is a touch and cuts nothing: a cut end
+  rounded onto that grid may lie about that far inside the edge, and a
+  sweep over it again (the next flush starts where the last one ended)
+  must leave it as it is. The intervals of all capsules are merged
+  (`sweptRanges`), and the stretches between them become
+  pieces through `restroke`, each new end a sample lerped where the
+  stretch ends (`sampleAt`: `x`, `y`, `p`, `t`, `w`, `o` linear; tilt and
+  letters this build does not know from the nearer sample), so a piece
+  ends at the eraser's edge however far apart the stroke's samples or the
+  path's points lie; a piece shorter than max(0.2 pt, half its drawn
+  width at either end) is a speck and goes, and a dot (one sample) within
+  reach goes whole. → `{ink, changed}`; a stroke `allow` refuses stays the
+  same object, and a sweep that cuts nothing gives the same ink.
+  `eraseAt(ink, x, y, radius, allow)` is it at one point.
+  `hitStrokesAlong(ink, path, radius, keep)` is the whole-stroke eraser's
+  test on the same geometry (the strokes the partial eraser would cut),
+  `hitStrokes(ink, x, y, radius, keep)` at one point.
+  `frontend/tests/inkErase.test.mjs` pins the cuts, and
+  `frontend/tests/bench/inkErase.bench.mjs` (not part of `npm test`)
+  times one flush of a 20-point path over a 500-stroke drawing, against
+  any copy of `src/ink` (one without `eraseAlong` is run as its layer
+  ran it, the point eraser at each of the path's points), and counts the
+  samples a flush leaves inside the swept band. `translateStrokes` only
+  touches the first sample's two
   absolute integers (and a shape record's points, below); `transformStrokes` scales/rotates selected XY samples
   around a shared origin without changing the other encoded channels;
   `strokesInLasso` picks strokes with more than half their samples inside
@@ -1567,12 +1611,22 @@ reach:
     `max(24 css px, 18 pt)` keeps the two timers apart: a tip that has
     travelled cannot paste, one that has not cannot snap.
   - Erasing: the draw context records `eraseSource: 'tool' | 'barrel'`
-    (the armed eraser, or the pen's eraser end / barrel button). `finish`
-    in erase mode calls `onEraseEnd()` once per gesture for `'tool'`
-    only, whether or not anything was erased; a gesture ended by
-    `pointercancel` does not. The whole-stroke pass hands its candidates
-    to `onErase(page, gid, ids)` and App applies the eraser filter there;
-    the hover ring draws a small pen or highlighter glyph when
+    (the armed eraser, or the pen's eraser end / barrel button; both erase
+    the same way), the down's mode (`'partial' | 'stroke'`) and radius in
+    page units, a `pass` id minted at the down (`strokeId`), and `sweep`,
+    the path not yet handed over: it starts at the down point and takes
+    every coalesced position of every move, in page units (a repeat
+    dropped). Once an animation frame the layer hands it to
+    `onEraseAlong(page, path, r, {mode, pass})`, one call for all the
+    page's groups, and keeps its last point as the next path's first, so
+    the flushes join into one path; the lift hands over the rest at once,
+    its own position included, and a cancel (`pointercancel`, lost
+    capture, a second finger, window blur) what was swept up to it. The
+    layer decides nothing about what goes: App tests the path against
+    every group, the eraser filter included. `finish` in erase mode then
+    calls `onEraseEnd()` once per gesture for `'tool'` only, whether or
+    not anything was erased; a gesture ended by `pointercancel` does not.
+    The hover ring draws a small pen or highlighter glyph when
     `ink.eraserFilter` is not `'all'` (the `.inkCursor`'s `data-filter`
     shows the matching `.inkCursorGlyph` in the centre mark's place).
   - Finger chords: `wireChords` installs one module-level
@@ -1795,7 +1849,9 @@ reach:
     fingerUndo, lassoMode}, text, actions}` — `eraserReturn`, `drawHold`
     and `scribble` the account flags, `eraserFilter` `'all' | 'pen' |
     'highlighter'`, `fingerUndo` `'off' | 'tap' | 'double'`. The actions
-    are the stroke, erase, select, action, move, jump and finger-scroll
+    are the stroke, erase (`onEraseAlong(page, path, r, {mode, pass})`,
+    the eraser's path since its last flush, "Erasing" above), select,
+    action, move, jump and finger-scroll
     handlers (and the text boxes') plus `onEraseEnd()` (the tool eraser
     lifted), `onEraseMany(page, [{gid, ids}])` (a scribble's targets, one
     entry across groups), `onUndoGesture('undo' | 'redo')`,
@@ -1898,12 +1954,25 @@ reach:
   - The eraser filter is one function: `ink.js` `eraserKeep(filter) →
     (stroke) => bool` (`'all'` keeps every stroke, `'pen'` tool `pen` of
     any brush, `'highlighter'` tool `highlighter`; a stroke of an unknown
-    tool only under `'all'`). App applies it in `handleInkErase`,
-    `handleInkErasePartial` and `handleInkEraseMany` — `hitStrokes(ink, x,
-    y, radius, keep)` and `eraseAt(ink, x, y, radius, keep)` take it as an
-    optional last argument and leave a stroke `keep` refuses untouched,
-    the same object, so the caches survive — and the layer builds it from
+    tool only under `'all'`). App applies it in `handleInkEraseAlong`
+    and `handleInkEraseMany` — `hitStrokesAlong(ink, path, radius, keep)`
+    and `eraseAlong(ink, path, radius, keep)` take it as an optional last
+    argument and leave a stroke `keep` refuses untouched, the same object,
+    so the caches survive — and the layer builds it from
     `ink.eraserFilter` for the scribble stage and the hover glyph.
+  - `handleInkEraseAlong(page, path, r, {mode, pass})`, the eraser's
+    flush: `eraseAlong` (partial) or `hitStrokesAlong` and `removeStrokes`
+    (whole strokes) over every group of the surface (`inkBySurface`)
+    through the filter, the changes of all of them one `applyInk`. Every
+    flush of one pass folds into one history entry, `T("partial ink
+    erasure")` or `T("ink erasure")`, keyed by the pass (`applyInk`'s
+    `pass` option keeps it on the entry; `applyInk` answers whether the
+    edit applied, since the byte budget may refuse it): a group the entry
+    holds takes the flush's `after`, another joins it with its `{id,
+    page, before, after}`, so one Ctrl+Z undoes the pass across groups. A
+    group whose drawing is no longer the entry's `after` (a save that
+    merged someone's strokes in meanwhile) starts a new entry instead, so
+    undoing the pass never takes their strokes away.
   - `inkBack()` is the previous distinct tool, else the stylus pen
     (`pencilActions.js` `backTool` over `inkPrevRef`); `onEraseEnd` with
     `inkEraserReturn` on and the eraser armed picks it with the options

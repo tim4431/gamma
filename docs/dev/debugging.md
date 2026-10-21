@@ -567,7 +567,10 @@ The scenarios live in `tests/e2e/scenarios/`:
   "running" with `page.route`, since the server's job is quick.
 - `ink.mjs`: handwriting. The tool strip and its presets, mouse strokes
   becoming an ink block with an `.ink` upload, persistence across a reload,
-  the eraser, stroke undo/redo, the partial eraser, a lasso move + delete,
+  the eraser, stroke undo/redo, the partial eraser (and one swept in
+  three long jumps over two groups: every stroke it crossed cut at its
+  edge, one undo entry, which redo brings back whole), a lasso move +
+  delete,
   the notes card's jump + outline (`/Ink` in the exported PDF is `test_ink.py`). Pen input:
   coalesced sample timing, pressure and lift endpoints in the uploaded
   file, prediction, palm suppression and palm-first pen takeover, cleanup

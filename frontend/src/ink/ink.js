@@ -537,12 +537,6 @@ export function eraserKeep(filter) {
   return (s) => (s.tool || "pen") === filter;
 }
 
-// Ids of the strokes an eraser at (x, y) with `radius` touches; `keep(stroke)`
-// (optional) leaves the strokes it refuses out.
-export function hitStrokes(ink, x, y, radius, keep) {
-  return (ink?.strokes || []).filter((s) => (!keep || keep(s)) && strokeEdgeDistance(s, x, y, radius) <= radius).map((s) => s.id);
-}
-
 // Nearest stroke edge within `radius`: ink (band 1) wins over a
 // highlighter (band 0) under it, then the last-painted stroke wins ties.
 // The caller converts a screen-space touch tolerance into page units.
@@ -996,30 +990,211 @@ function restroke(stroke, samples) {
   return encodeStroke({ ...keys, ch: stroke.ch || "xy", samples, from: from ?? id });
 }
 
-// Partial eraser: cut every sample within `radius` (plus half the width)
-// of (x, y) out of the strokes it touches; each remaining run of at least
-// two samples becomes its own stroke. → {ink, changed}. A stroke `keep`
-// (optional) refuses stays as it is, the same object.
-export function eraseAt(ink, x, y, radius, allow) {
+// --- the eraser --------------------------------------------------------------
+// The eraser sweeps its path (page points): every two consecutive points
+// and all within `radius` of the segment between them, a capsule, a path of
+// one point being a disk. A stroke lies under the sweep where its centre
+// line comes within radius plus its drawn half-width there (strokeWidth /
+// 2, linear between two samples). The test runs along the segments between
+// samples, not at the samples, so a fast eraser, whose points lie far
+// apart, and a sparse stroke (a fast mouse stroke, a held line's two
+// samples) are cut wherever the sweep crosses them. Per capsule, the part
+// of one such segment under it is one interval: the distance from a point
+// moving along a segment to a segment is convex, and less a linear
+// half-width it stays convex, so a point inside is found first and the
+// interval's ends by bisection from it.
+
+// pt: an overlap shallower than GRAZE is a touch, and cuts nothing. It is
+// the file's grid: a cut end, rounded onto it, may lie about that far
+// inside the edge, and a sweep over the cut again (the next flush starts
+// where this one ended) must leave it as it is.
+const GRAZE = 1 / COORD_UNIT;
+const EDGE = 1e-3;     // pt: how near the eraser's edge a cut lands (just outside it)
+const MIN_PIECE = 0.2; // pt: a piece shorter than this, or than half its drawn width, is a speck
+const PHI = (Math.sqrt(5) - 1) / 2;
+
+// A path's capsules, each with its box padded by the radius, and their union.
+function sweepOf(path, radius) {
+  const pts = (path || []).filter((p) => Number.isFinite(p?.x) && Number.isFinite(p?.y));
+  if (!pts.length || !(radius >= 0)) return null;
+  const caps = [], box = [Infinity, Infinity, -Infinity, -Infinity];
+  for (let i = 0; i < Math.max(1, pts.length - 1); i++) {
+    const c = pts[i], d = pts[Math.min(i + 1, pts.length - 1)];
+    const cap = { cx: c.x, cy: c.y, dx: d.x, dy: d.y, x0: Math.min(c.x, d.x) - radius, y0: Math.min(c.y, d.y) - radius,
+      x1: Math.max(c.x, d.x) + radius, y1: Math.max(c.y, d.y) + radius };
+    caps.push(cap);
+    box[0] = Math.min(box[0], cap.x0); box[1] = Math.min(box[1], cap.y0);
+    box[2] = Math.max(box[2], cap.x1); box[3] = Math.max(box[3], cap.y1);
+  }
+  return { caps, box, radius };
+}
+
+// Twice the signed area of (o, a, b): which side of the line o → a b is on.
+const cross = (ox, oy, ax, ay, bx, by) => (ax - ox) * (by - oy) - (ay - oy) * (bx - ox);
+
+// A point of 0..1 where the convex `depth` is inside (below −GRAZE): the
+// deepest of the candidates when one is, else a golden-section search (a
+// half-width that changes along the segment moves the deepest point off
+// them); −1 when there is none.
+function insideOf(depth, candidates) {
+  let best = -1, low = -GRAZE;
+  for (const u of candidates) {
+    const v = depth(u);
+    if (v < low) { low = v; best = u; }
+  }
+  if (best >= 0) return best;
+  let lo = 0, hi = 1, x1 = 1 - PHI, x2 = PHI, f1 = depth(x1), f2 = depth(x2);
+  for (let k = 0; k < 48; k++) {
+    if (f1 < -GRAZE) return x1;
+    if (f2 < -GRAZE) return x2;
+    if (f1 <= f2) { hi = x2; x2 = x1; f2 = f1; x1 = hi - PHI * (hi - lo); f1 = depth(x1); }
+    else { lo = x1; x1 = x2; f1 = f2; x2 = lo + PHI * (hi - lo); f2 = depth(x2); }
+  }
+  return -1;
+}
+
+// Where `depth` crosses 0 between `out` (outside) and `inside`, to EDGE pt
+// along a segment `len` long: the outside end of the bracket, so a piece's
+// new end lies just past the eraser's edge.
+function edgeOf(depth, out, inside, len) {
+  for (let k = 0; k < 64 && Math.abs(inside - out) * len > EDGE; k++) {
+    const m = (out + inside) / 2;
+    if (depth(m) < 0) inside = m; else out = m;
+  }
+  return out;
+}
+
+// The part of the segment a → b of a stroke (drawn half-widths ha, hb at
+// its ends) under the capsule c of radius r: [u0, u1] in 0..1 along it,
+// or null when it stays outside. With `any`, a point inside is enough
+// ([u, u], no bisection).
+function underCapsule(a, b, ha, hb, c, r, any) {
+  const ex = b.x - a.x, ey = b.y - a.y;
+  // the segments' distance against the wider half-width rules out most pairs
+  const d1 = cross(c.cx, c.cy, c.dx, c.dy, a.x, a.y), d2 = cross(c.cx, c.cy, c.dx, c.dy, b.x, b.y);
+  const d3 = cross(a.x, a.y, b.x, b.y, c.cx, c.cy), d4 = cross(a.x, a.y, b.x, b.y, c.dx, c.dy);
+  const crossing = ((d1 > 0 && d2 < 0) || (d1 < 0 && d2 > 0)) && ((d3 > 0 && d4 < 0) || (d3 < 0 && d4 > 0));
+  const near = crossing ? 0 : Math.min(segDist2(a.x, a.y, c.cx, c.cy, c.dx, c.dy), segDist2(b.x, b.y, c.cx, c.cy, c.dx, c.dy),
+    segDist2(c.cx, c.cy, a.x, a.y, b.x, b.y), segDist2(c.dx, c.dy, a.x, a.y, b.x, b.y));
+  if (Math.sqrt(near) - Math.max(ha, hb) - r >= -GRAZE) return null;
+  const depth = (u) => Math.sqrt(segDist2(a.x + u * ex, a.y + u * ey, c.cx, c.cy, c.dx, c.dy)) - (ha + u * (hb - ha)) - r;
+  // the nearest the two segments come: where they cross, or an end of one
+  // against the other (in the plane, the nearest pair has an end in it)
+  const l2 = ex * ex + ey * ey;
+  const along = (px, py) => (l2 ? clamp(((px - a.x) * ex + (py - a.y) * ey) / l2, 0, 1) : 0);
+  const candidates = [0, 1, along(c.cx, c.cy), along(c.dx, c.dy)];
+  if (crossing) candidates.push(d1 / (d1 - d2));
+  const u = insideOf(depth, candidates);
+  if (u < 0) return null;
+  if (any) return [u, u];
+  const len = Math.sqrt(l2);
+  return [depth(0) < 0 ? 0 : edgeOf(depth, 0, u, len), depth(1) < 0 ? 1 : edgeOf(depth, 1, u, len)];
+}
+
+// The parts of stroke `s` under a sweep, as sorted and merged [from, to]
+// ranges along its samples (sample i at i, a fraction u on to the next at
+// i + u), or null when none; a dot (one sample) is under it whole, [[0,
+// 0]], or not at all. With `any`, the first part found is the answer.
+function sweptRanges(s, sweep, any = false) {
+  const b = strokeBounds(s), box = sweep.box;
+  if (!b || b[2] < box[0] || b[0] > box[2] || b[3] < box[1] || b[1] > box[3]) return null;
+  const caps = sweep.caps.filter((c) => b[2] >= c.x0 && b[0] <= c.x1 && b[3] >= c.y0 && b[1] <= c.y1);
+  if (!caps.length) return null;
+  const pts = decodeStroke(s), r = sweep.radius;
+  if (pts.length === 1) {
+    const q = pts[0], h = strokeWidth(s, q) / 2;
+    return caps.some((c) => Math.sqrt(segDist2(q.x, q.y, c.cx, c.cy, c.dx, c.dy)) - h - r < -GRAZE) ? [[0, 0]] : null;
+  }
+  const ranges = [];
+  for (let i = 0; i + 1 < pts.length; i++) {
+    const a = pts[i], q = pts[i + 1];
+    const ha = strokeWidth(s, a) / 2, hb = strokeWidth(s, q) / 2, h = Math.max(ha, hb);
+    const x0 = Math.min(a.x, q.x) - h, x1 = Math.max(a.x, q.x) + h, y0 = Math.min(a.y, q.y) - h, y1 = Math.max(a.y, q.y) + h;
+    for (const c of caps) {
+      if (x1 < c.x0 || x0 > c.x1 || y1 < c.y0 || y0 > c.y1) continue;
+      const part = underCapsule(a, q, ha, hb, c, r, any);
+      if (!part) continue;
+      if (any) return [[i + part[0], i + part[1]]];
+      ranges.push([i + part[0], i + part[1]]);
+    }
+  }
+  if (!ranges.length) return null;
+  ranges.sort((p, q) => p[0] - q[0]);
+  const out = [ranges[0]];
+  for (let k = 1; k < ranges.length; k++) {
+    const last = out[out.length - 1], [lo, hi] = ranges[k];
+    if (lo <= last[1] + 1e-9) last[1] = Math.max(last[1], hi); else out.push([lo, hi]);
+  }
+  return out;
+}
+
+// The sample at v along a stroke's samples (sample i at i): a sample
+// itself, or one lerped between two — x, y, p, t, w and o linear, tilt
+// (a, z) and letters this build does not know from the nearer of the two.
+function sampleAt(pts, v) {
+  const i = Math.floor(v), u = v - i;
+  if (i >= pts.length - 1) return pts[pts.length - 1];
+  if (u <= 1e-9) return pts[i];
+  if (u >= 1 - 1e-9) return pts[i + 1];
+  return u < 0.5 ? lerpSample(pts[i], pts[i + 1], u) : lerpSample(pts[i + 1], pts[i], 1 - u);
+}
+// What the swept ranges leave of a stroke's samples: a run per stretch
+// between them, each end where a range begins or ends.
+function keptRuns(pts, ranges) {
+  const runs = [];
+  const take = (from, to) => {
+    if (!(to > from)) return;
+    const run = [sampleAt(pts, from)];
+    for (let j = Math.floor(from + 1e-9) + 1; j < to - 1e-9; j++) run.push(pts[j]);
+    run.push(sampleAt(pts, to));
+    runs.push(run);
+  };
+  let from = 0;
+  for (const [lo, hi] of ranges) { take(from, lo); from = Math.max(from, hi); }
+  take(from, pts.length - 1);
+  return runs;
+}
+// A piece that would draw as a blot, not a line: shorter than MIN_PIECE,
+// or than half its drawn width at either end.
+const speck = (s, run) => arcLengths(run)[run.length - 1]
+  < Math.max(MIN_PIECE, strokeWidth(s, run[0]) / 2, strokeWidth(s, run[run.length - 1]) / 2);
+
+// The partial eraser along `path` (page points; one point is a disk) with
+// `radius`: every stroke under the sweep is cut where the sweep's edge
+// crosses it, a sample lerped there (sampleAt), so each piece ends at the
+// eraser's edge however far apart the stroke's samples or the path's
+// points lie; a piece that is a speck goes, and so does a dot under the
+// sweep. Each piece is a stroke of its own (restroke). → {ink, changed};
+// a stroke `allow` (optional) refuses stays as it is, the same object, and
+// a sweep that cuts nothing gives the same ink.
+export function eraseAlong(ink, path, radius, allow) {
+  const sweep = sweepOf(path, radius);
   let changed = false;
   const strokes = [];
   for (const s of ink?.strokes || []) {
-    if (allow && !allow(s)) { strokes.push(s); continue; }
-    const b = strokeBounds(s);
-    if (!b || x < b[0] - radius || x > b[2] + radius || y < b[1] - radius || y > b[3] + radius) { strokes.push(s); continue; }
-    const pts = decodeStroke(s);
-    const keep = pts.map((q) => {
-      const tol = radius + strokeWidth(s, q) / 2;
-      return (q.x - x) ** 2 + (q.y - y) ** 2 > tol * tol;
-    });
-    if (keep.every(Boolean)) { strokes.push(s); continue; }
+    const ranges = sweep && (!allow || allow(s)) ? sweptRanges(s, sweep) : null;
+    if (!ranges) { strokes.push(s); continue; }
     changed = true;
-    let run = [];
-    const flush = () => { if (run.length >= 2) strokes.push(restroke(s, run)); run = []; };
-    pts.forEach((q, i) => { if (keep[i]) run.push(q); else flush(); });
-    flush();
+    for (const run of keptRuns(decodeStroke(s), ranges)) if (!speck(s, run)) strokes.push(restroke(s, run));
   }
   return { ink: changed ? { ...ink, strokes } : ink, changed };
+}
+// The partial eraser at one point: a disk of `radius` at (x, y).
+export function eraseAt(ink, x, y, radius, allow) {
+  return eraseAlong(ink, [{ x, y }], radius, allow);
+}
+
+// Ids of the strokes the sweep of `path` with `radius` touches, the
+// whole-stroke eraser's test (a stroke the partial eraser would cut);
+// `keep(stroke)` (optional) leaves the strokes it refuses out.
+export function hitStrokesAlong(ink, path, radius, keep) {
+  const sweep = sweepOf(path, radius);
+  if (!sweep) return [];
+  return (ink?.strokes || []).filter((s) => (!keep || keep(s)) && sweptRanges(s, sweep, true)).map((s) => s.id);
+}
+// The same at one point (x, y).
+export function hitStrokes(ink, x, y, radius, keep) {
+  return hitStrokesAlong(ink, [{ x, y }], radius, keep);
 }
 
 function pointInPolygon(x, y, poly) {
