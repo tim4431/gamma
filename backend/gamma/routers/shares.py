@@ -46,7 +46,7 @@ import sqlite3
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
-from .. import collab
+from .. import collab, inbox
 from ..auth import SHARE_AUDIENCES, SHARE_ROLES, ShareScope, note_share_miss, require_ws, share_access, share_lookup
 from ..blocks_store import FOLDERS, TRASH, page_attachment
 from ..db import account_name, account_names, connect_pages_db, connect_users_db, delete_shares, page_now
@@ -162,11 +162,35 @@ def _validated(editor: str, current: dict, payload: ShareSettings) -> dict:
     return {"audience": audience, "role": role, "users": users}
 
 
-def _invite(conn, token: str, users: list[dict]) -> None:
-    """The share's invited people become ``users`` ([{user_id, role}])."""
+def _invite(conn, token: str, users: list[dict]) -> list[str]:
+    """The share's invited people become ``users`` ([{user_id, role}]).
+    Someone invited before keeps when they were (``added_at``); returns
+    the ids of the people invited now, whom ``_tell`` lets know."""
+    had = dict(conn.execute("SELECT user_id, added_at FROM share_users WHERE token = ?", (token,)).fetchall())
+    now = page_now()
     conn.execute("DELETE FROM share_users WHERE token = ?", (token,))
-    conn.executemany("INSERT INTO share_users (token, user_id, role) VALUES (?, ?, ?)",
-                     [(token, u["user_id"], u["role"]) for u in users])
+    conn.executemany("INSERT INTO share_users (token, user_id, role, added_at) VALUES (?, ?, ?, ?)",
+                     [(token, u["user_id"], u["role"], had[u["user_id"]] if u["user_id"] in had else now)
+                      for u in users])
+    return [u["user_id"] for u in users if u["user_id"] not in had]
+
+
+def _tell(ws: str, request: Request, target: ShareScope, token: str, invited: list[str]) -> None:
+    """A ``shared`` Inbox item for each person just invited, after the
+    share's commit, with the token as the way in (gamma/inbox.py; never
+    raises). The snippet is the page's title or the folder's name."""
+    if not invited:
+        return
+    name = ""
+    try:
+        with connect_pages_db(ws) as conn:
+            row = conn.execute("SELECT content FROM unified_blocks WHERE id = ?",
+                               (target.page or target.folder,)).fetchone()
+        name = (row[0] or "").split("\n", 1)[0] if row else ""
+    except (sqlite3.Error, ValueError):
+        pass
+    inbox.emit("shared", invited, request.state.user_id, ws, page_id=target.page, block_id=target.folder,
+               snippet=name, via=token)
 
 
 # ---- the four operations, the same for both targets -------------------------
@@ -190,8 +214,8 @@ def _create(ws: str, request: Request, target: ShareScope, payload: ShareSetting
             (token, ws, target.page, target.folder, request.state.user_id, fields["audience"], fields["role"],
              page_now()),
         )
-        if cur.rowcount:
-            _invite(conn, token, fields["users"])
+        invited = _invite(conn, token, fields["users"]) if cur.rowcount else []
+    _tell(ws, request, target, token, invited)
     return _settings(_find(ws, target))
 
 
@@ -209,11 +233,11 @@ def _update(ws: str, request: Request, target: ShareScope, payload: ShareSetting
     with connect_users_db() as conn:
         cur = conn.execute("UPDATE shares SET audience = ?, role = ? WHERE token = ?",
                            (fields["audience"], fields["role"], share["token"]))
-        if cur.rowcount:
-            _invite(conn, share["token"], fields["users"])
+        invited = _invite(conn, share["token"], fields["users"]) if cur.rowcount else []
     if not cur.rowcount:  # stopped by another request meanwhile
         raise HTTPException(status_code=404, detail=f"{what} is not shared")
     collab.revalidate(ws)
+    _tell(ws, request, target, share["token"], invited)
     return _settings(share_lookup(share["token"]))
 
 

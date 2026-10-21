@@ -177,6 +177,10 @@ export const PREFS = {
   // The always-on status bar under the tabs — off by default, the floating
   // pill carries user-facing messages; the bar is a debugging aid.
   statusBarVisible: flag("gamma-status-bar", BROWSER, false),
+  // A fresh Inbox item rings as a system notification once per browser
+  // (inbox/useInbox.js): the browser's permission is this device's, so
+  // the choice is too.
+  inboxSystemNotifications: flag("gamma-inbox-notifications", BROWSER, false),
   // Tours offered by themselves the first time a feature comes up
   // (guide/triggers.js); off leaves only Account › Tours.
   suggestTours: flag("gamma-suggest-tours", ACCOUNT, true),

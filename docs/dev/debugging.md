@@ -524,6 +524,19 @@ The scenarios live in `tests/e2e/scenarios/`:
   persistence, PDF receipts and textarea shrink after clearing context. Run with `--only mentions`.
 - `noteMentions.mjs`: the note editor's @ menu, its chips, Invite… and a reminder's
   card ([mentions.md](mentions.md)). Run with `--group note-mentions`.
+- `comments.mjs`: threads on a note, the page and a highlight from their
+  controls, the popover opening in place, live replies, resolve and
+  reopen, the Comments window, Ctrl+Shift+M and Escape, edit and delete, a
+  viewer's and a link visitor's side, `?thread=` and a folder share's
+  thread link ([comments.md](comments.md) "In the app"). Run with
+  `--group comments`.
+- `inbox.mjs`: an invitation's jump to its workspace; the bell's count from
+  a page socket's nudge after a mention typed through the @ menu and, on the
+  home library, on focus; the jumps in place, into another workspace and
+  through a share; Mark all read, Archive and back, an item settling once
+  its page is in Recently deleted, and Inbox notifications ringing once per
+  browser (a stand-in `Notification`) ([comments.md](comments.md) "The
+  Inbox"). Run with `--group inbox`.
 - `chatNavigation.mjs`: a library or PDF chat reply keeps streaming and is
   saved while the user navigates away and back, before or after it finishes;
   the model menu lists one connection's models.

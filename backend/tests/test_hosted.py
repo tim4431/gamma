@@ -258,6 +258,8 @@ def test_read_only_refuses_writes_but_lets_people_leave_with_their_data(plan, ad
     assert [(n["tone"], n["pane"]) for n in theirs] == [("error", "account")]
     r = member.post("/api/notices/hosted/seen", json={"fingerprint": theirs[0]["fingerprint"]})
     assert r.status_code == 200
+    # so does the Inbox's bookkeeping: marking items read or archived
+    assert member.post("/api/inbox/mark", json={"all": True, "read": True}).status_code == 200
     assert member.post("/api/logout").status_code == 200
     login("ho_member", "ho-member-pw1")
     # a sign-in still works for an existing account, but makes no new one

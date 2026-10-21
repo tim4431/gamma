@@ -29,10 +29,8 @@ import { cutObject } from "./mdObjects";
 import { blockSpans, parseTable, protectedSpans, scanMathSpans, scanTables } from "./mdScan";
 import { LinkIcon, MicIcon, PenIcon, PlayIcon, TypeIcon, XIcon } from "../shared/ui/Icons";
 import { FileChip, parseUploadUrl, postFile, uploadFilesAsLines } from "../transfers/FileChip";
-import {
-  envCompletions, findMathAtCursor, latexCompletionEdit, latexCompletions,
-  LatexAcPopup, MathLivePreview, mathTabJump,
-} from "./LatexEditor";
+import { findMathAtCursor, LatexAcPopup, MathLivePreview } from "./LatexEditor";
+import { useMathUi } from "./useMathUi.js";
 import { BlockCmEditor, OBJECT_DRAG_TYPE } from "./BlockCmEditor";
 import { expandBlankLines } from "./mdMarks";
 import { BLOCK_COMMANDS } from "./blockCommands.js";
@@ -42,10 +40,12 @@ import { blockStartInSource, gapInSource, renderedGaps, sourceOffsetAtPoint } fr
 import { highlightCode, makeCopyButton } from "./codeHighlight";
 import { fenceInnerAt } from "./fences.js";
 import { enterPlan, pastePlacements, quoteMarksAt } from "./mdLines.js";
-import { filterSlashCommands, SlashMenuPopup } from "./SlashMenu";
+import { SlashMenuPopup } from "./SlashMenu";
 import { RefPickerPopup } from "./RefPicker";
-import { pageByTitle, pickerCounts, rankRefPages, refBlockPath, refBlockText } from "./refLists.js";
-import { datePending, mentionMarkdown, mentionRows, mentionText, mentionTrigger } from "./mentions.js";
+import { useRefPicker } from "./useRefPicker.js";
+import { useSlashMenu } from "./useSlashMenu.js";
+import { mentionMarkdown } from "./mentions.js";
+import { useMentionMenu } from "./useMentionMenu.js";
 import { MentionChip, MentionContext, MentionMenuPopup } from "./MentionMenu";
 import { remarkCallouts } from "./callouts";
 import { PeerChips, RenderedCarets } from "../collaboration/Presence";
@@ -53,10 +53,10 @@ import { ContextMenu, MenuItem } from "../shared/ui/Menus";
 import { API, apiJson, assetUrl, copyText, withShare, withWorkspace } from "../shared/lib/utils";
 import { copyImage } from "../shared/lib/copyImage.js";
 import { CopyIcon, ExportIcon, MessageSquareIcon, PlusIcon, SheetIcon, SparklesIcon, Trash2Icon } from "../shared/ui/Icons";
-import { T, t } from "../shared/i18n/i18n.js";
+import { T, t, tn } from "../shared/i18n/i18n.js";
+import { shortCount } from "../comments/comments.js";
 import { guideEvents } from "../guide/events.js";
 import { useIsRecent } from "../guide/recent.js";
-import { pageKindLabel } from "../library/libraryUtils";
 import {
   applyImageEdit, applyTableEdit, formatTables, htmlTableToMarkdown,
   MdImage, MdTableWrap, noteTableMade, tsvToMarkdown,
@@ -242,79 +242,6 @@ async function uploadImageFile(file) {
   return (await postFile("/api/upload-image", file))?.url || null;
 }
 
-// Live LaTeX aids while the caret sits inside $...$ / $$...$$: the floating
-// preview plus \command autocomplete state — shared by the block editor and
-// the embed card's in-place editor. Recomputed on every edit AND caret move
-// (the preview must track the caret); the autocomplete only OPENS on typing.
-function useMathUi() {
-  const [mathUi, setMathUi] = useState(null);
-  const [mathAcIdx, setMathAcIdx] = useState(0);
-
-  function updateMathUi(ta, typing) {
-    const cursor = ta.selectionStart;
-    if (cursor !== ta.selectionEnd) { setMathUi(null); return; }
-    // A "$" inside a ``` fence is code (shell vars), never math.
-    const seg = fenceInnerAt(ta.value, cursor) ? null : findMathAtCursor(ta.value, cursor);
-    if (!seg) { setMathUi(null); return; }
-    // \command autocomplete: a backslash-word ending at the caret, only
-    // inside math (a bare "\" in prose — file paths — must not trigger it),
-    // and only opened by TYPING — clicking into an existing formula must not
-    // pop the menu. Caret moves (typing=false) keep an already-open popup
-    // only while the caret stays on the same trigger; React fires onSelect
-    // right after onChange for a keystroke, so this must not wipe it.
-    // "\begin{name" (even with the } already typed) completes environment
-    // names instead — accepting replaces the whole \begin{… with the snippet.
-    const before = ta.value.slice(seg.start, cursor);
-    const mEnv = before.match(/\\begin\{([a-zA-Z*]*)\}?$/);
-    const m = mEnv ? null : before.match(/\\([a-zA-Z]+)$/);
-    // The completion popup hangs off the caret; the preview is docked to the
-    // editor column (dock = its content box) above the span's first line
-    // — stable while typing inside a multi-line $$ block — with the caret
-    // line as the fallback when the span's edges are off screen
-    // (useCaretAnchored). `caret` marks the typing spot in the preview.
-    const previewRect = () => {
-      const box = ta.getBoundingClientRect();
-      const first = ta.caretCoords(seg.start), last = ta.caretCoords(seg.end), at = ta.caretCoords(cursor);
-      return {
-        left: first.left, top: first.top, bottom: last.bottom,
-        caretTop: at.top, caretBottom: at.bottom,
-        dock: { left: box.left, right: box.right },
-      };
-    };
-    const next = {
-      tex: ta.value.slice(seg.start, seg.end),
-      display: seg.display,
-      caret: cursor - seg.start,
-      anchor: { ...ta.caretCoords(cursor), getRect: () => ta.caretCoords(cursor) },
-      previewAnchor: { ...previewRect(), getRect: previewRect },
-      ac: null,
-    };
-    setMathUi((prev) => {
-      const trig = mEnv || m;
-      const start = trig ? cursor - trig[0].length : -1;
-      if (trig && (typing || prev?.ac?.start === start)) {
-        const items = mEnv ? envCompletions(mEnv[1]) : latexCompletions(m[1]);
-        if (items.length) next.ac = { start, items };
-      }
-      return next;
-    });
-    if (typing) setMathAcIdx(0);
-  }
-
-  // Accept an autocomplete entry into the editor `ta` and close the popup.
-  function acceptCompletion(ta, c) {
-    if (!ta || !mathUi?.ac) return;
-    const { start } = mathUi.ac;
-    const edit = latexCompletionEdit(ta.value, start, ta.selectionStart, c, mathUi.display);
-    ta.view?.dispatch({ ...edit, userEvent: "input.complete" });
-    setMathUi(null);
-    ta.focus();
-    updateMathUi(ta, false);
-  }
-
-  return { mathUi, setMathUi, mathAcIdx, setMathAcIdx, updateMathUi, acceptCompletion };
-}
-
 // ![[id]] transclusion: the referenced block's content rendered in a card.
 // With onEmbedEdit (not read-only), the synced position is a full editing
 // surface for the SOURCE block, Notion-synced-block style: checkboxes, image
@@ -330,7 +257,7 @@ function BlockEmbedCard({ refId, refBlock, refLabels, onBlockRefClick, onEmbedEd
   // text it was made from, so the server merges it into whatever the source
   // says by now instead of replacing that (the card's copy may be old).
   const draftBaseRef = useRef("");
-  const { mathUi, setMathUi, mathAcIdx, setMathAcIdx, updateMathUi, acceptCompletion } = useMathUi();
+  const { mathUi, setMathUi, mathAcIdx, updateMathUi, acceptCompletion, acKey, tabJumpKey } = useMathUi();
   const editorRef = useRef(null);
   const editable = !!onEmbedEdit && refBlock?.content != null;
 
@@ -446,29 +373,10 @@ function BlockEmbedCard({ refId, refBlock, refLabels, onBlockRefClick, onEmbedEd
             onBlur={save}
             onPaste={handlePaste}
             onKeyDown={(e) => {
-              if (mathUi?.ac) {
-                const n = mathUi.ac.items.length;
-                if (e.key === "ArrowDown") { e.preventDefault(); setMathAcIdx((i) => Math.min(i + 1, n - 1)); return; }
-                if (e.key === "ArrowUp") { e.preventDefault(); setMathAcIdx((i) => Math.max(i - 1, 0)); return; }
-                // Tab accepts; Enter closes the popup and keeps its own job.
-                if (e.key === "Tab" && !e.shiftKey) { e.preventDefault(); acceptLatexAc(mathUi.ac.items[mathAcIdx]); return; }
-                if (e.key === "Escape") { e.preventDefault(); setMathUi((u) => (u ? { ...u, ac: null } : null)); return; }
-                if (e.key === "Enter") setMathUi((u) => (u ? { ...u, ac: null } : null));
-              }
+              if (acKey(e, editorRef.current)) return;
               // Same math Tab-hop as the block editor (no indent to fall
               // through to here — an unhandled Tab just moves focus).
-              if (e.key === "Tab" && editorRef.current) {
-                const ta = editorRef.current;
-                const origin = e.shiftKey ? ta.selectionStart : ta.selectionEnd;
-                const jump = !fenceInnerAt(ta.value, origin)
-                  && mathTabJump(ta.value, origin, e.shiftKey ? -1 : 1);
-                if (jump) {
-                  e.preventDefault();
-                  ta.setSelectionRange(jump.anchor, jump.head);
-                  updateMathUi(ta, false);
-                  return;
-                }
-              }
+              if (tabJumpKey(e, editorRef.current)) return;
               // Escape saves and exits, same as blurring a normal block.
               if (e.key === "Escape") { e.preventDefault(); save(); }
             }}
@@ -812,6 +720,15 @@ const BlockRow = React.memo(function BlockRow({
   onInvite, // the @ menu's "Invite…": the page's Share popover (absent where one may not share)
   onReminderSet, // a reminder was just written by the @ menu (App's useReminders)
   onUndo,
+  // Comments (comments/useComments.js): open the block's thread popover
+  // from the control (its element is where the popover hangs), fetch the
+  // popover's module ahead (pointer over or focus on the control), and the
+  // block's open threads, and whether its popover is open (`commentOpen`).
+  // Absent where the page's comments cannot be read.
+  onComment,
+  onCommentPreload,
+  commentCount = 0,
+  commentOpen = false,
 }) {
   const ref = useRef(null);
   const clickPosRef = useRef(null);
@@ -991,218 +908,37 @@ const BlockRow = React.memo(function BlockRow({
   const stableObjectDrop = useRef((p) => objectDropRef.current?.drop(p)).current;
   // The [[ref]] chip and Gamma-link card labels come resolved from App
   // (refLabels.js, once per tree change): `refLabels`.
-  // The [[ link picker: { query, anchor } while a "[[" is being typed.
-  const [refPopup, setRefPopup] = useState(null);
-  const [refSelectedIdx, setRefSelectedIdx] = useState(0);
-  // Live LaTeX aids (preview + \command autocomplete) — the shared hook.
-  const { mathUi, setMathUi, mathAcIdx, setMathAcIdx, updateMathUi, acceptCompletion } = useMathUi();
-  // "/" command menu: { start, query, items, anchor }. Opened only by TYPING
-  // the slash (caret moves just keep or close it), suppressed inside math.
-  const [slashMenu, setSlashMenu] = useState(null);
-  const [slashIdx, setSlashIdx] = useState(0);
-  // "@" mention menu (editor/mentions.js): { start, query, rows, anchor },
-  // opened by typing an "@" that starts a word; it stays open across
-  // spaces while something answers the query.
-  const [atMenu, setAtMenu] = useState(null);
-  const [atIdx, setAtIdx] = useState(0);
-  // Notion-style "Paste as" chooser after pasting a URL: the URL text is
-  // already inserted; { start, end, url, items, anchor }. Pasted text also
-  // has `text`, as copied (`url` is what went in, placed at the line's
-  // level), and `restore`, what [start, end) held before the paste. Any
-  // further edit, caret move or blur keeps the URL and dismisses the menu.
-  const [pasteMenu, setPasteMenu] = useState(null);
-  const [pasteIdx, setPasteIdx] = useState(0);
-  const [searchResults, setSearchResults] = useState([]);
-  // The server's block scan ran out of time: the picker keeps what it found
-  // and its footer says to type more.
-  const [searchPartial, setSearchPartial] = useState(false);
-  const [fileDragOver, setFileDragOver] = useState(false);
-  const uploadingRef = useRef(false);
-
-  useEffect(() => {
-    if (!refPopup) { setSearchResults([]); setSearchPartial(false); return; }
-    const q = refPopup.query;
-    const timer = setTimeout(async () => {
-      try {
-        const res = await fetch(withShare(`${API}/block-search?q=${encodeURIComponent(q)}&limit=12`));
-        const data = await res.json();
-        setSearchResults((data.blocks || []).filter((b) => b.id !== block.id));
-        setSearchPartial(!!data.partial);
-      } catch (_) { setSearchResults([]); setSearchPartial(false); }
-    }, 120);
-    return () => clearTimeout(timer);
-  }, [refPopup?.query, block.id]);
-  // The picker's rows (editor/refLists.js): pages by title, then blocks
-  // other than pages (a page result is a page row) as plain text.
-  const refRows = useMemo(() => {
-    if (!refPopup) return [];
-    const labelOf = (id) => pages?.find((p) => p.id === id)?.content ?? lookupBlock?.(id)?.content ?? refCache?.[id]?.content;
-    const pageHits = rankRefPages(pages, refPopup.query, rootId);
-    const blockHits = searchResults.filter((b) => b.page_root_id !== b.id);
-    const [np, nb] = pickerCounts(pageHits.length, blockHits.length);
-    return [
-      ...pageHits.slice(0, np).map((p) => ({
-        kind: "page", id: p.id, title: p.content, isPdf: !!p._attachment,
-        meta: [pageKindLabel(p._attachment), p._folderChips?.[0]?.name].filter(Boolean).join(" · "),
-      })),
-      ...blockHits.slice(0, nb).map((b) => ({
-        kind: "block", id: b.id, title: refBlockText(b.content, labelOf) || t("(empty)"), meta: refBlockPath(b), block: b,
-      })),
-    ];
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [refPopup?.query, pages, searchResults, rootId]);
-  const refSearchShown = !!refPopup && refRows.length > 0;
-  const refSelected = Math.min(refSelectedIdx, refRows.length - 1);
-  useEffect(() => { if (refSearchShown) guideEvents.emit("ref.search"); }, [refSearchShown]);
-
-  // Resolve cross-note refs and Gamma link targets found in content
-  useEffect(() => {
-    if (!block.content || !onFetchRefs) return;
-    const unknown = refIdsOf(block).filter(([id]) => !lookupBlock?.(id) && !refCache?.[id]);
-    // Only a [[ref]]'s id is asked about when the search misses it (a Gamma
-    // link may name another server's page).
-    if (unknown.length > 0) onFetchRefs(unknown.map(([id]) => id), unknown.filter(([, ref]) => ref).map(([id]) => id));
-  }, [block.content]);
-
-  // A picked row: the typed "[[query" becomes [[id]] (a "!" before it
-  // stays, making it an embed), and the chip's label is cached at once.
-  function insertRef(r) {
-    const ta = ref.current;
-    if (!ta) return;
-    const val = ta.value;
-    const cursor = ta.selectionStart;
-    const before = val.slice(0, cursor);
-    const match = before.match(/\[\[([^\]\n]*)$/);
-    if (!match) return;
-    const triggerStart = cursor - match[0].length;
-    const newVal = val.slice(0, triggerStart) + `[[${r.id}]]` + val.slice(cursor);
-    onChangeText(block.id, newVal);
-    if (onCacheRef) onCacheRef(r.id, r.kind === "page" ? { content: r.title, page_title: r.title } : r.block);
-    setRefPopup(null);
-    requestAnimationFrame(() => {
-      const newCursor = triggerStart + `[[${r.id}]]`.length;
-      ta.setSelectionRange(newCursor, newCursor);
-      ta.focus();
-    });
-  }
-
-  // "]]" typed by hand after a page's exact title: the text becomes that
-  // page's [[id]] (only when exactly one page has the title; otherwise it
-  // stays text and renders as an unlinked chip). After the keystroke's own
-  // update, and only if the text is still what was typed.
-  function linkTypedTitle(value, cursor) {
-    const m = value.slice(0, cursor).match(/\[\[([^[\]\n]+)\]\]$/);
-    const page = m && pageByTitle(pages, m[1]);
-    if (!page || page.id === m[1]) return;
-    const from = cursor - m[0].length, text = `[[${page.id}]]`;
-    requestAnimationFrame(() => {
+  // The [[ link picker (useRefPicker.js): a picked row's [[id]] goes in
+  // through the row's own text path, the caret after it a frame later.
+  const refPicker = useRefPicker({
+    editorRef: ref, excludeId: block.id, pages, rootId, lookupBlock, refCache, onCacheRef,
+    write: (edit) => {
       const ta = ref.current;
-      if (!ta?.view || ta.value.slice(from, cursor) !== m[0]) return;
-      onCacheRef?.(page.id, { content: page.content, page_title: page.content });
-      // No selection given: the caret maps through the change, so text typed
-      // since the "]]" stays where it was typed.
-      ta.view.dispatch({ changes: { from, to: cursor, insert: text }, userEvent: "input" });
-    });
-  }
-
-  function acceptLatexAc(c) { acceptCompletion(ref.current, c); }
-
-  // "/" trigger: a slash starting a word, with the query typed so far after
-  // it. Recomputed on edits (typing=true, may open) and caret moves
-  // (typing=false, only keeps an already-open menu on the same trigger).
-  function updateSlashMenu(ta, typing) {
-    const cursor = ta.selectionStart;
-    if (cursor !== ta.selectionEnd) { setSlashMenu(null); return; }
-    const m = ta.value.slice(0, cursor).match(/(?:^|\s)\/([a-zA-Z0-9-]*)$/);
-    if (!m || findMathAtCursor(ta.value, cursor) || fenceInnerAt(ta.value, cursor)) { setSlashMenu(null); return; }
-    const start = cursor - m[1].length - 1;
-    const items = filterSlashCommands(m[1], { newPage: !!onNewPage, sheet: !!onInsertSheet });
-    if (!items.length) { setSlashMenu(null); return; }
-    const anchor = ta.caretCoords(start);
-    setSlashMenu((prev) => {
-      if (!typing && prev?.start !== start) return null;
-      return { start, query: m[1], items, anchor };
-    });
-    if (typing) setSlashIdx(0);
-  }
-
-  // "@" trigger (editor/mentions.js mentionTrigger): recomputed like the
-  // slash menu's on edits (typing, may open) and caret moves (only keeps an
-  // open menu on its own "@"); closed by a selection, math, a code fence,
-  // a [[ being typed, or a query nothing answers — unless it is a date
-  // still being typed ("@next" before "fri"), which keeps the menu, hidden
-  // with no rows, until it means one.
-  function updateAtMenu(ta, typing) {
-    const cursor = ta.selectionStart, value = ta.value;
-    if (cursor !== ta.selectionEnd || findMathAtCursor(value, cursor) || fenceInnerAt(value, cursor)
-      || /\[\[[^\]\n]*$/.test(value.slice(0, cursor))) { setAtMenu(null); return; }
-    setAtMenu((prev) => {
-      const trigger = mentionTrigger(value, cursor, prev?.start ?? null);
-      if (!trigger || (!typing && prev?.start !== trigger.start)) return null;
-      const rows = mentionRows({
-        query: trigger.query, people: mentions.people, me: mentions.me, pages, rootId, canInvite: !!onInvite,
+      onChangeText(block.id, edit.value);
+      requestAnimationFrame(() => {
+        ta.setSelectionRange(edit.caret, edit.caret);
+        ta.focus();
       });
-      return rows.length || datePending(trigger.query) ? { ...trigger, rows, anchor: ta.caretCoords(trigger.start) } : null;
-    });
-    if (typing) setAtIdx(0);
-  }
-
-  // A picked row replaces the typed "@query" with its mention and a space
-  // (mentions.js mentionText); "Invite…" removes it and opens the Share
-  // popover. One editor transaction, change and caret together: a caret set
-  // a frame later would land behind the keys typed meanwhile.
-  function pickMention(row) {
-    const ta = ref.current;
-    if (!ta?.view || !atMenu) return;
-    const { start } = atMenu;
-    const cursor = ta.selectionStart;
-    setAtMenu(null);
-    const text = mentionText(row, mentions.me);
-    const insert = text && !/^\s/.test(ta.value.slice(cursor, cursor + 1)) ? `${text} ` : text;
-    if (row.kind === "page") onCacheRef?.(row.id, { content: row.title, page_title: row.title });
-    ta.view.dispatch({
-      changes: { from: start, to: cursor, insert },
-      selection: { anchor: start + insert.length },
-      userEvent: "input",
-    });
-    // Inside the key press or click: the gesture a notification prompt needs.
-    if (row.kind === "remind") onReminderSet?.();
-    if (row.kind === "invite") onInvite?.();
-  }
-
-  // What a block command runs with (blockCommands.js): the row's keydown
-  // dispatches with it, and the editing bar builds one per press.
-  const commandContext = () => ({
-    block, tree: getTree?.(), view, folded: collapsed, readOnly, editor: ref.current,
-    row: { onHop, onMoveBlock, onDuplicate, onDelete, onEnterSibling, onIndent, onOutdent, onToggle, onAddToChat, onMoveToPage },
+    },
   });
-
-  function runSlashCommand(c) {
-    const ta = ref.current;
-    if (!ta || !slashMenu) return;
-    const start = slashMenu.start;
-    const value = ta.value;
-    const cursor = ta.selectionStart;
-    setSlashMenu(null);
-    if (c.name === "table") noteTableMade(block.id, value, start);
-    c.run({
-      value,
-      start,
-      cursor,
-      setText: (newVal, selStart, selEnd) => {
-        onChangeText(block.id, newVal);
-        requestAnimationFrame(() => {
-          try { ta.setSelectionRange(selStart, selEnd ?? selStart); } catch (_) {}
-          ta.focus();
-          updateMathUi(ta, false);
-        });
-      },
-      openRefPopup: () => {
-        requestAnimationFrame(() => {
-          setRefPopup({ query: "", anchor: ta.caretCoords(Math.max(0, ta.selectionStart - 2)) });
-          setRefSelectedIdx(0);
-        });
-      },
+  // Live LaTeX aids (preview + \command autocomplete) — the shared hook.
+  const { mathUi, setMathUi, mathAcIdx, updateMathUi, acceptCompletion, acKey, tabJumpKey } = useMathUi();
+  // "/" command menu (useSlashMenu.js): every command a note can run; the
+  // text goes in through the row's own text path, the caret a frame later.
+  const slash = useSlashMenu({
+    editorRef: ref, refPicker,
+    can: { newPage: !!onNewPage, sheet: !!onInsertSheet, image: true, embed: true },
+    setText: (newVal, selStart, selEnd) => {
+      const ta = ref.current;
+      onChangeText(block.id, newVal);
+      requestAnimationFrame(() => {
+        try { ta.setSelectionRange(selStart, selEnd ?? selStart); } catch (_) {}
+        ta.focus();
+        updateMathUi(ta, false);
+      });
+    },
+    onRun: (c, value, start) => { if (c.name === "table") noteTableMade(block.id, value, start); },
+    actions: (value, start, cursor) => ({
       // "/note": the block becomes a sheet of paper when nothing else is in
       // it, else a sheet goes in after it (App's onInsertSheet).
       insertSheet: () => onInsertSheet(block.id, value.slice(0, start) + value.slice(cursor)),
@@ -1226,8 +962,45 @@ const BlockRow = React.memo(function BlockRow({
         };
         inp.click();
       },
-    });
-  }
+    }),
+  });
+  // "@" mention menu (useMentionMenu.js): a picked reminder wakes the
+  // reminders, "Invite…" opens the Share popover — inside the key press or
+  // click, the gesture a notification prompt needs.
+  const atPicker = useMentionMenu({
+    editorRef: ref, people: mentions.people, me: mentions.me, pages, rootId, canInvite: !!onInvite, onCacheRef,
+    onPicked: (row) => {
+      if (row.kind === "remind") onReminderSet?.();
+      if (row.kind === "invite") onInvite?.();
+    },
+  });
+  // Notion-style "Paste as" chooser after pasting a URL: the URL text is
+  // already inserted; { start, end, url, items, anchor }. Pasted text also
+  // has `text`, as copied (`url` is what went in, placed at the line's
+  // level), and `restore`, what [start, end) held before the paste. Any
+  // further edit, caret move or blur keeps the URL and dismisses the menu.
+  const [pasteMenu, setPasteMenu] = useState(null);
+  const [pasteIdx, setPasteIdx] = useState(0);
+  const [fileDragOver, setFileDragOver] = useState(false);
+  const uploadingRef = useRef(false);
+
+  // Resolve cross-note refs and Gamma link targets found in content
+  useEffect(() => {
+    if (!block.content || !onFetchRefs) return;
+    const unknown = refIdsOf(block).filter(([id]) => !lookupBlock?.(id) && !refCache?.[id]);
+    // Only a [[ref]]'s id is asked about when the search misses it (a Gamma
+    // link may name another server's page).
+    if (unknown.length > 0) onFetchRefs(unknown.map(([id]) => id), unknown.filter(([, ref]) => ref).map(([id]) => id));
+  }, [block.content]);
+
+  function acceptLatexAc(c) { acceptCompletion(ref.current, c); }
+
+  // What a block command runs with (blockCommands.js): the row's keydown
+  // dispatches with it, and the editing bar builds one per press.
+  const commandContext = () => ({
+    block, tree: getTree?.(), view, folded: collapsed, readOnly, editor: ref.current,
+    row: { onHop, onMoveBlock, onDuplicate, onDelete, onEnterSibling, onIndent, onOutdent, onToggle, onAddToChat, onMoveToPage, onComment },
+  });
 
   useEffect(() => {
     registerRef(block.id, ref);
@@ -1776,35 +1549,24 @@ const BlockRow = React.memo(function BlockRow({
               onChange={(e) => {
                 onChangeText(block.id, e.target.value, e.selectionBefore);
                 onCaret?.(block.id, e.target.selectionStart, e.target.selectionEnd);
-                const cursor = e.target.selectionStart;
-                const before = e.target.value.slice(0, cursor);
-                const match = before.match(/\[\[([^\]\n]*)$/);
-                if (match) {
-                  setRefPopup({ query: match[1], anchor: e.target.caretCoords(cursor - match[0].length) });
-                  setRefSelectedIdx(0);
-                } else {
-                  setRefPopup(null);
-                  // One "]" typed, closing a [[title]]: link it if a page has exactly that title.
-                  const typed = e.selectionBefore?.from === cursor - 1 && e.selectionBefore?.to === cursor - 1;
-                  if (typed && before.endsWith("]]")) linkTypedTitle(e.target.value, cursor);
-                }
+                refPicker.onEdit(e);
                 updateMathUi(e.target, true);
-                updateSlashMenu(e.target, true);
-                updateAtMenu(e.target, true);
+                slash.update(e.target, true);
+                atPicker.update(e.target, true);
                 setPasteMenu(null);
               }}
               onSelect={(e) => {
                 onCaret?.(block.id, e.target.selectionStart, e.target.selectionEnd);
-                updateMathUi(e.target, false); updateSlashMenu(e.target, false); updateAtMenu(e.target, false);
+                updateMathUi(e.target, false); slash.update(e.target, false); atPicker.update(e.target, false);
                 setPasteMenu(null);
               }}
               onBlur={() => {
                 onStartEdit(block.id, false);
                 setMathUi(null);
-                setSlashMenu(null);
-                setAtMenu(null);
+                slash.close();
+                atPicker.close();
                 setPasteMenu(null);
-                setTimeout(() => setRefPopup(null), 120);
+                setTimeout(refPicker.close, 120);
               }}
               onPaste={handleEditorPaste}
               onUndo={onUndo}
@@ -1816,62 +1578,20 @@ const BlockRow = React.memo(function BlockRow({
                   if (e.key === "Enter" || e.key === "Tab") { e.preventDefault(); applyPasteAs(pasteMenu.items[pasteIdx]); return; }
                   if (e.key === "Escape") { e.preventDefault(); setPasteMenu(null); return; }
                 }
-                if (refSearchShown) {
-                  if (e.key === "ArrowDown") { e.preventDefault(); setRefSelectedIdx((i) => Math.min(i + 1, refRows.length - 1)); return; }
-                  if (e.key === "ArrowUp") { e.preventDefault(); setRefSelectedIdx((i) => Math.max(i - 1, 0)); return; }
-                  if (e.key === "Enter" || (e.key === "Tab" && !e.shiftKey)) { e.preventDefault(); insertRef(refRows[refSelected]); return; }
-                  if (e.key === "Escape") { e.preventDefault(); setRefPopup(null); return; }
-                }
-                if (slashMenu) {
-                  const n = slashMenu.items.length;
-                  if (e.key === "ArrowDown") { e.preventDefault(); setSlashIdx((i) => Math.min(i + 1, n - 1)); return; }
-                  if (e.key === "ArrowUp") { e.preventDefault(); setSlashIdx((i) => Math.max(i - 1, 0)); return; }
-                  if (e.key === "Enter" || e.key === "Tab") { e.preventDefault(); runSlashCommand(slashMenu.items[slashIdx]); return; }
-                  if (e.key === "Escape") { e.preventDefault(); setSlashMenu(null); return; }
-                }
-                if (atMenu?.rows.length) {
-                  const n = atMenu.rows.length;
-                  if (e.key === "ArrowDown") { e.preventDefault(); setAtIdx((i) => Math.min(i + 1, n - 1)); return; }
-                  if (e.key === "ArrowUp") { e.preventDefault(); setAtIdx((i) => Math.max(i - 1, 0)); return; }
-                  if (e.key === "Enter" || (e.key === "Tab" && !e.shiftKey)) {
-                    e.preventDefault();
-                    pickMention(atMenu.rows[Math.min(atIdx, n - 1)]);
-                    return;
-                  }
-                  if (e.key === "Escape") { e.preventDefault(); setAtMenu(null); return; }
-                }
-                if (mathUi?.ac) {
-                  const n = mathUi.ac.items.length;
-                  if (e.key === "ArrowDown") { e.preventDefault(); setMathAcIdx((i) => Math.min(i + 1, n - 1)); return; }
-                  if (e.key === "ArrowUp") { e.preventDefault(); setMathAcIdx((i) => Math.max(i - 1, 0)); return; }
-                  // Tab accepts; Enter closes the popup and keeps its own job
-                  // (a line break in $$, else the outliner's Enter) — a
-                  // completion the user never asked for must not eat it.
-                  if (e.key === "Tab" && !e.shiftKey) { e.preventDefault(); acceptLatexAc(mathUi.ac.items[mathAcIdx]); return; }
-                  if (e.key === "Escape") { e.preventDefault(); setMathUi((u) => u ? { ...u, ac: null } : null); return; }
-                  if (e.key === "Enter") setMathUi((u) => u ? { ...u, ac: null } : null);
-                }
+                if (refPicker.keyDown(e)) return;
+                if (slash.keyDown(e)) return;
+                if (atPicker.keyDown(e)) return;
+                // The \command completion's keys (useMathUi.js acKey).
+                if (acKey(e, ref.current)) return;
                 // The block commands (blockCommands.js, docs/dev/hotkeys.md):
                 // move / duplicate / delete the block, formatting, the hop to
                 // the neighbouring block at the caret's top or bottom line…
                 // A handled key stops here; the outliner's own keys follow.
                 if (dispatchHotkey(BLOCK_COMMANDS, e, commandContext(), keybindings)) return;
                 // Tab inside raw math (popup closed) hops between argument
-                // groups snippet-style — \frac{1|}{} lands in the second {} —
-                // Shift+Tab hops back. Only when there's somewhere to go;
-                // otherwise Tab falls through to the outliner's indent.
-                if (e.key === "Tab" && ref.current) {
-                  const ta = ref.current;
-                  const origin = e.shiftKey ? ta.selectionStart : ta.selectionEnd;
-                  const jump = !fenceInnerAt(ta.value, origin)
-                    && mathTabJump(ta.value, origin, e.shiftKey ? -1 : 1);
-                  if (jump) {
-                    e.preventDefault();
-                    ta.setSelectionRange(jump.anchor, jump.head);
-                    updateMathUi(ta, false);
-                    return;
-                  }
-                }
+                // groups (useMathUi.js tabJumpKey); with nowhere to go it
+                // falls through to the outliner's indent.
+                if (tabJumpKey(e, ref.current)) return;
                 // Inside a ``` fence the outliner keys turn code-editor:
                 // any Enter is a line break (never a new note) and Tab
                 // indents with spaces instead of nesting the block. Enter
@@ -2006,6 +1726,24 @@ const BlockRow = React.memo(function BlockRow({
             </button>
           ) : null}
         </div>
+        {/* A viewer comments too: the control asks for onComment, not for
+            editing rights. A button, so the row's mousedown leaves it be. */}
+        {onComment && block.id !== "root" ? (
+          <button
+            type="button"
+            className={`ctlBtn commentCtl${commentCount ? " has" : ""}${commentOpen ? " on" : ""}`}
+            data-comment-for={block.id}
+            aria-expanded={commentOpen}
+            title={commentCount ? tn("{n} open comment", "{n} open comments", commentCount) : t("Comment on this note")}
+            aria-label={commentCount ? tn("{n} open comment", "{n} open comments", commentCount) : t("Comment on this note")}
+            onPointerEnter={onCommentPreload}
+            onFocus={onCommentPreload}
+            onClick={(e) => { e.stopPropagation(); onComment(block.id, e.currentTarget); }}
+          >
+            <MessageSquareIcon size={14} />
+            {commentCount ? <span className="commentCtlCount">{shortCount(commentCount)}</span> : null}
+          </button>
+        ) : null}
         {!readOnly && block.id !== "root" ? (
           <button
             className="uiClose uiCloseSm uiCloseDanger blockDeleteBtn"
@@ -2023,21 +1761,20 @@ const BlockRow = React.memo(function BlockRow({
         </>
       ) : null}
       {!readOnly && editing ? <EditBar context={commandContext} onUndo={onUndo} /> : null}
-      {!readOnly && editing && slashMenu ? (
-        <SlashMenuPopup items={slashMenu.items} selected={slashIdx} anchor={slashMenu.anchor} onPick={runSlashCommand}
-          grouped={!slashMenu.query} commands guide="editor.slashMenu" event="slash.opened" />
+      {!readOnly && editing && slash.popup ? (
+        <SlashMenuPopup {...slash.popup} guide="editor.slashMenu" event="slash.opened" />
       ) : null}
-      {!readOnly && editing && atMenu?.rows.length ? (
-        <MentionMenuPopup rows={atMenu.rows} selected={Math.min(atIdx, atMenu.rows.length - 1)} anchor={atMenu.anchor}
-          query={atMenu.query} onPick={pickMention} />
+      {!readOnly && editing && atPicker.shown ? (
+        <MentionMenuPopup rows={atPicker.atMenu.rows} selected={atPicker.selected} anchor={atPicker.atMenu.anchor}
+          query={atPicker.atMenu.query} onPick={atPicker.pick} />
       ) : null}
       {!readOnly && editing && pasteMenu ? (
         <SlashMenuPopup title={t("Paste as")} items={pasteMenu.items} selected={pasteIdx} anchor={pasteMenu.anchor} onPick={applyPasteAs}
           guide="editor.pasteAs" event="paste.offered" />
       ) : null}
-      {refSearchShown ? (
-        <RefPickerPopup rows={refRows} selected={refSelected} anchor={refPopup.anchor}
-          query={refPopup.query} partial={searchPartial} onPick={insertRef} />
+      {refPicker.shown ? (
+        <RefPickerPopup rows={refPicker.rows} selected={refPicker.selected} anchor={refPicker.refPopup.anchor}
+          query={refPicker.refPopup.query} partial={refPicker.partial} onPick={refPicker.insert} />
       ) : null}
     </div>
   );
@@ -2142,9 +1879,16 @@ const SortableBlockRow = React.memo(function SortableBlockRow({ block, ...rowPro
               t("Copied block as markdown"),
             )}
           >{t("Copy as markdown")}</MenuItem>
-          {block.id !== "root" && rowProps.onAddToChat ? (
+          {block.id !== "root" && rowProps.onComment ? (
             <MenuItem
               icon={MessageSquareIcon}
+              title={t("Start or read this note's comment threads")}
+              onClick={() => { setHandleMenu(null); rowProps.onComment(block.id); }}
+            >{t("Comment")}</MenuItem>
+          ) : null}
+          {block.id !== "root" && rowProps.onAddToChat ? (
+            <MenuItem
+              icon={SparklesIcon}
               title={t("Attach this block (with its sub-blocks) to your next chat message — Ctrl+click a block does the same")}
               onClick={() => { setHandleMenu(null); rowProps.onAddToChat(block); }}
             >{t("Add to chat")}</MenuItem>
@@ -2266,7 +2010,9 @@ function AiGhostRow({ content, depth }) {
 function BlockTree({ blocks, readOnly, rowProps, depth = 0, parentId, onSheet = false }) {
   // Every row takes its own entry of the labels map, never the map itself
   // (a new one on every tree change would re-render each memoized row).
-  const { refLabelsById, ...rowRest } = rowProps;
+  // So too the comment counts: each row its own number, and whether its
+  // thread popover is open.
+  const { refLabelsById, commentCounts, commentOpenFor, ...rowRest } = rowProps;
   const live = rowProps.aiLive;
   const ghost = live?.tool === "create_block" && live.parentId === (parentId ?? rowProps.rootId) ? live : null;
   if ((!blocks || blocks.length === 0) && !ghost) return null;
@@ -2286,6 +2032,8 @@ function BlockTree({ blocks, readOnly, rowProps, depth = 0, parentId, onSheet = 
       {ghostAt === 0 ? ghostRow : null}
       {list.map((rawBlock, idx) => { const block = legacy(rawBlock);
         const refLabels = refLabelsById?.get(rawBlock.id); // undefined: the row's default, NO_LABELS
+        const commentCount = commentCounts?.get(rawBlock.id) || 0;
+        const commentOpen = !!commentOpenFor && commentOpenFor === rawBlock.id;
         const sheetNumber = rowProps.sheetNumbers ? rowProps.sheetNumbers.get(rawBlock.id) || 0
           : depth === 0 && isSheet(rawBlock) ? ++sheets : 0; return (
         <React.Fragment key={block.id}>
@@ -2296,10 +2044,10 @@ function BlockTree({ blocks, readOnly, rowProps, depth = 0, parentId, onSheet = 
               removed beside it, is the same block at another place. */}
           {!readOnly ? (
             <SortableBlockRow block={block} depth={depth} sheetNumber={sheetNumber} onSheet={onSheet} refLabels={refLabels}
-              place={idx} siblings={list.length} {...rowRest} />
+              commentCount={commentCount} commentOpen={commentOpen} place={idx} siblings={list.length} {...rowRest} />
           ) : (
             <BlockRow block={block} depth={depth} sheetNumber={sheetNumber} onSheet={onSheet} refLabels={refLabels}
-              place={idx} siblings={list.length} {...rowRest} />
+              commentCount={commentCount} commentOpen={commentOpen} place={idx} siblings={list.length} {...rowRest} />
           )}
           {!isFolded(block, rowProps.view) && (block.children?.length > 0 || live?.parentId === block.id) ? (
             <div className="blockChildren">

@@ -30,6 +30,14 @@ The owner can then invite existing accounts:
 A shared workspace must retain at least one owner. To transfer ownership,
 make another member an owner before removing or demoting the current owner.
 
+`workspaces.set_member(ws, user_id, role, by)` returns whether it added the
+account (a `SELECT 1` under its `BEGIN IMMEDIATE`) rather than changing a
+member's role. A new member gets an `invited` item in their Inbox from
+`by`, after the commit ([comments.md](comments.md) "The inbox"); so do the
+members `invite_cloud` and `claim_pending_memberships` add (below). A role
+change tells no one. `remove_member` (removed, or leaving) deletes the
+member's Inbox items from that workspace with the membership.
+
 ### Pending invitations (Gamma Cloud usernames)
 
 When this server signs people in with Gamma Cloud
@@ -156,7 +164,10 @@ in its browser tab). AI keys, provider choice and the preference profile
 belong to the account. Open tabs, recents, reading positions and saved
 layouts belong to an **account and workspace**; the server keeps the
 first three in the workspace's pages.db (`workspace_prefs`), and an
-account's go when it leaves the workspace or is deleted.
+account's go when it leaves the workspace or is deleted. Inbox items are
+the account's too, in users.db: an account's go when it leaves the
+workspace or is deleted, and a workspace's go with it
+(`workspaces._delete_rows`).
 Their browser caches use `user@workspace`; another account opening the same
 shared library gets its own reading state. Unscoped legacy session caches are
 not restored because their owner is unknown.
@@ -174,6 +185,7 @@ Keep identity and data location separate in endpoint code:
 | `can_write(request)` | The same write rule as a yes/no, for an endpoint that offers less instead of refusing (the AI chat arms no changing tools) |
 | `resolve_ws(request)` | Read through a share token, otherwise normal workspace access |
 | `require_ws_writer(request)` | Write through an edit share, otherwise workspace editor access |
+| `require_commenter(request, page_id)` | Write a comment on the page: any member (viewers too), or a signed-in account a share admits, view or edit, within the share's pages; never a link visitor or a read-scope token ([comments.md](comments.md) "Who may comment") |
 | `share_scope(request)` | The `ShareScope` (one page, or the pages filed in one folder) a share-enabled endpoint must enforce |
 
 Without a share token, selection is `?ws=` first, then `X-Gamma-Workspace`,

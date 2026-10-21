@@ -166,7 +166,10 @@ tools (`edit_block`, `create_block`, `move_block`, `rename_page`, `move_page`)
 call them directly — so everything a page's viewers see comes from one path
 and one log. Reads never write: a stored shape that needs repairing is a
 `normalize.py` step ([migrations.md](migrations.md)), not a fix-up on a
-listing. Pages themselves are not blocks of any page: creating one is
+listing. The two exceptions settle an account's own bookkeeping rows in
+users.db, never content: the reminders' done marks
+([mentions.md](mentions.md) "Reminders") and the Inbox's items
+([comments.md](comments.md) "The inbox"). Pages themselves are not blocks of any page: creating one is
 `blocks_store.create_page` (a plain insert). Deleting one is `ops.trash_page`,
 which moves the page under the reserved `trash` block for 30 days
 ([home_library.md](home_library.md) "Recently deleted"; a share host
@@ -397,12 +400,36 @@ Messages:
   it as the writer's presence); `reload {seq}` (refetch the tree — a
   change ops cannot express, a restore, the page back from Recently
   deleted); `trashed` (the page went to Recently deleted: keep the unsent
-  edits, show it, wait for a `reload`).
+  edits, show it, wait for a `reload`); `comments {block_id, thread_id}`
+  (a comment on the page was written, resolved or deleted: refetch the
+  page's threads; sent to every peer but the writer's tab, through
+  `publish`'s `exclude`, [comments.md](comments.md) "The API"). A comment
+  is no block: it has no op, no seq and no row in the op log, so a client
+  that reconnects refetches the threads on its `hello` instead of catching
+  up. `inbox` (no fields): something new is in the account's Inbox; sent
+  to every page socket of the recipient's account, whatever room it is in
+  (`collab.publish_account`, below), and the tab refetches its Inbox count.
+  A client ignores a message type it does not know.
 - client → server: `cursor {block, anchor, head}` only (`anchor`/`head` = -1
   when no editor is open on that block). **Writes never travel over the
   socket**: they are `POST /api/pages/{id}/ops`, so auth and scoping live in
   one place. A dropped socket does not stop HTTP saves; a closing tab attempts
   to flush queued edits with a keepalive fetch.
+
+**One account's sockets.** `collab.publish_account(user_id, message)`
+sends to every page socket whose peer is that account (`peer.account`, a
+guest's too, a share link's too), in any room of any workspace. It reads
+the `(room, peer)` pairs at once, as `revalidate_account` does, then
+schedules one coroutine on the socket loop that sends to them and drops a
+peer whose send fails, as `Room.broadcast` does. It is safe from any
+thread and a no-op when the account has no socket open. The Inbox uses it
+for its content-free nudge, `{t: "inbox"}` ([comments.md](comments.md)
+"Live delivery"); the tab then asks `/api/inbox` itself, so a socket
+admitted to one page learns nothing about another. A tab with no page open
+(the home library, Settings) has no socket and polls instead. An account
+socket of its own, `WS /api/ws/account`, is reserved for later: an
+`_accounts` registry beside `_rooms`, its sockets closed from logout and
+from `workspaces.delete_account`, so the home library hears the nudge too.
 
 A peer is `{client, user, name, color, can_edit, block, anchor, head}` —
 `user` the account's username, which the handshake reads with the session;
@@ -433,7 +460,8 @@ focus, and `peers` / `me` as React state. The session owns:
   (`diffTrees`) and the ops queued. The mark sits on the tree value itself
   (a `WeakMap` of tree → `"load"` / `"remote"` / `"fold"`), read once by
   the transition that commits it. `"fold"` (`foldBlocks`, a text box's
-  measured size) is diffed and sent like any edit but joins the undo
+  measured size, an abandoned Comment highlight's removal) is diffed and
+  sent like any edit but joins the undo
   entry before it. It is never a flag set beside `setBlocks`: such a
   flag outlived a load React skipped (nothing changed) or was set by an
   effect running before the autosave one, and the edit committed with it
@@ -753,6 +781,10 @@ state in App instead of the tree.
   test opens its own page, and sequence numbers are asserted relative to
   the hello's (or the previous ack's) — never as absolute counts — so a
   step added to one test never renumbers the others.
+- `backend/tests/test_collab.py` also covers `publish_account`: every
+  socket of one account, in two rooms and through a share link, and no
+  other account's. The Inbox's nudge reaching the recipient's sockets only
+  is in `backend/tests/test_inbox.py`.
 - `backend/tests/test_collab_robustness.py`: conflict codes and the op
   index, a retried batch answered once from its log row (from a fresh
   process too, and applied again once the row is pruned), create-if-absent

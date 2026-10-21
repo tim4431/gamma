@@ -69,6 +69,13 @@ def _pending(info):
     return [m for m in info["members"] if m.get("pending")]
 
 
+def _invited(name):
+    """The account's ``invited`` Inbox items: ``[(workspace, inviter)]``."""
+    with connect_users_db() as conn:
+        return sorted(conn.execute("SELECT workspace_id, actor FROM inbox_items WHERE kind = 'invited' "
+                                   "AND user_id = ?", (account_of(name),)).fetchall())
+
+
 def test_invite_waits_and_provisioned_sign_in_claims_it(owner, boss, cloud_on, monkeypatch):
     ws = _shared(boss, "PM lab")
     r = owner.post(f"/api/workspaces/{ws}/invites", json={"username": "@PM-Alice ", "role": "viewer"})
@@ -94,12 +101,14 @@ def test_invite_waits_and_provisioned_sign_in_claims_it(owner, boss, cloud_on, m
     info = owner.get(f"/api/workspaces/{ws}").json()
     assert ("pm-alice", "editor", "pm_owner") in [(m["username"], m["role"], m["added_by"]) for m in info["members"]]
     assert _pending(info) == []
+    assert _invited("pm-alice") == [(ws, account_of("pm_owner"))]  # an Inbox item from the inviter
 
     # someone already linked here joins at once, no pending row
     ws2 = _shared(boss, "PM lab two")
     r = owner.post(f"/api/workspaces/{ws2}/invites", json={"username": "pm-alice", "role": "viewer"})
     assert r.json()["invited"] == {"member": "pm-alice", "username": "pm-alice"}
     assert workspaces.role_of(ws2, account_of("pm-alice")) == "viewer" and workspaces.pending_invites(ws2) == []
+    assert _invited("pm-alice") == sorted([(ws, account_of("pm_owner")), (ws2, account_of("pm_owner"))])
     r = owner.post(f"/api/workspaces/{ws2}/invites", json={"username": "pm-alice", "role": "editor"})
     assert r.status_code == 400 and "already a member" in r.json()["detail"]
 

@@ -63,7 +63,7 @@ def test_v20_removes_the_legacy_guest_account(data_dir):
         conn.execute("INSERT INTO shares (token, workspace_id, page_id, created_at) VALUES ('sh-g', ?, 'p', ?)", (ws, OLD))
         conn.execute("PRAGMA user_version = 19")
         conn.commit()
-    assert migrations.ensure_current()["applied"] == ["guest_accounts", "folder_shares", "upload_orphans", "page_trash", "jobs", "account_ids", "block_columns", "page_changes", "chats_and_notes_index", "folder_blocks", "highlight_shape", "session_columns", "share_token_workspace", "page_ops_batch_id", "folder_links", "folder_links_remote", "reminders_done"]
+    assert migrations.ensure_current()["applied"] == ["guest_accounts", "folder_shares", "upload_orphans", "page_trash", "jobs", "account_ids", "block_columns", "page_changes", "chats_and_notes_index", "folder_blocks", "highlight_shape", "session_columns", "share_token_workspace", "page_ops_batch_id", "folder_links", "folder_links_remote", "reminders_done", "comments_inbox"]
     with connect_users_db() as conn:
         assert conn.execute("SELECT username, is_guest FROM users").fetchall() == [("mig20_nopw", 0)]
         for table in ("sessions", "workspaces", "workspace_members", "user_prefs", "shares"):
@@ -89,7 +89,7 @@ def test_v21_gives_shares_a_folder_target(data_dir):
         conn.execute("INSERT INTO shares (token, workspace_id, page_id, created_at) VALUES ('sh21', 'ws21', 'p1', ?)", (OLD,))
         conn.execute("PRAGMA user_version = 20")
         conn.commit()
-    assert migrations.ensure_current()["applied"] == ["folder_shares", "upload_orphans", "page_trash", "jobs", "account_ids", "block_columns", "page_changes", "chats_and_notes_index", "folder_blocks", "highlight_shape", "session_columns", "share_token_workspace", "page_ops_batch_id", "folder_links", "folder_links_remote", "reminders_done"]
+    assert migrations.ensure_current()["applied"] == ["folder_shares", "upload_orphans", "page_trash", "jobs", "account_ids", "block_columns", "page_changes", "chats_and_notes_index", "folder_blocks", "highlight_shape", "session_columns", "share_token_workspace", "page_ops_batch_id", "folder_links", "folder_links_remote", "reminders_done", "comments_inbox"]
     with connect_users_db() as conn:
         assert conn.execute("SELECT page_id, folder FROM shares WHERE token = 'ws21.sh21'").fetchone() == ("p1", "")
         conn.execute("INSERT INTO shares (token, workspace_id, page_id, folder, created_at) VALUES ('f1', 'ws21', '', 'a/b', ?)", (OLD,))
@@ -113,13 +113,13 @@ def test_v23_writes_the_reserved_trash_row(data_dir):
     with closing(sqlite3.connect(str(config.USERS_DB))) as conn:
         conn.execute("PRAGMA user_version = 22")
         conn.commit()
-    assert migrations.ensure_current()["applied"] == ["page_trash", "jobs", "account_ids", "block_columns", "page_changes", "chats_and_notes_index", "folder_blocks", "highlight_shape", "session_columns", "share_token_workspace", "page_ops_batch_id", "folder_links", "folder_links_remote", "reminders_done"]
+    assert migrations.ensure_current()["applied"] == ["page_trash", "jobs", "account_ids", "block_columns", "page_changes", "chats_and_notes_index", "folder_blocks", "highlight_shape", "session_columns", "share_token_workspace", "page_ops_batch_id", "folder_links", "folder_links_remote", "reminders_done", "comments_inbox"]
     with closing(sqlite3.connect(str(ws_dir / "pages.db"))) as conn:
         assert conn.execute("SELECT parent_id, position FROM unified_blocks WHERE id = 'trash'").fetchone() == (None, "a1")
     with closing(sqlite3.connect(str(config.USERS_DB))) as conn:
         conn.execute("PRAGMA user_version = 22")
         conn.commit()
-    assert migrations.ensure_current()["applied"] == ["page_trash", "jobs", "account_ids", "block_columns", "page_changes", "chats_and_notes_index", "folder_blocks", "highlight_shape", "session_columns", "share_token_workspace", "page_ops_batch_id", "folder_links", "folder_links_remote", "reminders_done"]  # re-runnable
+    assert migrations.ensure_current()["applied"] == ["page_trash", "jobs", "account_ids", "block_columns", "page_changes", "chats_and_notes_index", "folder_blocks", "highlight_shape", "session_columns", "share_token_workspace", "page_ops_batch_id", "folder_links", "folder_links_remote", "reminders_done", "comments_inbox"]  # re-runnable
     with closing(sqlite3.connect(str(ws_dir / "pages.db"))) as conn:
         assert conn.execute("SELECT COUNT(*) FROM unified_blocks WHERE id = 'trash'").fetchone()[0] == 1
 
@@ -131,7 +131,7 @@ def test_v35_adds_folder_links_and_is_repeatable(data_dir):
     v24_users_db(34)
     with closing(sqlite3.connect(str(data_dir / "users.db"))) as conn:
         assert not conn.execute("SELECT 1 FROM sqlite_master WHERE name = 'folder_links'").fetchone()
-    assert migrations.ensure_current()["applied"] == ["folder_links", "folder_links_remote", "reminders_done"]
+    assert migrations.ensure_current()["applied"] == ["folder_links", "folder_links_remote", "reminders_done", "comments_inbox"]
     with connect_users_db() as conn:
         assert conn.execute("SELECT * FROM folder_links").fetchall() == []
         assert migrations._columns(conn, "folder_links")[-3:] == ["remote_url", "token", "token_id"]
@@ -140,7 +140,7 @@ def test_v35_adds_folder_links_and_is_repeatable(data_dir):
     with closing(sqlite3.connect(str(data_dir / "users.db"))) as conn:
         conn.execute("PRAGMA user_version = 34")
         conn.commit()
-    assert migrations.ensure_current()["applied"] == ["folder_links", "folder_links_remote", "reminders_done"]  # re-runnable over an existing table
+    assert migrations.ensure_current()["applied"] == ["folder_links", "folder_links_remote", "reminders_done", "comments_inbox"]  # re-runnable over an existing table
     with connect_users_db() as conn:
         assert conn.execute("SELECT id, path, remote_url, token, token_id FROM folder_links").fetchall() == [("l1", "Papers", "", "", "")]
 
@@ -167,7 +167,7 @@ def test_v36_reshapes_the_folder_links_release_0_2_16_made(data_dir):
         conn.execute("INSERT INTO folder_links (id, workspace_id, folder_id, path, created_by, created_at) "
                      "VALUES ('l1', 'ws1', 'root', 'Papers', 'u1', '2026-01-01T00:00:00Z')")
         conn.commit()
-    assert migrations.ensure_current()["applied"] == ["folder_links_remote", "reminders_done"]
+    assert migrations.ensure_current()["applied"] == ["folder_links_remote", "reminders_done", "comments_inbox"]
     with connect_users_db() as conn:
         ddl = conn.execute("SELECT sql FROM sqlite_master WHERE name = 'folder_links'").fetchone()[0]
         assert "REFERENCES" not in ddl
@@ -175,7 +175,7 @@ def test_v36_reshapes_the_folder_links_release_0_2_16_made(data_dir):
         assert conn.execute("SELECT id, path, remote_url FROM folder_links").fetchall() == [("l1", "Papers", "")]
         conn.execute("INSERT INTO folder_links (id, workspace_id, folder_id, path, created_by, created_at, remote_url) "
                      "VALUES ('l2', 'wsOfAnotherServer', 'root', 'Shared', 'u1', '2026-01-02T00:00:00Z', 'https://nas')")
-    assert migrations.data_version() == SCHEMA_VERSION == 39
+    assert migrations.data_version() == SCHEMA_VERSION == 40
     assert migrations.ensure_current()["applied"] == []  # 0.2.16's own step 36 left it here: current
     with connect_users_db() as conn:
         assert conn.execute("SELECT COUNT(*) FROM folder_links").fetchone() == (2,)
@@ -193,7 +193,7 @@ def test_v39_moves_the_done_reminders_into_their_table(data_dir):
             ("u-b", "reminders-done", "not json", OLD), ("u-b", "profile", "{}", OLD)])
         conn.execute("PRAGMA user_version = 38")
         conn.commit()
-    assert migrations.ensure_current()["applied"] == ["reminders_done"]
+    assert migrations.ensure_current()["applied"] == ["reminders_done", "comments_inbox"]
     with connect_users_db() as conn:
         assert sorted(conn.execute("SELECT * FROM reminders_done")) == [
             ("u-a", "b1/2026-10-10/09:00", "", "2026-10-11T08:00:00.000Z"),
@@ -203,10 +203,49 @@ def test_v39_moves_the_done_reminders_into_their_table(data_dir):
     with closing(sqlite3.connect(str(data_dir / "users.db"))) as conn:
         conn.execute("PRAGMA user_version = 38")
         conn.commit()
-    assert migrations.ensure_current()["applied"] == ["reminders_done"]  # re-runnable
+    assert migrations.ensure_current()["applied"] == ["reminders_done", "comments_inbox"]  # re-runnable
     with connect_users_db() as conn:
         assert sorted(conn.execute("SELECT key, workspace_id FROM reminders_done")) == [
             ("b1/2026-10-10/09:00", "ws1"), ("b2/2026-10-12/", "")]
+
+
+def test_v40_adds_the_inbox_and_the_invitation_time(data_dir):
+    """users.db gains ``inbox_items`` with its three indexes, and
+    ``share_users`` gains ``added_at`` ('' on the invitations already
+    there), in step 40's frozen shape; a rerun changes nothing, and no
+    workspace is touched (the comments table comes from the pages.db
+    schema statements)."""
+    connect_users_db().close()
+    with closing(sqlite3.connect(str(data_dir / "users.db"))) as conn:
+        conn.execute("DROP TABLE inbox_items")
+        conn.execute("ALTER TABLE share_users RENAME TO share_users_v40")
+        conn.execute("CREATE TABLE share_users (token TEXT NOT NULL, user_id TEXT NOT NULL, role TEXT NOT NULL, "
+                     "PRIMARY KEY (token, user_id))")
+        conn.execute("DROP TABLE share_users_v40")
+        conn.execute("INSERT INTO share_users VALUES ('ws1.secret', 'u-a', 'edit')")
+        conn.execute("PRAGMA user_version = 39")
+        conn.commit()
+    result = migrations.ensure_current()
+    assert result["applied"] == ["comments_inbox"] and result["workspace_steps"] == []
+    assert migrations.workspace_format() == 38  # a global step only: clones and publications keep syncing
+    with connect_users_db() as conn:
+        assert conn.execute("SELECT token, user_id, role, added_at FROM share_users").fetchall() == [
+            ("ws1.secret", "u-a", "edit", "")]
+        assert migrations._columns(conn, "inbox_items") == [
+            "id", "user_id", "kind", "actor", "workspace_id", "page_id", "block_id", "thread_id", "comment_id",
+            "share_token", "snippet", "at", "read_at", "archived_at"]
+        indexes = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'index' "
+                                              "AND tbl_name = 'inbox_items'")}
+        assert {"idx_inbox_user", "idx_inbox_unread", "idx_inbox_comment"} <= indexes
+        conn.execute("INSERT INTO inbox_items (id, user_id, kind, actor, workspace_id, at) "
+                     "VALUES ('i1', 'u-a', 'shared', 'u-b', 'ws1', ?)", (OLD,))
+    with closing(sqlite3.connect(str(data_dir / "users.db"))) as conn:
+        conn.execute("PRAGMA user_version = 39")
+        conn.commit()
+    assert migrations.ensure_current()["applied"] == ["comments_inbox"]  # re-runnable
+    with connect_users_db() as conn:
+        assert conn.execute("SELECT id FROM inbox_items").fetchall() == [("i1",)]
+        assert migrations._columns(conn, "share_users") == ["token", "user_id", "role", "added_at"]
 
 
 def test_v24_adds_jobs_and_is_repeatable(data_dir):
@@ -215,7 +254,7 @@ def test_v24_adds_jobs_and_is_repeatable(data_dir):
         conn.execute("DROP TABLE jobs")
         conn.execute("PRAGMA user_version = 23")
         conn.commit()
-    assert migrations.ensure_current()["applied"] == ["jobs", "account_ids", "block_columns", "page_changes", "chats_and_notes_index", "folder_blocks", "highlight_shape", "session_columns", "share_token_workspace", "page_ops_batch_id", "folder_links", "folder_links_remote", "reminders_done"]
+    assert migrations.ensure_current()["applied"] == ["jobs", "account_ids", "block_columns", "page_changes", "chats_and_notes_index", "folder_blocks", "highlight_shape", "session_columns", "share_token_workspace", "page_ops_batch_id", "folder_links", "folder_links_remote", "reminders_done", "comments_inbox"]
     with connect_users_db() as conn:
         assert conn.execute("SELECT * FROM jobs").fetchall() == []
         indexes = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'jobs'")}
@@ -223,7 +262,7 @@ def test_v24_adds_jobs_and_is_repeatable(data_dir):
     with closing(sqlite3.connect(str(data_dir / "users.db"))) as conn:
         conn.execute("PRAGMA user_version = 23")
         conn.commit()
-    assert migrations.ensure_current()["applied"] == ["jobs", "account_ids", "block_columns", "page_changes", "chats_and_notes_index", "folder_blocks", "highlight_shape", "session_columns", "share_token_workspace", "page_ops_batch_id", "folder_links", "folder_links_remote", "reminders_done"]  # re-runnable over an existing table
+    assert migrations.ensure_current()["applied"] == ["jobs", "account_ids", "block_columns", "page_changes", "chats_and_notes_index", "folder_blocks", "highlight_shape", "session_columns", "share_token_workspace", "page_ops_batch_id", "folder_links", "folder_links_remote", "reminders_done", "comments_inbox"]  # re-runnable over an existing table
 
 
 WS25 = "wsAccounts25"
@@ -320,7 +359,7 @@ def test_v25_keys_accounts_by_id(data_dir):
     from gamma.publisher_sessions import cipher
 
     build_v24_accounts()
-    assert migrations.ensure_current()["applied"] == ["account_ids", "block_columns", "page_changes", "chats_and_notes_index", "folder_blocks", "highlight_shape", "session_columns", "share_token_workspace", "page_ops_batch_id", "folder_links", "folder_links_remote", "reminders_done"]
+    assert migrations.ensure_current()["applied"] == ["account_ids", "block_columns", "page_changes", "chats_and_notes_index", "folder_blocks", "highlight_shape", "session_columns", "share_token_workspace", "page_ops_batch_id", "folder_links", "folder_links_remote", "reminders_done", "comments_inbox"]
     ids = ids_by_name()
     alice, bob = ids["alice"], ids["bob"]
     assert len(set(ids.values())) == 3 and all(len(i) == 12 for i in ids.values())
@@ -362,7 +401,7 @@ def test_v25_keys_accounts_by_id(data_dir):
     with closing(sqlite3.connect(str(config.USERS_DB))) as conn:
         conn.execute("PRAGMA user_version = 24")
         conn.commit()
-    assert migrations.ensure_current()["applied"] == ["account_ids", "block_columns", "page_changes", "chats_and_notes_index", "folder_blocks", "highlight_shape", "session_columns", "share_token_workspace", "page_ops_batch_id", "folder_links", "folder_links_remote", "reminders_done"]  # re-runnable: nothing changes again
+    assert migrations.ensure_current()["applied"] == ["account_ids", "block_columns", "page_changes", "chats_and_notes_index", "folder_blocks", "highlight_shape", "session_columns", "share_token_workspace", "page_ops_batch_id", "folder_links", "folder_links_remote", "reminders_done", "comments_inbox"]  # re-runnable: nothing changes again
     assert account_state() == before and ids_by_name() == ids
 
 
@@ -390,7 +429,7 @@ def test_v25_resumes_after_a_crash(data_dir, monkeypatch):
     with closing(sqlite3.connect(str(config.USERS_DB))) as conn:
         ids = dict(conn.execute("SELECT username, id FROM users").fetchall())
     monkeypatch.setattr(migrations, "_each_pages_db", real_each)
-    assert migrations.ensure_current()["applied"] == ["account_ids", "block_columns", "page_changes", "chats_and_notes_index", "folder_blocks", "highlight_shape", "session_columns", "share_token_workspace", "page_ops_batch_id", "folder_links", "folder_links_remote", "reminders_done"]
+    assert migrations.ensure_current()["applied"] == ["account_ids", "block_columns", "page_changes", "chats_and_notes_index", "folder_blocks", "highlight_shape", "session_columns", "share_token_workspace", "page_ops_batch_id", "folder_links", "folder_links_remote", "reminders_done", "comments_inbox"]
     assert ids_by_name() == ids
     state = account_state()
     assert state["page_ops"][0] == (1, ids["alice"]) and state["tasks"] == sorted(["", ids["alice"]])
@@ -426,7 +465,7 @@ def test_v26_gives_blocks_their_hot_fields(data_dir):
     with closing(sqlite3.connect(str(config.USERS_DB))) as conn:
         conn.execute("PRAGMA user_version = 25")
         conn.commit()
-    assert migrations.ensure_current()["applied"] == ["block_columns", "page_changes", "chats_and_notes_index", "folder_blocks", "highlight_shape", "session_columns", "share_token_workspace", "page_ops_batch_id", "folder_links", "folder_links_remote", "reminders_done"]
+    assert migrations.ensure_current()["applied"] == ["block_columns", "page_changes", "chats_and_notes_index", "folder_blocks", "highlight_shape", "session_columns", "share_token_workspace", "page_ops_batch_id", "folder_links", "folder_links_remote", "reminders_done", "comments_inbox"]
 
     def blocks():
         with closing(sqlite3.connect(str(pages_db))) as conn:
@@ -451,7 +490,7 @@ def test_v26_gives_blocks_their_hot_fields(data_dir):
     with closing(sqlite3.connect(str(config.USERS_DB))) as conn:
         conn.execute("PRAGMA user_version = 25")
         conn.commit()
-    assert migrations.ensure_current()["applied"] == ["block_columns", "page_changes", "chats_and_notes_index", "folder_blocks", "highlight_shape", "session_columns", "share_token_workspace", "page_ops_batch_id", "folder_links", "folder_links_remote", "reminders_done"]  # re-runnable
+    assert migrations.ensure_current()["applied"] == ["block_columns", "page_changes", "chats_and_notes_index", "folder_blocks", "highlight_shape", "session_columns", "share_token_workspace", "page_ops_batch_id", "folder_links", "folder_links_remote", "reminders_done", "comments_inbox"]  # re-runnable
     assert blocks() == before
     with closing(sqlite3.connect(str(pages_db))) as conn:
         cols = [r[1] for r in conn.execute("PRAGMA table_xinfo(unified_blocks)")]
@@ -500,7 +539,7 @@ def test_v27_folds_tombstones_into_the_change_log(data_dir):
                      (WS27, f"{OLD}|older", OLD, OLD))
         conn.execute("PRAGMA user_version = 26")
         conn.commit()
-    assert migrations.ensure_current()["applied"] == ["page_changes", "chats_and_notes_index", "folder_blocks", "highlight_shape", "session_columns", "share_token_workspace", "page_ops_batch_id", "folder_links", "folder_links_remote", "reminders_done"]
+    assert migrations.ensure_current()["applied"] == ["page_changes", "chats_and_notes_index", "folder_blocks", "highlight_shape", "session_columns", "share_token_workspace", "page_ops_batch_id", "folder_links", "folder_links_remote", "reminders_done", "comments_inbox"]
 
     def log():
         with closing(sqlite3.connect(str(pages_db))) as conn:
@@ -524,7 +563,7 @@ def test_v27_folds_tombstones_into_the_change_log(data_dir):
     with closing(sqlite3.connect(str(config.USERS_DB))) as conn:
         conn.execute("PRAGMA user_version = 26")
         conn.commit()
-    assert migrations.ensure_current()["applied"] == ["page_changes", "chats_and_notes_index", "folder_blocks", "highlight_shape", "session_columns", "share_token_workspace", "page_ops_batch_id", "folder_links", "folder_links_remote", "reminders_done"]  # re-runnable
+    assert migrations.ensure_current()["applied"] == ["page_changes", "chats_and_notes_index", "folder_blocks", "highlight_shape", "session_columns", "share_token_workspace", "page_ops_batch_id", "folder_links", "folder_links_remote", "reminders_done", "comments_inbox"]  # re-runnable
     assert log() == before
 
 
@@ -594,7 +633,7 @@ def test_v28_moves_the_chats_and_builds_the_notes_index(data_dir):
         return hits, chats, history, tables
 
     stamp(27)
-    assert migrations.ensure_current()["applied"] == ["chats_and_notes_index", "folder_blocks", "highlight_shape", "session_columns", "share_token_workspace", "page_ops_batch_id", "folder_links", "folder_links_remote", "reminders_done"]
+    assert migrations.ensure_current()["applied"] == ["chats_and_notes_index", "folder_blocks", "highlight_shape", "session_columns", "share_token_workspace", "page_ops_batch_id", "folder_links", "folder_links_remote", "reminders_done", "comments_inbox"]
     before = state()
     hits, chats, history, tables = before
     assert hits == [("binnedKid", "binned", "a binned wombat"), ("hl", "page", "wombat highlight"),
@@ -611,7 +650,7 @@ def test_v28_moves_the_chats_and_builds_the_notes_index(data_dir):
         conn.execute("INSERT INTO chats VALUES ('page', '[]', ?)", (NEW,))
         conn.commit()
     stamp(27)
-    assert migrations.ensure_current()["applied"] == ["chats_and_notes_index", "folder_blocks", "highlight_shape", "session_columns", "share_token_workspace", "page_ops_batch_id", "folder_links", "folder_links_remote", "reminders_done"]  # re-runnable
+    assert migrations.ensure_current()["applied"] == ["chats_and_notes_index", "folder_blocks", "highlight_shape", "session_columns", "share_token_workspace", "page_ops_batch_id", "folder_links", "folder_links_remote", "reminders_done", "comments_inbox"]  # re-runnable
     assert state() == before
 
 
@@ -702,7 +741,8 @@ def test_v29_makes_folders_and_labels_blocks(data_dir):
                                                         ("shGone", WS29, "", "Gone/Path", OLD),
                                                         ("shTwin", WS29, "", "physics/qec", OLD),  # resolves to shQ's folder
                                                         ("shPage", WS29, "p2", "", OLD)])
-        conn.executemany("INSERT INTO share_users VALUES (?, 'id-bob29', 'view')", [("shGone",), ("shTwin",)])
+        conn.executemany("INSERT INTO share_users (token, user_id, role) VALUES (?, 'id-bob29', 'view')",
+                         [("shGone",), ("shTwin",)])
         conn.executemany("INSERT INTO user_prefs VALUES (?, ?, 'pinned-folders', ?, ?)", [
             ("id-alice29", WS29, json.dumps([{"path": "Physics", "at": "2025-01-01T00:00:00.000Z"},
                                               {"path": "Nowhere", "at": "2025-01-02T00:00:00.000Z"}]), OLD),
@@ -718,7 +758,7 @@ def test_v29_makes_folders_and_labels_blocks(data_dir):
     def label(name):
         return tree_block_id("labels", (name,))
 
-    assert migrations.ensure_current()["applied"] == ["folder_blocks", "highlight_shape", "session_columns", "share_token_workspace", "page_ops_batch_id", "folder_links", "folder_links_remote", "reminders_done"]
+    assert migrations.ensure_current()["applied"] == ["folder_blocks", "highlight_shape", "session_columns", "share_token_workspace", "page_ops_batch_id", "folder_links", "folder_links_remote", "reminders_done", "comments_inbox"]
 
     def state():
         with closing(sqlite3.connect(str(pages_db))) as conn:
@@ -767,7 +807,7 @@ def test_v29_makes_folders_and_labels_blocks(data_dir):
     with closing(sqlite3.connect(str(config.USERS_DB))) as conn:
         conn.execute("PRAGMA user_version = 28")
         conn.commit()
-    assert migrations.ensure_current()["applied"] == ["folder_blocks", "highlight_shape", "session_columns", "share_token_workspace", "page_ops_batch_id", "folder_links", "folder_links_remote", "reminders_done"]  # re-runnable
+    assert migrations.ensure_current()["applied"] == ["folder_blocks", "highlight_shape", "session_columns", "share_token_workspace", "page_ops_batch_id", "folder_links", "folder_links_remote", "reminders_done", "comments_inbox"]  # re-runnable
     assert state() == before
 
 
@@ -885,7 +925,7 @@ def test_v30_gives_highlights_their_shape(data_dir):
         conn.commit()
         users_before = list(conn.iterdump())
 
-    assert migrations.ensure_current()["applied"] == ["highlight_shape", "session_columns", "share_token_workspace", "page_ops_batch_id", "folder_links", "folder_links_remote", "reminders_done"]
+    assert migrations.ensure_current()["applied"] == ["highlight_shape", "session_columns", "share_token_workspace", "page_ops_batch_id", "folder_links", "folder_links_remote", "reminders_done", "comments_inbox"]
 
     def state():
         with closing(sqlite3.connect(str(pages_db))) as conn:
@@ -916,7 +956,7 @@ def test_v30_gives_highlights_their_shape(data_dir):
     with closing(sqlite3.connect(str(config.USERS_DB))) as conn:
         conn.execute("PRAGMA user_version = 29")
         conn.commit()
-    assert migrations.ensure_current()["applied"] == ["highlight_shape", "session_columns", "share_token_workspace", "page_ops_batch_id", "folder_links", "folder_links_remote", "reminders_done"]  # re-runnable
+    assert migrations.ensure_current()["applied"] == ["highlight_shape", "session_columns", "share_token_workspace", "page_ops_batch_id", "folder_links", "folder_links_remote", "reminders_done", "comments_inbox"]  # re-runnable
     assert state() == before
 
 
@@ -1081,7 +1121,7 @@ def test_v31_drops_the_dead_session_column(data_dir, monkeypatch):
     with closing(sqlite3.connect(str(config.USERS_DB))) as conn:
         assert [r[1] for r in conn.execute("PRAGMA table_info(sessions)")] == ["token", "user_id", "guest_date", "created_at", "via"]
         (alice,) = conn.execute("SELECT id FROM users WHERE username = 'alice31'").fetchone()
-    assert migrations.ensure_current()["applied"] == ["session_columns", "share_token_workspace", "page_ops_batch_id", "folder_links", "folder_links_remote", "reminders_done"]
+    assert migrations.ensure_current()["applied"] == ["session_columns", "share_token_workspace", "page_ops_batch_id", "folder_links", "folder_links_remote", "reminders_done", "comments_inbox"]
     with closing(sqlite3.connect(str(config.USERS_DB))) as conn:
         assert [r[1] for r in conn.execute("PRAGMA table_info(sessions)")] == ["token", "user_id", "created_at", "via"]
         assert conn.execute("SELECT user_id, created_at, via FROM sessions WHERE token = 'tok-31'").fetchone() == (alice, OLD, "cloud")
@@ -1160,7 +1200,7 @@ def test_v33_gives_the_op_log_its_batch_columns(data_dir, monkeypatch):
     no_log.parent.mkdir()
     _legacy_pages_db(no_log, [])
 
-    assert migrations.ensure_current()["applied"] == ["page_ops_batch_id", "folder_links", "folder_links_remote", "reminders_done"]
+    assert migrations.ensure_current()["applied"] == ["page_ops_batch_id", "folder_links", "folder_links_remote", "reminders_done", "comments_inbox"]
 
     def shape(conn):
         return ([tuple(r[1:]) for r in conn.execute("PRAGMA table_info(page_ops)")],
@@ -1190,7 +1230,7 @@ def test_v33_gives_the_op_log_its_batch_columns(data_dir, monkeypatch):
     with closing(sqlite3.connect(str(config.USERS_DB))) as conn:
         conn.execute("PRAGMA user_version = 32")
         conn.commit()
-    assert migrations.ensure_current()["applied"] == ["page_ops_batch_id", "folder_links", "folder_links_remote", "reminders_done"]  # re-runnable
+    assert migrations.ensure_current()["applied"] == ["page_ops_batch_id", "folder_links", "folder_links_remote", "reminders_done", "comments_inbox"]  # re-runnable
     assert state() == before
 
     ws_backup._normalize_copies(restored.parent)  # a backup taken before the step
@@ -1229,9 +1269,9 @@ def test_v34_moves_the_workspace_prefs_into_the_workspace(data_dir, monkeypatch)
         conn.commit()
 
     result = migrations.ensure_current()
-    assert result["applied"] == ["folder_links", "folder_links_remote", "reminders_done"]
+    assert result["applied"] == ["folder_links", "folder_links_remote", "reminders_done", "comments_inbox"]
     assert result["workspace_steps"] == ["workspace_prefs", "highlight_colors", "recording_kind"]
-    assert migrations.data_version() == SCHEMA_VERSION == 39
+    assert migrations.data_version() == SCHEMA_VERSION == 40
     assert migrations.is_behind(WS34)
     with closing(sqlite3.connect(str(pages_db))) as conn:  # the upgrade left the workspace as it was
         assert conn.execute("PRAGMA user_version").fetchone()[0] == 0

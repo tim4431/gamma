@@ -1,7 +1,8 @@
-// The [[ link picker's lists (BlockTree's refPopup, RefPicker.jsx): pages
+// The [[ link picker's lists (useRefPicker.js, RefPicker.jsx): pages
 // matched by title first, then note blocks as one plain line under their
-// page path. Also the hand-typed [[title]] rule: the one page with exactly
-// that title. Pure, so node tests it (tests/refLists.test.mjs).
+// page path. Also the typed "[[query" and the edit a picked row makes, and
+// the hand-typed [[title]] rule: the one page with exactly that title.
+// Pure, so node tests it (tests/refLists.test.mjs).
 import { createLibraryMatcher } from "../library/librarySearch.js";
 import { plainSnippet } from "../search/snippets.js";
 import { REF_RE } from "./refLabels.js";
@@ -57,4 +58,31 @@ export function pageByTitle(pages, text) {
   if (!want) return null;
   const hits = (pages || []).filter((p) => norm(p.content) === want);
   return hits.length === 1 ? hits[0] : null;
+}
+
+// The "[[query" being typed just before the caret (`before`: the text up
+// to it), as its query, or null when no picker is being typed.
+export function refQueryAt(before) {
+  const m = String(before || "").match(/\[\[([^\]\n]*)$/);
+  return m ? m[1] : null;
+}
+
+// A picked row: the typed "[[query" before `cursor` becomes [[id]] (a "!"
+// before it stays, making it an embed). {from, to, insert, value, caret},
+// or null when no "[[" is being typed there.
+export function refInsertEdit(value, cursor, id) {
+  const query = refQueryAt(String(value || "").slice(0, cursor));
+  if (query == null) return null;
+  const from = cursor - query.length - 2, insert = `[[${id}]]`;
+  return { from, to: cursor, insert, value: value.slice(0, from) + insert + value.slice(cursor), caret: from + insert.length };
+}
+
+// "]]" typed by hand after a page's exact title, ending at `cursor`: that
+// title's [[id]] as {from, to, insert, page}, or null (no such page, or
+// already an id).
+export function typedTitleLink(value, cursor, pages) {
+  const m = String(value || "").slice(0, cursor).match(/\[\[([^[\]\n]+)\]\]$/);
+  const page = m && pageByTitle(pages, m[1]);
+  if (!page || page.id === m[1]) return null;
+  return { from: cursor - m[0].length, to: cursor, insert: `[[${page.id}]]`, page };
 }

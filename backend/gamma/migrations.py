@@ -1547,6 +1547,50 @@ def _v39_reminders_done(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
+# users.db ``inbox_items`` and its indexes, and the column ``share_users``
+# gains, as schema version 40 shaped them, frozen: step 40 creates and adds
+# them from these.
+_V40_INBOX_ITEMS = [
+    """CREATE TABLE IF NOT EXISTS inbox_items (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        actor TEXT NOT NULL,
+        workspace_id TEXT NOT NULL,
+        page_id TEXT NOT NULL DEFAULT '',
+        block_id TEXT NOT NULL DEFAULT '',
+        thread_id TEXT NOT NULL DEFAULT '',
+        comment_id TEXT NOT NULL DEFAULT '',
+        share_token TEXT NOT NULL DEFAULT '',
+        snippet TEXT NOT NULL DEFAULT '',
+        at TEXT NOT NULL,
+        read_at TEXT,
+        archived_at TEXT
+    )""",
+    "CREATE INDEX IF NOT EXISTS idx_inbox_user ON inbox_items(user_id, at)",
+    "CREATE INDEX IF NOT EXISTS idx_inbox_unread ON inbox_items(user_id) WHERE read_at IS NULL AND archived_at IS NULL",
+    "CREATE INDEX IF NOT EXISTS idx_inbox_comment ON inbox_items(comment_id) WHERE comment_id != ''",
+]
+_V40_SHARE_USERS_ADDED_AT = "ALTER TABLE share_users ADD COLUMN added_at TEXT NOT NULL DEFAULT ''"
+
+
+def _v40_comments_inbox(conn: sqlite3.Connection) -> None:
+    """users.db gains ``inbox_items`` (each account's Inbox,
+    docs/dev/comments.md "The inbox") with its indexes, and ``share_users``
+    gains ``added_at`` (when a person was invited; '' on the rows already
+    there). Re-runnable: the table and indexes are ``IF NOT EXISTS``, the
+    column is added only where it is missing (a ``share_users`` that is
+    missing altogether gets it from the schema statements). No workspace is
+    touched: the comments table is additive, and every pages.db gets it from
+    ``db.PAGES_SCHEMA`` when it opens (migrations.md rule 2)."""
+    for stmt in _V40_INBOX_ITEMS:
+        conn.execute(stmt)
+    cols = _columns(conn, "share_users")
+    if cols and "added_at" not in cols:
+        conn.execute(_V40_SHARE_USERS_ADDED_AT)
+    conn.commit()
+
+
 STEPS = [
     (20, "guest_accounts", _v20_guest_accounts),
     (21, "folder_shares", _v21_folder_shares),
@@ -1566,6 +1610,7 @@ STEPS = [
     (36, "folder_links_remote", _v36_folder_links_remote),
     # Next release: a global step deletes the user_prefs rows of the reminders-done key (39 kept them).
     (39, "reminders_done", _v39_reminders_done),
+    (40, "comments_inbox", _v40_comments_inbox),
 ]
 
 # The workspace parts of the steps from version 34 on: (version, name,

@@ -14,8 +14,8 @@ import anyio
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 
-from . import backup_schedule, cloud_sync, config, db_maintenance, guests, hosted, jobs, migrations, offsite
-from . import sync_engine, trash, upload_gc, version, workspaces, ws_backup
+from . import backup_schedule, cloud_sync, comments, config, db_maintenance, guests, hosted, inbox, jobs, migrations
+from . import offsite, sync_engine, trash, upload_gc, version, workspaces, ws_backup
 from .publish import check_config as check_publish_config
 from .auth import session_middleware
 from .compression import JsonGzip
@@ -33,9 +33,11 @@ from .routers import (
     chats,
     clip,
     collab,
+    comments as comments_router,
     export,
     folders,
     imports,
+    inbox as inbox_router,
     integrations,
     ink,
     jobs as jobs_router,
@@ -336,6 +338,8 @@ def create_app() -> FastAPI:
                 every(hosted.SYNC_INTERVAL, hosted.tick, "[hosted] the plan sync failed"), \
                 every(guests.SWEEP_INTERVAL_S, guests.delete_expired, "[guests] sweep failed"), \
                 every(trash.SWEEP_INTERVAL_S, trash.sweep, "[trash] sweep failed"), \
+                every(comments.SWEEP_INTERVAL_S, comments.sweep, "[comments] sweep failed"), \
+                every(inbox.SWEEP_INTERVAL_S, inbox.sweep, "[inbox] sweep failed"), \
                 every(ws_backup.STALE_TEMP_S, ws_backup.sweep_stale_temp, "[backups] temp sweep failed"), \
                 every(jobs.SWEEP_INTERVAL_S, jobs.sweep, "[jobs] sweep failed"), \
                 every(db_maintenance.EVERY_S, db_maintenance.tick, "[db] maintenance failed"), \
@@ -379,6 +383,7 @@ def create_app() -> FastAPI:
     app.include_router(chats.history_router)
     app.include_router(prefs.router)
     app.include_router(notices.router)
+    app.include_router(inbox_router.router)
     app.include_router(mentions.router)
     app.include_router(integrations.router)
     app.include_router(mcp_oauth_router)
@@ -400,6 +405,7 @@ def create_app() -> FastAPI:
     app.include_router(clip.router)
     app.include_router(folders.router)
     app.include_router(collab.router)
+    app.include_router(comments_router.router)
     app.include_router(sync.router)
     app.include_router(mirrors.router)
     app.include_router(folder_links_api.router)

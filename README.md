@@ -32,7 +32,7 @@ Your library lives on your server and opens from any browser: the office desktop
 
 Open a paper by pasting any link — arXiv, DOI, or a publisher page; Gamma finds the PDF and falls back to a legal open-access copy when the DOI is paywalled — or drag the file in. Then:
 
-- **Highlight** — select text or drag a box around a figure, pick a color, add a comment. Each highlight becomes a block in your notes. Highlights already saved in the file by Acrobat, Preview or SumatraPDF come in as blocks too.
+- **Highlight** — select text or drag a box around a figure, pick a color, add a note. Each highlight becomes a block in your notes. Highlights already saved in the file by Acrobat, Preview or SumatraPDF come in as blocks too.
 - **Draw** — with a stylus or the mouse: circle a claim, sketch an arrow, highlight freely. Lasso strokes to move, resize, rotate or recolor them; erase whole strokes or part of one. Ink is a note block linked to its place on the page.
 - **Type on the page** — the Text tool puts a text box on a PDF page or a notebook sheet, like Acrobat's, with Markdown and math inside. Boxes are notes too, and export as real text boxes in the annotated PDF.
 - **Follow citations** — references in the PDF are clickable; a global **← Back** unwinds jumps across documents, and a cited arXiv/DOI paper is one click from your library.
@@ -105,8 +105,9 @@ Coming from Zotero? A folder is a collection and a label is a tag. Importing or 
 <a href="./docs/user_guide/user_guide.md#workspaces"><img alt="Three people on one page of a shared workspace: the owner and Maya type two questions into the same block at once while Sam captions another block and pastes a figure from the paper under it, each caret labeled with its writer's name" src="./docs/assets/demos/demo-collab.webp" width="100%"></a>
 
 - **Edit together** — changes and cursors appear live; edits to different blocks coexist, same-block edits merge.
+- **Comments and an inbox** — comment on a note, a highlight or the whole page, @mention people, reply and resolve; viewers comment too. The bell gathers the mentions, replies, shares and invitations of every workspace and share you can open, and opens each one at its note with the thread showing.
 
-→ Guide: [Share a page](./docs/user_guide/user_guide.md#share-a-page) · [Workspaces](./docs/user_guide/user_guide.md#workspaces)
+→ Guide: [Share a page](./docs/user_guide/user_guide.md#share-a-page) · [Workspaces](./docs/user_guide/user_guide.md#workspaces) · [Comments and inbox](./docs/user_guide/user_guide.md#comments-and-inbox)
 
 ## Connect your research
 

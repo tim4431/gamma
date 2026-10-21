@@ -339,6 +339,14 @@ function caretOf(s, id, o) {
 // editor is open): push the previous tree when the transition was an edit
 // here, merge it into the running chunk, or record nothing; a load empties
 // the stack.
+// Whether `tree` takes the stack back to its newest entry's tree (a block
+// made and then removed with nothing done in between): folded, that edit
+// takes the entry away and leaves no step behind (observeTree).
+export function takesBackNewest(s, tree) {
+  const top = s.undo[s.undo.length - 1];
+  return !!top && classifyTransition(top.tree, tree) === null;
+}
+
 export function observeTree(s, blocks, o, editingId = null) {
   const prev = s.prev;
   const prevEditing = s.prevEditing;
@@ -356,9 +364,8 @@ export function observeTree(s, blocks, o, editingId = null) {
     if (origin === "fold") {
       // Back to the newest entry's tree (a text box made and left empty):
       // the entry goes, and the redo steps it cleared come back.
-      const top = s.undo[s.undo.length - 1];
-      if (top && classifyTransition(top.tree, blocks) === null) {
-        s.undo.pop();
+      if (takesBackNewest(s, blocks)) {
+        const top = s.undo.pop();
         if (top.redo) s.redo = top.redo;
         s.lastEdit = null;
       }
@@ -469,5 +476,9 @@ export function useBlockHistory(blocks, setBlocks, opts) {
   // Another client's ops landed (`rebaseHistory`): {pageId, pos, before}.
   const rebase = useCallback((ops, where) => rebaseHistory(st.current, ops, where), []);
 
-  return { undo, clear, rebase };
+  // Whether `tree` is the newest entry's tree again (`takesBack`): an edit
+  // to it, made with foldBlocks, then takes that entry away.
+  const takesBack = useCallback((tree) => takesBackNewest(st.current, tree), []);
+
+  return { undo, clear, rebase, takesBack };
 }

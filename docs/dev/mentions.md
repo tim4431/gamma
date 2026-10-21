@@ -44,10 +44,13 @@ whichever side drifts.
 
 ## The @ menu
 
-`editor/BlockTree.jsx` owns the trigger, the keys and the insertion, like
-the `/` menu's. The rows come from `mentionRows` in `mentions.js`. The popup
-is `MentionMenuPopup` in `editor/MentionMenu.jsx`: the `[[` picker's
-surface, rows and footer, with a person's `PeerAvatar` in the icon column.
+`editor/useMentionMenu.js` owns the trigger, the keys and the insertion,
+for a note row (`editor/BlockTree.jsx`) and a comment's field, which has the
+same menu without "Remind" rows (the reminder scan reads notes only) or
+"Invite…" ([comments.md](comments.md) "The composer"). The rows come from
+`mentionRows` in `mentions.js`. The popup is `MentionMenuPopup` in
+`editor/MentionMenu.jsx`: the `[[` picker's surface, rows and footer, with a
+person's `PeerAvatar` in the icon column.
 
 - **Opening.** An `@` typed at a word start opens the menu
   (`mentionTrigger`). While the menu is open its query may hold spaces, so
@@ -218,8 +221,10 @@ person who sets a reminder a day passes that within three years.
 
 - Nothing reminds anyone while no Gamma tab or desktop window is open: the
   server sends no e-mail or push.
-- Being mentioned notifies no one: there is no inbox. The notes index could
-  find a person's mentions the same way it finds their reminders.
+- Mentions themselves are not listed from the notes index: the Inbox is
+  told when a note gains a person's mention, and keeps that as an item
+  ([comments.md](comments.md) "The inbox"). `mentions.people_in` is the
+  rule it diffs by: the person mentions outside code.
 
 ## Tests
 

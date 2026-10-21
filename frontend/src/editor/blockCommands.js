@@ -206,6 +206,13 @@ export const BLOCK_COMMANDS = [
     when: (c) => !!c.row.onAddToChat,
     run: (c) => { c.row.onAddToChat(c.block); },
   },
+  // The thread popover's way in from the keyboard: a viewer comments too,
+  // so no `edits`; the focused row's control is where it opens.
+  {
+    id: "block.comment", label: t("Comment on this note"), group: GROUP_NOTES, keys: "Mod-Shift-m",
+    when: (c) => !!c.row.onComment,
+    run: (c) => { c.row.onComment(c.block.id); },
+  },
   {
     id: "block.moveToPage", label: t("Move block to page…"), group: GROUP_NOTES, keys: null, edits: true,
     when: (c) => !!c.row.onMoveToPage,

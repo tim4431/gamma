@@ -33,6 +33,8 @@ export const GROUPS = [
   { id: "chat-navigation", files: ["chatNavigation.mjs"] }, // ~12
   { id: "mentions", files: ["mentions.mjs"] }, // ~11
   { id: "note-mentions", files: ["noteMentions.mjs"] },
+  { id: "comments", files: ["comments.mjs"] },
+  { id: "inbox", files: ["inbox.mjs"] },
   { id: "collab", files: ["collab.mjs"] }, // ~11
   { id: "mirror", files: ["mirror.mjs"] }, // ~9
   { id: "transfers", files: ["transfers.mjs"] }, // ~9
@@ -52,7 +54,7 @@ const ALL = "all";
 const GUIDES = ["guide", "contextual-guide", "triggered-guide"];
 const CHAT = ["chat-navigation", "mentions", "contextual-guide", "triggered-guide", "notes-pdf-share", "touch"];
 // every group that opens a PDF in the viewer
-const PDF_VIEW = ["notes-pdf-share", "pdf-load", "pdf-touch", "ink", "ink-editing", "textbox", "collab", "files", "transfers", "touch", ...GUIDES];
+const PDF_VIEW = ["notes-pdf-share", "pdf-load", "pdf-touch", "ink", "ink-editing", "textbox", "collab", "comments", "files", "transfers", "touch", ...GUIDES];
 const EXPORTS = ["transfers", "files", "ink", "diagrams"];
 
 // [glob, groups], first match wins. `**` spans folders, `*` stays in one.
@@ -84,13 +86,21 @@ export const RULES = [
   // the replay store every handwriting replay and a recording's player run on
   ["frontend/src/replay/**", ["ink", "ink-editing", "notebooks", "recording"]],
   ["frontend/src/recording/**", ["recording"]],
+  // the row control, the thread popover, the Comments window, the page's threads over the socket
+  ["frontend/src/comments/**", ["comments", "collab", "inbox"]],
+  // the bell, its panel and the jumps (a thread's opens through comments/)
+  ["frontend/src/inbox/**", ["inbox"]],
   ["frontend/src/pdf/**", PDF_VIEW],
   // (a text box's editor and read mode are the notes')
   // the @ menu and its chips (the reminders are App's, under app/**)
   ["frontend/src/editor/mentions.js", ["note-mentions", "notes-pdf-share"]],
-  ["frontend/src/editor/MentionMenu.jsx", ["note-mentions", "notes-pdf-share"]],
-  ["frontend/src/editor/**", ["notes-pdf-share", "diagrams", "files", "collab", "transfers", "mcp", "guide", "triggered-guide", "textbox", "touch"]],
+  ["frontend/src/editor/MentionMenu.jsx", ["note-mentions", "notes-pdf-share", "inbox"]],
+  // the @ menu's state and keys, a note row's and a comment field's
+  ["frontend/src/editor/useMentionMenu.js", ["note-mentions", "notes-pdf-share", "comments", "inbox"]],
+  ["frontend/src/editor/**", ["notes-pdf-share", "diagrams", "files", "collab", "comments", "transfers", "mcp", "guide", "triggered-guide", "textbox", "touch"]],
   ["frontend/src/chat/**", CHAT],
+  // the Inbox notifications row
+  ["frontend/src/settings/SettingsAppearance.jsx", ["settings", "i18n", "mirror", "cloud-sign-in", "mcp", "publish", "triggered-guide", "inbox"]],
   ["frontend/src/settings/**", ["settings", "i18n", "mirror", "cloud-sign-in", "mcp", "publish", "triggered-guide"]],
   ["frontend/src/collaboration/MirrorPopover.jsx", ["mirror", "publish"]],
   ["frontend/src/collaboration/MergeResolver.jsx", ["mirror"]],
@@ -175,12 +185,20 @@ export const RULES = [
   ["backend/gamma/version.py", ["settings"]],
   ["backend/gamma/server_settings.py", ["settings", "mcp", "cloud-sign-in"]],
   ["backend/gamma/routers/admin.py", ["settings", "mcp", "cloud-sign-in"]],
-  ["backend/gamma/routers/shares.py", ["notes-pdf-share", "publish", "collab"]],
+  ["backend/gamma/routers/shares.py", ["notes-pdf-share", "publish", "collab", "inbox"]],
   ["backend/gamma/routers/links.py", ["notes-pdf-share", "guide"]],
   ["backend/gamma/routers/metadata.py", ["notes-pdf-share", "guide"]],
   ["backend/gamma/translate_engines.py", ["settings", "notes-pdf-share"]],
   // deleting a folder or a label (the trees' other writes are ops, ALL below)
   ["backend/gamma/routers/folders.py", ["folders", "notes-pdf-share"]],
+  // comments: their storage and API, and the hooks every block writer runs
+  // (orphan, place and purge on deletes, moves and page purges; the copies
+  // of a backup merge and an import; after_write feeds the inbox)
+  ["backend/gamma/comments.py", ["comments", "inbox", "notes-pdf-share", "collab", "transfers"]],
+  ["backend/gamma/routers/comments.py", ["comments", "inbox"]],
+  // the Inbox: its producers' items, the listing and its settle, the marks
+  ["backend/gamma/inbox.py", ["inbox", "comments"]],
+  ["backend/gamma/routers/inbox.py", ["inbox"]],
   ["backend/gamma/publisher_sessions.py", ["settings"]],
   ["backend/gamma/routers/publisher_sessions.py", ["settings"]],
   ["backend/gamma/routers/clip.py", []], // the browser extension's ingest
