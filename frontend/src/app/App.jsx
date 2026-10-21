@@ -193,7 +193,8 @@ import {
 } from "../library/libraryUtils";
 import { createLibraryMatcher } from "../library/librarySearch";
 import { useComments } from "../comments/useComments";
-import { abandonedCommentHighlight, shortCount, threadLink } from "../comments/comments.js";
+import { abandonedCommentHighlight, isOpen, shortCount, threadLink } from "../comments/comments.js";
+import { preloadCommentMargin } from "../comments/marginSlot";
 import { useInbox } from "../inbox/useInbox";
 import { InboxBadge, InboxButton } from "../inbox/InboxButton";
 import { inboxJump, isUnread } from "../inbox/inboxText.js";
@@ -4139,19 +4140,27 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
 
   // The thread popover (comments/ThreadPopover.jsx): {blockId, threadId
   // (one to show and scroll to), anchor (the element it opened from, null
-  // for the block's row control), compose (focus "New comment")}, or null.
+  // for the block's row control), compose (focus "New comment"), margin
+  // (shown as the active card in the PDF's margin instead)}, or null.
   // A second press on the control it hangs from closes it.
   const [threadPop, setThreadPop] = useState(null);
   useEffect(() => { setThreadPop(null); }, [focusedBlockId]);
-  function openThread(blockId, anchor = null, { threadId = "", compose = false, toggle = true } = {}) {
-    ThreadPopover.preload();
-    setThreadPop((cur) => (toggle && cur?.blockId === blockId && !threadId ? null : { blockId, threadId, anchor, compose }));
+  // `pdf`: opened from the PDF (a highlight, its menu, the selection
+  // popup) or a jump to a thread: a highlight whose page has room for the
+  // margin opens its card there, its threadId the active card (an open
+  // thread's; a resolved one has no card and opens in the popover).
+  const pdfMarginRef = useRef(null); // set by PdfViewer: (hlId) => whether its card would show
+  function openThread(blockId, anchor = null, { threadId = "", compose = false, toggle = true, pdf = false } = {}) {
+    const thread = threadId ? commentsRef.current.threads.find((th) => th.id === threadId) : null;
+    const margin = pdf && !(thread && !isOpen(thread)) && !!pdfMarginRef.current?.(blockId);
+    if (margin) preloadCommentMargin(); else ThreadPopover.preload();
+    setThreadPop((cur) => (toggle && cur?.blockId === blockId && !threadId ? null : { blockId, threadId, anchor, compose, margin }));
   }
   // Escape gives the focus back to the control it opened from.
   function closeThread(returnFocus) {
     const pop = threadPop;
     setThreadPop(null);
-    if (!returnFocus || !pop) return;
+    if (!returnFocus || !pop || pop.margin) return;
     const el = pop.anchor?.isConnected ? pop.anchor : document.querySelector(`[data-comment-for="${CSS.escape(pop.blockId)}"]`);
     el?.focus();
   }
@@ -4168,7 +4177,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       if (freshCommentRef.current?.id !== id) return;
       const el = document.querySelector(`[data-hl-id="${CSS.escape(id)}"]`);
       if (!el && ++frames < 30) { requestAnimationFrame(open); return; }
-      openThread(id, el, { compose: true, toggle: false });
+      openThread(id, el, { compose: true, toggle: false, pdf: true });
     };
     requestAnimationFrame(open);
   }
@@ -4184,7 +4193,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       } else showInNotes(thread.block_id);
       triggerFlash(thread.block_id);
     }
-    openThread(thread.block_id, null, { threadId: thread.id, toggle: false });
+    openThread(thread.block_id, null, { threadId: thread.id, toggle: false, pdf: true });
   }
   // A thread to open once its page's comments are in: the boot's ?thread=,
   // or one in this workspace named by its page and block (the inbox), as
@@ -8011,6 +8020,38 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       (blockHistory.takesBack(remove(blocks)) ? foldBlocks : setBlocks)(remove);
     }
   }, [threadPop]); // eslint-disable-line react-hooks/exhaustive-deps
+  // A link visitor without an account signs in through the share's own gate.
+  const commentSignIn = shareMode && shareInfo && !shareInfo.viewer && !publicPage
+    ? () => { setThreadPop(null); setLoginError(""); setShareGate("login"); } : undefined;
+  // The PDF's comment margin (comments/marginSlot.jsx, docs/dev/comments.md
+  // "The PDF margin"): what its cards read, the popover's props with the
+  // active card's target; none on a phone. The handlers reach App's latest
+  // through a ref, so the value changes only with what the cards show.
+  const marginFns = useRef(null);
+  marginFns.current = { commentLabels, openBlockLink, copyThreadLink, onCacheRef, commentSignIn, openThread };
+  const commentMargin = useMemo(() => (commentsOn && !isPhone ? {
+    threadsByBlock: comments.threadsByBlock,
+    target: threadPop?.margin ? threadPop : null,
+    me: commentMe,
+    owner: !shareMode && workspace?.role === "owner",
+    canComment,
+    people,
+    labelsFor: (body) => marginFns.current.commentLabels(body),
+    links: {
+      pages: pageBlocks, rootId: focusedBlockId, lookupBlock: (id) => treeById.get(id), refCache,
+      onCacheRef: (...args) => marginFns.current.onCacheRef(...args),
+    },
+    onBlockRefClick: (...args) => marginFns.current.openBlockLink(...args),
+    onAdd: comments.add,
+    onEdit: comments.edit,
+    onDelete: comments.remove,
+    onResolve: comments.resolve,
+    onCopyLink: (comment) => marginFns.current.copyThreadLink(comment),
+    onSignIn: commentSignIn ? () => marginFns.current.commentSignIn?.() : undefined,
+    onActivate: (blockId, threadId) => marginFns.current.openThread(blockId, null, { threadId, toggle: false, pdf: true }),
+    onClose: () => setThreadPop(null),
+  } : null), [commentsOn, isPhone, comments.threadsByBlock, threadPop, commentMe, shareMode, workspace?.role, canComment, people, // eslint-disable-line react-hooks/exhaustive-deps
+    pageBlocks, focusedBlockId, treeById, refCache, !!commentSignIn, comments.add, comments.edit, comments.remove, comments.resolve]);
   // Kept by identity while the colours are the same (highlights are rebuilt
   // from the tree on every edit): a row prop of every block.
   const highlightColorsPrev = useRef({});
@@ -10963,7 +11004,12 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
               }}
               onHighlightContext={setHighlightMenu}
               // a note badge's click on a highlight with threads: its popover, from the badge
-              onHighlightThread={commentsOn ? (hlId, anchor) => openThread(hlId, anchor, { toggle: false }) : undefined}
+              onHighlightThread={commentsOn ? (hlId, anchor) => openThread(hlId, anchor, { toggle: false, pdf: true }) : undefined}
+              // its threads as cards beside the pages (comments/marginSlot.jsx)
+              commentMargin={commentMargin}
+              marginRef={pdfMarginRef}
+              onMarginLost={() => setThreadPop((cur) => (cur?.margin
+                ? { ...cur, margin: false, anchor: document.querySelector(`[data-hl-id="${CSS.escape(cur.blockId)}"]`) } : cur))}
               onAreaSelection={(sel) => addChatPicture(regionPicture("area", focusedBlockId, sel.pageNumber,
                 regionBox({ boundingRect: sel.rect, width: sel.width, height: sel.height })))}
               // the selection popup's Comment: a highlight with its thread popover open on it
@@ -11910,7 +11956,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                 const id = highlightMenu.id;
                 setHighlightMenu(null);
                 openThread(id, document.querySelector(`[data-hl-id="${CSS.escape(id)}"]`),
-                  { compose: true, toggle: false });
+                  { compose: true, toggle: false, pdf: true });
               }}
             >
               {t("Comment")}
@@ -11927,7 +11973,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
             </button>
         </ContextMenu>
       ) : null}
-      {threadPop && focusedBlockId && commentsOn ? (
+      {threadPop && focusedBlockId && commentsOn && !threadPop.margin ? (
         // One per app, keyed by its block: another block's is a fresh one.
         <LazyBoundary>
           <ThreadPopover
@@ -11949,8 +11995,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
             onResolve={comments.resolve}
             onCopyLink={copyThreadLink}
             // a visitor without an account: the share's own sign-in gate
-            onSignIn={shareMode && shareInfo && !shareInfo.viewer && !publicPage
-              ? () => { setThreadPop(null); setLoginError(""); setShareGate("login"); } : undefined}
+            onSignIn={commentSignIn}
             onClose={closeThread}
           />
         </LazyBoundary>

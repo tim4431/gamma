@@ -12,7 +12,12 @@
 // preview, Enter and Shift+Enter, the "/" menu); on a phone, a note's thread link
 // bringing the notes over the PDF; the selection popup opening at the
 // pointer, its Comment making a highlight drawn as a commented passage, and
-// an abandoned one leaving none.
+// an abandoned one leaving none; the PDF margin's cards where the page has
+// room (level with their highlights, apart, a press opening the thread, a
+// reply, Resolve, the selection's Comment as a card), and the badge and
+// popover without room; the pages' margins as one column (a card grown at
+// a page's foot pushing the next page's down), and a card pressed with a
+// pen or the Text tool armed opening and drawing nothing.
 import { editRow } from "./notes.mjs";
 import { dragSelectPdfText, selectPdfText, waitForPdf } from "./pdf.mjs";
 import { Account, assertOpensInPlace, sleep, wanted } from "../harness.mjs";
@@ -567,6 +572,237 @@ export async function commentScenarios({ server, browser, makePdf, step, until, 
     await A.keyboard.press("Control+Shift+z");
     await until(async () => (await marks()).includes(hl), { what: "the redo brings it back" });
     assertEq((await marks()).sort().join(), kept.sort().join(), "the highlights as before the undo");
+    assertNoProblems(A);
+  });
+
+  await step("comments: with room beside the page the threads are cards in the margin, level with their highlights; a press opens one, a reply posts from it, Resolve takes it away; the selection popup's Comment opens a card; narrow, the badge and the popover as before", async () => {
+    // (A is on the reviewed paper: "tensor networks" and "matrix product",
+    // on the page's two nearby lines, each with a thread)
+    if (await popover(A).count()) await closePopover(A);
+    const all = await ann.api(`/api/pages/${reviewed}/comments?state=all`);
+    const onPaper = (body) => all.threads.find((x) => x.comments[0].body === body);
+    const first = onPaper("Which paper is this?");
+    const second = onPaper("Cite the original MPS paper");
+    assert(first && second, "the two highlights' threads");
+    await A.setViewportSize({ width: 1600, height: 900 });
+    const margin = A.locator('[data-page="1"] .commentMargin');
+    const zoomOut = A.getByRole("button", { name: "Zoom out", exact: true });
+    for (let i = 0; i < 12 && !(await margin.count()); i++) {
+      await zoomOut.click();
+      await sleep(200);
+    }
+    await margin.waitFor({ state: "attached", timeout: 5000 }); // (a column of no height: the cards are placed in it)
+    const cards = margin.locator(".commentCard");
+    const card = (body) => cards.filter({ hasText: body });
+    await card("Which paper is this?").waitFor();
+    await card("Cite the original MPS paper").waitFor();
+    assertEq(await A.locator('[data-page="1"] .pdfNoteBadge.hasThread').count(), 0, "the threads leave the badges for the cards");
+    // level with the highlight's first line, beside the page
+    const geometry = () => A.evaluate(() => {
+      const page = document.querySelector('[data-page="1"]').getBoundingClientRect();
+      return [...document.querySelectorAll('[data-page="1"] .commentCard')].map((el) => {
+        const r = el.getBoundingClientRect();
+        const hl = [...document.querySelectorAll(`[data-page="1"] [data-hl-id="${el.dataset.cardFor}"]`)]
+          .map((m) => m.getBoundingClientRect().top);
+        return { top: r.top, bottom: r.bottom, left: r.left, hl: Math.min(...hl), pageRight: page.right, active: el.classList.contains("active") };
+      });
+    });
+    // (the cards settle a frame after they are measured, and move with a short transition)
+    const settled = async (what) => until(async () => apart(await geometry()), { what });
+    const apart = (list) => [...list].sort((a, b) => a.top - b.top).every((b, i, s) => i === 0 || b.top >= s[i - 1].bottom);
+    await settled("two highlights on nearby lines: cards that do not overlap");
+    let boxes = await geometry();
+    const top = boxes.reduce((a, b) => (a.top < b.top ? a : b));
+    assert(Math.abs(top.top - top.hl) <= 30, `the first card is level with its highlight: card ${top.top}, highlight ${top.hl}`);
+    assert(boxes.every((b) => b.left > b.pageRight), "the cards stand right of the page");
+    await shot(A, "w8-margin-two-cards");
+
+    // A press on a card: its whole thread, with its reply field focused, and its highlight drawn stronger.
+    const hlFirst = A.locator(`[data-hl-id="${first.block_id}"]`).first();
+    const restWash = await hlFirst.evaluate((el) => getComputedStyle(el).backgroundColor);
+    await card("Which paper is this?").locator(".commentBody").first().click();
+    const active = margin.locator(".commentCard.active");
+    await active.waitFor();
+    assert((await active.innerText()).includes("Which paper is this?"), "the pressed card is the active one");
+    await focused(field(active), "the reply field takes the focus");
+    assert((await hlFirst.evaluate((el) => getComputedStyle(el).backgroundColor)) !== restWash, "the active card's highlight is drawn stronger");
+    await A.keyboard.type("Found it: the 2004 review");
+    await A.keyboard.press("Shift+Enter");
+    await until(async () => (await ann.api(`/api/pages/${reviewed}/comments?state=all`)).threads
+      .find((x) => x.id === first.id)?.comments.some((x) => x.body === "Found it: the 2004 review"), { what: "the reply is stored" });
+    await active.locator(".commentBody", { hasText: "Found it: the 2004 review" }).waitFor();
+    await settled("the grown active card pushes the one under it down");
+    boxes = await geometry();
+    const activeBox = boxes.find((b) => b.active);
+    assert(Math.abs(activeBox.top - activeBox.hl) <= 30, `the active card stays level with its highlight: ${activeBox.top}, ${activeBox.hl}`);
+    await shot(A, "w8-active-card");
+    // Escape: no card is active, and the card at rest counts the reply
+    await A.keyboard.press("Escape");
+    await active.waitFor({ state: "detached" });
+    assertEq(await card("Which paper is this?").locator(".commentReplies").innerText(), "1 reply");
+    assertEq(await card("Which paper is this?").locator(".commentField").count(), 0, "at rest: no field");
+    // a press on the highlight in the page makes its card the active one; a press outside, none
+    await A.locator(`[data-hl-id="${second.block_id}"]`).first().click();
+    await active.waitFor();
+    assert((await active.innerText()).includes("Cite the original MPS paper"), "the highlight's card");
+    await A.locator(".blockRow").first().click();
+    await active.waitFor({ state: "detached" });
+
+    // Resolve, from the active card: the card leaves the margin
+    await card("Cite the original MPS paper").locator(".commentBody").first().click();
+    await active.getByRole("button", { name: "Resolve", exact: true }).click();
+    await card("Cite the original MPS paper").waitFor({ state: "detached" });
+    await until(async () => !!(await ann.api(`/api/pages/${reviewed}/comments?state=all`)).threads
+      .find((x) => x.id === second.id)?.resolved_at, { what: "the thread is resolved" });
+    assertEq(await cards.count(), 1, "one card left");
+
+    // The selection popup's Comment: a card of its own, its field focused
+    const tip = A.locator(".plainTip");
+    await dragSelectPdfText(A, 1, "A paper about");
+    await tip.waitFor();
+    await tip.getByRole("button", { name: "Comment on this passage" }).click();
+    const fresh = margin.locator(".commentCard.active .commentNew");
+    await fresh.waitFor();
+    await focused(field(fresh), "the new comment's field takes the focus");
+    assertEq(await popover(A).count(), 0, "no popover: the card is the thread");
+    await A.keyboard.type("Say which review");
+    await shot(A, "w8-new-comment-card");
+    await A.keyboard.press("Shift+Enter");
+    await card("Say which review").waitFor();
+    await until(async () => (await ann.api(`/api/pages/${reviewed}/comments?state=all`)).threads
+      .some((x) => x.comments[0].body === "Say which review"), { what: "the new comment is stored" });
+    await active.locator(".commentField").waitFor(); // stored, it is the active card with its reply field
+    await settled("the new card does not overlap the others");
+    // one left with nothing typed leaves no highlight, as with the popover
+    const marks = () => A.evaluate(() => new Set([...document.querySelectorAll('[data-page="1"] [data-hl-id]')].map((el) => el.dataset.hlId)).size);
+    const kept = await marks();
+    await dragSelectPdfText(A, 1, "states");
+    await tip.waitFor();
+    await tip.getByRole("button", { name: "Comment on this passage" }).click();
+    await fresh.waitFor();
+    await until(async () => (await marks()) === kept + 1, { what: "the highlight drawn" });
+    await A.keyboard.press("Escape");
+    await fresh.waitFor({ state: "detached" });
+    await until(async () => (await marks()) === kept, { what: "the abandoned highlight is taken away" });
+    assertNoProblems(A);
+
+    // Narrow, at fit-width: no margin; the badge and the popover as before.
+    await A.setViewportSize({ width: 1280, height: 860 });
+    await A.getByRole("button", { name: "Fit to width", exact: true }).click();
+    await margin.waitFor({ state: "detached" });
+    const badge = A.locator(`[data-page="1"] .pdfNoteBadge.hasThread[data-hl-id="${first.block_id}"]`);
+    await badge.waitFor();
+    await badge.click();
+    await popover(A).locator(".commentBody", { hasText: "Found it: the 2004 review" }).waitFor();
+    await shot(A, "w8-narrow-fallback");
+    await closePopover(A);
+    assertNoProblems(A);
+  });
+
+  await step("comments: the pages' margins are one column: a card grown at a page's foot pushes the next page's cards down; with a pen or the Text tool armed, a press on a card opens it and draws nothing", async () => {
+    // a highlight on page 1's last line, another on page 2's first
+    const pdf = makePdf([[...Array(25).fill(""), "Bottom of page one"], ["Top of page two", "and more of page two"]]);
+    const up = await ann.upload("/api/uploads", pdf, "two-pages.pdf", "application/pdf");
+    const paper = await ann.api(`/api/blocks/by-doc/${up.doc_id}`, { method: "POST", body: { default_title: "Two pages", source_url: up.source_url } });
+    await A.setViewportSize({ width: 1600, height: 900 });
+    await A.goto(`${server.base}/?ws=${wsId}&page=${paper.id}`);
+    await waitForPdf(A, 1);
+    const highlight = async (pageNo, text) => {
+      await A.locator(`[data-page="${pageNo}"]`).scrollIntoViewIfNeeded();
+      await waitForPdf(A, pageNo);
+      await selectPdfText(A, pageNo, text);
+      await A.waitForSelector(".plainTip .colorBtn", { timeout: 5000 });
+      await A.locator(".plainTip .colorBtn").first().click();
+      const mark = A.locator(`[data-page="${pageNo}"] [data-hl-id]`).first();
+      await mark.waitFor({ timeout: 10000 });
+      return mark.getAttribute("data-hl-id");
+    };
+    const foot = await highlight(1, "Bottom of page one");
+    const head = await highlight(2, "Top of page two");
+    // (the highlights are saved before their threads can be stored on them)
+    const post = (block_id, body, thread_id) => until(async () => (await ann.api(`/api/pages/${paper.id}/comments`, { method: "POST", body: { block_id, body, thread_id } }).catch(() => null))?.thread, { what: `"${body}" stored` });
+    const footThread = await post(foot, "Bottom of page one, with a long thread");
+    for (let i = 1; i <= 4; i++) await post(foot, `Reply ${i}: a reply long enough to take two lines of the card's column, so the card grows`, footThread.id);
+    await post(head, "Top of page two");
+    const zoomOut = A.getByRole("button", { name: "Zoom out", exact: true });
+    const margins = A.locator(".commentMargin");
+    for (let i = 0; i < 12 && (await margins.count()) < 2; i++) {
+      await zoomOut.click();
+      await sleep(200);
+    }
+    const card = (body) => A.locator(".commentCard").filter({ hasText: body });
+    const footCard = card("Bottom of page one, with a long thread");
+    const headCard = card("Top of page two");
+    await footCard.waitFor();
+    await headCard.waitFor();
+    await footCard.scrollIntoViewIfNeeded();
+    await footCard.locator(".commentBody").first().click();
+    const active = A.locator(".commentCard.active");
+    await active.locator(".commentBody", { hasText: "Reply 4" }).waitFor();
+    // every card on the two pages, in the viewport's frame
+    const geometry = () => A.evaluate(() => [...document.querySelectorAll(".commentCard")].map((el) => {
+      const r = el.getBoundingClientRect();
+      const hl = [...document.querySelectorAll(`[data-hl-id="${el.dataset.cardFor}"]`)].map((m) => m.getBoundingClientRect().top);
+      const x = r.left + r.width / 2, y = r.bottom - 12;
+      return { top: r.top, bottom: r.bottom, hl: Math.min(...hl), active: el.classList.contains("active"), page: el.closest("[data-page]").dataset.page,
+        // what shows at the card's foot (when in view): the card itself, not another page's
+        own: y < 0 || y > innerHeight || el.contains(document.elementFromPoint(x, y)) };
+    }));
+    const apart = (list) => [...list].sort((a, b) => a.top - b.top).every((b, i, s) => i === 0 || b.top >= s[i - 1].bottom);
+    const boxes = await until(async () => { const g = await geometry(); return g.length === 2 && apart(g) ? g : null; },
+      { what: "the grown card at page 1's foot and page 2's first card do not overlap" });
+    const grown = boxes.find((b) => b.active), next = boxes.find((b) => !b.active);
+    assertEq(`${grown.page} ${next.page}`, "1 2", "a card on each page");
+    assert(grown.bottom > next.hl, `the grown card runs past the next page's highlight: card bottom ${grown.bottom}, highlight ${next.hl}`);
+    assert(next.top >= grown.bottom, `the next page's card goes under it: ${next.top}, ${grown.bottom}`);
+    assert(Math.abs(grown.top - grown.hl) <= 30, `the active card stays level with its highlight: ${grown.top}, ${grown.hl}`);
+    assert(boxes.every((b) => b.own), "no card is drawn over another");
+    if (flags?.keep) { // both cards in view, for the record
+      await A.locator(".pdfViewer").evaluate((el, dy) => el.scrollBy(0, dy), grown.top - 160);
+      await sleep(200);
+      await shot(A, "w8-page-boundary");
+    }
+    await A.keyboard.press("Escape");
+    await active.waitFor({ state: "detached" });
+
+    // The pen strip opens with a pen armed: a drag over a card draws
+    // nothing, and a press on it makes it the active card.
+    const extras = async () => ((await ann.api(`/api/blocks/${paper.id}/subtree`)).block.children || [])
+      .filter((b) => b.properties?.ink_url || b.properties?.text_box).length;
+    const drawn = () => A.locator(".inkLayer path, .textBox").count();
+    await A.click("button[aria-label='Handwriting tools']");
+    await A.waitForSelector(".pdfInkBar .inkToolBtn.modeActive .inkToolInk");
+    await headCard.scrollIntoViewIfNeeded();
+    const b = await headCard.boundingBox();
+    await A.mouse.move(b.x + 20, b.y + b.height / 2);
+    await A.mouse.down();
+    await A.mouse.move(b.x + b.width - 20, b.y + b.height / 2, { steps: 12 });
+    await A.mouse.up();
+    assertEq(await drawn(), 0, "no stroke under the drag");
+    // (the drag began and ended on the card: a press on it)
+    if (await active.count()) {
+      // (an Escape before the card's field has the focus closes the pen strip too)
+      await focused(field(active), "the pressed card's reply field takes the focus");
+      await A.keyboard.press("Escape");
+      await active.waitFor({ state: "detached" });
+    }
+    await headCard.locator(".commentBody").first().click();
+    await active.waitFor();
+    assert((await active.innerText()).includes("Top of page two"), "the pressed card is the active one");
+    await focused(field(active), "its reply field takes the focus");
+    await A.keyboard.press("Escape");
+    await active.waitFor({ state: "detached" });
+    // and the Text tool makes no box there
+    await A.click(".pdfInkBar button[title^='Text (T)']");
+    await A.waitForSelector(".pdfInkBar button[title^='Text (T)'].modeActive", { timeout: 5000 });
+    await headCard.locator(".commentBody").first().click();
+    await active.waitFor();
+    await A.keyboard.press("Escape");
+    await active.waitFor({ state: "detached" });
+    await sleep(500); // (a stroke or a box would be saved by now)
+    assertEq(await drawn(), 0, "no stroke and no text box on the page");
+    assertEq(await extras(), 0, "none stored");
+    await A.click("button[aria-label='Handwriting tools']");
     assertNoProblems(A);
   });
 

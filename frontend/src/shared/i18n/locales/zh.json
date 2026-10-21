@@ -2850,6 +2850,7 @@
   "Show the tab": "显示标签页",
   "Show the translate button in the PDF viewer. Click translates the current page (or shows/hides an existing translation); right-click or long-press opens the options, including translating the whole document. Nothing translates until you ask.": "在 PDF 查看器中显示翻译按钮。单击翻译当前页（或显示/隐藏已有翻译）；右键或长按打开选项，包括翻译整篇文档。不主动翻译，除非你要求。",
   "Show the translation — right-click for options": "显示翻译——右键打开选项",
+  "Show this thread": "查看此讨论",
   "Show tool output": "显示工具输出",
   "Show translation": "显示翻译",
   "Show {n} resolved thread": "显示 {n} 条已解决的评论",

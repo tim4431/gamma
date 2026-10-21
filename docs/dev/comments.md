@@ -373,11 +373,13 @@ and the socket").
 The code is `frontend/src/comments/`. Two modules load with the app:
 `comments.js` (pure: folding, ordering, the changes a write makes before
 the server answers, the thread link; `tests/comments.test.mjs`) and
-`useComments.js`. Two surfaces load on first use, through `lazySurface`
+`useComments.js`. Three surfaces load on first use, through `lazySurface`
 ([frontend-refactor.md](frontend-refactor.md) "Lazy boundaries"):
-`ThreadPopover.jsx` (with the composer, `CommentComposer.jsx`) and
-`CommentsPanel.jsx`. `comments.css` holds every rule, design tokens only,
-and loads with the app, since the rows need the control's rules.
+`ThreadPopover.jsx` and the PDF margin's cards, `CommentMargin.jsx` (both
+draw a thread with `Thread.jsx`, which holds the composer,
+`CommentComposer.jsx`), and `CommentsPanel.jsx`. `comments.css` holds every
+rule, design tokens only, and loads with the app, since the rows need the
+control's rules.
 
 **The page's threads.** App runs one `useComments` for the open page. It
 reads `GET /api/pages/{id}/comments?state=all` when the page opens, and
@@ -393,7 +395,8 @@ keep their identity while they read the same (`keepIfSame`), and a refetch
 that changed nothing keeps every thread object (`keepThreads`), so it
 re-renders no row. The reader's own writes show at once. A new comment gets
 its id here (`makeId`, a block id's shape), so a retried request is
-answered as stored. Every write sends this tab's `client`, so the room's
+answered as stored; `add` resolves that id once stored (false when
+refused), which a new thread's margin card activates. Every write sends this tab's `client`, so the room's
 nudge skips it. A refused write puts the threads back as they were while
 the list is still the one the change made (a refetch or another write
 since leaves it), says so in the status line, and refetches. A refused
@@ -552,8 +555,10 @@ press makes the highlight by the swatches' path (`handleSelConfirm` →
 highlight colour, without opening its note for typing (`addHighlight`'s
 `edit: false`). `commentOnNewHighlight` then waits for the highlight's
 first rect to be drawn and opens the thread popover from it with "New
-comment" focused, as the highlight menu's Comment does. App keeps that
-highlight in `freshCommentRef` while its popover is open; when the popover
+comment" focused, as the highlight menu's Comment does; where the page has
+room for the margin, the new thread opens as a card there instead ("The
+PDF margin" below). App keeps that
+highlight in `freshCommentRef` while its popover (or card) is open; when it
 closes, or another block's takes its place, a highlight with no note and
 no thread (`abandonedCommentHighlight`, `comments/comments.js`) is deleted
 through the tree, as the highlight menu's Delete does: an abandoned
@@ -577,7 +582,8 @@ one with a note, or with no open thread, its plain fill. A click (a tap
 too) jumps as before and opens the thread popover from the badge
 (`PdfViewer`'s `onHighlightThread(id, badge)`). The count rides on the
 highlight objects (`threadCount`), which the viewer's per-page memo
-compares beside `hasNote`.
+compares beside `hasNote`. Where the page has room for a column beside it,
+the threads are cards in the margin and leave the badge (below).
 
 **The Comments window.** Dock window `comments` (`renderWindow`, a
 `LazyBoundary` whose fallback is the empty `DockWindow`), shown while
@@ -612,6 +618,114 @@ on the PDF.
 
 **Vocabulary.** A thread is called a comment in the interface ("3
 comments", "Comment on this note"); a highlight's own text is its note.
+
+### The PDF margin
+
+Beside the PDF's pages, as Notion shows comments in a page's right margin,
+each highlight's open threads are cards in a column, level with the
+highlight's first line. Only the PDF has the margin: a note's threads, the
+page's own and the notes pane's controls keep the popover, and the notes
+pane has no comments section.
+
+**When it shows.** While the document has a highlight with an open thread,
+or a new thread's card is open, every page with room for the column
+stands beside it: the page and a column `CARD_W` (280 px) wide,
+`COLUMN_GAP` (24 px) from the page, are centred together, so the page
+moves left by half of what the column takes (`marginLeft`,
+`comments/marginLayout.js`). A page that would leave less than `EDGE`
+(16 px) at either side has no margin and is centred as before: a page at
+fit-width, a narrow pane, a high zoom. A phone has none (App passes no
+`commentMargin`). With no open thread in the document the pages are where
+they always were. The viewer reads its own width (a ResizeObserver) and
+hands each page its left edge (`PdfPage`'s `marginLeft`, null for none),
+and the zoom anchor's horizontal arithmetic reads the same layout
+(`pageLeft`). A zoom keeps the line under the pointer. It keeps the point
+across the line too while the layout stays the same (the column fits
+before and after, or neither), and once the page is wider than the
+viewer. A zoom that makes the column appear or go moves the page sideways
+by half the column's width (about 150 px) under the pointer: the page
+fits the viewer, so there is no horizontal scroll to take the move up. A
+page without the margin keeps the
+badge's count and the popover; a page with it draws no count on the badge
+(the badge stays for a highlight's own note).
+
+**Where the cards come from.** The column is inside the page's box
+(`.commentMargin`, absolute, `left: calc(100% + COLUMN_GAP)`), so it
+scrolls and zooms with the page and needs nothing for pages out of view:
+a page draws it only inside its look-ahead, like its highlights. App
+provides `CommentMarginContext` (`comments/marginSlot.jsx`) through the
+viewer's `commentMargin` prop: the page's `threadsByBlock`, the active
+card's target and the popover's props and handlers. A page's
+`CommentMarginSlot` reads it, so a new comment re-renders the margins and
+not the pages, and finds the page's highlights with an open thread (and
+the one a new thread's card is for), each at its first rect's top
+(`highlightTop`). The cards (`CommentMargin.jsx`) load on first use.
+
+**Stacking.** `stackCards` (`marginLayout.js`, `tests/marginLayout.test.mjs`)
+sorts the cards by their highlight's top, keeping a highlight's threads in
+order. Each goes at its highlight's top, or `CARD_GAP` (8 px) under the
+card above when it would overlap it. The active card stays level with its
+highlight: the ones under it are pushed down, the ones over it up, as in
+Notion, but none above `min`; when they would go there, the cards stack
+down from it and the active one comes as near its highlight as they leave
+room for. Cards near a page's foot may run past it.
+
+The drawn pages' margins are one column. Each page knows its top in px
+from the first page's top (the viewer sums the page heights and
+`PAGE_GAP`s, `PdfPage`'s `pageTop`) and tells the viewer's
+`createMarginStack` (`MarginStackContext`, `marginSlot.jsx`) where its
+lowest card ends, in the same frame. A page's `min` is `CARD_GAP` under
+the lowest end among the pages above it, else the first page's top, so a
+card grown at a page's foot pushes the next page's cards down, and at a
+low zoom a page's cards go on under the ones above. A page reads that end
+with `useSyncExternalStore`; it depends on the pages above only, so the
+column settles page by page. The cards of the pages above are never moved
+up for an active card on a later page: that card comes as near its
+highlight as they leave room for. The margin holding the active card
+(`.commentMargin.hasActive`) is drawn over the other pages' margins. The heights are the cards' own, measured before the
+paint and again by a ResizeObserver as a thread opens, a field grows or a
+formula is drawn. A measure is compared with the last one, kept in a ref,
+and sets no state when they agree: done in a state updater, React re-ran
+it against an older state as the observer's updates and the layout
+effect's interleaved, and it looped ("Maximum update depth exceeded"). A
+card moves with a short `top` transition.
+
+**A card.** At rest it is the thread's first comment (avatar, name, time
+and text as comments are drawn, clamped to three lines) and "n replies",
+with neither Resolve nor the "⋯". It is `Thread.jsx`'s `Thread` with
+`summary`: the popover's own thread view, whose active rule it shares. A
+press on the card (not on a button, link or field), Enter or Space on it,
+or a press on its highlight in the page makes it the active card: the
+whole thread, the reply field focused, Resolve on the first comment and
+each comment's "⋯", drawn as the popover draws them (comments past the
+first 2,000 characters as they near the view). A card holding an unsent
+reply keeps its field. One card is active at a time; a press outside every
+margin (one on its own highlight, a menu or a popup it opened excepted)
+or Escape makes none active. The active card's highlight is drawn
+stronger: its wash mixed with its own strong line colour (`--hl-line`, or
+`--hl-dark-line` on a light page), while the card shows. Resolve takes
+the card away and makes none active. The page's pens, lasso, eraser and
+Text tool leave a press on a card alone (`.commentMargin` is in
+`ink/InkLayer.jsx`'s `NOT_INK`, and `markup/TextBoxLayer.jsx` skips it),
+so a card is pressed, read and typed in with a tool armed. A link visitor without an account
+can make a card active to read it and gets "Sign in to comment" under
+the thread, as in the popover.
+
+**The active card is App's `threadPop`.** `openThread(..., { pdf: true })`
+(a highlight's click or badge, the highlight menu's Comment, the selection
+popup's Comment, a jump to a thread from the Comments window, a link or
+the Inbox) asks the viewer whether the highlight's page has room
+(`marginRef.current(hlId)`); when it has, and the thread is not a
+resolved one (which has no card), the target is `{..., margin: true}`
+and App renders no popover for it. A press on a card opens its thread the
+same way. So Copy link, Escape and the abandoned-Comment rule read the
+same state as for the popover: a new thread's card (`compose`, a field
+of its own, focused) closed with nothing sent takes its highlight away.
+Sent, `add`'s id makes the new thread the active card. When the active
+card's page loses its room (a zoom, a narrower pane), the viewer calls
+`onMarginLost` and App shows the thread in the popover from the
+highlight instead, drafts and all (they are keyed per field, not per
+surface).
 
 ### The Inbox
 
@@ -794,6 +908,10 @@ has notifications; the iPad's WKWebView has none, and the row says so.
   keyboard and an on-screen one. `frontend/tests/slashCommands.test.mjs`:
   the commands a comment's field offers, without a page, a sheet, an
   upload or an embed.
+  `frontend/tests/marginLayout.test.mjs`: the page's left edge beside its
+  margin and without one, and the stacking of the cards (level, put under
+  the one above, the active one level with the ones over it moved up, none
+  above the page's top).
   `frontend/tests/selectionTip.test.mjs`: the selection popup's anchor from
   the release point, and its placement from it. `frontend/tests/refLists.test.mjs`: the typed `[[query`, a picked
 row's edit and the hand-typed title's. `frontend/tests/inboxText.test.mjs`: the sentence of each kind, the
@@ -833,7 +951,18 @@ row's edit and the hand-typed title's. `frontend/tests/inboxText.test.mjs`: the 
   line and then Comment and Link; Comment making a highlight with its
   popover and the field focused, the comment sent with Shift+Enter, and the
   highlight's rects drawn with the 2px line of its colour; a second Comment
-  left with Escape leaving no highlight. `tests/e2e/select.mjs` runs it for `frontend/src/comments/`
+  left with Escape leaving no highlight; the PDF margin at a zoom that
+  leaves room: the two highlights' cards beside the page, the first within
+  30 px of its highlight's top, the two on nearby lines not overlapping,
+  no thread count on the badges; a press on a card making it the active one
+  with its field focused and its highlight drawn stronger, a reply posted
+  from it and the grown card staying level while the one under it moves
+  down; Escape and a press outside making none active, "1 reply" at rest;
+  a press on the highlight in the page activating its card; Resolve taking
+  the card away; the selection popup's Comment opening a card with its
+  field focused and no popover, its comment sent and the card active, one
+  left with Escape leaving no highlight; and at fit-width in a narrower
+  window, no margin, the badge and its popover. `tests/e2e/select.mjs` runs it for `frontend/src/comments/`
   (with `collab` and `inbox`), the editor and the PDF viewer,
   `routers/comments.py`, `gamma/inbox.py`, and `gamma/comments.py` with
   `notes-pdf-share`, `collab` and `transfers` too, since every block

@@ -112,8 +112,9 @@ export function useComments({ pageId, enabled, me, onStatus, flush }) {
 
   const failed = (what, err) => statusRef.current?.(t("Couldn't save the comment: {message}", { message: err?.message || what }));
 
-  // A new thread on `blockId`, or a reply in `threadId`. Resolves true
-  // once stored, false when refused (the composer then keeps the text).
+  // A new thread on `blockId`, or a reply in `threadId`. Resolves the
+  // comment's id once stored (a new thread's id is its first comment's),
+  // false when refused (the composer then keeps the text).
   const add = useCallback(async (blockId, body, threadId = "") => {
     const page = pageRef.current;
     if (!page) return false;
@@ -129,7 +130,7 @@ export function useComments({ pageId, enabled, me, onStatus, flush }) {
         json("POST", { id, block_id: blockId, body, thread_id: threadId, client: CLIENT_ID }));
       pendingRef.current.delete(id);
       set(page, (list) => upsertThread(list, out.thread));
-      return true;
+      return id;
     } catch (err) {
       pendingRef.current.delete(id);
       set(page, (list) => deleteComment(list, id));

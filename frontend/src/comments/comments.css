@@ -1,7 +1,8 @@
 /* Comments (docs/dev/comments.md "In the app"): the row control, the page
-   title's, the PDF badge's variant, the thread popover and the Comments
-   window. Loaded with the startup bundle (useComments.js imports it), since
-   the rows need their control's rules before any popover opens. */
+   title's, the PDF badge's variant, the thread popover, the PDF's margin
+   cards and the Comments window. Loaded with the startup bundle
+   (useComments.js imports it), since the rows need their control's rules
+   before any popover opens. */
 
 /* --- The row control (editor/BlockTree.jsx BlockRow) -----------------------
    A ctlBtn after the body, beside the ×: shown with its count while the
@@ -161,6 +162,54 @@
   font-size: var(--fs-sm);
   color: var(--text-muted);
 }
+
+/* --- The PDF margin (CommentMargin.jsx) ------------------------------------
+   A column beside the page, inside the page's box so it scrolls and zooms
+   with it; its width and its distance from the page are marginLayout.js's,
+   set inline. Each card stands where stackCards put it. At rest a card is
+   its thread's first comment, clamped, with the reply count; the active one
+   is lifted and holds the whole thread. The pages' columns stack as one
+   (a page's cards start under the ones above), and the one holding the
+   active card is drawn over the others. The page's own cursors (a crosshair
+   while Ctrl is held), its selection rules and its pens stop at the
+   column. */
+.commentMargin {
+  position: absolute;
+  top: 0;
+  height: 0;
+  z-index: 5;
+  cursor: auto;
+  user-select: text;
+  -webkit-user-select: text;
+  touch-action: auto;
+}
+.commentMargin.hasActive { z-index: 6; }
+.commentCard {
+  position: absolute;
+  left: 0;
+  right: 0;
+  box-sizing: border-box;
+  padding: var(--space-3) var(--space-4);
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-1);
+  color: var(--text-primary);
+  transition: top var(--dur-fast) ease, box-shadow var(--dur-fast) ease;
+}
+.commentCard.active { z-index: 1; box-shadow: var(--shadow-2); border-color: var(--border-light); }
+/* The thread fills the card: no list rule under it, and its press area
+   is the card's. */
+.commentCard .commentThread { padding-bottom: 0; border-bottom: none; }
+.commentCard .commentThread.canReply { margin: calc(-1 * var(--space-3)) calc(-1 * var(--space-4)); padding: var(--space-3) var(--space-4); }
+.commentCard .commentThread.canReply:hover { background: transparent; }
+.commentCard:has(.commentThread.canReply:hover) { border-color: var(--border-light); }
+.commentThread.collapsed .commentBody {
+  max-height: calc(3em * var(--lh-ui));
+  overflow: hidden;
+}
+.commentReplies { font-size: var(--fs-xs); font-weight: 600; color: var(--text-muted); padding-left: calc(20px + var(--space-3)); } /* under the text, past the avatar */
+.commentCard .commentSignIn { padding-bottom: 0; }
 
 /* The composer (CommentComposer.jsx): one rounded box holding the note
    editor and, for a new comment or a reply, the round send button at its
