@@ -14,8 +14,9 @@ test("Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y step the stroke history, unless the block h
   assert.deepEqual(stripKey(key("KeyZ", { metaKey: true, shiftKey: true }), state()), { kind: "undo", redo: true, prevent: true, stop: true });
   assert.deepEqual(stripKey(key("KeyY", { ctrlKey: true }), state()), { kind: "undo", redo: true, prevent: true, stop: true });
   assert.equal(stripKey(key("KeyZ", { ctrlKey: true }), state({ boxUndo: true })), null);
-  assert.equal(stripKey(key("KeyZ", { ctrlKey: true, altKey: true }), state()), null);
-  assert.equal(stripKey(key("KeyZ"), state()), null, "a bare Z is nothing");
+  assert.deepEqual(stripKey(key("KeyZ", { ctrlKey: true, altKey: true }), state()), { kind: "toggle", what: "zoom" },
+    "AltGr+Z is no undo: as a third-level letter it counts as a bare Z");
+  assert.deepEqual(stripKey(key("KeyZ"), state()), { kind: "toggle", what: "zoom" }, "a bare Z is the zoom window's");
 });
 
 test("Escape closes one layer at a time: a text box keeps it, then the selection, the options row, the strip", () => {
@@ -23,6 +24,36 @@ test("Escape closes one layer at a time: a text box keeps it, then the selection
   assert.deepEqual(stripKey(key("Escape"), state({ hasSelection: true, optionsOpen: true })), { kind: "deselect" });
   assert.deepEqual(stripKey(key("Escape"), state({ optionsOpen: true })), { kind: "closeOptions" });
   assert.deepEqual(stripKey(key("Escape"), state()), { kind: "close" });
+});
+
+test("Escape after the options row: the Shapes tool, then the ruler, then the zoom window, then the strip", () => {
+  const all = { tool: "shape", ruler: true, zoom: true };
+  assert.equal(stripKey(key("Escape"), state({ ...all, hasBox: true })), null, "a selected text box keeps it");
+  assert.deepEqual(stripKey(key("Escape"), state({ ...all, hasSelection: true })), { kind: "deselect" });
+  assert.deepEqual(stripKey(key("Escape"), state({ ...all, optionsOpen: true })), { kind: "closeOptions" }, "the ruler's row too");
+  assert.deepEqual(stripKey(key("Escape"), state(all)), { kind: "off", what: "shape" });
+  assert.deepEqual(stripKey(key("Escape"), state({ ...all, tool: "pen1" })), { kind: "off", what: "ruler" });
+  assert.deepEqual(stripKey(key("Escape"), state({ tool: "pen1", zoom: true })), { kind: "off", what: "zoom" });
+  assert.deepEqual(stripKey(key("Escape"), state({ tool: "eraser" })), { kind: "close" });
+});
+
+test("R, S and Z toggle the ruler, the Shapes tool and the zoom window, by the physical key", () => {
+  assert.deepEqual(stripKey(key("KeyR"), state()), { kind: "toggle", what: "ruler" });
+  assert.deepEqual(stripKey(key("KeyS"), state({ tool: "shape" })), { kind: "toggle", what: "shape" });
+  assert.deepEqual(stripKey(key("KeyZ", { shiftKey: true }), state()), { kind: "toggle", what: "zoom" }, "Shift does not matter");
+  assert.deepEqual(stripKey(key("KeyR", { ctrlKey: true, altKey: true }), state()), { kind: "toggle", what: "ruler" }, "AltGr is no modifier");
+  assert.equal(stripKey(key("KeyR", { ctrlKey: true }), state()), null, "Ctrl+R is someone else's");
+  assert.equal(stripKey(key("KeyS", { metaKey: true }), state()), null, "Cmd+S too");
+  assert.equal(stripKey(key("KeyS", { altKey: true }), state()), null);
+});
+
+test("Enter is the zoom window's New line, unless a button, a link, a menu row or a selected text box has it", () => {
+  assert.deepEqual(stripKey(key("Enter"), state({ zoom: true })), { kind: "newLine", prevent: true });
+  assert.deepEqual(stripKey(key("NumpadEnter"), state({ zoom: true })), { kind: "newLine", prevent: true });
+  assert.equal(stripKey(key("Enter"), state()), null, "no zoom window: Enter is nobody's here");
+  assert.equal(stripKey(key("Enter"), state({ zoom: true, onControl: true })), null, "a focused button keeps its Enter");
+  assert.equal(stripKey(key("Enter"), state({ zoom: true, hasBox: true })), null, "a selected text box opens on its Enter");
+  assert.equal(stripKey(key("Enter", { ctrlKey: true }), state({ zoom: true })), null, "a chord is someone else's");
 });
 
 test("Delete and Backspace remove the selection only while there is one", () => {

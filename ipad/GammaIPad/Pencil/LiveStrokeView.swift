@@ -3,9 +3,13 @@ import UIKit
 /// The stroke being drawn, natively, over the web view, in the claim's look
 /// (docs/dev/ipad.md "The pen", step 4), a frame or two ahead of what the
 /// page could paint: a ribbon as wide as the brush's law makes each sample
-/// (InkWidth), a dashed line, or the plain polyline at the tool's colour,
+/// (InkWidth; a calligraphy pen's from the travel against the claim's nib,
+/// turned by the first sample's roll, its ends round where the page's are
+/// the nib's flat corners), a dashed line, or the plain polyline at the tool's colour,
 /// width and opacity; a highlighter multiplied onto the page; the samples
-/// smoothed through the lazy brush when the preset smooths; and, once the
+/// smoothed through the lazy brush when the preset smooths; along the
+/// ruler (the claim's `snap`), the line between the outermost projections
+/// of the samples onto its edge (RulerSnap), even end to end; and, once the
 /// page snapped a held stroke, that shape instead (HeldShape), in the
 /// selection blue for its first frames. The saved stroke is the web's (its
 /// pen outline); each line stays until the web says it painted that stroke,
@@ -55,6 +59,14 @@ final class LiveStrokeView: UIView {
                 flashed = true
                 line.add(Self.flash(), forKey: "flash")
             }
+        } else if let snap = tool.snap {
+            // Along the ruler: every sample projected onto its edge, the line
+            // between the outermost two at the tool's width end to end and in
+            // its dash, as the page commits it (a ruler line is even, like a
+            // held one); no lazy brush and no prediction, as on the page.
+            line.removeAnimation(forKey: "flash")
+            let ends = RulerSnap.project(samples.map { Self.point($0) }, onto: snap)
+            Self.stroke(line, path: Self.polyline(ends), width: width, color: ink, dash: tool.dash)
         } else {
             // a shape dropped while it flashed: no blue outline on the freehand line
             line.removeAnimation(forKey: "flash")
@@ -67,7 +79,8 @@ final class LiveStrokeView: UIView {
                 // even, even under pressure: the committed dashes have their widths
                 Self.stroke(line, path: Self.polyline(points), width: width, color: ink, dash: dash)
             } else if let widths = InkWidth.widths(read, tool: tool.kind, brush: tool.brush, pressure: tool.pressure,
-                                                    size: tool.size, live: true) {
+                                                    size: tool.size, live: true,
+                                                    nib: tool.liveNib(roll: samples.first.flatMap { $0.count > 6 ? $0[6] : nil })) {
                 var radii = widths.map { CGFloat(max(tool.size * $0, 0.5)) / 2 }
                 // the predicted points at the width the stroke has reached
                 if let last = radii.last, points.count > radii.count {

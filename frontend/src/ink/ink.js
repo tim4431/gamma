@@ -126,8 +126,39 @@ const HEX_RE = /^#[0-9a-f]{6}$/i;
 // pen preset or a pen stroke names — the plain Pen is the absent key — in
 // the order the Style picker lists them and Shift+[ / ] step through
 // them. A highlighter has none. Their laws are ink/finishStroke.js BRUSHES.
-export const BRUSH_ORDER = [null, "monoline", "brush", "pencil"];
-export const KNOWN_BRUSHES = new Set(["monoline", "brush", "pencil"]);
+export const BRUSH_ORDER = [null, "monoline", "brush", "pencil", "calligraphy"];
+export const KNOWN_BRUSHES = new Set(["monoline", "brush", "pencil", "calligraphy"]);
+// The calligraphy pen's nib (docs/dev/handwriting.md "Calligraphy"): a
+// preset's angle is an integer from NIB_MIN to NIB_MAX degrees, stepped by
+// NIB_STEP on the strip, DEFAULT_NIB to start, counterclockwise as seen (45
+// rises to the right); a stroke's `nib` is that angle as an undirected
+// line, 0..179, the nib's edge the page vector (cos nib, −sin nib).
+export const DEFAULT_NIB = 45, NIB_MIN = -60, NIB_MAX = 60, NIB_STEP = 15;
+// The hairline a nib draws along its own edge, in sizes: the floor of the
+// calligraphy law (finishStroke.js BRUSHES), which the screen draws as a
+// segment that long across the nib, swept with it (nibOutline); and how
+// far the nib's corners reach from a sample, in sizes: the diagonal of the
+// nib and that hairline (half of it each side).
+export const NIB_HAIR = 0.12;
+export const NIB_REACH = Math.hypot(1, NIB_HAIR);
+// A calligraphy pen smooths (ink/stabilizer.js) at this level unless its
+// preset sets its own, Off (0) included: a default the layer draws with,
+// never written into the preset, so a pen stepped through Calligraphy to
+// another style keeps the smoothing it had.
+export const CALLIGRAPHY_SMOOTHING = 2;
+// The smoothing level a preset draws with, 0–4: its own, else its brush's default.
+export const presetSmoothing = (preset) => preset?.stabilize
+  ?? (preset?.kind === "pen" && preset.brush === "calligraphy" ? CALLIGRAPHY_SMOOTHING : 0);
+// A stroke's nib from its preset's angle and the pen's twist at the
+// stroke's first sample (PointerEvent.twist, or the iPad host's roll:
+// degrees clockwise as seen, so a clockwise roll turns the nib clockwise):
+// (nib − twist) mod 180, rounded; the twist left out when it is null or
+// `lock` (the preset's Lock angle) is on.
+export function strokeNib(nib, twist = null, lock = false) {
+  const angle = Number.isFinite(nib) ? nib : DEFAULT_NIB;
+  const turn = !lock && Number.isFinite(twist) ? twist : 0;
+  return ((Math.round(angle - turn) % 180) + 180) % 180;
+}
 // A line: dashed or dotted, solid when absent (DASH below).
 export const isDash = (v) => v === "dashed" || v === "dotted";
 
@@ -140,7 +171,7 @@ export function sizesFor(kind) {
 // The keys a preset is known by here; any other key it carries is kept as
 // it is (below), so an older build that edits one preset never strips what
 // a newer one wrote — while the preset serialises under TOOL_MAX_BYTES.
-const KNOWN_TOOL_KEYS = new Set(["id", "kind", "color", "size", "opacity", "brush", "dash", "stabilize", "straight", "hidden"]);
+const KNOWN_TOOL_KEYS = new Set(["id", "kind", "color", "size", "opacity", "brush", "nib", "nibLock", "dash", "stabilize", "straight", "hidden"]);
 const TOOL_MAX_BYTES = 512;   // UTF-8 bytes of the preset's JSON, what the profile stores
 const utf8Bytes = (s) => new TextEncoder().encode(s).length;
 // A stored list (the account's profile, localStorage, possibly hand-edited
@@ -163,10 +194,17 @@ export function normalizeTools(list) {
     // A preset's own opacity (the swatch's alpha when it was picked); left
     // out, the kind's usual one applies (toolStyle).
     const opacity = Number(t.opacity);
-    // Smoothing (ink/stabilizer.js) 0–4, left out at 0; a highlighter's
-    // straightening, 'always' | 'off', left out at the default 'hold'; a
-    // hidden preset (off the strip, still in the list), left out when shown.
-    const stabilize = Math.round(Number(t.stabilize));
+    // Smoothing (ink/stabilizer.js) 0–4, left out at 0 — but kept at 0 on a
+    // calligraphy pen, whose smoothing left out is CALLIGRAPHY_SMOOTHING; a
+    // highlighter's straightening, 'always' | 'off', left out at the default
+    // 'hold'; a hidden preset (off the strip, still in the list), left out
+    // when shown.
+    const stabilize = t.stabilize == null ? NaN : Math.round(Number(t.stabilize));
+    // A calligraphy pen's nib angle, an integer from NIB_MIN to NIB_MAX left
+    // out at DEFAULT_NIB, and its Lock angle, left out when off: neither
+    // stays on any other preset.
+    const calligraphy = kind === "pen" && t.brush === "calligraphy";
+    const nib = t.nib == null ? NaN : Math.round(Number(t.nib));
     const preset = { id, kind, color: t.color.toLowerCase(), size: Math.round(size * 100) / 100,
       ...(Number.isFinite(opacity) && opacity >= 0.1 && opacity <= 1 && opacity !== defaultOpacity(kind)
         ? { opacity: Math.round(opacity * 100) / 100 } : {}),
@@ -174,8 +212,10 @@ export function normalizeTools(list) {
       // brush on a highlighter is dropped: the plain pen is the absent
       // key); a line, pens and highlighters alike, left out when solid
       ...(kind === "pen" && KNOWN_BRUSHES.has(t.brush) ? { brush: t.brush } : {}),
+      ...(calligraphy && Number.isFinite(nib) && nib >= NIB_MIN && nib <= NIB_MAX && nib !== DEFAULT_NIB ? { nib } : {}),
+      ...(calligraphy && t.nibLock === true ? { nibLock: true } : {}),
       ...(isDash(t.dash) ? { dash: t.dash } : {}),
-      ...(Number.isFinite(stabilize) && stabilize >= 1 && stabilize <= 4 ? { stabilize } : {}),
+      ...(Number.isFinite(stabilize) && stabilize >= (calligraphy ? 0 : 1) && stabilize <= 4 ? { stabilize } : {}),
       ...(kind === "highlighter" && (t.straight === "always" || t.straight === "off") ? { straight: t.straight } : {}),
       ...(t.hidden === true ? { hidden: true } : {}) };
     // The keys this build does not know, verbatim and after the known ones,
@@ -200,18 +240,24 @@ export function visibleTools(list) {
 // A kind's opacity when a preset names none.
 export const defaultOpacity = (kind) => (kind === "highlighter" ? HIGHLIGHTER_OPACITY : 1);
 // What the layer draws with for a preset: {tool, color, size, opacity} and
-// a pen's brush and the line (dash) when it has them — the keys a stroke is
-// encoded with — plus the preset's smoothing level and a highlighter's
-// straightening (the layer reads them; a stroke's style never carries them).
+// a pen's brush, a calligraphy pen's nib (0..179, strokeNib) and the line
+// (dash) when it has them — the keys a stroke is encoded with — plus the
+// smoothing level it draws with (presetSmoothing: a calligraphy pen's
+// default included), a highlighter's straightening and a calligraphy
+// pen's Lock angle (`nibLock`: the layer reads them; a stroke's style
+// never carries them).
 export function toolStyle(preset) {
   const opacity = preset.opacity ?? defaultOpacity(preset.kind);
-  const input = { ...(preset.stabilize ? { stabilize: preset.stabilize } : {}) };
+  const level = presetSmoothing(preset);
+  const input = level ? { stabilize: level } : {};
   const line = isDash(preset.dash) ? { dash: preset.dash } : {};
   return preset.kind === "highlighter"
     ? { tool: "highlighter", color: preset.color, size: preset.size, opacity, ...input,
       ...(preset.straight ? { straight: preset.straight } : {}), ...line }
     : { tool: "pen", color: preset.color, size: preset.size, opacity, ...input,
-      ...(KNOWN_BRUSHES.has(preset.brush) ? { brush: preset.brush } : {}), ...line };
+      ...(KNOWN_BRUSHES.has(preset.brush) ? { brush: preset.brush } : {}),
+      ...(preset.brush === "calligraphy" ? { nib: strokeNib(preset.nib), ...(preset.nibLock ? { nibLock: true } : {}) } : {}),
+      ...line };
 }
 
 
@@ -462,14 +508,20 @@ export function inkFeatures(ink) {
 
 // --- geometry --------------------------------------------------------------
 
-const bounds = strokeCache("bounds", (s) => s.size ?? DEFAULT_SIZE);
+// A calligraphy stroke drawn with its nib (one without a shape record)
+// reaches as far as the nib's corners from every sample, whatever its w:
+// half the nib and its hairline's diagonal, in sizes (nibOutline below;
+// gamma/ink.py bounding_box pads the same).
+const nibDrawn = (stroke) => stroke.brush === "calligraphy" && !stroke.shape;
+const bounds = strokeCache("bounds", (s) => `${s.size ?? DEFAULT_SIZE}|${nibDrawn(s) ? "nib" : ""}`);
 // [x0, y0, x1, y1] around the samples, width included.
 export function strokeBounds(stroke) {
   const hit = bounds.get(stroke);
   if (hit) return hit;
   let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  const nibReach = nibDrawn(stroke) ? (stroke.size ?? DEFAULT_SIZE) * NIB_REACH / 2 : 0;
   for (const s of decodeStroke(stroke)) {
-    const r = strokeWidth(stroke, s) / 2;
+    const r = Math.max(strokeWidth(stroke, s) / 2, nibReach);
     x0 = Math.min(x0, s.x - r); y0 = Math.min(y0, s.y - r);
     x1 = Math.max(x1, s.x + r); y1 = Math.max(y1, s.y + r);
   }
@@ -553,15 +605,35 @@ export function nearestInkStroke(groups, x, y, radius) {
   return best;
 }
 
-// A colour, width, opacity or line change of the selected strokes: `size`
-// alone changes for a width (the baked w multiplies it), never `pts`; `dash`
-// is 'dashed' | 'dotted', or null for solid (the key goes), any other value
-// ignored, and applies to every tool; every other key rides along (a brush
-// change re-bakes w, so it is ink/finishStroke.js restyleBrush). The
-// original object for a no-op.
+// The shapes with an inside, the ones a fill is drawn in (gamma/ink.py
+// CLOSED_SHAPES): a stroke's `fill` counts only on a shape record of these
+// kinds, and FILL_OPACITY is a fill's opacity when it names none.
+export const CLOSED_SHAPES = new Set(["rect", "ellipse", "triangle", "polygon"]);
+export const FILL_OPACITY = 0.25;
+export const isClosedShape = (stroke) => CLOSED_SHAPES.has(stroke?.shape?.kind);
+// A fill as a stroke carries it: {color: '#rrggbb', opacity?}, the opacity
+// left out at FILL_OPACITY; null for none, undefined for a value that is no
+// fill.
+function fillOf(value) {
+  if (value === null) return null;
+  if (!value || !HEX_RE.test(value.color || "")) return undefined;
+  const opacity = Number(value.opacity);
+  const kept = Number.isFinite(opacity) && opacity > 0 && opacity <= 1 ? Math.round(opacity * 100) / 100 : FILL_OPACITY;
+  return { color: value.color.toLowerCase(), ...(kept !== FILL_OPACITY ? { opacity: kept } : {}) };
+}
+const sameFill = (a, b) => (a?.color ?? null) === (b?.color ?? null) && (a?.opacity ?? FILL_OPACITY) === (b?.opacity ?? FILL_OPACITY);
+// A colour, width, opacity, line or fill change of the selected strokes:
+// `size` alone changes for a width (the baked w multiplies it), never
+// `pts`; `dash` is 'dashed' | 'dotted', or null for solid (the key goes),
+// any other value ignored, and applies to every tool; `fill` is {color,
+// opacity?} or null for none, and applies to the closed shapes alone
+// (isClosedShape: every other stroke stays as it is for it); every other
+// key rides along (a brush change re-bakes w, so it is
+// ink/finishStroke.js restyleBrush). The original object for a no-op.
 export function restyleStrokes(ink, ids, patch) {
   const selected = new Set(ids);
   const line = "dash" in patch && (patch.dash === null || isDash(patch.dash)) ? { dash: patch.dash } : null;
+  const fill = "fill" in patch ? fillOf(patch.fill) : undefined;
   let changed = false;
   const strokes = ink.strokes.map((s) => {
     if (!selected.has(s.id) || (patch.tool && patch.tool !== s.tool)) return s;
@@ -571,10 +643,12 @@ export function restyleStrokes(ink, ids, patch) {
       ? Math.round(Math.max(sizes[0], Math.min(sizes.at(-1), patch.size)) * 100) / 100 : s.size;
     const opacity = Number.isFinite(patch.opacity) ? Math.round(Math.min(1, Math.max(0.1, patch.opacity)) * 100) / 100 : s.opacity;
     const dash = line ? line.dash : s.dash ?? null;
-    if (color === s.color && size === s.size && opacity === s.opacity && dash === (s.dash ?? null)) return s;
+    const filled = fill !== undefined && isClosedShape(s) ? fill : s.fill ?? null;
+    if (color === s.color && size === s.size && opacity === s.opacity && dash === (s.dash ?? null) && sameFill(filled, s.fill)) return s;
     changed = true;
     const out = { ...s, color, size, opacity };
     if (dash) out.dash = dash; else delete out.dash;
+    if (filled) out.fill = filled; else delete out.fill;
     return out;
   });
   return changed ? { ...ink, strokes } : ink;
@@ -743,13 +817,16 @@ const sameStrokes = (a, b) => a.length === b.length && a.every((s, i) => sameStr
 
 // --- merge -----------------------------------------------------------------
 // A stroke is compared as two halves (docs/dev/handwriting.md "Two writers,
-// one group"): its GEOMETRY (pts, ch, size, shape, and brush, since a brush
-// change bakes the w in pts again: the key travels with the widths baked
-// for it) and its LOOK (every other key but id and from, with the defaults
-// filled in so an omitted key equals its default value).
-const GEOM_KEYS = ["pts", "ch", "size", "shape", "brush"];
+// one group"): its GEOMETRY (pts, ch, size, shape, and brush and nib, since
+// a brush or a nib change bakes the w in pts again, and a turn or a flip of
+// a calligraphy stroke moves its nib with its samples: the keys travel with
+// the widths baked for them) and its LOOK (every other key but id and
+// from, with the defaults filled in so an omitted key equals its default
+// value).
+const GEOM_KEYS = ["pts", "ch", "size", "shape", "brush", "nib"];
 const NOT_LOOK = new Set(["id", "from", ...GEOM_KEYS]);
-const geomOf = (s) => ({ pts: s.pts, ch: s.ch || "xy", size: s.size ?? DEFAULT_SIZE, shape: s.shape ?? null, brush: s.brush ?? null });
+const geomOf = (s) => ({ pts: s.pts, ch: s.ch || "xy", size: s.size ?? DEFAULT_SIZE, shape: s.shape ?? null, brush: s.brush ?? null,
+  nib: s.nib ?? null });
 function lookOf(s) {
   const out = { tool: "pen", color: INK_COLORS[0], opacity: 1, pen: true };
   for (const k of Object.keys(s)) if (!NOT_LOOK.has(k) && s[k] != null) out[k] = s[k];
@@ -960,8 +1037,10 @@ export function transformPoint(x, y, { cx, cy, scale, angle }) {
 
 // Uniform scaling/rotation around a shared page-space origin. Rewrite only
 // XY channels, preserving pressure, timing, tilt, widths, IDs and other
-// metadata; the size scales with the selection, and a shape record's
-// params go through the same map.
+// metadata; the size scales with the selection, a shape record's params go
+// through the same map, and a calligraphy nib turns with the samples, (nib
+// − angle°) mod 180 rounded (the angle turns clockwise as seen, a nib
+// counts counterclockwise), so its baked widths stay right.
 export function transformStrokes(ink, ids, { cx, cy, scale = 1, angle = 0 }) {
   if (![cx, cy, scale, angle].every(Number.isFinite) || scale <= 0 || (scale === 1 && angle === 0)) return ink;
   const selected = new Set(ids);
@@ -979,7 +1058,9 @@ export function transformStrokes(ink, ids, { cx, cy, scale = 1, angle = 0 }) {
       pts[i * n] = nx - px; pts[i * n + 1] = ny - py;
       px = nx; py = ny;
     });
-    return carryShape(s, { ...s, pts, size: Math.max(0.01, Math.min(MAX_STROKE_SIZE, s.size * scale)) }, map);
+    const out = carryShape(s, { ...s, pts, size: Math.max(0.01, Math.min(MAX_STROKE_SIZE, s.size * scale)) }, map);
+    if (Number.isFinite(s.nib) && angle) out.nib = ((Math.round(s.nib - (angle * 180) / Math.PI) % 180) + 180) % 180;
+    return out;
   });
   return changed ? { ...ink, strokes } : ink;
 }
@@ -1545,6 +1626,76 @@ function cutBands(samples) {
 
 const polyline = (pts) => pts.map((s, i) => `${i ? "L" : "M"}${s.x.toFixed(2)},${s.y.toFixed(2)}`).join(" ")
   + (pts.length === 1 ? ` L${(pts[0].x + 0.01).toFixed(2)},${pts[0].y.toFixed(2)}` : "");
+
+// --- the calligraphy nib -------------------------------------------------------
+// The calligraphy pen on the screen (docs/dev/handwriting.md "Client"): a
+// flat nib, a segment `size` long at the angle `nib` (its edge the page
+// vector (cos nib, −sin nib)), swept along the samples (stabilised
+// already: nothing smooths them again). The sweep of a segment along a run
+// of samples whose travel stays on one side of the segment's direction is
+// one polygon, the run moved by half the segment one way and back the
+// other (their Minkowski sum: as wide across the travel as the segment's
+// sine against it); where the travel crosses the segment's direction —
+// where the band's width passes through zero, which every reversal does
+// too — the run ends and the next begins with the segment itself between
+// them, so a U-turn stays filled. The hairline along the nib's edge, the
+// law's floor (NIB_HAIR, finishStroke.js BRUSHES), is the same sweep of a
+// segment NIB_HAIR × size long across the nib, and the nib's footprint
+// (the two segments' rectangle) stands at the first and the last sample,
+// so a tap leaves the nib's mark and the ends show its corners. Every
+// piece is wound one way (clockwise as seen), so the nonzero rule fills
+// their union and an overlap never punches a hole. → one path `d`. The
+// nib is `size` long at every pressure: the pressure's share of the law
+// is in `w` alone, which the exporters draw.
+const area2 = (poly) => {
+  let a = 0;
+  for (let i = 0; i < poly.length; i++) {
+    const p = poly[i], q = poly[(i + 1) % poly.length];
+    a += p[0] * q[1] - q[0] * p[1];
+  }
+  return a;
+};
+// A closed subpath of `poly` ([[x, y]]), wound clockwise as seen.
+const woundPath = (poly) => {
+  const pts = area2(poly) < 0 ? poly.slice().reverse() : poly;
+  return "M" + pts.map(([x, y]) => `${x.toFixed(2)},${y.toFixed(2)}`).join(" L") + " Z";
+};
+// The sweep of the segment between ±(vx, vy) along `pts`, as pieces into `out`.
+function sweepSegment(pts, vx, vy, out) {
+  let from = 0, side = 0;
+  const piece = (a, b) => {
+    if (!side) return;   // a run along the segment itself sweeps nothing: the other segment draws it
+    const poly = [];
+    for (let i = a; i <= b; i++) poly.push([pts[i].x + vx, pts[i].y + vy]);
+    for (let i = b; i >= a; i--) poly.push([pts[i].x - vx, pts[i].y - vy]);
+    out.push(woundPath(poly));
+  };
+  for (let i = 1; i < pts.length; i++) {
+    const c = vx * (pts[i].y - pts[i - 1].y) - vy * (pts[i].x - pts[i - 1].x);
+    const s = Math.abs(c) < 1e-9 ? 0 : Math.sign(c);
+    if (s && side && s !== side) { piece(from, i - 1); from = i - 1; }
+    if (s) side = s;
+  }
+  piece(from, pts.length - 1);
+}
+export function nibOutline(samples, size, nib = DEFAULT_NIB) {
+  const pts = (samples || []).filter((s, i, all) => Number.isFinite(s?.x) && Number.isFinite(s?.y)
+    && (!i || s.x !== all[i - 1].x || s.y !== all[i - 1].y));
+  if (!pts.length) return "";
+  const r = ((Number.isFinite(nib) ? nib : DEFAULT_NIB) * Math.PI) / 180, h = size / 2, g = (NIB_HAIR * size) / 2;
+  const ex = Math.cos(r) * h, ey = -Math.sin(r) * h;   // half the nib, along its edge
+  const nx = Math.sin(r) * g, ny = Math.cos(r) * g;    // half the hairline, across it
+  const out = [];
+  const stamp = (p) => out.push(woundPath([[p.x + ex + nx, p.y + ey + ny], [p.x + ex - nx, p.y + ey - ny],
+    [p.x - ex - nx, p.y - ey - ny], [p.x - ex + nx, p.y - ey + ny]]));
+  stamp(pts[0]);
+  if (pts.length > 1) {
+    sweepSegment(pts, ex, ey, out);
+    sweepSegment(pts, nx, ny, out);
+    stamp(pts[pts.length - 1]);
+  }
+  return out.join(" ");
+}
 const circle = (x, y, r) => {
   const R = r.toFixed(2);
   return `M${(x - r).toFixed(2)},${y.toFixed(2)} a${R},${R} 0 1,0 ${(2 * r).toFixed(2)},0 a${R},${R} 0 1,0 ${(-2 * r).toFixed(2)},0Z`;
@@ -1562,9 +1713,19 @@ const circle = (x, y, r) => {
 // - a highlighter, {d, stroke: true, width, multiply: true, dash}: its
 //   polyline at its size, multiplied onto the page; an unknown tool the
 //   same at its mean drawn width, source-over.
-// `grain` marks a pencil, whose fill is the layer's grain pattern.
+// `grain` marks a pencil, whose fill is the layer's grain pattern. A
+// calligraphy pen without a shape record is its nib (nibOutline), its dash
+// runs each a nib, its dots round dots of the drawn width; with a shape it
+// is an even line, as every shape is. A filled closed shape (isClosedShape)
+// also has `fill`, the closed polygon through its samples, which the layer
+// fills in the stroke's fill under its outline.
 function buildStrokePath(stroke) {
   const pts = decodeStroke(stroke);
+  const out = buildOutline(stroke, pts);
+  if (stroke.fill && isClosedShape(stroke) && pts.length >= 3) out.fill = polyline(pts) + " Z";
+  return out;
+}
+function buildOutline(stroke, pts) {
   const tool = stroke.tool || "pen";
   const size = stroke.size ?? DEFAULT_SIZE;
   if (tool !== "pen") {
@@ -1574,10 +1735,16 @@ function buildStrokePath(stroke) {
   const grain = stroke.brush === "pencil";
   const dash = dashPattern(stroke), dotted = !!dash && stroke.dash === "dotted";
   const pressure = pts[0]?.w != null, shaded = pts[0]?.o != null;
+  const dotPath = (q) => circle(q.x, q.y, size * (q.w ?? 1) / 2);
+  if (nibDrawn(stroke)) {
+    const nib = Number.isFinite(stroke.nib) ? stroke.nib : DEFAULT_NIB;
+    if (dotted) return { d: dashDots(pts, stroke).map(dotPath).join(" "), stroke: false, grain };
+    const runs = dash ? dashRuns(pts, stroke) : [pts];
+    return { d: runs.map((run) => nibOutline(run, size, nib)).join(" "), stroke: false, grain };
+  }
   if (dash && !pressure && !shaded) return { d: polyline(pts), stroke: true, width: size, multiply: false, dash: dashArray(stroke), grain };
   const opts = outlineOptions(stroke);
   const dots = dotted ? dashDots(pts, stroke) : null;
-  const dotPath = (q) => circle(q.x, q.y, size * (q.w ?? 1) / 2);
   if (!shaded) {
     if (dots) return { d: dots.map(dotPath).join(" "), stroke: false, grain };
     // every dash outlined as a piece, the only one of a short stroke too

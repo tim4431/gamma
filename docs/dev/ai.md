@@ -903,8 +903,8 @@ missing pages and non-page blocks are ignored.
 
 ### Pointing the chat at notes
 
-Three optional request fields say what the message is about inside the
-notes. The server resolves all three against the request's context pages.
+Four optional request fields say what the message is about inside the
+notes. The server resolves all four against the request's context pages.
 
 - `focus_block_id` — the block row the cursor is on (`focusedId` in
   `app/App.jsx` → `focusedNote`). The chat shows it as a "Block at your
@@ -940,6 +940,31 @@ notes. The server resolves all three against the request's context pages.
   handwriting into its caption." through ChatDock's `askSignal`. The send
   waits until the conversation has loaded, and while a reply streams the
   request goes into the composer instead.
+- `ink_selections` — handwriting the user selected on a page,
+  `[{page_id, block_id, space, strokes}]`: the selection menu's
+  **Transcribe** on a selection that takes only part of a group
+  ([handwriting.md](handwriting.md) "Transcribe a selection") sends the
+  selected strokes of each group, as the client holds them (strokes not
+  saved yet included), in the group's file `space`. At most 8 entries and
+  64 KB of JSON together (`MAX_INK_SELECTIONS`,
+  `MAX_INK_SELECTION_BYTES`, a 422 past either; App refuses a bigger
+  selection with a status line before sending). The composer shows one
+  chip per group, "Selected handwriting · K strokes", dropped once sent.
+  `ai_context.request_ink_selections` keeps an entry whose `page_id` is a
+  context page and whose strokes parse as a version 2 file in that space;
+  the notes-focus section lists each as `- [block_id] (selected
+  handwriting on p. N, K strokes)` under "Handwriting the user selected
+  for this message (part of the note block in brackets):", and each sends
+  its picture — `ink_view.picture` with the inline file, the selected
+  strokes alone on their page, cropped to them — within the picture
+  budget, as an attached handwriting block's does; after the list the
+  section says "Each picture holds only the selected strokes, saved or
+  not: transcribe exactly those, not the rest of the block's
+  handwriting.", and the agent's prompt says to read a selection from
+  its picture, not with `view_ink` (which shows the whole block as it was
+  saved, without the strokes not saved yet). The request it comes
+  with is "Transcribe the selected handwriting."; an agent that may edit
+  appends the text to that block's caption, as for a whole block.
 - `note_selections` — selected note text as exact ranges of block sources,
   `[{block_id, from, to, text}]`; `text` is the source slice the client saw.
   Two sources feed it:

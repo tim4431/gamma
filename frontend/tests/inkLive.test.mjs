@@ -23,6 +23,9 @@ test("a writer's chunk: samples rounded to the wire's units, at most LIVE_SAMPLE
     { tool: "pen", size: 2, color: "#000000", opacity: 1, pen: true }, "only the keys a stroke is encoded with");
   assert.deepEqual(liveStyle({ tool: "highlighter", color: "#ffe066", size: 14, opacity: 0.6, dash: "dotted" }, false),
     { tool: "highlighter", size: 14, color: "#ffe066", opacity: 0.6, pen: false, dash: "dotted" });
+  assert.deepEqual(liveStyle({ tool: "pen", brush: "calligraphy", nib: 0, nibLock: true, color: "#000000", size: 2, opacity: 1 }, true),
+    { tool: "pen", size: 2, color: "#000000", opacity: 1, pen: true, brush: "calligraphy", nib: 0 }, "a calligraphy pen's nib, 0 too, never its lock");
+  assert.equal("nib" in liveStyle({ tool: "pen", brush: "brush", nib: 30, color: "#000000", size: 2 }, true), false, "a nib only on a calligraphy pen");
 });
 
 test("chunks in order grow a wet stroke on their surface; a gap drops it until the file lands; drop cancels it", () => {
@@ -105,4 +108,14 @@ test("the writer's ledger: a stroke sent live and taken away before a save held 
   ledger.sent("s5", 4);
   ledger.clear();
   assert.deepEqual(ledger.removed([{ before: ink("s5"), after: ink() }]), [], "leaving the page forgets them");
+});
+
+test("a calligraphy pen's wet stroke keeps its nib, an integer 0..179; anything else is left out", () => {
+  clearWet();
+  receiveInkLive(chunk({ id: "cal", style: { ...style, brush: "calligraphy", nib: 150 } }));
+  receiveInkLive(chunk({ id: "odd", style: { ...style, brush: "calligraphy", nib: 400 } }));
+  const [cal, odd] = wetOn(3);
+  assert.deepEqual([cal.style.brush, cal.style.nib], ["calligraphy", 150]);
+  assert.equal("nib" in odd.style, false);
+  clearWet();
 });

@@ -626,6 +626,38 @@ export const FlipVIcon = (p) => (
 export const BrushIcon = (p) => (
   <Icon {...p}><path d="m14.6 4.4 5 5" /><path d="M20.5 3.5a2.1 2.1 0 0 0-3 0L9 12l3 3 8.5-8.5a2.1 2.1 0 0 0 0-3Z" /><path d="M9 12c-3 0-5 2-5 5 0 1.5-1 3-2 3 3 0 7 0 8-3a3.3 3.3 0 0 0-1-5Z" /></Icon>
 );
+// The tool strip's modifiers (markup/MarkupToolbar.jsx): the ruler, the
+// Shapes tool, the zoom window, a line stamped along the ruler, and the
+// glyphs of the Shapes tool's kinds.
+export const RulerIcon = (p) => (
+  <Icon {...p}><path d="M21.3 15.3a2.4 2.4 0 0 1 0 3.4l-2.6 2.6a2.4 2.4 0 0 1-3.4 0L2.7 8.7a2.41 2.41 0 0 1 0-3.4l2.6-2.6a2.41 2.41 0 0 1 3.4 0Z" /><path d="m14.5 12.5 2-2" /><path d="m11.5 9.5 2-2" /><path d="m8.5 6.5 2-2" /><path d="m17.5 15.5 2-2" /></Icon>
+);
+export const ShapesIcon = (p) => (
+  <Icon {...p}><path d="M8.3 10a.7.7 0 0 1-.63-1.08L11.4 3a.7.7 0 0 1 1.2-.04l3.7 5.94a.7.7 0 0 1-.57 1.1Z" /><rect x="3" y="14" width="7" height="7" rx="1" /><circle cx="17.5" cy="17.5" r="3.5" /></Icon>
+);
+// A window with its docked panel along the bottom and a magnifier above.
+export const ZoomWindowIcon = (p) => (
+  <Icon {...p}><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M3 14.5h18" /><circle cx="10.5" cy="8.75" r="2.5" /><path d="m12.4 10.6 1.8 1.8" /></Icon>
+);
+// A ruler with its ticks, and the line drawn along it.
+export const StampLineIcon = (p) => (
+  <Icon {...p}><rect x="3" y="4" width="18" height="7" rx="1" /><path d="M7 4v3" /><path d="M11 4v2" /><path d="M15 4v3" /><path d="M3 17.5h18" /></Icon>
+);
+export const MinusIcon = (p) => (
+  <Icon {...p}><path d="M5 12h14" /></Icon>
+);
+export const ShapeLineIcon = (p) => (
+  <Icon {...p}><path d="M5 19 19 5" /></Icon>
+);
+export const ShapeArrowIcon = (p) => (
+  <Icon {...p}><path d="M5 19 19 5" /><path d="M10 5h9v9" /></Icon>
+);
+export const ShapeRectIcon = (p) => (
+  <Icon {...p}><rect x="4" y="6" width="16" height="12" rx="1" /></Icon>
+);
+export const ShapeEllipseIcon = (p) => (
+  <Icon {...p}><ellipse cx="12" cy="12" rx="9" ry="6.5" /></Icon>
+);
 
 // The recording player (recording/PlayerBar.jsx) and pill (RecordingPill.jsx).
 export const PauseIcon = ({ size = 16, ...rest }) => (

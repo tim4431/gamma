@@ -474,8 +474,10 @@ left `ref`. `RULES` in `select.mjs` maps each source path (first matching
 glob wins) to the groups that exercise it: `frontend/src/guide/**` to the
 three tour groups, `backend/gamma/ink.py` to the ink groups,
 `frontend/src/markup/**` (the page layers and the tool strip, whose
-anchors the ink tour uses) to the ink, ink-editing, pdf-touch, notebooks,
-triggered-guide and textbox groups, docs, desktop,
+anchors the ink tour uses) to the ink groups (ink, ink-editing, inkShapes,
+inkZoom), pdf-touch, notebooks, triggered-guide and textbox, the chat's
+pictures of handwriting (`backend/gamma/ink_view.py`) to the groups of the AI
+modules (`ai_*.py`: the chat's, settings and inkZoom), docs, desktop,
 extension and backend tests to none, and what every scenario goes through
 (`src/app/`, `src/shared/`, the home library, the page's live session, the
 backend core: auth, db, blocks, ops, uploads) to all of them. A changed

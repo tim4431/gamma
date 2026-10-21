@@ -7,6 +7,7 @@ client's recognisers (inkshapes.json, inkscribble.json) have only the node
 side, and this side checks their shape."""
 
 import json
+import math
 from pathlib import Path
 
 import pytest
@@ -118,6 +119,8 @@ def test_ink_width(row):
     stroke = {"id": "a", "tool": row["tool"], "pen": row["pen"], "size": row["size"], "opacity": 0.8}
     if row["brush"]:
         stroke["brush"] = row["brush"]
+    if row.get("nib") is not None:
+        stroke["nib"] = row["nib"]
     if row.get("shape"):
         stroke["shape"] = row["shape"]
     if "samples" in row:
@@ -312,6 +315,8 @@ SHAPE_PARAMS = {
     "circle": {"cx", "cy", "r"},
     "ellipse": {"cx", "cy", "rx", "ry", "angle"},
 }
+# What the Shapes tool draws (frontend/src/ink/shapeTool.js; inkshapes.json `tool`).
+SHAPE_TOOL_KINDS = ("line", "arrow", "rect", "ellipse")
 
 
 def _check_samples(samples, timed=True):
@@ -343,6 +348,10 @@ def test_ink_fixture_notes_are_unique():
     kinds = {c["expect"]["kind"] for c in INKSHAPES["cases"] if c["expect"]}
     assert kinds == set(SHAPE_PARAMS), "every kind the recogniser answers has a positive case"
     assert sum(1 for c in INKSHAPES["cases"] if c["expect"] is None) >= 4, "letters and zigzags that must not recognise"
+    notes = [c["note"] for c in INKSHAPES["tool"]]
+    assert len(set(notes)) == len(notes)
+    assert {c["kind"] for c in INKSHAPES["tool"]} == set(SHAPE_TOOL_KINDS), "every kind the Shapes tool draws has a drag"
+    assert any(c["expect"] is None for c in INKSHAPES["tool"]), "a drag too short to draw"
     assert any(c["scribble"] for c in INKSCRIBBLE["cases"]) and any(not c["scribble"] for c in INKSCRIBBLE["cases"])
 
 
@@ -366,6 +375,41 @@ def test_ink_shape_fixture(case):
          "pts": [100, 100, 0, 1000, 500, 300], "shape": shape}]})
     assert ink.strokes[0].shape.kind == shape["kind"] and ink.strokes[0].shape.params == shape["params"]
     assert shape["kind"] in inkmod.SHAPE_KINDS
+
+
+@pytest.mark.parametrize("case", INKSHAPES["tool"], ids=[c["note"] for c in INKSHAPES["tool"]])
+def test_ink_shape_tool_fixture(case):
+    """A drag of the Shapes tool, which the server never runs: the case is
+    well formed, only a drag under 4 css px draws nothing, and the stroke it
+    commits — pen false, brush monoline, written xyt, its shape record —
+    parses on the server."""
+    assert set(case) == {"note", "kind", "from", "to", "shift", "k", "expect"}
+    assert case["kind"] in SHAPE_TOOL_KINDS and isinstance(case["shift"], bool) and case["k"] > 0
+    for point in (case["from"], case["to"]):
+        assert len(point) == 2 and all(isinstance(v, (int, float)) and round(v, 2) == v for v in point)
+    expect = case["expect"]
+    reach = math.hypot(case["to"][0] - case["from"][0], case["to"][1] - case["from"][1]) * case["k"]
+    if expect is None:
+        assert reach < 4, "only a drag under 4 css px draws nothing"
+        return
+    assert reach >= 4
+    assert set(expect) == {"params", "count", "closed"}
+    params = expect["params"]
+    assert set(params) == SHAPE_PARAMS[case["kind"]] - {"head"}, "the tool writes no arrow head"
+    assert all(isinstance(v, (int, float)) and round(v, 2) == v for v in params.values()), "on the 1/100 pt grid"
+    assert isinstance(expect["count"], int) and expect["count"] >= 2
+    assert expect["closed"] is (case["kind"] in ("rect", "ellipse"))
+    if case["kind"] == "line":
+        assert expect["count"] == 2
+    if case["kind"] == "ellipse":
+        assert params["rx"] >= params["ry"] and params["angle"] in (0, 90) and expect["count"] >= 49
+    if case["kind"] == "rect":
+        assert params["angle"] == 0
+    shape = {"kind": case["kind"], "params": dict(params)}
+    ink = inkmod.parse_ink({"format": "gamma-ink", "version": 2, "space": INK_SPACE, "strokes": [
+        {"id": "s", "tool": "pen", "brush": "monoline", "pen": False, "color": "#1d4ed8", "size": 2, "ch": "xyt",
+         "pts": [100, 100, 0, 1000, 500, 300], "shape": shape}]})
+    assert ink.strokes[0].shape.kind == case["kind"] and ink.strokes[0].shape.params == params
 
 
 @pytest.mark.parametrize("case", INKSCRIBBLE["cases"], ids=[c["note"] for c in INKSCRIBBLE["cases"]])

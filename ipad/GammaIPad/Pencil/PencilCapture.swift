@@ -210,9 +210,12 @@ final class PencilCapture: UIGestureRecognizer {
     private func record(_ touch: UITouch, into recorder: inout StrokeRecorder) {
         let space = surface ?? view
         let point = touch.preciseLocation(in: space)
+        // the barrel roll (an Apple Pencil Pro), which turns a calligraphy nib
+        var roll: Double? = nil
+        if #available(iOS 17.5, *) { roll = Double(touch.rollAngle) }
         recorder.add(x: Double(point.x), y: Double(point.y), force: Double(touch.force),
                      maximumForce: Double(touch.maximumPossibleForce), time: touch.timestamp,
-                     altitude: Double(touch.altitudeAngle), azimuth: Double(touch.azimuthAngle(in: space)))
+                     altitude: Double(touch.altitudeAngle), azimuth: Double(touch.azimuthAngle(in: space)), roll: roll)
     }
 
     private func preview(predicted: [UITouch]) {
@@ -399,8 +402,11 @@ struct ClaimQueue<Touch: Hashable> {
 /// p the force over the maximum (0…1), t in ms since the first sample and
 /// never going back, then, when the Pencil reports its tilt, `a` and `z`,
 /// its altitude and azimuth in degrees (the web converts them back to
-/// radians, as WebKit gives a page's pointer events). The lift reports no
-/// force, so a zero keeps the last pressure, as the web's own sampling does.
+/// radians, as WebKit gives a page's pointer events), and after them, when
+/// it reports its barrel roll (iPadOS 17.5), `r`, in degrees 0…360,
+/// clockwise as seen (PointerEvent.twist's convention: the page turns a
+/// calligraphy nib by the first sample's). The lift reports no force, so a
+/// zero keeps the last pressure, as the web's own sampling does.
 ///
 /// It also keeps the stroke's stillness anchor (shapes.js stillSince): the
 /// latest sample that landed more than `PencilCapture.holdSlop` from the
@@ -415,17 +421,23 @@ struct StrokeRecorder {
     private(set) var stillTime: TimeInterval = 0
     private var start: TimeInterval?
 
-    /// `altitude` and `azimuth` in radians, as UITouch gives them; a sample
-    /// without them has four values.
+    /// `altitude`, `azimuth` and `roll` in radians, as UITouch gives them; a
+    /// sample without the two angles has four values, one without the roll six.
     mutating func add(x: Double, y: Double, force: Double, maximumForce: Double, time: TimeInterval,
-                      altitude: Double? = nil, azimuth: Double? = nil) {
+                      altitude: Double? = nil, azimuth: Double? = nil, roll: Double? = nil) {
         let begin = start ?? time
         start = begin
         let measured = maximumForce > 0 ? force / maximumForce : 0.5
         let p = measured > 0 ? min(1, measured) : (samples.last?[2] ?? 0.5)
         let t = max(samples.last?[3] ?? 0, (time - begin) * 1000)
         var sample = [x, y, p, t]
-        if let altitude, let azimuth { sample += [altitude * 180 / .pi, azimuth * 180 / .pi] }
+        if let altitude, let azimuth {
+            sample += [altitude * 180 / .pi, azimuth * 180 / .pi]
+            if let roll, roll.isFinite {
+                let degrees = (roll * 180 / .pi).truncatingRemainder(dividingBy: 360)
+                sample.append(degrees < 0 ? degrees + 360 : degrees)
+            }
+        }
         if samples.isEmpty {
             stillSince = 0
             stillTime = time

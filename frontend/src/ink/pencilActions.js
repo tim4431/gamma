@@ -10,7 +10,9 @@
 // prefs: {tools: the preset list, pen: the id of the pen a stylus writes
 // with, tap, squeeze: this browser's inkPencilTap and inkPencilSqueeze}.
 // state: {tool: the armed tool, previous: the tool armed before it,
-// options: the options row is open, busy: a stroke or a claim is in
+// options: the open options row, App's inkUi.options — true for the armed
+// tool's, "ruler" for the ruler's (not the tool's: Show options opens the
+// tool's in its place), false for none —, busy: a stroke or a claim is in
 // progress (InkLayer.jsx inkBusy), squeeze: the squeeze App holds open,
 // {since, ignored, hold: {tool, used} | null} or null, now: ms on the clock
 // `since` was read from}.
@@ -42,13 +44,14 @@ const SYSTEM = { switchEraser: "eraser", switchPrevious: "previous", showColorPa
 // The tool to go back to: the one armed before the current one when it is
 // still on the strip and not the current one, else the pen a stylus writes
 // with (the last pen armed, else the first preset). The gestures' Switch to
-// last tool and the eraser's return to the last tool (App's inkBack) both
-// pick it.
+// last tool, the eraser's return to the last tool and the Shapes tool's off
+// (App's inkBack) all pick it. The reserved tools count as on the strip.
+const RESERVED = ["eraser", "select", "text", "shape"];
 export function backTool(prefs = {}, state = {}) {
   const tools = prefs.tools || [];
   const pen = tools.find((x) => x.id === prefs.pen)?.id || tools[0]?.id || null;
   const { tool = null, previous = null } = state;
-  const known = ["eraser", "select", "text"].includes(previous) || tools.some((x) => x.id === previous);
+  const known = RESERVED.includes(previous) || tools.some((x) => x.id === previous);
   return known && previous !== tool ? previous : pen;
 }
 
@@ -75,7 +78,7 @@ function act(choice, prefs, state) {
       return { pick: backTool(prefs, state) };
     case "options":
       // With the hand armed the Pencil writes with the stylus pen: its row.
-      return { ui: tool ? { open: true, options: !options } : { open: true, tool: pen, options: true } };
+      return { ui: tool ? { open: true, options: options !== true } : { open: true, tool: pen, options: true } };
     case "undo":
       return { undo: true };
     default:

@@ -29,7 +29,7 @@ test("the default pen's law is 1 + (p − 0.5), capped; constant-width styles ha
 });
 
 test("the brush table: Brush and Pencil have laws, the Pencil an opacity law; the channels follow the style and the tilt", () => {
-  assert.deepEqual(Object.keys(BRUSHES), ["pen", "monoline", "brush", "pencil"]);
+  assert.deepEqual(Object.keys(BRUSHES), ["pen", "monoline", "brush", "pencil", "calligraphy"]);
   assert.equal(widthLaw({ tool: "pen", brush: "brush" })({ p: 0.4 }), 0.8, "the Brush's law before its tapers: 2p");
   assert.equal(widthLaw({ tool: "pen", brush: "brush", pen: false }) !== null, true, "a mouse Brush still writes w, from the speed law");
   assert.equal(widthLaw({ tool: "pen", brush: "pencil", pen: false }), null, "a mouse Pencil is even");
@@ -310,7 +310,8 @@ const WIDTH = JSON.parse(readFileSync(new URL("../../tests/shared/inkwidth.json"
 const near = (a, b, tol, what) => assert.ok(Math.abs(a - b) <= tol, `${what}: ${a} vs ${b}`);
 for (const row of WIDTH.rows) {
   test(`width: ${row.note}`, () => {
-    const style = { tool: row.tool, brush: row.brush || undefined, pen: row.pen, size: row.size, ...(row.shape ? { shape: row.shape } : {}) };
+    const style = { tool: row.tool, brush: row.brush || undefined, pen: row.pen, size: row.size, ...(row.nib != null ? { nib: row.nib } : {}),
+      ...(row.shape ? { shape: row.shape } : {}) };
     let stroke, decoded, ch;
     if (row.samples) {
       const samples = row.samples.map(([x, y, p, t, a]) => ({ x, y, ...(p != null ? { p } : {}), t, ...(a != null ? { a } : {}) }));
@@ -350,4 +351,87 @@ test("restyleBrush holds a w that would draw past the server's 100 pt cap there;
   assert.ok(strokeMaxWidth(pencil) <= 100, `held at the cap (${strokeMaxWidth(pencil)})`);
   assert.equal(decodeStroke(pencil)[2].w, 1.666, "w = floor(100 / 60, three decimals), not the law's 3.5");
   assert.equal(strokeMaxWidth(encodeStroke({ id: "e", size: 3, ch: "xy", samples: [{ x: 0, y: 0 }] })), 3, "no w: the size");
+});
+
+// --- the calligraphy pen (docs/dev/handwriting.md "The brush table") ------------
+import { travelAt } from "../src/ink/finishStroke.js";
+import { DEFAULT_NIB } from "../src/ink/ink.js";
+
+test("calligraphy: the law reads the travel and the nib, a mouse stroke has it too (xytw), a shape has none", () => {
+  const style = { tool: "pen", brush: "calligraphy", size: 2, nib: 45 };
+  assert.ok(widthLaw({ ...style, pen: false }), "a mouse or finger stroke bakes the direction alone");
+  assert.equal(widthLaw({ ...style, pen: false, shape: { kind: "line", params: {} } }), null, "a shape is even");
+  assert.equal(strokeChannels({ ...style, pen: false }), "xytw");
+  assert.equal(strokeChannels({ ...style, pen: true }), "xyptw");
+  assert.equal(strokeChannels({ ...style, pen: false, shape: { kind: "line", params: {} } }), "xyt");
+  const law = BRUSHES.calligraphy.w;
+  assert.equal(law({ p: 0.5 }, null, 45), 1, "no travel: the nib's whole length");
+  assert.ok(Math.abs(law({ p: 0.5 }, [1, 1], 45) - 1) < 1e-12, "down to the right across a 45° nib: full");
+  assert.ok(Math.abs(law({ p: 0.5 }, [1, -1], 45) - 0.12) < 1e-12, "along it: the hairline");
+  assert.ok(Math.abs(law({ p: 1 }, [0, 1], 0) - 1.15) < 1e-12, "full pressure: 1.15");
+  // the style's nib turns the widths; without one the stroke is a 45° nib
+  const down = Array.from({ length: 5 }, (_, i) => ({ x: 10, y: 10 + 3 * i, p: 0.5, t: 8 * i }));
+  assert.deepEqual(brushWidths(down, { ...style, pen: true, nib: 0 }), [1, 1, 1, 1, 1], "down across a level nib");
+  assert.deepEqual(brushWidths(down, { ...style, pen: true, nib: 90 }), [0.12, 0.12, 0.12, 0.12, 0.12], "down along an upright one");
+  assert.deepEqual(brushWidths(down, { tool: "pen", brush: "calligraphy", pen: true }), brushWidths(down, { ...style, pen: true, nib: DEFAULT_NIB }));
+  // the pressure counts only when the stroke reads it
+  const pressed = down.map((s) => ({ ...s, p: 1 }));
+  assert.deepEqual(brushWidths(pressed, { ...style, pen: false, nib: 0 }), [1, 1, 1, 1, 1], "pen false: p read as 0.5");
+  assert.deepEqual(brushWidths(pressed, { ...style, pen: true, nib: 0 }), [1.15, 1.15, 1.15, 1.15, 1.15]);
+  assert.deepEqual(brushWidths(down, { ...style, pen: true }, { live: true }), brushWidths(down, { ...style, pen: true }), "no tapers: live is the same");
+});
+
+test("calligraphy: travelAt is the neighbours' chord, one-sided at the ends, the segment ending there at a reversal, null with no length", () => {
+  const pts = [[0, 0], [2, 0], [4, 0], [2, 0], [0, 0]].map(([x, y]) => ({ x, y }));
+  assert.deepEqual(travelAt(pts, 0), [2, 0]);
+  assert.deepEqual(travelAt(pts, 1), [4, 0]);
+  assert.deepEqual(travelAt(pts, 2), [2, 0], "before and after coincide: the segment ending at it");
+  assert.deepEqual(travelAt(pts, 4), [-2, 0]);
+  assert.equal(travelAt([{ x: 3, y: 3 }], 0), null);
+  assert.equal(travelAt([{ x: 3, y: 3 }, { x: 3, y: 3 }], 1), null);
+  assert.equal(travelAt([{ x: 3, y: 3 }, { x: 3, y: 3 }, { x: 5, y: 3 }], 0), null, "one sample each way, no farther: a repeated first sample has none");
+  assert.deepEqual(travelAt([{ x: 3, y: 3 }, { x: 3, y: 3 }, { x: 5, y: 3 }], 1), [2, 0]);
+});
+
+test("restyleBrush to calligraphy bakes with the stroke's own nib, else 45, and writes it; a change away drops it", () => {
+  const samples = Array.from({ length: 6 }, (_, i) => ({ x: 10 + 3 * i, y: 20 + 3 * i, p: 0.5, t: 8 * i }));
+  const pen = encodeStroke({ id: "p", size: 2, ch: "xyptw", samples: bakeWidths(samples, { tool: "pen", pen: true }) });
+  const turned = encodeStroke({ id: "q", size: 2, nib: 135, ch: "xyptw", samples: bakeWidths(samples, { tool: "pen", pen: true }) });
+  const mouse = encodeStroke({ id: "m", size: 2, pen: false, ch: "xyt", samples: samples.map(({ x, y, t }) => ({ x, y, t })) });
+  const ink = { ...newInk(1, 612, 792), strokes: [pen, turned, mouse] };
+  const out = restyleBrush(ink, ["p", "q", "m"], "calligraphy");
+  const [p, q, m] = out.strokes;
+  assert.deepEqual([p.brush, p.nib, p.ch], ["calligraphy", 45, "xyptw"], "no nib of its own: 45");
+  assert.deepEqual(decodeStroke(p).map((s) => s.w), [1, 1, 1, 1, 1, 1], "down to the right across a 45° nib");
+  assert.deepEqual([q.nib, ...decodeStroke(q).map((s) => s.w)], [135, 0.12, 0.12, 0.12, 0.12, 0.12, 0.12], "its own nib, along which it runs");
+  assert.deepEqual([m.brush, m.ch, m.pen], ["calligraphy", "xytw", false], "a mouse stroke gets w from its direction");
+  assert.equal(restyleBrush(out, ["p", "q", "m"], "calligraphy"), out, "choosing it again changes nothing");
+  // nib 0 survives (written with != null)
+  const flat = restyleBrush({ ...ink, strokes: [{ ...pen, nib: 0 }] }, ["p"], "calligraphy").strokes[0];
+  assert.equal(flat.nib, 0);
+  const back = restyleBrush(out, ["p", "q"], "brush");
+  assert.ok(back.strokes.slice(0, 2).every((s) => s.brush === "brush" && !("nib" in s)), "a change away drops the nib");
+  const plain = restyleBrush(out, ["p"], null).strokes[0];
+  assert.deepEqual(["brush" in plain, "nib" in plain], [false, false]);
+  assert.deepEqual(plain.pts, pen.pts, "and bakes the very samples the pen had");
+  // a stroke in calligraphy without a nib (an older writer's) gets one
+  const { nib: _n, ...bare } = p;
+  const fixed = restyleBrush({ ...ink, strokes: [bare] }, ["p"], "calligraphy").strokes[0];
+  assert.equal(fixed.nib, 45);
+});
+
+test("finishStroke: a held calligraphy shape keeps its nib and brush, constant width; another brush's shape takes no nib and no stroke a Lock angle", () => {
+  const samples = line(10);
+  const hold = { kind: "line", params: { x1: 0, y1: 0, x2: 50, y2: 0 } };
+  const cal = finishStroke(samples, { style: { tool: "pen", brush: "calligraphy", nib: 30, nibLock: true, color: "#000", size: 2 }, pen: true, hold });
+  assert.deepEqual([cal.style.brush, cal.style.nib, "nibLock" in cal.style], ["calligraphy", 30, false]);
+  assert.equal(strokeChannels(cal.style, cal.commit), "xyt");
+  const mono = finishStroke(samples, { style: { tool: "pen", brush: "monoline", nib: 30, color: "#000", size: 2 }, pen: false, hold });
+  assert.equal("nib" in mono.style, false, "a nib only on a calligraphy pen");
+  // freehand: decimated and baked with the nib, the style handed back as it came
+  const style = { tool: "pen", brush: "calligraphy", nib: 0, color: "#000", size: 2 };
+  const down = Array.from({ length: 5 }, (_, i) => ({ x: 10, y: 10 + 3 * i, p: 0.5, t: 8 * i }));
+  const free = finishStroke(down, { style, pen: true });
+  assert.equal(free.style, style);
+  assert.deepEqual(free.commit.map((s) => s.w), [1, 1, 1, 1, 1]);
 });

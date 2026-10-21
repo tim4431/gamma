@@ -9,10 +9,13 @@
 // "select", "text", or null for the hand) · {kind: "width", step: ±1} (the
 // armed preset thinner or thicker) · {kind: "brush", step: ±1} (the same
 // keys with Shift: the armed pen's style back or forward through Pen,
-// Ballpoint, Brush, Pencil) · {kind: "eraser", phase: "down" | "up",
+// Ballpoint, Brush, Pencil, Calligraphy) · {kind: "eraser", phase: "down" | "up",
 // held} (E: `down` on a non-repeat keydown, `up` on the keyup with `held`
-// the ms since the down, so App decides tap or hold); `prevent` and `stop`
-// say what to do with the event.
+// the ms since the down, so App decides tap or hold) · {kind: "toggle",
+// what: "ruler" | "shape" | "zoom"} (R, S, Z: the ruler, the Shapes tool,
+// the zoom window on or off) · {kind: "off", what} (Escape taking one of
+// them away) · {kind: "newLine"} (Enter while the zoom window is open: its
+// New line); `prevent` and `stop` say what to do with the event.
 //
 // A chord with Ctrl, Cmd or Alt is someone else's (Ctrl+C / X / V / D / A
 // on handwriting are catalog commands, app/appCommands.js), except Ctrl+Z /
@@ -22,11 +25,17 @@
 // state: {tools: the visible presets in row order, tool: the armed tool,
 // hasSelection: the lasso holds strokes, boxUndo: Ctrl+Z belongs to the
 // block history (the Text tool is armed or a box is selected or edited),
-// hasBox: a text box is selected (Escape is its), optionsOpen: the armed
-// tool's options row is open (Escape closes it before the strip),
-// eraserDown: the timeStamp of the E keydown still held, or null}.
+// hasBox: a text box is selected (Escape is its), optionsOpen: an options
+// row is open, the armed tool's or the ruler's (Escape closes it before the
+// strip), eraserDown: the timeStamp of the E keydown still held, or null,
+// ruler / zoom: the ruler shows / the zoom window is open, onControl: the
+// key's target is a button, a link or a menu row (which keeps its Enter)}.
+// Escape goes one layer at a time: the text box, the selection, the open
+// row, the Shapes tool (the tool before it comes back), the ruler, the
+// zoom window, then the strip.
 export function stripKey(e, state = {}) {
-  const { tools = [], tool = null, hasSelection = false, boxUndo = false, hasBox = false, optionsOpen = false, eraserDown = null } = state;
+  const { tools = [], tool = null, hasSelection = false, boxUndo = false, hasBox = false, optionsOpen = false, eraserDown = null,
+    ruler = false, zoom = false, onControl = false } = state;
   const code = e.code || "";
   if (e.type === "keyup") {
     if (code !== "KeyE" || eraserDown == null) return null;
@@ -41,7 +50,12 @@ export function stripKey(e, state = {}) {
   }
   if (code === "Escape") {
     if (hasBox) return null;
-    return { kind: hasSelection ? "deselect" : optionsOpen ? "closeOptions" : "close" };
+    if (hasSelection) return { kind: "deselect" };
+    if (optionsOpen) return { kind: "closeOptions" };
+    if (tool === "shape") return { kind: "off", what: "shape" };
+    if (ruler) return { kind: "off", what: "ruler" };
+    if (zoom) return { kind: "off", what: "zoom" };
+    return { kind: "close" };
   }
   if ((code === "Delete" || code === "Backspace") && hasSelection) return { kind: "delete", prevent: true };
   if (mod || alt) return null;
@@ -49,6 +63,11 @@ export function stripKey(e, state = {}) {
   if (code === "KeyL") return { kind: "pick", id: "select" };
   if (code === "KeyT") return { kind: "pick", id: "text" };
   if (code === "KeyV") return { kind: "pick", id: null };
+  if (code === "KeyR") return { kind: "toggle", what: "ruler" };
+  if (code === "KeyS") return { kind: "toggle", what: "shape" };
+  if (code === "KeyZ") return { kind: "toggle", what: "zoom" };
+  // a selected text box keeps its Enter (it opens the box), as it keeps its Escape
+  if ((code === "Enter" || code === "NumpadEnter") && zoom && !onControl && !hasBox) return { kind: "newLine", prevent: true };
   if (code === "BracketLeft" || code === "BracketRight") {
     return { kind: e.shiftKey ? "brush" : "width", step: code === "BracketLeft" ? -1 : 1 };
   }

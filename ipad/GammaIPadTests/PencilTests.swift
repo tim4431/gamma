@@ -5,7 +5,8 @@ import XCTest
 /// The Pencil layer's pure parts (Pencil/): which touch a claim takes, the
 /// samples a stroke hands back with their tilt and stillness anchor, when a
 /// hold is asked, the lazy brush, the ribbon, the held shape and how it
-/// follows the pen, and the gesture actions' names. The recognizer's life
+/// follows the pen, the ruler's edge (RulerSnap), and the gesture actions'
+/// names. The recognizer's life
 /// among WebKit's own recognizers needs a device (docs/dev/ipad.md "Device
 /// checks").
 final class ClaimQueueTests: XCTestCase {
@@ -138,6 +139,19 @@ final class StrokeRecorderTests: XCTestCase {
         XCTAssertEqual(first[5], 90, accuracy: 1e-9, "the azimuth")
         stroke.add(x: 11, y: 20, force: 2, maximumForce: 4, time: 0.004, altitude: 0.5)
         XCTAssertEqual(stroke.samples[1].count, 4, "without both angles, four values, as an older shell sends")
+    }
+
+    func testThePencilsRollComesSeventhInDegreesClockwise() {
+        var stroke = StrokeRecorder()
+        stroke.add(x: 10, y: 20, force: 2, maximumForce: 4, time: 0, altitude: Double.pi / 4, azimuth: 0, roll: Double.pi / 6)
+        XCTAssertEqual(stroke.samples[0].count, 7, "[x, y, p, t, a, z, r]")
+        XCTAssertEqual(stroke.samples[0][6], 30, accuracy: 1e-9, "the roll in degrees")
+        stroke.add(x: 11, y: 20, force: 2, maximumForce: 4, time: 0.004, altitude: Double.pi / 4, azimuth: 0, roll: -Double.pi / 2)
+        XCTAssertEqual(stroke.samples[1][6], 270, accuracy: 1e-9, "into 0…360")
+        stroke.add(x: 12, y: 20, force: 2, maximumForce: 4, time: 0.008, altitude: Double.pi / 4, azimuth: 0)
+        XCTAssertEqual(stroke.samples[2].count, 6, "no roll reported: six values")
+        stroke.add(x: 13, y: 20, force: 2, maximumForce: 4, time: 0.012, roll: 1)
+        XCTAssertEqual(stroke.samples[3].count, 4, "a roll without the tilt is not written: the seventh value follows the sixth")
     }
 
     func testTheStillnessAnchorMovesOnlyPastTheSlop() {
@@ -576,5 +590,40 @@ final class PencilActionTests: XCTestCase {
         guard #available(iOS 17.5, *) else { throw XCTSkip("iPadOS 17.5 actions") }
         XCTAssertEqual(PencilAction.name(.showContextualPalette), "showInkAttributes")
         XCTAssertEqual(PencilAction.name(.runSystemShortcut), "runSystemShortcut")
+    }
+}
+
+/// The ruler's edge (the claim's `snap`): the web's ink/ruler.js onRail and
+/// railLine, the cases of frontend/tests/ruler.test.mjs in view coordinates.
+final class RulerSnapTests: XCTestCase {
+    func testAPointIsProjectedOntoTheEdge() {
+        let level = InkTool.Snap(x0: 100, y0: 200, angle: 0)
+        XCTAssertEqual(RulerSnap.point(CGPoint(x: 130, y: 190), onto: level), CGPoint(x: 130, y: 200))
+        // 90°: the edge runs up the screen (counterclockwise as seen, y down)
+        let upright = RulerSnap.point(CGPoint(x: 80, y: 20), onto: InkTool.Snap(x0: 50, y0: 50, angle: 90))
+        XCTAssertEqual(upright.x, 50, accuracy: 1e-9)
+        XCTAssertEqual(upright.y, 20, accuracy: 1e-9)
+        // 30°: along (cos 30°, −sin 30°) from the origin, 100 cos 30° out
+        let tilted = RulerSnap.point(CGPoint(x: 100, y: 0), onto: InkTool.Snap(x0: 0, y0: 0, angle: 30))
+        XCTAssertEqual(tilted.x, 75, accuracy: 1e-9)
+        XCTAssertEqual(tilted.y, -43.30127, accuracy: 1e-5)
+    }
+
+    func testTheLineRunsBetweenTheOutermostProjectionsFromTheEndNearerTheFirst() {
+        let level = InkTool.Snap(x0: 100, y0: 200, angle: 0)
+        let wobbly = [CGPoint(x: 150, y: 195), CGPoint(x: 260, y: 205), CGPoint(x: 330, y: 190), CGPoint(x: 290, y: 199)]
+        XCTAssertEqual(RulerSnap.project(wobbly, onto: level), [CGPoint(x: 150, y: 200), CGPoint(x: 330, y: 200)],
+                       "it went back, but the line reaches the farthest point")
+        XCTAssertEqual(RulerSnap.project([CGPoint(x: 450, y: 190), CGPoint(x: 300, y: 185), CGPoint(x: 160, y: 205)], onto: level),
+                       [CGPoint(x: 450, y: 200), CGPoint(x: 160, y: 200)], "drawn right to left, it starts at the right")
+        XCTAssertEqual(RulerSnap.project([CGPoint(x: 120, y: 190)], onto: level), [CGPoint(x: 120, y: 200), CGPoint(x: 120, y: 200)],
+                       "a dot of the edge")
+        XCTAssertEqual(RulerSnap.project([], onto: level), [])
+    }
+
+    func testTheEdgeTheClaimCarriesIsDrawnAndDeclared() throws {
+        XCTAssertTrue(HostInfo(version: "0").inkLooks.contains("snap"), "the live line draws a stroke along the ruler")
+        let claim = try JSONDecoder().decode(InkTool.self, from: Data(#"{"kind":"pen","color":"#222222","size":2,"snap":{"x0":10.5,"y0":20,"angle":30}}"#.utf8))
+        XCTAssertEqual(claim.snap, InkTool.Snap(x0: 10.5, y0: 20, angle: 30))
     }
 }

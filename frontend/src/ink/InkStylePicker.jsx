@@ -3,41 +3,46 @@
 // (markup/MarkupToolbar.jsx) and the selection menu's Style row
 // (InkLayer.jsx InkSelectionMenu). The picker is a button showing a short
 // stroke drawn in the current brush's look, its name and a ▾; its press
-// opens InkStyleMenu, a ContextMenu of the four brushes the caller renders
+// opens InkStyleMenu, a ContextMenu of the five brushes the caller renders
 // outside its InkTooltips host (a portal's events bubble to the host, so
 // every row the pointer crossed would raise a tooltip), the way the strip's
 // other menus open: on the press, so the menu takes the tooltip's place in
 // the same frame. Brush values: 'pen' (the plain pen, the absent key in a
-// file or a preset), 'monoline' (shown as Ballpoint), 'brush', 'pencil'.
+// file or a preset), 'monoline' (shown as Ballpoint), 'brush', 'pencil',
+// 'calligraphy'. NibPreview is a calligraphy pen's nib at its angle, for
+// its options row.
 import { CheckIcon, ChevronDownIcon } from "../shared/ui/Icons";
 import { ContextMenu, MenuItem } from "../shared/ui/Menus";
-import { BRUSH_ORDER, encodeStroke, strokePath } from "./ink.js";
+import { BRUSH_ORDER, DEFAULT_NIB, encodeStroke, strokeNib, strokePath } from "./ink.js";
 import { bakeWidths, strokeChannels } from "./finishStroke.js";
 import { t, T } from "../shared/i18n/i18n.js";
 
-// The four in the order the picker lists them and Shift+[ / ] steps them
+// The five in the order the picker lists them and Shift+[ / ] steps them
 // (ink.js BRUSH_ORDER, the plain pen there null): [value, name, title].
 const NAMES = {
   pen: [T("Pen"), T("Pen: width follows stylus pressure")],
   monoline: [T("Ballpoint"), T("Ballpoint: an even line at every pressure")],
   brush: [T("Brush"), T("Brush: a felt tip that swells with pressure and tapers at the ends")],
   pencil: [T("Pencil"), T("Pencil: tilt widens the line, pressure darkens it")],
+  calligraphy: [T("Calligraphy"), T("Calligraphy: a flat nib, thick across it and thin along it")],
 };
 export const BRUSH_CHOICES = BRUSH_ORDER.map((brush) => [brush || "pen", ...NAMES[brush || "pen"]]);
 // A stroke's or a preset's brush key → the picker's value.
 export const brushValue = (brush) => (brush && BRUSH_CHOICES.some(([v]) => v === brush) ? brush : "pen");
-// The brush's name in words: "Pen", "Ballpoint", "Brush", "Pencil".
+// The brush's name in words: "Pen", "Ballpoint", "Brush", "Pencil", "Calligraphy".
 export const brushName = (brush) => t(BRUSH_CHOICES.find(([v]) => v === brushValue(brush))[1]);
 
 // A short wave in a brush's look, drawn by the stroke renderer itself
 // (ink.js strokePath over samples baked by the brush table), pressure
-// rising and falling along it; the pencil leans a little. Built once per
+// rising and falling along it; the pencil leans a little and the
+// calligraphy pen is its nib at 45° (ink.js nibOutline). Built once per
 // brush, in a 28 × 10 box.
 const previews = new Map();
 function previewPath(brush) {
   let path = previews.get(brush);
   if (path) return path;
-  const style = { tool: "pen", brush: brush === "pen" ? undefined : brush, pen: true, size: 1.8 };
+  const style = { tool: "pen", brush: brush === "pen" ? undefined : brush, pen: true, size: brush === "calligraphy" ? 3 : 1.8,
+    ...(brush === "calligraphy" ? { nib: DEFAULT_NIB } : {}) };
   const samples = Array.from({ length: 17 }, (_, i) => {
     const f = i / 16;
     return { x: 3 + 22 * f, y: 5 - 2.4 * Math.sin(f * Math.PI * 2), p: 0.2 + 0.75 * Math.sin(f * Math.PI), t: 12 * i,
@@ -80,9 +85,9 @@ export function InkStylePicker({ brush, mixed = false, open = false, title, onOp
   );
 }
 
-// The picker's menu at (x, y): the four brushes, each led by its preview,
+// The picker's menu at (x, y): the five brushes, each led by its preview,
 // the current one (`value`; none when mixed) checked; onPick(value) with
-// 'pen' | 'monoline' | 'brush' | 'pencil'. `ignoreRef` is the button, so
+// 'pen' | 'monoline' | 'brush' | 'pencil' | 'calligraphy'. `ignoreRef` is the button, so
 // its own press toggles the menu instead of dismissing it.
 export function InkStyleMenu({ x, y, value, ignoreRef, onPick, onClose }) {
   return (
@@ -98,6 +103,18 @@ export function InkStyleMenu({ x, y, value, ignoreRef, onPick, onClose }) {
         ))}
       </div>
     </ContextMenu>
+  );
+}
+
+// A calligraphy pen's nib at `nib` degrees (a preset's −60..60, or a
+// stroke's 0..179; counterclockwise as seen), a 16 px glyph beside the Nib
+// angle control: the flat nib as a bar turned to the angle.
+export function NibPreview({ nib = DEFAULT_NIB }) {
+  const deg = strokeNib(nib);
+  return (
+    <svg className="inkNibPreview" width="16" height="16" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+      <rect x="2.5" y="7" width="11" height="2" rx="0.5" fill="currentColor" transform={`rotate(${-deg} 8 8)`} />
+    </svg>
   );
 }
 

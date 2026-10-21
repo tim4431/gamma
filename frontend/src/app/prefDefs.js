@@ -368,6 +368,11 @@ export const PREFS = {
   inkScribbleErase: flag("gamma-ink-scribble-erase", ACCOUNT, false),
   inkEraserReturn: flag("gamma-ink-eraser-return", ACCOUNT, false),
   inkEraserFilter: pref("gamma-ink-eraser-filter", ACCOUNT, "all", oneOf(["all", "pen", "highlighter"])),
+  // The Shapes tool (ink/shapeTool.js): what its drag draws, and whether its
+  // rectangles and ellipses get a light tint of the pen's colour inside —
+  // set on its options row, no Settings row.
+  inkShapeKind: pref("gamma-ink-shape-kind", ACCOUNT, "line", oneOf(["line", "arrow", "rect", "ellipse"])),
+  inkShapeFill: flag("gamma-ink-shape-fill", ACCOUNT, false),
   // The strip's tool presets: [{id, kind: pen|highlighter, color, size, …}],
   // the user's own row of pens and highlighters (ink.js DEFAULT_TOOLS,
   // normalizeTools), the account's: a browser that signs in takes the
@@ -382,6 +387,12 @@ export const PREFS = {
   inkEraserSize: pref("gamma-ink-eraser-size", BROWSER, 1, { ...intIn(0, 2), serialize: String }),
   // The lasso draws a freeform loop or a box.
   inkLassoMode: pref("gamma-ink-lasso", BROWSER, "free", oneOf(["free", "box"])),
+  // The ruler's ticks, in points or centimetres (ink/ruler.js rulerTicks),
+  // and the zoom window's height in css px (ink/ZoomWindow.jsx, its top
+  // edge's drag): set where they act, like the eraser's. The ruler's place
+  // and the window's are session state.
+  inkRulerUnits: pref("gamma-ink-ruler-units", BROWSER, "pt", oneOf(["pt", "cm"])),
+  inkZoomHeight: pref("gamma-ink-zoom-height", BROWSER, 200, { ...intClamped(160, 320), serialize: String }),
   // --- Recordings and their replay (docs/dev/recording.md) ---
   // How the player draws the strokes not yet reached (replay/playback.js
   // MODES): faded, hidden until written, or as they are; its speed; and

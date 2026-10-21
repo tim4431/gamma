@@ -62,7 +62,8 @@ export function TextBoxLayer({ surface, wrapRef, width, height, marks }) {
       const L = live.current;
       if (!L.armed || !L.width) return;
       if (press) { end(); return; } // a second finger: a pinch, not a box
-      if (e.button !== 0 || e.target.closest?.(".textBox")) return;
+      // a box, or the ruler (its band moves it, ink/InkLayer.jsx InkRuler), keeps its press
+      if (e.button !== 0 || e.target.closest?.(".textBox, .inkRuler")) return;
       e.preventDefault();
       e.stopPropagation();
       // The box being typed in is left at the press, an edit before the new box exists.

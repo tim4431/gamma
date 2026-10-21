@@ -289,3 +289,104 @@ def test_attached_handwriting_rides_with_the_message_as_a_picture(stored_pdf):
                               pages=[], page_id=ids["paper"])
     assert "handwriting on p. 1" in notes_focus_section(ids["ws"], payload, crops=crops)
     assert crops == []
+
+
+def _selected(block_id, page_id, points=((100, 100), (180, 100)), color="#0000ff", kind="pdf-page", width=PAGE_W, height=PAGE_H):
+    """An ink_selections entry: one stroke the user selected (saved or not), as the client sends it."""
+    space = {"kind": kind, "width": width, "height": height, **({"page": 1} if kind == "pdf-page" else {})}
+    return {"page_id": page_id, "block_id": block_id, "space": space,
+            "strokes": [{"id": "sel1", "color": color, "size": 6, "ch": "xy",
+                         "pts": inkmod.encode_points([{"x": x, "y": y} for x, y in points], "xy")}]}
+
+
+def _colours(image):
+    """(any blue pixel, any red pixel) of a rendered picture ``(bytes, media type, w, h)``."""
+    import io
+
+    from PIL import Image
+    data = Image.open(io.BytesIO(image[0])).convert("RGB").tobytes()
+    pixels = list(zip(data[0::3], data[1::3], data[2::3]))
+    return (any(b > 200 and r < 90 and g < 90 for r, g, b in pixels),
+            any(r > 200 and g < 90 and b < 90 for r, g, b in pixels))
+
+
+def test_selected_handwriting_rides_with_the_message_as_a_picture_of_those_strokes(stored_pdf):
+    """Part of a group: the selected strokes, drawn alone where they lie on
+    their page (the group's stored stroke stays out), labelled with the
+    group's block and its caption."""
+    ids = stored_pdf
+    crops = []
+    payload = SimpleNamespace(focus_block_id="", context_blocks=[], note_selections=[], pages=[], page_id=ids["paper"],
+                              ink_selections=[_selected(ids["group"], ids["paper"])])
+    section = notes_focus_section(ids["ws"], payload, crops=crops)
+    assert "Handwriting the user selected for this message (part of the note block in brackets):" in section
+    assert f"- [{ids['group']}] (selected handwriting on p. 1, 1 stroke) circled the key result" in section
+    # the picture is the selection alone: what to transcribe, not the block's whole drawing
+    assert "Each picture holds only the selected strokes, saved or not: transcribe exactly those" in section
+    assert "(a picture of it is attached to the message)" in section
+    (crop,) = crops
+    assert crop["group"] == "ink" and crop["block_id"] == ids["group"]
+    assert crop["label"].startswith(f"The selected handwriting of block [{ids['group']}] on PDF page 1")
+    from gamma.ink_view import picture
+    from gamma.db import connect_pages_db
+    with connect_pages_db(ids["ws"]) as conn:
+        shown = picture(ids["ws"], conn, ids["group"], ids["paper"],
+                        ink=inkmod.parse_ink({"format": "gamma-ink", "version": 2, **_selected(ids["group"], ids["paper"])}))
+    assert shown["pdf_page"] == 1 and not shown["whole"] and shown["strokes"] == 1
+    blue, red = _colours(shown["image"])
+    assert blue and not red, "the selected stroke alone, not the group's stored one crossing the same crop"
+
+
+def test_selected_handwriting_not_saved_yet_or_on_paper_is_drawn_too(stored_pdf):
+    """The block need not be saved: its strokes are drawn on their PDF page
+    all the same; a sheet's selection is drawn on that sheet."""
+    ids = stored_pdf
+    crops = []
+    payload = SimpleNamespace(focus_block_id="", context_blocks=[], note_selections=[], pages=[ids["paper"], ids["book"]],
+                              page_id="", ink_selections=[
+                                  _selected("draftgroup1", ids["paper"]),
+                                  _selected(ids["scrawl"], ids["book"], kind="canvas", width=595.28, height=841.89,
+                                            points=((100, 200), (300, 220))),
+                              ])
+    section = notes_focus_section(ids["ws"], payload, crops=crops)
+    assert "- [draftgroup1] (selected handwriting on p. 1, 1 stroke)\n  (a picture of it is attached" in section
+    assert f"- [{ids['scrawl']}] (selected handwriting on a page of paper, 1 stroke)" in section
+    assert [c["block_id"] for c in crops] == ["draftgroup1", ids["scrawl"]]
+    assert crops[1]["label"].startswith(f"The selected handwriting of block [{ids['scrawl']}] on a page of paper")
+
+
+def test_a_selection_off_the_chat_s_pages_or_unreadable_is_dropped(stored_pdf):
+    from gamma.ai_context import MAX_INK_SELECTIONS, request_ink_selections
+    ids = stored_pdf
+    good = _selected(ids["group"], ids["paper"])
+    ask = lambda entries, **kw: SimpleNamespace(pages=[], page_id=ids["paper"], ink_selections=entries, **kw)  # noqa: E731
+    assert [s["block_id"] for s in request_ink_selections(ask([good]))] == [ids["group"]]
+    # another page's, a broken stroke, a version 1 space, no strokes, not an object: all dropped
+    broken = {**good, "strokes": [{"id": "x", "ch": "xy", "pts": [1, 2, 3]}]}
+    assert request_ink_selections(ask([_selected(ids["group"], ids["book"]), broken, {**good, "space": {"kind": "pdf-page"}},
+                                       {**good, "strokes": []}, "nope", {**good, "block_id": ""}])) == []
+    assert len(request_ink_selections(ask([good] * (MAX_INK_SELECTIONS + 3)))) == MAX_INK_SELECTIONS
+    # nothing selected, no section; a selection alone makes one
+    empty = SimpleNamespace(focus_block_id="", context_blocks=[], note_selections=[], pages=[], page_id=ids["paper"],
+                            ink_selections=[_selected(ids["group"], ids["book"])])
+    assert notes_focus_section(ids["ws"], empty, crops=[]) == ""
+
+
+def test_the_chat_takes_eight_selections_and_64_kb_of_them_and_no_more(stored_pdf, inked):
+    """/ai/chat/context renders the request /ai/chat would send, with the
+    selection's lines; past either cap the request is refused."""
+    from gamma.ai_context import MAX_INK_SELECTION_BYTES, MAX_INK_SELECTIONS, ink_selection_bytes
+    c, _ = inked
+    ids = stored_pdf
+    body = {"prompt": "Transcribe the selected handwriting.", "page_id": ids["paper"], "title": "t"}
+    one = _selected(ids["group"], ids["paper"])
+    r = c.post("/api/ai/chat/context", json={**body, "ink_selections": [one]})
+    assert r.status_code == 200, r.text
+    assert f"- [{ids['group']}] (selected handwriting on p. 1, 1 stroke)" in r.text
+    assert c.post("/api/ai/chat/context", json={**body, "ink_selections": [one] * MAX_INK_SELECTIONS}).status_code == 200
+    assert c.post("/api/ai/chat/context", json={**body, "ink_selections": [one] * (MAX_INK_SELECTIONS + 1)}).status_code == 422
+    # one long stroke over the byte cap
+    long = _selected(ids["group"], ids["paper"], points=[(10 + i % 280, 10 + i // 280) for i in range(12_000)])
+    assert ink_selection_bytes([long]) > MAX_INK_SELECTION_BYTES
+    assert c.post("/api/ai/chat/context", json={**body, "ink_selections": [long]}).status_code == 422
+    assert c.post("/api/ai/chat", json={**body, "ink_selections": [long]}).status_code == 422

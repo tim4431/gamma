@@ -9,6 +9,7 @@ import sqlite3
 import sys
 from urllib.request import Request as URLRequest
 
+from . import ink as inkmod
 from .ai_pictures import picture as _picture
 from .ai_protocols.base import Protocol, reasoning_text
 from .blocks_store import (FOLDERS, LABELS, PATH_SEP, fetch_subtree, filing, folder_paths, label_names,
@@ -245,6 +246,60 @@ def final_prompt(payload, located: list | None = None, budget: int | None = None
 # the selection in the open editor. Their size is passage_budget's.
 MAX_CONTEXT_BLOCKS = MAX_SELECTIONS
 MAX_NOTE_SELECTIONS = MAX_SELECTIONS + 1
+# Handwriting selected for a message (the selection menu's Transcribe on part
+# of a group, docs/dev/handwriting.md "Transcribe a selection"): the strokes
+# themselves, as the client holds them, for at most this many groups and
+# this many bytes of compact JSON together; past either the request is
+# refused (routers/ai.py), and the client says so before sending.
+MAX_INK_SELECTIONS = 8
+MAX_INK_SELECTION_BYTES = 65536
+
+
+def ink_selection_bytes(value) -> int:
+    """How many bytes ``ink_selections`` take as compact JSON (what the
+    client measures, ``JSON.stringify``)."""
+    return len(json.dumps(value, separators=(",", ":"), ensure_ascii=False).encode("utf-8"))
+
+
+def request_ink_selections(payload) -> list[dict]:
+    """The handwriting the user selected for this message: ``[{page_id,
+    block_id, ink}]``, ``ink`` the selected strokes as a version 2 file in
+    their group's space — strokes not saved yet included, since they come
+    from the client. An entry is kept only when its page is one of the
+    request's context pages and its strokes parse (``ink.parse_ink``);
+    anything else is dropped, with a log line."""
+    entries = getattr(payload, "ink_selections", None) or []
+    if not entries:
+        return []
+    pages = {str(p) for p in (getattr(payload, "pages", None) or []) if p}
+    if getattr(payload, "page_id", ""):
+        pages.add(str(payload.page_id))
+    out = []
+    for raw in entries[:MAX_INK_SELECTIONS]:
+        if not isinstance(raw, dict):
+            continue
+        page_id = str(raw.get("page_id") or "").strip()[:64]
+        block_id = str(raw.get("block_id") or "").strip()[:64]
+        if not block_id or page_id not in pages:
+            log.info(f"[ai_chat] selected handwriting of {block_id or '?'} dropped: its page is not in the chat's context")
+            continue
+        try:
+            ink = inkmod.parse_ink({"format": inkmod.FORMAT, "version": inkmod.VERSION,
+                                    "space": raw.get("space"), "strokes": raw.get("strokes")})
+        except inkmod.InkError as error:
+            log.info(f"[ai_chat] selected handwriting of {block_id} dropped: {str(error)[:200]}")
+            continue
+        if ink.strokes:
+            out.append({"page_id": page_id, "block_id": block_id, "ink": ink})
+    return out
+
+
+def selection_label(ink) -> str:
+    """How the notes-focus section names a selection of a group's strokes
+    (beside ``handwriting_label``'s whole groups)."""
+    n = len(ink.strokes)
+    where = f"on p. {ink.space.page}" if ink.space.kind == "pdf-page" else "on a page of paper"
+    return f"(selected handwriting {where}, {n} stroke{'' if n == 1 else 's'})"
 
 
 def request_note_selections(payload) -> list[dict]:
@@ -302,7 +357,9 @@ def notes_focus_section(ws: str, payload, notes_seen: dict | None = None,
     full — what an edit_block replace may start from (ai_tools.notes_seen).
     ``crops``, when given, receives the pictures of attached handwriting
     blocks and pages of paper (gamma/ai_pictures.py dicts, group "ink";
-    the request's picture budget decides how many go)."""
+    the request's picture budget decides how many go), and of the
+    handwriting the user selected (``request_ink_selections``: the selected
+    strokes alone where they lie, each labelled with its group's block)."""
     focus = str(getattr(payload, "focus_block_id", "") or "").strip()
     chips = [str(b).strip() for b in (getattr(payload, "context_blocks", None) or [])
              if str(b).strip()][:MAX_CONTEXT_BLOCKS]
@@ -311,7 +368,8 @@ def notes_focus_section(ws: str, payload, notes_seen: dict | None = None,
     for sel in request_note_selections(payload):
         if sel["block_id"] != focus and sel["block_id"] not in chips:
             chips.append(sel["block_id"])
-    if not focus and not chips:
+    selections = request_ink_selections(payload)
+    if not focus and not chips and not selections:
         return ""
     pages = {str(p) for p in (payload.pages or []) if p}
     if payload.page_id:
@@ -445,6 +503,35 @@ def notes_focus_section(ws: str, payload, notes_seen: dict | None = None,
                     out.append("Note blocks the user attached to this message (ids in "
                                "brackets; edit them by id when asked to change them):\n"
                                + "\n".join(shown))
+            if selections:
+                from .ink_view import picture
+                lines = []
+                for sel in selections:
+                    block_id, page_id = sel["block_id"], sel["page_id"]
+                    line = f"- [{block_id}] {selection_label(sel['ink'])}"
+                    # the group's caption, when its block is saved on that page
+                    row = conn.execute("SELECT content FROM unified_blocks WHERE id = ?", (block_id,)).fetchone()
+                    caption = (row[0] or "").strip() if row and page_root_id(conn, block_id) == page_id else ""
+                    if caption:
+                        line += " " + (caption if len(caption) <= 500 else caption[:500] + "…").replace("\n", "\n  ")
+                        if len(caption) <= 500 and notes_seen is not None:
+                            notes_seen[block_id] = row[0] or ""
+                    if crops is not None:
+                        try:
+                            drawn = picture(ws, conn, block_id, page_id, ink=sel["ink"])
+                        except Exception as error:  # a picture that fails never fails the message
+                            log.warning(f"[ai_chat] selected handwriting picture of {block_id} failed: {error}")
+                            drawn = {}
+                        if drawn.get("image"):
+                            where = f"PDF page {drawn['pdf_page']}" if drawn.get("pdf_page") else "a page of paper"
+                            crops.append(_picture(drawn["image"], f"The selected handwriting of block [{block_id}] on {where}, "
+                                                  f"{drawn['image'][2]}×{drawn['image'][3]} px", "ink", block_id=block_id))
+                            line += "\n  (a picture of it is attached to the message)"
+                    lines.append(line)
+                out.append("Handwriting the user selected for this message (part of the note block in brackets):\n"
+                           + "\n".join(lines)
+                           + "\nEach picture holds only the selected strokes, saved or not: transcribe exactly those, "
+                             "not the rest of the block's handwriting.")
     except sqlite3.Error as error:
         log.warning(f"[ai_chat] notes focus section failed: {error}")
         return ""

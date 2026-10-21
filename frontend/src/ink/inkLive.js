@@ -24,13 +24,16 @@ const WORD = /^[a-z][a-z0-9-]{0,15}$/;
 // --- sending -----------------------------------------------------------------
 
 // The look a stroke in progress is sent with: the preset's, as the
-// committed stroke will be encoded (`brush` and `dash` only when set).
+// committed stroke will be encoded (`brush`, a calligraphy pen's `nib` and
+// `dash` only when set).
 export function liveStyle(use, pen) {
   return {
     tool: use.tool || "pen", size: use.size, color: use.color, opacity: use.opacity ?? 1, pen: pen !== false,
-    ...(use.brush ? { brush: use.brush } : {}), ...(use.dash ? { dash: use.dash } : {}),
+    ...(use.brush ? { brush: use.brush } : {}), ...(use.brush === "calligraphy" && nibOk(use.nib) ? { nib: use.nib } : {}),
+    ...(use.dash ? { dash: use.dash } : {}),
   };
 }
+const nibOk = (v) => Number.isInteger(v) && v >= 0 && v <= 179;
 
 // Samples `from` … (at most LIVE_SAMPLES of them) as a chunk's `samples`:
 // [x, y, p, t, a, z] with page points to two decimals, the pressure 0..1
@@ -103,6 +106,7 @@ const plainStyle = (s) => {
     tool, size: s.size, color: typeof s.color === "string" && s.color.length <= 40 ? s.color : "#1f1f1f",
     opacity: finite(s.opacity) && s.opacity > 0 && s.opacity <= 1 ? s.opacity : 1, pen: s.pen !== false,
     ...(typeof s.brush === "string" && WORD.test(s.brush) ? { brush: s.brush } : {}),
+    ...(nibOk(s.nib) ? { nib: s.nib } : {}),
     ...(typeof s.dash === "string" && WORD.test(s.dash) ? { dash: s.dash } : {}),
   };
 };

@@ -24,6 +24,8 @@ test("switchPrevious goes back to the tool armed before, the strip's tools inclu
 test("the palette and the attributes open the armed tool's row, or arm the pen with its row", () => {
   assert.deepEqual(pencilAction("showColorPalette", prefs, { tool: "pen1", options: false }), { ui: { open: true, options: true } });
   assert.deepEqual(pencilAction("showInkAttributes", prefs, { tool: "pen1", options: true }), { ui: { open: true, options: false } });
+  // the ruler's row open is not the tool's: the gesture opens the tool's in its place
+  assert.deepEqual(pencilAction("showColorPalette", prefs, { tool: "pen1", options: "ruler" }), { ui: { open: true, options: true } });
   assert.deepEqual(pencilAction("showColorPalette", prefs, { tool: null, options: false }), { ui: { open: true, tool: "pen2", options: true } });
 });
 
@@ -36,6 +38,9 @@ test("anything else is nothing", () => {
 test("backTool is the tool armed before, else the stylus pen: the eraser's return reads it too", () => {
   assert.equal(backTool(prefs, { tool: "eraser", previous: "pen1" }), "pen1");
   assert.equal(backTool(prefs, { tool: "eraser", previous: "select" }), "select");
+  assert.equal(backTool(prefs, { tool: "eraser", previous: "shape" }), "shape", "the Shapes tool is a tool to go back to");
+  assert.equal(backTool(prefs, { tool: "shape", previous: "pen1" }), "pen1", "the Shapes tool's off gives back the tool before it");
+  assert.equal(backTool(prefs, { tool: "shape", previous: "shape" }), "pen2");
   assert.equal(backTool(prefs, { tool: "eraser", previous: "eraser" }), "pen2", "the same tool is no way back");
   assert.equal(backTool(prefs, { tool: "eraser", previous: "gone" }), "pen2", "a removed preset falls back to the pen");
   assert.equal(backTool(prefs, { tool: "eraser", previous: null }), "pen2");

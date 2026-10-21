@@ -5,15 +5,19 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
-  ChevronLeftIcon, ChevronRightIcon, DuplicateIcon, ErasePartialIcon, EraserIcon, EraseStrokeIcon, EyeIcon, EyeOffIcon, HandIcon,
-  HighlightIcon, HistoryIcon, LassoIcon, MoreIcon, PenIcon, RectSelectIcon, RedoIcon, SettingsIcon, TrashIcon,
-  TypeIcon, UndoIcon, XIcon,
+  CheckIcon, ChevronLeftIcon, ChevronRightIcon, DuplicateIcon, ErasePartialIcon, EraserIcon, EraseStrokeIcon, EyeIcon, EyeOffIcon, HandIcon,
+  HighlightIcon, HistoryIcon, LassoIcon, MinusIcon, MoreIcon, PaintBucketIcon, PenIcon, PlusIcon, RectSelectIcon, RedoIcon, RulerIcon,
+  SettingsIcon, ShapeArrowIcon, ShapeEllipseIcon, ShapeLineIcon, ShapeRectIcon, ShapesIcon, StampLineIcon, TrashIcon, TypeIcon, UndoIcon,
+  XIcon, ZoomWindowIcon,
 } from "../shared/ui/Icons";
 import { ContextMenu, MenuDivider, MenuItem, SubMenuItem } from "../shared/ui/Menus";
 import { CommandMenuItem } from "../app/CommandMenuItem.jsx";
-import { DEFAULT_TOOLS, MAX_TOOLS, defaultOpacity, sizesFor, toolId, visibleTools } from "../ink/ink";
+import {
+  DEFAULT_NIB, DEFAULT_TOOLS, MAX_TOOLS, NIB_MAX, NIB_MIN, NIB_STEP, defaultOpacity, presetSmoothing, sizesFor, toolId, visibleTools,
+} from "../ink/ink";
 import { ColorChoices, ERASER_SIZES, InkTooltips, inkColorName, swallowClick } from "../ink/InkLayer";
-import { InkLineChoices, InkStyleMenu, InkStylePicker, brushValue } from "../ink/InkStylePicker.jsx";
+import { InkLineChoices, InkStyleMenu, InkStylePicker, NibPreview, brushValue } from "../ink/InkStylePicker.jsx";
+import { nativeHost } from "../shared/lib/host.js";
 import { pickerColors } from "../shared/model/palette.js";
 import { usePalette } from "../shared/ui/paletteContext.js";
 import { TextStyleChoices } from "./TextBoxLayer";
@@ -33,8 +37,9 @@ const SIZE_LABELS = [t("Small"), t("Medium"), t("Large")];
 // the lasso; size, colour and background of new text boxes for the Text
 // tool.
 // `tools`: the presets, hidden ones included (`visibleTools` filters the
-// row); `active`: a preset id, "eraser", "select", "text" or null (the
-// hand); `options`: whether the row is open; `textStyle`: the selected
+// row); `active`: a preset id, "eraser", "select", "text", "shape" (the
+// Shapes tool) or null (the hand); `options`: which row is open — false,
+// true (the armed tool's) or "ruler" (the ruler's); `textStyle`: the selected
 // box's style, else that of new boxes, which onTextStyle(patch) sets (and
 // the selected box's). onChangeTools(list | fn) writes the preset list
 // (ids stable; a pill's deferred action passes an updater). Undo / Redo
@@ -48,6 +53,22 @@ const SIZE_LABELS = [t("Small"), t("Medium"), t("Large")];
 // always / off, ink/finishStroke.js). The eraser's row carries, after the
 // sizes, the account's Erases filter (`eraserFilter`) and the Back to last
 // tool toggle (`eraserReturn`), both through onEraser({filter} | {return}).
+// The modifiers (docs/dev/handwriting.md "What the user sees"): `ruler`
+// (App's inkRuler, or null), `rulerUnits` and onToggleRuler(),
+// onRulerOptions({snap} | {units} | {hide: true}), onStampLine(); the Shapes
+// tool's `shapeKind`, `shapeFill`, onShape({kind} | {fill}),
+// onToggleShape() and `stylusPen` (the preset a stylus writes with, whose
+// look its shapes take); the zoom window's `zoomOpen`, `zoomAvailable` (a
+// PDF page is in view), `phone` and onToggleZoom(). Each shows in the second
+// group as a pressed button only while on, and has its row in More;
+// onToggleOptions(which) opens or closes the armed tool's row, or with
+// "ruler" the ruler's.
+const SHAPE_CHOICES = [
+  ["line", T("Line"), ShapeLineIcon, T("Line: drag from one end to the other")],
+  ["arrow", T("Arrow"), ShapeArrowIcon, T("Arrow: drag from the tail to the tip")],
+  ["rect", T("Rectangle"), ShapeRectIcon, T("Rectangle: drag from corner to corner; Shift makes a square")],
+  ["ellipse", T("Ellipse"), ShapeEllipseIcon, T("Ellipse: drag across its box; Shift makes a circle")],
+];
 const SMOOTHING = [0, 1, 2, 3, 4];
 const STRAIGHT = [
   ["hold", T("Hold"), T("Straight highlighter — Hold: keep the pen still at the end of a stroke to straighten it")],
@@ -75,7 +96,39 @@ export function inkToolName(preset) {
   if (brush === "monoline") return t("{color} ballpoint pen", { color });
   if (brush === "brush") return t("{color} brush pen", { color });
   if (brush === "pencil") return t("{color} pencil", { color });
+  if (brush === "calligraphy") return t("{color} calligraphy pen", { color });
   return t("{color} pen", { color });
+}
+// A calligraphy pen's Style row adds its Nib angle (NIB_MIN … NIB_MAX in
+// NIB_STEP steps: − and + around a readout, a slider with a fine pointer,
+// then the nib drawn at the angle) and, under a host whose Pencil reports
+// its barrel roll (`pencilRoll`, an Apple Pencil Pro), Lock angle. A
+// calligraphy pen whose Smoothing was never set smooths at 2 (ink.js
+// CALLIGRAPHY_SMOOTHING, presetSmoothing): a default, not part of the
+// edit, so the pen keeps the smoothing it had when it leaves Calligraphy.
+const finePointer = () => typeof window !== "undefined" && !!window.matchMedia?.("(pointer: fine)").matches;   // i18n-ignore: a media query
+function NibAngle({ preset, edit, seg }) {
+  const nib = Number.isFinite(preset.nib) ? preset.nib : DEFAULT_NIB;
+  const step = (by) => edit({ nib: Math.max(NIB_MIN, Math.min(NIB_MAX, nib + by)) });
+  return <>
+    <span className="inkNib" role="group" aria-label={t("Nib angle")} title={t("Nib angle: the slant of the flat nib, −60° to 60°")}>
+      {finePointer() ? (
+        <input type="range" className="setRange inkNibRange" min={NIB_MIN} max={NIB_MAX} step={NIB_STEP} value={nib} aria-label={t("Nib angle")}
+          onChange={(e) => edit({ nib: Number(e.target.value) })} />
+      ) : (
+        <button type="button" className="ctlBtn" aria-label={t("Nib angle −15°")} title={t("Nib angle −15°")} disabled={nib <= NIB_MIN}
+          onClick={() => step(-NIB_STEP)}><MinusIcon size={14} aria-hidden="true" /></button>
+      )}
+      <span className="inkNibReadout">{`${nib}°`}</span>
+      {finePointer() ? null : (
+        <button type="button" className="ctlBtn" aria-label={t("Nib angle +15°")} title={t("Nib angle +15°")} disabled={nib >= NIB_MAX}
+          onClick={() => step(NIB_STEP)}><PlusIcon size={14} aria-hidden="true" /></button>
+      )}
+      <NibPreview nib={nib} />
+    </span>
+    {nativeHost()?.pencilRoll ? seg(!!preset.nibLock, t("Lock angle"), null, () => edit({ nibLock: !preset.nibLock }),
+      t("Lock angle: rolling Apple Pencil Pro does not turn the nib")) : null}
+  </>;
 }
 // "Blue pen · 2 pt".
 const toolLabel = (preset) => t("{name} · {size} pt", { name: inkToolName(preset), size: preset.size });
@@ -189,7 +242,10 @@ function usePresetDrag({ tools, rowRef, onChangeTools, onStatus }) {
 
 export function MarkupToolbar({ tools, active, options, eraserMode, eraserSize, eraserReturn = false, eraserFilter = "all", lassoMode,
   textStyle, blockHistory, onPick, onToggleOptions, onChangeTools, onEraser, onLasso, onTextStyle, onClose, onUndo, onRedo, canUndo, canRedo,
-  onOpenSettings, onStatus, cmdCtx, bindings }) {
+  onOpenSettings, onStatus, cmdCtx, bindings,
+  ruler = null, rulerUnits = "pt", onToggleRuler, onRulerOptions, onStampLine,
+  shapeKind = "line", shapeFill = false, onShape, onToggleShape, stylusPen = null,
+  zoomOpen = false, zoomAvailable = false, phone = false, onToggleZoom }) {
   const visible = visibleTools(tools);
   const hidden = tools.filter((x) => x.hidden);
   const preset = tools.find((x) => x.id === active) || null;
@@ -215,14 +271,14 @@ export function MarkupToolbar({ tools, active, options, eraserMode, eraserSize, 
   });
   // The Tool and Style menus belong to the open options row of a preset.
   useEffect(() => {
-    if ((menu?.kind === "tool" || menu?.kind === "style") && !(options && preset)) setMenu(null);
+    if ((menu?.kind === "tool" || menu?.kind === "style") && !(options === true && preset)) setMenu(null);
   }, [menu?.kind, options, preset]);
   const { props: dragProps, drag } = usePresetDrag({ tools, rowRef, onChangeTools, onStatus });
   // A press on the Text tool leaves the box being typed in focused, so a
   // tap on the armed tool opens the options row that restyles that box.
   const btn = (id, label, icon, extra, more) => (
     <button key={id} type="button" className={"ctlBtn inkToolBtn" + (active === id ? " modeActive" : "") + (drag?.id === id ? " inkDragging" : "")}
-      data-guide={id === "eraser" ? "ink.eraser" : id === "select" ? "ink.lasso" : id === "text" ? "ink.text" : undefined}
+      data-guide={id === "eraser" ? "ink.eraser" : id === "select" ? "ink.lasso" : id === "text" ? "ink.text" : id === "shape" ? "ink.shape" : undefined}
       onMouseDown={id === "text" ? keepFocus : undefined}
       onClick={() => tap(id)} title={label} aria-label={label} aria-pressed={active === id} {...more}>{icon}{extra}</button>
   );
@@ -287,6 +343,12 @@ export function MarkupToolbar({ tools, active, options, eraserMode, eraserSize, 
   const menuRow = (id, extra) => (
     <CommandMenuItem key={id} id={id} ctx={cmdCtx} bindings={bindings} onRun={closeMenu} onMouseDown={keepFocus} {...extra} />
   );
+  // A modifier's More row: a checkbox naming its key, ticked while on.
+  const modifierRow = (Icon, label, key, on, run, extra) => (
+    <MenuItem icon={Icon} role="menuitemcheckbox" aria-checked={on} keys={key} onMouseDown={keepFocus}
+      trailing={on ? <><span className="ctxMenuKey">{key}</span><CheckIcon size={14} className="ctxMenuCheck" /></> : undefined}
+      onClick={() => { closeMenu(); run?.(); }} {...extra}>{label}</MenuItem>
+  );
   return <>
     <InkTooltips className="pdfInkBar" role="toolbar" aria-label={t("Markup tools")} data-guide="ink.toolbar">
       <div className="pdfInkRow" ref={rowRef}>
@@ -305,6 +367,18 @@ export function MarkupToolbar({ tools, active, options, eraserMode, eraserSize, 
         {btn("eraser", t("Eraser (E) — the pen's eraser end and barrel button erase too"), <EraserIcon size={16} />)}
         {btn("select", t("Lasso (L): circle strokes to select them, then drag the box to move or press Delete"), <LassoIcon size={16} />)}
         {btn("text", t("Text (T): tap the page to type, or drag to set the width"), <TypeIcon size={16} />)}
+        {/* The modifiers, each only while on (More turns them on): a tap opens the ruler's row, the Shapes tool's row, or closes the zoom window. */}
+        {ruler ? (
+          <button type="button" className="ctlBtn inkToolBtn modeActive" aria-pressed="true" aria-label={t("Ruler")}
+            title={t("Ruler (R): write straight along its edges — tap for its options")} data-guide="ink.ruler"
+            onClick={() => onToggleOptions("ruler")}><RulerIcon size={16} /></button>
+        ) : null}
+        {active === "shape" ? btn("shape", t("Shapes (S): drag to draw a shape — tap again for its options"), <ShapesIcon size={16} />, null,
+          { "aria-label": t("Shapes") }) : null}
+        {zoomOpen && onToggleZoom ? (
+          <button type="button" className="ctlBtn inkToolBtn modeActive" aria-pressed="true" aria-label={t("Zoom window")}
+            title={t("Zoom window (Z): write large in the panel below — tap to close")} onClick={onToggleZoom}><ZoomWindowIcon size={16} /></button>
+        ) : null}
         <span className="pdfInkSep" />
         <button type="button" className={"ctlBtn inkToolBtn" + (active === null ? " modeActive" : "")}
           onClick={() => onPick(null)} title={t("Hand (V): scroll and select text; a stylus still writes")} aria-label={t("Hand")}
@@ -325,12 +399,15 @@ export function MarkupToolbar({ tools, active, options, eraserMode, eraserSize, 
         </span>
         {drag ? <span className="inkDropBar" style={{ left: drag.bar.left, top: drag.bar.top, height: drag.bar.height }} aria-hidden="true" /> : null}
       </div>
-      {options && preset ? (
+      {options === true && preset ? (
         <div className="pdfInkSub inkPresetOptions" data-ink-options="tool" data-guide="ink.options">
           {row(t("Style"), "inkOptStyle", <>
             {preset.kind === "pen" ? (
               // the Style picker: its menu opens on the press, after the InkTooltips host (`menu`)
-              <InkStylePicker brush={preset.brush} open={menu?.kind === "style"} onOpen={(button) => toggleMenu("style", button)} />
+              <>
+                <InkStylePicker brush={preset.brush} open={menu?.kind === "style"} onOpen={(button) => toggleMenu("style", button)} />
+                {brushValue(preset.brush) === "calligraphy" ? <><span className="pdfInkSep" /><NibAngle preset={preset} edit={edit} seg={seg} /></> : null}
+              </>
             ) : (
               <span className="inkStraight" role="group" aria-label={t("Straight highlighter")}>
                 {STRAIGHT.map(([value, label, title]) => seg((preset.straight || "hold") === value, t(label), null,
@@ -344,7 +421,7 @@ export function MarkupToolbar({ tools, active, options, eraserMode, eraserSize, 
             {/* Smoothing: five hollow dots, Off and the four string lengths (ink/stabilizer.js). */}
             <span className="inkSmoothing" role="group" aria-label={t("Smoothing")}>
               {SMOOTHING.map((level) => {
-                const on = (preset.stabilize || 0) === level;
+                const on = presetSmoothing(preset) === level;
                 const label = level ? t("Smoothing {level} of 4", { level }) : t("Smoothing off");
                 return <button key={level} type="button" className={"ctlBtn inkSizeBtn" + (on ? " modeActive" : "")}
                   onClick={() => edit({ stabilize: level })} aria-pressed={on} aria-label={label}
@@ -376,7 +453,7 @@ export function MarkupToolbar({ tools, active, options, eraserMode, eraserSize, 
           </>)}
         </div>
       ) : null}
-      {options && active === "eraser" ? (
+      {options === true && active === "eraser" ? (
         <div className="pdfInkSub" data-ink-options="eraser">
           {seg(eraserMode !== "partial", t("Whole strokes"), <EraseStrokeIcon size={14} />, () => onEraser({ mode: "stroke" }),
             t("Whole strokes: anything the eraser touches goes entirely"))}
@@ -399,13 +476,13 @@ export function MarkupToolbar({ tools, active, options, eraserMode, eraserSize, 
             t("After erasing, return to the tool you had"))}
         </div>
       ) : null}
-      {options && active === "select" ? (
+      {options === true && active === "select" ? (
         <div className="pdfInkSub" data-ink-options="select">
           {seg(lassoMode !== "box", t("Freeform"), <LassoIcon size={14} />, () => onLasso("free"), t("Freeform: draw a loop around the strokes"))}
           {seg(lassoMode === "box", t("Box"), <RectSelectIcon size={14} />, () => onLasso("box"), t("Box: drag a rectangle over the strokes"))}
         </div>
       ) : null}
-      {options && active === "text" ? (
+      {options === true && active === "text" ? (
         // A press here keeps the focus in the box being typed in, which the row restyles too.
         <div className="pdfInkSub" data-ink-options="text" onMouseDown={keepFocus}>
           <TextStyleChoices kind="size" style={textStyle} onStyle={onTextStyle} />
@@ -415,12 +492,57 @@ export function MarkupToolbar({ tools, active, options, eraserMode, eraserSize, 
           <TextStyleChoices kind="bg" style={textStyle} onStyle={onTextStyle} />
         </div>
       ) : null}
+      {options === true && active === "shape" ? (
+        <div className="pdfInkSub" data-ink-options="shape">
+          <span className="inkShapeKinds" role="group" aria-label={t("Shape")}>
+            {SHAPE_CHOICES.map(([kind, label, Icon, title]) => seg(shapeKind === kind, t(label), <Icon size={14} />,
+              () => onShape?.({ kind }), t(title)))}
+          </span>
+          {stylusPen ? <>
+            <span className="pdfInkSep" />
+            <span className="inkShapeUses" title={t("Shapes take the colour, width and line of the pen a stylus writes with")}>
+              {t("Uses: {color} pen · {size} pt", { color: inkColorName(stylusPen.color), size: stylusPen.size })}
+            </span>
+          </> : null}
+          <span className="pdfInkSep" />
+          {seg(!!shapeFill, t("Fill"), <PaintBucketIcon size={14} />, () => onShape?.({ fill: !shapeFill }),
+            t("Fill: rectangles and ellipses get a light tint of the pen's colour"))}
+        </div>
+      ) : null}
+      {options === "ruler" && ruler ? (
+        <div className="pdfInkSub" data-ink-options="ruler">
+          <span className="inkRulerAngle">{t("Angle {deg}°", { deg: Math.round(ruler.angle) % 180 })}</span>
+          <span className="inkRulerRotation" role="group" aria-label={t("Ruler rotation")}>
+            {seg(!!ruler.snap, t("Snap 15°"), null, () => onRulerOptions?.({ snap: true }), t("Snap 15°: the ruler turns in 15° steps"))}
+            {seg(!ruler.snap, t("Free"), null, () => onRulerOptions?.({ snap: false }), t("Free: the ruler turns smoothly; hold Shift to snap"))}
+          </span>
+          <span className="pdfInkSep" />
+          <button type="button" className="ctlBtn inkSegBtn" onClick={() => onStampLine?.()} aria-label={t("Stamp line")}
+            title={t("Stamp line: a straight line along the ruler with the armed pen")}><StampLineIcon size={14} /><span>{t("Stamp line")}</span></button>
+          <span className="pdfInkSep" />
+          {/* unit symbols, the same in every language */}
+          <span className="inkRulerUnits" role="group" aria-label={t("Ruler units")}>
+            {seg(rulerUnits !== "cm", "pt", null, () => onRulerOptions?.({ units: "pt" }), t("Ticks in points"))}
+            {seg(rulerUnits === "cm", "cm", null, () => onRulerOptions?.({ units: "cm" }), t("Ticks in centimetres"))}
+          </span>
+          <span className="pdfInkSep" />
+          <button type="button" className="ctlBtn inkSegBtn" onClick={() => onRulerOptions?.({ hide: true })} aria-label={t("Hide")}
+            title={t("Hide the ruler (R)")}><EyeOffIcon size={14} /><span>{t("Hide")}</span></button>
+        </div>
+      ) : null}
     </InkTooltips>
     {/* The menus, outside the InkTooltips host (see `menu` above). */}
     {menu?.kind === "more" ? (
       <ContextMenu x={menu.x} y={menu.y} ignoreRef={triggerRef} onClose={closeMenu} className="inkStripMenu">
         {menuRow("ink.paste", { disabledTitle: t("Copy or cut handwriting first") })}
         {menuRow("ink.selectAll")}
+        <MenuDivider />
+        {modifierRow(RulerIcon, t("Ruler"), "R", !!ruler, onToggleRuler)}
+        <MenuItem icon={StampLineIcon} disabled={!ruler} title={ruler ? undefined : t("Show the ruler first")} onMouseDown={keepFocus}
+          onClick={() => { closeMenu(); onStampLine?.(); }}>{t("Stamp line")}</MenuItem>
+        {modifierRow(ShapesIcon, t("Shapes"), "S", active === "shape", onToggleShape)}
+        {onToggleZoom && !phone ? modifierRow(ZoomWindowIcon, t("Zoom window"), "Z", !!zoomOpen, onToggleZoom,
+          { disabled: !zoomAvailable, title: zoomAvailable ? undefined : t("The zoom window works on PDF pages") }) : null}
         <MenuDivider />
         <MenuItem icon={SettingsIcon} onMouseDown={keepFocus} onClick={() => { closeMenu(); onOpenSettings?.("reading", "Handwriting"); }}>
           {t("Handwriting settings…")}

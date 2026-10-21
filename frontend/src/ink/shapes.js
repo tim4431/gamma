@@ -9,6 +9,7 @@
 // the central moments (Xournal++'s circle recogniser). Fixtures:
 // tests/shared/inkshapes.json, and inkhold.json for the hold's own rules.
 import { t } from "../shared/i18n/i18n.js";
+import { decodeStroke, encodePoints } from "./ink.js";
 
 // Draw and hold's numbers, one table for the layer and the iPad host, whose
 // Swift constants mirror it (docs/dev/ipad.md "The pen"): the tip still for
@@ -561,6 +562,118 @@ export function followHold(hold, samples) {
     if (moved >= REFIT_PX) refit = true;
   }
   return refit ? refitShape(kind, params, { pointer: samples[samples.length - 1], from }) : params;
+}
+
+// --- editable shapes ---------------------------------------------------------------
+// A shape held alone in the selection shows its own handles
+// (docs/dev/handwriting.md "Editable shapes"): its params are the
+// geometry, and a drag of a handle gives new params, from which the
+// stroke's samples are written again. Every edit that moves the samples
+// carries the params with them (ink.js mapShape), so they always describe
+// the samples drawn.
+
+// The handles of a shape, [{id, x, y}] in page points: `p1` and `p2`, a
+// line's or an arrow's ends (x1, y1 and x2, y2); `c0`, `c1`… a rectangle's,
+// a triangle's or a polygon's corners, in shapeSamples' order; `rx` and
+// `ry`, an ellipse's long- and short-axis ends. None for a curve or a kind
+// this build does not know.
+export function shapeHandles(kind, params) {
+  const p = params || {};
+  if (kind === "line" || kind === "arrow") return [{ id: "p1", x: p.x1, y: p.y1 }, { id: "p2", x: p.x2, y: p.y2 }];
+  if (kind === "rect" || kind === "triangle" || kind === "polygon") {
+    return (shapeCorners(kind, p) || []).map((q, i) => ({ id: `c${i}`, x: q.x, y: q.y }));
+  }
+  if (kind === "ellipse") {
+    const rad = (p.angle || 0) / DEG, c = Math.cos(rad), s = Math.sin(rad);
+    return [{ id: "rx", x: p.cx + p.rx * c, y: p.cy + p.rx * s }, { id: "ry", x: p.cx - p.ry * s, y: p.cy + p.ry * c }];
+  }
+  return [];
+}
+
+// The params with handle `id` at `point` (page points): a line's or an
+// arrow's end moves alone, Shift turning it in 15° steps about the other
+// end, its length kept; a triangle's corner moves alone; a rectangle's
+// corner moves with the opposite one fixed and the angle kept; a polygon's
+// corner sets its radius and its turn, the polygon staying regular about
+// its centre; `rx` sets the ellipse's long axis, its length and its
+// direction, and `ry` its short one's length (the pointer's distance from
+// the centre across the long axis). Normalised as `recognise` returns it,
+// every number on the 1/100 grid; the params as they were for a handle
+// the shape does not have.
+const MIN_SIDE = 0.5;   // pt: a dragged rectangle or ellipse keeps at least this much of each side
+export function dragHandle(kind, params, id, point, { shift = false } = {}) {
+  const p = params || {};
+  if ((kind === "line" || kind === "arrow") && (id === "p1" || id === "p2")) {
+    const [fx, fy] = id === "p1" ? [p.x2, p.y2] : [p.x1, p.y1];
+    let { x, y } = point;
+    if (shift) {
+      const len = Math.hypot(x - fx, y - fy), ang = (Math.round(Math.atan2(y - fy, x - fx) * DEG / 15) * 15) / DEG;
+      x = fx + Math.cos(ang) * len;
+      y = fy + Math.sin(ang) * len;
+    }
+    return rounded(id === "p1" ? { ...p, x1: x, y1: y } : { ...p, x2: x, y2: y });
+  }
+  const corner = /^c(\d+)$/.exec(id || "");
+  if (kind === "triangle" && corner && +corner[1] < 3) {
+    const n = +corner[1] + 1;
+    return rounded({ ...p, [`x${n}`]: point.x, [`y${n}`]: point.y });
+  }
+  if (kind === "rect" && corner && +corner[1] < 4) {
+    const fixed = shapeCorners("rect", p)[(+corner[1] + 2) % 4];
+    const rad = (p.angle || 0) / DEG, c = Math.cos(rad), s = Math.sin(rad);
+    const dx = point.x - fixed.x, dy = point.y - fixed.y;
+    const w = Math.max(MIN_SIDE, Math.abs(dx * c + dy * s)), h = Math.max(MIN_SIDE, Math.abs(-dx * s + dy * c));
+    return rounded(normaliseRect({ cx: fixed.x + dx / 2, cy: fixed.y + dy / 2, w, h, angle: p.angle || 0 }));
+  }
+  if (kind === "polygon" && corner && +corner[1] < Math.max(3, Math.round(p.n))) {
+    const n = Math.max(3, Math.round(p.n));
+    const r = Math.max(MIN_SIDE, Math.hypot(point.x - p.cx, point.y - p.cy));
+    const angle = Math.atan2(point.y - p.cy, point.x - p.cx) * DEG - (360 / n) * +corner[1];
+    return rounded(normalisePolygon({ cx: p.cx, cy: p.cy, r, n, angle }));
+  }
+  if (kind === "ellipse" && (id === "rx" || id === "ry")) {
+    const dx = point.x - p.cx, dy = point.y - p.cy;
+    if (id === "rx") {
+      const rx = Math.max(MIN_SIDE, Math.hypot(dx, dy));
+      return rounded(normaliseEllipse({ cx: p.cx, cy: p.cy, rx, ry: p.ry, angle: rx > MIN_SIDE ? Math.atan2(dy, dx) * DEG : p.angle || 0 }));
+    }
+    const rad = (p.angle || 0) / DEG;
+    const ry = Math.max(MIN_SIDE, Math.abs(-dx * Math.sin(rad) + dy * Math.cos(rad)));
+    return rounded(normaliseEllipse({ cx: p.cx, cy: p.cy, rx: p.rx, ry, angle: p.angle || 0 }));
+  }
+  return params;
+}
+
+// `stroke` (one with a shape record) written again from `params`: the
+// shape's dense polyline (shapeSamples) over the stroke's own span of
+// time — from its first sample's t to its last's — and at its mean
+// pressure, encoded with its own channels, its `shape` the new params and
+// every other key kept (id, look, t0, fill, nib, extras): the XY-only
+// rewrite a handle's drag commits, so the params and the samples agree as
+// after every other edit. The same stroke when there is nothing to draw
+// (a kind shapeSamples does not know).
+export function reshapeStroke(stroke, params) {
+  const kind = stroke?.shape?.kind;
+  const old = decodeStroke(stroke);
+  if (!kind || !old.length) return stroke;
+  const t0 = old[0].t ?? 0, span = Math.max(0, (old[old.length - 1].t ?? 0) - t0);
+  const p = old.some((s) => s.p != null) ? round2(old.reduce((sum, s) => sum + (s.p ?? 0.5), 0) / old.length) : 0.5;
+  const samples = shapeSamples(kind, params, { span, p });
+  if (!samples.length) return stroke;
+  const ch = stroke.ch || "xy";
+  return { ...stroke, shape: { ...stroke.shape, params: { ...params } }, pts: encodePoints(samples.map((s) => ({ ...s, t: s.t + t0 })), ch) };
+}
+// A group with the stroke `id` reshaped to `params` (reshapeStroke), or
+// the same group when it has no such stroke with a shape.
+export function reshapeInk(ink, id, params) {
+  let changed = false;
+  const strokes = (ink?.strokes || []).map((s) => {
+    if (s.id !== id || !s.shape) return s;
+    const next = reshapeStroke(s, params);
+    if (next !== s) changed = true;
+    return next;
+  });
+  return changed ? { ...ink, strokes } : ink;
 }
 
 // The kind's name for the "Shape: circle." pill.

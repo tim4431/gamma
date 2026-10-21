@@ -13,6 +13,8 @@ import { createPortal } from "react-dom";
 import { CheckIcon, ChevronRightIcon, CopyIcon, LanguagesIcon, LinkIcon, MessageSquareIcon, OutlineIcon } from "../shared/ui/Icons";
 import { MarkupLayers, NO_MARKS } from "../markup/MarkupLayers";
 import { armedClasses, usePageTools } from "../markup/PageTools";
+import { ZoomWindow } from "../ink/ZoomWindow.jsx";
+import { revealDelta } from "../ink/zoomWindow.js";
 import { KEEP_MARGIN, RENDER_MARGIN, ZOOM_SETTLE_MS, cropPage, installPageRaster } from "./pageRaster.js";
 import { installVerticalScrollSnap } from "./verticalScrollSnap.js";
 import { segmentPage, selectionParagraphs } from "./pdfTranslate";
@@ -448,7 +450,11 @@ async function fetchPdfData(url, onLoadState, isCancelled) {
 // that box on position.pageNumber.
 // flashHighlightId: the highlight a jump just landed on, which pulses once
 // (.pdfHlFlash; App's triggerFlash sets it for about a second).
-function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef, onJump, onHighlightJump, onLinkHighlight, onSelectionFinished, onAreaSelection, onHighlightContext, searchRef, captureRef, onEffectiveScale, onZoomTo, findMarks, onExternalLink, onLinkContext, onBeforeLinkJump, onLoadState, retryRef, areaMode, hideEmbeddedAnnots, darkPage = false, translateKey = "", translateParallel = 3, onTranslate, translateCtlRef, onTranslateState, selTranslate = "", translateLangLabel = "", marks, flashHighlightId = null, smoothWheel = false, onPageInView }) {
+// The zoom window (ink/ZoomWindow.jsx) docks under the scroller while the
+// page tools' ink.zoom is on one of the document's pages: zoomHeight is its
+// height in css px and onZoomHeight(px) sets it (inkZoomHeight);
+// onZoomChange(update) changes the window, `update(window) → next | null`.
+function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef, onJump, onHighlightJump, onLinkHighlight, onSelectionFinished, onAreaSelection, onHighlightContext, searchRef, captureRef, onEffectiveScale, onZoomTo, findMarks, onExternalLink, onLinkContext, onBeforeLinkJump, onLoadState, retryRef, areaMode, hideEmbeddedAnnots, darkPage = false, translateKey = "", translateParallel = 3, onTranslate, translateCtlRef, onTranslateState, selTranslate = "", translateLangLabel = "", marks, flashHighlightId = null, smoothWheel = false, onPageInView, zoomHeight = 200, onZoomHeight, onZoomChange }) {
   const tools = usePageTools(), { ink, text } = tools;
   const viewerRef = useRef(null);
   const [pdfDoc, setPdfDoc] = useState(null);
@@ -1599,6 +1605,29 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
     };
   }, [canAnnotate]);
 
+  // The zoom window: on a page of this document only, with the pdf.js page
+  // it draws from once that has loaded. As the window moves, the scroller
+  // keeps its box on the page in view (revealDelta: only as far as it must).
+  const zoom = ink.zoom && pdfDoc && onZoomChange && ink.zoom.page >= 1 && ink.zoom.page <= numPages ? ink.zoom : null;
+  const [zoomPage, setZoomPage] = useState(null); // {doc, n, page}
+  useEffect(() => {
+    if (!zoom || (zoomPage?.doc === pdfDoc && zoomPage.n === zoom.page)) return undefined;
+    let cancelled = false;
+    pdfDoc.getPage(zoom.page).then((page) => { if (!cancelled) setZoomPage({ doc: pdfDoc, n: zoom.page, page }); }, () => {});
+    return () => { cancelled = true; };
+  }, [pdfDoc, zoom?.page]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    const root = viewerRef.current, width = zoom && pageWidthsRef.current[zoom.page - 1];
+    const wrap = width && root?.querySelector(`.pdfPageWrap[data-page="${zoom.page}"]`);
+    if (!wrap) return;
+    const r = wrap.getBoundingClientRect(), k = r.width / width, v = root.getBoundingClientRect();
+    const { dx, dy } = revealDelta(
+      { left: r.left + zoom.x * k, top: r.top + zoom.y * k, right: r.left + (zoom.x + zoom.w) * k, bottom: r.top + (zoom.y + zoom.h) * k },
+      { left: v.left + root.clientLeft, top: v.top + root.clientTop, right: v.left + root.clientLeft + root.clientWidth,
+        bottom: v.top + root.clientTop + root.clientHeight });
+    if (dx || dy) root.scrollBy({ left: dx, top: dy });
+  }, [zoom?.page, zoom?.x, zoom?.y, zoom?.w, zoom?.h]); // eslint-disable-line react-hooks/exhaustive-deps
+
   function handleSelConfirm(commentText, color, extra) {
     if (!selPopup) return;
     if (selPopup.kind === "area") {
@@ -1676,7 +1705,7 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
       {/* overflow-anchor off: the browser's own scroll anchoring would fight
           the zoom re-placement above with adjustments of its own. */}
       <div ref={viewerRef} data-guide="pdf.viewer" className={"pdfViewer" + (areaCursor || areaMode ? " areaCursor" : "") + (areaMode ? " areaMode" : "") + (darkPage ? " pdfDark" : "") + (transPeek ? " transPeek" : "") + armedClasses(tools) + (ink.tool?.tool === "select" ? " inkSelect" : "")}
-        style={{ height: "100%", overflowY: "auto", overflowX: "auto", overflowAnchor: "none" }}
+        style={{ height: zoom ? `calc(100% - ${zoomHeight}px)` : "100%", overflowY: "auto", overflowX: "auto", overflowAnchor: "none" }}
         onScroll={(e) => {
           lastScrollRef.current = e.currentTarget.scrollTop;
           lastScrollLeftRef.current = e.currentTarget.scrollLeft;
@@ -1730,6 +1759,14 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
         </TipFrame>
       )}
       </div>
+      {zoom ? (
+        <ZoomWindow zoom={zoom} size={{ width: pageWidths[zoom.page - 1] || FALLBACK_W, height: pageHeights[zoom.page - 1] || FALLBACK_H }}
+          page={zoomPage?.doc === pdfDoc && zoomPage.n === zoom.page ? zoomPage.page : null}
+          marks={(displayedUrl === url && marks.get(zoom.page)) || NO_MARKS}
+          height={zoomHeight} onHeight={(px) => onZoomHeight?.(px)} onChange={onZoomChange} onClose={() => onZoomChange(() => null)}
+          annotationMode={pdfjsLib ? (hideEmbeddedAnnots ? pdfjsLib.AnnotationMode.DISABLE : pdfjsLib.AnnotationMode.ENABLE) : undefined}
+          isCancel={(err) => !!pdfjsLib && err instanceof pdfjsLib.RenderingCancelledException} dark={darkPage} />
+      ) : null}
     </div>
   );
 }

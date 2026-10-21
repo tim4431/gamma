@@ -5,7 +5,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { claimTool, hostEvent, shapeFromHost, shapeToHost } from "../src/ink/hostInk.js";
-import { penTilt } from "../src/ink/inkInput.js";
+import { penTilt, penTwist } from "../src/ink/inkInput.js";
 import { toolStyle } from "../src/ink/ink.js";
 
 test("claimTool: a plain pen claims the four keys an older shell reads, nothing else", () => {
@@ -24,7 +24,7 @@ test("claimTool: the look's keys, each only away from its default", () => {
   assert.ok(Math.abs(dotted.dash[0] - 0.8) < 1e-9 && dotted.dash[1] === 16, `dotted: a tenth of a size on, two off (${dotted.dash})`);
   assert.equal("pressure" in dotted, false, "pressure read: the key left out");
   assert.equal(claimTool({ ...toolStyle({ id: "p", kind: "pen", color: "#000000", size: 2, brush: "monoline" }), pen: true }).brush, "monoline");
-  assert.equal("brush" in claimTool({ tool: "pen", color: "#000000", size: 2, brush: "calligraphy", pen: true }), false,
+  assert.equal("brush" in claimTool({ tool: "pen", color: "#000000", size: 2, brush: "fountain", pen: true }), false,
     "a brush the build does not know is the plain Pen");
 });
 
@@ -67,4 +67,30 @@ test("shapeToHost / shapeFromHost: points moved and scaled, lengths scaled, angl
   assert.deepEqual(shapeFromHost({ kind: "line", params: { x1: 55, y1: 130, x2: 205.01, y2: 130 } }, at).params,
     { x1: 10, y1: 20, x2: 110.01, y2: 20 });
   assert.equal(shapeToHost({ kind: "blob", params: {} }, at), undefined, "a kind it does not know");
+});
+
+test("claimTool: a calligraphy pen claims its nib, 0..179, and leaves it to the roll unless the preset locks it", () => {
+  const cal = { ...toolStyle({ id: "c", kind: "pen", color: "#000000", size: 2, brush: "calligraphy", nib: -30 }), pen: true };
+  // its smoothing of 2 rides too: a calligraphy pen's default, which its preset leaves out (ink.js presetSmoothing)
+  assert.deepEqual(claimTool(cal, { k: 1 }), { kind: "pen", color: "#000000", size: 2, opacity: 1, brush: "calligraphy", nib: 150, nibRoll: true,
+    stabilize: 2 });
+  assert.equal("stabilize" in claimTool({ ...toolStyle({ id: "c", kind: "pen", color: "#000000", size: 2, brush: "calligraphy", stabilize: 0 }), pen: true }),
+    false, "a calligraphy pen with Smoothing off claims none");
+  const locked = { ...toolStyle({ id: "c", kind: "pen", color: "#000000", size: 2, brush: "calligraphy", nibLock: true }), pen: true };
+  assert.deepEqual([claimTool(locked).nib, "nibRoll" in claimTool(locked)], [45, false], "45 to start; locked: no roll");
+  assert.equal("nib" in claimTool({ ...toolStyle({ id: "p", kind: "pen", color: "#000000", size: 2 }), nib: 30, pen: true }), false,
+    "only a calligraphy pen has a nib");
+});
+
+test("hostEvent: a seventh value is the roll, as twist, which penTwist reads (clockwise degrees 0..359)", () => {
+  const ev = hostEvent([10, 20, 0.4, 16, 40, 120, 30.4]);
+  assert.equal(ev.twist, 30.4);
+  assert.equal(penTwist(ev), 30);
+  assert.equal(penTwist(hostEvent([10, 20, 0.4, 16, 40, 120, 359.7])), 0, "wraps at 360");
+  assert.equal(penTwist(hostEvent([10, 20, 0.4, 16, 40, 120])), null, "six values: no roll");
+  assert.equal("twist" in hostEvent([10, 20, 0.4, 16]), false);
+  assert.equal(penTwist({ pointerType: "mouse", twist: 0 }), null, "a mouse has no roll");
+  assert.equal(penTwist({ pointerType: "touch", twist: 0 }), null);
+  assert.equal(penTwist({ pointerType: "pen", twist: 90 }), 90);
+  assert.equal(penTwist({ pointerType: "pen" }), null);
 });

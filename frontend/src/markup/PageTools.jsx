@@ -16,18 +16,27 @@ import { createContext, useContext } from "react";
 // browser's. ink.clip: the handwriting clipboard holds strokes (a held pen
 // or a right-click may then offer Paste here); ink.keys: {copy, cut,
 // duplicate}, the chord labels the selection menu puts in its titles (""
-// when unbound). text.armed: the Text tool is armed; text.style: the style
-// of new boxes ({size, color, bg}).
-// actions carries the handlers: the ink ones (onStroke, onEraseAlong(page,
+// when unbound). ink.ruler: the ruler, {surface, x, y, angle, length,
+// snap} in page points (ink/ruler.js), or null; ink.rulerUnits: its ticks,
+// 'pt' | 'cm'. While the Shapes tool is armed ink.tool is {tool: "shape",
+// kind, fill, style} (ink/shapeTool.js; `style` the stylus pen's look as an
+// even Ballpoint line). ink.zoom: the zoom window, {page, x, y, w, h, mag,
+// line, x0} in page points (ink/zoomWindow.js), or null. text.armed: the
+// Text tool is armed; text.style: the style of new boxes ({size, color, bg}).
+// actions carries the handlers: the ink ones (onStroke(page, stroke,
+// {width, height}, {label}): a stroke and its history entry's label, onEraseAlong(page,
 // path, r, {mode, pass}): the path the eraser swept since its last call,
 // onEraseEnd, onEraseMany, onSelect, onAction(page, kind,
 // arg) — style, transform, delete, duplicate, copy, cut, flip {axis},
-// split, merge, select-note, show-note —, onMoveSelection, onPaste(page,
+// split, merge, select-note, show-note, transcribe —, onMoveSelection, onPaste(page,
 // pt, {width, height}): the clipboard at a page point, onFingerScroll,
 // onUndoGesture, onHoldStatus, onInkLive(page, msg): a chunk of the
 // stroke in progress for the page's other peers, ink/inkLive.js,
 // onHaptic(kind, at): a held shape or a pen lasso's selection, for the
-// iPad host's haptics),
+// iPad host's haptics, onRuler(next | null): the ruler moved, turned,
+// stretched or put away, onZoom(page, {x, y} | {mag} | {at, size}): the
+// zoom window dragged, resized, or sent to a tapped point of a page whose
+// size in points rides along),
 // onJump (show a mark's block in the notes) and the text boxes'
 // (markup/useTextBoxes.js) — one object for App's life whose functions call
 // the latest handlers (shared/lib/stableActions.js), so the context value
@@ -37,6 +46,7 @@ export const PageToolsContext = createContext(null);
 export const usePageTools = () => useContext(PageToolsContext);
 
 // The classes a surface's container takes for the armed tool (app.css,
-// markup.css): inkArmed, inkTouchDraw when a finger draws too, textArmed.
+// markup.css): inkArmed, inkTouchDraw when a finger draws too,
+// inkShapeArmed for the Shapes tool (a crosshair, no footprint), textArmed.
 export const armedClasses = ({ ink, text }) => (ink.tool ? " inkArmed" : "") + (ink.tool && !ink.penOnly ? " inkTouchDraw" : "")
-  + (text.armed ? " textArmed" : "");
+  + (ink.tool?.tool === "shape" ? " inkShapeArmed" : "") + (text.armed ? " textArmed" : "");

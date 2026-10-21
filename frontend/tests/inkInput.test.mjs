@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { appendInkSample, penTilt, predictedInkSamples } from "../src/ink/inkInput.js";
+import { appendInkSample, penTilt, penTwist, predictedInkSamples } from "../src/ink/inkInput.js";
 
 const drawing = (k = 1) => ({ samples: [], pen: true, pressure: true, startTime: 100, k,
   use: { tool: "pen" }, toPt: (e) => ({ x: e.clientX / k, y: e.clientY / k }) });
@@ -67,4 +67,15 @@ test("a pen's tilt is read as integer degrees from altitude / azimuth, else from
   const mouse = Object.assign(drawing(), { pen: false });
   appendInkSample(mouse, tilted(10, 100, 50));
   assert.equal("a" in mouse.samples[0], false);
+});
+
+test("penTwist: a pen's barrel roll as integer degrees 0..359, clockwise; null for a mouse, a finger or no twist", () => {
+  assert.equal(penTwist({ pointerType: "pen", twist: 30.4 }), 30);
+  assert.equal(penTwist({ pointerType: "pen", twist: 0 }), 0, "a pen without the sensor reports 0: no turn");
+  assert.equal(penTwist({ pointerType: "pen", twist: 359.6 }), 0);
+  assert.equal(penTwist({ pointerType: "pen", twist: -90 }), 270);
+  assert.equal(penTwist({ pointerType: "mouse", twist: 45 }), null);
+  assert.equal(penTwist({ pointerType: "touch", twist: 45 }), null);
+  assert.equal(penTwist({ pointerType: "pen" }), null);
+  assert.equal(penTwist({ twist: 12 }), 12, "the iPad host's event (hostInk.js hostEvent) carries no pointerType");
 });

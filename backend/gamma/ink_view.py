@@ -53,20 +53,26 @@ def crop_box(inks, width: float, height: float):
     return (fx0, fy0, fx1, fy1)
 
 
-def picture(ws: str, conn, block_id: str, page_id: str, whole: bool = False) -> dict:
+def picture(ws: str, conn, block_id: str, page_id: str, whole: bool = False, ink=None) -> dict:
     """What view_ink shows of ``block_id`` — a handwriting group or a sheet
     of paper — on the page ``page_id``: ``{image, strokes, whole, pdf_page,
     bare}`` (``image`` is render_page's ``(bytes, media type, width,
     height)``; ``bare``: the strokes are drawn on blank paper because the PDF
     page could not be copied), or ``{error}`` in words for the model.
     ``whole`` shows the whole PDF page or sheet with all its handwriting
-    instead of this group, cropped."""
+    instead of this group, cropped. ``ink``, an InkFile, is drawn in place
+    of the block's stored file — the strokes a user selected for the chat
+    (ai_context.request_ink_selections), saved or not, so the block need
+    not hold a file nor be saved yet: cropped to them, on PDF page
+    ``ink.space.page`` of the page's PDF, or on the sheet holding the block,
+    else on blank paper of the space's size, never ``whole``."""
     blocks = [block_to_dict(row) for row in fetch_subtree(conn, page_id)]
     by_id = {b["id"]: b for b in blocks}
     block = by_id.get(block_id)
-    if block is None:
+    inline = ink is not None
+    if page_id not in by_id or (block is None and not inline):
         return {"error": "error: no such block on that page"}
-    props = block["properties"]
+    props = block["properties"] if block else {}
     uploads = ws_uploads_dir(ws)
 
     def load(b):
@@ -74,19 +80,22 @@ def picture(ws: str, conn, block_id: str, page_id: str, whole: bool = False) -> 
         return inkmod.read_upload(uploads, url) if url else None
 
     sheets = sheets_of(blocks, page_id)
-    if is_sheet(props):
+    if inline:
+        whole = False
+    elif is_sheet(props):
         sheet = next((s for s in sheets if s["id"] == block_id), None)
         if sheet is None:
             return {"error": "error: that page of paper could not be read"}
         inks = [ink for b in sheet["blocks"] if (ink := load(b)) is not None]
         return _done(_render(notebook_pdf([(sheet["paper"], sheet_text_boxes(sheet["blocks"]), inks)]), None),
                      inks, whole=True)
-    if not props.get("ink_url"):
+    elif not props.get("ink_url"):
         return {"error": ('error: that block holds no handwriting — pass the id of a handwriting '
                           'block (read_block labels it "handwriting on …") or of a page of paper')}
-    ink = load(block)
-    if ink is None:
-        return {"error": "error: the handwriting's stroke file is missing or unreadable"}
+    else:
+        ink = load(block)
+        if ink is None:
+            return {"error": "error: the handwriting's stroke file is missing or unreadable"}
 
     if ink.space.kind == "canvas":
         # On a sheet: the nearest one holding the group (sheets_of), else a
@@ -107,13 +116,13 @@ def picture(ws: str, conn, block_id: str, page_id: str, whole: bool = False) -> 
     attachment = page_attachment(by_id[page_id]["properties"])
     path = pdf_path(ws, attachment["id"]) if attachment else None
     # What is added to the page: ink still embedded in the PDF is drawn by
-    # the file itself.
+    # the file itself (a selection's strokes are drawn all the same).
     if whole:
         inks = [i for b in blocks
                 if b["properties"].get("ink_url") and not still_embedded(b["properties"])
                 and (i := load(b)) is not None and i.space.kind == "pdf-page" and i.space.page == page_no]
     else:
-        inks = [] if still_embedded(props) else [ink]
+        inks = [] if still_embedded(props) and not inline else [ink]
     drawn = inks or [ink]
     box = None if whole else crop_box([ink], ink.space.width, ink.space.height)
     data = b""

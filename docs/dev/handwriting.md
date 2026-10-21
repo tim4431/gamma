@@ -7,17 +7,20 @@ does the same things, is in
 GoodNotes store, and why the file looks the way it does, in
 [research/ink-storage.md](../research/ink-storage.md). Code:
 `gamma/ink.py` + `gamma/routers/ink.py` (server), `frontend/src/ink/ink.js`,
-`ink/finishStroke.js`, `ink/shapes.js`, `ink/gestures.js`,
+`ink/finishStroke.js`, `ink/shapes.js`, `ink/shapeTool.js`, `ink/ruler.js`,
+`ink/zoomWindow.js`, `ink/gestures.js`,
 `ink/stabilizer.js`, `ink/fingerChords.js`, `ink/stripKeys.js`,
 `ink/pencilActions.js`, `ink/hostInk.js`, `ink/inkStore.js`, `ink/inkJournal.js`,
 `ink/inkFlush.js`, `ink/inkLive.js`, `ink/grain.js`,
-`ink/InkStylePicker.jsx`, `ink/InkLayer.jsx`, `ink/inkInput.js` (client),
+`ink/InkStylePicker.jsx`, `ink/InkLayer.jsx`, `ink/ZoomWindow.jsx`,
+`ink/inkInput.js` (client),
 with the
 tool strip and the page plumbing it shares with text boxes in
 `markup/MarkupToolbar.jsx`, `markup/MarkupLayers.jsx` and
 `markup/PageTools.jsx`; tests `backend/tests/test_ink.py`,
 `frontend/tests/ink.test.mjs`, `inkErase.test.mjs`, `finishStroke.test.mjs`,
-`shapes.test.mjs`, `gestures.test.mjs`, `stabilizer.test.mjs`,
+`shapes.test.mjs`, `shapeTool.test.mjs`, `ruler.test.mjs`,
+`zoomWindow.test.mjs`, `gestures.test.mjs`, `stabilizer.test.mjs`,
 `fingerChords.test.mjs`, `stripKeys.test.mjs`, `pencilActions.test.mjs`,
 `hostInk.test.mjs`, `inkInput.test.mjs`, `inkLive.test.mjs`,
 `inkJournal.test.mjs`, `inkFlush.test.mjs` (and the benchmarks
@@ -26,12 +29,17 @@ tool strip and the page plumbing it shares with text boxes in
 shared fixtures `tests/shared/inkv2.json`, `inkwidth.json`, `inkdash.json`
 and `inkmerge.json` (read by `backend/tests/test_shared_fixtures.py` and the
 node tests, `inkwidth.json` by the iPad app's `InkWidthTests` too) and
-`inkshapes.json`, `inkscribble.json` (the recognisers run in
-the node tests only, the server never recognises; the Python side checks
-the fixtures' shape and that every stored `shape` record parses) and
+`inkshapes.json`, `inkscribble.json` (the recognisers and the Shapes
+tool's drags run in the node tests only, the server never recognises; the
+Python side checks the fixtures' shape and that every stored `shape`
+record parses) and
 `inkhold.json` (the hold's stillness and refit rule, run by the node tests
-and the iPad app's XCTest), e2e `tests/e2e/scenarios/ink.mjs`
-and `inkEditing.mjs` (the draft journal's restore in `ink.mjs` too), and the live stroke in `collab.mjs`. The same files are
+and the iPad app's XCTest), e2e `tests/e2e/scenarios/ink.mjs`,
+`inkEditing.mjs` (the draft journal's restore in `ink.mjs` too),
+`inkShapes.mjs` (group `inkShapes`: the Shapes tool, the ruler, the
+calligraphy pen, shape handles and fills) and `inkZoom.mjs` (group
+`inkZoom`: the zoom window and transcribing a selection), and the live
+stroke in `collab.mjs`. The same files are
 written on notebook sheets ([notebooks.md](notebooks.md)) and by the iPad
 app ([ipad.md](ipad.md)). Typed text on a page is
 [text_boxes.md](text_boxes.md).
@@ -44,7 +52,9 @@ app ([ipad.md](ipad.md)). Typed text on a page is
   **tool presets** — each a pen or a highlighter with its own colour and
   width, shown as the icon over a colour bar (four pens and three
   highlighters to start) — then the eraser, the lasso and the Text tool
-  (typed text boxes, [text_boxes.md](text_boxes.md)); a hand (nothing
+  (typed text boxes, [text_boxes.md](text_boxes.md)), followed, only
+  while each is on, by a pressed *Ruler*, *Shapes* and *Zoom window*
+  button (below); a hand (nothing
   armed: scroll and select text); **More** (⋯, "More handwriting tools")
   and close; and Undo / Redo pinned at the right end, always the last two
   buttons. Its accessible name is "Markup tools". One tap arms a tool;
@@ -55,16 +65,22 @@ app ([ipad.md](ipad.md)). Typed text on a page is
   place in the same frame): *Paste handwriting* (Ctrl+V; greyed, titled
   "Copy or cut handwriting first", until the handwriting clipboard holds
   strokes), *Select all handwriting on this page* (Ctrl+A), a divider,
-  and *Handwriting settings…* (Settings → Reading & editing, at the
-  Handwriting section). The first two rows are the catalog commands
-  `ink.paste` and `ink.selectAll` drawn as `CommandMenuItem`s, so a
-  rebound chord shows there too. Escape or a press outside closes it.
-  The button is `data-guide="ink.more"` for the guide.
+  *Ruler* (R), *Stamp line* (greyed, titled "Show the ruler first",
+  while the ruler is hidden), *Shapes* (S) and *Zoom window* (Z; greyed,
+  titled "The zoom window works on PDF pages", while the viewer shows no
+  PDF page — the notebook view, the PDF hidden, a page without one — and
+  left out on a phone), each of the three
+  ticked while on, a divider, and *Handwriting settings…* (Settings →
+  Reading & editing, at the Handwriting section). The first two rows are
+  the catalog commands `ink.paste` and `ink.selectAll` drawn as
+  `CommandMenuItem`s, so a rebound chord shows there too; R, S and Z are
+  the strip's own keys, named on their rows. Escape or a press outside
+  closes it. The button is `data-guide="ink.more"` for the guide.
 - **A preset's options row** is three captioned sub-rows (the caption a
   14 px line in the small caption size, hidden under 480 px of viewport
   width). **Style**: for a pen, the **Style picker** — a button showing
   a short stroke drawn in the current style, its name and a ▾ (*Pen ▾*),
-  which opens a menu on the press, like More, with four rows, each led by
+  which opens a menu on the press, like More, with five rows, each led by
   the same stroke preview: *Pen* (width follows the stylus pressure),
   *Ballpoint* (an even line at every pressure; the stored brush is still
   `monoline`, a word that never shows), *Brush* (a felt tip: twice as
@@ -73,17 +89,20 @@ app ([ipad.md](ipad.md)). Typed text on a page is
   slowly and thins where it moves fast, so it is a felt look without a
   stylus) and *Pencil* (graphite: the line darkens with pressure and
   widens as the pencil leans, with a grain on the screen; a mouse draws a
-  soft even line). The current row is ticked. The preset reads "Red
-  ballpoint pen · 4 pt · key 1", "Blue brush pen · 2 pt", "Black pencil ·
-  2 pt". `Shift+[` / `Shift+]` step the armed pen through the four, in
-  that order. Then the **Line** trio, *Solid* · *Dashed* · *Dotted*, for
+  soft even line) and *Calligraphy* (a flat nib: thick where the pen
+  moves across the nib, thin where it moves along it; "Calligraphy"
+  below). The current row is ticked. The preset reads "Red ballpoint pen
+  · 4 pt · key 1", "Blue brush pen · 2 pt", "Black pencil · 2 pt",
+  "Black calligraphy pen · 2 pt". `Shift+[` / `Shift+]` step the armed
+  pen through the five, in that order. A calligraphy pen's Style row
+  adds its **Nib angle** after the picker. Then the **Line** trio,
+  *Solid* · *Dashed* · *Dotted*, for
   pens and highlighters alike (dashes are two widths long with two-width
   gaps; dots sit two widths apart; the pattern follows the width, so a
   thicker pen has longer dashes), then the *Smoothing* ladder of five
   dots (Off, 1–4: the preset's `stabilize`, "Smoothing" below); on a
   highlighter the *Straight* pills (Hold · Always · Off, its `straight`,
   "Straight highlighter" below) stand where the Style picker would.
-  Calligraphy is a later release.
   **Color**: the palette — the colour groups the account chose for pen
   presets or for highlighter presets (Settings → Appearance › Colors,
   [settings.md](settings.md); by default the 14 dark "Pen" colours and
@@ -146,10 +165,17 @@ app ([ipad.md](ipad.md)). Typed text on a page is
   the armed preset thinner / thicker through its eight widths (the pill:
   "Blue pen · 2.8 pt.", options row open or not; at the end of the ladder
   the pill repeats the width), `Shift+[` / `Shift+]` step the armed pen's
-  style back / forward through Pen, Ballpoint, Brush, Pencil, wrapping
+  style back / forward through Pen, Ballpoint, Brush, Pencil,
+  Calligraphy, wrapping
   (the same pill, now naming the style: "Blue brush pen · 2.8 pt."; a
   highlighter has no styles and the keys do nothing), `L` `T` `V` the
-  lasso / Text tool / hand,
+  lasso / Text tool / hand, `R` the ruler on or off, `S` the Shapes tool
+  on or off (off gives back the tool armed before it), `Z` the zoom
+  window open or closed (nothing on a phone; where the viewer shows no
+  PDF page the pill says it works on PDF pages),
+  **Enter**, while the zoom window is open, its *New line* (a focused
+  button, link, menu row or text field, and a selected text box, keep
+  their Enter),
   `Delete` (the lasso selection), and **`Ctrl+Z` / `Ctrl+Shift+Z` step
   the strokes** (each stroke or selection edit is one entry; the history
   is per visit of the page). **`E` taps or holds**: a tap arms the eraser
@@ -157,8 +183,11 @@ app ([ipad.md](ipad.md)). Typed text on a page is
   does); held 300 ms or more while an erasing pass is made, letting go
   returns to the tool armed before it, and a lasso selection made before
   the hold comes back with the lasso. `Esc` closes one layer at a time: a
-  selected text box, then the ink selection, then an open options row,
-  then the strip. Ctrl+C / X / V / D / A are not strip keys but catalog
+  selected text box, then the ink selection, then an open options row
+  (the armed tool's or the ruler's), then the Shapes tool (the tool armed
+  before it comes back), then the ruler, then the zoom window, then the
+  strip; closing the strip hides the ruler and closes the zoom window
+  too. Ctrl+C / X / V / D / A are not strip keys but catalog
   commands (`ink.copy`, `ink.cut`, `ink.paste`, `ink.duplicate`,
   `ink.selectAll`, "Copy, cut and paste" below), so Settings → Keyboard
   lists and rebinds them. While the Text tool is armed or a text box is
@@ -221,6 +250,98 @@ app ([ipad.md](ipad.md)). Typed text on a page is
   lift commits it as here. Under a shell that does not send `hold`
   nothing is recognised: a shape is never recognised at commit time
   without the live preview.
+- **Shapes** (More → *Shapes*, or `S`, which arm it with its options row
+  open): a drag on the page draws a line, an arrow, a rectangle or an
+  ellipse from where it starts to where it ends. The shape follows the
+  pointer while dragging and is committed at the lift, one undo entry; a
+  drag under 4 px draws nothing. Shift turns a line or an arrow in 15°
+  steps about its start, and makes the rectangle a square and the
+  ellipse a circle. The options row: *Line* · *Arrow* · *Rectangle* ·
+  *Ellipse* (the account's `inkShapeKind`, Line to start), what it draws
+  with, "Uses: Blue pen · 2 pt" — the colour, width, opacity and line of
+  the pen a stylus writes with, as an even line whatever that pen's
+  style (a shape is a Ballpoint) — and *Fill* (the account's
+  `inkShapeFill`, off to start: its rectangles and ellipses get a light
+  tint of the pen's colour inside, "Fill" below). The cursor is a
+  crosshair. A finger draws shapes only where fingers draw (*Draws with:
+  Pen and finger*); a pen and the mouse always do. While it is armed the
+  strip shows a pressed *Shapes* button after Text, whose tap opens and
+  closes the row; S, the More row and Esc give back the tool armed
+  before it. Its strokes carry their `shape` record and edit like a held
+  shape ("Editable shapes" below). In the iPad app the page draws them
+  as in Safari: the shell captures only pen and highlighter strokes.
+- **Ruler** (More → *Ruler*, or `R`, which show it with its options row
+  open): a straight edge laid over the page or sheet in view, in the
+  selection blue — a band 36 px wide with ticks along it, both edges
+  drawn as lines, a compass knob in the middle showing its angle, and a
+  handle at each end. It keeps its size on the screen at any zoom, lies
+  on the page and scrolls with it, starts level across the middle of
+  what shows of the page, four fifths of that wide, and is not saved. A
+  **pen** on the band, or any stroke begun within 12 px outside either
+  edge (a pen's, the mouse's, a finger's where fingers draw), is drawn
+  along the nearer edge: whatever the hand does, the stroke is the
+  straight line between the farthest points it reached along that edge,
+  an even line like a held one (no tapers, no shading) in the preset's
+  colour, width, style and line. A **finger or the mouse** on the band
+  moves the ruler; a second finger turns it with the first, and the page
+  neither scrolls nor zooms meanwhile. Dragging the knob turns it freely
+  (the ruler follows the pointer round its middle, from where the pointer
+  first stands 12 px out), or in 15° steps with Shift or with *Snap 15°*
+  chosen in its row (choosing it puts the ruler on the nearest 15° at
+  once); a tap on the knob snaps it to the nearest 15° and a double tap
+  turns it 90°. Dragging an end handle lengthens or shortens it, the
+  other end staying. A focused band, knob or handle takes the arrow keys
+  (the band moves 1 pt, Shift 10 pt; the knob turns 1°, Shift to the next
+  15°, and with *Snap 15°* every press is a 15° step; an end moves 10 pt
+  out or in). While the Text tool is armed the ruler still moves, and a
+  press on it is never a new text box. While it
+  shows the strip has a pressed *Ruler* button after Text, whose tap
+  opens and closes the ruler's options row: *Angle 30°*, *Snap 15°* ·
+  *Free* (Free to start), *Stamp line* (a line along the middle of the
+  ruler, end to end, with the armed pen or highlighter — the pen a
+  stylus writes with when another tool is armed —, one undo entry, "Line
+  stamped along the ruler." with Undo; More has it too), *pt* · *cm*
+  (the ticks: a short one every 10 pt, a longer one every 50 and a
+  number every 100, or millimetres with a longer tick every 5 and each
+  centimetre numbered; this device's `inkRulerUnits`) and *Hide*. R, the
+  More row, *Hide* and Esc take it away, and so do closing the strip,
+  leaving the page and the viewer no longer showing its surface (a PDF
+  page's when the PDF is hidden or the notebook view takes its place, a
+  sheet's when the notebook view closes). The eraser, the lasso and the Shapes tool ignore it,
+  and on the band every pointer moves it then. In the iPad app the shell
+  draws the line along the edge under the Pencil too ([ipad.md](ipad.md)
+  "The pen").
+- **Zoom window** (More → *Zoom window*, or `Z`; PDF pages only, and not
+  on a phone): a panel docked along the bottom of the viewer, the pages
+  scrolling above it, shows a strip of a page two, three or four times as
+  large as at 100 %, so small handwriting is written large — the page and
+  its handwriting, not its text boxes —; the page shows the part it holds
+  as a blue box. What is written in the panel
+  lands on the page, in the page's current group, as if written there:
+  saved, undone, replayed and shared the same way. Whenever a stroke
+  reaches into the panel's right fifth, the window moves on along the
+  line by three fifths of its width; when that would carry it past the
+  page's right edge it goes back to where the line began, one line down.
+  Its bar: *Previous line* and *Next line* (the window up or down one
+  line), *New line* (back to where the line began, one line down; Enter),
+  the line height (− 24 pt +, from 8 to 96 pt), *2×* · *3×* · *4×* (3×
+  to start) and *Close* (or Z, or Esc). The panel is 160 to 320 px tall,
+  200 to start, and its top edge drags to resize it (this device's
+  `inkZoomHeight`). On the page, the box's top band drags it, its corner
+  resizes it (the magnification follows, from 2× to 4×; the panel moves
+  when the box is let go; focused, the arrow keys move the band and step
+  the corner, at once), and a tap on a blank
+  spot of a page — a finger's, or the mouse's with the hand or the lasso,
+  one that does not just dismiss a selection — centres it there, on
+  another page too; each of these sets where its line begins. The viewer
+  scrolls to keep the box in view as it moves, and its own buttons at the
+  bottom stand above the panel. Fingers in the
+  panel neither scroll nor zoom; a pen writes there as on the page,
+  palms refused, in the iPad app too. The panel draws the selection's
+  dashed box, which a finger or the mouse drags, while the selection's
+  menu and handles stay on the page. While it is open the strip shows a
+  pressed *Zoom window* button after Text, whose tap closes it; closing
+  the strip and leaving the page close it too.
 - **Smoothing** (a preset's `stabilize`, 0–4, Off by default): the pen
   tip pulls the line behind it on a string of 3, 6, 10 or 16 css px (the
   lazy brush of Krita and Xournal++), so a shaky hand draws a calm line;
@@ -256,22 +377,26 @@ app ([ipad.md](ipad.md)). Typed text on a page is
   changes: Color, Width, Style, Copy, Duplicate, More and Delete.
   **Style** opens its own row: the Style picker (the strip's, shown when
   the selection holds pen strokes; its button names the style they share,
-  or *Mixed*) and the Line trio; a pill is pressed only when every stroke
+  or *Mixed*), the Line trio and, when the selection holds a closed
+  shape, *Fill* ("Fill" below); a pill is pressed only when every stroke
   it applies to matches (the brush looks at pens only, the line at every
-  stroke). Choosing a style re-bakes the selected pens' widths from the
-  pressure and tilt they were written with — a pen becomes a brush pen
-  with its tapers, a pencil with its shading — while a snapped shape
-  takes the style's name and stays constant width, and highlighters are
-  left alone; choosing a line applies to everything selected. Each choice is
-  one undo entry, "ink style change" or "ink line change". A restyle that
-  would push the group past its byte budget is refused with the usual
-  pill.
+  stroke, the fill at the closed shapes). Choosing a style re-bakes the
+  selected pens' widths from the pressure and tilt they were written with
+  — a pen becomes a brush pen with its tapers, a pencil with its shading,
+  a calligraphy pen with its nib (the stroke's own angle, else 45°) —
+  while a snapped shape takes the style's name and stays constant width,
+  and highlighters are left alone; choosing a line applies to everything
+  selected. Each choice is one undo entry, "ink style change", "ink line
+  change" or "ink fill change". A restyle that would push the group past
+  its byte budget is refused with the usual pill.
   **More** (⋯, `aria-expanded`) adds the second row, "More edits": Cut,
-  Flip horizontal, Flip vertical, New note, Merge into note (only when
-  the selection is one whole group and the page has another), Select note
-  (every stroke of the selected ink blocks) and Show note (jump to the
-  notes pane) — at most seven buttons in a row, a hard cap for every later
-  addition. Whether the second row is open is remembered for the session.
+  Flip horizontal, Flip vertical, New note — or, in its place, Merge into
+  note when the selection is one whole group and the page has another
+  (New note would change nothing then) —, Select note (every stroke of
+  the selected ink blocks), Show note (jump to the notes pane) and
+  Transcribe ("Transcribe a selection" below) — at most seven buttons in
+  a row, a hard cap for every later addition. Whether the second row is
+  open is remembered for the session.
   Color, Width and Style open their option row under whichever rows show,
   one at a time. Edits apply at once and keep pressure and time; a mixed
   pen/highlighter selection gets a width row per kind. Duplicate offsets
@@ -314,8 +439,9 @@ app ([ipad.md](ipad.md)). Typed text on a page is
   strokes out of their blocks into a new ink block on the same page,
   their ids kept, as one undo entry ("ink split"); a selection that is
   already a whole note of its own is left as it is ("This handwriting is
-  already a note of its own."). **Merge into note** (shown when the
-  selection is one whole group and the page has another) appends this
+  already a note of its own."). **Merge into note** (shown in New note's
+  place when the selection is one whole group and the page has another)
+  appends this
   group's strokes to the page's previous group — the nearest one before it
   in the page's order, else the first after it — and empties
   this one, whose block then goes when it holds no caption or notes; one
@@ -332,14 +458,42 @@ app ([ipad.md](ipad.md)). Typed text on a page is
   rotation to 15°; a focused handle takes arrow keys (10% / 15°). The
   handles keep their screen size and follow the live preview. Pressure,
   timing, tilt and stroke ids are untouched.
+- **Editable shapes.** A selection of exactly one stroke that carries a
+  shape record — a held shape, a Shapes stroke, a ruler line or a
+  stamped one — also shows the shape's own handles, 28 px on the screen:
+  the two ends of a line or an arrow, the corners of a rectangle, a
+  triangle or a polygon, and the two axis handles of an ellipse (the end
+  of its long axis and of its short one). Dragging one reshapes the
+  shape: a line's or an arrow's other end stays (Shift turns the dragged
+  end in 15° steps about it), a triangle's other corners stay, a
+  rectangle keeps its angle and its opposite corner, a polygon stays
+  regular and turns and grows with its corner, an ellipse turns and
+  stretches with its long-axis handle and widens with the other. The
+  shape is redrawn under the pointer, and the release is one undo entry,
+  "ink shape edit", the stroke's id, look and timing kept. A focused
+  shape handle takes the arrow keys (1 pt, Shift 10 pt). An erased piece
+  of a shape is plain ink and has none, and a selection of more than one
+  stroke has the box's handles only.
+- **Fill.** A closed shape (a rectangle, an ellipse, a triangle or a
+  polygon) can be filled: the selection's Style row offers *Fill* —
+  *None*, the highlighter palette's swatches (the "Ink highlight" colours
+  by default) and a custom colour — drawn as a light tint, a quarter
+  opaque, inside the outline and behind it; the Shapes tool's *Fill*
+  fills its rectangles and ellipses with the pen's colour. Exports and
+  the AI's picture draw the fill. The annotated PDF keeps a filled shape
+  as its outline, a plain /Ink annotation, with the fill only in Gamma's
+  own copy of the strokes, so another PDF reader shows the outline and a
+  Gamma import brings the fill back.
 - **Hover feedback:** a mouse or hovering pen shows the tool's footprint
   around a centre mark. With *Hover preview* on (this device's
   `inkHoverPreview`, on by default) the footprint is the armed preset's
   look: a round dot for a pen, a ballpoint or a highlighter, a teardrop
   for a brush pen, for a pencil an ellipse that leans the way the pencil
-  does when the pointer reports tilt (a round dot otherwise), and the
-  ring dashed or dotted when the preset's line is. Off, every pen and
-  highlighter shows a plain round ring at its width. Pen and highlighter
+  does when the pointer reports tilt (a round dot otherwise), for a
+  calligraphy pen its nib (a short bar at the angle the next stroke would
+  take), and the ring dashed or dotted when the preset's line is. Off,
+  every pen and highlighter shows a plain round ring at its width. The
+  Shapes tool shows a crosshair. Pen and highlighter
   widths follow the zoom; the eraser radius stays in screen pixels, like
   the erasure. Tool and menu buttons show their description on hover or
   keyboard focus.
@@ -349,6 +503,26 @@ app ([ipad.md](ipad.md)). Typed text on a page is
   small round dabs of the same grain, as wide as the saved line. Exports
   and the AI's picture draw the pencil as a plain line in the same
   shades, without the grain.
+- **Calligraphy** (the Style picker's fifth row) is a flat nib: the line
+  is as wide as the nib where the pen moves across it and a hairline (an
+  eighth of that) where it moves along it, its ends and turns showing
+  the nib's slanted corners; a mouse or finger draws the same. The Style
+  row's **Nib angle**: − and + around a readout, −60° to 60° in 15° steps
+  (45° to start, the nib rising to the right), or a slider with a mouse,
+  beside a small nib turned to the angle. A calligraphy pen smooths at 2
+  unless its *Smoothing* is set, Off included: a default, never written
+  into the preset, so a pen stepped or switched through Calligraphy to
+  another style smooths as it did before. When the pen reports its barrel roll — an Apple Pencil Pro in
+  the iPad app, or a pen whose browser reports a twist — rolling it turns
+  the nib: the roll when a stroke starts is added to the angle (a
+  clockwise roll turns the nib clockwise). In the iPad app the row has a
+  **Lock angle** pill, off to start, which keeps the angle whatever the
+  roll. The hover footprint is the nib, a short bar at its angle. A
+  stroke keeps its nib through every edit: a flip mirrors it, a turn turns
+  it with the stroke, an erased piece keeps it. Exports and the AI's
+  picture draw the same thick and thin widths with round ends instead of
+  the nib's corners, and a little wider where the pen pressed harder,
+  which the screen does not show ("The brush table" below).
 - **Live co-drawing.** While someone else draws on a page this tab has
   open, their stroke appears as it is written, in their preset's look;
   when their drawing is saved the wet stroke becomes the saved one, the
@@ -356,8 +530,9 @@ app ([ipad.md](ipad.md)). Typed text on a page is
   highlight), whose freehand trace gives way to the shape. A stroke they
   undo or erase before it is saved goes at once; one whose save never
   arrives goes a minute after its pen lifted, and every wet stroke of
-  someone who leaves goes with them. A stroke written in the iPad app
-  shows once it is saved. There is nothing to switch on.
+  someone who leaves goes with them. A stroke written in the iPad app,
+  and a Shapes stroke, shows once it is saved. There is nothing to switch
+  on.
 - **Dense pages** stay fluid: a group of more than 200 strokes appears
   first as thin lines that fill out to their true widths within a moment;
   groups scrolled far off the visible part of a page are not drawn; on a
@@ -405,9 +580,12 @@ app ([ipad.md](ipad.md)). Typed text on a page is
   *Pressure-sensitive strokes*, *Undo with fingers*, *Hover preview* —
   and, in the iPad app only, **Apple Pencil**, this browser's too:
   *Double tap* and *Squeeze*, what the Pencil's gestures do
-  ([ipad.md](ipad.md) "The pen"), and *Haptics*. Presets, smoothing
-  and the straight highlighter are set on the strip; More → *Handwriting
-  settings…* opens the section.
+  ([ipad.md](ipad.md) "The pen"), and *Haptics*. Presets, smoothing,
+  the straight highlighter and the nib angle, the Shapes tool's kind and
+  fill (the account's `inkShapeKind` and `inkShapeFill`), the ruler's
+  units and the zoom window's height (this device's `inkRulerUnits` and
+  `inkZoomHeight`) are set on the strip and the panel; More →
+  *Handwriting settings…* opens the section.
 - **A stylus draws right away** even with the strip closed (Settings →
   Reading & editing → This device; on by default), with the last pen
   preset armed on the strip. **Fingers never draw**
@@ -443,6 +621,19 @@ app ([ipad.md](ipad.md)). Typed text on a page is
   "view_ink"). The chat's "Attach what I see" sends the visible page with
   the handwriting on it, and the agent's `clip_region` stores a picture of
   a group for the notes ([ai.md](ai.md#pictures)).
+- **Transcribe a selection** (the selection menu's second row,
+  *Transcribe*): a selection made of whole groups attaches them and asks
+  for their text, as *Transcribe with AI* does. One that takes only part
+  of a group sends just the
+  selected strokes, as a picture of them where they lie on their page or
+  sheet, with "Transcribe the selected handwriting.": the composer shows
+  a chip per group, "Selected handwriting · 4 strokes", the answer comes
+  in the chat, and an agent that may edit adds the text to that group's
+  caption, as for a whole group. Strokes not saved yet go too. A
+  selection of more than 64 KB of handwriting, or across more than eight
+  groups, is refused, "Too much handwriting selected to transcribe;
+  select less." A shared page's view has no chat to ask: there the button
+  says so on the pill."
 - A group erased empty deletes its block, and undo brings it back. A
   group whose block holds a caption or notes keeps its block, with an
   empty drawing, so erasing strokes never deletes text.
@@ -450,24 +641,28 @@ app ([ipad.md](ipad.md)). Typed text on a page is
   edit shares draw.
 - On an iPad this layer runs in Safari or the web app installed to the
   home screen. The iPad app captures the Pencil natively and writes the
-  same files ([ipad.md](ipad.md) "The pen").
+  same files ([ipad.md](ipad.md) "The pen"), the calligraphy nib, its
+  barrel roll and the ruler's edge included.
 
 ## Model
 
 A stroke is a tool, a look and a polyline of samples. Two tools are
 known, `pen` (a filled outline) and `highlighter` (a stroked polyline,
-multiplied onto the page and drawn under the ink); three brushes of the
-pen, `monoline` (Ballpoint, a pen of constant width), `brush` and
-`pencil`, the absent brush being the plain Pen. Both are open strings in
-the file, so a later pen style is a new value and a renderer that does
-not know it draws the stroke plainly from its baked width (below,
-"Width"). Pressure, timing and tilt stay in the samples, raw; the width a
-pressure brush drew with is baked into the samples once, when the stroke
-is finished, as a multiplier of the stroke's nominal size, and the
+multiplied onto the page and drawn under the ink); four brushes of the
+pen, `monoline` (Ballpoint, a pen of constant width), `brush`, `pencil`
+and `calligraphy`, the absent brush being the plain Pen. Both are open
+strings in the file, so a later pen style is a new value and a renderer
+that does not know it draws the stroke plainly from its baked width
+(below, "Width"). Pressure, timing and tilt stay in the samples, raw; the
+width a pressure brush drew with is baked into the samples once, when the
+stroke is finished, as a multiplier of the stroke's nominal size, and the
 pencil's shading the same way as an opacity multiplier. Live canvas,
 retained SVG, eraser geometry, hit tests and the server's exporters all
 draw from those baked values — there is no width or opacity formula in
-any of them — and partial erasing keeps them in every surviving piece.
+any of them; the one shape built from geometry instead is the calligraphy
+nib the client's screen sweeps along a stroke from its angle and size
+("The brush table") — and partial erasing keeps them in every surviving
+piece.
 
 **The brush table**, in words (the numbers are pinned by
 `tests/shared/inkwidth.json`, whose `about` is the normative statement):
@@ -500,13 +695,36 @@ any of them — and partial erasing keeps them in every surviving piece.
   capped at 4; and `o = 0.15 + 0.85p`, the opacity multiplier, written in
   the `o` channel — the pencil is the first brush that writes it. A mouse
   or finger pencil stroke writes neither.
+- **Calligraphy** (`calligraphy`, a flat nib): `w = max(0.12, s) × (0.85
+  + 0.3p)`, capped to [0, 4], where `s` is the sine of the angle between
+  the stroke's travel at the sample and the nib's edge, `|dx·sin(nib) +
+  dy·cos(nib)| / |(dx, dy)|`. The travel `(dx, dy)` (page points, y down)
+  runs from the sample before to the sample after (from the first to the
+  second at the start, from the last but one to the last at the end);
+  where those two coincide, a stroke turning straight back, it is the
+  segment ending at the sample, else the one starting there; a sample
+  with no travel at all (a tap, every sample at one point) takes `s = 1`.
+  The edge is the page vector `(cos nib, −sin nib)`, `nib` the stroke's
+  angle in degrees counterclockwise as seen (45 when it has none), so a
+  45° nib rises to the right and a stroke drawn down to the right across
+  it is at full width. The pressure counts only when the stroke reads it;
+  a mouse or finger stroke (`pen: false`) takes p = 0.5 and so carries
+  `w` from the direction alone, written `xytw`. The tilt is not read; the
+  barrel roll only sets the stroke's `nib`, at its first sample. The
+  client's screen draws the nib itself along the same samples
+  (`nibOutline`, "Client"), its width across the travel `size × s` with
+  the 0.12 floor kept as a hairline, at every pressure: the pressure's
+  share, 0.85 to 1.15, is in `w` alone, which every other renderer and
+  exporter draws with round ends, and which the hit test, the eraser,
+  the bounds and the iPad's live line read.
 - A **highlighter** has no brushes and no `w`; a **mouse or finger** Pen
   or Ballpoint stroke (`pen: false`) is even, as today.
 - A stroke that carries a **`shape`** record (a held shape, a straight
-  highlight, and later the shape tools) is **constant width whatever its
-  brush**: no law runs on it, so it has no `w` and no `o` and draws its
-  size end to end. It keeps its brush key, so the Style picker still
-  names it and a restyle changes it, and it is written `xyt`. (The
+  highlight, a Shapes stroke, a ruler line, a stamped line) is **constant
+  width whatever its brush**: no law runs on it, so it has no `w` and no
+  `o` and draws its size end to end, a calligraphy shape too (as an even
+  line, not with its nib). It keeps its brush key, so the Style picker
+  still names it and a restyle changes it, and it is written `xyt`. (The
   Brush's tapers would put both samples of a held straight line at the
   0.1 floor, and every server renderer draws between a stroke's samples:
   the exports and the AI's picture would show a hairline.)
@@ -578,18 +796,18 @@ and the canonical bytes never write a key at its omission value:
 |---|---|---|---|
 | `id` | `^[A-Za-z0-9_-]{1,32}$` | required; a client mints 8 chars | survives every edit (the merge's handle) |
 | `tool` | `^[a-z][a-z0-9-]{0,15}$` | `pen` | `pen` or `highlighter` are known; an unknown value draws as a round-capped polyline of the baked width, source-over at `opacity`, in its own export bucket; the eraser and the lasso take it like any stroke |
-| `brush` | `^[a-z][a-z0-9-]{0,15}$` | omitted | `monoline` (Ballpoint: constant width, no `w`), `brush` (Brush: `w` from pressure or speed with tapers) and `pencil` (Pencil: `w` from pressure and tilt, `o` from pressure) are known; a stroke with a `shape` keeps its brush but has no `w` or `o`, whatever the brush; an unknown brush draws exactly as a pen from `w` (and `o`), so only texture is lost. Open on every tool: the server does not refuse one on a highlighter (it draws at its size, as any highlighter) |
+| `brush` | `^[a-z][a-z0-9-]{0,15}$` | omitted | `monoline` (Ballpoint: constant width, no `w`), `brush` (Brush: `w` from pressure or speed with tapers), `pencil` (Pencil: `w` from pressure and tilt, `o` from pressure) and `calligraphy` (Calligraphy: `w` from the travel against `nib`, a little from pressure) are known; a stroke with a `shape` keeps its brush but has no `w` or `o`, whatever the brush; an unknown brush draws exactly as a pen from `w` (and `o`), so only texture is lost — and that is how the server's exporters draw a calligraphy stroke. Open on every tool: the server does not refuse one on a highlighter (it draws at its size, as any highlighter) |
 | `color` | `#rrggbb` or `rgb[a](…)`, ≤ 40 chars | `#1f1f1f` | |
 | `size` | number in (0, 100] | `1.6` | nominal diameter in pt, the anchor `w` multiplies; a width restyle changes `size` only, a resize scales it; the server refuses `size × max(w) > 100` |
 | `opacity` | number in (0, 1] | `1` | |
-| `pen` | bool | `true` | `false` marks a stroke without real pressure — a mouse or finger, or a stylus with *Pressure-sensitive strokes* off — drawn even, no `w`, for every brush but `brush`, whose `w` then comes from the pointer's speed (a snapped stroke is `pen: false` too, and even whatever its brush: it carries `shape`) |
+| `pen` | bool | `true` | `false` marks a stroke without real pressure — a mouse or finger, or a stylus with *Pressure-sensitive strokes* off — drawn even, no `w`, for every brush but `brush`, whose `w` then comes from the pointer's speed, and `calligraphy`, whose `w` comes from its direction alone (a snapped stroke is `pen: false` too, and even whatever its brush: it carries `shape`) |
 | `t0` | int ≥ 0 | omitted | wall-clock ms of the first sample, never invented (a client without timing omits `t` and `t0`); the replay reads both |
 | `band` | `0` or `1` | the tool's default, `0` for a highlighter and `1` otherwise, and omitted when equal to it | `0` draws under, `1` draws as ink. Every layer draws band 0 first, then band 1 (`InkLayer`, `to_svg`, `pdf_path_ops`, the annotated PDF's `/Annots` order); a tap prefers band 1 within the radius (`nearestInkStroke`) |
 | `from` | a stroke id | omitted | the stroke this piece was cut from by the partial eraser. A cut of a piece keeps the root's id, so every piece names the original. Written by `restroke`, kept by every edit, dropped on paste and duplicate (`cloneStrokes`, `duplicateStrokes`: a copy is not a piece). Read by the merge only |
 | `shape` | `{kind, params}` | omitted | `kind` one of `line` `arrow` `rect` `ellipse` `triangle` `polygon` `curve`; `params` an object of at most 64 finite numbers (and booleans), the geometry an editor rebuilds `pts` from after a handle drag, moved with `pts` by every edit that moves the samples ("Client"). The stroke **also carries its baked `pts`**, so hit test, bounds, eraser, lasso, replay and every exporter draw it as any stroke; it is constant width whatever its `brush` (no `w`, no `o`: "The brush table"); a piece cut from a shape loses `shape` and `fill` |
-| `fill` | `{color: '#rrggbb', opacity}` | omitted; `opacity` in (0, 1], omitted at `0.25` | closed shapes only |
+| `fill` | `{color: '#rrggbb', opacity}` | omitted; `opacity` in (0, 1], omitted at `0.25` | the inside of a closed shape — a `shape` of kind `rect`, `ellipse`, `triangle` or `polygon` (`CLOSED_SHAPES`, both languages) —, drawn under its outline at `opacity`; written only there (the selection's Fill, the Shapes tool's), and a fill on any other stroke is kept but not drawn; a piece cut from the shape drops it |
 | `dash` | `dashed` or `dotted` | omitted (solid) | dash geometry is derived from `size` at render time, never stored ("Dash geometry" above; `DASH` in `ink.js` and `ink.py`) |
-| `nib` | int 0..179 | omitted | a calligraphy nib's angle in degrees |
+| `nib` | int 0..179 | omitted | a calligraphy nib's angle in degrees, counterclockwise as seen: the nib's edge is the page vector `(cos nib, −sin nib)`, so 45 rises to the right. Written on every calligraphy stroke, 0 included (`!= null`), and only there: a brush change away from `calligraphy` drops it, one to it writes the stroke's own or 45. Kept by a cut, mirrored by a flip (`(180 − nib) mod 180`) and turned with the samples by a rotation; part of the stroke's geometry in the merge |
 | `ch` | `^xy[a-z]*$`, no repeated letter, ≤ 12 chars | `xy` | the channels of each sample, below |
 | `pts` | non-empty list of ints, a multiple of `len(ch)` long | required | the samples, flat |
 | anything else | JSON to depth 3, finite numbers, keys `^[A-Za-z][A-Za-z0-9_]{0,31}$`, strings ≤ 1 KB, arrays ≤ 256 | — | kept verbatim through parse, canonical bytes, merge and every edit helper (`restroke`, `duplicateStrokes`, `cloneStrokes`, `translateStrokes`, `transformStrokes`, `restyleStrokes`); ≤ 1 KB serialised per stroke. A null-valued key is dropped |
@@ -631,15 +849,16 @@ in `ink.py`, both one line); the opacity is `opacity × o` with the `o`
 channel, else `opacity` (`strokeOpacity`, `stroke_opacity`, the same one
 line), which every renderer draws in three shades (`o` rounded up to a
 band, "Channels" above), so no law hides there either. Pressure-shaped
-strokes — tool `pen` with `pen` true and no `brush`, or brush `brush` or
-`pencil`, and no `shape` — always carry `w`, baked once on
+strokes — tool `pen` with `pen` true and no `brush`, or brush `brush`,
+`pencil` or `calligraphy`, and no `shape` — always carry `w`, baked once on
 the client in `finishStroke.js` `bakeWidths` from the brush table
 (`BRUSHES`, "The brush table" above), the only place a width or opacity
 law lives; a brush restyle of existing strokes runs the same function
 again (`restyleBrush`, "Client"). Constant-width strokes (highlighter,
 monoline, a `pen: false` Pen, Ballpoint or Pencil, and every stroke with a
 `shape`, whatever its brush) omit `w`; a freehand `pen: false` Brush
-stroke carries `w` from the speed law and no `p`. The raw
+stroke carries `w` from the speed law and no `p`, and a `pen: false`
+calligraphy stroke `w` from its direction alone. The raw
 `p`, `a`, `z` stay beside `w` (Notability keeps force and tilt beside its
 fractional widths), so a brush change re-bakes from them and a future law
 can re-map; the multiplier form means a width restyle touches `size`
@@ -754,11 +973,13 @@ instead of replacing (`ops._Batch.merge_ink`, `ink.merge_ink`; the client's
 `mergeInk` is the same function, `tests/shared/inkmerge.json` pins both):
 
 - A stroke is compared as two halves. Its **geometry** is `pts`, `ch`,
-  `size`, `shape` and `brush`; its **look** is everything else but `id`
-  and `from`: `color`, `opacity`, `dash`, `nib`, `band`, `fill`, `tool`,
+  `size`, `shape`, `brush` and `nib`; its **look** is everything else but
+  `id` and `from`: `color`, `opacity`, `dash`, `band`, `fill`, `tool`,
   `pen`, `t0` and any extra key. A width restyle is therefore geometry, a
-  move or a resize too, and so is a brush change: it bakes `w` in `pts`
-  again, so the key travels with the widths baked for it, and a brush
+  move or a resize too, and so are a brush change and a nib change (a
+  restyle to calligraphy, a flip or a turn of a calligraphy stroke): each
+  bakes `w` in `pts` again or moves the samples with it, so the key
+  travels with the widths baked for it, and a brush
   change here composes with a recolour there into the new brush with its
   widths in the new colour, while an undo of it after someone's recolour
   gives the plain widths back with the key. (As a change of both halves
@@ -1054,6 +1275,49 @@ reach:
   nothing; `inkBytes` / `strokeBytes` give a group's exact upload size,
   cached per object, for the byte budget (`MAX_BYTES`,
   `GROUP_SPLIT_BYTES`).
+  **The calligraphy pen**: `KNOWN_BRUSHES` and `BRUSH_ORDER` (null,
+  `monoline`, `brush`, `pencil`, `calligraphy`: the Style picker's order
+  and Shift+[ / ]'s) know it; `DEFAULT_NIB` (45), `NIB_MIN` / `NIB_MAX`
+  (−60 / 60) and `NIB_STEP` (15) are a preset's range, and
+  `strokeNib(nib, twist, lock) → 0..179` a stroke's angle from its
+  preset's, `(nib − twist) mod 180` rounded, the twist left out when it is
+  null or `lock`. `normalizeTools` keeps a calligraphy pen's `nib` (an
+  integer from −60 to 60, omitted at 45) and `nibLock: true` (omitted
+  when false) and drops both from any other preset; `toolStyle` puts the
+  preset's angle on the style a stroke is encoded with (`nib`, as
+  `strokeNib(nib, null)`) and `nibLock` on the armed tool for the layer,
+  never on a stroke. `nibOutline(samples, size, nib) → d` is the pen on
+  the screen: a flat segment `size` long at the angle `nib` swept along
+  the samples (already stabilised), as closed pieces split wherever the
+  travel crosses the nib's direction (where the swept band's width
+  passes through zero) and at every reversal, the nib's own segment
+  inserted at each split so a U-turn stays filled, unioned with the same
+  sweep of a hairline segment `NIB_HAIR` (0.12) × `size` long across the
+  nib (the hairline the floor stands for) and with the nib's footprint —
+  the rectangle of the two segments — at the first and the last sample,
+  so a tap leaves the nib's mark and the ends show its corners; every
+  piece is wound the same way (clockwise as seen) and the path is filled
+  with the nonzero rule, so overlapping pieces leave no hole. The nib is
+  `size` long at every pressure ("The brush table"). `strokePath` routes
+  a calligraphy stroke without a `shape` to it — a dashed one outlines
+  each of `dashRuns`' on-runs with it, a dotted one draws its dots as
+  round dots of `size × w` as any pressure stroke does — and a
+  calligraphy stroke with a shape draws as an even line. `strokeBounds`
+  pads a calligraphy stroke without a shape by `size × NIB_REACH / 2` at
+  every sample (`NIB_REACH` = hypot(1, `NIB_HAIR`): as far as the nib's
+  corners reach), or by its drawn half-width where that is wider.
+  `transformStrokes` turns a `nib` with the samples, `(nib − angle°) mod
+  180` rounded (the transform turns clockwise as seen, the nib counts
+  counterclockwise), and `flipStrokes` mirrors it, so neither changes
+  `w`; every other edit keeps it, `restroke` included. `GEOM_KEYS` holds
+  `nib`. **Fills**: `CLOSED_SHAPES` (`rect`, `ellipse`, `triangle`,
+  `polygon`) and `isClosedShape(stroke)`; `strokePath(stroke).fill` is
+  the closed polygon through the samples of a filled closed shape (absent
+  otherwise), which the layer fills in `stroke.fill.color` at
+  `stroke.fill.opacity ?? 0.25` before the outline, in the stroke's band;
+  `restyleStrokes(ink, ids, {fill: {color, opacity?} | null})` sets or
+  clears it on the selected closed shapes only (any other stroke stays the
+  same object).
 - `ink/finishStroke.js` (pure): `finishStroke(samples, ctx) → {commit,
   erase, label, style, status}`, the one stage between a lifted pen and
   the committed stroke. `InkLayer`'s finish and the iPad `claim.commit`
@@ -1155,7 +1419,18 @@ reach:
     Highlighters are the same objects; the same `ink` object comes back
     when nothing changed.
     Lives here, not in `ink.js`, because the bake does, and `ink.js`
-    never imports upward.
+    never imports upward. A change to `calligraphy` bakes with the
+    stroke's own `nib`, else `DEFAULT_NIB`, and writes it; a change to any
+    other brush drops `nib`.
+  - **Calligraphy** in `BRUSHES` (`calligraphy: {w, travel: true}`): its
+    law reads the sample's travel ("The brush table": the samples around
+    it) and the style's `nib` (`DEFAULT_NIB` when absent), so
+    `brushWidths` hands it the samples and the index; `widthLaw` answers
+    for it whether or not the stroke reads pressure (p = 0.5 without), so
+    `strokeChannels` writes a mouse calligraphy stroke `xytw`, and null
+    with a `shape`, as for every brush. `tests/shared/inkwidth.json` pins
+    it row by row (each calligraphy row with its `nib`). The live canvas
+    and a peer's wet stroke draw `nibOutline`, not these widths.
   - The result: `commit` the samples to encode (`null` for nothing),
     `erase` `[{gid, ids}] | null`, `label` the history entry's, `style`
     the object to encode with (`ctx.style` itself when nothing snapped),
@@ -1235,6 +1510,109 @@ reach:
     {pointer: the last sample, from})`, else `params`.
   - `shapeName(kind) → string`: the kind's translated name for the
     "Shape: circle." pill.
+  - `shapeHandles(kind, params) → [{id, x, y}]`: the handles a shape held
+    alone in the selection shows — `p1` and `p2` (a line's or an arrow's
+    ends: `x1, y1` and `x2, y2`), `c0`, `c1`… (a rectangle's, a
+    triangle's or a polygon's corners, in `shapeSamples`' order), `rx`
+    and `ry` (an ellipse's long- and short-axis ends) —; none for a
+    `curve` or a kind it does not know. `dragHandle(kind, params, id,
+    point, {shift}) → params`: the params with that handle at `point`
+    (page points) — an end moves alone (Shift: in 15° steps about the
+    other), a triangle's corner alone, a rectangle's corner with the
+    opposite one fixed and the angle kept, a polygon's corner setting its
+    radius and its turn (still regular), `rx` the long axis's length and
+    direction, `ry` the short one's length — normalised as `recognise`
+    returns it, on the 1/100 grid. `reshapeStroke(stroke, params) →
+    stroke`: the stroke written again from them, `shapeSamples(kind,
+    params, {span: its own first-to-last t, p: its mean p})` encoded with
+    its own `ch`, its `shape` the new params, every other key kept (id,
+    look, `t0`, `fill`, extras) — the XY-only rewrite a handle drag
+    commits, so params and samples agree as after every other edit.
+    `reshapeInk(ink, id, params) → ink` is it on the group's stroke of
+    that id (the same group when it has no such stroke with a shape), what
+    App's `reshape` action applies.
+- `ink/shapeTool.js` (pure; `tests/shared/inkshapes.json` `tool`, whose
+  `about` is the normative statement, `frontend/tests/shapeTool.test.mjs`):
+  the Shapes tool. `SHAPE_TOOL_KINDS` (`line`, `arrow`, `rect`, `ellipse`,
+  the values of the account's `inkShapeKind`), `SHAPE_MIN_PX` (4) and
+  `toolShape(kind, from, to, {shift, k}) → {kind, params} | null`, the
+  shape a drag from `from` to `to` (page points, at `k` css px per pt)
+  draws: null under 4 css px; a line or an arrow from `from` to `to` (no
+  `head`), Shift turning it to the nearest 15°; a rectangle `{cx, cy, w,
+  h, angle: 0}` spanning the two; an ellipse inscribed in that box with
+  `rx ≥ ry` (angle 0, or 90 for a tall box); with Shift either takes the
+  square box of the larger side, laid toward `to`; every number on the
+  1/100 grid.
+- `ink/ruler.js` (pure; `frontend/tests/ruler.test.mjs`): the ruler.
+  `RULER_PX` (36, the band's width in css px), `RULER_SNAP_PX` (12, the
+  reach outside each edge), `RULER_MIN` (36 pt, its shortest length).
+  A ruler is `{surface, x, y, angle, length, snap}`: its middle in page
+  points, its angle in degrees counterclockwise as seen in [0, 180) (its
+  direction the page vector `(cos angle, −sin angle)`), its length in
+  page points and whether the knob turns it in 15° steps.
+  `defaultRuler(surface, visible) → ruler` (level across the middle of
+  `visible`, the part of the surface on the screen in page points, four
+  fifths of its width); `rulerDir(ruler)`, `rulerEnds(ruler)` and
+  `rulerEdges(ruler, k) → [{origin, dir}, {origin, dir}]` (the edges'
+  lines, `RULER_PX / 2 / k` pt either side of its middle line);
+  `snapRail(ruler, point, k, {band}) → {origin, dir} | null`, the edge a
+  stroke that starts at `point` is drawn along — the nearer one, when the
+  point lies on the band (`band`: the pointer may write there, a pen) or
+  within `RULER_SNAP_PX / k` pt outside an edge, and between the ruler's
+  ends (half a css px of slack) —, and `onBand(ruler, point, k)`;
+  `onRail(sample, rail)`, the sample's point projected onto the
+  rail's line, every other key kept; `railLine(samples, rail) → {x1, y1,
+  x2, y2}`, the line between the two farthest projections, from the end
+  nearer the first sample's, on the 1/100 grid; `turnRuler(ruler, deg,
+  {snap})` (about its middle), `snapAngle(deg, step = 15)` (into [0,
+  180)), `stepAngle(deg, ±1)` (the next 15° either way, the knob's Shift +
+  arrow), `moveRuler(ruler, dx, dy)`, `pinchRuler(ruler, from, to,
+  {snap})` (two fingers: turned by the change of the angle between them
+  and carried with their midpoint, turning about it, the fold at 180° kept
+  away from the middle's turn), `stretchRuler(ruler, end, point)` (that end
+  to the point's projection, the other staying, at least `RULER_MIN`) and
+  `rulerTicks(ruler, units, k)`, what the band draws (pt: a tick every 10,
+  longer every 50, numbered every 100; cm: every millimetre, longer every
+  5, numbered every centimetre; a rank closer than 3 css px is left out,
+  and the numbers when closer than 24); `stampLine(ruler, look, {t0})`,
+  Stamp line's stroke — the middle line from the start end to the other in
+  a preset's look through `finishStroke`'s hold stage, both samples at t 0,
+  encoded —; and `hostSnap(rail, angle, {left, top, k})`, the claim's
+  `snap` in viewport css px.
+- `ink/zoomWindow.js` (pure; `frontend/tests/zoomWindow.test.mjs`): the
+  zoom window's rules over App's `inkZoom` — `{page, x, y, w, h, mag,
+  line, x0}`: the PDF page's number, the window's top-left, width and
+  height in page points, the magnification (css px per pt in the panel,
+  2 to 4), the line height in points and where the line began (`x0`) —
+  and the page's `{width, height}` in points. `ZOOM_MAGS` ([2, 3, 4]),
+  `ZOOM_MAG` (3; `ZOOM_MAG_MIN` 2 to `ZOOM_MAG_MAX` 4), `ZOOM_LINE` (24
+  pt; `ZOOM_LINE_MIN` 8 to `ZOOM_LINE_MAX` 96 in steps of
+  `ZOOM_LINE_STEP` 2), `ZOOM_HEIGHT` (200 css px; 160 to 320),
+  `ZOOM_CHROME` (45 css px: what the panel's top border, grip and bar
+  take of its height), `ADVANCE_AT` (0.8) and `ADVANCE_BY` (0.6).
+  `openWindow(page, size, visible, panel)` (`visible` the part of the
+  page on the screen in page points, `panel` the panel's view `{width,
+  height}` in css px: `w` and `h` from it at `ZOOM_MAG`, the window at the
+  left of the visible part, a twentieth of the page's width in, its middle
+  at the visible part's, `x0` its `x`); `sized(win, panel, size)` (`w` and
+  `h` again, the view's css px over `mag`, when the view's size changes,
+  the top-left kept); `clampWindow(win, size)` (inside its page; a window
+  wider than its page keeps its left edge on it); `advance(win, box,
+  size)`, after a stroke whose box reached past `x + ADVANCE_AT × w`: `x +
+  ADVANCE_BY × w`, or, when that would pass the page's right edge, `x0`
+  and one line down; `newLine` (`x0`, one line down; at the page's
+  bottom nothing moves), `nextLine` and `prevLine` (one line down or up,
+  `x` kept); `moveWindow(win, {x, y}, size)` (the top-left there, `x0`
+  with it: the page's drag band) and `moveTo(win, page, point, size)`
+  (centred on a point of `page`, which may be another one, `x0` there: a
+  tap); `setMag(win, mag, panel, size)` (held to 2…4, `w` and `h` from
+  the view — the window's own `w × mag` without one — the left edge and
+  the vertical middle kept); `magForWidth(win, width)` (the magnification
+  that makes the window `width` points wide in the same panel: the
+  page's resize corner); `setLine(win, line)`; and `revealDelta(rect,
+  view, pad)` (how far the viewer scrolls to bring the window's box into
+  view, only as far as it must). Every answer is clamped to its page, and
+  one that changes nothing is the window itself.
 - `ink/gestures.js` (pure; fixture `tests/shared/inkscribble.json`): the
   scribble.
   - `isScribble(samples, {k, durationMs}) → bool` over decoded page-pt
@@ -1306,8 +1684,10 @@ reach:
   strip's key table (matched by `e.code`), dispatched by App's existing
   capture-phase handler, for the keydown and, for `E` alone, the keyup.
   `state` is `{tools: the visible presets, tool, hasSelection, boxUndo,
-  hasBox, optionsOpen, eraserDown}` (the last the timeStamp of the `E`
-  keydown still held, or null, so the keyup's `held` is pure arithmetic).
+  hasBox, optionsOpen, eraserDown, ruler, zoom, onControl}` (`eraserDown`
+  the timeStamp of the `E` keydown still held, or null, so the keyup's
+  `held` is pure arithmetic; `ruler` and `zoom` whether they are on;
+  `onControl` the key's target is a button, a link or a menu row).
   A chord with Ctrl, Cmd or
   Alt is not the strip's, except Ctrl+Z / Y and the AltGr pair (`ctrlKey
   && altKey` together, a third-level letter on some layouts, treated as
@@ -1325,10 +1705,14 @@ reach:
   | "up", held}` for
   `E` — `down` on a non-repeat keydown, `up` on the keyup with `held` the
   ms since the down, so App decides tap or hold ("Hold-E" under App);
-  `{kind: "escape"}` resolved by App in order — `hasBox` leaves it to the
-  box (null), `hasSelection` → `deselect`, `optionsOpen` → `closeOptions`,
-  else `close`; `delete`; `undo`. Nothing with Mod-C / X / V / D / A: those
-  are catalog commands.
+  `{kind: "toggle", what: "ruler" | "shape" | "zoom"}` for `R`, `S`
+  and `Z`; `{kind: "newLine", prevent: true}` for Enter (and the keypad's)
+  while `zoom` and neither `onControl` nor `hasBox`; Escape in order — `hasBox` leaves it
+  to the box (null), `hasSelection` → `deselect`, `optionsOpen` →
+  `closeOptions`, the Shapes tool armed (`tool === "shape"`) → `{kind:
+  "off", what: "shape"}`, `ruler` → `{kind: "off", what: "ruler"}`, `zoom`
+  → `{kind: "off", what: "zoom"}`, else `close`; `delete`; `undo`.
+  Nothing with Mod-C / X / V / D / A: those are catalog commands.
 - `ink/pencilActions.js` (pure): `pencilAction(message, prefs, state)`,
   the Pencil's double tap and squeeze as App applies them, and
   `backTool(prefs, state)`, the tool to go back to (the one armed before,
@@ -1548,23 +1932,34 @@ reach:
   and Escape closes it first ([ui-design.md](ui-design.md#menus-and-submenus))
   — and calls
   `onAction("style", {brush})` with `null` | `'monoline'` | `'brush'` |
-  `'pencil'`), then the Line trio (`role="group"`, aria-label "Line",
-  `aria-pressed` on a pill only when every selected stroke's `dash`
-  matches it, calling `onAction("style", {dash})` with `null` |
-  `'dashed'` | `'dotted'`), 32 px targets like the Color row's — and More
-  shows the `.inkEditOptions.inkEditMore` row (its
-  `aria-label` "More edits"): Cut, Flip horizontal (`FlipHIcon`), Flip
-  vertical (`FlipVIcon`), New note (`NotebookPenIcon`), Merge into note
-  (`MergeIcon`, rendered only when `canMerge`: the selected ids are
-  exactly one group's strokes and the surface has another group, which
-  the layer works out from `groups`), Select note, Show note; whether it
-  is open is a module-level flag, so it lasts the session. The Color and
+  `'pencil'` | `'calligraphy'`), then the Line trio (`role="group"`,
+  aria-label "Line", `aria-pressed` on a pill only when every selected
+  stroke's `dash` matches it, calling `onAction("style", {dash})` with
+  `null` | `'dashed'` | `'dotted'`), 32 px targets like the Color row's,
+  and, when the selection holds a closed shape (`isClosedShape`), the
+  Fill group (`.inkFillChoices`, `role="group"`, aria-label "Fill", after a paint bucket glyph: a *None* pill,
+  aria-label "No fill", pressed when no selected closed shape has a fill,
+  then `ColorChoices` on the highlighter picker's colours,
+  `pickerColors(palette, "highlighter")`, a swatch pressed when every
+  closed shape is filled with it, calling `onAction("style", {fill:
+  {color}})` or `{fill: null}`) — and More shows the
+  `.inkEditOptions.inkEditMore` row (its `aria-label` "More edits"): Cut,
+  Flip horizontal (`FlipHIcon`), Flip vertical (`FlipVIcon`), New note
+  (`NotebookPenIcon`) or, in its place when `canMerge` (the selected ids
+  are exactly one group's strokes and the surface has another group,
+  which the layer works out from `groups`), Merge into note
+  (`MergeIcon`), Select note, Show note and Transcribe (`SparklesIcon`,
+  aria-label "Transcribe", title "Transcribe with AI: the selected
+  handwriting as text in the chat", `onAction("transcribe")`) — seven
+  buttons whichever of the two shows; whether it is open is a
+  module-level flag, so it lasts the session. The Color and
   Width rows render under the open rows, one at a time. Copy, Cut and
   Duplicate take their title's chord from `ink.keys` on the context
   (`"Copy · Ctrl+C"`; the label alone when unbound). `usePalette` is
   called before the early return, so the hooks' order never changes. The
   buttons dispatch `onAction(page, kind, arg)` with `copy`, `cut`, `flip`
-  `{axis: 'h' | 'v'}`, `split`, `merge` beside the older kinds.
+  `{axis: 'h' | 'v'}`, `split`, `merge`, `transcribe` and, from the
+  shape handles, `reshape` `{id, params}` beside the older kinds.
   A text box's menu is placed the same way. `InkTransformHandles` are the resize/rotate
   buttons; `InkTooltips` shows a button's title on hover or focus for the
   strip and the menus, since native titles are unreliable under Pencil
@@ -1579,8 +1974,9 @@ reach:
   `above` keeps a strip's tips above, on the side its menus open.
   `InkCard` is the picture in the notes. For `markup/` the file
   exports `InkTooltips`, `inkColorName`, `ERASER_SIZES`, `ColorChoices` (a
-  palette role's swatches plus a custom colour, for a pen preset's row and a
-  text box's colours; the strip, the selection menu and the text box read
+  palette role's swatches plus a custom colour, for a pen preset's row, a
+  text box's colours and the selection's Fill, which passes no colour for
+  None or a mix and then nothing is marked; the strip, the selection menu and the text box read
   the account's palette through `usePalette`, `shared/ui/paletteContext.js`)
   and `swallowClick` (eats the click a handled
   pointer-up would deliver). Imports run from `markup/` to `ink/`, never
@@ -1616,13 +2012,29 @@ reach:
     to read, so it is even, and a Brush follows the speed law), a pen's
     tilt (`penTilt`, integer degrees, none when upright), the pointer-up
     position with the last contact pressure and tilt (up reports zero),
-    repeated points dropped. The live outline gets the same endpoint treatment as
+    repeated points dropped, and a pen's twist (`penTwist`, integer degrees
+    0..359, clockwise as seen; null for a mouse or a finger), whose value
+    at the first sample sets a calligraphy stroke's `nib` on the draw
+    context (`strokeNib(preset nib, twist, preset nibLock)`). The live outline gets the same endpoint treatment as
     saved ink, so it reaches the pen tip. With `getPredictedEvents()` the pen
     preview adds at most 16 ms / 12 CSS px of prediction, expiring after
     32 ms and never encoded.
-  - Canvas: `shared/lib/canvasSize.js` caps the live bitmap (8 Mi pixels /
-    4096 per edge) and the context transform uses the real backing-to-page
-    ratio; lift and cancel release the bitmap. Canvas and SVG share the
+  - Canvas: the live canvas covers what shows of the layer, not the whole
+    page: at the down it is laid on where the layer's rect meets the box
+    it is seen through (`viewportOf`: the zoom window's view, the PDF
+    viewer, the nearest scroller, else the window; `canvasWindow` in
+    `shared/lib/canvasSize.js`, the draw context's `cw`), placed in the
+    layer's own percentages, and it grows (`growCanvas`) only when a frame
+    reaches past it while more of the layer shows than at the down (a
+    resize since): what lies outside the view is never seen. So over a
+    page magnified past its viewer — the zoom window's at 4×, a page at
+    400 % — the line under the pen keeps the device's pixel ratio and a
+    pen-down allocates a canvas of the view, not one of the whole page
+    held to a ratio near 1 by the caps. `canvasSize` still caps the bitmap
+    (8 Mi pixels / 4096 per edge on an iPad or a touch-first device, 16 Mi
+    / 8192 on a desktop), and the context transform (`windowMatrix`) uses
+    the real backing-to-page ratio and the window's offset; lift and
+    cancel release the bitmap. Canvas and SVG share the
     dark-page colour filter, and so does a text box's body.
   - Selection: the lasso draws its polygon on the same canvas. A drag inside
     the selection box moves the selected strokes (previewed as a translated
@@ -1693,12 +2105,19 @@ reach:
     opacity}` and the look — `brush` for a pen of a known brush other
     than the plain Pen, `pressure: false` when the look reads no
     pressure, `dash` as `dashPattern(look)` × k (css px), `blend:
-    'multiply'` for a highlighter, `stabilize` when the preset smooths;
-    each left out at its default. `hostEvent(sample) → {clientX,
-    clientY, pressure, timeStamp, altitudeAngle?, azimuthAngle?}`: a host
-    sample, `[x, y, p, t]` or `[x, y, p, t, a, z]`, as the pointer event
+    'multiply'` for a highlighter, `stabilize` when the preset smooths,
+    and for a calligraphy pen `nib` (the preset's angle, 0..179) with
+    `nibRoll: true` unless the preset locks it; each left out at its
+    default. The ruler's `snap` is added by the layer's claim, beside the
+    tool's look (`{x0, y0, angle}`: the rail's origin in viewport css px,
+    the ruler's angle). `hostEvent(sample) → {clientX, clientY, pressure,
+    timeStamp, altitudeAngle?, azimuthAngle?, twist?}`: a host sample,
+    `[x, y, p, t]`, `[x, y, p, t, a, z]` or, from a shell with
+    `pencilRoll`, `[x, y, p, t, a, z, r]`, as the pointer event
     `inkSample` reads, the degrees turned to radians, so `penTilt` rounds
-    and drops an upright pencil as it does a browser's. `shapeToHost(shape,
+    and drops an upright pencil as it does a browser's, and the roll `r`
+    as `twist`; `claim.commit` sets the stroke's nib from the first
+    sample's. `shapeToHost(shape,
     {left, top, k})` and `shapeFromHost(shape, {left, top, k})`: a shape
     record between page points and viewport css px (`ink.js` `mapShape`:
     points moved, lengths scaled, angles kept, on the 1/100 grid).
@@ -1746,6 +2165,136 @@ reach:
     azimuth) and the preset's `data-dash` (`dashed` or `dotted`, the
     ring's border style); off, a round ring at the preset's width. The
     eraser's ring and glyph are the same either way.
+  - **The Shapes tool** (`tool.tool === "shape"`, `{tool, kind, fill,
+    style}` from the context): a down that would draw (a pen, the mouse,
+    a finger where fingers draw) starts a drag; each move draws
+    `shapeSamples` of `toolShape(kind, down, pointer, {shift: e.shiftKey,
+    k})` on the live canvas at the style's constant width, with its fill;
+    the lift commits it through `finishStroke` with `hold: {kind, params}`
+    and `pen: false` — the hold stage: constant width, `xyt`, `t` spread
+    over the drag's time, `t0` the down's wall clock, labelled "ink
+    straight line" or "ink shape" —, its status dropped, through the
+    ordinary `onStroke`, the style carrying `fill: {color: style.color}`
+    for a rectangle or an ellipse while `fill` is on; nothing under
+    `SHAPE_MIN_PX`. It never arms the hold timer, *Paste here* or the
+    scribble, sends no wet stroke (`onInkLive`: peers see the shape once
+    it is saved), and the iPad host never claims it. The page wrapper takes
+    `inkShapeArmed` (`armedClasses`), whose cursor is a crosshair, and
+    the hover footprint hides.
+  - **The ruler** (`ruler`: this surface's, or null; `onRuler(next |
+    null)`; `InkRuler`): an anchor over the layer on the ruler's middle
+    line, placed and sized in page percentages (as long as the ruler) and
+    turned by its angle — the unscaled wrapper its controls sit in, as the
+    transform handles' are, so the band stays 36 css px at any zoom with
+    no measuring per frame — holding the band with an SVG of its ticks and
+    edges in css px, the knob and the ends, in the `inkSelRect` blue and
+    outside the layer's SVG, so the dark-page filter never touches it and
+    the band's `touch-action` holds on every engine: `.inkRuler`
+    (`data-x`, `data-y`, `data-angle`, `data-length`, page points and
+    degrees, for the e2e), the band `.inkRulerBand` (`touch-action:
+    none`, its pointer and touch events stopped so the viewer's pan and
+    pinch never see them; `tabIndex` 0, aria-label "Ruler", title "Drag
+    to move the ruler; write along its edges with a pen"), its ticks
+    (`rulerTicks` in `rulerUnits`), both edges as lines, the knob
+    `.inkRulerKnob` (`role="slider"`, aria-label "Ruler angle",
+    `aria-valuemin` 0, `aria-valuemax` 179, `aria-valuenow` the angle,
+    title "Drag to turn the ruler; tap to snap to 15°; double tap to turn
+    it 90°") with its readout, and an end handle each side
+    `.inkRulerEnd` (aria-label "Ruler end", title "Drag to lengthen or
+    shorten the ruler"). The capture-phase `pointerdown` gates it like
+    the selection's hit box: a pen on the band with a stroke tool (a pen
+    or highlighter preset, or the stylus pen with nothing armed; not its
+    eraser end or barrel, `writesOnBand`) starts a stroke there; every
+    other pointer, and every pointer while the eraser, the lasso or the
+    Shapes tool is armed, is left to the band (the knob and the ends are
+    `NOT_INK`), whose own handlers move the ruler — previewed in
+    `InkRuler` and handed to `onRuler` at the gesture's end, each arrow
+    key at once; a second touch anywhere while a finger holds the band
+    turns and moves it with the two (`pinchRuler`), window-level capture
+    listeners keeping every touch from the page's handlers and the
+    viewer's pan and pinch meanwhile — the touch ones added at that
+    finger's down and taken away at its gesture's end, since a
+    non-passive touch listener left on the window would hold every
+    scroll in the app on the main thread (the band's own touches stop at
+    the band); the knob turns it (Shift, or the ruler's `snap`, in 15°
+    steps), a tap snaps it (`snapAngle`) and a double press
+    (`shared/ui/press.js`) turns it 90°; an end handle changes its length
+    along its direction, one end staying (`stretchRuler`); the arrow keys
+    as in "What the user sees". Every change goes through `onRuler`. The
+    Text tool's layer (`markup/TextBoxLayer.jsx`) leaves a press on the
+    ruler to it. A stroke whose down is on the band (a pen) or
+    in the snap zone (`snapRail`) gets `d.rail = {origin, dir}`:
+    `takeSample` projects each sample onto it (`onRail`, `p` and `t`
+    kept; such a stroke has no smoothing and no prediction, as the shell's
+    line has no lazy brush), the live canvas draws the line between
+    the farthest projections at the preset's constant width (no law), the
+    hold timer, *Paste here* and the scribble stay off, and the lift
+    commits through `finishStroke` with `hold: {kind: "line", params:
+    railLine(samples, rail)}` — the hold stage, so it is constant width,
+    `xyt`, labelled "ink straight line" — its status dropped. Under the
+    iPad host the claim carries `snap: {x0, y0, angle}` and `claim.commit`
+    projects the host's samples onto `d.rail` the same way. A `chrome:
+    false` layer draws no ruler and never writes along one.
+  - **Shape handles** (`InkTransformHandles`): when the selection is
+    exactly one stroke whose shape record `shapeHandles` knows, a button
+    per handle (`.inkTransformHandle.inkShapeHandle`, `data-handle` its
+    id, 28 css px; aria-labels "Line start" / "Line end", "Arrow tail" /
+    "Arrow tip", "Corner {n}", "Ellipse length" / "Ellipse width"; title
+    "Drag to reshape; arrow keys move it") at the params' points, through
+    the live preview's transform. A drag previews `reshapeStroke(stroke,
+    dragHandle(…))` and the release calls `onAction(page, "reshape", {id,
+    params})`; the arrow keys move a focused one 1 pt (Shift 10 pt), each
+    press one commit. The handles are `InkShapeHandles`, which
+    `InkTransformHandles` renders beside its two; each is drawn as a small
+    ring in the selection blue (`.inkShapeDot`) inside its 28 px target,
+    and the layer draws the reshaped stroke (`reshape`) in the original's
+    place while a drag goes on.
+  - **Fills**: a stroke whose `strokePath` has `fill` gets a `<path
+    className="inkFill">` before its outline (`fill` the stroke's fill
+    colour, `fillOpacity` its opacity or 0.25), in the same band; the live
+    canvas fills the same polygon (`ctx.fill`) before the outline
+    (`paintLiveStroke` for a style with a `fill` on a closed `shape`).
+  - **The calligraphy footprint**: `.inkCursor[data-brush="calligraphy"]`
+    is the nib, a bar the preset's width long on the screen and 0.12 of
+    that thick (two pixels at least), turned by its `--nib` (`rotate(−nib
+    deg)`, the hovering pen's twist applied as `strokeNib` would).
+  - **`chrome: false`** (the zoom window's layer): draws the strokes, the
+    stroke in progress, peers' wet strokes and the selection's dashed box,
+    whose drag moves the selection as on the page; renders no
+    `InkSelectionMenu`, no `InkTransformHandles` (nor shape handles), no
+    *Paste here* menu, no ruler and no zoom overlay, registers no finger
+    chords (the page's layer has them), raises no finger-scroll hint
+    (`onFingerScroll`: nothing scrolls there) and reports no `onInkFeatures`;
+    after `onStroke` it hands each stroke it committed to
+    `onZoomStroke(strokeBounds(stroke))`. Its viewport (`viewportOf`, for
+    the culling and for the live and wet canvases, which cover the view,
+    not the magnified page) is the panel's view. The page's selection menu leaves a
+    press in the panel alone (`ignoreRef` covers `.inkZoomPanel`), so the
+    panel's drag of the selection, its bar and its strokes never dismiss
+    it by a press — a stroke there deselects as one on the page does.
+  - **The zoom overlay** (`zoom`: this page's window, or null;
+    `onZoom(page, patch)`): `.inkZoomRect` over the window's `{x, y, w,
+    h}` in the selection blue (`data-x`, `data-y`, `data-w`, `data-h` in
+    page points, for the e2e), its top band `.inkZoomBand` (aria-label
+    "Zoom window: drag to move") and its corner `.inkZoomResize`
+    (aria-label "Zoom window: drag to resize") in `NOT_INK` and
+    `touch-action: none`, buttons that take their press in the capture
+    phase, before the page's layers (a text box's Text tool included) and
+    the viewer see it: a drag draws the box where the window would go
+    (`preview`, by `zoomWindow.js` `moveWindow` and `setMag`, App's own
+    rules), at most once a frame, and at the release a drag of the band
+    calls `onZoom(page, {x, y})`, one of the corner `onZoom(page, {mag})`
+    (`magForWidth`: `w × mag` over the new width, held to 2..4) — the
+    window is the page tools' for every page, so moving it each frame
+    would draw every page's layers again each frame; a focused band's
+    arrow keys move the window 1 pt (Shift 10), a focused corner's step
+    the magnification by 0.25, each press at once. On any PDF page while a window is open, a
+    blank tap — a finger's tap, or a mouse click with the hand or the
+    lasso, that selects no stroke and dismisses no selection, on no
+    highlight, link or text box — calls `onZoom(page, {at: {x, y}, size})`
+    (`size` that page's in points; the page's layers only, never the
+    panel's: MarkupLayers passes `onZoom` only to a `chrome` layer, and
+    only while a window is open).
   - Finger chords: `wireChords` installs one module-level
     `makeChordDetector` (the `hostClaims` pattern: a singleton, so several
     page layers never double-fire) behind its own four document capture
@@ -1782,7 +2331,11 @@ reach:
     source-over, the dabs of one opacity band in one path filled once at
     `globalAlpha = opacity × band` — the shades the SVG draws — so dabs
     never darken where they overlap (`paintLiveStroke`, which a peer's wet
-    stroke goes through too). **Dirty rects**: each frame of a stroke
+    stroke goes through too). A calligraphy stroke is `nibOutline` of its
+    samples so far, one `Path2D` filled once (nonzero), the shape it
+    commits; a stroke along the ruler, a Shapes drag and a held shape draw
+    their line or shape at the preset's constant width, with a fill when
+    the shape has one. **Dirty rects**: each frame of a stroke
     clears only the union of the last frame's box and this one's — the
     samples' (and the prediction's, the smoothing string's tip) padded by
     two sizes, the widest any brush draws — before the stroke is painted
@@ -1814,7 +2367,8 @@ reach:
     decimals, `p` 0..1 or null without pressure, `t` ms since the stroke's
     first sample, integer degrees or null, at most `LIVE_SAMPLES` 64 a
     chunk) with `n` the index of the chunk's first sample and the look
-    the stroke commits with (`liveStyle`); on the lift, once the stroke is
+    the stroke commits with (`liveStyle`, a calligraphy pen's `nib` with
+    it, which the receiving side keeps when it is an integer 0..179); on the lift, once the stroke is
     committed, the rest, the last chunk (possibly empty) marked `done`;
     `drop: true` when it ends uncommitted (a cancel, a scribble that
     erased, the paste hold, a lost pointer). A committed stroke an edit
@@ -1832,7 +2386,9 @@ reach:
     stroke lands), by surface, keyed `client/id`. Not React state: each
     layer subscribes to its own surface (`useWetStrokes`) and paints the
     wet strokes on a canvas of their own (`.inkWetCanvas`, under the live
-    canvas, cleared whole per paint) through `paintLiveStroke` with the
+    canvas, cleared whole per paint, laid on what shows of the surface as
+    the live canvas is and, while it has strokes, painted again when a
+    scroll or a resize brings more of the surface into view) through `paintLiveStroke` with the
     style's width law baked on the fly (start taper only until `done`), so
     a peer's 20 chunks a second repaint one canvas and re-render nothing.
     A wet stroke goes when a group drawn on its surface holds its id (the
@@ -1841,8 +2397,8 @@ reach:
     group when the writer has one, but every group is checked), on `drop`,
     when its writer leaves the page (App's `keepWetOf(peers)`), with the
     page (`clearWet`), and 60 s after its last chunk (`WET_MS`). The
-    canvas's `data-wet` counts the wet strokes drawn and `data-wet-ids`
-    names them, for the e2e. A read-only surface without ink mounts its
+    canvas's `data-wet` counts the wet strokes and `data-wet-ids` names
+    them, for the e2e. A read-only surface without ink mounts its
     layer while it has wet strokes (`useHasWet`, `MarkupLayers.jsx`).
   - **Dense pages** (`useVisibleGroups`, `useIdleOutlines`,
     `useGroupRasters`; none of it changes a pixel of what is drawn once
@@ -1883,6 +2439,53 @@ reach:
     drops the pictures of groups scrolled away first, else keeps its
     paths at that zoom. A browser that taints the canvas with the SVG
     image shows the SVG image itself.
+- `ink/ZoomWindow.jsx`: the zoom window's panel, which `PdfViewer`
+  renders docked under its scroller while the page tools' `ink.zoom` is on
+  one of its document's pages (the scroller gives up the panel's height:
+  PdfViewer's `zoomHeight`, `onZoomHeight(px)` and `onZoomChange(update)`
+  props, App's `inkZoomHeight` and `changeInkZoom`). Props: `zoom`, `size`
+  (the page's `{width, height}` in points), `page` (the pdf.js page, null
+  until it loads), its `marks`, `height` and `onHeight(px)`,
+  `onChange(update)` (an update of the window, `update(window) → next`,
+  so it always applies to the window as it is then, on that page only),
+  `onClose()`, and the viewer's `annotationMode`, `isCancel` and `dark`
+  (its flipped page colours). `.inkZoomPanel` (`role="region"`,
+  aria-label "Zoom window", `data-guide="ink.zoom"`, `data-page`,
+  `data-mag`, the surface's `armedClasses`; App closes it under the phone
+  layout) holds the grip `.inkZoomGrip` (`role=
+  "separator"`, `aria-orientation="horizontal"`, aria-label "Zoom window
+  height", `aria-valuenow` in css px, 160 to 320; a drag or ↑ / ↓ by
+  10 px), the bar `.inkZoomBar` (`role="toolbar"`, aria-label "Zoom
+  window controls": *Previous line* `ChevronLeftIcon`, *Next line*
+  `ChevronRightIcon`, *New line* `CornerDownLeftIcon` titled "New line ·
+  Enter", the Line height group — `role="group"`, aria-label "Line
+  height": `MinusIcon` "Smaller line height", the readout "24 pt",
+  `PlusIcon` "Larger line height" —, the Magnification group —
+  `role="group"`, aria-label "Magnification": the pills *2×*, *3×*, *4×*,
+  `aria-pressed`, titled "Magnify 2×" … — and *Close* `XIcon`,
+  aria-label "Close the zoom window", title "Close the zoom window (Z)")
+  and the view `.inkZoomView` (`touch-action: none` at rest whether or
+  not fingers draw, two-finger touches stopped before the viewer's
+  pinch): inside it the page `.inkZoomPage`, `width × mag` by `height ×
+  mag` css px and moved by `(−x × mag, −y × mag)` from the window's rect,
+  the one source of truth (nothing reads a scroll position back), with
+  the page's pixels behind it from `pdf/pageRaster.js` `renderRegion`
+  (`zoomRasterPlan`: the window and a margin of 0.65 of its width on
+  either side and half its height above and below, so an auto-advance
+  along the line or a step to the next line lands on pixels already
+  drawn, at `mag` × the device pixel ratio — never the whole page: a 4×
+  page would pass the canvas caps — into two canvases, the hidden one
+  drawn and then shown, drawn again 80 ms after the window leaves what
+  `zoomRasterNeed` says is covered), and a `<MarkupLayers
+  chrome={false}>` for the page — same surface, same groups, same marks,
+  no text boxes — so what it commits joins the page's current group
+  through the same `onStroke`, and storage, replay and sync see nothing
+  new. Its `onZoomStroke(box)` runs `advance`; the panel measures its
+  view and keeps `w` and `h` (`sized`), and the main viewer scrolls the
+  window's box into view (`revealDelta`) when it moves. The viewer's own
+  bottom controls (the close and full-screen buttons, the recording pill,
+  the player bar) stand above the panel while it is open (`.viewerWrap
+  .inkZoomOpen`, `--ink-zoom-h`).
 - `markup/` ([text_boxes.md](text_boxes.md) "Client"):
   - `MarkupToolbar.jsx` `MarkupToolbar` is the strip. Its first row
     (`.pdfInkRow`) is five groups split by `.pdfInkSep`: the presets; the
@@ -1922,21 +2525,26 @@ reach:
     opens the hoisted `menu` state as `{kind: 'style', id}`, rendered
     after the `InkTooltips` element like the others, `InkStyleMenu`: a
     `ContextMenu` holding a `role="menu"` "Pen style" of
-    four `MenuItem`s in the order Pen · Ballpoint · Brush · Pencil, each
-    `role="menuitemradio"` with `aria-checked` on the current one and the
-    `BrushPreview` as its icon, titled "Pen: width follows stylus
+    five `MenuItem`s in the order Pen · Ballpoint · Brush · Pencil ·
+    Calligraphy, each `role="menuitemradio"` with `aria-checked` on the
+    current one and the `BrushPreview` as its icon (the calligraphy one
+    drawn by `nibOutline` at 45°), titled "Pen: width follows stylus
     pressure", "Ballpoint: an even line at every pressure", "Brush: a
     felt tip that swells with pressure and tapers at the ends", "Pencil:
-    tilt widens the line, pressure darkens it"; a row calls `edit({brush})`
-    with `'pen'` (which `normalizeTools` drops), `'monoline'`, `'brush'`
-    or `'pencil'`), a highlighter's *Straight* trio in its place, the
+    tilt widens the line, pressure darkens it", "Calligraphy: a flat nib,
+    thick across it and thin along it"; a row calls `edit({brush})` with
+    `'pen'` (which `normalizeTools` drops), `'monoline'`, `'brush'`,
+    `'pencil'` or `'calligraphy'`, the brush alone), a highlighter's
+    *Straight* trio in its place, the
     **Line** trio (`InkLineChoices`, `role="group"`, aria-label "Line":
     *Solid* · *Dashed* · *Dotted* pills, each with a glyph of its line,
     titled "Solid line", "Dashed line: dashes
     two widths long", "Dotted line: a dot every two widths", calling
     `edit({dash})` with `null`, `'dashed'`, `'dotted'`; pens and
     highlighters both) and the *Smoothing* five-dot ladder, `inkSizeBtn`
-    dots for `stabilize` 0–4 —, Color — the `ColorChoices` —
+    dots for `stabilize` 0–4, the pressed one the level the preset draws
+    with (`presetSmoothing`: a calligraphy pen's 2 when it sets none) —,
+    Color — the `ColorChoices` —
     and Width — the eight dots, Duplicate, Remove, ⋯; the eraser's row,
     after the sizes, the *Erases* trio and the *Back to last tool*
     toggle, `aria-pressed`, title "After erasing, return to the tool you
@@ -1950,12 +2558,79 @@ reach:
     cancels; a hold that never moved is the button's ordinary click).
     Hidden presets are filtered out (`visibleTools`) before the row and
     the key lists see them.
+    **The ruler, the Shapes tool and the zoom window.** The second group
+    shows after the Text tool, each only while on, *Ruler* (`RulerIcon`,
+    `ctlBtn inkToolBtn modeActive`, `aria-pressed="true"`, aria-label
+    "Ruler", title "Ruler (R): write straight along its edges — tap for
+    its options", `data-guide="ink.ruler"`; its click is
+    `onToggleOptions("ruler")`), *Shapes* (`ShapesIcon`, the armed tool's
+    button for the id `shape`, aria-label "Shapes", title "Shapes (S):
+    drag to draw a shape — tap again for its options",
+    `data-guide="ink.shape"`) and *Zoom window* (`ZoomWindowIcon`,
+    aria-label "Zoom window", title "Zoom window (Z): write large in the
+    panel below — tap to close"; its click is `onToggleZoom()`). The More
+    menu's rows after its first divider: *Ruler* (`MenuItem`, `RulerIcon`,
+    `role="menuitemcheckbox"`, `aria-checked`, `keys="R"`, a trailing
+    `CheckIcon` while on; `onToggleRuler()`), *Stamp line*
+    (`StampLineIcon`; `onStampLine()`; disabled, titled "Show the ruler
+    first", without a ruler), *Shapes* (`ShapesIcon`, the same checkbox
+    row, `keys="S"`; `onToggleShape()`) and *Zoom window*
+    (`ZoomWindowIcon`, checkbox, `keys="Z"`; `onToggleZoom()`; disabled,
+    titled "The zoom window works on PDF pages", without
+    `zoomAvailable`, and not rendered under `phone`). The ruler's row
+    (`.pdfInkSub`, `data-ink-options="ruler"`, open while `options ===
+    "ruler"`): `.inkRulerAngle` "Angle {deg}°", the *Snap 15°* · *Free*
+    pills (`role="group"`, aria-label "Ruler rotation"; titled "Snap 15°:
+    the ruler turns in 15° steps" and "Free: the ruler turns smoothly;
+    hold Shift to snap"; `onRulerOptions({snap})`), *Stamp line*
+    (`StampLineIcon`, title "Stamp line: a straight line along the ruler
+    with the armed pen"), the *pt* · *cm* pills (`role="group"`,
+    aria-label "Ruler units"; titled "Ticks in points" and "Ticks in
+    centimetres"; `onRulerOptions({units})`) and *Hide* (title "Hide the
+    ruler (R)"; `onRulerOptions({hide: true})`). The Shapes row
+    (`data-ink-options="shape"`, the armed tool's row, `options === true`
+    with `active === "shape"`): the kind pills (`role="group"`,
+    aria-label "Shape": *Line* · *Arrow* · *Rectangle* · *Ellipse*, each
+    with a glyph of its shape, titled "Line: drag from one end to the
+    other", "Arrow: drag from the tail to the tip", "Rectangle: drag from
+    corner to corner; Shift makes a square" and "Ellipse: drag across its
+    box; Shift makes a circle"; `onShape({kind})`), `.inkShapeUses`
+    "Uses: {color} pen · {size} pt" (the `stylusPen` preset's colour in
+    words and its width; title "Shapes take the colour, width and line of
+    the pen a stylus writes with") and *Fill* (`PaintBucketIcon`,
+    `aria-pressed`, title "Fill: rectangles and ellipses get a light tint
+    of the pen's colour"; `onShape({fill})`). A calligraphy pen's Style
+    row has, after the Style picker, the **Nib angle** group
+    (`role="group"`, aria-label "Nib angle", title "Nib angle: the slant
+    of the flat nib, −60° to 60°"): `ctlBtn`s aria-labelled "Nib angle
+    −15°" and "Nib angle +15°" around `.inkNibReadout` ("45°"), each
+    greyed at its end of the range — with a fine pointer (`(pointer:
+    fine)`), an `<input type="range" class="setRange">` (min −60, max 60,
+    step 15, aria-label "Nib angle") in their place —, then a
+    `NibPreview` glyph (the nib at the angle, `aria-hidden`), each change
+    `edit({nib})`; and, under a host with `pencilRoll`, *Lock angle*
+    (`aria-pressed`, title "Lock angle: rolling Apple Pencil Pro does not
+    turn the nib"; `edit({nibLock})`). Its new props: `ruler` (App's
+    `inkRuler`, or null), `rulerUnits`, `onToggleRuler()`,
+    `onRulerOptions({snap} | {units} | {hide: true})`, `onStampLine()`,
+    `shapeKind`, `shapeFill`, `onShape({kind} | {fill})`,
+    `onToggleShape()`, `stylusPen` (the preset a stylus writes with),
+    `zoomOpen`, `zoomAvailable`, `phone` and `onToggleZoom()`; `options`
+    is `false`, `true` (the armed tool's row) or `"ruler"`, and
+    `onToggleOptions(which)` takes `"ruler"` for the ruler's.
   - `MarkupLayers.jsx` `<MarkupLayers>` is the one place a surface's layers
     mount (`PdfPage`, the notebook view's sheet, `NoteSheet`). It maps the
     tools and the surface's marks onto `InkLayer`'s props. A read-only
     surface gets no edit callbacks, and one with no ink mounts no layer
     unless peers are writing on it (`useHasWet`, "Wet strokes").
-    While the Text tool is armed the layer only draws.
+    While the Text tool is armed the layer only draws. It passes the
+    layer `ruler` (`ink.ruler` when its `surface` is this surface, else
+    null), `rulerUnits`, `zoom` (`ink.zoom` when its `page` is this
+    surface, else null) and the actions `onRuler` and `onZoom` (the latter
+    only while a window is open), and takes `chrome` (true by default; the
+    zoom window's `false`, which mounts no text boxes and passes the layer
+    no ruler, window box, `onZoom`, *Paste here*, finger chords,
+    finger-scroll hint or `onInkFeatures`) and `onZoomStroke` for `InkLayer`.
   - `useMarks` (same file) builds App's marks per surface: its ink groups,
     and the lasso selection and the flash when they are on it. A surface's
     slice is kept while its parts are unchanged, so a memoized page
@@ -1984,12 +2659,20 @@ reach:
     `ink/inkLive.js` for its own surface ("Wet strokes" above).
     `ink` also carries `clip` (the clipboard holds strokes) and `keys`
     (`{copy, cut, duplicate}`: the chord labels the selection menu puts
-    in its titles).
+    in its titles), `ruler` (`{surface, x, y, angle, length, snap}`, or
+    null), `rulerUnits` (`'pt' | 'cm'`) and `zoom` (App's `inkZoom`, or
+    null); for the Shapes tool `ink.tool` is `{tool: "shape", kind, fill,
+    style}` (`style` the stylus pen's look with brush `monoline`, as
+    `toolStyle` gives it, smoothing and straightening left out). The
+    actions also carry `onRuler(next | null)` and `onZoom(page, {x, y} |
+    {mag} | {at, size})`, and `onAction` takes `transcribe`.
     `armedClasses(tools)` gives a surface's container its armed-tool
-    classes (`inkArmed`, `inkTouchDraw`, `textArmed`).
+    classes (`inkArmed`, `inkTouchDraw`, `textArmed`, and `inkShapeArmed`
+    while the Shapes tool is armed).
 - `app/App.jsx` owns the tool state: `inkUi` (`open`, the armed `tool` — a
-  preset id, `eraser`, `select`, `text` (the Text tool) or `null` for the
-  hand — its `options` row,
+  preset id, `eraser`, `select`, `text` (the Text tool), `shape` (the
+  Shapes tool) or `null` for the hand — its `options` row (`true`, or
+  `"ruler"` for the ruler's),
   and `pen`, the last pen preset, which a stylus writes with when nothing
   is armed — resolved among the visible presets, so a hidden pen falls
   back to the first visible one) plus the prefs (`inkTools`, the
@@ -1997,7 +2680,9 @@ reach:
   App's `setInkTools` runs every write through it, the updater form the
   pill's *Show* passes included, so the stored and pushed list is the
   canonical one — which keeps a preset's
-  `stabilize` 0–4 as an integer, omitted at 0, a pen's `brush` among
+  `stabilize` 0–4 as an integer, omitted at 0 except on a calligraphy
+  pen, whose 0 is its Off (left out, a calligraphy pen smooths at
+  `CALLIGRAPHY_SMOOTHING`, 2: `presetSmoothing`), a pen's `brush` among
   `monoline`, `brush`, `pencil` (`KNOWN_BRUSHES`; `'pen'`, an unknown
   value or any brush on a highlighter is dropped, so the plain pen is the
   absent key), a `dash` of `dashed` | `dotted` on a pen or a highlighter,
@@ -2009,7 +2694,8 @@ reach:
   the preset serialises under 512 bytes of UTF-8, and a list that hides every
   preset shows its first, so the row is never empty; `toolStyle` copies
   `brush` and `dash` onto the style a stroke is encoded with and carries
-  smoothing and straightening onto the armed tool for the layer, never
+  the smoothing it draws with (`presetSmoothing`) and straightening onto
+  the armed tool for the layer, never
   onto a stroke; `inkToolName(preset)` reads "{color} pen", "{color}
   ballpoint pen", "{color} brush pen", "{color} pencil" and "{color}
   highlighter" (the line is not named), and `visibleTools(list)` is the list without the hidden
@@ -2255,6 +2941,86 @@ reach:
     button's label spells them (`inkToolName(preset)`, which
     `MarkupToolbar.jsx` exports beside `moveTool(tools, id, slot)`, the
     reorder a drop and Move left / right share).
+  - **The Shapes tool, the ruler and the zoom window.** `"shape"` joins the reserved tool ids
+    (`"eraser"`, `"select"`, `"text"`) in every guard that lists them —
+    `inkTool`, the effect that drops a removed or hidden preset, the
+    strip's fall-back to the stylus pen — and `inkTool` for it is `{tool:
+    "shape", kind: inkShapeKind, fill: inkShapeFill, style}`. `inkRuler`
+    (`{surface, x, y, angle, length, snap}`, or null) and `inkZoom`
+    (`{page, x, y, w, h, mag, line, x0}`, or null) are session state,
+    cleared when the strip closes (`closeInkStrip()`, which all three
+    closers call) and when the open page changes — the zoom window also
+    when the PDF is hidden, the notebook view opens or the layout turns
+    to a phone's, and the ruler (`hideInkRuler()`, its row with it) when
+    the viewer stops showing its surface: a PDF page's when the PDF is
+    hidden or the notebook view opens, a sheet's when it closes
+    (`inkRulerShown`).
+    `handleInkStroke(page, stroke, size, {label})` takes the history
+    entry's label the layer's `onStroke` passes (`finishStroke`'s: "ink
+    stroke", "ink straight line", "ink shape"); *Stamp line* passes "ink
+    straight line".
+    `toggleInkRuler()` shows `defaultRuler` on the surface in view
+    (`pasteTarget()`'s, across `visiblePart(page, size)`, the part of its
+    box inside its viewer and the window, in page points) with its row
+    open, or hides it (`hideInkRuler()`, the ruler's row with it);
+    `inkRulerOptions({snap} | {units} | {hide})` is the row's (*Snap 15°*
+    puts the angle on the grid at once);
+    `toggleInkShape()` arms `"shape"` with its row open, or gives back
+    `inkBack()`; `toggleInkZoom()` opens `openWindow` on the PDF page in
+    view — its middle at the middle of what shows of the page above where
+    the panel will stand (`visiblePart` less the panel's height), its size
+    from the scroller's width and `inkZoomHeight` less `ZOOM_CHROME` —, or
+    closes it: nothing on a phone, and on a sheet (or with no PDF page in
+    view) the pill "The zoom window works on PDF pages."; `stampRulerLine()` draws a line
+    along the ruler's middle between its ends with the armed preset (else
+    the stylus pen) through `finishStroke`'s hold stage (a span of 0, `t0`
+    now: `ruler.js` `stampLine`) and `handleInkStroke` on the ruler's
+    surface (the size of the surface it was laid on, kept beside it), one
+    entry, then
+    `undoableStatus(t("Line stamped along the ruler."), {ink: true})`;
+    `onRuler` sets `inkRuler` (null hides it); `onZoom(page, patch)`
+    (`handleInkZoom`) moves the window (`moveTo` for `{at, size}`, the
+    window going to that page; `moveWindow` for `{x, y}`; both moves by
+    hand set `x0`; `{mag}` through `setMag`), the panel's own buttons, its
+    auto-advance and its view's size go through `changeInkZoom(update)`,
+    and Enter through `inkZoomNewLine()`, all by `zoomWindow.js`; the size
+    of the window's page in points is kept beside it. The prefs:
+    `inkShapeKind` and `inkShapeFill` the account's, `inkRulerUnits` and
+    `inkZoomHeight` this browser's ([settings.md](settings.md) "Reading
+    & editing"). `handleInkAction` gains `reshape` (`{id, params}` →
+    `reshapeInk`, the entry `T("ink shape edit")`) and `transcribe`
+    (below), and the `style` action's `fill` (`restyleStrokes`, `T("ink
+    fill change")`); a style change, by Shift+[ / ] as by the menu,
+    writes the brush alone (a calligraphy pen's smoothing of 2 is
+    `presetSmoothing`'s default, never stored). The strip's key handler
+    takes `stripKey`'s `toggle` and `off` (`what`: `ruler`, `shape`,
+    `zoom`) and `newLine`, its state carrying `ruler`, `zoom` and
+    `onControl` (the target inside a button, a link or a menu row).
+  - **Transcribe a selection** (`handleInkAction("transcribe")`,
+    `transcribeInkSelection()`): a selection whose strokes are whole groups
+    flushes the page's drafts first (`flushInk()`, awaited, so the stored
+    files hold what the screen shows), then attaches each group's block as
+    `transcribeInk` does (the oldest attached block making room, said on
+    the pill) and asks "Transcribe this handwriting into its caption."
+    once — unless a group's save has not landed (its draft still dirty
+    after the flush, or its block not in the tree), when its strokes go
+    inline as below; otherwise it puts one chip per
+    group on `chatNotes` — `{kind: "ink", id: the block, page_id: the
+    open page, space: the group's file space, strokes: the selected
+    strokes as the draft holds them, text: tn("Selected handwriting · {n}
+    stroke", "Selected handwriting · {n} strokes", n)}`, replacing an
+    earlier ink chip of that block — unless, with the ink chips already
+    waiting, they are more than `MAX_INK_SELECTIONS` (8) groups or their
+    JSON passes `MAX_INK_SELECTION_BYTES` (65 536) together (both in
+    `chat/passageBudget.js`, the server's caps), which raises
+    "Too much handwriting selected to transcribe; select less." and sends
+    nothing; then `showChat()` and `setChatAsk` "Transcribe the selected
+    handwriting.". In a shared page's view it only says "Transcribing
+    needs the AI chat, which a shared page cannot use." The composer shows
+    an ink chip as "Selected handwriting · 4 strokes" with a pen, without a
+    preview. ChatDock sends them as `ink_selections: [{page_id,
+    block_id, space, strokes}]` ([ai.md](ai.md) "Pointing the chat at
+    notes") and drops them once sent.
 - With the strip open, Ctrl+Z is the stroke history (a capture-phase key
   handler, so the page's block undo never sees it); with it closed, Ctrl+Z
   is the page's block history, which knows the group's block but not its
@@ -2271,7 +3037,8 @@ reach:
   falls through to block undo. Undo and redo report the action and PDF page
   in the status pill (“Undone: ink width change (page 1).”); the labels
   distinguish drawing, erasure, partial erasure, move, colour, width,
-  duplicate, delete, paste, cut, flip, split and merge.
+  duplicate, delete, paste, cut, flip, split, merge, a straight line, a
+  shape, a shape edit, a style, a line and a fill change.
 
 ## Server
 
@@ -2391,37 +3158,97 @@ reach:
   highlighter drawn after it and asserts the pen's pure colour, a pencil
   stroke and asserts its three shades, and a dashed one and counts its
   dashes.
+- **Calligraphy and fills on the server** (`gamma/ink.py`): `_GEOM_KEYS`
+  holds `nib` beside `brush` ("Two writers, one group";
+  `tests/shared/inkmerge.json` pins it); `bounding_box` pads a
+  calligraphy stroke without a `shape` by `size × NIB_REACH / 2` at every
+  sample (hypot(1, 0.12): the nib's corners), or its drawn half-width where
+  that is wider, as `strokeBounds` does, so a merged file's box and the AI's
+  crop agree with the client's; every exporter draws a calligraphy
+  stroke as the pen it is, from `w` (round-ended widths; the flat nib is
+  the screen's alone). A filled closed shape's fill is drawn first, as
+  the closed polygon through its samples, in the stroke's band (`fill_of`,
+  over `CLOSED_SHAPES`): `to_svg` writes a `<path d="… Z" fill="rgb(…)"
+  fill-opacity="α"/>` before the stroke's own elements, `pdf_path_ops`
+  the polygon filled with `f` in the fill's colour (`r g b rg`) under
+  `/GSink<α × 1000>` (none at 1) before the outline — a fill of its own
+  rather than `B`, since a pen's outline is drawn as segments or bands,
+  never as that polygon stroked. A fill on a stroke that is no closed
+  shape is not drawn. The annotated PDF stays
+  /Ink-pure: the outline is in its bucket's `/Ink` like any stroke and
+  the fill only in `/GammaInk`'s strokes; no `/Square`, `/Circle` or
+  `/Polygon` is written for ink, and a Gamma import brings the fill back
+  from `/GammaInk`.
+- **A selection for the chat** (`routers/ai.py`, `ai_context.py`,
+  `ink_view.py`; [ai.md](ai.md) "Pointing the chat at notes"):
+  `AIChatRequest.ink_selections`, at most 8 entries
+  (`MAX_INK_SELECTIONS`) and 64 KB of compact JSON together
+  (`MAX_INK_SELECTION_BYTES`, `ink_selection_bytes`; a 422 past either).
+  `ai_context.request_ink_selections(payload)` keeps each `{page_id,
+  block_id, space, strokes}` whose `page_id` is one of the request's
+  context pages and whose strokes parse as a version 2 file in that
+  space (`ink.parse_ink`; anything else is dropped, with a log line), and
+  `notes_focus_section` lists them under "Handwriting the user selected
+  for this message (part of the note block in brackets):", each `-
+  [block_id] (selected handwriting on p. N, K strokes)` (`selection_label`;
+  "on a page of paper" for a canvas space) followed by the group's
+  caption when its block is saved on that page (a caption of up to 500
+  characters counts as read, for an `edit_block` replace), with "(a
+  picture of it is attached to the message)" when its picture went,
+  labelled "The selected handwriting of block [id] on PDF page N", and
+  after the list "Each picture holds only the selected strokes, saved or
+  not: transcribe exactly those, not the rest of the block's
+  handwriting." (the agent's prompt adds that a selection is read from
+  its picture, not with `view_ink`, which shows the whole block as it
+  was saved, `ai_tools.agent_system`). A
+  message whose only pointer into the notes is a selection still gets
+  the section. The picture is
+  `ink_view.picture(ws, conn, block_id, page_id, ink=file)`: the inline
+  file drawn instead of the block's stored one — the block need not
+  hold a file, nor be saved yet, and the group's other strokes stay out
+  — on PDF page `space.page` of the page's PDF (`page_with_ink(…,
+  vector=True)`; drawn even where the PDF still embeds the group), or on
+  the sheet holding the block, else on blank paper of the space's size,
+  cropped to the
+  selected strokes (`crop_box`), within the request's picture budget as
+  an attached handwriting block's is (group `ink`).
 
 ## Not built yet
 
-Dedicated shape tools (a shape comes only from draw-and-hold; a committed
-shape has no handles yet, though its `shape` record is written for them),
-the calligraphy pen
-(the Style picker's fifth row; `nib` is stored and preserved but nothing
-writes it, and the iPad shell's claim does not carry it), a fill on
-closed shapes (`fill` likewise), the pencil's grain
-in exports and the AI picture (they draw its shades as plain bands), the
-pencil's grain and a dashed pressure line's widths on the iPad shell's
-native live line (it draws the pencil untextured and a dashed line at an
-even width until the web's stroke replaces it), live co-drawing of a stroke the iPad shell
-captures (its samples reach the page only at the lift, so peers see it
-when its file lands), reading handwriting back from the system
-clipboard (copy writes a `gamma/ink` item for other apps, but a paste
-reads only this tab's own clipboard, so nothing pastes across tabs yet),
-Xournal++ `.xopp` import, and a
-replay of erasures and edits (it shows the drawing as it is, in the order
-it was written). Audio recording to go with the replay is
-[recording.md](recording.md). Obsidian vault export writes an ink block's
-caption only. The Notability comparison in the research note lists what a
-closer pen experience still needs (a snap of
-straight highlights to the PDF's text lines); draw-and-hold, smoothing,
-the straight highlighter, scribble-to-erase, the eraser's return and
-filter, finger undo, the highlighter
-drawn behind the ink (`band`), the handwriting clipboard, flips, note
-split and merge, presets on the account and their drag order, the Pen /
-Ballpoint / Brush / Pencil styles, dashed and dotted lines, the
-selection's Style row, live co-drawing over presence, the dense-page
+The pencil's grain and the calligraphy nib's corners in exports and the
+AI's picture (they draw the pencil's shades as plain bands and the
+calligraphy pen's widths with round ends), the calligraphy nib's pressure
+on the screen (the nib is drawn at the stroke's size; the pressure's 0.85
+to 1.15 is in `w` alone), on the iPad shell's native live line the
+pencil's grain, a dashed pressure line's widths and the calligraphy
+nib's flat ends (it draws them untextured, even and round until the web's
+stroke replaces it), live co-drawing of a stroke the iPad shell captures
+(its samples reach the page only at the lift, so peers see it when its
+file lands), reading handwriting back from the system clipboard (copy
+writes a `gamma/ink` item for other apps, but a paste reads only this
+tab's own clipboard, so nothing pastes across tabs yet), the zoom window
+on sheets of paper and past a page's bottom (it covers PDF pages, and New
+line stops at the last line of a page), the ruler and the page's text
+boxes inside the zoom window (it shows the page's pixels and its
+handwriting),
+a pressure brush's widths along the ruler (a ruler line is even, as a
+held one is), triangles and polygons from the Shapes tool (draw-and-hold
+makes them) and handles on a `curve`, Xournal++ `.xopp` import, and a
+replay of erasures and edits (it shows the drawing as it is, in the
+order it was written). Audio recording to go with the replay is
+[recording.md](recording.md). Obsidian vault export writes an ink
+block's caption only. The Notability comparison in the research note
+lists what a closer pen experience still needs (a snap of straight
+highlights to the PDF's text lines); draw-and-hold, smoothing, the
+straight highlighter, scribble-to-erase, the eraser's return and
+filter, finger undo, the highlighter drawn behind the ink (`band`), the
+handwriting clipboard, flips, note split and merge, presets on the
+account and their drag order, the Pen / Ballpoint / Brush / Pencil /
+Calligraphy styles, dashed and dotted lines, the selection's Style row,
+the Shapes tool, shape handles and fills, the ruler, the zoom window,
+transcribing a selection, live co-drawing over presence, the dense-page
 floor, the draft journal, and in the iPad app draw-and-hold, hold to
-paste, the preset's look on the live line, the Pencil's tilt, the
-gesture choices and the haptics are built. The broader interaction survey is
+paste, the preset's look on the live line, the Pencil's tilt and barrel
+roll, the ruler's edge, the gesture choices and the haptics are built.
+The broader interaction survey is
 [handwriting-interactions.md](../research/handwriting-interactions.md).

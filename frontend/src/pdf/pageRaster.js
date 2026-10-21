@@ -101,6 +101,33 @@ export function detailPlan(slice, dpr) {
   };
 }
 
+// The zoom window's pixels (ink/ZoomWindow.jsx): the part of the page its
+// window shows and a margin around it — ZOOM_RASTER_MARGIN of the window's
+// width on either side, more than the auto-advance's step along a line, and
+// of its height above and below, a line at the usual height — at the
+// panel's magnification and the screen's own resolution, never the whole
+// page, which at 4× would pass the canvas caps. So the window moves on
+// along its line, or a line down, over pixels already drawn. `win` is the
+// window ({x, y, w, h} in page points, `mag` css px per point), `page` the
+// page's {width, height} in points. → detailPlan's {width, height, rect}
+// plus `scale` (the magnification), rect in css px of the page box at that
+// scale; null for a window off its page. zoomRasterNeed is the window's own
+// rect in the same css px, what a drawn plan must still cover (`covers`)
+// before the panel draws again.
+export const ZOOM_RASTER_MARGIN = { x: 0.65, y: 0.5 };
+export function zoomRasterNeed(win, page) {
+  const x0 = Math.max(0, win.x), y0 = Math.max(0, win.y);
+  const x1 = Math.min(page.width, win.x + win.w), y1 = Math.min(page.height, win.y + win.h);
+  if (!(win.mag > 0 && x1 > x0 && y1 > y0)) return null;
+  return { x: x0 * win.mag, y: y0 * win.mag, width: (x1 - x0) * win.mag, height: (y1 - y0) * win.mag };
+}
+export function zoomRasterPlan(win, page, dpr) {
+  const mx = win.w * ZOOM_RASTER_MARGIN.x, my = win.h * ZOOM_RASTER_MARGIN.y;
+  const grown = { ...win, x: win.x - mx, y: win.y - my, w: win.w + 2 * mx, h: win.h + 2 * my };
+  const slice = zoomRasterNeed(grown, page);
+  return slice ? { scale: win.mag, ...detailPlan(slice, dpr) } : null;
+}
+
 // Whether a drawn rectangle still covers a needed one.
 export function covers(drawn, need) {
   return drawn.x <= need.x + SLACK && drawn.y <= need.y + SLACK

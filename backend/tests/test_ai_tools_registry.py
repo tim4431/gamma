@@ -77,6 +77,9 @@ def test_agent_system_explains_the_new_tools_only_when_armed():
     text = agent_system(folder(""))
     # Handwriting: look first, then write the transcription into the caption.
     assert "view_ink" in text and "[illegible]" in text and "caption" in text
+    # a selection is read from its own picture, not from view_ink's whole saved block
+    assert "attached as a picture of just those strokes, saved or not: read it there, not with view_ink" in text
+    assert "(a selection: from its picture)" in text
     assert "cite returns the citation records" in text
     assert "save_paper adds a paper" in text and "never as a side effect" in text
     assert "restore_page brings one back" in text

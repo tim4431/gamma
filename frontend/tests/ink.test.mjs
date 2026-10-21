@@ -751,13 +751,13 @@ test("a key a record leaves out follows too: an arrow's head drawn by default is
 import { visibleTools } from "../src/ink/ink.js";
 test("normalizeTools keeps a hidden flag and unknown keys per preset, capped at 512 bytes; visibleTools filters the hidden ones", () => {
   const stored = [
-    { ...DEFAULT_TOOLS[0], hidden: true, dash: "dotted", nib: 45 },
+    { ...DEFAULT_TOOLS[0], hidden: true, dash: "dotted", grip: "soft" },
     { ...DEFAULT_TOOLS[1], hidden: false },
     { ...DEFAULT_TOOLS[4], hidden: "yes", style: { kind: "marker" } },
   ];
   const [hidden, shown, hl] = normalizeTools(JSON.parse(JSON.stringify(stored)));
-  assert.deepEqual(hidden, { ...DEFAULT_TOOLS[0], hidden: true, dash: "dotted", nib: 45 }, "the known keys first, then the extras verbatim");
-  assert.deepEqual(Object.keys(hidden), ["id", "kind", "color", "size", "dash", "hidden", "nib"], "dash is known, nib an extra");
+  assert.deepEqual(hidden, { ...DEFAULT_TOOLS[0], hidden: true, dash: "dotted", grip: "soft" }, "the known keys first, then the extras verbatim");
+  assert.deepEqual(Object.keys(hidden), ["id", "kind", "color", "size", "dash", "hidden", "grip"], "dash is known, grip an extra");
   assert.equal("hidden" in shown, false, "false is left out");
   assert.equal("hidden" in hl, false, "only true hides");
   assert.deepEqual(hl.style, { kind: "marker" }, "an object rides along");
@@ -801,8 +801,8 @@ test("normalizeTools keeps a pen's known brush and a line on pens and highlighte
   assert.deepEqual(toolStyle(brush), { tool: "pen", color: brush.color, size: brush.size, opacity: 1, brush: "brush", dash: "dashed" });
   assert.deepEqual(toolStyle(hl), { tool: "highlighter", color: hl.color, size: hl.size, opacity: HIGHLIGHTER_OPACITY, dash: "dotted" });
   assert.deepEqual(normalizeTools(JSON.parse(JSON.stringify([brush, pencil, hl]))), [brush, pencil, hl], "a round trip changes nothing");
-  assert.deepEqual(BRUSH_ORDER, [null, "monoline", "brush", "pencil"]);
-  assert.deepEqual([...KNOWN_BRUSHES], ["monoline", "brush", "pencil"]);
+  assert.deepEqual(BRUSH_ORDER, [null, "monoline", "brush", "pencil", "calligraphy"]);
+  assert.deepEqual([...KNOWN_BRUSHES], ["monoline", "brush", "pencil", "calligraphy"]);
   assert.equal(inkFeatures({ ...newInk(1, 612, 792), strokes: [pen({ brush: "brush" }), pen({ id: "q", brush: "pencil", dash: "dotted" })] }), null,
     "the brushes and the lines are this build's own");
 });
@@ -1028,4 +1028,214 @@ test("caches: cachedStrokePath only looks, and a placeholder is the samples as a
   const built = strokePath(s);
   assert.equal(cachedPath(s), built);
   assert.equal(cachedPath({ ...s, color: "#000000" }), built);
+});
+
+// --- the calligraphy pen (docs/dev/handwriting.md "Calligraphy", "Client") ------------
+import {
+  CALLIGRAPHY_SMOOTHING, CLOSED_SHAPES, DEFAULT_NIB, FILL_OPACITY, NIB_HAIR, NIB_MAX, NIB_MIN, NIB_REACH, NIB_STEP, isClosedShape, nibOutline,
+  presetSmoothing, strokeNib,
+} from "../src/ink/ink.js";
+import { bakeWidths, brushWidths } from "../src/ink/finishStroke.js";
+
+// nibOutline's subpaths ("Mx,y Lx,y … Z") as polygons, and the nonzero
+// winding of a point against them.
+const polygonsOf = (d) => d.split("M").filter((p) => p.trim()).map((p) => {
+  assert.ok(p.trim().endsWith("Z"), "every piece is closed");
+  return p.replace("Z", "").trim().split(" L").map((xy) => xy.split(",").map(Number));
+});
+const signedArea = (poly) => poly.reduce((a, p, i) => { const q = poly[(i + 1) % poly.length]; return a + p[0] * q[1] - q[0] * p[1]; }, 0) / 2;
+function winding(polys, x, y) {
+  let w = 0;
+  for (const poly of polys) {
+    for (let i = 0; i < poly.length; i++) {
+      const [ax, ay] = poly[i], [bx, by] = poly[(i + 1) % poly.length];
+      const side = (bx - ax) * (y - ay) - (x - ax) * (by - ay);
+      if (ay <= y && by > y && side > 0) w++;
+      else if (ay > y && by <= y && side < 0) w--;
+    }
+  }
+  return w;
+}
+const filled = (polys, x, y) => winding(polys, x, y) !== 0;
+
+test("strokeNib: the preset's angle less the pen's clockwise twist, mod 180; a lock or no twist keeps the angle", () => {
+  assert.deepEqual([DEFAULT_NIB, NIB_MIN, NIB_MAX, NIB_STEP], [45, -60, 60, 15]);
+  assert.equal(strokeNib(45), 45);
+  assert.equal(strokeNib(-45), 135, "the preset's −45° is the stroke's 135°");
+  assert.equal(strokeNib(undefined), 45, "no angle: 45");
+  assert.equal(strokeNib(45, 30), 15, "a clockwise roll of 30° turns the nib clockwise");
+  assert.equal(strokeNib(45, 30, true), 45, "Lock angle");
+  assert.equal(strokeNib(0, 200), 160);
+  assert.equal(strokeNib(10, null), 10);
+  assert.equal(strokeNib(60, 239.6), 0, "rounded, and 180 is 0");
+});
+
+test("normalizeTools keeps a calligraphy pen's nib (−60..60, left out at 45) and Lock angle, and neither on another preset; toolStyle carries the nib to the stroke", () => {
+  const [cal, flat, lock, odd, plain, hl] = normalizeTools([
+    { ...DEFAULT_TOOLS[0], brush: "calligraphy", nib: -30 },
+    { ...DEFAULT_TOOLS[1], brush: "calligraphy", nib: 45, nibLock: false },
+    { ...DEFAULT_TOOLS[2], brush: "calligraphy", nib: 0, nibLock: true },
+    { ...DEFAULT_TOOLS[3], brush: "calligraphy", nib: 75, nibLock: "yes" },
+    { ...DEFAULT_TOOLS[0], id: "p5", nib: 30, nibLock: true },
+    { ...DEFAULT_TOOLS[4], brush: "calligraphy", nib: 30 },
+  ]);
+  assert.deepEqual([cal.brush, cal.nib, "nibLock" in cal], ["calligraphy", -30, false]);
+  assert.deepEqual(["nib" in flat, "nibLock" in flat], [false, false], "45 and an unlocked angle are the defaults: left out");
+  assert.deepEqual([lock.nib, lock.nibLock], [0, true], "0 is an angle like any other");
+  assert.deepEqual(["nib" in odd, "nibLock" in odd], [false, false], "out of range, and only true locks");
+  assert.deepEqual(["nib" in plain, "nibLock" in plain], [false, false], "a plain pen has no nib");
+  assert.deepEqual(["brush" in hl, "nib" in hl], [false, false], "nor a highlighter");
+  assert.deepEqual(Object.keys(cal), ["id", "kind", "color", "size", "brush", "nib"]);
+  assert.deepEqual(normalizeTools(JSON.parse(JSON.stringify([cal, lock]))), [cal, lock], "a round trip changes nothing");
+  assert.deepEqual(toolStyle(cal), { tool: "pen", color: cal.color, size: cal.size, opacity: 1, stabilize: 2, brush: "calligraphy", nib: 150 });
+  assert.deepEqual(toolStyle(lock), { tool: "pen", color: lock.color, size: lock.size, opacity: 1, stabilize: 2, brush: "calligraphy", nib: 0,
+    nibLock: true });
+  assert.equal(toolStyle(flat).nib, 45);
+  assert.equal("nib" in toolStyle(plain), false);
+  assert.equal(inkFeatures({ ...newInk(1, 612, 792), strokes: [pen({ brush: "calligraphy", nib: 45 })] }), null, "the brush and its key are this build's own");
+});
+
+test("a calligraphy pen smooths at 2 unless its preset says otherwise, Off included; the default is never stored, so leaving Calligraphy keeps the smoothing it had", () => {
+  const [cal, off, three, plain] = normalizeTools([
+    { ...DEFAULT_TOOLS[0], brush: "calligraphy" },
+    { ...DEFAULT_TOOLS[1], brush: "calligraphy", stabilize: 0 },
+    { ...DEFAULT_TOOLS[2], brush: "calligraphy", stabilize: 3 },
+    { ...DEFAULT_TOOLS[3], stabilize: 0 },
+  ]);
+  assert.equal(CALLIGRAPHY_SMOOTHING, 2);
+  assert.deepEqual(["stabilize" in cal, off.stabilize, three.stabilize, "stabilize" in plain], [false, 0, 3, false],
+    "0 is kept only on a calligraphy pen, where it is the Off its default would otherwise fill");
+  assert.deepEqual([cal, off, three, plain].map(presetSmoothing), [2, 0, 3, 0]);
+  assert.deepEqual([toolStyle(cal).stabilize, "stabilize" in toolStyle(off), toolStyle(three).stabilize], [2, false, 3],
+    "the layer draws with the level in effect");
+  // a style change is the brush alone: stepping on from Calligraphy leaves no smoothing behind
+  const [pencil, offPencil] = normalizeTools([{ ...cal, brush: "pencil" }, { ...off, brush: "pencil" }]);
+  assert.deepEqual(["stabilize" in pencil, "stabilize" in offPencil, presetSmoothing(pencil)], [false, false, 0]);
+  assert.equal(normalizeTools([{ ...three, brush: "pencil" }])[0].stabilize, 3, "a level the user chose stays");
+  assert.equal(presetSmoothing(normalizeTools([{ ...DEFAULT_TOOLS[4], brush: "calligraphy" }])[0]), 0, "a highlighter has no brush, nor its default");
+  assert.equal(normalizeTools([{ ...DEFAULT_TOOLS[0], brush: "calligraphy", stabilize: null }])[0].stabilize, undefined, "null is no level");
+});
+
+test("nibOutline: closed pieces all wound one way, as wide as the nib across the travel and a hairline along it, a U-turn filled", () => {
+  const size = 4;
+  // a stroke down the page across a level nib (nib 0: its edge along x): the band is the nib's length wide
+  const down = Array.from({ length: 11 }, (_, i) => ({ x: 100, y: 100 + 2 * i }));
+  const across = polygonsOf(nibOutline(down, size, 0));
+  assert.ok(across.every((p) => signedArea(p) > 0), "every piece wound clockwise as seen");
+  assert.ok(filled(across, 100 + 0.45 * size, 110) && filled(across, 100 - 0.45 * size, 110), "half the nib each side");
+  assert.ok(!filled(across, 100 + 0.55 * size, 110) && !filled(across, 100 - 0.55 * size, 110));
+  // the same stroke along an upright nib: the hairline, NIB_HAIR × size
+  const along = polygonsOf(nibOutline(down, size, 90));
+  assert.ok(filled(along, 100 + 0.4 * NIB_HAIR * size, 110), "the hairline is drawn");
+  assert.ok(!filled(along, 100 + 0.8 * NIB_HAIR * size, 110), "and no wider");
+  assert.ok(along.every((p) => signedArea(p) >= 0));
+  // a stroke going down and straight back up: the reversal splits the pieces, the band stays filled where they meet
+  const back = [...down, ...down.slice(0, -1).reverse()];
+  const uTurn = polygonsOf(nibOutline(back, size, 0));
+  assert.ok(uTurn.every((p) => signedArea(p) >= 0), "the pieces either side of the reversal wound alike");
+  for (let y = 100.25; y < 120; y += 0.5) assert.ok(filled(uTurn, 100, y) && filled(uTurn, 101.5, y), `filled at ${y}`);
+  assert.ok(!filled(uTurn, 100, 120.5), "the turn is the nib's flat edge");
+  // a loop that crosses itself, under a 45° nib: wherever the centre line runs, the ink is
+  const loop = Array.from({ length: 64 }, (_, i) => ({ x: 200 + 20 * Math.sin(i / 8), y: 200 + 12 * Math.sin(i / 4) }));
+  const polys = polygonsOf(nibOutline(loop, size, 45));
+  assert.ok(polys.every((p) => signedArea(p) >= 0));
+  for (const q of loop) assert.ok(filled(polys, q.x + 0.01, q.y + 0.01), `the centre line at ${q.x.toFixed(1)},${q.y.toFixed(1)} is ink`);
+  // a tap: the nib's footprint, size × NIB_HAIR × size, turned to the angle
+  const tap = polygonsOf(nibOutline([{ x: 50, y: 50 }], size, 45));
+  assert.equal(tap.length, 1);
+  assert.ok(Math.abs(signedArea(tap[0]) - size * NIB_HAIR * size) < 0.01, "the nib's rectangle");
+  assert.ok(filled(tap, 50 + 0.4 * size * Math.cos(Math.PI / 4), 50 - 0.4 * size * Math.sin(Math.PI / 4)), "rising to the right");
+  assert.ok(!filled(tap, 50 + 0.4 * size * Math.cos(Math.PI / 4), 50 + 0.4 * size * Math.sin(Math.PI / 4)));
+  assert.equal(nibOutline([], size, 45), "");
+});
+
+test("nibOutline draws what the law bakes: its width across the travel is size × max(0.12, s) at every angle", () => {
+  const size = 10;
+  for (const deg of [0, 15, 30, 45, 60, 75, 90, 120, 150]) {
+    const r = (deg * Math.PI) / 180, dx = Math.cos(r), dy = Math.sin(r);
+    const samples = Array.from({ length: 21 }, (_, i) => ({ x: 100 + dx * 2 * i, y: 100 + dy * 2 * i, p: 0.5, t: 8 * i }));
+    const polys = polygonsOf(nibOutline(samples, size, 30));
+    const w = brushWidths(samples, { tool: "pen", brush: "calligraphy", nib: 30, pen: true })[10];
+    // walk across the middle of the stroke and measure the ink
+    const mx = 100 + dx * 20, my = 100 + dy * 20;
+    let inside = 0;
+    for (let k = -600; k <= 600; k++) if (filled(polys, mx - dy * k * size / 1000, my + dx * k * size / 1000)) inside++;
+    assert.ok(Math.abs(inside / 1000 - w) < 0.012, `travel at ${deg}° under a 30° nib: ${inside / 1000} sizes drawn, ${w} baked`);
+  }
+});
+
+test("strokePath draws a calligraphy stroke as its nib, its dashes as nibs and its dots round; with a shape, an even line; bounds reach its corners", () => {
+  const samples = Array.from({ length: 21 }, (_, i) => ({ x: 100 + 2 * i, y: 200 + 2 * i, p: 0.5, t: 8 * i }));
+  const style = { tool: "pen", brush: "calligraphy", nib: 45, size: 2, pen: true };
+  const stroke = encodeStroke({ id: "c", ...style, ch: "xyptw", samples: bakeWidths(samples, style) });
+  assert.equal(strokePath(stroke).d, nibOutline(decodeStroke(stroke), 2, 45));
+  assert.equal(strokePath(stroke).stroke, false);
+  const dashed = strokePath({ ...stroke, dash: "dashed" });
+  assert.ok(dashed.d.split("M").length - 1 > strokePath(stroke).d.split("M").length - 1, "each dash its own nib");
+  const dotted = strokePath({ ...stroke, dash: "dotted" });
+  assert.ok(/a[\d.]+,[\d.]+ 0 1,0/.test(dotted.d), "dots as round dots of the drawn width");
+  const shapedLine = encodeStroke({ id: "s", ...style, pen: false, ch: "xyt", shape: { kind: "line", params: { x1: 100, y1: 200, x2: 140, y2: 240 } },
+    samples: [{ x: 100, y: 200, t: 0 }, { x: 140, y: 240, t: 100 }] });
+  assert.notEqual(strokePath(shapedLine).d, nibOutline(decodeStroke(shapedLine), 2, 45), "a shape is an even line");
+  // the bounds: as far as the nib's corners, w or not
+  const b = strokeBounds(stroke);
+  const reach = 2 * NIB_REACH / 2;
+  assert.ok(Math.abs(b[0] - (100 - reach)) < 1e-9 && Math.abs(b[3] - (240 + reach)) < 1e-9, JSON.stringify(b));
+  assert.deepEqual(strokeBounds(shapedLine), [99, 199, 141, 241], "a shape: its size");
+});
+
+test("a turn turns a calligraphy nib with the samples, so its baked widths stay right; a flip mirrors it; a cut keeps it", () => {
+  const samples = Array.from({ length: 9 }, (_, i) => ({ x: 100 + 3 * i, y: 200 + (i % 3), p: 0.5, t: 8 * i }));
+  const style = { tool: "pen", brush: "calligraphy", nib: 30, size: 2, pen: true };
+  const stroke = encodeStroke({ id: "c", ...style, ch: "xyptw", samples: bakeWidths(samples, style) });
+  const ink = { ...newInk(1, 612, 792), strokes: [stroke] };
+  for (const angle of [Math.PI / 2, -Math.PI / 6, 1]) {
+    const turned = transformStrokes(ink, ["c"], { cx: 120, cy: 200, scale: 1.5, angle }).strokes[0];
+    assert.equal(turned.nib, ((Math.round(30 - (angle * 180) / Math.PI) % 180) + 180) % 180);
+    const again = brushWidths(decodeStroke(turned), { ...style, nib: turned.nib });
+    decodeStroke(turned).forEach((q, i) => assert.ok(Math.abs(q.w - again[i]) <= 0.02, `w at ${i} after a turn of ${angle}: ${q.w} vs ${again[i]}`));
+  }
+  assert.equal(transformStrokes(ink, ["c"], { cx: 0, cy: 0, scale: 2 }).strokes[0].nib, 30, "a resize keeps it");
+  const flipped = flipStrokes(ink, ["c"], { cx: 110, cy: 0, axis: "h" }).strokes[0];
+  assert.equal(flipped.nib, 150);
+  const mirrored = brushWidths(decodeStroke(flipped), { ...style, nib: 150 });
+  decodeStroke(flipped).forEach((q, i) => assert.ok(Math.abs(q.w - mirrored[i]) <= 0.02, "the mirrored widths are the mirrored nib's"));
+  const pieces = eraseAt(ink, 112, 201, 1.5).ink.strokes;
+  assert.ok(pieces.length >= 2 && pieces.every((s) => s.nib === 30 && s.brush === "calligraphy"), "an erased piece keeps its nib");
+});
+
+// --- fills on closed shapes ----------------------------------------------------------
+
+test("fills: CLOSED_SHAPES, restyleStrokes sets or clears a fill on the closed shapes alone, the opacity left out at 0.25", () => {
+  assert.deepEqual([...CLOSED_SHAPES], ["rect", "ellipse", "triangle", "polygon"]);
+  assert.equal(FILL_OPACITY, 0.25);
+  const rect = shaped("rect", SHAPES.rect), line = shaped("line", SHAPES.line), free = pen({ id: "free" });
+  assert.deepEqual([isClosedShape(rect), isClosedShape(line), isClosedShape(free)], [true, false, false]);
+  const ink = { ...newInk(1, 612, 792), strokes: [rect, line, free] };
+  const tinted = restyleStrokes(ink, ["rect", "line", "free"], { fill: { color: "#FDE047" } });
+  assert.deepEqual(tinted.strokes[0].fill, { color: "#fde047" }, "lower case, the default opacity left out");
+  assert.equal(tinted.strokes[1], line, "an open shape takes no fill");
+  assert.equal(tinted.strokes[2], free, "nor a freehand stroke");
+  assert.equal(tinted.strokes[0].pts, rect.pts, "a look change: the samples stay");
+  assert.equal(restyleStrokes(tinted, ["rect"], { fill: { color: "#fde047", opacity: 0.25 } }), tinted, "the same fill: no entry");
+  assert.deepEqual(restyleStrokes(tinted, ["rect"], { fill: { color: "#fde047", opacity: 0.5 } }).strokes[0].fill, { color: "#fde047", opacity: 0.5 });
+  const cleared = restyleStrokes(tinted, ["rect"], { fill: null });
+  assert.equal("fill" in cleared.strokes[0], false, "null clears it");
+  assert.equal(restyleStrokes(ink, ["rect"], { fill: null }), ink, "no fill already");
+  assert.equal(restyleStrokes(ink, ["rect"], { fill: { color: "red" } }), ink, "a colour that is no hex is ignored");
+  // a colour change leaves the fill as it is
+  assert.deepEqual(restyleStrokes(tinted, ["rect"], { color: "#dc2626" }).strokes[0].fill, { color: "#fde047" });
+});
+
+test("fills: strokePath gives a filled closed shape its polygon, nothing else gets one; a cut piece drops the fill", () => {
+  const rect = { ...shaped("rect", SHAPES.rect), fill: { color: "#fde047" } };
+  const p = strokePath(rect);
+  assert.ok(p.fill && p.fill.startsWith("M") && p.fill.endsWith("Z"), "the closed polygon through its samples");
+  assert.equal(p.fill.split("L").length, decodeStroke(rect).length, "one vertex a sample");
+  assert.equal(strokePath(shaped("rect", SHAPES.rect)).fill, undefined, "no fill, no polygon");
+  assert.equal(strokePath({ ...shaped("line", SHAPES.line), fill: { color: "#fde047" } }).fill, undefined, "an open shape's fill is not drawn");
+  const ink = { ...newInk(1, 612, 792), strokes: [rect] };
+  const [corner] = decodeStroke(rect);
+  const pieces = eraseAt(ink, corner.x, corner.y, 3).ink.strokes;
+  assert.ok(pieces.length && pieces.every((s) => !("fill" in s) && !("shape" in s)), "a piece is plain ink");
 });

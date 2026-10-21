@@ -17,10 +17,12 @@ struct HostInfo: Encodable, Equatable {
     var ink = true
     /// What of the claim's look the live line draws (LiveStrokeView): the
     /// width from the Pencil's force by the brush, the dash, a highlighter
-    /// multiplied onto the page, the smoothing, and the Pencil brush's width
-    /// from the tilt. A look not listed is drawn as the plain line, and the
+    /// multiplied onto the page, the smoothing, the Pencil brush's width
+    /// from the tilt, the Calligraphy pen's width from the travel against
+    /// its nib, and a stroke along the ruler's edge (the claim's `snap`,
+    /// RulerSnap). A look not listed is drawn as the plain line, and the
     /// page claims the stroke all the same.
-    var inkLooks = ["pressure", "dash", "blend", "stabilize", "pencil"]
+    var inkLooks = ["pressure", "dash", "blend", "stabilize", "pencil", "calligraphy", "snap"]
     /// The host sends `hold` when a captured Pencil stays still (PencilCapture).
     var hold = true
     /// The host forwards the Pencil's double tap and squeeze.
@@ -28,6 +30,13 @@ struct HostInfo: Encodable, Equatable {
     /// A squeeze's start and cancel come too (`squeeze`), and its end says
     /// so (`pencil` with `phase`).
     var pencilPhases = true
+    /// The `stroke` and `hold` samples carry the Pencil's barrel roll, a
+    /// seventh value (UITouch.rollAngle, iPadOS 17.5: an Apple Pencil Pro),
+    /// which turns a calligraphy pen's nib; the web shows its Lock angle.
+    var pencilRoll: Bool = {
+        if #available(iOS 17.5, *) { return true }
+        return false
+    }()
     /// The host plays `haptic` (PencilHaptics).
     var haptics = true
     /// The host has a server picker (the web shows a "Server…" row).
@@ -70,8 +79,11 @@ struct InkTool: Decodable, Equatable {
     enum Kind: String { case pen, highlighter }
     /// A pen's brush (finishStroke.js BRUSHES; InkWidth): absent, or a brush
     /// the shell does not know, is the plain Pen.
-    enum Brush: String { case pen, monoline, brush, pencil }
-    /// The ruler's line, reserved: decoded, not drawn yet. CSS px and degrees.
+    enum Brush: String { case pen, monoline, brush, pencil, calligraphy }
+    /// The ruler's edge the stroke runs along (RulerSnap): a point of it,
+    /// (x0, y0) in viewport CSS px, and its angle in degrees counterclockwise
+    /// as seen, the edge running along (cos angle, −sin angle). A snap the
+    /// shell cannot read is dropped, never the claim.
     struct Snap: Decodable, Equatable {
         var x0: Double
         var y0: Double
@@ -95,9 +107,16 @@ struct InkTool: Decodable, Equatable {
     /// The smoothing, 0 (none) to 4: the lazy brush's string (LazyBrush.radii).
     var stabilize: Int
     var snap: Snap?
+    /// A calligraphy pen's nib, degrees 0…179 counterclockwise as seen (the
+    /// edge the vector (cos nib, −sin nib) in the view's y-down space), 45
+    /// when the claim names none.
+    var nib: Int
+    /// The nib turns with the Pencil's roll at the stroke's first sample
+    /// (the preset's Lock angle off): `liveNib`.
+    var nibRoll: Bool
 
     init(kind: Kind, color: String, size: Double, opacity: Double = 1, brush: Brush = .pen, pressure: Bool = true,
-         dash: [Double]? = nil, multiply: Bool = false, stabilize: Int = 0, snap: Snap? = nil) {
+         dash: [Double]? = nil, multiply: Bool = false, stabilize: Int = 0, snap: Snap? = nil, nib: Int = 45, nibRoll: Bool = false) {
         self.kind = kind
         self.color = color
         self.size = size
@@ -108,9 +127,20 @@ struct InkTool: Decodable, Equatable {
         self.multiply = multiply
         self.stabilize = stabilize
         self.snap = snap
+        self.nib = nib
+        self.nibRoll = nibRoll
     }
 
-    private enum Keys: String, CodingKey { case kind, color, size, opacity, brush, pressure, dash, blend, stabilize, snap }
+    /// The nib the live line draws with: the claim's, turned by `roll` (the
+    /// stroke's first sample's, degrees clockwise as seen) when it follows
+    /// the roll, (nib − roll) mod 180 — the page's strokeNib.
+    func liveNib(roll: Double?) -> Double {
+        guard nibRoll, let roll, roll.isFinite else { return Double(nib) }
+        let turned = (Double(nib) - roll).rounded().truncatingRemainder(dividingBy: 180)
+        return turned < 0 ? turned + 180 : turned
+    }
+
+    private enum Keys: String, CodingKey { case kind, color, size, opacity, brush, pressure, dash, blend, stabilize, snap, nib, nibRoll }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: Keys.self)
@@ -129,6 +159,13 @@ struct InkTool: Decodable, Equatable {
             guard value.isFinite else { return nil }
             return Int(min(4, max(0, value.rounded())))
         }
+        // A nib is a number, rounded and turned into 0…179.
+        let nib = (try? c.decodeIfPresent(Double.self, forKey: .nib)).flatMap { value -> Int? in
+            guard value.isFinite, abs(value) < 1e6 else { return nil }
+            let degrees = Int(value.rounded()) % 180
+            return degrees < 0 ? degrees + 180 : degrees
+        }
+        let nibRoll = (try? c.decodeIfPresent(Bool.self, forKey: .nibRoll)) ?? false
         self.init(kind: kind == "highlighter" ? .highlighter : .pen,
                   color: try c.decode(String.self, forKey: .color),
                   size: try c.decode(Double.self, forKey: .size),
@@ -138,7 +175,9 @@ struct InkTool: Decodable, Equatable {
                   dash: dash,
                   multiply: blend == "multiply",
                   stabilize: level ?? 0,
-                  snap: try? c.decodeIfPresent(Snap.self, forKey: .snap))
+                  snap: try? c.decodeIfPresent(Snap.self, forKey: .snap),
+                  nib: nib ?? 45,
+                  nibRoll: nibRoll)
     }
 }
 
@@ -214,10 +253,11 @@ enum SqueezePhase: String, Encodable { case began, ended, cancelled }
 
 /// Native → web: `window.gammaNative.receive(msg)`, awaited.
 enum HostMessage: Equatable {
-    /// The finished stroke: `[x, y, p, t, a, z]` per sample (StrokeRecorder),
+    /// The finished stroke: `[x, y, p, t, a, z, r?]` per sample (StrokeRecorder),
     /// x and y in CSS px of the viewport, p = force / maximum force, t = ms
     /// from the first sample, a and z the Pencil's altitude and azimuth in
-    /// degrees. No samples: the system cancelled the touch, or the page took
+    /// degrees, r its barrel roll in degrees clockwise as seen (`pencilRoll`
+    /// only). No samples: the system cancelled the touch, or the page took
     /// the hold. `held` is the `n` of the hold whose shape the line was drawn
     /// as (ShapeHold), nil when none was: the page commits a shape only for
     /// that hold, so a lift that came before the page's answer stays the

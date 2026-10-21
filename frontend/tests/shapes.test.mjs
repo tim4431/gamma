@@ -185,3 +185,126 @@ test("stillSince: no samples is the first index; followHold never reads the samp
   assert.deepEqual(followHold(hold, [{ x: 0, y: 0, t: 0 }, { x: 0, y: 0, t: 850 }]), hold.params);
   assert.equal(followHold(hold, [{ x: 0, y: 0, t: 0 }, { x: 100, y: 0, t: 300 }, { x: 113, y: 0, t: 950 }]), null);
 });
+
+// --- editable shapes (docs/dev/handwriting.md "Editable shapes") ---------------------
+import { dragHandle, reshapeInk, reshapeStroke, shapeHandles } from "../src/ink/shapes.js";
+import { decodeStroke, encodeStroke, newInk, translateStrokes } from "../src/ink/ink.js";
+
+const near2 = (a, b, tol = 0.011) => Math.abs(a - b) <= tol;
+const at = (handles, id) => handles.find((h) => h.id === id);
+// How far a polyline lies from another: the farthest any sample of either is from the other's path.
+const gapTo = (p, a, b) => {
+  const dx = b.x - a.x, dy = b.y - a.y, len2 = dx * dx + dy * dy;
+  const u = len2 ? Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / len2)) : 0;
+  return Math.hypot(p.x - (a.x + u * dx), p.y - (a.y + u * dy));
+};
+const polylineGap = (a, b) => {
+  const from = (pts, path) => Math.max(...pts.map((p) => Math.min(...path.slice(1).map((q, i) => gapTo(p, path[i], q)))));
+  return Math.max(from(a, b), from(b, a));
+};
+
+test("shapeHandles: a line's and an arrow's ends, the corners in shapeSamples' order, an ellipse's two axis ends; none for a curve", () => {
+  assert.deepEqual(shapeHandles("line", { x1: 1, y1: 2, x2: 30, y2: 40 }), [{ id: "p1", x: 1, y: 2 }, { id: "p2", x: 30, y: 40 }]);
+  assert.deepEqual(shapeHandles("arrow", { x1: 1, y1: 2, x2: 30, y2: 40, head: 9 }).map((h) => h.id), ["p1", "p2"]);
+  const rect = { cx: 100, cy: 100, w: 40, h: 20, angle: 0 };
+  assert.deepEqual(shapeHandles("rect", rect), [{ id: "c0", x: 80, y: 90 }, { id: "c1", x: 120, y: 90 }, { id: "c2", x: 120, y: 110 }, { id: "c3", x: 80, y: 110 }]);
+  const samples = shapeSamples("rect", rect, {});
+  for (const h of shapeHandles("rect", rect)) assert.ok(samples.some((s) => s.x === h.x && s.y === h.y), `${h.id} is a sample`);
+  const tri = { x1: 0, y1: 0, x2: 40, y2: 0, x3: 20, y3: 30 };
+  assert.deepEqual(shapeHandles("triangle", tri), [{ id: "c0", x: 0, y: 0 }, { id: "c1", x: 40, y: 0 }, { id: "c2", x: 20, y: 30 }]);
+  const hex = shapeHandles("polygon", { cx: 0, cy: 0, r: 10, n: 6, angle: 0 });
+  assert.equal(hex.length, 6);
+  assert.ok(near2(hex[0].x, 10) && near2(hex[0].y, 0) && near2(hex[1].x, 5) && near2(hex[1].y, 8.66));
+  const ell = shapeHandles("ellipse", { cx: 50, cy: 50, rx: 30, ry: 10, angle: 90 });
+  assert.ok(near2(at(ell, "rx").x, 50) && near2(at(ell, "rx").y, 80), "the long axis's end, turned 90° (down the page)");
+  assert.ok(near2(at(ell, "ry").x, 40) && near2(at(ell, "ry").y, 50), "the short axis's end");
+  assert.deepEqual(shapeHandles("curve", { x1: 0, y1: 0, x2: 1, y2: 1 }), []);
+  assert.deepEqual(shapeHandles("spiral", {}), []);
+});
+
+test("dragHandle: an end moves alone, Shift turning it in 15° steps about the other; a triangle's corner alone", () => {
+  const line = { x1: 100, y1: 100, x2: 200, y2: 100 };
+  assert.deepEqual(dragHandle("line", line, "p2", { x: 220.004, y: 130 }), { x1: 100, y1: 100, x2: 220, y2: 130 });
+  assert.deepEqual(dragHandle("line", line, "p1", { x: 90, y: 80 }), { x1: 90, y1: 80, x2: 200, y2: 100 });
+  const snapped = dragHandle("line", line, "p2", { x: 200, y: 127 }, { shift: true });   // 15.1° → 15°
+  assert.ok(near2(Math.atan2(snapped.y2 - 100, snapped.x2 - 100) * 180 / Math.PI, 15, 0.01));
+  assert.ok(near2(Math.hypot(snapped.x2 - 100, snapped.y2 - 100), Math.hypot(100, 27), 0.02), "its length kept");
+  assert.equal(dragHandle("arrow", { ...line, head: 12 }, "p2", { x: 150, y: 150 }).head, 12, "an arrow keeps its head");
+  const tri = { x1: 0, y1: 0, x2: 40, y2: 0, x3: 20, y3: 30 };
+  assert.deepEqual(dragHandle("triangle", tri, "c1", { x: 50, y: 10 }), { x1: 0, y1: 0, x2: 50, y2: 10, x3: 20, y3: 30 });
+  assert.equal(dragHandle("line", line, "c0", { x: 0, y: 0 }), line, "a handle it does not have: as it was");
+});
+
+test("dragHandle: a rectangle's corner keeps the opposite one and the angle; a polygon stays regular; an ellipse turns, stretches and widens", () => {
+  const rect = { cx: 100, cy: 100, w: 40, h: 20, angle: 0 };
+  assert.deepEqual(dragHandle("rect", rect, "c2", { x: 140, y: 130 }), { cx: 110, cy: 110, w: 60, h: 40, angle: 0 });
+  assert.deepEqual(dragHandle("rect", rect, "c2", { x: 60, y: 70 }), { cx: 70, cy: 80, w: 20, h: 20, angle: 0 }, "past the fixed corner: the box flips over");
+  // a turned rectangle: the opposite corner stays where it was, the angle with it
+  const turned = { cx: 100, cy: 100, w: 40, h: 20, angle: 20 };
+  const fixed = at(shapeHandles("rect", turned), "c0");
+  const out = dragHandle("rect", turned, "c2", { x: 140, y: 140 });
+  assert.equal(out.angle, 20);
+  const moved = at(shapeHandles("rect", out), "c0");
+  assert.ok(near2(moved.x, fixed.x, 0.02) && near2(moved.y, fixed.y, 0.02), "c0 stays");
+  // a polygon's corner sets its radius and its turn about the centre
+  const hex = { cx: 0, cy: 0, r: 10, n: 6, angle: 0 };
+  const grown = dragHandle("polygon", hex, "c1", { x: 0, y: 20 });
+  assert.deepEqual([grown.cx, grown.cy, grown.r, grown.n], [0, 0, 20, 6]);
+  assert.ok(near2(grown.angle, 30), "corner 1 at 90°: the first at 30°");
+  const c1 = at(shapeHandles("polygon", grown), "c1");
+  assert.ok(near2(c1.x, 0, 0.02) && near2(c1.y, 20, 0.02), "the dragged corner lands under the pointer");
+  // an ellipse: the long axis follows rx, ry sets the short one, and a short axis grown past the long one swaps them
+  const ell = { cx: 50, cy: 50, rx: 30, ry: 10, angle: 0 };
+  assert.deepEqual(dragHandle("ellipse", ell, "rx", { x: 50, y: 90 }), { cx: 50, cy: 50, rx: 40, ry: 10, angle: 90 });
+  assert.deepEqual(dragHandle("ellipse", ell, "ry", { x: 70, y: 65 }), { cx: 50, cy: 50, rx: 30, ry: 15, angle: 0 }, "across the long axis only");
+  assert.deepEqual(dragHandle("ellipse", ell, "ry", { x: 50, y: 90 }), { cx: 50, cy: 50, rx: 40, ry: 30, angle: 90 }, "past it: the axes swap");
+});
+
+test("reshapeStroke writes the stroke again from new params: the shape's polyline over its own time and mean pressure, every other key kept", () => {
+  const params = { cx: 150, cy: 250, w: 80, h: 40, angle: 0 };
+  const stroke = encodeStroke({ id: "r", ch: "xypt", pen: false, brush: "calligraphy", nib: 30, color: "#123456", t0: 99,
+    fill: { color: "#fde047" }, note: "mine", shape: { kind: "rect", params },
+    samples: shapeSamples("rect", params, { span: 480, p: 0.62 }).map((s) => ({ ...s, t: s.t + 20 })) });
+  const next = dragHandle("rect", params, "c2", { x: 200, y: 290 });
+  const out = reshapeStroke(stroke, next);
+  assert.deepEqual(out.shape, { kind: "rect", params: next });
+  const got = decodeStroke(out);
+  assert.ok(polylineGap(got, shapeSamples("rect", next, {})) < 0.01, "the params' polyline, on the 1/100 grid");
+  assert.deepEqual([got[0].t, got.at(-1).t], [20, 500], "its own span of time");
+  assert.ok(got.every((s) => s.p === 0.62), "its mean pressure");
+  assert.deepEqual([out.id, out.ch, out.color, out.t0, out.fill, out.note, out.nib, out.brush, out.pen],
+    ["r", "xypt", "#123456", 99, stroke.fill, "mine", 30, "calligraphy", false]);
+  assert.equal(reshapeStroke(encodeStroke({ id: "f", ch: "xy", samples: [{ x: 0, y: 0 }] }), next).pts.length, 2, "no shape: as it was");
+  // a later move keeps the params and the samples together, as after every other edit
+  const ink = { ...newInk(1, 612, 792), strokes: [out] };
+  const shifted = translateStrokes(ink, ["r"], 7.5, -3).strokes[0];
+  assert.ok(polylineGap(decodeStroke(shifted), shapeSamples("rect", shifted.shape.params, {})) < 0.02);
+  // reshapeInk: the named stroke alone, the same group for anything else
+  const two = { ...newInk(1, 612, 792), strokes: [stroke, encodeStroke({ id: "x", ch: "xy", samples: [{ x: 1, y: 1 }] })] };
+  const edited = reshapeInk(two, "r", next);
+  assert.equal(edited.strokes[1], two.strokes[1]);
+  assert.deepEqual(edited.strokes[0].shape.params, next);
+  assert.equal(reshapeInk(two, "x", next), two, "a stroke without a shape");
+  assert.equal(reshapeInk(two, "nope", next), two);
+});
+
+test("every kind with handles rebuilds from a drag of each of them: the samples lie on the new params' shape", () => {
+  const cases = {
+    line: { x1: 100, y1: 200, x2: 180.5, y2: 230.25 },
+    arrow: { x1: 100, y1: 200, x2: 220, y2: 240, head: 18 },
+    triangle: { x1: 100, y1: 300, x2: 160, y2: 220, x3: 210, y3: 310 },
+    rect: { cx: 150, cy: 250, w: 80, h: 40, angle: 20 },
+    polygon: { cx: 150, cy: 250, r: 40, n: 6, angle: 10 },
+    ellipse: { cx: 150, cy: 250, rx: 50, ry: 20, angle: 160 },
+  };
+  for (const [kind, params] of Object.entries(cases)) {
+    const stroke = encodeStroke({ id: kind, ch: "xyt", pen: false, shape: { kind, params }, samples: shapeSamples(kind, params, { span: 300 }) });
+    for (const h of shapeHandles(kind, params)) {
+      const next = dragHandle(kind, params, h.id, { x: h.x + 13.37, y: h.y - 6.5 });
+      const out = reshapeStroke(stroke, next);
+      const gap = polylineGap(decodeStroke(out), shapeSamples(kind, out.shape.params, {}));
+      assert.ok(gap < 0.01, `${kind} ${h.id}: ${gap}`);
+      assert.equal(out.shape.kind, kind);
+    }
+  }
+});

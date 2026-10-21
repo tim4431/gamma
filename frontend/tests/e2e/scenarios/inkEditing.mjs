@@ -107,11 +107,12 @@ export async function inkEditingScenarios({ server, browser, alice, bob, makePdf
     assertEq(await menu().getByRole("button", { name: "More", exact: true }).getAttribute("aria-expanded"), "false");
     await menu().getByRole("button", { name: "More", exact: true }).tap();
     assertEq(await menu().getByRole("button", { name: "More", exact: true }).getAttribute("aria-expanded"), "true");
-    // (Merge into note: the selection is this note's whole drawing and the page has another)
-    for (const name of ["Cut", "Flip horizontal", "Flip vertical", "New note", "Merge into note", "Select note", "Show note"]) {
+    // (Merge into note in New note's place: the selection is this note's whole drawing and the page has another)
+    for (const name of ["Cut", "Flip horizontal", "Flip vertical", "Merge into note", "Select note", "Show note", "Transcribe"]) {
       const box = await menu().getByRole("button", { name, exact: true }).boundingBox();
       assert(box.width >= 36 && box.height >= 36, `${name} retains a touch target`);
     }
+    assertEq(await menu().getByRole("button", { name: "New note", exact: true }).count(), 0, "New note gives Merge into note its place");
     assertEq(await menu().locator(".inkEditMore .ctlBtn").count(), 7, "at most seven buttons in the second row");
     await menu().getByRole("button", { name: "Duplicate", exact: true }).hover();
     await page.getByRole("tooltip").filter({ hasText: "Duplicate" }).waitFor();

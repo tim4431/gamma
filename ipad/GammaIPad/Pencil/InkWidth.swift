@@ -10,9 +10,11 @@ import Foundation
 ///
 /// A sample's `w` multiplies the tool's size into the width drawn there; a
 /// Pencil's `o` multiplies its opacity. A stroke has widths when its brush
-/// has a width law for it: a pen's Pen, Brush or Pencil (not the Ballpoint),
-/// with pressure (only the Brush without, by its speed law), and never a
-/// highlighter or a shape (a held shape is even end to end, whatever its brush).
+/// has a width law for it: a pen's Pen, Brush, Pencil or Calligraphy pen
+/// (not the Ballpoint), with pressure (only the Brush without, by its speed
+/// law, and the Calligraphy pen, by its travel against the nib alone), and
+/// never a highlighter or a shape (a held shape is even end to end,
+/// whatever its brush).
 enum InkWidth {
     /// One sample as a law reads it: x and y in one unit (the Brush's tapers
     /// and its speed law measure lengths in sizes of it), p the pressure,
@@ -32,6 +34,9 @@ enum InkWidth {
     static let brushMax = 2.0
     /// perfect-freehand's simulatePressure step (its RATE_OF_PRESSURE_CHANGE).
     static let simulateRate = 0.275
+    /// The Calligraphy pen's hairline along its nib, in sizes: the law's
+    /// floor (ink.js NIB_HAIR).
+    static let nibHair = 0.12
 
     /// A host sample (StrokeRecorder: `[x, y, p, t]`, or `[x, y, p, t, a, z]`
     /// with the tilt) as a law reads it.
@@ -51,7 +56,38 @@ enum InkWidth {
         case .monoline: return nil
         case .brush: return 2 * p
         case .pencil: return clamp((1 + (p - 0.5)) * (1 + 2 * (1 - clamp(s.a ?? 90, 0, 90) / 90)), 0, 4)
+        case .calligraphy: return calligraphy(s, travel: nil, nib: 45)
         }
+    }
+
+    /// The Calligraphy pen's law at one sample: as wide as the nib where the
+    /// stroke travels across it, the hairline (`nibHair`) along it — the sine
+    /// between the travel (dx, dy) and the nib's edge, the vector (cos nib,
+    /// −sin nib) in the view's y-down space, `nib` in degrees
+    /// counterclockwise as seen; no travel (a tap) draws the whole nib — and
+    /// a little wider with pressure, capped at 4 (finishStroke.js
+    /// BRUSHES.calligraphy).
+    static func calligraphy(_ s: Sample, travel: (dx: Double, dy: Double)?, nib: Double) -> Double {
+        let r = nib * .pi / 180
+        var across = 1.0
+        if let d = travel { across = abs(d.dx * sin(r) + d.dy * cos(r)) / hypot(d.dx, d.dy) }
+        return clamp(max(nibHair, across) * (0.85 + 0.3 * pressureOf(s)), 0, 4)
+    }
+
+    /// The direction a stroke travels at sample `i` (finishStroke.js
+    /// travelAt): from the sample before to the one after, one-sided at the
+    /// ends; where those two coincide, the segment ending at it, else the one
+    /// starting there; nil where the stroke has no length.
+    static func travel(_ samples: [Sample], at i: Int) -> (dx: Double, dy: Double)? {
+        guard samples.indices.contains(i) else { return nil }
+        let n = samples.count
+        func step(_ a: Int, _ b: Int) -> (dx: Double, dy: Double) {
+            (dx: samples[b].x - samples[a].x, dy: samples[b].y - samples[a].y)
+        }
+        var tries = [step(max(i - 1, 0), min(i + 1, n - 1))]
+        if i > 0 { tries.append(step(i - 1, i)) }
+        if i < n - 1 { tries.append(step(i, i + 1)) }
+        return tries.first { hypot($0.dx, $0.dy) > 1e-9 }
     }
 
     /// The Pencil's opacity law: pressure darkens it.
@@ -60,9 +96,10 @@ enum InkWidth {
     }
 
     /// Whether a stroke has widths (finishStroke.js widthLaw): a pen's brush
-    /// with a law, not a shape, and with pressure unless it is the Brush.
+    /// with a law, not a shape, and with pressure unless it is the Brush or
+    /// the Calligraphy pen.
     static func hasWidths(tool: InkTool.Kind, brush: InkTool.Brush, pressure: Bool, shape: Bool) -> Bool {
-        tool == .pen && !shape && brush != .monoline && (pressure || brush == .brush)
+        tool == .pen && !shape && brush != .monoline && (pressure || brush == .brush || brush == .calligraphy)
     }
 
     /// The width multipliers of a stroke, one per sample to three decimals,
@@ -73,10 +110,20 @@ enum InkWidth {
     /// samples' own, or, without pressure (`pressure` false, or samples
     /// without p), the speed law's. `live` is a stroke still being written:
     /// no end taper and the start taper at its full length, as the web's
-    /// live canvas draws it, so the line under the pen holds still.
+    /// live canvas draws it, so the line under the pen holds still. A
+    /// Calligraphy pen's widths read each sample's travel and `nib` (the
+    /// stroke's, in degrees; the claim's, turned by the roll), its pressure
+    /// only when the stroke reads it (else 0.5), and have no tapers.
     static func widths(_ samples: [Sample], tool: InkTool.Kind, brush: InkTool.Brush, pressure: Bool, size: Double,
-                       shape: Bool = false, live: Bool = false) -> [Double]? {
+                       shape: Bool = false, live: Bool = false, nib: Double = 45) -> [Double]? {
         guard hasWidths(tool: tool, brush: brush, pressure: pressure, shape: shape), !samples.isEmpty else { return nil }
+        if brush == .calligraphy {
+            let read = pressure && samples[0].p != nil
+            return samples.indices.map { i -> Double in
+                let s = read ? samples[i] : Sample(x: samples[i].x, y: samples[i].y, p: 0.5, a: nil)
+                return round3(calligraphy(s, travel: travel(samples, at: i), nib: nib))
+            }
+        }
         guard brush == .brush else { return samples.map { round3(law(brush, $0) ?? 1) } }
         let size = max(0.01, size)
         let read = pressure && samples[0].p != nil

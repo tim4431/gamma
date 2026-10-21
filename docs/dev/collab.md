@@ -425,7 +425,8 @@ sends, at most every 50 ms while a stroke is in progress:
 sheet; `g` the group block the stroke joins (null before the group's
 first flush, when the writer has no block yet); `id` the stroke id the
 committed stroke will carry; `style` the preset's look as the stroke
-will be encoded (`brush` and `dash` only when set); `k` the writer's
+will be encoded (`brush` and `dash` only when set, and a calligraphy
+pen's `nib`, its angle 0..179); `k` the writer's
 css px per pt; `n` the index of this chunk's first sample in the stroke;
 `samples` the samples since the last chunk as `[x, y, p, t, a, z]` —
 page points to two decimals, pressure 0..1 or null, ms since the

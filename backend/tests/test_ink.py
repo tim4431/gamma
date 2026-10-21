@@ -7,6 +7,7 @@ merge cases) run in test_shared_fixtures.py."""
 
 import io
 import json
+import math
 import zipfile
 
 import pytest
@@ -902,3 +903,95 @@ def test_notes_pdf_draws_the_strokes(guest):
     assert r.status_code == 200, r.text
     page = PdfReader(io.BytesIO(r.content)).pages[0]
     assert sorted(page["/Resources"]["/ExtGState"]) == ["/GSink330", "/GSink660"]
+
+
+# --- the calligraphy pen and fills (handwriting.md "Calligraphy and fills on the server") ---
+
+def _rect(fill=None, kind="rect", **over):
+    """A rectangle as the Shapes tool or a hold commits it: its corners with a
+    sample every 2 pt, closed, pen false, written xyt, its shape record."""
+    corners = [(100, 300), (180, 300), (180, 340), (100, 340), (100, 300)]
+    samples = []
+    for (ax, ay), (bx, by) in zip(corners, corners[1:]):
+        n = max(1, int(math.hypot(bx - ax, by - ay) // 2))
+        samples += [{"x": ax + (bx - ax) * j / n, "y": ay + (by - ay) * j / n} for j in range(n)]
+    samples.append({"x": 100, "y": 300})
+    for i, s in enumerate(samples):
+        s["t"] = 4 * i
+    params = {"cx": 140, "cy": 320, "w": 80, "h": 40, "angle": 0} if kind == "rect" else {"x1": 100, "y1": 300, "x2": 180, "y2": 340}
+    return {"id": over.pop("id", "r"), "tool": "pen", "brush": "monoline", "pen": False, "color": "#1d4ed8", "size": 2, "ch": "xyt",
+            "pts": inkmod.encode_points(samples, "xyt"), "shape": {"kind": kind, "params": params},
+            **({"fill": fill} if fill else {}), **over}
+
+
+def test_calligraphy_bounds_reach_the_nib_corners_whatever_w():
+    """The screen draws a calligraphy stroke with its nib, which reaches
+    size × hypot(1, 0.12) / 2 from every sample; the box says so, as the
+    client's strokeBounds does, and a calligraphy shape is its size."""
+    samples = [{"x": 100 + 2 * i, "y": 200 + 2 * i, "p": 0.5, "t": 8 * i, "w": 1} for i in range(21)]
+    stroke = {"id": "c", "brush": "calligraphy", "nib": 45, "size": 2, "ch": "xyptw", "pts": inkmod.encode_points(samples, "xyptw")}
+    reach = 2 * inkmod.NIB_REACH / 2
+    box = inkmod.bounding_box(inkmod.parse_ink(_ink(strokes=[stroke])))
+    assert box == pytest.approx((100 - reach, 200 - reach, 140 + reach, 240 + reach))
+    # a hairline's w would give a box a hair wide: the nib's corners still reach
+    thin = {**stroke, "pts": inkmod.encode_points([{**s, "w": 0.12} for s in samples], "xyptw")}
+    assert inkmod.bounding_box(inkmod.parse_ink(_ink(strokes=[thin]))) == pytest.approx(box)
+    shaped = {**stroke, "pen": False, "ch": "xyt", "shape": {"kind": "line", "params": {"x1": 100, "y1": 200, "x2": 140, "y2": 240}},
+              "pts": inkmod.encode_points([{"x": 100, "y": 200, "t": 0}, {"x": 140, "y": 240, "t": 90}], "xyt")}
+    assert inkmod.bounding_box(inkmod.parse_ink(_ink(strokes=[shaped]))) == pytest.approx((99, 199, 141, 241))
+    # every exporter draws it from its baked widths, as any pen
+    svg = inkmod.to_svg(inkmod.parse_ink(_ink(strokes=[stroke])))
+    assert svg.count("<path") == 20 and 'stroke-width="2"' in svg
+
+
+def test_a_nib_is_geometry_in_the_merge():
+    base = inkmod.parse_ink(_ink(strokes=[{**_ink()["strokes"][0], "brush": "calligraphy", "nib": 45}]))
+    turned = inkmod.parse_ink(_ink(strokes=[{**_ink()["strokes"][0], "brush": "calligraphy", "nib": 60}]))
+    moved = inkmod.parse_ink(_ink(strokes=[{**_ink()["strokes"][0], "brush": "calligraphy", "nib": 45,
+                                            "pts": inkmod.encode_points(_samples(x0=150), "xyptw")}]))
+    got = inkmod.merge_ink(base, turned, moved)
+    assert not got.clean and got.lost_ours == ["s1"] and got.ink.strokes[0].nib == 45 and got.ink.strokes[0].pts == moved.strokes[0].pts
+
+
+def test_a_filled_closed_shape_draws_its_fill_under_its_outline():
+    ink = inkmod.parse_ink(_ink(strokes=[_rect({"color": "#fde047"}), _rect({"color": "#fde047"}, kind="line", id="l")]))
+    svg = inkmod.to_svg(ink)
+    fill = '" fill="rgb(253,224,71)" fill-opacity="0.25"/>'
+    assert svg.count(fill) == 1, "the rectangle's fill, not the line's"
+    at = svg.index(fill)
+    assert svg.rindex("<path", 0, at) < svg.index('<g fill="none" stroke="rgb(29,78,216)"'), "the fill comes first"
+    assert svg[svg.rindex("<path", 0, at):at].endswith(" Z"), "a closed polygon"
+    ops = inkmod.pdf_path_ops(ink, lambda x, y: (x, PAGE_H - y))
+    assert ops.count(b" h f") == 1 and b"q /GSink250 gs\n0.99 0.88 0.28 rg\n" in ops
+    assert ops.index(b" h f") < ops.index(b"0.11 0.31 0.85 RG"), "under the outline"
+    assert sorted(inkmod.pdf_path_resources(ops)) == ["/GSink250"]
+    # an opaque fill sets no state; none at all, no fill drawn
+    solid = inkmod.parse_ink(_ink(strokes=[_rect({"color": "#fde047", "opacity": 1})]))
+    assert inkmod.pdf_path_resources(inkmod.pdf_path_ops(solid, lambda x, y: (x, y))) is None
+    assert b" h f" not in inkmod.pdf_path_ops(inkmod.parse_ink(_ink(strokes=[_rect()])), lambda x, y: (x, y))
+    # the AI's picture: the page's content stamped with the fill, its state declared
+    from PyPDF2 import PdfReader
+    from gamma.pdf_export import page_with_ink
+    out, _ = page_with_ink(_blank_pdf(), 1, [ink], vector=True)
+    page = PdfReader(io.BytesIO(out)).pages[0]
+    stamped = b"".join(part.get_object().get_data() for part in page["/Contents"])
+    assert b" h f" in stamped and "/GSink250" in page["/Resources"]["/ExtGState"]
+
+
+def test_the_annotated_pdf_keeps_a_filled_shape_as_ink_and_brings_the_fill_back():
+    """/Ink-pure: a filled rectangle is its outline in its bucket's /Ink, the
+    fill only in /GammaInk; no /Square, /Circle or /Polygon is written for
+    ink, and a Gamma import reads the fill back."""
+    from PyPDF2 import PdfReader
+    from gamma.pdf_export import annotate_pdf
+    from gamma.routers.imports import _extract_pdf_annotations
+
+    ink = inkmod.parse_ink(_ink(strokes=[_rect({"color": "#fde047", "opacity": 0.4})]))
+    out, written = annotate_pdf(_blank_pdf(), [], ink=[{"ink": ink, "note": "", "id": "blk"}])
+    assert written == 1
+    reader = PdfReader(io.BytesIO(out))
+    annots = [a.get_object() for a in reader.pages[0]["/Annots"]]
+    assert [str(a["/Subtype"]) for a in annots] == ["/Ink"]
+    assert json.loads(str(annots[0]["/GammaInk"]))["strokes"][0]["fill"] == {"color": "#fde047", "opacity": 0.4}
+    back = _extract_pdf_annotations(reader)[0]["ink"].strokes[0]
+    assert back.fill.color == "#fde047" and back.fill.opacity == 0.4 and back.shape.kind == "rect"

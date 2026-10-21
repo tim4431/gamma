@@ -63,15 +63,22 @@ export function useMarks({ ink, inkSelection, inkFlash, boxes, boxSel, boxFlash 
 // is near the view (a PDF page within its viewer's look-ahead); one that is
 // not and carries no marks mounts nothing — each layer listens on the
 // window and the document, and a book has hundreds of pages. A read-only
-// surface mounts it for peers' strokes in progress too (useHasWet).
-export function MarkupLayers({ surface, wrapRef, width, height, marks, active = true }) {
+// surface mounts it for peers' strokes in progress too (useHasWet). The
+// ruler (ink.ruler) goes to the layer of the surface it lies on, and so
+// does the zoom window's box (ink.zoom). `chrome` false is the zoom
+// window's own copy of a page's layers (ink/ZoomWindow.jsx): its ink layer
+// draws and writes but shows no menu, handles, ruler or window box, opens
+// no Paste here, takes no finger chords (the page's layer has them all) and
+// raises no finger-scroll hint (nothing scrolls there), and there are no
+// text boxes; onZoomStroke(box) hears of each stroke it commits.
+export function MarkupLayers({ surface, wrapRef, width, height, marks, active = true, chrome = true, onZoomStroke }) {
   const { readOnly, ink, text, actions } = usePageTools();
   const wet = useHasWet(surface);
   const edit = readOnly || text.armed ? {} : actions;
   if (!active && !marks.ink.length && !marks.boxes.length) return null;
   return (
     <>
-      <TextBoxLayer surface={surface} wrapRef={wrapRef} width={width} height={height} marks={marks} />
+      {chrome ? <TextBoxLayer surface={surface} wrapRef={wrapRef} width={width} height={height} marks={marks} /> : null}
       {readOnly && !marks.ink.length && !wet ? null : (
         <InkLayer pageNumber={surface} wrapRef={wrapRef} width={width} height={height} blocks={marks.ink}
           tool={ink.tool} penTool={ink.penTool} penOnly={ink.penOnly} pressure={ink.pressure} eraserMode={ink.eraserMode}
@@ -79,12 +86,19 @@ export function MarkupLayers({ surface, wrapRef, width, height, marks, active = 
           fingerUndo={ink.fingerUndo} lassoMode={ink.lassoMode} selection={marks.inkSelection} flash={marks.inkFlash}
           clip={!!ink.clip} keys={ink.keys} hoverPreview={ink.hoverPreview !== false}
           onStroke={edit.onStroke} onEraseAlong={edit.onEraseAlong} onEraseEnd={edit.onEraseEnd}
-          onEraseMany={edit.onEraseMany} onSelect={edit.onSelect} onPaste={edit.onPaste}
+          onEraseMany={edit.onEraseMany} onSelect={edit.onSelect} onPaste={chrome ? edit.onPaste : undefined}
           onAction={edit.onAction} onMoveSelection={edit.onMoveSelection} onJump={text.armed ? undefined : actions.onJump}
-          onFingerScroll={edit.onFingerScroll} onHoldStatus={edit.onHoldStatus} onInkFeatures={actions.onInkFeatures}
+          onFingerScroll={chrome ? edit.onFingerScroll : undefined} onHoldStatus={edit.onHoldStatus}
+          onInkFeatures={chrome ? actions.onInkFeatures : undefined}
           onInkLive={edit.onInkLive} onHaptic={edit.onHaptic}
+          // the ruler lies on the surface it was laid on; it moves while the Text tool is armed too
+          ruler={chrome && ink.ruler?.surface === surface ? ink.ruler : null} rulerUnits={ink.rulerUnits}
+          onRuler={readOnly ? undefined : actions.onRuler}
           // the finger chords step the block history while the Text tool has the page, so they stay wired then
-          onUndoGesture={readOnly ? undefined : actions.onUndoGesture} />
+          onUndoGesture={readOnly || !chrome ? undefined : actions.onUndoGesture}
+          // the zoom window's box on its page; while a window is open a blank tap on any page moves it there
+          chrome={chrome} onZoomStroke={onZoomStroke} zoom={chrome && ink.zoom?.page === surface ? ink.zoom : null}
+          onZoom={chrome && ink.zoom && !readOnly ? actions.onZoom : undefined} />
       )}
     </>
   );

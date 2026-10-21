@@ -3,7 +3,8 @@
 // before the bundle runs, its user script declares `window.gammaNative` —
 // the host's platform, its version and what it can do: {platform, version,
 // ink (it captures claimed Pencil strokes), inkLooks (what of the claim's
-// look its live line draws), hold (it sends `hold` when a captured Pencil
+// look its live line draws, `snap` the line along the ruler's edge among
+// them), hold (it sends `hold` when a captured Pencil
 // stays still), pencil (it forwards the double tap and the squeeze),
 // pencilPhases (a squeeze's start and cancel come too, as `squeeze`),
 // haptics (it plays `haptic`), servers (it has a server picker)} — and a

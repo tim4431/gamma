@@ -291,15 +291,15 @@ export async function inkScenarios({ server, browser, alice, makePdf, step, unti
       await page.click(".pdfInkSub button[aria-label='Red']");
       await page.click(".pdfInkSub button[aria-label='Width 4 pt']");
       assertEq(await page.locator(".pdfInkSub button[aria-label='Width 4 pt']").getAttribute("title"), "Width 4 pt · [ ]", "a width dot names the bracket keys");
-      // the Style picker: its menu opens on the press, the four styles in order, the current one checked
+      // the Style picker: its menu opens on the press, the five styles in order, the current one checked
       const picker = page.locator(".pdfInkSub .inkStyleBtn");
       assertEq(JSON.stringify([await picker.getAttribute("aria-label"), await picker.getAttribute("aria-expanded")]), JSON.stringify(["Style: Pen", "false"]));
       await picker.click();
       const styles = page.getByRole("menu", { name: "Pen style" });
-      assertEq(JSON.stringify(await styles.getByRole("menuitemradio").allTextContents()), JSON.stringify(["Pen", "Ballpoint", "Brush", "Pencil"]),
-        "Pen · Ballpoint · Brush · Pencil");
+      assertEq(JSON.stringify(await styles.getByRole("menuitemradio").allTextContents()), JSON.stringify(["Pen", "Ballpoint", "Brush", "Pencil", "Calligraphy"]),
+        "Pen · Ballpoint · Brush · Pencil · Calligraphy");
       assertEq(await styles.getByRole("menuitemradio", { name: "Pen", exact: true }).getAttribute("aria-checked"), "true");
-      assertEq(await styles.locator(".inkBrushPreview").count(), 4, "each row led by a stroke in its look");
+      assertEq(await styles.locator(".inkBrushPreview").count(), 5, "each row led by a stroke in its look");
       await styles.getByRole("menuitemradio", { name: "Ballpoint", exact: true }).click();
       await page.locator(".pdfInkSub").getByRole("button", { name: "Style: Ballpoint", exact: true }).waitFor();
       assertEq(await page.locator(".pdfInkBar .inkToolBtn.modeActive").getAttribute("aria-label"),
@@ -1276,7 +1276,7 @@ export async function inkScenarios({ server, browser, alice, makePdf, step, unti
   // wait until preset 1 is a solid plain pen there again.
   const presetsPushed = () => until(async () => {
     const first = ((await account.api("/api/prefs/profile")).value?.inkTools || [])[0];
-    return !first || (!first.brush && !first.dash);
+    return !first || (!first.brush && !first.dash && !first.stabilize);
   }, { what: "preset 1 a solid plain pen on the account again" }).catch(() => {});
 
   await step("ink: the Style picker's Brush bakes a tapered pressure stroke; Dashed cuts it into dashes and dashes an even line; Shift+[ ] step the style", async () => {
@@ -1327,7 +1327,12 @@ export async function inkScenarios({ server, browser, alice, makePdf, step, unti
       await until(async () => { const label = await armedLabel(); return / pen · /.test(label) && !/ballpoint|brush|pencil/.test(label); },
         { what: "back to the plain pen" });
       await page.keyboard.press("Shift+BracketLeft");
-      await until(async () => (await armedLabel()).includes(" pencil · "), { what: "Shift+[ wraps from Pen to Pencil" });
+      await until(async () => (await armedLabel()).includes(" calligraphy pen · "), { what: "Shift+[ wraps from Pen to Calligraphy" });
+      await page.keyboard.press("Shift+BracketLeft");
+      await until(async () => (await armedLabel()).includes(" pencil · "), { what: "and on to Pencil" });
+      // Calligraphy's smoothing of 2 is its default, never stored: the pen stepped past it smooths as before (not at all)
+      await until(async () => { const first = JSON.parse(await page.evaluate(() => localStorage.getItem("gamma-ink-tools")) || "[]")[0];
+        return first?.brush === "pencil" && !("stabilize" in first); }, { what: "a pencil with no smoothing left behind by Calligraphy" });
     } finally {
       // preset 1 back to a solid plain pen, for the steps (and scenarios) after
       if (!(await page.locator(".pdfInkSub").count())) await openOptions().catch(() => {});

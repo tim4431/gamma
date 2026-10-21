@@ -10,7 +10,7 @@
 import { T, t } from "../shared/i18n/i18n.js";
 import { shapeName, shapeSamples } from "./shapes.js";
 import { isScribble, scribbleTargets } from "./gestures.js";
-import { DEFAULT_SIZE, KNOWN_BRUSHES, MAX_STROKE_SIZE, decodeStroke, encodePoints } from "./ink.js";
+import { DEFAULT_NIB, DEFAULT_SIZE, KNOWN_BRUSHES, MAX_STROKE_SIZE, NIB_HAIR, decodeStroke, encodePoints } from "./ink.js";
 
 // Coalesced samples closer than this to the previous kept one (in points,
 // scale 1) are dropped: a 240 Hz trace roughly halves with no visible change.
@@ -27,7 +27,9 @@ const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 // Brush's `w` is shaped along the stroke by its two tapers (in sizes of
 // arc length, each at most half the stroke, eased out as a sine) between
 // `min` and `max`, and when the pointer reports no pressure its `simulate`
-// speed law stands in for it.
+// speed law stands in for it. The Calligraphy pen's law reads the stroke's
+// travel at the sample (`travel`: travelAt) and its `nib` as well, so a
+// mouse or finger stroke has it too, its pressure read as 0.5.
 // A highlighter, an unknown tool, an unknown brush and a stroke that
 // carries a shape record (a held shape, a straight highlight) have no laws:
 // a shape is constant width whatever its brush, so it keeps its brush key
@@ -48,7 +50,33 @@ export const BRUSHES = {
     w: (s) => clamp((1 + (pOf(s) - 0.5)) * (1 + 2 * (1 - clamp(s.a ?? 90, 0, 90) / 90)), 0, 4),
     o: (s) => clamp(0.15 + 0.85 * pOf(s), 0, 1),
   },
+  // a flat nib: as wide as the nib where the stroke travels across it and
+  // a hairline (NIB_HAIR) along it — the sine between the travel `dir`
+  // ([dx, dy] in page points, y down; null for none, which draws the
+  // nib's whole length) and the nib's edge, the page vector (cos nib, −sin
+  // nib) — and a little wider with pressure, capped at 4
+  calligraphy: {
+    w: (s, dir, nib = DEFAULT_NIB) => {
+      const r = (nib * Math.PI) / 180;
+      const across = dir ? Math.abs(dir[0] * Math.sin(r) + dir[1] * Math.cos(r)) / Math.hypot(dir[0], dir[1]) : 1;
+      return clamp(Math.max(NIB_HAIR, across) * (0.85 + 0.3 * pOf(s)), 0, 4);
+    },
+    travel: true,
+  },
 };
+// The direction a stroke travels at sample i, [dx, dy] in page points:
+// from the sample before to the sample after (one-sided at the ends);
+// where those two coincide (a stroke turning straight back) the segment
+// ending at the sample, else the one starting there; null where the stroke
+// has no length (a tap, every sample at one point).
+export function travelAt(samples, i) {
+  const n = samples.length;
+  const at = (a, b) => [samples[b].x - samples[a].x, samples[b].y - samples[a].y];
+  const tries = [at(Math.max(i - 1, 0), Math.min(i + 1, n - 1))];
+  if (i > 0) tries.push(at(i - 1, i));
+  if (i < n - 1) tries.push(at(i, i + 1));
+  return tries.find(([dx, dy]) => Math.hypot(dx, dy) > 1e-9) || null;
+}
 // perfect-freehand's simulatePressure step (its RATE_OF_PRESSURE_CHANGE).
 const SIMULATE_RATE = 0.275;
 const easeOutSine = (x) => Math.sin(x * Math.PI / 2);
@@ -62,15 +90,17 @@ function brushOf({ tool = "pen", brush } = {}) {
 }
 
 // The width law of a style, a function of one sample before the Brush's
-// tapers and speed law (bakeWidths applies those), or null when the style
-// writes no w: a highlighter, the Ballpoint, a mouse or finger stroke of
-// every brush but the Brush, an unknown tool or brush, and a stroke with a
-// `shape` (constant width, whatever its brush: a Brush's tapers would put
-// both ends of a two-sample line at the floor, and every renderer draws
-// between its samples).
+// tapers and speed law (bakeWidths applies those) — the Calligraphy pen's
+// of the sample, its travel and the nib (brushWidths hands it all three) —
+// or null when the style writes no w: a highlighter, the Ballpoint, a
+// mouse or finger stroke of every brush but the Brush and the Calligraphy
+// pen, an unknown tool or brush, and a stroke with a `shape` (constant
+// width, whatever its brush: a Brush's tapers would put both ends of a
+// two-sample line at the floor, and every renderer draws between its
+// samples).
 export function widthLaw(style = {}) {
   const b = brushOf(style);
-  if (!b?.w || style.shape || (style.pen === false && !b.simulate)) return null;
+  if (!b?.w || style.shape || (style.pen === false && !b.simulate && !b.travel)) return null;
   return b.w;
 }
 // The opacity law of a style, or null when it writes no o (every brush but
@@ -83,6 +113,7 @@ export function opacityLaw(style = {}) {
 // Whether a stroke of `style` has a pressure to read: a stylus drew it
 // (`pen` not false) and its samples carry p.
 const hasPressure = (style, samples) => style.pen !== false && samples.length > 0 && samples[0].p != null;
+const NO_PRESSURE = { p: 0.5 };
 // The pressure the speed law gives each sample, from the spacing alone
 // (perfect-freehand's simulatePressure; time is never read): 0.5 at the
 // first, then a step toward 1 − min(1, d / size) for a sample at distance d
@@ -109,7 +140,9 @@ function simulatedPressure(samples, size) {
 // perfect-freehand draws a lone point at its untapered radius); its
 // pressure is the samples' own, else (no pressure: a mouse or finger, the
 // pressure preference off, a stroke without p) the speed law. A style with
-// a `shape` has no law (widthLaw), so a snapped stroke gets null here.
+// a `shape` has no law (widthLaw), so a snapped stroke gets null here. The
+// Calligraphy pen reads each sample's travel (travelAt) and the style's
+// `nib` (DEFAULT_NIB without), the pressure only when the stroke reads it.
 // `live` is the stroke in progress (the live canvas, a peer's wet stroke),
 // whose length is not known yet: no end taper, and the start taper at its
 // full length, so the line under the pen holds still while it is written
@@ -118,6 +151,10 @@ export function brushWidths(samples, style, { live = false } = {}) {
   const law = widthLaw(style);
   if (!law || !samples.length) return null;
   const b = brushOf(style);
+  if (b.travel) {
+    const read = hasPressure(style, samples), nib = Number.isFinite(style.nib) ? style.nib : DEFAULT_NIB;
+    return samples.map((s, i) => round3(law(read ? s : NO_PRESSURE, travelAt(samples, i), nib)));
+  }
   if (!b.taper) return samples.map((s) => round3(law(s)));
   const size = Math.max(0.01, style.size ?? DEFAULT_SIZE);
   const simulated = hasPressure(style, samples) ? null : simulatedPressure(samples, size);
@@ -150,7 +187,7 @@ export function brushOpacities(samples, style) {
 // `xyptwo` a pencil (`xyptazwo` tilted), `xypt` a Ballpoint or a
 // highlighter, `xyt` a mouse or finger stroke and every snapped result
 // (pen false and a shape, whatever the brush), but `xytw` for a mouse
-// brush's freehand stroke.
+// brush's or calligraphy pen's freehand stroke.
 export function strokeChannels(style, samples = []) {
   if (style.pen === false) return "xyt" + (widthLaw(style) ? "w" : "");
   return "xypt" + (samples.some((s) => s.a != null) ? "az" : "") + (widthLaw(style) ? "w" : "") + (opacityLaw(style) ? "o" : "");
@@ -188,7 +225,9 @@ export function bakeWidths(samples, style) {
 
 // The selection's brush change (docs/dev/handwriting.md "Client"): every
 // selected stroke of tool pen (`brush` null or 'pen' for the plain Pen,
-// else 'monoline' | 'brush' | 'pencil'; any other value changes nothing) is
+// else 'monoline' | 'brush' | 'pencil' | 'calligraphy'; any other value
+// changes nothing; a calligraphy pen bakes with the stroke's own `nib`,
+// else DEFAULT_NIB, and writes it, any other brush drops it) is
 // baked again — its samples decoded, w and o stripped, the new brush's laws
 // run on the pressure and tilt it was written with, with its own `pen` flag
 // (a mouse stroke turned Brush gets the speed law) — and written with its
@@ -221,16 +260,17 @@ export function restyleBrush(ink, ids, brush) {
   let changed = false;
   const strokes = ink.strokes.map((s) => {
     if (!selected.has(s.id) || (s.tool || "pen") !== "pen") return s;
-    const style = { tool: "pen", brush: next || undefined, size: s.size ?? DEFAULT_SIZE, pen: s.pen !== false, shape: s.shape };
+    const nib = next === "calligraphy" ? (Number.isFinite(s.nib) ? s.nib : DEFAULT_NIB) : undefined;
+    const style = { tool: "pen", brush: next || undefined, size: s.size ?? DEFAULT_SIZE, pen: s.pen !== false, shape: s.shape, nib };
     const cap = MAX_STROKE_SIZE / style.size;
     const decoded = decodeStroke(s);
     const samples = bakeWidths(decoded.map(({ w, o, ...q }) => q), style).map((q) => (q.w > cap ? { ...q, w: Math.floor(cap * 1000) / 1000 } : q));
-    if ((s.brush || null) === next && bakedAlike(decoded, samples)) return s;
+    if ((s.brush || null) === next && (s.nib ?? undefined) === nib && bakedAlike(decoded, samples)) return s;
     changed = true;
     const ch = [...(s.ch || "xy")].filter((c) => c !== "w" && c !== "o").join("")
       + (widthLaw(style) ? "w" : "") + (opacityLaw(style) ? "o" : "");
-    const { brush: _was, ...keys } = s;
-    return { ...keys, ...(next ? { brush: next } : {}), ch, pts: encodePoints(samples, ch) };
+    const { brush: _was, nib: _nib, ...keys } = s;
+    return { ...keys, ...(next ? { brush: next } : {}), ...(nib != null ? { nib } : {}), ch, pts: encodePoints(samples, ch) };
   });
   return changed ? { ...ink, strokes } : ink;
 }
@@ -293,7 +333,10 @@ export function finishStroke(samples, ctx) {
     const shaped = shapeSamples(kind, params, { span, p: r2(meanP) });
     if (shaped.length) {
       const line = kind === "line" || kind === "arrow";
-      const look = { ...ctx.style, pen: false, shape: shapeRecord(kind, params) };
+      // a nib only on a calligraphy pen's, and the preset's Lock angle never on a stroke
+      const { nibLock: _lock, nib, ...keys } = ctx.style;
+      const look = { ...keys, ...(keys.brush === "calligraphy" ? { nib: Number.isFinite(nib) ? nib : DEFAULT_NIB } : {}),
+        pen: false, shape: shapeRecord(kind, params) };
       return { commit: shaped, erase: null,
         label: line ? T("ink straight line") : T("ink shape"),
         style: look,

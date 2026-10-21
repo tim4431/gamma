@@ -18,8 +18,9 @@ the change come from one place ("Asking before a call" in
 [ai.md](ai.md#asking-before-a-call-approvals)). A permission is either
 reading or changing: its tools share the `mutating` flag, which also sets its
 default (reading allowed, changes ask; `ai_permissions.permission_state`).
-A cursor block (`focus_block_id`), attached block chips (`context_blocks`)
-and note selections reach the model with the message, ids and text, so
+A cursor block (`focus_block_id`), attached block chips (`context_blocks`),
+note selections and selected handwriting (`ink_selections`, a picture of
+the strokes with their block's id) reach the model with the message, so
 "this block" / "these" resolve without a `read_block` round-trip (see
 "Pointing the chat at notes" in [ai.md](ai.md)). `agent_system` never names
 them: it holds only what stays the same for a whole conversation, since the
@@ -316,7 +317,22 @@ append when it has one. The notes' **Transcribe with AI** (a handwriting
 block's ⋮⋮ menu) sends exactly that request with the block attached as a
 chip, and an attached handwriting block's picture rides with the message
 (see "Pointing the chat at notes" in [ai.md](ai.md)). So a chat without
-tools still answers with the transcription.
+tools still answers with the transcription. The selection menu's
+**Transcribe** does the same for a selection of whole groups; for a
+selection that takes only part of a group it sends the selected strokes
+instead, as `ink_selections` (`[{page_id, block_id, space, strokes}]`,
+at most 8 entries and 64 KB together): each is drawn alone where it lies,
+through `ink_view.picture(…, ink=file)` — the same page with the inline
+file in place of the block's stored one, so strokes not saved yet are
+seen too — labelled "selected handwriting on p. N, K strokes" with its
+block's id, with the request "Transcribe the selected handwriting.". The
+notes section says each picture holds only the selected strokes, to be
+transcribed exactly, and the prompt's handwriting paragraph says a
+selection is read from its picture, not with view_ink, whose picture is
+the whole block as it was saved (the rest of the group, and none of the
+strokes not saved yet). The
+answer comes in the chat; with `edit_block` armed the agent appends it to
+that block's caption, as for a whole group.
 
 ### view_image (both scopes)
 

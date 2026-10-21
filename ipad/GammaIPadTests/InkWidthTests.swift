@@ -40,7 +40,7 @@ final class InkWidthTests: XCTestCase {
             let brush = try XCTUnwrap(InkTool.Brush(rawValue: row.brush ?? "pen"), row.note)
             let samples = row.samples.map { stroke($0) } ?? [sample(row.p, a: row.a)]
             let ws = InkWidth.widths(samples, tool: kind, brush: brush, pressure: row.pen, size: row.size,
-                                     shape: row.shape != nil)
+                                     shape: row.shape != nil, nib: row.nib ?? 45)
             let os = InkWidth.opacities(samples, tool: kind, brush: brush, pressure: row.pen, shape: row.shape != nil)
             if row.samples != nil {
                 assertNear(ws, row.ws, row.note)
@@ -140,6 +140,29 @@ final class InkWidthTests: XCTestCase {
         XCTAssertEqual(InkWidth.opacityBand(1), 1)
     }
 
+    func testTheCalligraphyPensNib() {
+        // a 45° nib rises to the right: down to the right is across it, up to the right along it
+        let down = stroke((0...5).map { [10 + Double($0), 10 + Double($0), 0.5, Double($0) * 8, nil] })
+        let up = stroke((0...5).map { [10 + Double($0), 10 - Double($0), 0.5, Double($0) * 8, nil] })
+        assertNear(InkWidth.widths(down, tool: .pen, brush: .calligraphy, pressure: true, size: 2, nib: 45),
+                   [1, 1, 1, 1, 1, 1], "across the nib: its whole length")
+        assertNear(InkWidth.widths(up, tool: .pen, brush: .calligraphy, pressure: true, size: 2, nib: 45),
+                   [0.12, 0.12, 0.12, 0.12, 0.12, 0.12], "along it: the hairline")
+        assertNear(InkWidth.widths(up, tool: .pen, brush: .calligraphy, pressure: true, size: 2, nib: 135),
+                   [1, 1, 1, 1, 1, 1], "a 135° nib turns it round")
+        XCTAssertEqual(InkWidth.widths([sample(1)], tool: .pen, brush: .calligraphy, pressure: true, size: 2), [1.15],
+                       "a tap: the whole nib, wider at full pressure")
+        let mouse = stroke([[0, 0, nil, 0, nil], [2, 2, nil, 16, nil], [4, 4, nil, 32, nil], [6, 2, nil, 48, nil], [8, 0, nil, 64, nil]])
+        assertNear(InkWidth.widths(mouse, tool: .pen, brush: .calligraphy, pressure: false, size: 2, nib: 45),
+                   [1, 1, 0.707, 0.12, 0.12], "without pressure: the direction alone")
+        XCTAssertNil(InkWidth.widths(mouse, tool: .pen, brush: .calligraphy, pressure: false, size: 2, shape: true),
+                     "a shape is even")
+        XCTAssertNil(InkWidth.opacities(down, tool: .pen, brush: .calligraphy, pressure: true), "no shades")
+        let back = stroke([[0, 0, 0.5, 0, nil], [2, 0, 0.5, 8, nil], [4, 0, 0.5, 16, nil], [2, 0, 0.5, 24, nil]])
+        XCTAssertEqual(InkWidth.travel(back, at: 2)?.dx, 2, "a reversal takes the segment ending at it")
+        XCTAssertNil(InkWidth.travel(stroke([[3, 3, 0.5, 0, nil]]), at: 0), "a tap has no travel")
+    }
+
     func testAHostSampleAsTheLawsReadIt() {
         XCTAssertEqual(InkWidth.sample([10, 20, 0.4, 8, 55, 120]), InkWidth.Sample(x: 10, y: 20, p: 0.4, a: 55))
         XCTAssertEqual(InkWidth.sample([10, 20, 0.4, 8]), InkWidth.Sample(x: 10, y: 20, p: 0.4, a: nil),
@@ -165,6 +188,8 @@ private struct WidthFixture: Decodable {
         let w: Double?
         let o: Double?
         let shape: Shape?
+        /// A calligraphy row's nib, degrees.
+        let nib: Double?
         let samples: [[Double?]]?
         let ws: [Double]?
         let os: [Double]?
@@ -172,7 +197,7 @@ private struct WidthFixture: Decodable {
         let at: Int?
 
         private enum CodingKeys: String, CodingKey {
-            case note, tool, brush, pen, size, p, a, w, o, shape, samples, ws, os, at
+            case note, tool, brush, pen, size, p, a, w, o, shape, nib, samples, ws, os, at
             case pSim = "p_sim"
         }
     }

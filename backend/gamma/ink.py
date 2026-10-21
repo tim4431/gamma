@@ -68,6 +68,14 @@ _HEX_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
 _EXTRA_KEY_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]{0,31}$")
 _UPLOAD_RE = re.compile(r"/api/uploads/([0-9a-f]{24}\.ink)$")
 SHAPE_KINDS = ("line", "arrow", "rect", "ellipse", "triangle", "polygon", "curve")
+# The shapes with an inside: a stroke's ``fill`` is drawn only on a shape
+# record of these kinds (CLOSED_SHAPES in ink.js).
+CLOSED_SHAPES = frozenset(("rect", "ellipse", "triangle", "polygon"))
+# How far a calligraphy nib's corners reach from a sample, in sizes: the
+# diagonal of the nib and its hairline, 0.12 sizes across it (NIB_REACH in
+# ink.js), half of it each side. The server draws the calligraphy pen from
+# ``w`` like any pen; only its box needs the nib.
+NIB_REACH = math.hypot(1, 0.12)
 # A stroke's dash as (on, off) in sizes — never stored, derived from the
 # nominal size at render time (DASH in ink.js; tests/shared/inkdash.json).
 DASH = {"dashed": (2.0, 2.0), "dotted": (0.1, 2.0)}
@@ -411,11 +419,19 @@ def in_draw_order(strokes) -> list[Stroke]:
     return [s for s in strokes if band_of(s) == 0] + [s for s in strokes if band_of(s) == 1]
 
 
+def _nib_drawn(stroke: Stroke) -> bool:
+    """A calligraphy stroke the screen draws with its nib: one without a
+    shape record (a shape is an even line, whatever its brush)."""
+    return stroke.brush == "calligraphy" and stroke.shape is None
+
+
 def bounding_box(ink: InkFile) -> tuple[float, float, float, float] | None:
     """(x0, y0, x1, y1) in points around every stroke, width included;
     None for an empty file. Read off the raw arrays — the running sums of
     x, y and w — with no per-sample objects: the upload route computes it
-    on every flush."""
+    on every flush. A calligraphy stroke drawn with its nib reaches as far
+    as the nib's corners from every sample, whatever its w (``NIB_REACH``,
+    the client's ``strokeBounds``)."""
     x0 = y0 = math.inf
     x1 = y1 = -math.inf
     half = COORD_UNIT / MULT_UNIT / 2    # a w integer → a radius in coordinate units, per point of size
@@ -424,11 +440,14 @@ def bounding_box(ink: InkFile) -> tuple[float, float, float, float] | None:
         xs = list(accumulate(pts[ch.index("x")::n]))
         ys = list(accumulate(pts[ch.index("y")::n]))
         wi = ch.find("w")
+        reach = s.size * COORD_UNIT * NIB_REACH / 2 if _nib_drawn(s) else 0
         if wi < 0:
-            r = s.size * COORD_UNIT / 2
+            r = max(s.size * COORD_UNIT / 2, reach)
             sx0, sx1, sy0, sy1 = min(xs) - r, max(xs) + r, min(ys) - r, max(ys) + r
         else:
             rs = list(map((s.size * half).__mul__, accumulate(pts[wi::n])))
+            if reach:
+                rs = [max(r, reach) for r in rs]
             sx0, sx1 = min(map(sub, xs, rs)), max(map(add, xs, rs))
             sy0, sy1 = min(map(sub, ys, rs)), max(map(add, ys, rs))
         x0, y0, x1, y1 = min(x0, sx0), min(y0, sy0), max(x1, sx1), max(y1, sy1)
@@ -773,6 +792,12 @@ def _mean(values) -> float:
     return sum(values) / len(values) if values else 1.0
 
 
+def fill_of(stroke: Stroke):
+    """The fill a stroke draws, ``Fill`` or None: a closed shape's
+    (``CLOSED_SHAPES``) alone; one on any other stroke is kept, not drawn."""
+    return stroke.fill if stroke.fill is not None and stroke.shape is not None and stroke.shape.kind in CLOSED_SHAPES else None
+
+
 def to_svg(ink: InkFile, box=None, pad: float = 4.0) -> str:
     """An SVG of the strokes cropped to ``box`` (default: the bounding box),
     band 0 then band 1. An opaque solid pen (and any tool this code does
@@ -782,7 +807,9 @@ def to_svg(ink: InkFile, box=None, pad: float = 4.0) -> str:
     band × opacity, untextured; a dashed stroke one centreline path at its
     mean drawn width and opacity with ``stroke-dasharray``; a highlighter
     one constant-width path with its opacity, multiplied onto what lies
-    beneath."""
+    beneath. A filled closed shape (``fill_of``) draws its fill first, the
+    closed polygon through its samples in the fill's colour at its
+    opacity, under its outline in its band."""
     box = box or bounding_box(ink) or (0, 0, 1, 1)
     x0, y0, x1, y1 = box[0] - pad, box[1] - pad, box[2] + pad, box[3] + pad
     w, h = max(1.0, x1 - x0), max(1.0, y1 - y0)
@@ -795,6 +822,12 @@ def to_svg(ink: InkFile, box=None, pad: float = 4.0) -> str:
         pattern = dash_pattern(stroke)
         dash = f' stroke-dasharray="{_fmt(pattern[0])} {_fmt(pattern[1])}"' if pattern else ""
         kind = _drawn_as(stroke, alpha)
+        fill = fill_of(stroke)
+        if fill is not None:
+            fr, fg, fb, _ = parse_color(fill.color)
+            parts.append(f'<path d="{_svg_line((x, y) for x, y, _ in stroke_polyline(stroke))} Z" '
+                         f'fill="rgb({round(fr * 255)},{round(fg * 255)},{round(fb * 255)})" '
+                         f'fill-opacity="{_fmt(fill.opacity)}"/>')
         if kind == "marker":
             parts.append(f'<path d="{_svg_line((x, y) for x, y, _ in stroke_polyline(stroke))}" fill="none" '
                          f'stroke="{color}" stroke-width="{_fmt(stroke.size)}" stroke-opacity="{_fmt(alpha)}" '
@@ -871,8 +904,13 @@ def pdf_path_ops(ink: InkFile, to_pdf, scale: float = 1.0, band: int | None = No
     ExtGState of its opacity (``/GSink<α>``, ``/CA`` and ``/ca``); a dashed
     stroke one path at its mean drawn width between ``[on off] 0 d`` and
     ``[] 0 d``; a highlighter its centreline under ``/GSinkM<α>``, which
-    multiplies like the screen. A writer embedding the ops declares the
-    states they set with ``pdf_path_resources``."""
+    multiplies like the screen. A filled closed shape (``fill_of``) fills
+    its polygon first, the closed path through its samples filled once
+    (``f``) in the fill's colour under ``/GSink<α>`` of the fill's opacity,
+    then draws its outline as any stroke (a fill of its own rather than
+    ``B``: a pen's outline is drawn as segments or bands, never as that
+    polygon stroked). A writer embedding the ops declares the states they
+    set with ``pdf_path_resources``."""
     from .pdf_typeset import num
     strokes = [s for s in in_draw_order(ink.strokes) if band is None or band_of(s) == band]
     if not strokes:
@@ -885,6 +923,12 @@ def pdf_path_ops(ink: InkFile, to_pdf, scale: float = 1.0, band: int | None = No
         pattern = dash_pattern(stroke)
         dash = b"[%s %s] 0 d" % tuple(_fmt(v * scale).encode() for v in pattern) if pattern else b""
         kind = _drawn_as(stroke, alpha)
+        fill = fill_of(stroke)
+        if fill is not None:
+            fr, fg, fb, _ = parse_color(fill.color)
+            body = [b"%s %s %s rg" % (num(fr), num(fg), num(fb)),
+                    _pdf_line([to_pdf(x, y) for x, y, _ in stroke_polyline(stroke)], num) + b" h f"]
+            ops += [b"q " + _gs(fill.opacity), *body, b"Q"] if fill.opacity < 1 else body
         if kind == "marker":
             line = _pdf_line([to_pdf(x, y) for x, y, _ in stroke_polyline(stroke)], num) + b" S"
             ops.append(b"q %s %s RG %s w" % (_gs(alpha, multiply=True), rgb, num(stroke.size * scale)))
@@ -1083,21 +1127,22 @@ class MergeResult:
 
 
 # A stroke's geometry: its samples and what they were made for. ``brush``
-# is geometry too, since a brush change bakes the ``w`` in ``pts`` again:
-# the key travels with the widths baked for it, so a merge never pairs one
-# brush with another's widths.
-_GEOM_KEYS = ("pts", "ch", "size", "shape", "brush")
+# and ``nib`` are geometry too, since a brush or a nib change bakes the
+# ``w`` in ``pts`` again, and a turn or a flip of a calligraphy stroke
+# moves its nib with its samples: the keys travel with the widths baked
+# for them, so a merge never pairs one brush or nib with another's widths.
+_GEOM_KEYS = ("pts", "ch", "size", "shape", "brush", "nib")
 _SKIP_LOOK = frozenset(("id", "from", *_GEOM_KEYS))
 
 
 def _geom(s: Stroke) -> tuple:
-    return (tuple(s.pts), s.ch, s.size, s.shape.model_dump() if s.shape else None, s.brush)
+    return (tuple(s.pts), s.ch, s.size, s.shape.model_dump() if s.shape else None, s.brush, s.nib)
 
 
 def _look(s: Stroke) -> tuple:
     extra = s.__pydantic_extra__ or {}
     return (s.tool, s.color, s.opacity, s.pen, s.t0, band_of(s),
-            s.fill.model_dump() if s.fill else None, s.dash, s.nib,
+            s.fill.model_dump() if s.fill else None, s.dash,
             json.dumps(extra, sort_keys=True, separators=(",", ":")) if extra else "")
 
 
@@ -1148,7 +1193,7 @@ def merge_ink(base: InkFile | None, ours: InkFile, theirs: InkFile, base_ids=Non
     """Apply the change ``base → ours`` to ``theirs`` (the group as stored
     now), stroke by stroke (handwriting.md "Two writers, one group"). A
     stroke is two halves, its geometry (``pts``, ``ch``, ``size``,
-    ``shape``, ``brush``) and its look (everything else but ``id`` and
+    ``shape``, ``brush``, ``nib``) and its look (everything else but ``id`` and
     ``from``): a half one side changed is taken from it, a half both
     changed differently takes theirs and marks the merge unclean. An edit
     beats a delete. A piece (``from: X``) follows its parent's fate on the

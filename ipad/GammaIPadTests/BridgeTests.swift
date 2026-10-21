@@ -80,7 +80,25 @@ final class BridgeTests: XCTestCase {
         XCTAssertEqual(try tool(["stabilize": "max"]).stabilize, 0)
         XCTAssertNil(try tool(["snap": ["x0": 1, "y0": "top", "angle": 0]]).snap)
         XCTAssertNil(try tool(["snap": 5]).snap)
-        XCTAssertEqual(try tool(["nib": ["angle": 30], "thinning": 0.5]), try tool([:]), "keys the shell does not know are ignored")
+        XCTAssertEqual(try tool(["grain": ["angle": 30], "thinning": 0.5]), try tool([:]), "keys the shell does not know are ignored")
+        XCTAssertEqual(try tool(["nib": ["angle": 30]]).nib, 45, "a nib that is no number is the default")
+        XCTAssertEqual(try tool(["nib": "steep"]).nib, 45)
+        XCTAssertFalse(try tool(["nibRoll": "yes"]).nibRoll)
+    }
+
+    func testACalligraphyPensClaimCarriesItsNib() throws {
+        let cal = try tool(["brush": "calligraphy", "nib": 150, "nibRoll": true])
+        XCTAssertEqual(cal, InkTool(kind: .pen, color: "#1f4fd8", size: 3, brush: .calligraphy, nib: 150, nibRoll: true))
+        let plain = try tool(["brush": "calligraphy"])
+        XCTAssertEqual(plain.nib, 45, "a claim without a nib: 45")
+        XCTAssertFalse(plain.nibRoll, "and no roll")
+        XCTAssertEqual(try tool(["nib": 200.4]).nib, 20, "turned into 0…179")
+        XCTAssertEqual(try tool(["nib": -30]).nib, 150)
+        // the live nib: the claim's, less the first sample's clockwise roll, mod 180
+        XCTAssertEqual(cal.liveNib(roll: 30), 120)
+        XCTAssertEqual(cal.liveNib(roll: 200), 130)
+        XCTAssertEqual(cal.liveNib(roll: nil), 150, "a sample without a roll keeps the nib")
+        XCTAssertEqual(try tool(["brush": "calligraphy", "nib": 150]).liveNib(roll: 30), 150, "Lock angle: no roll")
     }
 
     func testThemeAndServersDecode() throws {
@@ -194,7 +212,7 @@ final class BridgeTests: XCTestCase {
     func testTheUserScriptDeclaresTheHost() {
         let script = HostInfo(version: "0.2.0").userScript
         XCTAssertTrue(script.contains(
-            #"{"haptics":true,"hold":true,"ink":true,"inkLooks":["pressure","dash","blend","stabilize","pencil"],"pencil":true,"pencilPhases":true,"platform":"ipad","servers":true,"version":"0.2.0"}"#
+            #"{"haptics":true,"hold":true,"ink":true,"inkLooks":["pressure","dash","blend","stabilize","pencil","calligraphy","snap"],"pencil":true,"pencilPhases":true,"pencilRoll":true,"platform":"ipad","servers":true,"version":"0.2.0"}"#
         ), script)
         XCTAssertTrue(script.contains(#"setAttribute("data-host", "ipad")"#))
         XCTAssertTrue(script.contains("queue.push({ msg, resolve, reject })"), "the stub queues until host.js drains it")

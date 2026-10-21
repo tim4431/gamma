@@ -19,8 +19,9 @@ import { waitForPdf } from "./pdf.mjs";
 function fakeShell(flags = {}) {
   const sent = [];
   window.e2eHostSent = sent;
-  const native = { platform: "ipad", version: "0.2.0", ink: true, inkLooks: ["pressure", "dash", "blend", "stabilize", "pencil"],
-    hold: true, pencil: true, pencilPhases: true, haptics: true, servers: true, ...flags };
+  const native = { platform: "ipad", version: "0.2.0", ink: true,
+    inkLooks: ["pressure", "dash", "blend", "stabilize", "pencil", "calligraphy", "snap"],
+    hold: true, pencil: true, pencilPhases: true, pencilRoll: true, haptics: true, servers: true, ...flags };
   native.receive = (msg) => new Promise((resolve, reject) => (native.queue ||= []).push({ msg, resolve, reject }));
   window.gammaNative = native;
   window.webkit = { messageHandlers: { gamma: { postMessage: (msg) => {
@@ -412,6 +413,49 @@ export async function ipadScenarios({ server, browser, alice, makePdf, step, unt
     }
   });
 
+  await step("ipad shell: a calligraphy pen claims its nib, and the roll the shell's first sample carries turns the committed nib; with Lock angle, which shows under pencilRoll, it does not", async () => {
+    await alice.api("/api/prefs/profile", { method: "PATCH", body: { set: { inkTools: [
+      { id: "cal1", kind: "pen", color: "#1f1f1f", size: 2, brush: "calligraphy" },   // smoothing left out: a calligraphy pen's 2
+      { id: "cal2", kind: "pen", color: "#1f4fd8", size: 2, brush: "calligraphy", nib: -30, nibLock: true },
+    ] } } });
+    let ctx;
+    try {
+      const opened = await shellPaper("calligraphy");
+      ctx = opened.ctx;
+      const { page, paper, shell } = opened;
+      // preset 1: the claim names the brush, the nib (45 to start), that it follows the roll and the smoothing it draws with
+      await page.keyboard.press("1");
+      let claim = await shell.down(81, 100, 200);
+      assert(claim.tool.brush === "calligraphy" && claim.tool.nib === 45 && claim.tool.nibRoll === true && claim.tool.stabilize === 2,
+        JSON.stringify(claim.tool));
+      // a stroke down to the right, the Pencil rolled 30° clockwise: [x, y, p, t, a, z, r]
+      const rows = Array.from({ length: 12 }, (_, i) => [100 + 6 * i, 200 + 6 * i, 0.5, 8 * i, 60, 45, 30]);
+      let before = await savedStrokes(paper.id);
+      assertEq(JSON.stringify(await shell.stroke(81, rows)), JSON.stringify({ committed: true }));
+      const [rolled] = await newStrokes(paper.id, before, 1, "the rolled calligraphy stroke saved");
+      assertEq(JSON.stringify([rolled.brush, rolled.nib, rolled.ch]), JSON.stringify(["calligraphy", 15, "xyptazw"]),
+        "45° less the 30° clockwise roll; its widths baked from the travel against that nib");
+      // preset 2 locks its angle (−30°, a stroke's 150°): no nibRoll, and a roll changes nothing
+      await page.keyboard.press("2");
+      claim = await shell.down(82, 100, 300);
+      assert(claim.tool.nib === 150 && !("nibRoll" in claim.tool), JSON.stringify(claim.tool));
+      before = await savedStrokes(paper.id);
+      await shell.stroke(82, rows.map(([x, y, ...rest]) => [x, y + 100, ...rest]));
+      const [locked] = await newStrokes(paper.id, before, 1, "the locked calligraphy stroke saved");
+      assertEq(locked.nib, 150, "the preset's angle, whatever the roll");
+      // its options row: the Nib angle and, under a shell that reports the roll, Lock angle pressed
+      await page.locator(".pdfInkBar .inkToolBtn.modeActive").first().click();
+      const lock = page.locator('[data-ink-options="tool"] button[aria-label="Lock angle"]');
+      await lock.waitFor();
+      assertEq(await lock.getAttribute("aria-pressed"), "true");
+      assertEq((await page.locator('[data-ink-options="tool"] .inkNibReadout').textContent()).trim(), "-30°");
+      assertNoProblems(page);
+    } finally {
+      await ctx?.close();
+      await alice.api("/api/prefs/profile", { method: "PATCH", body: { set: { inkTools: null } } }).catch(() => {});
+    }
+  });
+
   await step("ipad shell: the host's hold snaps a still line (css px, a snap tick), the lift commits it refit; a quick move commits freehand, as does a lift that beat the answer; with strokes copied a still pen opens Paste here", async () => {
     let ctx;
     try {
@@ -474,6 +518,40 @@ export async function ipadScenarios({ server, browser, alice, makePdf, step, unt
       assertEq(JSON.stringify(await shell.stroke(83, [])), JSON.stringify({ committed: false }), "the lift after a cancel commits nothing");
       await page.keyboard.press("Escape");
       assertEq((await savedStrokes(paper.id)).size, before.size, "nothing saved");
+      assertNoProblems(page);
+    } finally { await ctx?.close(); }
+  });
+
+  await step("ipad shell: with the ruler on, a claim that starts by its edge carries snap, and the host's wandering samples commit as the projected line", async () => {
+    let ctx;
+    try {
+      const opened = await shellPaper("ruler");
+      ctx = opened.ctx;
+      const { page, paper, shell } = opened;
+      await page.keyboard.press("r");
+      await page.waitForSelector('[data-page="1"] .inkRuler .inkRulerBand');   // the band: the ruler's own box has no height
+      const ruler = await page.locator('[data-page="1"] .inkRuler').evaluate((el) =>
+        ({ x: Number(el.dataset.x), y: Number(el.dataset.y), angle: Number(el.dataset.angle), length: Number(el.dataset.length) }));
+      assertEq(ruler.angle, 0, "level");
+      const g = await shell.geometry();
+      // css px from the page's corner: the top edge is half the band (18 px) above the middle line
+      const edge = ruler.y * g.k - 18, x0 = (ruler.x - ruler.length / 4) * g.k;
+      // the armed pen, 5 px outside the top edge
+      const claim = await shell.down(95, x0, edge - 5);
+      const snap = claim.tool.snap;
+      assert(snap, `the claim carries the edge: ${JSON.stringify(claim.tool)}`);
+      assert(Math.abs(snap.x0 - (g.left + ruler.x * g.k)) < 0.02 && Math.abs(snap.y0 - (g.top + edge)) < 0.02 && snap.angle === 0,
+        `snap at the edge's middle in viewport css px, the ruler's angle: ${JSON.stringify(snap)}`);
+      assertEq(JSON.stringify(await shell.hold(95, [[x0, edge - 5, 0.5, 0], [x0 + 1, edge - 5, 0.5, 700]])), JSON.stringify({}),
+        "along the ruler a hold answers nothing");
+      const before = await savedStrokes(paper.id);
+      const rows = Array.from({ length: 10 }, (_, i) => [x0 + 15 * i, edge - 5 + (i % 2 ? 8 : 0), 0.5, 16 * i]);
+      assertEq(JSON.stringify(await shell.stroke(95, rows)), JSON.stringify({ committed: true }));
+      const [line] = await newStrokes(paper.id, before, 1, "the ruler line saved");
+      assertEq(JSON.stringify([line.ch, line.pen, line.shape?.kind]), JSON.stringify(["xyt", false, "line"]), "an even line with its line record");
+      const p = line.shape.params, y = edge / g.k;
+      assert(Math.abs(p.y1 - y) < 0.02 && Math.abs(p.y2 - y) < 0.02, `both ends on the edge: ${JSON.stringify(p)}`);
+      assert(Math.abs(p.x1 - x0 / g.k) < 0.02 && Math.abs(p.x2 - (x0 + 135) / g.k) < 0.02, `from the first sample to the farthest: ${JSON.stringify(p)}`);
       assertNoProblems(page);
     } finally { await ctx?.close(); }
   });

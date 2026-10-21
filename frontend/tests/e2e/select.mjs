@@ -26,6 +26,8 @@ export const GROUPS = [
   { id: "ink-editing", files: ["inkEditing.mjs"] }, // ~22
   { id: "pdf-load", files: ["pdfload.mjs"] }, // ~20
   { id: "ink", files: ["ink.mjs"] }, // ~19
+  { id: "inkShapes", files: ["inkShapes.mjs"] }, // ~12
+  { id: "inkZoom", files: ["inkZoom.mjs"] }, // ~12
   { id: "notebooks", files: ["notebooks.mjs"] }, // ~15
   { id: "recording", files: ["recording.mjs"] }, // ~15
   { id: "pdf-touch", files: ["pdfTouch.mjs"] }, // ~15
@@ -52,7 +54,7 @@ const ALL = "all";
 const GUIDES = ["guide", "contextual-guide", "triggered-guide"];
 const CHAT = ["chat-navigation", "mentions", "contextual-guide", "triggered-guide", "notes-pdf-share", "touch"];
 // every group that opens a PDF in the viewer
-const PDF_VIEW = ["notes-pdf-share", "pdf-load", "pdf-touch", "ink", "ink-editing", "textbox", "collab", "files", "transfers", "touch", ...GUIDES];
+const PDF_VIEW = ["notes-pdf-share", "pdf-load", "pdf-touch", "ink", "ink-editing", "inkShapes", "inkZoom", "textbox", "collab", "files", "transfers", "touch", ...GUIDES];
 const EXPORTS = ["transfers", "files", "ink", "diagrams"];
 
 // [glob, groups], first match wins. `**` spans folders, `*` stays in one.
@@ -77,9 +79,9 @@ export const RULES = [
   ["frontend/src/main.jsx", ALL],
   ["frontend/src/guide/**", GUIDES],
   // (a text box's menu is placed and labelled by the ink layer's helpers)
-  ["frontend/src/ink/**", ["ink", "ink-editing", "pdf-touch", "triggered-guide", "notebooks", "textbox", "touch", "ipad"]], // ipad: the host claim path
+  ["frontend/src/ink/**", ["ink", "ink-editing", "inkShapes", "inkZoom", "pdf-touch", "triggered-guide", "notebooks", "textbox", "touch", "ipad"]], // ipad: the host claim path
   // what a page surface carries (ink and text boxes) and the tool strip, whose anchors the ink tour uses
-  ["frontend/src/markup/**", ["ink", "ink-editing", "pdf-touch", "triggered-guide", "notebooks", "textbox", "touch"]],
+  ["frontend/src/markup/**", ["ink", "ink-editing", "inkShapes", "inkZoom", "pdf-touch", "triggered-guide", "notebooks", "textbox", "touch"]],
   ["frontend/src/notebook/**", ["notebooks", "textbox", "touch"]],
   // the replay store every handwriting replay and a recording's player run on
   ["frontend/src/replay/**", ["ink", "ink-editing", "notebooks", "recording"]],
@@ -90,7 +92,7 @@ export const RULES = [
   ["frontend/src/editor/mentions.js", ["note-mentions", "notes-pdf-share"]],
   ["frontend/src/editor/MentionMenu.jsx", ["note-mentions", "notes-pdf-share"]],
   ["frontend/src/editor/**", ["notes-pdf-share", "diagrams", "files", "collab", "transfers", "mcp", "guide", "triggered-guide", "textbox", "touch"]],
-  ["frontend/src/chat/**", CHAT],
+  ["frontend/src/chat/**", [...CHAT, "inkZoom"]], // inkZoom: a selection's Transcribe reaches the chat's request
   ["frontend/src/settings/**", ["settings", "i18n", "mirror", "cloud-sign-in", "mcp", "publish", "triggered-guide", "ipad"]], // ipad: Apple Pencil, under its host
   ["frontend/src/collaboration/MirrorPopover.jsx", ["mirror", "publish"]],
   ["frontend/src/collaboration/MergeResolver.jsx", ["mirror"]],
@@ -112,9 +114,9 @@ export const RULES = [
 
   ["backend/tests/**", []],
   ["backend/gamma/ai_protocols/**", [...CHAT, "settings"]],
-  ["backend/gamma/ai_*.py", [...CHAT, "settings"]],
+  ["backend/gamma/ai_*.py", [...CHAT, "settings", "inkZoom"]],
   ["backend/gamma/chatgpt_oauth.py", ["settings"]],
-  ["backend/gamma/routers/ai.py", [...CHAT, "settings"]],
+  ["backend/gamma/routers/ai.py", [...CHAT, "settings", "inkZoom"]],
   ["backend/gamma/routers/chats.py", CHAT],
   ["backend/gamma/mcp_*", ["mcp"]],
   ["backend/gamma/integrations.py", ["mcp", "mirror", "settings"]],
@@ -133,8 +135,8 @@ export const RULES = [
   ["backend/gamma/hosted.py", ["cloud-sign-in"]], // a hosted container's plan (read-only gates every write only there)
   ["backend/gamma/publish.py", ["publish"]],
   ["backend/gamma/routers/publish.py", ["publish"]],
-  ["backend/gamma/ink.py", ["ink", "ink-editing", "triggered-guide", "notebooks"]],
-  ["backend/gamma/routers/ink.py", ["ink", "ink-editing", "triggered-guide", "notebooks"]],
+  ["backend/gamma/ink.py", ["ink", "ink-editing", "inkShapes", "triggered-guide", "notebooks"]],
+  ["backend/gamma/routers/ink.py", ["ink", "ink-editing", "inkShapes", "triggered-guide", "notebooks"]],
   ["backend/gamma/notebook.py", ["notebooks"]],
   ["backend/gamma/recording.py", ["recording", ...EXPORTS]],
   ["backend/gamma/routers/recordings.py", ["recording"]],
@@ -187,6 +189,8 @@ export const RULES = [
   ["backend/gamma/offsite.py", ["settings"]], // the Off-site copies section of Backups
   ["backend/gamma/s3.py", ["settings"]],
   // the core every scenario goes through: app, auth, db, migrations, workspaces, blocks, ops, uploads, prefs, collab …
+  // the chat's pictures of handwriting (view_ink, an attached group, a transcribed selection): the AI modules' groups
+  ["backend/gamma/ink_view.py", [...CHAT, "settings", "inkZoom"]],
   ["backend/gamma/**", ALL],
   ["backend/app.py", ALL],
   ["backend/manage.py", ALL],
