@@ -150,26 +150,39 @@
   color: var(--text-muted);
 }
 
-/* The composer (CommentComposer.jsx): the note editor in a bordered field
-   that grows with the text up to 40vh and then scrolls, in the rendered
-   comment's type; the send button under its right end. */
+/* The composer (CommentComposer.jsx): one rounded box holding the note
+   editor and, for a new comment or a reply, the round send button at its
+   right, on the text's line while it is one line and at its last line once
+   it wraps (as Notion and the chat's composer have it). The text grows up to
+   40vh and then scrolls, in the rendered comment's type. An edit's Cancel and
+   Save, and the length warning, sit in a bar under the box. */
 .commentComposer { display: flex; flex-direction: column; gap: var(--space-2); }
-.commentField {
+.commentBox {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--space-2);
   box-sizing: border-box;
   width: 100%;
-  padding: var(--space-3) var(--space-4);
+  padding: var(--space-2) var(--space-2) var(--space-2) var(--space-4);
   cursor: text;
   background: var(--bg-field);
   border: 1px solid var(--border-light);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-lg);
 }
-/* Over the note editor's own size and overflow. The border stays on
-   .commentField alone, so the focus ring's border wins over it. */
+.commentField {
+  flex: 1;
+  min-width: 0;
+  box-sizing: border-box;
+  padding: var(--space-1) 0;
+}
+/* Over the note editor's own size and overflow; the border and the focus
+   ring are the box's (app.css), so the field draws none. */
 .commentField.blockEditorCm {
   min-height: var(--ctl-btn-sm);
   max-height: 40vh;
   overflow-y: auto;
 }
+.commentBox .uiBtn.chatCircleBtn.commentSend { align-self: flex-end; }
 .commentField.blockEditorCm .cm-scroller {
   font-size: var(--fs-md);
   line-height: var(--lh-ui);
@@ -179,7 +192,7 @@
 .commentComposerBar { display: flex; align-items: center; gap: var(--space-3); }
 .commentComposerSpacer { flex: 1; }
 .commentTooLong { font-size: var(--fs-xs); color: var(--danger); }
-.commentSend.uiBtn.sm { min-width: var(--ctl-btn-sm); }
+.commentComposerBar .commentSend.uiBtn.sm { min-width: var(--ctl-btn-sm); }
 
 /* --- The Comments window (CommentsPanel.jsx) ------------------------------- */
 .commentsPanel {

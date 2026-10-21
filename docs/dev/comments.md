@@ -485,11 +485,14 @@ first. The field keeps its own undo history (`ownHistory`), so Ctrl/⌘+Z
 stays out of the page's block history; F2 stays with it too. The history
 starts afresh when the field's text is set from outside (emptied on
 sending, put back when a send fails), so an undo never brings back part of
-a sent comment. It is a
-bordered `.commentField` in the rendered comment's type that grows with
-the text up to 40vh and then scrolls. The field is focused a frame after
+a sent comment. The field sits in one rounded box (`.commentBox`, which
+takes the focus ring) with the round send button at its right, the chat
+composer's `chatCircleBtn`, as Notion has it: on the text's line while the
+text is one line, at its last line once it wraps. The text is in the
+rendered comment's type and grows up to 40vh, then scrolls. The field is focused a frame after
 mounting, since the popover stands hidden until it is placed and a hidden
-field takes no focus. An edit's field has Cancel and Save, and Escape cancels it. It
+field takes no focus. An edit's field has Cancel and Save in a bar under
+its box (where the length warning shows too), and Escape cancels it. It
 closes once the server has the edit. Unsent text is kept per field for as
 long as the tab lives, in a module-level map of `CommentComposer.jsx`
 keyed `new:<block>`, `reply:<thread>` and `edit:<comment>` (`draftKey`):

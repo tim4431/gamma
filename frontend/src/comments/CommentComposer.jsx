@@ -138,38 +138,53 @@ export function CommentComposer({ initial = "", placeholder, submitLabel, autoFo
 
   return (
     <div className="commentComposer">
-      <BlockCmEditor
-        ref={ref}
-        ownHistory
-        className="blockEditorCm commentField"
-        value={text}
-        placeholder={placeholder}
-        ariaLabel={placeholder}
-        refLabels={labelsFor ? labelsFor(text) : NO_LABELS}
-        mentions={mentions}
-        onChange={(e) => {
-          setText(e.target.value);
-          refPicker.onEdit(e);
-          updateMathUi(e.target, true);
-          atPicker.update(e.target, true);
-        }}
-        onSelect={(e) => { updateMathUi(e.target, false); atPicker.update(e.target, false); }}
-        onBlur={() => {
-          setMathUi(null);
-          atPicker.close();
-          setTimeout(refPicker.close, 120);
-        }}
-        onKeyDown={onKeyDown}
-      />
-      <div className="commentComposerBar">
-        {tooLong ? <span className="commentTooLong">{t("At most {n} characters", { n: MAX_COMMENT.toLocaleString() })}</span> : null}
-        <span className="commentComposerSpacer" />
-        {cancel ? <button type="button" className="uiBtn sm ghost" onClick={cancel}>{t("Cancel")}</button> : null}
-        <button type="button" className="uiBtn sm primary commentSend" disabled={!trimmed || tooLong}
-          onMouseDown={(e) => e.preventDefault()} onClick={submit} title={submitLabel} aria-label={submitLabel}>
-          {onCancel ? submitLabel : <ArrowUpIcon size={14} />}
-        </button>
+      <div className="commentBox">
+        <BlockCmEditor
+          ref={ref}
+          ownHistory
+          className="blockEditorCm commentField"
+          value={text}
+          placeholder={placeholder}
+          ariaLabel={placeholder}
+          refLabels={labelsFor ? labelsFor(text) : NO_LABELS}
+          mentions={mentions}
+          onChange={(e) => {
+            setText(e.target.value);
+            refPicker.onEdit(e);
+            updateMathUi(e.target, true);
+            atPicker.update(e.target, true);
+          }}
+          onSelect={(e) => { updateMathUi(e.target, false); atPicker.update(e.target, false); }}
+          onBlur={() => {
+            setMathUi(null);
+            atPicker.close();
+            setTimeout(refPicker.close, 120);
+          }}
+          onKeyDown={onKeyDown}
+        />
+        {/* A new comment or a reply sends from the round button inside the
+            box, beside the text (its last line once it wraps), as the chat's
+            composer does; an edit saves from the bar under it. */}
+        {cancel ? null : (
+          <button type="button" className="uiBtn primary chatCircleBtn commentSend" disabled={!trimmed || tooLong}
+            onMouseDown={(e) => e.preventDefault()} onClick={submit} title={submitLabel} aria-label={submitLabel}>
+            <ArrowUpIcon size={14} />
+          </button>
+        )}
       </div>
+      {tooLong || cancel ? (
+        <div className="commentComposerBar">
+          {tooLong ? <span className="commentTooLong">{t("At most {n} characters", { n: MAX_COMMENT.toLocaleString() })}</span> : null}
+          <span className="commentComposerSpacer" />
+          {cancel ? <button type="button" className="uiBtn sm ghost" onClick={cancel}>{t("Cancel")}</button> : null}
+          {cancel ? (
+            <button type="button" className="uiBtn sm primary commentSend" disabled={!trimmed || tooLong}
+              onMouseDown={(e) => e.preventDefault()} onClick={submit} title={submitLabel} aria-label={submitLabel}>
+              {submitLabel}
+            </button>
+          ) : null}
+        </div>
+      ) : null}
       {mathUi ? (
         <>
           <MathLivePreview tex={mathUi.tex} display={mathUi.display} anchor={mathUi.previewAnchor} caret={mathUi.caret} />
