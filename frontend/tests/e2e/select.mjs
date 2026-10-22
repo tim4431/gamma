@@ -164,9 +164,10 @@ export const RULES = [
   ["backend/gamma/hosted.py", ["cloud-sign-in"]], // a hosted container's plan (read-only gates every write only there)
   ["backend/gamma/publish.py", ["publish"]],
   ["backend/gamma/routers/publish.py", ["publish"]],
-  ["backend/gamma/ink.py", ["ink", "ink-editing", "ink-shapes", "triggered-guide", "notebooks"]],
+  // transfers: the Notability import writes its strokes through ink.py (encode_points, the file's checks, group_files)
+  ["backend/gamma/ink.py", ["ink", "ink-editing", "ink-shapes", "triggered-guide", "notebooks", "transfers"]],
   ["backend/gamma/routers/ink.py", ["ink", "ink-editing", "ink-shapes", "triggered-guide", "notebooks"]],
-  ["backend/gamma/notebook.py", ["notebooks"]],
+  ["backend/gamma/notebook.py", ["notebooks", "transfers"]], // transfers: a Notability note's paper pages (paper_ops)
   ["backend/gamma/recording.py", ["recording", ...EXPORTS]],
   ["backend/gamma/routers/recordings.py", ["recording"]],
   // what the exports, the notebook PDF and the agent's outline read of a text box

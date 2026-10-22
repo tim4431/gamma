@@ -497,7 +497,10 @@ tool strip, whose anchors the ink tour uses) goes to the ink groups (ink,
 ink-editing, ink-shapes, ink-zoom), pdf-touch, touch, notebooks,
 triggered-guide, textbox and comments (a press on a margin card with a pen
 or the Text tool armed). `backend/gamma/ink.py` goes to ink,
-ink-editing, ink-shapes, notebooks and triggered-guide. The chat's
+ink-editing, ink-shapes, notebooks, triggered-guide and transfers, and
+`backend/gamma/notebook.py` to notebooks and transfers: the Notability
+note the transfers scenario imports writes its strokes through the first
+and paints its paper page with the second's paper. The chat's
 pictures of handwriting (`backend/gamma/ink_view.py`) go to the groups of
 the AI modules (`ai_*.py`: the chat's, settings and ink-zoom).
 Docs, desktop, extension and backend tests go to none, and what every

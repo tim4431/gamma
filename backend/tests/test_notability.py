@@ -942,6 +942,27 @@ def test_a_transform_composed_past_a_float_s_range_leaves_its_stroke_out():
     assert plan.left_out["stroke"] == 1 and len(list(nm.page_strokes(note, plan.pages[0], plan.left_out))) == 1
 
 
+def test_a_stroke_past_what_a_stroke_file_holds_is_left_out_and_the_page_comes_in():
+    """A coordinate under COORD_LIMIT can still land past ink.MAX_XY (±10^7
+    pt, what a stroke file holds) on its page: a narrow note maps a unit to
+    612 / W points (38.25 at W 16). That stroke is left out and counted,
+    as one past the sample caps is, and the page's other strokes make a
+    file that parses."""
+    far = 900_000
+    note = note_of(fx.session(width=16.0, curves=[fx.curve([(2, 2), (4, 2), (6, 4), (8, 4)]),
+                                                  fx.curve([(far, 2), (far + 2, 4)], polyline=True)]))
+    plan = nm.plan_note(note, {})
+    page = plan.pages[0]
+    assert far < nb.COORD_LIMIT and plan.left_out["stroke"] == 0 and page.curves == [0, 1]
+    assert far * page.frame.k * ink.COORD_UNIT > ink.MAX_XY
+    left = Counter()
+    strokes = list(nm.page_strokes(note, page, left))
+    assert len(strokes) == 1 and left["stroke"] == 1
+    space = {"kind": "canvas", "width": page.frame.width, "height": page.frame.height}
+    files = list(ink.group_files(strokes, space))
+    assert [len(ink.parse_ink(ink.dumps(f)).strokes) for f in files] == [1]
+
+
 def test_samples_are_counted_before_they_are_made(monkeypatch):
     note = note_of(fx.session(curves=[fx.curve([(0, 0), (60_000, 0)], polyline=True)]))
 

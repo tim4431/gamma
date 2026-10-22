@@ -678,8 +678,12 @@ names:
   outline or a sticky's past 50,000 is left out unmade, and so are the
   stroke that would take the note past 20,000,000 and every stroke after
   it (`notability_map.page_strokes`). A NaN, an infinity or a coordinate
-  past 10⁶, the groups' transforms applied, leaves its item out. Finding
-  the notes of an upload is linear in its files.
+  past 10⁶, the groups' transforms applied, leaves its item out. So does
+  a stroke that would land past ±10,000,000 pt on its page (`ink.MAX_XY`,
+  what a stroke file holds). A unit of the note is the page's width ÷ W
+  points, so only a page many times as many points wide as W gets there:
+  a letter page of a note a few dozen units wide, or a PDF page far wider
+  than its note. Finding the notes of an upload is linear in its files.
 - Pictures are PNG, JPEG, GIF or WebP by their first bytes, decoded only to
   be transformed and only up to 40 MP; a stretch so long and thin that a
   side would round to no pixel is refused. One image file is read for at

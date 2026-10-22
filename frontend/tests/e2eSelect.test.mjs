@@ -50,10 +50,13 @@ test("a change selects the groups that exercise it", () => {
   assert.equal(pick(["frontend/src/app/App.jsx"]).length, GROUPS.length);
   // the pens' "Use this browser's pens instead?" (prefs.js useProfileSync, App's onReplaced) is ink.mjs's
   for (const file of ["frontend/src/app/prefs.js", "frontend/src/app/prefDefs.js"]) assert.ok(pick([file]).includes("ink"), file);
-  assert.deepEqual(pick(["backend/gamma/ink.py"]).sort(), ["ink", "ink-editing", "ink-shapes", "notebooks", "triggered-guide"]);
+  assert.deepEqual(pick(["backend/gamma/ink.py"]).sort(), ["ink", "ink-editing", "ink-shapes", "notebooks", "transfers", "triggered-guide"]);
   // the Notability import is an export's groups; its fixture writer is the transfers scenario's
   assert.deepEqual(pick(["backend/gamma/notability_import.py"]).sort(), ["diagrams", "files", "ink", "transfers"]);
   assert.deepEqual(pick(["backend/tests/notability_fixtures.py"]), ["transfers"]);
+  // and the note that scenario imports goes through ink.py (its strokes: encode_points, the
+  // stroke file's checks, group_files) and notebook.py (its paper page: normalize_paper, paper_ops)
+  for (const file of ["backend/gamma/ink.py", "backend/gamma/notebook.py"]) assert.ok(pick([file]).includes("transfers"), file);
   // a comment card stands in the page's box, where the ink layer and the text boxes leave its presses alone
   for (const file of ["frontend/src/ink/InkLayer.jsx", "frontend/src/markup/TextBoxLayer.jsx"]) assert.ok(pick([file]).includes("comments"), file);
   // the chat's pictures of handwriting are the AI modules' groups
