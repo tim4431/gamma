@@ -614,8 +614,14 @@ The scenarios live in `tests/e2e/scenarios/`:
   "running" with `page.route`, since the server's job is quick.
 - `ink.mjs`: handwriting.
   - The tool strip and its presets: the options row, More, the Tool menu,
-    reordering, the bracket keys and a held E. Opening the strip arms the
-    stylus pen, not a highlighter before a hidden last pen.
+    reordering, the bracket keys (`]` at the widest says the width again
+    without a write) and a held E. Opening the strip arms the stylus pen,
+    not a highlighter before a hidden last pen.
+  - The strip's menus (More, the Tool menu, the Style picker's) open on
+    the press, each 4 px under its button by its left edge
+    (`assertMenuFrom`). A press on More while the Tool menu is open swaps
+    the two, and More opened with Enter closes on Escape with the focus
+    left on it.
   - Mouse strokes becoming an ink block with an `.ink` upload, persistence
     across a reload, the eraser, stroke undo/redo, a lasso move + delete
     and the notes card's jump + outline (`/Ink` in the exported PDF is
@@ -629,6 +635,11 @@ The scenarios live in `tests/e2e/scenarios/`:
     order. Stylus latency and OS palm rejection need a real tablet.
   - The file: a pressure stroke stored as version 2 with its baked width,
     and two tabs changing one group at once (the save merges by stroke).
+    A change to a stroke the other tab changed meanwhile is dropped, and
+    that tab's pill says so.
+  - The build fence: a page whose session names another build than the
+    socket's hello stops drawing, behind a sticky pill with Reload. The
+    strip opens with nothing armed, and a drag saves nothing.
   - Draw and hold: a held line, and a closed circle and rectangle held
     still where they began, snap to their shapes.
   - The pen's feel: a highlighter always straightened, the eraser's
@@ -648,23 +659,37 @@ The scenarios live in `tests/e2e/scenarios/`:
     them after a reload. A later pull, a later load of a browser that
     only took or sent the account's list, and a browser on the defaults
     never ask.
-- `inkEditing.mjs`: tap-to-select and the selection menu, which opens and
-  grows in place, frame by frame. Colour/width
-  edits keeping pressure and time, duplicate ids, selective delete, the
-  Undo/Redo buttons, a finger lasso-move across groups in pen-only mode,
-  swipe/hold arbitration, a pen resuming through a selection, menu
-  placement on a small screen, view/edit shares. Copy, cut and paste
-  (Ctrl+C / X / V, and Paste here on a right-click), a flip, and New note
-  and Merge into note. The Style row restyles a pen to Brush and Dotted;
-  a highlighter takes a line, never a brush. The Color row rings the
-  colour every selected stroke shares, none for a mix, and a colour off
-  the palette on the custom swatch; a custom colour keeps a highlighter's
-  opacity. Ctrl+D and the menu's Duplicate set the copy off by the same
-  12 css px at two zooms, and a Duplicate past the bytes one file holds
-  is refused with the selection kept. Ctrl+V while the next paper's PDF
-  loads pastes nothing. Native Chromium touch/pen,
-  asserting on the persisted stroke files. `--only "ink edit:"`; `--only
-  ink` runs all four ink files.
+- `inkEditing.mjs`: editing handwriting, on native Chromium touch and pen,
+  asserting on the persisted stroke files. `--only "ink edit:"`, and
+  `--only ink` runs all four ink files.
+  - Tap-to-select and the selection menu, which opens and grows in place,
+    frame by frame.
+  - Colour/width edits keeping pressure and time, duplicate ids, selective
+    delete and the Undo/Redo buttons.
+  - A finger lasso-move across groups in pen-only mode, swipe/hold
+    arbitration, a pen resuming through a selection and menu placement on
+    a small screen.
+  - View/edit shares, and an edit share's Transcribe saying a shared page
+    has no AI chat.
+  - Copy, cut and paste (Ctrl+C / X / V, and Paste here on a right-click),
+    a flip, and New note and Merge into note.
+  - New note on a note's whole drawing, and Merge into note on a note with
+    a caption, are refused on the pill and change nothing.
+  - The Style row restyles a pen to Brush and Dotted, and a highlighter
+    takes a line, never a brush.
+  - The selection's Style picker opens its menu 4 px under it. Opened with
+    Enter, Escape closes that menu alone and the focus stays on the
+    picker.
+  - A tap on the picker opens the menu, the tap's click leaves it open,
+    and a second tap closes it.
+  - The Color row rings the colour every selected stroke shares, none for
+    a mix, and a colour off the palette on the custom swatch. A custom
+    colour keeps a highlighter's opacity.
+  - Ctrl+D and the menu's Duplicate set the copy off by the same 12 css px
+    at two zooms. A Duplicate past the bytes one file holds is refused
+    with the selection kept.
+  - Ctrl+V while the next paper's PDF loads pastes nothing, and once a
+    page of it is in view it pastes there.
 - `inkShapes.mjs`: the strip's modifiers ([handwriting.md](handwriting.md)
   "What the user sees"). The Shapes tool's dragged rectangle stored with
   its shape record, the ruler and a stroke begun by its edge, Stamp line,
@@ -680,6 +705,36 @@ The scenarios live in `tests/e2e/scenarios/`:
   Transcribe, with the AI
   stubbed: part of a group goes as `ink_selections`, a whole group as its
   block's chip. `--group ink-zoom`.
+- `notebooks.mjs`: sheets of paper ([notebooks.md](notebooks.md)), written
+  on with the same ink tools. `--group notebooks`.
+  - A new notebook opens in the notebook view, a stroke on a sheet becomes
+    a group under it, and a click on a stroke selects it.
+  - Writing low on the last page adds the next, and Add page adds one
+    more. Z with the strip open says the zoom window works on PDF pages,
+    and opens none.
+  - The paper menu sets a page's pattern, and a page added after it takes
+    its paper.
+  - The side bar switches to the notes view and a page's own switch back,
+    the choice outliving a reload. The pages and their handwriting survive
+    a reload, and the export is a PDF of the pages.
+  - Two fingers pinch-zoom and pan the pages and Ctrl+wheel zooms, both
+    holding the paper under them. A page of hundreds of strokes draws them
+    in the other view after a switch.
+  - Pages in a note: "/note" turns an empty block into a page drawn in
+    place, the page and its group's card replay the writing, and "Add page
+    below" adds one.
+- `recording.mjs`: audio recordings ([recording.md](recording.md)), with a
+  stand-in MediaRecorder and Audio. `--group recording`.
+  - The mic records into a recording block, and a note typed and a stroke
+    drawn meanwhile carry their moment.
+  - Play shades the note and fades the stroke until their moment, a tap on
+    the stroke seeks, and Escape closes the player.
+  - The player's mode and speed menus open on the press, 4 px above their
+    buttons. A press on one while the other is open swaps them, a second
+    press closes it, and after Enter and Escape the focus stays on the
+    mode button.
+  - In the notebook view, Follow scrolls the viewer to the sheet being
+    written on.
 - `textBoxes.mjs`: text boxes ([text_boxes.md](text_boxes.md)) on a PDF
   page and on a sheet in both views. It covers the Text tool's click and
   drag, typing, the stored block after a reload, the notes marker's jump,
@@ -756,9 +811,9 @@ The scenarios live in `tests/e2e/scenarios/`:
   Chinese and back through the reload ([i18n.md](i18n.md)). `--only i18n`.
 - `share.mjs`: the share dialog, the anonymous share view (PDF, highlight,
   image through the share token, no editor), an edit share.
-- `settings.mjs`, `folders.mjs`, `trash.mjs`, `quickOpen.mjs`,
-  `notebooks.mjs`, `mcp.mjs` and `cloudSignIn.mjs` are groups of their
-  own; each file's header names the doc it covers.
+- `settings.mjs`, `folders.mjs`, `trash.mjs`, `quickOpen.mjs`, `mcp.mjs`
+  and `cloudSignIn.mjs` are groups of their own. Each file's header names
+  the doc it covers.
 
 Every step also asserts that no API call failed (4xx/5xx), no console error
 and no page error happened meanwhile (`openPage` records them;
