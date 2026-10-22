@@ -279,6 +279,44 @@ export async function commentScenarios({ server, browser, makePdf, step, until, 
     }
   });
 
+  await step("comments: a formula draws whole: held hidden while its faces load in a fresh browser, shown once they are in", async () => {
+    // Faces outside the warmed set (shared/lib/katexFonts.js FACES), so even
+    // a browser that has the common ones must fetch these first.
+    const root = await ann.api(`/api/pages/${pg.id}/comments`, { method: "POST",
+      body: { block_id: "cmnote2", body: "The space $\\mathcal{H}$ and the algebra $\\mathfrak{g}$ over $\\mathbb{R}$" } });
+    const ctx = await ben.context(browser);
+    // Every mark put on a formula and taken off again, from the first script on.
+    await ctx.addInitScript(() => {
+      window.__mathHold = { held: 0, released: 0 };
+      new MutationObserver((records) => {
+        for (const r of records) {
+          if (r.attributeName !== "data-fonts") continue;
+          if (r.target.getAttribute("data-fonts") === "loading") window.__mathHold.held++;
+          else window.__mathHold.released++;
+        }
+      }).observe(document, { attributes: true, attributeFilter: ["data-fonts"], subtree: true });
+    });
+    const E = await openPage(ctx, `${server.base}/?ws=${wsId}&page=${pg.id}&block=cmnote2&thread=${root.thread.id}`);
+    try {
+      const formula = popover(E).locator(`.commentThread[data-thread-id="${root.thread.id}"] .commentBody .katex`);
+      await formula.first().waitFor({ timeout: 10000 });
+      await until(async () => (await E.locator(".katex[data-fonts]").count()) === 0, { what: "the formulas are shown again", timeout: 5000 });
+      const hold = await E.evaluate(() => window.__mathHold);
+      assert(hold.held >= 1, `the first formula found its faces loading and was held: ${JSON.stringify(hold)}`);
+      assert(hold.released >= 1, `a held formula was released: ${JSON.stringify(hold)}`);
+      const faces = await E.evaluate(() => {
+        const out = {};
+        for (const f of document.fonts) if (/^KaTeX_(Caligraphic|Fraktur|AMS)$/.test(f.family) && f.weight === "400") out[f.family] = f.status;
+        return out;
+      });
+      assertEq(faces.KaTeX_Caligraphic, "loaded", "the calligraphic face is in");
+      assertEq(faces.KaTeX_Fraktur, "loaded", "the fraktur face is in");
+      assertNoProblems(E);
+    } finally {
+      await ctx.close();
+    }
+  });
+
   await step("comments: a note thread's Copy link in a folder share opens that page at the thread", async () => {
     await ann.file(pg.id, { folders: ["Review folder"] });
     const { token } = await ann.api(`/api/share/folder/${await ann.folder("Review folder")}`, { method: "POST" });

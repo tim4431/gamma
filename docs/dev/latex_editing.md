@@ -115,11 +115,23 @@ KaTeX's fonts (`katex.min.css`, imported by `shared/styles/app.css`) use
 `font-display: block`: a glyph stays invisible until its face has loaded,
 and the browser fetches each face only when a formula first needs it, so the
 first formula in a view (a comment's thread, the preview) would appear piece
-by piece as its faces arrive. `shared/lib/katexFonts.js` asks for the faces
-most formulas use (Main in three styles, Math italic, Size1 to Size4, AMS)
-once, at startup (`main.jsx`, as soon as the styles are in), so they load
-beside the app's own code and a formula shown the moment its page has
-drawn still draws whole.
+by piece as its faces arrive: its box, fraction rules and radicals (CSS and
+SVG) at once, its glyphs over the next frames, about 100 ms even from the
+browser's cache. `shared/lib/katexFonts.js` takes two measures, both
+installed by `main.jsx` as soon as the styles are in. `warmKatexFonts` asks
+for the faces most formulas use (Main in three styles, Math italic, Size1 to
+Size4, AMS) once, at startup, so they load beside the app's own code and a
+formula shown the moment its page has drawn still draws whole.
+`holdMathForFonts` makes that so whatever the timing: a `MutationObserver`
+catches every `.katex` added to the page before its frame paints, forces a
+layout there (which makes the browser start the loads the formula needs and
+turns those faces' status to `loading`) and, while any KaTeX face loads,
+marks the new formulas `data-fonts="loading"`, which `app.css` hides whole;
+the mark comes off once no face is loading (`document.fonts.ready`, checked
+again each frame), or after 3 s, the block period after which the browser
+would draw a fallback anyway. The browser suite's comments scenario opens a
+fresh browser at a thread with `\mathcal` and `\mathfrak` (faces outside the
+warmed set) and checks the formula was held and then released.
 
 Validation (from `frontend`):
 

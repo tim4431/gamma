@@ -1,4 +1,8 @@
 @import "katex/dist/katex.min.css";
+/* A formula whose fonts are still loading, until they are in: hidden whole,
+   rather than its box and rules drawn with its glyphs still to come
+   (shared/lib/katexFonts.js holdMathForFonts). */
+.katex[data-fonts="loading"] { visibility: hidden; }
 
 /* The tokens (theme colours, type, radii, layers) live in tokens.css, which
    index.html links ahead of this file; this file only reads them. */
