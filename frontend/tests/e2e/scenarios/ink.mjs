@@ -10,11 +10,11 @@
 // crashed tab never saved, a browser with pens of its own asked once whether
 // to keep them over the account's (the question staying up while a page
 // opens; a browser that only took or sent the account's list never asked on
-// a later load), and the build fence stopping a page the server was updated
-// under. /Ink in the
+// a later load, nor the next account to sign in on it), and the build fence
+// stopping a page the server was updated under. /Ink in the
 // annotated PDF is backend/tests/test_ink.py; the chat's view_ink is
 // test_ai_tools_ink.py.
-import { PYTHON, assertMenuFrom, assertOpensInPlace, fakeAiModels, until } from "../harness.mjs";
+import { Account, PYTHON, assertMenuFrom, assertOpensInPlace, fakeAiModels, until } from "../harness.mjs";
 import { waitForPdf } from "./pdf.mjs";
 import { DEFAULT_TOOLS, decodeStroke, encodeStroke, newInk, strokeWidth } from "../../../src/ink/ink.js";
 import { execFileSync } from "node:child_process";
@@ -1892,26 +1892,28 @@ export async function inkScenarios({ server, browser, alice, makePdf, step, unti
     } finally { await jctx.close(); }
   });
 
+  // The pens question, a pen list whose first pen is `color`, a browser's first pen, and how many times
+  // this session asked: Settings → Help & diagnostics lists every status the pill showed
+  const ask = "Use this browser's pens instead?";
+  const pens = (color) => DEFAULT_TOOLS.map((tool, i) => (i ? tool : { ...tool, color }));
+  const localFirst = (p) => p.evaluate(() => JSON.parse(localStorage.getItem("gamma-ink-tools") || "[]")[0]?.color);
+  const asked = async (p) => {
+    await p.locator('[data-guide="header.account"]').click();
+    await p.getByRole("button", { name: "Settings…", exact: true }).click();
+    const dialog = p.getByRole("dialog", { name: "Settings", exact: true });
+    await dialog.waitFor();
+    await p.getByRole("navigation", { name: "Settings categories" }).getByRole("button", { name: "Help & diagnostics", exact: true }).click();
+    await p.locator(".sysLogBox").waitFor();
+    const n = await p.locator(".sysLogMsg").evaluateAll((els, text) => els.filter((el) => el.textContent === text).length, ask);
+    await p.getByRole("button", { name: "Close settings", exact: true }).click();
+    await dialog.waitFor({ state: "hidden" });
+    return n;
+  };
+
   await step("ink: a browser with pens of its own is asked once, on the account's first pull, whether to keep them; Use this browser's pushes them; a later pull, and a browser on the defaults, never ask", async () => {
-    const ask = "Use this browser's pens instead?";
     // B's own pens and another device's two later edits, each its own first pen's colour
-    const pens = (color) => DEFAULT_TOOLS.map((tool, i) => (i ? tool : { ...tool, color }));
     const [ownPens, laterPens, lastPens] = [pens("#7c3aed"), pens("#ea580c"), pens("#0891b2")];
     const accountFirst = async () => ((await account.api("/api/prefs/profile")).value?.inkTools || [])[0]?.color;
-    const localFirst = (p) => p.evaluate(() => JSON.parse(localStorage.getItem("gamma-ink-tools") || "[]")[0]?.color);
-    // how many times this session asked: Settings → Help & diagnostics lists every status the pill showed
-    const asked = async (p) => {
-      await p.locator('[data-guide="header.account"]').click();
-      await p.getByRole("button", { name: "Settings…", exact: true }).click();
-      const dialog = p.getByRole("dialog", { name: "Settings", exact: true });
-      await dialog.waitFor();
-      await p.getByRole("navigation", { name: "Settings categories" }).getByRole("button", { name: "Help & diagnostics", exact: true }).click();
-      await p.locator(".sysLogBox").waitFor();
-      const n = await p.locator(".sysLogMsg").evaluateAll((els, text) => els.filter((el) => el.textContent === text).length, ask);
-      await p.getByRole("button", { name: "Close settings", exact: true }).click();
-      await dialog.waitFor({ state: "hidden" });
-      return n;
-    };
     // a paper of its own, whose strip A writes with
     const up = await account.upload("/api/uploads", makePdf([["Pens on the account"]]), "pens.pdf", "application/pdf");
     const paper = await account.api(`/api/blocks/by-doc/${up.doc_id}`, { method: "POST", body: { default_title: "Pens paper", source_url: up.source_url } });
@@ -1939,9 +1941,9 @@ export async function inkScenarios({ server, browser, alice, makePdf, step, unti
       const C = await openPage(await browserWith(), library);
       await until(async () => (await localFirst(C)) === "#15803d", { what: "C takes the account's pens" });
       // B had pens of its own when it signed in: the account's stand, and it is asked once. B opens the
-      // paper, the page held back until the question is up: the "Ready." of the page opening then goes to
-      // the log only, and the question stays on the pill (under the PDF's loading pill, another channel,
-      // while that lasts) until it is answered
+      // paper, the page held back until the question is up: the "Ready." of the page opening shows over the
+      // question for its second and goes, the PDF's loading pill stays under it, and the question stays on
+      // the pill until it is answered
       const bContext = await browserWith({ cookies: [], origins: [{ origin: server.base,
         localStorage: [{ name: "gamma-ink-tools", value: JSON.stringify(ownPens) }] }] });
       let release;
@@ -1951,6 +1953,7 @@ export async function inkScenarios({ server, browser, alice, makePdf, step, unti
       const pill = B.locator(".statusPill", { hasText: ask });
       await pill.waitFor();
       release();
+      await B.locator(".statusPill", { hasText: "Ready." }).waitFor({ timeout: 5000 });
       await waitForPdf(B, 1);
       await pill.waitFor({ timeout: 4000 });
       assertEq(await localFirst(B), "#15803d", "the account's pens stand until B answers");
@@ -1967,6 +1970,18 @@ export async function inkScenarios({ server, browser, alice, makePdf, step, unti
       await until(async () => (await A.$eval(".pdfInkBar .inkToolInk", (el) => getComputedStyle(el).backgroundColor)) === "rgb(124, 58, 237)",
         { what: "A's strip shows B's first pen" });
       assertEq(await asked(A), 0, "A, on the list it sent the account, takes B's on its next load without a question");
+      // A makes its first pen red, and its page is hidden while the change settles: the change goes with
+      // keepalive (prefs.js push), and A remembers the list it sent once the answer is in
+      await A.keyboard.press("1");
+      await A.click(".pdfInkBar .inkToolBtn.modeActive");
+      await A.waitForSelector(".pdfInkSub[data-ink-options='tool']");
+      await A.click(".pdfInkSub button[aria-label='Red']");
+      await until(async () => (await localFirst(A)) === "#dc2626", { what: "A's red pen, its push waiting" });
+      await A.evaluate(() => {
+        Object.defineProperty(document, "hidden", { configurable: true, get: () => true });
+        document.dispatchEvent(new Event("visibilitychange"));
+      });
+      await until(async () => (await accountFirst()) === "#dc2626", { what: "A's red pen on the account" });
       // another device edits the account's pens: B's next pull takes the edit and does not ask again
       await account.api("/api/prefs/profile", { method: "PATCH", body: { set: { inkTools: laterPens } } });
       const pulled = B.waitForResponse((r) => r.url().endsWith("/api/prefs/profile") && r.request().method() === "GET");
@@ -1986,11 +2001,62 @@ export async function inkScenarios({ server, browser, alice, makePdf, step, unti
       await C.reload();
       await until(async () => (await localFirst(C)) === "#0891b2", { what: "C's next load takes the next edit" });
       assertEq(await asked(C), 0, "a browser that only took the account's pens is not asked on a later load");
+      // nor A, whose last list went with keepalive as its page was hidden
+      await A.reload();
+      await until(async () => (await localFirst(A)) === "#0891b2", { what: "A's next load takes the next edit" });
+      assertEq(await asked(A), 0, "a browser that sent its list as its page was hidden is not asked on a later load");
+      // D has pens of its own and is asked as a link to a page that is gone opens: the page's notice takes
+      // down the link's "Opening..." and leaves the question on the pill
+      const gone = await account.api("/api/blocks", { method: "POST", body: { parent_id: "root", content: "Gone before the pens question" } });
+      await account.api(`/api/blocks/${gone.id}`, { method: "DELETE" });
+      await account.api(`/api/trash/${gone.id}`, { method: "DELETE" });
+      const dContext = await browserWith({ cookies: [], origins: [{ origin: server.base,
+        localStorage: [{ name: "gamma-ink-tools", value: JSON.stringify(pens("#db2777")) }] }] });
+      let releaseD;
+      const heldD = new Promise((resolve) => { releaseD = resolve; });
+      await dContext.route(`**/api/blocks/${gone.id}/subtree*`, async (route) => { await heldD; await route.continue(); });
+      const D = await openPage(dContext, `${server.base}/?page=${gone.id}&ws=${account.ws}`);
+      const dPill = D.locator(".statusPill", { hasText: ask });
+      await dPill.waitFor();
+      releaseD();
+      await D.locator(".missingPageNotice").waitFor({ timeout: 15000 });
+      await dPill.waitFor({ timeout: 2000 });
+      assertNoProblems(D, [/find-page\/[^ ]+ -> 404/, /\/subtree -> 404/]);
       for (const p of [A, B, C]) assertNoProblems(p);
     } finally {
       for (const c of contexts) await c.close();
       // the account back on the default pens for the groups after this one
       await account.api("/api/prefs/profile", { method: "PATCH", body: { set: { inkTools: null } } }).catch(() => {});
+    }
+  });
+
+  await step("ink: the next account to sign in on a browser takes its own pens without a question about the last account's, and the browser keeps nothing of the last account's profile", async () => {
+    // X and Y, each with pens of its own on its profile. X loads in a browser and takes its pens; Y then
+    // loads in a browser with X's storage, as after X signs out and Y signs in.
+    const signedUp = async (name) => {
+      await server.manage("create-user", name, `${name}-pw`);
+      return new Account(server, name, `${name}-pw`).login();
+    };
+    const [x, y] = [await signedUp("pens-x"), await signedUp("pens-y")];
+    await x.api("/api/prefs/profile", { method: "PATCH", body: { set: { inkTools: pens("#2a6f4e") } } });
+    await y.api("/api/prefs/profile", { method: "PATCH", body: { set: { inkTools: pens("#8b4a1f") } } });
+    const xContext = await x.context(browser);
+    let yContext = null;
+    try {
+      const X = await openPage(xContext, `${server.base}/?ws=${x.ws}`);
+      await until(async () => (await localFirst(X)) === "#2a6f4e", { what: "X takes its account's pens" });
+      assertEq(await asked(X), 0, "X came to the browser on the defaults");
+      yContext = await y.context(browser, { storageState: { cookies: [], origins: (await xContext.storageState()).origins } });
+      const Y = await openPage(yContext, `${server.base}/?ws=${y.ws}`);
+      await until(async () => (await localFirst(Y)) === "#8b4a1f", { what: "Y takes its account's pens" });
+      assertEq(await asked(Y), 0, "the pens X's account left are no list this browser made: Y is not asked");
+      const kept = await Y.evaluate(() => Object.keys(localStorage).filter((key) => (localStorage.getItem(key) || "").includes("#2a6f4e")));
+      assertEq(JSON.stringify(kept), "[]", "no key the browser keeps names X's pens once Y's are in");
+      assertNoProblems(X);
+      assertNoProblems(Y);
+    } finally {
+      await xContext.close();
+      if (yContext) await yContext.close();
     }
   });
 

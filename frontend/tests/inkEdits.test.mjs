@@ -27,6 +27,12 @@ test("the byte budget refuses an edit that takes a group past MAX_BYTES, but let
   assert.equal(overBudget([{ before: small, after: huge }]), true, "growth past the cap");
   assert.equal(overBudget([{ before: huger, after: huge }]), false, "still over, but smaller");
   assert.equal(overBudget([{ before: small, after: small }, { before: small, after: huge }]), true, "any change of the edit");
+  // a group that ends exactly at the cap is the server's to take; one byte more is not
+  const sized = (bytes) => { const base = strokeBytes(padded("p", 0)); return padded("p", bytes - base); };
+  const exact = page(sized(MAX_BYTES - inkBytes(page()) + 1));
+  assert.equal(inkBytes(exact), MAX_BYTES);
+  assert.equal(overBudget([{ before: small, after: exact }]), false, "exactly MAX_BYTES");
+  assert.equal(overBudget([{ before: small, after: page(sized(MAX_BYTES - inkBytes(page()) + 2)) }]), true, "one byte past it");
 });
 
 test("a change that leaves strokes in a group with no block in the tree puts the block back", () => {
@@ -126,6 +132,9 @@ test("the eraser's sweep: each group of the surface cut along the path or losing
   assert.deepEqual(partial.map((c) => c.id), ["g1"]);
   assert.equal(partial[0].after.strokes.length, 4, "each stroke cut in two");
   assert.ok(partial[0].after.strokes.every((s) => s.from === "a" || s.from === "h"));
+  const pens = eraseAlongChanges(1, blocks, path, 3, true, inkOf, eraserKeep("pen"));
+  assert.deepEqual(pens[0].after.strokes.map((s) => s.from || s.id), ["a", "a", "h"], "the partial eraser cuts the pen stroke; the filter keeps the highlighter whole");
+  assert.equal(pens[0].after.strokes[2], groups.g1.strokes[1]);
   assert.deepEqual(eraseAlongChanges(1, blocks, [{ x: 0, y: 300 }, { x: 600, y: 300 }], 3, false, inkOf, eraserKeep("all")), [],
     "a sweep that touches nothing changes nothing");
 });

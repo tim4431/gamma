@@ -829,6 +829,81 @@ export async function inkEditingScenarios({ server, browser, alice, bob, makePdf
     } finally { await fctx.close(); }
   });
 
+  await step("ink edit: a New note or a Merge into note that would take a note past the server's cap is refused on the pill, and the selection stays on the strokes it had", async () => {
+    // Two groups of about 3.3 MB on one page: ink.js MAX_BYTES (6 MiB) holds one of them, not both. New
+    // note of both and Merge into note of the second pass their plans (selectionEdits.js), and applyInk
+    // refuses them for their bytes.
+    const up = await alice.upload("/api/uploads", makePdf([["Two notes too full to join"]]), "full-notes.pdf", "application/pdf");
+    const paper = (await alice.api(`/api/blocks/by-doc/${up.doc_id}`, { method: "POST", body: { default_title: "Full notes", source_url: up.source_url } })).id;
+    const groupAt = async (tag, y0) => {
+      const strokes = Array.from({ length: 240 }, (_, i) => encodeStroke({ id: `${tag}${i}`, color: "#1f1f1f", size: 1, ch: "xyt", t0: 1000 + i,
+        samples: Array.from({ length: 1000 }, (_, j) => ({ x: 100 + (i % 20) * 20 + (j % 2) * 7.31,
+          y: y0 + Math.floor(i / 20) * 20 + (Math.floor(j / 2) % 2) * 7.37, t: j * 99999 })) }));
+      const file = await alice.api("/api/upload-ink", { method: "POST", body: { ...newInk(1, 612, 792), strokes } });
+      await alice.api("/api/blocks", { method: "POST", body: { parent_id: paper, content: "",
+        properties: { ink_url: file.url, pdf_position: file.pdf_position, ink_strokes: strokes.length } } });
+      return file.url;
+    };
+    const files = [await groupAt("one", 100), await groupAt("two", 450)];
+    const savedFiles = async () => ((await alice.api(`/api/blocks/${paper}/subtree`)).block.children || [])
+      .filter((b) => b.properties?.ink_url).map((b) => b.properties.ink_url);
+    const fctx = await alice.context(browser);
+    try {
+      const fpage = await openPage(fctx, `${server.base}/?page=${paper}&ws=${alice.ws}`);
+      const fmenu = fpage.getByRole("toolbar", { name: "Edit handwriting", exact: true });
+      const more = fmenu.getByRole("button", { name: "More", exact: true });
+      const moreRow = async () => { if (await more.getAttribute("aria-expanded") !== "true") await more.click(); };
+      await waitForPdf(fpage, 1);
+      await until(async () => (await fpage.locator(paths).count()) >= 480, { what: "both groups drawn", timeout: 30000 });
+      await fpage.getByRole("button", { name: "Handwriting tools", exact: true }).click();
+      await fpage.waitForSelector(".pdfInkBar");
+      // what the pill says, as it changes: a final message is up a second, which a long task can outlast
+      await fpage.evaluate(() => {
+        window.pillSaid = [];
+        new MutationObserver(() => {
+          const said = document.querySelector(".statusPill .pillText")?.textContent;
+          if (said && window.pillSaid.at(-1) !== said) window.pillSaid.push(said);
+        }).observe(document.body, { subtree: true, childList: true, characterData: true });
+      });
+      const refused = async (what) => {
+        await until(() => fpage.evaluate(() => window.pillSaid.includes("This handwriting note is full. Move part of it to a new note, or start a new one.")),
+          { what: `${what} refused on the pill`, timeout: 15000 });
+        await fpage.evaluate(() => { window.pillSaid = []; });
+        await fpage.waitForTimeout(300);
+        assertEq(await fpage.locator('[data-page="1"] .inkSelRect').count(), 1, `${what}: the selection's box still around the strokes`);
+        assert(await fmenu.isVisible(), `${what}: the selection menu still up`);
+        assert(await fpage.getByRole("button", { name: "Undo ink", exact: true }).isDisabled(), `${what}: no edit made`);
+        assertEq(JSON.stringify(await savedFiles()), JSON.stringify(files), `${what}: the groups' files as they were`);
+      };
+      // Ctrl+A: both groups; New note of them all
+      await fpage.keyboard.press("Control+a");
+      await fmenu.waitFor();
+      await moreRow();
+      await fmenu.getByRole("button", { name: "New note", exact: true }).click();
+      await refused("New note");
+      // the second group alone, whole (a tap with the hand on one of its strokes, then Select note): Merge
+      // into note in New note's place
+      await fpage.keyboard.press("Escape");
+      await fmenu.waitFor({ state: "hidden" });
+      await fpage.keyboard.press("v");
+      const at = await fpage.locator('[data-page="1"]').evaluate((el) => {
+        const rect = el.getBoundingClientRect(), k = rect.width / 612;
+        return { x: Math.round(rect.left + 103 * k), y: Math.round(rect.top + 453 * k) };
+      });
+      await until(async () => {
+        if (await fmenu.count()) return true;
+        await fpage.mouse.click(at.x, at.y);
+        return fmenu.waitFor({ timeout: 2000 }).then(() => true, () => false);
+      }, { timeout: 15000, what: "a stroke of the second group selected" });
+      await moreRow();
+      await fmenu.getByRole("button", { name: "Select note", exact: true }).click();
+      await moreRow();
+      await fmenu.getByRole("button", { name: "Merge into note", exact: true }).click();
+      await refused("Merge into note");
+      assertNoProblems(fpage);
+    } finally { await fctx.close(); }
+  });
+
   await step("ink edit: Ctrl+V while the next paper's PDF loads pastes nothing, never onto the last paper's page; once a page of it is in view, there", async () => {
     // Ctrl+V lands on the page in view (PdfViewer's onPageInView). Here the first paper is read at its
     // third page, and the next one, a page long, opens with its PDF held back while the strip has a pen

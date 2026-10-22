@@ -222,13 +222,14 @@ export function useInkSelection({ focusedBlockId, readOnly, inkUi, blocksRef, in
   // new ink block on the same surface, ids kept, as one entry across the
   // groups and the new block (applyInk inserts it; undo empties it again,
   // and flushInk deletes the empty block). A selection that already is a
-  // whole note of its own is left as it is.
+  // whole note of its own is left as it is. The new note becomes the
+  // selection once applyInk applied it: the byte budget may refuse it, as
+  // it may a merge, leaving the selection as it was.
   function splitInkSelection() {
     const plan = splitPlan(inkSelection, inkOf, makeId);
     if (!plan) return;
     if (plan.refused) { setStatus(plan.refused); return; }
-    applyInk(plan.changes, { label: T("ink split") });
-    handleInkSelect(inkSelection.page, plan.items);
+    if (applyInk(plan.changes, { label: T("ink split") })) handleInkSelect(inkSelection.page, plan.items);
   }
   // Merge into note: the selection's whole group appended to the surface's
   // previous group (the nearest before it in page order, else the first
@@ -238,8 +239,7 @@ export function useInkSelection({ focusedBlockId, readOnly, inkUi, blocksRef, in
     const plan = mergePlan(inkSelection, inkOf, blocksRef.current, inkBySurface);
     if (!plan) return;
     if (plan.refused) { setStatus(plan.refused); return; }
-    applyInk(plan.changes, { label: T("ink merge") });
-    handleInkSelect(inkSelection.page, plan.items);
+    if (applyInk(plan.changes, { label: T("ink merge") })) handleInkSelect(inkSelection.page, plan.items);
   }
   return { inkSelection, inkClip, clearInkSelection, restoreInkSelection, handleInkSelect, handleInkMoveSelection,
     deleteInkSelection, selectionStill, handleInkAction, copyInkSelection, pasteInk, pasteAtCentre,

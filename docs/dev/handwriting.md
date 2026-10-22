@@ -88,9 +88,10 @@ app ([ipad.md](ipad.md)). Typed text on a page is
     - a hand (nothing armed: scroll and select text);
     - **More** (⋯, "More handwriting tools") and close;
     - Undo / Redo, pinned at the right end as the last two buttons.
-- **More** opens a menu on the press. It is a `ContextMenu` of `MenuItem`s
-  rendered outside the strip's tooltip host, so it takes the tooltip's
-  place in the same frame.
+- **More** opens a menu on the press, which takes the button's tooltip
+  away, so the menu takes the tooltip's place in the same frame. The menu
+  is a `ContextMenu` of `MenuItem`s rendered outside the strip's tooltip
+  host, so its rows raise none of the strip's tooltips.
   - Its rows:
     - *Paste handwriting* (Ctrl+V) and *Select all handwriting on this
       page* (Ctrl+A);
@@ -203,14 +204,16 @@ app ([ipad.md](ipad.md)). Typed text on a page is
     instead?". Its *Use this browser's* pushes the local list, and
     otherwise the account's pens stand.
   - A list this browser changed itself is neither the defaults nor the
-    list it last took from the account or sent there, which it remembers
-    per account.
+    list it last took from an account or sent there. The browser remembers
+    that list whichever account it was, so the next account to sign in is
+    not asked about the last one's pens.
   - A later pull that differs, and a later load that finds the list this
     browser last took or sent replaced, bring another device's edit, which
     applies without a question.
   - The question stays on the pill for its 8 seconds, or until it is
-    answered. A page opening under it (a `?page=` link) puts its "Ready."
-    in the system log only.
+    answered. A page opening under it (a `?page=` link, or one to a page
+    that is gone) shows its own messages over it for their second, and
+    then the question again.
   - Every write of the list goes through `normalizeTools` (`setInkTools`
     in `ink/useInkStrip.js`), so what this browser keeps and pushes is
     exactly what a pull reads back.
@@ -414,8 +417,9 @@ app ([ipad.md](ipad.md)). Typed text on a page is
     Text, whose tap closes it. Closing the strip and leaving the page
     close it too.
 - **Smoothing** (a preset's `stabilize`, 0–4, Off by default): the pen
-  tip pulls the line behind it on a string of 3, 6, 10 or 16 css px (the
-  lazy brush of Krita and Xournal++), so a shaky hand draws a calm line.
+  tip pulls the line behind it on a string of 3, 6, 10 or 16 css px, so a
+  shaky hand draws a calm line. It is the lazy brush of Krita and
+  Xournal++.
   - Pressure and time are untouched, a sharp reversal (over 90°) still
     makes a corner, and the lift catches the line up to the tip.
   - It applies while drawing only: saved ink is never re-smoothed, and the
@@ -431,10 +435,10 @@ app ([ipad.md](ipad.md)). Typed text on a page is
     pill.
   - There is no snap to the PDF's text lines.
 - **Scribble to erase** (`inkScribbleErase`, the account's, off by
-  default): a fast dense back-and-forth with a pen, at least four sharp
-  reversals along its own long axis within two seconds, erases the pen
-  strokes under it as one undo entry. The pill says "Erased 3 strokes."
-  with Undo.
+  default): a fast dense back-and-forth with a pen erases the pen strokes
+  under it as one undo entry, and the pill says "Erased 3 strokes." with
+  Undo. The scribble takes at least four sharp reversals along its own
+  long axis within two seconds.
   - Turning it on shows a pill explaining the gesture.
   - It takes the strokes at least 70 % inside its box, never a
     highlighter, never a stroke more than three times its size, and only
@@ -476,9 +480,9 @@ app ([ipad.md](ipad.md)). Typed text on a page is
     brush looks at pens only, the line at every stroke, the fill at the
     closed shapes.
   - Choosing a style re-bakes the selected pens' widths from the pressure
-    and tilt they were written with: a pen becomes a brush pen with its
-    tapers, a pencil with its shading, a calligraphy pen with its nib (the
-    stroke's own angle, else 45°).
+    and tilt they were written with. A pen becomes a brush pen with its
+    tapers, a pencil with its shading, or a calligraphy pen with its nib
+    (the stroke's own angle, else 45°).
   - A snapped shape takes the style's name and stays constant width, and
     highlighters are left alone. Choosing a line applies to everything
     selected.
@@ -544,16 +548,21 @@ app ([ipad.md](ipad.md)). Typed text on a page is
     arms the lasso. Duplicate is Ctrl+D as well.
 - **New note from selection** (More → New note) moves the selected
   strokes out of their blocks into a new ink block on the same page, their
-  ids kept, as one undo entry ("ink split"). A selection that is already a
-  whole note of its own is left as it is ("This handwriting is already a
-  note of its own.").
-- **Merge into note** (shown in New note's place when the selection is one
-  whole group and the page has another) appends this group's strokes to
-  the page's previous group: the nearest one before it in the page's
-  order, else the first after it.
+  ids kept, as one undo entry ("ink split").
+  - A selection that is already a whole note of its own is left as it is
+    ("This handwriting is already a note of its own.").
+  - Strokes of more bytes than one file holds are refused with the byte
+    budget's pill, and the selection stays as it was.
+- **Merge into note** appends this group's strokes to the page's previous
+  group: the nearest one before it in the page's order, else the first
+  after it. It shows in New note's place when the selection is one whole
+  group and the page has another.
   - It empties this one, whose block then goes when it holds no caption or
     notes. One that does is left as it is and the pill says "Not merged:
     this note has a caption or notes under it."
+  - A merge that would put more strokes or bytes in the previous group
+    than one file holds is refused on the pill, and the selection stays on
+    this group.
   - Undo brings both groups and the block back together.
 - A **finger drag inside the selection** moves it, even in pen-only mode
   (the dashed box is a `touch-action: none` hit surface; fingers outside
@@ -569,9 +578,9 @@ app ([ipad.md](ipad.md)). Typed text on a page is
 - **Editable shapes.** A selection of exactly one stroke that carries a
   shape record (a held shape, a Shapes stroke, a ruler line or a stamped
   one) also shows the shape's own handles, 28 px on the screen.
-  - The handles are the two ends of a line or an arrow, the corners of a
-    rectangle, a triangle or a polygon, and the two axis handles of an
-    ellipse (the end of its long axis and of its short one).
+  - The handles are the two ends of a line or an arrow and the corners of
+    a rectangle, a triangle or a polygon. An ellipse has two axis handles,
+    the end of its long axis and of its short one.
   - Dragging one reshapes the shape:
     - a line's or an arrow's other end stays (Shift turns the dragged end
       in 15° steps about it);
@@ -626,8 +635,8 @@ app ([ipad.md](ipad.md)). Typed text on a page is
     reader draws as a plain line.
 - **Calligraphy** (the Style picker's fifth row) is a flat nib: the line
   is as wide as the nib where the pen moves across it and a hairline (an
-  eighth of that) where it moves along it, its ends and turns showing
-  the nib's slanted corners. A mouse or finger draws the same.
+  eighth of that) where it moves along it. Its ends and turns show the
+  nib's slanted corners, and a mouse or finger draws the same.
   - The Style row's **Nib angle**: − and + around a readout, −60° to 60°
     in 15° steps (45° to start, the nib rising to the right), beside a
     small nib turned to the angle.
@@ -736,9 +745,9 @@ app ([ipad.md](ipad.md)). Typed text on a page is
   - A click on ink selects it (Show note scrolls the notes to its block),
     and in read-only views jumps to the block directly.
 - **Replay.** The play button in the card's corner (on hover; always on a
-  touch screen) replays the group's writing in the card and on its page,
-  scrolled into view: the PDF page, the notebook view's sheet, or the
-  sheet in the notes.
+  touch screen) replays the group's writing in the card and on its page.
+  - The page scrolls into view: the PDF page, the notebook view's sheet,
+    or the sheet in the notes.
   - The strokes appear in the order they were written, each at the pace it
     was written. Pauses shrink to 0.4 s, and a replay longer than 15 s
     plays faster.
@@ -883,11 +892,11 @@ stroked line; a pressure stroke is cut by arc length into on-runs that
 are each outlined, and a dotted pressure stroke is a circle per dot of
 the drawn diameter there.
 
-The storage shape is a deliberate copy of what the two
-reference apps store ([research/ink-storage.md](../research/ink-storage.md)):
-Notability's base width times a per-anchor fractional width with the raw
-force and tilt beside it, GoodNotes' explicit highlighter flag and
-parametric shape records.
+The storage shape is a deliberate copy of what the two reference apps
+store ([research/ink-storage.md](../research/ink-storage.md)). From
+Notability come a base width times a per-anchor fractional width, with
+the raw force and tilt beside it. From GoodNotes come the explicit
+highlighter flag and parametric shape records.
 
 An ink group is a block with these properties (no schema change):
 
@@ -920,19 +929,19 @@ Plain JSON (`application/json`), one per group:
 
 **The file.** `format` is the literal `gamma-ink`; `version` is `2`
 (a version 1 file is converted, "Upgrading version 1" below). `space`
-is where the strokes lie: `kind` is `pdf-page` or `canvas`
-(a literal; a third kind would be a version 3), `page` 1-based (required
-for a PDF page), `width`/`height` the page as displayed at scale 1 (pdf.js
-viewport: points, origin top-left, y down, rotation applied; the frame
-highlight rects normalise to and the frame the PDF writers map to user
-space). `{kind: "canvas", width, height}` is a sheet of paper, points from
-its top-left corner, the sheet's size when the group was drawn
+is where the strokes lie. Its `kind` is `pdf-page` or `canvas`, a literal:
+a third kind would be a version 3. `page` is 1-based, required for a PDF
+page. `width`/`height` are the page as displayed at scale 1, in the pdf.js
+viewport: points, origin top-left, y down, rotation applied. That is the
+frame highlight rects normalise to, and the frame the PDF writers map to
+user space. `{kind: "canvas", width, height}` is a sheet of paper, points
+from its top-left corner, the sheet's size when the group was drawn
 ([notebooks.md](notebooks.md)). `strokes` is the list below. Any other key
 of the file or of `space` is kept verbatim by every reader and writer
 (parse, canonical bytes, merge, the exporters' `/GammaInk`), up to 16 KB of
-serialised extras per file; on a merge the result takes the writer's
-file-level extras (last writer by strokes, advisory only, since nothing
-writes one).
+serialised extras per file. On a merge the result takes the writer's
+file-level extras: the last writer by strokes, advisory only, since
+nothing writes one.
 
 **A stroke.** Every key but `id` and `pts` has a default or is omitted,
 and the canonical bytes never write a key at its omission value:
@@ -983,13 +992,14 @@ flat integer array, `len(ch)` integers per sample, ~300 bytes a stroke.
 | `o` | drawn opacity × 1000 | delta after the first sample; running sum 0..1000 (decoded 0..1.000); written by the pencil. The rule is `opacity × o` (`strokeOpacity` / `stroke_opacity`, one line each, like the width, pinned by `inkwidth.json`); the renderers draw it in three shades, `o` rounded up to 0.33, 0.66 or 1 (`opacityBand`, `stroke_bands`), each shade at `opacity × band` |
 
 A letter neither codec knows is carried by stride: `decodeStroke` /
-`decode_stroke` put its integer in the sample's `rest` array, every reader
-ignores it, and both encoders copy `rest` back in place, so a cut on a copy
-that predates a letter keeps the stride and the file stays valid. The
-decoded sample is `{x, y, p?, t?, a?, z?, w?, o?, rest?}` (each key
-present when its channel is, `rest` when the list has a letter the codec
-does not know), with `w` and `o` as multipliers, so a decoded cache never
-depends on `size`; `tests/shared/inkwidth.json` pins the decoded values.
+`decode_stroke` put its integer in the sample's `rest` array, and every
+reader ignores it. Both encoders copy `rest` back in place, so a cut on a
+copy that predates a letter keeps the stride and the file stays valid. The
+decoded sample is `{x, y, p?, t?, a?, z?, w?, o?, rest?}`: each key is
+present when its channel is, and `rest` when the list has a letter the
+codec does not know. `w` and `o` are multipliers, so a decoded cache never
+depends on `size`, and `tests/shared/inkwidth.json` pins the decoded
+values.
 
 **Rounding.** Both encoders (`encodePoints`, `encode_points`) round every
 channel as `Math.round` does, a half going up (`js_round` on the server).
@@ -1011,15 +1021,15 @@ strokes (tool `pen` with `pen` true and no `brush`, or brush `brush`,
 once on the client in `finishStroke.js` `bakeWidths` from the brush table
 (`BRUSHES`, "The brush table" above), the only place a width or opacity
 law lives, and a brush restyle of existing strokes runs the same
-function again (`restyleBrush`, "Client"). Constant-width strokes (highlighter,
-monoline, a `pen: false` Pen, Ballpoint or Pencil, and every stroke with a
-`shape`, whatever its brush) omit `w`; a freehand `pen: false` Brush
-stroke carries `w` from the speed law and no `p`, and a `pen: false`
-calligraphy stroke `w` from its direction alone. The raw
-`p`, `a`, `z` stay beside `w` (Notability keeps force and tilt beside its
-fractional widths), so a brush change re-bakes from them and a future law
-can re-map; the multiplier form means a width restyle touches `size`
-alone and `pts` stay byte-identical. perfect-freehand is driven from `w`:
+function again (`restyleBrush`, "Client"). Constant-width strokes omit
+`w`: a highlighter, monoline, a `pen: false` Pen, Ballpoint or Pencil, and
+every stroke with a `shape`, whatever its brush. A freehand `pen: false`
+Brush stroke carries `w` from the speed law and no `p`, and a `pen: false`
+calligraphy stroke `w` from its direction alone. The raw `p`, `a`, `z`
+stay beside `w`, as Notability keeps force and tilt beside its fractional
+widths, so a brush change re-bakes from them and a future law can re-map.
+The multiplier form means a width restyle touches `size` alone, and `pts`
+stay byte-identical. perfect-freehand is driven from `w`:
 pressure = `w / 2` with thinning 1 (perfect-freehand does not clamp the
 pressure, so a pencil's `w` of 3.5 draws a radius of 1.75 sizes), and
 the outline's radius matches the baked width exactly. The live
@@ -1035,8 +1045,10 @@ above). The iPad shell sends raw samples and the web app bakes them like
 its own ([ipad.md](ipad.md) "The pen").
 
 **Limits** (`gamma/ink.py`, enforced on upload): 5 000 strokes, 500 000
-samples, `MAX_BYTES` 6 MB, finite numbers (`pts` integers included), unique stroke ids, the extras
-caps, x and y within ±10 000 000 pt, `w` in 0..4, `o` in 0..1, `size × max(w) ≤ 100`.
+samples and `MAX_BYTES` 6 MB a file. Numbers are finite (`pts` integers
+included), stroke ids unique and the extras within their caps. x and y
+lie within ±10 000 000 pt, `w` in 0..4 and `o` in 0..1, with
+`size × max(w) ≤ 100`.
 
 **The bytes of an upload** are the client's, `ink.js` `serializeInk`: keys
 sorted at every level, no whitespace, null and undefined keys dropped, and
@@ -1327,10 +1339,10 @@ reach.
       capsule (`underCapsule`). The distance from a point moving along a
       segment to a segment is convex, and less a linear half-width it
       stays convex, so their common part is one interval of the segment.
-    - That interval is found from a point inside it (where the two
-      segments cross, or an end of one against the other, else a
-      golden-section search) by a bisection to each side to 0.001 pt,
-      ending just outside the edge.
+    - That interval is found from a point inside it by a bisection to each
+      side to 0.001 pt, ending just outside the edge. The point is where
+      the two segments cross, or an end of one against the other, else a
+      golden-section search finds one.
     - Boxes (the stroke's, each capsule's, each segment's) rule out nearly
       every pair first.
     - An overlap shallower than the file's 0.01 pt grid is a touch and
@@ -1457,10 +1469,10 @@ reach.
       [0°, 360° / n).
     - Every changed number is on the 1/100 grid. A side count, a flag or
       an unknown key stays as it is.
-    - A key the record leaves out is written with what `shapes.js` draws
-      in its place when the edit changes it: an arrow's head (`min(length
-      / 4, 24)`) times the scale on a resize, the angle 0 of a rectangle,
-      a polygon or an ellipse on a turn or a flip.
+    - A key the record leaves out is written, when the edit changes it,
+      with what `shapes.js` draws in its place. A resize writes an arrow's
+      head (`min(length / 4, 24)`) times the scale, and a turn or a flip
+      the angle 0 of a rectangle, a polygon or an ellipse.
     - A record of a kind this build does not know is dropped by such an
       edit, the stroke kept as ink. Its params may be geometry it cannot
       move, and stale ones would rebuild the wrong samples.
@@ -1639,10 +1651,10 @@ reach.
          baked.
        - `brushWidths(samples, style, {live})` and `brushOpacities(samples,
          style)` are the same values as arrays. `live` is for a stroke
-         still being written (the live canvas, a peer's wet stroke): the
-         end taper left out and the start taper at its full length,
-         whatever the stroke's length so far, so the line under the pen
-         holds still.
+         still being written (the live canvas, a peer's wet stroke).
+         - It leaves the end taper out and draws the start taper at its
+           full length, whatever the stroke's length so far, so the line
+           under the pen holds still.
        - `strokeChannels(style, samples)` is the `ch` a new stroke is
          written with:
          - `xyptw` for a pressure pen or brush, `xyptwo` for a pencil;
@@ -1659,9 +1671,10 @@ reach.
       `calligraphy`; any other value is ignored).
     - It decodes the samples, strips `w` and `o`, and bakes them again for
       the new style. The bake reads the stroke's own `pen` flag, so a mouse
-      stroke turned brush gets the speed law, and its `shape`, so a snapped
-      stroke stays constant width: only its brush key changes, and a `w` or
-      `o` an older build baked for it goes.
+      stroke turned brush gets the speed law.
+    - It reads the stroke's `shape` too, so a snapped stroke stays constant
+      width: only its brush key changes, and a `w` or `o` an older build
+      baked for it goes.
     - It re-encodes with the stroke's own channels but `w` and `o` plus
       what the new brush writes (`strokeChannels` for every stroke this
       build writes, while a letter this build does not know keeps its
@@ -1781,10 +1794,11 @@ reach.
     - The result is normalised as `recognise` would return it.
     - A pure refit needs `from`: without the snap position it cannot tell
       a scale from a rotation.
-  - The hold's numbers, one table for the layer and the iPad host (whose
-    Swift constants mirror it): `HOLD_MS` 600, `HOLD_MOVE` 3 css px (a tip
-    that moves farther starts the timer again), `HOLD_MIN_MS` 250,
-    `REFIT_PX` 6, `CANCEL_PX` 12, `CANCEL_MS` 150 and `PASTE_MOVE` 2.
+  - The hold's numbers are one table for the layer and the iPad host,
+    whose Swift constants mirror it. They are `HOLD_MS` 600, `HOLD_MOVE` 3
+    css px (a tip that moves farther starts the timer again),
+    `HOLD_MIN_MS` 250, `REFIT_PX` 6, `CANCEL_PX` 12, `CANCEL_MS` 150 and
+    `PASTE_MOVE` 2.
   - `holdQualifies(samples, k) → bool`: whether a hold asks the recogniser
     (InkLayer's `holdFire`, and the iPad claim's hold).
     - The page-pt samples, at least 2, must reach the recogniser's size
@@ -1903,10 +1917,11 @@ reach.
 - `ink/zoomWindow.js` (pure; `frontend/tests/zoomWindow.test.mjs`): the
   zoom window's rules over `useInkZoom`'s `inkZoom` and the page's
   `{width, height}` in points.
-  - `inkZoom` is `{page, x, y, w, h, mag, line, x0}`: the PDF page's
-    number, the window's top-left, width and height in page points, the
-    magnification in css px per pt in the panel (2 to 4), the line height
-    in points and where the line began, `x0`.
+  - `inkZoom` is `{page, x, y, w, h, mag, line, x0}`:
+    - `page`, the PDF page's number, and `x`, `y`, `w`, `h`, the window's
+      top-left, width and height in page points;
+    - `mag`, the magnification in the panel in css px per pt (2 to 4),
+      `line`, the line height in points, and `x0`, where the line began.
   - The constants:
     - `ZOOM_MAGS` ([2, 3, 4]) and `ZOOM_MAG` (3; `ZOOM_MAG_MIN` 2 to
       `ZOOM_MAG_MAX` 4);
@@ -2008,8 +2023,8 @@ reach.
   - `mode` is one of `CHORD_MODES`, `'off' | 'tap' | 'double'`, the values
     `app/prefDefs.js` allows `inkFingerUndo`.
   - A **chord** is N = 2 or 3 `touch` contacts whose downs lie within 80
-    ms of the first, none of which `move`s more than 10 css px from its
-    down, all lifted by `up` within 250 ms of the first down.
+    ms of the first. None of them `move`s more than 10 css px from its
+    down, and all are lifted by `up` within 250 ms of the first down.
     - A `cancel` of any contact voids the chord in progress. A
       `pointercancel` is never a lift, so a pinch, which cancels both
       touches, never undoes.
@@ -2193,10 +2208,13 @@ reach.
   - **The journal** (`ink/inkJournal.js`) is the IndexedDB database
     `gamma-ink-journal`, store `drafts`, key `<workspace>/<block
     id>/<tab>`.
-    - Its value is `{bytes, base, baseIds, at, tab, sent}`: the dirty
-      draft's canonical `serializeInk` bytes, the file it was edited from
-      and that file's ids, when, the tab that wrote it, and the uploads
-      whose block `PUT` that tab sent without an answer yet, oldest first.
+    - Its value is `{bytes, base, baseIds, at, tab, sent}`:
+      - `bytes`, the dirty draft's canonical `serializeInk` bytes;
+      - `base` and `baseIds`, the file it was edited from and that file's
+        ids;
+      - `at`, when, and `tab`, the tab that wrote it;
+      - `sent`, the uploads whose block `PUT` that tab sent without an
+        answer yet, oldest first.
   - `inkStore` writes a draft's entry:
     - when it turns dirty (300 ms after the edit);
     - at once when a `PUT` goes (`markSending`, awaited, for half a second
@@ -2220,9 +2238,10 @@ reach.
     - One older than 7 days is deleted as it is read, so an entry whose
       block never comes back goes with time.
     - A block with entries is restored the first time it is shown, one
-      entry a visit. It is not when this tab has a draft of it (the entries
-      wait for the next visit), when the entry is this tab's own, or when
-      its tab's lock is still held (that tab is open and saves it itself).
+      entry a visit. It is not restored while this tab has a draft of it,
+      whose entries wait for the next visit.
+    - Nor is an entry restored when it is this tab's own, or when its
+      tab's lock is still held: that tab is open and saves it itself.
   - What the entry's change counts from is the newest of its `sent`
     uploads that the server has, else the entry's `base`. That `PUT` may
     have landed, so what it carried is the server's, to keep or delete.
@@ -2239,10 +2258,10 @@ reach.
     - When the file it counts from is the block's current `ink_url`, the
       entry is the drawing as it is.
     - When the block names another file (someone saved meanwhile) and that
-      file still loads, it is `mergeInk(base, entry, current)` less every
-      stroke `base` had that `current` lacks, and the pieces cut from one.
-      mergeInk lets an edit beat a delete, which suits two writers at work,
-      not a tab that is gone.
+      file still loads, it is `mergeInk(base, entry, current)` less two
+      things: every stroke `base` had that `current` lacks, and the pieces
+      cut from one. mergeInk lets an edit beat a delete, which suits two
+      writers at work, not a tab that is gone.
     - It is nothing, and the entry is dropped, when that differs in no
       stroke from the current file, when the base is gone (a 404), or when
       the entry is older than 7 days.
@@ -2318,10 +2337,10 @@ reach.
     after it may still fit.
   - The bytes are the ledger's `bodyBytes` ([collab.md](collab.md)
     "Keepalive").
-- `ink/InkLayer.jsx`: `InkLayer` (one per surface: a PDF page, a sheet in
-  the notebook view, a sheet among the notes; it draws after the
-  highlights and the text boxes) is the retained SVG plus a
-  `desynchronized` canvas for the stroke in progress.
+- `ink/InkLayer.jsx`: `InkLayer` is the retained SVG plus a
+  `desynchronized` canvas for the stroke in progress. There is one per
+  surface (a PDF page, a sheet in the notebook view, a sheet among the
+  notes), and it draws after the highlights and the text boxes.
   - The SVG draws every group's band-0 strokes first, then every group's
     band-1 strokes (two `<g data-ink-id>` per group at most). `Strokes`
     alone, as in the notes card, orders one drawing by band.
@@ -3488,10 +3507,11 @@ reach.
   - `handleInkAction(action, value)` (the layers' `onAction`) handles
     these, the selection's strokes, box and space coming from
     `selectedInk()`:
-    - `copy`, and `cut` (copy, then `deleteInkSelection` with the entry
-      `T("ink cut")`). Both raise `setStatus(tn("Copied {n} stroke.",
-      "Copied {n} strokes.", n) | tn("Cut {n} stroke.", "Cut {n}
-      strokes.", n), {label: t("Paste"), run: pasteAtCentre})`.
+    - `copy`, and `cut` (copy, then the selected strokes removed as one
+      entry, `T("ink cut")`, and the selection let go). Both raise
+      `setStatus(tn("Copied {n} stroke.", "Copied {n} strokes.", n) |
+      tn("Cut {n} stroke.", "Cut {n} strokes.", n), {label: t("Paste"),
+      run: pasteAtCentre})`.
     - `flip` (`{axis}` → `flipStrokes` about the selection box's centre,
       `T("ink flip")`, the selection kept).
     - `split` (`T("ink split")`): the strokes leave their groups and a new
@@ -3499,6 +3519,9 @@ reach.
       `pdfPositionOf`. It is one entry whose changes name the old groups
       and the new block, which `applyInk` inserts, and undo removes it
       again.
+      - The new block's strokes become the selection only when `applyInk`
+        applied the entry, as the copies of a Duplicate and the strokes a
+        merge moved do. The byte budget may refuse each of them.
     - `merge` (`T("ink merge")`): the selection's whole group is appended
       to the page's previous group (`inkBySurface`'s order, the nearest
       before it, else the first after) through `appendStrokes`, and
@@ -3984,7 +4007,8 @@ reach.
       (`textCollapsed()`);
     - `ink.selectAll` "Select all handwriting on this page" Mod-a, when
       `c.inkOpen && c.inkTool`, which selects every stroke of every group
-      on the surface in view and arms the lasso.
+      on the selection's surface, else the one in view, and arms the
+      lasso.
   - All five are `edits: true`. A `run` handed a key event from a text
     field returns `false`, so the browser keeps its own copy and paste
     there.
@@ -3997,16 +4021,19 @@ reach.
   - **Presets on the account**: `useProfileSync` reports, on a load's first
     pull of the account only, an account entry whose server value replaced
     a local one this browser made itself (`onReplaced({name, local})`).
-    - That local value is neither the default nor the account's value as
-      this browser last took it or sent it. That value is kept per account
-      in `gamma-profile-seen:<user>`, written on each pull and each push
-      the server confirmed.
+    - That local value is neither the default nor the value as this
+      browser last took it from an account or sent it. That value is kept
+      for the browser in `gamma-profile-seen`, whichever account it was.
+      It is written on each pull and each push the server confirmed, a
+      keepalive push's once the page reads the answer.
     - Any other change applies silently.
     - For `inkTools` App raises "Use this browser's pens instead?" with
-      *Use this browser's*, once a session, as `setStatus(…, {keep:
-      true})`. A status without a button meanwhile leaves it up.
+      *Use this browser's*, once a session. The question is logged and
+      holds the pill's own `pens` channel for 8 s as a `question`, which
+      ranks with final messages ([ui-design.md](ui-design.md#the-status-pill)
+      "The status pill").
     - The action takes the pill down and sets `inkTools` to the local
-      list, which pushes it.
+      list through `setInkTools`, which pushes it.
   - **Transcribe a selection**, the chat half: `askToTranscribe({blocks} |
     {chips})`, which `transcribeInkSelection` in `ink/useInkSelection.js`
     calls. A group's *Transcribe with AI* in the ⋮⋮ menu is

@@ -67,33 +67,35 @@ const PULL_MIN_MS = 15000;
 //   Settings replaced entries on the server.
 const NONE = new Set();
 const perName = (values) => Object.fromEntries(ACCOUNT_PREFS.map((name) => [name, JSON.stringify(values[name])]));
-// The account's profile as this browser last took it from the server or
-// sent it there ({name: JSON}, perName's), kept per account
-// (`gamma-profile-seen:<user>`): on a later load, a local value equal to it
-// is the account's, not one this browser made. Without it (another
-// browser profile, storage cleared) every local value that is not the
-// default counts as this browser's.
-const seenKey = (user) => `gamma-profile-seen:${user}`;
-function seenOf(user) {
+// The profile as this browser last took it from the server or sent it
+// there ({name: JSON}, perName's), whichever account it was
+// (`gamma-profile-seen`): a local value equal to it came from an account,
+// not from this browser, even when another account signs in next. One
+// record for the browser, as its settings are one: the next account's
+// first pull writes over it. Without it (another browser profile, storage
+// cleared) every local value that is not the default counts as this
+// browser's.
+const SEEN_KEY = "gamma-profile-seen";
+function seenOf() {
   try {
-    const seen = JSON.parse(localStorage.getItem(seenKey(user)) || "null");
+    const seen = JSON.parse(localStorage.getItem(SEEN_KEY) || "null");
     return seen && typeof seen === "object" && !Array.isArray(seen) ? seen : {};
   } catch { return {}; }
 }
-function rememberSeen(user, seen) {
-  try { localStorage.setItem(seenKey(user), JSON.stringify(seen)); } catch { /* the next load asks as if none were kept */ }
+function rememberSeen(seen) {
+  try { localStorage.setItem(SEEN_KEY, JSON.stringify(seen)); } catch { /* the next load asks as if none were kept */ }
 }
 // failed: {name: the value whose push failed}; awaitingAt: the server time of the last push
 const IDLE = { inflight: NONE, failed: {}, awaiting: NONE, awaitingAt: "" };
 
 // `onReplaced({name, local})`, when given, is told on a load's first pull of
 // an account (once per entry) of an entry whose server value replaced a
-// local one this browser made itself: neither the default nor the account's
-// value as this browser last took it or sent it (`seenOf` above). The
-// browser had its own and the account's won, so the caller can offer to
-// push the local value back (the strip's presets: "Use this browser's pens
-// instead?"). A later pull, or a later load, that finds the account changed
-// since is another device's change, so it never asks.
+// local one this browser made itself: neither the default nor the value as
+// this browser last took it from an account or sent it (`seenOf` above).
+// The browser had its own and the account's won, so the caller can offer
+// to push the local value back (the strip's presets: "Use this browser's
+// pens instead?"). A later pull, or a later load, that finds the account
+// changed since is another device's change, so it never asks.
 export function useProfileSync(prefs, user, { onReplaced } = {}) {
   const values = profileOf(prefs);
   const snap = JSON.stringify(values);
@@ -116,7 +118,7 @@ export function useProfileSync(prefs, user, { onReplaced } = {}) {
   function apply(value, keep = NONE, first = false) {
     const read = readProfile(value);
     const current = latest.current.prefs;
-    const seen = first ? seenOf(latest.current.user) : {};
+    const seen = first ? seenOf() : {};
     const replaced = [];
     for (const [name, v] of Object.entries(read)) {
       if (keep.has(name)) continue;
@@ -144,14 +146,16 @@ export function useProfileSync(prefs, user, { onReplaced } = {}) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ set: Object.fromEntries(changed) }),
     };
+    const sent = perName(JSON.parse(now));
     // The page is going away: keepalive when the page's keepalive room has
     // space for it at the normal priority (shared/lib/keepalive.js), since
     // it is small and losing it costs only the last change of a setting.
+    // An answer the page lives to read is remembered as a push's is.
     if (keepalive) {
-      keepaliveFetch(PROFILE_URL, { ...request, credentials: "same-origin" }, { priority: "normal" }).catch(() => {});
+      keepaliveFetch(PROFILE_URL, { ...request, credentials: "same-origin" }, { priority: "normal" })
+        .then((r) => { if (r.ok && latest.current.user === u) rememberSeen(sent); }).catch(() => {});
       return Promise.resolve();
     }
-    const sent = perName(JSON.parse(now));
     const confirmed = confirmedRef.current || {};
     const names = ACCOUNT_PREFS.filter((name) => sent[name] !== confirmed[name]);
     const id = ++pushIdRef.current;
@@ -164,7 +168,7 @@ export function useProfileSync(prefs, user, { onReplaced } = {}) {
       sendingRef.current -= 1;
       if (latest.current.user !== u) return;
       confirmedRef.current = sent;
-      rememberSeen(u, sent);
+      rememberSeen(sent);
       settle((f) => ({ ...f, failed: {}, awaiting: new Set([...f.awaiting, ...names]), awaitingAt: d?.updated_at || f.awaitingAt }));
       if (!timerRef.current && syncedRef.current === now) mark("loaded");
     }, (err) => {
@@ -217,7 +221,7 @@ export function useProfileSync(prefs, user, { onReplaced } = {}) {
           settled = true;
         }
         confirmedRef.current = perName(read);
-        rememberSeen(u, confirmedRef.current);
+        rememberSeen(confirmedRef.current);
       }
       if (settled) setFlight((f) => ({ ...f, failed: {} }));
       mark("loaded");

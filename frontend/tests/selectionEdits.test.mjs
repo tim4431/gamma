@@ -14,6 +14,7 @@ import {
   actionEdit, centredOn, clipOf, duplicatePlan, inkChips, mergePlan, pasteShift, selectAllItems, selectedStrokes, selectionChanges,
   selectionStill, splitPlan, transcribeGroups,
 } from "../src/ink/selectionEdits.js";
+import { reshapeInk } from "../src/ink/shapes.js";
 import { setLocale } from "../src/shared/i18n/i18n.js";
 
 const stroke = (id, x = 10, y = 10) => encodeStroke({ id, ch: "xy", pen: false, size: 1, samples: [{ x, y }, { x: x + 20, y: y + 10 }] });
@@ -75,9 +76,18 @@ test("each in-place action's edit, and its history label in T() (translated when
     check("transform", { cx: 50, cy: 50, angle: 0.5 }, "INK ROTATION", transformStrokes(ink, ["a"], { cx: 50, cy: 50, angle: 0.5 }));
     check("transform", { cx: 50, cy: 50, scale: 2 }, "INK RESIZE", transformStrokes(ink, ["a"], { cx: 50, cy: 50, scale: 2 }));
     check("flip", { axis: "h" }, "ink flip", flipStrokes(ink, ["a"], { cx: 70, cy: 15, axis: "h" }));
+    check("flip", { axis: "v" }, "ink flip", flipStrokes(ink, ["a"], { cx: 70, cy: 15, axis: "v" }));
     const reshape = actionEdit("reshape", { id: "b", params: {} }, box);
     assert.equal(reshape.label, "ink shape edit");
     assert.equal(reshape.edit(ink, ["a"]), ink, "a shape handle of a stroke outside the selection changes nothing");
+    // a shape handle's drag writes the selected shape again from its new params
+    const line = { ...encodeStroke({ id: "L", ch: "xyt", pen: false, size: 2, samples: [{ x: 10, y: 10, t: 0 }, { x: 110, y: 10, t: 50 }] }),
+      shape: { kind: "line", params: { x1: 10, y1: 10, x2: 110, y2: 10 } } };
+    const drawn = page(stroke("a"), line), params = { x1: 10, y1: 10, x2: 210, y2: 60 };
+    const reshaped = actionEdit("reshape", { id: "L", params }, box).edit(drawn, ["a", "L"]);
+    assert.notEqual(reshaped, drawn, "the selected shape is written again");
+    assert.deepEqual(reshaped, reshapeInk(drawn, "L", params));
+    assert.deepEqual(reshaped.strokes[1].shape.params, params);
     for (const action of ["delete", "copy", "cut", "duplicate", "split", "merge", "transcribe", "select-note", "show-note"]) {
       assert.equal(actionEdit(action, {}, box), null, action);
     }
@@ -100,7 +110,17 @@ test("Duplicate puts the copies beside the originals in their groups, and is ref
   assert.deepEqual(refused, { refused: "This handwriting note is full. Start a new note before duplicating." }, "no change, g2's included");
 });
 
-test("New note takes the selected strokes into a new group, ids kept; the whole of one note is refused", () => {
+test("Duplicate counts its copies against MAX_STROKES: a group that ends exactly at the cap takes them, one past it is refused", () => {
+  const two = { page: 2, items: [{ id: "g", ids: ["a", "b"] }] };
+  const atCap = page(...many(MAX_STROKES - 4), stroke("a"), stroke("b", 50));   // MAX_STROKES - 2, and 2 copies
+  const plan = duplicatePlan(two, groupsOf({ g: atCap }), { dx: 12, dy: 12 });
+  assert.equal(plan.changes[0].after.strokes.length, MAX_STROKES);
+  const pastCap = page(...many(MAX_STROKES - 3), stroke("a"), stroke("b", 50));   // MAX_STROKES - 1, and 2 copies
+  assert.deepEqual(duplicatePlan(two, groupsOf({ g: pastCap }), { dx: 12, dy: 12 }),
+    { refused: "This handwriting note is full. Start a new note before duplicating." });
+});
+
+test("New note takes the selected strokes into a new group, ids kept; the whole of one note alone is refused", () => {
   const g1 = page(stroke("a"), stroke("b", 100)), g2 = page(stroke("x"));
   const inkOf = groupsOf({ g1, g2 });
   const plan = splitPlan({ page: 1, items: [{ id: "g1", ids: ["b"] }, { id: "g2", ids: ["x"] }] }, inkOf, () => "new");
@@ -112,6 +132,11 @@ test("New note takes the selected strokes into a new group, ids kept; the whole 
     { refused: "This handwriting is already a note of its own." });
   assert.equal(made, 0, "no id is made for a refusal");
   assert.equal(splitPlan({ page: 1, items: [{ id: "g1", ids: ["gone"] }] }, inkOf, () => "new"), null, "nothing selected any more");
+  // one note whole and part of another: a new note of all of them
+  const g3 = page(stroke("y"), stroke("z", 200));
+  const mixed = splitPlan({ page: 1, items: [{ id: "g1", ids: ["a", "b"] }, { id: "g3", ids: ["y"] }] }, groupsOf({ g1, g3 }), () => "new");
+  assert.deepEqual(mixed.changes.map((c) => [c.id, ids(c.after)]), [["g1", []], ["g3", ["z"]], ["new", ["a", "b", "y"]]]);
+  assert.deepEqual(mixed.items, [{ id: "new", ids: ["a", "b", "y"] }]);
 });
 
 test("Merge into note appends a whole group to the previous one on its surface, else the next, and empties it", () => {
@@ -125,6 +150,7 @@ test("Merge into note appends a whole group to the previous one on its surface, 
   assert.deepEqual(plan.changes.map((c) => [c.id, ids(c.before), ids(c.after)]), [["g1", ["a"], ["a", "b", "c"]], ["g2", ["b", "c"], []]]);
   assert.deepEqual(plan.items, [{ id: "g1", ids: ["b", "c"] }]);
   assert.equal(mergePlan(whole("g1"), inkOf, tree, surfaces).changes[0].id, "g2", "the first group: into the next one (g0 has no strokes)");
+  assert.equal(mergePlan(whole("g3"), inkOf, tree, surfaces).changes[0].id, "g2", "the last group: into the one just before it, not the first");
   assert.equal(mergePlan({ page: 1, items: [{ id: "g2", ids: ["b"] }] }, inkOf, tree, surfaces), null, "part of a group");
   assert.equal(mergePlan({ page: 1, items: [{ id: "g1", ids: ["a"] }, { id: "g3", ids: ["d"] }] }, inkOf, tree, surfaces), null, "two groups");
   assert.equal(mergePlan(whole("g1"), inkOf, tree, new Map([[1, [{ id: "g1" }]]])), null, "no other group on the surface");
@@ -135,6 +161,9 @@ test("Merge into note appends a whole group to the previous one on its surface, 
   const full = { ...groups, g1: page(...many(MAX_STROKES - 1)) };
   assert.deepEqual(mergePlan(whole("g2"), groupsOf(full), tree, surfaces),
     { refused: "This handwriting note is full. Move part of it to a new note, or start a new one." });
+  const atCap = { ...groups, g1: page(...many(MAX_STROKES - 2)) };
+  assert.equal(mergePlan(whole("g2"), groupsOf(atCap), tree, surfaces).changes[0].after.strokes.length, MAX_STROKES,
+    "a merge that ends exactly at the cap goes through");
 });
 
 test("select all takes every stroke of the surface's groups, a group with none left out", () => {
@@ -152,6 +181,8 @@ test("Transcribe: whole groups go as their blocks; part of one, as one chip per 
   assert.deepEqual(whole.groups.map((g) => g.id), ["g1", "g2"]);
   const part = transcribeGroups({ page: 1, items: [{ id: "g1", ids: ["a", "gone"] }, { id: "g2", ids: ["x"] }] }, inkOf);
   assert.equal(part.whole, false, "part of g1 (a stroke erased since counts against it)");
+  assert.equal(transcribeGroups({ page: 1, items: [{ id: "g1", ids: ["a", "b", "erased"] }] }, inkOf).whole, false,
+    "every stroke of g1 and one erased since: not whole either");
   assert.equal(transcribeGroups({ page: 1, items: [{ id: "gone", ids: ["z"] }] }, inkOf).whole, false, "no group");
   const chips = inkChips(part.groups, "page-1");
   assert.deepEqual(chips, [

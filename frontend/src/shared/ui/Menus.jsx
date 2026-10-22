@@ -241,7 +241,8 @@ function SubMenuItem({ id, icon: Icon, label, title, children, ...rest }) {
 // selection menu's Style menu. A menu opens on its button's press
 // (press.js triggerPress), not on the click that follows. The press takes the
 // button's tooltip away (InkTooltips), and the menu comes in the same frame.
-// A click with no press behind it (Enter, Space) toggles it too.
+// A click with no press behind it (Enter, Space) toggles it too. While the
+// recording player is open, Space plays and pauses instead.
 // A press on the open menu's own button closes it, because that button is
 // the menu's ignoreRef. A press on another button of the toolbar swaps the
 // menus: the open menu's outside press queues its close first, so the updater

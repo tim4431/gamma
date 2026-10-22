@@ -4,7 +4,8 @@
 // were made, the card plays the recording back with the stroke faded until
 // its moment and the note shaded, a tap on the stroke seeks, and Escape
 // closes the player; in a notebook view, Follow scrolls the viewer to the
-// sheet being written on. The browser has no microphone and no decoder
+// sheet being written on; with no viewer shown, the player docks over the
+// notes. The browser has no microphone and no decoder
 // here: an init script stands in for MediaRecorder and Audio. The server's
 // side is backend/tests/test_recordings.py.
 import { waitForPdf } from "./pdf.mjs";
@@ -263,5 +264,31 @@ export async function recordingScenarios({ server, browser, alice, makePdf, step
       await until(async () => !(await npage.$(".replayBar")), { what: "the player closed" });
       assertNoProblems(npage);
     } finally { await fctx.close(); }
+  });
+
+  await step("recording: with no viewer shown, Play docks the player over the notes, and Escape closes it", async () => {
+    // A page of notes with no paper and no notebook view: the player has no viewer to sit in, so it docks
+    // in the notes' list (App's notesReplayDock), stuck to its bottom edge as the list scrolls.
+    const audio = await account.upload("/api/upload-file", Buffer.from([0x1a, 0x45, 0xdf, 0xa3, 0x84, 0x42, 0x86, 0x81, 0x01]), "notes.webm", "audio/webm");
+    const started = Date.now() - 60_000;
+    const notes = await account.api("/api/blocks", { method: "POST", body: { parent_id: "root", content: "Notes with a recording" } });
+    await account.api("/api/blocks", { method: "POST", body: { parent_id: notes.id, content: "Notes audio",
+      properties: { t0: started, recording: { started, state: "done", dur: 4000,
+        segments: [{ url: audio.url, started, dur: 4000, bytes: 9, mime: "audio/webm" }] } } } });
+    const nctx = await account.context(browser);
+    await nctx.addInitScript(fakeMedia);
+    try {
+      const npage = await openPage(nctx, `${server.base}/?page=${notes.id}&ws=${account.ws}`);
+      await npage.click(".recordingCard button[aria-label='Play recording']");
+      const bar = npage.locator(".blockList .notesReplayDock .replayBar");
+      await bar.waitFor({ timeout: 5000 });
+      assertEq(await npage.locator(".replayBar").count(), 1, "one player, over the notes");
+      const [list, shown] = [await npage.locator(".blockList").boundingBox(), await bar.boundingBox()];
+      assert(shown.width > 0 && shown.y >= list.y && shown.y + shown.height <= list.y + list.height + 1,
+        `the player in view, within the notes' list: bar ${JSON.stringify(shown)}, list ${JSON.stringify(list)}`);
+      await npage.keyboard.press("Escape");
+      await until(async () => !(await npage.$(".replayBar")), { what: "the player closed" });
+      assertNoProblems(npage);
+    } finally { await nctx.close(); }
   });
 }

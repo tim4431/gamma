@@ -445,13 +445,15 @@ the step closed on its way out (the usual `finally { await ctx.close() }`)
 is there too, as `-closed.jpg`: closing a context or a page during a step
 first keeps its last look. The
 `check` workflow runs the suite on every PR and uploads those folders as the
-`e2e-failures-<shard>` artifact. `harness.mjs` holds the server lifecycle, `Account` (session
-cookie + `X-Gamma-Workspace` for API seeding, browser contexts logged in as
-that account), `makePdf` (a small real PDF with a text layer), `step()`,
-`assertOpensInPlace` (a menu or card read frame by frame: no frame of it
-where it then moves, [ui-design.md](ui-design.md#menus-and-popups-open-in-place)),
-and `assertMenuFrom` (a toolbar button's menu 4 px below or above that
-button, by its left edge, [ui-design.md](ui-design.md#menus-and-submenus)).
+`e2e-failures-<shard>` artifact. `harness.mjs` holds the server
+lifecycle, `Account` (session cookie + `X-Gamma-Workspace` for API
+seeding, browser contexts logged in as that account), `makePdf` (a small
+real PDF with a text layer) and `step()`. It also holds two checks of
+where a surface opens. `assertOpensInPlace` reads a menu or card frame by
+frame: no frame of it where it then moves
+([ui-design.md](ui-design.md#menus-and-popups-open-in-place)).
+`assertMenuFrom` finds a toolbar button's menu 4 px below or above that
+button, by its left edge ([ui-design.md](ui-design.md#menus-and-submenus)).
 
 The run is split into groups (`GROUPS` in `tests/e2e/select.mjs`, one per
 scenario file except `notes-pdf-share`, whose scenarios hand data along;
@@ -617,11 +619,10 @@ The scenarios live in `tests/e2e/scenarios/`:
     reordering, the bracket keys (`]` at the widest says the width again
     without a write) and a held E. Opening the strip arms the stylus pen,
     not a highlighter before a hidden last pen.
-  - The strip's menus (More, the Tool menu, the Style picker's) open on
-    the press, each 4 px under its button by its left edge
-    (`assertMenuFrom`). A press on More while the Tool menu is open swaps
-    the two, and More opened with Enter closes on Escape with the focus
-    left on it.
+  - The strip's menus (More, the Tool menu, the Style picker's) open 4 px
+    under their buttons by the left edge (`assertMenuFrom`). A press on
+    More while the Tool menu is open swaps the two, and More opened with
+    Enter closes on Escape with the focus left on it.
   - Mouse strokes becoming an ink block with an `.ink` upload, persistence
     across a reload, the eraser, stroke undo/redo, a lasso move + delete
     and the notes card's jump + outline (`/Ink` in the exported PDF is
@@ -653,12 +654,17 @@ The scenarios live in `tests/e2e/scenarios/`:
   - Transcribe with AI (the oldest attached block making room), the
     Handwriting rows in Settings, and the draft journal bringing back
     strokes a crashed tab never saved.
-  - A browser with pens of its own asked once, on the account's first
-    pull, whether to keep them, the question staying up while a page
-    opens: *Use this browser's* pushes them, and another browser shows
-    them after a reload. A later pull, a later load of a browser that
-    only took or sent the account's list, and a browser on the defaults
-    never ask.
+  - A browser with pens of its own is asked once, on the account's first
+    pull, whether to keep them. *Use this browser's* pushes them, and
+    another browser shows them after a reload.
+  - The question stays up while a page opens under it, the page's "Ready."
+    showing over it for its second, and while a link to a page that is
+    gone opens.
+  - A later pull and a browser on the defaults never ask. Nor does a later
+    load of a browser that only took the account's list or sent its own,
+    by a push or with keepalive as its page was hidden.
+  - The next account to sign in on a browser takes its own pens without a
+    question, and no key the browser keeps names the last account's pens.
 - `inkEditing.mjs`: editing handwriting, on native Chromium touch and pen,
   asserting on the persisted stroke files. `--only "ink edit:"`, and
   `--only ink` runs all four ink files.
@@ -688,6 +694,8 @@ The scenarios live in `tests/e2e/scenarios/`:
   - Ctrl+D and the menu's Duplicate set the copy off by the same 12 css px
     at two zooms. A Duplicate past the bytes one file holds is refused
     with the selection kept.
+  - So are a New note and a Merge into note past those bytes, on a page of
+    two groups of about 3.3 MB each.
   - Ctrl+V while the next paper's PDF loads pastes nothing, and once a
     page of it is in view it pastes there.
 - `inkShapes.mjs`: the strip's modifiers ([handwriting.md](handwriting.md)
@@ -735,6 +743,8 @@ The scenarios live in `tests/e2e/scenarios/`:
     mode button.
   - In the notebook view, Follow scrolls the viewer to the sheet being
     written on.
+  - With no viewer shown, Play docks the player over the notes, and Escape
+    closes it.
 - `textBoxes.mjs`: text boxes ([text_boxes.md](text_boxes.md)) on a PDF
   page and on a sheet in both views. It covers the Text tool's click and
   drag, typing, the stored block after a reload, the notes marker's jump,
@@ -812,8 +822,9 @@ The scenarios live in `tests/e2e/scenarios/`:
 - `share.mjs`: the share dialog, the anonymous share view (PDF, highlight,
   image through the share token, no editor), an edit share.
 - `settings.mjs`, `folders.mjs`, `trash.mjs`, `quickOpen.mjs`, `mcp.mjs`
-  and `cloudSignIn.mjs` are groups of their own. Each file's header names
-  the doc it covers.
+  and `cloudSignIn.mjs` are groups of their own. The headers of
+  `folders.mjs`, `trash.mjs` and `cloudSignIn.mjs` name the doc each
+  covers.
 
 Every step also asserts that no API call failed (4xx/5xx), no console error
 and no page error happened meanwhile (`openPage` records them;

@@ -416,30 +416,35 @@ Escape closes it first (`NestCtx` in Menus.jsx).
 
 A menu a toolbar's button opens comes from `useMenuTrigger({side})`
 (Menus.jsx). It opens on the button's press, as a native menu does, not on
-the click that follows (`triggerPress`, [below](#gestures-shareduipressjs)):
-a primary press, from a mouse's left button, a finger or a pen, opens or
-closes it, the click after it does nothing, and a click no press led to
-(Enter or Space on the focused button) toggles it. The press takes the
-button's tooltip away (`InkTooltips`) and the menu comes in the same frame.
-One hook holds the menus of one toolbar, one open at a time:
-`trigger(kind)` is a button's props (the press, the keyboard's click,
-`aria-haspopup="menu"` and `aria-expanded`), `menu` the open menu's
-`ContextMenu` props, and `close()` what a row calls before it acts. The
+the click that follows (`triggerPress`, [below](#gestures-shareduipressjs)).
+A primary press opens or closes it: a mouse's left button, a finger or a
+pen. The click after the press does nothing. A click no press led to
+(Enter or Space on the focused button) toggles the menu too. While the
+recording player is open, Space plays and pauses wherever the focus is
+outside a text field ([recording.md](recording.md)), so then only Enter
+opens these menus from the keyboard. The press takes the button's tooltip
+away (`InkTooltips`), and the menu comes in the same frame.
+
+One hook holds the menus of one toolbar, one open at a time.
+`trigger(kind)` is a button's props: the press, the keyboard's click,
+`aria-haspopup="menu"` and `aria-expanded`. `menu` is the open menu's
+`ContextMenu` props, and `close()` is what a row calls before it acts. The
 pressed button is the open menu's `ignoreRef`, so a press on it closes the
 menu rather than closing and reopening it. A press on another button of
-the toolbar swaps the menus: the open menu's outside press queues its close
-first, so the new kind opens. `side` (`"below"` or `"above"`) places the
-menus from their buttons, each by its button's left edge (`menuAnchor`,
-[below](#menus-and-popups-open-in-place)). The menu is rendered outside any
-`InkTooltips` host: React bubbles a portal's events up to the host, which
-would raise a tooltip for every row the pointer crosses. Nothing moves the
-focus: the menu takes none, so after Escape closes it the focus is where it
-was (on the button, when the keyboard opened it). The recording
-player's mode and speed menus open above the bar; the tool strip's More,
-Tool and Style menus and the selection menu's Style menu open below their
-buttons. `MenuSelect` and `ActionMenu` still open on the click
-(`useDropdown`), and `MenuButton` remains a row's stand-in for its
-right-click menu ([below](#menubutton)).
+the toolbar swaps the menus: the open menu's outside press queues its
+close first, so the new kind opens. `side` (`"below"` or `"above"`)
+places the menus from their buttons, each by its button's left edge
+(`menuAnchor`, [below](#menus-and-popups-open-in-place)).
+
+The menu is rendered outside any `InkTooltips` host. React bubbles a
+portal's events up to the host, which would raise a tooltip for every row
+the pointer crosses. Nothing moves the focus: the menu takes none, so
+after Escape closes it the focus is where it was (on the button, when the
+keyboard opened it). The recording player's mode and speed menus open
+above the bar. The tool strip's More, Tool and Style menus and the
+selection menu's Style menu open below their buttons. `MenuSelect` and
+`ActionMenu` open on the click (`useDropdown`), and `MenuButton` is a
+row's stand-in for its right-click menu ([below](#menubutton)).
 
 A menu that lists commands lists their ids: `CommandMenuItem`
 (`app/CommandMenuItem.jsx`) draws a catalog command ([hotkeys.md](hotkeys.md))
@@ -543,10 +548,12 @@ it to the floating pill: one ending in "…" is in progress and spins,
 anything else is final and fades after a second. `setStatus(msg, action)`
 with an `action` `{label, run}` puts its button on the pill
 (`.statusPill.interactive`), which then stays 8 seconds to be pressed.
-With `{keep: true}` it is a question that holds the pill for those 8
-seconds or until its `run` clears it (`postPill("status", null)`). A
-status without a button posted meanwhile goes to the log only, while
-another button or an error replaces it. The pens question uses it
+Each source posts to a channel of its own (`postPill(channel, entry)`),
+and the pill shows one entry: an error first, then a final message, then
+any other, the newest first among equals. An entry with `question: true`
+ranks with the final messages. So a question on its own channel stays
+over a spinner or another button, and a newer final message shows over
+it for its second and goes. The pens question is one
 ([handwriting.md](handwriting.md) "Presets follow the account").
 `sayUndoable(msg, run)` is that with Undo, which clears the pill and
 runs `run`. `undoableStatus(msg)` is the one whose Undo runs the
@@ -657,28 +664,32 @@ never learns which gesture it was.
   the innermost element it reaches. The browser's `dblclick` after a
   counted double tap is ignored.
 - **`triggerPress(run)`**: a button whose menu opens on the press, as a
-  native menu does, not on the click that follows. `run` is called for a
-  press with the primary button (a mouse's left button; a finger's or a
-  pen's contact is button 0 too) and for a click no press led to
-  (`detail` 0: Enter or Space on the focused button). The click after a
-  press belongs to the press, so it does nothing; the right and middle
-  buttons do nothing either. `useMenuTrigger`
+  native menu does, not on the click that follows. `useMenuTrigger`
   ([Menus and submenus](#menus-and-submenus)) is built on it.
+  - `run` is called for a press with the primary button: a mouse's left
+    button, or a finger's or a pen's contact, which is button 0 too.
+  - It is called for a click no press led to as well (`detail` 0: Enter
+    or Space on the focused button).
+  - The click after a press belongs to the press, so it does nothing. The
+    right and middle buttons do nothing either.
 - **The timings** are exported (`HOLD_MS`, `HOLD_SLOP`, `DOUBLE_MS`,
   `DOUBLE_SLOP`) for gestures these helpers do not cover: the strip's
   preset drag (`markup/MarkupToolbar.jsx`) and the finger-undo chords
   (`ink/fingerChords.js`) read them.
-- **Where they are.** `menuPress`: the library's rows, cards and chips,
-  tabs, the Back button, highlights, their note badges and PDF links, the
-  translate button, the note object frame, file chips, chat history rows.
-  `doublePress`: the dock grip's fold, a diagram's source, a picture's
-  zoom, a resize grip's natural size. `triggerPress`: the buttons
-  `useMenuTrigger` drives (the recording player's mode and speed, the tool
-  strip's More, Tool and Style, the selection menu's Style). A widget built
-  outside React (the editor's picture and table widgets,
-  `BlockCmEditor.jsx`) attaches the same handlers with `addEventListener`.
-  `tests/press.test.mjs` covers the counting and which press or click
-  `triggerPress` answers.
+- **Where they are.**
+  - `menuPress`: the library's rows, cards and chips, tabs, the Back
+    button, highlights, their note badges and PDF links, the translate
+    button, the note object frame, file chips, chat history rows.
+  - `doublePress`: the dock grip's fold, a diagram's source, a picture's
+    zoom, a resize grip's natural size.
+  - `triggerPress`: the buttons `useMenuTrigger` drives (the recording
+    player's mode and speed, the tool strip's More, Tool and Style, the
+    selection menu's Style).
+  - A widget built outside React (the editor's picture and table widgets,
+    `BlockCmEditor.jsx`) attaches the same handlers with
+    `addEventListener`.
+  - `tests/press.test.mjs` covers the counting and which press or click
+    `triggerPress` answers.
 
 ### Device questions: `shared/lib/pointer.js`
 

@@ -49,7 +49,8 @@ tests `backend/tests/test_recordings.py`, `frontend/tests/replay.test.mjs`,
   to 2×), then **Follow** (the page and the notes scroll to what is being
   written) and Done. Every control is an icon button of one height and
   the scrubber takes the width that is left. Space, ← → and Escape work
-  while no editor has the focus.
+  while no editor has the focus. Space plays and pauses even on a focused
+  button, so the keyboard opens the mode and speed menus with Enter.
 - During playback, a note written during the recording is **shaded**
   until its moment and shown plainly after; a text box on the page the
   same; a stroke faded, hidden or drawn whole by the mode. **A tap on a

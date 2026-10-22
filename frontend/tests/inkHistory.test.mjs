@@ -7,6 +7,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { encodeStroke, newInk, translateStrokes } from "../src/ink/ink.js";
 import { HISTORY_CAP, foldInto, passFold, recordEntry, stepChanges, undoMessage } from "../src/ink/inkHistory.js";
+import { setLocale } from "../src/shared/i18n/i18n.js";
 
 const stroke = (id, x = 10) => encodeStroke({ id, ch: "xyt", pen: false, samples: [{ x, y: 10, t: 0 }, { x: x + 5, y: 12, t: 8 }] });
 const drawing = (...strokes) => ({ ...newInk(1, 612, 792), strokes });
@@ -60,6 +61,15 @@ test("what someone changed since is kept over the step and counted; a group with
   assert.deepEqual(ids(changes[1].after), []);
 });
 
+test("a step that meets someone's change since counts at least one stroke, though none of ours was lost", () => {
+  const a = stroke("a");
+  const entry = { label: "ink move", changes: [{ id: "g1", page: 1, before: drawing(a), after: translateStrokes(drawing(a), ["a"], 30, 30) }] };
+  const { changes, kept } = stepChanges(entry, false, () => drawing());   // a erased since
+  assert.equal(kept, 1);
+  assert.deepEqual(ids(changes[0].after), ["a"], "an edit beats a delete: the move undone brings a back");
+  assert.equal(undoMessage(entry, false, kept, 1), "Undone: ink move (page 1; 1 stroke someone changed since was kept).");
+});
+
 test("an eraser pass's flushes fold into its entry across groups", () => {
   const a = stroke("a"), b = stroke("b", 40), c = stroke("c", 80);
   const h = empty();
@@ -100,4 +110,14 @@ test("the pill says what was undone or redone, on which page, and how many strok
   assert.equal(undoMessage({ label: "partial ink erasure" }, false, 1, 3), "Undone: partial ink erasure (page 3; 1 stroke someone changed since was kept).");
   assert.equal(undoMessage(entry, false, 2, 1), "Undone: ink move (page 1; 2 strokes someone changed since were kept).");
   assert.equal(undoMessage(entry, false, 0, "?"), "Undone: ink move (page ?).", "a sheet no longer among the sheets");
+});
+
+test("the pill translates the label the history keeps in English", () => {
+  setLocale("xx", { "Undone": "UNDONE", "Redone": "REDONE", "ink stroke": "INK STROKE" });
+  try {
+    assert.equal(undoMessage({ label: "ink stroke", changes: [] }, false, 0, 2), "UNDONE: INK STROKE (page 2).");
+    assert.equal(undoMessage({ label: "ink stroke", changes: [] }, true, 0, 2), "REDONE: INK STROKE (page 2).");
+  } finally {
+    setLocale("en", {});
+  }
 });
