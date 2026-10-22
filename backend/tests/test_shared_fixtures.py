@@ -96,6 +96,22 @@ def test_ink_upgrade_v1(case):
         inkmod.parse_ink(case["v1"].encode())
 
 
+INKCODEC = _load("inkcodec.json")
+
+
+@pytest.mark.parametrize("case", INKCODEC["encode"], ids=[c["note"] for c in INKCODEC["encode"]])
+def test_ink_encode_points(case):
+    """encode_points writes encodePoints' integers: Math.round's halves, the client's clamps and defaults."""
+    assert inkmod.encode_points(case["samples"], case["ch"]) == case["pts"]
+
+
+@pytest.mark.parametrize("case", INKCODEC["files"], ids=[c["note"] for c in INKCODEC["files"]])
+def test_ink_canonical_numbers(case):
+    """dumps writes serializeInk's bytes: every number as JSON.stringify writes it."""
+    assert inkmod.dumps(json.loads(case["file"])) == case["bytes"].encode()
+    assert inkmod.dumps(inkmod.parse_ink(case["file"].encode())) == case["bytes"].encode()
+
+
 INKWIDTH = _load("inkwidth.json")
 
 

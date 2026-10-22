@@ -344,9 +344,9 @@ def test_socket_ink_live_is_relayed_to_the_others_and_never_logged(guest):
     presence: relayed to the room's other peers with the sender's client id,
     never back to the sender, never into the op log."""
     page = make_page(guest, "Socket ink-live page")
-    chunk = {"t": "ink-live", "page": 1, "g": None, "id": "k7Qm2x",
+    chunk = {"t": "ink-live", "page": 1, "id": "k7Qm2x",
              "style": {"tool": "pen", "brush": "brush", "size": 2, "color": "#1f1f1f", "opacity": 1, "pen": True},
-             "k": 1.5, "n": 0, "samples": [[120.4, 305.12, 0.62, 0, 71, 203], [121, 306, 0.64, 8, None, None]]}
+             "n": 0, "samples": [[120.4, 305.12, 0.62, 0, 71, 203], [121, 306, 0.64, 8, None, None]]}
     with guest.websocket_connect(f"/api/ws/page/{page['id']}?client=aa") as a, \
             guest.websocket_connect(f"/api/ws/page/{page['id']}?client=bb") as b:
         seq = recv_hello(a)["seq"]

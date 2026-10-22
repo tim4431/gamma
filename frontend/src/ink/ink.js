@@ -10,8 +10,8 @@
 // t (ms) and w/o (× 1000) are deltas after the first sample, p is 0..1000
 // absolute. The drawn width is `size × w` (strokeWidth): the only width
 // rule, baked once by ink/finishStroke.js. Keep the codec here in step
-// with the backend's; tests/shared/inkv2.json, inkwidth.json and
-// inkmerge.json pin both.
+// with the backend's; tests/shared/inkv2.json, inkwidth.json,
+// inkmerge.json and inkcodec.json pin both.
 import { getStroke } from "perfect-freehand";
 import { INK_COLORS, INK_HIGHLIGHT_ALPHA, INK_HIGHLIGHT_COLORS } from "../shared/model/palette.js";
 import { MAX_STABILIZE } from "./stabilizer.js";

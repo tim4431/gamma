@@ -980,6 +980,71 @@ def test_a_drawing_the_remote_refuses_waits_in_a_conflict_row(monkeypatch):
     assert status["files_pushed"] == 1 and _strokes(remote, "inkR") == (ul, ["a"])
 
 
+def test_a_page_adopted_with_a_refused_drawing_is_looked_at_again(monkeypatch):
+    """A page both sides hold, linked with this copy's version
+    (``_adopt_page``, ``adopt: mine``), whose drawing the remote refuses is
+    deferred like an edited page or one pushed whole: the drawing goes the
+    round after the remote takes it, with no other edit on either side."""
+    from gamma import ink as inkmod
+    from gamma.routers import ink as ink_router
+
+    remote = Side("mr_adopt_ink_remote")
+    local = Side("mr_adopt_ink_local")
+    page = remote.page("Drawn on in the copy")
+    remote.insert(page["id"], "inkA", "")
+    local.client.post("/api/pages", json={"id": page["id"], "title": "Drawn on in the copy"}).raise_for_status()
+    local.insert(page["id"], "inkA", "")
+    ul = _ink_file(local, [("a", 100)])
+    local.ops(page["id"], [{"op": "set", "id": "inkA", "props": {"ink_url": ul, "ink_strokes": 1}}])
+    token = create_token(remote.id, remote.ws, "link", 90, scope="write")["token"]
+    r = local.client.post("/api/mirrors", json={"remote_url": "http://testserver", "token": token,
+                                                "workspace_id": local.ws, "adopt": "mine"})
+    assert r.status_code == 201, r.text
+
+    def refuse(data):
+        raise inkmod.InkVersionError("pretend the remote is older")
+    monkeypatch.setattr(ink_router, "parse_ink", refuse)
+    _sync(local)
+    assert "ink_url" not in remote.tree(page["id"])["children"][0]["properties"]
+    conflicts = local.client.get(f"/api/mirrors/{local.ws}/conflicts").json()["conflicts"]
+    assert [(c["kind"], c["block_id"]) for c in conflicts] == [("file", "inkA")]
+    assert page["id"] in sync_engine.get_mirror(local.ws)["status"]["retry"]
+    # the remote updated: the drawing goes with the next round
+    monkeypatch.setattr(ink_router, "parse_ink", inkmod.parse_ink)
+    status = _sync(local)
+    assert status["files_pushed"] == 1 and _strokes(remote, "inkA") == (ul, ["a"])
+
+
+def test_a_refused_drawing_is_charged_to_the_block_that_draws_it():
+    """The ``file`` row of a refused drawing names the block whose
+    ``ink_url`` is the file, the block ``_without_files`` holds back, never
+    one that only mentions the file in another property."""
+    side = Side("mr_ink_lookup")
+    page = side.page("Two blocks name one drawing")
+    url = _ink_file(side, [("a", 100)])
+    name = url.rsplit("/", 1)[1]
+    blocks = {page["id"]: {"parent": "root", "position": "a0", "content": "Two blocks name one drawing", "props": {}},
+              "mentions": {"parent": page["id"], "position": "a0", "content": "", "props": {"note": f"from {url}"}},
+              "draws": {"parent": page["id"], "position": "a1", "content": "",
+                        "props": {"ink_url": url, "ink_strokes": 1}}}
+
+    class Older:
+        """A remote whose release refuses this copy's drawings."""
+
+        def head_ok(self, path):
+            return False
+
+        def post_file(self, path, name, data, progress=None):
+            raise sync_engine.RemoteError(400, "update Gamma")
+
+    refused = sync_engine._push_files(side.ws, Older(), {name}, {"files_pushed": 0}, page_id=page["id"], blocks=blocks)
+    assert refused == {name}
+    with connect_pages_db(side.ws) as conn:
+        assert [r[0] for r in conn.execute("SELECT block_id FROM sync_conflicts WHERE kind = 'file'")] == ["draws"]
+    ops = [{"op": "set", "id": bid, "props": dict(blocks[bid]["props"])} for bid in ("mentions", "draws")]
+    assert sync_engine._without_files(ops, refused, blocks) == ops[:1]
+
+
 def test_a_redirect_off_the_remote_drops_its_credentials():
     """A file's GET redirected to another origin goes there without the
     write token, the workspace header or a cookie; one on the remote's own

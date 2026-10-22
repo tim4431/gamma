@@ -33,6 +33,7 @@ import json
 import math
 import re
 from dataclasses import dataclass, field
+from decimal import Decimal
 from itertools import accumulate
 from operator import add, sub
 from typing import Literal
@@ -202,6 +203,10 @@ class Stroke(BaseModel):
         n = len(self.ch)
         if not self.pts or len(self.pts) % n:
             raise ValueError("pts length must be a positive multiple of the channel count")
+        try:   # an integer past the largest double is a client's Infinity, and dumps writes none
+            float(min(self.pts)), float(max(self.pts))
+        except OverflowError:
+            raise ValueError("pts: not a finite number") from None
         for letter, cap in (("w", MAX_W), ("o", MAX_O)):
             slot = self.ch.find(letter)
             if slot < 0:
@@ -341,29 +346,49 @@ def decode_stroke(stroke: Stroke) -> list[dict]:
     return out
 
 
+def js_round(v: float) -> int:
+    """``Math.round``: the nearest integer, a half going up (0.5 → 1, -0.5
+    → 0, 2.5 → 3) where Python's ``round`` takes the even one. The server
+    rounds with it what the client rounds, so both write the same integers."""
+    n = round(v)
+    return n + 1 if v - n == 0.5 else n   # (v - n is exact: n is the integer nearest v)
+
+
+def _clamp(v: float, lo: float, hi: float) -> float:
+    return max(lo, min(hi, v))
+
+
 def encode_points(samples: list[dict], ch: str = "xy") -> list[int]:
-    """The inverse of :func:`decode_stroke` (the importer and tests use it):
-    ``samples`` carry ``x``/``y`` in points and the optional channels; a
-    letter not known here takes the next integer of the sample's ``rest``."""
+    """The inverse of :func:`decode_stroke` and the twin of ink.js
+    ``encodePoints``, integer for integer (tests/shared/inkcodec.json):
+    ``samples`` carry ``x``/``y`` in points and the optional channels, each
+    rounded as ``Math.round`` rounds (``js_round``), with the client's
+    clamps (p and o to 0..1, w to 0..4, a to 0..90) and defaults for a
+    channel a sample lacks or holds as None; a letter not known here takes
+    the next integer of the sample's ``rest``."""
     out = []
     prev = {c: 0 for c in ch if c in DELTA_CH}
     for s in samples:
         rest = iter(s.get("rest") or ())
         for c in ch:
+            v = s.get(c)
             if c in ("x", "y"):
-                v = round(s[c] * COORD_UNIT)
+                v = js_round(s[c] * COORD_UNIT)
             elif c == "p":
-                v = round(max(0.0, min(1.0, s.get("p", 0.5))) * PRESSURE_UNIT)
+                v = js_round(_clamp(0.5 if v is None else v, 0, 1) * PRESSURE_UNIT)
             elif c == "t":
-                v = int(s.get("t") or 0)
-            elif c == "a":   # a sample without tilt in a tilted stroke is upright (ink.js encodePoints)
-                v = round(max(0.0, min(90.0, s["a"] if s.get("a") is not None else 90.0)))
+                v = js_round(v or 0)
+            elif c == "a":   # a sample without tilt in a tilted stroke is upright
+                v = js_round(_clamp(90 if v is None else v, 0, 90))
             elif c == "z":
-                v = round(s["z"]) if s.get("z") is not None else 0
-            elif c in ("w", "o"):
-                v = round((s.get(c) if s.get(c) is not None else 1.0) * MULT_UNIT)
+                v = js_round(0 if v is None else v)
+            elif c == "w":
+                v = js_round(_clamp(1 if v is None else v, 0, MAX_W / MULT_UNIT) * MULT_UNIT)
+            elif c == "o":
+                v = js_round(_clamp(1 if v is None else v, 0, 1) * MULT_UNIT)
             else:
-                v = int(next(rest, 0))
+                v = next(rest, None)
+                v = js_round(0 if v is None else v)
             if c in prev:
                 out.append(v - prev[c])
                 prev[c] = v
@@ -1031,30 +1056,73 @@ def to_dict(model: BaseModel) -> dict:
     return model.model_dump(by_alias=True, exclude_unset=True, exclude_none=True)
 
 
-def _canon(value):
-    """Whole-number floats as integers, null keys dropped, at every level —
-    the client's ``serializeInk`` writes ``612``, never ``612.0``."""
-    if isinstance(value, bool) or value is None:
-        return value
-    if isinstance(value, float):
-        return int(value) if value.is_integer() else value
+_SAFE_INT = 2 ** 53   # every integer up to here is a double exactly
+
+
+def _js_number(v: int | float) -> str:
+    """A number as ``JSON.stringify`` writes it (ECMAScript
+    Number::toString): the shortest digits that read back as the same
+    double (the digits of Python's ``repr``), plain from 1e-6 up to 1e21
+    (``0.00001``, ``1000000``) and ``d[.ddd]e±n`` outside (``1e-7``,
+    ``1.5e+21``); ``-0`` is ``0`` and a whole float an integer. An int is
+    the double a client's ``JSON.parse`` makes of it. ValueError for one
+    that is not finite."""
+    if isinstance(v, int) and -_SAFE_INT <= v <= _SAFE_INT:
+        return str(v)
+    try:
+        x = float(v)
+    except OverflowError:
+        x = math.inf
+    if not math.isfinite(x):
+        raise ValueError("an ink file holds finite numbers only")
+    if x == 0:
+        return "0"
+    _, digits, exp = Decimal(repr(abs(x))).normalize().as_tuple()
+    s = "".join(map(str, digits))
+    k, n = len(s), exp + len(s)   # |x| = 0.s × 10^n
+    if k <= n <= 21:
+        out = s + "0" * (n - k)
+    elif 0 < n <= 21:
+        out = f"{s[:n]}.{s[n:]}"
+    elif -6 < n <= 0:
+        out = "0." + "0" * -n + s
+    else:
+        out = s[0] + ("." + s[1:] if k > 1 else "") + ("e+" if n > 0 else "e-") + str(abs(n - 1))
+    return "-" + out if x < 0 else out
+
+
+def _canonical(value) -> str:
+    """``value`` as ``serializeInk`` writes it: keys sorted, null keys
+    dropped, numbers as ``_js_number`` writes them, text as it is."""
+    if value is None:
+        return "null"
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, (int, float)):
+        return _js_number(value)
+    if isinstance(value, str):
+        return json.dumps(value, ensure_ascii=False)
     if isinstance(value, dict):
-        return {k: _canon(v) for k, v in value.items() if v is not None}
-    if isinstance(value, list):
-        return [_canon(v) for v in value]
-    return value
+        return "{" + ",".join(f"{json.dumps(k, ensure_ascii=False)}:{_canonical(value[k])}"
+                              for k in sorted(value) if value[k] is not None) + "}"
+    if isinstance(value, (list, tuple)):
+        if value and set(map(type, value)) == {int} and -_SAFE_INT <= min(value) and max(value) <= _SAFE_INT:
+            return "[" + ",".join(map(str, value)) + "]"   # a stroke's pts, the bulk of a file
+        return "[" + ",".join(map(_canonical, value)) + "]"
+    raise TypeError(f"{type(value).__name__} is not JSON")
 
 
 def dumps(ink: InkFile | dict) -> bytes:
-    """Canonical bytes (equal to the client's ``serializeInk``): sorted keys
-    at every level, no whitespace, null keys dropped, whole floats as
-    integers, never NaN, non-ASCII text as UTF-8 (``JSON.stringify`` never
-    escapes it, so an extra key holding "café" hashes the same on both
-    sides). For the files the server writes itself — a merge, an import,
-    the upgrade step; uploads are stored as they came."""
+    """Canonical bytes, equal to the client's ``serializeInk``
+    (tests/shared/inkcodec.json, inkv2.json): sorted keys at every level,
+    no whitespace, null keys dropped, numbers as ``JSON.stringify`` writes
+    them (``_js_number``: ``612`` for 612.0, ``1e-7``, ``1e+21``), never
+    NaN, non-ASCII text as UTF-8 (``JSON.stringify`` never escapes it, so
+    an extra key holding "café" hashes the same on both sides). For the
+    files the server writes itself — a merge, an import, the upgrade step;
+    uploads are stored as they came."""
     data = to_dict(ink) if isinstance(ink, InkFile) else ink
-    return json.dumps(_canon(data), separators=(",", ":"), sort_keys=True, allow_nan=False,
-                      ensure_ascii=False).encode("utf-8")
+    return _canonical(data).encode("utf-8")
 
 
 # --- version 1 → 2 ---------------------------------------------------------------

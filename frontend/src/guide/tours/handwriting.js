@@ -28,7 +28,7 @@ export default {
       body: T("Click its text to add a caption.") },
     { id: "ink-style", anchor: "ink.toolbar", placement: "bottom",
       title: T("Tap your pen again for options"),
-      body: T("Colour, width, and Pen (pressure) or Ballpoint."),
+      body: T("Style (Pen, Ballpoint, Brush, Pencil or Calligraphy), line, Smoothing, colour and width."),
       advanceOn: { event: "ink.options" } },
     { id: "ink-erase", anchor: "pdf.pane", reveal: "ink.toolbar", placement: "inside",
       title: T("Erase, or lasso strokes to move"),

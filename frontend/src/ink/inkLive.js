@@ -1,8 +1,9 @@
 // Live co-drawing (docs/dev/handwriting.md "Wet strokes", docs/dev/collab.md
 // "ink-live"): a stroke while it is written travels to the page's other
 // peers as `ink-live` chunks over the page socket, and theirs arrive here.
-// This module is both halves, pure: the chunk a writer sends (liveChunk),
-// the writer's ledger of strokes sent and not saved yet (liveLedger), and
+// This module is both halves, pure: what a writer's chunk carries
+// (liveStyle, liveSamples; InkLayer's liveChunk sends it), the writer's
+// ledger of strokes sent and not saved yet (liveLedger), and
 // the receiving side's WET strokes, by surface (a PDF page number, a
 // sheet's block id). Plain module state like inkStore: a surface's layer
 // subscribes to its own wet strokes and paints them on a canvas of its own,
@@ -130,7 +131,8 @@ function decodeSamples(list, last) {
 // server). The first chunk (`n` 0) starts a wet stroke; a later one adds
 // its samples when its `n` is the count held, and a gap (a chunk missed)
 // drops the stroke: nothing more is drawn of it until its file lands.
-// `drop` cancels it. → whether anything changed.
+// `drop` cancels it. Keys it does not read are ignored, such as the `g`
+// and `k` older writers sent. → whether anything changed.
 export function receiveInkLive(msg) {
   if (!msg || typeof msg.client !== "string" || typeof msg.id !== "string") return false;
   const surface = msg.page;

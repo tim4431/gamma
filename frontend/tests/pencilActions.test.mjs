@@ -1,7 +1,7 @@
 // node --test tests/  (from frontend/) — the Pencil's double tap and squeeze.
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { PENCIL_CHOICES, SQUEEZE_HOLDS, SQUEEZE_TAP_MS, backTool, pencilAction } from "../src/ink/pencilActions.js";
+import { PENCIL_CHOICES, SQUEEZE_HOLDS, SQUEEZE_TAP_MS, backTool, pencilAction, stylusPen } from "../src/ink/pencilActions.js";
 
 const tools = [{ id: "pen1", kind: "pen" }, { id: "pen2", kind: "pen" }, { id: "hl1", kind: "highlighter" }];
 const prefs = { tools, pen: "pen2" };
@@ -18,7 +18,7 @@ test("switchPrevious goes back to the tool armed before, the strip's tools inclu
   assert.deepEqual(pencilAction("switchPrevious", prefs, { tool: "pen1", previous: "select" }), { pick: "select" });
   assert.deepEqual(pencilAction("switchPrevious", prefs, { tool: "pen1", previous: "text" }), { pick: "text" });
   assert.deepEqual(pencilAction("switchPrevious", prefs, { tool: "pen1", previous: null }), { pick: "pen2" });
-  assert.deepEqual(pencilAction("switchPrevious", { tools, pen: "nope" }, { tool: "hl1", previous: null }), { pick: "pen1" }, "no stylus pen: the first preset");
+  assert.deepEqual(pencilAction("switchPrevious", { tools, pen: "nope" }, { tool: "hl1", previous: null }), { pick: "pen1" }, "no last pen: the first pen");
 });
 
 test("the palette and the attributes open the armed tool's row, or arm the pen with its row", () => {
@@ -44,8 +44,26 @@ test("backTool is the tool armed before, else the stylus pen: the eraser's retur
   assert.equal(backTool(prefs, { tool: "eraser", previous: "eraser" }), "pen2", "the same tool is no way back");
   assert.equal(backTool(prefs, { tool: "eraser", previous: "gone" }), "pen2", "a removed preset falls back to the pen");
   assert.equal(backTool(prefs, { tool: "eraser", previous: null }), "pen2");
-  assert.equal(backTool({ tools, pen: "nope" }, { tool: "eraser" }), "pen1", "no stylus pen: the first preset");
+  assert.equal(backTool({ tools, pen: "nope" }, { tool: "eraser" }), "pen1", "no last pen: the first pen");
   assert.equal(backTool({}, {}), null);
+});
+
+test("stylusPen: the last pen armed while it is a pen on the strip, else the first pen, else the first preset; the gestures fall back to it", () => {
+  // a highlighter first in the row, and the last pen armed since hidden (off the strip)
+  const row = [{ id: "hl1", kind: "highlighter" }, { id: "pen1", kind: "pen" }, { id: "pen2", kind: "pen" }];
+  assert.equal(stylusPen(row, "pen2").id, "pen2");
+  assert.equal(stylusPen(row, "hidden").id, "pen1", "a hidden pen: the first pen, not the highlighter before it");
+  assert.equal(stylusPen(row, "hl1").id, "pen1", "a highlighter is never the stylus pen while a pen is on the strip");
+  assert.equal(stylusPen([{ id: "hl1", kind: "highlighter" }], "hidden").id, "hl1", "no pen on the strip: the first preset");
+  assert.equal(stylusPen([], "pen1"), undefined);
+  assert.equal(stylusPen(undefined, null), undefined);
+  const hidden = { tools: row, pen: "hidden" };
+  assert.equal(backTool(hidden, { tool: "eraser", previous: null }), "pen1", "the eraser's return");
+  assert.deepEqual(pencilAction("switchPrevious", hidden, { tool: "hl1", previous: null }), { pick: "pen1" }, "Switch to last tool");
+  assert.deepEqual(pencilAction("showColorPalette", hidden, { tool: null, options: false }), { ui: { open: true, tool: "pen1", options: true } },
+    "Show options with the hand armed: the stylus pen's row");
+  assert.deepEqual(pencilAction({ gesture: "squeeze", action: "switchEraser", phase: "began" }, { ...hidden, squeeze: "holdEraser" }, { tool: "eraser", previous: null }),
+    { began: { ignored: false, pick: "pen1" } }, "Eraser while held, from the eraser");
 });
 
 // --- the choices (Settings → Reading & editing → Apple Pencil) ---------------------

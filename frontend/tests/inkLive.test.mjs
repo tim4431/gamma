@@ -8,7 +8,8 @@ import {
 } from "../src/ink/inkLive.js";
 
 const style = { tool: "pen", brush: "brush", size: 2, color: "#1f1f1f", opacity: 1, pen: true };
-const chunk = (over = {}) => ({ t: "ink-live", client: "c1", page: 3, g: null, id: "k7Qm2x", style, k: 1.5, n: 0,
+// A chunk as a peer's arrives: what the writer sent, `client` added by the server.
+const chunk = (over = {}) => ({ t: "ink-live", client: "c1", page: 3, id: "k7Qm2x", style, n: 0,
   samples: [[10, 20, 0.5, 0, null, null], [11, 21, 0.6, 8, 71, 203]], ...over });
 
 test("a writer's chunk: samples rounded to the wire's units, at most LIVE_SAMPLES, the look as it will be encoded", () => {
@@ -62,6 +63,17 @@ test("chunks in order grow a wet stroke on their surface; a gap drops it until t
   assert.equal(wetOn("sheet1").length, 1);
   assert.ok(seen.length >= 4, "the layer heard of every change");
   off();
+  clearWet();
+});
+
+test("an older writer's chunks, with the g and k it sent, draw the same wet stroke: keys it does not read are ignored", () => {
+  clearWet();
+  assert.equal(receiveInkLive(chunk({ id: "old", g: "blk_9f2a", k: 1.5 })), true);
+  assert.equal(receiveInkLive(chunk({ id: "old", g: "blk_9f2a", k: 1.5, n: 2, samples: [[12, 22, null, 16, null, null]], done: true })), true);
+  const [w] = wetOn(3);
+  assert.deepEqual([w.id, w.style.brush, w.samples.length, w.done], ["old", "brush", 3, true]);
+  assert.deepEqual(w.samples[1], { x: 11, y: 21, t: 8, p: 0.6, a: 71, z: 203 });
+  assert.equal("g" in w || "k" in w, false, "the wet stroke keeps neither");
   clearWet();
 });
 

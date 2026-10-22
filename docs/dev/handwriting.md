@@ -30,7 +30,7 @@ app ([ipad.md](ipad.md)). Typed text on a page is
   `inkFlush.test.mjs`. The benchmarks `tests/bench/inkCache.bench.mjs` and
   `inkErase.bench.mjs` are not part of `npm test`.
 - Shared fixtures in `tests/shared/`: `inkv2.json`, `inkwidth.json`,
-  `inkdash.json` and `inkmerge.json` are read by
+  `inkdash.json`, `inkmerge.json` and `inkcodec.json` are read by
   `backend/tests/test_shared_fixtures.py` and the node tests, and
   `inkwidth.json` by the iPad app's `InkWidthTests` too. The recognisers
   and the Shapes tool's drags (`inkshapes.json`, `inkscribble.json`) run
@@ -39,9 +39,9 @@ app ([ipad.md](ipad.md)). Typed text on a page is
   parses. `inkhold.json`, the hold's stillness and refit rule, runs in the
   node tests and the iPad app's XCTest.
 - e2e: `tests/e2e/scenarios/ink.mjs` (the draft journal's restore too),
-  `inkEditing.mjs`, `inkShapes.mjs` (group `inkShapes`: the Shapes tool,
+  `inkEditing.mjs`, `inkShapes.mjs` (group `ink-shapes`: the Shapes tool,
   the ruler, the calligraphy pen, shape handles and fills), `inkZoom.mjs`
-  (group `inkZoom`: the zoom window and transcribing a selection), and the
+  (group `ink-zoom`: the zoom window and transcribing a selection), and the
   live stroke in `collab.mjs`.
 
 ## What the user sees
@@ -50,7 +50,8 @@ app ([ipad.md](ipad.md)). Typed text on a page is
   the top of the page, laid out like Notability's. Its accessible name is
   "Markup tools". One tap arms a tool; **tapping the armed tool again
   opens its options row** under the strip. Opening the strip arms the last
-  pen used. The first row is five groups, split by thin rules
+  pen used, or the first pen on the strip when that one is hidden, even
+  with a highlighter before it. The first row is five groups, split by thin rules
   (`.pdfInkSep`):
   - the **tool presets**, each a pen or a highlighter with its own colour
     and width, shown as the icon over a colour bar (four pens and three
@@ -78,10 +79,11 @@ app ([ipad.md](ipad.md)). Typed text on a page is
   the strip's own keys, named on their rows. Escape or a press outside
   closes it. The button is `data-guide="ink.more"` for the guide.
 - **A preset's options row** is three captioned sub-rows (the caption a
-  14 px line in the small caption size, hidden under 480 px of viewport
-  width). On a phone (480 px and under) Style and Width share one wrapping
-  line and Color takes the next, so the open strip never stands more than
-  about 110 px over the page.
+  14 px line in the small caption size). On a phone (480 px of viewport
+  width and under) the captions go, Style and Width share one wrapping
+  line and Color takes the next. There the dot buttons (the widths,
+  Smoothing, the eraser's sizes) narrow to 24 px and the pills' padding to
+  6 px. A narrow phone wraps the open row onto several lines.
   - **Style**, for a pen, is the **Style picker**: a button showing a
     short stroke drawn in the current style, its name and a ▾ (*Pen ▾*).
     It opens a menu on the press, like More, whose five rows are each led
@@ -166,46 +168,14 @@ app ([ipad.md](ipad.md)). Typed text on a page is
   pushes is exactly what a pull reads back. Which pen a stylus writes
   with stays session state; the eraser's mode and size and the lasso mode
   stay this browser's.
-- Keys while the strip is open (`ink/stripKeys.js`, matched by the
-  physical key, so a layout or Shift does not matter):
-  - `1`–`9` arm the visible preset at that position; `P` / `H` step
-    forward through the pens / highlighters and `Shift+P` / `Shift+H`
-    backward.
-  - `[` / `]` make the armed preset thinner / thicker through its eight
-    widths, options row open or not. The pill says "Blue pen · 2.8 pt.",
-    and repeats the width at the end of the ladder.
-  - `Shift+[` / `Shift+]` step the armed pen's style back / forward
-    through Pen, Ballpoint, Brush, Pencil, Calligraphy, wrapping, with the
-    same pill naming the style ("Blue brush pen · 2.8 pt."). A highlighter
-    has no styles, and the keys do nothing.
-  - `L` `T` `V` arm the lasso / Text tool / hand. `R` turns the ruler on
-    or off, and `S` the Shapes tool (off gives back the tool armed before
-    it). `Z` opens or closes the zoom window: nothing on a phone, and
-    where the viewer shows no PDF page the pill says it works on PDF
-    pages.
-  - **Enter**, while the zoom window is open, is its *New line*; a focused
-    button, link, menu row or text field, and a selected text box, keep
-    their Enter.
-  - `Delete` (or Backspace) deletes the lasso selection. **`Ctrl+Z` /
-    `Ctrl+Shift+Z` (or `Ctrl+Y`) step the strokes**: each stroke or
-    selection edit is one entry, and the history is per visit of the page.
-  - **`E` taps or holds.** A tap arms the eraser and it stays armed (a
-    second tap opens its row, as a tap on the button does). Held 300 ms or
-    more while an erasing pass is made, letting go returns to the tool
-    armed before it, and a lasso selection made before the hold comes back
-    with the lasso.
-  - `Esc` closes one layer at a time: a selected text box, then the ink
-    selection, then an open options row (the armed tool's or the ruler's),
-    then the Shapes tool (the tool armed before it comes back), then the
-    ruler, then the zoom window, then the strip. Closing the strip hides
-    the ruler and closes the zoom window too.
-  - Ctrl+C / X / V / D / A are not strip keys but catalog commands
-    (`ink.copy`, `ink.cut`, `ink.paste`, `ink.duplicate`,
-    `ink.selectAll`, "Copy, cut and paste" below), so Settings → Keyboard
-    lists and rebinds them.
-  - While the Text tool is armed or a text box is selected or edited,
-    `Ctrl+Z` is left to the block history, and `Esc` to a selected or
-    edited box.
+- **Keys while the strip is open** (`ink/stripKeys.js`) arm the presets
+  and tools and step the armed preset's width and style. R, S and Z turn
+  the ruler, the Shapes tool and the zoom window on and off, and Esc
+  closes one layer at a time. The full list is
+  [hotkeys.md](hotkeys.md#widget-keys-the-markup-strip-and-a-text-box)
+  "Widget keys". Ctrl+C / X / V / D / A are catalog commands instead
+  ("Copy, cut and paste" below), so Settings → Keyboard lists and rebinds
+  them.
 - The **eraser**'s options row: *whole strokes* removes anything it
   touches, *partial* cuts through them (the pieces on either side become
   their own strokes), three sizes, then *Erases* and *Back to last tool*.
@@ -238,11 +208,12 @@ app ([ipad.md](ipad.md)). Typed text on a page is
   rectangle (axis-snapped within 5°; a square when the sides are within
   10 %), a regular polygon of 5 to 8 sides (only convex and closed: a
   zigzag never becomes a hexagon), a circle and an ellipse.
-  - The hold counts only when the stroke's chord is at least max(24 css
-    px, 18 pt), so zoom cannot turn a letter into a line, and the stroke
-    lasted at least 250 ms before the tip went still. The timer restarts
-    whenever the tip moves more than 3 css px, so a pause mid-letter needs
-    a real stop.
+  - The hold counts only when the stroke's extent, its bounding-box
+    diagonal, is at least max(24 css px, 18 pt). The stroke must also
+    have lasted 250 ms or more before the tip went still. So a shape
+    closed where it began snaps like any other, and zoom cannot turn a
+    small letter into a shape. The timer restarts whenever the tip moves
+    more than 3 css px, so a pause mid-letter needs a real stop.
   - Keep holding and move 6 css px or more to refit: a line follows the
     tip as its new endpoint, and a closed shape scales about its centre
     and rotates with the tip (Shift snaps the rotation to 15°; a rectangle
@@ -536,8 +507,8 @@ app ([ipad.md](ipad.md)). Typed text on a page is
   eighth of that) where it moves along it, its ends and turns showing
   the nib's slanted corners. A mouse or finger draws the same.
   - The Style row's **Nib angle**: − and + around a readout, −60° to 60°
-    in 15° steps (45° to start, the nib rising to the right), or a slider
-    with a mouse, beside a small nib turned to the angle.
+    in 15° steps (45° to start, the nib rising to the right), beside a
+    small nib turned to the angle.
   - A calligraphy pen smooths at 2 unless its *Smoothing* is set, Off
     included. That is a default, never written into the preset, so a pen
     stepped or switched through Calligraphy to another style smooths as
@@ -845,10 +816,10 @@ and the canonical bytes never write a key at its omission value:
 | anything else | JSON to depth 3, finite numbers, keys `^[A-Za-z][A-Za-z0-9_]{0,31}$`, strings ≤ 1 KB, arrays ≤ 256 | — | kept verbatim through parse, canonical bytes, merge and every edit helper (`restroke`, `duplicateStrokes`, `cloneStrokes`, `translateStrokes`, `transformStrokes`, `restyleStrokes`); ≤ 1 KB serialised per stroke. A null-valued key is dropped |
 
 The server's models are pydantic with `extra="allow"` and one extras
-validator for the caps (`gamma/ink.py`); `json.loads` runs with a
-`parse_constant` that refuses `NaN` and `Infinity`, and `dumps` with
-`allow_nan=False`, because pydantic would keep a `NaN` extra and
-`JSON.parse` in every browser then fails on the file.
+validator for the caps (`gamma/ink.py`). `json.loads` runs with a
+`parse_constant` that refuses `NaN` and `Infinity`, and `dumps` refuses a
+number that is not finite (`ValueError`). Pydantic would keep a `NaN`
+extra, and `JSON.parse` in every browser then fails on the file.
 
 **Channels.** `ch` names the channels of each sample, InkML-style, `x`
 `y` first and then any of the letters below in any order; `pts` is one
@@ -872,6 +843,13 @@ decoded sample is `{x, y, p?, t?, a?, z?, w?, o?, rest?}` (each key
 present when its channel is, `rest` when the list has a letter the codec
 does not know), with `w` and `o` as multipliers, so a decoded cache never
 depends on `size`; `tests/shared/inkwidth.json` pins the decoded values.
+
+**Rounding.** Both encoders (`encodePoints`, `encode_points`) round every
+channel as `Math.round` does, a half going up (`js_round` on the server).
+They clamp `p` and `o` to 0..1, `w` to 0..4 and `a` to 0..90. A channel a
+sample lacks, or holds as null, takes its default: `p` 0.5, `t` 0, `a`
+90, `z` 0, `w` 1, `o` 1, and 0 for a letter the codec does not know.
+`tests/shared/inkcodec.json` pins the two to the same integers.
 
 **Width.** The drawn width at a sample is `size × w` when the stroke has
 the `w` channel, else `size`. That is the whole rule: there is no width
@@ -902,41 +880,43 @@ canvas runs the same function on the samples' live `w`, computed by the
 same law (a brush's end taper is applied at the lift, so the wet line has
 its start taper only). Tilt is captured for pen pointers only
 (`inkSample`: `altitudeAngle` / `azimuthAngle`, else `tiltX` / `tiltY`,
-as integer degrees), and the `a` / `z` letters are written only when at
-least one sample of the stroke reported tilt (samples without it inside
-such a stroke write 90 and 0, the altitude clamped to 0..90, in both
-codecs: `encodePoints`, `encode_points`), so a tilt-less client and a tilt-capable
-one hash an untilted stroke identically. The iPad shell sends raw samples
-and the web app bakes them like its own ([ipad.md](ipad.md) "The pen").
+as integer degrees). The `a` / `z` letters are written only when at
+least one sample of the stroke reported tilt, so a tilt-less client and a
+tilt-capable one hash an untilted stroke identically. A sample without
+tilt inside such a stroke writes the defaults, 90 and 0 ("Rounding"
+above). The iPad shell sends raw samples and the web app bakes them like
+its own ([ipad.md](ipad.md) "The pen").
 
 **Limits** (`gamma/ink.py`, enforced on upload): 5 000 strokes, 500 000
-samples, `MAX_BYTES` 6 MB, finite numbers, unique stroke ids, the extras
+samples, `MAX_BYTES` 6 MB, finite numbers (`pts` integers included), unique stroke ids, the extras
 caps, `w` in 0..4, `o` in 0..1, `size × max(w) ≤ 100`.
 
 **The bytes of an upload** are the client's, `ink.js` `serializeInk`: keys
-sorted at every level, no whitespace, null and undefined keys dropped,
-whole-number floats written as integers (`612`, never `612.0`). The server
-validates an upload and stores it as it came, named by the sha256 of those
-bytes (`routers/ink.py`, `storage.store_file`), so the same strokes from a
-browser, the iPad and the migration are one file, and a client can name a
-file by its hash before the server has it. The server writes files of its
-own with `ink.dumps` (the same canon, pinned equal to `serializeInk` on a
-fixture, non-ASCII text in an extra key written as UTF-8 on both sides,
-never `\u`-escaped) for a merge, an import or the upgrade step. The codec lives twice
-by design (`ink.py` `decode_stroke` / `encode_points`, `ink.js`
-`decodeStroke` / `encodeStroke`); `tests/shared/inkv2.json`,
-`inkwidth.json` and `inkmerge.json` pin both sides to the same bytes.
+sorted at every level, no whitespace, null and undefined keys dropped, and
+every number as `JSON.stringify` writes it (`612`, never `612.0`; `1e-7`,
+`0.00001`, `1e+21`). The server validates an upload and stores it as it
+came, named by the sha256 of those bytes (`routers/ink.py`,
+`storage.store_file`). So the same strokes from a browser, the iPad and
+the migration are one file, and a client can name a file by its hash
+before the server has it. The server writes files of its own with
+`ink.dumps`, for a merge, an import or the upgrade step. It is the same
+canon. Numbers go through `_js_number` (an integer past 2^53 as the
+double a client's `JSON.parse` reads), and non-ASCII text in an extra key
+is UTF-8 on both sides, never `\u`-escaped. The codec lives twice by design
+(`ink.py` `decode_stroke` / `encode_points`, `ink.js` `decodeStroke` /
+`encodeStroke`). `tests/shared/inkv2.json`, `inkwidth.json`,
+`inkmerge.json` and `inkcodec.json` pin both sides to the same bytes.
 
-**The byte budget** is the client's to keep: `applyInk` measures the
+**The byte budget** is the client's to keep. `applyInk` measures the
 group's bytes (`inkBytes`: exactly `serializeInk(ink).length`, summed
 from each stroke's canonical bytes and cached per stroke object, so an
-edit costs its changed strokes only) and refuses an edit that would
-cross `MAX_BYTES` with the pill "This group is full; split it or start a
-new one". A new stroke that would push a group past 3 MB starts a new
-group block on the same surface instead (a group is "the page's current
-writing", so this is invisible). `finishStroke` decimates coalesced
-samples closer than 0.1 pt to the previous kept one before baking, so a
-240 Hz trace roughly halves with no visible change.
+edit costs its changed strokes only). It refuses an edit that would cross
+`MAX_BYTES` with the pill "This handwriting note is full. Move part of it
+to a new note, or start a new one." A new stroke that would push a group
+past 3 MB starts a new group block on the same surface instead (a group
+is "the page's current writing", so this is invisible). `finishStroke`
+decimates coalesced samples closer than 0.1 pt to the previous kept one
+before baking, so a 240 Hz trace roughly halves with no visible change.
 
 ### Upgrading version 1
 
@@ -1058,12 +1038,18 @@ pieces that were dropped), and `returned`, the strokes theirs had erased
 that the writer's change brings back. `ops._Batch.merge_ink` puts
 `{clean, lost_ours, returned}` into the batch result (not the echo, so
 the op log, catch-up and mirrors never carry it), and `routers/blocks.py`
-copies it onto the `PUT` answer as `ink_conflict`. The writer's pill says
-"Your change to n strokes was not applied: someone changed them since"
-for `lost_ours`, "n strokes someone erased came back" for `returned`, and
-"Merged with changes made meanwhile" for an unclean answer with neither.
+copies it onto the `PUT` answer as `ink_conflict`. The writer's pill:
+
+- `lost_ours`: "Your change to n strokes was not applied: someone changed
+  them since".
+- `returned`: "n strokes someone erased came back".
+- An unclean answer with neither: "Merged with changes made meanwhile".
+
 Undo and redo collect the same flag (`inkUndo`): "Undone: … (page 1; n
-strokes someone changed since were kept)."
+strokes someone changed since were kept)." Each count goes through
+`tn()`, so one stroke reads "Your change to 1 stroke was not applied:
+someone changed it since", "1 stroke someone erased came back" and "…
+1 stroke someone changed since was kept)."
 
 The merged file is stored (`ink.dumps`) only when it is new. One stored
 already stays: the purge deletes only under the write lock the batch
@@ -1099,13 +1085,13 @@ reach.
   group's: nothing is sure to run once a closing page is gone, so a flush
   waiting for each group in turn would send the first alone.
 - The groups **share the room the page's keepalive ledger leaves
-  handwriting**, its lowest priority (`available('low')`,
-  [collab.md](collab.md) "Keepalive"). `keepalive` goes to the groups, in
-  order, whose upload and `PUT` bodies still fit in that room; the others
-  go as plain fetches (`ink/inkFlush.js` `planFlush`, "Client"). A plain
-  fetch may still land, but a closing page may cut it off; then the draft
-  journal keeps that handwriting and restores it on the next visit
-  ("Client", the journal). The journal is why handwriting is the lowest
+  handwriting**, its lowest priority (`available('low')`; the ledger and
+  its priorities are [collab.md](collab.md) "Keepalive"). `keepalive`
+  goes to the groups, in order, whose upload and `PUT` bodies still fit
+  in that room, and the others go as plain fetches (`ink/inkFlush.js`
+  `planFlush`, "Client"). When a closing page cuts a plain fetch off, the
+  draft journal keeps that handwriting and restores it on the next visit
+  ("Client", the journal). That is why handwriting takes the lowest
   priority: typed edits lost at the close are lost for good.
 - A closing tab fires `visibilitychange` before `pagehide`, so
   `pagehide` flushes every draft still unsaved again, whether or not the
@@ -1124,9 +1110,9 @@ reach.
   it does not). One whose `PUT` is on its way with keepalive sends nothing
   more, and an empty group whose `DELETE` is on its way is not deleted
   again: a second would be answered 404 and raise "Handwriting not saved
-  yet" on a page the back-forward cache keeps. The `DELETE` has no body,
-  so it goes with keepalive, and counts as on its way, even when the
-  queued edits leave handwriting no room at all.
+  yet" on a page the back-forward cache keeps. The `DELETE`, with no
+  body, always goes with keepalive (collab.md "Keepalive"), so it counts
+  as on its way even when the queued edits leave handwriting no room.
 - Every `PUT` is written to the draft journal before it goes
   (`inkStore.markSending`, "Client"), since its answer may never come. A
   4xx stops the flush's retries, except a 404 (the block's insert may
@@ -1411,7 +1397,8 @@ reach.
     4. **decimate** (`DECIMATE_PT`, 0.1 pt) then **bakeWidths** (the brush
        table `BRUSHES`, the only place a width or opacity law lives:
        `{pen: {w: law}, monoline: {}, brush: {w: law over the whole
-       stroke, simulate: the speed law}, pencil: {w: law, o: law}}`, read
+       stroke, simulate: the speed law}, pencil: {w: law, o: law},
+       calligraphy: {w: law of the travel against the nib, travel: true}}`, read
        through `widthLaw(style)`, `opacityLaw(style)`; `bakeWidths(samples,
        style)` writes `w`, and `o` for the pencil, rounded to three
        decimals, running the brush's tapers over the samples' arc length
@@ -1479,35 +1466,49 @@ reach.
   - `recognise(samples, {k, kinds}) → {kind, params} | null` over decoded
     page-pt samples `[{x, y, p?, t?}]` as the layer holds them when the
     timer fires (the still tail included). `kinds` (optional) restricts
-    the answer, `['line']` for a highlighter. Null when there are fewer
-    than 8 samples or the bounding box's diagonal is under
-    `max(MIN_EXTENT_PX / k, MIN_EXTENT_PT)` pt (24 css px, 18 pt). Then ShortStraw
-    corners (resampled at bboxDiagonal / 40, window 3, threshold 0.95 ×
-    median straw; the endpoints are corners; a closed stroke, its end
-    within 10 % of the bounding-box diagonal of the start, merges its two
-    end corners): **1 side** → least-squares line through the samples, kept
-    only when the RMS distance of the samples to it is ≤ 3 % of the chord
-    and the path is ≤ 1.08 × the chord, snapped to 0°, 45° or 90° when
-    within 5° by rotating about the midpoint (length kept) → `line {x1,
-    y1, x2, y2}` from the first endpoint to the last; a **first side
-    followed by two or three sides each ≤ 0.35 × it**, whose far ends lie
-    within 0.4 × the shaft of the shaft's end and on both sides of the
-    shaft line → `arrow {x1, y1, x2, y2, head}` (`x2, y2` the tip, `head`
-    the mean barb length, the shaft snapped as a line); **3 sides,
-    closed** → `triangle {x1, y1, x2, y2, x3, y3}` in drawing order from
-    the corner nearest the first sample; **4 sides, closed, angles 90° ±
-    15°** → `rect {cx, cy, w, h, angle}`, `angle` in [−45°, 45°) and 0
-    after an axis snap (within 5°), `w` the side along `angle`, a square
-    (sides within 10 %) taking the mean side for both; **5–8 sides,
-    closed, convex, sides within 15 % and turns all one way** → `polygon
-    {cx, cy, r, n, angle}` (circumradius, side count, direction of the
-    first corner in [0, 360 / n)); **no inner corner, closed** → the
-    inertia test (Xournal++): with the central moments' eigenvalue ratio ≥
-    0.95 and the radial deviation about the centroid ≤ 10 % of the mean
-    radius → `circle {cx, cy, r}`; else with the radial deviation about
-    the moment ellipse ≤ 12 % → `ellipse {cx, cy, rx, ry, angle}` (`rx ≥
-    ry`, `angle` in [0°, 180°)); anything else, every open curve included,
-    null. Thresholds in css px divide by `k`; everything else is points.
+    the answer, `['line']` for a highlighter. Thresholds in css px divide
+    by `k`; everything else is points or ratios.
+    - Null with fewer than 8 samples, or when the stroke's extent, its
+      bounding-box diagonal, is under the size floor,
+      `max(MIN_EXTENT_PX / k, MIN_EXTENT_PT)` pt (24 css px, 18 pt). The
+      samples are then resampled at the diagonal / 40, and the stroke is
+      **closed** when its ends lie within 10 % of the diagonal.
+    - An open stroke is a **line** when its path is at most 1.08 × its
+      chord and the samples' RMS distance to their least-squares line is
+      at most 3 % of the chord. That is `line {x1, y1, x2, y2}` from the
+      first endpoint to the last, snapped to 0°, 45° or 90° when within 5°
+      by a turn about its midpoint (length kept).
+    - Else an open stroke may be an **arrow**, read from distances to the
+      tip, since ShortStraw cannot place corners along a head a few
+      samples long. The tip is the raw sample farthest from the first, and
+      the shaft up to it must pass the line test. Every later sample lies
+      within 0.4 × the shaft of the tip. The farthest on each side of the
+      shaft line are the barbs, both needed and neither over 0.35 × the
+      shaft. That is `arrow {x1, y1, x2, y2, head}` (`x2, y2` the tip,
+      `head` the mean barb, the shaft snapped as a line). A mean barb under
+      max(6, 0.08 × the shaft) pt, or a head whose path is not 1.8 to 4.5
+      times it (a hook, a loop), makes none. Any other open stroke is null.
+    - A closed stroke's corners are ShortStraw's (window 3, a straw under
+      0.95 × the median, kept where the path turns 30° or more), the join
+      counting as one where the path turns there too. Three to eight
+      corners make a polygon (the intersections of its sides'
+      least-squares lines), kept when the samples' RMS distance to it is at
+      most 3 % of the diagonal:
+      - **3** → `triangle {x1, y1, x2, y2, x3, y3}` in drawing order from
+        the corner nearest the first sample;
+      - **4, angles 90° ± 15°** → `rect {cx, cy, w, h, angle}`, `angle` in
+        [−45°, 45°) and 0 after an axis snap (within 5°), `w` the side
+        along `angle`, a square (sides within 10 %) taking the mean side
+        for both;
+      - **5–8, convex, sides within 15 % and turns all one way** →
+        `polygon {cx, cy, r, n, angle}` (circumradius, side count,
+        direction of the first corner in [0, 360 / n)).
+    - A closed stroke that makes no polygon goes to the inertia test
+      (Xournal++). With the central moments' eigenvalue ratio ≥ 0.95 and
+      the radial deviation about the centroid ≤ 10 % of the mean radius it
+      is a `circle {cx, cy, r}`. Else, with the radial deviation about the
+      moment ellipse ≤ 12 %, it is an `ellipse {cx, cy, rx, ry, angle}`
+      (`rx ≥ ry`, `angle` in [0°, 180°)). Else it is null.
   - `shapeSamples(kind, params, {span, p}) → [{x, y, p, t}]`: the dense
     polyline a shape commits as: a line two samples; an arrow tail → tip
     → barb → tip → barb; a triangle, rectangle or polygon its corners with
@@ -1528,9 +1529,13 @@ reach.
   - The hold's numbers, one table for the layer and the iPad host (whose
     Swift constants mirror it): `HOLD_MS` 600, `HOLD_MOVE` 3 css px (a tip
     that moves farther starts the timer again), `HOLD_MIN_MS` 250,
-    `REFIT_PX` 6, `CANCEL_PX` 12, `CANCEL_MS` 150 and `PASTE_MOVE` 2. The
-    floor the hold puts under a stroke's chord is the recogniser's own
-    size floor, `MIN_EXTENT_PX` (24 css px) and `MIN_EXTENT_PT` (18 pt).
+    `REFIT_PX` 6, `CANCEL_PX` 12, `CANCEL_MS` 150 and `PASTE_MOVE` 2.
+  - `holdQualifies(samples, k) → bool`: whether a hold asks the
+    recogniser (InkLayer's `holdFire`, and the iPad claim's hold). The
+    page-pt samples, at least 2, must reach the recogniser's size floor by
+    their extent, the bounding-box diagonal `recognise` measures. Their
+    chord would not do: a closed shape ends where it began. The hold's
+    other rules (`HOLD_MS` still, `HOLD_MIN_MS`) are the callers'.
   - `stillSince(samples) → index` (fixture `tests/shared/inkhold.json`,
     which the iPad app's XCTest runs too): the stillness anchor of `[{x,
     y}]` in css px, the latest sample more than `HOLD_MOVE` from the
@@ -1705,7 +1710,7 @@ reach.
   the lift's, `t` spread from the last emitted `t` to the lift's, ending
   with the lift point exactly. Nothing here reads the stroke's style.
 - `ink/fingerChords.js` (pure): `makeChordDetector({onChord, mode, now})
-  → {down(e), up(e), cancel(e), move(e), setMode(mode), reset()}`, the
+  → {down(e), up(e), cancel(e), move(e), palm(), setMode(mode), reset()}`, the
   two- and three-finger undo chords. `e` is any object with `pointerId`,
   `pointerType`, `clientX`, `clientY` and `timeStamp` (`now()` is only
   for tests; the events' own `timeStamp` is the clock). `mode` is one of
@@ -1723,20 +1728,22 @@ reach.
   completes within 400 ms of the first's last lift with its centroid
   within 30 css px of the first's (`DOUBLE_MS` / `DOUBLE_SLOP`, the
   values `shared/ui/press.js` uses); `'off'` fires nothing but still
-  tracks contacts, so `setMode` mid-gesture is safe. `reset()` forgets
-  everything (window blur).
+  tracks contacts, so `setMode` mid-gesture is safe. `palm()` voids the
+  chord in progress, for a pen the detector never saw (the iPad host owns
+  the Pencil: `InkLayer`'s `penBusy()`). `reset()` forgets everything
+  (window blur).
 - `ink/stripKeys.js` (pure): `stripKey(event, state) → action | null`, the
   strip's key table (matched by `e.code`), dispatched by App's
   capture-phase handler, for the keydown and, for `E` alone, the keyup.
+  What each key does, and which chords are left alone, is
+  [hotkeys.md](hotkeys.md#widget-keys-the-markup-strip-and-a-text-box)
+  "Widget keys"; this is the table's contract.
   `state` is `{tools: the visible presets, tool, hasSelection, boxUndo,
   hasBox, optionsOpen, eraserDown, ruler, zoom, onControl}` (`eraserDown`
   the timeStamp of the `E` keydown still held, or null, so the keyup's
   `held` is pure arithmetic; `ruler` and `zoom` whether they are on;
   `onControl` the key's target is a button, a link or a menu row).
-  A chord with Ctrl, Cmd or Alt is not the strip's, except Ctrl+Z / Y and
-  the AltGr pair (`ctrlKey && altKey` together, a third-level letter on
-  some layouts, treated as no modifier). Nothing with Mod-C / X / V / D /
-  A: those are catalog commands. The actions:
+  The actions:
   - `{kind: "pick", id}` for `1`–`9` (the visible list), `P` / `H`
     (forward; with Shift backward, wrapping), `L`, `T`, `V`.
   - `{kind: "width", step: ±1}` for `BracketLeft` / `BracketRight`: App
@@ -1747,8 +1754,7 @@ reach.
     an armed pen preset through `BRUSH_ORDER` (`null` for Pen,
     `monoline`, `brush`, `pencil`, `calligraphy`), wrapping, and raises
     the same pill, whose `name` says the style ("Blue brush pen · 2
-    pt."). An armed highlighter or no preset ignores it. Like the brackets
-    themselves, it is a widget key, not a catalog command.
+    pt."). An armed highlighter or no preset ignores it.
   - `{kind: "eraser", phase: "down" | "up", held}` for `E`: `down` on a
     non-repeat keydown, `up` on the keyup with `held` the ms since the
     down, so App decides tap or hold ("Hold-E" under App).
@@ -1766,22 +1772,28 @@ reach.
   `backTool(prefs, state)`, the tool to go back to (the one armed before,
   when it is still on the strip and not the current one, else the stylus
   pen), which the gestures' *Switch to last tool* and App's `inkBack`
-  both read. `RESERVED_TOOLS` (`"eraser"`, `"select"`, `"text"`,
-  `"shape"`) are the strip's tools that are no preset; they count as on
-  the strip, and App reads the list too.
+  both read. `stylusPen(tools, pen)` is that pen. It is `pen`, the last
+  pen armed, while that is a pen preset on the strip, else the strip's
+  first pen, else its first preset (undefined for an empty strip). App's
+  `inkPenPreset` is it, opening the strip (`openInkStrip`) arms it, and
+  `backTool` and the `'options'` gesture with the hand armed fall back
+  to it. `RESERVED_TOOLS` (`"eraser"`,
+  `"select"`, `"text"`, `"shape"`) are the strip's tools that are no
+  preset; they count as on the strip, and App reads the list too.
   - `message`: `{gesture: 'tap' | 'squeeze', action, phase?: 'began' |
     'ended' | 'cancelled'}`: the host's `pencil`, and its `squeeze` as
     the gesture `squeeze`; a bare action string reads as a tap. A squeeze
     in any other phase (a later shell's `changed`) answers null.
-  - `prefs`: `{tools, pen, tap, squeeze}`, the last two this browser's
-    `inkPencilTap` and `inkPencilSqueeze`. `'system'` (the default) maps
-    the system's action: `switchEraser` → `'eraser'`, `switchPrevious` →
-    `'previous'`, `showColorPalette` and `showInkAttributes` →
-    `'options'`, anything else → `'none'`. `'eraser'` toggles the eraser
-    against `backTool`, `'previous'` picks `backTool`, `'options'` opens
-    the armed tool's row (with the hand armed, the stylus pen's),
-    `'undo'` undoes and `'none'` does nothing; a squeeze also takes
-    `'holdEraser'` and `'holdPrevious'`.
+  - `prefs`: `{tools, pen, tap, squeeze}`: the presets on the strip, the
+    last pen armed (App's `inkUi.pen`, which `stylusPen` reads), and this
+    browser's `inkPencilTap` and `inkPencilSqueeze`. `'system'` (the
+    default) maps the system's action: `switchEraser` → `'eraser'`,
+    `switchPrevious` → `'previous'`, `showColorPalette` and
+    `showInkAttributes` → `'options'`, anything else → `'none'`.
+    `'eraser'` toggles the eraser against `backTool`, `'previous'` picks
+    `backTool`, `'options'` opens the armed tool's row (with the hand
+    armed, the stylus pen's), `'undo'` undoes and `'none'` does nothing.
+    A squeeze also takes `'holdEraser'` and `'holdPrevious'`.
   - `state`: `{tool, previous, options, busy, squeeze, now}`, `busy` a
     stroke or a claim in progress (`InkLayer.jsx` `inkBusy()`), `squeeze`
     the squeeze App holds open (`{since, ignored, hold: {tool, used} |
@@ -1954,9 +1966,8 @@ reach.
   plain. It holds by drawing, until each settles, the upload, the `PUT`
   and the `DELETE` it has on their way with keepalive (`inkFlightRef`). A
   group that does not fit goes as plain fetches, and a smaller one after
-  it may still fit. The bytes are the ledger's `bodyBytes`, a string's
-  UTF-8 length, not encoded past the cap (a longer text's length, already
-  past it, stands for it).
+  it may still fit. The bytes are the ledger's `bodyBytes`
+  ([collab.md](collab.md) "Keepalive").
 - `ink/InkLayer.jsx`: `InkLayer` (one per surface: a PDF page, a sheet in
   the notebook view, a sheet among the notes; it draws after the
   highlights and the text boxes) is the retained SVG plus a
@@ -2109,12 +2120,12 @@ reach.
   - Draw and hold: with `ink.drawHold` on (and, for a highlighter, the
     preset's `straight` not `'off'`), a hold timer on the draw context
     restarts whenever the tip moves more than `HOLD_MOVE`. It fires after
-    `HOLD_MS` still when the stroke's chord is at least
-    `max(MIN_EXTENT_PX / k, MIN_EXTENT_PT)` pt and the stroke lasted
-    `HOLD_MIN_MS` before the tip went still (`holdFire`; the numbers are
-    `shapes.js`'s, above). On firing, `recognise(d.samples, {k, kinds})`
-    (`['line']` for a highlighter) sets `d.hold = {kind, params, snap:
-    params, from: the tip, at: now}` on a hit. The canvas then draws
+    `HOLD_MS` still when `holdQualifies(d.samples, k)` (the stroke's
+    extent at the size floor) and the stroke lasted `HOLD_MIN_MS` before
+    the tip went still (`holdFire`; the numbers are `shapes.js`'s, above).
+    On firing, `recognise(d.samples, {k, kinds})` (`['line']` for a
+    highlighter) sets `d.hold = {kind, params, snap: params, from: the
+    tip, at: now}` on a hit. The canvas then draws
     `shapeSamples` of it instead of the trace: two frames in the
     `inkSelRect` blue, then the preset's look at its constant width, as
     the shape commits (its style carries the shape, so it has no width
@@ -2130,33 +2141,36 @@ reach.
     on only under a host.
   - The iPad host (`nativeHost().ink`, [ipad.md](ipad.md) "The pen"): a
     pen down claims the stroke (`claimForHost`) with the claim's tool,
-    `claimTool(look, {k})` (`ink/hostInk.js`, below); the claim is
+    `claimTool(look, {k})` (`ink/hostInk.js`, below). The claim is
     `{taken, commit(samples, held), hold(samples), held}` in the module's
     `hostClaims`. Under `nativeHost().hold` the module also answers
-    `hold` through the claim's `hold`: a claim not taken, or one keeping
-    a shape already, answers `{}`; with `pasteArmed` and every sample
-    within `PASTE_MOVE` of the first, the claim ends there (out of
-    `hostClaims`, `hostOwned` cleared, its pointer `pasteHold`), *Paste
-    here* opens at the down, and the answer is `{cancel: true}`; with
-    `holdOn`, a chord of at least the recogniser's size floor
-    (`MIN_EXTENT_PX`, `MIN_EXTENT_PT`) and `HOLD_MIN_MS` from the first
-    sample to the anchor (`stillSince`),
-    `recognise` runs over the samples in page points (`hostEvent`, the
-    draw context's `toPt`, its `kinds`; through the preset's stabilizer,
-    the last sample closing the path, as the layer's own `snapHold` does
-    with its tip), and a hit is kept as `held =
-    {kind, params, from: the last sample, n: the samples' count, tSnap:
-    the anchor's t + HOLD_MS}`, all in css px (`shapeToHost`), and
-    answered `{shape: {kind, params}}`, with `onHaptic('snap', from)`;
-    anything else answers `{}`. `commit` replays the samples through
-    `hostEvent` (the tilt from degrees) and the stabilizer, and with
-    `held`, when the host's `stroke` names that hold (its `held`
-    is `held.n`: the shell drew the shape), gives the draw context `hold:
-    shapeFromHost(…)` of `followHold(held, samples)` (none when that is
-    null) for `finishStroke`'s hold stage; a `stroke` naming no hold (its
-    lift came before the shell had the answer, and it drew the freehand
-    line) commits freehand. Under a host without `hold` nothing
-    answers, so a captured stroke is never recognised.
+    `hold` through the claim's `hold`:
+    - A claim not taken, one keeping a shape already, or one along the
+      ruler answers `{}`.
+    - With `pasteArmed` and every sample within `PASTE_MOVE` of the
+      first, the claim ends there (out of `hostClaims`, `hostOwned`
+      cleared, its pointer `pasteHold`), *Paste here* opens at the down,
+      and the answer is `{cancel: true}`.
+    - With `holdOn`, the samples in page points (the draw context's
+      `toPt`) must pass `holdQualifies`, and `HOLD_MIN_MS` must have
+      passed from the first sample to the anchor (`stillSince`). Then
+      `recognise` runs over them (`hostEvent`, `toPt`, the context's
+      `kinds`), through the preset's stabilizer, the last sample closing
+      the path, as the layer's own `snapHold` does with its tip.
+    - A hit is kept as `held = {kind, params, from: the last sample, n:
+      the samples' count, tSnap: the anchor's t + HOLD_MS}`, all in css px
+      (`shapeToHost`), and answered `{shape: {kind, params}}`, with
+      `onHaptic('snap', from)`. Anything else answers `{}`.
+    - `commit` replays the samples through `hostEvent` (the tilt from
+      degrees) and the stabilizer. With `held`, when the host's `stroke`
+      names that hold (its `held` is `held.n`: the shell drew the shape),
+      it gives the draw context `hold: shapeFromHost(…)` of
+      `followHold(held, samples)` (none when that is null) for
+      `finishStroke`'s hold stage. A `stroke` naming no hold (its lift
+      came before the shell had the answer, and it drew the freehand line)
+      commits freehand.
+    - Under a host without `hold` nothing answers, so a captured stroke is
+      never recognised.
   - `ink/hostInk.js` (pure): the iPad shell's side of a stroke.
     `claimTool(look, {k}) → tool`: `{kind, color, size: size × k,
     opacity}` and the look: `brush` for a pen of a known brush other
@@ -2180,7 +2194,7 @@ reach.
     points moved, lengths scaled, angles kept, on the 1/100 grid).
   - Paste here: with `ink.clip` (the clipboard holds strokes) and a pen
     or highlighter preset armed, a pen or mouse down in stroke mode arms
-    the draw-and-hold timer with the chord floor at 0. When it fires
+    the draw-and-hold timer, with no size floor for a paste. When it fires
     (`HOLD_MS` still) before the tip has travelled `PASTE_MOVE`, the draft
     is cancelled, nothing committed, and a one-row `ContextMenu` (a
     `MenuItem` *Paste here*, `ClipboardIcon`) opens at the point; its row
@@ -2193,8 +2207,8 @@ reach.
     cannot paste. The wrapper's `contextmenu` listener opens the same row
     for a mouse right-click when a tool is armed, no stroke is under the
     pointer and the clipboard holds strokes, and `preventDefault`s only
-    then; otherwise the page's own menus run. Chord 0 against the hold's
-    size floor keeps the two timers apart: a tip that has travelled cannot
+    then; otherwise the page's own menus run. No travel against the
+    hold's size floor keeps the two apart: a tip that has travelled cannot
     paste, one that has not cannot snap.
   - Erasing: the draw context records `eraseSource: 'tool' | 'barrel'`
     (the armed eraser, or the pen's eraser end / barrel button; both erase
@@ -2306,10 +2320,12 @@ reach.
     dragHandle(…))` and the release calls `onAction(page, "reshape", {id,
     params})`; the arrow keys move a focused one 1 pt (Shift 10 pt), each
     press one commit. The handles are `InkShapeHandles`, which
-    `InkTransformHandles` renders beside its two; each is drawn as a small
-    ring in the selection blue (`.inkShapeDot`) inside its 28 px target,
-    and the layer draws the reshaped stroke (`reshape`) in the original's
-    place while a drag goes on.
+    `InkTransformHandles` renders beside its two. Each is drawn as a small
+    ring in the selection blue (`.inkShapeDot`) inside its 28 px target.
+    The keyboard's focus ring is the dot's own
+    (`.inkShapeHandle:focus-visible .inkShapeDot`), and the button around
+    it draws none. The layer draws the reshaped stroke (`reshape`) in the
+    original's place while a drag goes on.
   - **Fills**: a stroke whose `strokePath` has `fill` gets a `<path
     className="inkFill">` before its outline (`fill` the stroke's fill
     colour, `fillOpacity` its opacity or 0.25), in the same band; the live
@@ -2452,15 +2468,15 @@ reach.
     scroll or a resize brings more of the surface into view) through `paintLiveStroke` with the
     style's width law baked on the fly (start taper only until `done`), so
     a peer's 20 chunks a second repaint one canvas and re-render nothing.
-    A wet stroke goes when a group drawn on its surface holds its id
-    (`inkLive.landWet`, which the layer runs on every paint and render: the
-    file landed, and the committed stroke stands where the wet one was;
-    every group is checked, whatever the message's `g`), on `drop`,
-    when its writer leaves the page (App's `keepWetOf(peers)`), with the
-    page (`clearWet`), and 60 s after its last chunk (`WET_MS`). The
-    canvas's `data-wet` counts the wet strokes and `data-wet-ids` names
-    them, for the e2e. A read-only surface without ink mounts its
-    layer while it has wet strokes (`useHasWet`, `MarkupLayers.jsx`).
+    A wet stroke goes when any group drawn on its surface holds its id
+    (`inkLive.landWet`, run on every paint and render). Its file has
+    landed then, and the committed stroke stands where it was. It also
+    goes on `drop`, when its writer leaves the page (App's
+    `keepWetOf(peers)`), with the page (`clearWet`), and 60 s after its
+    last chunk (`WET_MS`). The canvas's `data-wet` counts the wet strokes
+    and `data-wet-ids` names them, for the e2e. A read-only surface
+    without ink mounts its layer while it has wet strokes (`useHasWet`,
+    `MarkupLayers.jsx`).
   - **Dense pages** (`useVisibleGroups`, `useIdleOutlines`,
     `useGroupRasters`; none of it changes a pixel of what is drawn once
     the outlines are built, and a tap's selection, the lasso and the
@@ -2540,6 +2556,10 @@ reach.
     the whole page (a 4× page would pass the canvas caps), into two
     canvases, the hidden one drawn and then shown, and drawn again 80 ms
     after the window leaves what `zoomRasterNeed` says is covered.
+  - The panel's paper and raster take the viewer's treatment for the
+    theme and for Flip page colors (`.inkZoomPanel.pdfDark`), in the
+    viewer's rule order. So Gamma Dark keeps its paper with the flip on
+    too.
   - Over them is a `<MarkupLayers chrome={false}>` for the page (same
     surface, same groups, same marks, no text boxes), so what it commits
     joins the page's current group through the same `onStroke`, and
@@ -2579,8 +2599,11 @@ reach.
     Reset this tool, each through `onChangeTools(list)` with the ids
     kept. The options rows (`.pdfInkSub`):
     - A preset's holds the three captioned sub-rows (`.inkOptRow` with an
-      `.inkOptCaption`). Below 480 px the captions go and Style and Width
-      wrap onto one line.
+      `.inkOptCaption`). At 480 px and under the captions go, Style and
+      Width wrap onto one line, the strip's `inkSizeBtn` dots narrow to
+      24 px and its `inkSegBtn` pills' padding to 6 px. That `@media`
+      block follows the strip's rules in `app.css`, which are as specific,
+      so it wins.
     - Style, for a pen, is the **Style picker** (`InkStylePicker` in
       `ink/InkStylePicker.jsx`, since the selection menu uses it too and
       imports never run from `ink/` to `markup/`). It is a `ctlBtn
@@ -2588,7 +2611,7 @@ reach.
       aria-label "Style: {brush}" naming the current one ("Style: Pen")
       and title "Pen style · Shift+[ ]", holding a `BrushPreview` glyph (a
       28 × 10 SVG stroke drawn in that brush's look), the brush's name and
-      a `ChevronDownIcon`.
+      a 14 px `ChevronDownIcon`.
     - Its `onPointerDown` opens the hoisted `menu` state as `{kind:
       'style', id}`, rendered after the `InkTooltips` element like the
       others: `InkStyleMenu`, a `ContextMenu` holding a `role="menu"` "Pen
@@ -2672,13 +2695,12 @@ reach.
     of the pen's colour"; `onShape({fill})`). A calligraphy pen's Style
     row has, after the Style picker, the **Nib angle** group
     (`role="group"`, aria-label "Nib angle", title "Nib angle: the slant
-    of the flat nib, −60° to 60°"): `ctlBtn`s aria-labelled "Nib angle
-    −15°" and "Nib angle +15°" around `.inkNibReadout` ("45°"), each
-    greyed at its end of the range (with a fine pointer, `(pointer:
-    fine)`, an `<input type="range" class="setRange">` in their place: min
-    −60, max 60, step 15, aria-label "Nib angle"), then a
-    `NibPreview` glyph (the nib at the angle, `aria-hidden`), each change
-    `edit({nib})`; and, under a host with `pencilRoll`, *Lock angle*
+    of the flat nib, −60° to 60°"). Two `ctlBtn`s with 16 px `MinusIcon`
+    and `PlusIcon`, aria-labelled "Nib angle −15°" and "Nib angle +15°",
+    stand around `.inkNibReadout` ("45°") for every pointer, each greyed
+    at its end of the range. A `NibPreview` glyph follows (the nib at the
+    angle, `aria-hidden`), and each change is `edit({nib})`.
+    Under a host with `pencilRoll` the row adds *Lock angle*
     (`aria-pressed`, title "Lock angle: rolling Apple Pencil Pro does not
     turn the nib"; `edit({nibLock})`). Its props for these: `ruler` (App's
     `inkRuler`, or null), `rulerUnits`, `onToggleRuler()`,
@@ -2743,7 +2765,8 @@ reach.
     the hand), its `options` row (`true`, or `"ruler"` for the ruler's),
     and `pen`, the last pen preset, which a stylus writes with when
     nothing is armed. `pen` is resolved among the visible presets, so a
-    hidden pen falls back to the first visible one.
+    hidden pen falls back to the first visible pen, else the first visible
+    preset (`pencilActions.js` `stylusPen`, App's `inkPenPreset`).
   - `inkTools`, the account's preset list, validated by `ink/ink.js`
     `normalizeTools`. App's `setInkTools` runs every write through it, the
     updater form the pill's *Show* passes included, so the stored and
@@ -2784,12 +2807,13 @@ reach.
     one with no file, so its upload must name no base: a base left from
     the deleted draft would make the server merge the strokes three ways
     against the new block's empty drawing and count them as deleted.
-  - Every edit funnels through `applyInk`, which checks the byte budget
-    (an edit that would grow a group past `MAX_BYTES` is refused with
-    "This group is full; split it or start a new one"), updates the
-    drafts, records the entry and schedules `flushInk` ("Fences": 700 ms
-    after the last edit, at most 5 s after the first unsaved one, and on
-    `visibilitychange`, `pagehide` and leaving the page).
+  - Every edit funnels through `applyInk`. It checks the byte budget: an
+    edit that would grow a group past `MAX_BYTES` is refused with "This
+    handwriting note is full. Move part of it to a new note, or start a
+    new one." Then it updates the drafts, records the entry and schedules
+    `flushInk` ("Fences": 700 ms after the last edit, at most 5 s after
+    the first unsaved one, and on `visibilitychange`, `pagehide` and
+    leaving the page).
     `handleInkStroke` starts a new group on the same surface when the
     current one would pass `GROUP_SPLIT_BYTES` (3 MB) or `MAX_STROKES`
     with the stroke.
@@ -2923,7 +2947,9 @@ reach.
       before it, else the first after) through `appendStrokes`, and
       emptied. `flushInk` deletes the empty block when it has no caption
       or children; one that has them is refused before anything moves,
-      with "Not merged: this note has a caption or notes under it."
+      with "Not merged: this note has a caption or notes under it." A
+      merge that would put the target past `MAX_STROKES` is refused with
+      the byte budget's pill.
   - `handleInkStrokes(page, strokes, size)` is `handleInkStroke` for
     several strokes at once (`size` the surface in points, for a fresh
     group's file): they join the surface's current group when it can
@@ -2974,14 +3000,12 @@ reach.
     change" or "ink width change"; each is one entry and goes through
     `applyInk`'s byte budget like any edit.
   - **Live co-drawing**: `onInkLive(page, msg)` (`handleInkLive`) adds
-    the surface as `page` and `g`, the group the stroke joins when that
-    group's block has a file (null before its first flush; worked out at
-    the stroke's first chunk), and hands the chunk to the page's collab
-    session, `sendInkLive(msg)`, which writes `{t: "ink-live", ...msg}` on
+    the surface as `page` and hands the chunk to the page's collab
+    session. Its `sendInkLive(msg)` writes `{t: "ink-live", ...msg}` on
     the socket when it is open and drops it otherwise (never queued, never
     retried: the committed stroke follows). Incoming `ink-live` messages
     (the session's `onInkLive`) go to `inkLive.receiveInkLive`, the wet
-    strokes' store ("Wet strokes" above), not App state; an effect on the
+    strokes' store ("Wet strokes" above), not App state. An effect on the
     session's `peers` keeps only the wet strokes of peers still on the
     page (`keepWetOf`: a `leave`, or the socket closing, which empties the
     peers), and leaving the page clears them (`clearWet`). Only a peer who
@@ -3128,8 +3152,9 @@ reach.
     codec, `upgrade_v1` (the version 1 converter) and `read_upload` (the
     parsed file behind a block's `ink_url`, None when unreadable: the
     exporters' one loader). `dumps` writes the canonical bytes, equal to
-    the client's `serializeInk`, so the same strokes dedup to one upload;
-    `merge_ink` returns the file, `clean`, `lost_ours` and `returned`.
+    the client's `serializeInk`, so the same strokes dedup to one upload.
+    `encode_points` rounds with `js_round`, `Math.round`'s twin. `merge_ink`
+    returns the file, `clean`, `lost_ours` and `returned`.
   - `stroke_width` (`size × w`, else `size`: no law), `stroke_opacity`
     (`opacity × o`, else `opacity`) and `stroke_polyline` (variable-width
     polylines every renderer draws from, band 0 first).

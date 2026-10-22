@@ -48,7 +48,7 @@ test("a change selects the groups that exercise it", () => {
   assert.deepEqual(pick(["frontend/src/guide/useGuide.js"]).sort(), ["contextual-guide", "guide", "triggered-guide"]);
   assert.deepEqual(pick(["docs/dev/debugging.md", "desktop/main.js", "backend/tests/test_ink.py"]), []);
   assert.equal(pick(["frontend/src/app/App.jsx"]).length, GROUPS.length);
-  assert.deepEqual(pick(["backend/gamma/ink.py"]).sort(), ["ink", "ink-editing", "inkShapes", "notebooks", "triggered-guide"]);
+  assert.deepEqual(pick(["backend/gamma/ink.py"]).sort(), ["ink", "ink-editing", "ink-shapes", "notebooks", "triggered-guide"]);
   // the chat's pictures of handwriting are the AI modules' groups
   assert.deepEqual(pick(["backend/gamma/ink_view.py"]).sort(), pick(["backend/gamma/ai_context.py"]).sort());
   // a scenario helper selects the scenarios importing it

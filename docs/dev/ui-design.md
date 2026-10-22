@@ -271,9 +271,10 @@ that list and keeps only its layout in its own rule. The kind label on a card
   `:focus-visible`, so mouse clicks never show it. The rule sits in the
   primitives layer of app.css with only `:focus-visible`'s specificity:
   a widget that draws its own focus overrides it (the switch's track, the
-  key chip, rows that highlight like `.chatHistRow`). Rows that fill a list
-  (menu items, popover items, search results, the Settings rail) draw it
-  inside (`outline-offset: -2px`), where the list can't clip it.
+  key chip, a shape handle's dot, rows that highlight like `.chatHistRow`).
+  Rows that fill a list (menu items, popover items, search results, the
+  Settings rail) draw it inside (`outline-offset: -2px`), where the list
+  can't clip it.
 - **Fields** show focus as the accent border plus a 3 px `--accent-bg` halo,
   on click and keyboard alike. The field list is next to the ring rule. A
   field inside a framing box (`.searchInputWrap`, `.homeFindBox`,

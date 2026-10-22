@@ -261,15 +261,17 @@ claimed.
      paste"). The shell takes the line away and keeps the touch, so palms
      stay swallowed, and at the lift sends `stroke` with no samples;
    - with *Draw and hold* on (and for a highlighter its preset's
-     straight not *Off*), a chord of at least max(24 CSS px, 18 pt)
-     (`shapes.js` `MIN_EXTENT_PX`, `MIN_EXTENT_PT`, the recogniser's own
-     floor), and at least 250 ms from the first sample to the anchor's,
-     `recognise` runs over the samples in page points (lines only for a
-     highlighter; through the preset's smoothing, as the page's own
-     hold). A shape comes back as `{shape: {kind, params}}` in viewport
-     CSS px (`shapeToHost`). The page keeps it on the claim with `n`, the
-     samples the hold carried, `from`, the last of them, and `tSnap`, the
-     anchor's `t` + 600, and posts `haptic` `snap` at `from`;
+     straight not *Off*), `recognise` runs over the samples in page
+     points (lines only for a highlighter; through the preset's
+     smoothing, as the page's own hold). It runs when their extent, the
+     bounding-box diagonal, reaches the recogniser's own floor of max(24
+     CSS px, 18 pt) (`shapes.js` `holdQualifies`). At least 250 ms must
+     also have passed from the first sample to the anchor's. A closed
+     shape counts by its size, though it ends where it began. A shape
+     comes back as `{shape: {kind, params}}` in viewport CSS px
+     (`shapeToHost`). The page keeps it on the claim with `n`, the samples
+     the hold carried, `from`, the last of them, and `tSnap`, the anchor's
+     `t` + 600, and posts `haptic` `snap` at `from`;
    - otherwise `{}`.
 
    On a shape the live line shows the shape instead of the trace, at the
@@ -706,9 +708,10 @@ confirm: [research/pymupdf-ios.md](../research/pymupdf-ios.md).
     of `tests/shared/inkhold.json`
   - the brush table against every row of `tests/shared/inkwidth.json`
     (`InkWidthTests`), the calligraphy rows with their `nib`. Both
-    fixtures are resources of the test bundle
-    (`project.yml`), so the Swift ports are held to the rows the web and
-    the server are held to
+    fixtures are resources of the test bundle (`project.yml`), so the
+    Swift ports are held to the rows the web's tests read. Only
+    `shapes.test.mjs` reads `inkhold.json`; `finishStroke.test.mjs` and
+    the server's `test_shared_fixtures.py` read `inkwidth.json`
   - the address, navigation and colour rules, and the keyboard accessory
     bar hidden on a real `WKWebView` (`ShellTests`)
   - the local server's port rule, environment, password shape, module

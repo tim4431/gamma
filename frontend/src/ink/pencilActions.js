@@ -7,8 +7,9 @@
 // its `squeeze` (a squeeze's start, or its cancel), `action` the system's
 // preferred action; a bare action string is a double tap. A squeeze in a
 // phase this page does not know (a later shell's) does nothing.
-// prefs: {tools: the preset list, pen: the id of the pen a stylus writes
-// with, tap, squeeze: this browser's inkPencilTap and inkPencilSqueeze}.
+// prefs: {tools: the presets on the strip, pen: the id of the last pen
+// armed (App's inkUi.pen, which stylusPen reads), tap, squeeze: this
+// browser's inkPencilTap and inkPencilSqueeze}.
 // state: {tool: the armed tool, previous: the tool armed before it,
 // options: the open options row, App's inkUi.options — true for the armed
 // tool's, "ruler" for the ruler's (not the tool's: Show options opens the
@@ -41,12 +42,16 @@ const PHASES = ["began", "ended", "cancelled"];
 // nothing.
 const SYSTEM = { switchEraser: "eraser", switchPrevious: "previous", showColorPalette: "options", showInkAttributes: "options" };
 
-// The pen a stylus writes with: the last pen armed (prefs.pen) while it is
-// on the strip, else the first preset; null for none.
-const stylusPen = (prefs) => {
-  const tools = prefs.tools || [];
-  return tools.find((x) => x.id === prefs.pen)?.id || tools[0]?.id || null;
-};
+// The preset a stylus writes with when no tool is armed: `pen`, the last
+// pen armed, while it is a pen preset on the strip (`tools`, the presets
+// not hidden), else the strip's first pen, else its first preset;
+// undefined for an empty strip. App's inkPenPreset is this, and the
+// gestures below fall back to it.
+export function stylusPen(tools, pen) {
+  const list = tools || [];
+  return list.find((x) => x.id === pen && x.kind === "pen") || list.find((x) => x.kind === "pen") || list[0];
+}
+const stylusPenId = (prefs) => stylusPen(prefs.tools, prefs.pen)?.id ?? null;
 
 // The strip's tools that are no preset; App reads the list too.
 export const RESERVED_TOOLS = ["eraser", "select", "text", "shape"];
@@ -59,7 +64,7 @@ export const RESERVED_TOOLS = ["eraser", "select", "text", "shape"];
 export function backTool(prefs = {}, state = {}) {
   const { tool = null, previous = null } = state;
   const known = RESERVED_TOOLS.includes(previous) || (prefs.tools || []).some((x) => x.id === previous);
-  return known && previous !== tool ? previous : stylusPen(prefs);
+  return known && previous !== tool ? previous : stylusPenId(prefs);
 }
 
 // The choice in effect for a gesture: this browser's, or under 'system'
@@ -83,7 +88,7 @@ function act(choice, prefs, state) {
       return { pick: backTool(prefs, state) };
     case "options":
       // With the hand armed the Pencil writes with the stylus pen: its row.
-      return { ui: tool ? { open: true, options: options !== true } : { open: true, tool: stylusPen(prefs), options: true } };
+      return { ui: tool ? { open: true, options: options !== true } : { open: true, tool: stylusPenId(prefs), options: true } };
     case "undo":
       return { undo: true };
     default:

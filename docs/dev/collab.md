@@ -417,19 +417,16 @@ joiner sees nothing until the committed drawing arrives. The client
 sends, at most every 50 ms while a stroke is in progress:
 
 ```json
-{"t": "ink-live", "page": 3, "g": "blk_9f2a" , "id": "k7Qm2x",
+{"t": "ink-live", "page": 3, "id": "k7Qm2x",
  "style": {"tool": "pen", "brush": "brush", "size": 2, "color": "#1f1f1f", "opacity": 1, "pen": true, "dash": "dashed"},
- "k": 1.5, "n": 24, "samples": [[120.4, 305.12, 0.62, 410, 71, 203]], "done": true}
+ "n": 24, "samples": [[120.4, 305.12, 0.62, 410, 71, 203]], "done": true}
 ```
 
 - `page`: the surface, the PDF page number or a sheet's block id.
-- `g`: the group block the stroke joins, null before the group's first
-  flush (the writer has no block yet).
 - `id`: the stroke id the committed stroke will carry.
 - `style`: the preset's look as the stroke will be encoded. `brush` and
   `dash` come only when set, and a calligraphy pen's `nib` (its angle,
   0..179).
-- `k`: the writer's css px per pt.
 - `n`: the index of this chunk's first sample in the stroke.
 - `samples`: the samples since the last chunk as `[x, y, p, t, a, z]`:
   page points to two decimals, pressure 0..1 or null, ms since the
@@ -441,6 +438,9 @@ sends, at most every 50 ms while a stroke is in progress:
   stroke cancelled before it was committed, or committed and then
   undone, erased or cut before a saved file held it: no file will ever
   replace it.
+
+A receiver ignores any other key, such as the `g` and `k` an older build
+sends.
 
 The server (`routers/collab.py`, `collab.ink_live`) relays the message to
 the room's other peers with `client` set to the sender's. It relays only

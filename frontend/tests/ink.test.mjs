@@ -88,6 +88,15 @@ for (const c of V2.cases) {
     assert.equal(serializeInk(upgradeV1(JSON.parse(c.v2))), c.v2, "idempotent on version 2");
   });
 }
+// tests/shared/inkcodec.json: the integers and the numbers' bytes
+// gamma/ink.py encode_points and dumps write, compared as a file holds them.
+const CODEC = JSON.parse(readFileSync(new URL("../../tests/shared/inkcodec.json", import.meta.url), "utf8"));
+for (const c of CODEC.encode) {
+  test(`encode: ${c.note}`, () => assert.equal(JSON.stringify(encodePoints(c.samples, c.ch)), JSON.stringify(c.pts)));
+}
+for (const c of CODEC.files) {
+  test(`numbers: ${c.note}`, () => assert.equal(serializeInk(JSON.parse(c.file)), c.bytes));
+}
 test("upgradeV1 leaves anything but a version 1 object as the same object", () => {
   const ink = newInk(1, 612, 792);
   assert.equal(upgradeV1(ink), ink);

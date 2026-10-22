@@ -131,7 +131,7 @@ import { GROUP_SPLIT_BYTES, MAX_BYTES, MAX_STROKES, appendStroke, appendStrokes,
 import { stripKey } from "../ink/stripKeys.js";
 import { ZOOM_CHROME, moveTo, moveWindow as moveZoomWindow, newLine, openWindow, setMag } from "../ink/zoomWindow.js";   // the zoom window's rules (moveWindow is the dock layout's here)
 import { defaultRuler, snapAngle, stampLine } from "../ink/ruler.js";   // the ruler's first place, its Snap 15° and its Stamp line
-import { RESERVED_TOOLS, backTool, pencilAction } from "../ink/pencilActions.js";
+import { RESERVED_TOOLS, backTool, pencilAction, stylusPen } from "../ink/pencilActions.js";
 import { inkBusy } from "../ink/InkLayer";
 import { NotebookViewer, PaperMenu, readPlace, showPlace } from "../notebook/NotebookViewer";
 import { NoteSheetContext } from "../notebook/NoteSheet";
@@ -6331,9 +6331,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // backTool read; a hidden preset is out of all of them.
   const inkVisible = useMemo(() => visibleTools(inkTools), [inkTools]);
   // The pen preset a stylus writes with when nothing is armed: the last pen
-  // armed on the strip, else the first pen in the row.
-  const inkPenPreset = useMemo(() => inkVisible.find((t) => t.id === inkUi.pen && t.kind === "pen")
-    || inkVisible.find((t) => t.kind === "pen") || inkVisible[0], [inkVisible, inkUi.pen]);
+  // armed on the strip, else the first pen in the row (pencilActions.js
+  // stylusPen, the rule the Pencil's gestures and backTool read too).
+  const inkPenPreset = useMemo(() => stylusPen(inkVisible, inkUi.pen), [inkVisible, inkUi.pen]);
   const inkPen = useMemo(() => toolStyle(inkPenPreset), [inkPenPreset]);
   // What the Shapes tool draws with: the stylus pen's colour, width,
   // opacity and line as an even Ballpoint line (a shape is constant width
@@ -6387,7 +6387,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       return { ...s, open: true, tool: id, options: open && !!id ? true : keepOptions && !!id ? s.options : false, pen: k === "pen" ? id : s.pen };
     });
   }, [inkTools]);
-  const openInkStrip = () => pickInkTool(inkVisible.find((t) => t.id === inkUi.pen)?.id || inkVisible[0].id);
+  // Opening the strip arms the stylus pen (stylusPen: the last pen armed,
+  // else the first pen on the row), never a highlighter put before it.
+  const openInkStrip = () => pickInkTool(stylusPen(inkVisible, inkUi.pen).id);
   // A removed or hidden preset leaves the strip's hand armed.
   useEffect(() => {
     if (inkUi.tool && !RESERVED_TOOLS.includes(inkUi.tool) && !inkVisible.some((t) => t.id === inkUi.tool)) {
@@ -6408,8 +6410,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   function reportInkConflict(conflict) {
     if (!conflict || conflict.clean) return;
     const lost = conflict.lost_ours?.length || 0, back = conflict.returned?.length || 0;
-    if (lost) setStatus(t("Your change to {n} strokes was not applied: someone changed them since", { n: lost }));
-    else if (back) setStatus(t("{n} strokes someone erased came back", { n: back }));
+    if (lost) setStatus(tn("Your change to {n} stroke was not applied: someone changed it since",
+      "Your change to {n} strokes was not applied: someone changed them since", lost));
+    else if (back) setStatus(tn("{n} stroke someone erased came back", "{n} strokes someone erased came back", back));
     else setStatus(t("Merged with changes made meanwhile"));
   }
   // The strokes this tab sent live (ink/inkLive.js liveLedger) that no
@@ -6581,7 +6584,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     // The byte budget: an edit that would take a group past the server's
     // cap is refused (one that shrinks a group over it is not).
     if (changes.some((c) => inkBytes(c.after) > MAX_BYTES && inkBytes(c.after) > inkBytes(c.before))) {
-      setStatus(t("This group is full; split it or start a new one"));
+      setStatus(t("This handwriting note is full. Move part of it to a new note, or start a new one."));
       return false;
     }
     for (const c of changes) playback.stop(c.id);
@@ -6637,7 +6640,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     setInkSelection(null);
     // a label is kept in English (T) and translated here; one made with t() already stays as it is
     const what = `${redo ? t("Redone") : t("Undone")}: ${t(entry.label)}`, page = inkPageNumber(entry.changes[0].page);
-    setStatus(kept ? t("{what} (page {page}; {n} strokes someone changed since were kept).", { what, page, n: kept })
+    setStatus(kept ? tn("{what} (page {page}; {n} stroke someone changed since was kept).",
+      "{what} (page {page}; {n} strokes someone changed since were kept).", kept, { what, page })
       : `${what} (page ${page}).`);
     if (!redo) guideEvents.emit("ink.undone");
     return true;
@@ -7147,7 +7151,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     const targetId = at > 0 ? groups[at - 1] : groups.find((gid) => gid !== from);
     const target = targetId ? inkOf(targetId) : null;
     if (!target) return;
-    if (target.strokes.length + sel.strokes.length > MAX_STROKES) { setStatus(t("This group is full; split it or start a new one")); return; }
+    if (target.strokes.length + sel.strokes.length > MAX_STROKES) { setStatus(t("This handwriting note is full. Move part of it to a new note, or start a new one.")); return; }
     const { ink: after, ids } = appendStrokes(target, sel.strokes);
     applyInk([{ id: targetId, page, before: target, after }, { id: from, page, before: source, after: { ...source, strokes: [] } }],
       { label: T("ink merge") });
@@ -7644,20 +7648,11 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     undoableStatus(status.text, { ink: true });
   }
   // A chunk of the stroke in progress for the page's other peers
-  // (ink/inkLive.js, docs/dev/collab.md "ink-live"), out on the page socket.
-  // `g` names the group the stroke joins once that group's block has a file
-  // (null before the first flush), worked out at the stroke's first chunk.
-  const inkLiveGroupRef = useRef({ id: null, g: null });
+  // (ink/inkLive.js, docs/dev/collab.md "ink-live"), out on the page socket
+  // with its surface as `page`.
   function handleInkLive(page, msg) {
     if (readOnly || inkStale || !msg?.id) return;
-    let { id, g } = inkLiveGroupRef.current;
-    if (id !== msg.id) {
-      const active = inkActiveRef.current;
-      const block = active?.page === page ? flattenBlocks(blocksRef.current).find((b) => b.id === active.id) : null;
-      g = block?.properties?.ink_url ? block.id : null;
-      inkLiveGroupRef.current = { id: msg.id, g };
-    }
-    collabRef.current.sendInkLive({ ...msg, page, g });
+    collabRef.current.sendInkLive({ ...msg, page });
     inkLiveSentRef.current.sent(msg.id, page, !!msg.drop);
   }
   // Handwriting a closed tab left unsaved, restored from the draft journal

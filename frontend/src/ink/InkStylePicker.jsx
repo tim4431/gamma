@@ -80,7 +80,7 @@ export function InkStylePicker({ brush, mixed = false, open = false, title, onOp
       onClick={(e) => { if (e.detail === 0) onOpen(e.currentTarget); }}>
       {mixed ? null : <BrushPreview brush={brush} />}
       <span className="inkStyleName">{name}</span>
-      <ChevronDownIcon size={12} aria-hidden="true" />
+      <ChevronDownIcon size={14} aria-hidden="true" />
     </button>
   );
 }

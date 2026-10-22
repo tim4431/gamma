@@ -101,30 +101,22 @@ export function inkToolName(preset) {
   return t("{color} pen", { color });
 }
 // A calligraphy pen's Style row adds its Nib angle (NIB_MIN … NIB_MAX in
-// NIB_STEP steps: − and + around a readout, a slider with a fine pointer,
+// NIB_STEP steps: − and + around a readout, for a mouse and a finger alike,
 // then the nib drawn at the angle) and, under a host whose Pencil reports
 // its barrel roll (`pencilRoll`, an Apple Pencil Pro), Lock angle. A
 // calligraphy pen whose Smoothing was never set smooths at 2 (ink.js
 // CALLIGRAPHY_SMOOTHING, presetSmoothing): a default, not part of the
 // edit, so the pen keeps the smoothing it had when it leaves Calligraphy.
-const finePointer = () => typeof window !== "undefined" && !!window.matchMedia?.("(pointer: fine)").matches;   // i18n-ignore: a media query
 function NibAngle({ preset, edit, seg }) {
   const nib = Number.isFinite(preset.nib) ? preset.nib : DEFAULT_NIB;
   const step = (by) => edit({ nib: Math.max(NIB_MIN, Math.min(NIB_MAX, nib + by)) });
   return <>
     <span className="inkNib" role="group" aria-label={t("Nib angle")} title={t("Nib angle: the slant of the flat nib, −60° to 60°")}>
-      {finePointer() ? (
-        <input type="range" className="setRange inkNibRange" min={NIB_MIN} max={NIB_MAX} step={NIB_STEP} value={nib} aria-label={t("Nib angle")}
-          onChange={(e) => edit({ nib: Number(e.target.value) })} />
-      ) : (
-        <button type="button" className="ctlBtn" aria-label={t("Nib angle −15°")} title={t("Nib angle −15°")} disabled={nib <= NIB_MIN}
-          onClick={() => step(-NIB_STEP)}><MinusIcon size={14} aria-hidden="true" /></button>
-      )}
+      <button type="button" className="ctlBtn" aria-label={t("Nib angle −15°")} title={t("Nib angle −15°")} disabled={nib <= NIB_MIN}
+        onClick={() => step(-NIB_STEP)}><MinusIcon size={16} aria-hidden="true" /></button>
       <span className="inkNibReadout">{`${nib}°`}</span>
-      {finePointer() ? null : (
-        <button type="button" className="ctlBtn" aria-label={t("Nib angle +15°")} title={t("Nib angle +15°")} disabled={nib >= NIB_MAX}
-          onClick={() => step(NIB_STEP)}><PlusIcon size={14} aria-hidden="true" /></button>
-      )}
+      <button type="button" className="ctlBtn" aria-label={t("Nib angle +15°")} title={t("Nib angle +15°")} disabled={nib >= NIB_MAX}
+        onClick={() => step(NIB_STEP)}><PlusIcon size={16} aria-hidden="true" /></button>
       <NibPreview nib={nib} />
     </span>
     {nativeHost()?.pencilRoll ? seg(!!preset.nibLock, t("Lock angle"), null, () => edit({ nibLock: !preset.nibLock }),

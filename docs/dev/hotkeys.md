@@ -94,14 +94,15 @@ From the palette a block command runs on the **focused row** with `editor: null`
 
 A few keys belong to a widget while it is active. They are not commands, so the palette and the pane do not list them and they cannot be rebound.
 
-- **The markup strip** ([handwriting.md](handwriting.md) "What the user sees"). While it is open, a capture-phase `keydown` listener on the window (App.jsx; the table is `ink/stripKeys.js`, matched by `e.code`) takes these keys:
-  - `1`–`9`: the visible presets in row order. `P` / `H`: the next pen / highlighter, with Shift the previous.
-  - `[` / `]`: the armed preset thinner / thicker, with a pill naming the width. `Shift+[` / `Shift+]` step an armed pen's style back / forward through Pen, Ballpoint, Brush, Pencil and Calligraphy, with the same pill.
-  - `E`: a tap arms the eraser. Held 300 ms or more across an erasing pass, its release returns to the tool before it. The handler sees the keydown (repeats ignored) and the keyup with the hold's length and whether a pass was made; a window blur ends a hold.
-  - `L`, `T` (the Text tool, [text_boxes.md](text_boxes.md)) and `V`. `R`: the ruler on or off. `S`: the Shapes tool on or off; off gives back the tool armed before it.
+- **The markup strip** ([handwriting.md](handwriting.md) "What the user sees"). While it is open, a capture-phase `keydown` listener on the window (App.jsx; the table is `ink/stripKeys.js`) takes these keys. It matches the physical key (`e.code`), so a layout or Shift does not change which key it is:
+  - `1`–`9`: the visible presets in row order. `P` / `H`: the next pen / highlighter, with Shift the previous, wrapping.
+  - `[` / `]`: the armed preset thinner / thicker through its eight widths, its options row open or not. A pill names the width ("Blue pen · 2.8 pt.") and repeats it at either end of the ladder.
+  - `Shift+[` / `Shift+]`: an armed pen's style back / forward through Pen, Ballpoint, Brush, Pencil and Calligraphy, wrapping, with the same pill naming the style ("Blue brush pen · 2.8 pt."). A highlighter has no styles, so on one the keys do nothing.
+  - `E`: a tap arms the eraser, and it stays armed (a second tap opens its row, as a tap on the button does). Held 300 ms or more across an erasing pass, its release returns to the tool armed before it, and a lasso selection made before the hold comes back with the lasso. The handler sees the keydown (repeats ignored) and the keyup with the hold's length and whether a pass was made; a window blur ends a hold.
+  - `L`, `T` and `V` arm the lasso, the Text tool ([text_boxes.md](text_boxes.md)) and the hand. `R`: the ruler on or off. `S`: the Shapes tool on or off; off gives back the tool armed before it.
   - `Z`: the zoom window open or closed. It does nothing on a phone, and where the viewer shows no PDF page a pill says it works on PDF pages. While the window is open, Enter is its *New line*, except on a focused button, link, menu row or text field, or a selected text box.
-  - Escape, one layer at a time: a selected text box, the ink selection, an open options row (the armed tool's or the ruler's), the Shapes tool, the ruler, the zoom window, then the strip.
-  - Delete or Backspace on a lasso selection, and Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y for the stroke history.
+  - Escape, one layer at a time: a selected text box, the ink selection, an open options row (the armed tool's or the ruler's), the Shapes tool (the tool armed before it comes back), the ruler, the zoom window, then the strip. Closing the strip hides the ruler and closes the zoom window too.
+  - Delete or Backspace deletes a lasso selection. Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y step the stroke history: each stroke or selection edit is one entry, and the history lasts one visit of the page.
 
   The More menu's *Ruler*, *Shapes* and *Zoom window* rows name R, S and Z on their right: widget keys, so neither the palette nor the pane lists them. The listener runs before App's own, so the page's block undo never sees those keys. A focused text field keeps its keys. A keyup still reaches the handler there, so a held E let go after a click into a caption ends its hold. Any other chord with Ctrl, Cmd or Alt held is left alone too, except the AltGr pair (`ctrlKey && altKey` together, a third-level letter on some layouts), which counts as no modifier.
 

@@ -136,8 +136,9 @@ class PageDeferred(Exception):
     """A page the round leaves for the next one without calling it an
     error: its push was refused because a block it holds lives in another
     page on the remote (a cross-page move there, which the other page's
-    round of this same pass settles), or the page it was about to create
-    there appeared meanwhile (the next round finds it on both sides)."""
+    round of this same pass settles), the page it was about to create
+    there appeared meanwhile (the next round finds it on both sides), or
+    the remote refused a drawing it names (``_deferred_files``)."""
 
 
 class _OffOriginRedirect(urllib.request.HTTPRedirectHandler):
@@ -965,15 +966,21 @@ def missing_uploads(ws: str, pages=None) -> set[str]:
     return {n for n in upload_refs(blocks) if UPLOAD_NAME_RE.match(n) and n not in stored}
 
 
+def _draws(block: dict, name: str) -> bool:
+    """Whether ``block`` (a snapshot entry) is the drawing stored as the
+    upload ``name``: its ``ink_url`` ends in it."""
+    return str((block.get("props") or {}).get("ink_url") or "").endswith("/" + name)
+
+
 def _push_files(ws: str, remote: Remote, names: set[str], report: dict, *, page_id: str,
                 blocks: dict) -> set[str]:
     """The files of ``names`` the remote lacks, uploaded. Returns the names
     the remote refused as a drawing (a ``400`` on an ``.ink``: a file this
     copy wrote in a shape the remote does not take — see ``_without_files``
     for what then happens to the page's ops); each is one open
-    ``sync_conflicts`` row of kind ``file`` on the block that names it,
-    written once, and the page's other work goes on. Every other error
-    raises."""
+    ``sync_conflicts`` row of kind ``file`` on the block whose drawing it
+    is (``_draws``, the block ``_without_files`` holds back), written once,
+    and the page's other work goes on. Every other error raises."""
     refused: set[str] = set()
     for name in sorted(names):
         if not UPLOAD_NAME_RE.match(name) or not storage.exists(ws, name) or remote.head_ok(f"/api/uploads/{name}"):
@@ -995,8 +1002,7 @@ def _push_files(ws: str, remote: Remote, names: set[str], report: dict, *, page_
             if e.status != 400 or not name.endswith(".ink"):
                 raise
             refused.add(name)
-            block_id = next((bid for bid, b in blocks.items()
-                             if name in json.dumps(b.get("props") or {})), "")
+            block_id = next((bid for bid, b in blocks.items() if _draws(b, name)), "")
             with connect_pages_db(ws) as conn:
                 _conflict(conn, page_id, block_id, "file", mine=name, theirs=e.detail or "refused", once=True)
             log.warning(f"[mirror] {ws}: the remote refused the drawing {name} ({e.detail}); its block's other "
@@ -1017,8 +1023,7 @@ def _without_files(ops: list[dict], refused: set[str], blocks: dict) -> list[dic
     remote's answer coming back, so the drawing never leaves this copy."""
     if not refused:
         return ops
-    held = {bid for bid, b in blocks.items()
-            if any(str((b.get("props") or {}).get("ink_url") or "").endswith("/" + n) for n in refused)}
+    held = {bid for bid, b in blocks.items() if any(_draws(b, n) for n in refused)}
     out = []
     for op in ops:
         props = op.get("props")
@@ -1914,7 +1919,9 @@ def _adopt_page(ws: str, remote: Remote, page_id: str, local: dict, remote_tree:
     other side had is lost: every block whose text differed is a
     ``diverged`` conflict carrying both texts (Use mine / Use theirs still
     work afterwards) and what only the other side had is a ``dropped`` one,
-    both written before anything is replaced."""
+    both written before anything is replaced. A drawing the remote refused
+    defers the page like ``_sync_page`` does (``_deferred_files``), so it
+    goes next round."""
     if local == remote_tree:
         with connect_pages_db(ws) as conn:
             _save_state(conn, page_id, seq, remote_tree)
@@ -1928,8 +1935,8 @@ def _adopt_page(ws: str, remote: Remote, page_id: str, local: dict, remote_tree:
         _dropped(conn, page_id, loser, winner, side)
     if policy == "mine":
         push_ops = diff(remote_tree, local, page_id, with_base=False)
-        push_ops = _without_files(push_ops, _push_files(ws, remote, upload_refs(push_ops), report,
-                                                        page_id=page_id, blocks=local), local)
+        refused = _push_files(ws, remote, upload_refs(push_ops), report, page_id=page_id, blocks=local)
+        push_ops = _without_files(push_ops, refused, local)
         after = _send(ws, remote, page_id, seq, remote_tree, push_ops)
         with connect_pages_db(ws) as conn:
             _save_state(conn, page_id, UNKNOWN_SEQ, after)  # landed: the base until the remote's answer is read
@@ -1939,6 +1946,7 @@ def _adopt_page(ws: str, remote: Remote, page_id: str, local: dict, remote_tree:
         _note(ws, page_id, "replaced there", local[page_id]["content"], stats=_stats(push_ops, remote_tree),
               changes=_changes(push_ops, remote_tree), report=report)
         report["pages_pushed"] += 1
+        _deferred_files(page_id, refused)
         return
     ops_ = diff(local, remote_tree, page_id, with_base=False)
     _pull_files(ws, remote, upload_refs(remote_tree.values()), report)

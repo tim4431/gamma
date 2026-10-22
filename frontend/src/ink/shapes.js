@@ -24,8 +24,8 @@ import { decodeStroke, encodePoints, mod, round2 } from "./ink.js";
 export const HOLD_MS = 600, HOLD_MOVE = 3, HOLD_MIN_MS = 250, REFIT_PX = 6, CANCEL_PX = 12, CANCEL_MS = 150, PASTE_MOVE = 2;
 
 // Thresholds. Those in css px divide by k; the rest are points or ratios.
-// The size floor is also the one InkLayer's hold puts under a stroke's
-// chord before it asks (holdFire, and the iPad claim's hold).
+// The size floor measures a stroke's extent, its bounding-box diagonal,
+// for the hold (holdQualifies) and the recogniser alike.
 export const MIN_EXTENT_PX = 24; // a stroke smaller than this on screen …
 export const MIN_EXTENT_PT = 18; // … or on the page is never a shape
 const MIN_SAMPLES = 8;
@@ -70,6 +70,18 @@ function bbox(pts) {
   let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
   for (const p of pts) { x0 = Math.min(x0, p.x); y0 = Math.min(y0, p.y); x1 = Math.max(x1, p.x); y1 = Math.max(y1, p.y); }
   return { x0, y0, x1, y1, w: x1 - x0, h: y1 - y0, diag: Math.hypot(x1 - x0, y1 - y0) };
+}
+// The size floor in pt at k css px per pt.
+const minExtent = (k) => Math.max(MIN_EXTENT_PX / k, MIN_EXTENT_PT);
+
+// Whether a hold asks the recogniser (InkLayer's holdFire, and the iPad
+// claim's hold): the stroke so far, page-pt samples at k css px per pt,
+// reaches the size floor by its extent, the bounding-box diagonal
+// `recognise` measures too. Never by its chord: a closed shape ends where
+// it began. The hold's other rules (HOLD_MS still, HOLD_MIN_MS) are the
+// callers'.
+export function holdQualifies(samples, k = 1) {
+  return (samples?.length || 0) >= 2 && bbox(samples).diag >= minExtent(k);
 }
 function pathLength(pts) {
   let n = 0;
@@ -321,12 +333,13 @@ function roundFrom(r) {
   return { kind: "ellipse", params: normaliseEllipse({ cx: m.cx, cy: m.cy, rx: 1 / Math.sqrt(a), ry: 1 / Math.sqrt(b), angle }) };
 }
 
-// An arrow from an open stroke: the tip is the resampled point farthest from
-// the tail, the shaft (tail to tip) must fit a line, and the head — the rest
+// An arrow from an open stroke: the tip is the raw sample farthest from the
+// tail, the shaft (tail to tip) must fit a line, and the head — the rest
 // of the path — stays near the tip, within 0.4 × the shaft, with its points
 // on both sides of the shaft line; a barb (the farthest head point on each
-// side) is at most 0.35 × the shaft and the head's path two to four barb
-// lengths (tip → barb → tip → barb, or a V), so a hook or a loop is none.
+// side) is at most 0.35 × the shaft, their mean at least max(6, 0.08 × the
+// shaft) pt, and the head's path 1.8 to 4.5 mean barbs (tip → barb → tip →
+// barb, or a V), so a hook or a loop is none.
 // ShortStraw cannot place corners along a head a few samples long, which is
 // why the head is read from distances rather than from its corners.
 function arrowFrom(samples) {
@@ -367,7 +380,7 @@ export function recognise(samples, { k = 1, kinds } = {}) {
   const box = bbox(samples);
   // the stroke's extent: its bounding-box diagonal (a closed shape has no
   // chord to speak of), under the floor nothing is recognised
-  if (box.diag < Math.max(MIN_EXTENT_PX / k, MIN_EXTENT_PT)) return null;
+  if (box.diag < minExtent(k)) return null;
   const r = resample(samples, box.diag / RESAMPLE_DIV);
   if (r.length < 2 * STRAW_W + 2) return null;
   const chord = dist(r[0], r[r.length - 1]);

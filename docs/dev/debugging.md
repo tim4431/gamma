@@ -471,13 +471,14 @@ those before adding workers.
 `--changed [ref]` picks the groups from what changed: the working tree
 (staged, unstaged, untracked) against `HEAD`, or everything since the branch
 left `ref`. `RULES` in `select.mjs` maps each source path (first matching
-glob wins) to the groups that exercise it: `frontend/src/guide/**` to the
-three tour groups, `backend/gamma/ink.py` to the ink groups, and
-`frontend/src/markup/**` (the page layers and the tool strip, whose
-anchors the ink tour uses) to the ink groups (ink, ink-editing, inkShapes,
-inkZoom), pdf-touch, touch, notebooks, triggered-guide and textbox. The
-chat's pictures of handwriting (`backend/gamma/ink_view.py`) go to the
-groups of the AI modules (`ai_*.py`: the chat's, settings and inkZoom).
+glob wins) to the groups that exercise it. `frontend/src/guide/**` goes to
+the three tour groups. `frontend/src/markup/**` (the page layers and the
+tool strip, whose anchors the ink tour uses) goes to the ink groups (ink,
+ink-editing, ink-shapes, ink-zoom), pdf-touch, touch, notebooks,
+triggered-guide and textbox. `backend/gamma/ink.py` goes to ink,
+ink-editing, ink-shapes, notebooks and triggered-guide. The chat's
+pictures of handwriting (`backend/gamma/ink_view.py`) go to the groups of
+the AI modules (`ai_*.py`: the chat's, settings and ink-zoom).
 Docs, desktop, extension and backend tests go to none, and what every
 scenario goes through
 (`src/app/`, `src/shared/`, the home library, the page's live session, the
@@ -568,36 +569,58 @@ The scenarios live in `tests/e2e/scenarios/`:
   background: the dialog closed mid-way, reopened from Background tasks and
   its zip downloaded ([tasks.md](tasks.md)). The job's listing is held at
   "running" with `page.route`, since the server's job is quick.
-- `ink.mjs`: handwriting. The tool strip and its presets, mouse strokes
-  becoming an ink block with an `.ink` upload, persistence across a reload,
-  the eraser, stroke undo/redo, the partial eraser (and one swept in
-  three long jumps over two groups: every stroke it crossed cut at its
-  edge, one undo entry, which redo brings back whole), a lasso move +
-  delete,
-  the notes card's jump + outline (`/Ink` in the exported PDF is `test_ink.py`). Pen input:
-  coalesced sample timing, pressure and lift endpoints in the uploaded
-  file, prediction, palm suppression and palm-first pen takeover, cleanup
-  after `pointercancel` / lost capture. Chromium's native touch and pen,
-  and synthetic Pencil events for Safari's handler order. Stylus latency
-  and OS palm rejection still need a real tablet.
+- `ink.mjs`: handwriting.
+  - The tool strip and its presets: the options row, More, the Tool menu,
+    reordering, the bracket keys and a held E. Opening the strip arms the
+    stylus pen, not a highlighter before a hidden last pen.
+  - Mouse strokes becoming an ink block with an `.ink` upload, persistence
+    across a reload, the eraser, stroke undo/redo, a lasso move + delete
+    and the notes card's jump + outline (`/Ink` in the exported PDF is
+    `test_ink.py`). The partial eraser, and one swept in three long jumps
+    over two groups: every stroke it crossed cut at its edge, one undo
+    entry, which redo brings back whole.
+  - Pen input: coalesced sample timing, pressure and lift endpoints in the
+    uploaded file, prediction, palm suppression and palm-first pen
+    takeover, cleanup after `pointercancel` / lost capture. Chromium's
+    native touch and pen, and synthetic Pencil events for Safari's handler
+    order. Stylus latency and OS palm rejection need a real tablet.
+  - The file: a pressure stroke stored as version 2 with its baked width,
+    and two tabs changing one group at once (the save merges by stroke).
+  - Draw and hold: a held line, and a closed circle and rectangle held
+    still where they began, snap to their shapes.
+  - The pen's feel: a highlighter always straightened, the eraser's
+    filter, Back to last tool, the two-finger double tap, Scribble to
+    erase and Smoothing.
+  - The pen styles: the Brush's tapers, Dashed and Shift+[ ], a Brush's
+    held line at constant width, a tilted Pencil's tilt, shading and
+    grain, and the hover footprint.
+  - A stroke's `ink-live` chunks: its page, id, look, `n` and samples,
+    and no `g` or `k`.
+  - Transcribe with AI, the Handwriting rows in Settings, and the draft
+    journal bringing back strokes a crashed tab never saved.
 - `inkEditing.mjs`: tap-to-select and the selection menu, which opens and
   grows in place, frame by frame. Colour/width
   edits keeping pressure and time, duplicate ids, selective delete, the
   Undo/Redo buttons, a finger lasso-move across groups in pen-only mode,
   swipe/hold arbitration, a pen resuming through a selection, menu
-  placement on a small screen, view/edit shares. Native Chromium touch/pen,
+  placement on a small screen, view/edit shares. Copy, cut and paste
+  (Ctrl+C / X / V, and Paste here on a right-click), a flip, and New note
+  and Merge into note. The Style row restyles a pen to Brush and Dotted;
+  a highlighter takes a line, never a brush. Native Chromium touch/pen,
   asserting on the persisted stroke files. `--only "ink edit:"`; `--only
   ink` runs all four ink files.
 - `inkShapes.mjs`: the strip's modifiers ([handwriting.md](handwriting.md)
   "What the user sees"). The Shapes tool's dragged rectangle stored with
   its shape record, the ruler and a stroke begun by its edge, Stamp line,
   Escape one layer at a time, the calligraphy pen and its nib, a shape's
-  handles and a Fill. `--group inkShapes`.
+  handles and a Fill. It also checks the crosshair as the page's cursor
+  with Shapes armed, the Nib angle's − and + (no slider), and that a
+  keyboard-focused handle shows one ring, its dot's. `--group ink-shapes`.
 - `inkZoom.mjs`: the zoom window (a stroke written in the panel saved at
   page coordinates, Previous / Next / New line, the advance along the
   line, the box dragged) and the selection menu's Transcribe, with the AI
   stubbed: part of a group goes as `ink_selections`, a whole group as its
-  block's chip. `--group inkZoom`.
+  block's chip. `--group ink-zoom`.
 - `textBoxes.mjs`: text boxes ([text_boxes.md](text_boxes.md)) on a PDF
   page and on a sheet in both views. It covers the Text tool's click and
   drag, typing, the stored block after a reload, the notes marker's jump,
@@ -621,11 +644,18 @@ The scenarios live in `tests/e2e/scenarios/`:
   highlight checks the next step off, finishing records "done", the menu
   restarts it, and Esc leaves a replay. `contextualGuide.mjs` (the AI chat
   tour, and each step's card opening beside its own anchor) and `triggeredGuide.mjs` (offers and hints): onboarding.md "Files".
-- `ipad.mjs`: the installed web app ([ipad.md](ipad.md)) — the manifest
+- `ipad.mjs`: the installed web app ([ipad.md](ipad.md)): the manifest
   and its icons, `theme-color` following the theme, the standalone-mode
   block in the bundled stylesheet (`display-mode` cannot be emulated in
-  Chromium), and a note editor's editing bar by tap (none with a mouse).
-  `--only ipad`.
+  Chromium), taps in the library, the upright and landscape layouts, the
+  phone's bottom bar, and a note editor's editing bar by tap (none with a
+  mouse). Its `ipad shell:` steps run the page under a stand-in host
+  (`fakeShell`). A Pencil stroke is claimed in the preset's look and
+  committed from the host's samples (with tilt, and a calligraphy nib
+  turned by the roll). The host's `hold` snaps and refits a still line
+  or opens Paste here. Then come a claim along the ruler, a shell
+  without `hold`, and the Apple Pencil gestures, settings and haptics.
+  `--group ipad`.
 - `touch.mjs`: one behaviour for mouse and finger
   ([ui-design.md](ui-design.md#one-behaviour-for-mouse-and-finger)), in
   desktop and touch contexts — a window's fold, unfold and drag, a held
@@ -657,7 +687,9 @@ The scenarios live in `tests/e2e/scenarios/`:
 - `collab.mjs`: two accounts in a shared workspace: presence, live ops, edits
   to different blocks, same-block last-writer-wins, undo after a remote edit,
   rename propagation, edits made offline replaying, remote delete, a
-  highlight made by the other person.
+  highlight made by the other person. The stroke one person is drawing
+  shows on the other's page within 700 ms (`ink-live`), and an undo right
+  after the lift takes it away at once.
 - `auth.mjs`: refusing an inaccessible explicit workspace without opening a
   different library, the login page, guest login (a new throwaway account
   each time) and demo mode ([guests.md](guests.md)).

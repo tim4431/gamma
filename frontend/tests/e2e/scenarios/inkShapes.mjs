@@ -73,7 +73,8 @@ export async function inkShapesScenarios({ server, browser, alice, makePdf, step
     const shapes = bar().locator("button[aria-label='Shapes']");
     assertEq(await shapes.getAttribute("aria-pressed"), "true", "a pressed Shapes button in the second group");
     assertEq(await shapes.getAttribute("data-guide"), "ink.shape");
-    assert(await page.locator(".pdfViewer.inkArmed").count(), "the crosshair class");
+    assertEq(await page.locator('.pdfPageWrap[data-page="1"]').evaluate((el) => getComputedStyle(el).cursor), "crosshair",
+      "the crosshair over the page");
     assertEq(JSON.stringify(await row.locator(".inkShapeKinds button").evaluateAll((els) => els.map((el) => el.getAttribute("aria-label")))),
       JSON.stringify(["Line", "Arrow", "Rectangle", "Ellipse"]));
     assertEq(await row.getByRole("button", { name: "Line", exact: true }).getAttribute("aria-pressed"), "true", "Line to start");
@@ -287,15 +288,15 @@ export async function inkShapesScenarios({ server, browser, alice, makePdf, step
       // the Smoothing ladder shows the 2 a calligraphy pen smooths at without a level of its own
       assertEq(await page.locator(".pdfInkSub").getByRole("button", { name: "Smoothing 2 of 4", exact: true }).getAttribute("aria-pressed"), "true",
         "a calligraphy pen smooths at 2");
-      // the Nib angle: a slider with a mouse, 45° to start, 15° a step; no Lock angle outside the iPad app
+      // the Nib angle: − and + around the degrees for a mouse as for a finger, 45° to start, 15° a step; no Lock angle outside the iPad app
       const nib = page.locator(".pdfInkSub").getByRole("group", { name: "Nib angle", exact: true });
       await nib.waitFor();
       assertEq((await nib.locator(".inkNibReadout").textContent()).trim(), "45°");
       assertEq(await nib.locator(".inkNibPreview").count(), 1, "the nib drawn at its angle");
-      const range = nib.locator("input[type='range'][aria-label='Nib angle']");
-      assertEq(JSON.stringify(await range.evaluate((el) => [el.min, el.max, el.step])), JSON.stringify(["-60", "60", "15"]));
-      await range.focus();
-      await page.keyboard.press("ArrowLeft");
+      assertEq(await nib.locator("input").count(), 0, "no slider: the same control set for every pointer");
+      assertEq(JSON.stringify(await nib.locator("button").evaluateAll((els) => els.map((el) => [el.getAttribute("aria-label"), el.disabled]))),
+        JSON.stringify([["Nib angle −15°", false], ["Nib angle +15°", false]]), "− and + around the readout, neither at its end");
+      await nib.getByRole("button", { name: "Nib angle −15°", exact: true }).click();
       await until(async () => (await nib.locator(".inkNibReadout").textContent()).trim() === "30°", { what: "a step down to 30°" });
       await until(async () => (await firstPreset())?.nib === 30, { what: "the preset's nib on the account" });
       assertEq(await page.locator(".pdfInkSub button[aria-label='Lock angle']").count(), 0, "Lock angle only where the pen reports its roll");
@@ -353,6 +354,13 @@ export async function inkShapesScenarios({ server, browser, alice, makePdf, step
     for (const box of await handles.evaluateAll((els) => els.map((el) => el.getBoundingClientRect().toJSON()))) {
       near(box.width, 28, 0.5, "a 28 px target"); near(box.height, 28, 0.5, "a 28 px target");
     }
+    // the keyboard's focus shows one ring, the dot's: the 28 px button around it draws none
+    await handles.first().focus();
+    await page.keyboard.press("Tab");
+    assertEq(JSON.stringify(await page.evaluate(() => {
+      const el = document.activeElement, ring = (e) => getComputedStyle(e).outlineStyle;
+      return [el.dataset.handle, el.matches(":focus-visible"), ring(el), ring(el.querySelector(".inkShapeDot"))];
+    })), JSON.stringify(["c1", true, "none", "solid"]), "Tab to the next corner: its dot ringed, the button not");
     const corner = await point(460, 240);   // c2, the bottom-right corner, at its centre
     const c2 = await page.locator('[data-page="1"] .inkShapeHandle[data-handle="c2"]').boundingBox();
     near(c2.x + c2.width / 2, corner.x, 1.5, "c2 on its corner"); near(c2.y + c2.height / 2, corner.y, 1.5, "c2 on its corner");

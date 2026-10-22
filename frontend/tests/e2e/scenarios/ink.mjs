@@ -2,7 +2,9 @@
 // mouse strokes becoming an ink block with an .ink upload, persistence
 // across a reload, the version 2 file a pressure stroke leaves and the
 // highlighter band under the ink, the eraser, the lasso, the notes card's jump + flash,
-// the pen styles and lines, a Brush preset's held line at constant width
+// the pen styles and lines, draw and hold (a line, and a circle and a rectangle
+// closed where they began), the keys of a stroke's ink-live chunks, a Brush
+// preset's held line at constant width
 // (in the Markdown export's SVG too), a group's Transcribe with AI, and the draft
 // journal bringing back what a crashed tab never saved. /Ink in the annotated PDF is
 // backend/tests/test_ink.py; the chat's view_ink is test_ai_tools_ink.py.
@@ -504,6 +506,79 @@ export async function inkScenarios({ server, browser, alice, makePdf, step, unti
     await page.mouse.up();
     await until(async () => (await pillText()).includes(`${first} is now key 1.`), { what: "dragged back to the front" });
     assertEq(await ids(), order, "the original order, the same ids");
+    assertNoProblems(page);
+  });
+
+  await step("ink: opening the strip arms the stylus pen: with the last pen hidden and a highlighter first in the row, the first pen, not the highlighter", async () => {
+    const armed = () => page.locator(".pdfInkBar .inkToolBtn.modeActive");
+    const name = async () => (await armed().getAttribute("aria-label")).split(" · ")[0];
+    const presets = () => page.locator(".pdfInkRow [data-preset]");
+    const presetName = async (i) => (await presets().nth(i).getAttribute("aria-label")).split(" · ")[0];
+    const pillText = async () => (await page.locator(".statusPill .pillText").textContent()) || "";
+    const ids = async () => page.evaluate(() => JSON.parse(localStorage.getItem("gamma-ink-tools")).map((t) => t.id).join());
+    const optionsRow = async () => {
+      await armed().click();
+      await page.waitForSelector(".pdfInkSub[data-ink-options='tool']");
+    };
+    const toolMenu = async () => {
+      await page.locator(".pdfInkSub button[aria-label='Tool menu']").click();
+      await page.waitForSelector(".inkStripMenu");
+      return page.locator(".inkStripMenu");
+    };
+    // Move the armed preset one key at a time, `n` keys left (< 0) or right.
+    const shift = async (who, n) => {
+      for (let i = 0; i < Math.abs(n); i++) {
+        const key = Number((await armed().getAttribute("aria-label")).match(/key (\d)/)[1]) + Math.sign(n);
+        await (await toolMenu()).getByRole("button", { name: n < 0 ? "Move left" : "Move right", exact: true }).click();
+        await until(async () => (await pillText()).includes(`${who} is now key ${key}.`), { what: `${who} at key ${key}` });
+      }
+    };
+    const order = await ids();
+    // the default row: four pens, then three highlighters; the first highlighter goes to the front
+    await page.keyboard.press("5");
+    const highlighter = await name();
+    let lastPen = null;
+    try {
+      await optionsRow();
+      await shift(highlighter, -4);
+      assertEq(await presetName(0), highlighter, "a highlighter at key 1");
+      const firstPen = await presetName(1);
+      // the last pen armed (the stylus pen), then hidden: its neighbour, a highlighter, is armed in its place
+      await page.keyboard.press("5");
+      lastPen = await name();
+      await optionsRow();
+      await (await toolMenu()).getByRole("button", { name: "Hide", exact: true }).click();
+      await until(async () => (await presets().count()) === 6, { what: "the last pen hidden" });
+      assert((await name()) !== lastPen, "its neighbour is armed");
+      // closed and opened again: the strip arms the first pen, as the stylus writes with it
+      await page.click("button[aria-label='Handwriting tools']");
+      await until(async () => !(await page.locator(".pdfInkBar").count()), { what: "the strip closed" });
+      await page.click("button[aria-label='Handwriting tools']");
+      await page.waitForSelector(".pdfInkBar");
+      assertEq(await name(), firstPen, "the strip opens on the first pen, not the highlighter before it");
+    } finally {
+      // back as it was, after a failure too: the hidden pen shown, the highlighter at key 5 again
+      if (!(await page.locator(".pdfInkBar").count())) {
+        await page.click("button[aria-label='Handwriting tools']").catch(() => {});
+        await page.waitForSelector(".pdfInkBar").catch(() => {});
+      }
+      if (lastPen && (await presets().count()) < 7) {
+        await page.keyboard.press("1");
+        await optionsRow().catch(() => {});
+        const menu = await toolMenu().catch(() => null);
+        await menu?.getByRole("button", { name: "Hidden tools", exact: true }).click().catch(() => {});
+        await menu?.getByRole("menu", { name: "Hidden tools" }).getByRole("button", { name: new RegExp(`^${lastPen} · `) }).click().catch(() => {});
+        await until(async () => (await presets().count()) === 7, { what: "seven presets again" }).catch(() => {});
+      }
+      const at = (await presets().evaluateAll((els) => els.map((el) => el.getAttribute("aria-label").split(" · ")[0]))).indexOf(highlighter);
+      if (at >= 0 && at !== 4) {
+        await page.keyboard.press(String(at + 1));
+        await optionsRow().catch(() => {});
+        await shift(highlighter, 4 - at).catch(() => {});
+      }
+    }
+    assertEq(await ids(), order, "the original order, the same ids");
+    assertEq(await page.evaluate(() => JSON.parse(localStorage.getItem("gamma-ink-tools")).filter((t) => t.hidden).length), 0, "nothing hidden");
     assertNoProblems(page);
   });
 
@@ -1057,6 +1132,81 @@ export async function inkScenarios({ server, browser, alice, makePdf, step, unti
     assert(await page.locator(".statusPill").getByRole("button", { name: "Undo", exact: true }).count(), "Undo is on the pill");
     await page.locator(".statusPill").getByRole("button", { name: "Undo", exact: true }).click();
     await until(async () => (await pathCount()) === before, { what: "the snap undone from the pill" });
+    assertNoProblems(page);
+  });
+
+  await step("ink: a closed circle and a closed rectangle held still where they began snap to their shapes (pen: false; the circle an ellipse record with rx = ry)", async () => {
+    await openStrip();
+    await page.keyboard.press("1");
+    // A pen stroke through `points` ([x, y, ms] from the page's corner), the
+    // tip then still past the 600 ms hold, and the lift. A closed stroke ends
+    // where it began: its extent, not its chord, carries it past the size floor.
+    const heldStroke = (points, pointerId) => page.locator('[data-page="1"]').evaluate(async (el, [points, pointerId]) => {
+      const box = el.getBoundingClientRect();
+      const send = (type, [x, y, time]) => {
+        const ev = new PointerEvent(type, { bubbles: true, cancelable: true, pointerType: "pen", pointerId, isPrimary: true,
+          button: 0, buttons: type === "pointerup" ? 0 : 1, clientX: box.left + x, clientY: box.top + y, pressure: type === "pointerup" ? 0 : 0.5 });
+        Object.defineProperty(ev, "timeStamp", { value: 70000 + time });
+        el.dispatchEvent(ev);
+      };
+      points.forEach((p, i) => send(i ? "pointermove" : "pointerdown", p));
+      await new Promise((r) => setTimeout(r, 900)); // past the 600 ms hold
+      const last = points[points.length - 1];
+      send("pointerup", [last[0], last[1], last[2] + 900]);
+    }, [points, pointerId]);
+    // a circle of 60 px drawn over 540 ms, back at its start; a 220 × 130 px rectangle from its top-left corner, back to it
+    const circle = Array.from({ length: 37 }, (_, i) => { const a = (i % 36) * Math.PI / 18; return [330 + 60 * Math.cos(a), 330 + 60 * Math.sin(a), 15 * i]; });
+    const side = (a, b, n) => Array.from({ length: n }, (_, i) => [a[0] + (b[0] - a[0]) * i / n, a[1] + (b[1] - a[1]) * i / n]);
+    const [c0, c1, c2, c3] = [[200, 520], [420, 520], [420, 650], [200, 650]];
+    const rect = [...side(c0, c1, 20), ...side(c1, c2, 12), ...side(c2, c3, 20), ...side(c3, c0, 12), c0].map(([x, y], i) => [x, y, 10 * i]);
+    for (const [name, points, pointerId, kind, fits] of [
+      ["circle", circle, 92, "ellipse", (p) => p.rx === p.ry && p.angle === 0],
+      ["rectangle", rect, 93, "rect", (p) => p.angle === 0 && p.w > p.h],
+    ]) {
+      const saved = await savedStrokes();
+      const before = await pathCount();
+      await heldStroke(points, pointerId);
+      await until(async () => (await pathCount()) === before + 1, { what: `the held ${name} drawn` });
+      const [st] = await newStrokes(saved, 1, `the held ${name} saved`);
+      assertEq(st.pen, false, `the ${name} is even`);
+      assertEq(st.shape?.kind, kind, `the ${name}'s shape record (${JSON.stringify(st.shape)})`);
+      assert(fits(st.shape.params), `the ${name}'s params (${JSON.stringify(st.shape.params)})`);
+      await until(async () => (await pillText()).includes(`Shape: ${name}.`), { what: `the "Shape: ${name}." pill` });
+      await page.locator(".statusPill").getByRole("button", { name: "Undo", exact: true }).click();
+      await until(async () => (await pathCount()) === before, { what: `the ${name} undone from the pill` });
+    }
+    assertNoProblems(page);
+  });
+
+  await step("ink: a stroke's ink-live chunks on the page socket carry its page, id, look, n and samples, and no g or k", async () => {
+    await openStrip();
+    await page.keyboard.press("1");
+    // every message the page's sockets send from here on
+    await page.evaluate(() => {
+      const send = WebSocket.prototype.send;
+      window.e2eSocketSent = [];
+      window.e2eSocketSend = send;
+      WebSocket.prototype.send = function (data) { window.e2eSocketSent.push(String(data)); return send.call(this, data); };
+    });
+    const saved = await savedStrokes();
+    const before = await pathCount();
+    try {
+      box = await page.locator('[data-page="1"]').boundingBox();
+      await drawLine(page, [box.x + 120, box.y + 330], [box.x + 300, box.y + 350]);
+      const [st] = await newStrokes(saved, 1, "the stroke saved");
+      const chunks = (await page.evaluate(() => window.e2eSocketSent)).filter((s) => s.includes('"ink-live"'))
+        .map((s) => JSON.parse(s)).filter((m) => m.t === "ink-live" && m.id === st.id);
+      assert(chunks.length && chunks.at(-1).done === true, `the stroke went out live, its last chunk marked done (${chunks.length} chunks)`);
+      for (const m of chunks) {
+        assert(["page", "id", "style", "n", "samples"].every((key) => key in m) && !("g" in m) && !("k" in m),
+          `a chunk's keys (${JSON.stringify(Object.keys(m))})`);
+      }
+      assertEq(chunks[0].page, 1, "the surface: the PDF page");
+    } finally {
+      await page.evaluate(() => { WebSocket.prototype.send = window.e2eSocketSend; });
+    }
+    await page.keyboard.press("Control+z");
+    await until(async () => (await pathCount()) === before, { what: "the stroke undone" });
     assertNoProblems(page);
   });
 

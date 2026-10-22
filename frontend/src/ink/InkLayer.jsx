@@ -29,7 +29,7 @@ import { brushOpacities, brushWidths, finishStroke, strokeChannels, widthLaw } f
 import { GRAIN_PX, GRAIN_UNITS, grainImage, grainUri } from "./grain.js";
 import { InkLineChoices, InkStyleMenu, InkStylePicker, brushValue } from "./InkStylePicker.jsx";
 import {
-  CANCEL_MS, CANCEL_PX, HOLD_MIN_MS, HOLD_MOVE, HOLD_MS, MIN_EXTENT_PT, MIN_EXTENT_PX, PASTE_MOVE, REFIT_PX, followHold, recognise,
+  CANCEL_MS, CANCEL_PX, HOLD_MIN_MS, HOLD_MOVE, HOLD_MS, PASTE_MOVE, REFIT_PX, followHold, holdQualifies, recognise,
   refitShape, shapeSamples, stillSince, dragHandle, reshapeStroke, shapeHandles,
 } from "./shapes.js";
 import { claimTool, hostEvent, shapeFromHost, shapeToHost } from "./hostInk.js";
@@ -1088,12 +1088,10 @@ export function InkLayer({ pageNumber, wrapRef, width, height, blocks, tool, pen
     const holdFire = (d) => {
       d.holdTimer = 0;
       if (drawing !== d || d.hold) return;
-      // the paste hold: no travel, against the shape hold's chord — a tip
-      // that has travelled cannot paste, one that has not cannot snap
+      // the paste hold: no travel, against the shape hold's size floor — a
+      // tip that has travelled cannot paste, one that has not cannot snap
       if (d.pasteArmed && d.travel <= PASTE_MOVE) { pasteHere(d); return; }
-      if (!d.holdOn || d.samples.length < 2) return;
-      const a = d.samples[0], b = d.samples.at(-1);
-      if (Math.hypot(b.x - a.x, b.y - a.y) < Math.max(MIN_EXTENT_PX / d.k, MIN_EXTENT_PT)) return;
+      if (!d.holdOn || !holdQualifies(d.samples, d.k)) return;
       if (d.tail.at - d.startTime < HOLD_MIN_MS) return;
       snapHold(d, false);
     };
@@ -1297,12 +1295,12 @@ export function InkLayer({ pageNumber, wrapRef, width, height, blocks, tool, pen
       if (!live.current.onInkLive) return;
       // the look the stroke commits with (a stylus with the pressure
       // preference off writes as a mouse does: pen false, no pressure)
-      d.live = { sent: 0, timer: 0, last: -Infinity, style: inkLive.liveStyle(d.look, d.look.pen), k: Math.round(d.k * 1000) / 1000 };
+      d.live = { sent: 0, timer: 0, last: -Infinity, style: inkLive.liveStyle(d.look, d.look.pen) };
       liveTick(d);
     };
     const liveChunk = (d, done) => {
       const lv = d.live, samples = inkLive.liveSamples(d.samples, lv.sent, lv.style.pen);
-      const msg = { id: d.liveId, style: lv.style, k: lv.k, n: lv.sent, samples };
+      const msg = { id: d.liveId, style: lv.style, n: lv.sent, samples };
       lv.sent += samples.length;
       if (done && lv.sent >= d.samples.length) msg.done = true;
       live.current.onInkLive?.(pageNumber, msg);
@@ -1421,7 +1419,8 @@ export function InkLayer({ pageNumber, wrapRef, width, height, blocks, tool, pen
         // far): with strokes on the clipboard and the pen never 2 css px
         // from its first sample, the claim ends here and Paste here opens
         // where it went down ({cancel}: the host drops its line); with draw
-        // and hold on, a chord of max(24 css px, 18 pt) and the stroke
+        // and hold on, the stroke's extent at the size floor (shapes.js
+        // holdQualifies, over the samples in page points) and the stroke
         // HOLD_MIN_MS old at the stillness anchor, the recogniser runs as
         // the layer's own hold does, and a shape is kept on the claim and
         // answered in css px for the host to draw and refit. Else nothing;
@@ -1438,7 +1437,7 @@ export function InkLayer({ pageNumber, wrapRef, width, height, blocks, tool, pen
             return { cancel: true };
           }
           const still = stillSince(pts);
-          if (!d.holdOn || Math.hypot(last.x - first.x, last.y - first.y) < Math.max(MIN_EXTENT_PX, MIN_EXTENT_PT * d.k)
+          if (!d.holdOn || !holdQualifies(pts.map((q) => d.toPt({ clientX: q.x, clientY: q.y })), d.k)
             || pts[still].t < HOLD_MIN_MS) return {};
           const c = hostDraft(d, samples, false);
           const hit = recognise(holdPath(c, d.toPt({ clientX: last.x, clientY: last.y })), { k: d.k, kinds: d.kinds });

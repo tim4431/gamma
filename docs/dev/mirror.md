@@ -223,10 +223,14 @@ does not hide it. When the two differ the round stops (`FormatMismatch`):
   ([handwriting.md](handwriting.md) "Upgrading version 1"). Until then the
   pause above holds. A remote of an older release that the format check
   did not reach may still refuse a drawing (`400` on an `.ink` push). The
-  copy then records one `file` conflict row for it and pushes the block's
-  other changes (`sync_engine._push_files`, `_without_files`). From
-  `_sync_page` and `_push_whole` the page is looked at again next round
+  copy then records one `file` conflict row for it, on the block whose
+  `ink_url` names the file (`_draws`), and pushes that block's other
+  changes (`sync_engine._push_files`, `_without_files`). From `_sync_page`,
+  `_push_whole` and `_adopt_page` (the adopt policy `mine`, a link's or a
+  force push's) the page is looked at again next round
   (`_deferred_files`), and the drawing goes once the remote takes it.
+  Publishing such a page answers 502 while it waits on the retry list
+  ([Publishing](#publishing), step 3).
 
 ## One round, one page (`sync_engine._sync_page`)
 

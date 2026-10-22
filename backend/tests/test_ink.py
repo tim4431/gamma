@@ -150,6 +150,8 @@ def test_monoline_preserves_samples_and_constant_width_in_exports(guest):
     (lambda d: d["strokes"][0].__setitem__("bad key", 1), "key"),
     (lambda d: d["strokes"][0].__setitem__("note", "x" * 600) or d["strokes"][0].__setitem__("note2", "y" * 600), "bytes"),
     (lambda d: d["strokes"][0].__setitem__("note", float("nan")), "finite"),
+    (lambda d: d["strokes"][0].__setitem__("pts", [10 ** 400, 100, 500, 0, 1000]), "finite"),   # a client's Infinity
+    (lambda d: d["strokes"][0].__setitem__("pts", [100, -(10 ** 400), 500, 0, 1000]), "finite"),
     (lambda d: d.__setitem__("meta", {f"k{i}": "x" * 1000 for i in range(20)}), "bytes"),
 ])
 def test_schema_rejects_bad_files(mutate, message):
@@ -780,6 +782,19 @@ def test_importer_reads_a_dashed_foreign_border_as_a_dashed_line():
         assert [s.dash for s in found["ink"].strokes] == ["dashed"]
     (found,) = _extract_pdf_annotations(_pdf_with_ink_annotation(border={NameObject("/S"): NameObject("/S")}))
     assert found["ink"].strokes[0].dash is None
+
+
+def test_importer_takes_the_ink_list_when_gamma_ink_holds_a_number_no_client_reads():
+    """A /GammaInk whose pts hold an integer past the largest double (a
+    client's JSON.parse reads Infinity, and dumps writes no such number) is
+    refused like any bad file: the import takes the /InkList, whose file
+    can be written, instead of failing at dumps."""
+    from gamma.routers.imports import _extract_pdf_annotations
+
+    bad = json.dumps(_ink(strokes=[{"id": "huge", "ch": "xy", "pts": [10 ** 400, 100]}]))
+    (found,) = _extract_pdf_annotations(_pdf_with_ink_annotation(gamma_ink=bad))
+    assert [s.id for s in found["ink"].strokes] == ["i0"]
+    assert inkmod.dumps(found["ink"]).startswith(b'{"format":"gamma-ink"')
 
 
 def test_dashed_ink_writes_a_dashed_border_and_comes_back_as_drawn():

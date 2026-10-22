@@ -1,13 +1,13 @@
 // node --test tests/  (from frontend/) — the draw-and-hold recogniser over
-// tests/shared/inkshapes.json, the polyline a shape commits as, the refit
-// under a continued hold, and the iPad host's hold rules over
-// tests/shared/inkhold.json (the Swift side runs the same cases).
+// tests/shared/inkshapes.json, the hold's size gate, the polyline a shape
+// commits as, the refit under a continued hold, and the iPad host's hold
+// rules over tests/shared/inkhold.json (the Swift side runs the same cases).
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import {
-  CANCEL_MS, CANCEL_PX, HOLD_MIN_MS, HOLD_MOVE, HOLD_MS, PASTE_MOVE, REFIT_PX, SHAPE_KINDS, dragHandle, followHold, recognise, refitShape,
-  reshapeInk, reshapeStroke, shapeHandles, shapeName, shapeSamples, stillSince,
+  CANCEL_MS, CANCEL_PX, HOLD_MIN_MS, HOLD_MOVE, HOLD_MS, MIN_EXTENT_PT, MIN_EXTENT_PX, PASTE_MOVE, REFIT_PX, SHAPE_KINDS, dragHandle, followHold,
+  holdQualifies, recognise, refitShape, reshapeInk, reshapeStroke, shapeHandles, shapeName, shapeSamples, stillSince,
 } from "../src/ink/shapes.js";
 import { decodeStroke, encodeStroke, newInk, translateStrokes } from "../src/ink/ink.js";
 
@@ -55,6 +55,72 @@ test("recognise: too few samples, kinds restricted to lines (a highlighter), and
   assert.equal(recognise(short, { k: 2 })?.kind, "line", "19 pt at k = 2: the floor is 18 pt");
   assert.equal(recognise(short, { k: 0.5 }), null, "19 pt at k = 0.5 is under 48 px on screen");
   assert.equal(recognise(null, {}), null);
+});
+
+// The hold's size gate (holdQualifies; InkLayer's holdFire and the iPad
+// claim's hold): the stroke's extent against max(24 css px, 18 pt), the
+// measure recognise uses, never its chord (first sample to last).
+const floor = (k) => Math.max(MIN_EXTENT_PX / k, MIN_EXTENT_PT);
+const chordOf = (s) => Math.hypot(s.at(-1).x - s[0].x, s.at(-1).y - s[0].y);
+const ZOOMS = [0.75, 1, 4 / 3, 2, 3];
+
+test("holdQualifies: every closed shape of the fixture qualifies by its extent, though its chord is under the floor", () => {
+  const closed = FIX.cases.filter((c) => ["triangle", "rect", "polygon", "circle", "ellipse"].includes(c.expect?.kind));
+  assert.equal(closed.length, 8);
+  for (const c of closed) {
+    const samples = decode(c.samples);
+    assert.ok(chordOf(samples) < floor(c.k), `${c.note}: ends ${chordOf(samples).toFixed(1)} pt from its start`);
+    assert.equal(holdQualifies(samples, c.k), true, c.note);
+  }
+});
+
+test("holdQualifies: a closed circle and a closed rectangle, back at their start, qualify at every zoom and are recognised", () => {
+  const circle = Array.from({ length: 37 }, (_, i) => {
+    const a = (i % 36) * Math.PI / 18;
+    return { x: 200 + 40 * Math.cos(a), y: 200 + 40 * Math.sin(a), p: 0.5, t: 15 * i };
+  });
+  const side = (a, b, n) => Array.from({ length: n }, (_, i) => ({ x: a.x + (b.x - a.x) * i / n, y: a.y + (b.y - a.y) * i / n }));
+  const [c0, c1, c2, c3] = [{ x: 100, y: 300 }, { x: 220, y: 300 }, { x: 220, y: 370 }, { x: 100, y: 370 }];
+  const rect = [...side(c0, c1, 20), ...side(c1, c2, 12), ...side(c2, c3, 20), ...side(c3, c0, 12), c0].map((q, i) => ({ ...q, p: 0.5, t: 10 * i }));
+  for (const k of ZOOMS) {
+    assert.equal(chordOf(circle), 0);
+    assert.equal(holdQualifies(circle, k), true, `the circle at k = ${k}`);
+    assert.equal(recognise(circle, { k })?.kind, "circle");
+    assert.equal(holdQualifies(rect, k), true, `the rectangle at k = ${k}`);
+    assert.equal(recognise(rect, { k })?.kind, "rect");
+  }
+});
+
+test("holdQualifies: an l, an o and a tick at writing size never qualify; a big l does, and the recogniser finds nothing in it", () => {
+  const pts = (rows) => rows.map(([x, y], i) => ({ x, y, p: 0.5, t: 20 * i }));
+  // a looped l 14 pt tall and 6 wide, from the baseline up, round and down, with its tail
+  const l = pts([[100, 114], [101, 110], [102, 106], [103.5, 102], [104.5, 100.5], [104, 99.8], [103, 100.3], [102.3, 102], [102, 106],
+    [102, 110], [102.3, 113.5], [104, 114], [106, 113]]);
+  // an o 8 pt across, closed
+  const o = Array.from({ length: 17 }, (_, i) => ({ x: 120 + 4 * Math.cos((i % 16) * Math.PI / 8), y: 110 + 4 * Math.sin((i % 16) * Math.PI / 8), p: 0.5, t: 20 * i }));
+  // a tick 10 pt wide and 12 tall
+  const tick = pts([[130, 108], [131.5, 110], [133, 112], [135, 108], [137.5, 104], [140, 100]]);
+  for (const k of ZOOMS) {
+    for (const [name, s] of [["l", l], ["o", o], ["tick", tick]]) assert.equal(holdQualifies(s, k), false, `${name} at k = ${k}`);
+  }
+  const fixtureTick = caseNamed("a tick under 18 pt");
+  assert.equal(holdQualifies(decode(fixtureTick.samples), fixtureTick.k), false);
+  const bigL = caseNamed("the letter l");
+  assert.equal(holdQualifies(decode(bigL.samples), bigL.k), true, "a size floor and no more");
+  assert.equal(recognise(decode(bigL.samples), { k: bigL.k }), null);
+});
+
+test("holdQualifies: a straight line qualifies exactly when its length reaches the floor, as under the chord; nothing under two samples", () => {
+  for (const k of [0.5, ...ZOOMS]) {
+    for (let len = 4; len <= 60; len += 2) {
+      const line = Array.from({ length: 9 }, (_, i) => ({ x: 100 + (len * i / 8) * Math.cos(0.5), y: 100 + (len * i / 8) * Math.sin(0.5) }));
+      assert.equal(holdQualifies(line, k), chordOf(line) >= floor(k), `${len} pt at k = ${k}`);
+    }
+  }
+  for (const c of FIX.cases.filter((c) => c.expect?.kind === "line")) assert.equal(holdQualifies(decode(c.samples), c.k), true, c.note);
+  assert.equal(holdQualifies([{ x: 0, y: 0 }], 1), false);
+  assert.equal(holdQualifies([], 1), false);
+  assert.equal(holdQualifies(null), false);
 });
 
 test("shapeSamples: a rectangle is a closed dense polyline with t spread over the span and p constant", () => {
