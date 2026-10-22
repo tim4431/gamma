@@ -57,6 +57,6 @@ def mark_items(payload: MarkRequest, request: Request):
         raise HTTPException(400, "name the items, or all")
     if payload.read is None and payload.archived is None:
         raise HTTPException(400, "say read or archived")
-    ids = [i for i in payload.ids if isinstance(i, str) and 0 < len(i) <= 64]
+    ids = [i for i in payload.ids if 0 < len(i) <= 64]
     return {"unread": inbox.mark(user_id, ids=ids, every=payload.all, read=payload.read,
                                  archived=payload.archived)}

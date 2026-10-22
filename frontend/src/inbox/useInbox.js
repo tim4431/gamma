@@ -24,6 +24,7 @@
 // (app/useReminders.js); its click is `onOpen(item)`.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { API, apiJson } from "../shared/lib/utils";
+import { nowStamp } from "../library/libraryUtils";
 import { t } from "../shared/i18n/i18n.js";
 import { applyMark, inboxSentence, inboxSnippet, itemsToRing, mergeListing, sameListing } from "./inboxText.js";
 
@@ -38,8 +39,6 @@ const EMPTY = { filter: "unread", items: [], more: false, loaded: false, failed:
 const post = (body) => ({
   method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body), keepalive: true,
 });
-// The server's stamp shape (db.page_now: microseconds, Z), so the two order alike.
-const nowIso = () => new Date().toISOString().replace("Z", "000Z");
 
 function rungIds() {
   try { return JSON.parse(localStorage.getItem(RUNG_KEY) || "[]"); } catch { return []; }
@@ -222,7 +221,7 @@ export function useInbox({ enabled, open, notify = false, onOpen, onStatus }) {
     const gen = ++markGen.current;
     marking.current += 1;
     const before = { filter: listRef.current.filter, items: listRef.current.items, known: known.current };
-    const { items, unreadDelta } = applyMark(listRef.current.items, target, change, listRef.current.filter, nowIso());
+    const { items, unreadDelta } = applyMark(listRef.current.items, target, change, listRef.current.filter, nowStamp());
     const guess = target.all && change.read ? 0 : Math.max(0, known.current + unreadDelta);
     known.current = guess;
     setUnread(guess);

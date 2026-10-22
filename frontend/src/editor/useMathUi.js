@@ -106,5 +106,5 @@ export function useMathUi() {
     return true;
   }
 
-  return { mathUi, setMathUi, mathAcIdx, setMathAcIdx, updateMathUi, acceptCompletion, acKey, tabJumpKey };
+  return { mathUi, setMathUi, mathAcIdx, updateMathUi, acceptCompletion, acKey, tabJumpKey };
 }

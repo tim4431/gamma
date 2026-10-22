@@ -625,7 +625,7 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
   // document has a highlight with an open thread, or a new comment's card
   // is open, each page with room for the card column stands beside it, the
   // two centred together (comments/marginLayout.js); pages without room are
-  // centred as before and keep the badge and the popover.
+  // centred and keep the badge and the popover.
   const [viewerW, setViewerW] = useState(0);
   useEffect(() => {
     const el = viewerRef.current;

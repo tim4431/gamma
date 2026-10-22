@@ -9,12 +9,8 @@
 // snippet, at, read_at, archived_at}` (GET /api/inbox); `actor` is a
 // username ("" once the account is gone).
 import { fmtDate, t } from "../shared/i18n/i18n.js";
-import { plainSnippet } from "../search/snippets.js";
-
-export const INBOX_FILTERS = ["unread", "all", "archived"];
-
-// A stored timestamp → a Date (a bare one is UTC, as the server writes it).
-const parseStamp = (iso) => new Date(/[Zz]|[+-]\d\d:?\d\d$/.test(iso) ? iso : `${iso}Z`);
+import { parseStamp } from "../library/libraryUtils.js";
+import { anchorSnippet } from "../comments/comments.js";
 
 export const isUnread = (item) => !item.read_at && !item.archived_at;
 
@@ -52,8 +48,7 @@ export function inboxSentence(item) {
 // is the name the sentence already says, so they have none.
 export function inboxSnippet(item, max = 140) {
   if (item.kind === "shared" || item.kind === "invited") return "";
-  const line = plainSnippet(item.snippet || "").replace(/\s+/g, " ").trim();
-  return line.length > max ? `${line.slice(0, max - 1).trimEnd()}…` : line;
+  return anchorSnippet(item.snippet, max);
 }
 
 const dayKey = (d) => `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`;

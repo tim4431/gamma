@@ -354,17 +354,15 @@ like any other content.
 | the Inbox panel open | the same poll every 5 s, plus the nudge | under 5 s |
 | a hidden tab | nothing until it shows again | on return |
 
-`collab.publish_account(user_id, message)` finds the `(room, peer)` pairs
-whose `peer.account` is the account, in any room of any workspace (a share
-link's included), as `revalidate_account` does. It then schedules one
-coroutine on the socket loop that sends to them and drops a peer whose send
-fails, as `Room.broadcast` does. The message is content-free: it says only
-that something changed, and the tab asks `/api/inbox` for the rest, so a
-socket admitted to one page learns nothing about another. A tab on the page
-where a comment was written gets both `comments` and `inbox`, and the
-client coalesces them (it debounces nudges by 300 ms). The account socket
-`WS /api/ws/account` is reserved for later ([collab.md](collab.md) "Rooms
-and the socket").
+`collab.publish_account` sends the nudge to every page socket of the
+account, in any room of any workspace, a share link's included
+([collab.md](collab.md) "Rooms and the socket"). The message is
+content-free: it says only that something changed, and the tab asks
+`/api/inbox` for the rest, so a socket admitted to one page learns nothing
+about another. A tab on the page where a comment was written gets both
+`comments` and `inbox`, and the client coalesces them (it debounces nudges
+by 300 ms). A tab with no page open has no socket and polls ("Not built"
+below).
 
 ## In the app
 
@@ -401,7 +399,8 @@ nudge skips it. A refused write puts the threads back as they were while
 the list is still the one the change made (a refetch or another write
 since leaves it), says so in the status line, and refetches. A refused
 comment gets its text back in its field, and a refused edit keeps its field
-open with the new text.
+open with the new text. A refetch that answers before the server has a new
+comment shows it again from the writes still on their way.
 
 **Where the controls show.** App's `commentsOn` is `!publicPage &&
 comments.readable`. Without it there is no row control (`rowProps.onComment`
@@ -410,9 +409,8 @@ title-row control, no Comment in the highlight menu, no popover and no
 Comments window (its View-menu row, the phone More sheet's row,
 `winVisible.comments`, and `app.toggleComments`, whose `when` reads
 `commentsOn` from `appCmdRef`): a page
-host's publication (comments stay off the share host in v1) and a page
-whose comments the reader cannot read. A refetch that answers before the server has a new comment shows
-it again from the writes still on their way.
+host's publication (comments stay off the share host) and a page
+whose comments the reader cannot read.
 
 **The row control.** `BlockRow` (`editor/BlockTree.jsx`) draws a `ctlBtn`
 with `MessageSquareIcon` after the row's body, beside the ×. It shows the
@@ -452,8 +450,7 @@ Notion: a press on the thread (not on one of its buttons, links or fields),
 Enter or Space on it, or the link that opened the popover at it makes it
 active, and a thread holding an unsent reply keeps its field. Its first comment's author line carries the thread's Resolve
 (a check mark) or Reopen button beside the "⋯"; a resolved thread says
-who resolved it at its foot, where the reply field was. A comment shows its author's avatar (`PeerAvatar`,
-`nameColor`), name, time and text rendered as a note is (`BlockMarkdown`
+who resolved it at its foot, where the reply field was. A comment shows its author's avatar (`PersonAvatar`), name, time and text rendered as a note is (`BlockMarkdown`
 with `blockId="comment:<id>"`, so math, @people chips and `[[links]]` work,
 a link to a block outside the page getting its label from App's reference
 cache, which `onFetchRefs` fills when the threads arrive; the
@@ -467,75 +464,83 @@ it, then those above it, the nearest first. It draws each comment after
 them as it comes within a screen of the view (an IntersectionObserver on
 `.commentPopBody`, the render in a transition), with a box of about its
 height (`estimatedLines`) in its place until then. A comment written or
-shown after the popover opened is drawn at once. A thread of twelve long
-comments full of math (300 equations) otherwise built every equation
-before the popover showed: about 900 ms in one task, against about 80 ms
-now. Its "⋯" (`MenuButton`) has Edit and Delete for its
+shown after the popover opened is drawn at once. Without this, a thread of
+twelve long comments full of math (300 equations) builds every equation
+before the popover shows: about 900 ms in one task, against about 80 ms
+with it. Its "⋯" (`MenuButton`) has Edit and Delete for its
 author (Delete for the workspace's owner too) and Copy link. "New comment"
 starts another thread. A link visitor without an account reads, with "Sign
 in to comment" (the share's sign-in gate) in place of the fields.
 
-**The composer.** The field is the note editor, `BlockCmEditor`, with its
+**The composer.** The field is the note editor, `BlockCmEditor`, with a
 send button. It has a note's typing aids, from the modules a note row
 uses: `[[links]]`, @people and date chips, inline marks and math drawn in
 place (App's MentionContext as `mentions`, `labelsFor(text)` as
-`refLabels`); "[[" opens the note's link picker (`editor/useRefPicker.js`:
-pages by title, then blocks from `GET /api/block-search` without the
-thread's own block; a picked row writes `[[id]]` and caches its label
-with App's `onCacheRef`, and "]]" after a page's exact title links it);
-"@" opens the note's @ menu at the caret (`editor/useMentionMenu.js`:
-people, dates and page links, no "Remind" rows, since the reminder scan
-reads notes only, and no "Invite…"); inside `$…$` and `$$…$$` the live
-preview, the `\command` and `\begin{}` completion, the Tab hop and the `$`
-and bracket pairing of [latex_editing.md](latex_editing.md)
-(`editor/useMathUi.js`); "/" opens the note's command menu
-(`editor/useSlashMenu.js`, the hook a note row uses: typed only, never
-inside math or a code fence). A comment offers the commands that write
-text: headings, to-do, the lists, quote, callout, divider, the two
-equations, table, code block, Mermaid diagram, today's date, "Link to
-note" (which opens the field's own `[[` picker), highlight and the colours.
-The commands that make a page or a sheet, upload a picture or embed a note
-`need` an ability the field does not pass (`slashCommands.js`
-`filterSlashCommands`' `can`: the field passes none, a note row passes
-`image` and `embed` always, `newPage` and `sheet` when App gives it their
-handlers). A command's text replaces the field's in one edit, which the
-field's undo takes back. App hands the pickers `links` (`pages`, the open
-page as `rootId`, `lookupBlock`, `refCache`, `onCacheRef`) through the
-popover. Left out: the outliner's keys, "Paste as", image and file upload,
-sheets, embeds, presence carets and object drags. The keys:
-`sendsOnShiftEnter` and `composing` (`chat/enterKey.js`) decide Return.
-Enter breaks the line as in a note, continuing a list or a quote
-(`mdLines.enterPlan`) outside a code fence or `$$…$$`; Shift+Enter and
-Ctrl/⌘+Enter send. On an on-screen keyboard Return breaks the line, Shift
-or not, and the button sends (Ctrl/⌘+Enter still sends from a tablet's
-keyboard). An edit's Save follows the same rule. The send button's hover
-title names the key (`"{label} ({hint})"` with `chordLabel("Shift-Enter")`:
-"Comment (Shift+Enter)", "⇧↩" on a Mac; on an on-screen keyboard
-`chordLabel("Mod-Enter")`, the key that sends there); its accessible name
-is the plain action. While a picker, the "/" menu or the completion is open it takes ↑ ↓
-Enter Tab and Escape first. The field keeps its own undo history (`ownHistory`), so Ctrl/⌘+Z
-stays out of the page's block history; F2 stays with it too. The history
-starts afresh when the field's text is set from outside (emptied on
-sending, put back when a send fails), so an undo never brings back part of
-a sent comment. The field sits in one rounded box (`.commentBox`, which
-takes the focus ring) with the round send button at its right, the chat
-composer's `chatCircleBtn` at the compact size of a line of text
-(`--ctl-icon-btn-xs`, 24 px, with a 12 px arrow), as Notion has it: on the
-text's line while the text is one line, at its last line once it wraps. The text is in the
-rendered comment's type and grows up to 40vh, then scrolls. The field is focused a frame after
-mounting, since the popover stands hidden until it is placed and a hidden
-field takes no focus. An edit's field has Cancel and Save in a bar under
-its box (where the length warning shows too), and Escape cancels it. It
-closes once the server has the edit. Unsent text is kept per field for as
-long as the tab lives, in a module-level map of `CommentComposer.jsx`
-keyed `new:<block>`, `reply:<thread>` and `edit:<comment>` (`draftKey`):
-a press outside the popover, Escape, a second press on its control or
-another block's comments close it, and the text is back when it opens
-again. A popover opens "New comment" when its block has a draft, and a
-comment with an unsaved edit opens in its edit field. Sending empties the
-field and its draft; Cancel drops an edit's. The field takes the focus a
-frame after mounting only when it does not have it already, so the caret
-of a field focused meanwhile stays where it is.
+`refLabels`). The pickers read App's `links` (`pages`, the open page as
+`rootId`, `lookupBlock`, `refCache`, `onCacheRef`), handed through the
+popover.
+
+- "[[" opens the note's link picker (`editor/useRefPicker.js`): pages by
+  title, then blocks from `GET /api/block-search` without the thread's own
+  block. A picked row writes `[[id]]` and caches its label with
+  `onCacheRef`; "]]" after a page's exact title links it.
+- "@" opens the note's @ menu at the caret (`editor/useMentionMenu.js`):
+  people, dates and page links. It has no "Remind" rows, since the
+  reminder scan reads notes only, and no "Invite…".
+- Inside `$…$` and `$$…$$` come the live preview, the `\command` and
+  `\begin{}` completion, the Tab hop and the `$` and bracket pairing of
+  [latex_editing.md](latex_editing.md) (`editor/useMathUi.js`).
+- "/" opens the note's command menu (`editor/useSlashMenu.js`: typed only,
+  never inside math or a code fence). A comment offers the commands that
+  write text: headings, to-do, the lists, quote, callout, divider, the two
+  equations, table, code block, Mermaid diagram, today's date, "Link to
+  note" (the field's own `[[` picker), highlight and the colours. The
+  commands that make a page or a sheet, upload a picture or embed a note
+  `need` an ability the field does not pass (`slashCommands.js`
+  `filterSlashCommands`' `can`: a note row passes `image` and `embed`, and
+  `newPage` and `sheet` when App gives it their handlers). A command's text
+  replaces the field's in one edit, which the field's undo takes back.
+
+Left out: the outliner's keys, "Paste as", image and file upload, sheets,
+embeds, presence carets and object drags.
+
+**The composer's keys.** `sendsOnShiftEnter` and `composing`
+(`chat/enterKey.js`) decide Return. Enter breaks the line as in a note,
+continuing a list or a quote (`mdLines.enterPlan`) outside a code fence or
+`$$…$$`. Shift+Enter and Ctrl/⌘+Enter send. On an on-screen keyboard
+Return breaks the line, Shift or not, and the button sends; Ctrl/⌘+Enter
+still sends from a tablet's keyboard. An edit's Save follows the same
+rule. While a picker, the "/" menu or the completion is open, it takes
+↑ ↓ Enter Tab and Escape first. The field keeps its own undo history
+(`ownHistory`), so Ctrl/⌘+Z stays out of the page's block history, and F2
+stays with it too. The history starts afresh when the field's text is set
+from outside (emptied on sending, put back when a send fails), so an undo
+never brings back part of a sent comment.
+
+**The composer's box.** The field sits in one rounded box (`.commentBox`,
+which takes the focus ring) with the round send button at its right: the
+chat composer's `chatCircleBtn` at the size of a line of text
+(`--ctl-icon-btn-xs`, 24 px, with a 12 px arrow). As in Notion, the button
+is on the text's line while the text is one line, and at its last line
+once it wraps. The text is in the rendered comment's type and grows up to
+40vh, then scrolls. The button's hover title names the key
+(`"{label} ({hint})"` with `chordLabel("Shift-Enter")`: "Comment
+(Shift+Enter)", "⇧↩" on a Mac; `chordLabel("Mod-Enter")` on an on-screen
+keyboard), and its accessible name is the plain action. An edit's field
+has Cancel and Save in a bar under its box, where the length warning shows
+too. Escape cancels an edit, and it closes once the server has it. The
+field takes the focus a frame after mounting, since the popover stands
+hidden until it is placed and a hidden field takes no focus; a field
+focused meanwhile keeps its caret.
+
+**Drafts.** Unsent text is kept per field for as long as the tab lives, in
+a module-level map of `CommentComposer.jsx` keyed `new:<block>`,
+`reply:<thread>` and `edit:<comment>` (`draftKey`). A press outside the
+popover, Escape, a second press on its control or another block's comments
+close it, and the text is back when it opens again. A popover opens "New
+comment" when its block has a draft, and a comment with an unsaved edit
+opens in its edit field. Sending empties the field and its draft; Cancel
+drops an edit's.
 
 **Other ways in.** The ⋮⋮ handle menu's Comment. The block command
 `block.comment` ("Comment on this note", Ctrl/⌘+Shift+M; no `edits`,
@@ -579,7 +584,7 @@ is drawn as Notion draws a commented passage: a lighter wash of its colour
 over a 2px line in a strong tone of the same hue (`--hl-dark-line`, which
 a flipped page draws too); a linked one keeps the link's blue line, and
 one with a note, or with no open thread, its plain fill. A click (a tap
-too) jumps as before and opens the thread popover from the badge
+too) jumps to the note, as on any highlight, and opens the thread popover from the badge
 (`PdfViewer`'s `onHighlightThread(id, badge)`). The count rides on the
 highlight objects (`threadCount`), which the viewer's per-page memo
 compares beside `hasNote`. Where the page has room for a column beside it,
@@ -633,10 +638,10 @@ stands beside it: the page and a column `CARD_W` (280 px) wide,
 `COLUMN_GAP` (24 px) from the page, are centred together, so the page
 moves left by half of what the column takes (`marginLeft`,
 `comments/marginLayout.js`). A page that would leave less than `EDGE`
-(16 px) at either side has no margin and is centred as before: a page at
+(16 px) at either side has no margin and stays centred: a page at
 fit-width, a narrow pane, a high zoom. A phone has none (App passes no
-`commentMargin`). With no open thread in the document the pages are where
-they always were. The viewer reads its own width (a ResizeObserver) and
+`commentMargin`). With no open thread in the document every page stays
+centred. The viewer reads its own width (a ResizeObserver) and
 hands each page its left edge (`PdfPage`'s `marginLeft`, null for none),
 and the zoom anchor's horizontal arithmetic reads the same layout
 (`pageLeft`). A zoom keeps the line under the pointer. It keeps the point
@@ -826,8 +831,8 @@ has notifications; the iPad's WKWebView has none, and the row says so.
   the Inbox. There is no e-mail, no mobile push and no notification on the
   iPad (its WKWebView has no `Notification`); a system notification rings
   only while a Gamma tab is open. A tab without a page open learns of new
-  items through the 30-second poll: the account socket `WS
-  /api/ws/account` is reserved, not built ([collab.md](collab.md)).
+  items through the 30-second poll: there is no account socket
+  ([collab.md](collab.md) "Limits and next steps").
 - **Invitations without an inviter.** A membership made from the command
   line (`manage.py`) has no actor, so its item reads "Someone added you to
   …".
@@ -838,147 +843,49 @@ has notifications; the iPad's WKWebView has none, and the row says so.
 
 ## Tests
 
-- `backend/tests/test_comments.py`: create, reply, edit, delete and the
-  tombstone, resolve and reopen, and no change-log move for any of them; the
-  validation (empty and over-long text, a block outside the page, a reply
-  into a reply or onto another block, a bad id, an unknown page or state,
-  half an emoji); a repeated client id answered as stored, 409 for
-  another author's and for the author's own on another page (a share
-  visitor's retry through another share reading nothing of it), 404 once
-  its page is in Recently deleted; an edit, a resolve and a delete refused
-  with 404 once the comment is off the page they were authorized for; the permission table row by row (owner,
-  editor, viewer, a non-member, an anonymous link visitor, a guest account
-  through a share link, a signed-in account through a view share, an edit
-  share and a list share, a guest at home, read and write tokens with a
-  write token's edit and delete of its own comments only); the events
-  handed to `after_write` for every kind, with `via`; a page in Recently deleted hiding its threads and its restore
-  showing them; the purge of a page deleted for good, sparing a note moved
-  away, and of a trashed copy that `create_page(block_id=)` replaces; a block delete orphaning, an undo bringing back, the sweep after
-  seven days and not before; an insert pulling a block out of a trashed
-  page; `PUT /blocks/{id}/children`; an edit share's visitor inserting, or
-  replacing children with, an id deleted from a private page and reading
-  none of its threads, while the visitor's own undo and a member's paste
-  keep theirs; a backup merge on the untrash path with
-  a remapped block and re-minted comment ids, and the review's count; the
-  Gamma export round trip with `author_name` after the author's account is
-  deleted; the room's `{t: "comments"}` reaching every tab but the writer's.
-  The suite's drift checks run after each test.
-- `backend/tests/test_inbox.py`: every producer (a mention in a note,
-  through the ops and the block endpoint; a comment's mention, a reply, a
-  resolve and its edit; a page and a folder share; an invitation); the
-  mention diff (a re-save is silent, a new name in the same block tells
-  that person, a reminder, code and an e-mail address name no one); no
-  self, no guest, no non-member; the batches of an offline copy, a mirror
-  and a link visitor telling no one; the AI's batch counting as its chat
-  owner's; a replayed batch telling no one twice; a share's invitee getting
-  the token and hearing of what happens on the page; a view-only folder
-  share's visitor mentioning an account of its own, which gets no item and
-  so not the page's anyone-with-the-link edit token, while a mention
-  through that link hands out that link; a half-typed `@ib_ben` archived at
-  once when the text becomes `@ib_benjamin`, a name removed by another path
-  settling, and a split and a join leaving one unread item that follows
-  the name; a stopped and remade share (the mention takes the new token,
-  the old `shared` item settles), the archived titles once the share is
-  gone for good and the page renamed, and an invitee who becomes a member
-  getting `""`; the owner of a shared workspace an admin made for them
-  told; the 25 cap, filled
-  from the people the page admits; the filters, the
-  marks and the paging, one moment never split; the settle after a block
-  delete, a trash (a member keeping the title), a stopped share (page and
-  folder), but not for a workspace that failed; the cleanup on leaving, workspace and account
-  deletion and the comment sweep; the daily sweep; the nudge reaching the
-  recipient's sockets only; a users.db error never failing the comment or
-  the batch; who has an Inbox (guests, tokens, no session).
-- `backend/tests/test_collab.py`: `publish_account` reaching every socket
-  of one account and no one else's. `test_shares.py`: `added_at` kept by a
-  later save, and only new invitees told. `test_workspaces.py` and
-  `test_pending_memberships.py`: `set_member`'s inserted flag and the
-  `invited` items of a claim and a linked invitation. `test_hosted.py`:
-  `/api/inbox/mark` passing the read-only gate.
-- `backend/tests/test_migrations.py`: step 40, re-run.
-- `backend/tests/test_restore_consistency.py`: `_fresh_ids`' remap.
-- `frontend/tests/comments.test.mjs`: the folding per block and the open
-  counts, Open and Resolved by latest activity, the popover's list, a
-  refetch keeping what reads the same, a new thread and a reply shown once,
-  an edit, a delete with the server's tombstone rules, resolve and reopen,
-  who may edit and delete, the 9+ badge, the anchor's one line, the thread
-  link, the commented-passage rule, the abandoned Comment highlight, which
-  comments a popover draws later and the height of the box standing in for
-  one. `frontend/tests/enterKey.test.mjs`: `sendsOnShiftEnter`, on a
-  keyboard and an on-screen one. `frontend/tests/slashCommands.test.mjs`:
-  the commands a comment's field offers, without a page, a sheet, an
-  upload or an embed.
-  `frontend/tests/marginLayout.test.mjs`: the page's left edge beside its
-  margin and without one, and the stacking of the cards (level, put under
-  the one above, the active one level with the ones over it moved up, none
-  above the page's top).
-  `frontend/tests/selectionTip.test.mjs`: the selection popup's anchor from
-  the release point, and its placement from it. `frontend/tests/refLists.test.mjs`: the typed `[[query`, a picked
-row's edit and the hand-typed title's. `frontend/tests/inboxText.test.mjs`: the sentence of each kind, the
-  snippet, the tabs, the days, the jump of each kind (in place, another
-  workspace, through a share, a folder, an invitation), a listing's first
-  page over the older items held, the marks and their count, and the
-  rings. `frontend/tests/collabSession.test.mjs`: the socket's `comments`
-  and `hello` reaching `onComments`, and `inbox` reaching `onInbox` on any
-  page.
-- Browser: the `comments` group (`tests/e2e/scenarios/comments.mjs`): two
-  editors, a viewer and a link visitor without an account. A thread on a
-  note from its row control, the popover opening in place, the @ menu of
-  people; the reply showing live in the other tab; Resolve, the window's
-  Resolved tab and Reopen; Ctrl+Shift+M from an open editor and Escape back
-  to the control; the page's own thread; edit and delete one's own, and
-  another person's comment offering Copy link only; a reply left unsent
-  back in its field when the popover opens again, and none once emptied;
-  the field as a note's editor: Ctrl+Z undoing its own typing, "[[" and
-  part of a title opening the link
-  picker, Escape closing only the picker, the picked page a chip in the
-  field and its title in the sent comment, "@" and a name picking a person
-  whose chip shows, `$\sqrt{x` showing the live preview while the caret is
-  inside, Enter breaking the line and Shift+Enter sending, the sent comment
-  showing KaTeX; the "/" menu offering the commands that write text and
-  none of New page, Handwritten note, Image and Embed note, Escape closing
-  only the menu, `/h2` and Enter making a heading, a bulleted list
-  continuing on Enter, the Equation block's `$$` with the live preview, the
-  sent comment showing an h2, the list and KaTeX, and the send button a
-  24 px circle with a 12 px arrow on the text's line, titled "Comment
-  (Shift+Enter)" and "Send reply (Shift+Enter)"; the viewer commenting
-  from a read-only row; the visitor reading with "Sign in to comment";
-  `?thread=` opening the thread; a note thread's Copy link in a folder
-  share, opened, showing the thread; a highlight's thread from its menu and
-  its PDF badge; on a phone, a note's thread link on a page with a PDF
-  bringing up the notes with the note under the popover; a mouse selection's
-  popup opening in place within 40px of the release point, its colours, the
-  line and then Comment and Link; Comment making a highlight with its
-  popover and the field focused, the comment sent with Shift+Enter, and the
-  highlight's rects drawn with the 2px line of its colour; a second Comment
-  left with Escape leaving no highlight; the PDF margin at a zoom that
-  leaves room: the two highlights' cards beside the page, the first within
-  30 px of its highlight's top, the two on nearby lines not overlapping,
-  no thread count on the badges; a press on a card making it the active one
-  with its field focused and its highlight drawn stronger, a reply posted
-  from it and the grown card staying level while the one under it moves
-  down; Escape and a press outside making none active, "1 reply" at rest;
-  a press on the highlight in the page activating its card; Resolve taking
-  the card away; the selection popup's Comment opening a card with its
-  field focused and no popover, its comment sent and the card active, one
-  left with Escape leaving no highlight; and at fit-width in a narrower
-  window, no margin, the badge and its popover. `tests/e2e/select.mjs` runs it for `frontend/src/comments/`
-  (with `collab` and `inbox`), the editor and the PDF viewer,
-  `routers/comments.py`, `gamma/inbox.py`, and `gamma/comments.py` with
-  `notes-pdf-share`, `collab` and `transfers` too, since every block
-  writer runs that module's hooks.
-- Browser: the `inbox` group (`tests/e2e/scenarios/inbox.mjs`): an owner
-  and an editor of a shared workspace, and an account outside it invited
-  to a page share. An invitation opening its workspace; a mention typed
-  through the @ menu in a note reaching the bell of a tab with
-  a page open within 3 s (the nudge: the poll is 30 s); the home library,
-  without a socket, catching up on focus; an item of another workspace
-  opening there at its block; an item of this workspace landing on its
-  block with the thread open, in place; the invitee hearing of the share, a
-  mention and a reply and opening the reply through the share; Mark all
-  read; Archive and Move back to the inbox; an item whose page went to
-  Recently deleted settling into Archived; Inbox notifications turned on
-  in Settings ringing a new item once per browser (a stand-in
-  `Notification`). `select.mjs` runs it for `frontend/src/inbox/`,
-  `gamma/inbox.py`, `routers/inbox.py`, `routers/shares.py`, the comments
-  modules, `MentionMenu.jsx` and `SettingsAppearance.jsx`.
+- `backend/tests/test_comments.py`: the writes and their validation, a
+  repeated client id answered as stored, and the permission table row by
+  row. Also the events handed to `after_write`, and the lifecycle: Recently
+  deleted, the purges, a delete orphaning and an undo bringing back, the
+  sweep, `PUT /blocks/{id}/children`, and a share editor's insert reading no
+  other page's threads. The backup merge, the Gamma export round trip and
+  the room's `{t: "comments"}` too. The suite's drift checks run after each
+  test.
+- `backend/tests/test_inbox.py`: every producer and the mention diff (a
+  re-save, a moved name, a half-typed name archived); who is left out (the
+  actor, guests, non-members, an offline copy, a mirror, a link visitor);
+  the share tokens `reach` hands out and the settle updates; the 25 cap.
+  Also the listing, its paging and its settle, the marks, the cleanups and
+  the sweep, the nudge reaching the recipient's sockets only, a users.db
+  error never failing a write, a share whose name cannot be read still
+  telling its invitee, and who has an Inbox.
+- `test_collab.py`: `publish_account`. `test_shares.py`: `added_at` and only
+  new invitees told. `test_workspaces.py`, `test_pending_memberships.py`:
+  the `invited` items. `test_hosted.py`: `/api/inbox/mark` past the
+  read-only gate. `test_migrations.py`: step 40, re-run.
+  `test_restore_consistency.py`: `_fresh_ids`' remap.
+- Frontend node tests: `comments.test.mjs` (folding, ordering, the changes
+  shown before the server answers, who may edit, the snippets and the
+  link, the highlight rules, which comments draw later),
+  `marginLayout.test.mjs` (a page's left edge and the stacking),
+  `inboxText.test.mjs` (sentences, days, jumps, listings, marks, rings),
+  `selectionTip.test.mjs`, `refLists.test.mjs`, `enterKey.test.mjs`
+  (`sendsOnShiftEnter`), `slashCommands.test.mjs` (a comment's commands)
+  and `collabSession.test.mjs` (the `comments` and `inbox` messages).
+- Browser: the `comments` group (`tests/e2e/scenarios/comments.mjs`), with
+  two editors, a viewer and a link visitor without an account. It covers a
+  thread from each control, live replies, resolve, the Comments window, the
+  composer as a note's editor (pickers, math, the "/" menu, Enter and
+  Shift+Enter, the send button), drafts, `?thread=` and Copy link, the
+  selection popup's Comment, and the PDF margin's cards (placement,
+  activation, a reply, Escape, Resolve, no margin at fit-width).
+- Browser: the `inbox` group (`tests/e2e/scenarios/inbox.mjs`): an
+  invitation's jump, a mention's nudge reaching an open page within 3 s and
+  the home library catching up on focus, the jumps in place, into another
+  workspace and through a share, Mark all read, Archive and back, an item
+  settling once its page is in Recently deleted, and a system notification
+  ringing once per browser.
+- `tests/e2e/select.mjs` runs these groups for the comment and inbox
+  modules, frontend and backend. `gamma/comments.py` also runs
+  `notes-pdf-share`, `collab` and `transfers`, since every block writer runs
+  its hooks.

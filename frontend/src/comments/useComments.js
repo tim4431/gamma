@@ -10,6 +10,7 @@
 // answer 404 or 403 (App then offers no comment controls).
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { API, apiJson, makeId } from "../shared/lib/utils";
+import { nowStamp } from "../library/libraryUtils";
 import { keepIfSame, sameMap } from "../shared/lib/keepIfSame.js";
 import { t } from "../shared/i18n/i18n.js";
 import { CLIENT_ID } from "../collaboration/usePageCollab";
@@ -23,8 +24,6 @@ import "./comments.css";
 const NO_THREADS = [];
 const sameList = (a, b) => !!a && a.length === b.length && a.every((x, i) => x === b[i]);
 const json = (method, body) => ({ method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-// The server's stamp shape (db.page_now: microseconds, Z), so the two order alike.
-const nowIso = () => new Date().toISOString().replace("Z", "000Z");
 
 // opts: pageId (the open page, "" for none), enabled (false on the home
 // library), me (the reader's username), onStatus(text), flush() (the page's
@@ -119,7 +118,7 @@ export function useComments({ pageId, enabled, me, onStatus, flush }) {
     const page = pageRef.current;
     if (!page) return false;
     const id = makeId();
-    const at = nowIso();
+    const at = nowStamp();
     const comment = { id, thread_id: threadId || id, author: me || "", body, created_at: at, updated_at: at, deleted: false };
     const p = { comment, blockId, pageId: page };
     pendingRef.current.set(id, p);
@@ -167,7 +166,7 @@ export function useComments({ pageId, enabled, me, onStatus, flush }) {
   }, [set, refresh]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const edit = useCallback((id, body) => write(
-    (list) => editComment(list, id, body, nowIso()),
+    (list) => editComment(list, id, body, nowStamp()),
     () => apiJson(`${API}/comments/${encodeURIComponent(id)}`, json("PATCH", { body, client: CLIENT_ID })),
     (list, out) => {
       const found = out?.comment && findComment(list, id);
@@ -181,7 +180,7 @@ export function useComments({ pageId, enabled, me, onStatus, flush }) {
   ), [write]);
 
   const resolve = useCallback((threadId, resolved) => write(
-    (list) => resolveThread(list, threadId, resolved, me || "", nowIso()),
+    (list) => resolveThread(list, threadId, resolved, me || "", nowStamp()),
     () => apiJson(`${API}/comments/${encodeURIComponent(threadId)}/resolve`, json("POST", { resolved, client: CLIENT_ID })),
     (list, out) => upsertThread(list, out?.thread),
   ), [write, me]);

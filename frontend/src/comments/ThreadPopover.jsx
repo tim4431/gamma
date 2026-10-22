@@ -16,7 +16,7 @@ import { PlusIcon, XIcon } from "../shared/ui/Icons";
 import { t, tn, T } from "../shared/i18n/i18n.js";
 import { touchTyping } from "../shared/lib/pointer.js";
 import { CommentComposer, hasDraft } from "./CommentComposer";
-import { SignInToComment, Thread, useLatestHandler } from "./Thread";
+import { COMMENT_POPUPS, SignInToComment, Thread, useLatestHandler } from "./Thread";
 import { isOpen, laterComments, popoverThreads } from "./comments.js";
 
 const TITLES = {
@@ -84,19 +84,18 @@ export default function ThreadPopover({ target, threads, kind = "note", me, owne
   // A press anywhere else closes it; not one in a menu, a popup or another
   // popover (its own "⋯" menu, a field's [[, @ and "/" menus, its LaTeX
   // preview and completion), nor on its anchor, which toggles.
-  const closeRef = useRef(onClose);
-  closeRef.current = onClose;
+  const close = useLatestHandler(onClose);
   useEffect(() => {
     const down = (e) => {
       const el = e.target;
       if (ref.current?.contains(el)) return;
-      if (el.closest?.("[data-popover], .ctxMenu, .refPopup, .slashMenu, .mathPreviewTip, .latexAcPopup")) return;
+      if (el.closest?.(COMMENT_POPUPS)) return;
       if (target.anchor?.contains(el)) return;
-      closeRef.current(false);
+      close(false);
     };
     document.addEventListener("pointerdown", down, true);
     return () => document.removeEventListener("pointerdown", down, true);
-  }, [target.anchor]);
+  }, [target.anchor, close]);
 
   const escape = () => onClose(true);
   // What every comment field takes besides its own props.

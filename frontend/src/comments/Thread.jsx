@@ -7,7 +7,7 @@
 import React, { startTransition, useCallback, useEffect, useRef, useState } from "react";
 import { ContextMenu, MenuButton, MenuItem } from "../shared/ui/Menus";
 import { CheckIcon, LinkIcon, PencilIcon, RefreshIcon, Trash2Icon } from "../shared/ui/Icons";
-import { PeerAvatar, nameColor } from "../collaboration/Presence";
+import { PersonAvatar } from "../collaboration/Presence";
 import { BlockMarkdown } from "../editor/BlockTree";
 import { fmtDate, t, tn } from "../shared/i18n/i18n.js";
 import { formatRelativeTime } from "../library/libraryUtils";
@@ -56,7 +56,7 @@ function Comment({ comment, me, owner, canComment, people, labelsFor, later, fie
   const openMenu = (e) => setMenu({ x: e.clientX, y: e.clientY });
   return (
     <div className="commentItem rowMenuHost" data-comment-id={comment.id}>
-      <PeerAvatar peer={{ name: comment.author || "?", color: nameColor(comment.author || "?"), anchor: 0 }} title={comment.author} />
+      <PersonAvatar name={comment.author || "?"} title={comment.author} />
       <div className="commentMain">
         <div className="commentMeta">
           <span className="commentAuthor">{comment.author || t("Someone")}</span>
@@ -159,6 +159,12 @@ export function SignInToComment({ onSignIn }) {
     </div>
   );
 }
+
+// The menus and popups a comment surface opens and draws outside itself: a
+// comment's "⋯" menu, a field's [[, @ and "/" menus, its LaTeX preview and
+// completion, another popover. A press in one is no press outside the
+// popover or the margin card.
+export const COMMENT_POPUPS = "[data-popover], .ctxMenu, .refPopup, .slashMenu, .mathPreviewTip, .latexAcPopup";
 
 // A handler that keeps its identity and calls the latest one given: the
 // comments' [[link]] clicks, since BlockMarkdown leaves its handlers out of

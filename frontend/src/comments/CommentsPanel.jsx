@@ -8,7 +8,7 @@ import React, { useState } from "react";
 import { DockWindow } from "../shared/ui/Widgets";
 import { Empty, Segmented } from "../settings/SettingsKit";
 import { CheckIcon, MessageSquareIcon } from "../shared/ui/Icons";
-import { PeerAvatar, nameColor } from "../collaboration/Presence";
+import { PersonAvatar } from "../collaboration/Presence";
 import { t, tn } from "../shared/i18n/i18n.js";
 import { formatRelativeTime } from "../library/libraryUtils";
 import { anchorSnippet, threadsIn } from "./comments.js";
@@ -39,7 +39,7 @@ export default function CommentsPanel({ threads, pageId, anchorText, labelOf, on
               data-thread-id={th.id} onClick={() => onOpen(th)}>
               <span className="commentsPanelAnchor">{anchor}</span>
               <span className="commentsPanelFirst">
-                <PeerAvatar peer={{ name: first?.author || "?", color: nameColor(first?.author || "?"), anchor: 0 }} title={first?.author} />
+                <PersonAvatar name={first?.author || "?"} title={first?.author} />
                 <span className="commentsPanelText">
                   <span className="commentAuthor">{first?.author}</span>{" "}
                   {first?.deleted ? <em>{t("Comment deleted")}</em> : anchorSnippet(first?.body, 140, labelOf)}

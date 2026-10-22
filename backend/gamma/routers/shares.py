@@ -50,6 +50,7 @@ from .. import collab, inbox
 from ..auth import SHARE_AUDIENCES, SHARE_ROLES, ShareScope, note_share_miss, require_ws, share_access, share_lookup
 from ..blocks_store import FOLDERS, TRASH, page_attachment
 from ..db import account_name, account_names, connect_pages_db, connect_users_db, delete_shares, page_now
+from ..logbuf import log
 
 router = APIRouter(prefix="/api", tags=["shares"])
 
@@ -178,7 +179,8 @@ def _invite(conn, token: str, users: list[dict]) -> list[str]:
 def _tell(ws: str, request: Request, target: ShareScope, token: str, invited: list[str]) -> None:
     """A ``shared`` Inbox item for each person just invited, after the
     share's commit, with the token as the way in (gamma/inbox.py; never
-    raises). The snippet is the page's title or the folder's name."""
+    raises). The snippet is the page's title or the folder's name; a name
+    that cannot be read is logged, and the items go out without it."""
     if not invited:
         return
     name = ""
@@ -187,8 +189,9 @@ def _tell(ws: str, request: Request, target: ShareScope, token: str, invited: li
             row = conn.execute("SELECT content FROM unified_blocks WHERE id = ?",
                                (target.page or target.folder,)).fetchone()
         name = (row[0] or "").split("\n", 1)[0] if row else ""
-    except (sqlite3.Error, ValueError):
-        pass
+    except (sqlite3.Error, ValueError) as e:
+        log.warning(f"[shares] the name of shared {target.page or target.folder} in workspace {ws} "
+                    f"could not be read for the Inbox: {e}")
     inbox.emit("shared", invited, request.state.user_id, ws, page_id=target.page, block_id=target.folder,
                snippet=name, via=token)
 

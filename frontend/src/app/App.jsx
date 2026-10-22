@@ -4106,12 +4106,14 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // not a link visitor without one, nor a guest account through a link.
   const commentMe = shareMode ? (shareInfo?.viewerIsGuest ? "" : shareInfo?.viewer || "") : authUser?.user || "";
   const canComment = !!commentMe;
+  // The workspace's owner deletes anyone's comment; not through a share link.
+  const commentOwner = !shareMode && workspace?.role === "owner";
   const comments = useComments({ pageId: focusedBlockId, enabled: !!focusedBlockId, me: commentMe, onStatus: (msg) => setStatus(msg),
     flush: () => collabRef.current?.flush() });
   const commentsRef = useRef(comments);
   commentsRef.current = comments;
   // Where the comment controls show: not on a page host's publication
-  // (comments stay off the share host in v1), nor on a page whose comments
+  // (comments stay off the share host), nor on a page whose comments
   // answer 404 or 403.
   const commentsOn = !publicPage && comments.readable;
   const collab = usePageCollab({
@@ -4150,6 +4152,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // margin opens its card there, its threadId the active card (an open
   // thread's; a resolved one has no card and opens in the popover).
   const pdfMarginRef = useRef(null); // set by PdfViewer: (hlId) => whether its card would show
+  // A highlight's element on the PDF page, where its thread popover hangs.
+  const highlightEl = (id) => document.querySelector(`[data-hl-id="${CSS.escape(id)}"]`);
   function openThread(blockId, anchor = null, { threadId = "", compose = false, toggle = true, pdf = false } = {}) {
     const thread = threadId ? commentsRef.current.threads.find((th) => th.id === threadId) : null;
     const margin = pdf && !(thread && !isOpen(thread)) && !!pdfMarginRef.current?.(blockId);
@@ -4175,7 +4179,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     let frames = 0;
     const open = () => {
       if (freshCommentRef.current?.id !== id) return;
-      const el = document.querySelector(`[data-hl-id="${CSS.escape(id)}"]`);
+      const el = highlightEl(id);
       if (!el && ++frames < 30) { requestAnimationFrame(open); return; }
       openThread(id, el, { compose: true, toggle: false, pdf: true });
     };
@@ -8033,7 +8037,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     threadsByBlock: comments.threadsByBlock,
     target: threadPop?.margin ? threadPop : null,
     me: commentMe,
-    owner: !shareMode && workspace?.role === "owner",
+    owner: commentOwner,
     canComment,
     people,
     labelsFor: (body) => marginFns.current.commentLabels(body),
@@ -11009,7 +11013,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
               commentMargin={commentMargin}
               marginRef={pdfMarginRef}
               onMarginLost={() => setThreadPop((cur) => (cur?.margin
-                ? { ...cur, margin: false, anchor: document.querySelector(`[data-hl-id="${CSS.escape(cur.blockId)}"]`) } : cur))}
+                ? { ...cur, margin: false, anchor: highlightEl(cur.blockId) } : cur))}
               onAreaSelection={(sel) => addChatPicture(regionPicture("area", focusedBlockId, sel.pageNumber,
                 regionBox({ boundingRect: sel.rect, width: sel.width, height: sel.height })))}
               // the selection popup's Comment: a highlight with its thread popover open on it
@@ -11955,8 +11959,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                 // the popover hangs from the highlight on the page
                 const id = highlightMenu.id;
                 setHighlightMenu(null);
-                openThread(id, document.querySelector(`[data-hl-id="${CSS.escape(id)}"]`),
-                  { compose: true, toggle: false, pdf: true });
+                openThread(id, highlightEl(id), { compose: true, toggle: false, pdf: true });
               }}
             >
               {t("Comment")}
@@ -11982,7 +11985,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
             threads={comments.threadsByBlock.get(threadPop.blockId)}
             kind={threadPop.blockId === focusedBlockId ? "page" : isHighlightBlock(treeById.get(threadPop.blockId)) ? "highlight" : "note"}
             me={commentMe}
-            owner={!shareMode && workspace?.role === "owner"}
+            owner={commentOwner}
             canComment={canComment}
             people={people}
             labelsFor={commentLabels}

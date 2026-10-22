@@ -32,7 +32,6 @@ from .blocks_store import new_block_id
 from .db import account_names, connect_pages_db, connect_users_db, format_stamp, page_now
 from .logbuf import log
 
-KINDS = ("mention", "comment_mention", "reply", "resolved", "shared", "invited")
 FILTERS = ("unread", "all", "archived")
 MAX_RECIPIENTS = 25        # accounts one event notifies at most
 REACH_CANDIDATES = 4 * MAX_RECIPIENTS  # accounts ``reach`` checks for one event, to fill those 25
@@ -428,13 +427,19 @@ def _entitled(ws: str, user_id: str, items: list) -> set[str]:
                 ways[key] = user_id in reach(ws, page_id, [user_id], token or "")
             ok = ways[key]
         elif kind == "shared":  # a folder share: the share still letting the account in
-            share = share_lookup(token) if token else None
-            ok = bool(share and share["folder"] == block_id and share_access(share, user_id, False)[0])
+            ok = _folder_share_admits(token, block_id, user_id)
         else:
             ok = False
         if ok:
             out.add(item_id)
     return out
+
+
+def _folder_share_admits(token: str, folder: str, user_id: str) -> bool:
+    """Whether a folder share's item still leads in: its share (``token``)
+    exists, is the share of ``folder`` and admits the account."""
+    share = share_lookup(token) if token else None
+    return bool(share and share["folder"] == folder and share_access(share, user_id, False)[0])
 
 
 def _target(row) -> str:
@@ -528,9 +533,7 @@ def _check(ws: str, user_id: str, items: list) -> tuple[list[str], dict[str, str
             # a ``shared`` item tells of its own share: another share is no way in to it
             lost = now is None or (kind == "shared" and bool(token) and now not in ("", token))
         elif kind == "shared":  # a folder share: the folder, and the share still letting the account in
-            share = share_lookup(token) if token else None
-            lost = not member and not (share and share["folder"] == block_id
-                                       and share_access(share, user_id, False)[0])
+            lost = not member and not _folder_share_admits(token, block_id, user_id)
         else:
             lost = not member
         if kind == "mention" and block_id in texts and name not in mentions.people_in(texts[block_id] or ""):

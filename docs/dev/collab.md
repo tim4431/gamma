@@ -426,10 +426,7 @@ thread and a no-op when the account has no socket open. The Inbox uses it
 for its content-free nudge, `{t: "inbox"}` ([comments.md](comments.md)
 "Live delivery"); the tab then asks `/api/inbox` itself, so a socket
 admitted to one page learns nothing about another. A tab with no page open
-(the home library, Settings) has no socket and polls instead. An account
-socket of its own, `WS /api/ws/account`, is reserved for later: an
-`_accounts` registry beside `_rooms`, its sockets closed from logout and
-from `workspaces.delete_account`, so the home library hears the nudge too.
+(the home library, Settings) has no socket and polls instead.
 
 A peer is `{client, user, name, color, can_edit, block, anchor, head}` —
 `user` the account's username, which the handshake reads with the session;
@@ -875,6 +872,11 @@ state in App instead of the tree.
   uvicorn needs the `websockets` package (`requirements.txt`; the desktop
   freeze collects it).
 - Rooms are per process: a multi-worker deployment would need a shared bus.
+- A tab with no page open has no socket, so the Inbox polls there
+  ([comments.md](comments.md) "Live delivery"). An account socket of its
+  own (`WS /api/ws/account`: an `_accounts` registry beside `_rooms`, its
+  sockets closed from logout and from `workspaces.delete_account`) would
+  let the home library hear the nudge too.
 - Presence carries only the block and caret; it could also carry the PDF
   viewport (which page someone is reading).
 - The op log has `actor` and `at` per batch but nothing reads them yet: an

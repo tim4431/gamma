@@ -50,7 +50,7 @@ same menu without "Remind" rows (the reminder scan reads notes only) or
 "Invite…" ([comments.md](comments.md) "The composer"). The rows come from
 `mentionRows` in `mentions.js`. The popup is `MentionMenuPopup` in
 `editor/MentionMenu.jsx`: the `[[` picker's surface, rows and footer, with a
-person's `PeerAvatar` in the icon column.
+person's `PersonAvatar` in the icon column.
 
 - **Opening.** An `@` typed at a word start opens the menu
   (`mentionTrigger`). While the menu is open its query may hold spaces, so

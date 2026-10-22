@@ -56,9 +56,10 @@ def threads_for(conn, page_ids, *, state: str | None = None) -> list[dict]:
     out; a tombstone (a root deleted while it has replies) comes with
     ``deleted`` true and no body. People are named by username:
     ``author`` falls back to the name stored with the comment once the
-    account is gone, ``resolved_by`` to "". The only reader: the API, and
-    later the exports and the AI. The caller decides which pages are
-    readable (a page in Recently deleted is no page of the library)."""
+    account is gone, ``resolved_by`` to "". The API is its one caller (the
+    other readers leave comments out: docs/dev/comments.md "Not built"). The
+    caller decides which pages are readable (a page in Recently deleted is
+    no page of the library)."""
     if state not in (None, *STATES):
         raise HTTPException(status_code=400, detail="state must be open, resolved or all")
     pages = sorted(set(page_ids))
@@ -375,12 +376,11 @@ def rows_of_pages(conn, page_ids) -> list[tuple]:
     pages = sorted(set(page_ids))
     if not pages:
         return []
-    rows = conn.execute(
+    return conn.execute(
         f"SELECT {_ROW.replace('c.page_id', 'b.page_id')} FROM comments c "
         "JOIN unified_blocks b ON b.id = c.block_id "
         "WHERE b.page_id IN (SELECT value FROM json_each(?)) AND c.orphaned_at IS NULL "
         "ORDER BY c.id != c.thread_id, c.created_at, c.id", (json.dumps(pages),)).fetchall()
-    return rows
 
 
 def copy_rows(dst, rows, *, blocks: dict | None = None) -> int:

@@ -8,7 +8,7 @@
 import React from "react";
 import { Empty, Segmented } from "../settings/SettingsKit";
 import { ArchiveIcon, ArchiveRestoreIcon, BellIcon, CheckIcon, MailIcon } from "../shared/ui/Icons";
-import { PeerAvatar, nameColor } from "../collaboration/Presence";
+import { PersonAvatar } from "../collaboration/Presence";
 import { t } from "../shared/i18n/i18n.js";
 import { formatRelativeTime } from "../library/libraryUtils";
 import { inboxDays, inboxSentence, inboxSnippet, isUnread } from "./inboxText.js";
@@ -29,7 +29,7 @@ function InboxRow({ item, inbox, workspaceId, now, onOpen }) {
   const archiveLabel = item.archived_at ? t("Move back to the inbox") : t("Archive this item");
   return (
     <div className={`inboxRow${unread ? " unread" : ""}`} data-inbox-id={item.id} data-kind={item.kind}>
-      <PeerAvatar peer={{ name: actor, color: nameColor(actor), anchor: 0 }} title={item.actor || undefined} />
+      <PersonAvatar name={actor} title={item.actor || undefined} />
       <button type="button" className="inboxMain" onClick={() => onOpen(item)} title={sentence}>
         <span className="inboxSentence">{sentence}</span>
         {snippet ? <span className="inboxSnippet">{snippet}</span> : null}

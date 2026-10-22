@@ -10,7 +10,7 @@
 import React, { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { t } from "../shared/i18n/i18n.js";
 import { CommentComposer } from "./CommentComposer";
-import { SignInToComment, Thread, useLatestHandler } from "./Thread";
+import { COMMENT_POPUPS, SignInToComment, Thread, useLatestHandler } from "./Thread";
 import { isOpen, laterComments } from "./comments.js";
 import { CARD_GAP, CARD_W, COLUMN_GAP, stackCards } from "./marginLayout.js";
 import { MarginStackContext } from "./marginSlot";
@@ -18,9 +18,8 @@ import { MarginStackContext } from "./marginSlot";
 // What a card measures before it is drawn (a collapsed card of two lines).
 const CARD_H = 72;
 // A press in one of these is not a press outside the active card: another
-// card, a menu or popup the card opened (its "⋯", a field's [[, @ and "/"
-// menus, its LaTeX preview and completion), the popover.
-const INSIDE = "[data-comment-margin], [data-popover], .ctxMenu, .refPopup, .slashMenu, .mathPreviewTip, .latexAcPopup";
+// card, or a menu or popup the card opened.
+const INSIDE = `[data-comment-margin], ${COMMENT_POPUPS}`;
 const NO_STACK = () => () => {};
 
 // The key of the card that is active: the new comment's, else the thread

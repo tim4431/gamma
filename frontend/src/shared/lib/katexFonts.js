@@ -18,7 +18,7 @@ const FACES = [
 let loading = null;
 
 // The faces' loads, started once; a face that fails is left for the first
-// formula that needs it to fetch, as before.
+// formula that needs it to fetch.
 export function warmKatexFonts() {
   if (loading || typeof document === "undefined" || !document.fonts?.load) return loading;
   loading = Promise.all(FACES.map((face) => document.fonts.load(face).catch(() => null)));

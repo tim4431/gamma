@@ -9,7 +9,6 @@
 // thread's root has `thread_id === id`; `author` is a username.
 import { plainSnippet } from "../search/snippets.js";
 
-export const COMMENT_STATES = ["open", "resolved"];
 export const MAX_COMMENT = 20000; // characters, as the server (comments.MAX_BODY)
 
 export const isOpen = (thread) => !thread.resolved_at;
@@ -203,11 +202,12 @@ export const canDeleteComment = (comment, me, owner = false) => !comment.deleted
 // A comment whose text was changed after it was written.
 export const isEdited = (comment) => !comment.deleted && !!comment.updated_at && comment.updated_at !== comment.created_at;
 
-// What a thread is on, in the Comments window: the anchor's words as one
-// line of at most `max` characters ("" for a block the page no longer
-// shows, or one without text). `labelOf(id)`: a [[link]]'s label as
-// editor/refLabels.js gives it ({content}), so the line names the page
-// rather than its id; a link it does not know stays as written.
+// A text as one line of at most `max` characters: in the Comments window,
+// what a thread is on ("" for a block the page no longer shows, or one
+// without text) and its first comment; the Inbox's snippets too.
+// `labelOf(id)`: a [[link]]'s label as editor/refLabels.js gives it
+// ({content}), so the line names the page rather than its id; a link it
+// does not know stays as written.
 export function anchorSnippet(text, max = 80, labelOf = null) {
   let src = String(text || "");
   if (labelOf) {
