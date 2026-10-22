@@ -468,6 +468,16 @@ and the ones running finish. The wall time is bounded by the longest group
 (settings and the first-run guide, about a minute each), so split one of
 those before adding workers.
 
+A group that throws outside its steps (its own setup: accounts, seeded
+pages) runs none of them. The summary counts it as a failure,
+`<group> (group aborted)`, and prints the error with its cause. The suite's
+`fetch` (the harness's and the scenarios') sends a request again when it
+went down a keep-alive connection the backend had already closed: `server.manage()`
+runs manage.py synchronously, and a few calls in a row can block Node past
+uvicorn's 5 s idle timeout, so the next request finds its socket closed
+(`fetch failed`, "other side closed", on Linux). The inbox group aborted that
+way in CI, uncounted, before both were fixed.
+
 `--changed [ref]` picks the groups from what changed: the working tree
 (staged, unstaged, untracked) against `HEAD`, or everything since the branch
 left `ref`. `RULES` in `select.mjs` maps each source path (first matching
