@@ -1,7 +1,8 @@
 // node --test tests/  (from frontend/) — the draw-and-hold recogniser over
 // tests/shared/inkshapes.json, the hold's size gate, the polyline a shape
-// commits as, the refit under a continued hold, and the iPad host's hold
-// rules over tests/shared/inkhold.json (the Swift side runs the same cases).
+// commits as (its `samples`, which the server's copy in gamma/ink.py runs
+// too), the refit under a continued hold, and the iPad host's hold rules
+// over tests/shared/inkhold.json (the Swift side runs the same cases).
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
@@ -165,6 +166,14 @@ test("shapeSamples: a line is two samples; an arrow runs tail → tip → barb �
   assert.equal(triangle.filter((s) => s.x === 20 && s.y === 30).length, 1);
   assert.deepEqual(shapeSamples("curve", {}, {}), []);
 });
+
+// inkshapes.json `samples`: the samples a shape record is drawn as, which
+// the server's copy (gamma/ink.py shape_samples) gives for the same params.
+for (const c of FIX.samples) {
+  test(`shapeSamples, as the server's shape_samples: ${c.note}`, () => {
+    assert.deepEqual(shapeSamples(c.kind, c.params, {}).map((s) => [s.x + 0, s.y + 0]), c.pts);
+  });
+}
 
 test("refitShape: a line or arrow takes the pointer as its end, Shift snapping the direction to 15°", () => {
   assert.deepEqual(refitShape("line", { x1: 0, y1: 0, x2: 100, y2: 0 }, { pointer: { x: 50, y: 50 }, from: { x: 100, y: 0 } }),

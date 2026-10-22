@@ -41,8 +41,11 @@ app ([ipad.md](ipad.md)). Typed text on a page is
   and the Shapes tool's drags (`inkshapes.json`, `inkscribble.json`) run
   in the node tests only, since the server never recognises; the Python
   side checks those fixtures' shape and that every stored `shape` record
-  parses. `inkhold.json`, the hold's stillness and refit rule, runs in the
-  node tests and the iPad app's XCTest.
+  parses. The samples a shape record is drawn as (`inkshapes.json`
+  `samples`) and the sample counts of the drags run on both sides
+  (`shapes.js` `shapeSamples`, `ink.py` `shape_samples`). `inkhold.json`,
+  the hold's stillness and refit rule, runs in the node tests and the
+  iPad app's XCTest.
 - e2e: `tests/e2e/scenarios/ink.mjs` (the draft journal's restore too),
   `inkEditing.mjs`, `inkShapes.mjs` (group `ink-shapes`: the Shapes tool,
   the ruler, the calligraphy pen, shape handles and fills), `inkZoom.mjs`
@@ -1554,10 +1557,14 @@ reach.
       (`rx ≥ ry`, `angle` in [0°, 180°)). Else it is null.
   - `shapeSamples(kind, params, {span, p}) → [{x, y, p, t}]`: the dense
     polyline a shape commits as: a line two samples; an arrow tail → tip
-    → barb → tip → barb; a triangle, rectangle or polygon its corners with
-    a sample every 2 pt along each side, closed (the last sample is the
-    first again); a circle or ellipse at least 48 samples, closed; `t`
-    spread evenly from 0 to `span` (ms), `p` constant.
+    → barb → tip → barb, each leg cut into equal steps of at most 2 pt; a
+    triangle, rectangle or polygon its corners, each side cut alike,
+    closed (the last sample is the first again); a circle or ellipse
+    max(48, ⌈perimeter / 2⌉) samples even in angle (Ramanujan's
+    perimeter), closed; x and y on the 1/100 grid, `t` spread evenly from
+    0 to `span` (ms), `p` constant. `gamma/ink.py` `shape_samples` gives
+    the same x and y (the fixture's `samples`), so a server writer of
+    shape records bakes the samples a handle drag would write.
   - `refitShape(kind, params, {pointer, from, shift}) → params`: the
     shape under a continued hold, computed from the **snap's** params
     every time (never from an already-refit set), `pointer` the tip now
@@ -3259,6 +3266,20 @@ reach.
     the client's `serializeInk`, so the same strokes dedup to one upload.
     `encode_points` rounds with `js_round`, `Math.round`'s twin. `merge_ink`
     returns the file, `clean`, `lost_ours` and `returned`.
+  - `shape_samples(kind, params, limit?)`: the samples a shape record is
+    drawn as, `shapes.js` `shapeSamples` step for step (its `densify` at
+    2 pt, `arrowPolyline` and round branch, `js_round` for `Math.round`,
+    and `_js_hypot` for `Math.hypot` as V8 and JavaScriptCore compute it,
+    since a side's sample count turns on the last bit of its length;
+    `tests/shared/inkshapes.json` `samples` holds both sides to the same
+    cases). A server writer of shape records (the Notability import)
+    bakes `pts` with it. Sin and cos are the platform's, and maths
+    libraries round their last bit differently (the Windows CRT and V8
+    disagree on about 2.5 % of sines and cosines, sin(45°) among them), so
+    a turned rectangle, polygon or ellipse can come out a sample 0.01 pt
+    off, or a side whose length is a whole number of steps with one sample
+    more or fewer (on Windows, 157 of 40,000 random shapes, 149 of them
+    turned ±45°); the fixture's cases keep clear of that last bit.
   - `stroke_width` (`size × w`, else `size`: no law), `stroke_opacity`
     (`opacity × o`, else `opacity`) and `stroke_polyline` (variable-width
     polylines every renderer draws from, band 0 first).
@@ -3438,7 +3459,8 @@ reach.
   `ink.group_files`, the client's rule (`GROUP_SPLIT_BYTES`, `MAX_STROKES`,
   `MAX_SAMPLES`), stroke ids `n0`, `n1`, … in each file as `from_pdf_ink`
   numbers them, so the same note makes the same files. Shapes keep their
-  `shape` records, and a sticky note is a filled `rect` in band 0.
+  `shape` records, sampled as `shapes.js` draws their params
+  (`ink.shape_samples`), and a sticky note is a filled `rect` in band 0.
 - `gamma/ink_view.py`: the picture the chat sees of a group (`view_ink`,
   and an attached handwriting block), drawn where it was written. A sheet
   goes through `notebook_pdf`, a PDF page through

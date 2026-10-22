@@ -27,7 +27,7 @@ from .text_box import LINE, MAX_SIZE, MIN_SIZE, PAD, escape_markdown, keep_on_su
 INSET = 20 / 768                 # the paper's left edge is at x = −W × INSET
 LETTER_PT, A4_PT = 612, 595.28   # a paper page's width in points
 TOLERANCE = 0.05                 # pt: the flattened polyline stays this close to the curve
-STEP_PT = 1.0                    # pt: the most two consecutive samples lie apart
+STEP_PT = 1.0                    # pt: the most two consecutive samples of a curve lie apart
 MAX_PIECES = 1024                # pieces per Bézier segment
 DECIMATE_PT = 0.1                # finishStroke.js DECIMATE_PT
 MAX_STROKE_SAMPLES = 50_000
@@ -37,8 +37,6 @@ CREAM = "#fbf7ec"                # the paper menu's cream (notebook.js PAPER_COL
 GRID_PT = 18                     # a legacy small grid's spacing
 TEXT_COLOR = "#1f1f1f"
 MATH_SIZE = 12
-ELLIPSE_MIN = 48                 # shapes.js: a round shape's sample floor
-ARROW_HEAD_MAX = 24              # shapes.js arrowPolyline: the head is min(length / 4, 24)
 SQUARE = math.sin(math.radians(90 * 0.02))  # |cos| of a corner within 2 % of a right angle
 SIDES = 0.02                     # opposite sides within 2 %
 _ALTITUDE_UNKNOWN = math.pi / 2  # the app's fill for "no tilt", and (1, 0) for the azimuth
@@ -488,21 +486,16 @@ def curve_stroke(curve: Curve, frame: Frame) -> dict | None:
 
 
 # --- shapes -------------------------------------------------------------------------------
-
-def _r2(value: float) -> float:
-    """Hundredths, halves up, as the client's ``round2`` (Math.round) rounds."""
-    return math.floor(value * 100 + 0.5) / 100
-
-
-def _js_round(value: float) -> int:
-    return math.floor(value + 0.5)
-
+# A shape with a record is drawn as shapes.js draws its params
+# (``ink.shape_samples``): the stroke keeps those samples until an editor
+# writes them again from the params after a handle drag. A plain outline
+# takes the same step.
 
 def normalise_rect(cx, cy, w, h, angle) -> dict:
     """shapes.js ``normaliseRect``: the angle into [−45, 45), w and h
     swapped on an odd quarter turn, so the side along the angle stays w."""
-    a = (_r2(angle) + 45) % 90 - 45
-    if _js_round((angle - a) / 90) % 2:
+    a = (inkmod.round2(angle) + 45) % 90 - 45
+    if inkmod.js_round((angle - a) / 90) % 2:
         w, h = h, w
     return {"cx": cx, "cy": cy, "w": w, "h": h, "angle": 0 if abs(a) < 1e-9 else a}
 
@@ -511,67 +504,25 @@ def normalise_ellipse(cx, cy, rx, ry, angle) -> dict:
     """shapes.js ``normaliseEllipse``: rx ≥ ry, the angle in [0, 180)."""
     if rx < ry:
         rx, ry, angle = ry, rx, angle + 90
-    return {"cx": cx, "cy": cy, "rx": rx, "ry": ry, "angle": _r2(angle) % 180}
+    return {"cx": cx, "cy": cy, "rx": rx, "ry": ry, "angle": inkmod.round2(angle) % 180}
 
 
 def _rounded(params: dict) -> dict:
-    return {key: _r2(value) for key, value in params.items()}
+    return {key: inkmod.round2(value) for key, value in params.items()}
 
 
-def _densify(pts: list, closed: bool, step: float = STEP_PT) -> list[tuple]:
-    """shapes.js ``densify``: a sample at each corner and one every
-    ``step`` along each side, the first corner again at the end when
-    ``closed``; [] when that is more than MAX_STROKE_SAMPLES samples,
-    counted before one is made."""
-    out = []
-    m = len(pts) if closed else len(pts) - 1
-    sides = [(pts[i], pts[(i + 1) % len(pts)]) for i in range(m)]
-    counts = [max(1, math.ceil(math.dist(a, b) / step)) for a, b in sides]
-    if sum(counts) + 1 > MAX_STROKE_SAMPLES:
-        return []
-    for (a, b), n in zip(sides, counts):
-        out += [(a[0] + (b[0] - a[0]) * j / n, a[1] + (b[1] - a[1]) * j / n) for j in range(n)]
-    out.append(pts[0] if closed else pts[-1])
-    return out
-
-
-def _rect_corners(p: dict) -> list[tuple]:
-    rad = math.radians(p["angle"])
-    c, s, hw, hh = math.cos(rad), math.sin(rad), p["w"] / 2, p["h"] / 2
-    return [(p["cx"] + u * c - v * s, p["cy"] + u * s + v * c) for u, v in ((-hw, -hh), (hw, -hh), (hw, hh), (-hw, hh))]
-
-
-def _barbs(tip, back, head: float) -> list[tuple]:
-    """``tip → barb → tip → barb``: the arrowhead's two barbs at ±30° from
-    the unit vector ``back`` (pointing back along the shaft), as
-    shapes.js ``arrowPolyline`` draws them."""
-    out = []
-    for sign in (1, -1):
-        a = math.radians(sign * 30)
-        c, s = math.cos(a), math.sin(a)
-        out += [(tip[0] + head * (back[0] * c - back[1] * s), tip[1] + head * (back[0] * s + back[1] * c)), tip]
-    return out[:-1]
-
-
-def _arrow_polyline(p: dict) -> list[tuple]:
-    tail, tip = (p["x1"], p["y1"]), (p["x2"], p["y2"])
-    length = math.dist(tail, tip) or 1
-    back = ((tail[0] - tip[0]) / length, (tail[1] - tip[1]) / length)
-    return [tail, tip, *_barbs(tip, back, min(length / 4, ARROW_HEAD_MAX))]
-
-
-def _ellipse_points(centre, u, v) -> list[tuple]:
-    """The ellipse ``centre + u cos t + v sin t`` (u, v its half-axes as
-    vectors, which also draws the ellipse inscribed in a skewed rectangle),
-    max(ELLIPSE_MIN, perimeter ÷ STEP_PT) points, closed; [] past
-    MAX_STROKE_SAMPLES. The perimeter is Ramanujan's, as ``shapeSamples``
-    takes it."""
+def _ellipse_points(centre, u, v) -> list[tuple] | None:
+    """A plain ellipse, ``centre + u cos t + v sin t`` (u, v its half-axes
+    as vectors, which also draws the ellipse inscribed in a skewed
+    rectangle), as many points as ``shape_samples`` gives an ellipse:
+    max(SHAPE_ROUND_MIN, Ramanujan's perimeter ÷ SHAPE_STEP), even in t,
+    closed. None past MAX_STROKE_SAMPLES, counted before one is made."""
     rx, ry = math.hypot(*u), math.hypot(*v)
     h = ((rx - ry) / (rx + ry)) ** 2 if rx + ry else 0
     perimeter = math.pi * (rx + ry) * (1 + 3 * h / (10 + math.sqrt(4 - 3 * h)))
-    n = max(ELLIPSE_MIN, math.ceil(perimeter / STEP_PT))
+    n = max(inkmod.SHAPE_ROUND_MIN, math.ceil(perimeter / inkmod.SHAPE_STEP))
     if n + 1 > MAX_STROKE_SAMPLES:
-        return []
+        return None
     return [(centre[0] + u[0] * math.cos(t) + v[0] * math.sin(t), centre[1] + u[1] * math.cos(t) + v[1] * math.sin(t))
             for t in (2 * math.pi * (i % n) / n for i in range(n + 1))]
 
@@ -593,15 +544,20 @@ def _square_corners(pts: list, equal_sides: bool) -> bool:
 
 
 def shape_stroke(shape: Shape, frame: Frame, left_out: Counter | None = None) -> dict | None:
-    """One shape as an even stroke dict without an ``id``: its outline
-    sampled every STEP_PT, and, for a line, an arrow, a rectangle, a
-    triangle or an ellipse, the ``shape`` record the client's recogniser
-    would write for it (params in page points, rounded to hundredths,
-    normalised as shapes.js does), so a handle drag rebuilds the same
-    shape. A curved line, a polygon, a rectangle or ellipse whose corners
-    are not square, and every shape from an ink group are plain strokes; a
-    fill only a record can carry is dropped (counted in ``left_out``). None
-    when its outline takes more than MAX_STROKE_SAMPLES samples."""
+    """One shape as an even stroke dict without an ``id``. A line, an
+    arrow, a rectangle, a triangle or an ellipse gets the ``shape`` record
+    the client's recogniser would write for it (params in page points,
+    rounded to hundredths, normalised as shapes.js does) and the samples
+    shapes.js draws those params as (``ink.shape_samples``), so a handle
+    drag rebuilds the stroke it is. A curved line, a polygon, a rectangle or
+    ellipse whose corners are not square, and every shape from an ink group
+    are plain strokes of their outline: a straight line as one with a
+    record is drawn, a polygon's corners with a sample at most SHAPE_STEP
+    apart (``ink.densify``), an ellipse as many samples as a record's
+    (``_ellipse_points``), a curved line flattened as a curve is, its head
+    as an arrow's. A fill only a record can carry is dropped (counted in
+    ``left_out``). None when its outline takes more than MAX_STROKE_SAMPLES
+    samples."""
     r, g, b, alpha = shape.rgba
     if alpha <= 0:
         return None
@@ -614,65 +570,51 @@ def shape_stroke(shape: Shape, frame: Frame, left_out: Counter | None = None) ->
         stroke["tool"] = "highlighter"
     if shape.dash:
         stroke["dash"] = shape.dash
-    record = None
+    record = None  # (kind, params), drawn by shape_samples
     kind, plain = shape.kind, shape.grouped
-    if kind == "line":
+    if kind == "line" and shape.control is not None:
         p0, p1 = pts
-        if shape.control is not None:
-            q = (A * shape.control[0] + E, D * shape.control[1] + F)
-            c1 = (p0[0] + 2 / 3 * (q[0] - p0[0]), p0[1] + 2 / 3 * (q[1] - p0[1]))
-            c2 = (p1[0] + 2 / 3 * (q[0] - p1[0]), p1[1] + 2 / 3 * (q[1] - p1[1]))
-            samples = [p0] + [(x, y) for x, y, _t in _cubic(p0, c1, c2, p1)]
-            if shape.arrow:
-                back = (q[0] - p1[0], q[1] - p1[1])
-                length = math.hypot(*back) or 1
-                head = min(math.dist(p0, p1) / 4, ARROW_HEAD_MAX)
-                samples = samples + _densify([p1, *_barbs(p1, (back[0] / length, back[1] / length), head)],
-                                             False)[1:]
-        else:
-            params = _rounded({"x1": p0[0], "y1": p0[1], "x2": p1[0], "y2": p1[1]})
-            if shape.arrow:
-                samples = _densify(_arrow_polyline(params), False)
-            else:
-                samples = _densify([(params["x1"], params["y1"]), (params["x2"], params["y2"])], False)
-            if not plain:
-                record = {"kind": "arrow" if shape.arrow else "line", "params": params}
+        q = (A * shape.control[0] + E, D * shape.control[1] + F)
+        c1 = (p0[0] + 2 / 3 * (q[0] - p0[0]), p0[1] + 2 / 3 * (q[1] - p0[1]))
+        c2 = (p1[0] + 2 / 3 * (q[0] - p1[0]), p1[1] + 2 / 3 * (q[1] - p1[1]))
+        samples = [p0] + [(x, y) for x, y, _t in _cubic(p0, c1, c2, p1)]
+        if shape.arrow:
+            back = (q[0] - p1[0], q[1] - p1[1])
+            length = math.hypot(*back) or 1
+            head = min(math.dist(p0, p1) / 4, inkmod.ARROW_HEAD_MAX)
+            samples += inkmod.densify([p1, *inkmod.arrow_barbs(p1, (back[0] / length, back[1] / length), head)],
+                                      False)[1:]
+    elif kind == "line":
+        p0, p1 = pts
+        record = ("arrow" if shape.arrow else "line", _rounded({"x1": p0[0], "y1": p0[1], "x2": p1[0], "y2": p1[1]}))
     elif kind in ("circle", "ellipse"):
         c0, c1, c2, c3 = pts
         centre = ((c0[0] + c1[0] + c2[0] + c3[0]) / 4, (c0[1] + c1[1] + c2[1] + c3[1]) / 4)
         if not plain and _square_corners(pts, False):
-            params = _rounded(normalise_ellipse(centre[0], centre[1], math.dist(c0, c1) / 2, math.dist(c1, c2) / 2,
-                                                math.degrees(math.atan2(c1[1] - c0[1], c1[0] - c0[0]))))
-            rad = math.radians(params["angle"])
-            u = (params["rx"] * math.cos(rad), params["rx"] * math.sin(rad))
-            v = (-params["ry"] * math.sin(rad), params["ry"] * math.cos(rad))
-            samples = _ellipse_points((params["cx"], params["cy"]), u, v)
-            record = {"kind": "ellipse", "params": params}
+            record = ("ellipse", _rounded(normalise_ellipse(centre[0], centre[1], math.dist(c0, c1) / 2,
+                                                            math.dist(c1, c2) / 2,
+                                                            math.degrees(math.atan2(c1[1] - c0[1], c1[0] - c0[0])))))
         else:
-            u = ((c1[0] - c0[0]) / 2, (c1[1] - c0[1]) / 2)
-            v = ((c3[0] - c0[0]) / 2, (c3[1] - c0[1]) / 2)
-            samples = _ellipse_points(centre, u, v)
+            samples = _ellipse_points(centre, ((c1[0] - c0[0]) / 2, (c1[1] - c0[1]) / 2),
+                                      ((c3[0] - c0[0]) / 2, (c3[1] - c0[1]) / 2))
     elif kind in ("rectangle", "square") and not plain and _square_corners(pts, True):
         c0, c1, c2, _c3 = pts
-        params = _rounded(normalise_rect(sum(p[0] for p in pts) / 4, sum(p[1] for p in pts) / 4,
-                                         math.dist(c0, c1), math.dist(c1, c2),
-                                         math.degrees(math.atan2(c1[1] - c0[1], c1[0] - c0[0]))))
-        samples = _densify(_rect_corners(params), True)
-        record = {"kind": "rect", "params": params}
+        record = ("rect", _rounded(normalise_rect(sum(p[0] for p in pts) / 4, sum(p[1] for p in pts) / 4,
+                                                  math.dist(c0, c1), math.dist(c1, c2),
+                                                  math.degrees(math.atan2(c1[1] - c0[1], c1[0] - c0[0])))))
     elif kind == "triangle" and not plain and len(pts) == 3:
-        params = _rounded({"x1": pts[0][0], "y1": pts[0][1], "x2": pts[1][0], "y2": pts[1][1],
-                           "x3": pts[2][0], "y3": pts[2][1]})
-        samples = _densify([(params["x1"], params["y1"]), (params["x2"], params["y2"]), (params["x3"], params["y3"])],
-                           True)
-        record = {"kind": "triangle", "params": params}
+        record = ("triangle", _rounded({"x1": pts[0][0], "y1": pts[0][1], "x2": pts[1][0], "y2": pts[1][1],
+                                        "x3": pts[2][0], "y3": pts[2][1]}))
     else:
-        samples = _densify(pts, len(pts) > 2) if len(pts) > 1 else pts
+        samples = inkmod.densify(pts, len(pts) > 2, MAX_STROKE_SAMPLES) if len(pts) > 1 else pts
+    if record is not None:
+        samples = inkmod.shape_samples(*record, MAX_STROKE_SAMPLES)
+        if not plain:  # a straight line from an ink group is drawn as one, without a record
+            stroke["shape"] = {"kind": record[0], "params": record[1]}
     if not samples:
         return None
-    if record is not None:
-        stroke["shape"] = record
     if shape.fill is not None and shape.fill[3] > 0:
-        if record is not None and record["kind"] in ("rect", "triangle", "ellipse"):
+        if stroke.get("shape", {}).get("kind") in ("rect", "triangle", "ellipse"):
             stroke["fill"] = {"color": _hex(shape.fill), "opacity": max(0.001, round(shape.fill[3], 3))}
         elif left_out is not None:
             left_out["polygon fill"] += 1
@@ -692,7 +634,7 @@ def sticky_stroke(media: Media, frame: Frame) -> dict | None:
     params = _rounded(normalise_rect((media.x + media.w / 2 - frame.ox) * k, (media.y + media.h / 2 - frame.oy) * k,
                                      media.w * k, media.h * k, math.degrees(media.rotation)))
     color = _hex(media.background or (1, 1, 1, 1))
-    samples = _densify(_rect_corners(params), True)
+    samples = inkmod.shape_samples("rect", params, MAX_STROKE_SAMPLES)
     if not samples:
         return None
     return _checked({"pen": False, "band": 0, "color": color, "size": STICKY_EDGE,

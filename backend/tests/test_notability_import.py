@@ -8,6 +8,7 @@ import io
 import json
 import math
 import tempfile
+import threading
 import zipfile
 
 import pytest
@@ -16,6 +17,7 @@ from fastapi import HTTPException
 import notability_fixtures as fx
 from conftest import account_of, folder_names, login, make_folder, make_user, workspace_of
 from gamma import import_zip, jobs, notability as nb, notability_import as ni, storage
+from gamma.blocks_store import folder_paths, pages_in_folder
 from gamma.db import connect_pages_db, ws_uploads_dir
 
 PDF = "5F0C2C77-1D3B-4E7B-9A55-2B4B0E1C0D01.pdf"
@@ -315,6 +317,103 @@ def test_folders_from_the_zip_and_from_the_subject(accounts):
     assert [folder_names(owner)[f] for f in props["folders"]] == [["Chemistry"]]
 
 
+def imported_at_once(monkeypatch, ws: str, uploads: dict) -> dict:
+    """``{name: report}`` of the uploads ``{name: .note bytes}`` imported
+    into ``ws`` at once, a thread each: every import reads the library and
+    stores its files, then waits for the others before it writes
+    (``_Import._write``), so none has written when another looks."""
+    real = ni._Import._write
+    together = threading.Barrier(len(uploads), timeout=30)
+
+    def gated(self, *args, **kwargs):
+        together.wait()
+        return real(self, *args, **kwargs)
+
+    monkeypatch.setattr(ni._Import, "_write", gated)
+    reports, errors = {}, []
+
+    def run(name, data):
+        try:
+            with connect_pages_db(ws) as conn:
+                reports[name] = ni.import_notes(ws, io.BytesIO(data), conn, name=f"{name}.note", actor="nbi")
+        except BaseException as exc:  # noqa: BLE001 — failed below, with the others let go
+            errors.append(exc)
+            together.abort()
+
+    threads = [threading.Thread(target=run, args=upload) for upload in uploads.items()]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(60)
+    assert not errors, errors
+    return reports
+
+
+def test_two_imports_of_one_note_at_once_leave_one_page_and_no_empty_folder(monkeypatch):
+    """The same note in two uploads, each filing it by a subject of its own,
+    imported at once: both have looked for it in the library before either
+    writes. The one that writes first makes the page and its folder; the
+    other finds the page under the write lock and writes nothing, no folder
+    either, and names the page where the first filed it."""
+    make_user("nbi_race", "nbi-password")
+    ws = workspace_of("nbi_race")
+    reports = imported_at_once(monkeypatch, ws, {
+        side: note("Raced note", subject=f"Raced {side}", curves=[fx.curve(WORKED)]) for side in "AB"})
+    won, lost = sorted(reports, key=lambda side: -reports[side]["pages_created"])
+    assert (reports[won]["pages_created"], reports[lost]["pages_created"], reports[lost]["pages_skipped"]) == (1, 0, 1)
+    page, skipped = reports[won]["pages"][0], reports[lost]["pages"][0]
+    with connect_pages_db(ws) as conn:
+        assert [r[0] for r in conn.execute("SELECT id FROM unified_blocks WHERE parent_id = 'root'")] == [page["id"]]
+        paths = folder_paths(conn)
+        assert {folder: pages_in_folder(conn, folder) for folder in paths} == {
+            folder: [page["id"]] for folder in paths}, "no folder is empty"
+        assert list(paths.values()) == [[f"Raced {won}"]], "the other import made no folder"
+    assert skipped["action"] == "skip" and skipped["id"] == page["id"]
+    assert skipped["folders"] == page["folders"] == [[f"Raced {won}"]]
+
+
+def test_two_notes_filed_into_one_new_folder_at_once_make_it_once(monkeypatch):
+    """Two notes filed by one new subject, imported at once: the folder is
+    looked for under the write lock, so the one that writes second files
+    its page in the folder the first made, not in a sibling of its name."""
+    make_user("nbi_shared", "nbi-password")
+    ws = workspace_of("nbi_shared")
+    reports = imported_at_once(monkeypatch, ws, {
+        name: note(name, subject="Shared subject", curves=[fx.curve(WORKED)]) for name in ("Shared 1", "Shared 2")})
+    assert [r["pages_created"] for r in reports.values()] == [1, 1]
+    with connect_pages_db(ws) as conn:
+        paths = folder_paths(conn)
+        assert list(paths.values()) == [["Shared subject"]], "one folder, not two of one name"
+        assert len(pages_in_folder(conn, next(iter(paths)))) == 2
+
+
+def test_a_note_whose_page_fails_to_write_leaves_no_folder(monkeypatch):
+    """A note whose page cannot be written is skipped with the reason, and
+    the folder made for it goes with the transaction; the next note is
+    written."""
+    make_user("nbi_failed", "nbi-password")
+    ws = workspace_of("nbi_failed")
+    real = ni.insert_page_tree
+
+    def failing(conn, page_id, title, props, tree, actor):
+        written = real(conn, page_id, title, props, tree, actor)
+        if title == "Failed note":
+            raise RuntimeError("the write failed")
+        return written
+
+    monkeypatch.setattr(ni, "insert_page_tree", failing)
+    upload = fx.zip_of({"Export/Failed/Failed.note": note("Failed note", curves=[fx.curve(WORKED)]),
+                        "Export/Kept/Kept.note": note("Kept note", curves=[fx.curve(WORKED)])})
+    with connect_pages_db(ws) as conn:
+        report = ni.import_notes(ws, io.BytesIO(upload), conn, name="Failed.zip", actor="nbi")
+    assert report["pages_created"] == 1
+    assert report["skipped"] == [{"title": "Failed note", "reason": "the write failed"}]
+    with connect_pages_db(ws) as conn:
+        assert [r[0] for r in conn.execute("SELECT content FROM unified_blocks WHERE parent_id = 'root'")] == [
+            "Kept note"]
+        assert list(folder_paths(conn).values()) == [["Kept"]], "the failed note's folder went with it"
+
+
 # --- refusals -------------------------------------------------------------------------------------
 
 def test_what_is_refused(accounts):
@@ -494,8 +593,8 @@ def test_damage_in_one_group_leaves_one_stroke_out_not_the_note(accounts):
     inner = {"transform": [1e-200, 0, 0, 1e-200, 1e200, -1e200], "index": 0,
              "curves": [fx.curve([(1, 1), (2, 2)], polyline=True)]}
     outer = {"transform": [1e200, 0, 1e200, 1e200, 0, 0], "index": 0, "groups": [inner]}  # composes to NaN
-    long_line = fx.shape(startPt=(0, 100), endPt=(600_000, 100))  # 650,000 samples: past a file's 500,000
+    long_one = fx.shape(points=[(0, 100), (300_000, 100), (0, 200)])  # 300,052 samples: a stroke takes 50,000
     result = imported(owner, note("Damaged group", curves=[fx.curve(WORKED)], groups=[outer],
-                                  shapes=[("line", 0, long_line)]), "Damaged.note")
+                                  shapes=[("triangle", 0, long_one)]), "Damaged.note")
     assert result["pages_created"] == 1 and result["strokes_imported"] == 1
     assert "2 strokes could not be read and were left out" in reasons(result)
