@@ -4,10 +4,15 @@
 // draw with it; and the tool to go back to. App composes it above the
 // text boxes, which an armed ink tool makes inert. The rest of the page
 // changes the strip only through the commands at the end: each makes one
-// fixed update, so each is the same function for the page's life.
+// fixed update (stripState.js), so each is the same function for the
+// page's life.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { normalizeTools, toolStyle, visibleTools } from "./ink.js";
 import { RESERVED_TOOLS, backTool, stylusPen } from "./pencilActions.js";
+import {
+  armedTool, disarmedForPage, disarmedForReplay, hiddenDropped, optionsClosed, optionsToggled, penRestored, pencilUiApplied,
+  picked, revealed, rulerRowClosed, rulerRowOpened, shapeStyleOf, stripClosed,
+} from "./stripState.js";
 
 // focusedBlockId: the open page; leaving it disarms the tool. readOnly,
 // and inkStale (the build fence, buildFence.js): no tool that draws is
@@ -38,21 +43,11 @@ export function useInkStrip({ focusedBlockId, readOnly, inkStale, inkTools, setI
   // stylusPen, the rule the Pencil's gestures and backTool read too).
   const inkPenPreset = useMemo(() => stylusPen(inkVisible, inkUi.pen), [inkVisible, inkUi.pen]);
   const inkPen = useMemo(() => toolStyle(inkPenPreset), [inkPenPreset]);
-  // What the Shapes tool draws with: the stylus pen's colour, width,
-  // opacity and line as an even Ballpoint line (a shape is constant width
-  // whatever the style); its smoothing, straightening and nib stay behind.
-  const inkShapeStyle = useMemo(() => {
-    const { stabilize: _s, straight: _st, nib: _n, nibLock: _l, brush: _b, ...look } = inkPen;
-    return look.tool === "pen" ? { ...look, brush: "monoline" } : look;
-  }, [inkPen]);
-  const inkTool = useMemo(() => {
-    const t = inkUi.tool;
-    if (!t || readOnly || inkStale) return null;
-    if (t === "eraser" || t === "select") return { tool: t };
-    if (t === "shape") return { tool: "shape", kind: inkShapeKind, fill: inkShapeFill, style: inkShapeStyle };
-    const p = inkTools.find((x) => x.id === t);
-    return p ? toolStyle(p) : null;
-  }, [inkUi.tool, readOnly, inkTools, inkStale, inkShapeKind, inkShapeFill, inkShapeStyle]);
+  // What the Shapes tool draws with: the stylus pen's look as an even
+  // Ballpoint line.
+  const inkShapeStyle = useMemo(() => shapeStyleOf(inkPen), [inkPen]);
+  const inkTool = useMemo(() => armedTool({ tool: inkUi.tool, readOnly, inkStale, inkTools, inkShapeKind, inkShapeFill, inkShapeStyle }),
+    [inkUi.tool, readOnly, inkTools, inkStale, inkShapeKind, inkShapeFill, inkShapeStyle]);
   // The Text tool (docs/dev/text_boxes.md) takes every pointer, a stylus's too.
   const textArmed = inkUi.tool === "text" && !readOnly;
   const inkPenTool = inkAutoPen && !readOnly && !textArmed && !inkStale ? inkPen : null;
@@ -60,10 +55,7 @@ export function useInkStrip({ focusedBlockId, readOnly, inkStale, inkTools, setI
   // closes unless the caller keeps it (a duplicate stays editable) or opens
   // it (`open`: the Shapes tool armed from More or S).
   const pickInkTool = useCallback((id, { keepOptions = false, open = false, kind } = {}) => {
-    setInkUi((s) => {
-      const k = kind || (id && inkTools.find((t) => t.id === id)?.kind);
-      return { ...s, open: true, tool: id, options: open && !!id ? true : keepOptions && !!id ? s.options : false, pen: k === "pen" ? id : s.pen };
-    });
+    setInkUi((s) => picked(s, id, inkTools, { keepOptions, open, kind }));
   }, [inkTools]);
   // Opening the strip arms the stylus pen (stylusPen: the last pen armed,
   // else the first pen on the row), never a highlighter put before it.
@@ -71,7 +63,7 @@ export function useInkStrip({ focusedBlockId, readOnly, inkStale, inkTools, setI
   // A removed or hidden preset leaves the strip's hand armed.
   useEffect(() => {
     if (inkUi.tool && !RESERVED_TOOLS.includes(inkUi.tool) && !inkVisible.some((t) => t.id === inkUi.tool)) {
-      setInkUi((s) => ({ ...s, tool: null, options: false }));
+      setInkUi(hiddenDropped);
     }
   }, [inkVisible, inkUi.tool]);
   // The tool armed before the current one, written after each commit: an
@@ -101,28 +93,28 @@ export function useInkStrip({ focusedBlockId, readOnly, inkStale, inkTools, setI
   }
   // Leaving a page disarms the tool; the strip stays open.
   useEffect(() => () => {
-    setInkUi((s) => (s.tool ? { ...s, tool: null } : s));
+    setInkUi(disarmedForPage);
   }, [focusedBlockId]);
   // The tool armed before the current one, read when asked (the Pencil's
   // gestures).
   const previousTool = () => inkPrevRef.current.previous;
   // A lasso selection shows the strip, its options row closed.
-  const revealInkStrip = useCallback(() => setInkUi((s) => ({ ...s, open: true, options: false })), []);
+  const revealInkStrip = useCallback(() => setInkUi(revealed), []);
   // The ruler laid opens its row; put away, it takes its row with it.
-  const openRulerRow = useCallback(() => setInkUi((s) => ({ ...s, open: true, options: "ruler" })), []);
-  const closeRulerRow = useCallback(() => setInkUi((s) => (s.options === "ruler" ? { ...s, options: false } : s)), []);
+  const openRulerRow = useCallback(() => setInkUi(rulerRowOpened), []);
+  const closeRulerRow = useCallback(() => setInkUi(rulerRowClosed), []);
   // The strip closes (App's closeInkStrip): the tools disarm.
-  const closeInkStripUi = useCallback(() => setInkUi((s) => ({ ...s, open: false, tool: null, options: false })), []);
+  const closeInkStripUi = useCallback(() => setInkUi(stripClosed), []);
   // An options row: no argument, the armed tool's; "ruler", the ruler's.
-  const toggleInkOptions = useCallback((which) => setInkUi((s) => ({ ...s, options: which === "ruler" ? (s.options === "ruler" ? false : "ruler") : s.options !== true })), []);
-  const closeInkOptions = useCallback(() => setInkUi((s) => ({ ...s, options: false })), []);
+  const toggleInkOptions = useCallback((which) => setInkUi((s) => optionsToggled(s, which)), []);
+  const closeInkOptions = useCallback(() => setInkUi(optionsClosed), []);
   // A Pencil gesture's patch of the strip (pencilActions.js {ui}).
-  const applyPencilUi = useCallback((ui) => setInkUi((s) => ({ ...s, ...ui })), []);
+  const applyPencilUi = useCallback((ui) => setInkUi((s) => pencilUiApplied(s, ui)), []);
   // A recording plays: taps seek rather than draw.
-  const disarmInk = useCallback(() => setInkUi((s) => (s.tool ? { ...s, tool: null, options: false } : s)), []);
+  const disarmInk = useCallback(() => setInkUi(disarmedForReplay), []);
   // The handwriting tour's end (the guide's restore("pen")): the pen last
   // drawn with, when the tour left the eraser, the lasso or Text armed.
-  const restorePen = useCallback(() => setInkUi((s) => (s.open && s.pen && RESERVED_TOOLS.includes(s.tool) ? { ...s, tool: s.pen, options: false } : s)), []);
+  const restorePen = useCallback(() => setInkUi(penRestored), []);
   return {
     inkUi, inkVisible, inkPenPreset, inkPen, inkTool, textArmed, inkPenTool,
     setInkTools, pickInkTool, openInkStrip, toggleInkShape, previousTool, inkEraserLifted,

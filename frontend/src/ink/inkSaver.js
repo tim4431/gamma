@@ -13,6 +13,19 @@ import { flattenBlocks } from "../shared/model/blockModel.js";
 import { inkProps, serializeInk } from "./ink.js";
 import { planFlush } from "./inkFlush.js";
 
+// What the server's merge dropped or brought back, as the pill says it
+// (the PUT answer's `ink_conflict`, "Two writers, one group"): the
+// strokes of ours it did not apply, else the strokes someone erased that
+// came back, else that it merged; null for a clean save or none.
+export function conflictMessage(conflict) {
+  if (!conflict || conflict.clean) return null;
+  const lost = conflict.lost_ours?.length || 0, back = conflict.returned?.length || 0;
+  if (lost) return tn("Your change to {n} stroke was not applied: someone changed it since",
+    "Your change to {n} strokes was not applied: someone changed them since", lost);
+  if (back) return tn("{n} stroke someone erased came back", "{n} strokes someone erased came back", back);
+  return t("Merged with changes made meanwhile");
+}
+
 // blocksRef: the page's block tree, read when a flush runs. setStatus:
 // the status pill. liveSaved(ink): live co-drawing's ledger
 // (useInkLive.js), told what a saved file holds. inkStore: the drafts
@@ -24,15 +37,10 @@ import { planFlush } from "./inkFlush.js";
 export function createInkSaver({ blocksRef, setStatus, liveSaved, inkStore, apiJson, API, keepaliveRoom }) {
   // The pending-upload timer, 0 when none.
   const inkTimerRef = { current: 0 };
-  // What the server's merge dropped or brought back (the PUT answer's
-  // `ink_conflict`, "Two writers, one group"), on the pill.
+  // What the server's merge dropped or brought back, on the pill.
   function reportInkConflict(conflict) {
-    if (!conflict || conflict.clean) return;
-    const lost = conflict.lost_ours?.length || 0, back = conflict.returned?.length || 0;
-    if (lost) setStatus(tn("Your change to {n} stroke was not applied: someone changed it since",
-      "Your change to {n} strokes was not applied: someone changed them since", lost));
-    else if (back) setStatus(tn("{n} stroke someone erased came back", "{n} strokes someone erased came back", back));
-    else setStatus(t("Merged with changes made meanwhile"));
+    const said = conflictMessage(conflict);
+    if (said) setStatus(said);
   }
   // The flush's keepalive requests on their way, by drawing: the upload,
   // the PUT and an empty group's DELETE, each until it settles, so a later

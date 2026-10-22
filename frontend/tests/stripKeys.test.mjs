@@ -1,7 +1,9 @@
-// node --test tests/  (from frontend/) — the tool strip's key table.
+// node --test tests/  (from frontend/) — the tool strip's key table, and
+// what its width and style keys do to the armed preset.
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { stripKey } from "../src/ink/stripKeys.js";
+import { HIGHLIGHTER_SIZES, PEN_SIZES } from "../src/ink/ink.js";
+import { stepBrush, stepWidth, stripKey } from "../src/ink/stripKeys.js";
 
 const tools = [
   { id: "pen1", kind: "pen" }, { id: "pen2", kind: "pen" }, { id: "hl1", kind: "highlighter" }, { id: "hl2", kind: "highlighter" },
@@ -108,4 +110,51 @@ test("digits arm the preset at that position, from the row or the keypad", () =>
   assert.equal(stripKey(key("Digit0"), state()), null);
   assert.equal(stripKey(key("KeyQ"), state()), null);
   assert.equal(stripKey({ ctrlKey: true }, state()), null, "an event without a code");
+});
+
+// --- [ / ] and Shift+[ / ]: the armed preset's width and style ---------------------
+const presets = [
+  { id: "pen1", kind: "pen", color: "#111111", size: 2 },
+  { id: "cal", kind: "pen", color: "#222222", size: 1.4, brush: "calligraphy", nib: 30 },
+  { id: "hl1", kind: "highlighter", color: "#ffee00", size: 14 },
+];
+
+test("[ and ] step the armed preset along its kind's sizes; the list comes back with that preset changed", () => {
+  const up = stepWidth(presets, "pen1", 1);
+  assert.equal(up.preset, presets[0], "the pill names the preset");
+  assert.equal(up.size, 2.8);
+  assert.deepEqual(up.next[0], { ...presets[0], size: 2.8 });
+  assert.equal(up.next[1], presets[1], "the others stay the same objects");
+  assert.equal(stepWidth(presets, "pen1", -1).size, 1.4);
+  assert.equal(stepWidth(presets, "hl1", 1).size, 18, "a highlighter's own ladder");
+  assert.equal(stepWidth(presets, "pen1", 1).next.length, presets.length);
+  assert.equal(stepWidth([{ id: "odd", kind: "pen", size: 3 }], "odd", 1).size, PEN_SIZES[0], "a size off the ladder steps from its start");
+  assert.equal(stepWidth([{ id: "odd", kind: "pen", size: 3 }], "odd", -1).size, PEN_SIZES[0]);
+  for (const tool of ["eraser", "select", null]) assert.equal(stepWidth(presets, tool, 1), null, `no preset armed: ${tool}`);
+});
+
+test("at either end of the ladder the size stays and nothing is written, but the pill still says the size (useStripKeys raises it)", () => {
+  const top = [{ id: "p", kind: "pen", size: PEN_SIZES.at(-1) }, { id: "h", kind: "highlighter", size: HIGHLIGHTER_SIZES[0] }];
+  assert.deepEqual(stepWidth(top, "p", 1), { preset: top[0], size: PEN_SIZES.at(-1), next: null });
+  assert.deepEqual(stepWidth(top, "h", -1), { preset: top[1], size: HIGHLIGHTER_SIZES[0], next: null });
+  assert.ok(stepWidth(top, "p", -1).next, "back down it writes again");
+});
+
+test("Shift+[ and Shift+] step an armed pen's style through BRUSH_ORDER, wrapping, the brush alone written", () => {
+  const next = stepBrush(presets, "pen1", 1);
+  assert.deepEqual(next.preset, { ...presets[0], brush: "monoline" }, "Pen → Ballpoint");
+  assert.equal(next.size, 2, "the pill says the pen's size");
+  assert.equal(next.next[0], next.preset);
+  assert.equal(next.next[2], presets[2]);
+  assert.equal(stepBrush(presets, "pen1", -1).preset.brush, "calligraphy", "back from Pen wraps to Calligraphy");
+  const plain = stepBrush(presets, "cal", 1).preset;
+  assert.deepEqual(plain, { id: "cal", kind: "pen", color: "#222222", size: 1.4, nib: 30 }, "Calligraphy → Pen: no brush key, the nib kept");
+  assert.equal(stepBrush(presets, "cal", -1).preset.brush, "pencil");
+  assert.equal(stepBrush([{ id: "x", kind: "pen", size: 2, brush: "bogus" }], "x", 1).preset.brush, "monoline", "an unknown brush steps from Pen");
+});
+
+test("a highlighter has no styles, and nothing armed has none either", () => {
+  assert.equal(stepBrush(presets, "hl1", 1), null);
+  assert.equal(stepBrush(presets, "eraser", 1), null);
+  assert.equal(stepBrush(presets, null, -1), null);
 });

@@ -8,8 +8,7 @@ import { useCallback, useEffect, useRef } from "react";
 import { t } from "../shared/i18n/i18n.js";
 import { isTextField } from "../shared/lib/hotkeys.js";
 import { inkToolName } from "../markup/MarkupToolbar";
-import { BRUSH_ORDER, sizesFor } from "./ink.js";
-import { stripKey } from "./stripKeys.js";
+import { stepBrush, stepWidth, stripKey } from "./stripKeys.js";
 
 // inkUi: the strip's state (useInkStrip.js); the listener is on while
 // it is open. inkSelection: the lasso's (useInkSelection.js). inkVisible,
@@ -94,22 +93,15 @@ export function useStripKeys({ inkUi, inkSelection, inkVisible, inkTools, setInk
       else if (action.kind === "delete") K.deleteInkSelection();
       else if (action.kind === "pick") K.pickInkTool(action.id);
       else if (action.kind === "width") {
-        const p = K.allTools.find((x) => x.id === K.tool);
-        if (!p) return;
-        const sizes = sizesFor(p.kind);
-        const size = sizes[Math.max(0, Math.min(sizes.length - 1, sizes.indexOf(p.size) + action.step))];
-        if (size !== p.size) K.setInkTools(K.allTools.map((x) => (x.id === p.id ? { ...x, size } : x)));
-        setStatus(t("{name} · {size} pt.", { name: inkToolName(p), size }));
+        const stepped = stepWidth(K.allTools, K.tool, action.step);
+        if (!stepped) return;
+        if (stepped.next) K.setInkTools(stepped.next);
+        setStatus(t("{name} · {size} pt.", { name: inkToolName(stepped.preset), size: stepped.size }));
       } else if (action.kind === "brush") {
-        const p = K.allTools.find((x) => x.id === K.tool);
-        if (!p || p.kind !== "pen") return;   // a highlighter has no styles
-        const n = BRUSH_ORDER.length, at = Math.max(0, BRUSH_ORDER.indexOf(p.brush ?? null));
-        const brush = BRUSH_ORDER[(at + action.step + n) % n];
-        const { brush: _was, ...rest } = p;
-        // the brush alone: a calligraphy pen's smoothing of 2 is its default (ink.js presetSmoothing), never written
-        const next = brush ? { ...rest, brush } : rest;
-        K.setInkTools(K.allTools.map((x) => (x.id === p.id ? next : x)));
-        setStatus(t("{name} · {size} pt.", { name: inkToolName(next), size: p.size }));
+        const stepped = stepBrush(K.allTools, K.tool, action.step);
+        if (!stepped) return;   // a highlighter has no styles
+        K.setInkTools(stepped.next);
+        setStatus(t("{name} · {size} pt.", { name: inkToolName(stepped.preset), size: stepped.size }));
       } else if (action.kind === "eraser" && action.phase === "down") {
         if (inkHoldRef.current) return;
         inkHoldRef.current = { since: e.timeStamp, erased: false, selection: K.selection, tool: K.tool };

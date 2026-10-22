@@ -260,7 +260,8 @@ No schema change: sheets are blocks and properties.
   - `handleInkStroke` (`ink/useInkStrokes.js`) takes a sheet id where a
     PDF page number goes: the group's file is `newCanvasInk`, and a new
     group's block is inserted under its sheet (`applyInk`,
-    `ink/useInkDocument.js`). Writing low on the last sheet calls App's
+    `ink/useInkDocument.js`). Writing below three quarters of the last
+    sheet's height (`notebook.js` `wantsSheetAfter`) calls App's
     `addSheetAfter` with `once`. A text box made on a sheet is inserted
     as the sheet's last child the same way (`markup/useTextBoxes.js`
     `onBoxCreate`).

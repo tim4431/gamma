@@ -1,11 +1,12 @@
 // The page's ink by surface (docs/dev/handwriting.md "Client"): its ink
 // groups, each surface's (a PDF page's by their position's page, a
 // sheet's by its id), the surface a paste without a point lands on, and
-// what messages call a surface. App composes it with the page's blocks
-// and sheets and the viewer's state.
+// what messages call a surface (the pure parts in inkSurfaces.js). App
+// composes it with the page's blocks and sheets and the viewer's state.
 import { useCallback, useMemo, useRef } from "react";
 import { inkBySheet } from "../notebook/notebook.js";
 import { flattenBlocks } from "../shared/model/blockModel.js";
+import { groupsBySurface, pasteTargetOf, surfaceLabel } from "./inkSurfaces.js";
 
 // The part of a surface on the screen, in its page points ({x, y, width,
 // height}): its box (a PDF page's .pdfPageWrap, a sheet's .nbSheet) cut
@@ -44,17 +45,7 @@ export function useInkSurfaces({ blocks, nbSheets, nbSheetsRef, nbCurrent, noteb
   const nbInk = useMemo(() => (nbSheets.length ? inkBySheet(blocks) : new Map()), [nbSheets, blocks]);
   // Each surface's groups: a PDF page's by their position's page, a
   // sheet's by its id.
-  const inkBySurface = useMemo(() => {
-    const map = new Map();
-    for (const b of inkBlocks) {
-      const p = b.properties?.pdf_position?.pageNumber;
-      if (!p) continue;
-      if (!map.has(p)) map.set(p, []);
-      map.get(p).push(b);
-    }
-    for (const [id, groups] of nbInk) map.set(id, groups);
-    return map;
-  }, [inkBlocks, nbInk]);
+  const inkBySurface = useMemo(() => groupsBySurface(inkBlocks, nbInk), [inkBlocks, nbInk]);
   // The PDF page in view and its size at scale 1 (PdfViewer's onPageInView:
   // the page whose centre lies nearest the scroller's), where Ctrl+V and
   // the pill's Paste land; a notebook pastes on nbCurrent.
@@ -63,19 +54,12 @@ export function useInkSurfaces({ blocks, nbSheets, nbSheetsRef, nbCurrent, noteb
   // Where a paste without a point goes: the notebook's current sheet, else
   // the PDF page in view, with its size.
   function pasteTarget() {
-    if (notebook) {
-      const sheet = nbSheetsRef.current.find((s) => s.id === nbCurrent) || nbSheetsRef.current.at(-1);
-      return sheet ? { page: sheet.id, size: { width: sheet.paper.width, height: sheet.paper.height } } : null;
-    }
-    const v = pageInViewRef.current;
-    return v && pdfUrl && !pdfHidden ? { page: v.page, size: v.size } : null;
+    return pasteTargetOf({ notebook, sheets: nbSheetsRef.current, current: nbCurrent, inView: pageInViewRef.current, pdfUrl, pdfHidden });
   }
   // What a stroke's `page` is called in messages: a PDF page's number, a
   // notebook sheet's place among the sheets.
   function inkPageNumber(page) {
-    if (typeof page !== "string") return page;
-    const i = nbSheetsRef.current.findIndex((s) => s.id === page);
-    return i >= 0 ? i + 1 : "?";
+    return surfaceLabel(page, nbSheetsRef.current);
   }
   return { inkBlocks, inkBySurface, onPageInView, pasteTarget, inkPageNumber };
 }

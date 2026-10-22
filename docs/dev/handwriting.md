@@ -1826,6 +1826,12 @@ reach.
     "shape"}`, `ruler` → `{kind: "off", what: "ruler"}`, `zoom` →
     `{kind: "off", what: "zoom"}`, else `close`.
   - `delete` and `undo`.
+  - `stepWidth(tools, id, step)` and `stepBrush(tools, id, step)` are
+    what the handler does with `width` and `brush` to the armed preset
+    of the account's list: `{preset, size, next}`, the preset and the
+    size the pill names, and the list to write. At either end of the
+    sizes `next` is null and the pill still shows. With no preset armed
+    (no pen, for a style) the answer is null.
 - `ink/pencilActions.js` (pure): `pencilAction(message, prefs, state)`,
   the Pencil's double tap and squeeze as `usePencil` applies them, and
   `backTool(prefs, state)`, the tool to go back to (the one armed before,
@@ -1873,6 +1879,13 @@ reach.
     for the other choices only after a `began` that was not ignored;
     `cancelled` acts only for a hold. While `busy` nothing acts but a
     hold's end, and a `began` comes back `ignored`.
+  - `pencilStep(message, prefs, state, now)` is `usePencil`'s step for
+    one message, with the squeeze it holds open: `{squeeze, run}`, the
+    squeeze after the message and what to run, in order (`["pick", id]`,
+    `["haptic", "tool"]`, `["restore", selection]`, `["undo"]`, `["ui",
+    patch]`). Its `state` adds `readOnly`, `takesInk` and `selection` to
+    `pencilAction`'s: where only a held squeeze's end acts, and the
+    lasso's selection a hold keeps and its end restores.
 - The replay (`ink.js`, pure;
   [recording.md](recording.md) "One clock for every replay"):
   - `strokeWalls(stroke)` is each sample's wall-clock ms (`t0` plus its
@@ -2700,7 +2713,11 @@ reach.
   of the names sets `inkStale`, which disarms the tools (`inkTool`,
   `inkPenTool` null) behind the sticky pill "Gamma was updated, reload
   to keep drawing" with a Reload button. Taps, selection and reading go
-  on.
+  on. The comparison is pure (`frontend/tests/buildFence.test.mjs`):
+  `buildNames(build)` is a build's names, and `sameBuild(seen, names)`
+  whether they share one with the build seen first. `buildTrips(fence,
+  build)` keeps the first build with names and answers whether this one
+  trips the fence, which happens once.
 - `ink/useInkStrip.js`: the tool strip's state, `useInkStrip({focusedBlockId,
   readOnly, inkStale, inkTools, setInkToolsRaw, inkAutoPen, inkShapeKind,
   inkShapeFill, inkEraserReturn})`, which App calls above the text boxes
@@ -2760,6 +2777,15 @@ reach.
     release goes back). A squeeze that
     toggles the eraser still toggles it; with the return on, the lift
     re-arms the pen and the next squeeze arms the eraser again.
+- `ink/stripState.js` (pure; `frontend/tests/stripState.test.mjs`): the
+  strip's updates as functions of `inkUi`, one for each write of
+  `useInkStrip`: `picked` (`pickInkTool`), `revealed`, `rulerRowOpened`,
+  `rulerRowClosed`, `stripClosed`, `optionsToggled`, `optionsClosed`,
+  `pencilUiApplied`, `disarmedForReplay` (`disarmInk`), `disarmedForPage`
+  (leaving a page), `penRestored` (`restorePen`) and `hiddenDropped` (a
+  removed or hidden preset armed). `armedTool({tool, readOnly, inkStale,
+  inkTools, inkShapeKind, inkShapeFill, inkShapeStyle})` is `inkTool`,
+  and `shapeStyleOf(inkPen)` the Shapes tool's style.
 - `ink/useInkLive.js`: live co-drawing, this tab's side,
   `useInkLive({focusedBlockId, readOnly, inkStale, peers, sendInkLive})
   → {handleInkLive, liveRemoved, liveSaved}`, which App calls after the
@@ -2809,7 +2835,7 @@ reach.
     remote op. Only the group's block itself (first stroke) is inserted
     through the tree. The answer's `ink_conflict` (its block's merge
     report) goes on the pill (`reportInkConflict`, "Two writers, one
-    group").
+    group"), in the words of `inkSaver.js` `conflictMessage(conflict)`.
   - A draft remembers its base (`inkStore` drafts: `{ink, dirty, url,
     base, baseIds}`). When the answer names another file than the upload, the
     server merged someone else's strokes: `markSaved` loads the merged
@@ -2849,6 +2875,12 @@ reach.
     a surface's box inside its viewer and the window, in page points, or
     null when none of it shows: where the ruler and the zoom window
     first go.
+- `ink/inkSurfaces.js` (pure; `frontend/tests/inkSurfaces.test.mjs`):
+  what `useInkSurfaces` works out from its inputs.
+  `groupsBySurface(inkBlocks, nbInk)` is `inkBySurface`,
+  `surfaceLabel(page, sheets)` is `inkPageNumber`, and
+  `pasteTargetOf({notebook, sheets, current, inView, pdfUrl,
+  pdfHidden})` is `pasteTarget()`.
 - `ink/useInkDocument.js`: the page's ink as a document,
   `useInkDocument({focusedBlockId, readOnly, blocksRef, setBlocks,
   inkBySurface, inkPageNumber, inkEraserFilter, scheduleInk, liveRemoved,
@@ -2915,6 +2947,24 @@ reach.
     handwriting from a previous visit was restored." with `{label:
     t("Discard"), run}`, once per block (a block is restored at most once
     a visit), and schedules the flush that saves the restored draft.
+- `ink/inkHistory.js` (pure; `frontend/tests/inkHistory.test.mjs`): the
+  stroke history's rules, which `useInkDocument` runs on `inkHistRef`.
+  `recordEntry(h, changes, {label, pass})` adds an edit's entry, keeps
+  the last `HISTORY_CAP` (200) and empties redo. `stepChanges(entry,
+  redo, inkOf)` is an undo or a redo onto the drawings as they are now,
+  with `kept`, the strokes someone changed since. `passFold(h, changes,
+  pass)` and `foldInto(last, changes, held)` fold an eraser pass's
+  flushes into one entry. `undoMessage(entry, redo, kept, page)` is the
+  pill.
+- `ink/inkEdits.js` (pure; `frontend/tests/inkEdits.test.mjs`): the
+  arithmetic of the edits `useInkDocument` and `useInkStrokes` make.
+  `overBudget(changes)` is the byte budget. `missingGroups(changes,
+  present)` and `withGroupBlocks(tree, missing)` put back a group's
+  block. `freshInk(page, size)` is a new group's file.
+  `splitsGroup(before, bytes, count)` says when strokes start the
+  surface's next group, and `pasteTooBig(page, strokes, size)` when no
+  group can hold a paste. `eraseManyChanges` and `eraseAlongChanges` are
+  the erasers' changes through the eraser filter.
 - `ink/useInkStrokes.js`: the strokes, `useInkStrokes({focusedBlockId,
   readOnly, inkStale, blocksRef, nbSheetsRef, applyInk, addSheetAfter,
   noteSqueezeUse, undoableInkStatus, setStatus}) → {handleInkStroke,
@@ -2932,8 +2982,9 @@ reach.
     same surface when the current one would pass `GROUP_SPLIT_BYTES`
     (3 MB) or `MAX_STROKES` with the stroke. On a sheet (`page` its id)
     the group's file is a canvas, and a stroke in the last quarter of
-    the last sheet adds the next one once (`addSheetAfter(id, {once:
-    true})`, [notebooks.md](notebooks.md)). A stroke while a held
+    the last sheet adds the next one once (`notebook.js`
+    `wantsSheetAfter`, then `addSheetAfter(id, {once: true})`;
+    [notebooks.md](notebooks.md)). A stroke while a held
     squeeze is open marks it used (`noteSqueezeUse()`).
   - `handleInkStrokes(page, strokes, size)` is `handleInkStroke` for
     several strokes at once (`size` the surface in points, for a fresh
@@ -3039,6 +3090,18 @@ reach.
       strokes: the selected strokes as the draft holds them, text:
       tn("Selected handwriting · {n} stroke", "Selected handwriting · {n}
       strokes", n)}`, and hands them over (`transcribe({chips})`).
+- `ink/selectionEdits.js` (pure; `frontend/tests/selectionEdits.test.mjs`):
+  what `useInkSelection` works out before it edits. `selectedStrokes(sel,
+  inkOf)` is `selectedInk()`, and `selectionStill(sel, inkOf)` the
+  owner's `selectionStill`. `selectionChanges(sel, inkOf, edit)` is the
+  changes of `editInkSelection`. `actionEdit(action, value, box)` gives
+  each in-place action of `handleInkAction` its edit and its history
+  label. `duplicatePlan`, `splitPlan` and `mergePlan` give Duplicate, New
+  note and Merge into note their changes and the strokes to select, or
+  `{refused}` with the pill's words. `selectAllItems` is select all,
+  `transcribeGroups` and `inkChips` are Transcribe's groups and chips,
+  and `clipOf`, `pasteShift` and `centredOn` are the clipboard and where
+  a paste lands.
 - `ink/useInkRuler.js`: the ruler, `useInkRuler({focusedBlockId,
   readOnly, inkStale, pdfHidden, notebook, inkUi, inkVisible, inkPen,
   setInkRulerUnits, pasteTarget, openRulerRow, closeRulerRow,
@@ -3102,7 +3165,8 @@ reach.
     and does what it answers ([hotkeys.md](hotkeys.md) "Widget keys").
     A focused text field keeps its keys, but a keyup still reaches the
     handler. `[` / `]` raise the width pill each time, at either end of
-    the sizes too.
+    the sizes too (`stripKeys.js` `stepWidth`; Shift+`[` / `]`
+    `stepBrush`).
   - The handler takes `stripKey`'s `toggle` and `off`
     (`what`: `ruler`, `shape`, `zoom`) and `newLine`, its state carrying
     `ruler`, `zoom` and `onControl` (the target inside a button, a link,
@@ -3129,7 +3193,9 @@ reach.
     `pencil` and `squeeze` under `nativeHost().pencil`, on a page that
     takes ink): each goes through `pencilAction(message, {tools, pen,
     tap: inkPencilTap, squeeze: inkPencilSqueeze}, {tool, previous,
-    options, busy: inkBusy(), squeeze: squeezeRef.current, now})`.
+    options, busy: inkBusy(), squeeze: squeezeRef.current, now})`, by
+    way of `pencilActions.js` `pencilStep`, whose run list the hook
+    plays.
     `{pick}` runs `pickInkTool`, `{ui}` patches `inkUi`, `{undo}` runs
     `stripUndo(false)` (the strip's Undo: the stroke history, or the block
     history under `boxUndo`), `{began}` opens `squeezeRef` (`{since,
@@ -3150,6 +3216,12 @@ reach.
     and, from the layer, `select` for a pen lasso that selected (at its
     lift) and `snap` for a held shape (at the tip), both in viewport CSS
     px.
+- `ink/inkCommands.js` (pure; `frontend/tests/inkCommands.test.mjs`
+  runs it through `APP_COMMANDS`): `inkCommandContext({inkUi, inkTool,
+  inkSelection, readOnly, inkClip}, {copyInkSelection, pasteAtCentre,
+  duplicateInkSelection, selectAllInk})`, the fields App's command
+  context carries for the handwriting commands (under `app/App.jsx`
+  below).
 - `markup/` ([text_boxes.md](text_boxes.md) "Client"):
   - `MarkupToolbar.jsx` `MarkupToolbar` is the strip. Its first row
     (`.pdfInkRow`) is five groups split by `.pdfInkSep`: the presets; the
@@ -3373,7 +3445,8 @@ reach.
     the lasso. All five are `edits: true`; a `run` handed a key event
     from a text field returns `false`, so the browser keeps its own copy
     and paste there. `appCmdRef.current` carries `inkOpen`, `inkTool`,
-    `inkSelected` and `inkClip` for the guards. Icons in
+    `inkSelected` and `inkClip` for the guards, and the five actions,
+    from `ink/inkCommands.js` `inkCommandContext`. Icons in
     `commandIcons.jsx`: `CopyIcon`, `ScissorsIcon`, `ClipboardIcon`,
     `CopyIcon`, `RectSelectIcon`, from `Icons.jsx` (as are the menu's
     `FlipHIcon` and `FlipVIcon`).

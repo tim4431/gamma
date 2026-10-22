@@ -66,9 +66,10 @@ test("a change selects the groups that exercise it", () => {
   const inkGroups = pick([ink("ink.js")]);
   assert.ok(!inkGroups.includes("collab") && !inkGroups.includes("recording"), "the rest of src/ink/ selects neither");
   const owners = {
-    collab: ["inkLive.js", "useInkLive.js", "buildFence.js", "inkSaver.js", "useInkSave.js", "useInkDocument.js"],
-    recording: ["useInkStrip.js", "stripState.js", "useInkSelection.js", "useInkSurfaces.js", "useInkDocument.js"],
-    ipad: ["usePencil.js", "useStripKeys.js"],
+    collab: ["inkLive.js", "useInkLive.js", "buildFence.js", "inkSaver.js", "useInkSave.js", "useInkDocument.js", "inkHistory.js", "inkEdits.js"],
+    recording: ["useInkStrip.js", "stripState.js", "useInkSelection.js", "selectionEdits.js", "useInkSurfaces.js", "inkSurfaces.js",
+      "useInkDocument.js", "inkHistory.js", "inkEdits.js"],
+    ipad: ["usePencil.js", "useStripKeys.js", "pencilActions.js", "stripKeys.js", "inkCommands.js"],
   };
   for (const [id, names] of Object.entries(owners)) {
     for (const name of names) {
@@ -77,6 +78,15 @@ test("a change selects the groups that exercise it", () => {
       for (const g of inkGroups) assert.ok(groups.includes(g), `${name} keeps ${g}`);
     }
   }
+  // an owner's pure parts select its groups; the commands' context is ink-editing's and the iPad's
+  // (Ctrl+C / X / V / D / A), not every group as App's does
+  const parts = { "stripState.js": ["useInkStrip.js"], "inkHistory.js": ["useInkDocument.js"], "inkEdits.js": ["useInkDocument.js", "useInkStrokes.js"],
+    "selectionEdits.js": ["useInkSelection.js"], "inkSurfaces.js": ["useInkSurfaces.js"] };
+  for (const [part, from] of Object.entries(parts)) assert.deepEqual(pick([ink(part)]), pick(from.map(ink)), `${part} selects ${from.join(" and ")}'s groups`);
+  assert.deepEqual(pick([ink("inkCommands.js")]), inkGroups);
+  assert.ok(inkGroups.includes("ink-editing") && inkGroups.includes("ipad"));
+  // the next sheet's rule moved into notebook.js: a notebook change still selects notebooks
+  assert.ok(pick(["frontend/src/notebook/notebook.js"]).includes("notebooks"));
   // the chat's pictures of handwriting are the AI modules' groups
   assert.deepEqual(pick(["backend/gamma/ink_view.py"]).sort(), pick(["backend/gamma/ai_context.py"]).sort());
   // a scenario helper selects the scenarios importing it

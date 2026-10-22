@@ -804,7 +804,9 @@ confirm: [research/pymupdf-ios.md](../research/pymupdf-ios.md).
   `shapes.test.mjs` runs `stillSince` and `followHold` over
   `tests/shared/inkhold.json`, and `pencilActions.test.mjs` the gesture
   choices, the squeeze's phases (an unknown one included), the held
-  squeeze's toggle either way over `usePencil`'s loop, and the busy rule.
+  squeeze's toggle either way over `usePencil`'s step (`pencilStep`),
+  its gate and the lasso's selection a hold restores, and the busy
+  rule.
 - The `ipad` browser group's shell steps (`tests/e2e/scenarios/ipad.mjs`)
   fake the host (`fakeShell`, declaring every flag above). A pen down on
   a PDF page is claimed with its place, tool and look (a Brush preset's

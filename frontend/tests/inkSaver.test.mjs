@@ -9,7 +9,7 @@
 import assert from "node:assert/strict";
 import { mock, test } from "node:test";
 import { encodeStroke, inkProps, newInk, serializeInk } from "../src/ink/ink.js";
-import { createInkSaver } from "../src/ink/inkSaver.js";
+import { conflictMessage, createInkSaver } from "../src/ink/inkSaver.js";
 
 const KiB = 1024;
 // how long every upload's name is (inkStore.js UPLOAD_NAME_CHARS: /api/uploads/<24 hex>.ink)
@@ -386,6 +386,18 @@ test("the merge report on the pill, after markSaved and liveSaved: strokes of ou
     assert.deepEqual(env.statuses, said ? [[said]] : []);
   }
 }));
+
+test("conflictMessage: the merge's report as the pill says it, ours lost before strokes come back, nothing for a clean save", () => {
+  assert.equal(conflictMessage({ clean: false, lost_ours: ["a"], returned: ["b"] }), "Your change to 1 stroke was not applied: someone changed it since");
+  assert.equal(conflictMessage({ clean: false, lost_ours: ["a", "b"] }), "Your change to 2 strokes was not applied: someone changed them since");
+  assert.equal(conflictMessage({ clean: false, lost_ours: [], returned: ["b"] }), "1 stroke someone erased came back");
+  assert.equal(conflictMessage({ clean: false, returned: ["b", "c", "d"] }), "3 strokes someone erased came back");
+  assert.equal(conflictMessage({ clean: false }), "Merged with changes made meanwhile");
+  assert.equal(conflictMessage({ clean: false, lost_ours: [], returned: [] }), "Merged with changes made meanwhile");
+  assert.equal(conflictMessage({ clean: true, lost_ours: ["a"] }), null);
+  assert.equal(conflictMessage(undefined), null);
+  assert.equal(conflictMessage(null), null);
+});
 
 test("pending(): a save waiting on its timer, set by an edit or a retry; a flush that starts clears it, so the timer never runs a second one", () => withMockTimers(async () => {
   const env = setup({ drafts: [{ id: "g1", ink: drawing("a1") }] });

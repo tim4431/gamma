@@ -104,18 +104,23 @@ export const RULES = [
   // the handwriting state App composes (docs/dev/handwriting.md "Client"): a
   // file on collab's paths (the ink-live socket, the build fence, the save)
   // or on the player's (Play disarms the strip, clears the lasso, stops a
-  // group's replay, lists the page's ink groups) selects that group too
+  // group's replay, lists the page's ink groups) selects that group too;
+  // an owner's pure parts select its groups (inkEdits.js: both owners')
   ["frontend/src/ink/inkLive.js", [...INK, "collab"]], // collab.mjs holds the ink-live steps
   ["frontend/src/ink/useInkLive.js", [...INK, "collab"]],
   ["frontend/src/ink/buildFence.js", [...INK, "collab"]], // the socket hello's build
   ["frontend/src/ink/inkSaver.js", [...INK, "collab"]], // the save marks live strokes saved (collab's drop step)
   ["frontend/src/ink/useInkSave.js", [...INK, "collab"]],
   ["frontend/src/ink/useInkDocument.js", [...INK, "collab", "recording"]], // applyInk's live drop, a group's replay stop
+  ["frontend/src/ink/inkHistory.js", [...INK, "collab", "recording"]], // collab's drop is an undo before the save
+  ["frontend/src/ink/inkEdits.js", [...INK, "collab", "recording"]], // a recorded or shared stroke's group block
   ["frontend/src/ink/useInkStrip.js", [...INK, "recording"]], // Play disarms through it
   ["frontend/src/ink/stripState.js", [...INK, "recording"]],
   ["frontend/src/ink/useInkSelection.js", [...INK, "recording"]], // Play clears the lasso through it
+  ["frontend/src/ink/selectionEdits.js", [...INK, "recording"]],
   ["frontend/src/ink/useInkSurfaces.js", [...INK, "recording"]], // the player's ink groups
-  ["frontend/src/ink/**", INK],
+  ["frontend/src/ink/inkSurfaces.js", [...INK, "recording"]],
+  ["frontend/src/ink/**", INK], // inkCommands.js too: the commands' keys are ink-editing's and ipad's steps
   // what a page surface carries (ink and text boxes) and the tool strip, whose anchors the ink tour uses
   ["frontend/src/markup/**", ["ink", "ink-editing", "ink-shapes", "ink-zoom", "pdf-touch", "triggered-guide", "notebooks", "textbox", "touch", "comments"]],
   ["frontend/src/notebook/**", ["notebooks", "textbox", "touch"]],

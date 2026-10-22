@@ -1,14 +1,17 @@
 // The strokes (docs/dev/handwriting.md "Client"): a finished stroke, or a
 // paste's strokes, into the surface's current group as one edit
 // (useInkDocument.js applyInk), the group's saved file loaded first when
-// no draft holds it yet and a new group started when it is full; and the
-// pill a snapped stroke raises. App composes it after the document.
+// no draft holds it yet and a new group started when it is full (the
+// arithmetic in inkEdits.js); and the pill a snapped stroke raises. App
+// composes it after the document.
 import { useEffect, useRef } from "react";
 import { guideEvents } from "../guide/events.js";
+import { wantsSheetAfter } from "../notebook/notebook.js";
 import { t, T } from "../shared/i18n/i18n.js";
 import { makeId } from "../shared/lib/utils";
 import { flattenBlocks } from "../shared/model/blockModel.js";
-import { GROUP_SPLIT_BYTES, MAX_BYTES, MAX_STROKES, appendStroke, appendStrokes, inkBytes, newCanvasInk, newInk, strokeBounds, strokeBytes } from "./ink.js";
+import { appendStroke, appendStrokes, strokeBounds, strokeBytes } from "./ink.js";
+import { freshInk, pasteTooBig, splitsGroup } from "./inkEdits.js";
 import * as inkStore from "./inkStore";
 
 // focusedBlockId: the open page; leaving it, the next stroke starts a
@@ -41,11 +44,11 @@ export function useInkStrokes({ focusedBlockId, readOnly, inkStale, blocksRef, n
     const loaded = !inkStore.draft(id) && existing?.properties.ink_url
       ? await inkStore.loadInk(existing.properties.ink_url) : null;
     const onSheet = typeof page === "string";
-    const fresh = () => (onSheet ? newCanvasInk(size.width, size.height) : newInk(page, size.width, size.height));
+    const fresh = () => freshInk(page, size);
     let before = inkStore.draft(id)?.ink || loaded || fresh();
     // A group past the split budget (or full of strokes) is left as it is:
     // the stroke starts the page's next group, invisibly.
-    if (before.strokes.length && (inkBytes(before) + strokeBytes(stroke) > GROUP_SPLIT_BYTES || before.strokes.length >= MAX_STROKES)) {
+    if (splitsGroup(before, strokeBytes(stroke), 1)) {
       id = makeId();
       inkActiveRef.current = { page, id };
       before = fresh();
@@ -55,8 +58,7 @@ export function useInkStrokes({ focusedBlockId, readOnly, inkStale, blocksRef, n
       // Writing into the last quarter of the page's last sheet adds the next
       // one right after it, so there is always paper below (Notability's
       // continuous page) — once: a page after it already there is the one.
-      const last = nbSheetsRef.current.at(-1), box = strokeBounds(stroke);
-      if (last?.id === page && box && box[3] > last.paper.height * 0.75) addSheetAfter(last.id, { once: true });
+      if (wantsSheetAfter(nbSheetsRef.current, page, strokeBounds(stroke))) addSheetAfter(page, { once: true });
     }
     guideEvents.emit("ink.stroke");
   }
@@ -67,10 +69,9 @@ export function useInkStrokes({ focusedBlockId, readOnly, inkStale, blocksRef, n
   // group could hold them.
   async function handleInkStrokes(page, strokes, size) {
     if (readOnly || !focusedBlockId || inkStale || !strokes.length || !size) return null;
-    const onSheet = typeof page === "string";
-    const fresh = () => (onSheet ? newCanvasInk(size.width, size.height) : newInk(page, size.width, size.height));
+    const fresh = () => freshInk(page, size);
     const bytes = strokes.reduce((n, s) => n + strokeBytes(s), 0);
-    if (strokes.length > MAX_STROKES || inkBytes(fresh()) + bytes > MAX_BYTES) {
+    if (pasteTooBig(page, strokes, size)) {
       setStatus(t("Too much handwriting to paste into one note."));
       return null;
     }
@@ -80,7 +81,7 @@ export function useInkStrokes({ focusedBlockId, readOnly, inkStale, blocksRef, n
     const loaded = existing && !inkStore.draft(id) && existing.properties.ink_url
       ? await inkStore.loadInk(existing.properties.ink_url) : null;
     let before = inkStore.draft(id)?.ink || loaded || fresh();
-    if (before.strokes.length && (inkBytes(before) + bytes > GROUP_SPLIT_BYTES || before.strokes.length + strokes.length > MAX_STROKES)) {
+    if (splitsGroup(before, bytes, strokes.length)) {
       id = makeId();
       before = fresh();
     }

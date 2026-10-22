@@ -4,14 +4,17 @@
 // edit brings its strokes back; undo and redo step that history onto
 // the drawings as they are now; the eraser's sweeps and a scribble's
 // erasures are edits, the flushes of one eraser pass folding into one
-// entry; and a draft the journal restored gets its pill. App composes it
-// after the surfaces.
+// entry; and a draft the journal restored gets its pill. Their pure parts
+// are inkHistory.js (the history) and inkEdits.js (the budget, the blocks
+// put back, the erasers' changes). App composes it after the surfaces.
 import { useEffect, useRef, useState } from "react";
 import { guideEvents } from "../guide/events.js";
 import * as playback from "../replay/playback.js";
 import { t, T, tn } from "../shared/i18n/i18n.js";
-import { findBlock, flattenBlocks, updateBlockTree } from "../shared/model/blockModel.js";
-import { MAX_BYTES, eraseAlong, eraserKeep, hitStrokesAlong, inkBytes, mergeInk, pdfPositionOf, removeStrokes } from "./ink.js";
+import { flattenBlocks } from "../shared/model/blockModel.js";
+import { eraserKeep, mergeInk } from "./ink.js";
+import { eraseAlongChanges, eraseManyChanges, missingGroups, overBudget, withGroupBlocks } from "./inkEdits.js";
+import { foldInto, passFold, recordEntry, stepChanges, undoMessage } from "./inkHistory.js";
 import * as inkStore from "./inkStore";
 
 // focusedBlockId: the open page; leaving it empties the history.
@@ -57,26 +60,19 @@ export function useInkDocument({ focusedBlockId, readOnly, blocksRef, setBlocks,
     if (!changes.length) return false;
     // The byte budget: an edit that would take a group past the server's
     // cap is refused (one that shrinks a group over it is not).
-    if (changes.some((c) => inkBytes(c.after) > MAX_BYTES && inkBytes(c.after) > inkBytes(c.before))) {
+    if (overBudget(changes)) {
       setStatus(t("This handwriting note is full. Move part of it to a new note, or start a new one."));
       return false;
     }
     for (const c of changes) playback.stop(c.id);
     const present = new Set(flattenBlocks(blocksRef.current).map((b) => b.id));
-    const missing = changes.filter((c) => c.after.strokes.length && !present.has(c.id));
+    const missing = missingGroups(changes, present);
     if (missing.length) {
       // A block coming back is fresh: no base for its draft (inkStore.dropDraft).
       for (const c of missing) inkStore.dropDraft(c.id);
       // A PDF page's group goes at the page's top level; a sheet's under
       // its sheet (`page` is then the sheet's id).
-      setBlocks((prev) => missing.reduce((tree, c) => {
-        const onSheet = typeof c.page === "string";
-        const node = { id: c.id, parentId: onSheet ? c.page : null, children: [], content: "",
-          properties: onSheet ? { ink_url: "", ink_strokes: 0 } : { ink_url: "", ink_strokes: 0, pdf_position: pdfPositionOf(c.after) } };
-        return onSheet && findBlock(tree, c.page)
-          ? updateBlockTree(tree, c.page, (sheet) => ({ ...sheet, children: [...(sheet.children || []), node] }))
-          : [...tree, node];
-      }, prev));
+      setBlocks((prev) => withGroupBlocks(prev, missing));
     }
     const byId = new Map(flattenBlocks(blocksRef.current).map((b) => [b.id, b]));
     for (const c of changes) inkStore.setDraft(c.id, c.after, byId.get(c.id)?.properties?.ink_url || "");
@@ -84,9 +80,7 @@ export function useInkDocument({ focusedBlockId, readOnly, blocksRef, setBlocks,
     liveRemoved(changes);
     if (record) {
       const h = inkHistRef.current;
-      h.undo.push(pass ? { changes, label, pass } : { changes, label });
-      if (h.undo.length > 200) h.undo.shift();
-      h.redo = [];
+      recordEntry(h, changes, { label, pass });
       setInkHistoryState({ undo: h.undo.length, redo: h.redo.length });
     }
     scheduleInk();
@@ -97,26 +91,15 @@ export function useInkDocument({ focusedBlockId, readOnly, blocksRef, setBlocks,
     const h = inkHistRef.current;
     const entry = (redo ? h.redo : h.undo).pop();
     if (!entry) { setStatus(redo ? t("Nothing to redo in handwriting.") : t("Nothing to undo in handwriting.")); return false; }
-    // Entries are stored forward (before → after). Undo applies after →
-    // before, redo before → after, each onto the group as it is NOW by
-    // stroke id (mergeInk), so strokes someone else drew meanwhile stay;
-    // what someone changed since is kept over the step, and the pill says so.
-    let kept = 0;
-    applyInk(entry.changes.map((c) => {
-      const [from, to] = redo ? [c.before, c.after] : [c.after, c.before];
-      const now = inkOf(c.id) || from;
-      const merged = mergeInk(from, to, now);
-      if (!merged.clean) kept += Math.max(1, merged.lostOurs.length);
-      return { ...c, before: now, after: merged.ink };
-    }), { record: false });
+    // The step lands on each group as it is now (inkHistory.js
+    // stepChanges): strokes someone else drew meanwhile stay, and what
+    // someone changed since is kept over it, which the pill says.
+    const { changes, kept } = stepChanges(entry, redo, inkOf);
+    applyInk(changes, { record: false });
     (redo ? h.undo : h.redo).push(entry);
     setInkHistoryState({ undo: h.undo.length, redo: h.redo.length });
     clearInkSelection();
-    // a label is kept in English (T) and translated here; one made with t() already stays as it is
-    const what = `${redo ? t("Redone") : t("Undone")}: ${t(entry.label)}`, page = inkPageNumber(entry.changes[0].page);
-    setStatus(kept ? tn("{what} (page {page}; {n} stroke someone changed since was kept).",
-      "{what} (page {page}; {n} strokes someone changed since were kept).", kept, { what, page })
-      : `${what} (page ${page}).`);
+    setStatus(undoMessage(entry, redo, kept, inkPageNumber(entry.changes[0].page)));
     if (!redo) guideEvents.emit("ink.undone");
     return true;
   }
@@ -135,16 +118,7 @@ export function useInkDocument({ focusedBlockId, readOnly, blocksRef, setBlocks,
   // go as one entry across their groups, with Undo on the pill.
   function handleInkEraseMany(page, targets) {
     if (readOnly) return;
-    const changes = [];
-    let n = 0;
-    for (const { gid, ids } of targets || []) {
-      const before = inkOf(gid);
-      if (!before) continue;
-      const allowed = before.strokes.filter((s) => ids.includes(s.id) && inkKeep(s)).map((s) => s.id);
-      if (!allowed.length) continue;
-      n += allowed.length;
-      changes.push({ id: gid, page, before, after: removeStrokes(before, allowed) });
-    }
+    const { changes, n } = eraseManyChanges(page, targets, inkOf, inkKeep);
     if (!changes.length) return;
     applyInk(changes, { label: T("ink scribble erase") });
     undoableInkStatus(tn("Erased {n} stroke.", "Erased {n} strokes.", n));
@@ -155,36 +129,18 @@ export function useInkDocument({ focusedBlockId, readOnly, blocksRef, setBlocks,
   // flush, `r` its radius in points. Every group of the surface is cut along
   // it (`mode` 'partial', ink.js eraseAlong) or loses the strokes it touched
   // ('stroke', hitStrokesAlong), through the eraser filter, as one applyInk
-  // a flush. The flushes of one pass (`pass`, minted at the down) fold into
-  // one history entry, across groups: a group the entry holds takes the
-  // new `after`, another joins it, so Ctrl+Z undoes the whole pass. A group
-  // whose drawing changed meanwhile (a save that merged someone's strokes)
-  // starts a new entry instead, so undoing the pass never takes theirs.
+  // a flush (inkEdits.js eraseAlongChanges). The flushes of one pass
+  // (`pass`, minted at the down) fold into one history entry, across
+  // groups, so Ctrl+Z undoes the whole pass (inkHistory.js passFold and
+  // foldInto: a group changed meanwhile starts a new entry).
   function handleInkEraseAlong(page, path, r, { mode, pass } = {}) {
     if (readOnly || !path?.length) return;
-    const partial = mode === "partial", changes = [];
-    for (const block of inkBySurface.get(page) || []) {
-      const before = inkOf(block.id);
-      if (!before?.strokes?.length) continue;
-      let after = before;
-      if (partial) after = eraseAlong(before, path, r, inkKeep).ink;
-      else {
-        const ids = hitStrokesAlong(before, path, r, inkKeep);
-        if (ids.length) after = removeStrokes(before, ids);
-      }
-      if (after !== before) changes.push({ id: block.id, page, before, after });
-    }
+    const partial = mode === "partial", changes = eraseAlongChanges(page, inkBySurface.get(page) || [], path, r, partial, inkOf, inkKeep);
     if (!changes.length) return;
     const h = inkHistRef.current, last = h.undo[h.undo.length - 1];
-    const held = (c) => last.changes.find((x) => x.id === c.id);
-    const fold = !!pass && last?.pass === pass && changes.every((c) => !held(c) || held(c).after === c.before);
+    const { fold, held } = passFold(h, changes, pass);
     if (!applyInk(changes, { record: !fold, label: partial ? T("partial ink erasure") : T("ink erasure"), pass })) return;
-    if (fold) {
-      for (const c of changes) {
-        const entry = held(c);
-        if (entry) entry.after = c.after; else last.changes.push({ ...c });
-      }
-    }
+    if (fold) foldInto(last, changes, held);
     guideEvents.emit("ink.erased");
   }
   // Handwriting a closed tab left unsaved, restored from the draft journal

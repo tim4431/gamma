@@ -137,6 +137,7 @@ import { useInkRuler } from "../ink/useInkRuler.js";
 import { useInkZoom } from "../ink/useInkZoom.js";
 import { useStripKeys } from "../ink/useStripKeys.js";
 import { usePencil } from "../ink/usePencil.js";
+import { inkCommandContext } from "../ink/inkCommands.js";
 import { NotebookViewer, PaperMenu, readPlace, showPlace } from "../notebook/NotebookViewer";
 import { NoteSheetContext } from "../notebook/NoteSheet";
 import {
@@ -7150,12 +7151,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     // The handwriting group (docs/dev/handwriting.md "Copy, cut and paste"):
     // the guards, and the actions the keys, the palette, the strip's More
     // menu and the selection menu share.
-    inkOpen: inkUi.open, inkTool: !!inkTool, inkSelected: !!inkSelection && !readOnly, inkClip,
-    inkCopy: () => copyInkSelection(false),
-    inkCut: () => copyInkSelection(true),
-    inkPaste: () => { pasteAtCentre(); },
-    inkDuplicate: () => { duplicateInkSelection(); },
-    inkSelectAll: () => selectAllInk(),
+    ...inkCommandContext({ inkUi, inkTool, inkSelection, readOnly, inkClip },
+      { copyInkSelection, pasteAtCentre, duplicateInkSelection, selectAllInk }),
   };
   // What the command palette lists right now: the app commands that apply,
   // then the block commands that work on the focused row without an editor.

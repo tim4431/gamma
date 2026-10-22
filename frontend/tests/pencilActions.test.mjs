@@ -1,7 +1,7 @@
 // node --test tests/  (from frontend/) — the Pencil's double tap and squeeze.
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { PENCIL_CHOICES, SQUEEZE_HOLDS, SQUEEZE_TAP_MS, backTool, pencilAction, stylusPen } from "../src/ink/pencilActions.js";
+import { PENCIL_CHOICES, SQUEEZE_HOLDS, SQUEEZE_TAP_MS, backTool, pencilAction, pencilStep, stylusPen } from "../src/ink/pencilActions.js";
 
 const tools = [{ id: "pen1", kind: "pen" }, { id: "pen2", kind: "pen" }, { id: "hl1", kind: "highlighter" }];
 const prefs = { tools, pen: "pen2" };
@@ -142,21 +142,17 @@ test("Eraser while held with the eraser armed holds the tool to go back to: a sh
     { release: { pick: "eraser" } }, "short, but it drew: the eraser again");
 });
 
-// usePencil's half (ink/usePencil.js pencilRef), as small as it goes: the
-// armed tool, the one before it, and the squeeze held open.
+// Squeezes through usePencil's step (pencilStep, as ink/usePencil.js
+// pencilRef runs it) over the strip as small as it goes: the armed tool,
+// and the one before it, which follows each switch (useInkStrip's
+// inkPrevRef). → (ms, at) => the tool armed after a squeeze's start at
+// `at` and after its end `ms` later.
 function squeezes(prefs, tool) {
   let previous = null, open = null;
-  const pick = (id) => { if (id !== tool) { previous = tool; tool = id; } };
   const send = (phase, now) => {
-    const ending = phase === "ended" || phase === "cancelled";
-    const was = open;
-    if (ending) open = null;
-    const r = pencilAction(squeeze(phase), prefs, { tool, previous, squeeze: was, now });
-    if (r?.began) {
-      open = { since: now, ignored: r.began.ignored, hold: "pick" in r.began ? { tool, used: false } : null };
-      if (open.hold) pick(r.began.pick);
-    } else if (r?.release && !r.release.stay) pick(r.release.pick);
-    else if (r && "pick" in r) pick(r.pick);
+    const step = pencilStep(squeeze(phase), prefs, { tool, previous, squeeze: open }, now);
+    open = step.squeeze;
+    for (const [what, id] of step.run) if (what === "pick" && id !== tool) { previous = tool; tool = id; }
     return tool;
   };
   return (ms, at) => [send("began", at), send("ended", at + ms)];
@@ -207,4 +203,64 @@ test("while a stroke or a claim is in progress nothing acts but a held squeeze's
   assert.deepEqual(pencilAction(squeeze("ended"), { ...prefs, squeeze: "holdEraser" },
     { ...busy, tool: "eraser", squeeze: { since: 0, ignored: false, hold: { tool: "pen1", used: false } }, now: 900 }),
   { release: { pick: "pen1" } }, "the end of a held squeeze is never lost");
+});
+
+// --- usePencil's step: the squeeze it holds, what it runs ----------------------------
+test("pencilStep runs a pick after its tick, ticking only for a switch; undo and a row patch as they come", () => {
+  assert.deepEqual(pencilStep(tap("switchEraser"), prefs, { tool: "pen1" }, 0), { squeeze: null, run: [["haptic", "tool"], ["pick", "eraser"]] });
+  assert.deepEqual(pencilStep(tap("switchPrevious"), prefs, { tool: "pen2", previous: null }, 0).run, [["pick", "pen2"]],
+    "the stylus pen armed already: no tick");
+  assert.deepEqual(pencilStep(tap(), { ...prefs, tap: "undo" }, { tool: "pen1" }, 0).run, [["undo"]]);
+  assert.deepEqual(pencilStep(tap("showColorPalette"), prefs, { tool: "pen1", options: false }, 0).run, [["ui", { open: true, options: true }]]);
+  assert.deepEqual(pencilStep(tap("ignore"), prefs, { tool: "pen1" }, 0), { squeeze: null, run: [] });
+  assert.deepEqual(pencilStep(tap(), prefs, { tool: "pen1", busy: true }, 0), { squeeze: null, run: [] }, "mid-stroke");
+});
+
+test("pencilStep opens a squeeze at its start, a hold keeping the tool and the lasso's selection, and closes it at its end", () => {
+  const selection = { page: 1, items: [{ id: "g1", ids: ["a"] }] };
+  assert.deepEqual(pencilStep(squeeze("began"), prefs, { tool: "pen1", selection }, 500), { squeeze: { since: 500, ignored: false, hold: null }, run: [] },
+    "System setting: a start only answers");
+  assert.deepEqual(pencilStep(squeeze("began"), { ...prefs, squeeze: "holdEraser" }, { tool: "pen1", busy: true }, 500),
+    { squeeze: { since: 500, ignored: true, hold: null }, run: [] }, "a start mid-stroke is ignored, its end with it");
+  const held = pencilStep(squeeze("began"), { ...prefs, squeeze: "holdEraser" }, { tool: "select", selection }, 500);
+  assert.deepEqual(held, { squeeze: { since: 500, ignored: false, hold: { tool: "select", used: false, selection } },
+    run: [["pick", "eraser"], ["haptic", "tool"]] });
+  assert.deepEqual(pencilStep(squeeze("began"), { ...prefs, squeeze: "holdPrevious" }, { tool: "pen2", previous: null }, 0).run, [],
+    "a hold whose tool is armed already: no switch");
+  const open = { since: 0, ignored: false, hold: null };
+  assert.deepEqual(pencilStep(squeeze("ended"), { ...prefs, squeeze: "eraser" }, { tool: "pen1", squeeze: open }, 900),
+    { squeeze: null, run: [["haptic", "tool"], ["pick", "eraser"]] });
+  assert.equal(pencilStep(squeeze("changed"), prefs, { tool: "pen1", squeeze: open }, 900).squeeze, open, "an unknown phase leaves it open");
+});
+
+test("a held squeeze's end goes back to the lasso with what is left of its selection; a short one that did nothing stays", () => {
+  const p = { ...prefs, squeeze: "holdEraser" }, selection = { page: 1, items: [{ id: "g1", ids: ["a"] }] };
+  const fromLasso = pencilStep(squeeze("began"), p, { tool: "select", selection }, 1000).squeeze;
+  assert.deepEqual(pencilStep(squeeze("ended"), p, { tool: "eraser", squeeze: fromLasso }, 1600),
+    { squeeze: null, run: [["pick", "select"], ["haptic", "tool"], ["restore", selection]] }, "the selection restored after the switch");
+  assert.deepEqual(pencilStep(squeeze("cancelled"), p, { tool: "eraser", squeeze: fromLasso }, 1600).run.at(-1), ["restore", selection], "a cancel too");
+  assert.deepEqual(pencilStep(squeeze("ended"), p, { tool: "eraser", squeeze: fromLasso }, 1100), { squeeze: null, run: [] },
+    "short and nothing erased: the eraser stays, nothing restored");
+  const used = { ...fromLasso, hold: { ...fromLasso.hold, used: true } };
+  assert.deepEqual(pencilStep(squeeze("ended"), p, { tool: "eraser", squeeze: used }, 1100).run.at(-1), ["restore", selection], "short, but it erased");
+  const fromPen = pencilStep(squeeze("began"), p, { tool: "pen1", selection }, 1000).squeeze;
+  assert.deepEqual(pencilStep(squeeze("ended"), p, { tool: "eraser", squeeze: fromPen }, 1600).run, [["pick", "pen1"], ["haptic", "tool"]],
+    "back to a pen: nothing to restore");
+  const noSelection = pencilStep(squeeze("began"), p, { tool: "select", selection: null }, 1000).squeeze;
+  assert.deepEqual(pencilStep(squeeze("ended"), p, { tool: "eraser", squeeze: noSelection }, 1600).run, [["pick", "select"], ["haptic", "tool"]]);
+});
+
+test("pencilStep's gate: on a read-only page, or where no page takes ink, only a held squeeze's end acts; an end closes the squeeze anyway", () => {
+  const held = { since: 0, ignored: false, hold: { tool: "pen1", used: false, selection: null } };
+  for (const gate of [{ readOnly: true }, { takesInk: false }]) {
+    const what = JSON.stringify(gate);
+    assert.deepEqual(pencilStep(tap("switchEraser"), prefs, { tool: "pen1", ...gate }, 0), { squeeze: null, run: [] }, what);
+    assert.deepEqual(pencilStep(squeeze("began"), { ...prefs, squeeze: "holdEraser" }, { tool: "pen1", ...gate }, 0), { squeeze: null, run: [] },
+      `${what}: no squeeze opens`);
+    assert.deepEqual(pencilStep(squeeze("ended"), { ...prefs, squeeze: "eraser" }, { tool: "pen1", squeeze: { since: 0, ignored: false, hold: null }, ...gate }, 900),
+      { squeeze: null, run: [] }, `${what}: a plain squeeze's end closes it and does nothing`);
+    assert.deepEqual(pencilStep(squeeze("cancelled"), { ...prefs, squeeze: "holdEraser" }, { tool: "eraser", squeeze: held, ...gate }, 900),
+      { squeeze: null, run: [["pick", "pen1"], ["haptic", "tool"]] }, `${what}: a held squeeze goes back, wherever the page is now`);
+    assert.equal(pencilStep(tap("switchEraser"), prefs, { tool: "eraser", squeeze: held, ...gate }, 0).squeeze, held, `${what}: a tap leaves it open`);
+  }
 });

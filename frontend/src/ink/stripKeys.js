@@ -16,11 +16,14 @@
 // the zoom window on or off) · {kind: "off", what} (Escape taking one of
 // them away) · {kind: "newLine"} (Enter while the zoom window is open: its
 // New line); `prevent` and `stop` say what to do with the event.
+// stepWidth and stepBrush, below, are what width and brush do to the
+// armed preset.
 //
 // A chord with Ctrl, Cmd or Alt is someone else's (Ctrl+C / X / V / D / A
 // on handwriting are catalog commands, app/appCommands.js), except Ctrl+Z /
 // Y and the AltGr pair — ctrlKey and altKey together, a third-level letter
 // on some layouts — which counts as no modifier.
+import { BRUSH_ORDER, sizesFor } from "./ink.js";
 
 // state: {tools: the visible presets in row order, tool: the armed tool,
 // hasSelection: the lasso holds strokes, boxUndo: Ctrl+Z belongs to the
@@ -87,4 +90,35 @@ export function stripKey(e, state = {}) {
     return t ? { kind: "pick", id: t.id } : null;
   }
   return null;
+}
+
+// The width keys' step for the armed preset `id` of `tools`, the
+// account's list: the next size on its kind's ladder (ink.js sizesFor; a
+// size off the ladder steps from its first), `step` ±1. → {preset, size,
+// next}: the preset and the size the pill names ("{name} · {size} pt.",
+// raised at either end of the ladder too), and the list with the preset
+// at that size, null when the size stays (at an end). null with no preset
+// armed.
+export function stepWidth(tools, id, step) {
+  const p = tools.find((x) => x.id === id);
+  if (!p) return null;
+  const sizes = sizesFor(p.kind);
+  const size = sizes[Math.max(0, Math.min(sizes.length - 1, sizes.indexOf(p.size) + step))];
+  return { preset: p, size, next: size !== p.size ? tools.map((x) => (x.id === p.id ? { ...x, size } : x)) : null };
+}
+
+// The style keys' step for an armed pen: its brush through BRUSH_ORDER
+// (null for Pen, then Ballpoint, Brush, Pencil, Calligraphy), wrapping,
+// the brush alone written (a calligraphy pen's smoothing of 2 is its
+// default, ink.js presetSmoothing, never written). → {preset: the pen
+// restyled, which the pill names, size, next: the list with it}; null for
+// a highlighter, which has no styles, or with no preset armed.
+export function stepBrush(tools, id, step) {
+  const p = tools.find((x) => x.id === id);
+  if (!p || p.kind !== "pen") return null;
+  const n = BRUSH_ORDER.length, at = Math.max(0, BRUSH_ORDER.indexOf(p.brush ?? null));
+  const brush = BRUSH_ORDER[(at + step + n) % n];
+  const { brush: _was, ...rest } = p;
+  const preset = brush ? { ...rest, brush } : rest;
+  return { preset, size: p.size, next: tools.map((x) => (x.id === p.id ? preset : x)) };
 }

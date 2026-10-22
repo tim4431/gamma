@@ -7,7 +7,7 @@ import { useCallback, useEffect, useRef } from "react";
 import { nativeHost, onHostMessage, postToHost } from "../shared/lib/host.js";
 import { inkBusy } from "./InkLayer";
 import { round2 } from "./ink.js";
-import { pencilAction } from "./pencilActions.js";
+import { pencilStep } from "./pencilActions.js";
 
 // readOnly: no gesture acts. takesInk: the page takes ink (a PDF page or
 // the notebook view shown, or sheets among the notes); elsewhere only a
@@ -23,52 +23,34 @@ export function usePencil({ readOnly, takesInk, inkUi, inkVisible, previousTool,
   inkSelection, selectionStill, restoreInkSelection, stripUndo, inkPencilTap, inkPencilSqueeze, inkHaptics }) {
   // The Pencil's double tap and squeeze, forwarded by the iPad app's shell
   // (docs/dev/ipad.md "Gestures"; the host's `pencil`, and `squeeze` for a
-  // squeeze's start and cancel): each goes through pencilAction with this
-  // browser's choice for the gesture (Settings → Reading & editing › Apple
-  // Pencil; the system's preferred action by default) — a tool armed, the
-  // armed tool's options row, the strip's Undo — only where a page takes
-  // ink, and none while a stroke or a claim is in progress (InkLayer.jsx
-  // inkBusy). A held squeeze (squeezeRef: {since, ignored, hold: {tool,
-  // used, selection} | null}, from its start to its end or cancel) arms its
-  // tool while it is held and goes back to the tool before at its end,
-  // restoring what is left of the lasso's selection, unless it was a short
-  // one that neither erased nor drew (handleInkEraseEnd and handleInkStroke
-  // mark it used). A `squeeze` is a start or a cancel; in any other phase
-  // (a later shell's) it does nothing.
+  // squeeze's start and cancel): each goes through pencilStep, over
+  // pencilAction, with this browser's choice for the gesture (Settings →
+  // Reading & editing › Apple Pencil; the system's preferred action by
+  // default) — a tool armed, the armed tool's options row, the strip's
+  // Undo — only where a page takes ink, and none while a stroke or a claim
+  // is in progress (InkLayer.jsx inkBusy). A held squeeze (squeezeRef:
+  // {since, ignored, hold: {tool, used, selection} | null}, from its start
+  // to its end or cancel) arms its tool while it is held and goes back to
+  // the tool before at its end, restoring what is left of the lasso's
+  // selection, unless it was a short one that neither erased nor drew
+  // (handleInkEraseEnd and handleInkStroke mark it used). A `squeeze` is a
+  // start or a cancel; in any other phase (a later shell's) it does
+  // nothing.
   // Each tool a gesture switches to ticks in an Apple Pencil Pro.
   const squeezeRef = useRef(null);
   const pencilRef = useRef(null);
   pencilRef.current = (message) => {
-    const ending = message.gesture === "squeeze" && (message.phase === "ended" || message.phase === "cancelled");
-    const open = squeezeRef.current;
-    if (ending) squeezeRef.current = null;
-    // the end of a held squeeze always goes back, wherever the page is now
-    if (!(ending && open?.hold) && (readOnly || !takesInk)) return;
-    const now = performance.now();
-    const result = pencilAction(message, { tools: inkVisible, pen: inkUi.pen, tap: inkPencilTap, squeeze: inkPencilSqueeze },
-      { tool: inkUi.tool, previous: previousTool(), options: inkUi.options, busy: inkBusy(), squeeze: open, now });
-    if (!result) return;
-    // a held squeeze's tool, armed and given back (the same tool is no switch)
-    const hold = (id) => {
-      if (id === inkUi.tool) return;
-      pickInkTool(id);
-      hostHaptic("tool");
-    };
-    if (result.began) {
-      const held = "pick" in result.began;
-      squeezeRef.current = { since: now, ignored: result.began.ignored,
-        hold: held ? { tool: inkUi.tool, used: false, selection: inkSelection } : null };
-      if (held) hold(result.began.pick);
-    } else if (result.release) {
-      if (result.release.stay) return;
-      hold(result.release.pick);
-      if (result.release.pick === "select" && open?.hold?.selection) restoreInkSelection(selectionStill(open.hold.selection));
-    } else if (result.undo) {
-      stripUndo(false);
-    } else if ("pick" in result) {
-      if (result.pick !== inkUi.tool) hostHaptic("tool");
-      pickInkTool(result.pick);
-    } else applyPencilUi(result.ui);
+    const step = pencilStep(message, { tools: inkVisible, pen: inkUi.pen, tap: inkPencilTap, squeeze: inkPencilSqueeze },
+      { readOnly, takesInk, tool: inkUi.tool, previous: previousTool(), options: inkUi.options, busy: inkBusy(),
+        selection: inkSelection, squeeze: squeezeRef.current }, performance.now());
+    squeezeRef.current = step.squeeze;
+    for (const [what, arg] of step.run) {
+      if (what === "pick") pickInkTool(arg);
+      else if (what === "haptic") hostHaptic(arg);
+      else if (what === "restore") restoreInkSelection(selectionStill(arg));
+      else if (what === "undo") stripUndo(false);
+      else applyPencilUi(arg);
+    }
   };
   useEffect(() => {
     if (!nativeHost()?.pencil) return undefined;
