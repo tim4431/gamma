@@ -201,7 +201,7 @@ export async function diagramScenarios(env) {
       await closeEditor(page);
       await page.locator(".diagramPreview").filter({ hasText: "Begin" }).waitFor();
       await page.locator(".diagramPreview").click({ button: "right" });
-      await page.getByRole("button", { name: "Edit markdown source" }).click();
+      await page.getByRole("menuitem", { name: "Edit markdown source" }).click();
       await page.locator(".blockEditorCm .cm-content").waitFor();
       await page.keyboard.press("ControlOrMeta+a");
       await page.keyboard.insertText(fence("flowchart LR\n  A[Edited] --> B[Saved]"));
@@ -406,7 +406,7 @@ export async function diagramScenarios(env) {
       const copyImageOf = async (picture) => {
         await page.evaluate(() => navigator.clipboard.writeText("before"));
         await picture.click({ button: "right" });
-        await page.getByRole("button", { name: "Copy image", exact: true }).click();
+        await page.getByRole("menuitem", { name: "Copy image", exact: true }).click();
         let copied = null;
         await until(async () => !(copied = await page.evaluate(readClipboard))["text/plain"], { what: "the figure reached the clipboard" });
         return copied;

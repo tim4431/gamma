@@ -6,8 +6,10 @@
 // tablet. Chromium emulates the tablet: `isMobile` gives `(hover: none)` and
 // `(pointer: coarse)`, and CDP's Input.dispatchTouchEvent the finger, with
 // the pointer events a real touch screen sends. That is emulation, not an
-// iPad (docs/dev/ipad.md has the device checks).
-import { fakeAiModels, wanted } from "../harness.mjs";
+// iPad (docs/dev/ipad.md has the device checks). The last step reads the
+// menus these steps open as assistive technology does: one role="menu"
+// around each menu's items, named by what opens it.
+import { assertMenuRoles, fakeAiModels, wanted } from "../harness.mjs";
 import { waitForPdf } from "./pdf.mjs";
 import { PNG_1PX } from "./notes.mjs";
 
@@ -855,5 +857,103 @@ export async function touchScenarios({ server, browser, alice, makePdf, step, un
       for (const [k, v] of Object.entries(want)) assertEq(sizes[name][k], v, `${name}: ${k}`);
     }
     return JSON.stringify(sizes.finger);
+  });
+
+  // --- 13. a menu as assistive technology reads it ------------------------------------
+
+  // WAI-ARIA's menu (ui-design.md, "Menus and submenus"): the surface is the
+  // one role="menu" around its items, a flyout a menu of its own inside its
+  // parent menu, and a menu a control opens is named by that control
+  // (harness.mjs assertMenuRoles reads an open menu so; the handwriting and
+  // replay steps read the strip's, the selection's and the player's menus).
+  const named = (page, name) => page.getByRole("menu", { name, exact: true });
+  // Menus open and in no other menu (a flyout the pointer rests on is in
+  // its parent's).
+  const topMenus = (page) => page.evaluate(() => [...document.querySelectorAll('[role="menu"]')]
+    .filter((m) => !m.parentElement.closest('[role="menu"]')).length);
+  const hasItem = (items, text, what) => assert(items.some((i) => i.text === text), `${what} has ${text}: ${items.map((i) => i.text).join(" | ")}`);
+
+  await step("touch: every menu is one role=menu around its items, named by what opens it: a page's ⋯ and its flyout, the sort, the account menu and Tours, View, a note's handle", async () => {
+    const ctx = await alice.context(browser);
+    try {
+      const page = await openPage(ctx, libUrl);
+      // A page's ⋯ opens the menu its right-click does: a context menu, with
+      // no control of its own to name it. Its Move to folder flyout is
+      // named by its row, which says it opens a menu and is open.
+      const row = fileRow(page, "Touch page two");
+      await row.waitFor();
+      await row.hover();
+      await row.locator(".rowMenuBtn").click();
+      await menu(page).waitFor();
+      assertEq(await topMenus(page), 1, "the page menu is the one menu open");
+      const pageItems = await assertMenuRoles(menu(page), "the page menu");
+      for (const text of ["Open", "Rename", "Duplicate"]) hasItem(pageItems, text, "the page menu");
+      const flyoutRow = page.locator(".ctxMenu .ctxSubTrigger", { hasText: "Move to folder" });
+      await flyoutRow.click();
+      const flyout = named(page, "Move to folder");
+      await flyout.waitFor();
+      assertEq(await flyoutRow.getAttribute("aria-haspopup"), "menu", "the flyout's row says it opens a menu");
+      assertEq(await flyoutRow.getAttribute("aria-expanded"), "true", "and that it is open");
+      await assertMenuRoles(flyout, "the Move to folder flyout", 1);
+      await closeMenu(page);
+
+      // The sort: a select named by its button, its choices radios with the
+      // current one checked.
+      const sort = page.locator(".homeListBar .uiSelectBtn").first();
+      assertEq(await sort.getAttribute("aria-haspopup"), "menu", "the sort's button says it opens a menu");
+      await sort.click();
+      const sortName = await sort.getAttribute("aria-label");
+      await named(page, sortName).waitFor();
+      assertEq(await sort.getAttribute("aria-expanded"), "true", "the sort's button is expanded while its menu is open");
+      const choices = await assertMenuRoles(named(page, sortName), "the sort menu");
+      assert(choices.every((c) => c.role === "menuitemradio"), `the sort's choices are radios: ${JSON.stringify(choices)}`);
+      const current = choices.filter((c) => c.checked === "true");
+      assertEq(current.length, 1, "one choice is checked");
+      assert(sortName.startsWith(`${current[0].text} — `), `the checked choice is the current one: ${current[0].text} / ${sortName}`);
+      await closeMenu(page);
+      assertEq(await sort.getAttribute("aria-expanded"), "false", "and collapsed once it closes");
+
+      // The account menu, named by its button: the open workspace the one
+      // checked radio; its Tours flyout.
+      const account = page.locator('[data-guide="header.account"]');
+      await account.click();
+      const accountMenu = named(page, "Account & settings");
+      await accountMenu.waitFor();
+      assertEq(await account.getAttribute("aria-expanded"), "true", "the account button is expanded while its menu is open");
+      const accountItems = await assertMenuRoles(accountMenu, "the account menu");
+      for (const text of ["Settings…", "Log out"]) hasItem(accountItems, text, "the account menu");
+      const workspaces = accountItems.filter((i) => i.role === "menuitemradio");
+      assert(workspaces.length && workspaces.filter((w) => w.checked === "true").length === 1,
+        `the open workspace is the one checked radio: ${JSON.stringify(workspaces)}`);
+      await page.locator('[data-guide="account.tour"]').click();
+      await named(page, "Tours").waitFor();
+      await assertMenuRoles(named(page, "Tours"), "the Tours flyout", 1);
+      await page.keyboard.press("Escape");
+      await accountMenu.waitFor({ state: "detached" });
+      assertNoProblems(page);
+
+      // On a page: View, named by its button, a window a checkbox row; a
+      // note's handle opens its context menu at the pointer.
+      const paperPage = await openPage(ctx, paperUrl);
+      await waitForPdf(paperPage);
+      const view = paperPage.locator('[data-guide="header.view"]');
+      await view.click();
+      const viewMenu = named(paperPage, "View");
+      await viewMenu.waitFor();
+      assertEq(await view.getAttribute("aria-expanded"), "true", "the View button is expanded while its menu is open");
+      const viewItems = await assertMenuRoles(viewMenu, "the View menu");
+      assert(viewItems.some((i) => i.text === "Notes" && i.role === "menuitemcheckbox"), `a window's row is a checkbox: ${JSON.stringify(viewItems)}`);
+      hasItem(viewItems, "Command palette", "the View menu");
+      await paperPage.keyboard.press("Escape");
+      await viewMenu.waitFor({ state: "detached" });
+      const wrap = paperPage.locator(".sortableBlockWrap", { hasText: "First touch note" }).first();
+      await wrap.hover();
+      await wrap.locator(".dragHandle").first().click();
+      await menu(paperPage).waitFor();
+      assertEq(await topMenus(paperPage), 1, "the handle menu is the one menu open");
+      hasItem(await assertMenuRoles(menu(paperPage), "a note's handle menu"), "Copy link to block", "a note's handle menu");
+      await closeMenu(paperPage);
+      assertNoProblems(paperPage);
+    } finally { await ctx.close(); }
   });
 }

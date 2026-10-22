@@ -62,7 +62,7 @@ export function ModelPicker({ models, value, onChange, onAdd, loading }) {
           add(menu && active >= 0 ? matches[active] : value);
         }
       }} />
-    {menu ? <ContextMenu {...menu} onClose={() => setMenu(null)} ignoreRef={input} className="aiModelMenu">
+    {menu ? <ContextMenu {...menu} onClose={() => setMenu(null)} ignoreRef={input} className="aiModelMenu" role="none">
       <div ref={list} id={id} role="listbox" aria-label={t("Available models")} className="aiModelOptions">
         {matches.map((model, index) => <button type="button" role="option" tabIndex={-1}
           id={`${id}-${index}`} aria-selected={index === active} key={model}

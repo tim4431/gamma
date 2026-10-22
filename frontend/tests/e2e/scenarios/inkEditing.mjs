@@ -1,6 +1,6 @@
 import { encodeStroke, newInk, decodeStroke, strokeBounds } from "../../../src/ink/ink.js";
 import { waitForPdf } from "./pdf.mjs";
-import { assertNear as near, assertMenuFrom, assertOpensInPlace } from "../harness.mjs";
+import { assertNear as near, assertMenuFrom, assertMenuRoles, assertOpensInPlace } from "../harness.mjs";
 
 export async function inkEditingScenarios({ server, browser, alice, bob, makePdf, step, until, assert, assertEq, assertNoProblems, openPage, flags }) {
   let ctx, page, cdp, pageId, noteId, secondId;
@@ -322,13 +322,15 @@ export async function inkEditingScenarios({ server, browser, alice, bob, makePdf
   });
 
   await step("ink edit: a right-click on blank page with a tool armed offers Paste here, which pastes at the point", async () => {
+    // the menu's row: found here, so the hand's count below counts it
+    const pasteHere = page.getByRole("menuitem", { name: "Paste here", exact: true });
     await page.getByRole("button", { name: / pen · .* · key 1\b/ }).tap();
     await tapInk();
     await page.keyboard.press("Control+c");
     await page.getByText("Copied 1 stroke.", { exact: true }).waitFor();
     const blank = await point(300, 500);
     await page.mouse.click(blank.x, blank.y, { button: "right" });
-    await page.getByRole("button", { name: "Paste here", exact: true }).click();
+    await pasteHere.click();
     await until(async () => (await inkBlocks()).length === 3, { what: "Paste here lands a group" });
     const added = (await inkBlocks()).find((b) => ![noteId, secondId].includes(b.id));
     const b = strokeBounds(added.ink.strokes[0]);
@@ -338,8 +340,14 @@ export async function inkEditingScenarios({ server, browser, alice, bob, makePdf
     await until(async () => (await inkBlocks()).length === 2);
     // Over ink, or with the hand, the page keeps its own menu: no Paste here.
     await page.getByRole("button", { name: "Hand", exact: true }).tap();
+    // counted a frame after the right-click's listeners ran: a menu they open is drawn by then
+    await page.evaluate(() => {
+      window.e2eRightClick = false;
+      addEventListener("contextmenu", () => requestAnimationFrame(() => { window.e2eRightClick = true; }), { capture: true, once: true });
+    });
     await page.mouse.click(blank.x, blank.y, { button: "right" });
-    assertEq(await page.getByRole("button", { name: "Paste here", exact: true }).count(), 0, "the hand offers no paste");
+    await page.waitForFunction(() => window.e2eRightClick);
+    assertEq(await pasteHere.count(), 0, "the hand offers no paste");
     // (Escape with no menu open would close the strip, which the next steps use.)
     if (await page.locator(".ctxMenu").count()) await page.keyboard.press("Escape");
     assertNoProblems(page);
@@ -585,6 +593,12 @@ export async function inkEditingScenarios({ server, browser, alice, bob, makePdf
     const styles = page.getByRole("menu", { name: "Pen style" });
     assertEq(await styles.getByRole("menuitemradio", { name: "Pen", exact: true }).getAttribute("aria-checked"), "true");
     await assertMenuFrom(page.locator(".inkStyleMenu"), row.getByRole("button", { name: "Style: Pen", exact: true }), "below", "the Pen style menu");
+    // a menu of its own, named Pen style and opened by the picker, out of
+    // the selection menu, which is a toolbar and no menu
+    const opener = row.getByRole("button", { name: "Style: Pen", exact: true });
+    assertEq(JSON.stringify([await opener.getAttribute("aria-haspopup"), await opener.getAttribute("aria-expanded")]), JSON.stringify(["menu", "true"]));
+    await assertMenuRoles(page.getByRole("menu", { name: "Pen style", exact: true }), "the selection's Pen style menu");
+    assertEq(await page.locator(".inkEditMenu").getAttribute("role"), "none", "the selection menu is no menu");
     await styles.getByRole("menuitemradio", { name: "Brush", exact: true }).click();
     await until(async () => (await stored()).strokes[0].brush === "brush", { what: "the stroke restyled to Brush" });
     const brushed = (await stored()).strokes[0];

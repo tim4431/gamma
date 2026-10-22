@@ -3788,15 +3788,17 @@ reach.
           that brush's look), the brush's name and a 14 px
           `ChevronDownIcon`.
       - Its button spreads the strip's `trigger("style")`
-        (`InkStylePicker`'s `trigger` prop: the press, the keyboard's
-        click, `aria-haspopup` and `aria-expanded`). The button shows
-        `modeActive` while its menu is open.
+        (`InkStylePicker`'s `trigger` prop: its id, the press, the
+        keyboard's click, `aria-haspopup` and `aria-expanded`). The button
+        shows `modeActive` while its menu is open.
       - The menu, rendered after the `InkTooltips` element like the
         others, takes the same hook's `menu` prop (its place under the
         picker, the picker as `ignoreRef`, `onClose`).
-        - It is `InkStyleMenu`, a `ContextMenu` holding a `role="menu"`
-          "Pen style" of five `MenuItem`s in the order Pen · Ballpoint ·
-          Brush · Pencil · Calligraphy.
+        - It is `InkStyleMenu`, the `ContextMenu` named "Pen style" (an
+          `aria-label` in place of the hook's `aria-labelledby`: the
+          picker's name is the brush it shows). It holds five `MenuItem`s
+          in the order Pen · Ballpoint · Brush · Pencil · Calligraphy, and
+          stops a press in it from reaching the page.
         - Each is `role="menuitemradio"` with `aria-checked` on the current
           one and the `BrushPreview` as its icon (the calligraphy one drawn
           by `nibOutline` at 45°).

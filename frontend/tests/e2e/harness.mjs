@@ -365,6 +365,53 @@ export async function assertMenuFrom(menu, button, side, what = "the menu") {
   }
 }
 
+// Asserts an open menu reads as WAI-ARIA's menu (docs/dev/ui-design.md,
+// "Menus and submenus"): `menu` is the one role="menu" around its items,
+// vertical (no aria-orientation: the role's default), and sits inside
+// `around` other menus (a flyout: 1, its parent). Each item of its own
+// level sits in exactly one menu of that level, directly in the menu or in
+// a group of it; a checkbox or radio item says whether it is checked; and
+// every control in it is an item. Returns those items: {text, role,
+// checked}. Find the menu by its name (getByRole("menu", {name})) to
+// check its name too.
+export async function assertMenuRoles(menu, what, around = 0) {
+  const ITEMS = '[role="menuitem"], [role="menuitemcheckbox"], [role="menuitemradio"]';
+  const shape = await menu.evaluate((el, ITEMS) => {
+    const menusAround = (node) => {
+      let n = 0;
+      for (let p = node.parentElement; p; p = p.parentElement) if (p.getAttribute("role") === "menu") n++;
+      return n;
+    };
+    const own = (node) => node.closest('[role="menu"]') === el;
+    return {
+      role: el.getAttribute("role"),
+      orientation: el.getAttribute("aria-orientation"),
+      around: menusAround(el),
+      items: [...el.querySelectorAll(ITEMS)].filter(own).map((item) => ({
+        text: (item.querySelector(".ctxMenuText") || item).textContent.trim(),
+        role: item.getAttribute("role"),
+        checked: item.getAttribute("aria-checked"),
+        menus: menusAround(item),
+        // the nearest element with a role around it: its menu, or a group in it
+        container: item.parentElement.closest("[role]")?.getAttribute("role"),
+      })),
+      strays: [...el.querySelectorAll("button, input, select, textarea, a[href], [tabindex]")]
+        .filter((node) => own(node) && !node.matches(ITEMS)).map((node) => node.outerHTML.slice(0, 120)),
+    };
+  }, ITEMS);
+  assertEq(shape.role, "menu", `${what} is a menu`);
+  assertEq(shape.orientation, null, `${what} is vertical, the menu role's default`);
+  assertEq(shape.around, around, around ? `${what} sits inside its parent menu` : `${what} sits inside no other menu`);
+  assert(shape.items.length > 0, `${what} has items`);
+  for (const item of shape.items) {
+    assertEq(item.menus, around + 1, `${what}: "${item.text}" is inside exactly one menu of its level`);
+    assert(["menu", "group"].includes(item.container), `${what}: "${item.text}" sits in its menu or a group of it, not a ${item.container}`);
+    if (item.role !== "menuitem") assert(["true", "false"].includes(item.checked), `${what}: "${item.text}" (${item.role}) says whether it is checked`);
+  }
+  assertEq(shape.strays.join(" | "), "", `${what}: every control in it is a menu item`);
+  return shape.items.map(({ text, role, checked }) => ({ text, role, checked }));
+}
+
 // ---------------------------------------------------------------------------
 // PDFs: a small but real PDF (Helvetica text, one content stream per page)
 // that pdf.js renders with a selectable text layer.

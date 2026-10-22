@@ -512,7 +512,7 @@ export async function commentScenarios({ server, browser, makePdf, step, until, 
     const mark = A.locator('[data-page="1"] [data-hl-id]').first();
     await mark.waitFor({ timeout: 10000 });
     await mark.click({ button: "right" });
-    await A.locator(".ctxMenu").getByRole("button", { name: "Comment", exact: true }).click();
+    await A.locator(".ctxMenu").getByRole("menuitem", { name: "Comment", exact: true }).click();
     await popover(A).waitFor();
     assertEq(await popover(A).locator(".commentPopTitle").innerText(), "Comments on this highlight");
     await focused(field(popover(A).locator(".commentNew")), "ready to write");
@@ -852,7 +852,7 @@ export async function commentScenarios({ server, browser, makePdf, step, until, 
     const active = A.locator(".commentCard.active");
     const strokes = () => A.locator('[data-page="2"] .inkLayer path').count();
     const menu = A.locator(".inkEditMenu");
-    const pasteHere = A.getByRole("button", { name: "Paste here", exact: true });
+    const pasteHere = A.getByRole("menuitem", { name: "Paste here", exact: true });
     // (the step before may leave the strip open: an Escape pressed before a
     // card's field has the focus is the strip's, and closes it first)
     if (!(await A.locator(".pdfInkBar").count())) await A.click("button[aria-label='Handwriting tools']");
