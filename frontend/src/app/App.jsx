@@ -127,7 +127,7 @@ import { makeStableActions, useStableActions } from "../shared/lib/stableActions
 import { keepIfSame, sameMap, sameObject } from "../shared/lib/keepIfSame.js";
 import { isTextBox, normalizeTextBox } from "../markup/textBox.js";
 import { useTextBoxes } from "../markup/useTextBoxes";
-import { GROUP_SPLIT_BYTES, MAX_BYTES, MAX_STROKES, appendStroke, appendStrokes, boundsOf, cloneStrokes, duplicateStrokes, eraseAlong, eraserKeep, flipStrokes, hitStrokesAlong, inkBounds, inkBytes, mergeInk, newCanvasInk, newInk, pdfPositionOf, removeStrokes, restyleStrokes, round2, strokeBounds, strokeBytes, toolStyle, transformStrokes, translateStrokes, unionBox } from "../ink/ink";
+import { MAX_STROKES, appendStrokes, boundsOf, cloneStrokes, duplicateStrokes, flipStrokes, inkBounds, removeStrokes, restyleStrokes, round2, toolStyle, transformStrokes, translateStrokes, unionBox } from "../ink/ink";
 import { stripKey } from "../ink/stripKeys.js";
 import { ZOOM_CHROME, moveTo, moveWindow as moveZoomWindow, newLine, openWindow, setMag } from "../ink/zoomWindow.js";   // the zoom window's rules (moveWindow is the dock layout's here)
 import { defaultRuler, snapAngle, stampLine } from "../ink/ruler.js";   // the ruler's first place, its Snap 15° and its Stamp line
@@ -139,6 +139,8 @@ import { useInkStrip } from "../ink/useInkStrip.js";
 import { useInkLive } from "../ink/useInkLive.js";
 import { useInkSave } from "../ink/useInkSave.js";
 import { useInkSurfaces, visiblePart } from "../ink/useInkSurfaces.js";   // visiblePart: the ruler's and the zoom window's first place
+import { useInkDocument } from "../ink/useInkDocument.js";
+import { useInkStrokes } from "../ink/useInkStrokes.js";
 import { NotebookViewer, PaperMenu, readPlace, showPlace } from "../notebook/NotebookViewer";
 import { NoteSheetContext } from "../notebook/NoteSheet";
 import {
@@ -3833,8 +3835,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   const { inkStale, noteServerBuild } = useBuildFence({ sessionBuild: authUser?.build, setStatus });
   // Handwriting (docs/dev/handwriting.md): the tool strip (ink/useInkStrip.js:
   // its state, the presets on it, the armed tool and the commands that
-  // change it), which the text boxes below read; the group the
-  // next stroke on a page joins and the group outlined after a jump.
+  // change it), which the text boxes below read; the group outlined after
+  // a jump.
   const {
     inkUi, inkVisible, inkPenPreset, inkPen, inkTool, textArmed, inkPenTool,
     setInkTools, pickInkTool, openInkStrip, toggleInkShape, previousTool, inkEraserLifted,
@@ -3843,7 +3845,6 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   } = useInkStrip({ focusedBlockId, readOnly, inkStale, inkTools, setInkToolsRaw, inkAutoPen,
     inkShapeKind, inkShapeFill, inkEraserReturn });
   const [inkFlash, setInkFlash] = useState(null);
-  const inkActiveRef = useRef(null);
   // The ruler (ink/ruler.js): {surface, x, y, angle, length, snap} in the
   // surface's page points, or null — session state, gone with the strip and
   // with the page — and the size of the surface it was laid on, for Stamp
@@ -3870,12 +3871,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   const nbScrollRef = useRef(null);
   const [nbCurrent, setNbCurrent] = useState("");
   const [paperMenu, setPaperMenu] = useState(false);
-  // Stroke-level history for the strip's Ctrl+Z and Undo/Redo buttons
-  // (entries: {changes: [{id, page, before, after}], label} per action;
-  // inkHistoryState mirrors the lengths for the buttons) and the lasso
-  // selection {page, items}.
-  const inkHistRef = useRef({ undo: [], redo: [] });
-  const [inkHistoryState, setInkHistoryState] = useState({ undo: 0, redo: 0 });
+  // The lasso selection {page, items}.
   const [inkSelection, setInkSelection] = useState(null);
   const [flashingId, setFlashingId] = useState(null);
   const [highlightMenu, setHighlightMenu] = useState(null); // { id, x, y } or null
@@ -6524,8 +6520,6 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // Undo / Redo (the strip's buttons, Ctrl+Z while it is open) step the
   // block history for text boxes, the stroke history otherwise.
   const boxUndo = textArmed || !!textBoxes.sel;
-  // The strip's Undo and Redo buttons, and a Pencil gesture's Undo.
-  const stripUndo = (redo) => (boxUndo ? undoBlocks(redo) : inkUndo(redo));
   // The save (ink/useInkSave.js over ink/inkSaver.js): the drafts go to the
   // server 700 ms after the last edit, at most 5 s after the first unsaved
   // one, and at once when the tab is hidden, the page goes away or another
@@ -6537,193 +6531,27 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // messages.
   const { inkBlocks, inkBySurface, onPageInView, pasteTarget, inkPageNumber } = useInkSurfaces({
     blocks, nbSheets, nbSheetsRef, nbCurrent, notebook, pdfUrl, pdfHidden });
+  // The page's ink as a document (ink/useInkDocument.js): every edit
+  // through applyInk, the stroke history and its steps, the eraser's
+  // sweeps and a scribble's erasures, the journal's restored drafts.
+  const { inkHistoryState, inkOf, applyInk, inkUndo, undoableInkStatus, stripUndo, handleUndoGesture,
+    handleInkEraseMany, handleInkEraseAlong } = useInkDocument({ focusedBlockId, readOnly, blocksRef, setBlocks,
+    inkBySurface, inkPageNumber, inkEraserFilter, scheduleInk, liveRemoved,
+    clearInkSelection: () => setInkSelection(null), boxUndo, undoBlocks, sayUndoable, setStatus, setInkFingerUndo });
+  // The strokes (ink/useInkStrokes.js): a stroke, or a paste's strokes,
+  // into the surface's current group, and the pill a snapped stroke
+  // raises. A stroke while a held squeeze is open marks it used.
+  const { handleInkStroke, handleInkStrokes, handleHoldStatus } = useInkStrokes({ focusedBlockId, readOnly, inkStale,
+    blocksRef, nbSheetsRef, applyInk, addSheetAfter,
+    noteSqueezeUse: () => { const hold = squeezeRef.current?.hold; if (hold) hold.used = true; return !!hold; },
+    undoableInkStatus, setStatus });
 
   useEffect(() => () => {
-    // Leaving a page: the ruler goes (its row with it), the next stroke
-    // starts a fresh group.
-    inkActiveRef.current = null;
-    inkHistRef.current = { undo: [], redo: [] };
-    setInkHistoryState({ undo: 0, redo: 0 });
+    // Leaving a page: the ruler goes (its row with it).
     setInkSelection(null);
     hideInkRuler();
   }, [focusedBlockId, flushInk]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // The strokes a group has right now: its draft, else its loaded file.
-  function inkOf(blockId) {
-    const block = flattenBlocks(blocksRef.current).find((b) => b.id === blockId);
-    return inkStore.draft(blockId)?.ink || (block ? inkStore.inkFor(block) : null);
-  }
-  // Every ink edit goes through here: the drafts change, the action lands
-  // on the stroke history, the upload is scheduled. A group whose block is
-  // not in the tree (undone away, or erased empty and deleted) gets its
-  // block back first. `pass` marks the entry as an eraser pass's, which the
-  // pass's later flushes fold into (handleInkEraseAlong). → whether the
-  // edit applied (the byte budget may refuse it).
-  function applyInk(changes, { record = true, label = t("ink stroke"), pass = null } = {}) {
-    if (!changes.length) return false;
-    // The byte budget: an edit that would take a group past the server's
-    // cap is refused (one that shrinks a group over it is not).
-    if (changes.some((c) => inkBytes(c.after) > MAX_BYTES && inkBytes(c.after) > inkBytes(c.before))) {
-      setStatus(t("This handwriting note is full. Move part of it to a new note, or start a new one."));
-      return false;
-    }
-    for (const c of changes) playback.stop(c.id);
-    const present = new Set(flattenBlocks(blocksRef.current).map((b) => b.id));
-    const missing = changes.filter((c) => c.after.strokes.length && !present.has(c.id));
-    if (missing.length) {
-      // A block coming back is fresh: no base for its draft (inkStore.dropDraft).
-      for (const c of missing) inkStore.dropDraft(c.id);
-      // A PDF page's group goes at the page's top level; a sheet's under
-      // its sheet (`page` is then the sheet's id).
-      setBlocks((prev) => missing.reduce((tree, c) => {
-        const onSheet = typeof c.page === "string";
-        const node = { id: c.id, parentId: onSheet ? c.page : null, children: [], content: "",
-          properties: onSheet ? { ink_url: "", ink_strokes: 0 } : { ink_url: "", ink_strokes: 0, pdf_position: pdfPositionOf(c.after) } };
-        return onSheet && findBlock(tree, c.page)
-          ? updateBlockTree(tree, c.page, (sheet) => ({ ...sheet, children: [...(sheet.children || []), node] }))
-          : [...tree, node];
-      }, prev));
-    }
-    const byId = new Map(flattenBlocks(blocksRef.current).map((b) => [b.id, b]));
-    for (const c of changes) inkStore.setDraft(c.id, c.after, byId.get(c.id)?.properties?.ink_url || "");
-    // a stroke sent live and taken away before any save held it: its wet stroke goes from the peers' pages
-    liveRemoved(changes);
-    if (record) {
-      const h = inkHistRef.current;
-      h.undo.push(pass ? { changes, label, pass } : { changes, label });
-      if (h.undo.length > 200) h.undo.shift();
-      h.redo = [];
-      setInkHistoryState({ undo: h.undo.length, redo: h.redo.length });
-    }
-    scheduleInk();
-    return true;
-  }
-  function inkUndo(redo) {
-    if (readOnly) return false;
-    const h = inkHistRef.current;
-    const entry = (redo ? h.redo : h.undo).pop();
-    if (!entry) { setStatus(redo ? t("Nothing to redo in handwriting.") : t("Nothing to undo in handwriting.")); return false; }
-    // Entries are stored forward (before → after). Undo applies after →
-    // before, redo before → after, each onto the group as it is NOW by
-    // stroke id (mergeInk), so strokes someone else drew meanwhile stay;
-    // what someone changed since is kept over the step, and the pill says so.
-    let kept = 0;
-    applyInk(entry.changes.map((c) => {
-      const [from, to] = redo ? [c.before, c.after] : [c.after, c.before];
-      const now = inkOf(c.id) || from;
-      const merged = mergeInk(from, to, now);
-      if (!merged.clean) kept += Math.max(1, merged.lostOurs.length);
-      return { ...c, before: now, after: merged.ink };
-    }), { record: false });
-    (redo ? h.undo : h.redo).push(entry);
-    setInkHistoryState({ undo: h.undo.length, redo: h.redo.length });
-    setInkSelection(null);
-    // a label is kept in English (T) and translated here; one made with t() already stays as it is
-    const what = `${redo ? t("Redone") : t("Undone")}: ${t(entry.label)}`, page = inkPageNumber(entry.changes[0].page);
-    setStatus(kept ? tn("{what} (page {page}; {n} stroke someone changed since was kept).",
-      "{what} (page {page}; {n} strokes someone changed since were kept).", kept, { what, page })
-      : `${what} (page ${page}).`);
-    if (!redo) guideEvents.emit("ink.undone");
-    return true;
-  }
-
-  // `page`: a PDF page number, or a notebook sheet's id; `label` the
-  // history entry's (the layer's finishStroke names a straight line or a
-  // shape, "Undone: ink shape").
-  async function handleInkStroke(page, stroke, size, { label = T("ink stroke") } = {}) {
-    if (readOnly || !focusedBlockId || inkStale) return;
-    // a stroke drawn while a squeeze holds its tool makes that squeeze no toggle
-    if (squeezeRef.current?.hold) squeezeRef.current.hold.used = true;
-    let id = inkActiveRef.current?.page === page ? inkActiveRef.current.id : null;
-    const existing = id ? flattenBlocks(blocksRef.current).find((b) => b.id === id && b.properties?.ink_url !== undefined) : null;
-    if (!existing) id = makeId();
-    inkActiveRef.current = { page, id };
-    // The group's strokes so far: the draft, else its file (loaded first —
-    // a stroke must never replace strokes that just have not arrived yet).
-    const loaded = !inkStore.draft(id) && existing?.properties.ink_url
-      ? await inkStore.loadInk(existing.properties.ink_url) : null;
-    const onSheet = typeof page === "string";
-    const fresh = () => (onSheet ? newCanvasInk(size.width, size.height) : newInk(page, size.width, size.height));
-    let before = inkStore.draft(id)?.ink || loaded || fresh();
-    // A group past the split budget (or full of strokes) is left as it is:
-    // the stroke starts the page's next group, invisibly.
-    if (before.strokes.length && (inkBytes(before) + strokeBytes(stroke) > GROUP_SPLIT_BYTES || before.strokes.length >= MAX_STROKES)) {
-      id = makeId();
-      inkActiveRef.current = { page, id };
-      before = fresh();
-    }
-    applyInk([{ id, page, before, after: appendStroke(before, stroke) }], { label });
-    if (onSheet) {
-      // Writing into the last quarter of the page's last sheet adds the next
-      // one right after it, so there is always paper below (Notability's
-      // continuous page) — once: a page after it already there is the one.
-      const last = nbSheetsRef.current.at(-1), box = strokeBounds(stroke);
-      if (last?.id === page && box && box[3] > last.paper.height * 0.75) addSheetAfter(last.id, { once: true });
-    }
-    guideEvents.emit("ink.stroke");
-  }
-  // The eraser filter (Settings › Handwriting › Erases, the eraser row's
-  // trio) is one predicate every erasure goes through here: the eraser's
-  // sweep, whole strokes or partial, from the tool or the pen's eraser end
-  // and barrel, and a scribble. The layer hands over where the eraser went
-  // and a scribble's candidates; what goes is decided here.
-  const inkKeep = eraserKeep(inkEraserFilter);
-  // A scribble's targets ([{gid, ids}], ink/gestures.js scribbleTargets)
-  // go as one entry across their groups, with Undo on the pill.
-  function handleInkEraseMany(page, targets) {
-    if (readOnly) return;
-    const changes = [];
-    let n = 0;
-    for (const { gid, ids } of targets || []) {
-      const before = inkOf(gid);
-      if (!before) continue;
-      const allowed = before.strokes.filter((s) => ids.includes(s.id) && inkKeep(s)).map((s) => s.id);
-      if (!allowed.length) continue;
-      n += allowed.length;
-      changes.push({ id: gid, page, before, after: removeStrokes(before, allowed) });
-    }
-    if (!changes.length) return;
-    applyInk(changes, { label: T("ink scribble erase") });
-    undoableStatus(tn("Erased {n} stroke.", "Erased {n} strokes.", n), { ink: true });
-    guideEvents.emit("ink.erased");
-  }
-  // The eraser's sweep, which the layer hands over once an animation frame
-  // and at the lift: `path` the page points it crossed since the last
-  // flush, `r` its radius in points. Every group of the surface is cut along
-  // it (`mode` 'partial', ink.js eraseAlong) or loses the strokes it touched
-  // ('stroke', hitStrokesAlong), through the eraser filter, as one applyInk
-  // a flush. The flushes of one pass (`pass`, minted at the down) fold into
-  // one history entry, across groups: a group the entry holds takes the
-  // new `after`, another joins it, so Ctrl+Z undoes the whole pass. A group
-  // whose drawing changed meanwhile (a save that merged someone's strokes)
-  // starts a new entry instead, so undoing the pass never takes theirs.
-  function handleInkEraseAlong(page, path, r, { mode, pass } = {}) {
-    if (readOnly || !path?.length) return;
-    const partial = mode === "partial", changes = [];
-    for (const block of inkBySurface.get(page) || []) {
-      const before = inkOf(block.id);
-      if (!before?.strokes?.length) continue;
-      let after = before;
-      if (partial) after = eraseAlong(before, path, r, inkKeep).ink;
-      else {
-        const ids = hitStrokesAlong(before, path, r, inkKeep);
-        if (ids.length) after = removeStrokes(before, ids);
-      }
-      if (after !== before) changes.push({ id: block.id, page, before, after });
-    }
-    if (!changes.length) return;
-    const h = inkHistRef.current, last = h.undo[h.undo.length - 1];
-    const held = (c) => last.changes.find((x) => x.id === c.id);
-    const fold = !!pass && last?.pass === pass && changes.every((c) => !held(c) || held(c).after === c.before);
-    if (!applyInk(changes, { record: !fold, label: partial ? T("partial ink erasure") : T("ink erasure"), pass })) return;
-    if (fold) {
-      for (const c of changes) {
-        const entry = held(c);
-        if (entry) entry.after = c.after; else last.changes.push({ ...c });
-      }
-    }
-    guideEvents.emit("ink.erased");
-  }
   function handleInkSelect(page, items) {
     if (readOnly) return;
     setInkSelection(items.length ? { page, items } : null);
@@ -6851,35 +6679,6 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       { label: t("Paste"), run: () => pasteAtCentre() });
     return true;
   }
-  // Several strokes at once (a paste): they join the surface's current
-  // group when it can take them all under MAX_STROKES and GROUP_SPLIT_BYTES,
-  // else a new group takes them all — a paste is never split across groups
-  // — as one entry. → {id, ids} of the group they landed in, null when no
-  // group could hold them.
-  async function handleInkStrokes(page, strokes, size) {
-    if (readOnly || !focusedBlockId || inkStale || !strokes.length || !size) return null;
-    const onSheet = typeof page === "string";
-    const fresh = () => (onSheet ? newCanvasInk(size.width, size.height) : newInk(page, size.width, size.height));
-    const bytes = strokes.reduce((n, s) => n + strokeBytes(s), 0);
-    if (strokes.length > MAX_STROKES || inkBytes(fresh()) + bytes > MAX_BYTES) {
-      setStatus(t("Too much handwriting to paste into one note."));
-      return null;
-    }
-    let id = inkActiveRef.current?.page === page ? inkActiveRef.current.id : null;
-    const existing = id ? flattenBlocks(blocksRef.current).find((b) => b.id === id && b.properties?.ink_url !== undefined) : null;
-    if (!existing) id = makeId();
-    const loaded = existing && !inkStore.draft(id) && existing.properties.ink_url
-      ? await inkStore.loadInk(existing.properties.ink_url) : null;
-    let before = inkStore.draft(id)?.ink || loaded || fresh();
-    if (before.strokes.length && (inkBytes(before) + bytes > GROUP_SPLIT_BYTES || before.strokes.length + strokes.length > MAX_STROKES)) {
-      id = makeId();
-      before = fresh();
-    }
-    inkActiveRef.current = { page, id };
-    const { ink: after, ids } = appendStrokes(before, strokes);
-    applyInk([{ id, page, before, after }], { label: T("ink paste") });
-    return { id, ids };
-  }
   // The clipboard's strokes onto `page` ({width, height} in points): fresh
   // copies with the copied box's top-left at `at` and the box kept inside
   // the surface (one too small for it keeps the top-left corner on), at
@@ -6935,7 +6734,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     if (!size) return;
     await handleInkStroke(ruler.surface, stampLine(ruler, armed ? toolStyle(armed) : inkPen, { t0: Date.now() }), size,
       { label: T("ink straight line") });
-    undoableStatus(t("Line stamped along the ruler."), { ink: true });
+    undoableInkStatus(t("Line stamped along the ruler."));
   }
   // The strip closes (its ✕, Esc, the viewer's pen button): the tools
   // disarm, the ruler goes and the zoom window closes.
@@ -7554,58 +7353,6 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     if (squeezeRef.current?.hold) { squeezeRef.current.hold.used = true; return; }
     inkEraserLifted();
   }
-  // The pill a snapped stroke raises ("Straightened.", "Shape: circle.",
-  // ink/finishStroke.js): Undo is one tap away every time; a `once` status
-  // (the first Always straightening of a highlighter) is said once a session.
-  const straightHintRef = useRef(true);
-  function handleHoldStatus(status) {
-    if (!status?.text) return;
-    if (status.once) {
-      if (!straightHintRef.current) return;
-      straightHintRef.current = false;
-    }
-    undoableStatus(status.text, { ink: true });
-  }
-  // Handwriting a closed tab left unsaved, restored from the draft journal
-  // (ink/inkStore.js onInkRestored): its draft saves like an edit, and the
-  // pill offers Discard — the restored change taken back (restored → the
-  // file it was laid over, applied onto the group as it is now, as an undo
-  // is) as one undoable entry. Only while the group is on this page.
-  const inkRestoreRef = useRef(null);
-  inkRestoreRef.current = {
-    schedule: () => scheduleInk(),
-    discard: (id, restored, prior) => {
-      const block = flattenBlocks(blocksRef.current).find((b) => b.id === id);
-      const now = block ? inkOf(id) : null;
-      if (!now) return;
-      const after = mergeInk(restored, prior, now).ink;
-      if (after === now) return;
-      const page = now.space?.kind === "canvas" ? block.parentId : now.space?.page;
-      applyInk([{ id, page, before: now, after }], { label: T("ink restore discarded") });
-    },
-  };
-  useEffect(() => inkStore.onInkRestored(({ id, ink, prior }) => {
-    inkRestoreRef.current.schedule();
-    setStatus(t("Unsaved handwriting from a previous visit was restored."),
-      { label: t("Discard"), run: () => inkRestoreRef.current.discard(id, ink, prior) });
-  }), [setStatus]);
-  // Two fingers tapped together undo, three redo (ink/fingerChords.js):
-  // exactly what the strip's buttons do — the block history while the Text
-  // tool or a text box has it, else the stroke history; with nothing to
-  // undo, nothing. The first chord of a session says so, with Turn off.
-  const fingerUndoHintRef = useRef(true);
-  function handleUndoGesture(kind) {
-    if (readOnly) return;
-    const redo = kind === "redo";
-    if (boxUndo) { undoBlocks(redo); return; }
-    const h = inkHistRef.current;
-    if (!(redo ? h.redo : h.undo).length) return;
-    if (!inkUndo(redo)) return;
-    if (!fingerUndoHintRef.current) return;
-    fingerUndoHintRef.current = false;
-    setStatus(redo ? t("Three fingers redid a stroke.") : t("Two fingers undid a stroke."),
-      { label: t("Turn off"), run: () => setInkFingerUndo("off") });
-  }
   // Turning scribble-to-erase on explains the gesture, once a session.
   const scribbleHintRef = useRef(true);
   const setScribbleErase = (on) => {
@@ -7811,16 +7558,21 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   function undoBlocks(redo) {
     reportUndo(blockHistory.undo(redo, !!document.activeElement?.closest?.(".cm-editor")), redo);
   }
-  // A change the pill offers to take back: its Undo runs the app.undo
-  // command (the block history), so the message names no key; a stroke
-  // edit (a snapped shape, a scribble erase) passes `ink` to step the
-  // stroke history instead, as the strip's Undo button does.
-  function undoableStatus(msg, { ink = false } = {}) {
+  // A change the pill offers to take back, with Undo beside it, which
+  // clears the pill and runs `run`. A stroke edit (a snapped shape, a
+  // scribble erase, a stamped line) raises it through
+  // ink/useInkDocument.js's undoableInkStatus, whose Undo steps the
+  // stroke history as the strip's Undo button does.
+  function sayUndoable(msg, run) {
     setStatus(msg, { label: t("Undo"), run: () => {
       postPill("status", null);
-      if (ink) inkUndo(false);
-      else commandById("app.undo").run(appCmdRef.current);
+      run();
     } });
+  }
+  // The block history's: its Undo runs the app.undo command, so the
+  // message names no key.
+  function undoableStatus(msg) {
+    sayUndoable(msg, () => commandById("app.undo").run(appCmdRef.current));
   }
   bindingsRef.current = keybindings;
   appCmdRef.current = {

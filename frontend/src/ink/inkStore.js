@@ -321,7 +321,7 @@ if (typeof window !== "undefined" && typeof window.addEventListener === "functio
 // block whose file changes while its restore runs is restored again,
 // against the new file. onInkRestored's listeners hear of it ({id, ink,
 // prior, ids}: the restored drawing, the block's file it was laid over,
-// the strokes it adds), App with the pill and its Discard.
+// the strokes it adds), useInkDocument.js with the pill and its Discard.
 let entries = { ws: null, map: null };   // map: block id → [{key, entry}]
 const restoring = new Set();
 const restoredListeners = new Set();

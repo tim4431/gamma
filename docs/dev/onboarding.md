@@ -777,8 +777,8 @@ where the thing happens:
 | `citation.shown` | PdfCitationOverlay, once a quote is found and marked |
 | `share.created` | App's `createShareLink` (the Share popover's Share button) |
 | `peer.joined` | App, when another account or a link visitor appears on the open page (a peer whose `user` is not this account) |
-| `ink.stroke` | App's `handleInkStroke` |
-| `ink.options`, `ink.erased`, `ink.undone` | App, when the armed tool's options row opens; `handleInkEraseAlong` / `handleInkEraseMany`; `inkUndo` (not redo) |
+| `ink.stroke` | `ink/useInkStrokes.js`'s `handleInkStroke` |
+| `ink.options`, `ink.erased`, `ink.undone` | App, when the armed tool's options row opens; `ink/useInkDocument.js`'s `handleInkEraseAlong` / `handleInkEraseMany`; its `inkUndo` (not redo) |
 | `ink.selected` | App's `handleInkSelect`, when a selection of handwriting comes up |
 | `table.shown` | MdTableWrap, when an editable table mounts |
 | `sheet.created` `{id}` | App's three ways to make a sheet of paper: `addSheetAfter` (**+**, Add page, writing low on the last sheet), `insertSheetAt` (`/note` in an empty block) and `createNotebook` |

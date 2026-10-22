@@ -257,11 +257,13 @@ No schema change: sheets are blocks and properties.
   - In the notes view the rows get `inlineSheets`, the numbers
     `sheetNumbers` and `NoteSheetContext`. The strip shows over the notes
     (`notesInkStrip`) when the page has sheets and no viewer holds it.
-  - `handleInkStroke` takes a sheet id where a PDF page number goes: the
-    group's file is `newCanvasInk`, and a new group's block is inserted
-    under its sheet. Writing low on the last sheet calls `addSheetAfter`
-    with `once`. A text box made on a sheet is inserted as the sheet's
-    last child the same way (`markup/useTextBoxes.js` `onBoxCreate`).
+  - `handleInkStroke` (`ink/useInkStrokes.js`) takes a sheet id where a
+    PDF page number goes: the group's file is `newCanvasInk`, and a new
+    group's block is inserted under its sheet (`applyInk`,
+    `ink/useInkDocument.js`). Writing low on the last sheet calls App's
+    `addSheetAfter` with `once`. A text box made on a sheet is inserted
+    as the sheet's last child the same way (`markup/useTextBoxes.js`
+    `onBoxCreate`).
   - `addSheetAfter` (right after a block), `addPageAtEnd` (after the last
     sheet), `insertSheetAt` ("/note"), `setSheetPaper` and
     `applyPaperToAll` (every sheet, at any depth) are thin `setBlocks`

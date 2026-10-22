@@ -509,9 +509,13 @@ it to the floating pill: one ending in "…" is in progress and spins,
 anything else is final and fades after a second. `setStatus(msg, action)`
 with an `action` `{label, run}` puts its button on the pill
 (`.statusPill.interactive`), which then stays 8 seconds to be pressed.
-`undoableStatus(msg)` is that with Undo, which runs the `app.undo`
-command: a deleted note says "Block deleted." with Undo beside it, in
-reach without a keyboard. A finger that scrolls a page while a tool is
+`sayUndoable(msg, run)` is that with Undo, which clears the pill and
+runs `run`. `undoableStatus(msg)` is the one whose Undo runs the
+`app.undo` command: a deleted note says "Block deleted." with Undo
+beside it, in reach without a keyboard. A stroke edit's pill (a snapped
+shape, a scribble erase, a stamped line) comes from
+`ink/useInkDocument.js`'s `undoableInkStatus(msg)`, whose Undo steps
+the stroke history. A finger that scrolls a page while a tool is
 armed and only a pen draws gets "Fingers scroll while a pen draws" with
 **Draw with finger**, once a session and never after a pen has drawn
 ([handwriting.md](handwriting.md)).

@@ -20,7 +20,8 @@ app ([ipad.md](ipad.md)). Typed text on a page is
   `ink/InkStylePicker.jsx`, `ink/InkLayer.jsx`, `ink/ZoomWindow.jsx`,
   `ink/inkInput.js`, and the owners of App's handwriting state,
   `ink/buildFence.js`, `ink/useInkStrip.js`, `ink/useInkLive.js`,
-  `ink/useInkSave.js` and `ink/useInkSurfaces.js`. The tool
+  `ink/useInkSave.js`, `ink/useInkSurfaces.js`,
+  `ink/useInkDocument.js` and `ink/useInkStrokes.js`. The tool
   strip and the page plumbing it shares with text boxes are in
   `markup/MarkupToolbar.jsx`, `markup/MarkupLayers.jsx` and
   `markup/PageTools.jsx`.
@@ -1505,7 +1506,7 @@ reach.
   - The result: `commit` the samples to encode (`null` for nothing),
     `erase` `[{gid, ids}] | null`, `label` the history entry's, `style`
     the object to encode with (`ctx.style` itself when nothing snapped),
-    `status` `{text, once} | null`, a pill for App's `undoableStatus`,
+    `status` `{text, once} | null`, a pill with Undo (`undoableInkStatus`),
     `once` meaning once a session. The caller encodes with
     `encodeStroke({...style, t0, samples: commit, ch:
     strokeChannels(style, commit)})`, erases through `onEraseMany`, and hands
@@ -1984,12 +1985,13 @@ reach.
     the block names now, flushed like any edit; its entry becomes this
     tab's in the same write that deletes the closed tab's (`moveEntry`).
     It is reported once through `onInkRestored(fn)` → `fn({id, ink,
-    prior, ids})` (queued until App listens), which App turns into the
-    pill "Unsaved handwriting from a previous visit was restored." with
-    *Discard*. *Discard* takes the restored change back as one `applyInk`
-    entry, "ink restore discarded", so it is undoable in turn: it applies
-    `mergeInk(ink, prior, now)`, the restored drawing to the file it was
-    laid over, onto the group as it is now, as an undo does.
+    prior, ids})` (queued until `useInkDocument.js` listens), which it
+    turns into the pill "Unsaved handwriting from a previous visit was
+    restored." with *Discard*. *Discard* takes the restored change back
+    as one `applyInk` entry, "ink restore discarded", so it is undoable
+    in turn: it applies `mergeInk(ink, prior, now)`, the restored drawing
+    to the file it was laid over, onto the group as it is now, as an undo
+    does.
   - Every IndexedDB call is wrapped: a browser without it, or a private
     window, loses only the journal. `frontend/tests/inkJournal.test.mjs`
     runs it on an in-memory IndexedDB.
@@ -2840,6 +2842,103 @@ reach.
     a surface's box inside its viewer and the window, in page points, or
     null when none of it shows: where the ruler and the zoom window
     first go.
+- `ink/useInkDocument.js`: the page's ink as a document,
+  `useInkDocument({focusedBlockId, readOnly, blocksRef, setBlocks,
+  inkBySurface, inkPageNumber, inkEraserFilter, scheduleInk, liveRemoved,
+  clearInkSelection, boxUndo, undoBlocks, sayUndoable, setStatus,
+  setInkFingerUndo}) → {inkHistoryState, inkOf, applyInk, inkUndo,
+  undoableInkStatus, stripUndo, handleUndoGesture, handleInkEraseMany,
+  handleInkEraseAlong}`, which App calls after the surfaces. `inkOf(id)`
+  is a group's strokes right now: its draft, else its loaded file.
+  - The **stroke history** (`inkHistRef`): entries of `{changes: [{id,
+    page, before, after}], label}`, one per action; `inkHistoryState`
+    mirrors its lengths for the strip's buttons, and leaving the page
+    empties it. A group whose block is gone is re-inserted when an entry
+    brings strokes back, its old draft dropped first
+    (`inkStore.dropDraft`). The block coming back is a fresh one with no
+    file, so its upload must name no base: a base left from the deleted
+    draft would make the server merge the strokes three ways against the
+    new block's empty drawing and count them as deleted.
+  - Every edit funnels through `applyInk`. It checks the byte budget: an
+    edit that would grow a group past `MAX_BYTES` is refused with "This
+    handwriting note is full. Move part of it to a new note, or start a
+    new one." Then it updates the drafts, records the entry and schedules
+    `flushInk` ("Fences": 700 ms after the last edit, at most 5 s after
+    the first unsaved one, and on `visibilitychange`, `pagehide` and
+    leaving the page).
+  - The eraser filter is one function: `ink.js` `eraserKeep(filter) →
+    (stroke) => bool` (`'all'` keeps every stroke, `'pen'` tool `pen` of
+    any brush, `'highlighter'` tool `highlighter`; a stroke of an unknown
+    tool only under `'all'`). It is applied in `handleInkEraseAlong`
+    and `handleInkEraseMany`: `hitStrokesAlong(ink, path, radius, keep)`
+    and `eraseAlong(ink, path, radius, keep)` take it as an optional last
+    argument and leave a stroke `keep` refuses untouched, the same object,
+    so the caches survive. The layer builds it from `ink.eraserFilter`
+    for the scribble stage and the hover glyph.
+  - `handleInkEraseAlong(page, path, r, {mode, pass})`, the eraser's
+    flush: `eraseAlong` (partial) or `hitStrokesAlong` and `removeStrokes`
+    (whole strokes) over every group of the surface (`inkBySurface`)
+    through the filter, the changes of all of them one `applyInk`. Every
+    flush of one pass folds into one history entry, `T("partial ink
+    erasure")` or `T("ink erasure")`, keyed by the pass (`applyInk`'s
+    `pass` option keeps it on the entry; `applyInk` answers whether the
+    edit applied, since the byte budget may refuse it): a group the entry
+    holds takes the flush's `after`, another joins it with its `{id,
+    page, before, after}`, so one Ctrl+Z undoes the pass across groups. A
+    group whose drawing is no longer the entry's `after` (a save that
+    merged someone's strokes in meanwhile) starts a new entry instead, so
+    undoing the pass never takes their strokes away.
+  - `handleInkEraseMany(page, targets)` deletes the targets across their
+    groups as one entry, `T("ink scribble erase")`, and raises
+    `undoableInkStatus(tn("Erased {n} stroke.", "Erased {n} strokes.",
+    n))`. `undoableInkStatus(msg)` is App's `sayUndoable(msg, run)` with
+    the stroke history's step for `run` (`inkUndo(false)`), as the strip's
+    button does, where App's `undoableStatus(msg)` runs the `app.undo`
+    command, the block history.
+  - `stripUndo(redo)` is the strip's Undo / Redo buttons and a Pencil
+    gesture's Undo: `undoBlocks(redo)` under `boxUndo`, else
+    `inkUndo(redo)`.
+  - `onUndoGesture(kind)` (`handleUndoGesture`) runs what the strip's
+    Undo / Redo buttons run: `inkUndo(redo)`, or `undoBlocks(redo)` under
+    `boxUndo`. The first chord of a session also raises a pill, "Two
+    fingers undid a stroke." / "Three fingers redid a stroke.", with a
+    *Turn off* action that sets `inkFingerUndo` to `'off'`
+    (`fingerUndoHintRef`, spent by the first chord).
+  - **The journal pill**: `inkStore.onInkRestored` raises "Unsaved
+    handwriting from a previous visit was restored." with `{label:
+    t("Discard"), run}`, once per block (a block is restored at most once
+    a visit), and schedules the flush that saves the restored draft.
+- `ink/useInkStrokes.js`: the strokes, `useInkStrokes({focusedBlockId,
+  readOnly, inkStale, blocksRef, nbSheetsRef, applyInk, addSheetAfter,
+  noteSqueezeUse, undoableInkStatus, setStatus}) → {handleInkStroke,
+  handleInkStrokes, handleHoldStatus}`, which App calls after the
+  document.
+  - The group the next stroke on a surface joins (`inkActiveRef`,
+    `{page, id}`); leaving the page forgets it, so the next stroke starts
+    a fresh group. A new group is found through `blocksRef`, once a
+    render has put its block in the tree.
+  - `handleInkStroke(page, stroke, size, {label})` (the layers'
+    `onStroke`) appends the stroke to that group as one `applyInk`. A
+    group no draft holds has its saved file loaded first, so a stroke
+    never replaces strokes that have not arrived yet; otherwise the
+    stroke applies within the layer's call. It starts a new group on the
+    same surface when the current one would pass `GROUP_SPLIT_BYTES`
+    (3 MB) or `MAX_STROKES` with the stroke. On a sheet (`page` its id)
+    the group's file is a canvas, and a stroke in the last quarter of
+    the last sheet adds the next one once (`addSheetAfter(id, {once:
+    true})`, [notebooks.md](notebooks.md)). A stroke while a held
+    squeeze is open marks it used (`noteSqueezeUse()`).
+  - `handleInkStrokes(page, strokes, size)` is `handleInkStroke` for
+    several strokes at once (`size` the surface in points, for a fresh
+    group's file): they join the surface's current group when it can
+    take them all under `MAX_STROKES` and `GROUP_SPLIT_BYTES`, else a new
+    group takes them all (a paste is never split across groups), through
+    `appendStrokes` as one entry, `T("ink paste")`; a set no group could
+    hold is refused with "Too much handwriting to paste into one note."
+    It returns `{id, ids}`, the group and the ids as they landed.
+  - `handleHoldStatus({text, once})` (`onHoldStatus`) raises
+    `undoableInkStatus(text)`, a `once` status at most once a session
+    (`straightHintRef`).
 - `markup/` ([text_boxes.md](text_boxes.md) "Client"):
   - `MarkupToolbar.jsx` `MarkupToolbar` is the strip. Its first row
     (`.pdfInkRow`) is five groups split by `.pdfInkSep`: the presets; the
@@ -3035,47 +3134,9 @@ reach.
     `inkEraserFilter`; and this browser's `inkFingerUndo`,
     `inkHoverPreview`, `inkPencilTap`, `inkPencilSqueeze` and `inkHaptics`
     ([settings.md](settings.md) "Reading & editing").
-  - The group the next stroke joins (`inkActiveRef`) and the lasso
-    selection (`inkSelection`).
-  - The **stroke history** (`inkHistRef`): entries of `{changes: [{id,
-    page, before, after}], label}`, one per action. A group whose block is
-    gone is re-inserted when an entry brings strokes back, its old draft
-    dropped first (`inkStore.dropDraft`). The block coming back is a fresh
-    one with no file, so its upload must name no base: a base left from
-    the deleted draft would make the server merge the strokes three ways
-    against the new block's empty drawing and count them as deleted.
-  - Every edit funnels through `applyInk`. It checks the byte budget: an
-    edit that would grow a group past `MAX_BYTES` is refused with "This
-    handwriting note is full. Move part of it to a new note, or start a
-    new one." Then it updates the drafts, records the entry and schedules
-    `flushInk` ("Fences": 700 ms after the last edit, at most 5 s after
-    the first unsaved one, and on `visibilitychange`, `pagehide` and
-    leaving the page).
-    `handleInkStroke` starts a new group on the same surface when the
-    current one would pass `GROUP_SPLIT_BYTES` (3 MB) or `MAX_STROKES`
-    with the stroke.
-  - The eraser filter is one function: `ink.js` `eraserKeep(filter) →
-    (stroke) => bool` (`'all'` keeps every stroke, `'pen'` tool `pen` of
-    any brush, `'highlighter'` tool `highlighter`; a stroke of an unknown
-    tool only under `'all'`). App applies it in `handleInkEraseAlong`
-    and `handleInkEraseMany`: `hitStrokesAlong(ink, path, radius, keep)`
-    and `eraseAlong(ink, path, radius, keep)` take it as an optional last
-    argument and leave a stroke `keep` refuses untouched, the same object,
-    so the caches survive. The layer builds it from `ink.eraserFilter`
-    for the scribble stage and the hover glyph.
-  - `handleInkEraseAlong(page, path, r, {mode, pass})`, the eraser's
-    flush: `eraseAlong` (partial) or `hitStrokesAlong` and `removeStrokes`
-    (whole strokes) over every group of the surface (`inkBySurface`)
-    through the filter, the changes of all of them one `applyInk`. Every
-    flush of one pass folds into one history entry, `T("partial ink
-    erasure")` or `T("ink erasure")`, keyed by the pass (`applyInk`'s
-    `pass` option keeps it on the entry; `applyInk` answers whether the
-    edit applied, since the byte budget may refuse it): a group the entry
-    holds takes the flush's `after`, another joins it with its `{id,
-    page, before, after}`, so one Ctrl+Z undoes the pass across groups. A
-    group whose drawing is no longer the entry's `after` (a save that
-    merged someone's strokes in meanwhile) starts a new entry instead, so
-    undoing the pass never takes their strokes away.
+  - The lasso selection (`inkSelection`).
+  - Turning `inkScribbleErase` on from Settings shows a pill explaining
+    the gesture once.
   - **The Pencil's gestures** (`pencilRef`, listening to the host's
     `pencil` and `squeeze` under `nativeHost().pencil`, on a page that
     takes ink): each goes through `pencilAction(message, {tools, pen,
@@ -3100,22 +3161,6 @@ reach.
     and, from the layer, `select` for a pen lasso that selected (at its
     lift) and `snap` for a held shape (at the tip), both in viewport CSS
     px.
-  - `handleInkEraseMany(page, targets)` deletes the targets across their
-    groups as one entry, `T("ink scribble erase")`, and raises
-    `undoableStatus(tn("Erased {n} stroke.", "Erased {n} strokes.", n),
-    {ink: true})`. `handleHoldStatus({text, once})` raises
-    `undoableStatus(text, {ink: true})`, a `once` status at most once a
-    session (`straightHintRef`). The `ink` option makes the pill's Undo step
-    the stroke history (`inkUndo`), as the strip's button does, where the
-    plain pill runs the `app.undo` command, the block history. Turning
-    `inkScribbleErase` on from Settings or the strip shows a pill
-    explaining the gesture once.
-  - `onUndoGesture(kind)` (`handleUndoGesture`) runs what the strip's
-    Undo / Redo buttons run: `inkUndo(redo)`, or `undoBlocks(redo)` under
-    `boxUndo`. The first chord of a session also raises a pill, "Two
-    fingers undid a stroke." / "Three fingers redid a stroke.", with a
-    *Turn off* action that sets `inkFingerUndo` to `'off'`
-    (`fingerUndoHintRef`, spent by the first chord).
   - **The handwriting clipboard** is `inkClipRef`, `{type: "gamma/ink",
     version: 2, space, box, strokes}`: the file's `space`, the selection's
     `inkBounds` box `{x1, y1, x2, y2}` in points and the raw stroke objects
@@ -3146,14 +3191,6 @@ reach.
       with "Not merged: this note has a caption or notes under it." A
       merge that would put the target past `MAX_STROKES` is refused with
       the byte budget's pill.
-  - `handleInkStrokes(page, strokes, size)` is `handleInkStroke` for
-    several strokes at once (`size` the surface in points, for a fresh
-    group's file): they join the surface's current group when it can
-    take them all under `MAX_STROKES` and `GROUP_SPLIT_BYTES`, else a new
-    group takes them all (a paste is never split across groups), through
-    `appendStrokes` as one entry, `T("ink paste")`; a set no group could
-    hold is refused with "Too much handwriting to paste into one note."
-    It returns `{id, ids}`, the group and the ids as they landed.
   - `pasteInk(page, at, size)` makes the copies with `cloneStrokes(strokes,
     dx, dy)`, `dx, dy` taking the clipboard box's top-left to `at` and then
     clamped so the box stays inside the surface (on a surface too small
@@ -3191,10 +3228,6 @@ reach.
     change")`, and a colour or a size to `restyleStrokes` with "ink color
     change" or "ink width change"; each is one entry and goes through
     `applyInk`'s byte budget like any edit.
-  - **The journal pill**: `inkStore.onInkRestored` raises "Unsaved
-    handwriting from a previous visit was restored." with `{label:
-    t("Discard"), run}`, once per block (a block is restored at most once
-    a visit), and schedules the flush that saves the restored draft.
   - **Hold-E**: the strip handler takes `stripKey`'s `eraser` action.
     `down` arms the eraser as a tap does and keeps `inkHoldRef = {since,
     erased: false, selection, tool}` (the lasso selection and the tool
@@ -3233,10 +3266,10 @@ reach.
       it) also goes when the viewer stops showing its surface: a PDF
       page's when the PDF is hidden or the notebook view opens, a sheet's
       when it closes (`inkRulerShown`).
-    - `handleInkStroke(page, stroke, size, {label})` takes the history
-      entry's label the layer's `onStroke` passes (`finishStroke`'s: "ink
-      stroke", "ink straight line", "ink shape"); *Stamp line* passes "ink
-      straight line".
+    - `handleInkStroke(page, stroke, size, {label})` (`useInkStrokes`)
+      takes the history entry's label the layer's `onStroke` passes
+      (`finishStroke`'s: "ink stroke", "ink straight line", "ink shape");
+      *Stamp line* passes "ink straight line".
     - `toggleInkRuler()` shows `defaultRuler` on the surface in view with
       its row open (`pasteTarget()`'s, across `visiblePart(page, size)`,
       the part of its box inside its viewer and the window, in page
@@ -3258,8 +3291,7 @@ reach.
       `finishStroke`'s hold stage (a span of 0, `t0` now: `ruler.js`
       `stampLine`) and `handleInkStroke` on the ruler's surface (the size
       of the surface it was laid on, kept beside it). It is one entry,
-      then `undoableStatus(t("Line stamped along the ruler."), {ink:
-      true})`.
+      then `undoableInkStatus(t("Line stamped along the ruler."))`.
     - `onZoom(page, patch)` (`handleInkZoom`) moves the window: `moveTo`
       for `{at, size}`, the window going to that page; `moveWindow` for
       `{x, y}` (both moves by hand set `x0`); `{mag}` through `setMag`.
