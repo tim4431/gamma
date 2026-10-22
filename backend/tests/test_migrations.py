@@ -1457,6 +1457,7 @@ def test_a_workspace_with_version_1_files_serves_version_2_after_its_first_open(
     assert sorted(p.name for p in uploads.iterdir() if p.is_file()) == files_after
     assert c.get(new_url).content == served.content
 
+
 def test_a_data_directory_at_40_gets_only_the_ink_upgrade(data_dir, monkeypatch):
     """A data directory release 40 left (comments and the Inbox): users.db
     at 40 with its Inbox, a workspace from before it at 38 and one it

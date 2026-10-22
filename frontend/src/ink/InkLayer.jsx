@@ -845,8 +845,12 @@ export function InkLayer({ pageNumber, wrapRef, width, height, blocks, tool, pen
   const penBusy = useRef(() => false);
   // What a press in leaves the selection menu open: this page, and the zoom
   // window under the viewer, whose layer draws and drags the same selection.
+  // A comment card beside the page (BESIDE_PAGE, inside the page's box) is
+  // off the page: a press there lets go of the selection, so the strip's
+  // Delete and Ctrl+C / X / D never reach strokes while a card is read.
   const menuIgnore = useRef(null);
-  menuIgnore.current = { contains: (node) => !!(wrapRef.current?.contains(node) || node?.closest?.(".inkZoomPanel")) };
+  menuIgnore.current = { contains: (node) => !!((wrapRef.current?.contains(node) && !node.closest?.(BESIDE_PAGE))
+    || node?.closest?.(".inkZoomPanel")) };
 
   const groups = [];
   for (const b of blocks || []) {

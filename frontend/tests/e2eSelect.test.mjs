@@ -52,6 +52,8 @@ test("a change selects the groups that exercise it", () => {
   // the Notability import is an export's groups; its fixture writer is the transfers scenario's
   assert.deepEqual(pick(["backend/gamma/notability_import.py"]).sort(), ["diagrams", "files", "ink", "transfers"]);
   assert.deepEqual(pick(["backend/tests/notability_fixtures.py"]), ["transfers"]);
+  // a comment card stands in the page's box, where the ink layer and the text boxes leave its presses alone
+  for (const file of ["frontend/src/ink/InkLayer.jsx", "frontend/src/markup/TextBoxLayer.jsx"]) assert.ok(pick([file]).includes("comments"), file);
   // the chat's pictures of handwriting are the AI modules' groups
   assert.deepEqual(pick(["backend/gamma/ink_view.py"]).sort(), pick(["backend/gamma/ai_context.py"]).sort());
   // a scenario helper selects the scenarios importing it

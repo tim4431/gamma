@@ -371,7 +371,9 @@ app ([ipad.md](ipad.md)). Typed text on a page is
   handwriting"), up to two rows of 36 px buttons. The first row never
   changes: Color, Width, Style, Copy, Duplicate, More and Delete. Color,
   Width and Style open their option row under whichever rows show, one at
-  a time. A blank tap or Escape dismisses the menu.
+  a time. A blank tap, a press off the page or Escape dismisses the menu
+  and lets go of the selection; a comment card beside a PDF page
+  ([comments.md](comments.md) "In the app") is off the page.
   - **Style** opens its own row: the Style picker (the strip's, shown when
     the selection holds pen strokes; its button names the style they
     share, or *Mixed*), the Line trio and, when the selection holds a
@@ -1980,7 +1982,10 @@ reach.
   per page visit on it: "Some handwriting here comes from a newer Gamma
   and is drawn plainly; update to see it as drawn". `InkSelectionMenu`
   is a portalled `ContextMenu` (its controls sit outside the page's pointer
-  listeners); `useSelectionMenuAnchor` gives it the selection's edges and
+  listeners). A press in the page's box or in the zoom window's panel
+  leaves it open (its `ignoreRef`), except one on a comment card in the
+  page's box (`BESIDE_PAGE`); any other press closes it.
+  `useSelectionMenuAnchor` gives it the selection's edges and
   the band it stays in, and the menu, from its own measured height, picks
   above or below before it is painted ([ui-design.md](ui-design.md#menus-and-popups-open-in-place)).
   Its first row is fixed: Color, Width, Style (`ctlBtn`, `BrushIcon`,

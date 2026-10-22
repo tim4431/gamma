@@ -552,7 +552,10 @@ The scenarios live in `tests/e2e/scenarios/`:
   viewer's and a link visitor's side, `?thread=` and a folder share's
   thread link. Also the field as a note's editor, the selection popup's
   Comment and the PDF margin's cards ([comments.md](comments.md) "In the
-  app"). Run with `--group comments`.
+  app"), and the cards beside the pen strip: a pen or the Text tool on a
+  card, a handwriting selection let go by a press on one, its right-click,
+  and its Enter and Escape with the zoom window open. Run with
+  `--group comments`.
 - `inbox.mjs`: an invitation's jump to its workspace; the bell's count from
   a page socket's nudge after a mention typed through the @ menu and, on the
   home library, on focus; the jumps in place, into another workspace and
