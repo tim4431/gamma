@@ -792,6 +792,43 @@ def create_page(conn, title: str, props: dict | None = None, *, actor: str,
                                       (block_id,)).fetchone())
 
 
+def insert_page_tree(conn, page_id: str, title: str, props: dict, tree: list, actor: str) -> int:
+    """Insert a root page (last on root) and its ``{content, properties?,
+    id?, children?}`` tree (a node's own ``id`` is honoured), touched by
+    ``actor`` (``touch_page``); returns the number of blocks written under
+    the page. Takes the write lock first (the position is read under it);
+    the caller commits. This is the bulk writer of the library imports:
+    they put pages in short transactions of their own, where
+    ``create_page`` commits each one. Iterative, so a deep tree never meets
+    the recursion limit ``flatten_tree`` would."""
+    write_lock(conn)
+    now = page_now()
+    pos = generate_key_between(last_child_position(conn, "root"), None)
+    conn.execute(
+        f"INSERT INTO unified_blocks ({STORED_COLUMNS}) VALUES (?,'root',?,?,?,?,?,?)",
+        (page_id, pos, title, json.dumps(props), now, now, page_id),
+    )
+    written = 0
+    pending = [(page_id, tree)]
+    while pending:
+        parent_id, nodes = pending.pop()
+        if not nodes:
+            continue
+        positions = generate_n_keys_between(None, None, n=len(nodes))
+        for node, child_pos in zip(nodes, positions):
+            child_id = node.get("id") or new_block_id()
+            conn.execute(
+                f"INSERT INTO unified_blocks ({STORED_COLUMNS}) VALUES (?,?,?,?,?,?,?,?)",
+                (child_id, parent_id, child_pos, node.get("content", ""), json.dumps(node.get("properties") or {}),
+                 now, now, page_id),
+            )
+            written += 1
+            if node.get("children"):
+                pending.append((child_id, node["children"]))
+    touch_page(conn, page_id, actor, now=now)
+    return written
+
+
 def get_or_create_doc_page(conn, doc_id: str, default_title: str = "",
                            source_url: str | None = None,
                            original_filename: str | None = None,

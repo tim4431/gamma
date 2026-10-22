@@ -368,6 +368,102 @@ with zipfile.ZipFile(sys.argv[1], 'w', zipfile.ZIP_DEFLATED) as z:
     } finally { await ctx.close(); }
   });
 
+  await step("transfer: a Notability note imports as a page with its ink, text box, picture and recording", async () => {
+    const { ctx, page } = await setup();
+    try {
+      // The backend's writer of what Notability writes (backend/tests/notability_fixtures.py):
+      // a PDF page then a paper page, a pen stroke and a highlighter, a text
+      // box and a picture on page 1, a dot on page 2, and a recording. And
+      // an .ntb, Notability Cloud's format, which the import refuses.
+      const note = path.join(server.dir, "E2E Notability note.note");
+      const ntb = path.join(server.dir, "Cloud note.ntb");
+      execFileSync(python, ["-c", `
+import sys
+sys.path.insert(0, 'backend/tests')
+from notability_fixtures import ntb, sample_note
+open(sys.argv[1], 'wb').write(sample_note())
+open(sys.argv[2], 'wb').write(ntb())
+`, note, ntb], { cwd: ROOT });
+      await page.waitForSelector(".folderNewBtn");
+      const pickNotes = async (file) => {
+        const dialog = await openDialog(page, "Import");
+        await choice(dialog, "Notability notes").click();
+        const chooser = page.waitForEvent("filechooser");
+        await choice(dialog, "Choose files…").click();
+        await (await chooser).setFiles(file);
+        return page.getByRole("dialog", { name: "Review Notability import", exact: true });
+      };
+      // The .ntb: the server's refusal says how to export "Note" instead, and
+      // sending the same file again is not offered.
+      let review = await pickNotes(ntb);
+      await review.getByRole("alert").filter({ hasText: "NTB" }).waitFor();
+      assertEq(await choice(review, "Retry preview").count(), 0, "a refused file is not offered again");
+      assert(!(await review.innerText()).includes("Choose what to import"), "nothing to choose from");
+      await choice(review, "Cancel").click();
+      await review.waitFor({ state: "detached" });
+      assertNoProblems(page, [/^POST \/api\/import\/review\S* -> 400$/]);
+
+      review = await pickNotes(note);
+      const target = review.getByRole("region", { name: "Library after import", exact: true });
+      await target.getByText("E2E Notability note", { exact: true }).waitFor();
+      assertEq((await target.locator(".importKind").allTextContents()).join(","), "PDF");
+      assert(await review.getByRole("heading", { name: "Source file", exact: true }).isVisible());
+      await choice(review, "Import to library").click();
+      const report = page.getByRole("dialog", { name: "Import complete", exact: true });
+      await report.waitFor();
+      const summary = await report.locator(".importReviewHeader").innerText();
+      assert(summary.includes("1 new page") && summary.includes("1 recording"), summary);
+      await choice(report, "Done").click();
+
+      // The page carries one PDF, the note's PDF page and its paper page; an
+      // ink group per page; the boxes on page 1; the recording.
+      const imported = (await alice.api("/api/blocks/root/children")).children.find((p) => p.content === "E2E Notability note");
+      assert(imported?.properties?.doc_id, "the note keeps a PDF");
+      const blocks = (await alice.api(`/api/blocks/${imported.id}/subtree`)).block.children;
+      const groups = blocks.filter((b) => b.properties?.ink_url);
+      assertEq(groups.length, 2, "an ink group per page");
+      const files = await Promise.all(groups.map((b) => alice.api(b.properties.ink_url)));
+      for (const file of files) assertEq(`${file.format} ${file.version} ${file.space.kind}`, "gamma-ink 2 pdf-page");
+      assert(files.find((f) => f.space.page === 1)?.strokes.some((s) => s.tool === "highlighter"), "the highlighter on page 1");
+      assert(files.flatMap((f) => f.strokes).some((s) => (s.ch || "").includes("w")), "a stroke whose width varies along it");
+      const boxes = blocks.filter((b) => b.properties?.text_box && b.properties.pdf_page === 1);
+      assert(boxes.some((b) => b.content.includes("Typed **box**")), "the text box");
+      assert(boxes.some((b) => b.content.startsWith("![")), "the picture's box");
+      const recording = blocks.find((b) => b.properties?.recording);
+      assertEq(recording?.properties.recording.segments[0].mime, "audio/mp4");
+
+      // Picked again, twice over: the files go up as one .zip, the second
+      // copy renamed in it, and the note already in the library is skipped.
+      const copy = { name: path.basename(note), mimeType: "application/octet-stream", buffer: fs.readFileSync(note) };
+      review = await pickNotes([copy, copy]);
+      await review.getByRole("heading", { name: "Selected files", exact: true }).waitFor();
+      const source = review.getByRole("region", { name: "ZIP contents", exact: true });
+      for (const name of ["E2E Notability note.note", "E2E Notability note (2).note"]) {
+        assert(await source.getByText(name, { exact: true }).isVisible(), name);
+      }
+      await until(async () => (await review.getByText("Already in library", { exact: true }).count()) === 2, { what: "both copies skipped" });
+      await choice(review, "Cancel").click();
+      await review.waitFor({ state: "detached" });
+
+      // On screen: both pages, the ink drawn, the picture as wide as its box's text.
+      await page.goto(`${server.base}/?page=${imported.id}&ws=${alice.ws}`);
+      await until(async () => (await page.locator(".pdfPageWrap").count()) === 2, { what: "the note's two pages" });
+      await until(async () => (await page.locator('[data-page="1"] .inkLayer path').count()) >= 2, { what: "the pen and the highlighter drawn" });
+      const picture = page.locator('[data-page="1"] .textBox img.mdImg');
+      await picture.waitFor();
+      await until(() => picture.evaluate((img) => img.complete && img.naturalWidth > 0), { what: "the picture loaded" });
+      const fit = await picture.evaluate((img) => {
+        const body = img.closest(".textBoxBody");
+        const style = getComputedStyle(body);
+        return { picture: img.getBoundingClientRect().width,
+          text: body.getBoundingClientRect().width - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight) };
+      });
+      assert(Math.abs(fit.picture - fit.text) < 1, `the picture fills its box's text width: ${JSON.stringify(fit)}`);
+      if (flags.keep) await page.screenshot({ path: `${server.dir}/notability-note.png` });
+      assertNoProblems(page);
+    } finally { await ctx.close(); }
+  });
+
   await step("transfer: format selection, live options, back navigation and a real notes PDF", async () => {
     const { ctx, page } = await setup();
     try {
@@ -477,9 +573,9 @@ with zipfile.ZipFile(sys.argv[1], 'w', zipfile.ZIP_DEFLATED) as z:
       assertEq(await dialog.locator('[data-preview="notes"]').count(), 0);
       await choice(dialog, "Close Export").click();
       dialog = await openDialog(page, "Import");
-      assertEq(await dialog.getByRole("group", { name: "Import from" }).getByRole("button").count(), 5);
+      assertEq(await dialog.getByRole("group", { name: "Import from" }).getByRole("button").count(), 6);
       assertEq(await choice(dialog, "Annotations in this PDF").getAttribute("aria-pressed"), "true");
-      for (const [type, count] of [["This paper", 2], ["Notes", 1], ["Library", 2]]) {
+      for (const [type, count] of [["This paper", 2], ["Notes", 2], ["Library", 2]]) {
         assertEq(await dialog.getByRole("group", { name: `${type} choices`, exact: true }).getByRole("button").count(), count);
       }
       if (flags.keep) await page.screenshot({ animations: "disabled", path: `${server.dir}/import-sources.png` });
@@ -531,7 +627,8 @@ with zipfile.ZipFile(sys.argv[1], 'w', zipfile.ZIP_DEFLATED) as z:
       assertEq(fs.readFileSync(await (await download).path()).subarray(0, 2).toString(), "PK");
       await choice(dialog, "Done").click();
       await dialog.waitFor({ state: "detached" });
-      for (const [name, accept, multiple] of [["Gamma export (.zip)", ".zip,application/zip", false], ["Logseq highlights", ".pdf,.edn,.md", true]]) {
+      for (const [name, accept, multiple] of [["Gamma export (.zip)", ".zip,application/zip", false], ["Logseq highlights", ".pdf,.edn,.md", true],
+        ["Notability notes", ".note,.zip,application/zip", true]]) {
         dialog = await openDialog(page, "Import");
         const chooser = page.waitForEvent("filechooser");
         if (multiple) {

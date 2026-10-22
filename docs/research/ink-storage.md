@@ -32,6 +32,8 @@ the engineering post on object selection
 (https://gingerlabs.medium.com/notability-object-selection-adventures-in-vector-graphics-e1ed4bbbb4f6);
 the first reverse engineering
 (https://jvns.ca/blog/2018/03/31/reverse-engineering-notability-format/).
+The whole `.note` file, beyond its strokes, and what the Notability import
+reads of it are in [notability-format.md](notability-format.md).
 
 - **One ink object per note, structure of arrays.** All handwriting of a
   note lives in one `InkedSpatialHash` inside `Session.plist`, as parallel

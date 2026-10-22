@@ -9,7 +9,8 @@ Code: `frontend/src/markup/` (`textBox.js`, `useTextBoxes.js`,
 `TextBoxLayer.jsx`, `markup.css`, and the parts shared with handwriting:
 `PageTools.jsx`, `MarkupLayers.jsx`, `MarkupToolbar.jsx`), `gamma/text_box.py`
 (the server's rules and the PDF layout), the `/FreeText` writer in
-`gamma/pdf_export.py`, the reader in `gamma/routers/imports.py`, and
+`gamma/pdf_export.py`, the reader in `gamma/routers/imports.py`, the boxes
+the Notability import makes in `gamma/notability_map.py`, and
 `gamma/notebook.py` `notebook_pdf`. Tests are listed [below](#tests).
 
 ## What the user sees
@@ -64,7 +65,7 @@ imported from the PDF's own `/FreeText` or `/Text` also carries
 `PAD` is 4 pt and `LINE` 1.25 times the size. Every value is at most
 `MAX_COORD`, 14 400 pt, the largest page side a PDF allows (ISO 32000-1,
 Annex C). On a PDF page the frame is the one ink files use
-([handwriting.md](handwriting.md#the-stroke-file-gamma-ink-v1)); on a sheet
+([handwriting.md](handwriting.md#the-stroke-file-gamma-ink-v2)); on a sheet
 it is points from the sheet's top-left.
 
 **Normalization.** Every reader goes through `normalize_text_box`
@@ -179,7 +180,13 @@ ink are in [handwriting.md](handwriting.md#client).
 - `markup.css`: the layer, frame, band, handle and read mode. The fixed
   code, link and mark colours sit in a `ds-allow` block
   ([ui-design.md](ui-design.md#ratchets)). The dark-page filter is ink's
-  rule in `app.css`, extended to `.textBoxBody`.
+  rule in `app.css`, extended to `.textBoxBody`. In a fixed-width box a
+  picture without a width of its own (`![alt](…)`, not `![alt|300](…)`)
+  fills the box's text width, its frames too, so it zooms with the page
+  as the text does; the Notability import makes a picture's box the
+  picture's size ([import_export.md](import_export.md#notability-notes)).
+  In an auto-width box, or sized in its Markdown, a picture keeps its own
+  size.
 - `app/App.jsx`:
   - `inkUi.tool === "text"` arms the tool (`textArmed`); `inkPenTool` is
     null meanwhile, so a stylus places boxes too.
@@ -302,7 +309,7 @@ replies and hidden annotations are in
 
 - A `/FreeText` or `/Text` becomes a text box. Its place comes from `/Rect`
   through `pdf_point_to_viewer`, the exact inverse of the export's mapping,
-  and `_on_page` keeps it inside the page.
+  and `text_box.keep_on_surface` keeps it inside the page.
 - With `/GammaTextBox`, the Markdown, size and style come from it and `x`,
   `y` from `/Rect`, so a move in another viewer holds. When `/Contents`
   (`\r` read as `\n`) differs from the `text` written, `/Contents` wins.
@@ -321,6 +328,15 @@ replies and hidden annotations are in
 - Only text boxes use the rotation-aware inverse. The highlight, area and
   ink import does a plain media-box flip, which agrees with the export
   wherever the view box is the media box.
+
+**The Notability import** ([import_export.md](import_export.md#notability-notes);
+`notability_map.text_box`, `picture_box`) makes three kinds of box, each
+fixed-width, as large as Notability drew it and kept on its surface
+(`keep_on_surface`): a text box (a line per paragraph, list items as
+Markdown, the size and colour of most of its characters, its paper colour
+as `bg`), a formula (display math in its colour), and a picture (its image
+as `![caption](/api/uploads/…)`, the box the picture's turned bounding box).
+A turned text box stands upright on its centre.
 
 **Notebook PDF** (`notebook.notebook_pdf`, [notebooks.md](notebooks.md)):
 each sheet's boxes with text are page content, selectable text, after the

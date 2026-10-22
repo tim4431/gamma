@@ -112,6 +112,7 @@ export const RULES = [
   ["frontend/package.json", ALL],
   ["frontend/package-lock.json", ALL],
 
+  ["backend/tests/notability_fixtures.py", ["transfers"]], // the Notability note the transfers scenario imports
   ["backend/tests/**", []],
   ["backend/gamma/ai_protocols/**", [...CHAT, "settings"]],
   ["backend/gamma/ai_*.py", [...CHAT, "settings", "ink-zoom"]],
@@ -154,6 +155,7 @@ export const RULES = [
   ["backend/gamma/logseq_*.py", EXPORTS],
   ["backend/gamma/zotero_*.py", EXPORTS],
   ["backend/gamma/import_*.py", EXPORTS],
+  ["backend/gamma/notability*.py", EXPORTS],
   ["backend/gamma/pdf_export.py", EXPORTS],
   ["backend/gamma/pdf_document.py", EXPORTS],
   ["backend/gamma/pdf_typeset.py", EXPORTS],

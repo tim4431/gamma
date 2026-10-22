@@ -91,8 +91,9 @@ mcp_oauth*.py      browser consent for MCP clients; mcp_lazy.py loads the option
 logseq_*.py        Logseq: PDF-highlight importers (EDN / Markdown), a page as a Logseq file graph
 markdown_*.py      Markdown import (one document, or a zip: Notion, Obsidian, Gamma's own) and export
 zotero_*.py        Zotero RDF library import and export
+notability*.py     Notability notes: the plists read behind guards, a note's model, its place in Gamma, the import
 obsidian_export.py an Obsidian vault export
-import_*.py        the reviewed library imports: staged uploads, preview and selection
+import_*.py        the reviewed library imports: staged uploads, preview and selection, the guarded zip walk
 bibtex.py          BibTeX entries and bibliographies, every printed entry valid BibTeX
 item_types.py      what a paper record describes (meta.kind), in Zotero's item-type names
 mathml.py          MathML in registry titles, as LaTeX math or as plain text

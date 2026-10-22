@@ -20,7 +20,7 @@
 export const ANCHORS = {
   "header.view": { view: "desktop", description: "View menu: reopen closed windows" },
   "view.menu": { view: "desktop", open: ["header.view"], description: "The View menu itself" },
-  "view.import": { view: "desktop", open: ["header.view"], surface: "view.menu", description: "Import…: a Zotero library, an Obsidian vault, a Notion export, Logseq highlights or a Gamma export" },
+  "view.import": { view: "desktop", open: ["header.view"], surface: "view.menu", description: "Import…: a Zotero library, Notability notes, an Obsidian vault, a Notion export, Logseq highlights or a Gamma export" },
   "header.tabs": { view: "tabs", description: "The open-tab strip; right-click a tab to pin it, or to pin its page to the library" },
   "chat.grip": { view: "desktop chat", description: "Chat title: drag to dock, double-click to collapse or expand" },
   "notes.grip": { view: "docked notes", description: "Notes title: drag to dock, double-click to collapse or expand" },

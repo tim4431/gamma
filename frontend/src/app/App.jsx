@@ -54,7 +54,7 @@ import { backdropPress, menuPress } from "../shared/ui/press.js";
 import { lastPointer, touchScreen } from "../shared/lib/pointer.js";
 import { appShell, nativeHost, onHostMessage, postToHost } from "../shared/lib/host.js";
 import { pickFiles } from "../shared/lib/pickFiles.js";
-import { folderPick } from "../transfers/folderZip.js";
+import { canPickFolder, filesUpload, folderPick } from "../transfers/folderZip.js";
 import { bibliographyPreview } from "../transfers/exportApi";
 import { collectEntryFiles } from "../shared/lib/dropEntries.js";
 import { useWheelPan } from "../shared/ui/wheelPan";
@@ -6165,12 +6165,19 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       importEmbeddedAnnots(focusedBlockId, docId, false, o.strip);
       return;
     }
-    if (["zotero", "markdown", "gamma"].includes(o.source)) {
+    if (["zotero", "markdown", "gamma", "notability"].includes(o.source)) {
       const review = (file) => setImportReview({ source: o.source, file, strip: o.strip,
         folder: homeMode && folderFilter ? folderFilter : "" });
       if (o.file) review(o.file); // dropped on the dialog: a .zip or a folder (folderZip.js)
       else if (o.pick === "folder") pickFiles({ directory: true }, (files) => review(folderPick(files)));
-      else pickFiles({ accept: o.source === "markdown" ? ".md,.markdown,.zip,text/markdown,application/zip" : ".zip,application/zip" },
+      else if (o.source === "notability") {
+        // Notes picked together go up as one .zip. Safari on an iPhone or
+        // iPad (no folder picker: canPickFolder) greys out a file whose
+        // extension it has no type for, a .note among them, so there the
+        // picker takes any file and the server says what it cannot read.
+        pickFiles({ accept: canPickFolder() ? ".note,.zip,application/zip" : "", multiple: true },
+          (files) => review(files.length === 1 ? files[0] : filesUpload(files, t("Notability notes"))));
+      } else pickFiles({ accept: o.source === "markdown" ? ".md,.markdown,.zip,text/markdown,application/zip" : ".zip,application/zip" },
         ([file]) => review(file));
       return;
     }
@@ -10683,7 +10690,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
             icon={ImportIcon}
             data-guide="view.import"
             onClick={() => { setOpenPopover(null); setImportOpen(true); }}
-            title={t("Bring in highlights — the ones saved inside this PDF file, a Logseq export, or a whole Zotero library")}
+            title={t("Bring in notes and highlights: a Zotero library, Notability notes, Markdown, a Logseq export, a Gamma export, or the annotations saved inside this PDF")}
           >{t("Import…")}</MenuItem>
         ),
       ],

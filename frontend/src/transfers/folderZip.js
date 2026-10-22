@@ -1,11 +1,12 @@
-// A picked or dropped folder as one .zip File, for the imports that read an
-// archive: the server's review takes the same upload either way
-// (docs/dev/import_export.md). Entries are stored, not compressed — PDFs
-// barely shrink, so packing is one CRC pass and the zip is a Blob over the
-// picked files rather than a copy of them — under the folder's own name
-// with UTF-8 names, as Explorer's or Finder's Compress writes it. Neither a
-// pick nor a drop here lists empty folders. Past 4 GB or 65,535 files the
-// sizes, offsets and counts that no longer fit go in ZIP64 records.
+// A picked or dropped folder, or several picked files, as one .zip File, for
+// the imports that read an archive: the server's review takes the same
+// upload either way (docs/dev/import_export.md). Entries are stored, not
+// compressed — PDFs barely shrink, so packing is one CRC pass and the zip is
+// a Blob over the picked files rather than a copy of them — under the
+// folder's own name with UTF-8 names, as Explorer's or Finder's Compress
+// writes it. Neither a pick nor a drop here lists empty folders. Past 4 GB
+// or 65,535 files the sizes, offsets and counts that no longer fit go in
+// ZIP64 records.
 const MAX32 = 0xFFFFFFFF;
 
 const CRC_TABLE = (() => {
@@ -46,6 +47,24 @@ export const folderPick = (fileList) => folderUpload([...fileList].map((file) =>
 
 // A folder dropped as one entry (dropEntries.js collectEntryFiles' pairs).
 export const folderDrop = (found) => folderUpload(found.map(({ file, folder }) => ({ path: [...folder, file.name].join("/"), file })));
+
+// Several picked files as one upload, packed like a folder under `name`;
+// `picked` tells the review's source column apart from a folder. A name
+// picked twice gets " (2)" before its extension, case aside, as the disks
+// of Windows and macOS compare names.
+export function filesUpload(fileList, name) {
+  const taken = new Set();
+  const entries = [...fileList].map((file) => {
+    const dot = file.name.lastIndexOf(".");
+    const stem = dot > 0 ? file.name.slice(0, dot) : file.name;
+    const ext = dot > 0 ? file.name.slice(dot) : "";
+    let unique = file.name;
+    for (let n = 2; taken.has(unique.toLowerCase()); n++) unique = `${stem} (${n})${ext}`;
+    taken.add(unique.toLowerCase());
+    return { path: `${name}/${unique}`, file };
+  });
+  return { ...folderUpload(entries), picked: true };
+}
 
 function dosStamp(ms) {
   const d = new Date(ms || Date.now());

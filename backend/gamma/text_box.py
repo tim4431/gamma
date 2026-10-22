@@ -82,6 +82,15 @@ def normalize_text_box(value) -> dict | None:
     }
 
 
+def keep_on_surface(box: dict, width: float, height: float) -> dict:
+    """The box kept inside a surface of ``width`` × ``height`` points, as
+    the client keeps a moved box: no wider or taller than the surface, its
+    corner moved in; normalized."""
+    w, h = min(box["w"], width), min(box["h"], height)
+    return normalize_text_box({**box, "w": w, "h": h, "x": min(max(box["x"], 0), width - w),
+                               "y": min(max(box["y"], 0), height - h)})
+
+
 def is_text_box(props: dict | None) -> bool:
     return isinstance((props or {}).get("text_box"), dict)
 

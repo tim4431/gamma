@@ -22,7 +22,7 @@ Read papers, keep what you learn. This guide shows each part of Gamma in a short
 | [Offline copies](#offline-copies) | A synced copy on your laptop or iPad |
 | [Gamma Connector](#gamma-connector) | Save papers from the browser |
 | [Assistants](#assistants) | Codex, Claude Code, DeepSeek Harness and other MCP clients; the tools they get |
-| [Import and export](#import-and-export) | Zotero, Obsidian, Notion, PDF, BibTeX |
+| [Import and export](#import-and-export) | Zotero, Notability, Obsidian, Notion, PDF, BibTeX |
 | [Backups and upgrades](#backups-and-upgrades) | Snapshots, exports, what a new version does |
 | [Install as an app](#install-as-an-app) | iPad, phone, desktop |
 | [Settings](#settings) | Where things are |
@@ -342,7 +342,8 @@ The first ten are the chat's own reading tools. An assistant never gets the writ
 
 Both are in the **View menu (≡)**, on a page or on the home library (with a folder open, Export takes the whole folder).
 
-- **Import**: a Zotero library (RDF with files: pick or drop the export folder, or a .zip of it), an Obsidian vault or Notion export, Markdown, Logseq, annotations embedded in a PDF, or a Gamma export from another Gamma.
+- **Import**: a Zotero library (RDF with files: pick or drop the export folder, or a .zip of it), Notability notes, an Obsidian vault or Notion export, Markdown, Logseq, annotations embedded in a PDF, or a Gamma export from another Gamma.
+- **From Notability**: export the notes with File Format **Note**, not NTB, which Gamma cannot read yet (in a note: the options icon → Export Options; in the library: press and hold a note → Export Options). Then pick the .note files, or a .zip of them, under **Notability notes**. Each note becomes a page. A note with PDF pages keeps them as its PDF, its paper pages printed into it; a note on paper alone becomes a notebook. Handwriting, shapes, sticky notes, text boxes, math, pictures and recordings come along, and the text typed on the page itself becomes the page's notes. A recording plays, but the handwriting does not replay with it. Notes already imported are skipped.
 - **Export**: **Annotated PDF** (highlights, ink and text boxes as real annotations), **Notes as PDF** or **Markdown**, **BibTeX**, an **Obsidian vault**, a **Logseq graph**, a **Zotero library**, or a **Gamma zip**.
 - **Keep a bibliography up to date**: share a folder, then Export → BibTeX → *Keep this .bib up to date* gives a link Overleaf can refresh.
 - **Keep a folder on your disk**: in the desktop app, a folder's *Keep on this computer…* writes its papers as PDFs beside Markdown notes into a directory you pick and keeps it up to date. One way: what you change there is neither sent back nor overwritten.
