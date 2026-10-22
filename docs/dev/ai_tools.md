@@ -286,13 +286,16 @@ Nothing is drawn by hand. Both paths reuse an export
   (`pdf_export.page_with_ink`). Every stroke is drawn as vectors into the
   copied page's content through `ink.pdf_path_ops`, as the notes-as-PDF
   export draws it. So the model sees the looks as drawn (baked widths and
-  tapers, dashes, the pencil's three shades without its grain), every
-  group's highlighters under every group's pens. A highlighter is
+  tapers, dashes, the pencil's three shades in the screen's grain, the
+  calligraphy nib), every group's highlighters under every group's pens.
+  A highlighter is
   multiplied onto the page through a graphics state, so the text under
   it stays as dark as it was. `/Ink` annotations could not do this: a
   viewer draws them over the page's content.
   `backend/tests/test_ai_tools_ink.py` renders text under a highlighter
-  and asserts every glyph pixel stays dark. Ink imported
+  and asserts every glyph pixel stays dark. It also checks the pencil's
+  grain where the screen draws it, on turned and cropped pages too, and
+  the nib's slanted ends. Ink imported
   from the PDF and still embedded in it (`pdf_export.still_embedded`) is
   not added twice. When the PDF
   is missing or PyPDF2 cannot copy the page (an encrypted file), the

@@ -78,8 +78,9 @@ A page with sheets of paper and no PDF has none to annotate:
 `annotated_pdf` writes `notebook.notebook_pdf` instead. Each sheet is a PDF page of its paper's
 size, painted with the paper, its text boxes typeset on it as real,
 selectable text, and the ink groups under it drawn over them as vectors
-in the content (the page is the drawing, so no `/FreeText` or `/Ink`
-layer). The switches do not apply.
+in the content, as the screen draws them, the pencil's grain and the
+calligraphy nib included (the page is the drawing, so no `/FreeText` or
+`/Ink` layer). The switches do not apply.
 
 ### Notes drawn on the page
 

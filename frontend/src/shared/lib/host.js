@@ -10,7 +10,10 @@
 // the Pencil's barrel roll), haptics (it plays `haptic`), servers (it has a
 // server picker)} — and a `receive(msg)` stub that queues what native sends
 // until this module takes over. A flag the host leaves out is a thing it
-// does not do, and the web leaves it out too; `version` only names the build.
+// does not do, and the web leaves it out too. The web reads neither
+// `version`, which only names the build, nor `inkLooks`, which only says
+// what the shell's live line can draw: a claim carries its whole look
+// either way.
 // The messages: the web posts `claim` (the ink layer), `theme`, `servers`
 // and `haptic` (App); native sends `stroke` and `hold` (the ink layer),
 // `pencil` and `squeeze` (App). Feature code asks nativeHost() for a

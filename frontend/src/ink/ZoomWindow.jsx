@@ -16,9 +16,10 @@
 // zoom: the window; size: the page's {width, height} in points; page: the
 // pdf.js page (null until it loads); marks: the page's marks (useMarks);
 // height / onHeight(px): the panel's height in css px, grip and bar
-// included (this browser's inkZoomHeight); onChange(update): an update of
-// the window, `update(window) → next`; onClose(); annotationMode, isCancel:
-// the viewer's, for the raster; dark: the viewer flips page colours.
+// included (this browser's inkZoomHeight; a drag of the grip applies it
+// once, at the release); onChange(update): an update of the window,
+// `update(window) → next`; onClose(); annotationMode, isCancel: the
+// viewer's, for the raster; dark: the viewer flips page colours.
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { MarkupLayers } from "../markup/MarkupLayers";
 import { armedClasses, usePageTools } from "../markup/PageTools";
@@ -32,12 +33,24 @@ import {
 } from "./zoomWindow.js";
 
 const clampHeight = (px) => Math.round(Math.max(ZOOM_HEIGHT_MIN, Math.min(ZOOM_HEIGHT_MAX, px)));
+// A grip drag's height, before it is applied, on what stands beside the
+// panel, set on the elements themselves so nothing above it renders: the
+// scroller (PdfViewer's .pdfViewer, which gives up the panel's height, in
+// the form its render writes) and App's --ink-zoom-h on .viewerWrap (the
+// viewer's bottom controls stand above the panel). The renders after the
+// release write the same values.
+function previewHeight(panel, px) {
+  const scroller = panel?.parentElement?.querySelector(":scope > .pdfViewer");
+  if (scroller) scroller.style.height = `calc(100% - ${px}px)`;
+  panel?.closest(".viewerWrap")?.style.setProperty("--ink-zoom-h", `${px}px`);
+}
 // A raster the window moved off waits this long for the move to rest
 // before it is drawn again (a drag of the page's band moves it every frame).
 const RASTER_REST_MS = 80;
 
 export function ZoomWindow({ zoom, size, page, marks, height, onHeight, onChange, onClose, annotationMode, isCancel, dark = false }) {
   const tools = usePageTools();
+  const panelRef = useRef(null);
   const viewRef = useRef(null);
   const pageRef = useRef(null);
   const live = useRef(null);
@@ -45,7 +58,12 @@ export function ZoomWindow({ zoom, size, page, marks, height, onHeight, onChange
   // Every change goes through the window as it is then, and on this page only.
   const update = (fn) => live.current.onChange((win) => (win && win.page === zoom.page ? fn(win, live.current.size) : win));
 
-  // The view's size in css px: the window's w and h follow it (sized).
+  // While the grip is dragged: the height the panel shows, not applied yet.
+  const [dragHeight, setDragHeight] = useState(null);
+  const shownHeight = dragHeight ?? height;
+  const dragging = dragHeight != null;
+  // The view's size in css px: the window's w and h follow it (sized),
+  // after a grip drag, whose every move changes it, once, at the release.
   const [view, setView] = useState(null);
   useLayoutEffect(() => {
     const el = viewRef.current;
@@ -58,8 +76,8 @@ export function ZoomWindow({ zoom, size, page, marks, height, onHeight, onChange
     return () => ro?.disconnect();
   }, []);
   useEffect(() => {
-    if (view?.width && view.height) update((win, s) => sized(win, view, s));
-  }, [view, zoom.page, zoom.mag]); // eslint-disable-line react-hooks/exhaustive-deps
+    if (!dragging && view?.width && view.height) update((win, s) => sized(win, view, s));
+  }, [view, zoom.page, zoom.mag, dragging]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // The raster: two canvases in one slot (pageRaster.js `pair`'s reason),
   // the hidden one drawn into and then shown, so the panel never shows a
@@ -109,22 +127,34 @@ export function ZoomWindow({ zoom, size, page, marks, height, onHeight, onChange
     for (const c of [canvasA.current, canvasB.current]) if (c) { c.width = 0; c.height = 0; }
   }, []);
 
-  // The grip: a drag of the top edge, or ↑ / ↓ by 10 px, resizes the panel
-  // (each height goes to onHeight as it moves; the scroller above follows).
+  // The grip: a drag of the top edge, or ↑ / ↓ by 10 px, resizes the panel.
+  // A drag shows its height on the panel and beside it as it moves
+  // (previewHeight) and hands it to onHeight once, as it ends, so the
+  // preference and App, whose render reaches every page's layers, change
+  // once a drag; each key press applies at once.
   const grip = useRef(null);
   const gripDown = (e) => {
     if (e.button !== 0) return;
     e.preventDefault();
-    grip.current = { id: e.pointerId, y: e.clientY, from: height };
+    grip.current = { id: e.pointerId, y: e.clientY, from: height, at: height };
     e.currentTarget.setPointerCapture?.(e.pointerId);
   };
   const gripMove = (e) => {
     const g = grip.current;
     if (g?.id !== e.pointerId) return;
     const next = clampHeight(g.from + g.y - e.clientY);
-    if (next !== height) onHeight(next);
+    if (next === g.at) return;
+    g.at = next;
+    previewHeight(panelRef.current, next);
+    setDragHeight(next);
   };
-  const gripEnd = (e) => { if (grip.current?.id === e.pointerId) grip.current = null; };
+  const gripEnd = (e) => {
+    const g = grip.current;
+    if (g?.id !== e.pointerId) return;
+    grip.current = null;
+    setDragHeight(null);
+    if (g.at !== g.from) onHeight(g.at);
+  };
 
   // A stroke written here that reached the window's right fifth moves it on.
   const onZoomStroke = (box) => update((win, s) => advance(win, box, s));
@@ -136,9 +166,9 @@ export function ZoomWindow({ zoom, size, page, marks, height, onHeight, onChange
   );
   return (
     <div className={"inkZoomPanel" + (dark ? " pdfDark" : "") + armedClasses(tools)} role="region" aria-label={t("Zoom window")} data-guide="ink.zoom"
-      data-page={zoom.page} data-mag={mag} style={{ height }}>
+      ref={panelRef} data-page={zoom.page} data-mag={mag} style={{ height: shownHeight }}>
       <div className="inkZoomGrip" role="separator" aria-orientation="horizontal" aria-label={t("Zoom window height")}
-        aria-valuenow={height} aria-valuemin={ZOOM_HEIGHT_MIN} aria-valuemax={ZOOM_HEIGHT_MAX} tabIndex={0}
+        aria-valuenow={shownHeight} aria-valuemin={ZOOM_HEIGHT_MIN} aria-valuemax={ZOOM_HEIGHT_MAX} tabIndex={0}
         title={t("Drag to make the zoom window taller or shorter")}
         onPointerDown={gripDown} onPointerMove={gripMove} onPointerUp={gripEnd} onPointerCancel={gripEnd} onLostPointerCapture={gripEnd}
         onKeyDown={(e) => {

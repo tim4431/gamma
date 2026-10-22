@@ -170,7 +170,10 @@ No schema change: sheets are blocks and properties.
   ink group on the sheet through `ink.pdf_path_ops`. Every group's band 0
   is drawn before any group's band 1, and the graphics states the strokes
   set (a highlighter's multiply, a pencil's shades:
-  `ink.pdf_path_resources`) go in the page's resources. `notebook_pdf` takes
+  `ink.pdf_path_resources`) go in the page's resources. So do the
+  pencil's grain patterns (`ink.GrainPatterns`: one tile image per colour
+  for the whole PDF), placed through the sheet's flipped frame
+  (`pdf_path_ops`' `frame`). `notebook_pdf` takes
   `(paper, [(content, text_box)], [InkFile])` per sheet.
   `X-Annotations-Written` counts the boxes and groups drawn. A page with
   neither is refused (400, "page has no PDF").

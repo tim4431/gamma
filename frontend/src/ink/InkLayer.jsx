@@ -40,6 +40,7 @@ import {
 import { toolShape } from "./shapeTool.js";
 import { doublePress } from "../shared/ui/press.js";
 import { makeStabilizer } from "./stabilizer.js";
+import { duplicateOffset, measureSurface } from "./surfaceScale.js";
 import { magForWidth, moveWindow, setMag } from "./zoomWindow.js";
 import { makeChordDetector } from "./fingerChords.js";
 import { INK_COLORS, colorName, pickerColors, swatchCss } from "../shared/model/palette.js";
@@ -837,6 +838,13 @@ export function InkLayer({ pageNumber, wrapRef, width, height, blocks, tool, pen
   // window under the viewer, whose layer draws and drags the same selection.
   const menuIgnore = useRef(null);
   menuIgnore.current = { contains: (node) => !!(wrapRef.current?.contains(node) || node?.closest?.(".inkZoomPanel")) };
+  // What a css px is in this surface's points, for a screen distance on it
+  // (surfaceScale.js: Duplicate's offset, the menu's and Ctrl+D's): measured
+  // by this layer, the page's own, never the zoom window's copy.
+  useEffect(() => {
+    if (!chrome) return undefined;
+    return measureSurface(pageNumber, () => ({ css: wrapRef.current?.getBoundingClientRect().width || 0, width: live.current.width }));
+  }, [pageNumber, chrome, wrapRef]);
 
   const groups = [];
   for (const b of blocks || []) {
@@ -1907,7 +1915,7 @@ export function InkLayer({ pageNumber, wrapRef, width, height, blocks, tool, pen
       {selBox && onSelect ? <div className="inkSelectionHit" data-guide="ink.selection" aria-label={t("Move selected handwriting")}
         style={{ left: pct(hitBox[0], width), top: pct(hitBox[1], height),
           width: pct(hitBox[2] - hitBox[0], width), height: pct(hitBox[3] - hitBox[1], height) }} /> : null}
-      {selBox && onAction && chrome && !dragging ? <InkSelectionMenu wrapRef={wrapRef} ignoreRef={menuIgnore} box={selBox} width={width}
+      {selBox && onAction && chrome && !dragging ? <InkSelectionMenu surface={pageNumber} wrapRef={wrapRef} ignoreRef={menuIgnore} box={selBox} width={width}
         strokes={selectedStrokes}
         canMerge={canMergeSelection(groups, selectedIds)} keys={keys}
         onAction={onAction} onClose={() => onSelect(pageNumber, [])} /> : null}
@@ -2550,8 +2558,9 @@ let moreOpen = false;
 // whichever rows show, one at a time. `keys` names the chords the titles
 // carry ("Copy · Ctrl+C"; the label alone unbound). `ignoreRef`: what a
 // press in leaves the menu open (the page, and the zoom window, whose
-// layer drags the selection too).
-function InkSelectionMenu({ wrapRef, ignoreRef, box, width, strokes, canMerge, keys, onAction, onClose }) {
+// layer drags the selection too). `surface`: the page or sheet the
+// selection is on, whose scale sets Duplicate's offset.
+function InkSelectionMenu({ surface, wrapRef, ignoreRef, box, width, strokes, canMerge, keys, onAction, onClose }) {
   const [options, setOptions] = useState(null);
   const [more, setMoreState] = useState(moreOpen);
   // The Style row's brush menu: {x, y} under its picker while open.
@@ -2565,8 +2574,6 @@ function InkSelectionMenu({ wrapRef, ignoreRef, box, width, strokes, canMerge, k
     return { left: r.left + x0 * k, top: r.top + y0 * k, right: r.left + x1 * k, bottom: r.top + y1 * k };
   }, [width, x0, y0, x1, y1]);
   if (!anchor) return null;
-  // 12 screen pixels, in the page's points
-  const nudge = () => 12 * width / wrapRef.current.getBoundingClientRect().width;
   const kinds = [...new Set(strokes.map((s) => s.tool))];
   const withKey = (label, key) => (key ? `${label} · ${key}` : label);
   // The Style row: the brush the selected pens share (undefined: mixed;
@@ -2578,6 +2585,10 @@ function InkSelectionMenu({ wrapRef, ignoreRef, box, width, strokes, canMerge, k
   // The Fill the selected closed shapes share (null: none; undefined: mixed).
   const closed = strokes.filter(isClosedShape);
   const fill = closed.length && closed.every((s) => (s.fill?.color ?? null) === (closed[0].fill?.color ?? null)) ? closed[0].fill?.color ?? null : undefined;
+  // The Color row: the colour and the opacity every selected stroke shares
+  // (undefined: they differ, so no swatch is marked, and a custom colour
+  // keeps each stroke's opacity).
+  const shared = (key) => (strokes.every((s) => s[key] === strokes[0]?.[key]) ? strokes[0]?.[key] : undefined);
   const toggleOptions = (row) => { setStyleMenu(null); setOptions(options === row ? null : row); };
   const toggleStyleMenu = (button) => {
     styleBtnRef.current = button;
@@ -2591,7 +2602,7 @@ function InkSelectionMenu({ wrapRef, ignoreRef, box, width, strokes, canMerge, k
         <button className={"ctlBtn" + (options === "width" ? " modeActive" : "")} aria-label={t("Width")} title={t("Width")} aria-expanded={options === "width"} onClick={() => toggleOptions("width")}><LineWidthIcon aria-hidden="true" /></button>
         <button className={"ctlBtn" + (options === "style" ? " modeActive" : "")} aria-label={t("Style")} title={t("Style")} aria-expanded={options === "style"} onClick={() => toggleOptions("style")}><BrushIcon aria-hidden="true" /></button>
         <button className="ctlBtn" aria-label={t("Copy")} title={withKey(t("Copy"), keys?.copy)} onClick={() => onAction("copy")}><CopyIcon aria-hidden="true" /></button>
-        <button className="ctlBtn" aria-label={t("Duplicate")} title={withKey(t("Duplicate"), keys?.duplicate)} onClick={() => onAction("duplicate", { dx: nudge(), dy: nudge() })}><DuplicateIcon aria-hidden="true" /></button>
+        <button className="ctlBtn" aria-label={t("Duplicate")} title={withKey(t("Duplicate"), keys?.duplicate)} onClick={() => onAction("duplicate", duplicateOffset(surface))}><DuplicateIcon aria-hidden="true" /></button>
         <button className={"ctlBtn" + (more ? " modeActive" : "")} aria-label={t("More")} title={t("More edits")} aria-expanded={more} onClick={() => setMore(!more)}><MoreIcon aria-hidden="true" /></button>
         <button className="ctlBtn inkDeleteBtn" aria-label={t("Delete")} title={t("Delete selected handwriting")} onClick={() => onAction("delete")}><TrashIcon aria-hidden="true" /></button>
       </div>
@@ -2606,11 +2617,8 @@ function InkSelectionMenu({ wrapRef, ignoreRef, box, width, strokes, canMerge, k
         <button className="ctlBtn" aria-label={t("Transcribe")} title={t("Transcribe with AI: the selected handwriting as text in the chat")} onClick={() => onAction("transcribe")}><SparklesIcon aria-hidden="true" /></button>
       </div> : null}
       {options === "color" ? <div className="inkEditOptions" aria-label={t("Selected ink color")}>
-        {pickerColors(palette, kinds.every((k) => k === "highlighter") ? "highlighter" : "pen").map((c, i) =>
-          <button key={c.hex + c.alpha + i} className="colorBtn inkSwatch" style={{ background: swatchCss(c) }} title={inkColorName(c.hex)} aria-label={inkColorName(c.hex)}
-            aria-pressed={strokes.every((s) => s.color === c.hex)} onClick={() => onAction("style", { color: c.hex, opacity: c.alpha })} />)}
-        <label className="colorBtn inkSwatch inkCustomColor" title={t("Custom color")}><input type="color" aria-label={t("Selected ink custom color")} value={strokes[0]?.color || INK_COLORS[0]}
-          onChange={(e) => onAction("style", { color: e.target.value })} /></label>
+        <ColorChoices colors={pickerColors(palette, kinds.every((k) => k === "highlighter") ? "highlighter" : "pen")}
+          color={shared("color")} alpha={shared("opacity")} onColor={(color, opacity) => onAction("style", { color, opacity })} />
       </div> : null}
       {options === "width" ? kinds.map((kind) => <div className="inkEditOptions" key={kind} aria-label={t("{kind} width", { kind: inkKindName(kind) })}>
         {kinds.length > 1 ? (kind === "highlighter" ? <HighlightIcon aria-label={t("Highlighter")} /> : <PenIcon aria-label={t("Pen")} />) : null}

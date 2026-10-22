@@ -13,11 +13,12 @@ app ([ipad.md](ipad.md)). Typed text on a page is
 - Server: `gamma/ink.py`, `gamma/routers/ink.py` and `gamma/ink_view.py`.
 - Client: `frontend/src/ink/ink.js`, `ink/finishStroke.js`,
   `ink/shapes.js`, `ink/shapeTool.js`, `ink/ruler.js`, `ink/zoomWindow.js`,
-  `ink/gestures.js`, `ink/stabilizer.js`, `ink/fingerChords.js`,
-  `ink/stripKeys.js`, `ink/pencilActions.js`, `ink/hostInk.js`,
-  `ink/inkStore.js`, `ink/inkJournal.js`, `ink/inkFlush.js`,
-  `ink/inkLive.js`, `ink/grain.js`, `ink/InkStylePicker.jsx`,
-  `ink/InkLayer.jsx`, `ink/ZoomWindow.jsx` and `ink/inkInput.js`. The tool
+  `ink/surfaceScale.js`, `ink/gestures.js`, `ink/stabilizer.js`,
+  `ink/fingerChords.js`, `ink/stripKeys.js`, `ink/pencilActions.js`,
+  `ink/hostInk.js`, `ink/inkStore.js`, `ink/inkJournal.js`,
+  `ink/inkFlush.js`, `ink/inkLive.js`, `ink/grain.js`,
+  `ink/InkStylePicker.jsx`, `ink/InkLayer.jsx`, `ink/ZoomWindow.jsx` and
+  `ink/inkInput.js`. The tool
   strip and the page plumbing it shares with text boxes are in
   `markup/MarkupToolbar.jsx`, `markup/MarkupLayers.jsx` and
   `markup/PageTools.jsx`.
@@ -26,13 +27,16 @@ app ([ipad.md](ipad.md)). Typed text on a page is
   `shapeTool.test.mjs`, `ruler.test.mjs`, `zoomWindow.test.mjs`,
   `gestures.test.mjs`, `stabilizer.test.mjs`, `fingerChords.test.mjs`,
   `stripKeys.test.mjs`, `pencilActions.test.mjs`, `hostInk.test.mjs`,
-  `inkInput.test.mjs`, `inkLive.test.mjs`, `inkJournal.test.mjs` and
-  `inkFlush.test.mjs`. The benchmarks `tests/bench/inkCache.bench.mjs` and
+  `inkInput.test.mjs`, `inkLive.test.mjs`, `inkJournal.test.mjs`,
+  `inkFlush.test.mjs`, `inkRender.test.mjs` and `surfaceScale.test.mjs`.
+  The benchmarks `tests/bench/inkCache.bench.mjs` and
   `inkErase.bench.mjs` are not part of `npm test`.
 - Shared fixtures in `tests/shared/`: `inkv2.json`, `inkwidth.json`,
-  `inkdash.json`, `inkmerge.json` and `inkcodec.json` are read by
-  `backend/tests/test_shared_fixtures.py` and the node tests, and
-  `inkwidth.json` by the iPad app's `InkWidthTests` too. The recognisers
+  `inkdash.json`, `inkmerge.json`, `inkcodec.json`, `inkgrain.json` (the
+  pencil's grain tile in each colour) and `inknib.json` (the calligraphy
+  nib's paths) are read by `backend/tests/test_shared_fixtures.py` and the
+  node tests (the last two by `inkRender.test.mjs`), and `inkwidth.json`
+  by the iPad app's `InkWidthTests` too. The recognisers
   and the Shapes tool's drags (`inkshapes.json`, `inkscribble.json`) run
   in the node tests only, since the server never recognises; the Python
   side checks those fixtures' shape and that every stored `shape` record
@@ -320,8 +324,10 @@ app ([ipad.md](ipad.md)). Typed text on a page is
     line), *New line* (back to where the line began, one line down;
     Enter), the line height (− 24 pt +, from 8 to 96 pt), *2×* · *3×* ·
     *4×* (3× to start) and *Close* (or Z, or Esc).
-  - The panel is 160 to 320 px tall, 200 to start, and its top edge drags
-    to resize it (this device's `inkZoomHeight`).
+  - The panel is 160 to 320 px tall, 200 to start (this device's
+    `inkZoomHeight`). Its top edge drags to resize it: the pages above
+    give up the space as it moves, and the height stays when the edge is
+    let go. Focused, the edge takes ↑ / ↓, 10 px a press.
   - On the page, the box's top band drags it and its corner resizes it
     (the magnification follows, from 2× to 4×; the panel moves when the
     box is let go). Focused, the arrow keys move the band and step the
@@ -372,6 +378,12 @@ app ([ipad.md](ipad.md)). Typed text on a page is
   changes: Color, Width, Style, Copy, Duplicate, More and Delete. Color,
   Width and Style open their option row under whichever rows show, one at
   a time. A blank tap or Escape dismisses the menu.
+  - **Color** opens the palette's swatches, the highlighter's when every
+    selected stroke is a highlighter and the pen's otherwise, and a custom
+    colour. The colour every selected stroke shares is ringed, a mix
+    rings none, and a colour off the palette shows on the custom swatch.
+    A swatch sets its own opacity, and a custom colour keeps each
+    stroke's.
   - **Style** opens its own row: the Style picker (the strip's, shown when
     the selection holds pen strokes; its button names the style they
     share, or *Mixed*), the Line trio and, when the selection holds a
@@ -396,11 +408,12 @@ app ([ipad.md](ipad.md)). Typed text on a page is
     seven buttons, a hard cap for every later addition. Whether the second
     row is open is remembered for the session.
   - Edits apply at once and keep pressure and time; a mixed
-    pen/highlighter selection gets a width row per kind. Duplicate offsets
-    fresh-id copies by 12 screen pixels and selects them; a full group
-    refuses. Flip mirrors the strokes about the selection box's centre,
-    widths and timing untouched, the box staying put; a second flip puts
-    them back.
+    pen/highlighter selection gets a width row per kind. Duplicate puts
+    fresh-id copies 12 px right of and below the originals and selects
+    them. The 12 px are measured at the zoom of the page or sheet the
+    selection is on, from the menu and Ctrl+D alike. A full group refuses.
+    Flip mirrors the strokes about the selection box's centre, widths and
+    timing untouched, the box staying put; a second flip puts them back.
   - One action across several blocks is one undo entry, and every action
     works without a keyboard; a button's title names the chord where one
     exists ("Copy · Ctrl+C").
@@ -500,8 +513,9 @@ app ([ipad.md](ipad.md)). Typed text on a page is
   darker where the pencil pressed harder (three shades on the page) and
   wider where it leaned; under the pen the live line is stamped from
   small round dabs of the same grain, as wide as the saved line. Exports
-  and the AI's picture draw the pencil as a plain line in the same
-  shades, without the grain.
+  and the AI's picture draw the same grain in the same shades, except the
+  annotated PDF's `/Ink` annotation, which a PDF reader draws as a plain
+  line.
 - **Calligraphy** (the Style picker's fifth row) is a flat nib: the line
   is as wide as the nib where the pen moves across it and a hairline (an
   eighth of that) where it moves along it, its ends and turns showing
@@ -521,10 +535,9 @@ app ([ipad.md](ipad.md)). Typed text on a page is
   - The hover footprint is the nib, a short bar at its angle. A stroke
     keeps its nib through every edit: a flip mirrors it, a turn turns it
     with the stroke, an erased piece keeps it.
-  - Exports and the AI's picture draw the same thick and thin widths with
-    round ends instead of the nib's corners, and a little wider where the
-    pen pressed harder, which the screen does not show ("The brush table"
-    below).
+  - Exports and the AI's picture draw the same nib, its slanted ends and
+    corners included. The annotated PDF's `/Ink` annotation is a plain
+    line.
 - **Live co-drawing.** While someone else draws on a page this tab has
   open, their stroke appears as it is written, in their preset's look.
   When their drawing is saved the wet stroke becomes the saved one, the
@@ -664,8 +677,8 @@ Live canvas, retained SVG, eraser geometry, hit tests and the server's
 exporters all draw from those baked values, with no width or opacity
 formula in any of them, and partial erasing keeps them in every
 surviving piece. The one shape built from geometry instead is the
-calligraphy nib, which the client's screen sweeps along a stroke from its
-angle and size ("The brush table").
+calligraphy nib, which the client's screen and the server's exporters
+sweep along a stroke from its angle and size ("The brush table").
 
 **The brush table**, in words (the numbers are pinned by
 `tests/shared/inkwidth.json`, whose `about` is the normative statement):
@@ -714,12 +727,12 @@ angle and size ("The brush table").
   a mouse or finger stroke (`pen: false`) takes p = 0.5 and so carries
   `w` from the direction alone, written `xytw`. The tilt is not read; the
   barrel roll only sets the stroke's `nib`, at its first sample. The
-  client's screen draws the nib itself along the same samples
-  (`nibOutline`, "Client"), its width across the travel `size × s` with
-  the 0.12 floor kept as a hairline, at every pressure: the pressure's
-  share, 0.85 to 1.15, is in `w` alone, which every other renderer and
-  exporter draws with round ends, and which the hit test, the eraser,
-  the bounds and the iPad's live line read.
+  client's screen and the server's exporters draw the nib itself along
+  the same samples (`nibOutline`, "Client"; `nib_outline`, "Server"), its
+  width across the travel `size × s` with the 0.12 floor kept as a
+  hairline, at every pressure. The pressure's share, 0.85 to 1.15, is in
+  `w` alone: the hit test, the eraser, the bounds and the annotated PDF's
+  `/Ink` width read it, and the iPad's live line draws it with round ends.
 - A **highlighter** has no brushes and no `w`; a **mouse or finger** Pen
   or Ballpoint stroke (`pen: false`) is even.
 - A stroke that carries a **`shape`** record (a held shape, a straight
@@ -799,7 +812,7 @@ and the canonical bytes never write a key at its omission value:
 |---|---|---|---|
 | `id` | `^[A-Za-z0-9_-]{1,32}$` | required; a client mints 8 chars | survives every edit (the merge's handle) |
 | `tool` | `^[a-z][a-z0-9-]{0,15}$` | `pen` | `pen` or `highlighter` are known; an unknown value draws as a round-capped polyline of the baked width, source-over at `opacity`, in its own export bucket; the eraser and the lasso take it like any stroke |
-| `brush` | `^[a-z][a-z0-9-]{0,15}$` | omitted | `monoline` (Ballpoint: constant width, no `w`), `brush` (Brush: `w` from pressure or speed with tapers), `pencil` (Pencil: `w` from pressure and tilt, `o` from pressure) and `calligraphy` (Calligraphy: `w` from the travel against `nib`, a little from pressure) are known; a stroke with a `shape` keeps its brush but has no `w` or `o`, whatever the brush; an unknown brush draws exactly as a pen from `w` (and `o`), so only texture is lost (that is how the server's exporters draw a calligraphy stroke). Open on every tool: the server does not refuse one on a highlighter (it draws at its size, as any highlighter) |
+| `brush` | `^[a-z][a-z0-9-]{0,15}$` | omitted | `monoline` (Ballpoint: constant width, no `w`), `brush` (Brush: `w` from pressure or speed with tapers), `pencil` (Pencil: `w` from pressure and tilt, `o` from pressure) and `calligraphy` (Calligraphy: `w` from the travel against `nib`, a little from pressure) are known; a stroke with a `shape` keeps its brush but has no `w` or `o`, whatever the brush; an unknown brush draws exactly as a pen from `w` (and `o`), so only texture is lost. Open on every tool: the server does not refuse one on a highlighter (it draws at its size, as any highlighter) |
 | `color` | `#rrggbb` or `rgb[a](…)`, ≤ 40 chars | `#1f1f1f` | |
 | `size` | number in (0, 100] | `1.6` | nominal diameter in pt, the anchor `w` multiplies; a width restyle changes `size` only, a resize scales it; the server refuses `size × max(w) > 100` |
 | `opacity` | number in (0, 1] | `1` | |
@@ -819,7 +832,9 @@ The server's models are pydantic with `extra="allow"` and one extras
 validator for the caps (`gamma/ink.py`). `json.loads` runs with a
 `parse_constant` that refuses `NaN` and `Infinity`, and `dumps` refuses a
 number that is not finite (`ValueError`). Pydantic would keep a `NaN`
-extra, and `JSON.parse` in every browser then fails on the file.
+extra, and `JSON.parse` in every browser then fails on the file. The
+extras validator also refuses an integer past the largest double, which
+a browser reads as `Infinity`.
 
 **Channels.** `ch` names the channels of each sample, InkML-style, `x`
 `y` first and then any of the letters below in any order; `pts` is one
@@ -1028,17 +1043,22 @@ instead of replacing (`ops._Batch.merge_ink`, `ink.merge_ink`; the client's
   applied: deletions win both ways, since "the other side changed it"
   cannot be judged without the base's content. A stroke the base did not
   have is an addition and stays. Without `base_ids` it is a union by
-  id. The mirror avoids this mode by pushing the base file an op names
-  when the origin lacks it. A file that cannot be read, or a result over
-  the budgets, leaves the write as sent (last writer wins).
+  id. A mirror's push carries `base_ids` read from its own copy of the
+  base file when it has one (sync_engine `_with_base_ids`), so an origin
+  that no longer holds the base merges by deletions. A file that cannot
+  be read, or a result over the budgets, leaves the write as sent (last
+  writer wins).
 
 The merge returns the file, `clean`, and two id lists: `lost_ours`, the
 writer's changes the result dropped (an edit or erasure theirs overrode,
 pieces that were dropped), and `returned`, the strokes theirs had erased
 that the writer's change brings back. `ops._Batch.merge_ink` puts
-`{clean, lost_ours, returned}` into the batch result (not the echo, so
-the op log, catch-up and mirrors never carry it), and `routers/blocks.py`
-copies it onto the `PUT` answer as `ink_conflict`. The writer's pill:
+`{clean, lost_ours, returned}` into the batch result, not the echo, so
+the op log and catch-up never carry it. `routers/blocks.py` copies it
+onto the `PUT` answer as `ink_conflict`, and `routers/collab.py` onto the
+ops answer. A mirror reads it there for its own pushes, and an unclean
+merge becomes an `ink_merged` conflict row ([mirror.md](mirror.md) "What
+travels"). The writer's pill:
 
 - `lost_ours`: "Your change to n strokes was not applied: someone changed
   them since".
@@ -1055,7 +1075,8 @@ The merged file is stored (`ink.dumps`) only when it is new. One stored
 already stays: the purge deletes only under the write lock the batch
 holds. The applied op names the merged file, with its stroke count and
 box. Merging a change that already landed adds nothing, so a mirror
-resends a lost ink push as it is (sync_engine `_unlanded`). A merge that
+resends a lost ink push as it is, its `base_ids` with it (sync_engine
+`_unlanded`). A merge that
 changes nothing returns the side it equals (the space compared on its
 known keys), so a resend mints no copy.
 
@@ -1093,16 +1114,22 @@ reach.
   draft journal keeps that handwriting and restores it on the next visit
   ("Client", the journal). That is why handwriting takes the lowest
   priority: typed edits lost at the close are lost for good.
-- A closing tab fires `visibilitychange` before `pagehide`, so
-  `pagehide` flushes every draft still unsaved again, whether or not the
-  first flush is still on its way. There the upload and the block's `PUT`
-  go side by side, since nothing is sure to run once the page is gone:
-  the `PUT` names the file by the hash `inkStore` worked out when the
-  draft changed (`nameLater`, idle time). Only there, because a peer that
-  the `PUT`'s op reaches before the upload has landed finds no file. A
-  flush the page will live past keeps the upload-then-`PUT` order, and so
-  does a draft the server will have to merge (its block names another
-  file than the draft's base), even on `pagehide`.
+- `pagehide` flushes every draft still unsaved. A tab closed while it
+  shows fires `pagehide` first and `visibilitychange` after it, in one
+  task (every close measured, headless Chromium and WebKit:
+  [research/keepalive-abort.md](../research/keepalive-abort.md)). So the
+  close flushes once, and the flush on going hidden that follows finds
+  nothing scheduled. A tab hidden before it closes flushed when it was
+  hidden, and its `pagehide` flushes what is still unsaved again, whether
+  or not that first flush is still on its way.
+- On `pagehide` the upload and the block's `PUT` go side by side, since
+  nothing is sure to run once the page is gone: the `PUT` names the file
+  by the hash `inkStore` worked out when the draft changed (`nameLater`,
+  idle time). Only there, because a peer that the `PUT`'s op reaches
+  before the upload has landed finds no file. A flush the page will live
+  past keeps the upload-then-`PUT` order, and so does a draft the server
+  will have to merge (its block names another file than the draft's
+  base), even on `pagehide`.
 - `pagehide` sends nothing twice. A drawing whose upload the first flush
   has on its way with keepalive sends its `PUT` alone, beside that
   upload, or nothing when the `PUT` cannot go beside it (then that flush
@@ -1323,7 +1350,9 @@ reach.
   a calligraphy stroke without a `shape` to it: a dashed one outlines
   each of `dashRuns`' on-runs with it, and a dotted one draws its dots as
   round dots of `size × w` as any pressure stroke does. A calligraphy
-  stroke with a shape draws as an even line. `strokeBounds`
+  stroke with a shape draws as an even line. The server's exporters draw
+  the same paths (`gamma/ink.py` `nib_outline` and `nib_shape`, "Server";
+  `tests/shared/inknib.json` pins them). `strokeBounds`
   pads a calligraphy stroke without a shape by `size × NIB_REACH / 2` at
   every sample (`NIB_REACH` = hypot(1, `NIB_HAIR`): as far as the nib's
   corners reach), or by its drawn half-width where that is wider.
@@ -1985,7 +2014,17 @@ reach.
   Its first row is fixed: Color, Width, Style (`ctlBtn`, `BrushIcon`,
   aria-label and title "Style", `aria-expanded`, `modeActive` while its
   row shows), Copy, Duplicate, More (`ctlBtn`, `MoreIcon`, aria-label
-  "More", title "More edits", `aria-expanded`), Delete. Style opens the
+  "More", title "More edits", `aria-expanded`), Delete. Color opens the
+  `.inkEditOptions` row "Selected ink color": `ColorChoices` on
+  `pickerColors(palette, …)`, the highlighter's colours when every
+  selected stroke is a highlighter and the pen's otherwise. Its `color`
+  is the colour every selected stroke shares and its `alpha` the opacity
+  they share, each left out when they differ. It calls `onAction("style",
+  {color, opacity})`: a swatch sends its own alpha, the custom colour the
+  shared opacity, and with none shared each stroke keeps its own.
+  Duplicate calls `onAction("duplicate", duplicateOffset(surface))`,
+  `surface` being the menu's prop for the page or sheet the selection is
+  on (`ink/surfaceScale.js` below). Style opens the
   `.inkEditOptions` row with aria-label "Selected ink style" (`options
   === "style"`, one of the three option rows). That row holds the
   `InkStylePicker` (`ink/InkStylePicker.jsx`) when the selection holds a
@@ -2038,14 +2077,17 @@ reach.
   A tip goes below its button unless that is near the window's bottom;
   `above` keeps a strip's tips above, on the side its menus open.
   `InkCard` is the picture in the notes. For `markup/` the file
-  exports `InkTooltips`, `inkColorName`, `ERASER_SIZES`, `ColorChoices` (a
-  palette role's swatches plus a custom colour, for a pen preset's row, a
-  text box's colours and the selection's Fill, which passes no colour for
-  None or a mix and then nothing is marked; the strip, the selection menu and the text box read
-  the account's palette through `usePalette`, `shared/ui/paletteContext.js`)
-  and `swallowClick` (eats the click a handled
-  pointer-up would deliver). Imports run from `markup/` to `ink/`, never
-  back.
+  exports `InkTooltips`, `inkColorName`, `ERASER_SIZES`, `ColorChoices`
+  and `swallowClick` (eats the click a handled pointer-up would deliver).
+  `ColorChoices` is a palette role's swatches plus a custom colour, for a
+  pen preset's row, a text box's colours and the selection's Color and
+  Fill rows. The swatch of the colour it is given is ringed (`.selected`,
+  `aria-pressed`), and a colour off the palette rings the custom swatch,
+  which shows it through `--ink-custom`. Given no colour (a mix, or Fill's
+  None) it marks nothing. The strip, the selection menu and the text box
+  read the account's palette through `usePalette`
+  (`shared/ui/paletteContext.js`). Imports run from `markup/` to `ink/`,
+  never back.
   - Claiming input: a capture-phase `pointerdown` listener on the page
     wrapper takes the pointer when a tool is armed or a stylus touches the
     page (`pointerType === "pen"` with *Stylus draws right away*), so text
@@ -2422,7 +2464,10 @@ reach.
   - `ink/grain.js` writes the grain tile, a 64 × 64 (`GRAIN_PX`) PNG of
     speckles at three strengths over 30 % bare paper (white noise over a
     coarser, smooth paper tooth, from a fixed seed, so every client draws
-    the same grain), as a 2-bit palette image. `grainUri(colour)` is the
+    the same grain), as a 2-bit palette image, its chunks' CRC from
+    `shared/lib/crc32.js`. `gamma/ink.py` `grain_png` writes the same PNG
+    byte for byte for the exporters (`tests/shared/inkgrain.json`,
+    "Server"). `grainUri(colour)` is the
     tile in that colour, built once per colour; only its palette differs,
     so no SVG filter tints it. `grainImage(colour)`
     is the tile decoded for `createPattern` (null until decoded, and in
@@ -2516,6 +2561,19 @@ reach.
     drops the pictures of groups scrolled away first, else keeps its
     paths at that zoom. A browser that taints the canvas with the SVG
     image shows the SVG image itself.
+- `ink/surfaceScale.js` (pure but for a registry;
+  `frontend/tests/surfaceScale.test.mjs`): a screen distance in a
+  surface's page units. The `InkLayer` with chrome registers its surface
+  by `pageNumber` (a PDF page's number, a sheet's id) through
+  `measureSurface(surface, measure)`. `measure() → {css, width}`, read at
+  each ask, is its wrapper's css width and the surface's width in units.
+  The zoom window's copy shows the surface at another scale and never
+  registers. The call `measureSurface` returns unregisters, unless
+  another layer has registered the surface since. `surfaceUnits(surface,
+  px)` converts with `pxToUnits(px, css, width)`, a scale of 1 when
+  nothing is measured. `duplicateOffset(surface)` is `DUPLICATE_PX` (12)
+  css px as `{dx, dy}`, which the menu's Duplicate and App's Ctrl+D both
+  send.
 - `ink/ZoomWindow.jsx`: the zoom window's panel, which `PdfViewer`
   renders docked under its scroller while the page tools' `ink.zoom` is on
   one of its document's pages (the scroller gives up the panel's height:
@@ -2534,6 +2592,16 @@ reach.
   - The grip `.inkZoomGrip`: `role="separator"`,
     `aria-orientation="horizontal"`, aria-label "Zoom window height",
     `aria-valuenow` in css px, 160 to 320; a drag or ↑ / ↓ by 10 px.
+    A drag keeps its height in the panel's state (`dragHeight`, which the
+    panel's height and `aria-valuenow` follow) and sets it beside the
+    panel as it moves (`previewHeight`: the sibling `.pdfViewer`'s height,
+    in the `calc(100% - Hpx)` form PdfViewer renders, and App's
+    `--ink-zoom-h` on `.viewerWrap`). The window's size waits too
+    (`sized()` runs once the drag ends). `onHeight` runs once, on
+    `pointerup`, `pointercancel` or `lostpointercapture`, when the height
+    changed, so the preference and App's render, which reaches every
+    page's layers, change once a drag. ↑ / ↓ call `onHeight` at each
+    press.
   - The bar `.inkZoomBar` (`role="toolbar"`, aria-label "Zoom window
     controls"): *Previous line* `ChevronLeftIcon`, *Next line*
     `ChevronRightIcon`, *New line* `CornerDownLeftIcon` titled "New line ·
@@ -2971,15 +3039,15 @@ reach.
     its size at scale 1), or `nbCurrent` with its paper on a notebook. The
     commands, the pill's *Paste* and the More menu's row all run it; the
     page's `onPaste(page, pt, size)` (a held pen or mouse, a right-click)
-    runs `pasteInk` at the point. `duplicateInkSelection()` (Ctrl+D) reads
-    the page's scale off the selection rectangle's screen transform for
-    the 12 px nudge; `selectAllInk()` takes the selection's surface, else
-    the one in view.
+    runs `pasteInk` at the point. `duplicateInkSelection()` (Ctrl+D) sends
+    `duplicateOffset(inkSelection.page)`, the offset the menu's Duplicate
+    sends (`ink/surfaceScale.js`); `selectAllInk()` takes the selection's
+    surface, else the one in view.
   - The commands (`appCommands.js`, group `GROUP_HANDWRITING`
     "Handwriting", after Library in `GROUPS`; [hotkeys.md](hotkeys.md)
     "Widget keys"): `ink.copy` "Copy handwriting" Mod-c, `ink.cut` "Cut
     handwriting" Mod-x, `ink.duplicate` "Duplicate handwriting" Mod-d
-    (the 12 screen-px nudge), when the lasso holds strokes
+    (12 css px on the selection's surface), when the lasso holds strokes
     (`c.inkSelected`); `ink.paste` "Paste handwriting" Mod-v, when
     `c.inkOpen && c.inkTool && c.inkClip` and
     `window.getSelection().isCollapsed`; `ink.selectAll` "Select all
@@ -3159,11 +3227,12 @@ reach.
     (`opacity × o`, else `opacity`) and `stroke_polyline` (variable-width
     polylines every renderer draws from, band 0 first).
   - `DASH` and `dash_pattern(stroke) → (on, off) | None` (the client's
-    table), and `dash_runs(stroke)`, the on-runs by arc length, boundary
-    samples lerped in x, y, p, t, w and o, a and z from the sample before.
-    `tests/shared/inkdash.json` pins both against the client's
-    `dashArray` / `dashRuns`, and with them the run splitting the bands
-    share.
+    table), `dash_runs(stroke)`, the on-runs by arc length, boundary
+    samples lerped in x, y, p, t, w and o, a and z from the sample before,
+    and `dash_dots(stroke)`, a dotted stroke's dots, one at each run's
+    middle. `tests/shared/inkdash.json` pins them against the client's
+    `dashArray` / `dashRuns` / `dashDots`, and with them the run splitting
+    the bands share.
   - `opacity_band(o)` and `stroke_bands(stroke)`, the pencil's shading:
     the stroke cut into runs of one opacity band, `o` quantised up to
     0.33 / 0.66 / 1, a sample lerped where `o` crosses an edge; one run at
@@ -3177,40 +3246,92 @@ reach.
     run shorter than 3 pt would outline as a blot. A run of two samples
     gets a midpoint first, since its two-point path reads their pressure
     as 0.5.
+  - The calligraphy nib, as the screen draws it: `NIB_HAIR` (0.12),
+    `DEFAULT_NIB` (45), `nib_outline(samples, size, nib)` (the client's
+    `nibOutline`, `woundPath` and `sweepSegment`, operation for operation,
+    its pieces as polygons wound clockwise as seen) and
+    `nib_shape(stroke)` (`buildOutline`'s nib branch: the whole stroke or
+    each dash run as a nib of its own, a dotted stroke's dots round at
+    their drawn width). `tests/shared/inknib.json` pins the paths.
+  - The pencil's grain, as the screen draws it: `GRAIN_PX` (64, the
+    tile's pixels a side), `GRAIN_UNITS` (32, the page units it spans),
+    `grain_rgb(colour)` (the client's `rgbOf`:
+    `#rrggbb`, `#rgb` or `rgb[a](…)`, black for anything else) and
+    `grain_png(colour)`, `grainUri`'s PNG byte for byte, cached per
+    colour. `tests/shared/inkgrain.json` pins it.
   - `bounding_box` (over the raw integer arrays, no per-sample objects:
     the running sums of x, y and w, which `routers/ink.py` computes on
     every flush) and `pdf_position` (the shape is `gamma/highlights.py`'s).
-  - The exporters draw a stroke one of four ways (`_drawn_as`): a
+  - The exporters draw a stroke one of five ways (`_drawn_as`): a
     **highlighter** as its centreline at its size, multiplied onto what
-    lies beneath; a **dashed** stroke as one centreline at its mean drawn
+    lies beneath; a **calligraphy pen** without a shape as its nib
+    (`nib_shape`); a **dashed** stroke as one centreline at its mean drawn
     width and mean drawn opacity, round caps, the pattern its size's; a
-    **pencil or a translucent pen** (`o`, or an opacity under 1) as a
-    filled outline per opacity band; an **opaque solid pen** (and any tool
-    this code does not know) as one round-capped segment per sample pair
-    at that pair's baked width. Each band is one path painted once, so it
-    never darkens where it overlaps itself, as stroked segments under an
-    alpha would. Each run is round only at the stroke's own ends and flat
-    where it meets the next (the client's `runOutline`), so two bands meet
-    without overlapping.
+    **pencil** (a mouse pencil without `o` too) or a **translucent pen**
+    (`o`, or an opacity under 1) as a filled outline per opacity band; an
+    **opaque solid pen** (and any tool this code does not know) as one
+    round-capped segment per sample pair at that pair's baked width. Each
+    band is one path painted once, so it never darkens where it overlaps
+    itself, as stroked segments under an alpha would, and a pencil's grain
+    is never painted twice. Each run is round only at the stroke's own
+    ends and flat where it meets the next (the client's `runOutline`), so
+    two bands meet without overlapping. A pen with the pencil brush, a
+    dashed one too, is painted with its grain (`_grained`); a highlighter
+    or an unknown tool never is.
   - `to_svg` writes them as a `<path>` with `stroke-opacity` and
-    `mix-blend-mode: multiply`, a `<path>` with `stroke-dasharray="on
-    off"`, a `<path>` per band with `fill-opacity` band × opacity
-    (untextured), and `<g>` of segments.
-  - `pdf_path_ops(ink, to_pdf, scale, band?)` (the notes-as-PDF writer,
-    the notebook PDF and the AI's page picture; `band` keeps one band, for
-    a writer drawing several groups band by band; `b""` when nothing is
-    left) writes the highlighter under `/GSinkM<α × 1000>` (`/CA`, `/ca`
-    and `/BM /Multiply`), the dash between `[on off] 0 d` and `[] 0 d`
-    (scaled with the drawing), each band as cubic outlines filled once
-    under `/GSink<α × 1000>` (`/CA`, `/ca`; none at 1), and the segments
-    as stroked lines, each at its pair's mean baked width. A graphics
-    state's name carries it, so `pdf_path_resources(ops)` declares every
-    state some ops set from the ops alone (None when they set none); the
-    writers embedding them put it in the page's `/ExtGState`.
+    `mix-blend-mode: multiply`, one `<path>` of the nib's pieces whose `d`
+    is the screen's own string (`_fixed` writes the digits of
+    `toFixed(2)`), a `<path>` with `stroke-dasharray="on off"`, a `<path>`
+    per band with `fill-opacity` band × opacity, and `<g>` of segments. A
+    pencil's paint is `url(#inkGrain-<rrggbb>)`: the `<defs>` hold one
+    `<pattern patternUnits="userSpaceOnUse">` per pencil colour,
+    `GRAIN_UNITS` page units square from the page's corner whatever the
+    crop, holding the tile as an `<image>` (`preserveAspectRatio="none"`),
+    as the layer draws it.
+  - `pdf_path_ops(ink, to_pdf, scale, band?, frame?)` (the notes-as-PDF
+    writer, the notebook PDF and the AI's page picture; `band` keeps one
+    band, for a writer drawing several groups band by band; `frame` is the
+    matrix the ops are drawn under in the page's default space, identity
+    by default; `b""` when nothing is left) writes the highlighter under
+    `/GSinkM<α × 1000>` (`/CA`, `/ca` and `/BM /Multiply`), the nib's
+    pieces as `m … l … h` subpaths (a dot as four cubics) filled once with
+    `f`, the dash between `[on off] 0 d` and `[] 0 d` (scaled with the
+    drawing), each band as cubic outlines filled once, and the segments as
+    stroked lines, each at its pair's mean baked width. A nib or a band
+    below full opacity is filled under `/GSink<α × 1000>` (`/CA`, `/ca`).
+    A graphics state's name carries it, so `pdf_path_resources(ops)`
+    declares every state some ops set from the ops alone (None when they
+    set none); the writers embedding them put it in the page's
+    `/ExtGState`.
+  - A pencil paints with the pattern
+    `/Grain<rrggbb>_<a>_<b>_<c>_<d>_<e>_<f>` (`/Pattern cs … scn`, and
+    `CS … SCN` for a dashed one's stroke) under its band's `/GSink`. The
+    name carries the colour and the pattern's matrix
+    (`_grain_matrix`: `to_pdf`, then `frame`, its y turned), so a cell is
+    `GRAIN_UNITS` page units from the page's corner on a turned, cropped
+    or flipped page too. A pattern is placed in the page's default space,
+    not the current transformation's, hence `frame`.
+  - `GrainPatterns(writer).resources(ops)` is the `/Pattern` dictionary
+    for every grain some ops paint with, read from the names (None when
+    they paint none). A document holds one soft mask (the tile's alpha,
+    DeviceGray), one 64 × 64 DeviceRGB image per colour with that
+    `/SMask`, and one coloured tiling pattern per colour and matrix
+    (`PatternType` 1, `PaintType` 1, `TilingType` 1; `/BBox`, `/XStep` and
+    `/YStep` 32; the cell `q 32 0 0 32 0 0 cm /Tile Do Q`), which its pages
+    share. `notebook_pdf` passes the frame `(1, 0, 0, -1, 0, h)` and
+    `pdf_document` `(1, 0, 0, -1, 0, PAGE_H)`, each with one
+    `GrainPatterns` per document. `pdf_export._stamp_ink` keeps the
+    identity, since the strokes follow the page's own content wrapped in
+    `q … Q`, and merges the patterns into the page's own `/Pattern`.
   - For the `/Ink` interchange: `ink_buckets` (keyed by tool, colour,
     size, opacity) and `from_pdf_ink` (a foreign `/Ink` whose `/BS` has
     `/S /D` imports as `dash: "dashed"`, whatever its `/D` array, since
-    the pattern follows the width).
+    the pattern follows the width). `from_pdf_ink` raises `InkError` for a
+    coordinate whose hundredths of a point are not finite, so the importer
+    skips that annotation as any unreadable one. `upgrade_v1` clamps an
+    integer pressure as it is, never through a float, so a version 1
+    `/GammaInk` holding one past the largest double falls back to the
+    `/InkList` like any payload that does not parse.
 - `routers/collab.py`: the page socket relays a client's `{t: "ink-live",
   …}` to the room's other peers as it came, with `client` set to the
   sender's, when `collab.ink_live` admits it: the sender `can_edit`, `id`
@@ -3251,7 +3372,7 @@ reach.
   - The notes-as-PDF document draws the strokes as vectors under a
     "handwriting, p. N" line, and the notebook PDF on their sheet, every
     group's band 0 before any group's band 1, each page declaring the
-    graphics states its ink sets.
+    graphics states its ink sets and the grain patterns it paints with.
   - The agent's `read_block` outline labels an ink block "handwriting on
     p. N, K strokes" before its caption.
 - `gamma/ink_view.py`: the picture the chat sees of a group (`view_ink`,
@@ -3261,26 +3382,29 @@ reach.
   stroke is stamped through `pdf_path_ops` into the copied page's content
   (`_stamp_ink`: the page's own content wrapped in `q … Q`, the strokes
   appended after it, mapped by `page_frame` like the annotated export,
-  the states they set added to the page's `/ExtGState`), every group's
+  the states they set added to the page's `/ExtGState` and the grain's
+  patterns to its `/Pattern`), every group's
   band 0 before any group's band 1. The pens show their baked widths,
-  tapers, dashes and pencil bands; the highlighters are multiplied onto
+  tapers, dashes, the pencil's shades in its grain and the calligraphy
+  nib; the highlighters are multiplied onto
   the page, so the text under them stays as dark as it was, and they stay
   under the ink, which `/Ink` annotations (drawn over the page's content)
   could not do. MuPDF rasterizes the sheet's PDF and the stamped page
   ([ai_tools.md](ai_tools.md) "view_ink"). `backend/tests/test_ai_tools_ink.py` renders text under a
-  highlighter and asserts every glyph pixel stays dark, a pen crossing a
-  highlighter drawn after it and asserts the pen's pure colour, a pencil
-  stroke and asserts its three shades, and a dashed one and counts its
-  dashes.
+  highlighter and asserts every glyph pixel stays dark, and a pen crossing
+  a highlighter drawn after it and asserts the pen's pure colour. It
+  checks a pencil's three shades through its grain, the grain's place on
+  turned and cropped pages, a calligraphy stroke's slanted ends and the
+  dashes of a dashed stroke.
 - **Calligraphy and fills on the server** (`gamma/ink.py`): `_GEOM_KEYS`
   holds `nib` beside `brush` ("Two writers, one group";
   `tests/shared/inkmerge.json` pins it). `bounding_box` pads a
   calligraphy stroke without a `shape` by `size × NIB_REACH / 2` at every
   sample (hypot(1, 0.12): the nib's corners), or its drawn half-width where
   that is wider, as `strokeBounds` does, so a merged file's box and the AI's
-  crop agree with the client's. Every exporter draws a calligraphy
-  stroke as the pen it is, from `w` (round-ended widths; the flat nib is
-  the screen's alone). A filled closed shape's fill is drawn first, as
+  crop agree with the client's. The exporters draw a calligraphy stroke
+  without a shape with its nib (`nib_shape`) and one with a shape as an
+  even line, as the screen does. A filled closed shape's fill is drawn first, as
   the closed polygon through its samples, in the stroke's band (`fill_of`,
   over `CLOSED_SHAPES`): `to_svg` writes a `<path d="… Z" fill="rgb(…)"
   fill-opacity="α"/>` before the stroke's own elements, and `pdf_path_ops`
@@ -3328,11 +3452,8 @@ reach.
 
 ## Not built yet
 
-- The pencil's grain and the calligraphy nib's corners in exports and the
-  AI's picture: they draw the pencil's shades as plain bands and the
-  calligraphy pen's widths with round ends.
-- The calligraphy nib's pressure on the screen: the nib is drawn at the
-  stroke's size, and the pressure's 0.85 to 1.15 is in `w` alone.
+- The calligraphy nib's pressure: the screen and the exports draw the nib
+  at the stroke's size, and the pressure's 0.85 to 1.15 is in `w` alone.
 - On the iPad shell's native live line, the pencil's grain, a dashed
   pressure line's widths and the calligraphy nib's flat ends: it draws
   them untextured, even and round until the web's stroke replaces it.

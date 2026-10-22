@@ -19,7 +19,9 @@ that holds the copy), `gamma/publish.py` + `gamma/routers/publish.py`
 Workspaces → Clones), `frontend/src/collaboration/MirrorPopover.jsx`
 (the header's sync pill, its settings and review views),
 `frontend/src/collaboration/MergeResolver.jsx` (the merge chip on a block
-row), `desktop/main.js` `keepOffline` (the shell's one-click flow). Why the
+row) with `frontend/src/collaboration/conflictKinds.js` (what each kind of
+conflict row says, pure), `desktop/main.js` `keepOffline` (the shell's
+one-click flow). Why the
 model is ops plus a three-way merge and not a CRDT:
 [research/collaboration.md](../research/collaboration.md).
 
@@ -104,11 +106,21 @@ the frontend changes: editing a mirror is editing a workspace.
   (`base_props`, sync_tree `_set_op`). The remote's change applied here
   merges into a drawing changed here (the local server's op path,
   `ops.merge_ink`), and this copy's push merges there into one the remote
-  changed since. A push of a drawing whose answer was lost goes again
-  unless the remote shows it as sent (`_unlanded`): merging a change that
-  landed adds nothing, and one that never arrived would otherwise be
-  taken for landed and lost ([handwriting.md](handwriting.md) "Two
-  writers, one group").
+  changed since.
+  - A push carries `base_ids` too, the stroke ids of that drawing as this
+    copy stores it (`_with_base_ids`; left off when the file is not here),
+    so a remote that no longer holds the drawing merges by deletions. A
+    remote of an older release ignores the key.
+  - The remote's answer reports one ink merge, its batch's last
+    (`ink_conflict`), so each drawing it may merge goes in a batch of its
+    own (`_batches`, at most `MAX_OPS` ops each). A merge there that was
+    not clean is one `ink_merged` conflict row (`_ink_merged`). A clean
+    one, or an answer without the key, records nothing.
+  - A push of a drawing whose answer was lost goes again, with its
+    `base_ids`, unless the remote shows it as sent (`_unlanded`): merging
+    a change that landed adds nothing, and one that never arrived would
+    otherwise be taken for landed and lost ([handwriting.md](handwriting.md)
+    "Two writers, one group"). The resend's answer is read the same way.
 - **Text boxes** merge key by key, the same way. A diff that changes a
   box's `text_box` carries the box it was changed from (`base_props`), so
   either side's server keeps the keys the other changed
@@ -229,7 +241,10 @@ does not hide it. When the two differ the round stops (`FormatMismatch`):
   `_push_whole` and `_adopt_page` (the adopt policy `mine`, a link's or a
   force push's) the page is looked at again next round
   (`_deferred_files`), and the drawing goes once the remote takes it.
-  Publishing such a page answers 502 while it waits on the retry list
+  Such a page (`DrawingDeferred`) has been through a link's or a force's
+  policy: its other changes landed and its base is saved. So, unlike any
+  other failure, it does not hold the policy back (`_round`). Publishing
+  such a page answers 502 while it waits on the retry list
   ([Publishing](#publishing), step 3).
 
 ## One round, one page (`sync_engine._sync_page`)
@@ -319,9 +334,13 @@ each):
 
 Every decision the engine takes on its own is a row of `sync_conflicts`
 (`merged`, `diverged`, `dropped`, `kept_local_edit`, `restored_remote_edit`,
-`page_restored`, `page_restored_from_remote`, and `file` for a drawing the
-remote refused: `mine` the file's name, `theirs` the remote's reason) with
-the texts involved. A
+`page_restored`, `page_restored_from_remote`) with the texts involved. Two
+kinds name drawings, by upload name: `file`, one the remote refused
+(`mine` the file, `theirs` the remote's reason), and `ink_merged`, one the
+remote merged by stroke without keeping every change of both sides
+(`mine` the drawing sent, `theirs` the remote's report as JSON, `{clean,
+lost_ours, returned}`, `result` the merged drawing both sides hold, `base`
+the one both changes started from). A
 `merged` row also keeps `base`, the text before either side edited it, so
 the resolver can show what each side changed. A `dropped` row's text is the
 removed block with what was under it as an indented list; its `base` names
@@ -332,7 +351,8 @@ recorded as its `base`, so words typed into the block since the merge are
 kept over the chosen version rather than lost. The text is written into
 the page the block is in *now* (it may have moved since) and only then is
 the conflict marked resolved; a write the block refuses answers 409 and
-leaves the conflict open.
+leaves the conflict open. Every other kind is only acknowledged:
+resolving it writes nothing.
 
 Pull-only mirrors (a read token, or a viewer's, or the *Receive only*
 direction) apply the remote's changes and never push; local edits stay
@@ -567,6 +587,18 @@ view, Settings.
   restores, *Removed*) show the one text involved and an *OK*. A *Removed*
   row shows the side that lost the block or page (its text with what was
   under it); one whose page is gone here has no button to open it.
+- The two handwriting kinds have an *OK* alone too. *Handwriting merged*
+  (`ink_merged`) says what the remote's merge left out: a **Local** panel
+  counts this clone's stroke changes that were not applied, a **Remote**
+  panel the strokes erased there that came back, and with neither, one
+  **Merged** panel ("on both sides now") says the drawing was merged. It
+  offers no *use mine*: the merged drawing is on both sides already, and
+  putting this clone's back whole would erase what remote drew meanwhile.
+  *Handwriting not sent* (`file`) shows the remote's reason under
+  *Remote · refused*.
+- What each kind says (title, sentence, glyph name, whether it is
+  textual) is `conflictKinds.js`'s (`MERGE_KIND`, `kindOf`, `isTextual`,
+  `inkMergeLines`), and `MergeResolver.jsx` maps the glyph names to icons.
 - `useConflicts(wsId)` loads a clone's open conflicts and posts a decision;
   the pill's review view and Settings share it.
 
@@ -725,7 +757,9 @@ resolvable like a merge; a block only the other side had becomes a
 `dropped` one holding its text. Both are written before anything is
 replaced. The policy is the link's (or a force's) only: once every page
 went through it, a page found on both sides without a base keeps both
-("Rounds cut short"). Pages one side alone has are created on the other,
+("Rounds cut short"). A page waiting only for a drawing the remote
+refused counts as through ("The data format"); any other failure keeps
+the policy for the next round. Pages one side alone has are created on the other,
 as always. A page the original deleted that this workspace still has goes
 back there whatever the policy (`page_restored`), since the tombstone
 predates the link: linking a restored backup to its original keeps the
@@ -740,8 +774,11 @@ adopt policy (`theirs` for pull, `mine` for push), and pages the losing side
 alone has — including pages the winner deleted after a sync, whose
 tombstones say nothing during a force — are deleted there (`prune`); what
 the loser had is kept in conflicts: `diverged` for a text replaced,
-`dropped` for a block or a page removed. A force pull reads the local
-feed whatever the direction, so a receive-only clone's own pages go too.
+`dropped` for a block or a page removed. As for a link, `adopt` and
+`prune` stay set until a round gets every page through, a page waiting
+only for a refused drawing counting as through. A force pull reads the
+local feed whatever the direction, so a receive-only clone's own pages go
+too.
 Cheap when little differs:
 a page whose trees are equal costs one read and no write, and only the
 differing blocks of a page are pushed, files only when the other side lacks
@@ -920,7 +957,14 @@ sync-on-change trigger, a remote on another data format pausing the round
 asked for while a round runs,
 edits made while the remote had demoted the account, a force pull on a
 receive-only clone, and a conflict resolved after its block moved to
-another page are in `test_mirror.py` too. `test_mirror_interrupted.py` is
+another page are in `test_mirror.py` too. So are a drawing's pushes:
+`base_ids` sent when this copy holds the base and left off when it does
+not, one `ink_merged` row after a push and after a resend, none for a
+clean merge or an older remote, one drawing per batch, and a force's
+policy that ends with a page waiting for its drawing but not with a page
+that failed. `frontend/tests/conflictKinds.test.mjs` checks that every
+kind the engine records has its words, and a merged drawing's lines.
+`test_mirror_interrupted.py` is
 rounds cut short: a first push stopped by a refused file, a dropped link or
 half way through its batches, a first pull waiting for its PDF and stopped
 after its first batch, a page both sides hold without a base, a force and a
@@ -989,6 +1033,11 @@ feed.
   `home`. Syncing them is a follow-up: a conversation per bucket, last writer wins by its `updated_at`
   version (what `routers/chats.py` already compares), the history entries
   by id. Nothing in the change feed names them yet.
+- An `ink_merged` row comes only from the remote's merge of a push. A
+  drawing both sides changed between rounds is merged here first, as the
+  remote's change lands through the local op path (`_apply_local`), and
+  that merge's report is dropped; the push that follows has nothing left
+  to merge there.
 - Every automated test runs both sides in one process (the backend suite's
   TestClient transport; the browser scenario clones a workspace of the same
   server). Two real servers are not exercised.

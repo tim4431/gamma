@@ -132,7 +132,9 @@ def notebook_pdf(sheets: list[tuple[dict, list, list]], resolve_ref=None) -> byt
     and the handwriting drawn over them as vectors (the page is the
     drawing, so every viewer and printer shows it as written): every
     group's band 0 before any group's band 1, with the graphics states the
-    strokes set (``ink.pdf_path_resources``) among the page's resources."""
+    strokes set (``ink.pdf_path_resources``) and the pencil's grain
+    patterns they paint with (``ink.GrainPatterns``, one tile per colour
+    for the whole document) among the page's resources."""
     from PyPDF2 import PdfWriter
     from PyPDF2.generic import DecodedStreamObject, DictionaryObject, NameObject
 
@@ -143,6 +145,7 @@ def notebook_pdf(sheets: list[tuple[dict, list, list]], resolve_ref=None) -> byt
 
     writer = PdfWriter()
     glyphs = GlyphFonts(writer)
+    grain = inkmod.GrainPatterns(writer)
     for paper, boxes, inks in sheets:
         w, h = paper["width"], paper["height"]
         writer.add_blank_page(w, h)
@@ -151,7 +154,8 @@ def notebook_pdf(sheets: list[tuple[dict, list, list]], resolve_ref=None) -> byt
         for content, box in boxes:
             ops, _w, _h = text_box.pdf_ops(content, box, w, glyphs, fonts, resolve_ref)
             body.append(b"q 1 0 0 1 %s %s cm\n%s\nQ" % (num(box["x"]), num(box["y"]), ops))
-        body += [inkmod.pdf_path_ops(ink, lambda x, y: (x, y), band=band) for band in (0, 1) for ink in inks]
+        body += [inkmod.pdf_path_ops(ink, lambda x, y: (x, y), band=band, frame=(1, 0, 0, -1, 0, h))
+                 for band in (0, 1) for ink in inks]
         body.append(b"Q")
         content = b"\n".join(part for part in body if part)
         stream = DecodedStreamObject()
@@ -161,6 +165,9 @@ def notebook_pdf(sheets: list[tuple[dict, list, list]], resolve_ref=None) -> byt
         states = inkmod.pdf_path_resources(content)
         if states:
             resources[NameObject("/ExtGState")] = states
+        patterns = grain.resources(content)
+        if patterns:
+            resources[NameObject("/Pattern")] = patterns
         if resources:
             page[NameObject("/Resources")] = resources
     glyphs.finalize()

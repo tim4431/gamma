@@ -10,7 +10,8 @@
 // Every version carries a radio, the one in the block preselected, and one
 // Apply confirms. A decision is an ordinary edit the next round pushes.
 // Rows from before the base was kept (and diverged blocks, which have
-// none) show the two texts against each other instead.
+// none) show the two texts against each other instead. The other kinds
+// are acknowledged with OK; what each kind says is conflictKinds.js's.
 import React from "react";
 import { API, apiJson } from "../shared/lib/utils";
 import { T, t } from "../shared/i18n/i18n.js";
@@ -19,6 +20,7 @@ import {
   AlertCircleIcon, ArrowDownIcon, ArrowUpIcon, CheckIcon, ChevronLeftIcon, ChevronRightIcon, ExternalLinkIcon,
   HardDriveIcon, MergeIcon, ServerIcon, TrashIcon,
 } from "../shared/ui/Icons";
+import { inkMergeLines, isTextual, kindOf as conflictKind } from "./conflictKinds.js";
 
 // Word-level tokens: runs of non-space and runs of space, so a diff never
 // splits a word and the coloured spans keep their spacing.
@@ -115,25 +117,13 @@ function mergedParts(base, mine, theirs, result) {
   })));
 }
 
-// The sync_conflicts kinds, in git's words (local = this clone, remote = origin).
-export const MERGE_KIND = {
-  merged: { short: T("Auto-merged"), long: T("Both sides changed this block; the two edits were merged into one text."), Icon: MergeIcon },
-  diverged: { short: T("Diverged"), long: T("Local and remote differed with no common version to merge from; one was kept, the other is here."), Icon: AlertCircleIcon },
-  kept_local_edit: { short: T("Kept local"), long: T("Remote deleted this, but it was edited here, so it stayed and was pushed back."), Icon: ArrowUpIcon },
-  restored_remote_edit: { short: T("Restored remote"), long: T("This was deleted here, but remote edited it, so it was pulled back."), Icon: ArrowDownIcon },
-  page_restored: { short: T("Page restored on remote"), long: T("Remote deleted this page; it was edited or restored here, so it was pushed back."), Icon: ArrowUpIcon },
-  page_restored_from_remote: { short: T("Page restored from remote"), long: T("This page was deleted here but edited on remote, so it was pulled back."), Icon: ArrowDownIcon },
-  dropped: { short: T("Removed"), long: T("A force or an attach made both sides the same; only the replaced side had this, so it was removed. Its text is kept here."), Icon: TrashIcon },
-};
+// A kind's glyph, by the name conflictKinds.js gives it.
+const KIND_ICONS = { merge: MergeIcon, alert: AlertCircleIcon, up: ArrowUpIcon, down: ArrowDownIcon, trash: TrashIcon };
 
-export function kindOf(conflict) {
-  return MERGE_KIND[conflict.kind] || { short: conflict.kind, long: "", Icon: AlertCircleIcon };
-}
-
-// Textual conflicts hold both texts and take a choice; the others are
-// decisions to acknowledge.
-export function isTextual(conflict) {
-  return conflict.kind === "merged" || conflict.kind === "diverged";
+// A row's kind (conflictKinds.js: its title and sentence) with its glyph.
+function kindOf(conflict) {
+  const kind = conflictKind(conflict);
+  return { ...kind, Icon: KIND_ICONS[kind.icon] || AlertCircleIcon };
 }
 
 // The sides: a glyph, a word, where it lives. (The API keeps mine / theirs.)
@@ -228,14 +218,26 @@ function Versions({ conflict, busy, onUse }) {
 }
 
 // A non-textual decision: the one text involved, to acknowledge. A removed
-// block or page carries the text of the side that lost it.
+// block or page carries the text of the side that lost it, a drawing the
+// remote merged what each side lost (inkMergeLines), one it refused its
+// reason.
 function Decision({ conflict }) {
   const c = conflict;
+  if (c.kind === "ink_merged") {
+    const lines = inkMergeLines(c);
+    return (
+      <div className={`mergeVersions ${lines.length > 1 ? "two" : "one"}`}>
+        {lines.map(({ side, text }) => (
+          <Version key={side} side={side} parts={[{ text, tag: "same" }]} hint={side === "result" ? t("on both sides now") : undefined} />
+        ))}
+      </div>
+    );
+  }
   const dropped = c.kind === "dropped";
   const ours = dropped ? Boolean(c.mine) : c.kind === "kept_local_edit" || c.kind === "page_restored";
   const text = ours ? c.mine : c.theirs;
   if (!text) return null;
-  const hint = dropped ? t("removed") : ours ? t("kept and pushed back") : t("pulled back");
+  const hint = dropped ? t("removed") : ours ? t("kept and pushed back") : c.kind === "file" ? t("refused") : t("pulled back");
   return (
     <div className="mergeVersions one">
       <Version side={ours ? "mine" : "theirs"} parts={[{ text, tag: "same" }]} hint={hint} />

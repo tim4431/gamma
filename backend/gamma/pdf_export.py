@@ -656,12 +656,15 @@ def page_with_ink(src, page_no: int, inks) -> tuple[bytes, int]:
 
 def _stamp_ink(writer, page, inks, rotation, crop) -> None:
     """Draw the groups ``inks`` into ``page``'s content as vectors —
-    ``ink.pdf_path_ops``, so baked widths, tapers, dashes and the pencil's
-    shades show as drawn, and highlighters multiply onto the page's text
-    as on screen — every group's band 0 before any group's band 1, mapped
-    through the page's frame like the /Ink export. The page's own content
-    is wrapped in ``q … Q`` first, so a state it leaves set cannot move the
-    strokes, and the graphics states the strokes set join its resources."""
+    ``ink.pdf_path_ops``, so baked widths, tapers, dashes, the pencil's
+    shades and grain and the calligraphy nib show as drawn, and
+    highlighters multiply onto the page's text as on screen — every
+    group's band 0 before any group's band 1, mapped through the page's
+    frame like the /Ink export. The page's own content is wrapped in
+    ``q … Q`` first, so a state it leaves set cannot move the strokes
+    (they are drawn in the page's default space, where the grain's
+    patterns are placed too), and the graphics states and patterns the
+    strokes use join its resources."""
     from . import ink as inkmod
 
     def to_pdf_of(ink):
@@ -688,12 +691,14 @@ def _stamp_ink(writer, page, inks, rotation, crop) -> None:
     else:
         old = [current if isinstance(current, IndirectObject) else writer._add_object(resolved)]
     page[NameObject("/Contents")] = ArrayObject([stream(b"q\n"), *old, stream(b"\nQ\n" + ops + b"\n")])
-    states = inkmod.pdf_path_resources(ops)
-    if states:
+    for key, found in (("/ExtGState", inkmod.pdf_path_resources(ops)),
+                       ("/Pattern", inkmod.GrainPatterns(writer).resources(ops))):
+        if not found:
+            continue
         resources = _resolve(page.get("/Resources"))
         if resources is None:
             resources = page[NameObject("/Resources")] = DictionaryObject()
-        own = _resolve(resources.get("/ExtGState"))
+        own = _resolve(resources.get(key))
         if own is None:
-            own = resources[NameObject("/ExtGState")] = DictionaryObject()
-        own.update(states)
+            own = resources[NameObject(key)] = DictionaryObject()
+        own.update(found)

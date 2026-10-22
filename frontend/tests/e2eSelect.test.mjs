@@ -48,6 +48,8 @@ test("a change selects the groups that exercise it", () => {
   assert.deepEqual(pick(["frontend/src/guide/useGuide.js"]).sort(), ["contextual-guide", "guide", "triggered-guide"]);
   assert.deepEqual(pick(["docs/dev/debugging.md", "desktop/main.js", "backend/tests/test_ink.py"]), []);
   assert.equal(pick(["frontend/src/app/App.jsx"]).length, GROUPS.length);
+  // the pens' "Use this browser's pens instead?" (prefs.js useProfileSync, App's onReplaced) is ink.mjs's
+  for (const file of ["frontend/src/app/prefs.js", "frontend/src/app/prefDefs.js"]) assert.ok(pick([file]).includes("ink"), file);
   assert.deepEqual(pick(["backend/gamma/ink.py"]).sort(), ["ink", "ink-editing", "ink-shapes", "notebooks", "triggered-guide"]);
   // the chat's pictures of handwriting are the AI modules' groups
   assert.deepEqual(pick(["backend/gamma/ink_view.py"]).sort(), pick(["backend/gamma/ai_context.py"]).sort());

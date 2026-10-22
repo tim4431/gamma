@@ -7,7 +7,9 @@
 // New line move the window, a stroke reaching into its right fifth moves it
 // on along the line, the box's band drags it (the panel following at the
 // release) and a click on a blank spot of the page centres it there; Z
-// closes it. The
+// closes it. A drag of the panel's grip shows its height as it moves (the
+// scroller giving up as much) and applies it once, at the release; the keys
+// apply each step at once. The
 // selection menu's Transcribe sends a selection that takes part of a group
 // as that group's strokes (`ink_selections`), and a whole group as its
 // block's chip, as Transcribe with AI does (the AI stubbed: no provider is
@@ -104,6 +106,56 @@ export async function inkZoomScenarios({ server, browser, alice, makePdf, step, 
     assertEq(await bar().locator(".inkZoomReadout").textContent(), "24 pt", "the line height to start");
     await until(() => page.locator(".inkZoomRaster").evaluateAll((els) => els.some((c) => c.style.display === "block" && c.width > 0)),
       { what: "the page's pixels drawn in the panel" });
+    assertNoProblems(page);
+  });
+
+  await step("ink zoom: a drag of the grip shows the height as it moves, the scroller following, and applies it once at the release; a reload keeps it; ↑ / ↓ apply at once", async () => {
+    const grip = () => page.getByRole("separator", { name: "Zoom window height", exact: true });
+    const pref = () => page.evaluate(() => localStorage.getItem("gamma-ink-zoom-height"));
+    // the panel's height, and whether the scroller ends where the panel starts
+    const docked = async () => {
+      const scroller = await page.locator(".pdfViewer").boundingBox(), shown = await panel().boundingBox();
+      return { height: shown.height, gap: shown.y - (scroller.y + scroller.height) };
+    };
+    const before = await state();
+    assertEq(await pref(), "200");
+    const g = await grip().boundingBox();
+    await page.mouse.move(g.x + g.width / 2, g.y + g.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(g.x + g.width / 2, g.y + g.height / 2 - 60, { steps: 6 });
+    // while it moves: the panel and the scroller show the height, the viewer's controls above it ...
+    await until(async () => Math.abs((await docked()).height - 260) <= 1, { what: "the panel follows the grip" });
+    near((await docked()).gap, 0, 1.5, "the scroller ends where the panel starts");
+    assertEq(await grip().getAttribute("aria-valuenow"), "260");
+    assertEq(await page.locator(".viewerWrap").evaluate((el) => el.style.getPropertyValue("--ink-zoom-h")), "260px", "the viewer's controls stand above it");
+    // ... while the preference, and the window every page's layers read, wait for the release
+    assertEq(await pref(), "200", "nothing written during the drag");
+    sameBox(await box(), before, "the window waits for the release");
+    await page.mouse.up();
+    await until(async () => (await pref()) === "260", { what: "the height applied at the release" });
+    await until(async () => {
+      const s = await state(), view = await page.locator(".inkZoomView").boundingBox();
+      return Math.abs(s.h * s.mag - view.height) <= 1;
+    }, { what: "the window as tall as the view, once" });
+    near((await docked()).height, 260, 1, "the panel keeps the height");
+    near((await docked()).gap, 0, 1.5, "and the scroller still ends where it starts");
+    // the browser keeps it: the window opens at that height after a reload
+    await page.reload();
+    await waitForPdf(page, 1);
+    await page.click("button[aria-label='Handwriting tools']");
+    await page.waitForSelector(".pdfInkBar");
+    await openWindow();
+    near((await docked()).height, 260, 1, "the height after a reload");
+    near((await docked()).gap, 0, 1.5);
+    // ↑ / ↓ step it by 10 px, each applied at once
+    await grip().focus();
+    await page.keyboard.press("ArrowDown");
+    await until(async () => (await pref()) === "250", { what: "↓ applied at once" });
+    near((await docked()).height, 250, 1);
+    for (let i = 0; i < 5; i++) await page.keyboard.press("ArrowDown");
+    await until(async () => (await pref()) === "200", { what: "back to 200" });
+    await until(async () => Math.abs((await docked()).height - 200) <= 1, { what: "the panel at 200 px" });
+    await settled();
     assertNoProblems(page);
   });
 

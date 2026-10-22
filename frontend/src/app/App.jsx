@@ -132,6 +132,7 @@ import { stripKey } from "../ink/stripKeys.js";
 import { ZOOM_CHROME, moveTo, moveWindow as moveZoomWindow, newLine, openWindow, setMag } from "../ink/zoomWindow.js";   // the zoom window's rules (moveWindow is the dock layout's here)
 import { defaultRuler, snapAngle, stampLine } from "../ink/ruler.js";   // the ruler's first place, its Snap 15° and its Stamp line
 import { RESERVED_TOOLS, backTool, pencilAction, stylusPen } from "../ink/pencilActions.js";
+import { duplicateOffset } from "../ink/surfaceScale.js";   // Duplicate's 12 css px, as the selection's surface measures them
 import { inkBusy } from "../ink/InkLayer";
 import { NotebookViewer, PaperMenu, readPlace, showPlace } from "../notebook/NotebookViewer";
 import { NoteSheetContext } from "../notebook/NoteSheet";
@@ -7042,11 +7043,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       return "mag" in patch ? setMag(win, patch.mag, null, size) : moveZoomWindow(win, patch, size);
     });
   }
-  // Ctrl+D: the menu's Duplicate, the copies 12 screen pixels away (the
-  // selection rectangle's screen transform gives the page's scale).
+  // Ctrl+D: the menu's Duplicate, the copies the same 12 css px away, in
+  // the points of the selection's own surface as its layer measures them.
   function duplicateInkSelection() {
-    const k = document.querySelector(".inkSelRect")?.getScreenCTM?.()?.a || 1;
-    handleInkAction("duplicate", { dx: 12 / k, dy: 12 / k });
+    if (inkSelection) handleInkAction("duplicate", duplicateOffset(inkSelection.page));
   }
   // Ctrl+A, More → Select all: every stroke of every group on the
   // selection's surface, else the one in view, the lasso armed.

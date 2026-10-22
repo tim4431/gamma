@@ -347,7 +347,10 @@ Preferences:
   browser had changed itself (not the defaults), `useProfileSync`'s
   `onReplaced({name, local})` lets App ask once, on the account's first
   pull. The status pill asks "Use this browser's pens instead?" with *Use
-  this browser's*, which sets the local list again and so pushes it. A
+  this browser's*, which sets the local list again and so pushes it. When
+  a page opens as that first pull lands (a `?page=` link, a restored
+  tab), its "Ready." replaces the question on the pill, which leaves it
+  only in the system log. A
   later pull that differs is another device's edit and applies without
   asking. App writes the list through `normalizeTools` every time, so
   the pushed value is the canonical one a pull reads back. The pen a stylus
@@ -363,8 +366,9 @@ Preferences:
   Handwriting rows, as `inkTools` is. **`inkRulerUnits`**
   (`oneOf(["pt", "cm"])`, default `pt`: the ruler's ticks) and
   **`inkZoomHeight`** (`intClamped(160, 320)` with `serialize: String`,
-  default 200: the zoom window's height in CSS px, set by dragging its
-  top edge) are browser preferences, like the eraser's. The ruler's place
+  default 200: the zoom window's height in CSS px, written when a drag of
+  its top edge is let go and at each ↑ / ↓ on it) are browser
+  preferences, like the eraser's. The ruler's place
   and angle and the zoom window's place, magnification and line height are session
   state ([handwriting.md](handwriting.md) "What the user sees"). **This device** (browser
   scope): two

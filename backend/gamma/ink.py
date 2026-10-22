@@ -24,16 +24,21 @@ not know is carried by stride and copied through. The drawn width at a
 sample is ``size × w`` when the stroke has ``w``, else ``size``, and the
 drawn opacity ``opacity × o``, else ``opacity``: there is no width or
 opacity law here (the client's finishStroke.js bakes both). The frontend's
-``src/ink/ink.js`` is the mirror of the codec and of the dash table; the
-shared fixtures under tests/shared pin both.
+``src/ink/ink.js`` is the mirror of the codec, the dash table and the
+calligraphy nib, and ``src/ink/grain.js`` of the pencil's grain, so the
+exporters draw what the screen draws; the shared fixtures under
+tests/shared pin them.
 """
 
+import base64
 import bisect
 import json
 import math
 import re
+import struct
+import zlib
 from dataclasses import dataclass, field
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 from itertools import accumulate
 from operator import add, sub
 from typing import Literal
@@ -70,11 +75,13 @@ SHAPE_KINDS = ("line", "arrow", "rect", "ellipse", "triangle", "polygon", "curve
 # The shapes with an inside: a stroke's ``fill`` is drawn only on a shape
 # record of these kinds (CLOSED_SHAPES in ink.js).
 CLOSED_SHAPES = frozenset(("rect", "ellipse", "triangle", "polygon"))
-# How far a calligraphy nib's corners reach from a sample, in sizes: the
-# diagonal of the nib and its hairline, 0.12 sizes across it (NIB_REACH in
-# ink.js), half of it each side. The server draws the calligraphy pen from
-# ``w`` like any pen; only its box needs the nib.
-NIB_REACH = math.hypot(1, 0.12)
+# The calligraphy nib (NIB_HAIR, DEFAULT_NIB and NIB_REACH in ink.js): a
+# flat segment ``size`` long at the stroke's ``nib`` (45 without one), with
+# a hairline NIB_HAIR sizes long across it. NIB_REACH is the diagonal of
+# the two, so its corners reach half of it from a sample, in sizes.
+NIB_HAIR = 0.12
+DEFAULT_NIB = 45
+NIB_REACH = math.hypot(1, NIB_HAIR)
 # A stroke's dash as (on, off) in sizes — never stored, derived from the
 # nominal size at render time (DASH in ink.js; tests/shared/inkdash.json).
 DASH = {"dashed": (2.0, 2.0), "dotted": (0.1, 2.0)}
@@ -97,7 +104,11 @@ def _check_extra(value, depth: int, where: str) -> None:
     if value is None or isinstance(value, bool):
         return
     if isinstance(value, (int, float)):
-        if not math.isfinite(value):
+        try:   # an integer past the largest double is a client's Infinity
+            finite = math.isfinite(value)
+        except OverflowError:
+            finite = False
+        if not finite:
             raise ValueError(f"{where}: not a finite number")
         return
     if isinstance(value, str):
@@ -522,23 +533,27 @@ def _arcs(samples: list[dict]) -> list[float]:
 _LERPED = ("x", "y", "p", "t", "w", "o")
 
 
-def _at(samples: list[dict], arcs: list[float], at: float) -> dict:
-    """The sample at arc length ``at``: x, y, p, t, w and o linear in the
-    arc between the samples around it, the other channels (a, z, unknown
-    letters) those of the sample before."""
-    i = bisect.bisect_left(arcs, at)
-    if i == 0:
-        return dict(samples[0])
-    if i >= len(samples):
-        return dict(samples[-1])
-    a, b = samples[i - 1], samples[i]
-    span = arcs[i] - arcs[i - 1]
-    f = (at - arcs[i - 1]) / span if span else 1.0
+def _lerp(a: dict, b: dict, f: float) -> dict:
+    """The sample a fraction ``f`` of the way from ``a`` to ``b``: x, y, p,
+    t, w and o linear, the other channels (a, z, unknown letters) ``a``'s
+    (``lerpSample`` in ink.js)."""
     out = dict(a)
     for k in _LERPED:
         if k in a and k in b:
             out[k] = a[k] + (b[k] - a[k]) * f
     return out
+
+
+def _at(samples: list[dict], arcs: list[float], at: float) -> dict:
+    """The sample at arc length ``at``, lerped between the samples around
+    it (``_lerp``)."""
+    i = bisect.bisect_left(arcs, at)
+    if i == 0:
+        return dict(samples[0])
+    if i >= len(samples):
+        return dict(samples[-1])
+    span = arcs[i] - arcs[i - 1]
+    return _lerp(samples[i - 1], samples[i], (at - arcs[i - 1]) / span if span else 1.0)
 
 
 def _cut(samples: list[dict], arcs: list[float], lo: float, hi: float) -> list[dict]:
@@ -568,6 +583,31 @@ def dash_runs(stroke: Stroke, samples: list[dict] | None = None) -> list[list[di
         hi = min(lo + on, arcs[-1])
         if hi > lo:
             out.append(_cut(samples, arcs, lo, hi))
+        k += 1
+    return out
+
+
+def dash_dots(stroke: Stroke, samples: list[dict] | None = None) -> list[dict]:
+    """A dotted stroke's dots as the screen draws them: one per on-run, the
+    sample lerped at the run's middle arc (``k (on + off) + on / 2``,
+    clipped to the length), a circle ``size × w`` across; the first sample
+    for a stroke of no length; none for a solid stroke. The client's
+    ``dashDots`` (tests/shared/inkdash.json)."""
+    samples = decode_stroke(stroke) if samples is None else samples
+    pattern = dash_pattern(stroke)
+    if not pattern or not samples:
+        return []
+    on, off = pattern
+    arcs = _arcs(samples)
+    if not arcs[-1] > 0:
+        return [dict(samples[0])]
+    out, i, k = [], 0, 0
+    while k * (on + off) < arcs[-1]:
+        at = min(k * (on + off) + on / 2, arcs[-1])
+        while i < len(arcs) - 2 and arcs[i + 1] < at:
+            i += 1
+        f = (at - arcs[i]) / (arcs[i + 1] - arcs[i]) if arcs[i + 1] > arcs[i] else 0.0
+        out.append(_lerp(samples[i], samples[i + 1], min(1.0, f)))
         k += 1
     return out
 
@@ -758,6 +798,205 @@ def stroke_outline(stroke: Stroke, samples: list[dict] | None = None,
     return [(x / k, y / k) for x, y in _pf_outline(_pf_points(pts, size), size, caps)]
 
 
+# --- the calligraphy nib -----------------------------------------------------------
+# ink.js nibOutline, woundPath and sweepSegment, operation for operation
+# (tests/shared/inknib.json pins the two): a flat segment ``size`` long at
+# the angle ``nib`` (its edge the page vector (cos nib, −sin nib)) swept
+# along the samples, as closed pieces split wherever the travel crosses the
+# segment's direction, with the same sweep of the hairline across it and
+# the nib's footprint at the first and the last sample. Every piece is
+# wound clockwise as seen, so the nonzero rule fills their union.
+
+def _area2(poly: list) -> float:
+    a = 0.0
+    for i, p in enumerate(poly):
+        q = poly[(i + 1) % len(poly)]
+        a += p[0] * q[1] - q[0] * p[1]
+    return a
+
+
+def _wound(poly: list) -> list:
+    """``poly`` wound clockwise as seen (y down)."""
+    return poly[::-1] if _area2(poly) < 0 else poly
+
+
+def _sweep_segment(pts: list[dict], vx: float, vy: float, out: list) -> None:
+    """The sweep of the segment between ±(vx, vy) along ``pts``, as pieces
+    into ``out``: a piece ends where the travel crosses to the segment's
+    other side; a run along the segment itself sweeps nothing."""
+    start, side = 0, 0
+
+    def piece(a: int, b: int) -> None:
+        if side:
+            out.append(_wound([(pts[i]["x"] + vx, pts[i]["y"] + vy) for i in range(a, b + 1)]
+                              + [(pts[i]["x"] - vx, pts[i]["y"] - vy) for i in range(b, a - 1, -1)]))
+
+    for i in range(1, len(pts)):
+        c = vx * (pts[i]["y"] - pts[i - 1]["y"]) - vy * (pts[i]["x"] - pts[i - 1]["x"])
+        s = (1 if c > 0 else -1) if abs(c) >= 1e-9 else 0   # (NaN counts as none, as Math.sign's NaN does)
+        if s and side and s != side:
+            piece(start, i - 1)
+            start = i - 1
+        if s:
+            side = s
+    piece(start, len(pts) - 1)
+
+
+def nib_outline(samples: list[dict], size: float, nib=DEFAULT_NIB) -> list[list[tuple[float, float]]]:
+    """The calligraphy nib swept along ``samples``: its pieces as polygons,
+    each wound clockwise as seen, to be filled together with the nonzero
+    rule; ``[]`` without a finite sample. A sample at the one before's
+    place is skipped."""
+    pts = [s for i, s in enumerate(samples) if math.isfinite(s["x"]) and math.isfinite(s["y"])
+           and (not i or s["x"] != samples[i - 1]["x"] or s["y"] != samples[i - 1]["y"])]
+    if not pts:
+        return []
+    r = (nib if isinstance(nib, (int, float)) and math.isfinite(nib) else DEFAULT_NIB) * math.pi / 180
+    h, g = size / 2, NIB_HAIR * size / 2
+    ex, ey = math.cos(r) * h, -math.sin(r) * h     # half the nib, along its edge
+    nx, ny = math.sin(r) * g, math.cos(r) * g      # half the hairline, across it
+
+    def stamp(p):
+        return _wound([(p["x"] + ex + nx, p["y"] + ey + ny), (p["x"] + ex - nx, p["y"] + ey - ny),
+                       (p["x"] - ex - nx, p["y"] - ey - ny), (p["x"] - ex + nx, p["y"] - ey + ny)])
+
+    out = [stamp(pts[0])]
+    if len(pts) > 1:
+        _sweep_segment(pts, ex, ey, out)
+        _sweep_segment(pts, nx, ny, out)
+        out.append(stamp(pts[-1]))
+    return out
+
+
+def nib_shape(stroke: Stroke, samples: list[dict] | None = None):
+    """A calligraphy stroke drawn with its nib, as the screen draws it
+    (ink.js ``buildOutline``) → ``(runs, dots)``: the polygons of
+    ``nib_outline`` for each run of ``dash_runs`` (the whole stroke when
+    solid, each dash its own nib), or for a dotted stroke no runs and its
+    dots as ``(x, y, radius)``, round at the drawn width (``dash_dots``)."""
+    samples = decode_stroke(stroke) if samples is None else samples
+    if stroke.dash == "dotted":
+        return [], [(q["x"], q["y"], stroke.size * q.get("w", 1) / 2) for q in dash_dots(stroke, samples)]
+    nib = stroke.nib if stroke.nib is not None else DEFAULT_NIB
+    return [nib_outline(run, stroke.size, nib) for run in dash_runs(stroke, samples)], []
+
+
+# --- the pencil's grain -------------------------------------------------------------
+# ink/grain.js, byte for byte (tests/shared/inkgrain.json pins the two): one
+# tile of speckles GRAIN_PX pixels square spanning GRAIN_UNITS page units,
+# from a fixed seed, written as a 2-bit palette PNG whose palette is the
+# colour at the four ALPHAS. The exporters fill a pencil with it, anchored
+# at the page's corner as the screen's pattern is.
+GRAIN_PX = 64
+GRAIN_UNITS = 32
+_GRAIN_ALPHAS = (0, 128, 204, 255)      # the palette's alpha per index
+_GRAIN_LEVELS = (0.3, 0.45, 0.7)        # the share of the tile under each index, cumulative
+_grain_tile: list = []
+
+
+def _mulberry32(seed: int):
+    """grain.js ``random``: mulberry32 in 32-bit arithmetic, so its numbers
+    are Math.imul's."""
+    a = seed & 0xFFFFFFFF
+
+    def rand() -> float:
+        nonlocal a
+        a = (a + 0x6D2B79F5) & 0xFFFFFFFF
+        t = ((a ^ (a >> 15)) * (a | 1)) & 0xFFFFFFFF
+        t ^= (t + (((t ^ (t >> 7)) * (t | 61)) & 0xFFFFFFFF)) & 0xFFFFFFFF
+        return ((t ^ (t >> 14)) & 0xFFFFFFFF) / 4294967296
+    return rand
+
+
+def _grain_indices() -> list[int]:
+    """The tile's palette indices, row by row (grain.js ``tileIndices``):
+    white noise over a coarser smooth noise, tileable, cut at the levels'
+    quantiles. Made once."""
+    if _grain_tile:
+        return _grain_tile
+    rand = _mulberry32(0x5EED1E55)
+    cell = 4
+    cells = GRAIN_PX // cell
+    grid = [rand() for _ in range(cells * cells)]
+
+    def at(cx, cy):
+        return grid[((cy + cells) % cells) * cells + ((cx + cells) % cells)]
+
+    def smooth(f):
+        return f * f * (3 - 2 * f)
+
+    values = []
+    for y in range(GRAIN_PX):
+        for x in range(GRAIN_PX):
+            cx, cy = x // cell, y // cell
+            fx, fy = smooth((x % cell) / cell), smooth((y % cell) / cell)
+            top = at(cx, cy) * (1 - fx) + at(cx + 1, cy) * fx
+            bottom = at(cx, cy + 1) * (1 - fx) + at(cx + 1, cy + 1) * fx
+            values.append(0.7 * rand() + 0.3 * (top * (1 - fy) + bottom * fy))
+    ranked = sorted(values)
+    cuts = [ranked[math.floor(q * len(ranked))] for q in _GRAIN_LEVELS]
+    _grain_tile[:] = [0 if v < cuts[0] else 1 if v < cuts[1] else 2 if v < cuts[2] else 3 for v in values]
+    return _grain_tile
+
+
+# JavaScript's \s and String.prototype.trim's whitespace
+_JS_SPACE = "\t\n\x0b\x0c\r \xa0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a" \
+            "\u2028\u2029\u202f\u205f\u3000\ufeff"
+_GRAIN_HEX6 = re.compile(r"#([0-9a-f]{6})", re.I | re.A)
+_GRAIN_HEX3 = re.compile(r"#([0-9a-f]{3})", re.I | re.A)
+_GRAIN_RGB = re.compile(rf"rgba?\([{_JS_SPACE}]*([0-9.]+)[{_JS_SPACE},]+([0-9.]+)[{_JS_SPACE},]+([0-9.]+)", re.I | re.A)
+
+
+def grain_rgb(color) -> tuple[int, int, int]:
+    """The colour a pencil's grain tile is painted in (grain.js ``rgbOf``):
+    ``#rrggbb``, ``#rgb`` or ``rgb[a](r, g, b[, a])``, its alpha left out;
+    black for anything else."""
+    s = str(color or "").strip(_JS_SPACE)
+    if m := _GRAIN_HEX6.fullmatch(s):
+        return tuple(int(m.group(1)[i:i + 2], 16) for i in (0, 2, 4))
+    if m := _GRAIN_HEX3.fullmatch(s):
+        return tuple(int(h * 2, 16) for h in m.group(1))
+    if m := _GRAIN_RGB.match(s):
+        def channel(v):
+            try:
+                n = float(v)        # Number(v); a NaN reaches the PNG as 0
+            except ValueError:
+                return 0
+            return js_round(_clamp(n, 0, 255)) if n == n else 0
+        return tuple(channel(v) for v in m.groups())
+    return (0, 0, 0)
+
+
+_grain_pngs: dict = {}
+
+
+def grain_png(color) -> bytes:
+    """The grain tile in ``color`` as the PNG the screen fills a pencil
+    with (grain.js ``grainUri``, its bytes): only the palette differs from
+    one colour to another."""
+    return _grain_png(grain_rgb(color))
+
+
+def _grain_png(rgb: tuple) -> bytes:
+    png = _grain_pngs.get(rgb)
+    if png is None:
+        def chunk(kind: bytes, data: bytes) -> bytes:
+            return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data))
+        row = 1 + GRAIN_PX // 4             # a filter byte (0) and four pixels a byte, the first in the high bits
+        raw = bytearray(row * GRAIN_PX)
+        for i, index in enumerate(_grain_indices()):
+            y, x = divmod(i, GRAIN_PX)
+            raw[y * row + 1 + (x >> 2)] |= index << (6 - 2 * (x & 3))
+        n = len(raw)                        # a zlib stream of one stored block
+        idat = bytes((0x78, 0x01, 0x01, n & 255, n >> 8, ~n & 255, (~n >> 8) & 255)) + raw + struct.pack(">I", zlib.adler32(raw))
+        png = _grain_pngs[rgb] = (b"\x89PNG\r\n\x1a\n"
+                                  + chunk(b"IHDR", struct.pack(">IIBBBBB", GRAIN_PX, GRAIN_PX, 2, 3, 0, 0, 0))
+                                  + chunk(b"PLTE", bytes(rgb) * len(_GRAIN_ALPHAS))
+                                  + chunk(b"tRNS", bytes(_GRAIN_ALPHAS))
+                                  + chunk(b"IDAT", idat) + chunk(b"IEND", b""))
+    return png
+
+
 # --- renderers ------------------------------------------------------------------
 
 def _fmt(v: float) -> str:
@@ -795,18 +1034,50 @@ def _band_outlines(stroke: Stroke, samples: list[dict]) -> list[tuple[float, lis
     return sorted(out.items())
 
 
+def _fixed(v: float) -> str:
+    """``v.toFixed(2)``, as the screen writes a nib's path: the double's
+    exact value to the nearest hundredth, a half away from zero; ``-0``
+    is ``0.00`` and a negative that rounds to nothing ``-0.00``."""
+    if not math.isfinite(v):
+        return "NaN" if v != v else "Infinity" if v > 0 else "-Infinity"
+    if abs(v) >= 1e21:
+        return _js_number(v)
+    return "0.00" if v == 0 else f"{Decimal(v).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP):f}"
+
+
+def _svg_nib(stroke: Stroke) -> str:
+    """A nib-drawn stroke's path, the screen's own ``d`` (ink.js
+    ``nibOutline`` per run, or ``circle`` per dot)."""
+    runs, dots = nib_shape(stroke)
+    if stroke.dash == "dotted":
+        return " ".join(f"M{_fixed(x - r)},{_fixed(y)} a{_fixed(r)},{_fixed(r)} 0 1,0 {_fixed(2 * r)},0 "
+                        f"a{_fixed(r)},{_fixed(r)} 0 1,0 {_fixed(-2 * r)},0Z" for x, y, r in dots)
+    return " ".join(" ".join("M" + " L".join(f"{_fixed(x)},{_fixed(y)}" for x, y in poly) + " Z" for poly in run)
+                    for run in runs)
+
+
+def _grained(stroke: Stroke) -> bool:
+    """A pencil, which the screen fills with its grain (``grain`` in
+    ink.js ``buildOutline``)."""
+    return stroke.tool == "pen" and stroke.brush == "pencil"
+
+
 def _drawn_as(stroke: Stroke, alpha: float) -> str:
     """How the exporters draw a stroke: ``marker`` (a highlighter's
-    multiplied centreline), ``dashed`` (one dashed centreline at the mean
-    drawn width), ``bands`` (a filled outline per opacity band: a pencil,
-    or a translucent pen, which stroked segments would darken where they
+    multiplied centreline), ``nib`` (a calligraphy pen without a shape:
+    its nib swept along it, ``nib_shape``), ``dashed`` (one dashed
+    centreline at the mean drawn width), ``bands`` (a filled outline per
+    opacity band: a pencil, which is painted with its grain, or a
+    translucent pen, which stroked segments would darken where they
     overlap) or ``segments`` (an opaque solid pen's round-capped segments,
     each at its baked width)."""
     if stroke.tool == "highlighter":
         return "marker"
+    if stroke.tool == "pen" and _nib_drawn(stroke):
+        return "nib"
     if stroke.dash:
         return "dashed"
-    return "bands" if alpha < 1 or "o" in stroke.ch else "segments"
+    return "bands" if alpha < 1 or "o" in stroke.ch or _grained(stroke) else "segments"
 
 
 def _mean(values) -> float:
@@ -826,20 +1097,33 @@ def to_svg(ink: InkFile, box=None, pad: float = 4.0) -> str:
     not know) draws one round-capped segment per sample pair at that pair's
     baked width; a translucent one, and a pencil, one filled outline per
     opacity band (``stroke_bands``, ``stroke_outline``) at ``fill-opacity``
-    band × opacity, untextured; a dashed stroke one centreline path at its
-    mean drawn width and opacity with ``stroke-dasharray``; a highlighter
-    one constant-width path with its opacity, multiplied onto what lies
-    beneath. A filled closed shape (``fill_of``) draws its fill first, the
-    closed polygon through its samples in the fill's colour at its
-    opacity, under its outline in its band."""
+    band × opacity; a dashed stroke one centreline path at its mean drawn
+    width and opacity with ``stroke-dasharray``; a highlighter one
+    constant-width path with its opacity, multiplied onto what lies
+    beneath; a calligraphy pen without a shape one path of its nib
+    (``nib_shape``), the screen's own ``d``, filled with the nonzero rule.
+    A pencil is painted with its grain: a ``<pattern>`` per colour in the
+    ``<defs>``, the tile ``GRAIN_UNITS`` page units square from the page's
+    corner whatever the crop, as the screen's layer draws it. A filled
+    closed shape (``fill_of``) draws its fill first, the closed polygon
+    through its samples in the fill's colour at its opacity, under its
+    outline in its band."""
     box = box or bounding_box(ink) or (0, 0, 1, 1)
     x0, y0, x1, y1 = box[0] - pad, box[1] - pad, box[2] + pad, box[3] + pad
     w, h = max(1.0, x1 - x0), max(1.0, y1 - y0)
     parts = [f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="{_fmt(x0)} {_fmt(y0)} {_fmt(w)} {_fmt(h)}" '
              f'width="{_fmt(w)}" height="{_fmt(h)}">']
+    grains = sorted({grain_rgb(s.color) for s in ink.strokes if _grained(s)})
+    if grains:
+        parts.append("<defs>" + "".join(
+            f'<pattern id="inkGrain-{bytes(rgb).hex()}" patternUnits="userSpaceOnUse" width="{GRAIN_UNITS}" '
+            f'height="{GRAIN_UNITS}"><image href="data:image/png;base64,{base64.b64encode(_grain_png(rgb)).decode()}" '
+            f'width="{GRAIN_UNITS}" height="{GRAIN_UNITS}" preserveAspectRatio="none"/></pattern>'
+            for rgb in grains) + "</defs>")
     for stroke in in_draw_order(ink.strokes):
         r, g, b, a = parse_color(stroke.color)
         color = f"rgb({round(r * 255)},{round(g * 255)},{round(b * 255)})"
+        paint = f"url(#inkGrain-{bytes(grain_rgb(stroke.color)).hex()})" if _grained(stroke) else color
         alpha = min(a, stroke.opacity)
         pattern = dash_pattern(stroke)
         dash = f' stroke-dasharray="{_fmt(pattern[0])} {_fmt(pattern[1])}"' if pattern else ""
@@ -855,10 +1139,15 @@ def to_svg(ink: InkFile, box=None, pad: float = 4.0) -> str:
                          f'stroke="{color}" stroke-width="{_fmt(stroke.size)}" stroke-opacity="{_fmt(alpha)}" '
                          f'stroke-linecap="round" stroke-linejoin="round"{dash} style="mix-blend-mode:multiply"/>')
             continue
+        if kind == "nib":
+            if d := _svg_nib(stroke):
+                parts.append(f'<path d="{d}" fill="{color}"'
+                             + (f' fill-opacity="{_fmt(alpha)}"' if alpha < 1 else "") + "/>")
+            continue
         if kind == "dashed":
             samples = decode_stroke(stroke)
             alpha *= _mean(s["o"] for s in samples if "o" in s)
-            parts.append(f'<path d="{_svg_line((s["x"], s["y"]) for s in samples)}" fill="none" stroke="{color}" '
+            parts.append(f'<path d="{_svg_line((s["x"], s["y"]) for s in samples)}" fill="none" stroke="{paint}" '
                          f'stroke-width="{_fmt(_mean(stroke_width(stroke, s) for s in samples))}"'
                          + (f' stroke-opacity="{_fmt(alpha)}"' if alpha < 1 else "")
                          + f' stroke-linecap="round" stroke-linejoin="round"{dash}/>')
@@ -866,7 +1155,7 @@ def to_svg(ink: InkFile, box=None, pad: float = 4.0) -> str:
         if kind == "bands":
             for band, outlines in _band_outlines(stroke, decode_stroke(stroke)):
                 d = " ".join(p for outline in outlines if (p := _svg_outline(outline)))
-                parts.append(f'<path d="{d}" fill="{color}"'
+                parts.append(f'<path d="{d}" fill="{paint}"'
                              + (f' fill-opacity="{_fmt(band * alpha)}"' if band * alpha < 1 else "") + "/>")
             continue
         poly = stroke_polyline(stroke)
@@ -891,11 +1180,57 @@ def _gs(alpha: float, multiply: bool = False) -> bytes:
 
 
 _GS_RE = re.compile(rb"/GSink(M?)(\d{1,4}) gs")
+_IDENTITY = (1.0, 0.0, 0.0, 1.0, 0.0, 0.0)
+
+
+def _grain_name(color: str, matrix: tuple) -> bytes:
+    """The pattern a pencil is painted with in ``pdf_path_ops``: the
+    tile's colour and the pattern's matrix are in its name —
+    ``Grain<rrggbb>_<a>_<b>_<c>_<d>_<e>_<f>`` — so ``GrainPatterns``
+    declares it from the ops alone."""
+    def n(v):
+        s = f"{v:.4f}".rstrip("0").rstrip(".")
+        return "0" if s == "-0" else s
+    return ("Grain" + bytes(grain_rgb(color)).hex() + "".join("_" + n(v) for v in matrix)).encode()
+
+
+_GRAIN_RE = re.compile(rb"/(Grain[0-9a-f]{6}(?:_-?\d+(?:\.\d+)?){6}) (?:scn|SCN)")
+
+
+def _grain_matrix(to_pdf, frame) -> tuple:
+    """A pencil's pattern matrix: pattern space to the page's default
+    space through the strokes' own mapping (``to_pdf``, then ``frame``),
+    its y turned, so the tile's first row is at the top of each cell as the
+    screen shows it and a cell is GRAIN_UNITS page units from the page's
+    corner. A pattern is placed in the page's space, not the current
+    transformation's, hence ``frame``."""
+    a, b, c, d, e, f = frame
+
+    def page(x, y):
+        px, py = to_pdf(x, y)
+        return a * px + c * py + e, b * px + d * py + f
+    (ox, oy), (ux, uy), (vx, vy) = page(0.0, 0.0), page(1.0, 0.0), page(0.0, 1.0)
+    return (ux - ox, uy - oy, ox - vx, oy - vy, ox, oy)
 
 
 def _pdf_line(pts, num) -> bytes:
     return (b"%s %s m " % (num(pts[0][0]), num(pts[0][1]))
             + b" ".join(b"%s %s l" % (num(x), num(y)) for x, y in pts[1:] or pts[:1]))
+
+
+_KAPPA = 0.5522847498   # a quarter circle's cubic control distance, per radius
+
+
+def _pdf_circle(x: float, y: float, r: float, to_pdf, num) -> bytes:
+    """A dot as four cubics, mapped (``to_pdf`` is affine)."""
+    k = r * _KAPPA
+    p = [to_pdf(px, py) for px, py in (
+        (x + r, y), (x + r, y + k), (x + k, y + r), (x, y + r), (x - k, y + r), (x - r, y + k), (x - r, y),
+        (x - r, y - k), (x - k, y - r), (x, y - r), (x + k, y - r), (x + r, y - k), (x + r, y))]
+    return (b"%s %s m " % (num(p[0][0]), num(p[0][1]))
+            + b" ".join(b"%s %s %s %s %s %s c" % (num(p[i][0]), num(p[i][1]), num(p[i + 1][0]), num(p[i + 1][1]),
+                                                  num(p[i + 2][0]), num(p[i + 2][1])) for i in range(1, 13, 3))
+            + b" h")
 
 
 def _pdf_outline(points, to_pdf) -> bytes:
@@ -915,33 +1250,47 @@ def _pdf_outline(points, to_pdf) -> bytes:
     return (" ".join(out) + " h").encode()
 
 
-def pdf_path_ops(ink: InkFile, to_pdf, scale: float = 1.0, band: int | None = None) -> bytes:
+def pdf_path_ops(ink: InkFile, to_pdf, scale: float = 1.0, band: int | None = None,
+                 frame: tuple = _IDENTITY) -> bytes:
     """PDF content-stream operators drawing the strokes, band 0 then band 1
     (``band`` keeps one, for a writer drawing several groups band by band);
     ``b""`` when nothing is left to draw. ``to_pdf(x, y)`` maps a
     display-space point to user space (the notes-as-PDF writer draws in a
-    frame of its own) and ``scale`` the widths. An opaque solid pen is a
-    round-capped segment per sample pair at its baked width; a translucent
-    pen, and a pencil, one filled outline per opacity band under the
-    ExtGState of its opacity (``/GSink<α>``, ``/CA`` and ``/ca``); a dashed
-    stroke one path at its mean drawn width between ``[on off] 0 d`` and
-    ``[] 0 d``; a highlighter its centreline under ``/GSinkM<α>``, which
-    multiplies like the screen. A filled closed shape (``fill_of``) fills
-    its polygon first, the closed path through its samples filled once
-    (``f``) in the fill's colour under ``/GSink<α>`` of the fill's opacity,
-    then draws its outline as any stroke (a fill of its own rather than
-    ``B``: a pen's outline is drawn as segments or bands, never as that
-    polygon stroked). A writer embedding the ops declares the states they
-    set with ``pdf_path_resources``."""
+    frame of its own), ``scale`` the widths, and ``frame`` is the matrix
+    of that user space in the page's default space (the transformation the
+    ops are drawn under), which the pencil's grain needs. An opaque solid
+    pen is a round-capped segment per sample pair at its baked width; a
+    translucent pen, and a pencil, one filled outline per opacity band
+    under the ExtGState of its opacity (``/GSink<α>``, ``/CA`` and
+    ``/ca``); a dashed stroke one path at its mean drawn width between
+    ``[on off] 0 d`` and ``[] 0 d``; a highlighter its centreline under
+    ``/GSinkM<α>``, which multiplies like the screen; a calligraphy pen
+    without a shape its nib (``nib_shape``), every piece filled at once
+    with the nonzero rule. A pencil is painted with its grain, a tiling
+    pattern named for its colour and matrix (``/Pattern cs /Grain… scn``,
+    ``SCN`` for a dashed one's stroke). A filled closed shape (``fill_of``)
+    fills its polygon first, the closed path through its samples filled
+    once (``f``) in the fill's colour under ``/GSink<α>`` of the fill's
+    opacity, then draws its outline as any stroke (a fill of its own
+    rather than ``B``: a pen's outline is drawn as segments or bands, never
+    as that polygon stroked). A writer embedding the ops declares the
+    states they set with ``pdf_path_resources`` and the patterns they paint
+    with through ``GrainPatterns``."""
     from .pdf_typeset import num
     strokes = [s for s in in_draw_order(ink.strokes) if band is None or band_of(s) == band]
     if not strokes:
         return b""
     ops = [b"q 1 J 1 j"]
+    grain_matrix = None
     for stroke in strokes:
         r, g, b, a = parse_color(stroke.color)
         alpha = min(a, stroke.opacity)
         rgb = b"%s %s %s" % (num(r), num(g), num(b))
+        fill_paint, stroke_paint = rgb + b" rg", rgb + b" RG"
+        if _grained(stroke):
+            grain_matrix = grain_matrix or _grain_matrix(to_pdf, frame)
+            name = _grain_name(stroke.color, grain_matrix)
+            fill_paint, stroke_paint = b"/Pattern cs /%s scn" % name, b"/Pattern CS /%s SCN" % name
         pattern = dash_pattern(stroke)
         dash = b"[%s %s] 0 d" % tuple(_fmt(v * scale).encode() for v in pattern) if pattern else b""
         kind = _drawn_as(stroke, alpha)
@@ -956,12 +1305,20 @@ def pdf_path_ops(ink: InkFile, to_pdf, scale: float = 1.0, band: int | None = No
             ops.append(b"q %s %s RG %s w" % (_gs(alpha, multiply=True), rgb, num(stroke.size * scale)))
             ops += [dash, line, b"[] 0 d", b"Q"] if dash else [line, b"Q"]
             continue
+        if kind == "nib":
+            runs, dots = nib_shape(stroke)
+            shape = [_pdf_line([to_pdf(x, y) for x, y in poly], num) + b" h" for run in runs for poly in run]
+            shape += [_pdf_circle(x, y, radius, to_pdf, num) for x, y, radius in dots]
+            if shape:
+                body = [fill_paint, *shape, b"f"]
+                ops += [b"q " + _gs(alpha), *body, b"Q"] if alpha < 1 else body
+            continue
         if kind == "dashed":
             samples = decode_stroke(stroke)
             alpha *= _mean(s["o"] for s in samples if "o" in s)
             width = _mean(stroke_width(stroke, s) for s in samples) * scale
             line = _pdf_line([to_pdf(s["x"], s["y"]) for s in samples], num) + b" S"
-            body = [b"%s RG %s w %s" % (rgb, num(width), dash), line, b"[] 0 d"]
+            body = [b"%s %s w %s" % (stroke_paint, num(width), dash), line, b"[] 0 d"]
             ops += [b"q " + _gs(alpha), *body, b"Q"] if alpha < 1 else body
             continue
         if kind == "bands":
@@ -969,7 +1326,7 @@ def pdf_path_ops(ink: InkFile, to_pdf, scale: float = 1.0, band: int | None = No
                 shape = [p for outline in outlines if (p := _pdf_outline(outline, to_pdf))]
                 if not shape:
                     continue
-                body = [rgb + b" rg", *shape, b"f"]
+                body = [fill_paint, *shape, b"f"]
                 ops += [b"q " + _gs(band_alpha * alpha), *body, b"Q"] if band_alpha * alpha < 1 else body
             continue
         ops.append(rgb + b" RG")
@@ -1001,6 +1358,74 @@ def pdf_path_resources(ops: bytes):
     return out
 
 
+class GrainPatterns:
+    """The pencil's grain in one PDF being written. ``resources(ops)`` is
+    the ``/Pattern`` dictionary declaring every grain some ops paint with
+    (the output of ``pdf_path_ops``, or a whole content stream that holds
+    it; the name carries the colour and the matrix, ``_grain_name``), None
+    when they paint none. Each is a coloured tiling pattern GRAIN_UNITS
+    square whose cell paints the tile as an image in its colour, the
+    tile's alpha its soft mask. The document holds one soft mask, one
+    image per colour and one pattern per colour and matrix, every page
+    that paints with them sharing them."""
+
+    def __init__(self, writer):
+        self.writer = writer
+        self._mask = None
+        self._images: dict = {}
+        self._patterns: dict = {}
+
+    def resources(self, ops: bytes):
+        from PyPDF2.generic import DictionaryObject, NameObject
+        names = sorted({m.group(1).decode() for m in _GRAIN_RE.finditer(ops)})
+        if not names:
+            return None
+        return DictionaryObject({NameObject("/" + name): self._pattern(name) for name in names})
+
+    def _image(self, data: bytes, space: str):
+        from PyPDF2.generic import DecodedStreamObject, NameObject, NumberObject
+        stream = DecodedStreamObject()
+        stream.set_data(zlib.compress(data, 9))
+        stream.update({NameObject("/Type"): NameObject("/XObject"), NameObject("/Subtype"): NameObject("/Image"),
+                       NameObject("/Width"): NumberObject(GRAIN_PX), NameObject("/Height"): NumberObject(GRAIN_PX),
+                       NameObject("/ColorSpace"): NameObject(space), NameObject("/BitsPerComponent"): NumberObject(8),
+                       NameObject("/Filter"): NameObject("/FlateDecode")})
+        return stream
+
+    def _tile(self, rgb: str):
+        """The tile in ``rgb`` (six hex digits): an image of the colour
+        whose soft mask is the tile's alpha."""
+        from PyPDF2.generic import NameObject
+        ref = self._images.get(rgb)
+        if ref is None:
+            if self._mask is None:
+                alpha = bytes(_GRAIN_ALPHAS[i] for i in _grain_indices())
+                self._mask = self.writer._add_object(self._image(alpha, "/DeviceGray"))
+            image = self._image(bytes.fromhex(rgb) * (GRAIN_PX * GRAIN_PX), "/DeviceRGB")
+            image[NameObject("/SMask")] = self._mask
+            ref = self._images[rgb] = self.writer._add_object(image)
+        return ref
+
+    def _pattern(self, name: str):
+        from PyPDF2.generic import ArrayObject, DecodedStreamObject, DictionaryObject, FloatObject, NameObject, NumberObject
+        ref = self._patterns.get(name)
+        if ref is None:
+            rgb, *matrix = name[len("Grain"):].split("_")
+            stream = DecodedStreamObject()
+            stream.set_data(b"q %d 0 0 %d 0 0 cm /Tile Do Q" % (GRAIN_UNITS, GRAIN_UNITS))
+            stream.update({
+                NameObject("/Type"): NameObject("/Pattern"), NameObject("/PatternType"): NumberObject(1),
+                NameObject("/PaintType"): NumberObject(1), NameObject("/TilingType"): NumberObject(1),
+                NameObject("/BBox"): ArrayObject(NumberObject(v) for v in (0, 0, GRAIN_UNITS, GRAIN_UNITS)),
+                NameObject("/XStep"): NumberObject(GRAIN_UNITS), NameObject("/YStep"): NumberObject(GRAIN_UNITS),
+                NameObject("/Matrix"): ArrayObject(FloatObject(v) for v in matrix),
+                NameObject("/Resources"): DictionaryObject({NameObject("/XObject"): DictionaryObject(
+                    {NameObject("/Tile"): self._tile(rgb)})}),
+            })
+            ref = self._patterns[name] = self.writer._add_object(stream)
+        return ref
+
+
 # --- PDF /Ink interchange --------------------------------------------------------
 
 def ink_buckets(ink: InkFile) -> list[list[Stroke]]:
@@ -1023,7 +1448,9 @@ def from_pdf_ink(ink_list, width_pt: float, color: str, opacity: float, page: in
     which wins when it parses (it carries pressure, time and the true dash
     of every stroke); one written before release T is a version 1 file and
     is upgraded first. ``dash`` is a foreign annotation's border style
-    (``"dashed"`` for a ``/BS /S /D``), given to each of its strokes."""
+    (``"dashed"`` for a ``/BS /S /D``), given to each of its strokes.
+    InkError for a coordinate the file cannot hold (not finite in 1/100
+    pt), as for any other bad annotation."""
     if private_json:
         try:
             ink = parse_ink(upgrade_v1(load_json(private_json)))
@@ -1038,6 +1465,8 @@ def from_pdf_ink(ink_list, width_pt: float, color: str, opacity: float, page: in
         samples = [{"x": nums[i], "y": page_h - nums[i + 1]} for i in range(0, len(nums) - 1, 2)]
         if not samples:
             continue
+        if not all(math.isfinite(s[k] * COORD_UNIT) for s in samples for k in ("x", "y")):
+            raise InkError(f"/InkList path {n}: a coordinate past the largest number")
         strokes.append({"id": f"i{n}", "tool": "pen", "pen": False, "color": color,
                         "size": max(0.2, min(100.0, width_pt or 1.0)), "opacity": max(0.05, min(1.0, opacity)),
                         **({"dash": dash} if dash in DASH else {}),
@@ -1163,8 +1592,8 @@ def _upgrade_stroke(s):
     new, prev = [], None
     for i in range(0, len(pts), n):
         row = pts[i:i + n]
-        p = row[pi]
-        w = 500 + max(0, min(1000, int(p) if isinstance(p, (int, float)) and math.isfinite(p) else 0))
+        p = row[pi]   # (an int is clamped as it is: one past the largest double has no float to test)
+        w = 500 + max(0, min(1000, int(p) if isinstance(p, int) or (isinstance(p, float) and math.isfinite(p)) else 0))
         new.extend(row)
         new.append(w if prev is None else w - prev)
         prev = w

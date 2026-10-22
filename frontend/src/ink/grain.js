@@ -7,7 +7,7 @@
 // 2 pt line is four grains wide). Pure: the PNG is written here from a
 // fixed seed — a 2-bit palette image, so another colour is another palette
 // and nothing else — and every client draws the same grain.
-import { crc32 } from "../transfers/folderZip.js";
+import { crc32 } from "../shared/lib/crc32.js";
 
 export const GRAIN_PX = 64;
 export const GRAIN_UNITS = 32;

@@ -5,9 +5,11 @@ annotated PDF export and the embedded-annotation importer, and the Markdown
 / notes-PDF renderings of an ink block. The shared fixtures (upgrade, width,
 merge cases) run in test_shared_fixtures.py."""
 
+import base64
 import io
 import json
 import math
+import re
 import zipfile
 
 import pytest
@@ -152,6 +154,10 @@ def test_monoline_preserves_samples_and_constant_width_in_exports(guest):
     (lambda d: d["strokes"][0].__setitem__("note", float("nan")), "finite"),
     (lambda d: d["strokes"][0].__setitem__("pts", [10 ** 400, 100, 500, 0, 1000]), "finite"),   # a client's Infinity
     (lambda d: d["strokes"][0].__setitem__("pts", [100, -(10 ** 400), 500, 0, 1000]), "finite"),
+    (lambda d: d["strokes"][0].__setitem__("note", 10 ** 400), "finite"),     # an extra key's too, at every level
+    (lambda d: d["strokes"][0].__setitem__("note", {"n": [1, -(10 ** 400)]}), "finite"),
+    (lambda d: d["space"].__setitem__("dpi", 10 ** 400), "finite"),
+    (lambda d: d.__setitem__("meta", 10 ** 400), "finite"),
     (lambda d: d.__setitem__("meta", {f"k{i}": "x" * 1000 for i in range(20)}), "bytes"),
 ])
 def test_schema_rejects_bad_files(mutate, message):
@@ -310,11 +316,12 @@ def test_pencil_bands_split_where_o_crosses_a_band_edge():
 def test_a_pencil_draws_three_shades_painted_once_each():
     ink = inkmod.parse_ink(_ink(strokes=[_pencil()]))
     svg = inkmod.to_svg(ink)
-    # one filled outline per band, untextured; the darkest band is opaque
-    assert svg.count("<path") == 3 and svg.count('fill="rgb(31,31,31)"') == 3
+    # one filled outline per band, painted with the grain; the darkest band is opaque
+    assert svg.count("<path") == 3 and svg.count('fill="url(#inkGrain-1f1f1f)"') == 3
     assert 'fill-opacity="0.33"' in svg and 'fill-opacity="0.66"' in svg and svg.count("fill-opacity") == 2
     ops = inkmod.pdf_path_ops(ink, lambda x, y: (x, PAGE_H - y))
     assert ops.count(b"\nf\n") == 3 and b"/GSink330 gs" in ops and b"/GSink660 gs" in ops
+    assert ops.count(b"/Pattern cs /Grain1f1f1f_1_0_0_1_0_792 scn\n") == 3
     states = inkmod.pdf_path_resources(ops)
     assert sorted(states) == ["/GSink330", "/GSink660"]
     assert (float(states["/GSink330"]["/CA"]), float(states["/GSink330"]["/ca"])) == (0.33, 0.33)
@@ -322,9 +329,74 @@ def test_a_pencil_draws_three_shades_painted_once_each():
     ops = inkmod.pdf_path_ops(inkmod.parse_ink(_ink(strokes=[_pencil(opacity=0.6)])), lambda x, y: (x, y))
     assert sorted(inkmod.pdf_path_resources(ops)) == ["/GSink198", "/GSink396", "/GSink600"]
     pale = inkmod.parse_ink(_ink(strokes=[{**_ink()["strokes"][0], "opacity": 0.5}]))
-    assert inkmod.to_svg(pale).count('fill-opacity="0.5"') == 1
+    assert inkmod.to_svg(pale).count('fill-opacity="0.5"') == 1 and "<pattern" not in inkmod.to_svg(pale)
     ops = inkmod.pdf_path_ops(pale, lambda x, y: (x, y))
     assert ops.count(b"/GSink500 gs") == 1 and ops.count(b"\nf\n") == 1 and b" l S" not in ops
+    assert b"/Pattern" not in ops and inkmod.GrainPatterns(None).resources(ops) is None
+
+
+def test_a_pencil_is_painted_with_its_grain_anchored_at_the_page_corner():
+    """One <pattern> per pencil colour, the screen's tile GRAIN_UNITS page
+    units square from the page's (0, 0) whatever the crop; every pencil
+    path painted with it at the opacity it had, a mouse pencil's even
+    outline and a dashed pencil's stroked centreline included; any other
+    pen, and a highlighter, plain."""
+    pencil = _pencil()
+    mouse = {"id": "m", "brush": "pencil", "pen": False, "color": "#dc2626", "size": 3, "ch": "xyt",
+             "pts": inkmod.encode_points([{"x": 300, "y": 300 + i, "t": 8 * i} for i in range(20)], "xyt")}
+    dashed = {**mouse, "id": "d", "color": "#1F1F1F", "dash": "dashed", "opacity": 0.5}
+    pen = {**mouse, "id": "pen", "brush": None, "color": "#2563eb"}
+    marker = {**mouse, "id": "hl", "tool": "highlighter", "color": "#ffe066"}
+    ink = inkmod.parse_ink(_ink(strokes=[pencil, mouse, dashed, pen, marker]))
+    svg = inkmod.to_svg(ink)
+    defs = svg[svg.index("<defs>"):svg.index("</defs>")]
+    assert defs.count("<pattern") == 2 and defs.index("inkGrain-1f1f1f") < defs.index("inkGrain-dc2626")
+    for rgb in ("1f1f1f", "dc2626"):
+        tile = base64.b64encode(inkmod.grain_png("#" + rgb)).decode()
+        assert (f'<pattern id="inkGrain-{rgb}" patternUnits="userSpaceOnUse" width="32" height="32">'
+                f'<image href="data:image/png;base64,{tile}" width="32" height="32" preserveAspectRatio="none"/>'
+                "</pattern>") in defs
+    assert svg.count('fill="url(#inkGrain-1f1f1f)"') == 3, "the shaded pencil's three bands"
+    assert svg.count('fill="url(#inkGrain-dc2626)"') == 1, "a mouse pencil is one outline, painted once"
+    assert '<path d="M300 300 L300 301' in svg and 'stroke="url(#inkGrain-1f1f1f)" stroke-width="3" stroke-opacity="0.5"' in svg
+    assert 'stroke="rgb(37,99,235)"' in svg and 'stroke="rgb(255,224,102)"' in svg and svg.count("url(#") == 5
+    # a crop moves the view, never the grain: the patterns are the same
+    cropped = inkmod.to_svg(ink, box=(250, 280, 320, 330), pad=0)
+    assert cropped[cropped.index("<defs>"):cropped.index("</defs>")] == defs
+    # the PDF: the pencils' fills and the dashed one's stroke paint with a
+    # pattern named for its colour and matrix; the pen and the highlighter plain
+    ops = inkmod.pdf_path_ops(ink, lambda x, y: (x, PAGE_H - y)).decode()
+    assert ops.count("/Pattern cs /Grain1f1f1f_1_0_0_1_0_792 scn") == 3
+    assert ops.count("/Pattern cs /Graindc2626_1_0_0_1_0_792 scn") == 1
+    assert "q /GSink500 gs\n/Pattern CS /Grain1f1f1f_1_0_0_1_0_792 SCN 3.00 w [6 6] 0 d" in ops
+    assert "0.15 0.39 0.92 RG" in ops and "1.00 0.88 0.40 RG" in ops
+
+
+def test_the_grain_s_pattern_matrix_carries_the_strokes_mapping():
+    """A pattern is placed in the page's default space, not under the
+    current transformation: its matrix is the strokes' own mapping
+    (``to_pdf``, then ``frame``) with y turned, so a cell's corner is the
+    corner of a 32-unit cell of the drawing and its first row is on top."""
+    ink = inkmod.parse_ink(_ink(strokes=[_pencil()]))
+
+    def matrix(ops):
+        name = re.search(rb"/(Grain\S+) scn", ops).group(1).decode()
+        return [float(v) for v in name.split("_")[1:]]
+    # a writer drawing in a y-down frame flipped by its content (notebook, notes PDF)
+    assert matrix(inkmod.pdf_path_ops(ink, lambda x, y: (x, y), frame=(1, 0, 0, -1, 0, 800))) == [1, 0, 0, 1, 0, 800]
+    # scaled and moved (the notes PDF fits a drawing to its column)
+    scaled = inkmod.pdf_path_ops(ink, lambda x, y: (60 + (x - 10) * 0.5, 54 + (y - 20) * 0.5), 0.5, frame=(1, 0, 0, -1, 0, 841.89))
+    a, b, c, d, e, f = matrix(scaled)
+    assert (a, b, c, d) == (0.5, 0, 0, 0.5) and (e, f) == pytest.approx((60 - 5, 841.89 - 54 + 10), abs=1e-4)
+    # a page shown turned a quarter: the cell turns with the page (pdf_export.page_frame's mapping)
+    from gamma.pdf_export import viewer_point_to_pdf
+    turned = inkmod.pdf_path_ops(ink, lambda x, y: viewer_point_to_pdf(x / 400, y / 300, 90, (0, 0, 300, 400)))
+    assert matrix(turned) == [0, 1, -1, 0, 0, 0]
+    # every display point is the pattern point the screen's tile has there: (x, -y)
+    for px, py in ((0, 0), (33.25, 70.5), (100, 12.75)):
+        X, Y = viewer_point_to_pdf(px / 400, py / 300, 90, (0, 0, 300, 400))
+        u, v = Y, -X                                 # the inverse of [0 1 -1 0 0 0]
+        assert (u, -v) == pytest.approx((px, py))
 
 
 def test_dashed_strokes_draw_one_dashed_centreline():
@@ -499,6 +571,10 @@ def test_upload_ink_rejects_bad_files(guest):
     r = guest.post("/api/upload-ink", content=b'{"format": "gamma-ink", "version": 2, "space": {"kind": "canvas", "width": 1, "height": 1}, "strokes": [], "x": Infinity}',
                    headers={"Content-Type": "application/json"})
     assert r.status_code == 400 and "finite" in r.json()["detail"]
+    # an integer past the largest double in an extra key is a client's Infinity too: refused, not a 500
+    r = guest.post("/api/upload-ink", content=b'{"format": "gamma-ink", "version": 2, "space": {"kind": "canvas", "width": 1, "height": 1}, "strokes": [], "x": 1' + b"0" * 400 + b"}",
+                   headers={"Content-Type": "application/json"})
+    assert r.status_code == 400 and "finite" in r.json()["detail"]
 
 
 def test_orphan_bookkeeping_follows_ink_url(guest, monkeypatch):
@@ -546,6 +622,9 @@ def test_read_upload_caches_the_parsed_file_by_path_and_stat(guest, tmp_path):
     assert first is not None and inkmod.read_upload(tmp_path, url) is first
     assert inkmod.read_upload(tmp_path, "/api/uploads/" + "b" * 24 + ".ink") is None
     assert inkmod.read_upload(tmp_path, "/api/uploads/x.gamma-ink") is None
+    # a stored file no client could read (an extra key past the largest double) is unreadable, not an error
+    (tmp_path / ("c" * 24 + ".ink")).write_bytes(_bytes({**_ink(), "x": 10 ** 400}))
+    assert inkmod.read_upload(tmp_path, f"/api/uploads/{'c' * 24}.ink") is None
 
 
 # --- two writers, one group ------------------------------------------------------------
@@ -797,6 +876,29 @@ def test_importer_takes_the_ink_list_when_gamma_ink_holds_a_number_no_client_rea
     assert inkmod.dumps(found["ink"]).startswith(b'{"format":"gamma-ink"')
 
 
+def test_foreign_ink_past_the_largest_number_is_refused_as_any_bad_annotation():
+    """A foreign /InkList coordinate whose hundredths overflow (a PDF number
+    of hundreds of digits reads as one) is an InkError, so the importer
+    skips the annotation as it skips any unreadable one; a version 1
+    /GammaInk whose pressure is an integer past the largest double falls
+    back to the /InkList, as any payload that does not parse."""
+    from PyPDF2.generic import ArrayObject, FloatObject, NameObject
+    from gamma.routers.imports import _extract_pdf_annotations
+
+    for huge in (1e307, -1e307, float("inf"), float("nan")):
+        with pytest.raises(inkmod.InkError):
+            inkmod.from_pdf_ink([[10, 10, huge, 40]], 1, "#000000", 1, 1, PAGE_W, PAGE_H)
+    reader = _pdf_with_ink_annotation()
+    annot = reader.pages[0]["/Annots"][0].get_object()
+    annot[NameObject("/InkList")] = ArrayObject([ArrayObject(FloatObject(v) for v in ("1" + "0" * 400 + ".5", 10, 30, 40))])
+    assert float(annot["/InkList"][0][0]) == math.inf and _extract_pdf_annotations(reader) == []
+    v1 = json.dumps({"format": "gamma-ink", "version": 1, "space": {"kind": "pdf-page", "page": 1, "width": PAGE_W, "height": PAGE_H},
+                     "strokes": [{"id": "old", "ch": "xyp", "pts": [100, 100, 10 ** 400]}]})
+    (found,) = _extract_pdf_annotations(_pdf_with_ink_annotation(gamma_ink=v1))
+    assert [s.id for s in found["ink"].strokes] == ["i0"]
+    assert inkmod.upgrade_v1(json.loads(v1))["strokes"][0]["pts"] == [100, 100, 10 ** 400, 1500]
+
+
 def test_dashed_ink_writes_a_dashed_border_and_comes_back_as_drawn():
     """/BS /S /D /D [on off] from a bucket's first stroke; the bucket key
     has no dash, so a dashed and a solid stroke of one look share a bucket,
@@ -953,9 +1055,43 @@ def test_calligraphy_bounds_reach_the_nib_corners_whatever_w():
     shaped = {**stroke, "pen": False, "ch": "xyt", "shape": {"kind": "line", "params": {"x1": 100, "y1": 200, "x2": 140, "y2": 240}},
               "pts": inkmod.encode_points([{"x": 100, "y": 200, "t": 0}, {"x": 140, "y": 240, "t": 90}], "xyt")}
     assert inkmod.bounding_box(inkmod.parse_ink(_ink(strokes=[shaped]))) == pytest.approx((99, 199, 141, 241))
-    # every exporter draws it from its baked widths, as any pen
-    svg = inkmod.to_svg(inkmod.parse_ink(_ink(strokes=[stroke])))
-    assert svg.count("<path") == 20 and 'stroke-width="2"' in svg
+
+
+def test_the_exporters_draw_a_calligraphy_stroke_with_its_nib():
+    """The nib's swept outline, one path filled with the nonzero rule, the
+    screen's (nib_outline; tests/shared/inknib.json); every dash its own
+    nib; dots round at the drawn width; a calligraphy shape an even line;
+    and a translucent one painted once under its opacity."""
+    samples = [{"x": 100 + 2 * i, "y": 200 + 2 * i, "p": 0.5, "t": 8 * i, "w": 1} for i in range(21)]
+    stroke = {"id": "c", "brush": "calligraphy", "nib": 45, "size": 2, "ch": "xyptw", "pts": inkmod.encode_points(samples, "xyptw")}
+    ink = inkmod.parse_ink(_ink(strokes=[stroke]))
+    polys = inkmod.nib_outline(inkmod.decode_stroke(ink.strokes[0]), 2, 45)
+    # the nib's footprint at each end and its sweep (the hairline runs along this travel: it sweeps nothing)
+    assert len(polys) == 3 and all(len(p) == 4 for p in (polys[0], polys[-1]))
+    svg = inkmod.to_svg(ink)
+    assert svg.count("<path") == 1 and svg.count(" Z") == 3 and 'fill="rgb(31,31,31)"' in svg and "stroke=" not in svg
+    ops = inkmod.pdf_path_ops(ink, lambda x, y: (x, PAGE_H - y))
+    assert ops.count(b" h\n") == 3 and ops.count(b"\nf\n") == 1 and b" S" not in ops
+    # the nib's corners, not a round cap: the start's footprint is the nib's rectangle, 45° to the page
+    (ax, ay), (bx, by) = polys[0][0], polys[0][1]
+    assert math.hypot(ax - bx, ay - by) in (pytest.approx(0.24), pytest.approx(2))
+    dashed = inkmod.parse_ink(_ink(strokes=[{**stroke, "dash": "dashed"}]))
+    runs, dots = inkmod.nib_shape(dashed.strokes[0])
+    assert len(runs) == len(inkmod.dash_runs(dashed.strokes[0])) > 1 and not dots
+    dotted = inkmod.parse_ink(_ink(strokes=[{**stroke, "dash": "dotted"}]))
+    runs, dots = inkmod.nib_shape(dotted.strokes[0])
+    assert not runs and len(dots) > 1 and all(r == pytest.approx(1) for _, _, r in dots)   # size × w / 2
+    assert inkmod.to_svg(dotted).count(" a1.00,1.00 0 1,0 2.00,0") == len(dots)
+    assert inkmod.pdf_path_ops(dotted, lambda x, y: (x, y)).count(b" c") == 4 * len(dots)
+    # a shape is an even line, whatever its brush, as any pen
+    shaped = {**stroke, "pen": False, "ch": "xyt", "shape": {"kind": "line", "params": {"x1": 100, "y1": 200, "x2": 140, "y2": 240}},
+              "pts": inkmod.encode_points([{"x": 100, "y": 200, "t": 0}, {"x": 140, "y": 240, "t": 90}], "xyt")}
+    assert 'stroke-width="2"' in inkmod.to_svg(inkmod.parse_ink(_ink(strokes=[shaped])))
+    # translucent: the union painted once, under its state
+    pale = inkmod.parse_ink(_ink(strokes=[{**stroke, "opacity": 0.4}]))
+    assert inkmod.to_svg(pale).count('fill-opacity="0.4"') == 1
+    ops = inkmod.pdf_path_ops(pale, lambda x, y: (x, y))
+    assert ops.count(b"\nf\n") == 1 and b"q /GSink400 gs\n" in ops and sorted(inkmod.pdf_path_resources(ops)) == ["/GSink400"]
 
 
 def test_a_nib_is_geometry_in_the_merge():

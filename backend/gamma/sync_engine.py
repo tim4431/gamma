@@ -79,11 +79,12 @@ import urllib.parse
 import urllib.request
 
 from . import config, migrations, ops, pdf_meta, storage, textmerge, workspaces
+from . import ink as inkmod
 from fractional_indexing import FIError, generate_key_between, validate_order_key
 
 from .auth import MIRROR_ACTOR
 from .blocks_store import FOLDERS, LABELS, TREES, create_page, fetch_subtree, last_child_position, page_root_id
-from .db import connect_pages_db, connect_users_db, page_now
+from .db import connect_pages_db, connect_users_db, page_now, ws_uploads_dir
 from .logbuf import log
 from .ops import MAX_OPS, OpError, commit_ops, latest_seq, props_patch, trash_page
 from .publisher_sessions import seal, unseal
@@ -138,7 +139,14 @@ class PageDeferred(Exception):
     page on the remote (a cross-page move there, which the other page's
     round of this same pass settles), the page it was about to create
     there appeared meanwhile (the next round finds it on both sides), or
-    the remote refused a drawing it names (``_deferred_files``)."""
+    the remote refused a drawing it names (``DrawingDeferred``)."""
+
+
+class DrawingDeferred(PageDeferred):
+    """A page deferred only because the remote refused a drawing it names
+    (``_deferred_files``): the rest of it landed and its base is saved, so
+    it went through a link's or a force's policy and does not hold that
+    policy back (``_round``); the next round pushes the drawing alone."""
 
 
 class _OffOriginRedirect(urllib.request.HTTPRedirectHandler):
@@ -1244,26 +1252,98 @@ def _apply_local(ws: str, page_id: str, ops: list[dict], remote_tree: dict | Non
     return applied
 
 
-def _push(remote: Remote, page_id: str, batches: list[dict]) -> None:
-    for batch in batches:
-        remote.post(f"/api/pages/{page_id}/ops", {"client": CLIENT, "batch": batch["id"], "ops": batch["ops"]})
+def _push(remote: Remote, page_id: str, batches: list[dict]) -> list:
+    """Post ``batches`` in order: the remote's answers."""
+    return [remote.post(f"/api/pages/{page_id}/ops", {"client": CLIENT, "batch": batch["id"], "ops": batch["ops"]})
+            for batch in batches]
 
 
 def _send(ws: str, remote: Remote, page_id: str, seq: int, base: dict, ops: list[dict]) -> dict:
     """Push ``ops`` (from ``base``, the remote's tree as this copy knows it)
-    in batches of MAX_OPS, each under an id of its own, all of them written
-    into the page's state (``pending``) before the first goes. A push whose
-    answer never comes back (the link dropped on the way back, a proxy's
-    504, the app quit) is then confirmed or sent again under the same ids
-    by the next round (``_confirm_push``) — never taken for the remote's own
-    change, nor sent as a new one. Returns what the remote holds once they
-    landed: ``base`` with the ops applied."""
+    in batches (``_batches``), each under an id of its own, all of them
+    written into the page's state (``pending``) before the first goes. A
+    push whose answer never comes back (the link dropped on the way back, a
+    proxy's 504, the app quit) is then confirmed or sent again under the
+    same ids by the next round (``_confirm_push``) — never taken for the
+    remote's own change, nor sent as a new one. A drawing goes with the
+    stroke ids of the one it was edited from (``_with_base_ids``), and an
+    answer saying the remote merged it is read (``_ink_merged``). Returns
+    what the remote holds once they landed: ``base`` with the ops applied."""
     if ops:
-        batches = [{"id": secrets.token_urlsafe(12), "ops": ops[i:i + MAX_OPS]} for i in range(0, len(ops), MAX_OPS)]
+        batches = _batches(_with_base_ids(ws, ops))
         with connect_pages_db(ws) as conn:
             _store_state(conn, page_id, seq, base, {"batches": batches, "at": page_now()})
-        _push(remote, page_id, batches)
+        # (a wrapped ``_push`` that answers nothing, as test_mirror_edges' does, reads nothing)
+        for batch, answer in zip(batches, _push(remote, page_id, batches) or ()):
+            _ink_merged(ws, page_id, batch["ops"], answer)
     return apply(base, ops)
+
+
+def _merges_ink(op: dict) -> bool:
+    """Whether the remote may merge ``op`` by stroke (ops.py merge_ink): a
+    set naming a new drawing and the one it was edited from."""
+    return op["op"] == "set" and bool((op.get("props") or {}).get("ink_url")) \
+        and "ink_url" in (op.get("base_props") or {})
+
+
+def _batches(ops: list[dict]) -> list[dict]:
+    """``ops`` in order, in batches of at most MAX_OPS, each under an id of
+    its own and holding at most one drawing the remote may merge
+    (``_merges_ink``): an answer reports one ink merge, the batch's last
+    (ops.py ``ink_conflict``), so the report names its block."""
+    chunks, chunk, inked = [], [], False
+    for op in ops:
+        ink = _merges_ink(op)
+        if chunk and (len(chunk) == MAX_OPS or (ink and inked)):
+            chunks.append(chunk)
+            chunk, inked = [], False
+        chunk.append(op)
+        inked = inked or ink
+    if chunk:
+        chunks.append(chunk)
+    return [{"id": secrets.token_urlsafe(12), "ops": c} for c in chunks]
+
+
+def _with_base_ids(ws: str, ops: list[dict]) -> list[dict]:
+    """``ops`` with ``base_ids`` on each drawing the remote may merge: the
+    stroke ids of the drawing it was edited from, read from this copy's
+    uploads, as the web client's save sends them, so a remote that no
+    longer holds that file merges by deletions instead of a blind union
+    (ops.py merge_ink). Left off when the file is not here; a remote of an
+    older release ignores the key."""
+    out = []
+    for op in ops:
+        base = inkmod.read_upload(ws_uploads_dir(ws), op["base_props"]["ink_url"]) if _merges_ink(op) else None
+        out.append({**op, "base_ids": [s.id for s in base.strokes]} if base is not None else op)
+    return out
+
+
+def _upload_name(url: str) -> str:
+    return (url or "").rsplit("/", 1)[-1]
+
+
+def _ink_merged(ws: str, page_id: str, ops: list[dict], answer) -> None:
+    """A batch's answer saying the remote merged this copy's drawing into
+    one changed there since and could not keep every change of both
+    (``ink_conflict`` with ``clean`` false, ops.py merge_ink): one open
+    ``ink_merged`` row on the group, ``mine`` the drawing sent, ``theirs``
+    the remote's report as JSON (``{clean, lost_ours, returned}``),
+    ``result`` the merged drawing both sides now hold, ``base`` the one the
+    change was made from (upload names). Nothing for a clean merge, an
+    answer without the key (a remote of an older release), or a batch
+    holding more than one drawing (stored by an earlier version of this
+    engine: which one the report is about cannot be told)."""
+    report = answer.get("ink_conflict") if isinstance(answer, dict) else None
+    drawn = [op for op in ops if _merges_ink(op)]
+    if not isinstance(report, dict) or report.get("clean") is not False or len(drawn) != 1:
+        return
+    op = drawn[0]
+    echo = next((o for o in answer.get("ops") or [] if o.get("op") == "set" and o.get("id") == op["id"]), {})
+    now = (echo.get("props") or {}).get("ink_url") or op["props"]["ink_url"]
+    with connect_pages_db(ws) as conn:
+        _conflict(conn, page_id, op["id"], "ink_merged", mine=_upload_name(op["props"]["ink_url"]),
+                  theirs=json.dumps(report), result=_upload_name(now),
+                  base=_upload_name(op["base_props"]["ink_url"]), once=True)
 
 
 def _unlanded(op: dict, base: dict, remote: dict) -> tuple[dict | None, dict | None]:
@@ -1302,7 +1382,8 @@ def _unlanded(op: dict, base: dict, remote: dict) -> tuple[dict | None, dict | N
     # A drawing merged by stroke goes again unless the remote shows it as
     # sent: merging a change that already landed adds nothing (ops.py
     # merge_ink), and a remote that drew on since would otherwise keep only
-    # its own strokes. Its derived keys (count, box) travel with it.
+    # its own strokes. Its derived keys (count, box) travel with it, and so
+    # do its base's stroke ids (``_with_base_ids``).
     base_props = op.get("base_props") or {}
     ink = "ink_url" in props and "ink_url" in base_props and now["props"].get("ink_url") != props["ink_url"]
     # A text box merged key by key (ops.py) is judged key by key: the keys
@@ -1323,6 +1404,8 @@ def _unlanded(op: dict, base: dict, remote: dict) -> tuple[dict | None, dict | N
         (rest if unchanged else landed).setdefault("props", {})[k] = v
     if ink:
         rest["base_props"] = op["base_props"]
+        if "base_ids" in op:
+            rest["base_ids"] = op["base_ids"]
     if box:
         rest["base_props"] = {**rest.get("base_props", {}), "text_box": now["props"]["text_box"]}
     return (landed if len(landed) > 2 else None), (rest if len(rest) > 2 + ("base_props" in rest) else None)
@@ -1368,12 +1451,14 @@ def _confirm_push(ws: str, remote: Remote, page_id: str, state: dict, *, resend:
         sent = False
         if rest and resend:
             try:
-                remote.post(f"/api/pages/{page_id}/ops", {"client": CLIENT, "batch": batch["id"], "ops": rest})
+                answer = remote.post(f"/api/pages/{page_id}/ops", {"client": CLIENT, "batch": batch["id"], "ops": rest})
                 sent = True
             except RemoteError as e:
                 if e.status == 0 or e.status in (408, 429) or 500 <= e.status < 600 and e.status != 507:
                     raise  # the link again: the push stays pending for the next round
                 log.info(f"[mirror] {ws}: {page_id}: the push sent again was refused ({e}); what landed stays")
+            if sent:  # a drawing sent again may have been merged there (``_ink_merged``)
+                _ink_merged(ws, page_id, rest, answer)
         landed += [p for pair in parts for p in (pair[0], pair[1] if sent else None) if p]
     after = apply(base, landed)
     with connect_pages_db(ws) as conn:
@@ -1908,7 +1993,7 @@ def _deferred_files(page_id: str, refused: set[str]) -> None:
     round (quietly, as a deferred page), so the drawing goes as soon as
     the remote takes it, without waiting for another edit here."""
     if refused:
-        raise PageDeferred(f"{page_id}: the remote refused {', '.join(sorted(refused))}; pushed again next round")
+        raise DrawingDeferred(f"{page_id}: the remote refused {', '.join(sorted(refused))}; pushed again next round")
 
 
 def _adopt_page(ws: str, remote: Remote, page_id: str, local: dict, remote_tree: dict, seq: int,
@@ -2104,7 +2189,7 @@ def _round(ws: str, mirror: dict, fetch) -> dict:
                              "local_gone": page_id in local_deleted if here else then["local_gone"]}
         if mirror["page_filter"] is not None:
             todo = _filtered(ws, mirror["page_filter"], todo, force=report["prune"])
-        failed = {}
+        failed, drawn = {}, set()
         order = sorted(todo, key=lambda p: (p not in TREES, p))  # the trees first: the pages are filed in them
         for n, page_id in enumerate(order):
             flags = todo[page_id]
@@ -2121,6 +2206,8 @@ def _round(ws: str, mirror: dict, fetch) -> dict:
                            local_gone=flags["local_gone"], mode=mode, report=report)
             except PageDeferred as e:
                 failed[page_id] = flags  # next round, quietly
+                if isinstance(e, DrawingDeferred):
+                    drawn.add(page_id)  # only its drawing waits: it went through the policy
                 log.info(f"[mirror] {ws}: {e}")
             except Exception as e:  # noqa: BLE001 — one page must not sink the round; it is retried next time
                 failed[page_id] = flags
@@ -2143,9 +2230,10 @@ def _round(ws: str, mirror: dict, fetch) -> dict:
 
         def finish(current):
             current = {**current, **patch}
-            if not failed:
-                # a link's or a force's policy is spent once every page went through — unless
-                # a newer one was asked for while the round ran
+            if not set(failed) - drawn:
+                # a link's or a force's policy is spent once every page went through (one
+                # waiting only for its drawing did) — unless a newer one was asked for while
+                # the round ran
                 for key in ("adopt", "prune"):
                     if current.get(key) == mirror["status"].get(key):
                         current.pop(key, None)

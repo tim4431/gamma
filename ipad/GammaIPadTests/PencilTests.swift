@@ -6,9 +6,10 @@ import XCTest
 /// samples a stroke hands back with their tilt, roll and stillness anchor,
 /// when a hold is asked, the lazy brush, the ribbon, the held shape and how
 /// it follows the pen, the ruler's edge (RulerSnap), where the Pencil
-/// hovered for a gesture, and the gesture actions' names. The recognizer's
-/// life among WebKit's own recognizers needs a device (docs/dev/ipad.md
-/// "Device checks").
+/// hovered for a gesture, the gesture actions' names, and the feedback each
+/// `haptic` kind plays (HapticFeel). The recognizer's life among WebKit's
+/// own recognizers, and how each feedback feels, need a device
+/// (docs/dev/ipad.md "Device checks").
 final class ClaimQueueTests: XCTestCase {
     private let here = CGPoint(x: 100, y: 200)
     private let there = CGPoint(x: 300, y: 260)
@@ -590,6 +591,23 @@ final class PencilActionTests: XCTestCase {
         guard #available(iOS 17.5, *) else { throw XCTSkip("iPadOS 17.5 actions") }
         XCTAssertEqual(PencilAction.name(.showContextualPalette), "showInkAttributes")
         XCTAssertEqual(PencilAction.name(.runSystemShortcut), "runSystemShortcut")
+    }
+}
+
+/// The feedback each `haptic` kind plays (PencilHaptics): Apple's for its event.
+final class HapticFeelTests: XCTestCase {
+    func testEachKindPlaysAFeedbackOfItsOwn() {
+        XCTAssertEqual(HapticFeel(.snap, placed: true), .pathCompleted, "a held shape: the canvas's shape recognition")
+        XCTAssertEqual(HapticFeel(.select, placed: true), .selectionChanged, "a pen lasso's selection")
+        XCTAssertEqual(HapticFeel(.tool, placed: true), .lightImpact, "a gesture's tool switch")
+        XCTAssertEqual(Set([HapticKind.snap, .select, .tool].map { HapticFeel($0, placed: true) }).count, 3)
+    }
+
+    func testWithoutAPlaceASnapIsTheLightImpact() {
+        // the canvas generator plays only at a place; the other two have a call without one
+        XCTAssertEqual(HapticFeel(.snap, placed: false), .lightImpact)
+        XCTAssertEqual(HapticFeel(.select, placed: false), .selectionChanged)
+        XCTAssertEqual(HapticFeel(.tool, placed: false), .lightImpact)
     }
 }
 

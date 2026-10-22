@@ -1,6 +1,6 @@
 import { encodeStroke, newInk, decodeStroke, strokeBounds } from "../../../src/ink/ink.js";
 import { waitForPdf } from "./pdf.mjs";
-import { assertOpensInPlace } from "../harness.mjs";
+import { assertNear as near, assertOpensInPlace } from "../harness.mjs";
 
 export async function inkEditingScenarios({ server, browser, alice, bob, makePdf, step, until, assert, assertEq, assertNoProblems, openPage, flags }) {
   let ctx, page, cdp, pageId, noteId, secondId;
@@ -546,6 +546,125 @@ export async function inkEditingScenarios({ server, browser, alice, bob, makePdf
     await menu().getByRole("button", { name: "Dashed", exact: true }).tap();
     await until(async () => (await stored(hlId))?.strokes[0].dash === "dashed", { what: "the highlighter dashed" });
     await until(async () => (await page.locator(`${paths}[stroke-dasharray="28 28"]`).count()) === 1, { what: "drawn with its 2-width dashes" });
+    assertNoProblems(page);
+  });
+
+  // Escape drops the selection, and its menu with it (a blank tap could land under the menu).
+  const dropSelection = async () => {
+    await page.keyboard.press("Escape");
+    await until(async () => (await menu().count()) === 0, { what: "the selection dropped" });
+  };
+
+  await step("ink edit: the Color row marks the colour every selected stroke shares and none for a mix; a custom colour recolours, keeps a highlighter's opacity and shows on the custom swatch", async () => {
+    // (after the Style step: "thin" green, "other" blue, and the dashed highlighter "hl", selected)
+    const colors = () => menu().locator(".inkEditOptions[aria-label='Selected ink color']");
+    const openColors = async () => {
+      const button = menu().getByRole("button", { name: "Color", exact: true });
+      if (await button.getAttribute("aria-expanded") !== "true") await button.tap();
+      await colors().waitFor();
+    };
+    // the swatches with the ring (.colorBtn.selected): a palette colour's name, or the custom swatch's title
+    const marked = () => colors().locator(".colorBtn.selected").evaluateAll((els) => els.map((el) => el.getAttribute("aria-label") || el.title));
+    const custom = () => colors().locator(".inkCustomColor");
+    const hlBlock = async () => (await inkBlocks()).find((b) => b.ink.strokes.some((s) => s.id === "hl"));
+    await dropSelection();
+    // a mix: the lasso round both pens
+    await page.getByRole("button", { name: /^Lasso \(L\)/ }).tap();
+    const start = await point(65, 205);
+    await page.mouse.move(start.x, start.y); await page.mouse.down();
+    for (const [x, y] of [[215, 205], [215, 285], [65, 285], [65, 205]]) {
+      const p = await point(x, y); await page.mouse.move(p.x, p.y, { steps: 3 });
+    }
+    await page.mouse.up();
+    await menu().waitFor();
+    await openColors();
+    assertEq(JSON.stringify(await marked()), "[]", "green and blue: no swatch is marked");
+    assertEq(await colors().locator("[aria-pressed='true']").count(), 0);
+    // one pen: its colour's swatch carries the ring
+    await dropSelection();
+    await tapInk();
+    await openColors();
+    assertEq(JSON.stringify(await marked()), JSON.stringify(["Green"]), "the colour it has is marked");
+    assertEq(await colors().getByRole("button", { name: "Green", exact: true }).getAttribute("aria-pressed"), "true");
+    // the highlighter: its yellow is none of the highlighter swatches, so the custom swatch shows it
+    await dropSelection();
+    await tapInk(140, 330);
+    await openColors();
+    assertEq(JSON.stringify(await marked()), JSON.stringify(["Custom color"]), "a colour off the palette marks the custom swatch");
+    assertEq(await custom().evaluate((el) => el.style.getPropertyValue("--ink-custom")), "#fde047", "in the stroke's colour");
+    const input = custom().locator("input[type=color]");
+    assertEq(await input.getAttribute("aria-label"), "Custom color", "the custom input is named as every colour picker's");
+    // a colour picked in the native picker (set as the browser sets it, past React's value tracker)
+    await input.evaluate((el, value) => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set.call(el, value);
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+      el.dispatchEvent(new Event("change", { bubbles: true }));
+    }, "#22aa88");
+    await until(async () => (await hlBlock())?.ink.strokes[0].color === "#22aa88", { what: "the custom colour saved" });
+    const recoloured = (await hlBlock()).ink.strokes[0];
+    assertEq(recoloured.opacity, 0.6, "the highlighter keeps its opacity");
+    assertEq(recoloured.dash, "dashed", "and its line");
+    await until(async () => (await custom().evaluate((el) => el.style.getPropertyValue("--ink-custom"))) === "#22aa88",
+      { what: "the custom swatch shows the picked colour" });
+    assertEq(JSON.stringify(await marked()), JSON.stringify(["Custom color"]));
+    const drawn = page.locator(`${paths}[stroke-dasharray]`);
+    await until(async () => (await drawn.getAttribute("stroke")) === "#22aa88", { what: "drawn in the picked colour" });
+    assertEq(await drawn.getAttribute("stroke-opacity"), "0.6", "at the highlighter's opacity");
+    // one undo entry, as every recolour
+    await page.getByRole("button", { name: "Undo ink", exact: true }).tap();
+    await page.getByText("Undone: ink color change (page 1).", { exact: true }).waitFor();
+    await until(async () => (await hlBlock()).ink.strokes[0].color === "#fde047", { what: "the colour undone" });
+    assertNoProblems(page);
+  });
+
+  await step("ink edit: Ctrl+D and the menu's Duplicate set the copy off by the same 12 css px, in the page's points, at two zooms", async () => {
+    // css px per point on page 1 (612 pt wide)
+    const scale = () => page.locator('[data-page="1"]').evaluate((el) => el.getBoundingClientRect().width / 612);
+    // the copy's offset in points: its first sample against the original's
+    const offset = async () => {
+      const [a, b] = (await stored()).strokes.map((s) => decodeStroke(s)[0]);
+      return { dx: b.x - a.x, dy: b.y - a.y };
+    };
+    const undoCopy = async () => {
+      await page.getByRole("button", { name: "Undo ink", exact: true }).tap();
+      await until(async () => (await stored())?.strokes.length === 1, { what: "the copy undone" });
+    };
+    const duplicates = async () => {
+      if (await menu().count()) await dropSelection();
+      await tapInk();
+      await page.keyboard.press("Control+d");
+      await until(async () => (await stored())?.strokes.length === 2, { what: "Ctrl+D's copy" });
+      const key = await offset();
+      await undoCopy();
+      await tapInk();
+      await menu().getByRole("button", { name: "Duplicate", exact: true }).tap();
+      await until(async () => (await stored())?.strokes.length === 2, { what: "the menu's copy" });
+      const button = await offset();
+      await undoCopy();
+      return { key, button };
+    };
+    const check = ({ key, button }, k, what) => {
+      for (const [name, d] of [["Ctrl+D", key], ["the menu's Duplicate", button]]) {
+        near(d.dx, 12 / k, 0.02, `${what}: ${name} right by 12 css px`);
+        near(d.dy, 12 / k, 0.02, `${what}: ${name} down by 12 css px`);
+      }
+      near(key.dx, button.dx, 0.011, `${what}: the same offset both ways`);
+    };
+    const k1 = await scale();
+    const first = await duplicates();
+    check(first, k1, "at the first zoom");
+    // zoomed in by a third or more: the same 12 px is fewer points
+    for (let i = 0; i < 4 && (await scale()) < k1 * 1.3; i++) {
+      const was = await scale();
+      await page.getByRole("button", { name: "Zoom in", exact: true }).tap();
+      await until(async () => Math.abs((await scale()) - was) > 0.01, { what: "the page zoomed in" });
+    }
+    await page.locator(".pdfViewer").evaluate((el) => { el.scrollTop = 0; el.scrollLeft = 0; });
+    const k2 = await scale();
+    assert(k2 >= k1 * 1.3, `zoomed in (${k1} to ${k2} css px a point)`);
+    const second = await duplicates();
+    check(second, k2, "zoomed in");
+    assert(second.key.dx < first.key.dx - 0.5, `fewer points zoomed in (${first.key.dx}, then ${second.key.dx})`);
     assertNoProblems(page);
   });
 

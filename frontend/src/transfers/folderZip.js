@@ -6,24 +6,9 @@
 // with UTF-8 names, as Explorer's or Finder's Compress writes it. Neither a
 // pick nor a drop here lists empty folders. Past 4 GB or 65,535 files the
 // sizes, offsets and counts that no longer fit go in ZIP64 records.
+import { crc32 } from "../shared/lib/crc32.js";
+
 const MAX32 = 0xFFFFFFFF;
-
-const CRC_TABLE = (() => {
-  const table = new Uint32Array(256);
-  for (let n = 0; n < 256; n++) {
-    let c = n;
-    for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1;
-    table[n] = c >>> 0;
-  }
-  return table;
-})();
-
-// CRC-32 continued over `bytes`; start from 0, as zlib's crc32 does.
-export function crc32(bytes, crc = 0) {
-  let c = ~crc >>> 0;
-  for (let i = 0; i < bytes.length; i++) c = CRC_TABLE[(c ^ bytes[i]) & 0xFF] ^ (c >>> 8);
-  return ~c >>> 0;
-}
 
 // Safari on an iPhone or iPad has no folder picker (it would pick files).
 export function canPickFolder() {

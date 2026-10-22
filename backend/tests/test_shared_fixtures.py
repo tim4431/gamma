@@ -1,13 +1,15 @@
 """Rules the frontend mirrors, pinned by one set of cases both sides read:
 tests/shared/*.json at the repository root. The node half is
-frontend/tests/textnorm.test.mjs, ink.test.mjs, finishStroke.test.mjs,
+frontend/tests/textnorm.test.mjs, ink.test.mjs, inkRender.test.mjs, finishStroke.test.mjs,
 notebook.test.mjs, mentions.test.mjs and textBox.test.mjs; a case added here fails whichever side drifts. The
 mirror's cases (synctree.json, textmerge.json) have only this Python side; the
 client's recognisers (inkshapes.json, inkscribble.json) have only the node
 side, and this side checks their shape."""
 
+import base64
 import json
 import math
+import re
 from pathlib import Path
 
 import pytest
@@ -212,6 +214,121 @@ def test_ink_dash_runs():
     middles = [{k: (run[0][k] + run[-1][k]) / 2 for k in ("x", "y", "w")} for run in runs]
     assert [{**_rounded([m])[0], "diameter": round(case["size"] * m["w"], 3)} for m in middles] == \
         [{k: d[k] for k in ("x", "y", "w", "diameter")} for d in case["dots"]]
+    # dash_dots, the dots the nib's dotted stroke draws, is the client's dashDots
+    dots = inkmod.dash_dots(stroke, case["samples"])
+    assert [{**_rounded([{k: q[k] for k in ("x", "y", "w")}])[0], "diameter": round(case["size"] * q["w"], 3)}
+            for q in dots] == [{k: d[k] for k in ("x", "y", "w", "diameter")} for d in case["dots"]]
+
+
+# tests/shared/inkgrain.json: the pencil's grain tile, which the exporters
+# fill a pencil with as the screen does.
+INKGRAIN = _load("inkgrain.json")
+
+
+def _png_chunks(png: bytes) -> dict:
+    out, i = {}, 8
+    while i < len(png):
+        n = int.from_bytes(png[i:i + 4], "big")
+        out[png[i + 4:i + 8]] = png[i + 8:i + 8 + n]
+        i += 12 + n
+    return out
+
+
+@pytest.mark.parametrize("tile", INKGRAIN["tiles"], ids=[t["note"] for t in INKGRAIN["tiles"]])
+def test_ink_grain_tile(tile):
+    """grain_png writes grainUri's PNG byte for byte, in grain_rgb's colour."""
+    assert (inkmod.GRAIN_PX, inkmod.GRAIN_UNITS) == (INKGRAIN["GRAIN_PX"], INKGRAIN["GRAIN_UNITS"])
+    png = base64.b64decode(tile["png"])
+    assert inkmod.grain_png(tile["color"]) == png
+    assert _png_chunks(png)[b"PLTE"] == bytes(inkmod.grain_rgb(tile["color"])) * 4
+    # only the palette differs from one colour to another
+    assert _png_chunks(png)[b"IDAT"] == _png_chunks(base64.b64decode(INKGRAIN["tiles"][0]["png"]))[b"IDAT"]
+
+
+def test_ink_grain_tile_in_the_svg_export():
+    """A pencil's pattern holds the fixture's tile, for every colour a file can hold."""
+    tiles = {t["color"]: t["png"] for t in INKGRAIN["tiles"]}
+    for color in ("#1f1f1f", "#DC2626", "rgb(37, 99, 235)"):
+        ink = inkmod.parse_ink({"format": "gamma-ink", "version": 2, "space": INK_SPACE, "strokes": [
+            {"id": "p", "brush": "pencil", "color": color, "ch": "xy", "pts": [1000, 1000, 500, 0]}]})
+        assert f'href="data:image/png;base64,{tiles[color]}"' in inkmod.to_svg(ink)
+
+
+# tests/shared/inknib.json: the calligraphy nib, which the exporters draw as
+# the screen does — the SVG export the screen's own path.
+INKNIB = _load("inknib.json")
+NIB_SPACE = {"kind": "canvas", "width": 600, "height": 600}
+_NUM = r"-?\d+(?:\.\d+)?"
+
+
+def _nib_stroke(case) -> dict:
+    """The stroke a case draws: its own, or a calligraphy stroke through its samples."""
+    if "stroke" in case:
+        return case["stroke"]
+    samples = [{"x": x, "y": y} for x, y in case["samples"]]
+    return {"id": "n", "brush": "calligraphy", "nib": case["nib"], "size": case["size"], "ch": "xy",
+            "pts": inkmod.encode_points(samples, "xy")}
+
+
+def _d_pieces(d: str) -> list:
+    """A path's pieces: each polygon as its [x, y] points, each dot as ("dot", cx, cy, r)."""
+    out = []
+    for piece in filter(str.strip, d.split("M")):
+        if " a" in piece:
+            x0, y, r = (float(v) for v in re.match(rf"({_NUM}),({_NUM}) a({_NUM}),", piece).groups())
+            out.append(("dot", x0 + r, y, r))
+        else:
+            out.append([[float(v) for v in xy.split(",")] for xy in piece.replace("Z", "").strip().split(" L")])
+    return out
+
+
+def _pdf_pieces(ops: str) -> list:
+    """The pieces of pdf_path_ops' one nib fill, in the same terms (to_pdf the identity)."""
+    out = []
+    for sub in re.findall(r"(\S+ \S+ m .*? h)", ops):
+        nums = [float(v) for v in re.findall(_NUM, sub)]
+        if " c " in sub + " ":       # a dot: four cubics from (cx + r, cy)
+            xs, ys = nums[0::2], nums[1::2]
+            r = (max(xs) - min(xs)) / 2
+            out.append(("dot", nums[0] - r, nums[1], r))
+        else:
+            out.append([[x, y] for x, y in zip(nums[0::2], nums[1::2])])
+    return out
+
+
+def _close_pieces(got, want, tol):
+    assert len(got) == len(want)
+    for g, w in zip(got, want):
+        if isinstance(w, tuple):
+            assert g[0] == "dot" and all(abs(a - b) <= tol for a, b in zip(g[1:], w[1:])), (g, w)
+        else:
+            assert len(g) == len(w) and all(abs(a - b) <= tol for p, q in zip(g, w) for a, b in zip(p, q)), (g, w)
+
+
+@pytest.mark.parametrize("case", INKNIB["cases"] + INKNIB["strokes"], ids=[c["note"] for c in INKNIB["cases"] + INKNIB["strokes"]])
+def test_ink_nib(case):
+    """nib_outline is nibOutline: the SVG export writes the screen's path
+    character for character, and the PDF writers fill the same pieces."""
+    ink = inkmod.parse_ink({"format": "gamma-ink", "version": 2, "space": NIB_SPACE, "strokes": [_nib_stroke(case)]})
+    svg = inkmod.to_svg(ink)
+    assert re.findall(r'<path d="([^"]*)"', svg) == [case["d"]]
+    if "samples" in case:   # the polygons themselves, before any rounding
+        polys = inkmod.nib_outline([{"x": x, "y": y} for x, y in case["samples"]], case["size"], case["nib"])
+        _close_pieces([[list(p) for p in poly] for poly in polys], _d_pieces(case["d"]), 0.005 + 1e-9)
+    ops = inkmod.pdf_path_ops(ink, lambda x, y: (x, y)).decode()
+    assert ops.count("\nf\n") == 1, "every piece in one nonzero fill"
+    dotted = case.get("stroke", {}).get("dash") == "dotted"    # (a dot's centre is read off two rounded numbers)
+    _close_pieces(_pdf_pieces(ops), _d_pieces(case["d"]), 0.02 if dotted else 0.01 + 1e-9)
+
+
+def test_ink_nib_fixture_covers_the_cases():
+    cases, strokes = INKNIB["cases"], INKNIB["strokes"]
+    assert {0, 45, 90, 135, 179} <= {c["nib"] for c in cases}
+    assert any(len(c["samples"]) == 1 for c in cases), "a single sample"
+    assert any(any(a == b for a, b in zip(c["samples"], c["samples"][1:])) for c in cases), "repeated samples"
+    assert any("turn back" in c["note"] for c in cases), "a turn back on itself"
+    assert {s["stroke"].get("dash") for s in strokes} == {None, "dashed", "dotted"}
+    assert all(s["stroke"]["brush"] == "calligraphy" and "shape" not in s["stroke"] for s in strokes)
 
 
 PAPER = _load("paper.json")

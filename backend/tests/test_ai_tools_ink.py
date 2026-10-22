@@ -3,6 +3,8 @@ sheet of paper, cropped or whole), the pictures of attached handwriting
 blocks riding with a message, and the renderer under both
 (gamma/ink_view.py, pdf_export.page_with_ink)."""
 
+import io
+import statistics
 from types import SimpleNamespace
 
 import pymupdf
@@ -42,14 +44,38 @@ def _pixel(pdf_bytes, x, y):
     return _raster(pdf_bytes)(x, y)
 
 
-def _raster(pdf_bytes):
-    """The first page rendered at 1 pt per pixel, as ``pixel(x, y) → (r, g, b)``."""
+def _raster(pdf_bytes, zoom=1):
+    """The first page rendered at ``zoom`` pixels per pt, as ``pixel(x, y) → (r, g, b)``."""
     doc = pymupdf.open(stream=pdf_bytes, filetype="pdf")
     try:
-        pix = doc[0].get_pixmap(matrix=pymupdf.Matrix(1, 1), alpha=False)
+        pix = doc[0].get_pixmap(matrix=pymupdf.Matrix(zoom, zoom), alpha=False)
     finally:
         doc.close()
     return pix.pixel
+
+
+def _grain_at(px, py, zoom=2):
+    """The alpha of the pencil's grain the screen draws at pixel ``(px, py)``
+    of a page rendered at ``zoom`` (a tile pixel is half a page unit)."""
+    tile = inkmod._grain_indices()
+    i, j = int((px + 0.5) * 2 / zoom) % inkmod.GRAIN_PX, int((py + 0.5) * 2 / zoom) % inkmod.GRAIN_PX
+    return inkmod._GRAIN_ALPHAS[tile[j * inkmod.GRAIN_PX + i]] / 255
+
+
+def _blank_page(width, height, rotation=0, crop=None):
+    """A blank one-page PDF, turned by ``rotation`` and cropped to ``crop``."""
+    from PyPDF2 import PdfWriter
+    from PyPDF2.generic import ArrayObject, FloatObject, NameObject, NumberObject
+
+    writer = PdfWriter()
+    writer.add_blank_page(width=width, height=height)
+    if rotation:
+        writer.pages[0][NameObject("/Rotate")] = NumberObject(rotation)
+    if crop:
+        writer.pages[0][NameObject("/CropBox")] = ArrayObject(FloatObject(v) for v in crop)
+    buf = io.BytesIO()
+    writer.write(buf)
+    return buf.getvalue()
 
 
 def _text_pdf(path, text="Handwriting", at=(40, 100), size=40):
@@ -190,15 +216,65 @@ def test_a_pen_stays_over_a_highlighter_drawn_after_it(tmp_path):
     assert r > 240 and b < 200                                  # the highlighter itself
 
 
-def test_a_pencil_shows_its_three_shades(tmp_path):
+def test_a_pencil_shows_its_three_shades_in_its_grain(tmp_path):
     """o = 0.15 + 0.85p from no pressure to full: the light, middle and
-    dark bands each read as their own grey."""
+    dark bands each read as their own grey through the screen's grain —
+    speckled, where a monoline stroke of the same colour beside it is
+    flat."""
     path = _pdf(tmp_path / "blank.pdf")
     pencil = _line("pc", 200, x0=30, x1=270, ch="xyptwo", brush="pencil", color="#000000", size=6,
                    p=lambda f: f, w=lambda f: 1 + (f - 0.5), o=lambda f: 0.15 + 0.85 * f)
-    shade = _raster(page_with_ink(path, 1, [_drawing(pencil)])[0])
-    light, mid, dark = (shade(x, 200)[0] for x in (55, 130, 240))   # o 0.33, 0.66, 1 bands
-    assert light == pytest.approx(255 * 0.67, abs=4) and mid == pytest.approx(255 * 0.34, abs=4) and dark < 4
+    mono = _line("m", 300, x0=30, x1=270, brush="monoline", color="#000000", size=6)
+    zoom = 4
+    shade = _raster(page_with_ink(path, 1, [_drawing(pencil, mono)])[0], zoom)
+
+    def window(x0, x1, y):
+        return [(x, py) for x in range(x0 * zoom, x1 * zoom) for py in range(y * zoom - 2, y * zoom + 2)]
+    for (x0, x1), band in (((40, 70), 0.33), ((100, 150), 0.66), ((200, 255), 1)):   # o crosses 0.33 at x 81, 0.66 at 174
+        got = [1 - shade(x, y)[0] / 255 for x, y in window(x0, x1, 200)]
+        want = [band * _grain_at(x, y, zoom) for x, y in window(x0, x1, 200)]
+        assert statistics.mean(got) == pytest.approx(statistics.mean(want), abs=0.02)
+        assert statistics.pvariance(got) > 0.01 * band, "the grain's speckle"
+    flat = [1 - shade(x, y)[0] / 255 for x, y in window(40, 255, 300)]
+    assert min(flat) > 0.99 and statistics.pvariance(flat) < 1e-4
+
+
+@pytest.mark.parametrize("rotation, crop", [(0, None), (90, None), (180, None), (270, None),
+                                            (0, (37.5, 61.25, 337.5, 461.25)), (90, (37.5, 61.25, 337.5, 461.25))])
+def test_the_pencil_s_grain_sits_where_the_screen_draws_it(rotation, crop):
+    """The grain is the screen's tile, GRAIN_UNITS page units square from
+    the page's corner as shown, on a turned page and a cropped one too:
+    every pixel inside a wide pencil stroke is as dark as the tile is
+    there, and not as the tile a few pixels off."""
+    w, h = (500.0, 600.0) if crop else (300.0, 400.0)
+    shown = ((crop[2] - crop[0], crop[3] - crop[1]) if crop else (w, h))[::(-1 if rotation in (90, 270) else 1)]
+    pencil = _line("pc", shown[1] / 2, x0=40, x1=shown[0] - 40, brush="pencil", color="#000000", size=40)
+    ink = inkmod.parse_ink({"format": "gamma-ink", "version": 2,
+                            "space": {"kind": "pdf-page", "page": 1, "width": shown[0], "height": shown[1]},
+                            "strokes": [pencil]})
+    pixel = _raster(page_with_ink(_blank_page(w, h, rotation, crop), 1, [ink])[0], 2)
+    inside = [(x, y) for y in range(int(shown[1]) - 30, int(shown[1]) + 30) for x in range(120, int(2 * shown[0]) - 120)]
+    got = [1 - pixel(x, y)[0] / 255 for x, y in inside]
+    assert statistics.correlation(got, [_grain_at(x, y) for x, y in inside]) > 0.95
+    assert abs(statistics.correlation(got, [_grain_at(x + 5, y + 3) for x, y in inside])) < 0.2
+
+
+def test_a_calligraphy_stroke_shows_its_nib_s_corners(tmp_path):
+    """A 45° nib drawn across the page: the ends are the nib's slanted
+    edge (the ink starts 12 pt further left below the line than above
+    it, and ends 12 pt further right above it), never a round cap."""
+    path = _pdf(tmp_path / "blank.pdf")
+    stroke = _line("c", 200, x0=50, x1=250, ch="xyptw", brush="calligraphy", nib=45, color="#000000", size=20,
+                   p=lambda f: 0.5, w=lambda f: 0.707)
+    pixel = _raster(page_with_ink(path, 1, [_drawing(stroke)])[0])
+
+    def ends(y):
+        dark = [x for x in range(int(PAGE_W)) if pixel(x, y)[0] < 128]
+        return dark[0], dark[-1]
+    (above_left, above_right), (below_left, below_right) = ends(194), ends(206)
+    assert above_left - below_left == pytest.approx(12, abs=2) and above_right - below_right == pytest.approx(12, abs=2)
+    # across the travel the nib is its sine against it wide, size × sin 45° (192.9 to 207.1)
+    assert [pixel(150, y)[0] < 128 for y in (191, 194, 206, 208)] == [False, True, True, False]
 
 
 def test_a_dashed_stroke_renders_with_gaps(tmp_path):

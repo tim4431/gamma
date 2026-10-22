@@ -372,9 +372,12 @@ see each other's pages or provider entries.
 
 Rules the frontend mirrors — search normalization (`gamma/textnorm.py` ↔
 `frontend/src/shared/lib/textnorm.js`), published pages' slugs
-(`gamma/publish.py` ↔ `frontend/src/shared/lib/slug.js`) and text boxes
+(`gamma/publish.py` ↔ `frontend/src/shared/lib/slug.js`), text boxes
 (`gamma/text_box.py` ↔ `frontend/src/markup/textBox.js`,
-`tests/shared/textbox.json`, [text_boxes.md](text_boxes.md)) — are pinned by ONE
+`tests/shared/textbox.json`, [text_boxes.md](text_boxes.md)) and
+handwriting (`gamma/ink.py` ↔ `frontend/src/ink/ink.js` and
+`ink/grain.js`: the codec, dashes, merge, the calligraphy nib and the
+pencil's grain, [handwriting.md](handwriting.md)) — are pinned by ONE
 set of cases both sides read: `tests/shared/*.json` at the repository root,
 run by `backend/tests/test_shared_fixtures.py` (the slugs by
 `test_publish.py`) and the matching node tests. Add a case there when a rule
@@ -598,6 +601,10 @@ The scenarios live in `tests/e2e/scenarios/`:
     and no `g` or `k`.
   - Transcribe with AI, the Handwriting rows in Settings, and the draft
     journal bringing back strokes a crashed tab never saved.
+  - A browser with pens of its own asked once, on the account's first
+    pull, whether to keep them: *Use this browser's* pushes them, and
+    another browser shows them after a reload. A later pull, and a
+    browser on the defaults, never ask.
 - `inkEditing.mjs`: tap-to-select and the selection menu, which opens and
   grows in place, frame by frame. Colour/width
   edits keeping pressure and time, duplicate ids, selective delete, the
@@ -606,7 +613,11 @@ The scenarios live in `tests/e2e/scenarios/`:
   placement on a small screen, view/edit shares. Copy, cut and paste
   (Ctrl+C / X / V, and Paste here on a right-click), a flip, and New note
   and Merge into note. The Style row restyles a pen to Brush and Dotted;
-  a highlighter takes a line, never a brush. Native Chromium touch/pen,
+  a highlighter takes a line, never a brush. The Color row rings the
+  colour every selected stroke shares, none for a mix, and a colour off
+  the palette on the custom swatch; a custom colour keeps a highlighter's
+  opacity. Ctrl+D and the menu's Duplicate set the copy off by the same
+  12 css px at two zooms. Native Chromium touch/pen,
   asserting on the persisted stroke files. `--only "ink edit:"`; `--only
   ink` runs all four ink files.
 - `inkShapes.mjs`: the strip's modifiers ([handwriting.md](handwriting.md)
@@ -618,7 +629,10 @@ The scenarios live in `tests/e2e/scenarios/`:
   keyboard-focused handle shows one ring, its dot's. `--group ink-shapes`.
 - `inkZoom.mjs`: the zoom window (a stroke written in the panel saved at
   page coordinates, Previous / Next / New line, the advance along the
-  line, the box dragged) and the selection menu's Transcribe, with the AI
+  line, the box dragged, and the grip: a drag shown as it moves, the
+  scroller following and nothing written, applied once at the release
+  and kept across a reload, ↑ / ↓ at once) and the selection menu's
+  Transcribe, with the AI
   stubbed: part of a group goes as `ink_selections`, a whole group as its
   block's chip. `--group ink-zoom`.
 - `textBoxes.mjs`: text boxes ([text_boxes.md](text_boxes.md)) on a PDF

@@ -7,9 +7,10 @@ Nothing is drawn here. A sheet goes through the notebook export's one-page
 PDF (``notebook.notebook_pdf``: the paper painted, its text boxes typeset,
 the strokes as vectors); ink on a PDF page is that page alone with the
 strokes stamped into its content as the same vectors
-(``pdf_export.page_with_ink``: baked widths, tapers, dashes and the
-pencil's shades as drawn, highlighters multiplied onto the text under
-them). ``pdf_text.render_page`` rasterizes either.
+(``pdf_export.page_with_ink``: baked widths, tapers, dashes, the
+pencil's shades and grain and the calligraphy nib as drawn, highlighters
+multiplied onto the text under them). ``pdf_text.render_page`` rasterizes
+either.
 """
 
 from . import ink as inkmod

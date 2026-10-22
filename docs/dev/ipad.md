@@ -115,19 +115,23 @@ window.gammaNative = {
 document.documentElement.setAttribute("data-host", "ipad");
 ```
 
-The web app reads these flags, never `version`: what a shell does not
-declare it does not do, and the web leaves it out (no `hold` listener,
-no `haptic`, no Apple Pencil settings). `inkLooks` lists what the live
-line draws of the claim's look (below): `pressure`, the width from the
-Pencil's force by the brush; `dash`; `blend`, a highlighter multiplied
-onto the page; `stabilize`, the smoothing; `pencil`, the Pencil
-brush's width from the tilt; `calligraphy`, the calligraphy pen's width
-from the travel against its `nib`; and `snap`, a stroke along the ruler's
-edge. A look a shell does not list is drawn as the plain line, and the
-page claims the stroke all the same: the committed stroke is the web's
-either way. `pencilRoll` says the `stroke` and `hold` samples carry the
-Pencil's barrel roll (iPadOS 17.5 and later), so a calligraphy preset's
-nib can follow it and its *Lock angle* pill shows.
+The web app reads `platform` and the flags `ink`, `hold`, `pencil`,
+`pencilPhases`, `pencilRoll`, `haptics` and `servers`, never `version`:
+what a shell does not declare it does not do, and the web leaves it out
+(no `hold` listener, no `haptic`, no Apple Pencil settings). `inkLooks`
+is informational, and nothing in the web reads it: it says what of the
+claim's look the shell's live line can draw (below), and the page sends
+the whole look in every claim whatever a shell lists. The looks:
+`pressure`, the width from the Pencil's force by the brush; `dash`;
+`blend`, a highlighter multiplied onto the page; `stabilize`, the
+smoothing; `pencil`, the Pencil brush's width from the tilt;
+`calligraphy`, the calligraphy pen's width from the travel against its
+`nib`; and `snap`, a stroke along the ruler's edge. A look a shell does
+not list is drawn as the plain line, and the page claims the stroke all
+the same: the committed stroke is the web's either way. `pencilRoll`
+says the `stroke` and `hold` samples carry the Pencil's barrel roll
+(iPadOS 17.5 and later), so a calligraphy preset's nib can follow it and
+its *Lock angle* pill shows.
 
 The web half is one module, `frontend/src/shared/lib/host.js`:
 `nativeHost()` (the object or null, read once), `postToHost(msg)` (a
@@ -145,7 +149,7 @@ takes messages only from the server's own main frame.
 | `{type: "claim", pointerId, at: {x, y}, tool: {kind: "pen"\|"highlighter", color, size, opacity, brush?, pressure?, dash?, blend?, stabilize?, nib?, nibRoll?, snap?}}` | `{taken}` | This Pencil touch is a stroke: take it. `at` is where the pointer went down, in viewport CSS px; `size` is the width on screen, in CSS px; the other keys are the preset's look, below |
 | `{type: "theme", bg: "#rrggbb", scheme: "light"\|"dark"}` | `{}` | Paint the window behind the page and pick the status bar's style |
 | `{type: "servers"}` | `{}` | Show the server picker |
-| `{type: "haptic", kind: "snap"\|"select"\|"tool", at?: {x, y}}` | `{}` | Play a tick: a held stroke snapped to a shape, a pen lasso selected strokes, a Pencil gesture switched the tool. `at` is where, in viewport CSS px, when there is a where. Sent once per event, only under `haptics` and with *Haptics* on |
+| `{type: "haptic", kind: "snap"\|"select"\|"tool", at?: {x, y}}` | `{}` | Play the kind's own feedback ([The pen](#the-pen) "Gestures"): `snap`, a held stroke snapped to a shape; `select`, a pen lasso selected strokes; `tool`, a Pencil gesture switched the tool (a kind the shell does not know plays as `tool`). `at` is where, in viewport CSS px, when there is a where. Sent once per event, only under `haptics` and with *Haptics* on |
 
 The claim's tool (`InkTool` in `Bridge.swift`, made by `ink/hostInk.js`
 `claimTool`) carries the preset's look beside its four keys. Each look
@@ -359,16 +363,34 @@ A gesture that comes while a stroke or a claim is in progress does
 nothing, and nor does the end of a squeeze that began then; the end of a
 held squeeze is never lost. Each tool switch a gesture makes posts
 `haptic` `tool`, a pen lasso that selects posts `select` at its lift,
-and a hold that snaps posts `snap` (under `haptics`, with *Haptics* on).
-The shell plays each as a light impact (`PencilHaptics`), on iPadOS 17.5
-and later through `UIImpactFeedbackGenerator(style: .light, view:)` at
-`at` when there is one. A gesture's `tool` tick comes without one and
-plays where the Pencil hovered for that gesture: `PencilGestures` keeps
-the tap's or the squeeze's `hoverPose` location, in the web view's
-points, for a second (none when the Pencil was too far off to hover).
-The system goes by the place to play a tick in an Apple Pencil Pro
-(device check 16). Before 17.5 it is the plain light impact, which an
-iPad does not play.
+and a hold that snaps posts `snap` (under `haptics`, with *Haptics* on:
+`App.jsx` `hostHaptic` checks both, and the shell plays what it is
+sent). On iPadOS 17.5 and later the shell plays each kind as Apple's
+feedback for its event (`PencilHaptics`, the choice in `HapticFeel`;
+Apple's "Playing haptic feedback in your app" and the WWDC24 session
+"Squeeze the most out of Apple Pencil"), from a generator made for the
+web view (`init(view:)`, the impact's `init(style:view:)`; one per
+feedback, kept), at `at` when there is one:
+
+| Kind | Feedback | Apple's use |
+|---|---|---|
+| `snap` | `UICanvasFeedbackGenerator`, `pathCompleted(at:)` | path completion or shape recognition |
+| `select` | `UISelectionFeedbackGenerator`, `selectionChanged(at:)` | a change in selection |
+| `tool` | `UIImpactFeedbackGenerator(style: .light)`, `impactOccurred(at:)` | an impact (Apple names no feedback for a tool switch) |
+
+The canvas generator's other feedback, `alignmentOccurred(at:)`, is
+Apple's for an object snapping to a guide or a ruler; the shell does not
+play it (a stroke along the ruler's edge plays nothing). A gesture's
+`tool` tick comes without a place and plays where the Pencil hovered for
+that gesture: `PencilGestures` keeps the tap's or the squeeze's
+`hoverPose` location, in the web view's points, for a second (none when
+the Pencil was too far off to hover). The system goes by the place to
+play the feedback in an Apple Pencil Pro (device checks 16 and 21).
+Without a place, `select` and `tool` play their generator's call that
+takes none (`selectionChanged()`, `impactOccurred()`), and so does
+`snap`, as the light impact, since its canvas feedback needs one; before
+17.5 every kind is the plain light impact. An iPad has no motor to play
+either.
 
 ### Gamma Cloud
 
@@ -704,7 +726,8 @@ confirm: [research/pymupdf-ios.md](../research/pymupdf-ios.md).
     outermost two kept) and
     the stillness anchor, when a hold is asked (`HoldWatch`, with the time
     given), the lazy brush, the ribbon, a gesture's hover place
-    (`GestureHover`), and `HeldShape` and `ShapeHold` against every case
+    (`GestureHover`), the feedback each `haptic` kind plays
+    (`HapticFeel`), and `HeldShape` and `ShapeHold` against every case
     of `tests/shared/inkhold.json`
   - the brush table against every row of `tests/shared/inkwidth.json`
     (`InkWidthTests`), the calligraphy rows with their `nib`. Both
@@ -871,10 +894,10 @@ Only an iPad can show these, and none has been run yet:
     3 pt slop, the timer firing while WebKit's scroll view tracks, and
     how soon after the pen stops the shape shows.
 16. The shell's tilt against Safari's for the same pose, and, on an
-    Apple Pencil Pro, the squeeze's phases and the haptics
-    (`impactOccurred(at:)`): a gesture's tick at its hover place, and
-    one made with the Pencil too far off to hover (no place: the plain
-    `impactOccurred()`, which may play on no motor at all).
+    Apple Pencil Pro, the squeeze's phases and the haptics' places: a
+    gesture's tick at its hover place, and one made with the Pencil too
+    far off to hover (no place: the plain `impactOccurred()`, which may
+    play on no motor at all).
 17. The live line's frame time on a long Brush or Pencil stroke:
     `LiveStrokeView` builds the whole ribbon again every frame, a disc
     and a quadrilateral per kept sample, filled at once. If it drops
@@ -896,6 +919,13 @@ Only an iPad can show these, and none has been run yet:
 20. The ruler's line under the Pencil against the committed one, at the
     edge's offset after a zoom, and the calligraphy ribbon's swap to the
     web's flat nib.
+21. The three haptics on an Apple Pencil Pro: a held shape's
+    `pathCompleted`, a pen lasso's `selectionChanged` and a gesture's
+    light impact should each feel distinct, at its place, and *Haptics*
+    off (Settings → Reading & editing → Apple Pencil) should
+    silence all three. Their feel is tuned there, in `HapticFeel` alone.
+    The shell calls no `prepare()`, so a tick that lags its shape or its
+    selection is worth noting.
 
 ### Not built yet
 

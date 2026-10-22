@@ -776,8 +776,9 @@ state in App instead of the tree.
 
 A closing tab's last requests go with `fetch` `keepalive`, which outlives
 the page. Browsers carry at most 64 KiB of keepalive request bodies in
-flight per page and refuse a keepalive fetch past that (a network error:
-nothing is sent). So every keepalive request of the page goes through one
+flight per page, `sendBeacon`'s included (the app sends none), and
+refuse a keepalive fetch past that (a network error: nothing is sent).
+So every keepalive request of the page goes through one
 ledger, `shared/lib/keepalive.js`. It counts each request's body bytes
 from the moment it starts until its answer's body is in or it fails, and
 gives a request the room of its priority:
@@ -805,11 +806,17 @@ batch out under its own id, then the queue in batches of `MAX_OPS` under
 the ids they will take. The claim is the bytes of those bodies that go
 with keepalive from an empty page (`keepaliveShare`: a batch over the cap
 goes plain and claims nothing). Once pagehide has sent them the claim is
-0, until the page is shown again from the back-forward cache. A closing
-tab fires `visibilitychange` (hidden) before `pagehide`. Handwriting, the
-profile and the reading position flush at the first, the edits at the
-second, and their POST goes with keepalive whenever the edits alone fit
-the cap.
+0, until the page is shown again from the back-forward cache. The edits,
+handwriting, the profile and the reading position each flush at
+`pagehide` as well as on going hidden. A tab closed while it shows fires
+`pagehide` first and `visibilitychange` (hidden) after it, in one task:
+every close measured in headless Chromium and WebKit did
+([research/keepalive-abort.md](../research/keepalive-abort.md)). So all
+four go from `pagehide`, and `visibilitychange` finds nothing new to
+send. The claim keeps the edits' room whichever listener runs first:
+their POST goes with keepalive whenever the edits alone fit the cap. A
+tab hidden before it closes flushed the lower priorities when it was
+hidden.
 
 The claim holds what the edits needed when a lower priority asked. A
 tab hidden with a drawing to save sends it with keepalive. Back on the
@@ -821,8 +828,11 @@ request whose body fits beside the critical requests on their way but
 not beside everything. Its batch id makes the copy that lands second a
 replay. In Chromium and WebKit, a page leaving for another (a
 navigation, a reload) stops counting its earlier keepalive requests, so
-the keepalive copy goes. A closing tab refuses it, and only the plain
-copy goes. No request is aborted to make room: both browsers keep an
+the keepalive copy goes. So does a page that closes itself
+(`window.close()`): both browsers stop counting them before `pagehide`,
+Chromium failing their fetches with a `TypeError` and WebKit giving no
+sign. A tab closed any other way refuses the keepalive copy, and only the
+plain copy goes. No request is aborted to make room: both browsers keep an
 aborted keepalive request going and free its share a task later
 (Chromium) or once it is answered (WebKit). So a keepalive sent in the
 abort's own task is refused
@@ -969,8 +979,12 @@ drive a pagehide.
   page may cut off. So a closing tab may lose edits past 64 KiB, and edits
   that grew past their room while a drawing's upload from an earlier
   flush was still on its way (leaving for another page takes their
-  keepalive copy). An outage followed by confirming the close, or a crash,
-  still loses them.
+  keepalive copy). At a close the plain copy reached a loopback server
+  from most Chromium closes, from WebKit in 13 of 45 at 1 KiB, and from
+  any of them in 2 of 480 once a new connection took 50 or 200 ms to open
+  ([research/keepalive-abort.md](../research/keepalive-abort.md)).
+  An outage followed by confirming the close, or a crash, still loses
+  them.
 - A remote delete of a block with our text edit in flight applies at once;
   the edit then comes back as a rescue only if our base still held the
   block, else it is dropped with the block (the screen already showed the

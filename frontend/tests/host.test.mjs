@@ -21,7 +21,9 @@ async function load({ native, standalone = false } = {}) {
 }
 
 // The user script's stub: what native sends before the bundle runs waits in
-// `queue`. The flags are HostInfo's (ipad/GammaIPad/Shell/Bridge.swift).
+// `queue`. The flags are HostInfo's (ipad/GammaIPad/Shell/Bridge.swift):
+// host.js hands them over as declared, and the web acts on every one but
+// inkLooks, which only says what the shell's live line can draw.
 const FLAGS = { ink: true, inkLooks: ["pressure", "dash", "blend", "stabilize", "pencil", "calligraphy", "snap"], hold: true, pencil: true,
   pencilPhases: true, pencilRoll: true, haptics: true, servers: true };
 function stub(fields) {
