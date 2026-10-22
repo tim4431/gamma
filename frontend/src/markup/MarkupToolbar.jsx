@@ -11,7 +11,7 @@ import {
   SettingsIcon, ShapeArrowIcon, ShapeEllipseIcon, ShapeLineIcon, ShapeRectIcon, ShapesIcon, StampLineIcon, TrashIcon, TypeIcon, UndoIcon,
   XIcon, ZoomWindowIcon,
 } from "../shared/ui/Icons";
-import { ContextMenu, MenuDivider, MenuItem, SubMenuItem } from "../shared/ui/Menus";
+import { ContextMenu, MenuDivider, MenuItem, SubMenuItem, useMenuTrigger } from "../shared/ui/Menus";
 import { CommandMenuItem } from "../app/CommandMenuItem.jsx";
 import {
   DEFAULT_NIB, DEFAULT_TOOLS, MAX_TOOLS, NIB_MAX, NIB_MIN, NIB_STEP, defaultOpacity, presetSmoothing, sizesFor, toolId, visibleTools,
@@ -252,28 +252,17 @@ export function MarkupToolbar({ tools, active, options, eraserMode, eraserSize, 
   const preset = tools.find((x) => x.id === active) || null;
   const tap = (id) => (id === active ? onToggleOptions() : onPick(id));
   const rowRef = useRef(null);
-  // The strip's menus, More and a preset's Tool menu, share one state and
-  // open on the press (the recording player's pattern): the press takes
-  // the button's tooltip away (InkTooltips) and the menu comes in the same
-  // frame, rendered after the InkTooltips element so no row the pointer
-  // crosses raises a strip tooltip over it. A click with no press behind
-  // it (Enter, Space) toggles it too.
-  const [menu, setMenu] = useState(null);     // {kind: "more" | "tool" | "style", x, y}
-  const triggerRef = useRef(null);
-  const closeMenu = useCallback(() => setMenu(null), []);
-  const toggleMenu = (kind, button) => {
-    const r = button.getBoundingClientRect();
-    triggerRef.current = button;
-    setMenu((open) => (open?.kind === kind ? null : { kind, x: r.left, y: r.bottom + 4 }));
-  };
-  const menuButton = (kind) => ({
-    onPointerDown: (e) => { if (e.button === 0) toggleMenu(kind, e.currentTarget); },
-    onClick: (e) => { if (e.detail === 0) toggleMenu(kind, e.currentTarget); },
-  });
+  // The strip's menus, More (`"more"`), a preset's Tool menu (`"tool"`) and
+  // its Style picker's (`"style"`), one at a time under their buttons
+  // (Menus.jsx useMenuTrigger): they open on the press and are rendered
+  // after the InkTooltips element, so no row the pointer crosses raises a
+  // strip tooltip over them. The rows call closeMenu before they act.
+  const menus = useMenuTrigger();
+  const closeMenu = menus.close;
   // The Tool and Style menus belong to the open options row of a preset.
   useEffect(() => {
-    if ((menu?.kind === "tool" || menu?.kind === "style") && !(options === true && preset)) setMenu(null);
-  }, [menu?.kind, options, preset]);
+    if ((menus.kind === "tool" || menus.kind === "style") && !(options === true && preset)) closeMenu();
+  }, [menus.kind, closeMenu, options, preset]);
   const { props: dragProps, drag } = usePresetDrag({ tools, rowRef, onChangeTools, onStatus });
   // A press on the Text tool leaves the box being typed in focused, so a
   // tap on the armed tool opens the options row that restyles that box.
@@ -382,8 +371,8 @@ export function MarkupToolbar({ tools, active, options, eraserMode, eraserSize, 
           onClick={() => onPick(null)} title={t("Hand (V): scroll and select text; a stylus still writes")} aria-label={t("Hand")}
           aria-pressed={active === null}><HandIcon size={16} /></button>
         <span className="pdfInkSep" />
-        <button type="button" className="ctlBtn" {...menuButton("more")} title={t("More handwriting tools")} aria-label={t("More handwriting tools")}
-          aria-haspopup="menu" aria-expanded={menu?.kind === "more"} data-guide="ink.more"><MoreIcon size={16} /></button>
+        <button type="button" className="ctlBtn" {...menus.trigger("more")} title={t("More handwriting tools")} aria-label={t("More handwriting tools")}
+          data-guide="ink.more"><MoreIcon size={16} /></button>
         <button type="button" className="ctlBtn" onClick={onClose} title={t("Close the markup tools (Esc)")} aria-label={t("Close the markup tools")}><XIcon size={16} /></button>
         <span className="pdfInkSep pdfInkSepEnd" />
         {/* A press here leaves an open editor (a box's, a note's) focused: the undo is its. */}
@@ -401,9 +390,9 @@ export function MarkupToolbar({ tools, active, options, eraserMode, eraserSize, 
         <div className="pdfInkSub inkPresetOptions" data-ink-options="tool" data-guide="ink.options">
           {row(t("Style"), "inkOptStyle", <>
             {preset.kind === "pen" ? (
-              // the Style picker: its menu opens on the press, after the InkTooltips host (`menu`)
+              // the Style picker: its menu opens on the press, after the InkTooltips host (`menus`)
               <>
-                <InkStylePicker brush={preset.brush} open={menu?.kind === "style"} onOpen={(button) => toggleMenu("style", button)} />
+                <InkStylePicker brush={preset.brush} trigger={menus.trigger("style")} />
                 {brushValue(preset.brush) === "calligraphy" ? <><span className="pdfInkSep" /><NibAngle preset={preset} edit={edit} seg={seg} /></> : null}
               </>
             ) : (
@@ -446,8 +435,8 @@ export function MarkupToolbar({ tools, active, options, eraserMode, eraserSize, 
               title={t("Duplicate: a second copy of this tool to give its own colour and width")} aria-label={t("Duplicate tool")}><DuplicateIcon size={16} /></button>
             <button type="button" className="ctlBtn" onClick={remove} disabled={visible.length <= 1}
               title={t("Remove this tool from the strip")} aria-label={t("Remove tool")}><TrashIcon size={16} /></button>
-            <button type="button" className="ctlBtn" {...menuButton("tool")} title={t("Move, hide, reset or remove this tool")} aria-label={t("Tool menu")}
-              aria-haspopup="menu" aria-expanded={menu?.kind === "tool"}><MoreIcon size={16} /></button>
+            <button type="button" className="ctlBtn" {...menus.trigger("tool")} title={t("Move, hide, reset or remove this tool")}
+              aria-label={t("Tool menu")}><MoreIcon size={16} /></button>
           </>)}
         </div>
       ) : null}
@@ -529,9 +518,9 @@ export function MarkupToolbar({ tools, active, options, eraserMode, eraserSize, 
         </div>
       ) : null}
     </InkTooltips>
-    {/* The menus, outside the InkTooltips host (see `menu` above). */}
-    {menu?.kind === "more" ? (
-      <ContextMenu x={menu.x} y={menu.y} ignoreRef={triggerRef} onClose={closeMenu} className="inkStripMenu">
+    {/* The menus, outside the InkTooltips host (see `menus` above). */}
+    {menus.kind === "more" ? (
+      <ContextMenu {...menus.menu} className="inkStripMenu">
         {menuRow("ink.paste", { disabledTitle: t("Copy or cut handwriting first") })}
         {menuRow("ink.selectAll")}
         <MenuDivider />
@@ -547,12 +536,11 @@ export function MarkupToolbar({ tools, active, options, eraserMode, eraserSize, 
         </MenuItem>
       </ContextMenu>
     ) : null}
-    {menu?.kind === "style" && preset?.kind === "pen" ? (
-      <InkStyleMenu x={menu.x} y={menu.y} value={brushValue(preset.brush)} ignoreRef={triggerRef}
-        onPick={(brush) => edit({ brush })} onClose={closeMenu} />
+    {menus.kind === "style" && preset?.kind === "pen" ? (
+      <InkStyleMenu menu={menus.menu} value={brushValue(preset.brush)} onPick={(brush) => edit({ brush })} />
     ) : null}
-    {menu?.kind === "tool" && preset ? (
-      <ContextMenu x={menu.x} y={menu.y} ignoreRef={triggerRef} onClose={closeMenu} className="inkStripMenu">
+    {menus.kind === "tool" && preset ? (
+      <ContextMenu {...menus.menu} className="inkStripMenu">
         <MenuItem icon={ChevronLeftIcon} disabled={visibleIndex <= 0} onMouseDown={keepFocus} onClick={() => { closeMenu(); move(-1); }}>{t("Move left")}</MenuItem>
         <MenuItem icon={ChevronRightIcon} disabled={visibleIndex < 0 || visibleIndex >= visible.length - 1} onMouseDown={keepFocus}
           onClick={() => { closeMenu(); move(1); }}>{t("Move right")}</MenuItem>

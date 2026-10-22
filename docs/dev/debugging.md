@@ -447,9 +447,11 @@ first keeps its last look. The
 `check` workflow runs the suite on every PR and uploads those folders as the
 `e2e-failures-<shard>` artifact. `harness.mjs` holds the server lifecycle, `Account` (session
 cookie + `X-Gamma-Workspace` for API seeding, browser contexts logged in as
-that account), `makePdf` (a small real PDF with a text layer), `step()`, and
+that account), `makePdf` (a small real PDF with a text layer), `step()`,
 `assertOpensInPlace` (a menu or card read frame by frame: no frame of it
-where it then moves, [ui-design.md](ui-design.md#menus-and-popups-open-in-place)).
+where it then moves, [ui-design.md](ui-design.md#menus-and-popups-open-in-place)),
+and `assertMenuFrom` (a toolbar button's menu 4 px below or above that
+button, by its left edge, [ui-design.md](ui-design.md#menus-and-submenus)).
 
 The run is split into groups (`GROUPS` in `tests/e2e/select.mjs`, one per
 scenario file except `notes-pdf-share`, whose scenarios hand data along;

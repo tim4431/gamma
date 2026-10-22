@@ -1,9 +1,10 @@
 // The gesture rules shared by mouse and finger (shared/ui/press.js): what
 // counts as a double tap, the stand-in event a held finger gives a menu
-// opener, the props a call site spreads, and when a dialog's backdrop closes it.
+// opener, the props a call site spreads, which press or click opens a menu
+// button's menu, and when a dialog's backdrop closes it.
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { backdropPress, doublePress, isDoubleTap, menuPress, pressAt } from "../src/shared/ui/press.js";
+import { backdropPress, doublePress, isDoubleTap, menuPress, pressAt, triggerPress } from "../src/shared/ui/press.js";
 
 const el = {}, other = {};
 const tapAt = (t, x = 100, y = 100, on = el) => ({ el: on, t, x, y });
@@ -39,6 +40,19 @@ test("no handler, no props", () => {
   assert.deepEqual(menuPress(undefined), {});
   assert.deepEqual(doublePress(null), {});
   assert.equal(menuPress(() => {})["data-press"], "menu");
+});
+
+test("a menu button: a pointer's press and a click no press led to run it; the click after a press does not", () => {
+  const ran = [];
+  const props = triggerPress((e) => ran.push(e.what));
+  props.onPointerDown({ button: 0, pointerType: "mouse", what: "mouse" });
+  props.onClick({ detail: 1, what: "the mouse's click" });
+  props.onPointerDown({ button: 0, pointerType: "touch", what: "finger" });
+  props.onPointerDown({ button: 0, pointerType: "pen", what: "pen" });
+  props.onPointerDown({ button: 2, pointerType: "mouse", what: "right button" });
+  props.onPointerDown({ button: 1, pointerType: "mouse", what: "middle button" });
+  props.onClick({ detail: 0, what: "Enter" });
+  assert.deepEqual(ran, ["mouse", "finger", "pen", "Enter"]);
 });
 
 test("one release is counted once, by the innermost element it reaches", () => {

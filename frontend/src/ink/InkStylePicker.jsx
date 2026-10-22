@@ -3,14 +3,16 @@
 // (markup/MarkupToolbar.jsx) and the selection menu's Style row
 // (InkLayer.jsx InkSelectionMenu). The picker is a button showing a short
 // stroke drawn in the current brush's look, its name and a ▾; its press
-// opens InkStyleMenu, a ContextMenu of the five brushes the caller renders
-// outside its InkTooltips host (a portal's events bubble to the host, so
-// every row the pointer crossed would raise a tooltip), the way the strip's
-// other menus open: on the press, so the menu takes the tooltip's place in
-// the same frame. Brush values: 'pen' (the plain pen, the absent key in a
-// file or a preset), 'monoline' (shown as Ballpoint), 'brush', 'pencil',
-// 'calligraphy'. NibPreview is a calligraphy pen's nib at its angle, for
-// its options row.
+// opens InkStyleMenu, a ContextMenu of the five brushes. Both take their
+// props from the caller's useMenuTrigger (shared/ui/Menus.jsx), the picker
+// its `trigger`, the menu its `menu`, so it opens the way the strip's other
+// menus do: on the press, the menu taking the tooltip's place in the same
+// frame. The caller renders the menu outside its InkTooltips host (a
+// portal's events bubble to the host, so every row the pointer crossed
+// would raise a tooltip). Brush values: 'pen' (the plain pen, the absent
+// key in a file or a preset), 'monoline' (shown as Ballpoint), 'brush',
+// 'pencil', 'calligraphy'. NibPreview is a calligraphy pen's nib at its
+// angle, for its options row.
 import { CheckIcon, ChevronDownIcon } from "../shared/ui/Icons";
 import { ContextMenu, MenuItem } from "../shared/ui/Menus";
 import { BRUSH_ORDER, DEFAULT_NIB, encodeStroke, strokeNib, strokePath } from "./ink.js";
@@ -67,17 +69,16 @@ function BrushPreview({ brush = "pen" }) {
 const PREVIEW_ICONS = Object.fromEntries(BRUSH_CHOICES.map(([value]) => [value, () => <BrushPreview brush={value} />]));
 
 // The picker's button. `brush` the current brush (a key or 'pen'), `mixed`
-// when the selection's pens differ (the button then says "Mixed"), `open`
-// whether its menu stands open, `onOpen(button)` toggles it — on the press
-// for a pointer, on the click for a keyboard (a click with no press behind
-// it, e.detail 0).
-export function InkStylePicker({ brush, mixed = false, open = false, title, onOpen }) {
+// when the selection's pens differ (the button then says "Mixed"),
+// `trigger` the props its owner's useMenuTrigger gives the button
+// (trigger(kind)): the press, the keyboard's click (a click with no press
+// behind it, e.detail 0), aria-haspopup and aria-expanded. The button shows
+// modeActive while its menu stands open.
+export function InkStylePicker({ brush, mixed = false, title, trigger }) {
   const name = mixed ? t("Mixed") : brushName(brush);
   return (
-    <button type="button" className={"ctlBtn inkStyleBtn" + (open ? " modeActive" : "")} aria-haspopup="menu" aria-expanded={open}
-      aria-label={t("Style: {brush}", { brush: name })} title={title ?? t("Pen style · Shift+[ ]")}
-      onPointerDown={(e) => { if (e.button === 0) onOpen(e.currentTarget); }}
-      onClick={(e) => { if (e.detail === 0) onOpen(e.currentTarget); }}>
+    <button type="button" className={"ctlBtn inkStyleBtn" + (trigger["aria-expanded"] ? " modeActive" : "")} {...trigger}
+      aria-label={t("Style: {brush}", { brush: name })} title={title ?? t("Pen style · Shift+[ ]")}>
       {mixed ? null : <BrushPreview brush={brush} />}
       <span className="inkStyleName">{name}</span>
       <ChevronDownIcon size={14} aria-hidden="true" />
@@ -85,19 +86,22 @@ export function InkStylePicker({ brush, mixed = false, open = false, title, onOp
   );
 }
 
-// The picker's menu at (x, y): the five brushes, each led by its preview,
-// the current one (`value`; none when mixed) checked; onPick(value) with
-// 'pen' | 'monoline' | 'brush' | 'pencil' | 'calligraphy'. `ignoreRef` is the button, so
-// its own press toggles the menu instead of dismissing it.
-export function InkStyleMenu({ x, y, value, ignoreRef, onPick, onClose }) {
+// The picker's menu: the five brushes, each led by its preview, the
+// current one (`value`; none when mixed) checked; onPick(value) with
+// 'pen' | 'monoline' | 'brush' | 'pencil' | 'calligraphy'. `menu` is the
+// open menu's ContextMenu props from the same useMenuTrigger as the
+// picker's `trigger`: its place under the picker, the picker as its
+// ignoreRef (so the picker's own press toggles the menu instead of
+// dismissing it) and onClose, which a row calls before it picks.
+export function InkStyleMenu({ menu, value, onPick }) {
   return (
-    <ContextMenu x={x} y={y} ignoreRef={ignoreRef} onClose={onClose} className="inkStripMenu inkStyleMenu">
+    <ContextMenu {...menu} className="inkStripMenu inkStyleMenu">
       {/* a press here is the menu's, never the page's under it */}
       <div role="menu" aria-label={t("Pen style")} onPointerDown={(e) => e.stopPropagation()}>
         {BRUSH_CHOICES.map(([choice, label, title]) => (
           <MenuItem key={choice} role="menuitemradio" aria-checked={value === choice} icon={PREVIEW_ICONS[choice]} title={t(title)}
             trailing={value === choice ? <CheckIcon size={14} className="ctxMenuCheck" /> : null}
-            onMouseDown={(e) => e.preventDefault()} onClick={() => { onClose(); onPick(choice); }}>
+            onMouseDown={(e) => e.preventDefault()} onClick={() => { menu.onClose(); onPick(choice); }}>
             {t(label)}
           </MenuItem>
         ))}

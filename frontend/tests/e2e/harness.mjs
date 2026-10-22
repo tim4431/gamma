@@ -353,6 +353,18 @@ export async function assertOpensInPlace(page, selector, act, { ms = 600, what =
   if (!seen) throw new Error(`${what} never showed`);
 }
 
+// Asserts where an open menu stands from the button that opened it
+// (useMenuTrigger, placement.js menuAnchor): its left edge on the button's,
+// and its top 4 px under the button (`side` "below") or its bottom 4 px
+// over it ("above").
+export async function assertMenuFrom(menu, button, side, what = "the menu") {
+  const m = await menu.boundingBox(), b = await button.boundingBox();
+  const gap = side === "above" ? b.y - (m.y + m.height) : m.y - (b.y + b.height);
+  if (Math.abs(gap - 4) > 1 || Math.abs(m.x - b.x) > 1) {
+    throw new Error(`${what} is not 4 px ${side} its button, by its left edge: menu ${JSON.stringify(m)}, button ${JSON.stringify(b)}`);
+  }
+}
+
 // ---------------------------------------------------------------------------
 // PDFs: a small but real PDF (Helvetica text, one content stream per page)
 // that pdf.js renders with a selectable text layer.

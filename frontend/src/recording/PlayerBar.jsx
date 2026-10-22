@@ -7,7 +7,7 @@
 // Every control is one icon button of the same height; the scrubber takes
 // the width that is left. Keys while the bar is open and no editor has the
 // focus: Space, ← →, Escape.
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef } from "react";
 import { InkTooltips, useInkVersion } from "../ink/InkLayer";
 import * as inkStore from "../ink/inkStore";
 import { fmtClock, nextTick, writingTicks } from "../replay/clock.js";
@@ -15,7 +15,7 @@ import * as playback from "../replay/playback.js";
 import { MODES } from "../replay/playback.js";
 import { useReplay } from "../replay/useFrame.js";
 import { REPLAY_RATES } from "../app/prefDefs.js";
-import { ContextMenu, MenuItem } from "../shared/ui/Menus";
+import { ContextMenu, MenuItem, useMenuTrigger } from "../shared/ui/Menus";
 import {
   Back10Icon, CheckIcon, ContrastIcon, EyeIcon, Forward10Icon, LocateIcon, PauseIcon, PenIcon, PlayIcon, SkipBackIcon,
   SkipForwardIcon, XIcon,
@@ -48,9 +48,10 @@ const typing = (el) => !!el?.closest?.("input, textarea, select, [contenteditabl
 export function PlayerBar({ block, inkBlocks, blocks, prefs, onShow }) {
   const state = useReplay();
   useInkVersion();
-  const [menu, setMenu] = useState(null); // {kind: "mode" | "rate", x, y}
-  const triggerRef = useRef(null);         // the open menu's button: a press on it closes, never reopens
-  const closeMenu = useCallback(() => setMenu(null), []);
+  // The mode and speed menus (`"mode"`, `"rate"`), opening on the press
+  // (Menus.jsx useMenuTrigger) up from the bar, the side of its tips
+  // (InkTooltips above).
+  const menus = useMenuTrigger({ side: "above" });
   const clock = state?.scope.recording ? state.clock : null;
   const groups = useMemo(() => (inkBlocks || []).map((b) => ({ id: b.id, ink: inkStore.inkFor(b) })).filter((g) => g.ink),
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -78,11 +79,11 @@ export function PlayerBar({ block, inkBlocks, blocks, prefs, onShow }) {
       if (e.key === " ") { e.preventDefault(); playback.toggle(); }
       else if (e.key === "ArrowLeft") { e.preventDefault(); playback.seek(playback.now().t - SKIP_MS); }
       else if (e.key === "ArrowRight") { e.preventDefault(); playback.seek(playback.now().t + SKIP_MS); }
-      else if (e.key === "Escape" && !menu) { e.preventDefault(); playback.stop(); }
+      else if (e.key === "Escape" && !menus.kind) { e.preventDefault(); playback.stop(); }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [clock, menu]);
+  }, [clock, menus.kind]);
 
   if (!clock) return null;
   const { t: at, playing, rate, mode } = state;
@@ -92,21 +93,6 @@ export function PlayerBar({ block, inkBlocks, blocks, prefs, onShow }) {
     if (tick) playback.seek(Math.max(0, tick.t - state.leadIn));
     else playback.seek(dir > 0 ? duration : 0);
   };
-  // A menu opens on the press, as a native menu does, not on the click that
-  // follows it: the press takes the button's tooltip away (InkTooltips), and
-  // with the menu coming in the same frame there is no gap between the two
-  // to flicker. A click with no press behind it (Enter, Space) toggles it
-  // too. The updater sees the close an open menu's outside press queued
-  // first, so a press on the other button swaps one menu for the other.
-  const toggleMenu = (kind, button) => {
-    const r = button.getBoundingClientRect();
-    triggerRef.current = button;
-    setMenu((open) => (open?.kind === kind ? null : { kind, x: r.left, y: r.top - 4 }));
-  };
-  const menuButton = (kind) => ({
-    onPointerDown: (e) => { if (e.button === 0) toggleMenu(kind, e.currentTarget); },
-    onClick: (e) => { if (e.detail === 0) toggleMenu(kind, e.currentTarget); },
-  });
   const ModeIcon = MODE_ICONS[mode] || ContrastIcon;
   const joins = clock.segments.slice(1).map((seg, i) => {
     const before = clock.segments[i];
@@ -148,12 +134,12 @@ export function PlayerBar({ block, inkBlocks, blocks, prefs, onShow }) {
             <SkipForwardIcon size={15} />
           </button>
           <span className="replaySep" aria-hidden="true" />
-          <button type="button" onMouseDown={keepFocus} className={"ctlBtn" + (menu?.kind === "mode" ? " modeActive" : "")} {...menuButton("mode")}
-            aria-haspopup="menu" aria-expanded={menu?.kind === "mode"} aria-label={t(MODE_TITLES[mode])} data-role="mode">
+          <button type="button" onMouseDown={keepFocus} className={"ctlBtn" + (menus.kind === "mode" ? " modeActive" : "")} {...menus.trigger("mode")}
+            aria-label={t(MODE_TITLES[mode])} data-role="mode">
             <ModeIcon size={16} />
           </button>
-          <button type="button" onMouseDown={keepFocus} className={"ctlBtn replayRate" + (menu?.kind === "rate" ? " modeActive" : "")} {...menuButton("rate")}
-            aria-haspopup="menu" aria-expanded={menu?.kind === "rate"} aria-label={t("Speed {rate}×", { rate })}>
+          <button type="button" onMouseDown={keepFocus} className={"ctlBtn replayRate" + (menus.kind === "rate" ? " modeActive" : "")} {...menus.trigger("rate")}
+            aria-label={t("Speed {rate}×", { rate })}>
             {rate}×
           </button>
           <button type="button" onMouseDown={keepFocus} className={"ctlBtn" + (prefs.follow ? " modeActive" : "")} aria-pressed={prefs.follow}
@@ -166,24 +152,25 @@ export function PlayerBar({ block, inkBlocks, blocks, prefs, onShow }) {
           </button>
         </div>
       </InkTooltips>
-      {menu ? (
-        <PlayerMenu menu={menu} mode={mode} rate={rate} triggerRef={triggerRef} onClose={closeMenu}
-          onMode={(m) => { playback.setMode(m); prefs.setMode(m); setMenu(null); }}
-          onRate={(r) => { playback.setRate(r); prefs.setRate(r); setMenu(null); }} />
+      {menus.menu ? (
+        <PlayerMenu kind={menus.kind} menu={menus.menu} mode={mode} rate={rate}
+          onMode={(m) => { playback.setMode(m); prefs.setMode(m); menus.close(); }}
+          onRate={(r) => { playback.setRate(r); prefs.setRate(r); menus.close(); }} />
       ) : null}
     </>
   );
 }
 
-// The mode or speed menu, apart from the bar: the bar's re-render on every
-// frame of the replay leaves the open menu as it is, and the menu sits
-// outside the InkTooltips host, whose children's events a portal still
-// bubbles to — inside it, every row the pointer crossed raised one of the
-// bar's tooltips over the menu.
-const PlayerMenu = React.memo(function PlayerMenu({ menu, mode, rate, triggerRef, onClose, onMode, onRate }) {
+// The mode or speed menu (`kind`), apart from the bar: the bar's re-render
+// on every frame of the replay leaves the open menu as it is (`menu`, the
+// hook's ContextMenu props, stays the same object until the next toggle),
+// and the menu sits outside the InkTooltips host, whose children's events
+// a portal still bubbles to — inside it, every row the pointer crossed
+// raised one of the bar's tooltips over the menu.
+const PlayerMenu = React.memo(function PlayerMenu({ kind, menu, mode, rate, onMode, onRate }) {
   return (
-    <ContextMenu x={menu.x} y={menu.y} anchorBottom ignoreRef={triggerRef} onClose={onClose}>
-      {menu.kind === "mode" ? MODES.map((m) => {
+    <ContextMenu {...menu}>
+      {kind === "mode" ? MODES.map((m) => {
         const Icon = MODE_ICONS[m];
         return (
           <MenuItem key={m} icon={Icon} title={t(MODE_TITLES[m])} trailing={mode === m ? <CheckIcon size={14} /> : null}

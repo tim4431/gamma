@@ -185,6 +185,7 @@ already exists. Bespoke CSS classes are for **layout only**.
 | `aiKeyInput` | every text/number/password input in dialogs and settings |
 | `switch` / `switchTrack` | every on/off toggle |
 | `MenuSelect` / `ActionMenu` ([Menus.jsx](../../frontend/src/shared/ui/Menus.jsx)) | every dropdown: Codex-style pill trigger + checkmarked `ContextMenu`. No native `<select>` anywhere |
+| `useMenuTrigger` ([Menus.jsx](../../frontend/src/shared/ui/Menus.jsx)) | the menus a toolbar's buttons open on the press, one at a time per toolbar: the recording player's mode and speed, the tool strip's More, Tool and Style, the selection menu's Style ([below](#menus-and-submenus)) |
 | `MenuItem` / `MenuLabel` / `MenuDivider` / `SubMenuItem` ([Menus.jsx](../../frontend/src/shared/ui/Menus.jsx)) | every row inside a menu, context or popover: icon column + ellipsizing label (+ `danger`, `trailing`, `keys`); `MenuDivider` between groups. `SubMenuItem` is the nested flyout — hover-opened, safe-triangle guarded; a popover menu hosts one through `MenuScope` |
 | `categoryTag`, `uiTag` | chips and small badges |
 | `KeyCaps` / `KeyBinding` ([SettingsKit.jsx](../../frontend/src/settings/SettingsKit.jsx); `KeyCaps` lives in [shared/ui/KeyCaps.jsx](../../frontend/src/shared/ui/KeyCaps.jsx), shared with the guide) | a keyboard chord as `.keyCap` key caps; `KeyBinding` is the rebindable version (click, press the new keys; reset button when changed) — [hotkeys.md](hotkeys.md) |
@@ -413,6 +414,33 @@ only the dropdown. A `ContextMenu` rendered inside another one's rows
 that menu: a press in it never dismisses the menu it came from, and
 Escape closes it first (`NestCtx` in Menus.jsx).
 
+A menu a toolbar's button opens comes from `useMenuTrigger({side})`
+(Menus.jsx). It opens on the button's press, as a native menu does, not on
+the click that follows (`triggerPress`, [below](#gestures-shareduipressjs)):
+a primary press, from a mouse's left button, a finger or a pen, opens or
+closes it, the click after it does nothing, and a click no press led to
+(Enter or Space on the focused button) toggles it. The press takes the
+button's tooltip away (`InkTooltips`) and the menu comes in the same frame.
+One hook holds the menus of one toolbar, one open at a time:
+`trigger(kind)` is a button's props (the press, the keyboard's click,
+`aria-haspopup="menu"` and `aria-expanded`), `menu` the open menu's
+`ContextMenu` props, and `close()` what a row calls before it acts. The
+pressed button is the open menu's `ignoreRef`, so a press on it closes the
+menu rather than closing and reopening it. A press on another button of
+the toolbar swaps the menus: the open menu's outside press queues its close
+first, so the new kind opens. `side` (`"below"` or `"above"`) places the
+menus from their buttons, each by its button's left edge (`menuAnchor`,
+[below](#menus-and-popups-open-in-place)). The menu is rendered outside any
+`InkTooltips` host: React bubbles a portal's events up to the host, which
+would raise a tooltip for every row the pointer crosses. Nothing moves the
+focus: the menu takes none, so after Escape closes it the focus is where it
+was (on the button, when the keyboard opened it). The recording
+player's mode and speed menus open above the bar; the tool strip's More,
+Tool and Style menus and the selection menu's Style menu open below their
+buttons. `MenuSelect` and `ActionMenu` still open on the click
+(`useDropdown`), and `MenuButton` remains a row's stand-in for its
+right-click menu ([below](#menubutton)).
+
 A menu that lists commands lists their ids: `CommandMenuItem`
 (`app/CommandMenuItem.jsx`) draws a catalog command ([hotkeys.md](hotkeys.md))
 as a `MenuItem` with its label, its glyph (`app/commandIcons.jsx`) and the
@@ -446,6 +474,12 @@ to place it:
   is the pure geometry (`tests/placement.test.mjs`): its own side of the
   point, the other side (`flipY`) when its own has no room and that one
   has, then inside the window and the `bounds` band.
+- `menuAnchor(rect, {side})` is where a menu that opens from a button
+  goes, as `ContextMenu`'s anchor, from the button's rect: its left edge
+  on the button's, 4 px under it (`side: "below"`) or over it (`"above"`,
+  with `anchorBottom`). Pure too (`tests/placement.test.mjs`);
+  `useMenuTrigger` places its menus with it, and the browser suite's
+  `assertMenuFrom` (harness.mjs) checks each of them there.
 - `useFloatingPosition(ref, place, deps, {follow})` measures and places it
   in a layout effect, before the browser paints it, and returns null until
   then, while the surface stands hidden. When its size changes later (a row
@@ -617,6 +651,14 @@ never learns which gesture it was.
   same element, within 400 ms and 30 px, are counted here, each once, by
   the innermost element it reaches. The browser's `dblclick` after a
   counted double tap is ignored.
+- **`triggerPress(run)`**: a button whose menu opens on the press, as a
+  native menu does, not on the click that follows. `run` is called for a
+  press with the primary button (a mouse's left button; a finger's or a
+  pen's contact is button 0 too) and for a click no press led to
+  (`detail` 0: Enter or Space on the focused button). The click after a
+  press belongs to the press, so it does nothing; the right and middle
+  buttons do nothing either. `useMenuTrigger`
+  ([Menus and submenus](#menus-and-submenus)) is built on it.
 - **The timings** are exported (`HOLD_MS`, `HOLD_SLOP`, `DOUBLE_MS`,
   `DOUBLE_SLOP`) for gestures these helpers do not cover: the strip's
   preset drag (`markup/MarkupToolbar.jsx`) and the finger-undo chords
@@ -625,10 +667,13 @@ never learns which gesture it was.
   tabs, the Back button, highlights, their note badges and PDF links, the
   translate button, the note object frame, file chips, chat history rows.
   `doublePress`: the dock grip's fold, a diagram's source, a picture's
-  zoom, a resize grip's natural size. A widget built outside React (the
-  editor's picture and table widgets, `BlockCmEditor.jsx`) attaches the
-  same handlers with `addEventListener`. `tests/press.test.mjs` covers the
-  counting.
+  zoom, a resize grip's natural size. `triggerPress`: the buttons
+  `useMenuTrigger` drives (the recording player's mode and speed, the tool
+  strip's More, Tool and Style, the selection menu's Style). A widget built
+  outside React (the editor's picture and table widgets,
+  `BlockCmEditor.jsx`) attaches the same handlers with `addEventListener`.
+  `tests/press.test.mjs` covers the counting and which press or click
+  `triggerPress` answers.
 
 ### Device questions: `shared/lib/pointer.js`
 
@@ -755,21 +800,24 @@ own controls.
 1. A menu on an item: spread `menuPress(open)` where `onContextMenu`
    would go, and give the menu a visible way in, a `MenuButton` in a
    `.rowMenuHost` row or a button of its own.
-2. A second action on an item: spread `doublePress(run)`, never
+2. A menu from a toolbar button: `useMenuTrigger`, the button spreading
+   its `trigger(kind)` and the menu rendered outside the `InkTooltips`
+   host ([Menus and submenus](#menus-and-submenus)).
+3. A second action on an item: spread `doublePress(run)`, never
    `onDoubleClick` alone.
-3. No `pointerType`, `(pointer: coarse)` or `maxTouchPoints` in feature
+4. No `pointerType`, `(pointer: coarse)` or `maxTouchPoints` in feature
    code: ask `pointer.js`.
-4. A control shown on hover: hide it under `@media (hover: hover)` or
+5. A control shown on hover: hide it under `@media (hover: hover)` or
    with `pointer-events: none` beside its `opacity: 0`, add the
    `:focus-visible` twin, and decide what shows it where nothing hovers.
-5. Sizes from `--ctl-*`, and what sits around them by `calc()` of them.
-6. Drag alone is not enough: what a drag files or orders has a menu row
+6. Sizes from `--ctl-*`, and what sits around them by `calc()` of them.
+7. Drag alone is not enough: what a drag files or orders has a menu row
    too (the folder menu's Move to, Move up, Move down).
-7. A text field's Enter handler returns early while an input method
+8. A text field's Enter handler returns early while an input method
    composes (`composing` in `chat/enterKey.js`), and an `autoFocus` that
    would raise an on-screen keyboard is `!touchTyping()`. A username or
    account field turns capitalization and correction off.
-8. A file pick goes through `pickFiles`.
+9. A file pick goes through `pickFiles`.
 
 ## Block editor interactions
 
@@ -874,10 +922,10 @@ preview), and image/table paste with the ordinary row editor. The card footer na
 | `editor/LatexEditor.jsx` | LaTeX aids while editing: the live preview docked to the editor column with a caret marker, the `\command` popup, `renderKatex`/`useCaretAnchored` shared helpers; `editor/latexCompletion.js` is the pure catalog (prefix/abbreviation/fuzzy tiers, snippets, Tab-out navigation) it re-exports; `editor/latexInput.js` supplies scalable delimiter pairing. See [LaTeX editing](latex_editing.md) for shortcuts and browser checks |
 | `library/RecentlyDeleted.jsx` | the Recently deleted dialog: a `SubDialog` of `aiProvRow` rows (title, who deleted it and when, days left, folder) with Restore and a delete-for-good icon button behind App's confirm box, Empty in its `DialogButtons` ([home_library.md](home_library.md) "Recently deleted") |
 | `library/libraryUtils.js` | the library's folder and label helpers over the folder and label trees ([home_library.md](home_library.md) "Folders and labels"), and `pageAttachment`, what a page carries |
-| `shared/ui/Widgets.jsx`, `shared/ui/Menus.jsx`, `shared/ui/Icons.jsx` | shared components; `OpenTabs` in Widgets is the topbar's tab strip (a kind icon per tab, pinned tabs first, full width with a pin in place of the close button, the active tab kept in view clear of the right-edge fade, and on overflow a "⌄ n" popover listing every tab with a filter) |
+| `shared/ui/Widgets.jsx`, `shared/ui/Menus.jsx`, `shared/ui/Icons.jsx` | shared components; `OpenTabs` in Widgets is the topbar's tab strip (a kind icon per tab, pinned tabs first, full width with a pin in place of the close button, the active tab kept in view clear of the right-edge fade, and on overflow a "⌄ n" popover listing every tab with a filter); `useMenuTrigger` in Menus is the menus a toolbar's buttons open on the press ([Menus and submenus](#menus-and-submenus)) |
 | `shared/ui/wheelPan.js` | `useWheelPan`: a plain mouse wheel pans a sideways strip (the card strips, the tab strip) |
 | `shared/ui/listKeys.js` | `stepList`: ↑/↓ between a search box and the results listed under it (Settings search, the move-to-page filter, the chat's page picker) |
 | `shared/ui/DiagramFigure.jsx`, `shared/ui/ResizeGrip.jsx` | the diagram figure (a Mermaid diagram inline, or a sanitized SVG drawing shown as an image) with its toolbar of `ctlBtn`s, ended by a note's object "⋯" (`tools`) ([diagrams.md](diagrams.md)); the two-sided drag grips (`ResizeGrips`) + `useDragResize` hook that size centred note images and diagrams alike, a double-click or double tap on a grip restoring the natural size |
-| `shared/ui/press.js`, `shared/lib/pointer.js`, `shared/lib/pickFiles.js` | one behaviour for mouse and finger (above): `menuPress` / `doublePress` / `pressAt`, the three device questions, and the system file picker opened from code |
+| `shared/ui/press.js`, `shared/lib/pointer.js`, `shared/lib/pickFiles.js` | one behaviour for mouse and finger (above): `menuPress` / `doublePress` / `pressAt` / `triggerPress`, the three device questions, and the system file picker opened from code |
 | `app/CommandMenuItem.jsx` | a catalog command as a menu row (the View menu's Undo, Redo, Go to page, Command palette; [Menus and submenus](#menus-and-submenus)) |
 | `shared/ui/menuAim.js` | pointer-trajectory ("safe triangle") hover intent for hierarchical menus — UI-agnostic, consumed by `shared/ui/Menus.jsx` |

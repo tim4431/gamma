@@ -7,6 +7,7 @@
 // an init script stands in for MediaRecorder and Audio. The server's side
 // is backend/tests/test_recordings.py.
 import { waitForPdf } from "./pdf.mjs";
+import { assertMenuFrom } from "../harness.mjs";
 
 async function drawLine(page, from, to) {
   await page.mouse.move(from[0], from[1]);
@@ -165,6 +166,8 @@ export async function recordingScenarios({ server, browser, alice, makePdf, step
     assert(held.menu && !held.tooltip, `the press swaps the tooltip for the menu at once: ${JSON.stringify(held)}`);
     await page.mouse.up();
     await page.waitForSelector(".ctxMenu .ctxMenuItem", { timeout: 5000 });
+    // up from the bar, by the button's left edge
+    await assertMenuFrom(page.locator(".ctxMenu"), page.locator(".replayBar button[data-role='mode']"), "above", "the mode menu");
     await onMode(9, 0);                   // the smallest move a hand makes, off the glyph
     await sleep(500);
     assert(!(await page.$(".inkTooltip")), "the press keeps the trigger's tooltip away while the pointer stays on it");
@@ -174,14 +177,30 @@ export async function recordingScenarios({ server, browser, alice, makePdf, step
     await onMode();
     await page.mouse.down(); await page.mouse.up();
     await until(async () => !(await page.$(".ctxMenu")), { what: "mode menu closed by a second press" });
+    // A press on the speed button while the mode menu stands open swaps the
+    // two: one menu, the speed's, and its button the one expanded. A second
+    // press on the speed button closes it.
+    await onMode();
+    await page.mouse.down(); await page.mouse.up();
+    await page.waitForSelector(".ctxMenu .ctxMenuItem", { timeout: 5000 });
+    await page.click(".replayBar .replayRate");
+    await until(async () => (await page.locator(".ctxMenu .ctxMenuItem").allTextContents()).join(" ") === "0.7× 1× 1.25× 1.5× 2×",
+      { what: "the speed menu in the mode menu's place" });
+    assertEq(await page.locator(".ctxMenu").count(), 1, "one menu at a time");
+    assertEq(await page.getAttribute(".replayBar button[data-role='mode']", "aria-expanded"), "false", "the mode button no longer expanded");
+    assertEq(await page.getAttribute(".replayBar .replayRate", "aria-expanded"), "true", "the speed button expanded");
+    await assertMenuFrom(page.locator(".ctxMenu"), page.locator(".replayBar .replayRate"), "above", "the speed menu, from its own button");
+    await page.click(".replayBar .replayRate");
+    await until(async () => !(await page.$(".ctxMenu")), { what: "speed menu closed by a second press" });
     // Enter (a click with no press behind it) opens it too; Escape closes
-    // the menu and leaves the player.
+    // the menu and leaves the player, the focus still on the button.
     await page.focus(".replayBar button[data-role='mode']");
     await page.keyboard.press("Enter");
     await page.waitForSelector(".ctxMenu .ctxMenuItem", { timeout: 5000 });
     await page.keyboard.press("Escape");
     await until(async () => !(await page.$(".ctxMenu")), { what: "mode menu closed by Escape" });
     assert(await page.$(".replayBar"), "Escape on the open menu leaves the player");
+    assert(await page.$eval(".replayBar button[data-role='mode']", (el) => el === document.activeElement), "the focus stays on the mode button");
     await lift.evaluate((el) => el.remove());
     // back to the start, then a tap on the stroke plays from just before it was written
     await page.$eval(".replayScrub input[type='range']", (el) => {
