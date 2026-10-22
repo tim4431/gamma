@@ -6,12 +6,14 @@ gamma-ink v2, the typed text, and the helpers the import shares
 
 import contextlib
 import io
+import json
 import math
 import plistlib
 import struct
 import zipfile
 from array import array
 from collections import Counter
+from pathlib import Path
 
 import pytest
 
@@ -23,6 +25,7 @@ from gamma.recording import mp4_duration_ms
 
 PDF = "A1B2C3D4-0000-4000-8000-000000000001.pdf"
 WORKED = [(10, 20), (12, 20), (14, 22), (16, 22)]
+SHARED = Path(__file__).resolve().parents[2] / "tests" / "shared"
 
 
 # --- helpers ------------------------------------------------------------------------------
@@ -50,6 +53,10 @@ def frame(k=1.0, width=612.0, height=792.0, pdf=PDF, page=1) -> nm.Frame:
 
 def decoded(stroke: dict) -> list[dict]:
     return ink.decode_stroke(ink.Stroke.model_validate({**stroke, "id": "n0"}))
+
+
+def xy(stroke: dict) -> list[tuple]:
+    return [(s["x"], s["y"]) for s in decoded(stroke)]
 
 
 # --- the fixture writer ------------------------------------------------------------------
@@ -605,12 +612,15 @@ def test_lines_and_arrows():
                          ("line", fx.shape(startPt=(10, 90), endPt=(110, 90), controlPoint1=(60, 140), arrow=1))])
     line, arrow, curved = (nm.shape_stroke(s, frame()) for s in note.shapes)
     assert line["shape"] == {"kind": "line", "params": {"x1": 10, "y1": 10, "x2": 110, "y2": 10}}
-    assert line["pen"] is False and line["ch"] == "xy" and len(decoded(line)) == 101
+    assert line["pen"] is False and line["ch"] == "xy" and xy(line) == [(10, 10), (110, 10)]  # its two ends
     assert arrow["shape"]["kind"] == "arrow" and "head" not in arrow["shape"]["params"]
-    tip = [(s["x"], s["y"]) for s in decoded(arrow)]
+    tip = xy(arrow)
+    assert tip == ink.shape_samples("arrow", arrow["shape"]["params"])
     assert (110, 50) in tip and tip[-1] == pytest.approx((110 - 24 * math.cos(math.radians(30)),
                                                           50 + 24 * math.sin(math.radians(30))), abs=0.01)
     assert "shape" not in curved and decoded(curved)[0]["x"] == 10
+    head = xy(curved)[xy(curved).index((110, 90)):]  # the head after the curve, its legs cut as an arrow's are
+    assert len(head) > 5 and max(math.dist(a, b) for a, b in zip(head, head[1:])) <= ink.SHAPE_STEP + 0.01
 
 
 def test_rectangles_triangles_and_ellipses():
@@ -634,8 +644,14 @@ def test_rectangles_triangles_and_ellipses():
                                                                  "y3": 30}}
     assert ellipse["shape"] == {"kind": "ellipse", "params": {"cx": 10, "cy": 30, "rx": 30, "ry": 10, "angle": 90}}
     h = (20 / 40) ** 2
-    assert len(decoded(ellipse)) == math.ceil(math.pi * 40 * (1 + 3 * h / (10 + math.sqrt(4 - 3 * h)))) + 1
+    assert len(decoded(ellipse)) == math.ceil(math.pi * 40 * (1 + 3 * h / (10 + math.sqrt(4 - 3 * h))) / 2) + 1
+    for stroke in (rect, triangle, ellipse):  # the samples shapes.js draws the params as
+        assert xy(stroke) == ink.shape_samples(stroke["shape"]["kind"], stroke["shape"]["params"])
     assert "shape" not in skewed and "shape" not in polygon and "fill" not in polygon
+    for outline, corners in ((skewed, skew), (polygon, [(0, 0), (30, 0), (40, 20), (10, 30), (0, 10)])):
+        pts = xy(outline)  # a plain outline: its corners, samples at most 2 pt apart, closed
+        assert set(corners) <= set(pts) and pts[0] == pts[-1]
+        assert max(math.dist(a, b) for a, b in zip(pts, pts[1:])) <= ink.SHAPE_STEP + 0.01
     counted = Counter()
     nm.shape_stroke(note.shapes[4], frame(), counted)
     assert counted["polygon fill"] == 1
@@ -648,10 +664,12 @@ def test_grouped_shapes_are_plain_strokes():
                         fx.shape(points=[(0, 0), (10, 0), (10, 10), (0, 10)])]}
     note = note_of(fx.session(groups=[group]))
     assert [(s.kind, s.grouped) for s in note.shapes] == [("ellipse", True), ("polygon", True)]
-    ellipse = nm.shape_stroke(note.shapes[0], frame())
+    ellipse, square = (nm.shape_stroke(s, frame()) for s in note.shapes)
     assert "shape" not in ellipse and ellipse["size"] == 3.0
     xs = [s["x"] for s in decoded(ellipse)]
-    assert min(xs) == pytest.approx(0, abs=0.01) and max(xs) == pytest.approx(40, abs=0.01)
+    assert len(xs) == 50  # as many as a record's: max(48, ceil(96.9 / 2)), and the first again
+    assert min(xs) == pytest.approx(0, abs=0.05) and max(xs) == 40
+    assert "shape" not in square and len(decoded(square)) == 4 * 10 + 1  # 20 pt sides, a sample every 2 pt
 
 
 def test_a_sticky_is_a_filled_rect_under_the_ink():
@@ -668,6 +686,46 @@ def test_a_sticky_is_a_filled_rect_under_the_ink():
     assert sticky["shape"]["kind"] == "rect" and params["angle"] == 30
     assert (params["w"], params["h"]) == (pytest.approx(80 * k, abs=0.01), pytest.approx(40 * k, abs=0.01))
     assert "tool" not in sticky and "opacity" not in sticky
+
+
+def _shape_for(kind: str, p: dict) -> tuple:
+    """The Notability shape the import maps onto a shape record's params: a
+    line's or an arrow's ends, a triangle's corners, a rectangle's corners
+    or those of the box an ellipse is inscribed in, from the top left."""
+    if kind in ("line", "arrow"):
+        return "line", fx.shape(startPt=(p["x1"], p["y1"]), endPt=(p["x2"], p["y2"]), arrow=int(kind == "arrow"))
+    if kind == "triangle":
+        return "triangle", fx.shape(points=[(p["x1"], p["y1"]), (p["x2"], p["y2"]), (p["x3"], p["y3"])])
+    a = math.radians(p["angle"])
+    c, s = math.cos(a), math.sin(a)
+    hw, hh = (p["w"] / 2, p["h"] / 2) if kind == "rect" else (p["rx"], p["ry"])
+    corners = [(p["cx"] + u * hw * c - v * hh * s, p["cy"] + u * hw * s + v * hh * c)
+               for u, v in ((-1, -1), (1, -1), (1, 1), (-1, 1))]
+    if kind == "rect":
+        return "rectangle", fx.shape(points=corners)
+    return "ellipse", fx.shape(rotatedRect={"corners": [list(corner) for corner in corners]})
+
+
+def test_shapes_are_drawn_as_the_web_draws_them():
+    """tests/shared/inkshapes.json ``samples``, each case of a kind the
+    import writes: the Notability shape of its params becomes that record
+    and the very samples shapes.js draws it as, and so does a sticky of a
+    rectangle's."""
+    shared = json.loads((SHARED / "inkshapes.json").read_text(encoding="utf-8"))["samples"]
+    cases = [c for c in shared if c["kind"] in ("line", "rect", "triangle", "ellipse")
+             or (c["kind"] == "arrow" and "head" not in c["params"])]  # the import writes no arrow head
+    assert {c["kind"] for c in cases} == {"line", "arrow", "rect", "triangle", "ellipse"}
+    note = _shapes_note([_shape_for(c["kind"], c["params"]) for c in cases])
+    for case, shape in zip(cases, note.shapes, strict=True):
+        stroke = nm.shape_stroke(shape, frame())
+        assert stroke["shape"] == {"kind": case["kind"], "params": case["params"]}, case["note"]
+        assert [list(p) for p in xy(stroke)] == case["pts"], case["note"]
+        if case["kind"] == "rect":
+            p = case["params"]
+            sticky = nb.Media(kind="sticky", x=p["cx"] - p["w"] / 2, y=p["cy"] - p["h"] / 2, w=p["w"], h=p["h"],
+                              rotation=math.radians(p["angle"]), background=(1, 1, 0, 1))
+            stroke = nm.sticky_stroke(sticky, frame())
+            assert stroke["shape"]["params"] == p and [list(q) for q in xy(stroke)] == case["pts"], case["note"]
 
 
 # --- text --------------------------------------------------------------------------------------
@@ -892,12 +950,17 @@ def test_samples_are_counted_before_they_are_made(monkeypatch):
 
     monkeypatch.setattr(nm, "_edge", never)
     assert nm.flatten(note.curves[0], frame()) is None  # 60,000 samples past MAX_STROKE_SAMPLES, none made
-    shapes = _shapes_note([("line", fx.shape(startPt=(0, 0), endPt=(60_000, 0))),
-                           ("polygon", fx.shape(points=[(0, 0), (30_000, 0), (0, 300), (30_000, 300)])),
-                           ("ellipse", fx.shape(rotatedRect={"corners": [[0, 0], [30_000, 0], [30_000, 9_000],
-                                                                         [0, 9_000]]}))])
-    assert [nm.shape_stroke(s, frame()) for s in shapes.shapes] == [None, None, None]
-    sticky = nb.Media(kind="sticky", x=0, y=0, w=20_000, h=20_000, background=(1, 1, 0, 1))
+    shapes = _shapes_note([("line", fx.shape(startPt=(0, 0), endPt=(120_000, 0), arrow=1)),
+                           ("polygon", fx.shape(points=[(0, 0), (60_000, 0), (0, 300), (60_000, 300)])),
+                           ("ellipse", fx.shape(rotatedRect={"corners": [[0, 0], [60_000, 0], [60_000, 18_000],
+                                                                         [0, 18_000]]})),
+                           ("ellipse", fx.shape(rotatedRect={"corners": [[0, 0], [60_000, 0], [60_000, 18_000],
+                                                                         [10, 18_000]]})),
+                           ("line", fx.shape(startPt=(0, 0), endPt=(60_000, 0)))])
+    *past, line = (nm.shape_stroke(s, frame()) for s in shapes.shapes)
+    assert past == [None, None, None, None]  # past 50,000 samples at 2 pt
+    assert xy(line) == [(0, 0), (60_000, 0)]  # a line is its two ends, however long
+    sticky = nb.Media(kind="sticky", x=0, y=0, w=30_000, h=30_000, background=(1, 1, 0, 1))
     assert nm.sticky_stroke(sticky, frame()) is None
 
 

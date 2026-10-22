@@ -27,7 +27,7 @@ top, by their content-hash name, linked relative to the note.
 import hashlib
 import json
 
-from .blocks_store import fetch_subtree, folder_paths, load_json, newest_change_seq, pages_in_folder
+from .blocks_store import fetch_subtree, folder_paths, load_props, newest_change_seq, pages_in_folder
 from .db import safe_doc_id
 from .markdown_export import block_ref_resolver, build_tree, collect_and_rewrite
 from .obsidian_export import (Filing, VaultContext, page_dir, referenced_blocks, render_vault_page, unique_name,
@@ -37,14 +37,6 @@ from .storage import find_upload_file
 ID_KEY = "gamma_id"   # the front-matter property naming the page
 ROOT = "root"         # the folder id that means the whole library
 MAX_NOTES = 200       # pages one notes request renders
-
-
-def _props(text) -> dict:
-    try:
-        props = load_json(text or "{}")
-    except (TypeError, ValueError):
-        return {}
-    return props if isinstance(props, dict) else {}
 
 
 def _page_rows(conn, folder_id: str) -> list[tuple]:
@@ -95,7 +87,7 @@ def layout(conn, ws: str, folder_id: str) -> dict | None:
 
     used, pages = set(), []
     for pid, content, props_text, updated_at, seq in _page_rows(conn, folder_id):
-        props = _props(props_text)
+        props = load_props(props_text)
         names = fil.folder(props)
         stem = unique_name(used, page_dir(names), vault_name(content or ""), "")
         tags = fil.tags(props)

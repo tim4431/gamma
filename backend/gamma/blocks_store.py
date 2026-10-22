@@ -72,6 +72,16 @@ def load_json(text: str):
         return json.loads(text)
 
 
+def load_props(text) -> dict:
+    """A stored ``properties`` column as an object (``load_json``): {} when
+    it is empty, does not parse, or is no object."""
+    try:
+        props = load_json(text or "{}")
+    except (TypeError, ValueError):
+        return {}
+    return props if isinstance(props, dict) else {}
+
+
 def block_kind(parent_id, page_id, props: dict) -> str | None:
     """The block's ``kind``, by the rule of the generated column
     (db.BLOCK_HOT_COLUMNS: the SQL and this must agree, which

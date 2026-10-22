@@ -32,7 +32,8 @@ node tests, `inkwidth.json` by the iPad app's `InkWidthTests` too) and
 `inkshapes.json`, `inkscribble.json` (the recognisers and the Shapes
 tool's drags run in the node tests only, the server never recognises; the
 Python side checks the fixtures' shape and that every stored `shape`
-record parses) and
+record parses, and both sides draw `inkshapes.json` `samples`, the
+samples a shape record is drawn as, and count the drags') and
 `inkhold.json` (the hold's stillness and refit rule, run by the node tests
 and the iPad app's XCTest), e2e `tests/e2e/scenarios/ink.mjs`,
 `inkEditing.mjs` (the draft journal's restore in `ink.mjs` too),
@@ -1474,10 +1475,14 @@ reach:
     null. Thresholds in css px divide by `k`; everything else is points.
   - `shapeSamples(kind, params, {span, p}) → [{x, y, p, t}]`: the dense
     polyline a shape commits as — a line two samples; an arrow tail → tip
-    → barb → tip → barb; a triangle, rectangle or polygon its corners with
-    a sample every 2 pt along each side, closed (the last sample is the
-    first again); a circle or ellipse at least 48 samples, closed; `t`
-    spread evenly from 0 to `span` (ms), `p` constant.
+    → barb → tip → barb, each leg cut into equal steps of at most 2 pt; a
+    triangle, rectangle or polygon its corners, each side cut alike,
+    closed (the last sample is the first again); a circle or ellipse
+    max(48, ⌈perimeter / 2⌉) samples even in angle (Ramanujan's
+    perimeter), closed; x and y on the 1/100 grid, `t` spread evenly from
+    0 to `span` (ms), `p` constant. `gamma/ink.py` `shape_samples` gives
+    the same x and y (the fixture's `samples`), so a server writer of
+    shape records bakes the samples a handle drag would write.
   - `refitShape(kind, params, {pointer, from, shift}) → params`: the
     shape under a continued hold, computed from the **snap's** params
     every time (never from an already-refit set), `pointer` the tip now
@@ -3100,10 +3105,24 @@ reach:
   For the `/Ink` interchange, `ink_buckets` (key unchanged: tool, colour,
   size, opacity) and `from_pdf_ink` (a foreign `/Ink` whose `/BS` has
   `/S /D` imports as `dash: "dashed"`, whatever its `/D` array, since the
-  pattern follows the width). `dumps` (the canonical bytes, equal to the
-  client's `serializeInk`, so the same strokes dedup to one upload),
-  `merge_ink` (→ the file, `clean`, `lost_ours`, `returned`). The server
-  computes no width and no opacity: it reads `w` and `o`.
+  pattern follows the width). `shape_samples(kind, params, limit?)` (the
+  samples a shape record is drawn as, `shapes.js` `shapeSamples` step for
+  step — its `densify` at 2 pt, `arrowPolyline` and round branch,
+  JavaScript's `Math.round`, and `Math.hypot` as V8 and JavaScriptCore
+  compute it, since a side's sample count turns on the last bit of its
+  length; `tests/shared/inkshapes.json` `samples` holds both sides to the
+  same cases): a server writer of shape records (the Notability import)
+  bakes `pts` with it. Sin and cos are the platform's, and maths
+  libraries round their last bit differently (the Windows CRT and V8
+  disagree on about 2.5 % of sines and cosines, sin(45°) among them), so
+  a turned rectangle, polygon or ellipse can come out a sample 0.01 pt
+  off, or a side whose length is a whole number of steps with one sample
+  more or fewer (on Windows, 157 of 40,000 random shapes, 149 of them
+  turned ±45°); the fixture's cases keep clear of that last bit. `dumps` (the
+  canonical bytes, equal to the client's `serializeInk`, so the same
+  strokes dedup to one upload), `merge_ink` (→ the file, `clean`,
+  `lost_ours`, `returned`). The server computes no width and no opacity:
+  it reads `w` and `o`.
 - `routers/collab.py`: the page socket relays a client's `{t: "ink-live",
   …}` to the room's other peers as it came, with `client` set to the
   sender's, when `collab.ink_live` admits it — the sender `can_edit`, `id`
@@ -3155,7 +3174,8 @@ reach:
   `ink.group_files`, the client's rule (`GROUP_SPLIT_BYTES`, `MAX_STROKES`,
   `MAX_SAMPLES`), stroke ids `n0`, `n1`, … in each file as `from_pdf_ink`
   numbers them, so the same note makes the same files. Shapes keep their
-  `shape` records, and a sticky note is a filled `rect` in band 0.
+  `shape` records, sampled as `shapes.js` draws their params
+  (`ink.shape_samples`), and a sticky note is a filled `rect` in band 0.
 - `gamma/ink_view.py`: the picture the chat sees of a group (`view_ink`,
   and an attached handwriting block), drawn where it was written. A sheet
   goes through `notebook_pdf`, a PDF page through

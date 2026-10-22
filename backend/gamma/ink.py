@@ -1032,6 +1032,155 @@ def from_pdf_ink(ink_list, width_pt: float, color: str, opacity: float, page: in
             "strokes": strokes}
 
 
+# --- shape records -----------------------------------------------------------------
+# A stroke's shape record keeps its baked ``pts``, and an editor writes them
+# again from the params after a handle drag (shapes.js ``reshapeStroke``),
+# so a server writer of shape records (the Notability import) bakes the
+# samples the web would: ``shape_samples`` is shapes.js ``shapeSamples``
+# (its x and y) step for step, down to JavaScript's ``Math.round`` and
+# ``Math.hypot`` as V8 computes it, since a side's sample count turns on the
+# last bit of its length. tests/shared/inkshapes.json ``samples`` holds both
+# to the same cases. Sin and cos are the platform's, and maths libraries
+# round their last bit their own way: a turned shape can then come out a
+# sample 0.01 pt off, or one sample more or fewer on a side a whole number
+# of steps long (docs/dev/handwriting.md "Server").
+
+SHAPE_STEP = 2          # pt between two samples along a shape's side (shapes.js SAMPLE_PT)
+SHAPE_ROUND_MIN = 48    # a circle's or an ellipse's fewest samples (ELLIPSE_MIN)
+ARROW_HEAD_MAX = 24     # pt: an arrow without a ``head`` param draws min(length / 4, 24)
+_DEG = 180 / math.pi    # shapes.js DEG: degrees become radians by a division by it
+
+
+def js_round(value: float) -> int:
+    """JavaScript's ``Math.round``: the nearest integer, a half toward +∞."""
+    whole = math.floor(value)
+    return whole + 1 if value - whole >= 0.5 else whole
+
+
+def round2(value: float) -> float:
+    """shapes.js ``round2``: to hundredths, as ``Math.round(v * 100) / 100``."""
+    return js_round(value * 100) / 100
+
+
+def _js_hypot(x: float, y: float) -> float:
+    """``Math.hypot(x, y)`` as V8 and JavaScriptCore compute it: the squares
+    of both over the larger, summed with Kahan's compensation, the root
+    scaled back. Not always the correctly rounded ``math.hypot``."""
+    ax, ay = abs(x), abs(y)
+    top = max(ax, ay)
+    if top == 0 or top == math.inf:
+        return top
+    total = carry = 0.0
+    for v in (ax, ay):
+        n = v / top
+        summand = n * n - carry
+        sum_ = total + summand
+        carry = (sum_ - total) - summand
+        total = sum_
+    return math.sqrt(total) * top
+
+
+def densify(points: list, closed: bool, limit: int | None = None) -> list[tuple[float, float]] | None:
+    """shapes.js ``densify`` at SHAPE_STEP: a sample at each of ``points``
+    (``(x, y)`` corners in order) and each side cut into equal steps of at
+    most SHAPE_STEP, the first corner again at the end when ``closed``.
+    None when that is more than ``limit`` samples, counted before one is
+    made."""
+    m = len(points) if closed else len(points) - 1
+    sides = [(points[i], points[(i + 1) % len(points)]) for i in range(m)]
+    counts = [max(1, math.ceil(_js_hypot(b[0] - a[0], b[1] - a[1]) / SHAPE_STEP)) for a, b in sides]
+    if limit is not None and sum(counts) + 1 > limit:
+        return None
+    out = []
+    for (a, b), n in zip(sides, counts):
+        out += [(a[0] + (b[0] - a[0]) * j / n, a[1] + (b[1] - a[1]) * j / n) for j in range(n)]
+    out.append(points[0] if closed else points[-1])
+    return out
+
+
+def arrow_barbs(tip: tuple, back: tuple, head: float) -> list[tuple[float, float]]:
+    """An arrowhead as shapes.js ``arrowPolyline`` draws it after the tip:
+    barb, tip, barb, each barb ``head`` from the tip at +30° and then −30°
+    from ``back``, the unit vector back along the line."""
+    def barb(sign):
+        a = (sign * 30) / _DEG
+        c, s = math.cos(a), math.sin(a)
+        return tip[0] + head * (back[0] * c - back[1] * s), tip[1] + head * (back[0] * s + back[1] * c)
+
+    return [barb(1), tip, barb(-1)]
+
+
+def _arrow_polyline(p: dict) -> list:
+    tail, tip = (p["x1"], p["y1"]), (p["x2"], p["y2"])
+    length = _js_hypot(tip[0] - tail[0], tip[1] - tail[1]) or 1
+    head = p["head"] if p.get("head") is not None else min(length / 4, ARROW_HEAD_MAX)
+    return [tail, tip, *arrow_barbs(tip, ((tail[0] - tip[0]) / length, (tail[1] - tip[1]) / length), head)]
+
+
+def _round_shape(kind: str, p: dict, limit: int | None) -> list | None:
+    """A circle's or an ellipse's points (shapeSamples' round branch):
+    max(SHAPE_ROUND_MIN, Ramanujan's perimeter ÷ SHAPE_STEP) of them, even
+    in angle, the first again last; [] where shapes.js's count is NaN."""
+    rx, ry = (p["r"], p["r"]) if kind == "circle" else (p["rx"], p["ry"])
+    rad = (0 if kind == "circle" else p.get("angle") or 0) / _DEG
+    c, s = math.cos(rad), math.sin(rad)
+    if rx + ry:
+        q = (rx - ry) / (rx + ry)
+        h = q * q
+    else:
+        h = 0.0 if rx == ry else math.inf  # ``NaN || 0`` and ``Infinity`` to shapes.js
+    if not 3 * h <= 4:
+        return []
+    perimeter = math.pi * (rx + ry) * (1 + (3 * h) / (10 + math.sqrt(4 - 3 * h)))
+    n = max(SHAPE_ROUND_MIN, math.ceil(perimeter / SHAPE_STEP))
+    if limit is not None and n + 1 > limit:
+        return None
+    out = []
+    for i in range(n + 1):
+        a = 2 * math.pi * (i % n) / n
+        u, v = rx * math.cos(a), ry * math.sin(a)
+        out.append((p["cx"] + u * c - v * s, p["cy"] + u * s + v * c))
+    return out
+
+
+def _shape_corners(kind: str, p: dict) -> list | None:
+    """shapes.js ``shapeCorners``: a triangle's, a rectangle's or a regular
+    polygon's corners in order; None for any other kind."""
+    if kind == "triangle":
+        return [(p["x1"], p["y1"]), (p["x2"], p["y2"]), (p["x3"], p["y3"])]
+    if kind == "rect":
+        rad = (p.get("angle") or 0) / _DEG
+        c, s, hw, hh = math.cos(rad), math.sin(rad), p["w"] / 2, p["h"] / 2
+        return [(p["cx"] + u * c - v * s, p["cy"] + u * s + v * c)
+                for u, v in ((-hw, -hh), (hw, -hh), (hw, hh), (-hw, hh))]
+    if kind == "polygon":
+        n = max(3, js_round(p["n"]))
+        return [(p["cx"] + p["r"] * math.cos(a), p["cy"] + p["r"] * math.sin(a))
+                for a in (((p.get("angle") or 0) + (360 / n) * i) / _DEG for i in range(n))]
+    return None
+
+
+def shape_samples(kind: str, params: dict, limit: int | None = None) -> list[tuple[float, float]] | None:
+    """The samples a shape record of ``kind`` with ``params`` draws as,
+    ``(x, y)`` in points on the 1/100 grid: shapes.js ``shapeSamples``. A
+    line its two ends; an arrow tail → tip → barb → tip → barb; a triangle,
+    a rectangle or a regular polygon its corners; each leg or side cut into
+    steps of at most SHAPE_STEP (``densify``), a closed one ending on its
+    first corner; a circle or an ellipse at least SHAPE_ROUND_MIN samples,
+    closed. [] for a kind shapes.js does not draw (a ``curve``). None when
+    that is more than ``limit`` samples, counted before one is made."""
+    if kind == "line":
+        pts = [(params["x1"], params["y1"]), (params["x2"], params["y2"])]
+    elif kind == "arrow":
+        pts = densify(_arrow_polyline(params), False, limit)
+    elif kind in ("circle", "ellipse"):
+        pts = _round_shape(kind, params, limit)
+    else:
+        corners = _shape_corners(kind, params)
+        pts = densify(corners, True, limit) if corners else []
+    return None if pts is None else [(round2(x), round2(y)) for x, y in pts]
+
+
 # --- canonical bytes ---------------------------------------------------------------
 
 def to_dict(model: BaseModel) -> dict:
@@ -1397,7 +1546,6 @@ def _merge_by_ids(ours: InkFile, theirs: InkFile, base_ids: set) -> MergeResult:
     both ways — and the merge is unclean when one was applied; the rest is
     the union by id."""
     o = {s.id: s for s in ours.strokes}
-    t = {s.id: s for s in theirs.strokes}
     clean, lost = True, []
     out: list[Stroke] = []
     for tp in theirs.strokes:

@@ -321,6 +321,13 @@ Recording; 16.1.5 on the iPad still writes `.note`.
   pt of the curve. The client's pen outline (perfect-freehand at streamline
   0.4) moves each point only part of the way to the next sample, so sparser
   samples would round a written corner.
+- **Shape samples** are the web's own: a shape with a record is drawn as
+  `shapes.js` draws its params (a line its two ends, a corner a sample and
+  each side cut into steps of at most 2 pt, an ellipse max(48, perimeter ÷
+  2) samples), since a handle drag writes the samples again from the
+  params and a finer import would change at the first drag. Plain outlines
+  take the same step. Against a 1 pt step, a note of every kind of shape
+  stores half the samples and 40 % fewer ink bytes.
 - **Shapes and curves**: on a page the stickies go first, then the curves
   in drawing order, then the shapes by their indices.
 - **No sync with recordings**: a recording becomes a recording block that

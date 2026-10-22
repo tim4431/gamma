@@ -17,12 +17,13 @@ then a commit run as a background job. The upload is untrusted:
   ``store_file_stream``, so the per-file cap, the quota and dedup apply,
   and the disk keeps ``import_staging.MIN_FREE_BYTES`` free.
 
-Files are stored first, outside any transaction; each note's page is then
-written in one short transaction under the write lock, the note's
-Session.plist digest checked again there (``notability_import``, the
-re-import key). A stopped job keeps the notes it finished. A 413 on one of
-a note's files skips that note; a 507 (the quota, or the disk) stops the
-import, since every later note would meet it too.
+Files are stored first, outside any transaction; each note's folder and
+page are then written in one short transaction under the write lock, the
+note's Session.plist digest checked again there (``notability_import``, the
+re-import key), so an import that finds the note there writes neither. A
+stopped job keeps the notes it finished. A 413 on one of a note's files
+skips that note; a 507 (the quota, or the disk) stops the import, since
+every later note would meet it too.
 """
 
 import contextlib
@@ -42,15 +43,15 @@ from . import ink as inkmod
 from . import notability as nb
 from . import notability_map as nmap
 from .ai_pictures import sniff
-from .blocks_store import (FOLDERS, attachment_props, filing, folder_paths, insert_page_tree, load_json,
-                           new_block_id, write_lock)
+from .blocks_store import (FOLDERS, attachment_props, filing, folder_inserts, folder_paths, insert_page_tree,
+                           load_props, new_block_id, write_lock)
 from .import_review import destination, validate_selection
 from .import_staging import MIN_FREE_BYTES
 from .import_zip import (READ_ERRORS, DirectoryTooLarge, check_ratio, new_walk, open_nested, open_zip,
                          walk_zip)
 from .logbuf import log
 from .notebook import paper_ops
-from .ops import ensure_filing
+from .ops import after_commit, apply_batches
 from .pdf_export import ExportPdfReader, display_size, page_frame
 from .recording import mp4_duration_ms
 from .server_settings import MB, workspace_quota
@@ -264,7 +265,7 @@ class _Import:
         for path, reason in left_out:
             self.warn(path, reason)
         for page_id, raw, title in self.conn.execute(_FOUND):
-            props = _props(raw)
+            props = load_props(raw)
             self.library.setdefault(props.get("notability_import"), (page_id, title, props))
         self.paths = folder_paths(self.conn)
         self.dirs = _note_dirs(bundles)
@@ -454,13 +455,7 @@ class _Import:
         recordings = [r for r in (self._store_recording(members, ref, note) for ref in note.recordings) if r]
         self._left_out(title, note.left_out + plan.left_out, note.classes)
         tree = list(plan.flow) + _markup(plan, groups, boxes) + recordings
-        filed = self.under
-        if dirs:
-            folder_ids, _ = ensure_filing(self.ws, self.conn, paths=[dirs], under=self.under, actor=self.actor)
-            filed = folder_ids.get(tuple(dirs), filed)
-        if filed:
-            props[FOLDERS] = [filed]
-        written = self._write(note, props, tree, entry)
+        written = self._write(note, props, tree, dirs, entry)
         if written:
             self.report["strokes_imported"] += sum(g["ink_strokes"] for page in groups for g in page)
             self.report["text_boxes_imported"] += counts["boxes"]
@@ -470,27 +465,40 @@ class _Import:
             entry["kind"] = "pdf" if props.get("doc_id") else "page"
         return written
 
-    def _write(self, note: nb.Note, props: dict, tree: list, entry: dict) -> bool:
-        """The page in one short transaction under the write lock; the
-        digest is looked for again there, so two imports of one note make
-        one page."""
+    def _write(self, note: nb.Note, props: dict, tree: list, dirs: list, entry: dict) -> bool:
+        """The note's folder and its page in one short transaction under the
+        write lock, the digest looked for again there: two imports of one
+        note make one page, and the one that finds it there writes nothing,
+        no folder either. The folder at ``dirs`` below the destination is
+        made where missing (``folder_inserts``, read under the lock too, so
+        two imports filing into one new folder make it once; its batch goes
+        through ``ops.apply_batches``)."""
         conn = self.conn
         write_lock(conn)
         try:
             row = conn.execute("SELECT id, content, properties FROM unified_blocks WHERE parent_id = 'root' "
                                "AND json_extract(properties, '$.notability_import') = ?", (note.digest,)).fetchone()
             if row:
+                paths = folder_paths(conn)  # with the folder the other import made
                 conn.rollback()
-                props = _props(row[2])
+                props = load_props(row[2])
                 entry.update(id=row[0], title=row[1], action="skip", kind="pdf" if props.get("doc_id") else "page",
-                             folders=[self.paths[f] for f in filing(props, FOLDERS) if f in self.paths])
+                             folders=[paths[f] for f in filing(props, FOLDERS) if f in paths])
                 self.report["pages_skipped"] += 1
                 return False
+            path = [d.strip() for d in dirs if d.strip()]
+            folder_ops, folder_ids = folder_inserts(conn, [path], self.under)
+            filed = folder_ids.get(tuple(path)) or self.under
+            if filed:
+                props[FOLDERS] = [filed]
+            results = apply_batches(conn, [(FOLDERS, folder_ops)], actor=self.actor) if folder_ops else []
             insert_page_tree(conn, entry["id"], note.title, props, tree, self.actor)
             conn.commit()
         except BaseException:
             conn.rollback()
             raise
+        for result in results:
+            after_commit(self.ws, conn, result)
         return True
 
     def _room(self, nbytes: int) -> None:
@@ -638,15 +646,6 @@ class _Import:
                                              "segments": [{"url": f"/api/uploads/{stored}", "started": started,
                                                            "dur": duration, "bytes": entry.size,
                                                            "mime": "audio/mp4"}]}}}
-
-
-def _props(text) -> dict:
-    """A stored page's properties; {} when they do not read as an object."""
-    try:
-        props = load_json(text or "{}")
-    except ValueError:
-        return {}
-    return props if isinstance(props, dict) else {}
 
 
 def _missing(path: str) -> str:

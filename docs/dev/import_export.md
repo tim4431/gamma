@@ -562,9 +562,15 @@ curve becomes one gamma-ink v2 stroke ([handwriting.md](handwriting.md)
 - **Shapes** keep the record the client's recogniser writes (params in page
   points, normalised as `shapes.js` does), so a handle drag rebuilds them: a
   line, a straight arrow, a rectangle or square with square corners, a
-  triangle, an ellipse, with a fill on the closed ones. A curved line, a
-  polygon, a skewed rectangle or ellipse, and every shape in an ink group
-  are plain even strokes of their outline.
+  triangle, an ellipse, with a fill on the closed ones. Their samples are
+  the ones `shapes.js` draws the params as (`ink.shape_samples`, held to
+  `shapeSamples` by `tests/shared/inkshapes.json` `samples`): a line its
+  two ends, an arrow, a rectangle or a triangle its corners and each side
+  cut into equal steps of at most 2 pt, an ellipse max(48, perimeter ÷ 2)
+  samples: what a handle drag writes again from the params. A curved
+  line, a polygon, a skewed rectangle or ellipse, and every shape in an
+  ink group are plain even strokes of their outline, at the same step; a
+  curved line is flattened as a curve is, its head drawn as an arrow's.
 - **A sticky note** (a coloured sheet to write on) is a filled rectangle
   stroke in band 0, turned as it was: under the ink in every renderer and
   exporter, and moved and resized like any shape. An empty text box would
@@ -612,9 +618,14 @@ and never sits on disk twice. For each chosen note, in path order:
    One past the cap skips the note; one that does not open becomes paper.
 3. Its PDF (the original or the composed one), its ink page by page, its
    pictures and its recordings are stored, outside any transaction.
-4. Its folder is made (`ops.ensure_filing`, a committed batch), then its
-   page is written in one short transaction under the write lock
-   (`blocks_store.insert_page_tree`), its digest looked for again there.
+4. Its folder and its page are written in one short transaction under the
+   write lock, its digest looked for again there: the folder made where
+   missing (`blocks_store.folder_inserts`, read under the lock, one batch
+   through `ops.apply_batches`), then the page
+   (`blocks_store.insert_page_tree`). An import that finds the note there
+   writes neither and names the page where it is filed, so two imports of
+   one note at once leave one page and no empty folder, and two filing
+   into one new folder make it once.
 
 A note's folder is the directories above it in the upload, less one top
 directory every note shares (a zipped folder, or the one picked files are

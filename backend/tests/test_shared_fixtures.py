@@ -1,10 +1,12 @@
 """Rules the frontend mirrors, pinned by one set of cases both sides read:
 tests/shared/*.json at the repository root. The node half is
 frontend/tests/textnorm.test.mjs, ink.test.mjs, finishStroke.test.mjs,
-notebook.test.mjs, mentions.test.mjs and textBox.test.mjs; a case added here fails whichever side drifts. The
-mirror's cases (synctree.json, textmerge.json) have only this Python side; the
-client's recognisers (inkshapes.json, inkscribble.json) have only the node
-side, and this side checks their shape."""
+notebook.test.mjs, mentions.test.mjs, textBox.test.mjs and shapes.test.mjs;
+a case added here fails whichever side drifts. The mirror's cases
+(synctree.json, textmerge.json) have only this Python side; the client's
+recognisers (inkshapes.json, inkscribble.json) have only the node side, and
+this side checks their shape, but both sides draw inkshapes.json's
+``samples`` and count the samples of its Shapes tool drags."""
 
 import json
 import math
@@ -303,7 +305,10 @@ def test_mention_scan(case):
 # (frontend/src/ink/shapes.js, gestures.js), which the server never runs;
 # this side pins the fixtures' shape, so a case the node tests read is well
 # formed, and that every shape a snapped stroke is stored with is one
-# parse_ink accepts (a recognised circle is written as an ellipse).
+# parse_ink accepts (a recognised circle is written as an ellipse). The
+# samples a shape record is drawn as (shapes.js shapeSamples) the server
+# draws too (ink.shape_samples): inkshapes.json ``samples`` and the Shapes
+# tool's counts hold both to the same answers.
 INKSHAPES = _load("inkshapes.json")
 INKSCRIBBLE = _load("inkscribble.json")
 SHAPE_PARAMS = {
@@ -352,6 +357,10 @@ def test_ink_fixture_notes_are_unique():
     assert len(set(notes)) == len(notes)
     assert {c["kind"] for c in INKSHAPES["tool"]} == set(SHAPE_TOOL_KINDS), "every kind the Shapes tool draws has a drag"
     assert any(c["expect"] is None for c in INKSHAPES["tool"]), "a drag too short to draw"
+    notes = [c["note"] for c in INKSHAPES["samples"]]
+    assert len(set(notes)) == len(notes)
+    assert {c["kind"] for c in INKSHAPES["samples"]} >= set(SHAPE_PARAMS), "every kind shapes.js draws has samples"
+    assert any(c["pts"] == [] for c in INKSHAPES["samples"]), "a kind drawn from no params"
     assert any(c["scribble"] for c in INKSCRIBBLE["cases"]) and any(not c["scribble"] for c in INKSCRIBBLE["cases"])
 
 
@@ -405,11 +414,24 @@ def test_ink_shape_tool_fixture(case):
         assert params["rx"] >= params["ry"] and params["angle"] in (0, 90) and expect["count"] >= 49
     if case["kind"] == "rect":
         assert params["angle"] == 0
+    drawn = inkmod.shape_samples(case["kind"], params)
+    assert len(drawn) == expect["count"] and (drawn[-1] == drawn[0]) is expect["closed"], "the server draws it alike"
     shape = {"kind": case["kind"], "params": dict(params)}
     ink = inkmod.parse_ink({"format": "gamma-ink", "version": 2, "space": INK_SPACE, "strokes": [
         {"id": "s", "tool": "pen", "brush": "monoline", "pen": False, "color": "#1d4ed8", "size": 2, "ch": "xyt",
          "pts": [100, 100, 0, 1000, 500, 300], "shape": shape}]})
     assert ink.strokes[0].shape.kind == case["kind"] and ink.strokes[0].shape.params == params
+
+
+@pytest.mark.parametrize("case", INKSHAPES["samples"], ids=[c["note"] for c in INKSHAPES["samples"]])
+def test_ink_shape_samples(case):
+    """A shape record drawn as shapes.js shapeSamples draws it: every sample
+    on the 1/100 pt grid, and ink.shape_samples gives each of them."""
+    assert set(case) == {"note", "kind", "params", "pts"}
+    assert case["kind"] in SHAPE_PARAMS or case["kind"] in inkmod.SHAPE_KINDS
+    assert all(isinstance(v, (int, float)) and round(v, 2) == v for v in case["params"].values())
+    assert all(len(p) == 2 and all(round(v, 2) == v for v in p) for p in case["pts"])
+    assert [list(p) for p in inkmod.shape_samples(case["kind"], case["params"])] == case["pts"]
 
 
 @pytest.mark.parametrize("case", INKSCRIBBLE["cases"], ids=[c["note"] for c in INKSCRIBBLE["cases"]])
