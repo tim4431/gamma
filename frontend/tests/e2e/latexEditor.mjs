@@ -26,9 +26,9 @@ const bundle = await build({
     }
     createRoot(document.getElementById('editor')).render(<Fixture />);
     const previewRoot = createRoot(document.getElementById('preview'));
-    window.preview = (tex, anchor, ac=false) => previewRoot.render(ac
+    window.preview = (tex, anchor, ac=false, caret) => previewRoot.render(ac
       ? <LatexAcPopup items={latexCompletions('left',12)} selected={0} anchor={anchor} onPick={noop}/>
-      : <MathLivePreview tex={tex} display anchor={anchor}/>);
+      : <MathLivePreview tex={tex} display anchor={anchor} caret={caret}/>);
     window.mathTabJump = mathTabJump;
     window.setDoc = (text, cursor=text.length, end=cursor) => {
       const api=window.editorRef.current;
@@ -199,6 +199,17 @@ try {
     }
     await page.evaluate(() => window.preview("", { left: innerWidth - 12, top: innerHeight - 18, bottom: innerHeight }, true));
     await contained(".latexAcPopup");
+  }
+  // The caret mark is a bar in text mode too: inside \text{…} it once showed
+  // as red "\vert" source, which KaTeX doesn't flag as an error.
+  const textArg = String.raw`a+\text{, independent of }J`;
+  for (const [caret, bar] of [[textArg.indexOf("}"), "|"], [textArg.length, "∣"]]) {
+    await page.evaluate(([tex, caret]) => window.preview(tex, { left: 40, top: 100, bottom: 118 }, false, caret), [textArg, caret]);
+    const shown = await page.locator(".mathPreviewTip").evaluate((el) => ({
+      marks: [...el.querySelectorAll('[style*="#3b82f6"]')].map((s) => s.textContent),
+      errors: el.querySelectorAll('.katex-error, [style*="#cc0000"]').length,
+    }));
+    assert.deepEqual(shown, { marks: [bar], errors: 0 }, `caret mark at ${caret}`);
   }
   await page.evaluate((tex) => window.preview(tex, { left: 880, top: 600, bottom: 618 }), long);
   await page.setViewportSize({ width: 320, height: 200 });
