@@ -3185,7 +3185,7 @@ reach.
       so it wins.
     - Style, for a pen, is the **Style picker** (`InkStylePicker` in
       `ink/InkStylePicker.jsx`, since the selection menu uses it too and
-      imports never run from `ink/` to `markup/`). It is a `ctlBtn
+      `ink/InkLayer.jsx` imports nothing from `markup/`). It is a `ctlBtn
       inkStyleBtn` with `aria-haspopup="menu"`, `aria-expanded`,
       aria-label "Style: {brush}" naming the current one ("Style: Pen")
       and title "Pen style · Shift+[ ]", holding a `BrushPreview` glyph (a
