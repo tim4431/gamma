@@ -16,13 +16,15 @@ properties, so the orphan collector, share scoping, mirrors, backups and
 the quota treat them as every upload; the server checks only their
 containers on upload (storage.is_audio) and reads the rest as given.
 
-Here: what the exports and the agent call a recording, and the
-``transcribe`` job, which turns its audio into those paragraphs.
+Here: what the exports and the agent call a recording, the length an
+imported ``.m4a`` states (``mp4_duration_ms``), and the ``transcribe`` job,
+which turns its audio into those paragraphs.
 """
 
 import json
 import math
 import re
+import struct
 import urllib.error
 from urllib.request import urlopen
 
@@ -38,6 +40,8 @@ from .ops import MAX_OPS, after_commit, apply_ops
 from .storage import UPLOAD_REF_RE, find_upload_file, upload_media_type
 
 TRANSCRIBE_MAX_BYTES = 25 * 1024 * 1024  # OpenAI's audio upload limit
+MP4_MAX_BOXES = 64                       # boxes read at each level of an MP4 file (mp4_duration_ms)
+MP4_MAX_MS = 48 * 3600 * 1000            # a longer stated length is damage
 TRANSCRIBE_TIMEOUT_S = 300               # a five-minute segment, with room
 # Answers with segment timestamps (verbose_json); gpt-4o-transcribe gives
 # none. A diarizing model (``…-diarize``) times its segments too and is
@@ -98,6 +102,66 @@ def recording_label(props) -> str:
     if isinstance(props, dict) and props.get("transcript") is True:
         return "(transcript)"
     return ""
+
+
+def mp4_duration_ms(f) -> int | None:
+    """The length an MP4 file (an .m4a recording) states in its movie
+    header, moov/mvhd's duration ÷ timescale (version 0 has 32-bit fields,
+    version 1 64-bit ones), in ms. None when the header is missing or the
+    value is implausible (a timescale or duration of 0, an all-ones
+    "unknown" duration, or over 48 hours). Walks the top-level boxes by
+    their sizes (size 1: a 64-bit size follows; size 0: to the end), then
+    moov's children, at most MP4_MAX_BOXES boxes at each level, reading
+    headers only, so a large ``mdat`` before ``moov`` is skipped, never
+    read. ``f`` is seekable."""
+
+    def boxes(start: int, end: int | None):
+        pos = start
+        for _ in range(MP4_MAX_BOXES):
+            if end is not None and pos + 8 > end:
+                return
+            f.seek(pos)
+            head = f.read(8)
+            if len(head) < 8:
+                return
+            size, kind = struct.unpack(">I4s", head)
+            header = 8
+            if size == 1:
+                large = f.read(8)
+                if len(large) < 8:
+                    return
+                size, header = struct.unpack(">Q", large)[0], 16
+            if size == 0:          # the box runs to the end of the file
+                yield kind, pos + header, end
+                return
+            if size < header:
+                return
+            yield kind, pos + header, pos + size
+            pos += size
+
+    for kind, start, end in boxes(0, None):
+        if kind != b"moov":
+            continue
+        for child, body, _end in boxes(start, end):
+            if child != b"mvhd":
+                continue
+            f.seek(body)
+            version = f.read(4)[:1]
+            if version == b"\x00":
+                fields, layout, unknown = f.read(16), ">8xII", 0xFFFFFFFF
+            elif version == b"\x01":
+                fields, layout, unknown = f.read(28), ">16xIQ", 0xFFFFFFFFFFFFFFFF
+            else:
+                return None
+            if len(fields) < struct.calcsize(layout):
+                return None
+            timescale, duration = struct.unpack(layout, fields)
+            if not timescale or not duration or duration == unknown:
+                return None
+            ms = round(duration * 1000 / timescale)
+            return ms if 0 < ms <= MP4_MAX_MS else None
+        return None
+    return None
 
 
 def transcript_paragraphs(segments: list[dict], max_chars: int = PARAGRAPH_CHARS) -> list[dict]:

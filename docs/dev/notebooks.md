@@ -178,6 +178,12 @@ No schema change: sheets are blocks and properties.
   handwriting under it is written on it"), a group on one ("handwriting
   on the page of paper above") and a text box on one ("text box on the
   page of paper above").
+- The Notability import ([import_export.md](import_export.md#notability-notes))
+  makes notebooks on the server: a note with no PDF page becomes a page of
+  sheets, one per Notability page, folded, each on the note's paper
+  (`notability_map.paper`: its size, colour and ruling, normalized), with
+  its ink groups (`canvas` space, the sheet's size) and text boxes under
+  it.
 
 ## Client
 
@@ -284,6 +290,7 @@ No schema change: sheets are blocks and properties.
   groups export as drawings, like any group's, and its text boxes as
   notes.
 - Templates beyond the four patterns (music staves, Cornell margins),
-  and a paper image.
+  and a paper image. A Notability template paper comes in as plain paper
+  of its colour.
 - Virtualizing a long notebook's sheets. Every sheet mounts, which suits
   notebooks of tens of pages.

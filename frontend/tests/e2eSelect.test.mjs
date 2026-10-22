@@ -49,6 +49,9 @@ test("a change selects the groups that exercise it", () => {
   assert.deepEqual(pick(["docs/dev/debugging.md", "desktop/main.js", "backend/tests/test_ink.py"]), []);
   assert.equal(pick(["frontend/src/app/App.jsx"]).length, GROUPS.length);
   assert.deepEqual(pick(["backend/gamma/ink.py"]).sort(), ["ink", "ink-editing", "inkShapes", "notebooks", "triggered-guide"]);
+  // the Notability import is an export's groups; its fixture writer is the transfers scenario's
+  assert.deepEqual(pick(["backend/gamma/notability_import.py"]).sort(), ["diagrams", "files", "ink", "transfers"]);
+  assert.deepEqual(pick(["backend/tests/notability_fixtures.py"]), ["transfers"]);
   // the chat's pictures of handwriting are the AI modules' groups
   assert.deepEqual(pick(["backend/gamma/ink_view.py"]).sort(), pick(["backend/gamma/ai_context.py"]).sort());
   // a scenario helper selects the scenarios importing it

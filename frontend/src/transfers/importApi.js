@@ -7,6 +7,7 @@ const FORMATS = {
   zotero: { label: T("Zotero"), endpoint: "zotero", instructions: T("Collections become folders. Additional PDFs become separate pages. Existing PDFs are kept.") },
   markdown: { label: T("Markdown"), endpoint: "markdown-zip", instructions: T("Notes become pages; linked files travel with the selected notes. Links to deselected notes stay as written.") },
   gamma: { label: T("Gamma"), endpoint: "gamma", instructions: T("Selected pages include their notes, attachments and chats. Pages already in your library are kept unchanged.") },
+  notability: { label: T("Notability"), endpoint: "notability", instructions: T("Each note becomes a page with its handwriting, typed text, pictures and recordings. Notes already imported are skipped.") },
 };
 export function importFormat(source, file) {
   const format = FORMATS[source];
@@ -18,10 +19,11 @@ export function dialogSource(endpoint) {
   return Object.keys(FORMATS).find((source) => FORMATS[source].endpoint === endpoint)
     || (endpoint === "markdown-file" ? "markdown" : "zotero");
 }
-// `file` is a File, or a picked folder (folderZip.js folderPick), packed into
-// a .zip first. `onProgress` gets {phase: "packing", loaded, total} while a
-// folder is read, {phase: "upload", loaded, total} while the bytes go up,
-// then {phase: "processing"} while the server reads the archive.
+// `file` is a File, or a picked folder or set of files (folderZip.js
+// folderPick, filesUpload), packed into a .zip first. `onProgress` gets
+// {phase: "packing", loaded, total} while they are read, {phase: "upload",
+// loaded, total} while the bytes go up, then {phase: "processing"} while
+// the server reads the archive.
 export async function requestImport({ source, file, folder = "", strip }, { signal, onProgress } = {}) {
   const upload = file.folder
     ? await zipFolder(file, { signal, onProgress: (loaded, total) => onProgress?.({ phase: "packing", loaded, total }) })

@@ -589,6 +589,11 @@ function useVisibleGroups(wrapRef, groups, width, height, enabled) {
   const boxes = useRef([]);
   boxes.current = enabled ? groups.map((g) => [g.id, inkBounds(g.ink)]) : [];
   const measureRef = useRef(null);
+  // A layer mounted together with its surface (a view switched to with its
+  // ink loaded) finds no surface below: React attaches the surface's ref
+  // after its children's layout effects. `attached` runs the setup again
+  // once the ref is there (the passive effect at the end).
+  const [attached, setAttached] = useState(0);
   useLayoutEffect(() => {
     if (!enabled) { measureRef.current = null; setVisible(null); return undefined; }
     const el = wrapRef.current;
@@ -626,9 +631,12 @@ function useVisibleGroups(wrapRef, groups, width, height, enabled) {
       cancelAnimationFrame(raf);
       measureRef.current = null;
     };
-  }, [enabled, wrapRef, width, height]);
+  }, [enabled, wrapRef, width, height, attached]);
   // the groups changed (a stroke, a file): measured again before the paint
   useLayoutEffect(() => { measureRef.current?.(); });
+  useEffect(() => {
+    if (enabled && width && height && !measureRef.current && wrapRef.current) setAttached((n) => n + 1);
+  });
   return enabled ? visible || NO_GROUPS : null;
 }
 const NO_GROUPS = new Set();

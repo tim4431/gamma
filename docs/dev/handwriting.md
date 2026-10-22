@@ -2411,7 +2411,11 @@ reach:
     side, renders its `<g>` empty; the layer measures it itself, before
     the paint of every render and on every scroll frame, and an
     `IntersectionObserver` on the page (root the scroller, margin 50 %)
-    tells when the whole page is that far off. **Idle outlines**: a group
+    tells when the whole page is that far off. A layer mounted with its
+    surface (a switch between the notes and notebook views, the ink
+    already loaded) finds the surface's ref unset in its layout effects,
+    since React attaches a parent's ref after its children's, and sets
+    the measuring up one render later. **Idle outlines**: a group
     of more than `IDLE_STROKES` strokes with more than a slice (50) of
     them not built yet draws those as `strokePlaceholder` polylines and
     builds the outlines in `requestIdleCallback` slices of 50 (`setTimeout`
@@ -3139,6 +3143,19 @@ reach:
   group's band 0 before any group's band 1, each page declaring the
   graphics states its ink sets. The agent's `read_block` outline labels
   an ink block "handwriting on p. N, K strokes" before its caption.
+- The Notability import ([import_export.md](import_export.md#notability-notes),
+  `gamma/notability_map.py`) writes v2 files of its own. Notability keeps
+  fitted Bézier chains, so each curve is flattened in page points to
+  samples at most a point apart (the client's input spacing: sparser ones
+  would let the pen outline's streamline round a corner) and within 0.05 pt
+  of the curve, then decimated as `finishStroke.js` does. `w` comes from
+  Notability's fractional widths, raw force and tilt become `p`, `a` and
+  `z` only where they are real, and there is no `t` or `t0`: the note stores
+  no sample times. A page's strokes are split into groups by
+  `ink.group_files`, the client's rule (`GROUP_SPLIT_BYTES`, `MAX_STROKES`,
+  `MAX_SAMPLES`), stroke ids `n0`, `n1`, … in each file as `from_pdf_ink`
+  numbers them, so the same note makes the same files. Shapes keep their
+  `shape` records, and a sticky note is a filled `rect` in band 0.
 - `gamma/ink_view.py`: the picture the chat sees of a group (`view_ink`,
   and an attached handwriting block), drawn where it was written. A sheet
   goes through `notebook_pdf`, a PDF page through
@@ -3233,9 +3250,12 @@ boxes inside the zoom window (it shows the page's pixels and its
 handwriting),
 a pressure brush's widths along the ruler (a ruler line is even, as a
 held one is), triangles and polygons from the Shapes tool (draw-and-hold
-makes them) and handles on a `curve`, Xournal++ `.xopp` import, and a
-replay of erasures and edits (it shows the drawing as it is, in the
-order it was written). Audio recording to go with the replay is
+makes them) and handles on a `curve`, Xournal++ `.xopp` import, Notability
+`.ntb` import (its op log's deletes and undos are not mapped:
+[research/notability-format.md](../research/notability-format.md)), strokes
+placed on a recording the Notability import brings (the note times a stroke
+as an event, not its samples), and a replay of erasures and edits (it shows
+the drawing as it is, in the order it was written). Audio recording to go with the replay is
 [recording.md](recording.md). Obsidian vault export writes an ink
 block's caption only. The Notability comparison in the research note
 lists what a closer pen experience still needs (a snap of straight

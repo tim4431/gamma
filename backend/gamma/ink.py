@@ -32,6 +32,7 @@ import bisect
 import json
 import math
 import re
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from itertools import accumulate
 from operator import add, sub
@@ -47,6 +48,9 @@ VERSION = 2
 MAX_STROKES = 5000
 MAX_SAMPLES = 500_000
 MAX_BYTES = 6 * 1024 * 1024
+# ink.js GROUP_SPLIT_BYTES: a group past it starts a new one, so every group
+# keeps room under MAX_BYTES for what an edit adds (a cut stroke is two pieces)
+GROUP_SPLIT_BYTES = 3 * 1024 * 1024
 COORD_UNIT = 100        # stored x/y are hundredths of a point
 PRESSURE_UNIT = 1000    # stored p is 0..1000
 MULT_UNIT = 1000        # stored w / o are multipliers × 1000
@@ -1047,6 +1051,8 @@ def _canon(value):
     if isinstance(value, dict):
         return {k: _canon(v) for k, v in value.items() if v is not None}
     if isinstance(value, list):
+        if all(type(v) is int for v in value):  # a stroke's pts: nothing to change, and most of a file
+            return value
         return [_canon(v) for v in value]
     return value
 
@@ -1061,6 +1067,40 @@ def dumps(ink: InkFile | dict) -> bytes:
     data = to_dict(ink) if isinstance(ink, InkFile) else ink
     return json.dumps(_canon(data), separators=(",", ":"), sort_keys=True, allow_nan=False,
                       ensure_ascii=False).encode("utf-8")
+
+
+def group_files(strokes, space: dict) -> Iterator[dict]:
+    """Stroke dicts without ids, in drawing order, as the gamma-ink v2 files
+    (dicts) of one surface (``space``). A new file starts before a stroke
+    that would take the current one past MAX_STROKES, MAX_SAMPLES or
+    GROUP_SPLIT_BYTES of canonical bytes, the rule the client splits a
+    page's writing into groups by. Bytes are measured as ink.js ``inkBytes``
+    measures them: the empty file's ``dumps``, plus each stroke's ``dumps``
+    and one comma, less one comma. A stroke's id is ``n<i>``, its index in
+    its file, as ``from_pdf_ink`` numbers its strokes, so the same strokes
+    always make the same bytes and the same stored file. Each stroke must
+    fit a file of its own; the caller's per-stroke cap sees to that."""
+    empty = len(dumps({"format": FORMAT, "version": VERSION, "space": space, "strokes": []}))
+    current: list = []
+    total = samples = 0  # the file's inkBytes once it holds a stroke, and its samples
+
+    def numbered(stroke, i):
+        out = {**stroke, "id": f"n{i}"}
+        return out, len(dumps(out)) + 1  # its bytes and its comma
+
+    for stroke in strokes:
+        n = len(stroke["pts"]) // len(stroke.get("ch") or "xy")
+        out, nbytes = numbered(stroke, len(current))
+        if current and (len(current) >= MAX_STROKES or samples + n > MAX_SAMPLES
+                        or total + nbytes > GROUP_SPLIT_BYTES):
+            yield {"format": FORMAT, "version": VERSION, "space": space, "strokes": current}
+            current, samples = [], 0
+            out, nbytes = numbered(stroke, 0)
+        total = (total if current else empty - 1) + nbytes
+        current.append(out)
+        samples += n
+    if current:
+        yield {"format": FORMAT, "version": VERSION, "space": space, "strokes": current}
 
 
 # --- version 1 → 2 ---------------------------------------------------------------
