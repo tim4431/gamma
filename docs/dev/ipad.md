@@ -493,6 +493,23 @@ adds the standard library and turns each compiled module (`.so`) into a
 framework of its own, signed, since iOS loads an app's native code only
 from frameworks.
 
+Two of the standard library's modules, `_ssl` and `_hashlib`, link OpenSSL
+statically, and Apple requires a privacy manifest in every framework that
+carries OpenSSL
+([third-party SDK requirements](https://developer.apple.com/support/third-party-SDK-requirements)):
+App Store Connect refused TestFlight build 9 for both (ITMS-91061).
+`install_python` moves a `<module>.xcprivacy` lying beside a module's `.so`
+into the framework as `PrivacyInfo.xcprivacy`, and the support package
+means to ship one for each of the two, but the 3.13-b16 tarball has none
+(its Makefile copies `lib-dynload` into the package before it writes
+them). So `build-python.sh` puts OpenSSL's own manifest beside each of the
+two modules, in every slice of the framework, on every run:
+`ipad/python/OpenSSL.xcprivacy`, the file OpenSSL ships for its macOS
+framework, which declares one accessed API (file timestamps, reason
+C617.1), no collected data and no tracking. The post-build phase fails a
+build whose two frameworks end up without it. Build 9's report named only
+these two: the wheels' frameworks drew no complaint and carry none.
+
 `install_python` converts `.so` files only, and PyMuPDF's wheel carries
 MuPDF as two plain dylibs beside its extension modules
 (`python/app_packages/pymupdf/libmupdf.dylib`, 57 MB, and
@@ -653,9 +670,12 @@ Only an iPad can show these, and none has been run yet:
   written and dry-run on Windows. On the simulator CI checks it: the
   start test ([Tests](#tests)) reads a PDF through the server, so a pull
   request whose MuPDF frameworks do not load fails there. No device has
-  imported `pymupdf` from the bundle (device check 12), and App Store
-  validation has not seen the hand-made frameworks. What remains to
-  confirm is listed in [research/pymupdf-ios.md](../research/pymupdf-ios.md).
+  imported `pymupdf` from the bundle (device check 12), and the only App
+  Store validation the hand-made frameworks have had is App Store
+  Connect's processing of TestFlight build 9, which complained of nothing
+  but the two OpenSSL manifests ([How the bundle is made](#how-the-bundle-is-made)).
+  What remains to confirm is listed in
+  [research/pymupdf-ios.md](../research/pymupdf-ios.md).
 - **Moving data between servers.** Nothing moves a library from This iPad
   to another server or back, beyond clones and the web app's per-workspace
   Export and Import, as on the desktop.

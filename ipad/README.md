@@ -102,7 +102,7 @@ needs, all of it generated and gitignored (`ipad/.gitignore`):
 
 | Output | What it is |
 |---|---|
-| `Python.xcframework/` | CPython 3.13.16 for iOS, BeeWare's [Python-Apple-support](https://github.com/beeware/Python-Apple-support) `3.13-b16`, downloaded once and checked against the sha256 pinned in the script |
+| `Python.xcframework/` | CPython 3.13.16 for iOS, BeeWare's [Python-Apple-support](https://github.com/beeware/Python-Apple-support) `3.13-b16`, downloaded once and checked against the sha256 pinned in the script, with OpenSSL's privacy manifest (`python/OpenSSL.xcprivacy`) put beside its `_ssl` and `_hashlib` modules on every run |
 | `GammaIPad/Resources/python/app_packages.iphoneos/` | The server's dependencies as iOS device wheels |
 | `GammaIPad/Resources/python/app_packages.iphonesimulator/` | The same as simulator wheels; a build takes the one for its platform |
 | `GammaIPad/Resources/python/app/` | `backend/app.py`, `backend/gamma/` and `python/gamma_ios.py`, with bytecode compiled for the device |
@@ -138,7 +138,11 @@ bash ipad/scripts/build-python.sh --check   # only check that every pin resolves
 In the build, a post-build phase copies the server code, the web app and
 the platform's wheels into the bundle, then runs the support package's
 `install_python`, which adds the standard library and makes each native
-module a signed framework. PyMuPDF's two MuPDF libraries come as plain
+module a signed framework; the two that link OpenSSL, `_ssl` and
+`_hashlib`, get the privacy manifest Apple requires of them from the file
+the script put beside each, and a build whose frameworks lack it fails
+([docs/dev/ipad.md "How the bundle is made"](../docs/dev/ipad.md#how-the-bundle-is-made)).
+PyMuPDF's two MuPDF libraries come as plain
 dylibs, which `install_python` leaves where they are, so a step of our own
 makes them frameworks the same way
 ([docs/research/pymupdf-ios.md](../docs/research/pymupdf-ios.md)).
