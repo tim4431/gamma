@@ -2,11 +2,13 @@
 // sheets, shown in the notebook view or among its notes. A new notebook
 // opens in the notebook view; it is written on with the same ink tools, a
 // click on a stroke selects it, a page is added by writing low on the last
-// one and by the button, the paper menu sets a page's paper and the page
+// one and by the button, Z says the zoom window is for PDF pages, the
+// paper menu sets a page's paper and the page
 // added after it takes that paper; the notebook view's side bar switches
 // to the notes view, a sheet's own switch back, remembered over a reload;
-// the export is a PDF of the sheets, and on a touch screen two fingers
-// pinch-zoom and pan the pages. Then pages in a note: "/note",
+// the export is a PDF of the sheets, on a touch screen two fingers
+// pinch-zoom and pan the pages, and a page of hundreds of strokes draws
+// them in either view after a switch. Then pages in a note: "/note",
 // written on in place, the replay of the page and of its group's card (on
 // the page too), and "Add page below". The
 // rules behind it are backend/tests/test_notebooks.py,
@@ -110,6 +112,14 @@ export async function notebookScenarios({ server, browser, alice, step, until, s
     await page.waitForSelector(".blockInkCard", { timeout: 5000 });
     b = await sheetBox(0);
     assert(b.width > 300, "the page fits the viewer's width");
+    assertNoProblems(page);
+  });
+
+  await step("notebook: Z with the strip open says the zoom window works on PDF pages, and opens none", async () => {
+    await page.waitForSelector(".pdfInkBar");
+    await page.keyboard.press("z");
+    await page.getByText("The zoom window works on PDF pages.", { exact: true }).waitFor();
+    assertEq(await page.locator(".inkZoomPanel").count(), 0, "no zoom window on a sheet");
     assertNoProblems(page);
   });
 
@@ -289,6 +299,35 @@ export async function notebookScenarios({ server, browser, alice, step, until, s
       assertNoProblems(tab);
     } finally {
       await touch.close();
+    }
+  });
+
+  // A sheet past IDLE_STROKES draws only the groups in view (InkLayer.jsx
+  // "dense pages"), measured once its surface is there: after a switch the
+  // layer mounts with its ink loaded, in the same commit as the sheet.
+  await step("notebook: a page of hundreds of strokes draws them in the other view after a switch, and back", async () => {
+    const [first] = await sheetsOnServer();
+    const { width, height } = first.properties.sheet;
+    const strokes = Array.from({ length: 250 }, (_, i) => ({ id: `d${i}`, color: "#1f1f1f", size: 2, ch: "xy",
+      pts: [(40 + (i % 25) * 20) * 100, (60 + Math.floor(i / 25) * 30) * 100, 1200, 0] }));
+    const up = await account.api("/api/upload-ink", { method: "POST",
+      body: { format: "gamma-ink", version: 2, space: { kind: "canvas", width, height }, strokes } });
+    const group = await account.api("/api/blocks", { method: "POST",
+      body: { parent_id: first.id, content: "", properties: { ink_url: up.url, ink_strokes: strokes.length } } });
+    const fresh = await account.context(browser); // no view chosen here: the notes view
+    try {
+      const tab = await openPage(fresh, `${server.base}/?page=${pageId}&ws=${account.ws}`);
+      const drawn = (where) => tab.locator(`${where} >> nth=0 >> .inkLayer path`).count();
+      await until(async () => (await drawn(".noteSheet .nbSheet")) >= 250, { what: "the notes view draws them", timeout: 15000 });
+      await tab.locator(".noteSheetBar button[aria-label='Notebook view']").first().click();
+      await tab.waitForSelector(".nbViewer .nbSheet", { timeout: 15000 });
+      await until(async () => (await drawn(".nbViewer .nbSheet")) >= 250, { what: "the notebook view draws them", timeout: 15000 });
+      await tab.click(".pdfZoomOverlay button[aria-label='Notes view']");
+      await until(async () => (await drawn(".noteSheet .nbSheet")) >= 250, { what: "the notes view draws them again", timeout: 15000 });
+      assertNoProblems(tab);
+    } finally {
+      await fresh.close();
+      await account.api(`/api/blocks/${group.id}`, { method: "DELETE" });
     }
   });
 

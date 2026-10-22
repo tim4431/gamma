@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { basePlan, windowMargin, windowSlice, detailPlan, covers } from "../src/pdf/pageRaster.js";
+import { basePlan, windowMargin, windowSlice, detailPlan, covers, zoomRasterNeed, zoomRasterPlan } from "../src/pdf/pageRaster.js";
 import { canvasSize, CANVAS_MAX_PIXELS, CANVAS_MAX_EDGE } from "../src/shared/lib/canvasSize.js";
 
 const inLimits = ({ width, height }) =>
@@ -151,4 +151,30 @@ test("for realistic views the planned detail canvas covers what is on screen and
     }
   }
   assert(checked > 1000);
+});
+
+test("the zoom window's raster is the window and a margin around it, at its magnification, inside the page and the limits", () => {
+  const page = { width: 612, height: 792 };
+  const win = { x: 150, y: 200, w: 200, h: 50, mag: 3 };
+  const plan = zoomRasterPlan(win, page, 2);
+  assert.equal(plan.scale, 3);
+  // 0.65 of the width either side (130 pt), half the height above and below (25 pt)
+  assert(near(plan.rect.x, 20 * 3) && near(plan.rect.y, 175 * 3), JSON.stringify(plan.rect));
+  assert(near(plan.rect.width, 460 * 3) && near(plan.rect.height, 100 * 3), JSON.stringify(plan.rect));
+  assert.deepEqual([plan.width, plan.height], [2760, 600], "the screen's own resolution");
+  assert(covers(plan.rect, zoomRasterNeed(win, page)));
+  // the auto-advance's step along the line, and a line down, stay on what is drawn
+  assert(covers(plan.rect, zoomRasterNeed({ ...win, x: win.x + 0.6 * win.w }, page)));
+  assert(covers(plan.rect, zoomRasterNeed({ ...win, y: win.y + 24 }, page)));
+  assert(!covers(plan.rect, zoomRasterNeed({ ...win, x: win.x + 0.7 * win.w }, page)));
+  // at the page's corner the margin stops at the page
+  const corner = zoomRasterPlan({ ...win, x: 0, y: 0 }, page, 1);
+  assert(corner.rect.x === 0 && corner.rect.y === 0 && near(corner.rect.width, 330 * 3), JSON.stringify(corner.rect));
+  // a 4× window on a phone-wide, three-ratio screen stays inside the canvas caps, never the whole page
+  for (const dpr of [1, 2, 3]) {
+    const big = zoomRasterPlan({ x: 0, y: 0, w: 612, h: 80, mag: 4 }, page, dpr);
+    assert(inLimits(big) && big.rect.height < 792 * 4 / 2, `${dpr}: ${JSON.stringify(big)}`);
+  }
+  assert.equal(zoomRasterPlan({ ...win, x: 900 }, page, 2), null, "off its page");
+  assert.equal(zoomRasterNeed({ ...win, mag: 0 }, page), null);
 });

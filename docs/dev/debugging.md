@@ -383,9 +383,12 @@ see each other's pages or provider entries.
 
 Rules the frontend mirrors — search normalization (`gamma/textnorm.py` ↔
 `frontend/src/shared/lib/textnorm.js`), published pages' slugs
-(`gamma/publish.py` ↔ `frontend/src/shared/lib/slug.js`) and text boxes
+(`gamma/publish.py` ↔ `frontend/src/shared/lib/slug.js`), text boxes
 (`gamma/text_box.py` ↔ `frontend/src/markup/textBox.js`,
-`tests/shared/textbox.json`, [text_boxes.md](text_boxes.md)) — are pinned by ONE
+`tests/shared/textbox.json`, [text_boxes.md](text_boxes.md)) and
+handwriting (`gamma/ink.py` ↔ `frontend/src/ink/ink.js` and
+`ink/grain.js`: the codec, dashes, merge, the calligraphy nib and the
+pencil's grain, [handwriting.md](handwriting.md)) — are pinned by ONE
 set of cases both sides read: `tests/shared/*.json` at the repository root,
 run by `backend/tests/test_shared_fixtures.py` (the slugs by
 `test_publish.py`) and the matching node tests. Add a case there when a rule
@@ -420,6 +423,7 @@ npm run e2e -- --jobs 1         # one worker, groups in order, live output (~8 m
 npm run e2e -- --changed        # only the groups the working tree's changes select
 npm run e2e -- --changed main --list  # a branch's selection and why, without running
 npm run e2e -- --group ink,collab     # these groups (ids: `--list`)
+npm run e2e -- --shard 1/2      # half the groups by time (CI runs each half on its own runner)
 npm run e2e -- --only collab    # steps whose name contains "collab" (one worker)
 npm run e2e -- --continue       # keep going after a failure
 npm run e2e -- --headed         # watch the browser
@@ -452,19 +456,23 @@ the step closed on its way out (the usual `finally { await ctx.close() }`)
 is there too, as `-closed.jpg`: closing a context or a page during a step
 first keeps its last look. The
 `check` workflow runs the suite on every PR and uploads those folders as the
-`e2e-failures` artifact. `harness.mjs` holds the server lifecycle, `Account` (session
-cookie + `X-Gamma-Workspace` for API seeding, browser contexts logged in as
-that account), `makePdf` (a small real PDF with a text layer), `step()`, and
-`assertOpensInPlace` (a menu or card read frame by frame: no frame of it
-where it then moves, [ui-design.md](ui-design.md#menus-and-popups-open-in-place)).
+`e2e-failures-<shard>` artifact. `harness.mjs` holds the server
+lifecycle, `Account` (session cookie + `X-Gamma-Workspace` for API
+seeding, browser contexts logged in as that account), `makePdf` (a small
+real PDF with a text layer) and `step()`. It also holds two checks of
+where a surface opens. `assertOpensInPlace` reads a menu or card frame by
+frame: no frame of it where it then moves
+([ui-design.md](ui-design.md#menus-and-popups-open-in-place)).
+`assertMenuFrom` finds a toolbar button's menu 4 px below or above that
+button, by its left edge ([ui-design.md](ui-design.md#menus-and-submenus)).
 
 The run is split into groups (`GROUPS` in `tests/e2e/select.mjs`, one per
 scenario file except `notes-pdf-share`, whose scenarios hand data along;
 `run.mjs` maps each id to its scenario functions). `--jobs N` (default:
 half the CPUs, at most 6; one with `--only`) forks N workers, each with its
 own backend, data dir and browser; a worker takes the next group off the
-queue, longest first, and the group's lines print as one block when it
-ends. A group must not rely on another group's data: put scenarios that do
+queue, longest first (each group's `s`, its seconds in a CI run), and the
+group's lines print as one block when it ends. A group must not rely on another group's data: put scenarios that do
 in the same group. Workers reuse their accounts between groups: restore an
 account preference changed for one scenario in `finally`, after closing its
 browser context. Otherwise a later group can inherit a different Enter-key
@@ -476,28 +484,42 @@ before testing citations).
 
 Without `--continue` a failure stops handing out groups
 and the ones running finish. The wall time is bounded by the longest group
-(settings and the first-run guide, about a minute each), so split one of
-those before adding workers.
+(settings, about two and a half minutes in CI), so split it before adding
+workers or shards.
+
+`--shard k/n` runs the k-th of n shares of the selection: each group,
+longest first by its `s`, goes to the share with the least time so far
+(`shardOf` in `select.mjs`), so the shares take about as long. CI runs the
+two halves (`--shard 1/2`, `--shard 2/2`) on two runners, about three
+minutes each. When a group's time drifts far from its `s` (a CI log prints
+each group's seconds as `── <group>  (N s`), update it.
 
 A group that throws outside its steps (its own setup: accounts, seeded
 pages) runs none of them. The summary counts it as a failure,
-`<group> (group aborted)`, and prints the error with its cause. The suite's
-`fetch` (the harness's and the scenarios') sends a request again when it
-went down a keep-alive connection the backend had already closed: `server.manage()`
-runs manage.py synchronously, and a few calls in a row can block Node past
-uvicorn's 5 s idle timeout, so the next request finds its socket closed
-(`fetch failed`, "other side closed", on Linux). The inbox group aborted that
-way in CI, uncounted, before both were fixed.
+`<group> (group aborted)`, and prints the error with its cause.
+`server.manage()` runs manage.py asynchronously: run synchronously, a few
+calls in a row (about a second each) blocked Node past uvicorn's 5 s
+keep-alive timeout, and the next request went down a socket the backend had
+closed (`fetch failed`, "other side closed", on Linux). The inbox group
+aborted that way in CI.
 
 `--changed [ref]` picks the groups from what changed: the working tree
 (staged, unstaged, untracked) against `HEAD`, or everything since the branch
 left `ref`. `RULES` in `select.mjs` maps each source path (first matching
-glob wins) to the groups that exercise it: `frontend/src/guide/**` to the
-three tour groups, `backend/gamma/ink.py` to the ink groups,
-`frontend/src/markup/**` (the page layers and the tool strip, whose
-anchors the ink tour uses) to the ink, ink-editing, pdf-touch, notebooks,
-triggered-guide and textbox groups, docs, desktop,
-extension and backend tests to none, and what every scenario goes through
+glob wins) to the groups that exercise it. `frontend/src/guide/**` goes to
+the three tour groups. `frontend/src/markup/**` (the page layers and the
+tool strip, whose anchors the ink tour uses) goes to the ink groups (ink,
+ink-editing, ink-shapes, ink-zoom), pdf-touch, touch, notebooks,
+triggered-guide, textbox and comments (a press on a margin card with a pen
+or the Text tool armed). `backend/gamma/ink.py` goes to ink,
+ink-editing, ink-shapes, notebooks, triggered-guide and transfers, and
+`backend/gamma/notebook.py` to notebooks and transfers: the Notability
+note the transfers scenario imports writes its strokes through the first
+and paints its paper page with the second's paper. The chat's
+pictures of handwriting (`backend/gamma/ink_view.py`) go to the groups of
+the AI modules (`ai_*.py`: the chat's, settings and ink-zoom).
+Docs, desktop, extension and backend tests go to none, and what every
+scenario goes through
 (`src/app/`, `src/shared/`, the home library, the page's live session, the
 backend core: auth, db, blocks, ops, uploads) to all of them. A changed
 scenario file also selects every scenario that imports its helpers, and a
@@ -509,7 +531,7 @@ catch-all (a new folder or module needs its rule), when a group's scenario
 files drift from `scenarios/`, or when a rule names an unknown group. When a
 change reaches less than its rule says (a new prop threaded through
 App.jsx into one pane), the selection errs wide: narrow it with `--group`.
-CI runs everything.
+CI runs everything, in its two shards.
 
 **Flaky steps.** A step that passes here and fails on CI is almost always a
 timing assumption that a slow machine breaks, and the CI runner has 4 cores.
@@ -564,7 +586,10 @@ The scenarios live in `tests/e2e/scenarios/`:
   viewer's and a link visitor's side, `?thread=` and a folder share's
   thread link. Also the field as a note's editor, the selection popup's
   Comment and the PDF margin's cards ([comments.md](comments.md) "In the
-  app"). Run with `--group comments`.
+  app"), and the cards beside the pen strip: a pen or the Text tool on a
+  card, a handwriting selection let go by a press on one, its right-click,
+  and its Enter and Escape with the zoom window open. Run with
+  `--group comments`.
 - `inbox.mjs`: an invitation's jump to its workspace; the bell's count from
   a page socket's nudge after a mention typed through the @ menu and, on the
   home library, on focus; the jumps in place, into another workspace and
@@ -613,23 +638,137 @@ The scenarios live in `tests/e2e/scenarios/`:
   background: the dialog closed mid-way, reopened from Background tasks and
   its zip downloaded ([tasks.md](tasks.md)). The job's listing is held at
   "running" with `page.route`, since the server's job is quick.
-- `ink.mjs`: handwriting. The tool strip and its presets, mouse strokes
-  becoming an ink block with an `.ink` upload, persistence across a reload,
-  the eraser, stroke undo/redo, the partial eraser, a lasso move + delete,
-  the notes card's jump + outline (`/Ink` in the exported PDF is `test_ink.py`). Pen input:
-  coalesced sample timing, pressure and lift endpoints in the uploaded
-  file, prediction, palm suppression and palm-first pen takeover, cleanup
-  after `pointercancel` / lost capture. Chromium's native touch and pen,
-  and synthetic Pencil events for Safari's handler order. Stylus latency
-  and OS palm rejection still need a real tablet.
-- `inkEditing.mjs`: tap-to-select and the selection menu, which opens and
-  grows in place, frame by frame. Colour/width
-  edits keeping pressure and time, duplicate ids, selective delete, the
-  Undo/Redo buttons, a finger lasso-move across groups in pen-only mode,
-  swipe/hold arbitration, a pen resuming through a selection, menu
-  placement on a small screen, view/edit shares. Native Chromium touch/pen,
-  asserting on the persisted stroke files. `--only "ink edit:"`; `--only
-  ink` runs both files.
+- `ink.mjs`: handwriting.
+  - The tool strip and its presets: the options row, More, the Tool menu,
+    reordering, the bracket keys (`]` at the widest says the width again
+    without a write) and a held E. Opening the strip arms the stylus pen,
+    not a highlighter before a hidden last pen.
+  - The strip's menus (More, the Tool menu, the Style picker's) open 4 px
+    under their buttons by the left edge (`assertMenuFrom`). A press on
+    More while the Tool menu is open swaps the two, and More opened with
+    Enter closes on Escape with the focus left on it.
+  - Mouse strokes becoming an ink block with an `.ink` upload, persistence
+    across a reload, the eraser, stroke undo/redo, a lasso move + delete
+    and the notes card's jump + outline (`/Ink` in the exported PDF is
+    `test_ink.py`). The partial eraser, and one swept in three long jumps
+    over two groups: every stroke it crossed cut at its edge, one undo
+    entry, which redo brings back whole.
+  - Pen input: coalesced sample timing, pressure and lift endpoints in the
+    uploaded file, prediction, palm suppression and palm-first pen
+    takeover, cleanup after `pointercancel` / lost capture. Chromium's
+    native touch and pen, and synthetic Pencil events for Safari's handler
+    order. Stylus latency and OS palm rejection need a real tablet.
+  - The file: a pressure stroke stored as version 2 with its baked width,
+    and two tabs changing one group at once (the save merges by stroke).
+    A change to a stroke the other tab changed meanwhile is dropped, and
+    that tab's pill says so.
+  - The build fence: a page whose session names another build than the
+    socket's hello stops drawing, behind a sticky pill with Reload. The
+    strip opens with nothing armed, and a drag saves nothing.
+  - Draw and hold: a held line, and a closed circle and rectangle held
+    still where they began, snap to their shapes.
+  - The pen's feel: a highlighter always straightened, the eraser's
+    filter, Back to last tool, the two-finger double tap, Scribble to
+    erase and Smoothing.
+  - The pen styles: the Brush's tapers, Dashed and Shift+[ ], a Brush's
+    held line at constant width, a tilted Pencil's tilt, shading and
+    grain, and the hover footprint.
+  - A stroke's `ink-live` chunks: its page, id, look, `n` and samples,
+    and no `g` or `k`.
+  - Transcribe with AI (the oldest attached block making room), the
+    Handwriting rows in Settings, and the draft journal bringing back
+    strokes a crashed tab never saved.
+  - A browser with pens of its own is asked once, on the account's first
+    pull, whether to keep them. *Use this browser's* pushes them, and
+    another browser shows them after a reload.
+  - The question stays up while a page opens under it, the page's "Ready."
+    showing over it for its second, and while a link to a page that is
+    gone opens.
+  - A later pull and a browser on the defaults never ask. Nor does a later
+    load of a browser that only took the account's list or sent its own,
+    by a push or with keepalive as its page was hidden.
+  - The next account to sign in on a browser takes its own pens without a
+    question, and no key the browser keeps names the last account's pens.
+- `inkEditing.mjs`: editing handwriting, on native Chromium touch and pen,
+  asserting on the persisted stroke files. `--only "ink edit:"`, and
+  `--only ink` runs all four ink files.
+  - Tap-to-select and the selection menu, which opens and grows in place,
+    frame by frame.
+  - Colour/width edits keeping pressure and time, duplicate ids, selective
+    delete and the Undo/Redo buttons.
+  - A finger lasso-move across groups in pen-only mode, swipe/hold
+    arbitration, a pen resuming through a selection and menu placement on
+    a small screen.
+  - View/edit shares, and an edit share's Transcribe saying a shared page
+    has no AI chat.
+  - Copy, cut and paste (Ctrl+C / X / V, and Paste here on a right-click),
+    a flip, and New note and Merge into note.
+  - New note on a note's whole drawing, and Merge into note on a note with
+    a caption, are refused on the pill and change nothing.
+  - The Style row restyles a pen to Brush and Dotted, and a highlighter
+    takes a line, never a brush.
+  - The selection's Style picker opens its menu 4 px under it. Opened with
+    Enter, Escape closes that menu alone and the focus stays on the
+    picker.
+  - A tap on the picker opens the menu, the tap's click leaves it open,
+    and a second tap closes it.
+  - The Color row rings the colour every selected stroke shares, none for
+    a mix, and a colour off the palette on the custom swatch. A custom
+    colour keeps a highlighter's opacity.
+  - Ctrl+D and the menu's Duplicate set the copy off by the same 12 css px
+    at two zooms. A Duplicate past the bytes one file holds is refused
+    with the selection kept.
+  - So are a New note and a Merge into note past those bytes, on a page of
+    two groups of about 3.3 MB each.
+  - Ctrl+V while the next paper's PDF loads pastes nothing, and once a
+    page of it is in view it pastes there.
+- `inkShapes.mjs`: the strip's modifiers ([handwriting.md](handwriting.md)
+  "What the user sees"). The Shapes tool's dragged rectangle stored with
+  its shape record, the ruler and a stroke begun by its edge, Stamp line,
+  Escape one layer at a time, the calligraphy pen and its nib, a shape's
+  handles and a Fill. It also checks the crosshair as the page's cursor
+  with Shapes armed, the Nib angle's − and + (no slider), and that a
+  keyboard-focused handle shows one ring, its dot's. `--group ink-shapes`.
+- `inkZoom.mjs`: the zoom window (a stroke written in the panel saved at
+  page coordinates, Previous / Next / New line, the advance along the
+  line, the box dragged, and the grip: a drag shown as it moves, the
+  scroller following and nothing written, applied once at the release
+  and kept across a reload, ↑ / ↓ at once) and the selection menu's
+  Transcribe, with the AI
+  stubbed: part of a group goes as `ink_selections`, a whole group as its
+  block's chip. `--group ink-zoom`.
+- `notebooks.mjs`: sheets of paper ([notebooks.md](notebooks.md)), written
+  on with the same ink tools. `--group notebooks`.
+  - A new notebook opens in the notebook view, a stroke on a sheet becomes
+    a group under it, and a click on a stroke selects it.
+  - Writing low on the last page adds the next, and Add page adds one
+    more. Z with the strip open says the zoom window works on PDF pages,
+    and opens none.
+  - The paper menu sets a page's pattern, and a page added after it takes
+    its paper.
+  - The side bar switches to the notes view and a page's own switch back,
+    the choice outliving a reload. The pages and their handwriting survive
+    a reload, and the export is a PDF of the pages.
+  - Two fingers pinch-zoom and pan the pages and Ctrl+wheel zooms, both
+    holding the paper under them. A page of hundreds of strokes draws them
+    in the other view after a switch.
+  - Pages in a note: "/note" turns an empty block into a page drawn in
+    place, the page and its group's card replay the writing, and "Add page
+    below" adds one.
+- `recording.mjs`: audio recordings ([recording.md](recording.md)), with a
+  stand-in MediaRecorder and Audio. `--group recording`.
+  - The mic records into a recording block, and a note typed and a stroke
+    drawn meanwhile carry their moment.
+  - Play shades the note and fades the stroke until their moment, a tap on
+    the stroke seeks, and Escape closes the player.
+  - The player's mode and speed menus open on the press, 4 px above their
+    buttons. A press on one while the other is open swaps them, a second
+    press closes it, and after Enter and Escape the focus stays on the
+    mode button.
+  - In the notebook view, Follow scrolls the viewer to the sheet being
+    written on.
+  - With no viewer shown, Play docks the player over the notes, and Escape
+    closes it.
 - `textBoxes.mjs`: text boxes ([text_boxes.md](text_boxes.md)) on a PDF
   page and on a sheet in both views. It covers the Text tool's click and
   drag, typing, the stored block after a reload, the notes marker's jump,
@@ -653,11 +792,18 @@ The scenarios live in `tests/e2e/scenarios/`:
   highlight checks the next step off, finishing records "done", the menu
   restarts it, and Esc leaves a replay. `contextualGuide.mjs` (the AI chat
   tour, and each step's card opening beside its own anchor) and `triggeredGuide.mjs` (offers and hints): onboarding.md "Files".
-- `ipad.mjs`: the installed web app ([ipad.md](ipad.md)) — the manifest
+- `ipad.mjs`: the installed web app ([ipad.md](ipad.md)): the manifest
   and its icons, `theme-color` following the theme, the standalone-mode
   block in the bundled stylesheet (`display-mode` cannot be emulated in
-  Chromium), and a note editor's editing bar by tap (none with a mouse).
-  `--only ipad`.
+  Chromium), taps in the library, the upright and landscape layouts, the
+  phone's bottom bar, and a note editor's editing bar by tap (none with a
+  mouse). Its `ipad shell:` steps run the page under a stand-in host
+  (`fakeShell`). A Pencil stroke is claimed in the preset's look and
+  committed from the host's samples (with tilt, and a calligraphy nib
+  turned by the roll). The host's `hold` snaps and refits a still line
+  or opens Paste here. Then come a claim along the ruler, a shell
+  without `hold`, and the Apple Pencil gestures, settings and haptics.
+  `--group ipad`.
 - `touch.mjs`: one behaviour for mouse and finger
   ([ui-design.md](ui-design.md#one-behaviour-for-mouse-and-finger)), in
   desktop and touch contexts — a window's fold, unfold and drag, a held
@@ -689,7 +835,9 @@ The scenarios live in `tests/e2e/scenarios/`:
 - `collab.mjs`: two accounts in a shared workspace: presence, live ops, edits
   to different blocks, same-block last-writer-wins, undo after a remote edit,
   rename propagation, edits made offline replaying, remote delete, a
-  highlight made by the other person.
+  highlight made by the other person. The stroke one person is drawing
+  shows on the other's page within 700 ms (`ink-live`), and an undo right
+  after the lift takes it away at once.
 - `auth.mjs`: refusing an inaccessible explicit workspace without opening a
   different library, the login page, guest login (a new throwaway account
   each time) and demo mode ([guests.md](guests.md)).
@@ -697,9 +845,10 @@ The scenarios live in `tests/e2e/scenarios/`:
   Chinese and back through the reload ([i18n.md](i18n.md)). `--only i18n`.
 - `share.mjs`: the share dialog, the anonymous share view (PDF, highlight,
   image through the share token, no editor), an edit share.
-- `settings.mjs`, `folders.mjs`, `trash.mjs`, `quickOpen.mjs`,
-  `notebooks.mjs`, `mcp.mjs` and `cloudSignIn.mjs` are groups of their
-  own; each file's header names the doc it covers.
+- `settings.mjs`, `folders.mjs`, `trash.mjs`, `quickOpen.mjs`, `mcp.mjs`
+  and `cloudSignIn.mjs` are groups of their own. The headers of
+  `folders.mjs`, `trash.mjs` and `cloudSignIn.mjs` name the doc each
+  covers.
 
 Every step also asserts that no API call failed (4xx/5xx), no console error
 and no page error happened meanwhile (`openPage` records them;

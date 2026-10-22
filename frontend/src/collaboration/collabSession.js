@@ -163,6 +163,7 @@ function dependents(ops, gone) {
 //                           (onopen/onmessage/onclose/onerror, send, close,
 //                           readyState)
 //   keepalivePost(path, body) — fire-and-forget POST while the tab closes
+//                           (the page's keepalive ledger, priority 'critical')
 //   opts()                — the live options, read on every use so callers
 //                           may pass fresh closures:
 //       pageId                        the open page (root block id); "" → idle
@@ -179,6 +180,11 @@ function dependents(ops, gone) {
 //       onGone(pageId, gone)          the open page went to Recently deleted
 //                                     ({trashed}: its trash entry, when known) —
 //                                     its edits wait — or is back (null)
+//       onInkLive(msg)                a peer's handwriting stroke in progress
+//                                     (`ink-live`, ink/inkLive.js)
+//       onBuild(build)                the server's build, from the hello (the build
+//                                     fence, ink/buildFence.js: a tab left open across
+//                                     an update stops drawing)
 //       onComments(msg)               someone wrote a comment on the page
 //                                     ({t: "comments", block_id, thread_id}), or
 //                                     the socket (re)joined (msg null): refetch
@@ -194,10 +200,12 @@ export function createCollabSession({ clientId, api, openSocket, keepalivePost, 
   const later = timers?.set || ((fn, ms) => globalThis.setTimeout(fn, ms));
   const cancel = timers?.clear || ((id) => globalThis.clearTimeout(id));
   const o = () => opts();
-  // Batch ids: this tab's own (the server keys them by client id too).
+  // Batch ids: this tab's own (the server keys them by client id too);
+  // batchId(n) is the n-th.
   const batchPrefix = Math.random().toString(36).slice(2, 8);
   let batchCount = 0;
-  const nextBatchId = () => `${batchPrefix}${(++batchCount).toString(36)}`;
+  const batchId = (n) => `${batchPrefix}${n.toString(36)}`;
+  const nextBatchId = () => batchId(++batchCount);
 
   const st = {
     session: pageSession(),   // queued writes retain their page after navigation
@@ -747,23 +755,39 @@ export function createCollabSession({ clientId, api, openSocket, keepalivePost, 
     if (s) park(s, trashed);
   }
 
-  // Tab closing / reloading: a keepalive POST of what is still unsaved — the
-  // batch out under its own id (the server answers a copy that already
-  // landed instead of applying it twice), then the queue. (Not for a page
-  // in Recently deleted: the server refuses it.)
-  function pagehide() {
+  // What pagehide sends, as [{path, body}], without sending it: per page
+  // with unsaved edits (not one in Recently deleted: the server refuses
+  // it), the batch out under its own id (the server answers a copy that
+  // already landed instead of applying it twice), then the queue in batches
+  // of MAX_OPS under the ids they will take. usePageCollab claims their
+  // bytes of the page's keepalive room (shared/lib/keepalive.js), read only
+  // when a lower priority asks for room.
+  function pendingKeepaliveBodies() {
+    const out = [];
+    let count = batchCount;
     for (const s of st.sessions) {
       if (s.gone) continue;
+      const path = `/pages/${encodeURIComponent(s.pageId)}/ops`;
       const batches = s.out ? [s.out] : [];
       for (let i = 0; i < s.queue.length; i += MAX_OPS) {
-        batches.push({ id: nextBatchId(), ops: s.queue.slice(i, i + MAX_OPS) });
+        batches.push({ id: batchId(++count), ops: s.queue.slice(i, i + MAX_OPS) });
       }
-      const page = s.pageId;
+      for (const b of batches) out.push({ path, body: JSON.stringify({ client: clientId, batch: b.id, ops: b.ops }) });
+    }
+    return out;
+  }
+
+  // Tab closing / reloading: a keepalive POST of every body
+  // pendingKeepaliveBodies names; the queue is spent (its batch ids too).
+  function pagehide() {
+    const bodies = pendingKeepaliveBodies();
+    for (const s of st.sessions) {
+      if (s.gone) continue;
+      batchCount += Math.ceil(s.queue.length / MAX_OPS);
       s.queue = [];
-      for (const b of batches) {
-        const body = JSON.stringify({ client: clientId, batch: b.id, ops: b.ops });
-        try { keepalivePost(`/pages/${encodeURIComponent(page)}/ops`, body); } catch {}
-      }
+    }
+    for (const { path, body } of bodies) {
+      try { keepalivePost(path, body); } catch {}
     }
   }
 
@@ -896,6 +920,10 @@ export function createCollabSession({ clientId, api, openSocket, keepalivePost, 
         switch (msg.t) {
           case "hello": {
             setMe({ client: msg.client, color: msg.color, connected: true });
+            // The server's build, compared with the one this page loaded
+            // under (ink/buildFence.js: a tab left open across an update
+            // stops drawing).
+            if (msg.build != null) o().onBuild?.(msg.build);
             setPeers((msg.peers || []).filter((p) => p.client !== msg.client));
             // The tree was fetched before the socket opened (its seq came
             // with it); anything that landed in between is in the log.
@@ -919,6 +947,10 @@ export function createCollabSession({ clientId, api, openSocket, keepalivePost, 
           case "cursor":
             setPeers((prev) => prev.map((p) => (p.client === msg.client
               ? { ...p, block: msg.block, anchor: msg.anchor, head: msg.head, rev: (p.rev || 0) + 1 } : p)));
+            break;
+          case "ink-live":
+            // a peer's handwriting stroke in progress (ink/inkLive.js)
+            o().onInkLive?.(msg);
             break;
           case "ops":
             receive(msg);
@@ -985,8 +1017,16 @@ export function createCollabSession({ clientId, api, openSocket, keepalivePost, 
     armCursor();
   }
 
+  // A chunk of the handwriting stroke in progress (ink/inkLive.js) for
+  // the room, on the open socket; dropped when the socket is down — never
+  // queued or retried, since the committed stroke follows by HTTP. → sent.
+  function sendInkLive(msg) {
+    if (!st.ws || st.ws.readyState !== SOCKET_OPEN) return false;
+    try { st.ws.send(JSON.stringify({ ...msg, t: "ink-live" })); return true; } catch { return false; }
+  }
+
   return {
-    commit, flush, hasPending, sendCursor, pagehide, connect, disconnect,
+    commit, flush, hasPending, sendCursor, sendInkLive, pagehide, pendingKeepaliveBodies, connect, disconnect,
     overlay, retryNow, reloadFailed, tooLong, gone,
     get peers() { return peers; },
     get me() { return me; },

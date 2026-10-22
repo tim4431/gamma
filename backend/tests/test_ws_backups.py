@@ -95,6 +95,21 @@ def test_snapshot_round_trip(owner, other):
     assert owner.delete(f"/api/workspaces/{ws}/backups/{b['name']}").status_code == 404
 
 
+def test_a_backup_from_a_newer_gamma_is_refused(tmp_path):
+    """A zip whose pages.db is stamped above this release's SCHEMA_VERSION
+    holds shapes this code cannot read: refused before anything is touched,
+    with the way forward in the message."""
+    from gamma import migrations, ws_backup
+    with closing(sqlite3.connect(str(tmp_path / "pages.db"))) as conn:
+        conn.execute("CREATE TABLE unified_blocks (id TEXT PRIMARY KEY, properties TEXT NOT NULL DEFAULT '{}')")
+        conn.execute(f"PRAGMA user_version = {migrations.SCHEMA_VERSION + 1}")
+        conn.commit()
+    with pytest.raises(ws_backup.BackupError) as e:
+        ws_backup._normalize_copies(tmp_path)
+    assert "newer Gamma" in str(e.value) and "update Gamma" in str(e.value)
+    assert str(migrations.SCHEMA_VERSION + 1) in str(e.value)
+
+
 def test_no_zip_carries_anyones_prefs_and_a_restore_keeps_them(owner):
     # Open tabs, recents and reading positions are each account's own: a
     # snapshot, an export and a Gamma export of the workspace hold the

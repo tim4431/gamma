@@ -6,7 +6,7 @@ import {
   DEFAULT_HIGHLIGHT, DEFAULT_PALETTE, INK_COLORS, INK_HIGHLIGHT_ALPHA, INK_HIGHLIGHT_COLORS, MAX_GROUPS, MAX_GROUP_COLORS, PICKERS,
   WASH_ALPHA, WASH_COLORS, colorName,
   darkPageColor, darkPageLine, hexColor, hexToHsv, highlightColor, hsvToHex, isDefaultPalette, nearestColor, newGroupId,
-  normalizeColor, normalizePalette, normalizeSwatch, parseColor, pickerColors, swatchCss, withAlpha,
+  normalizeColor, normalizePalette, normalizeSwatch, parseColor, pickerColors, swatchCss, swatchMarker, withAlpha,
 } from "../src/shared/model/palette.js";
 import { PREFS, readProfile } from "../src/app/prefDefs.js";
 import { DEFAULT_TOOLS, HIGHLIGHTER_OPACITY } from "../src/ink/ink.js";
@@ -182,6 +182,20 @@ test("a picker's colours: its group's, else the first group's with any; never em
   const emptied = normalizePalette({ groups: [{ id: "x", name: "X", colors: ["#555555"] }, { id: "e", name: "E", colors: [] }], pickers: { text: "e" } });
   assert.equal(emptied.pickers.text, "e");
   assert.deepEqual(pickerColors(emptied, "text").map((c) => c.hex), ["#555555"], "a chosen group with no colours does not empty the picker");
+});
+
+test("a picker marks the swatch of the colour shared, and of one hex at two alphas only the one at the opacity shared", () => {
+  const marked = (colors, color, alpha) => colors.filter(swatchMarker(colors, color, alpha)).map((c) => `${c.hex}@${c.alpha}`);
+  const pens = DEFAULT_PALETTE.groups[2].colors;
+  assert.deepEqual(marked(pens, "#DC2626", 1), ["#dc2626@1"], "the colour's swatch, whatever its case");
+  assert.deepEqual(marked(pens, "#dc2626", 0.4), ["#dc2626@1"], "a hex the palette holds once is marked at any opacity");
+  assert.deepEqual(marked(pens, "", 1), [], "a mix marks nothing");
+  assert.deepEqual(marked(pens, "#123456", 1), [], "a colour off the palette marks no swatch");
+  const twice = [{ hex: "#1f1f1f", alpha: 1 }, { hex: "#dc2626", alpha: 1 }, { hex: "#dc2626", alpha: 0.5 }];
+  assert.deepEqual(marked(twice, "#dc2626", 1), ["#dc2626@1"]);
+  assert.deepEqual(marked(twice, "#dc2626", 0.5), ["#dc2626@0.5"]);
+  assert.deepEqual(marked(twice, "#dc2626", 0.8), [], "an opacity neither swatch has");
+  assert.deepEqual(marked(twice, "#dc2626", undefined), [], "opacities that differ");
 });
 
 test("the picker's space: hex ↔ hue, saturation, value round-trips; grays keep hue 0; inputs clamp", () => {

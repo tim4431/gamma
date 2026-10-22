@@ -4,13 +4,16 @@ The file organization is in place ([source map](../../frontend/src/README.md):
 functional folders directly under `src/`, alongside `app/` and `shared/`,
 without an extra `features/` layer), and so is the startup bundle split
 ([Lazy boundaries](#lazy-boundaries)). The state decomposition below is
-still a proposal: modules have moved, their state ownership has not been
-redesigned, and `app/App.jsx` is about 11,000 lines. Two steps are taken:
-the block tree holds the document only, and the viewer's own state (the open
-editor, their folding) is App's `view` beside it
-(`shared/model/blockModel.js`, [collab.md](collab.md)); the AI connect
-dialog's form state is `useProviderEditor` (`settings/providerEditor.js`).
-Everything from "Goal and current constraints" on is open work.
+still mostly a proposal: modules have moved, most of their state
+ownership has not been redesigned, and `app/App.jsx` is about 11,900
+lines. Three steps are taken: the block tree holds the document only, and
+the viewer's own state (the open editor, their folding) is App's `view`
+beside it (`shared/model/blockModel.js`, [collab.md](collab.md)); the AI
+connect dialog's form state is `useProviderEditor`
+(`settings/providerEditor.js`); and App's handwriting state lives in
+owners in `ink/` that App composes (the `ink/` row below,
+[handwriting.md](handwriting.md) "Client"). Everything from "Goal and
+current constraints" on is open work, but for that row.
 
 ## Lazy boundaries
 
@@ -105,7 +108,7 @@ may carry a PDF attachment.
 
 Paths below are relative to `frontend/src/`. The folders exist except
 `app/preferences/`, `pages/` and `workspace/`; the hooks and state owners in
-this table are proposals.
+this table are proposals, but for the `ink/` row's, which are built.
 
 | Module or area | Responsibility | Existing code to extract |
 |---|---|---|
@@ -119,6 +122,7 @@ this table are proposals.
 | `library/` | Listing derivation, selection, page/folder/label operations, and library UI | `pageBlocks` through `homeItems`, click handlers, filing, rename/move/delete, carousels |
 | `workspace/` | Dock arrangement, visibility, panel sizes, drag geometry, and phone presentation | `moveWindow`, `startWindowDock`, `renderSlotGroup`, per-page layout snapshots |
 | `pdf/` | Viewer controls, PDF/notes jumps, scroll restoration, translation, and snapshots | Existing viewer/translation files, `restorePdfScroll`, zoom and capture logic |
+| `ink/` (built: `buildFence.js`, `useInkStrip.js`, `useInkLive.js`, `useInkSave.js` over `inkSaver.js`, `useInkSurfaces.js`, `useInkDocument.js`, `useInkStrokes.js`, `useInkSelection.js`, `useInkRuler.js`, `useInkZoom.js`, `useStripKeys.js`, `usePencil.js`) | The strip's tools, a page's ink edits and history, saving, the lasso and clipboard, ruler, zoom window, strip keys, Pencil | Extracted: the build fence; `inkUi` with its presets and commands; live co-drawing; `flushInk` and `scheduleInk` (the save as a node-tested factory); the ink by surface and `pasteTarget`; `applyInk`, the stroke history and the erasers; `handleInkStroke` and `handleInkStrokes`; the lasso selection, its actions and the clipboard; the ruler; the zoom window; the strip's key handler; the Pencil's gestures and haptics; their pure parts, node-tested (`stripState.js`, `inkHistory.js`, `inkEdits.js`, `selectionEdits.js`, `inkSurfaces.js`, `inkCommands.js`). App keeps the composition, the page tools, navigation, the chat half of Transcribe ([handwriting.md](handwriting.md) "Client") |
 | `transfers/` | Upload/import/export operations | `uploadFiles`, format imports, backup transfer functions (the Background tasks store, tray and the job handlers in `useAppJobs.js` already live in `tasks/`) |
 | `sharing/` | Share-link resolution/gates and owner share controls | `resolveShare`, `loadShareSettings`, invitation mutations (the popover itself, `SharePopover.jsx`, already lives here) |
 | `settings/` | Settings panels and AI provider form/request state | Existing settings files plus the provider list, Test, usage and login-check handlers App still holds (the connect dialog's form, catalog and sign-in are already `useProviderEditor`) |

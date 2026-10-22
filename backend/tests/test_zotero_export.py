@@ -65,7 +65,7 @@ def _pdf_annots(z, item):
 
 def _ink_block(guest, bid, caption):
     """A handwriting group on PDF page 1, its strokes uploaded."""
-    ink = {"format": "gamma-ink", "version": 1,
+    ink = {"format": "gamma-ink", "version": 2,
            "space": {"kind": "pdf-page", "page": 1, "width": 612, "height": 792},
            "strokes": [{"id": "s1", "tool": "pen", "color": "#1d4ed8", "size": 2, "opacity": 1, "pen": True,
                         "t0": 1757760000000, "ch": "xypt",

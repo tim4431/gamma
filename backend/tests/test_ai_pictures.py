@@ -50,7 +50,7 @@ def _data_url(data, media="image/png"):
 
 
 def _ink(points=((40, 60), (260, 340))):
-    return {"format": "gamma-ink", "version": 1,
+    return {"format": "gamma-ink", "version": 2,
             "space": {"kind": "pdf-page", "page": 1, "width": PAGE_W, "height": PAGE_H},
             "strokes": [{"id": "s1", "color": "#ff0000", "size": 6, "ch": "xy",
                          "pts": inkmod.encode_points([{"x": x, "y": y} for x, y in points], "xy")}]}

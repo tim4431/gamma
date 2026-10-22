@@ -19,14 +19,14 @@ Watchtower (the `update-demo-server`, `update-share-host` and
 
 | Workflow | File | Runs when | Produces |
 |---|---|---|---|
-| `check` | `check.yml` | every pull request to `main`, except one that only touches the account server or the website | pass/fail: brand asset consistency, the iPad's pins resolved, backend pytest, frontend unit tests + build, the browser suite (3 parallel workers), extension unit tests + zip (~5 min) |
+| `check` | `check.yml` | every pull request to `main`, except one that only touches the account server or the website | pass/fail: brand asset consistency, the iPad's pins resolved, backend pytest, frontend unit tests + build, the browser suite (two shards on two runners, 3 workers each), extension unit tests + zip (~5 min) |
 | `desktop` | `desktop.yml` | manual dispatch only (`release` skill) | Windows installer, macOS dmg + zip, Debian/Ubuntu deb, the update-feed files, the browser extension's `gamma-connector-<version>.zip` → GitHub Release `v<version>`; the MSIX artifact + a Microsoft Store submission when the secrets exist; a Docker tag `<version>` |
 | `chrome-store` | `chrome-store.yml` | dispatched by the desktop release (not a pre-release) when the `CWS_*` variables exist; daily at 09:17 UTC for a release the store skipped; manual dispatch with a tag | the release's Connector zip uploaded to the Chrome Web Store and submitted for review (API V2) |
 | `docker` | `docker.yml` | every push to `main` except one that only touches the account server or the website; dispatched by the desktop release with a version; manual dispatch from any branch (a `sha-<short>` image only) | `ghcr.io/tim4431/gamma:sha-<short>` on every run; `:latest` only from `main`; `:<version>` and `:<major.minor>` when dispatched with a version; linux/amd64 + arm64 |
 | `cloud` | `cloud.yml` | a pull request touching `cloud/`; manual dispatch from any branch (`update-account-server` skill) | pass/fail: the account server's pytest; when dispatched and green, `ghcr.io/tim4431/gamma-cloud:latest` + `:sha-<short>` (`cloud/Dockerfile`, amd64) |
 | `fleet` | `fleet.yml` | a pull request or a push to `main` touching `cloud/fleet/`; manual dispatch from any branch | pass/fail: the fleet agent's pytest; on a push to main or a dispatch, when green, `ghcr.io/tim4431/gamma-fleet:latest` + `:sha-<short>` (`cloud/fleet/Dockerfile`, amd64; [hosted.md](hosted.md)) |
 | `site` | `site.yml` | a PR or a push to `main` touching `sites/`, `docs/` (the artwork it copies and the documents it renders), `PRIVACY.md` or `TERMS.md`; manual dispatch from any branch (`build-site` skill) | pass/fail: the site builds with every internal link resolving and its Worker passes a dry run; on a push or dispatch, gammapdf.com: `sites/dist` deployed as a Cloudflare Worker (static assets only; needs `CLOUDFLARE_API_TOKEN` + `CLOUDFLARE_ACCOUNT_ID`; [sites/README.md](../../sites/README.md)) |
-| `ipad` | `ipad.yml` | a pull request touching `ipad/`, `backend/requirements.txt`, `tools/build_frontend_if_needed.mjs` or the workflow; manual dispatch | pass/fail on macOS: the app's Python, wheels, server code and web app prepared (`ipad/scripts/build-python.sh`), the Xcode project generated (XcodeGen), the XCTest suite on an iPad simulator with the embedded server started, an unsigned device build ([ipad/README.md](../../ipad/README.md)) |
+| `ipad` | `ipad.yml` | a pull request touching `ipad/`, the ink fixtures its tests read (`tests/shared/inkwidth.json`, `inkhold.json`), `backend/requirements.txt`, `tools/build_frontend_if_needed.mjs` or the workflow; manual dispatch | pass/fail on macOS: the app's Python, wheels, server code and web app prepared (`ipad/scripts/build-python.sh`), the Xcode project generated (XcodeGen), the XCTest suite on an iPad simulator with the embedded server started, an unsigned device build ([ipad/README.md](../../ipad/README.md)) |
 | `Assistant plugin package` | `codex-plugin.yml` | PRs touching the plugin or its tooling, or manual dispatch | plugin packaging and installer tests on Windows/macOS/Linux and preview plugin release assets (pins `checkout@v4`/`setup-python@v5`/`upload-artifact@v4`, older than the rule below) |
 
 The `desktop` workflow also builds the versioned assistant plugin assets —
@@ -203,12 +203,13 @@ backend pytest (Python 3.12, `requirements.txt` + `requirements-dev.txt`,
 test at 300 s, after which it fails with every thread's stack instead of
 holding the job), the frontend unit tests + build (Node 22,
 `npm test` then `npm run build`), the browser suite
-(`npm run e2e -- --continue --jobs 3` against a backend started from the checkout with
+(`npm run e2e -- --continue --jobs 3 --shard <k>/2`, the two shards as a
+matrix of two jobs of about equal time, against a backend started from the checkout with
 `GAMMA_E2E_PYTHON=python` — both requirements files, since a scenario
 builds its Zotero fixture from a backend test module — Playwright's
 Chromium installed with its system deps; on a failure the harness's
 `failures/` folders — screenshots, page problems, the error, the server
-log tail — are uploaded as the `e2e-failures` artifact), and the extension's unit
+log tail — are uploaded as the `e2e-failures-<shard>` artifact), and the extension's unit
 tests (Node 22, `node --test extension/tests/*.test.mjs` — the pure
 modules; its `.e2e.mjs` files need Playwright's full Chromium and are run
 by hand) followed by a manifest parse + zip of the extension. No installers. A PR that changes only
@@ -224,8 +225,11 @@ red check is fixed on the branch as normal work.
 One macOS job (`macos-15`, 50 minutes) for the iPad app, which carries
 the Gamma server and the built web app ([ipad.md](ipad.md#the-local-server)).
 It runs for the server's dependencies and the frontend's build helper as
-well as for `ipad/`, but not for backend or frontend code, which the other
-checks test. A change that matters on the device is dispatched by hand.
+well as for `ipad/`, but not for backend or frontend code, which the
+other checks test. It also runs for the two ink fixtures the Swift ports
+of the brush table and the held shape are held to
+(`tests/shared/inkwidth.json`, `inkhold.json`, resources of the test
+bundle). A change that matters on the device is dispatched by hand.
 
 - Python 3.13 (`setup-python`), so pip's environment markers match the
   device's, and Node 22 with `npm ci` in `frontend/`.

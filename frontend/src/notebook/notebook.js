@@ -197,6 +197,16 @@ export function sheetAfterPlan(tree, afterId, makeId, { once = false } = {}) {
   return { id, add: true };
 }
 
+// Whether a stroke on sheet `page` adds the next sheet: one written into
+// the last quarter of the page's last sheet (`box` its bounds, [x1, y1,
+// x2, y2] in the sheet's points, null for none), so there is always paper
+// below (Notability's continuous page). useInkStrokes.js adds it once
+// (sheetAfterPlan's `once`).
+export function wantsSheetAfter(sheets, page, box) {
+  const last = sheets.at(-1);
+  return last?.id === page && !!box && box[3] > last.paper.height * 0.75;
+}
+
 // The tree with a new sheet `id` right after block `afterId`, on the paper
 // of the sheet nearest before it (paperBefore), folded; the same tree when
 // the id is there already or the block is not.

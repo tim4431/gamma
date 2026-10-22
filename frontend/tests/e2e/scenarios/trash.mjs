@@ -7,7 +7,7 @@ import { Account, wanted } from "../harness.mjs";
 export async function trashScenarios(env) {
   const { server, browser, step, openPage, assert, assertEq, assertNoProblems, until } = env;
   if (!wanted("trash")) return;
-  server.manage("create-user", "trash-user", "trash-pw");
+  await server.manage("create-user", "trash-user", "trash-pw");
   const user = await new Account(server, "trash-user", "trash-pw").login();
   const pageApi = (title, folders = []) => user.api("/api/pages", { method: "POST", body: { title, folders } });
   const binTests = await user.folder("bin/tests");

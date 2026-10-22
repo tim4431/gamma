@@ -11,6 +11,12 @@ import { t } from "../shared/i18n/i18n.js";
 // selections each (ai_context.MAX_SELECTIONS, MAX_CONTEXT_BLOCKS; the
 // selection in the open editor comes on top).
 export const MAX_CHAT_PASSAGES = 12;
+// At most this many groups' selected handwriting, and this many bytes of
+// it as JSON together (ai_context.MAX_INK_SELECTIONS,
+// MAX_INK_SELECTION_BYTES): the selection menu's Transcribe refuses more
+// before anything is sent.
+export const MAX_INK_SELECTIONS = 8;
+export const MAX_INK_SELECTION_BYTES = 65536;
 
 // How much of each item a shared budget keeps: an item within an even
 // share keeps all of it, and what it leaves goes to the rest, again split

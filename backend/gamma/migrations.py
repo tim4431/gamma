@@ -30,7 +30,9 @@ The rules that keep this safe and small:
   every workspace's databases when a pending step walks them — is
   snapshotted with the SQLite backup API into ``backups/<time>-v<N>/``
   (``gamma/backups.py``; uploads are never copied — steps move them, never
-  rewrite them). A workspace's own steps copy its two databases into that
+  rewrite them; step 41 is the one exception, writing a new
+  content-addressed file beside each stroke file it converts). A
+  workspace's own steps copy its two databases into that
   snapshot first (``workspaces/<id>/``). An upgrade that does not finish
   keeps that snapshot named in ``backups/upgrade.json`` and every retry
   reuses it, so a restart loop neither piles up copies nor rotates the
@@ -1591,6 +1593,74 @@ def _v40_comments_inbox(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
+def _v41_ink_v2(ws: str, pages: sqlite3.Connection, data) -> None:
+    """The stroke file moves to ``gamma-ink`` version 2 (gamma/ink.py
+    ``upgrade_v1``, docs/dev/handwriting.md "Upgrading version 1"): for
+    every block whose properties name an ``ink_url``, the file is read from
+    the workspace's uploads; a version 1 (or unversioned) one is converted,
+    its canonical bytes written as a NEW upload named by their sha256 (the
+    naming ``POST /api/upload-ink`` uses) and the block's ``ink_url`` set
+    to that name, ``ink_strokes`` and ``pdf_position`` untouched; the old
+    file is left for the orphan cleanup. The first step that writes upload
+    files (rule 4's exception); nothing is rewritten in place. A version 2
+    file is skipped, so a rerun changes nothing; a file that cannot be read
+    or converted is logged and its block left as it is. Pure, so every copy
+    of the workspace mints the same names and a mirror's digest sync
+    agrees once both sides have run it. Nothing is stamped or touched."""
+    from . import ink as inkmod
+    if not _columns(pages, "unified_blocks"):
+        return  # an old copy without the table gets it from the schema statements
+    # the uploads beside this pages.db: the live workspace's or a backup's unpacked copy
+    file = pages.execute("PRAGMA database_list").fetchone()[2]
+    if not file:
+        return  # an in-memory database has none
+    uploads = Path(file).with_name("uploads")
+    where = f"workspace {ws}" if ws else "a backup's copy"
+    converted: dict[str, str] = {}  # old upload name -> new (one file, many blocks)
+    changed = []
+    for block_id, raw in pages.execute(
+            "SELECT id, properties FROM unified_blocks WHERE properties LIKE '%\"ink_url\":%'").fetchall():
+        try:
+            props = json.loads(raw) if raw else None
+        except ValueError:
+            continue
+        m = inkmod._UPLOAD_RE.search(props.get("ink_url") or "") if isinstance(props, dict) else None
+        if not m:
+            continue
+        name = m.group(1)
+        if name not in converted:
+            converted[name] = _upgrade_ink_file(uploads, name, where)
+        if converted[name] and converted[name] != name:
+            props["ink_url"] = f"/api/uploads/{converted[name]}"
+            changed.append((json.dumps(props), block_id))
+    pages.executemany("UPDATE unified_blocks SET properties = ? WHERE id = ?", changed)
+    if changed:
+        log.info(f"[migrate] {where}: {len(changed)} handwriting blocks moved to gamma-ink version 2")
+
+
+def _upgrade_ink_file(uploads: Path, name: str, where: str) -> str:
+    """One stored ``.ink``: its name when it is not version 1 (version 2
+    already, or a newer file this release does not write; or it cannot be
+    read: logged), else the name of the converted copy written beside
+    it."""
+    from . import ink as inkmod
+    from .storage import content_digest, write_atomic
+    path = uploads / name
+    try:
+        obj = inkmod.load_json(path.read_bytes())
+        if obj.get("version", 1) != 1:
+            return name
+        data = inkmod.dumps(inkmod.upgrade_v1(obj))
+        inkmod.parse_ink(data)  # the converted file must be a valid version 2 drawing
+    except (OSError, inkmod.InkError, ValueError, TypeError, AttributeError) as e:
+        log.warning(f"[migrate] {where}: handwriting file {name} left as it is: {e}")
+        return name
+    new = f"{content_digest(data)}.ink"
+    if not (uploads / new).is_file():
+        write_atomic(uploads / new, data)
+    return new
+
+
 STEPS = [
     (20, "guest_accounts", _v20_guest_accounts),
     (21, "folder_shares", _v21_folder_shares),
@@ -1621,4 +1691,5 @@ WORKSPACE_STEPS = [
     (34, "workspace_prefs", _v34_workspace_prefs),
     (37, "highlight_colors", _v37_highlight_colors),
     (38, "recording_kind", _v38_recording_kind),
+    (41, "ink_v2", _v41_ink_v2),
 ]

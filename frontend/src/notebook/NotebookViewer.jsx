@@ -3,8 +3,10 @@
 // pattern drawn from each sheet's paper — with the layers a PDF page has
 // (markup/MarkupLayers.jsx, keyed by the sheet's id instead of a page number) and
 // an "Add page" sheet after the last. The scale follows the viewer's zoom ("page-width"
-// fits the widest sheet). App owns the tree, the tools, the stroke history
-// and the commits; PaperMenu edits a sheet's paper.
+// fits the widest sheet). App owns the tree; the tools, the stroke history
+// and the commits are in the owners App composes (ink/useInkStrip.js,
+// ink/useInkDocument.js, ink/useInkStrokes.js); PaperMenu edits a sheet's
+// paper.
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { MarkupLayers, NO_MARKS } from "../markup/MarkupLayers";
 import { armedClasses, usePageTools } from "../markup/PageTools";

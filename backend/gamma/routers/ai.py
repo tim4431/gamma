@@ -49,12 +49,15 @@ from ..ai_tools import (
     tool_states,
 )
 from ..ai_context import (
+    MAX_INK_SELECTION_BYTES,
+    MAX_INK_SELECTIONS,
     MAX_NOTE_SELECTIONS,
     MAX_SELECTIONS,
     MIN_PASSAGE_BUDGET,
     build_messages as _build_messages,
     context_markdown,
     gather_inputs as _gather_inputs,
+    ink_selection_bytes,
     passage_budget,
     pdf_path as _pdf_path,
     prompt_tokens,
@@ -148,6 +151,20 @@ class AIChatRequest(BaseModel):
     focus_block_id: str = ""
     context_blocks: list = Field(default_factory=list)
     note_selections: list = Field(default_factory=list, max_length=MAX_NOTE_SELECTIONS)
+    # Handwriting the user selected on a page (the selection menu's
+    # Transcribe on part of a group): [{page_id, block_id, space, strokes}],
+    # one group's selected strokes as the client holds them, saved or not,
+    # drawn where they lie for the model (ai_context.request_ink_selections).
+    # At most MAX_INK_SELECTIONS groups and MAX_INK_SELECTION_BYTES of
+    # compact JSON together: past either the request is refused (422).
+    ink_selections: list = Field(default_factory=list, max_length=MAX_INK_SELECTIONS)
+
+    @field_validator("ink_selections")
+    @classmethod
+    def _ink_selections_size(cls, value):
+        if ink_selection_bytes(value) > MAX_INK_SELECTION_BYTES:
+            raise ValueError(f"the selected handwriting is over {MAX_INK_SELECTION_BYTES // 1024} KB")
+        return value
     attach_pdf: bool = False  # send the PDF itself instead of extracted text
     effort: str = ""      # reasoning effort; empty = provider default (param omitted)
     speed: str = ""       # service tier (ai_protocols.SPEED_ORDER); empty = the provider's usual

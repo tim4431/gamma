@@ -3,6 +3,8 @@ sheet of paper, cropped or whole), the pictures of attached handwriting
 blocks riding with a message, and the renderer under both
 (gamma/ink_view.py, pdf_export.page_with_ink)."""
 
+import io
+import statistics
 from types import SimpleNamespace
 
 import pymupdf
@@ -22,7 +24,7 @@ PAGE_W, PAGE_H = 300.0, 400.0
 def _ink(kind="pdf-page", color="#ff0000", width=PAGE_W, height=PAGE_H,
          points=((40, 60), (260, 340))):
     space = {"kind": kind, "width": width, "height": height, **({"page": 1} if kind == "pdf-page" else {})}
-    return {"format": "gamma-ink", "version": 1, "space": space,
+    return {"format": "gamma-ink", "version": 2, "space": space,
             "strokes": [{"id": "s1", "color": color, "size": 6, "ch": "xy",
                          "pts": inkmod.encode_points([{"x": x, "y": y} for x, y in points], "xy")}]}
 
@@ -39,11 +41,66 @@ def _pdf(path, pages=1):
 
 def _pixel(pdf_bytes, x, y):
     """The RGB of pixel ``(x, y)`` of the first page rendered at 1 pt per pixel."""
+    return _raster(pdf_bytes)(x, y)
+
+
+def _raster(pdf_bytes, zoom=1):
+    """The first page rendered at ``zoom`` pixels per pt, as ``pixel(x, y) → (r, g, b)``."""
     doc = pymupdf.open(stream=pdf_bytes, filetype="pdf")
     try:
-        return doc[0].get_pixmap(matrix=pymupdf.Matrix(1, 1), alpha=False).pixel(x, y)
+        pix = doc[0].get_pixmap(matrix=pymupdf.Matrix(zoom, zoom), alpha=False)
     finally:
         doc.close()
+    return pix.pixel
+
+
+def _grain_at(px, py, zoom=2):
+    """The alpha of the pencil's grain the screen draws at pixel ``(px, py)``
+    of a page rendered at ``zoom`` (a tile pixel is half a page unit)."""
+    tile = inkmod._grain_indices()
+    i, j = int((px + 0.5) * 2 / zoom) % inkmod.GRAIN_PX, int((py + 0.5) * 2 / zoom) % inkmod.GRAIN_PX
+    return inkmod._GRAIN_ALPHAS[tile[j * inkmod.GRAIN_PX + i]] / 255
+
+
+def _blank_page(width, height, rotation=0, crop=None):
+    """A blank one-page PDF, turned by ``rotation`` and cropped to ``crop``."""
+    from PyPDF2 import PdfWriter
+    from PyPDF2.generic import ArrayObject, FloatObject, NameObject, NumberObject
+
+    writer = PdfWriter()
+    writer.add_blank_page(width=width, height=height)
+    if rotation:
+        writer.pages[0][NameObject("/Rotate")] = NumberObject(rotation)
+    if crop:
+        writer.pages[0][NameObject("/CropBox")] = ArrayObject(FloatObject(v) for v in crop)
+    buf = io.BytesIO()
+    writer.write(buf)
+    return buf.getvalue()
+
+
+def _text_pdf(path, text="Handwriting", at=(40, 100), size=40):
+    """A one-page PDF with a line of black text, its baseline at ``at``."""
+    doc = pymupdf.open()
+    doc.new_page(width=PAGE_W, height=PAGE_H).insert_text(at, text, fontsize=size)
+    doc.save(str(path))
+    doc.close()
+    return path
+
+
+def _drawing(*strokes):
+    return inkmod.parse_ink({"format": "gamma-ink", "version": 2,
+                             "space": {"kind": "pdf-page", "page": 1, "width": PAGE_W, "height": PAGE_H},
+                             "strokes": list(strokes)})
+
+
+def _line(sid, y, x0=20, x1=280, step=2.0, ch="xy", **look):
+    """A horizontal stroke at ``y``; ``look`` keys that are channels
+    (p, w, o) are callables of the fraction along it."""
+    channels = {k: look.pop(k) for k in ("p", "w", "o") if k in look}
+    n = int((x1 - x0) / step) + 1
+    samples = [{"x": x0 + step * i, "y": y, "t": 8 * i, **{k: f(i / (n - 1)) for k, f in channels.items()}}
+               for i in range(n)]
+    return {"id": sid, "ch": ch, "pts": inkmod.encode_points(samples, ch), **look}
 
 
 def _page_count(pdf_bytes):
@@ -99,7 +156,138 @@ def test_page_with_ink_draws_the_strokes_on_that_page(tmp_path):
     # The stroke runs corner to corner through the middle; the corner is paper.
     assert _pixel(data, 150, 200) == (255, 0, 0)
     assert _pixel(data, 290, 10) == (255, 255, 255)
+    doc = pymupdf.open(stream=data, filetype="pdf")
+    try:
+        assert list(doc[0].annots()) == []          # drawn into the content, not annotated
+    finally:
+        doc.close()
+    assert page_with_ink(path, 2, [])[0]   # nothing to stamp: the page as it is
     assert page_with_ink(path, 3, []) == (b"", 2)
+
+
+@pytest.mark.parametrize("rotation", [0, 90, 180, 270])
+def test_stamped_strokes_land_where_they_were_drawn_on_a_turned_page(rotation):
+    """The stamp maps display space through the page's frame, as /Ink does."""
+    import io
+    from PyPDF2 import PdfWriter
+    from PyPDF2.generic import NameObject, NumberObject
+
+    writer = PdfWriter()
+    writer.add_blank_page(width=PAGE_W, height=PAGE_H)
+    if rotation:
+        writer.pages[0][NameObject("/Rotate")] = NumberObject(rotation)
+    buf = io.BytesIO()
+    writer.write(buf)
+    shown = (PAGE_H, PAGE_W) if rotation in (90, 270) else (PAGE_W, PAGE_H)
+    ink = inkmod.parse_ink({"format": "gamma-ink", "version": 2,
+                            "space": {"kind": "pdf-page", "page": 1, "width": shown[0], "height": shown[1]},
+                            "strokes": [_line("pen", 40, x0=30, x1=80, color="#ff0000", size=6),
+                                        _line("hl", 90, x0=30, x1=80, tool="highlighter", color="#0000ff",
+                                              size=10, opacity=0.5)]})
+    pixel = _raster(page_with_ink(buf.getvalue(), 1, [ink])[0])
+    assert pixel(55, 40) == (255, 0, 0) and pixel(55, 60) == (255, 255, 255)
+    r, g, b = pixel(55, 90)
+    assert b == 255 and 120 < r == g < 136                    # blue at half strength, multiplied
+
+
+def test_text_under_a_highlighter_stays_legible(tmp_path):
+    """The highlighter multiplies onto the page's text: every glyph pixel
+    under it stays dark, and the paper around them turns yellow."""
+    path = _text_pdf(tmp_path / "text.pdf")
+    bare = _raster(page_with_ink(path, 1, [])[0])
+    glyphs = [(x, y) for x in range(40, 280) for y in range(74, 100) if max(bare(x, y)) < 60]
+    assert len(glyphs) > 300
+    marker = _line("hl", 88, x0=30, tool="highlighter", color="#ffe066", size=30, opacity=0.6)
+    lit = _raster(page_with_ink(path, 1, [_drawing(marker)])[0])
+    assert all(max(lit(x, y)) < 80 for x, y in glyphs)
+    r, g, b = lit(32, 88)                      # paper under the highlighter, left of the text
+    assert r > 240 and b < 200 and lit(32, 160) == (255, 255, 255)
+
+
+def test_a_pen_stays_over_a_highlighter_drawn_after_it(tmp_path):
+    """Band 0 is drawn first across the page's groups, as on screen."""
+    path = _pdf(tmp_path / "blank.pdf")
+    pen = _line("pen", 200, color="#0000ff", size=6)
+    marker = {**_line("hl", 0, x0=150, x1=150), "tool": "highlighter", "color": "#ffe066", "size": 30,
+              "pts": inkmod.encode_points([{"x": 150, "y": 100}, {"x": 150, "y": 300}], "xy")}
+    data, _ = page_with_ink(path, 1, [_drawing(pen), _drawing(marker)])
+    assert _pixel(data, 150, 200) == (0, 0, 255)                # the crossing: the pen on top
+    r, g, b = _pixel(data, 150, 150)
+    assert r > 240 and b < 200                                  # the highlighter itself
+
+
+def test_a_pencil_shows_its_three_shades_in_its_grain(tmp_path):
+    """o = 0.15 + 0.85p from no pressure to full: the light, middle and
+    dark bands each read as their own grey through the screen's grain —
+    speckled, where a monoline stroke of the same colour beside it is
+    flat."""
+    path = _pdf(tmp_path / "blank.pdf")
+    pencil = _line("pc", 200, x0=30, x1=270, ch="xyptwo", brush="pencil", color="#000000", size=6,
+                   p=lambda f: f, w=lambda f: 1 + (f - 0.5), o=lambda f: 0.15 + 0.85 * f)
+    mono = _line("m", 300, x0=30, x1=270, brush="monoline", color="#000000", size=6)
+    zoom = 4
+    shade = _raster(page_with_ink(path, 1, [_drawing(pencil, mono)])[0], zoom)
+
+    def window(x0, x1, y):
+        return [(x, py) for x in range(x0 * zoom, x1 * zoom) for py in range(y * zoom - 2, y * zoom + 2)]
+    for (x0, x1), band in (((40, 70), 0.33), ((100, 150), 0.66), ((200, 255), 1)):   # o crosses 0.33 at x 81, 0.66 at 174
+        got = [1 - shade(x, y)[0] / 255 for x, y in window(x0, x1, 200)]
+        want = [band * _grain_at(x, y, zoom) for x, y in window(x0, x1, 200)]
+        assert statistics.mean(got) == pytest.approx(statistics.mean(want), abs=0.02)
+        assert statistics.pvariance(got) > 0.01 * band, "the grain's speckle"
+    flat = [1 - shade(x, y)[0] / 255 for x, y in window(40, 255, 300)]
+    assert min(flat) > 0.99 and statistics.pvariance(flat) < 1e-4
+
+
+@pytest.mark.parametrize("rotation, crop", [(0, None), (90, None), (180, None), (270, None),
+                                            (0, (37.5, 61.25, 337.5, 461.25)), (90, (37.5, 61.25, 337.5, 461.25))])
+def test_the_pencil_s_grain_sits_where_the_screen_draws_it(rotation, crop):
+    """The grain is the screen's tile, GRAIN_UNITS page units square from
+    the page's corner as shown, on a turned page and a cropped one too:
+    every pixel inside a wide pencil stroke is as dark as the tile is
+    there, and not as the tile a few pixels off."""
+    w, h = (500.0, 600.0) if crop else (300.0, 400.0)
+    shown = ((crop[2] - crop[0], crop[3] - crop[1]) if crop else (w, h))[::(-1 if rotation in (90, 270) else 1)]
+    pencil = _line("pc", shown[1] / 2, x0=40, x1=shown[0] - 40, brush="pencil", color="#000000", size=40)
+    ink = inkmod.parse_ink({"format": "gamma-ink", "version": 2,
+                            "space": {"kind": "pdf-page", "page": 1, "width": shown[0], "height": shown[1]},
+                            "strokes": [pencil]})
+    pixel = _raster(page_with_ink(_blank_page(w, h, rotation, crop), 1, [ink])[0], 2)
+    inside = [(x, y) for y in range(int(shown[1]) - 30, int(shown[1]) + 30) for x in range(120, int(2 * shown[0]) - 120)]
+    got = [1 - pixel(x, y)[0] / 255 for x, y in inside]
+    assert statistics.correlation(got, [_grain_at(x, y) for x, y in inside]) > 0.95
+    assert abs(statistics.correlation(got, [_grain_at(x + 5, y + 3) for x, y in inside])) < 0.2
+
+
+def test_a_calligraphy_stroke_shows_its_nib_s_corners(tmp_path):
+    """A 45° nib drawn across the page: the ends are the nib's slanted
+    edge (the ink starts 12 pt further left below the line than above
+    it, and ends 12 pt further right above it), never a round cap."""
+    path = _pdf(tmp_path / "blank.pdf")
+    stroke = _line("c", 200, x0=50, x1=250, ch="xyptw", brush="calligraphy", nib=45, color="#000000", size=20,
+                   p=lambda f: 0.5, w=lambda f: 0.707)
+    pixel = _raster(page_with_ink(path, 1, [_drawing(stroke)])[0])
+
+    def ends(y):
+        dark = [x for x in range(int(PAGE_W)) if pixel(x, y)[0] < 128]
+        return dark[0], dark[-1]
+    (above_left, above_right), (below_left, below_right) = ends(194), ends(206)
+    assert above_left - below_left == pytest.approx(12, abs=2) and above_right - below_right == pytest.approx(12, abs=2)
+    # across the travel the nib is its sine against it wide, size × sin 45° (192.9 to 207.1)
+    assert [pixel(150, y)[0] < 128 for y in (191, 194, 206, 208)] == [False, True, True, False]
+
+
+def test_a_dashed_stroke_renders_with_gaps(tmp_path):
+    """A dashed pressure pen of size 4: dashes 8 pt on, 8 off along its
+    centreline (round caps eat 4 pt of every gap)."""
+    path = _pdf(tmp_path / "blank.pdf")
+    dashed = _line("d", 300, ch="xyptw", color="#000000", size=4, dash="dashed", p=lambda f: 0.5, w=lambda f: 1.0)
+    pixel = _raster(page_with_ink(path, 1, [_drawing(dashed)])[0])
+    ink = [max(pixel(x, 300)) < 128 for x in range(10, 290)]
+    runs = sum(1 for a, b in zip([False] + ink, ink) if b and not a)
+    assert runs == 17 and not all(ink)
+    solid = _raster(page_with_ink(path, 1, [_drawing({**dashed, "dash": None})])[0])
+    assert all(max(solid(x, 300)) < 128 for x in range(20, 281))
 
 
 def test_crop_box_pads_grows_and_stays_on_the_page():
@@ -170,3 +358,104 @@ def test_attached_handwriting_rides_with_the_message_as_a_picture(stored_pdf):
                               pages=[], page_id=ids["paper"])
     assert "handwriting on p. 1" in notes_focus_section(ids["ws"], payload, crops=crops)
     assert crops == []
+
+
+def _selected(block_id, page_id, points=((100, 100), (180, 100)), color="#0000ff", kind="pdf-page", width=PAGE_W, height=PAGE_H):
+    """An ink_selections entry: one stroke the user selected (saved or not), as the client sends it."""
+    space = {"kind": kind, "width": width, "height": height, **({"page": 1} if kind == "pdf-page" else {})}
+    return {"page_id": page_id, "block_id": block_id, "space": space,
+            "strokes": [{"id": "sel1", "color": color, "size": 6, "ch": "xy",
+                         "pts": inkmod.encode_points([{"x": x, "y": y} for x, y in points], "xy")}]}
+
+
+def _colours(image):
+    """(any blue pixel, any red pixel) of a rendered picture ``(bytes, media type, w, h)``."""
+    import io
+
+    from PIL import Image
+    data = Image.open(io.BytesIO(image[0])).convert("RGB").tobytes()
+    pixels = list(zip(data[0::3], data[1::3], data[2::3]))
+    return (any(b > 200 and r < 90 and g < 90 for r, g, b in pixels),
+            any(r > 200 and g < 90 and b < 90 for r, g, b in pixels))
+
+
+def test_selected_handwriting_rides_with_the_message_as_a_picture_of_those_strokes(stored_pdf):
+    """Part of a group: the selected strokes, drawn alone where they lie on
+    their page (the group's stored stroke stays out), labelled with the
+    group's block and its caption."""
+    ids = stored_pdf
+    crops = []
+    payload = SimpleNamespace(focus_block_id="", context_blocks=[], note_selections=[], pages=[], page_id=ids["paper"],
+                              ink_selections=[_selected(ids["group"], ids["paper"])])
+    section = notes_focus_section(ids["ws"], payload, crops=crops)
+    assert "Handwriting the user selected for this message (part of the note block in brackets):" in section
+    assert f"- [{ids['group']}] (selected handwriting on p. 1, 1 stroke) circled the key result" in section
+    # the picture is the selection alone: what to transcribe, not the block's whole drawing
+    assert "Each picture holds only the selected strokes, saved or not: transcribe exactly those" in section
+    assert "(a picture of it is attached to the message)" in section
+    (crop,) = crops
+    assert crop["group"] == "ink" and crop["block_id"] == ids["group"]
+    assert crop["label"].startswith(f"The selected handwriting of block [{ids['group']}] on PDF page 1")
+    from gamma.ink_view import picture
+    from gamma.db import connect_pages_db
+    with connect_pages_db(ids["ws"]) as conn:
+        shown = picture(ids["ws"], conn, ids["group"], ids["paper"],
+                        ink=inkmod.parse_ink({"format": "gamma-ink", "version": 2, **_selected(ids["group"], ids["paper"])}))
+    assert shown["pdf_page"] == 1 and not shown["whole"] and shown["strokes"] == 1
+    blue, red = _colours(shown["image"])
+    assert blue and not red, "the selected stroke alone, not the group's stored one crossing the same crop"
+
+
+def test_selected_handwriting_not_saved_yet_or_on_paper_is_drawn_too(stored_pdf):
+    """The block need not be saved: its strokes are drawn on their PDF page
+    all the same; a sheet's selection is drawn on that sheet."""
+    ids = stored_pdf
+    crops = []
+    payload = SimpleNamespace(focus_block_id="", context_blocks=[], note_selections=[], pages=[ids["paper"], ids["book"]],
+                              page_id="", ink_selections=[
+                                  _selected("draftgroup1", ids["paper"]),
+                                  _selected(ids["scrawl"], ids["book"], kind="canvas", width=595.28, height=841.89,
+                                            points=((100, 200), (300, 220))),
+                              ])
+    section = notes_focus_section(ids["ws"], payload, crops=crops)
+    assert "- [draftgroup1] (selected handwriting on p. 1, 1 stroke)\n  (a picture of it is attached" in section
+    assert f"- [{ids['scrawl']}] (selected handwriting on a page of paper, 1 stroke)" in section
+    assert [c["block_id"] for c in crops] == ["draftgroup1", ids["scrawl"]]
+    assert crops[1]["label"].startswith(f"The selected handwriting of block [{ids['scrawl']}] on a page of paper")
+
+
+def test_a_selection_off_the_chat_s_pages_or_unreadable_is_dropped(stored_pdf):
+    from gamma.ai_context import MAX_INK_SELECTIONS, request_ink_selections
+    ids = stored_pdf
+    good = _selected(ids["group"], ids["paper"])
+    ask = lambda entries, **kw: SimpleNamespace(pages=[], page_id=ids["paper"], ink_selections=entries, **kw)  # noqa: E731
+    assert [s["block_id"] for s in request_ink_selections(ask([good]))] == [ids["group"]]
+    # another page's, a broken stroke, a version 1 space, no strokes, not an object: all dropped
+    broken = {**good, "strokes": [{"id": "x", "ch": "xy", "pts": [1, 2, 3]}]}
+    assert request_ink_selections(ask([_selected(ids["group"], ids["book"]), broken, {**good, "space": {"kind": "pdf-page"}},
+                                       {**good, "strokes": []}, "nope", {**good, "block_id": ""}])) == []
+    assert len(request_ink_selections(ask([good] * (MAX_INK_SELECTIONS + 3)))) == MAX_INK_SELECTIONS
+    # nothing selected, no section; a selection alone makes one
+    empty = SimpleNamespace(focus_block_id="", context_blocks=[], note_selections=[], pages=[], page_id=ids["paper"],
+                            ink_selections=[_selected(ids["group"], ids["book"])])
+    assert notes_focus_section(ids["ws"], empty, crops=[]) == ""
+
+
+def test_the_chat_takes_eight_selections_and_64_kb_of_them_and_no_more(stored_pdf, inked):
+    """/ai/chat/context renders the request /ai/chat would send, with the
+    selection's lines; past either cap the request is refused."""
+    from gamma.ai_context import MAX_INK_SELECTION_BYTES, MAX_INK_SELECTIONS, ink_selection_bytes
+    c, _ = inked
+    ids = stored_pdf
+    body = {"prompt": "Transcribe the selected handwriting.", "page_id": ids["paper"], "title": "t"}
+    one = _selected(ids["group"], ids["paper"])
+    r = c.post("/api/ai/chat/context", json={**body, "ink_selections": [one]})
+    assert r.status_code == 200, r.text
+    assert f"- [{ids['group']}] (selected handwriting on p. 1, 1 stroke)" in r.text
+    assert c.post("/api/ai/chat/context", json={**body, "ink_selections": [one] * MAX_INK_SELECTIONS}).status_code == 200
+    assert c.post("/api/ai/chat/context", json={**body, "ink_selections": [one] * (MAX_INK_SELECTIONS + 1)}).status_code == 422
+    # one long stroke over the byte cap
+    long = _selected(ids["group"], ids["paper"], points=[(10 + i % 280, 10 + i // 280) for i in range(12_000)])
+    assert ink_selection_bytes([long]) > MAX_INK_SELECTION_BYTES
+    assert c.post("/api/ai/chat/context", json={**body, "ink_selections": [long]}).status_code == 422
+    assert c.post("/api/ai/chat", json={**body, "ink_selections": [long]}).status_code == 422

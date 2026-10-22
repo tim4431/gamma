@@ -1,0 +1,174 @@
+// The Pencil's double tap and squeeze, as the iPad app's shell forwards them
+// (docs/dev/ipad.md "Gestures"): what the strip does for each, by this
+// browser's choice for the gesture. Pure; usePencil.js runs pencilStep's
+// answer (at the end): pencilAction's, with the squeeze held open kept.
+//
+// message: {gesture: 'tap' | 'squeeze', action, phase?: 'began' | 'ended' |
+// 'cancelled'} — the host's `pencil` (a double tap, or a squeeze's end) and
+// its `squeeze` (a squeeze's start, or its cancel), `action` the system's
+// preferred action; a bare action string is a double tap. A squeeze in a
+// phase this page does not know (a later shell's) does nothing.
+// prefs: {tools: the presets on the strip, pen: the id of the last pen
+// armed (useInkStrip.js inkUi.pen, which stylusPen reads), tap, squeeze:
+// this browser's inkPencilTap and inkPencilSqueeze}.
+// state: {tool: the armed tool, previous: the tool armed before it,
+// options: the open options row, useInkStrip.js inkUi.options — true for
+// the armed tool's, "ruler" for the ruler's (not the tool's: Show options
+// opens the tool's in its place), false for none —, busy: a stroke or a
+// claim is in progress (InkLayer.jsx inkBusy), squeeze: the squeeze
+// usePencil.js holds open, {since, ignored, hold: {tool, used} | null} or
+// null, now: ms on the clock `since` was read from}.
+// → {pick: id} (arm that tool; null is the hand), {ui: {open, tool?,
+// options}} (a patch of the strip's state), {undo: true} (what the strip's
+// Undo does), {began: {ignored, pick?}} (a squeeze started; `pick`, for a
+// hold choice, the tool to arm while it is held: what the choice's toggle
+// would arm, so with the eraser armed already Eraser while held holds the
+// tool to go back to, and a short squeeze gives it back), {release: {pick} |
+// {stay: true}} (a held squeeze ended or was cancelled: back to `pick`, the
+// tool armed when it began, or, after a squeeze under SQUEEZE_TAP_MS that
+// neither erased nor drew, the tool it armed stays), or null.
+
+// What a gesture can be set to (prefDefs.js inkPencilTap, inkPencilSqueeze):
+// 'system' follows the system's preferred action; the squeeze also has the
+// two hold choices, a tool armed only while the Pencil is squeezed.
+export const PENCIL_CHOICES = ["system", "eraser", "previous", "options", "undo", "none"];
+export const SQUEEZE_HOLDS = ["holdEraser", "holdPrevious"];
+// A held squeeze shorter than this that neither erased nor drew was a
+// toggle: the tool it armed stays armed.
+export const SQUEEZE_TAP_MS = 300;
+// The phases of a squeeze (the host's `squeeze` and `pencil`).
+const PHASES = ["began", "ended", "cancelled"];
+// The system's preferred actions (UIPencilPreferredAction) as the choices
+// they stand for under 'system'; any other (runSystemShortcut, ignore) is
+// nothing.
+const SYSTEM = { switchEraser: "eraser", switchPrevious: "previous", showColorPalette: "options", showInkAttributes: "options" };
+
+// The preset a stylus writes with when no tool is armed: `pen`, the last
+// pen armed, while it is a pen preset on the strip (`tools`, the presets
+// not hidden), else the strip's first pen, else its first preset;
+// undefined for an empty strip. useInkStrip.js inkPenPreset is this, and the
+// gestures below fall back to it.
+export function stylusPen(tools, pen) {
+  const list = tools || [];
+  return list.find((x) => x.id === pen && x.kind === "pen") || list.find((x) => x.kind === "pen") || list[0];
+}
+const stylusPenId = (prefs) => stylusPen(prefs.tools, prefs.pen)?.id ?? null;
+
+// The strip's tools that are no preset; useInkStrip.js reads the list too.
+export const RESERVED_TOOLS = ["eraser", "select", "text", "shape"];
+
+// The tool to go back to: the one armed before the current one when it is
+// still on the strip and not the current one, else the pen a stylus writes
+// with (stylusPen). The gestures' Switch to last tool, the eraser's return
+// to the last tool and the Shapes tool's off (useInkStrip.js inkBack) all
+// pick it. The reserved tools count as on the strip.
+export function backTool(prefs = {}, state = {}) {
+  const { tool = null, previous = null } = state;
+  const known = RESERVED_TOOLS.includes(previous) || (prefs.tools || []).some((x) => x.id === previous);
+  return known && previous !== tool ? previous : stylusPenId(prefs);
+}
+
+// The choice in effect for a gesture: this browser's, or under 'system'
+// (the default, and whatever else is stored) the system's action's.
+function choiceOf(gesture, action, prefs) {
+  const own = gesture === "squeeze" ? prefs.squeeze : prefs.tap;
+  const known = PENCIL_CHOICES.includes(own) || (gesture === "squeeze" && SQUEEZE_HOLDS.includes(own));
+  const choice = known ? own : "system";
+  return choice === "system" ? SYSTEM[action] || "none" : choice;
+}
+
+// What a choice does at once; a hold choice acts as its toggle.
+function act(choice, prefs, state) {
+  const { tool = null, options = false } = state;
+  switch (choice) {
+    case "eraser":
+    case "holdEraser":
+      return { pick: tool === "eraser" ? backTool(prefs, state) : "eraser" };
+    case "previous":
+    case "holdPrevious":
+      return { pick: backTool(prefs, state) };
+    case "options":
+      // With the hand armed the Pencil writes with the stylus pen: its row.
+      return { ui: tool ? { open: true, options: options !== true } : { open: true, tool: stylusPenId(prefs), options: true } };
+    case "undo":
+      return { undo: true };
+    default:
+      return null;
+  }
+}
+
+export function pencilAction(message, prefs = {}, state = {}) {
+  const msg = typeof message === "string" ? { action: message } : message || {};
+  const gesture = msg.gesture === "squeeze" ? "squeeze" : "tap";
+  // a double tap has no phases
+  const phase = gesture === "squeeze" ? msg.phase : undefined;
+  // a phase this page does not know (a later shell's `changed`) is nothing
+  if (phase != null && !PHASES.includes(phase)) return null;
+  const choice = choiceOf(gesture, msg.action, prefs);
+  const { busy = false, squeeze = null, now = 0 } = state;
+  // A squeeze's start answers for every choice, so its end can tell what
+  // it began; one that comes while a stroke is in progress is ignored, its
+  // end with it.
+  if (phase === "began") {
+    if (busy) return { began: { ignored: true } };
+    if (!SQUEEZE_HOLDS.includes(choice)) return { began: { ignored: false } };
+    // held, the tool its toggle would arm: the eraser, or with the eraser
+    // armed the tool to go back to; the last tool, for Last tool while held
+    return { began: { ignored: false, pick: act(choice, prefs, state).pick } };
+  }
+  if (phase === "ended" || phase === "cancelled") {
+    if (!squeeze || squeeze.ignored) return null;
+    // a hold's end is never lost, a stroke in progress or not
+    if (squeeze.hold) {
+      if (now - squeeze.since < SQUEEZE_TAP_MS && !squeeze.hold.used) return { release: { stay: true } };
+      return { release: { pick: squeeze.hold.tool ?? null } };
+    }
+    return phase === "ended" && !busy ? act(choice, prefs, state) : null;
+  }
+  // No phase: a double tap, or a squeeze from a shell without phases.
+  return busy ? null : act(choice, prefs, state);
+}
+
+// usePencil.js's step for one host message (its pencilRef), with the
+// squeeze it holds open: → {squeeze, run}. `squeeze` is what it holds
+// after the message: an end or a cancel closes it, and a start opens
+// {since: now, ignored, hold: {tool, used: false, selection} | null}, a
+// hold keeping the armed tool and the lasso's selection. `run` is what to
+// do, in order: ["pick", id], ["haptic", "tool"] (the tick of a tool
+// switch), ["restore", selection] (the lasso's selection kept at a held
+// squeeze's start, as selectionStill leaves it), ["undo"] (the strip's
+// Undo) or ["ui", patch]. The gate: on a read-only page, or where no page
+// takes ink (`takesInk` false), only a held squeeze's end acts. `prefs`
+// is pencilAction's; `state` is its own with `readOnly`, `takesInk` and
+// `selection` (the lasso's), its `squeeze` the one held open before.
+export function pencilStep(message, prefs, state, now) {
+  const { readOnly = false, takesInk = true, tool = null, selection = null } = state;
+  const ending = message.gesture === "squeeze" && (message.phase === "ended" || message.phase === "cancelled");
+  const open = state.squeeze ?? null;
+  const run = [];
+  let squeeze = ending ? null : open;
+  // the end of a held squeeze always goes back, wherever the page is now
+  if (!(ending && open?.hold) && (readOnly || !takesInk)) return { squeeze, run };
+  const result = pencilAction(message, prefs, { ...state, squeeze: open, now });
+  if (!result) return { squeeze, run };
+  // a held squeeze's tool, armed and given back (the same tool is no switch)
+  const hold = (id) => {
+    if (id === tool) return;
+    run.push(["pick", id], ["haptic", "tool"]);
+  };
+  if (result.began) {
+    const held = "pick" in result.began;
+    squeeze = { since: now, ignored: result.began.ignored, hold: held ? { tool, used: false, selection } : null };
+    if (held) hold(result.began.pick);
+  } else if (result.release) {
+    if (result.release.stay) return { squeeze, run };
+    hold(result.release.pick);
+    if (result.release.pick === "select" && open?.hold?.selection) run.push(["restore", open.hold.selection]);
+  } else if (result.undo) {
+    run.push(["undo"]);
+  } else if ("pick" in result) {
+    if (result.pick !== tool) run.push(["haptic", "tool"]);
+    run.push(["pick", result.pick]);
+  } else run.push(["ui", result.ui]);
+  return { squeeze, run };
+}

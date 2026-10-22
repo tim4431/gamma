@@ -182,7 +182,7 @@ def test_cite_and_view_ink(client, connection):
     assert f'## "Cited paper" (page_id {paper["id"]}; http://localhost/?ws={ws}&page={paper["id"]})' in text
     assert "```bibtex" in text and "A. Author" in text
     # Handwriting on PDF page 1, stored the way the pen uploads it.
-    ink = {"format": "gamma-ink", "version": 1,
+    ink = {"format": "gamma-ink", "version": 2,
            "space": {"kind": "pdf-page", "width": 612, "height": 792, "page": 1},
            "strokes": [{"id": "s1", "color": "#ff0000", "size": 6, "ch": "xy",
                         "pts": encode_points([{"x": 40, "y": 60}, {"x": 260, "y": 340}], "xy")}]}

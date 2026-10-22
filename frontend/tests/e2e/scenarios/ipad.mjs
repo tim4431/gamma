@@ -3,18 +3,26 @@
 // standalone-mode stylesheet, the layout by orientation (upright: the
 // compact shell; landscape: the docks), and the editing bar a touch screen's
 // note editor brings; and the iPad app's shell over it (shared/lib/host.js),
-// played by a stand-in host: the Pencil's claim and the stroke handed back,
-// the theme message, the Pencil gestures and the Server row. Chromium in a
-// tablet-sized touch context — emulation, not an iPad.
+// played by a stand-in host: the Pencil's claim in the preset's look and the
+// stroke handed back, the hold and its answer, the theme message, the
+// Pencil gestures with their choices and phases, the haptics, the Apple
+// Pencil settings and the Server row. Chromium in a tablet-sized touch
+// context — emulation, not an iPad.
+import { decodeStroke } from "../../../src/ink/ink.js";
+import { newInkStrokes, savedInkStrokes } from "./ink.mjs";
 import { same, tree } from "./notes.mjs";
 import { waitForPdf } from "./pdf.mjs";
 
-// What the iPad app's user script declares before the bundle runs, with a
-// message handler that records what the page posts and takes every claim.
-function fakeShell() {
+// What the iPad app's user script declares before the bundle runs (HostInfo,
+// every flag this build's shell declares; `flags` overrides them, e.g.
+// {hold: false} for an older shell), with a message handler that records
+// what the page posts, a haptic included, and takes every claim.
+function fakeShell(flags = {}) {
   const sent = [];
   window.e2eHostSent = sent;
-  const native = { platform: "ipad", version: "0.2.0", ink: true, pencil: true, servers: true };
+  const native = { platform: "ipad", version: "0.2.0", ink: true,
+    inkLooks: ["pressure", "dash", "blend", "stabilize", "pencil", "calligraphy", "snap"],
+    hold: true, pencil: true, pencilPhases: true, pencilRoll: true, haptics: true, servers: true, ...flags };
   native.receive = (msg) => new Promise((resolve, reject) => (native.queue ||= []).push({ msg, resolve, reject }));
   window.gammaNative = native;
   window.webkit = { messageHandlers: { gamma: { postMessage: (msg) => {
@@ -22,6 +30,8 @@ function fakeShell() {
     return Promise.resolve(msg.type === "claim" ? { taken: true } : {});
   } } } };
 }
+// An iPad's own Safari, which would be offered Add to Home Screen; the shell never is.
+const SHELL_UA = "Mozilla/5.0 (iPad; CPU OS 18_2 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.2 Mobile/15E148 Safari/604.1";
 
 export async function ipadScenarios({ server, browser, alice, makePdf, step, until, sleep, assert, assertEq, assertNoProblems, openPage }) {
   await step("ipad: install manifest, icons, status-bar colour and standalone mode", async () => {
@@ -170,9 +180,7 @@ export async function ipadScenarios({ server, browser, alice, makePdf, step, unt
   await step("ipad shell: a Pencil stroke is claimed and committed from the host's samples; theme, gestures, Server row", async () => {
     const up = await alice.upload("/api/uploads", makePdf([["A page the Pencil writes on."]]), "shell.pdf", "application/pdf");
     const paper = await alice.api(`/api/blocks/by-doc/${up.doc_id}`, { method: "POST", body: { default_title: "Shell paper", source_url: up.source_url } });
-    // An iPad's own Safari would be offered Add to Home Screen; the shell never is.
-    const ctx = await alice.context(browser, { hasTouch: true, viewport: { width: 1194, height: 834 },
-      userAgent: "Mozilla/5.0 (iPad; CPU OS 18_2 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.2 Mobile/15E148 Safari/604.1" });
+    const ctx = await alice.context(browser, { hasTouch: true, viewport: { width: 1194, height: 834 }, userAgent: SHELL_UA });
     await ctx.addInitScript(fakeShell);
     try {
       const page = await openPage(ctx, `${server.base}/?ws=${alice.ws}&block=${paper.id}`);
@@ -234,13 +242,14 @@ export async function ipadScenarios({ server, browser, alice, makePdf, step, unt
       }, { what: "the host's stroke saved as an ink block" });
       const ink = await alice.api(block.properties.ink_url);
       const st = ink.strokes[0];
-      assertEq(st.ch, "xypt");
+      assertEq(st.ch, "xyptw");
       assert(st.pen === true && typeof st.t0 === "number", "a pen stroke with its wall clock");
-      assertEq(st.pts.length, 16, "four samples, the repeat dropped");
-      assertEq(JSON.stringify(st.pts.filter((_, i) => i % 4 === 2)), "[200,400,600,800]", "pressure");
-      assertEq(JSON.stringify(st.pts.filter((_, i) => i % 4 === 3)), "[0,4,4,4]", "time deltas");
-      const x = st.pts.filter((_, i) => i % 4 === 0).reduce((a, b) => a + b, 0) / 100;
-      const y = st.pts.filter((_, i) => i % 4 === 1).reduce((a, b) => a + b, 0) / 100;
+      assertEq(st.pts.length, 20, "four samples, the repeat dropped");
+      assertEq(JSON.stringify(st.pts.filter((_, i) => i % 5 === 2)), "[200,400,600,800]", "pressure");
+      assertEq(JSON.stringify(st.pts.filter((_, i) => i % 5 === 3)), "[0,4,4,4]", "time deltas");
+      assertEq(JSON.stringify(st.pts.filter((_, i) => i % 5 === 4)), "[700,200,200,200]", "the width baked by the web app, like its own strokes");
+      const x = st.pts.filter((_, i) => i % 5 === 0).reduce((a, b) => a + b, 0) / 100;
+      const y = st.pts.filter((_, i) => i % 5 === 1).reduce((a, b) => a + b, 0) / 100;
       assert(Math.abs(x - 130 / k) < 0.02 && Math.abs(y - 300 / k) < 0.02, `page units from the down's rect and zoom: ${x}, ${y}`);
       // The same pointer again, no longer claimed, commits nothing.
       assertEq(JSON.stringify(await page.evaluate(stroke, samples)), JSON.stringify({ committed: false }));
@@ -288,6 +297,439 @@ export async function ipadScenarios({ server, browser, alice, makePdf, step, unt
       await until(async () => (await page.evaluate(() => window.e2eHostSent.filter((m) => m.type === "servers").length)) === 1,
         { what: "the sign-in page's servers message" });
     } finally { await anon.close(); }
+  });
+
+  // --- the shell: the claim's look, the hold, the gestures' choices, the haptics ---
+  // A PDF page in a shell context (the stand-in with `flags`), the strip open
+  // with the stylus pen, and the shell's side played in the page: the Pencil
+  // going down on page 1 (the page claims it, the stand-in takes it), the
+  // host's `hold` and `stroke` with samples [x, y, p, t, a?, z?] in px from
+  // the page's corner (a `stroke` naming, as `held`, the hold whose shape
+  // the shell drew), and what the page posted.
+  async function shellPaper(name, flags) {
+    const up = await alice.upload("/api/uploads", makePdf([[`A page the Pencil ${name} on.`]]), `${name}.pdf`, "application/pdf");
+    const paper = await alice.api(`/api/blocks/by-doc/${up.doc_id}`, { method: "POST", body: { default_title: `Shell ${name}`, source_url: up.source_url } });
+    const ctx = await alice.context(browser, { hasTouch: true, viewport: { width: 1194, height: 834 }, userAgent: SHELL_UA });
+    await ctx.addInitScript(fakeShell, flags || {});
+    const page = await openPage(ctx, `${server.base}/?ws=${alice.ws}&block=${paper.id}`);
+    await waitForPdf(page, 1);
+    await page.click("button[aria-label='Handwriting tools']");
+    await page.waitForSelector(".pdfInkBar .inkToolBtn.modeActive .inkToolInk");
+    const pdf = page.locator('[data-page="1"]');
+    const geometry = () => pdf.evaluate((el) => {
+      const box = el.getBoundingClientRect();
+      return { left: box.left, top: box.top, k: box.width / el.querySelector(".inkLayer").viewBox.baseVal.width };
+    });
+    const sent = (type) => page.evaluate((type) => window.e2eHostSent.filter((m) => m.type === type), type);
+    const receive = (msg) => page.evaluate((msg) => window.gammaNative.receive(msg), msg);
+    const toViewport = async (rows) => { const g = await geometry(); return rows.map(([x, y, ...rest]) => [g.left + x, g.top + y, ...rest]); };
+    const down = async (pointerId, x, y) => {
+      const claims = (await sent("claim")).length;
+      await pdf.evaluate((el, [pointerId, x, y]) => {
+        const box = el.getBoundingClientRect();
+        el.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, cancelable: true, pointerType: "pen", pointerId,
+          button: 0, buttons: 1, pressure: 0.5, clientX: box.left + x, clientY: box.top + y }));
+      }, [pointerId, x, y]);
+      const claim = await until(async () => (await sent("claim")).slice(claims).find((m) => m.pointerId === pointerId),
+        { what: `pointer ${pointerId} claimed` });
+      await until(async () => (await pdf.locator(".inkCanvas").evaluate((c) => c.style.display)) === "none", { what: "the draft handed over" });
+      return claim;
+    };
+    const shell = { pdf, geometry, sent, receive, toViewport, down,
+      hold: async (pointerId, rows) => receive({ type: "hold", pointerId, samples: await toViewport(rows) }),
+      stroke: async (pointerId, rows, held) => receive({ type: "stroke", pointerId, samples: await toViewport(rows), ...(held == null ? {} : { held }) }) };
+    return { ctx, page, paper, shell };
+  }
+  // The strokes saved on a page (ink.mjs), and the ones saved since.
+  const savedStrokes = (paperId) => savedInkStrokes(alice, paperId);
+  const newStrokes = (paperId, before, n, what) => newInkStrokes(alice, paperId, before, n, what);
+  // A line drawn left to right over 300 ms at `y`, then held still to 780 ms
+  // (six-value samples, the Pencil at 50°): the stillness anchor is its end
+  // at 300 ms, so the hold's snap time is 900 ms.
+  const heldLine = (y) => [
+    ...Array.from({ length: 16 }, (_, i) => [100 + 10 * i, y + (i % 2 ? 0.6 : -0.6), 0.5, 20 * i, 50, 90]),
+    ...Array.from({ length: 6 }, (_, j) => [250 + (j % 2 ? 0.5 : -0.25), y + (j % 2 ? 0.25 : -0.25), 0.5, 380 + 80 * j, 50, 90]),
+  ];
+  const T_SNAP = 900;
+  const LOOKS = [
+    { id: "pen1", kind: "pen", color: "#1f4fd8", size: 2, brush: "brush", dash: "dashed", stabilize: 2 },
+    { id: "pen2", kind: "pen", color: "#222222", size: 2, brush: "pencil" },
+    { id: "pen3", kind: "pen", color: "#c2410c", size: 2 },
+    { id: "hl1", kind: "highlighter", color: "#fde047", size: 14 },
+  ];
+
+  await step("ipad shell: the claim carries the preset's look, and a Pencil preset's six-value samples commit with their tilt", async () => {
+    await alice.api("/api/prefs/profile", { method: "PATCH", body: { set: { inkTools: LOOKS } } });
+    let ctx;
+    try {
+      const opened = await shellPaper("styles");
+      ctx = opened.ctx;
+      const { page, paper, shell } = opened;
+      const { k } = await shell.geometry();
+      const near = (a, b) => Math.abs(a - b) < 1e-6;
+      const keys = (tool) => JSON.stringify(Object.keys(tool).sort());
+      // preset 1: a dashed Brush that smooths
+      await page.keyboard.press("1");
+      let claim = await shell.down(71, 100, 200);
+      assertEq(keys(claim.tool), JSON.stringify(["brush", "color", "dash", "kind", "opacity", "size", "stabilize"]), "the look's keys");
+      assert(claim.tool.brush === "brush" && claim.tool.stabilize === 2 && near(claim.tool.size, 2 * k), JSON.stringify(claim.tool));
+      assert(near(claim.tool.dash[0], 2 * claim.tool.size) && near(claim.tool.dash[1], 2 * claim.tool.size),
+        `dashed: two sizes on, two off, in css px (${claim.tool.dash})`);
+      assertEq(JSON.stringify(await shell.stroke(71, [])), JSON.stringify({ committed: false }));
+      // preset 3: the plain pen claims the four keys an older shell reads
+      await page.keyboard.press("3");
+      claim = await shell.down(72, 100, 200);
+      assertEq(keys(claim.tool), JSON.stringify(["color", "kind", "opacity", "size"]), "a plain pen: nothing of a look");
+      await shell.stroke(72, []);
+      // preset 4: a highlighter multiplies onto the page
+      await page.keyboard.press("4");
+      claim = await shell.down(73, 100, 200);
+      assert(claim.tool.kind === "highlighter" && claim.tool.blend === "multiply" && !("brush" in claim.tool), JSON.stringify(claim.tool));
+      await shell.stroke(73, []);
+      // preset 2: a Pencil; the host's samples carry the tilt in degrees
+      await page.keyboard.press("2");
+      claim = await shell.down(74, 150, 400);
+      assertEq(claim.tool.brush, "pencil");
+      const before = await savedStrokes(paper.id);
+      const rows = Array.from({ length: 12 }, (_, i) => [150 + 8 * i, 400, 0.3 + 0.05 * i, 8 * i, 40.2, 119.6]);
+      assertEq(JSON.stringify(await shell.stroke(74, rows)), JSON.stringify({ committed: true }));
+      const [pencil] = await newStrokes(paper.id, before, 1, "the Pencil stroke saved");
+      assertEq(JSON.stringify([pencil.brush, pencil.ch]), JSON.stringify(["pencil", "xyptazwo"]), "pressure, tilt, width and shade");
+      assert(decodeStroke(pencil).every((q) => q.a === 40 && q.z === 120), "the tilt as integer degrees on every sample");
+      assertNoProblems(page);
+    } finally {
+      await ctx?.close();
+      await alice.api("/api/prefs/profile", { method: "PATCH", body: { set: { inkTools: null } } }).catch(() => {});
+    }
+  });
+
+  await step("ipad shell: a calligraphy pen claims its nib, and the roll the shell's first sample carries turns the committed nib; with Lock angle, which shows under pencilRoll, it does not", async () => {
+    await alice.api("/api/prefs/profile", { method: "PATCH", body: { set: { inkTools: [
+      { id: "cal1", kind: "pen", color: "#1f1f1f", size: 2, brush: "calligraphy" },   // smoothing left out: a calligraphy pen's 2
+      { id: "cal2", kind: "pen", color: "#1f4fd8", size: 2, brush: "calligraphy", nib: -30, nibLock: true },
+    ] } } });
+    let ctx;
+    try {
+      const opened = await shellPaper("calligraphy");
+      ctx = opened.ctx;
+      const { page, paper, shell } = opened;
+      // preset 1: the claim names the brush, the nib (45 to start), that it follows the roll and the smoothing it draws with
+      await page.keyboard.press("1");
+      let claim = await shell.down(81, 100, 200);
+      assert(claim.tool.brush === "calligraphy" && claim.tool.nib === 45 && claim.tool.nibRoll === true && claim.tool.stabilize === 2,
+        JSON.stringify(claim.tool));
+      // a stroke down to the right, the Pencil rolled 30° clockwise: [x, y, p, t, a, z, r]
+      const rows = Array.from({ length: 12 }, (_, i) => [100 + 6 * i, 200 + 6 * i, 0.5, 8 * i, 60, 45, 30]);
+      let before = await savedStrokes(paper.id);
+      assertEq(JSON.stringify(await shell.stroke(81, rows)), JSON.stringify({ committed: true }));
+      const [rolled] = await newStrokes(paper.id, before, 1, "the rolled calligraphy stroke saved");
+      assertEq(JSON.stringify([rolled.brush, rolled.nib, rolled.ch]), JSON.stringify(["calligraphy", 15, "xyptazw"]),
+        "45° less the 30° clockwise roll; its widths baked from the travel against that nib");
+      // preset 2 locks its angle (−30°, a stroke's 150°): no nibRoll, and a roll changes nothing
+      await page.keyboard.press("2");
+      claim = await shell.down(82, 100, 300);
+      assert(claim.tool.nib === 150 && !("nibRoll" in claim.tool), JSON.stringify(claim.tool));
+      before = await savedStrokes(paper.id);
+      await shell.stroke(82, rows.map(([x, y, ...rest]) => [x, y + 100, ...rest]));
+      const [locked] = await newStrokes(paper.id, before, 1, "the locked calligraphy stroke saved");
+      assertEq(locked.nib, 150, "the preset's angle, whatever the roll");
+      // its options row: the Nib angle and, under a shell that reports the roll, Lock angle pressed
+      await page.locator(".pdfInkBar .inkToolBtn.modeActive").first().click();
+      const lock = page.locator('[data-ink-options="tool"] button[aria-label="Lock angle"]');
+      await lock.waitFor();
+      assertEq(await lock.getAttribute("aria-pressed"), "true");
+      assertEq((await page.locator('[data-ink-options="tool"] .inkNibReadout').textContent()).trim(), "-30°");
+      assertNoProblems(page);
+    } finally {
+      await ctx?.close();
+      await alice.api("/api/prefs/profile", { method: "PATCH", body: { set: { inkTools: null } } }).catch(() => {});
+    }
+  });
+
+  await step("ipad shell: the host's hold snaps a still line (css px, a snap tick), the lift commits it refit; a quick move commits freehand, as does a lift that beat the answer; with strokes copied a still pen opens Paste here", async () => {
+    let ctx;
+    try {
+      const opened = await shellPaper("holds");
+      ctx = opened.ctx;
+      const { page, paper, shell } = opened;
+      const { left, top, k } = await shell.geometry();
+      const line = heldLine(300);
+      await shell.down(81, 100, 300);
+      let before = await savedStrokes(paper.id);
+      const answer = await shell.hold(81, line);
+      assertEq(answer?.shape?.kind, "line", `the hold answers a line (${JSON.stringify(answer)})`);
+      const p = answer.shape.params;
+      assert(Math.abs(p.x1 - (left + 100)) < 2 && Math.abs(p.x2 - (left + 250)) < 2 && Math.abs(p.y1 - (top + 300)) < 1.5 && p.y1 === p.y2,
+        `in viewport css px, snapped level (${JSON.stringify(p)})`);
+      const [from] = await shell.toViewport([line.at(-1)]);
+      const snap = (await shell.sent("haptic")).at(-1);
+      assert(snap?.kind === "snap" && Math.abs(snap.at.x - from[0]) < 0.011 && Math.abs(snap.at.y - from[1]) < 0.011,
+        `a snap ticks at the hold's last sample (${JSON.stringify(snap)})`);
+      assertEq(JSON.stringify(await shell.hold(81, line)), "{}", "a claim keeps one shape: a later hold answers nothing");
+      // the pen moves on slowly after the snap: the line's end follows it to the lift
+      const after = Array.from({ length: 10 }, (_, i) => [250 + 4 * (i + 1), 300 + 3 * (i + 1), 0.5, T_SNAP + 200 + 40 * i, 50, 90]);
+      assertEq(JSON.stringify(await shell.stroke(81, [...line, ...after], line.length)), JSON.stringify({ committed: true }));
+      const [held] = await newStrokes(paper.id, before, 1, "the held line saved");
+      assertEq(JSON.stringify([held.shape?.kind, held.ch, held.pen]), JSON.stringify(["line", "xyt", false]), "a shape: constant width, no pressure");
+      const [a, b] = decodeStroke(held);
+      assert(Math.abs(b.x - 290 / k) < 0.02 && Math.abs(b.y - 330 / k) < 0.02, `refit to the last sample, in page points (${b.x}, ${b.y})`);
+      assert(Math.abs(a.x - (p.x1 - left) / k) < 0.02 && Math.abs(a.y - (p.y1 - top) / k) < 0.02, "its start where it snapped");
+      assert(Math.abs(held.shape.params.x2 - b.x) < 0.011 && Math.abs(held.shape.params.y2 - b.y) < 0.011, "its shape record follows its samples");
+      await until(async () => (await page.locator(".statusPill").allInnerTexts()).join(" ").includes("Straightened."), { what: "the pill says so" });
+      // a quick move right after the snap drops it: the stroke is freehand
+      const line2 = heldLine(500);
+      await shell.down(82, 100, 500);
+      before = await savedStrokes(paper.id);
+      assertEq((await shell.hold(82, line2))?.shape?.kind, "line");
+      const quick = Array.from({ length: 6 }, (_, i) => [250 + 6 * (i + 1), 500, 0.5, T_SNAP + 20 * (i + 1), 50, 90]);
+      assertEq(JSON.stringify(await shell.stroke(82, [...line2, ...quick], line2.length)), JSON.stringify({ committed: true }));
+      const [free] = await newStrokes(paper.id, before, 1, "the freehand stroke saved");
+      assert(!free.shape && free.ch === "xyptazw", `freehand, with its pressure and tilt (${free.ch})`);
+      // the lift came before the shell had the answer: it drew the freehand line and names no hold, and the page keeps to it
+      const line3 = heldLine(400);
+      await shell.down(84, 100, 400);
+      before = await savedStrokes(paper.id);
+      assertEq((await shell.hold(84, line3))?.shape?.kind, "line", "the page answers, and keeps, the shape");
+      assertEq(JSON.stringify(await shell.stroke(84, line3)), JSON.stringify({ committed: true }));
+      const [raced] = await newStrokes(paper.id, before, 1, "the stroke whose lift beat the answer saved");
+      assert(!raced.shape && raced.ch === "xyptazw", `freehand, as the shell drew it (${raced.ch})`);
+      // with strokes on the clipboard, a pen held still where it went down opens Paste here; the host drops its line
+      await page.keyboard.press("Control+a");
+      await until(async () => /^Lasso/.test(await page.locator(".pdfInkBar .inkToolBtn.modeActive").getAttribute("aria-label")),
+        { what: "select all arms the lasso" });
+      await page.keyboard.press("Control+c");
+      await page.getByText("Copied 3 strokes.", { exact: true }).first().waitFor();
+      await page.keyboard.press("1");
+      await shell.down(83, 400, 650);
+      before = await savedStrokes(paper.id);
+      const still = Array.from({ length: 10 }, (_, i) => [400 + (i % 2) * 0.5, 650, 0.5, 70 * i, 50, 90]);
+      assertEq(JSON.stringify(await shell.hold(83, still)), JSON.stringify({ cancel: true }), "the page takes the hold");
+      await page.locator(".inkPasteMenu").getByText("Paste here", { exact: true }).waitFor();
+      assertEq(JSON.stringify(await shell.stroke(83, [])), JSON.stringify({ committed: false }), "the lift after a cancel commits nothing");
+      await page.keyboard.press("Escape");
+      assertEq((await savedStrokes(paper.id)).size, before.size, "nothing saved");
+      assertNoProblems(page);
+    } finally { await ctx?.close(); }
+  });
+
+  await step("ipad shell: with the ruler on, a claim that starts by its edge carries snap, and the host's wandering samples commit as the projected line", async () => {
+    let ctx;
+    try {
+      const opened = await shellPaper("ruler");
+      ctx = opened.ctx;
+      const { page, paper, shell } = opened;
+      await page.keyboard.press("r");
+      await page.waitForSelector('[data-page="1"] .inkRuler .inkRulerBand');   // the band: the ruler's own box has no height
+      const ruler = await page.locator('[data-page="1"] .inkRuler').evaluate((el) =>
+        ({ x: Number(el.dataset.x), y: Number(el.dataset.y), angle: Number(el.dataset.angle), length: Number(el.dataset.length) }));
+      assertEq(ruler.angle, 0, "level");
+      const g = await shell.geometry();
+      // css px from the page's corner: the top edge is half the band (18 px) above the middle line
+      const edge = ruler.y * g.k - 18, x0 = (ruler.x - ruler.length / 4) * g.k;
+      // the armed pen, 5 px outside the top edge
+      const claim = await shell.down(95, x0, edge - 5);
+      const snap = claim.tool.snap;
+      assert(snap, `the claim carries the edge: ${JSON.stringify(claim.tool)}`);
+      assert(Math.abs(snap.x0 - (g.left + ruler.x * g.k)) < 0.02 && Math.abs(snap.y0 - (g.top + edge)) < 0.02 && snap.angle === 0,
+        `snap at the edge's middle in viewport css px, the ruler's angle: ${JSON.stringify(snap)}`);
+      assertEq(JSON.stringify(await shell.hold(95, [[x0, edge - 5, 0.5, 0], [x0 + 1, edge - 5, 0.5, 700]])), JSON.stringify({}),
+        "along the ruler a hold answers nothing");
+      const before = await savedStrokes(paper.id);
+      const rows = Array.from({ length: 10 }, (_, i) => [x0 + 15 * i, edge - 5 + (i % 2 ? 8 : 0), 0.5, 16 * i]);
+      assertEq(JSON.stringify(await shell.stroke(95, rows)), JSON.stringify({ committed: true }));
+      const [line] = await newStrokes(paper.id, before, 1, "the ruler line saved");
+      assertEq(JSON.stringify([line.ch, line.pen, line.shape?.kind]), JSON.stringify(["xyt", false, "line"]), "an even line with its line record");
+      const p = line.shape.params, y = edge / g.k;
+      assert(Math.abs(p.y1 - y) < 0.02 && Math.abs(p.y2 - y) < 0.02, `both ends on the edge: ${JSON.stringify(p)}`);
+      assert(Math.abs(p.x1 - x0 / g.k) < 0.02 && Math.abs(p.x2 - (x0 + 135) / g.k) < 0.02, `from the first sample to the farthest: ${JSON.stringify(p)}`);
+      assertNoProblems(page);
+    } finally { await ctx?.close(); }
+  });
+
+  await step("ipad shell: under a shell without hold nothing answers it, and a held stroke commits freehand", async () => {
+    let ctx;
+    try {
+      const opened = await shellPaper("older", { hold: false });
+      ctx = opened.ctx;
+      const { page, paper, shell } = opened;
+      await shell.down(85, 100, 300);
+      const before = await savedStrokes(paper.id);
+      const line = heldLine(300);
+      assertEq(await shell.hold(85, line), undefined, "no hold listener: the host reads the nothing as {}");
+      assertEq(JSON.stringify(await shell.stroke(85, line)), JSON.stringify({ committed: true }));
+      const [st] = await newStrokes(paper.id, before, 1, "the stroke saved");
+      assert(!st.shape && st.ch === "xyptazw", `never recognised under it (${st.ch})`);
+      assertNoProblems(page);
+    } finally { await ctx?.close(); }
+  });
+
+  await step("ipad shell: Apple Pencil settings under the host; a double tap set to Undo undoes; Eraser while held arms the eraser and gives the tool back, short squeezes toggle it either way, an unknown phase does nothing, an erased selection stays gone; gestures wait for a claim; switches tick unless Haptics is off", async () => {
+    let ctx;
+    try {
+      const opened = await shellPaper("gestures");
+      ctx = opened.ctx;
+      const { page, shell } = opened;
+      const armed = () => page.locator(".pdfInkBar .inkToolBtn.modeActive").getAttribute("aria-label");
+      const eraserArmed = () => page.locator(".pdfInkBar button[title^='Eraser'].modeActive").count();
+      const pen = await armed();
+      const row = (name) => page.locator(`.settingsPane [data-setting="${name}"]`).first();
+      const openSettings = async () => {
+        await page.getByRole("button", { name: "Account & settings", exact: true }).click();
+        await page.getByRole("button", { name: "Settings…", exact: true }).click();
+        const dialog = page.getByRole("dialog", { name: "Settings", exact: true });
+        await dialog.waitFor();
+        await page.getByRole("navigation", { name: "Settings categories" }).getByRole("button", { name: "Reading & editing", exact: true }).click();
+        await row("Apple Pencil").waitFor();
+        return dialog;
+      };
+      const closeSettings = async (dialog) => {
+        await page.getByRole("button", { name: "Close settings", exact: true }).click();
+        await dialog.waitFor({ state: "hidden" });
+      };
+      const choose = async (setting, option) => {
+        await row(setting).getByRole("button", { name: setting, exact: true }).click();
+        await page.locator(".uiSelectMenu .ctxMenuItem", { hasText: option }).click();
+      };
+      let dialog = await openSettings();
+      assertEq(await page.locator('.settingsPane .setSection[data-setting="Apple Pencil"] .setScope').getAttribute("data-scope"), "browser",
+        "the Apple Pencil choices stay with this device");
+      for (const name of ["Double tap", "Squeeze", "Haptics"]) assert(await row(name).count(), `the row "${name}"`);
+      await choose("Double tap", "Undo");
+      await row("Squeeze").getByRole("button", { name: "Squeeze", exact: true }).click();
+      const offered = await page.locator(".uiSelectMenu .ctxMenuItem").allInnerTexts();
+      assertEq(JSON.stringify(offered), JSON.stringify(["System setting", "Switch to eraser", "Switch to last tool", "Show tool options", "Undo",
+        "Nothing", "Eraser while held", "Last tool while held"]), "the squeeze's choices, the held ones under a shell with phases");
+      await page.locator(".uiSelectMenu .ctxMenuItem", { hasText: "Eraser while held" }).click();
+      await row("Pressure-sensitive strokes").locator("input[type=checkbox]").uncheck();
+      assertEq(JSON.stringify(await page.evaluate(() => ["gamma-ink-pencil-tap", "gamma-ink-pencil-squeeze"].map((k) => localStorage.getItem(k)))),
+        JSON.stringify(["undo", "holdEraser"]), "browser preferences");
+      await closeSettings(dialog);
+
+      // a stroke the host hands back; a double tap set to Undo takes it back, but not while a claim is open
+      const count = () => page.locator('[data-page="1"] .inkLayer path').count();
+      const n0 = await count();
+      const claim = await shell.down(91, 100, 250);
+      assertEq(claim.tool.pressure, false, "Pressure-sensitive strokes off: the claim says the stroke reads none");
+      await shell.stroke(91, [[100, 250, 0.5, 0], [150, 250, 0.5, 40], [200, 250, 0.5, 80]]);
+      await until(async () => (await count()) === n0 + 1, { what: "the stroke drawn" });
+      await shell.down(92, 300, 250);
+      await shell.receive({ type: "pencil", gesture: "tap", action: "switchEraser" });
+      await sleep(300);
+      assertEq(await count(), n0 + 1, "a double tap under the moving pen undoes nothing");
+      await shell.stroke(92, []);
+      await shell.receive({ type: "pencil", gesture: "tap", action: "switchEraser" });
+      await until(async () => (await count()) === n0, { what: "the double tap set to Undo undoes the stroke" });
+      assertEq(await armed(), pen, "Undo switches no tool");
+
+      // Eraser while held: the squeeze's start arms the eraser, its end gives the pen back
+      let ticks = (await shell.sent("haptic")).length;
+      await shell.receive({ type: "squeeze", phase: "began", action: "switchEraser" });
+      await until(eraserArmed, { what: "the squeeze arms the eraser" });
+      await sleep(350);
+      await shell.receive({ type: "pencil", gesture: "squeeze", action: "switchEraser", phase: "ended" });
+      await until(async () => (await armed()) === pen, { what: "its end gives the pen back" });
+      const tools = (await shell.sent("haptic")).slice(ticks);
+      assertEq(JSON.stringify(tools), JSON.stringify([{ type: "haptic", kind: "tool" }, { type: "haptic", kind: "tool" }]), "each switch ticks, with no place");
+      // a cancel gives it back too
+      await shell.receive({ type: "squeeze", phase: "began", action: "switchEraser" });
+      await until(eraserArmed, { what: "armed again" });
+      await sleep(350);
+      await shell.receive({ type: "squeeze", phase: "cancelled", action: "switchEraser" });
+      await until(async () => (await armed()) === pen, { what: "the cancel gives the pen back" });
+      // a short squeeze that erased nothing is a toggle: the eraser stays
+      await page.evaluate(() => {
+        window.gammaNative.receive({ type: "squeeze", phase: "began", action: "switchEraser" });
+        window.gammaNative.receive({ type: "pencil", gesture: "squeeze", action: "switchEraser", phase: "ended" });
+      });
+      await until(eraserArmed, { what: "the short squeeze arms the eraser" });
+      await sleep(200);
+      assertEq(await eraserArmed(), 1, "and it stays armed");
+      // with the eraser armed, a held squeeze holds the pen and comes back, and a short one gives the pen back
+      await shell.receive({ type: "squeeze", phase: "began", action: "switchEraser" });
+      await until(async () => (await armed()) === pen, { what: "the pen while the squeeze is held" });
+      await sleep(350);
+      await shell.receive({ type: "pencil", gesture: "squeeze", action: "switchEraser", phase: "ended" });
+      await until(eraserArmed, { what: "the eraser again at its end" });
+      await page.evaluate(() => {
+        window.gammaNative.receive({ type: "squeeze", phase: "began", action: "switchEraser" });
+        window.gammaNative.receive({ type: "pencil", gesture: "squeeze", action: "switchEraser", phase: "ended" });
+      });
+      await until(async () => (await armed()) === pen, { what: "a second short squeeze gives the pen back" });
+      await sleep(200);
+      assertEq(await armed(), pen, "and it stays");
+      // a squeeze in a phase the page does not know, or a `squeeze` with none, does nothing
+      ticks = (await shell.sent("haptic")).length;
+      await shell.receive({ type: "squeeze", phase: "changed", action: "switchEraser" });
+      await shell.receive({ type: "pencil", gesture: "squeeze", action: "switchEraser", phase: "changed" });
+      await shell.receive({ type: "squeeze", action: "switchEraser" });
+      await sleep(200);
+      assertEq(await armed(), pen, "no tool switched");
+      assertEq((await shell.sent("haptic")).length, ticks, "and nothing ticked");
+
+      // a pen lasso that selects ticks where it lifts
+      await shell.down(94, 100, 650);
+      await shell.stroke(94, [[100, 650, 0.5, 0], [150, 650, 0.5, 40], [200, 650, 0.5, 80]]);
+      await until(async () => (await count()) === n0 + 1, { what: "a stroke to select" });
+      await page.keyboard.press("l");
+      await until(async () => /^Lasso/.test(await armed()), { what: "the lasso armed" });
+      const lasso = await armed();
+      ticks = (await shell.sent("haptic")).length;
+      await shell.pdf.evaluate((el) => {
+        const box = el.getBoundingClientRect();
+        const send = (type, x, y) => el.dispatchEvent(new PointerEvent(type, { bubbles: true, cancelable: true, pointerType: "pen", pointerId: 95,
+          button: 0, buttons: type === "pointerup" ? 0 : 1, pressure: 0.5, clientX: box.left + x, clientY: box.top + y }));
+        send("pointerdown", 60, 600);
+        for (const [x, y] of [[260, 600], [260, 700], [60, 700], [60, 610]]) send("pointermove", x, y);
+        send("pointerup", 60, 610);
+      });
+      const select = await until(async () => (await shell.sent("haptic")).slice(ticks).find((m) => m.kind === "select"),
+        { what: "the lasso's selection ticks" });
+      const [lift] = await shell.toViewport([[60, 610]]);
+      assert(Math.abs(select.at.x - lift[0]) < 0.011 && Math.abs(select.at.y - lift[1]) < 0.011, `at its lift (${JSON.stringify(select)})`);
+      const selected = () => page.locator('[data-page="1"] [data-ink-selection]').count();
+      await until(async () => (await selected()) === 1, { what: "the stroke selected" });
+      // a held squeeze puts the selection aside with the lasso and brings both back
+      await shell.receive({ type: "squeeze", phase: "began", action: "switchEraser" });
+      await until(async () => (await eraserArmed()) && !(await selected()), { what: "the eraser armed, the selection gone with the lasso" });
+      await sleep(350);
+      await shell.receive({ type: "pencil", gesture: "squeeze", action: "switchEraser", phase: "ended" });
+      await until(async () => (await armed()) === lasso && (await selected()) === 1, { what: "the lasso back with its selection" });
+      // a held squeeze that erases the selected stroke brings the lasso back with nothing selected
+      await shell.receive({ type: "squeeze", phase: "began", action: "switchEraser" });
+      await until(async () => (await eraserArmed()) && !(await selected()), { what: "the eraser armed again" });
+      await shell.pdf.evaluate((el) => {
+        const box = el.getBoundingClientRect();
+        const send = (type, x, y) => el.dispatchEvent(new PointerEvent(type, { bubbles: true, cancelable: true, pointerType: "pen", pointerId: 96,
+          button: 0, buttons: type === "pointerup" ? 0 : 1, pressure: 0.5, clientX: box.left + x, clientY: box.top + y }));
+        send("pointerdown", 150, 620);
+        for (const y of [630, 640, 650, 660, 670, 680]) send("pointermove", 150, y);
+        send("pointerup", 150, 680);
+      });
+      await until(async () => (await count()) === n0, { what: "the selected stroke erased" });
+      await sleep(350);
+      await shell.receive({ type: "pencil", gesture: "squeeze", action: "switchEraser", phase: "ended" });
+      await until(async () => (await armed()) === lasso, { what: "the lasso back" });
+      assertEq(await selected(), 0, "nothing selected");
+      // nothing to deselect: Escape closes the strip at once, as it does with no selection
+      await page.keyboard.press("Escape");
+      await until(async () => !(await page.$(".pdfInkBar")), { what: "Escape closes the strip: no selection was left behind" });
+      await page.click("button[aria-label='Handwriting tools']");
+      await page.waitForSelector(".pdfInkBar .inkToolBtn.modeActive");
+
+      // Haptics off: switches no longer tick
+      dialog = await openSettings();
+      await row("Haptics").locator("input[type=checkbox]").uncheck();
+      await closeSettings(dialog);
+      ticks = (await shell.sent("haptic")).length;
+      await page.keyboard.press("1");
+      await shell.receive({ type: "squeeze", phase: "began", action: "switchEraser" });
+      await until(eraserArmed, { what: "the eraser armed" });
+      await sleep(350);
+      await shell.receive({ type: "pencil", gesture: "squeeze", action: "switchEraser", phase: "ended" });
+      await until(async () => (await armed()) === pen, { what: "the pen back" });
+      assertEq((await shell.sent("haptic")).length, ticks, "no tick with Haptics off");
+      assertNoProblems(page);
+    } finally { await ctx?.close(); }
   });
 
   await step("phone: a labelled bottom bar, the More sheet, no empty topbar, the Library tab as home", async () => {

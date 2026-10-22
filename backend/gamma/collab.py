@@ -184,6 +184,30 @@ async def _send_each(targets: list, text: str) -> None:
             publish(room.key[0], room.key[1], {"t": "leave", "client": peer.client})
 
 
+INK_LIVE_MAX_BYTES = 16 * 1024  # one relayed ink-live message, serialised
+INK_LIVE_MAX_SAMPLES = 64       # samples in one chunk
+
+
+def ink_live(msg: dict, peer: Peer) -> str | None:
+    """A peer's handwriting stroke in progress (docs/dev/collab.md
+    "ink-live") as the text to relay to the room's others, or None to drop
+    it: only an editor's, with a string ``id``, at most
+    ``INK_LIVE_MAX_SAMPLES`` samples and ``INK_LIVE_MAX_BYTES`` serialised,
+    ``client`` set to the sender's own. The rest is relayed as it came: it
+    is presence, never stored, logged or replayed to a later joiner, and
+    the receiving clients judge its contents."""
+    if not peer.can_edit or not isinstance(msg.get("id"), str):
+        return None
+    samples = msg.get("samples")
+    if samples is not None and (not isinstance(samples, list) or len(samples) > INK_LIVE_MAX_SAMPLES):
+        return None
+    try:
+        text = json.dumps({**msg, "t": "ink-live", "client": peer.client}, separators=(",", ":"), allow_nan=False)
+    except (TypeError, ValueError):
+        return None
+    return text if len(text.encode()) <= INK_LIVE_MAX_BYTES else None
+
+
 def publish_ops(ws: str, result: dict) -> None:
     """Fan out an applied batch (the dict ``ops.apply_ops`` returns). A
     ``cursor`` on the result (the writer's caret after the batch) rides

@@ -30,3 +30,33 @@ export function canvasSize(width, height, ratio = 1) {
   if (!r) return { width: 1, height: 1 };
   return { width: Math.max(1, Math.floor(width * r)), height: Math.max(1, Math.floor(height * r)) };
 }
+
+// A canvas laid over part of a box (the ink layer's live and wet canvases,
+// ink/InkLayer.jsx): where `rect`, the box's screen rect ({left, top, right,
+// bottom}), meets `view`, the screen rect it is seen through, in css px from
+// the box's top-left and out to whole pixels — {x, y, width, height}, or
+// null when none of the box shows. Over a page magnified past its viewer
+// (the zoom window's at 4×, a page at 400 %) such a canvas holds what shows
+// at the device's ratio, where one over the whole page would be held far
+// below it by the caps above.
+export function canvasWindow(rect, view) {
+  const left = Math.max(rect.left, view.left), top = Math.max(rect.top, view.top);
+  const right = Math.min(rect.right, view.right), bottom = Math.min(rect.bottom, view.bottom);
+  if (!(right > left && bottom > top)) return null;
+  const x = Math.floor(left - rect.left), y = Math.floor(top - rect.top);
+  return { x, y, width: Math.ceil(right - rect.left) - x, height: Math.ceil(bottom - rect.top) - y };
+}
+// Whether window `a` holds window `b` (canvasWindow's).
+export const windowHolds = (a, b) => b.x >= a.x && b.y >= a.y && b.x + b.width <= a.x + a.width && b.y + b.height <= a.y + a.height;
+// The smallest window holding both.
+export function windowUnion(a, b) {
+  const x = Math.min(a.x, b.x), y = Math.min(a.y, b.y);
+  return { x, y, width: Math.max(a.x + a.width, b.x + b.width) - x, height: Math.max(a.y + a.height, b.y + b.height) - y };
+}
+// The transform (setTransform's six numbers) from page points, `k` css px
+// each, to the pixels of a canvas whose backing store is `size` ({width,
+// height}) laid on window `win` of the box.
+export function windowMatrix(size, win, k) {
+  const sx = size.width / win.width, sy = size.height / win.height;
+  return [sx * k, 0, 0, sy * k, -win.x * sx, -win.y * sy];
+}

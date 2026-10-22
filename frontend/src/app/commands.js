@@ -5,7 +5,7 @@
 // dispatchers: app/appCommands.js (App's window listener) and
 // editor/blockCommands.js (a block row's keydown).
 import { t } from "../shared/i18n/i18n.js";
-import { APP_COMMANDS, GROUP_LIBRARY, GROUP_NAVIGATION, GROUP_PAGE, GROUP_VIEW } from "./appCommands.js";
+import { APP_COMMANDS, GROUP_HANDWRITING, GROUP_LIBRARY, GROUP_NAVIGATION, GROUP_PAGE, GROUP_VIEW } from "./appCommands.js";
 import { BLOCK_COMMANDS, GROUP_FORMAT, GROUP_NOTES } from "../editor/blockCommands.js";
 import { effectiveKeys } from "../shared/lib/hotkeys.js";
 
@@ -24,7 +24,7 @@ export function commandChord(id, bindings) {
 }
 
 // The pane's order.
-export const GROUPS = Object.freeze([GROUP_NAVIGATION, GROUP_PAGE, GROUP_VIEW, GROUP_LIBRARY, GROUP_NOTES, GROUP_FORMAT]);
+export const GROUPS = Object.freeze([GROUP_NAVIGATION, GROUP_PAGE, GROUP_VIEW, GROUP_LIBRARY, GROUP_HANDWRITING, GROUP_NOTES, GROUP_FORMAT]);
 
 // Keys the outliner and its popups own outright — no command, no rebinding —
 // listed so the pane and the cheat sheet can show the whole picture. Each

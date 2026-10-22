@@ -7,7 +7,7 @@ import path from "node:path";
 export async function settingsScenarios(env) {
   const { server, browser, step, openPage, assert, assertEq, assertNoProblems, until, sleep, flags } = env;
   if (!wanted("settings")) return;
-  server.manage("create-user", "settings-user", "settings-pw");
+  await server.manage("create-user", "settings-user", "settings-pw");
   const user = await new Account(server, "settings-user", "settings-pw").login();
   // A dummy connection supplies model choices. These tests never send AI jobs.
   await user.api("/api/ai/providers", { method: "POST", body: {
@@ -292,7 +292,8 @@ export async function settingsScenarios(env) {
       await until(async () => (await caps(del)) === "Ctrl Shift K", { what: "reset" });
       assertEq(await caps(ren), "F2", "the clash is gone with the reset");
       await page.getByRole("searchbox", { name: "Filter shortcuts" }).fill("duplicate");
-      await until(async () => (await page.locator(".keyboardPane .setRow").count()) === 2, { what: "filtered to the two duplicate rows" });
+      // Duplicate block above / below, and the handwriting group's Duplicate handwriting.
+      await until(async () => (await page.locator(".keyboardPane .setRow").count()) === 3, { what: "filtered to the three duplicate rows" });
       assertNoProblems(page);
     } finally { await ctx.close(); }
   });
@@ -1042,7 +1043,7 @@ export async function settingsScenarios(env) {
       await page.getByText('No settings found. Try "model", "PDF", or "storage".', { exact: true }).waitFor();
       assertEq(await page.locator(".settingsSearchResult").count(), 0, "a member's search finds no admin section");
       await box.fill("");
-      server.manage("set-admin", "settings-user", "on");
+      await server.manage("set-admin", "settings-user", "on");
       await page.reload();
       await page.waitForSelector(".folderNewBtn");
       await openSettings(page);
@@ -1076,12 +1077,12 @@ export async function settingsScenarios(env) {
       assertNoProblems(page);
     } finally {
       await ctx.close();
-      server.manage("set-admin", "settings-user", "off");
+      await server.manage("set-admin", "settings-user", "off");
     }
   });
 
   await step("settings: Off-site copies are set up in a dialog with a write-only secret, tested there, and Copy now shows the failed round", async () => {
-    server.manage("set-admin", "settings-user", "on");
+    await server.manage("set-admin", "settings-user", "on");
     const before = (await user.api("/api/admin/offsite")).settings;
     // Copy now goes to a stand-in bucket that holds its first request until
     // released, so the round is seen running, then refuses every request
@@ -1221,7 +1222,7 @@ export async function settingsScenarios(env) {
       try {
         const { secret_set: _secret, ...fields } = before;
         await user.api("/api/admin/offsite", { method: "PUT", body: fields });
-      } finally { server.manage("set-admin", "settings-user", "off"); }
+      } finally { await server.manage("set-admin", "settings-user", "off"); }
     }
   });
 
@@ -1236,8 +1237,8 @@ export async function settingsScenarios(env) {
     let ctx = null;
     try {
       await managed.start();
-      managed.manage("create-user", "env-admin", "env-admin-pw");
-      managed.manage("set-admin", "env-admin", "on");
+      await managed.manage("create-user", "env-admin", "env-admin-pw");
+      await managed.manage("set-admin", "env-admin", "on");
       const admin = await new Account(managed, "env-admin", "env-admin-pw").login();
       ctx = await admin.context(browser);
       await ctx.addInitScript(() => localStorage.setItem("gamma-ai-login-check", "off"));
@@ -1772,7 +1773,7 @@ export async function settingsScenarios(env) {
       assert(url.searchParams.get("diagnostics").includes("**Build:**"), "diagnostics ride along");
       // The Diagnostics pane's Help row opens the same dialog; an admin's
       // report adds the server dashboard and log.
-      server.manage("set-admin", "settings-user", "on");
+      await server.manage("set-admin", "settings-user", "on");
       await page.reload();
       await page.waitForSelector(".folderNewBtn");
       await openSettings(page);
@@ -1785,13 +1786,13 @@ export async function settingsScenarios(env) {
       await dialog.waitFor({ state: "detached" });
       assertNoProblems(page);
     } finally {
-      server.manage("set-admin", "settings-user", "off");
+      await server.manage("set-admin", "settings-user", "off");
       await ctx.close();
     }
   });
 
   await step("settings: administrators see their own account separately from all users", async () => {
-    server.manage("set-admin", "settings-user", "on");
+    await server.manage("set-admin", "settings-user", "on");
     const { ctx, page } = await setup();
     try {
       await openSettings(page);
@@ -1841,8 +1842,8 @@ export async function settingsScenarios(env) {
   await step("settings: an admin's own new username and password saved together both take", async () => {
     // The new password ends the account's sessions, the editor's own too,
     // so the rename has to go first or it is sent signed out.
-    server.manage("create-user", "rename-self", "rename-self-pw");
-    server.manage("set-admin", "rename-self", "on");
+    await server.manage("create-user", "rename-self", "rename-self-pw");
+    await server.manage("set-admin", "rename-self", "on");
     const self = await new Account(server, "rename-self", "rename-self-pw").login();
     const ctx = await self.context(browser);
     await ctx.addInitScript(() => localStorage.setItem("gamma-ai-login-check", "off"));
@@ -1869,7 +1870,7 @@ export async function settingsScenarios(env) {
   });
 
   await step("settings: Server → Guests turns guest sign-in off, and saves the lifetime and demo mode", async () => {
-    server.manage("set-admin", "settings-user", "on");
+    await server.manage("set-admin", "settings-user", "on");
     const before = await user.api("/api/admin/settings");
     const { ctx, page } = await setup();
     try {
@@ -1916,7 +1917,7 @@ export async function settingsScenarios(env) {
 
   await step("settings: a shared AI provider from Server is a read-only connection for every account", async () => {
     // settings-user is an admin since the step above.
-    server.manage("create-user", "settings-member", "settings-member-pw");
+    await server.manage("create-user", "settings-member", "settings-member-pw");
     const member = await new Account(server, "settings-member", "settings-member-pw").login();
     const { ctx, page } = await setup();
     try {
@@ -1990,7 +1991,7 @@ export async function settingsScenarios(env) {
 
   await step("settings: who may use a shared connection — every account, guests too, or the accounts named", async () => {
     // settings-user is an admin and settings-member exists since the steps above.
-    server.manage("create-user", "settings-outsider", "settings-outsider-pw");
+    await server.manage("create-user", "settings-outsider", "settings-outsider-pw");
     const member = await new Account(server, "settings-member", "settings-member-pw").login();
     const outsider = await new Account(server, "settings-outsider", "settings-outsider-pw").login();
     const shared = (await user.api("/api/admin/ai-providers", { method: "POST",
@@ -2088,7 +2089,7 @@ export async function settingsScenarios(env) {
   // The red dot (app/notices.js): the feed is faked so no real error or
   // release is needed; the acks go to the real server.
   await step("settings: a notice dots the account button, the menu says what it is, and Settings… lands on its pane", async () => {
-    server.manage("set-admin", "settings-user", "on");
+    await server.manage("set-admin", "settings-user", "on");
     const ctx = await user.context(browser);
     try {
       await ctx.addInitScript(() => localStorage.setItem("gamma-ai-login-check", "off"));

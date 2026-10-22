@@ -2,12 +2,14 @@
 
 The View menu's (≡) Import…/Export… dialogs and every pipeline behind them: embedded
 PDF annotations, Logseq graphs, Zotero libraries, Markdown notes (Obsidian
-vaults, Notion exports), Markdown and Obsidian vault export, the notes
+vaults, Notion exports), Notability notes, Markdown and Obsidian vault export, the notes
 typeset as their own PDF, the BibTeX bibliography, and the annotated-PDF
 writer (its internals and the shared typesetting engine are in
 [pdf_typesetting.md](pdf_typesetting.md)). Code: `gamma/routers/imports.py`, `gamma/zotero_import.py`,
 `gamma/zotero_export.py`, `gamma/logseq_import.py`, `gamma/markdown_import.py`,
-`gamma/markdown_zip_import.py`, `gamma/markdown_export.py`, `gamma/obsidian_export.py`, `gamma/pdf_export.py`,
+`gamma/markdown_zip_import.py`, `gamma/import_zip.py` (the zip walk the library imports share),
+`gamma/notability_import.py`, `gamma/notability.py`, `gamma/notability_archive.py`,
+`gamma/notability_map.py`, `gamma/markdown_export.py`, `gamma/obsidian_export.py`, `gamma/pdf_export.py`,
 `gamma/pdf_notes.py`, `gamma/pdf_document.py`, `gamma/pdf_typeset.py`,
 `gamma/note_markup.py`, `gamma/vector_text.py`, `gamma/pdf_glyphs.py`,
 `gamma/pdf_image.py`, `gamma/text_box.py`, `gamma/bibtex.py`,
@@ -33,8 +35,11 @@ app that writes 0.831 means 212); PyPDF2 dict access returns `IndirectObject`s, 
 `.get_object()` them. `/Ink` (freehand drawings from any PDF app, or a Gamma
 export) becomes a handwriting block: the strokes are stored as an `.ink`
 upload (`gamma/ink.py`), the block gets `ink_url` / `ink_strokes` /
-`pdf_position`; a Gamma export's private `/GammaInk` key restores pressure
-and time, foreign ink is polylines at the annotation's width
+`pdf_position`. A Gamma export's private `/GammaInk` key restores pressure,
+time, the dash, a calligraphy pen's nib and a closed shape's record and
+fill. An export writes a filled shape as its outline's `/Ink` alone, never
+a `/Square`, `/Circle` or `/Polygon`. Foreign ink is polylines at the
+annotation's width, dashed when its border style is (`/BS /S /D`)
 ([handwriting.md](handwriting.md)). `/FreeText` (typed text) and `/Text`
 (a sticky note) become text-box blocks (`text_box`, `pdf_page`), not
 highlights, by the rules in
@@ -118,22 +123,26 @@ The View menu's single "Import…" entry → `ImportDialog` in `transfers/Import
 export dialog's counterpart. Step one is a source card: annotations embedded
 in this PDF, a Logseq .pdf + .edn, a Zotero library (its export folder or a
 .zip of it), Markdown notes (one
-`.md` or a `.zip` such as a Notion export), or a Gamma export .zip. Double-click
+`.md` or a `.zip` such as a Notion export), Notability notes (one or more
+`.note` files, or a `.zip` of them), or a Gamma export .zip. Double-click
 or Next confirms. Only sources with an option get a review step. That option is
 the strip switch, which applies to embedded annotations, including those
-inside Zotero's exported PDFs. Markdown, Logseq and Gamma open the file picker
-directly, with their preparation notes under the selected card.
+inside Zotero's exported PDFs. Markdown, Notability, Logseq and Gamma open the
+file picker directly, with their preparation notes under the selected card.
 `resolveImport` in `transfers/transferFormats.js` decides both.
+Notability's picker takes several files, which go up as one `.zip`
+(`folderZip.js` `filesUpload`, a name picked twice numbered), and takes any
+file on an iPhone or iPad, whose Safari greys out a `.note`.
 Zotero is the default source (a numbered step guide reusing
 settingsKit's `Step`); with a PDF open, that PDF's own annotations win. Nothing
 is remembered: the switch starts from the Settings preference each time, so the
 setting stays the standing policy.
 
-Zotero, Markdown (ZIP or one file), Obsidian/Notion ZIPs and Gamma exports
-share one review flow: Upload → Review → Import → Summary.
+Zotero, Markdown (ZIP or one file), Obsidian/Notion ZIPs, Notability notes and
+Gamma exports share one review flow: Upload → Review → Import → Summary.
 
 - `POST /api/import/review` takes the file, its `source` (`zotero`,
-  `markdown-zip`, `markdown-file`, `gamma`), an optional `folder` (the
+  `markdown-zip`, `markdown-file`, `gamma`, `notability`), an optional `folder` (the
   destination folder's id, `""` the library's top; 400 when it is no
   folder, `import_review.destination`) and `strip`.
   It stages the upload, runs the source's preview and returns the two trees
@@ -173,6 +182,11 @@ share one review flow: Upload → Review → Import → Summary.
   (`tasks.start("import", …)`) with its progress and Stop. It may close while
   the job runs, and the job's row in Background tasks opens it again on that
   job (`{jobId}`, no file: the summary then shows the library column only).
+  A preview the server refuses (400, 413, 415: a file the source does not
+  read, such as a Notability `.ntb`, or one too large) shows its reason
+  without the retry a lost connection gets. The source column is headed by
+  what was uploaded: one file, a ZIP's contents, a folder, or the files
+  picked together.
   `ImportTree.jsx` renders one tree with its checkboxes (a folder toggles
   its descendants). A tree of more than 300 files (a vault) starts with its
   folders closed, a closed folder's rows are made only once it opens, and
@@ -247,7 +261,8 @@ folder of notes, because they only differ in naming and link conventions
   and Notion's `Export-<uuid>/` wrappers are dropped; zips inside the zip
   (Notion's `Part-N.zip` members of a big export) are read in place, each
   spooled to a temporary file, to two levels deep and up to 500 of them
-  (`MAX_ZIP_DEPTH`, `MAX_NESTED_ZIPS`: each holds its file open until the
+  (the walk the library imports share, `gamma/import_zip.py`:
+  `MAX_ZIP_DEPTH`, `MAX_NESTED_ZIPS`; each holds its file open until the
   import ends), and a warning names every one left closed; `.obsidian/`,
   `.trash/` and `.canvas` files are skipped (a canvas is a warning).
 - **Links**: a link to another note in the zip becomes a `[[page]]` mention
@@ -299,8 +314,8 @@ folder of notes, because they only differ in naming and link conventions
 - **In short batches**: a page's bundled files are stored while its links
   are rewritten, outside any transaction. Its rows then wait with the next
   ones, and every `PAGES_PER_COMMIT` (50) pages go in as one short
-  transaction: `insert_note_page` takes the write lock and touches each
-  page in the change log. Other writers are never shut
+  transaction: `blocks_store.insert_page_tree`, the library imports' bulk
+  writer, takes the write lock and touches each page in the change log. Other writers are never shut
   out for the length of an import, the change feed lists each batch as it
   lands ([collab.md](collab.md) "The change feed"), and an import that
   fails half way keeps the batches it finished. (A transaction per page
@@ -462,6 +477,253 @@ rechecks the current library, and leaves actual results and warnings in the dial
   already made. A file Zotero doesn't have locally gets no `z:path` at all,
   and an archive of only the `.rdf` has no `files/` tree, so neither looks
   like this.
+
+## Notability notes
+
+`POST /api/import/notability` (View menu ≡ → Import… → Notability notes;
+`gamma/notability_import.py`, which reads a note through
+`gamma/notability.py` and `gamma/notability_archive.py` and places it through
+`gamma/notability_map.py`) imports Notability's "Note" export. A `.note` is a
+zip holding one folder: `Session.plist` (the whole note, a keyed archive),
+`metadata.plist`, its PDFs, pictures and recordings. The upload is one
+`.note`, several picked together (the dialog packs them into one `.zip`), a
+`.zip` of them (a library's export), or a zip of an unzipped note folder
+(`.nbn`, iCloud's form). Each note becomes one page. It is a source of the
+reviewed import above (`source` `notability`), so the import itself is the
+`import` job. The format, its sources and what was decided where they
+disagree are in [research/notability-format.md](../research/notability-format.md).
+
+**What a note becomes** (`notability_map.plan_note`):
+
+| The note | Becomes |
+|---|---|
+| No PDF page, and something drawn or placed on its pages | A notebook: a sheet per page, each on the note's paper ([notebooks.md](notebooks.md)) |
+| No PDF page and nothing on its pages | A plain note page: its typed text as notes |
+| Its pages are exactly one bundled PDF's, 1..n in order | A page carrying that PDF as it is |
+| Any other note with a PDF page: paper pages among them, several PDFs, pages reordered, repeated or left out | A page carrying one PDF made of the note's pages in order (`compose_pdf`): each PDF page copied from its file, each paper page a blank page of the paper's size with the paper painted on it |
+
+- A sheet matches a Notability paper page (its own paper, ink and boxes on
+  it, more paper added by writing low), so a paper note stays a notebook to
+  write on.
+- A sheet can carry neither a PDF background nor a paper image, the notebook
+  view shows only on a page without a PDF, and a page carries one PDF. A
+  mixed note therefore becomes one composed PDF, rather than pages split
+  apart that lose its order.
+- A note on one PDF keeps the file's bytes, shared by content hash with any
+  page of the same file. A new page is made even when another page carries
+  that PDF, since the note is its own document (`page_for_doc` still
+  answers with the older page). The page gets no `auto_title`: the note's
+  name is the user's.
+- Annotations another app saved inside the PDF are not imported, since
+  Notability hides them; Import → Annotations in this PDF brings them in.
+
+**Where things land.** A note is one canvas in document units, its pages
+stacked without gaps. It is W units wide: the locked reflow state's page
+width, else the paper's `lockedWidth`, else 768 for a note from 2013–14,
+else 565. The paper's left edge is at `−W × 20/768`. A paper page is 612 pt
+wide (an A4 one 595.28) and as tall as its paper asks; a PDF page is scaled
+to W and bottom-aligned in a slot of `ceil(h)` units. The layout's pages come
+first (one whose PDF or page is missing or unreadable is paper, with a
+warning), then paper pages while something lies below the last, and trailing
+empty paper pages are dropped, as Notability's export drops them
+(`notability_map.frames`). An item is on the page holding the vertical centre
+of its bounding box, above page 1 counting as page 1. It is never split: a
+stroke that crosses a page's edge keeps its samples outside that page's
+frame, where the screen cuts it off.
+
+**Handwriting.** Notability stores a curve as a fitted Bézier chain with a
+width multiplier, a force and a tilt per anchor, and no raw samples. Each
+curve becomes one gamma-ink v2 stroke ([handwriting.md](handwriting.md)
+"Interchange"):
+
+- **Samples.** The chain is flattened in page points, each cubic cut into
+  equal steps by the larger of Wang's bound (within 0.05 pt of the curve)
+  and a bound that keeps steps within a point, then decimated as the client
+  decimates. The client's pen outline (perfect-freehand at streamline 0.4)
+  moves each point only part of the way to the next sample, and its own
+  input arrives about a point apart: sparser samples would round off a
+  written corner.
+- **Channels.** `w` is the fractional widths, linear between anchors. `p`
+  (force ÷ the Pencil's maximum, 25/6) and `a`/`z` (the tilt) are written
+  only where the note has real values (1.0, π/2 and (1, 0) are its
+  "unknown"), in the client's channel order. A curve of even width is an
+  even stroke (`pen: false`); a highlighter is the highlighter tool at its
+  stored alpha; a pencil curve has `brush: "pencil"` and no `o`, since
+  Notability's shading law is not public. There is never a `t` or `t0`: the
+  note stores no time for a sample.
+- **Files.** A page's strokes are packed into files by `ink.group_files`,
+  the client's split (5,000 strokes, 500,000 samples, 3 MB of canonical
+  bytes), stroke ids `n0`, `n1`, … in each file, so the same note stores the
+  same files in any workspace. Each file passes `ink.parse_ink` on its bytes
+  and is stored as `ink.dumps`.
+- **Groups** (16.x) are read with their transforms composed and their
+  widths scaled. A curve of style 6, or with an alpha of 0, is not drawn by
+  Notability and not imported.
+- **Shapes** keep the record the client's recogniser writes (params in page
+  points, normalised as `shapes.js` does), so a handle drag rebuilds them: a
+  line, a straight arrow, a rectangle or square with square corners, a
+  triangle, an ellipse, with a fill on the closed ones. Their samples are
+  the ones `shapes.js` draws the params as (`ink.shape_samples`, held to
+  `shapeSamples` by `tests/shared/inkshapes.json` `samples`): a line its
+  two ends, an arrow, a rectangle or a triangle its corners and each side
+  cut into equal steps of at most 2 pt, an ellipse max(48, perimeter ÷ 2)
+  samples: what a handle drag writes again from the params. A curved
+  line, a polygon, a skewed rectangle or ellipse, and every shape in an
+  ink group are plain even strokes of their outline, at the same step; a
+  curved line is flattened as a curve is, its head drawn as an arrow's.
+- **A sticky note** (a coloured sheet to write on) is a filled rectangle
+  stroke in band 0, turned as it was: under the ink in every renderer and
+  exporter, and moved and resized like any shape. An empty text box would
+  go when its editor closed, could not turn and would lie under the ink.
+- On a page the strokes go stickies, curves, then shapes.
+
+**Text, math, pictures, recordings.**
+
+- The text typed on the pages has no stored place (Notability lays it out
+  from the top of page 1), so it becomes the page's notes, first in the
+  page: a block per paragraph, nested by its list level, a numbered item
+  "n. text", a checklist item the editor's to-do (`- [ ] `). Bold, italic,
+  strikethrough and highlight become Markdown, and each run is escaped
+  (`text_box.escape_markdown`), so "$5" or "# x" reads as typed.
+- A text box becomes a fixed-width text box (`pdf_page` on a PDF page, under
+  its sheet on paper): a line per paragraph, the size and colour of most of
+  its characters, its paper colour as fill. A turned box stands upright on
+  its centre, since a box cannot turn ([text_boxes.md](text_boxes.md)).
+- A formula (Notability stores its LaTeX alone) becomes a box of display
+  math in its colour.
+- A picture becomes a fixed-width box holding `![caption](/api/uploads/…)`,
+  as large as the picture as turned. Its bytes are stored as they came
+  unless it is cropped, flipped, turned or stretched; then Pillow applies
+  the EXIF orientation, the crop, the flips, the stretch and the turn, and a
+  turned picture is a PNG with transparent corners, at most 2,048 px on its
+  longer side (`picture_bytes`).
+- Each recording (`.m4a`, listed by `Recordings/library.plist`) becomes a
+  recording block after everything else ([recording.md](recording.md)): one
+  segment, its length from the file's movie header
+  (`recording.mp4_duration_ms`), started when Notability made it. No stroke
+  is placed on it: the note times each stroke drawn during a recording as
+  an event, but not its samples, and the replay places a stroke only by its
+  samples' times, which are never invented.
+
+**One note at a time.** The upload's walk (`gamma/import_zip.py`, the
+Markdown import's too) opens a `.zip` inside it but not a `.note`: each note
+is opened only while it is read, in a stack of its own, its temporary file
+closed before the next. So a library of thousands of notes imports whole
+and never sits on disk twice. For each chosen note, in path order:
+
+1. Its Session.plist is read and hashed. A note whose digest a page of the
+   library carries (`properties.notability_import`), or that came earlier in
+   the upload, is skipped and shown where it is.
+2. The PDFs its pages name are checked against the per-file cap and opened.
+   One past the cap skips the note; one that does not open becomes paper.
+3. Its PDF (the original or the composed one), its ink page by page, its
+   pictures and its recordings are stored, outside any transaction.
+4. Its folder and its page are written in one short transaction under the
+   write lock, its digest looked for again there: the folder made where
+   missing (`blocks_store.folder_inserts`, read under the lock, one batch
+   through `ops.apply_batches`), then the page
+   (`blocks_store.insert_page_tree`). An import that finds the note there
+   writes neither and names the page where it is filed, so two imports of
+   one note at once leave one page and no empty folder, and two filing
+   into one new folder make it once.
+
+A note's folder is the directories above it in the upload, less one top
+directory every note shares (a zipped folder, or the one picked files are
+packed into), below the destination. A note with none is filed by its
+subject (`noteSubject`, unless unsorted), else in the destination. A
+preview reads every note the same way, but not its ink, and writes nothing.
+A 413 on one of a note's files skips that note (`skipped`); a 507 (the quota
+or the disk) stops the import and lists the notes not reached with its
+reason, since each would meet it too. A stopped job keeps the notes it
+finished.
+
+**Limits.** The upload is untrusted, and every guard is in the code it
+names:
+
+- Zip bombs: the shared ratio rule. A member past 1 MiB that unpacks to
+  over 100 times its packed size is not read; an archive that does so as a
+  whole is refused (413), and a note that does is skipped.
+- A central directory past 16 MiB (about 100,000 files) is refused before
+  zipfile reads it (413 for the upload; a note is skipped): zipfile builds
+  an object per entry and never reads the entry count
+  (`import_zip.open_zip`).
+- Zips inside the upload open to 2 levels and 500 in all, never under
+  `NBPDFIndex/` (Notability's search cache), and are spooled only while the
+  disk keeps 1 GB free.
+- Plists (`notability_archive.load_plist`) are size-capped (Session.plist
+  256 MiB, the others 4 MiB). A binary plist's trailer is checked before
+  plistlib allocates its tables (at most 1,000,000 objects), and so are the
+  references its arrays and dictionaries hold (at most 8,000,000 in all):
+  plistlib makes a tuple slot and a list slot of each, about 17 bytes for
+  a 1-byte reference. XML entities are refused. An archive is read by named
+  keys only, UID chains followed at most 64 hops, every value type-checked
+  where it is read.
+- An archive can name one object a million times for a few bytes each, so
+  no cost is paid per name: what an object reads as (a string, an array, a
+  mapping) is made once (`Archive._once`), and a note's costs are counted
+  where they are spent. The plists inside a note (its ink groups, their
+  archives, shape lists and dash styles) are read up to 256 MiB in all, its
+  typed text up to 5,000,000 characters (a text, a formula or a caption
+  past it is cut short or left out), the formatting runs on that text up
+  to 200,000 (past them a text keeps its words only; a run named twice in
+  one text is read once), and its objects (text boxes, pictures, formulas,
+  stickies) up to 10,000. A name (a file's, a font's, a class's) longer
+  than 1,024 characters is no name; a missing file is named once.
+- The ink arrays stay `array.array`, each checked against its count before
+  it is unpacked. At most 1,000,000 curves and 100,000 shapes a note,
+  10,000 points a curve or a shape, 1,024 pieces a Bézier segment, 5,000
+  pages (the layout is read no further), and ink groups 8 deep and 20,000
+  in all, a group's plist and the archive inside it each counting one. A
+  stroke's samples are counted before one is made: a curve, a shape's
+  outline or a sticky's past 50,000 is left out unmade, and so are the
+  stroke that would take the note past 20,000,000 and every stroke after
+  it (`notability_map.page_strokes`). A NaN, an infinity or a coordinate
+  past 10⁶, the groups' transforms applied, leaves its item out. So does
+  a stroke that would land past ±10,000,000 pt on its page (`ink.MAX_XY`,
+  what a stroke file holds). A unit of the note is the page's width ÷ W
+  points, so only a page many times as many points wide as W gets there:
+  a letter page of a note a few dozen units wide, or a PDF page far wider
+  than its note. Finding the notes of an upload is linear in its files.
+- Pictures are PNG, JPEG, GIF or WebP by their first bytes, decoded only to
+  be transformed and only up to 40 MP; a stretch so long and thin that a
+  side would round to no pixel is refused. One image file is read for at
+  most 4 pictures of a note. A bundled PDF is read and opened once however
+  many names lead to it, and a recording file listed twice is one
+  recording. Recordings are `.m4a` by their `ftyp`, their length read from
+  box headers only, and are streamed into storage
+  (`storage.store_file_stream`). A text box's or a formula's text is cut
+  at 200,000 characters, what the editor saves (`ops.MAX_CONTENT`).
+- Every file goes through `store_pdf`, `store_file` or
+  `store_file_stream` (per-file cap, quota, dedup), its size checked from
+  the zip before a byte is read.
+
+**The report**: `pages_created`, `pages_skipped`, `pdfs_stored`,
+`strokes_imported`, `text_boxes_imported`, `pictures_imported`,
+`recordings_imported`, the `pages` (each with its kind, folders, warnings
+and `missing`), `skipped` and `warnings`. What a note leaves out is one
+warning per kind ("3 rotated text boxes are placed upright"). `entries`
+lists the upload's notes and, not imported, its other files.
+
+**Not read, and said so.**
+
+- `.ntb`, the format of Notability Cloud and the Mac app's Save As, is
+  refused (400) with how to export "Note" instead. Three public decoders
+  agree on fresh strokes, but none has mapped what its op log keeps for a
+  stroke deleted, undone, moved or restyled, so erased ink could come back.
+  An `.ntb` beside notes is a warning.
+- A Supernote `.note`, and a "PDF + Recording" backup (add its PDF instead).
+- Left out with a warning: partly erased shapes, a polygon's fill, objects
+  of a kind this import does not know, and anything past the limits. A
+  template paper comes in as plain paper of its colour.
+- Not kept: a text box's turn, alignment, fonts, per-run colours and
+  underline; a sticky's lines; Notability's pencil shading and dash
+  lengths (Gamma draws its own); an animated GIF's animation (its still
+  frame comes in); where a caption is drawn; note links and tags; the
+  handwriting Notability recognised (`HandwritingIndex`).
+- A text box or picture that overlaps a sticky is drawn under it, since
+  boxes lie under the ink layer.
+- A long paper note is a notebook of as many sheets, and the notebook view
+  mounts every sheet ([notebooks.md](notebooks.md) "Not built yet").
 
 ## Zotero RDF export
 
