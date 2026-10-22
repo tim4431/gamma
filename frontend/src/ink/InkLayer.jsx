@@ -7,8 +7,10 @@
 // the notes, with a replay of their writing that plays there and on the
 // page (replay/playback.js). The tool strip is markup/MarkupToolbar.jsx, and
 // a surface mounts its layer through markup/MarkupLayers.jsx. Strokes come
-// from inkStore (drafts ahead of uploads, files behind block URLs); App owns
-// the tool state, the selection, the stroke history and the commits.
+// from inkStore (drafts ahead of uploads, files behind block URLs); the
+// tool state, the selection, the stroke history and the commits are in the
+// owners App composes (useInkStrip.js, useInkSelection.js,
+// useInkDocument.js, useInkStrokes.js).
 import React, { createContext, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal, flushSync } from "react-dom";
 import { ContextMenu, MenuItem } from "../shared/ui/Menus";
@@ -124,9 +126,9 @@ if (nativeHost()?.ink) {
   }
 }
 // Whether a stroke is in progress anywhere: a layer's pointer drawing (a
-// stroke, an erasure, a lasso, a move) or a claim the host holds. App's
-// Pencil gestures wait for it (pencilActions.js), so a double tap under the
-// moving pen never undoes the stroke before it.
+// stroke, an erasure, a lasso, a move) or a claim the host holds. The
+// Pencil's gestures (usePencil.js) wait for it (pencilActions.js), so a
+// double tap under the moving pen never undoes the stroke before it.
 const busyLayers = new Set();
 export function inkBusy() {
   if (hostClaims.size) return true;
@@ -799,8 +801,9 @@ function samplesBox(samples, pad) {
 // which calls onPaste(page, pt, {width, height}); keys: {copy, cut,
 // duplicate}, the chord labels the selection menu's titles name.
 // onInkLive(page, msg): a chunk of the stroke in progress for the page's
-// other peers (inkLive.js; App sends it on the page socket); their strokes
-// in progress on this surface, the wet strokes, come from inkLive's store.
+// other peers (inkLive.js; useInkLive.js sends it on the page socket);
+// their strokes in progress on this surface, the wet strokes, come from
+// inkLive's store.
 // hoverPreview: the hover footprint shows the preset's look (this browser's
 // inkHoverPreview), else a plain ring at its width. onHaptic(kind, at): a
 // pen stroke snapped to a shape ('snap') or a pen lasso selected strokes
@@ -1153,7 +1156,7 @@ export function InkLayer({ pageNumber, wrapRef, width, height, blocks, tool, pen
     // The eraser's pass. `d.sweep` is the path it swept since the last
     // flush, from the point that flush ended at (the down point before the
     // first), so the flushes join into one path; every coalesced position
-    // goes in. App gets it once an animation frame, at the lift and, for
+    // goes in. It goes out once an animation frame, at the lift and, for
     // what was swept already, at a cancel, as one onEraseAlong over every
     // group of the page (ink.js eraseAlong / hitStrokesAlong test the
     // capsules between the points, so a fast eraser leaves nothing it

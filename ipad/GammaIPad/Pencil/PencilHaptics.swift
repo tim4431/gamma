@@ -25,7 +25,7 @@ enum HapticFeel {
 }
 
 /// The web's `haptic` (Bridge), sent once per event, so nothing is limited
-/// here, and never with *Haptics* off (App's hostHaptic checks it). On
+/// here, and never with *Haptics* off (usePencil's hostHaptic checks it). On
 /// iPadOS 17.5 and later each kind plays its own feedback (HapticFeel) from
 /// a generator made for the web view, and an Apple Pencil Pro plays it in
 /// the Pencil at `at` (the web view's points): where the page says, or for

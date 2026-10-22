@@ -142,8 +142,8 @@ test("Eraser while held with the eraser armed holds the tool to go back to: a sh
     { release: { pick: "eraser" } }, "short, but it drew: the eraser again");
 });
 
-// App's half (App.jsx pencilRef), as small as it goes: the armed tool, the
-// one before it, and the squeeze held open.
+// usePencil's half (ink/usePencil.js pencilRef), as small as it goes: the
+// armed tool, the one before it, and the squeeze held open.
 function squeezes(prefs, tool) {
   let previous = null, open = null;
   const pick = (id) => { if (id !== tool) { previous = tool; tool = id; } };

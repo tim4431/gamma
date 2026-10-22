@@ -94,7 +94,7 @@ From the palette a block command runs on the **focused row** with `editor: null`
 
 A few keys belong to a widget while it is active. They are not commands, so the palette and the pane do not list them and they cannot be rebound.
 
-- **The markup strip** ([handwriting.md](handwriting.md) "What the user sees"). While it is open, a capture-phase `keydown` listener on the window (App.jsx; the table is `ink/stripKeys.js`) takes these keys. It matches the physical key (`e.code`), so a layout or Shift does not change which key it is:
+- **The markup strip** ([handwriting.md](handwriting.md) "What the user sees"). While it is open, a capture-phase `keydown` listener on the window (`ink/useStripKeys.js`; the table is `ink/stripKeys.js`) takes these keys. It matches the physical key (`e.code`), so a layout or Shift does not change which key it is:
   - `1`–`9`: the visible presets in row order. `P` / `H`: the next pen / highlighter, with Shift the previous, wrapping.
   - `[` / `]`: the armed preset thinner / thicker through its eight widths, its options row open or not. A pill names the width ("Blue pen · 2.8 pt.") and repeats it at either end of the ladder.
   - `Shift+[` / `Shift+]`: an armed pen's style back / forward through Pen, Ballpoint, Brush, Pencil and Calligraphy, wrapping, with the same pill naming the style ("Blue brush pen · 2.8 pt."). A highlighter has no styles, so on one the keys do nothing.

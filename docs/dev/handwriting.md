@@ -18,13 +18,13 @@ app ([ipad.md](ipad.md)). Typed text on a page is
   `ink/hostInk.js`, `ink/inkStore.js`, `ink/inkJournal.js`,
   `ink/inkFlush.js`, `ink/inkSaver.js`, `ink/inkLive.js`, `ink/grain.js`,
   `ink/InkStylePicker.jsx`, `ink/InkLayer.jsx`, `ink/ZoomWindow.jsx`,
-  `ink/inkInput.js`, and the owners of App's handwriting state,
+  `ink/inkInput.js`, and the owners of the handwriting state App composes,
   `ink/buildFence.js`, `ink/useInkStrip.js`, `ink/useInkLive.js`,
   `ink/useInkSave.js`, `ink/useInkSurfaces.js`,
   `ink/useInkDocument.js`, `ink/useInkStrokes.js`,
-  `ink/useInkSelection.js`, `ink/useInkRuler.js` and
-  `ink/useInkZoom.js`. The tool
-  strip and the page plumbing it shares with text boxes are in
+  `ink/useInkSelection.js`, `ink/useInkRuler.js`,
+  `ink/useInkZoom.js`, `ink/useStripKeys.js` and `ink/usePencil.js`. The
+  tool strip and the page plumbing it shares with text boxes are in
   `markup/MarkupToolbar.jsx`, `markup/MarkupLayers.jsx` and
   `markup/PageTools.jsx`.
 - Tests: `backend/tests/test_ink.py`; `frontend/tests/ink.test.mjs`,
@@ -1789,8 +1789,9 @@ reach.
   the Pencil: `InkLayer`'s `penBusy()`). `reset()` forgets everything
   (window blur).
 - `ink/stripKeys.js` (pure): `stripKey(event, state) → action | null`, the
-  strip's key table (matched by `e.code`), dispatched by App's
-  capture-phase handler, for the keydown and, for `E` alone, the keyup.
+  strip's key table (matched by `e.code`), dispatched by the
+  capture-phase handler in `useStripKeys`, for the keydown and, for `E`
+  alone, the keyup.
   What each key does, and which chords are left alone, is
   [hotkeys.md](hotkeys.md#widget-keys-the-markup-strip-and-a-text-box)
   "Widget keys"; this is the table's contract.
@@ -1803,18 +1804,19 @@ reach.
   The actions:
   - `{kind: "pick", id}` for `1`–`9` (the visible list), `P` / `H`
     (forward; with Shift backward, wrapping), `L`, `T`, `V`.
-  - `{kind: "width", step: ±1}` for `BracketLeft` / `BracketRight`: App
-    steps the armed preset through `sizesFor(kind)` and says "{name} ·
+  - `{kind: "width", step: ±1}` for `BracketLeft` / `BracketRight`: the
+    handler steps the armed preset through `sizesFor(kind)` and says "{name} ·
     {size} pt." on the pill, where `name` is the preset's colour and kind
     in words.
-  - `{kind: "brush", step: ±1}` for the same keys with Shift: App steps
-    an armed pen preset through `BRUSH_ORDER` (`null` for Pen,
+  - `{kind: "brush", step: ±1}` for the same keys with Shift: the handler
+    steps an armed pen preset through `BRUSH_ORDER` (`null` for Pen,
     `monoline`, `brush`, `pencil`, `calligraphy`), wrapping, and raises
     the same pill, whose `name` says the style ("Blue brush pen · 2
     pt."). An armed highlighter or no preset ignores it.
   - `{kind: "eraser", phase: "down" | "up", held}` for `E`: `down` on a
     non-repeat keydown, `up` on the keyup with `held` the ms since the
-    down, so App decides tap or hold ("Hold-E" under App).
+    down, so the handler decides tap or hold ("Hold-E" under
+    `ink/useStripKeys.js`).
   - `{kind: "toggle", what: "ruler" | "shape" | "zoom"}` for `R`, `S` and
     `Z`; `{kind: "newLine", prevent: true}` for Enter (and the keypad's)
     while `zoom` and neither `onControl` nor `hasBox`.
@@ -1825,7 +1827,7 @@ reach.
     `{kind: "off", what: "zoom"}`, else `close`.
   - `delete` and `undo`.
 - `ink/pencilActions.js` (pure): `pencilAction(message, prefs, state)`,
-  the Pencil's double tap and squeeze as App applies them, and
+  the Pencil's double tap and squeeze as `usePencil` applies them, and
   `backTool(prefs, state)`, the tool to go back to (the one armed before,
   when it is still on the strip and not the current one, else the stylus
   pen), which the gestures' *Switch to last tool* and `useInkStrip`'s
@@ -1854,8 +1856,8 @@ reach.
     A squeeze also takes `'holdEraser'` and `'holdPrevious'`.
   - `state`: `{tool, previous, options, busy, squeeze, now}`, `busy` a
     stroke or a claim in progress (`InkLayer.jsx` `inkBusy()`), `squeeze`
-    the squeeze App holds open (`{since, ignored, hold: {tool, used} |
-    null}`, or null), `now` in ms.
+    the squeeze `usePencil` holds open (`{since, ignored, hold: {tool,
+    used} | null}`, or null), `now` in ms.
   - The answer: `{pick: id}` (arm it; null is the hand), `{ui: patch}`
     (the strip's state), `{undo: true}`, `{began: {ignored, pick?}}` (a
     squeeze started; `pick`, only for a hold choice not ignored, is the
@@ -2218,8 +2220,8 @@ reach.
     once. The timer is cleared in `handOver`, `finish` and `cancel`.
     `commitStroke` passes `hold: d.hold` to `finishStroke` and the
     result's `status` to `onHoldStatus`. A pen stroke that snaps calls
-    `onHaptic('snap', tip)`, the tip in viewport CSS px, which App sends
-    on only under a host.
+    `onHaptic('snap', tip)`, the tip in viewport CSS px, which
+    `usePencil`'s `hostHaptic` sends on only under a host.
   - The iPad host (`nativeHost().ink`, [ipad.md](ipad.md) "The pen"): a
     pen down claims the stroke (`claimForHost`) with the claim's tool,
     `claimTool(look, {k})` (`ink/hostInk.js`, below). The claim is
@@ -2303,8 +2305,9 @@ reach.
     the flushes join into one path; the lift hands over the rest at once,
     its own position included, and a cancel (`pointercancel`, lost
     capture, a second finger, window blur) what was swept up to it. The
-    layer decides nothing about what goes: App tests the path against
-    every group, the eraser filter included. `finish` in erase mode then
+    layer decides nothing about what goes: `useInkDocument`
+    (`handleInkEraseAlong`) tests the path against every group, the
+    eraser filter included. `finish` in erase mode then
     calls `onEraseEnd()` once per gesture for `'tool'` only, whether or
     not anything was erased; a gesture ended by `pointercancel` does not.
     The hover ring draws a small pen or highlighter glyph when
@@ -2751,8 +2754,9 @@ reach.
     armed tool after each commit). `inkEraserLifted()`, the end of App's
     `handleInkEraseEnd` (`onEraseEnd`), picks it with the options row
     closed when `inkEraserReturn` is on and the eraser armed; App's part
-    first marks a held E and stops while a held squeeze is open
-    (`squeezeRef`'s `hold`: its release goes back). A squeeze that
+    first marks a held E (`noteInkEraseHold()`, `useStripKeys`) and stops
+    while a held squeeze is open (`noteSqueezeUse()`, `usePencil`: its
+    release goes back). A squeeze that
     toggles the eraser still toggles it; with the return on, the lift
     re-arms the pen and the next squeeze arms the eraser again.
 - `ink/useInkLive.js`: live co-drawing, this tab's side,
@@ -3083,6 +3087,68 @@ reach.
     through `changeInkZoom(update)`, and Enter through
     `inkZoomNewLine()`, all by `zoomWindow.js`. The size of the window's
     page in points is kept beside it.
+- `ink/useStripKeys.js`: the strip's keys, `useStripKeys({inkUi,
+  inkSelection, inkVisible, inkTools, setInkTools, pickInkTool,
+  toggleInkShape, closeInkOptions, toggleInkOptions, closeInkStrip,
+  inkUndo, boxUndo, hasBox, deleteInkSelection, selectionStill,
+  clearInkSelection, restoreInkSelection, inkRuler, toggleInkRuler,
+  inkZoom, toggleInkZoom, inkZoomNewLine, setStatus}) →
+  {noteInkEraseHold}`, which App calls after the zoom window, `hasBox`
+  being whether a text box is selected.
+  - While the strip is open (`inkUi.open`), a capture-phase `keydown`
+    and `keyup` listener on the window hands each key to `stripKey`
+    with the latest render's state (`inkKeysRef`, assigned every render)
+    and does what it answers ([hotkeys.md](hotkeys.md) "Widget keys").
+    A focused text field keeps its keys, but a keyup still reaches the
+    handler. `[` / `]` raise the width pill each time, at either end of
+    the sizes too.
+  - The handler takes `stripKey`'s `toggle` and `off`
+    (`what`: `ruler`, `shape`, `zoom`) and `newLine`, its state carrying
+    `ruler`, `zoom` and `onControl` (the target inside a button, a link,
+    a menu row or a comment thread). An open menu, a preset being
+    dragged and a focused comment thread keep Escape from it.
+  - **Hold-E**: the handler takes `stripKey`'s `eraser` action.
+    `down` arms the eraser as a tap does and keeps `inkHoldRef = {since,
+    erased: false, selection, tool}` (the lasso selection and the tool
+    armed before), and `onEraseEnd` marks `erased` (App's
+    `handleInkEraseEnd` runs `noteInkEraseHold()`). `up` with `held ≥
+    300` and `erased` picks `tool` again and, when that is the lasso,
+    restores what is left of the snapshot (`selectionStill`). A shorter
+    press, or one that erased nothing, leaves the eraser armed; a window
+    `blur` clears the hold.
+- `ink/usePencil.js`: the Apple Pencil under the iPad app
+  ([ipad.md](ipad.md) "Gestures"), `usePencil({readOnly, takesInk,
+  inkUi, inkVisible, previousTool, pickInkTool, applyPencilUi,
+  inkSelection, selectionStill, restoreInkSelection, stripUndo,
+  inkPencilTap, inkPencilSqueeze, inkHaptics}) → {hostHaptic,
+  noteSqueezeUse}`, which App calls after the strip's keys, `takesInk`
+  being whether the page takes ink (a PDF page or the notebook view
+  shown, or sheets among the notes).
+  - **The Pencil's gestures** (`pencilRef`, listening to the host's
+    `pencil` and `squeeze` under `nativeHost().pencil`, on a page that
+    takes ink): each goes through `pencilAction(message, {tools, pen,
+    tap: inkPencilTap, squeeze: inkPencilSqueeze}, {tool, previous,
+    options, busy: inkBusy(), squeeze: squeezeRef.current, now})`.
+    `{pick}` runs `pickInkTool`, `{ui}` patches `inkUi`, `{undo}` runs
+    `stripUndo(false)` (the strip's Undo: the stroke history, or the block
+    history under `boxUndo`), `{began}` opens `squeezeRef` (`{since,
+    ignored, hold}`; a `pick` is armed, with the tool before and the
+    lasso's selection kept in `hold`), `{release}` picks back (the
+    selection restored when that is the lasso, as `selectionStill(selection)`
+    has it: without the strokes erased meanwhile, none when nothing is
+    left; `stay` keeps the tool the squeeze armed), and an `ended` or
+    `cancelled` closes `squeezeRef` whatever the answer. An erase pass
+    (App's `handleInkEraseEnd`) or a committed stroke (`handleInkStroke`)
+    while a hold is open marks it `used` (`noteSqueezeUse()`, which
+    answers whether one was open). A host `squeeze` is taken only in its
+    `began` and `cancelled` phases.
+  - **Haptics** (`hostHaptic(kind, at)`, the page tools' `onHaptic`):
+    `postToHost({type: "haptic", kind, at?})` when `nativeHost().haptics`
+    and this browser's `inkHaptics` are on: `tool` for a gesture's pick
+    that changed the armed tool (an `{ui}` or an `{undo}` plays nothing),
+    and, from the layer, `select` for a pen lasso that selected (at its
+    lift) and `snap` for a held shape (at the tip), both in viewport CSS
+    px.
 - `markup/` ([text_boxes.md](text_boxes.md) "Client"):
   - `MarkupToolbar.jsx` `MarkupToolbar` is the strip. Its first row
     (`.pdfInkRow`) is five groups split by `.pdfInkSep`: the presets; the
@@ -3273,6 +3339,14 @@ reach.
     `armedClasses(tools)` gives a surface's container its armed-tool
     classes (`inkArmed`, `inkTouchDraw`, `textArmed`).
 - `app/App.jsx` composes the owners above and owns the rest of the state:
+  - The glue between the owners: `boxUndo` (the Text tool armed or a
+    text box selected: Undo is the block history's), `closeInkStrip()`
+    (below), `handleInkEraseEnd()` (the page tools' `onEraseEnd`:
+    `noteInkEraseHold()`, then, unless `noteSqueezeUse()` finds a held
+    squeeze open, `inkEraserLifted()`) and the Pencil's `takesInk`; the
+    page tools (`pageActions`, the `pageTools` memo, `inkKeys`, the marks
+    with `inkFlash`); and the jumps between the notes and the page
+    (`showOnPage`, `showInNotes`).
   - The other prefs: the eraser's mode and size; the lasso mode; the
     account's `inkDrawHold`, `inkScribbleErase`, `inkEraserReturn` and
     `inkEraserFilter`; and this browser's `inkFingerUndo`,
@@ -3280,30 +3354,6 @@ reach.
     ([settings.md](settings.md) "Reading & editing").
   - Turning `inkScribbleErase` on from Settings shows a pill explaining
     the gesture once.
-  - **The Pencil's gestures** (`pencilRef`, listening to the host's
-    `pencil` and `squeeze` under `nativeHost().pencil`, on a page that
-    takes ink): each goes through `pencilAction(message, {tools, pen,
-    tap: inkPencilTap, squeeze: inkPencilSqueeze}, {tool, previous,
-    options, busy: inkBusy(), squeeze: squeezeRef.current, now})`.
-    `{pick}` runs `pickInkTool`, `{ui}` patches `inkUi`, `{undo}` runs
-    `stripUndo(false)` (the strip's Undo: the stroke history, or the block
-    history under `boxUndo`), `{began}` opens `squeezeRef` (`{since,
-    ignored, hold}`; a `pick` is armed, with the tool before and the
-    lasso's selection kept in `hold`), `{release}` picks back (the
-    selection restored when that is the lasso, as `selectionStill(selection)`
-    has it: without the strokes erased meanwhile, none when nothing is
-    left; `stay` keeps the tool the squeeze armed), and an `ended` or
-    `cancelled` closes `squeezeRef` whatever the answer. An erase pass
-    (`handleInkEraseEnd`) or a committed stroke while a hold is open
-    marks it `used`. A host `squeeze` is taken only in its `began` and
-    `cancelled` phases.
-  - **Haptics** (`hostHaptic(kind, at)`, the page tools' `onHaptic`):
-    `postToHost({type: "haptic", kind, at?})` when `nativeHost().haptics`
-    and this browser's `inkHaptics` are on: `tool` for a gesture's pick
-    that changed the armed tool (an `{ui}` or an `{undo}` plays nothing),
-    and, from the layer, `select` for a pen lasso that selected (at its
-    lift) and `snap` for a held shape (at the tip), both in viewport CSS
-    px.
   - The commands (`appCommands.js`, group `GROUP_HANDWRITING`
     "Handwriting", after Library in `GROUPS`; [hotkeys.md](hotkeys.md)
     "Widget keys"): `ink.copy` "Copy handwriting" Mod-c, `ink.cut` "Cut
@@ -3321,14 +3371,6 @@ reach.
     `commandIcons.jsx`: `CopyIcon`, `ScissorsIcon`, `ClipboardIcon`,
     `CopyIcon`, `RectSelectIcon`, from `Icons.jsx` (as are the menu's
     `FlipHIcon` and `FlipVIcon`).
-  - **Hold-E**: the strip handler takes `stripKey`'s `eraser` action.
-    `down` arms the eraser as a tap does and keeps `inkHoldRef = {since,
-    erased: false, selection, tool}` (the lasso selection and the tool
-    armed before), and `onEraseEnd` marks `erased`. `up` with `held ≥
-    300` and `erased` picks `tool` again and, when that is the lasso,
-    restores what is left of the snapshot (`selectionStill`). A shorter
-    press, or one that erased nothing, leaves the eraser armed; a window
-    `blur` clears the hold.
   - **Presets on the account**: `useProfileSync` reports, on the
     account's first pull only, an account entry whose server value
     replaced a local one that was neither the default nor equal to it
@@ -3340,8 +3382,8 @@ reach.
   - The strip's pills: *Move left* / *Move right* and a drop say "Blue
     pen is now key 3." (or "Blue pen moved." past the ninth place), *Hide*
     says "Blue pen hidden." with *Show*, `[` / `]` say "Blue pen · 2.8
-    pt.". The name is the preset's colour and kind in words, as the
-    button's label spells them (`inkToolName(preset)`, which
+    pt." (`useStripKeys`). The name is the preset's colour and kind in
+    words, as the button's label spells them (`inkToolName(preset)`, which
     `MarkupToolbar.jsx` exports beside `moveTool(tools, id, slot)`, the
     reorder a drop and Move left / right share).
   - **The Shapes tool, the ruler and the zoom window.**
@@ -3368,11 +3410,6 @@ reach.
       `fill` (`restyleStrokes`, `T("ink fill change")`). A style change,
       by Shift+[ / ] as by the menu, writes the brush alone (a calligraphy
       pen's smoothing of 2 is `presetSmoothing`'s default, never stored).
-    - The strip's key handler takes `stripKey`'s `toggle` and `off`
-      (`what`: `ruler`, `shape`, `zoom`) and `newLine`, its state carrying
-      `ruler`, `zoom` and `onControl` (the target inside a button, a link,
-      a menu row or a comment thread). An open menu, a preset being
-      dragged and a focused comment thread keep Escape from it.
   - **Transcribe a selection**, the chat half (`askToTranscribe({blocks}
     | {chips})`, which `transcribeInkSelection` in
     `ink/useInkSelection.js` calls):

@@ -7,7 +7,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { t } from "../shared/i18n/i18n.js";
 import { visiblePart } from "./useInkSurfaces.js";
-import { ZOOM_CHROME, moveTo, moveWindow as moveZoomWindow, newLine, openWindow, setMag } from "./zoomWindow.js";   // the zoom window's rules (moveZoomWindow: App's name for it, beside the dock layout's moveWindow)
+import { ZOOM_CHROME, moveTo, moveWindow as moveZoomWindow, newLine, openWindow, setMag } from "./zoomWindow.js";   // the zoom window's rules (moveWindow as moveZoomWindow, the name handleInkZoom calls it by)
 
 // focusedBlockId: the open page; another one closes the window.
 // readOnly: no window opens. isPhone: a phone's layout, where it never

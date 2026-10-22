@@ -1,5 +1,5 @@
 // The tool strip's key table (docs/dev/handwriting.md "What the user
-// sees"), pure: a key event → the action App's capture-phase handler
+// sees"), pure: a key event → the action the handler in useStripKeys.js
 // dispatches, or null when the key is not the strip's or is left to
 // another owner (the block history, a selected text box). Keys are matched
 // by `e.code`, so a layout that puts another letter on the E key still arms
@@ -11,7 +11,7 @@
 // keys with Shift: the armed pen's style back or forward through Pen,
 // Ballpoint, Brush, Pencil, Calligraphy) · {kind: "eraser", phase: "down" | "up",
 // held} (E: `down` on a non-repeat keydown, `up` on the keyup with `held`
-// the ms since the down, so App decides tap or hold) · {kind: "toggle",
+// the ms since the down, so the handler decides tap or hold) · {kind: "toggle",
 // what: "ruler" | "shape" | "zoom"} (R, S, Z: the ruler, the Shapes tool,
 // the zoom window on or off) · {kind: "off", what} (Escape taking one of
 // them away) · {kind: "newLine"} (Enter while the zoom window is open: its

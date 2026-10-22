@@ -1,6 +1,6 @@
 // The Pencil's double tap and squeeze, as the iPad app's shell forwards them
 // (docs/dev/ipad.md "Gestures"): what the strip does for each, by this
-// browser's choice for the gesture. Pure; App applies the answer.
+// browser's choice for the gesture. Pure; usePencil.js applies the answer.
 //
 // message: {gesture: 'tap' | 'squeeze', action, phase?: 'began' | 'ended' |
 // 'cancelled'} — the host's `pencil` (a double tap, or a squeeze's end) and
@@ -14,9 +14,9 @@
 // options: the open options row, useInkStrip.js inkUi.options — true for
 // the armed tool's, "ruler" for the ruler's (not the tool's: Show options
 // opens the tool's in its place), false for none —, busy: a stroke or a
-// claim is in progress (InkLayer.jsx inkBusy), squeeze: the squeeze App
-// holds open, {since, ignored, hold: {tool, used} | null} or null, now: ms
-// on the clock `since` was read from}.
+// claim is in progress (InkLayer.jsx inkBusy), squeeze: the squeeze
+// usePencil.js holds open, {since, ignored, hold: {tool, used} | null} or
+// null, now: ms on the clock `since` was read from}.
 // → {pick: id} (arm that tool; null is the hand), {ui: {open, tool?,
 // options}} (a patch of the strip's state), {undo: true} (what the strip's
 // Undo does), {began: {ignored, pick?}} (a squeeze started; `pick`, for a

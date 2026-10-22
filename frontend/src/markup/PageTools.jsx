@@ -1,8 +1,8 @@
 // The page tools every surface's layers read (markup/MarkupLayers.jsx): a
 // PDF page, a sheet in the notebook view and a sheet among the notes all
-// take the same tools from here. App owns the state and the handlers and
-// provides PageToolsContext around the viewer and the notes
-// (docs/dev/handwriting.md).
+// take the same tools from here. App builds them from the owners it
+// composes (ink/'s, the text boxes') and provides PageToolsContext
+// around the viewer and the notes (docs/dev/handwriting.md).
 import { createContext, useContext } from "react";
 
 // {readOnly, ink: {tool, penTool, penOnly, pressure, eraserMode, eraserSize,

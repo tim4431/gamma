@@ -1,7 +1,8 @@
 // The markup tool strip (docs/dev/handwriting.md, docs/dev/text_boxes.md),
-// over the PDF, the notebook view or the notes. App owns the tool state and
-// the stroke history; the layers read the armed tool through
-// PageToolsContext (markup/PageTools.jsx).
+// over the PDF, the notebook view or the notes. The tool state is
+// ink/useInkStrip.js's and the stroke history ink/useInkDocument.js's;
+// the layers read the armed tool through PageToolsContext
+// (markup/PageTools.jsx).
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
@@ -45,8 +46,9 @@ const SIZE_LABELS = [t("Small"), t("Medium"), t("Large")];
 // the selected box's). onChangeTools(list | fn) writes the preset list
 // (ids stable; a pill's deferred action passes an updater). Undo / Redo
 // step the stroke history, or with `blockHistory` the page's block history
-// (the Text tool armed, a box selected or edited; App routes Ctrl+Z the
-// same way). onStatus(text, action?) is App's setStatus; cmdCtx and
+// (the Text tool armed, a box selected or edited; the strip's keys,
+// ink/useStripKeys.js, route Ctrl+Z the same way). onStatus(text,
+// action?) is App's setStatus; cmdCtx and
 // bindings feed the More menu's command rows (app/CommandMenuItem.jsx);
 // onOpenSettings() opens Settings at its Handwriting section.
 // A preset's row also carries its Smoothing ladder (`stabilize` 0–4,

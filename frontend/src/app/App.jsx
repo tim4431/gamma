@@ -52,7 +52,7 @@ import LibraryEmpty from "../library/LibraryEmpty";
 import { ContextMenu, MenuButton, MenuDivider, MenuItem, MenuLabel, MenuScope, MenuSelect, SubMenuItem, menuGroups } from "../shared/ui/Menus";
 import { backdropPress, menuPress } from "../shared/ui/press.js";
 import { lastPointer, touchScreen } from "../shared/lib/pointer.js";
-import { appShell, nativeHost, onHostMessage, postToHost } from "../shared/lib/host.js";
+import { appShell, nativeHost, postToHost } from "../shared/lib/host.js";
 import { pickFiles } from "../shared/lib/pickFiles.js";
 import { canPickFolder, filesUpload, folderPick } from "../transfers/folderZip.js";
 import { bibliographyPreview } from "../transfers/exportApi";
@@ -118,17 +118,13 @@ import { ReminderAlerts } from "./ReminderAlerts";
 import { dotTone, noticeAction, noticeText } from "./notices";
 import { useBlockHistory } from "../editor/blockHistory.js";
 import { useMarks } from "../markup/MarkupLayers";
-import { MarkupToolbar, inkToolName } from "../markup/MarkupToolbar";
-import { BRUSH_ORDER, sizesFor } from "../ink/ink";   // the strip's key handler
+import { MarkupToolbar } from "../markup/MarkupToolbar";
 import { PageToolsContext } from "../markup/PageTools";
 import { makeStableActions, useStableActions } from "../shared/lib/stableActions.js";
 import { keepIfSame, sameMap, sameObject } from "../shared/lib/keepIfSame.js";
 import { isTextBox, normalizeTextBox } from "../markup/textBox.js";
 import { useTextBoxes } from "../markup/useTextBoxes";
-import { inkBounds, round2 } from "../ink/ink";
-import { stripKey } from "../ink/stripKeys.js";
-import { pencilAction } from "../ink/pencilActions.js";
-import { inkBusy } from "../ink/InkLayer";
+import { inkBounds } from "../ink/ink";
 import { useBuildFence } from "../ink/buildFence.js";
 import { useInkStrip } from "../ink/useInkStrip.js";
 import { useInkLive } from "../ink/useInkLive.js";
@@ -139,6 +135,8 @@ import { useInkStrokes } from "../ink/useInkStrokes.js";
 import { useInkSelection } from "../ink/useInkSelection.js";
 import { useInkRuler } from "../ink/useInkRuler.js";
 import { useInkZoom } from "../ink/useInkZoom.js";
+import { useStripKeys } from "../ink/useStripKeys.js";
+import { usePencil } from "../ink/usePencil.js";
 import { NotebookViewer, PaperMenu, readPlace, showPlace } from "../notebook/NotebookViewer";
 import { NoteSheetContext } from "../notebook/NoteSheet";
 import {
@@ -6532,7 +6530,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // raises. A stroke while a held squeeze is open marks it used.
   const { handleInkStroke, handleInkStrokes, handleHoldStatus } = useInkStrokes({ focusedBlockId, readOnly, inkStale,
     blocksRef, nbSheetsRef, applyInk, addSheetAfter,
-    noteSqueezeUse: () => { const hold = squeezeRef.current?.hold; if (hold) hold.used = true; return !!hold; },
+    noteSqueezeUse: () => noteSqueezeUse(),
     undoableInkStatus, setStatus });
   // The lasso selection and the handwriting clipboard
   // (ink/useInkSelection.js): the selection's edits and the selection
@@ -6562,6 +6560,35 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     closeInkStripUi();
     clearInkRuler();
     clearInkZoom();
+  }
+  // The strip's keys while it is open (ink/useStripKeys.js; the table is
+  // ink/stripKeys.js): in the capture phase, so the page's block undo
+  // never sees the stroke history's Ctrl+Z; Hold-E learns of an eraser
+  // pass through noteInkEraseHold (handleInkEraseEnd).
+  const { noteInkEraseHold } = useStripKeys({ inkUi, inkSelection, inkVisible, inkTools, setInkTools, pickInkTool,
+    toggleInkShape, closeInkOptions, toggleInkOptions, closeInkStrip, inkUndo, boxUndo, hasBox: !!textBoxes.sel,
+    deleteInkSelection, selectionStill, clearInkSelection, restoreInkSelection, inkRuler, toggleInkRuler,
+    inkZoom, toggleInkZoom, inkZoomNewLine, setStatus });
+  // The Apple Pencil (ink/usePencil.js): the double tap and the squeeze
+  // the iPad app forwards, where the page takes ink, and the ticks in an
+  // Apple Pencil Pro (hostHaptic, the page tools' onHaptic); a stroke or
+  // an erase pass marks a held squeeze used through noteSqueezeUse.
+  const { hostHaptic, noteSqueezeUse } = usePencil({ readOnly,
+    takesInk: ((!!pdfUrl || notebook) && !viewerHidden) || nbSheets.length > 0,
+    inkUi, inkVisible, previousTool, pickInkTool, applyPencilUi, inkSelection, selectionStill, restoreInkSelection,
+    stripUndo, inkPencilTap, inkPencilSqueeze, inkHaptics });
+  // The eraser tool lifted (never the pen's eraser end or barrel, whose
+  // lift is the switch): a held E (noteInkEraseHold) learns a pass was made; with
+  // "Eraser returns to the last tool" on, back to the tool armed before it,
+  // the options row closed — except while a held squeeze is open, whose
+  // end goes back instead (noteSqueezeUse; the pass marks it used). A squeeze
+  // that toggles the eraser (pencilActions.js) still toggles it: with the
+  // return on, the lift re-arms the pen and the next squeeze arms the
+  // eraser again.
+  function handleInkEraseEnd() {
+    noteInkEraseHold();
+    if (noteSqueezeUse()) return;
+    inkEraserLifted();
   }
 
   // From the notes (a marker, an ink card): show an ink group or a text box
@@ -6658,108 +6685,6 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   }
   // Leaving the page closes its paper menu.
   useEffect(() => { setPaperMenu(false); setNbCurrent(""); }, [focusedBlockId]);
-  // The strip's keys while it is open (the table is ink/stripKeys.js): 1–9
-  // arm the visible preset at that position, P / H step through the pens /
-  // highlighters (Shift: backwards), [ / ] step the armed preset's width
-  // with a pill, Shift+[ / ] an armed pen's style through BRUSH_ORDER (Pen,
-  // Ballpoint, Brush, Pencil, wrapping; the same pill naming the style), E
-  // taps or holds the eraser ("Hold-E" below), L the lasso,
-  // T the Text tool, V the hand, Esc closes one layer at a time (the
-  // selection, the options row, the strip), Delete removes the selection,
-  // and Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y step the STROKE history — registered
-  // in the capture phase so the page's block undo (a bubble listener on the
-  // window) never sees them. Text boxes are blocks: with the Text tool armed
-  // or a box selected, Ctrl+Z is left to the block undo, and Esc to the box
-  // (it lets go first). A focused text field keeps its own keys, and an open
-  // menu or a preset drag keeps Escape (they close themselves).
-  // Hold-E: the keydown arms the eraser as a tap does and keeps {since,
-  // erased, selection, tool} — the lasso selection and the tool armed before;
-  // handleInkEraseEnd marks `erased`; the keyup after 300 ms or more with an
-  // erasing pass between picks that tool again and, when it is the lasso,
-  // restores what is left of the selection (selectionStill). A shorter
-  // press, or one that erased nothing, leaves the eraser armed (a tap with
-  // it already armed opens its row, as a tap on the button does). A window
-  // blur ends a hold.
-  const inkKeysRef = useRef(null);
-  inkKeysRef.current = { inkUndo, deleteInkSelection, selectionStill, hasSelection: !!inkSelection, selection: inkSelection, tools: inkVisible,
-    allTools: inkTools, setInkTools, tool: inkUi.tool, pickInkTool, boxUndo, hasBox: !!textBoxes.sel, optionsOpen: !!inkUi.options,
-    // the modifiers: R, S, Z, the zoom window's Enter and their places in Esc's order
-    ruler: !!inkRuler, toggleInkRuler, toggleInkShape, closeInkStrip,
-    zoom: !!inkZoom, toggleInkZoom, inkZoomNewLine };
-  const inkHoldRef = useRef(null);
-  useEffect(() => {
-    if (!inkUi.open) return;
-    const endHold = () => { inkHoldRef.current = null; };
-    const onKey = (e) => {
-      // A text field keeps its keys; a keyup is harmless and ends a hold
-      // whose E is let go after a click into a caption.
-      if (e.type !== "keyup" && isTextField(e.target)) return;
-      const K = inkKeysRef.current;
-      // a focused button, link, menu row or comment thread (a margin card or the
-      // thread popover, whose Enter opens it) keeps its Enter
-      const onControl = !!e.target?.closest?.("button, a[href], [role^='menuitem'], .commentMargin, .commentPopover");   // i18n-ignore: a selector
-      const action = stripKey(e, { ...K, onControl, eraserDown: inkHoldRef.current?.since ?? null });
-      if (!action) return;
-      // an open menu, a preset being dragged and a focused comment thread take Escape first
-      if (e.code === "Escape" && (document.querySelector(".ctxMenu, .inkDragGhost")
-        || e.target?.closest?.(".commentMargin, .commentPopover"))) return;   // i18n-ignore: a selector
-      if (action.prevent) e.preventDefault();
-      if (action.stop) e.stopPropagation();
-      if (action.kind === "undo") K.inkUndo(action.redo);
-      else if (action.kind === "deselect") clearInkSelection();
-      else if (action.kind === "closeOptions") closeInkOptions();
-      else if (action.kind === "close") K.closeInkStrip();
-      else if (action.kind === "toggle" || action.kind === "off") {
-        // R / S / Z, and Esc taking the Shapes tool, the ruler or the zoom
-        // window away: stripKey says "off" only for one that is on
-        if (action.what === "ruler") K.toggleInkRuler();
-        else if (action.what === "shape") K.toggleInkShape();
-        else if (action.what === "zoom") K.toggleInkZoom();
-      } else if (action.kind === "newLine") K.inkZoomNewLine();
-      else if (action.kind === "delete") K.deleteInkSelection();
-      else if (action.kind === "pick") K.pickInkTool(action.id);
-      else if (action.kind === "width") {
-        const p = K.allTools.find((x) => x.id === K.tool);
-        if (!p) return;
-        const sizes = sizesFor(p.kind);
-        const size = sizes[Math.max(0, Math.min(sizes.length - 1, sizes.indexOf(p.size) + action.step))];
-        if (size !== p.size) K.setInkTools(K.allTools.map((x) => (x.id === p.id ? { ...x, size } : x)));
-        setStatus(t("{name} · {size} pt.", { name: inkToolName(p), size }));
-      } else if (action.kind === "brush") {
-        const p = K.allTools.find((x) => x.id === K.tool);
-        if (!p || p.kind !== "pen") return;   // a highlighter has no styles
-        const n = BRUSH_ORDER.length, at = Math.max(0, BRUSH_ORDER.indexOf(p.brush ?? null));
-        const brush = BRUSH_ORDER[(at + action.step + n) % n];
-        const { brush: _was, ...rest } = p;
-        // the brush alone: a calligraphy pen's smoothing of 2 is its default (ink.js presetSmoothing), never written
-        const next = brush ? { ...rest, brush } : rest;
-        K.setInkTools(K.allTools.map((x) => (x.id === p.id ? next : x)));
-        setStatus(t("{name} · {size} pt.", { name: inkToolName(next), size: p.size }));
-      } else if (action.kind === "eraser" && action.phase === "down") {
-        if (inkHoldRef.current) return;
-        inkHoldRef.current = { since: e.timeStamp, erased: false, selection: K.selection, tool: K.tool };
-        if (K.tool !== "eraser") K.pickInkTool("eraser");
-      } else if (action.kind === "eraser") {
-        const hold = inkHoldRef.current;
-        inkHoldRef.current = null;
-        if (!hold) return;
-        if (action.held >= 300 && hold.erased) {
-          if (hold.tool === "eraser") return;
-          K.pickInkTool(hold.tool);
-          if (hold.tool === "select" && hold.selection) restoreInkSelection(K.selectionStill(hold.selection));
-        } else if (hold.tool === "eraser") toggleInkOptions();
-      }
-    };
-    window.addEventListener("keydown", onKey, true);
-    window.addEventListener("keyup", onKey, true);
-    window.addEventListener("blur", endHold);
-    return () => {
-      window.removeEventListener("keydown", onKey, true);
-      window.removeEventListener("keyup", onKey, true);
-      window.removeEventListener("blur", endHold);
-      endHold();
-    };
-  }, [inkUi.open]);
 
   useEffect(() => { attachModeBlockIdRef.current = attachModeBlockId; }, [attachModeBlockId]);
 
@@ -6930,86 +6855,6 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // feature the row gates on) stays so.
   const stableRowProps = useMemo(makeStableActions, []);
   useEffect(() => { if (!notebook) setPaperMenu(false); }, [notebook]);
-  // The Pencil's double tap and squeeze, forwarded by the iPad app's shell
-  // (docs/dev/ipad.md "Gestures"; the host's `pencil`, and `squeeze` for a
-  // squeeze's start and cancel): each goes through pencilAction with this
-  // browser's choice for the gesture (Settings → Reading & editing › Apple
-  // Pencil; the system's preferred action by default) — a tool armed, the
-  // armed tool's options row, the strip's Undo — only where a page takes
-  // ink, and none while a stroke or a claim is in progress (InkLayer.jsx
-  // inkBusy). A held squeeze (squeezeRef: {since, ignored, hold: {tool,
-  // used, selection} | null}, from its start to its end or cancel) arms its
-  // tool while it is held and goes back to the tool before at its end,
-  // restoring what is left of the lasso's selection, unless it was a short
-  // one that neither erased nor drew (handleInkEraseEnd and handleInkStroke
-  // mark it used). A `squeeze` is a start or a cancel; in any other phase
-  // (a later shell's) it does nothing.
-  // Each tool a gesture switches to ticks in an Apple Pencil Pro.
-  const squeezeRef = useRef(null);
-  const pencilRef = useRef(null);
-  pencilRef.current = (message) => {
-    const ending = message.gesture === "squeeze" && (message.phase === "ended" || message.phase === "cancelled");
-    const open = squeezeRef.current;
-    if (ending) squeezeRef.current = null;
-    // the end of a held squeeze always goes back, wherever the page is now
-    if (!(ending && open?.hold) && (readOnly || !(((!!pdfUrl || notebook) && !viewerHidden) || nbSheets.length))) return;
-    const now = performance.now();
-    const result = pencilAction(message, { tools: inkVisible, pen: inkUi.pen, tap: inkPencilTap, squeeze: inkPencilSqueeze },
-      { tool: inkUi.tool, previous: previousTool(), options: inkUi.options, busy: inkBusy(), squeeze: open, now });
-    if (!result) return;
-    // a held squeeze's tool, armed and given back (the same tool is no switch)
-    const hold = (id) => {
-      if (id === inkUi.tool) return;
-      pickInkTool(id);
-      hostHaptic("tool");
-    };
-    if (result.began) {
-      const held = "pick" in result.began;
-      squeezeRef.current = { since: now, ignored: result.began.ignored,
-        hold: held ? { tool: inkUi.tool, used: false, selection: inkSelection } : null };
-      if (held) hold(result.began.pick);
-    } else if (result.release) {
-      if (result.release.stay) return;
-      hold(result.release.pick);
-      if (result.release.pick === "select" && open?.hold?.selection) restoreInkSelection(selectionStill(open.hold.selection));
-    } else if (result.undo) {
-      stripUndo(false);
-    } else if ("pick" in result) {
-      if (result.pick !== inkUi.tool) hostHaptic("tool");
-      pickInkTool(result.pick);
-    } else applyPencilUi(result.ui);
-  };
-  useEffect(() => {
-    if (!nativeHost()?.pencil) return undefined;
-    const offPencil = onHostMessage("pencil", (msg) => { pencilRef.current(msg || {}); });
-    const offSqueeze = onHostMessage("squeeze", (msg) => {
-      if (msg?.phase === "began" || msg?.phase === "cancelled") pencilRef.current({ ...msg, gesture: "squeeze" });
-    });
-    return () => { offPencil(); offSqueeze(); };
-  }, []);
-  // A tick in an Apple Pencil Pro (the host's `haptic`): a gesture's tool
-  // switch ('tool'), and from the ink layer a pen lasso that selected
-  // ('select') and a held shape ('snap') at a point in viewport css px;
-  // only under a host that plays them, with this browser's Haptics on.
-  function hostHaptic(kind, at) {
-    if (!nativeHost()?.haptics || !inkHaptics) return;
-    const point = at && Number.isFinite(at.x) && Number.isFinite(at.y)
-      ? { at: { x: round2(at.x), y: round2(at.y) } } : {};
-    postToHost({ type: "haptic", kind, ...point }).catch(() => {});
-  }
-  // The eraser tool lifted (never the pen's eraser end or barrel, whose
-  // lift is the switch): a held E (inkHoldRef) learns a pass was made; with
-  // "Eraser returns to the last tool" on, back to the tool armed before it,
-  // the options row closed — except while a held squeeze is open, whose
-  // end goes back instead (squeezeRef; the pass marks it used). A squeeze
-  // that toggles the eraser (pencilActions.js) still toggles it: with the
-  // return on, the lift re-arms the pen and the next squeeze arms the
-  // eraser again.
-  function handleInkEraseEnd() {
-    if (inkHoldRef.current) inkHoldRef.current.erased = true;
-    if (squeezeRef.current?.hold) { squeezeRef.current.hold.used = true; return; }
-    inkEraserLifted();
-  }
   // Turning scribble-to-erase on explains the gesture, once a session.
   const scribbleHintRef = useRef(true);
   const setScribbleErase = (on) => {

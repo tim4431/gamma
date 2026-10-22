@@ -335,8 +335,8 @@ tap as `pencil`, and on iPadOS 17.5 and later the squeeze in its phases:
 ends, or `squeeze` `cancelled` in its place when the system cancels it
 (the repeating `changed` is not sent), each with the system's preferred
 action. A squeeze in a phase the page does not know (a later shell's
-`changed`, a `squeeze` without a phase) does nothing. `App.jsx` applies
-`ink/pencilActions.js` with this browser's
+`changed`, a `squeeze` without a phase) does nothing. `ink/usePencil.js`
+applies `ink/pencilActions.js` with this browser's
 choice for each gesture, *Double tap* and *Squeeze* (`inkPencilTap`,
 `inkPencilSqueeze`, in Settings → Reading & editing → Apple Pencil, which
 shows only in the app; [settings.md](settings.md) "Reading & editing"):
@@ -364,7 +364,7 @@ nothing, and nor does the end of a squeeze that began then; the end of a
 held squeeze is never lost. Each tool switch a gesture makes posts
 `haptic` `tool`, a pen lasso that selects posts `select` at its lift,
 and a hold that snaps posts `snap` (under `haptics`, with *Haptics* on:
-`App.jsx` `hostHaptic` checks both, and the shell plays what it is
+`ink/usePencil.js` `hostHaptic` checks both, and the shell plays what it is
 sent). On iPadOS 17.5 and later the shell plays each kind as Apple's
 feedback for its event (`PencilHaptics`, as `HapticFeel` picks it). The
 sources are Apple's "Playing haptic feedback in your app" and the WWDC24
@@ -804,7 +804,7 @@ confirm: [research/pymupdf-ios.md](../research/pymupdf-ios.md).
   `shapes.test.mjs` runs `stillSince` and `followHold` over
   `tests/shared/inkhold.json`, and `pencilActions.test.mjs` the gesture
   choices, the squeeze's phases (an unknown one included), the held
-  squeeze's toggle either way over App's loop, and the busy rule.
+  squeeze's toggle either way over `usePencil`'s loop, and the busy rule.
 - The `ipad` browser group's shell steps (`tests/e2e/scenarios/ipad.mjs`)
   fake the host (`fakeShell`, declaring every flag above). A pen down on
   a PDF page is claimed with its place, tool and look (a Brush preset's
