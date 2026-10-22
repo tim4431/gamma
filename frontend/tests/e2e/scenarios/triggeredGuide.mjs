@@ -197,7 +197,7 @@ export async function triggeredGuideScenarios(env) {
       await page.locator('[data-guide="notes.table"]').first().hover();
       await corner.first().click();
       await page.waitForSelector(".mdObjectSelected");
-      await page.getByRole("button", { name: "Delete table" }).click();
+      await page.getByRole("menuitem", { name: "Delete table" }).click();
       await until(async () => await content(byMenu.id) === "before\n\nafter", { what: "the table left its block, the text around it stayed" });
       await page.locator('[data-guide="notes.table"]').first().hover();
       await corner.first().click();
@@ -679,7 +679,7 @@ export async function triggeredGuideScenarios(env) {
       await page.click('[data-guide="header.view"]');
       await until(async () => await page.locator('[data-guide-offer="window-closed"]').count() === 0, { what: "opening View answers the card" });
       assertEq(await progress(page, "window-closed"), "done");
-      await page.locator(".menuPopover").getByRole("button", { name: "AI Chat", exact: true }).click();
+      await page.locator(".menuPopover").getByRole("menuitemcheckbox", { name: "AI Chat", exact: true }).click();
       await page.getByRole("button", { name: "Close Chat", exact: true }).waitFor();
       assertNoProblems(page);
     } finally { await ctx.close(); }
@@ -760,7 +760,7 @@ export async function triggeredGuideScenarios(env) {
     const home = await open("");
     try {
       await home.page.click('[data-guide="header.account"]');
-      await home.page.getByRole("button", { name: "Settings…" }).click();
+      await home.page.getByRole("menuitem", { name: "Settings…" }).click();
       await home.page.locator(".settingsNavBtn", { hasText: "Appearance" }).click();
       const toggle = home.page.getByRole("checkbox", { name: "Suggest tours" });
       assert(await toggle.isChecked(), "on by default");

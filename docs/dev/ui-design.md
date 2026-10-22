@@ -390,10 +390,12 @@ is a `MenuItem` (icon column, ellipsizing label, optional `trailing` node or
 `MenuDivider`; `menuGroups(...groups)` drops empty groups and puts one
 divider between the rest, so a menu a viewer sees half of has no doubled
 rule. Popover menus use the same rows: the topbar's account, View and Add
-menus and the page header's Document popover. A popover that hosts a flyout
-renders its panel as a `MenuScope` (the flyout state a `ContextMenu`
-carries), so the account menu's **Tours** is a `SubMenuItem` like any other
-(`data-guide="account.tour"` on its trigger, `data-tour` on its rows). A
+menus and the page header's Document popover. The account, View and
+Document menus render their panel as a `MenuScope` (the flyout state and
+the menu role a `ContextMenu` carries), so the account menu's **Tours** is
+a `SubMenuItem` like any other (`data-guide="account.tour"` on its trigger,
+`data-tour` on its rows); the Add popover, whose rows sit under its URL
+field, keeps a plain panel. A
 click on a flyout's trigger opens it and never toggles it shut. A row that opens a nested list is a
 `SubMenuItem` — it renders its panel *inside* the parent menu's DOM (a
 portalled panel would sit outside the parent's outside-pointerdown test, and
@@ -404,6 +406,50 @@ instead (`.phoneBottomBar .popover .ctxSubMenu`): beside it, the sheet's
 own scroll box would clip it. An open menu takes Escape first, on the
 capture phase. So Escape in a dropdown inside a dialog or a popover closes
 only the dropdown.
+
+To assistive technology a menu is WAI-ARIA's
+[menu](https://www.w3.org/WAI/ARIA/apg/patterns/menubar/). The element
+around its rows, the `MenuScope`, has `role="menu"`: every `ContextMenu`
+and the account, View and Document menus. A menu is vertical, the role's
+default, so nothing sets `aria-orientation`. Inside a menu a `MenuItem` is
+a `menuitem` and a `MenuDivider` a `separator`. A row whose check the
+row itself sets passes its own role with `aria-checked`: `menuitemcheckbox`
+for a toggle (the View menu's windows, a page's labels), `menuitemradio`
+for one of a set (`MenuSelect`'s choices, the account menu's workspaces,
+the player's mode and speed, a `Segmented` inside a menu). A folder row's
+check in Move to folder (a page's) or Move to (a folder's), where it is
+already, is no state the row sets: it stays a `menuitem`, and its title
+says so. A `MenuSelect` with
+headings puts each set of radios in a `group` named by its heading. Every
+other control in a menu is a `menuitem` too (the account card, a notice's
+link, which the notice's sentence describes, the highlight menu's
+colours), with no other role between it and its menu or group: a
+notice is no `status` region there. The one control that is no item is
+the page menu's "New label…" field, a text box in the labels flyout,
+which the menu role has no place for. A flyout is a menu of its own inside its
+row's wrapper, as the pattern nests a submenu, so a flyout's rows sit in
+two menus and every other row in exactly one; no element adds a second
+`role="menu"` around rows that already have one. Outside a menu (a dialog's
+list, the Add popover, a settings popover) a `MenuItem` stays a plain
+button, and a `ContextMenu` that holds something else passes
+`role="none"`: the handwriting and text box menus are toolbars, the model
+picker's list is a listbox.
+
+A menu is named by what opens it. `MenuSelect`, `ActionMenu`, a flyout
+and the player's mode and speed menus point `aria-labelledby` at their
+button or row; another menu with a button of its own takes that button's
+name as its `aria-label` (Account & settings, View, Document, Export chat,
+Translate, Comment actions, Recording actions, Table options). The
+dropdowns' buttons, a flyout's row, the account, View and Document
+buttons, the chat's export button and the player's buttons say
+`aria-haspopup="menu"` and `aria-expanded`; a `MenuButton` says
+`aria-haspopup` alone. A context menu, opened at the pointer by a
+right-click, a held finger or a row's "⋯" standing in for them, has no
+control of its own to name it and goes without a name, as a native
+context menu does. The roles leave the keyboard and focus as they were:
+the rows are Tab stops, and the pattern's arrow keys and focus moving
+into a menu as it opens are not built. The last step of the browser
+suite's `touch.mjs` reads the menus this way.
 
 A menu that lists commands lists their ids: `CommandMenuItem`
 (`app/CommandMenuItem.jsx`) draws a catalog command ([hotkeys.md](hotkeys.md))

@@ -19,7 +19,7 @@ export async function transferScenarios({ server, browser, alice, bob, makePdf, 
     // The View menu — on a phone its rows are in the bottom bar's More sheet.
     const view = page.locator('[data-popover="menu"] > button');
     await (await view.count() ? view : page.locator('[data-guide="header.account"]')).click();
-    await page.getByRole("button", { name: `${name}…`, exact: true }).click();
+    await page.getByRole("menuitem", { name: `${name}…`, exact: true }).click();
     // The dialogs are a chunk fetched on first use (docs/dev/frontend-refactor.md,
     // "Lazy boundaries"): a click right after the menu opened can beat it.
     const dialog = page.getByRole("dialog", { name, exact: true });
@@ -577,7 +577,7 @@ with zipfile.ZipFile(sys.argv[1], 'w', zipfile.ZIP_DEFLATED) as z:
       await page.waitForSelector(".folderNewBtn");
       const view = page.locator('[data-popover="menu"] > button');
       await (await view.count() ? view : page.locator('[data-guide="header.account"]')).click();
-      await page.getByRole("button", { name: "Export…", exact: true }).click();
+      await page.getByRole("menuitem", { name: "Export…", exact: true }).click();
       const dialog = page.getByRole("dialog", { name: `Export “${folder}”`, exact: true });
       await dialog.getByRole("group", { name: "Papers choices", exact: true }).waitFor();
       await choice(dialog, "Annotated PDF").click();
@@ -691,7 +691,7 @@ with zipfile.ZipFile(sys.argv[1], 'w', zipfile.ZIP_DEFLATED) as z:
       // A folder's dialog is named after it, so openDialog's exact "Export" misses.
       const view = page.locator('[data-popover="menu"] > button');
       await (await view.count() ? view : page.locator('[data-guide="header.account"]')).click();
-      await page.getByRole("button", { name: "Export…", exact: true }).click();
+      await page.getByRole("menuitem", { name: "Export…", exact: true }).click();
       const dialog = page.getByRole("dialog", { name: `Export “${folder}”`, exact: true });
       await dialog.getByRole("group", { name: "Papers choices", exact: true }).waitFor();
       if (flags.keep) await page.screenshot({ animations: "disabled", path: `${server.dir}/export-bibtex-cards.png` });

@@ -640,7 +640,11 @@ The scenarios live in `tests/e2e/scenarios/`:
   finger and the "⋯" for every menu, Select mode, the folder menu's moves,
   the View menu's command rows, the pill's Undo, a notebook's place across
   its views and tabs, the viewer's touch tools, the editing bar's marks,
-  and the chat's composer and history rows. `--group touch`.
+  and the chat's composer and history rows. Its last step reads those
+  menus as assistive technology does: one `role="menu"` around each
+  menu's items and no other role between (a group aside), a flyout inside
+  its parent, the names
+  ([ui-design.md](ui-design.md#menus-and-submenus)). `--group touch`.
 - `pdfTouch.mjs`: 400% rendering under an emulated canvas limit, distant-page
   release/repaint, live ink, native touch swipes ([pdf_loading.md](pdf_loading.md)).
   `--only "pdf touch"`.

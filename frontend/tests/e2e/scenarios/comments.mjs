@@ -472,7 +472,7 @@ export async function commentScenarios({ server, browser, makePdf, step, until, 
     const mark = A.locator('[data-page="1"] [data-hl-id]').first();
     await mark.waitFor({ timeout: 10000 });
     await mark.click({ button: "right" });
-    await A.locator(".ctxMenu").getByRole("button", { name: "Comment", exact: true }).click();
+    await A.locator(".ctxMenu").getByRole("menuitem", { name: "Comment", exact: true }).click();
     await popover(A).waitFor();
     assertEq(await popover(A).locator(".commentPopTitle").innerText(), "Comments on this highlight");
     await focused(field(popover(A).locator(".commentNew")), "ready to write");

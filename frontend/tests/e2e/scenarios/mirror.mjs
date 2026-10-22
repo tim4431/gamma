@@ -23,7 +23,7 @@ export async function mirrorScenarios(env) {
       const page = await openPage(ctx, server.base);
       await page.waitForSelector(".folderNewBtn");
       await page.getByRole("button", { name: "Account & settings", exact: true }).click();
-      await page.getByRole("button", { name: "Settings…", exact: true }).click();
+      await page.getByRole("menuitem", { name: "Settings…", exact: true }).click();
       await page.getByRole("dialog", { name: "Settings", exact: true }).waitFor();
       await page.getByRole("navigation", { name: "Settings categories" }).getByRole("button", { name: "Workspaces", exact: true }).click();
       await page.getByText("No clones yet.", { exact: true }).waitFor();
@@ -146,14 +146,14 @@ export async function mirrorScenarios(env) {
       // The row of a paused clone first: tagged, its status line saying which side to update.
       await page.route("**/api/mirrors", gapped);
       await page.getByRole("button", { name: "Account & settings", exact: true }).click();
-      await page.getByRole("button", { name: "Settings…", exact: true }).click();
+      await page.getByRole("menuitem", { name: "Settings…", exact: true }).click();
       await page.getByRole("dialog", { name: "Settings", exact: true }).waitFor();
       await page.getByRole("navigation", { name: "Settings categories" }).getByRole("button", { name: "Workspaces", exact: true }).click();
       const pausedRow = page.locator(".aiProvRow", { hasText: "clone of" });
       await pausedRow.getByText("update needed", { exact: true }).waitFor();
       await pausedRow.getByText("paused · update this Gamma to sync again", { exact: true }).waitFor();      await page.unroute("**/api/mirrors", gapped);
       await page.locator(".aiProvRow", { hasText: "clone of" }).getByRole("button", { name: "More", exact: true }).click();
-      await page.getByRole("button", { name: "Remove origin", exact: true }).click(); // the menu row
+      await page.getByRole("menuitem", { name: "Remove origin", exact: true }).click(); // the menu row
       await page.getByRole("button", { name: "Remove origin", exact: true }).click(); // the confirm
       await page.getByText("No clones yet.", { exact: true }).waitFor();
       assertEq((await user.api("/api/mirrors")).mirrors.length, 0);

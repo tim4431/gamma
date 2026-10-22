@@ -16,12 +16,12 @@ export async function i18nScenarios(env) {
   const settings = (page) => page.getByRole("dialog", { name: /^(Settings|设置)$/ });
   async function openSettings(page, account, item) {
     await page.getByRole("button", { name: account, exact: true }).click();
-    await page.getByRole("button", { name: item, exact: true }).click();
+    await page.getByRole("menuitem", { name: item, exact: true }).click();
     await settings(page).waitFor();
   }
   const pick = async (page, row, option) => {
     await page.locator(`.settingsPane [data-setting="${row}"] .uiSelectBtn`).click();
-    await page.locator(".uiSelectMenu").getByRole("button", { name: option, exact: true }).click();
+    await page.locator(".uiSelectMenu").getByRole("menuitemradio", { name: option, exact: true }).click();
   };
 
   await step("i18n: switching to 中文 translates the settings dialog, persists, and System restores English", async () => {

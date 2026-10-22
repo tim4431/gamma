@@ -60,7 +60,7 @@ export async function chatNavigationScenarios(env) {
             await until(async () => !(await page.locator(".chatPanel").count()));
             await page.evaluate(() => window.chatStream.push({ delta: " Continued with the panel closed." }));
             await page.getByRole("button", { name: "View", exact: true }).click();
-            await page.locator(".menuPopover").getByRole("button", { name: "AI Chat" }).click();
+            await page.locator(".menuPopover").getByRole("menuitemcheckbox", { name: "AI Chat" }).click();
             await page.getByRole("button", { name: "View", exact: true }).click();
             await until(async () => (await page.locator(".chatPanel").innerText()).includes("Continued with the panel closed."));
             await page.getByRole("button", { name: "Stop generating", exact: true }).waitFor();
@@ -136,7 +136,7 @@ export async function chatNavigationScenarios(env) {
       await input.fill("A draft question");
       const downloadEvent = page.waitForEvent("download");
       await page.getByRole("button", { name: "Export chat", exact: true }).click();
-      await page.getByRole("button", { name: "Export context", exact: true }).click();
+      await page.getByRole("menuitem", { name: "Export context", exact: true }).click();
       const download = await downloadEvent;
       assert(download.suggestedFilename().endsWith(" - context.md"), download.suggestedFilename());
       const text = await readFile(await download.path(), "utf8");
@@ -199,7 +199,7 @@ export async function chatNavigationScenarios(env) {
       await page.getByRole("button", { name: "Chat history", exact: true }).click();
       await page.locator(".chatHistRow", { hasText: "Keep this one" }).click({ button: "right" });
       const downloadEvent = page.waitForEvent("download");
-      await page.getByRole("button", { name: "Export", exact: true }).click();
+      await page.getByRole("menuitem", { name: "Export", exact: true }).click();
       const download = await downloadEvent;
       assertEq(download.suggestedFilename(), "Keep this one.md", "no pictures: the bare transcript");
       const text = await readFile(await download.path(), "utf8");
@@ -1165,7 +1165,7 @@ export async function chatNavigationScenarios(env) {
       await page.locator('[title^="Chat settings"]').click();
       const popover = page.locator(".chatSettingsPop");
       await popover.getByRole("button", { name: "Fetch documents", exact: true }).click();
-      await page.locator(".uiSelectMenu").getByRole("button", { name: "Ask", exact: true }).click();
+      await page.locator(".uiSelectMenu").getByRole("menuitemradio", { name: "Ask", exact: true }).click();
       await page.locator('[title^="Chat settings"]').click();
       const second = await send("Fetch the paper it cites", 2);
       assertEq(JSON.stringify(second.granted), JSON.stringify(["block_edit"]));

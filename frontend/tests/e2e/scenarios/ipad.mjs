@@ -74,7 +74,7 @@ export async function ipadScenarios({ server, browser, alice, makePdf, step, unt
       let colors = await themeColor();
       assertEq(colors.meta, colors.topbar, "theme-color matches the library under it");
       await page.getByRole("button", { name: "More", exact: true }).click();
-      await page.getByRole("button", { name: "Settings…", exact: true }).click();
+      await page.getByRole("menuitem", { name: "Settings…", exact: true }).click();
       await page.getByRole("dialog", { name: "Settings", exact: true }).waitFor();
       const before = await page.locator("html").getAttribute("data-theme");
       const next = before === "sepia" ? "Gamma Dark" : "Sepia";
@@ -271,7 +271,7 @@ export async function ipadScenarios({ server, browser, alice, makePdf, step, unt
 
       // The account menu's Server row asks the host for its server picker.
       await page.getByRole("button", { name: "Account & settings", exact: true }).click();
-      await page.getByRole("button", { name: "Server…", exact: true }).click();
+      await page.getByRole("menuitem", { name: "Server…", exact: true }).click();
       await until(async () => (await sent("servers")).length === 1, { what: "the servers message" });
       // No install offer under the shell.
       assertEq(await page.getByText("Add to Home Screen").count(), 0, "no install offer");
@@ -318,9 +318,9 @@ export async function ipadScenarios({ server, browser, alice, makePdf, step, unt
       // rows on top; a row opens its own popover in the sheet's place.
       await page.getByRole("button", { name: "More", exact: true }).tap();
       const sheet = page.locator(".userPopover");
-      await sheet.getByRole("button", { name: "Import…", exact: true }).waitFor();
-      await sheet.getByRole("button", { name: "Settings…", exact: true }).waitFor();
-      await sheet.getByRole("button", { name: "Background tasks", exact: true }).tap();
+      await sheet.getByRole("menuitem", { name: "Import…", exact: true }).waitFor();
+      await sheet.getByRole("menuitem", { name: "Settings…", exact: true }).waitFor();
+      await sheet.getByRole("menuitem", { name: "Background tasks", exact: true }).tap();
       await page.locator(".tasksPopover").waitFor();
       assertEq(await sheet.count(), 0, "the sheet gave way to the tasks");
       await page.keyboard.press("Escape");

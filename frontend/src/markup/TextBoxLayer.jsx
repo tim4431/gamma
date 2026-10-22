@@ -344,7 +344,7 @@ function TextBoxMenu({ boxRef, box, onStyle, onDuplicate, onShowNote, onDelete, 
       aria-expanded={options === kind} onClick={() => setOptions(options === kind ? null : kind)}><Icon aria-hidden="true" /></button>
   );
   return (
-    <ContextMenu {...anchor} ignoreRef={everywhere} onClose={onClose} className="inkEditMenu textBoxMenu">
+    <ContextMenu {...anchor} ignoreRef={everywhere} onClose={onClose} className="inkEditMenu textBoxMenu" role="none">
       <InkTooltips role="toolbar" aria-label={t("Edit text box")} onPointerDown={(e) => e.stopPropagation()}>
         <div className="inkEditRow">
           {choice("size", t("Size"), TextSizeIcon)}

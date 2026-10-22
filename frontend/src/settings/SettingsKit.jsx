@@ -11,6 +11,7 @@ import { API, apiJson, copyText, fmtBytes } from "../shared/lib/utils";
 import { AlertCircleIcon, CheckIcon, CloudCheckIcon, CopyIcon, EyeIcon, EyeOffIcon, MonitorIcon, RefreshIcon, ShieldIcon, UndoIcon, UserIcon, XIcon } from "../shared/ui/Icons";
 import { bindable, chordFromEvent } from "../shared/lib/hotkeys.js";
 import { KeyCaps } from "../shared/ui/KeyCaps.jsx";
+import { useInMenu } from "../shared/ui/Menus";
 import { backdropPress } from "../shared/ui/press.js";
 import { BROWSER_TAG, profileSyncState } from "./syncState.js";
 import { t, tn } from "../shared/i18n/i18n.js";
@@ -148,12 +149,17 @@ export function Toggle({ checked, onChange, disabled, label, ...row }) {
 // Joined pill buttons for a single mutually-exclusive choice.
 // `options` are [value, label, Icon, tooltip].
 export function Segmented({ value, onChange, options, disabled }) {
+  // In a menu (the table column menu's alignment) its choices are the
+  // menu's radio items; anywhere else, pressed buttons.
+  const inMenu = useInMenu();
   return (
     <span className="segGroup">
       {options.map(([val, label, Icon, tip]) => (
         <button
           key={val} type="button" title={t(tip || label)} disabled={disabled}
-          aria-pressed={value === val}
+          role={inMenu ? "menuitemradio" : undefined}
+          aria-checked={inMenu ? value === val : undefined}
+          aria-pressed={inMenu ? undefined : value === val}
           className={`uiBtn sm ${value === val ? "on" : ""}`}
           onClick={() => onChange(val)}
         >

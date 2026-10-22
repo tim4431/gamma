@@ -8706,11 +8706,13 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                         ? t("Document: {name}", { name: pageAttach.name || defaultPageTitle(pageAttach) })
                         : t("Attach a PDF as this page's document (URL, arXiv id, DOI, or upload) — it gets the viewer, highlights and metadata. Other files go into blocks.")}
                       aria-label={pageAttach ? t("Document") : t("Attach document")}
+                      aria-haspopup={pageAttach ? "menu" : undefined}
+                      aria-expanded={openPopover === "attach"}
                       disabled={loading}
                       onClick={() => setOpenPopover((p) => (p === "attach" ? null : "attach"))}
                     ><PaperclipIcon size={16} /></button>
                     {openPopover === "attach" && pageAttach ? (
-                      <div className="popover addPopover attachPopover">
+                      <MenuScope className="popover addPopover attachPopover" aria-label={t("Document")}>
                         <div className="popoverTitle">{t("Document")}</div>
                         <div className="popoverHint attachFileName" title={pageAttach.url}>
                           <PaperclipIcon size={14} /> {pageAttach.name || defaultPageTitle(pageAttach)}
@@ -8726,7 +8728,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                         {!readOnly ? (
                           <MenuItem icon={ScissorsIcon} onClick={detachPdfFromPage}>{t("Detach the PDF…")}</MenuItem>
                         ) : null}
-                      </div>
+                      </MenuScope>
                     ) : openPopover === "attach" ? (
                       <div className="popover addPopover attachPopover">
                         <div className="popoverTitle">{t("Attach a document")}</div>
@@ -10091,7 +10093,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   const commandRow = (id) => <CommandMenuItem key={id} id={id} ctx={appCmdRef.current} bindings={keybindings} />;
   const viewMenuItems = (menuReadOnly) => {
     const pdfRow = !homeMode && (!!pageAttach || hasSheets);
-    const shown = (on) => (on ? <CheckIcon size={14} className="ctxMenuCheck" /> : null);
+    // A window's row: a toggle, checked while the window shows.
+    const shown = (on) => ({ role: "menuitemcheckbox", "aria-checked": on, trailing: on ? <CheckIcon size={14} className="ctxMenuCheck" /> : null });
     const exportable = (focusedBlock && !homeMode) || (homeMode && libTree.folders.has(folderFilter));
     // Bringing a closed window back retires the guide's window-closed hint.
     const toggleWindow = (id, isShown, toggle) => () => {
@@ -10102,18 +10105,18 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       [
         (!isPhone || pdfRow) && <div key="windows" className="popoverSection">{t("Windows")}</div>,
         pdfRow && (pageAttach ? (
-          <MenuItem key="pdf" icon={FileIcon} trailing={shown(!pdfHidden)} onClick={toggleWindow("pdf", !pdfHidden, () => setPdfHidden((v) => !v))}>PDF</MenuItem>
+          <MenuItem key="pdf" icon={FileIcon} {...shown(!pdfHidden)} onClick={toggleWindow("pdf", !pdfHidden, () => setPdfHidden((v) => !v))}>PDF</MenuItem>
         ) : (
-          <MenuItem key="pdf" icon={NotebookIcon} trailing={shown(notebook)} onClick={() => setNotebookView(focusedBlockId, !notebook)}>{t("Notebook view")}</MenuItem>
+          <MenuItem key="pdf" icon={NotebookIcon} {...shown(notebook)} onClick={() => setNotebookView(focusedBlockId, !notebook)}>{t("Notebook view")}</MenuItem>
         )),
         !homeMode && !isPhone && (
-          <MenuItem key="notes" icon={FileTextIcon} trailing={shown(notesVisible)} onClick={toggleWindow("notes", notesVisible, () => setNotesVisible((v) => !v))}>{t("Notes")}</MenuItem>
+          <MenuItem key="notes" icon={FileTextIcon} {...shown(notesVisible)} onClick={toggleWindow("notes", notesVisible, () => setNotesVisible((v) => !v))}>{t("Notes")}</MenuItem>
         ),
         (!menuReadOnly || focusedBlockId) && !isPhone && (
-          <MenuItem key="chat" icon={SparklesIcon} trailing={shown(!chatHidden)} onClick={toggleWindow("chat", !chatHidden, () => setChatHidden((v) => !v))}>{t("AI Chat")}</MenuItem>
+          <MenuItem key="chat" icon={SparklesIcon} {...shown(!chatHidden)} onClick={toggleWindow("chat", !chatHidden, () => setChatHidden((v) => !v))}>{t("AI Chat")}</MenuItem>
         ),
         !homeMode && focusedBlockId && commentsOn && !isPhone && (
-          <MenuItem key="comments" icon={MessageSquareIcon} trailing={shown(!commentsHidden)}
+          <MenuItem key="comments" icon={MessageSquareIcon} {...shown(!commentsHidden)}
             onPointerEnter={CommentsPanel.preload}
             onClick={toggleWindow("comments", !commentsHidden, () => setCommentsHidden((v) => !v))}>{t("Comments")}</MenuItem>
         ),
@@ -10166,11 +10169,13 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         title={t("View — windows, import, export")}
         data-guide="header.view"
         aria-label={t("View")}
+        aria-haspopup="menu"
+        aria-expanded={openPopover === "menu"}
       >
         <MenuIcon size={16} />
       </button>
       {openPopover === "menu" ? (
-        <div className="popover menuPopover" data-guide="view.menu">{viewMenuItems(menuReadOnly)}</div>
+        <MenuScope className="popover menuPopover" data-guide="view.menu" aria-label={t("View")}>{viewMenuItems(menuReadOnly)}</MenuScope>
       ) : null}
     </PopoverAnchor>
   );
@@ -10394,6 +10399,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
               : notices.list.length ? tn("Account & settings — {n} notice", "Account & settings — {n} notices", notices.list.length)
               : t("Account & settings")}
             aria-label={isPhone ? t("More") : t("Account & settings")}
+            aria-haspopup="menu"
+            aria-expanded={openPopover === "user"}
           >
             {isPhone ? <MenuIcon size={20} /> : <UserIcon size={20} />}
             {isPhone ? <span className="barLabel">{t("More")}</span> : null}
@@ -10403,9 +10410,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
               : notices.tone ? <span className={`noticeDot ${dotTone(notices.tone)}`} data-tone={notices.tone} aria-hidden="true" /> : null}
           </button>
           {openPopover === "user" ? (
-            <MenuScope className="popover userPopover" data-guide="account.menu">
+            <MenuScope className="popover userPopover" data-guide="account.menu" aria-label={isPhone ? t("More") : t("Account & settings")}>
               {/* The card is the way into your account: Settings → Account & sync. */}
-              <button type="button" className="userCard" data-guide="account.card"
+              <button type="button" role="menuitem" className="userCard" data-guide="account.card"
                 onClick={() => openSettingsPane("account")} title={t("Account & sync")}>
                 <span className="userAvatar" aria-hidden="true">
                   {authUser.is_guest
@@ -10442,15 +10449,19 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                 </div>
               ) : null}
               {/* What the red dot is about: one row per notice, its sentence
-                  and a link to the Settings pane that resolves it. */}
+                  and a link to the Settings pane that resolves it. The link
+                  is the menu's item and the sentence its description: a
+                  status region around them would stand between the item
+                  and its menu. */}
               {notices.list.length ? (
                 <div className="accountNotices" data-testid="account-notices">
                   {notices.list.map((notice) => (
-                    <div key={notice.id} className={`accountNotice ${notice.tone}`} role="status">
+                    <div key={notice.id} className={`accountNotice ${notice.tone}`}>
                       {notice.tone === "info" ? <InfoIcon size={14} /> : <AlertCircleIcon size={14} />}
                       <span className="accountNoticeBody">
-                        <span className="accountNoticeText">{noticeText(notice)}</span>
-                        <button type="button" className="accountNoticeAction"
+                        <span className="accountNoticeText" id={`account-notice-${notice.id}`}>{noticeText(notice)}</span>
+                        <button type="button" role="menuitem" className="accountNoticeAction"
+                          aria-describedby={`account-notice-${notice.id}`}
                           onClick={() => openSettingsPane(notice.pane)}>
                           {noticeAction(notice)} →
                         </button>
@@ -10462,12 +10473,15 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
               {isPhone ? phoneMoreRows() : null}
               <MenuDivider />
               {/* The workspace switcher: every library this account belongs
-                  to; switching reloads the tab on that workspace's URL. */}
-              <div data-guide="account.workspaces">
+                  to; switching reloads the tab on that workspace's URL. The
+                  open one is the checked radio of its group. */}
+              <div data-guide="account.workspaces" role="group" aria-label={t("Workspaces")}>
               {workspaces.length ? <div className="popoverSection">{t("Workspaces")}</div> : null}
               {workspaces.map((w) => (
                 <MenuItem
                   key={w.id}
+                  role="menuitemradio"
+                  aria-checked={w.id === wsId}
                   className={`wsItem ${w.id === wsId ? "active" : ""}`}
                   icon={() => <span className="wsItemBadge" aria-hidden="true">{(w.name || "?").charAt(0).toUpperCase()}</span>}
                   onClick={() => { setOpenPopover(null); switchWorkspace(w.id); }}
@@ -10500,7 +10514,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                   whose first step needs no open popover closes this menu. */}
               <SubMenuItem id="tours" icon={HelpCircleIcon} label={t("Tours")} data-guide="account.tour">
                 {guide.startable().map((tour) => (
-                  <MenuItem key={tour.id} role="menuitem" data-tour={tour.id}
+                  <MenuItem key={tour.id} data-tour={tour.id}
                     onClick={() => guide.start(tour.id)}>{t(tour.title)}</MenuItem>
                 ))}
               </SubMenuItem>
@@ -10757,7 +10771,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         </div>
       )}
       {transMenu && (
-        <ContextMenu x={transMenu.x} y={transMenu.y} onClose={() => setTransMenu(null)}>
+        <ContextMenu x={transMenu.x} y={transMenu.y} onClose={() => setTransMenu(null)} aria-label={t("Translate")}>
           {pdfTransState.running ? (
             <MenuItem icon={XIcon} onClick={() => { setTransMenu(null); pdfTranslateCtl.current?.halt(); }}>
               {t("Stop translating")}
@@ -11719,6 +11733,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                       {allLabels.map(({ id: l, name }) => (
                         <MenuItem
                           key={l}
+                          role="menuitemcheckbox"
+                          aria-checked={allLabelled(l)}
                           icon={LabelIcon}
                           title={allLabelled(l) ? t("Remove the label “{l}”", { l: name }) : name}
                           trailing={allLabelled(l) ? <CheckIcon size={14} className="ctxMenuCheck" /> : null}
@@ -11894,6 +11910,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                 <button
                   key={c.hex + c.alpha + i}
                   type="button"
+                  role="menuitem"
                   className="colorBtn"
                   style={{ background: swatchCss(c) }}
                   onClick={() => {
@@ -11906,6 +11923,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
               ))}
             </div>
             <button
+              role="menuitem"
               className="ctxMenuItem"
               onClick={() => {
                 const h = highlights.find((x) => x.id === highlightMenu.id);
@@ -11922,6 +11940,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
             </button>
             {highlights.find((x) => x.id === highlightMenu.id)?.linkTarget?.url ? (
               <button
+                role="menuitem"
                 className="ctxMenuItem"
                 onClick={() => {
                   setLinkPrompt(highlights.find((x) => x.id === highlightMenu.id).linkTarget.url);
@@ -11932,6 +11951,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
               </button>
             ) : null}
             <button
+              role="menuitem"
               className="ctxMenuItem"
               onClick={() => {
                 const h = highlights.find((x) => x.id === highlightMenu.id);
@@ -11954,6 +11974,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
             </button>
             {commentsOn ? (
             <button
+              role="menuitem"
               className="ctxMenuItem"
               onClick={() => {
                 // the popover hangs from the highlight on the page
@@ -11966,6 +11987,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
             </button>
             ) : null}
             <button
+              role="menuitem"
               className="ctxMenuItem"
               onClick={() => {
                 deleteHighlight(highlightMenu.id);

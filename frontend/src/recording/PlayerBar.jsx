@@ -7,7 +7,7 @@
 // Every control is one icon button of the same height; the scrubber takes
 // the width that is left. Keys while the bar is open and no editor has the
 // focus: Space, ← →, Escape.
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { InkTooltips, useInkVersion } from "../ink/InkLayer";
 import * as inkStore from "../ink/inkStore";
 import { fmtClock, nextTick, writingTicks } from "../replay/clock.js";
@@ -50,6 +50,7 @@ export function PlayerBar({ block, inkBlocks, blocks, prefs, onShow }) {
   useInkVersion();
   const [menu, setMenu] = useState(null); // {kind: "mode" | "rate", x, y}
   const triggerRef = useRef(null);         // the open menu's button: a press on it closes, never reopens
+  const menuId = useId();                  // the buttons' ids, "-mode" and "-rate": each names its menu
   const closeMenu = useCallback(() => setMenu(null), []);
   const clock = state?.scope.recording ? state.clock : null;
   const groups = useMemo(() => (inkBlocks || []).map((b) => ({ id: b.id, ink: inkStore.inkFor(b) })).filter((g) => g.ink),
@@ -149,10 +150,12 @@ export function PlayerBar({ block, inkBlocks, blocks, prefs, onShow }) {
           </button>
           <span className="replaySep" aria-hidden="true" />
           <button type="button" onMouseDown={keepFocus} className={"ctlBtn" + (menu?.kind === "mode" ? " modeActive" : "")} {...menuButton("mode")}
+            id={`${menuId}-mode`}
             aria-haspopup="menu" aria-expanded={menu?.kind === "mode"} aria-label={t(MODE_TITLES[mode])} data-role="mode">
             <ModeIcon size={16} />
           </button>
           <button type="button" onMouseDown={keepFocus} className={"ctlBtn replayRate" + (menu?.kind === "rate" ? " modeActive" : "")} {...menuButton("rate")}
+            id={`${menuId}-rate`}
             aria-haspopup="menu" aria-expanded={menu?.kind === "rate"} aria-label={t("Speed {rate}×", { rate })}>
             {rate}×
           </button>
@@ -167,7 +170,7 @@ export function PlayerBar({ block, inkBlocks, blocks, prefs, onShow }) {
         </div>
       </InkTooltips>
       {menu ? (
-        <PlayerMenu menu={menu} mode={mode} rate={rate} triggerRef={triggerRef} onClose={closeMenu}
+        <PlayerMenu menu={menu} mode={mode} rate={rate} triggerRef={triggerRef} labelledBy={`${menuId}-${menu.kind}`} onClose={closeMenu}
           onMode={(m) => { playback.setMode(m); prefs.setMode(m); setMenu(null); }}
           onRate={(r) => { playback.setRate(r); prefs.setRate(r); setMenu(null); }} />
       ) : null}
@@ -180,19 +183,19 @@ export function PlayerBar({ block, inkBlocks, blocks, prefs, onShow }) {
 // outside the InkTooltips host, whose children's events a portal still
 // bubbles to — inside it, every row the pointer crossed raised one of the
 // bar's tooltips over the menu.
-const PlayerMenu = React.memo(function PlayerMenu({ menu, mode, rate, triggerRef, onClose, onMode, onRate }) {
+const PlayerMenu = React.memo(function PlayerMenu({ menu, mode, rate, triggerRef, labelledBy, onClose, onMode, onRate }) {
   return (
-    <ContextMenu x={menu.x} y={menu.y} anchorBottom ignoreRef={triggerRef} onClose={onClose}>
+    <ContextMenu x={menu.x} y={menu.y} anchorBottom ignoreRef={triggerRef} onClose={onClose} aria-labelledby={labelledBy}>
       {menu.kind === "mode" ? MODES.map((m) => {
         const Icon = MODE_ICONS[m];
         return (
-          <MenuItem key={m} icon={Icon} title={t(MODE_TITLES[m])} trailing={mode === m ? <CheckIcon size={14} /> : null}
+          <MenuItem key={m} role="menuitemradio" icon={Icon} title={t(MODE_TITLES[m])} trailing={mode === m ? <CheckIcon size={14} /> : null}
             aria-checked={mode === m} onMouseDown={keepFocus} onClick={() => onMode(m)}>
             {t(MODE_LABELS[m])}
           </MenuItem>
         );
       }) : REPLAY_RATES.map((r) => (
-        <MenuItem key={r} trailing={rate === r ? <CheckIcon size={14} /> : null} aria-checked={rate === r} onMouseDown={keepFocus}
+        <MenuItem key={r} role="menuitemradio" trailing={rate === r ? <CheckIcon size={14} /> : null} aria-checked={rate === r} onMouseDown={keepFocus}
           onClick={() => onRate(r)}>
           {r}×
         </MenuItem>

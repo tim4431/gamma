@@ -1604,7 +1604,7 @@ export default function ChatDock({
           <DownloadIcon size={16} />
         </button>
         {exportMenu ? (
-          <ContextMenu x={exportMenu.x} y={exportMenu.y} onClose={() => setExportMenu(null)} ignoreRef={exportBtnRef}>
+          <ContextMenu x={exportMenu.x} y={exportMenu.y} onClose={() => setExportMenu(null)} ignoreRef={exportBtnRef} aria-label={t("Export chat")}>
             <MenuItem icon={MessageSquareIcon} disabled={!chatMessages.length}
               title={t("Download this conversation as Markdown, with its pictures")}
               onClick={() => { setExportMenu(null); exportConversation(); }}>{t("Export conversation")}</MenuItem>
