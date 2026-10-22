@@ -1816,6 +1816,9 @@ export async function inkScenarios({ server, browser, alice, makePdf, step, unti
       await A.waitForSelector(".pdfInkSub[data-ink-options='tool']");
       await A.click(".pdfInkSub button[aria-label='Green']");
       await until(async () => (await accountFirst()) === "#15803d", { what: "A's pens on the account" });
+      // C, a browser on the defaults, takes the account's pens without a question
+      const C = await openPage(await browserWith(), library);
+      await until(async () => (await localFirst(C)) === "#15803d", { what: "C takes the account's pens" });
       // B had pens of its own when it signed in: the account's stand, and it is asked once (in the
       // library: a page opening as the pull lands says "Ready." on the same pill, in the question's place)
       const B = await openPage(await browserWith({ cookies: [], origins: [{ origin: server.base,
@@ -1841,10 +1844,13 @@ export async function inkScenarios({ server, browser, alice, makePdf, step, unti
       await pulled;
       await until(async () => (await localFirst(B)) === "#ea580c", { what: "B takes the later edit" });
       assertEq(await asked(B), 1, "B was asked once, on its first pull");
-      // a browser on the defaults takes the account's pens without a question
-      const C = await openPage(await browserWith(), library);
-      await until(async () => (await localFirst(C)) === "#ea580c", { what: "C takes the account's pens" });
-      assertEq(await asked(C), 0, "a browser on the defaults is never asked");
+      // C's next pull replaces A's pens, which it took on its first, with the edit, and asks nothing: a later
+      // pull never asks, in a session not asked yet too (B's once-a-session question cannot hide it)
+      const pulledC = C.waitForResponse((r) => r.url().endsWith("/api/prefs/profile") && r.request().method() === "GET");
+      await C.evaluate(() => window.dispatchEvent(new Event("focus")));
+      await pulledC;
+      await until(async () => (await localFirst(C)) === "#ea580c", { what: "C takes the later edit" });
+      assertEq(await asked(C), 0, "a browser on the defaults is never asked, on its first pull or a later one");
       for (const p of [A, B, C]) assertNoProblems(p);
     } finally {
       for (const c of contexts) await c.close();

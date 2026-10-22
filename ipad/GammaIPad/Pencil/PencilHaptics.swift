@@ -31,8 +31,8 @@ enum HapticFeel {
 /// the Pencil at `at` (the web view's points): where the page says, or for
 /// a gesture's tick where the Pencil hovered for the gesture
 /// (ShellController, PencilGestures). Without a place it is the generator's
-/// plain call, and before 17.5 every kind is the plain light impact: an
-/// iPad has no motor to play either.
+/// plain call, and before 17.5 every kind is the plain light impact. An
+/// iPad itself has no motor: only an Apple Pencil Pro plays these.
 @MainActor
 enum PencilHaptics {
     /// The view the generators were made for, and one generator per feel:

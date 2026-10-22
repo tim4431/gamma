@@ -33,9 +33,10 @@ app ([ipad.md](ipad.md)). Typed text on a page is
   `inkErase.bench.mjs` are not part of `npm test`.
 - Shared fixtures in `tests/shared/`: `inkv2.json`, `inkwidth.json`,
   `inkdash.json`, `inkmerge.json`, `inkcodec.json`, `inkgrain.json` (the
-  pencil's grain tile in each colour) and `inknib.json` (the calligraphy
-  nib's paths) are read by `backend/tests/test_shared_fixtures.py` and the
-  node tests (the last two by `inkRender.test.mjs`), and `inkwidth.json`
+  pencil's grain tile in each colour), `inknib.json` (the calligraphy
+  nib's paths) and `inkoutline.json` (strokes the screen outlines whole)
+  are read by `backend/tests/test_shared_fixtures.py` and the node tests
+  (the last three by `inkRender.test.mjs`), and `inkwidth.json`
   by the iPad app's `InkWidthTests` too. The recognisers
   and the Shapes tool's drags (`inkshapes.json`, `inkscribble.json`) run
   in the node tests only, since the server never recognises; the Python
@@ -383,7 +384,10 @@ app ([ipad.md](ipad.md)). Typed text on a page is
     colour. The colour every selected stroke shares is ringed, a mix
     rings none, and a colour off the palette shows on the custom swatch.
     A swatch sets its own opacity, and a custom colour keeps each
-    stroke's.
+    stroke's. On pens and highlighters selected together a swatch sets
+    the colour alone, so a highlighter stays translucent. A colour the
+    palette holds at two opacities rings only the swatch at the opacity
+    the selection shares.
   - **Style** opens its own row: the Style picker (the strip's, shown when
     the selection holds pen strokes; its button names the style they
     share, or *Mixed*), the Line trio and, when the selection holds a
@@ -513,7 +517,8 @@ app ([ipad.md](ipad.md)). Typed text on a page is
   darker where the pencil pressed harder (three shades on the page) and
   wider where it leaned; under the pen the live line is stamped from
   small round dabs of the same grain, as wide as the saved line. Exports
-  and the AI's picture draw the same grain in the same shades, except the
+  and the AI's picture draw the same grain in the same shades, except a
+  dashed or dotted pencil, one dashed line at its mean shade, and the
   annotated PDF's `/Ink` annotation, which a PDF reader draws as a plain
   line.
 - **Calligraphy** (the Style picker's fifth row) is a flat nib: the line
@@ -834,7 +839,10 @@ validator for the caps (`gamma/ink.py`). `json.loads` runs with a
 number that is not finite (`ValueError`). Pydantic would keep a `NaN`
 extra, and `JSON.parse` in every browser then fails on the file. The
 extras validator also refuses an integer past the largest double, which
-a browser reads as `Infinity`.
+a browser reads as `Infinity`. Whatever the parser itself refuses (an
+integer past Python's 4300 digits, nesting deeper than its stack) is an
+`InkError` like the rest (`load_json`): an upload answers 400 and a
+stored file reads as unreadable.
 
 **Channels.** `ch` names the channels of each sample, InkML-style, `x`
 `y` first and then any of the letters below in any order; `pts` is one
@@ -842,7 +850,7 @@ flat integer array, `len(ch)` integers per sample, ~300 bytes a stroke.
 
 | letter | unit | encoding |
 |---|---|---|
-| `x` `y` | 1/100 pt | delta after the first sample |
+| `x` `y` | 1/100 pt | delta after the first sample; the running sums are checked to ±10⁹ (`MAX_XY`, ±10 000 000 pt: a hundred times the largest page, and every writer can place it, where a PDF's numbers stop at 28 digits) |
 | `p` | pressure 0..1000 | absolute; decoded as `p / 1000` and clamped to 0..1 |
 | `t` | ms since `t0` | delta after the first sample |
 | `a` | altitude, degrees 0..90 | absolute |
@@ -904,7 +912,7 @@ its own ([ipad.md](ipad.md) "The pen").
 
 **Limits** (`gamma/ink.py`, enforced on upload): 5 000 strokes, 500 000
 samples, `MAX_BYTES` 6 MB, finite numbers (`pts` integers included), unique stroke ids, the extras
-caps, `w` in 0..4, `o` in 0..1, `size × max(w) ≤ 100`.
+caps, x and y within ±10 000 000 pt, `w` in 0..4, `o` in 0..1, `size × max(w) ≤ 100`.
 
 **The bytes of an upload** are the client's, `ink.js` `serializeInk`: keys
 sorted at every level, no whitespace, null and undefined keys dropped, and
@@ -1043,9 +1051,10 @@ instead of replacing (`ops._Batch.merge_ink`, `ink.merge_ink`; the client's
   applied: deletions win both ways, since "the other side changed it"
   cannot be judged without the base's content. A stroke the base did not
   have is an addition and stays. Without `base_ids` it is a union by
-  id. A mirror's push carries `base_ids` read from its own copy of the
-  base file when it has one (sync_engine `_with_base_ids`), so an origin
-  that no longer holds the base merges by deletions. A file that cannot
+  id. A mirror's push uploads the base file first where the origin no
+  longer holds it (sync_engine `_push_bases`), so the origin merges
+  three-way. It carries `base_ids` too, read from its own copy of the
+  file (`_with_base_ids`), for an origin that still lacks it. A file that cannot
   be read, or a result over the budgets, leaves the write as sent (last
   writer wins).
 
@@ -1053,12 +1062,15 @@ The merge returns the file, `clean`, and two id lists: `lost_ours`, the
 writer's changes the result dropped (an edit or erasure theirs overrode,
 pieces that were dropped), and `returned`, the strokes theirs had erased
 that the writer's change brings back. `ops._Batch.merge_ink` puts
-`{clean, lost_ours, returned}` into the batch result, not the echo, so
-the op log and catch-up never carry it. `routers/blocks.py` copies it
-onto the `PUT` answer as `ink_conflict`, and `routers/collab.py` onto the
-ops answer. A mirror reads it there for its own pushes, and an unclean
-merge becomes an `ink_merged` conflict row ([mirror.md](mirror.md) "What
-travels"). The writer's pill:
+`{clean, lost_ours, returned}` into the batch result under the block's
+id (`ink_conflicts`, one per drawing the batch merged), not into the
+echo, so the op log and catch-up never carry it. `routers/blocks.py`
+puts its block's onto the `PUT` answer as `ink_conflict`, and
+`routers/collab.py` puts them all onto the ops answer. A mirror reads
+them there for its own pushes, and an unclean merge becomes an
+`ink_merged` conflict row ([mirror.md](mirror.md) "What travels"). A
+retry the server answers from its op log (the batch landed and its
+answer was lost) carries none. The writer's pill:
 
 - `lost_ours`: "Your change to n strokes was not applied: someone changed
   them since".
@@ -1116,7 +1128,7 @@ reach.
   priority: typed edits lost at the close are lost for good.
 - `pagehide` flushes every draft still unsaved. A tab closed while it
   shows fires `pagehide` first and `visibilitychange` after it, in one
-  task (every close measured, headless Chromium and WebKit:
+  task (every close measured that fired them, headless Chromium and WebKit:
   [research/keepalive-abort.md](../research/keepalive-abort.md)). So the
   close flushes once, and the flush on going hidden that follows finds
   nothing scheduled. A tab hidden before it closes flushed when it was
@@ -2021,7 +2033,9 @@ reach.
   is the colour every selected stroke shares and its `alpha` the opacity
   they share, each left out when they differ. It calls `onAction("style",
   {color, opacity})`: a swatch sends its own alpha, the custom colour the
-  shared opacity, and with none shared each stroke keeps its own.
+  shared opacity, and with none shared each stroke keeps its own. On a
+  selection of more than one tool (`kinds`: pens and highlighters) it
+  sends the colour alone, so each stroke keeps its opacity.
   Duplicate calls `onAction("duplicate", duplicateOffset(surface))`,
   `surface` being the menu's prop for the page or sheet the selection is
   on (`ink/surfaceScale.js` below). Style opens the
@@ -2082,9 +2096,13 @@ reach.
   `ColorChoices` is a palette role's swatches plus a custom colour, for a
   pen preset's row, a text box's colours and the selection's Color and
   Fill rows. The swatch of the colour it is given is ringed (`.selected`,
-  `aria-pressed`), and a colour off the palette rings the custom swatch,
-  which shows it through `--ink-custom`. Given no colour (a mix, or Fill's
-  None) it marks nothing. The strip, the selection menu and the text box
+  `aria-pressed`): where the palette holds that colour at more than one
+  alpha, only the swatch at the alpha it is given
+  (`shared/model/palette.js` `swatchMarker`). A colour off the palette
+  rings the custom swatch, which shows it through `--ink-custom`. Given
+  no colour (a mix, or Fill's None) it marks nothing. The custom swatch's
+  native picker is invisible, so its keyboard focus rings the swatch
+  (`.inkCustomColor:has(input:focus-visible)`), as on every swatch. The strip, the selection menu and the text box
   read the account's palette through `usePalette`
   (`shared/ui/paletteContext.js`). Imports run from `markup/` to `ink/`,
   never back.
@@ -2471,15 +2489,18 @@ reach.
     tile in that colour, built once per colour; only its palette differs,
     so no SVG filter tints it. `grainImage(colour)`
     is the tile decoded for `createPattern` (null until decoded, and in
-    node). The layer's `<defs>` hold one `<pattern
-    id="inkGrain-<layer>-<colour>" patternUnits="userSpaceOnUse">` per
-    pencil colour drawn on the surface, `GRAIN_UNITS` (32) page units
+    node). `grainHex(colour)` names the tile a colour is painted with, its
+    r, g and b as six hex digits. The layer's `<defs>` hold one `<pattern
+    id="inkGrain-<layer>-<rrggbb>" patternUnits="userSpaceOnUse">` per
+    tile the surface's pencils need, `GRAIN_UNITS` (32) page units
     square (two grains a point, so the grain zooms with the paper and a
     2 pt line is four grains wide), holding an `<image
-    href={grainUri(colour)}>`; a pencil band fills with
+    href={grainUri("#rrggbb")}>`; a pencil band fills with
     `url(#inkGrain-…)` (`GrainContext` hands `Strokes` the fill; a
-    notes card's SVG has its own). One pattern per colour per SVG, never
-    per stroke; a mouse pencil, which has no shades, fills with it too.
+    notes card's SVG has its own). Colours of one r, g and b share a
+    pattern and no two tiles share a name, as on the server
+    (`inkGrain-<rrggbb>`). One pattern per tile per SVG, never per
+    stroke; a mouse pencil, which has no shades, fills with it too.
   - **Wet strokes** (`ink-live`, [collab.md](collab.md) "presence";
     `ink/inkLive.js`, pure, both halves). A stroke's id is minted at the
     down (`strokeId`), and the committed stroke is encoded under it. The
@@ -2601,7 +2622,7 @@ reach.
     `pointerup`, `pointercancel` or `lostpointercapture`, when the height
     changed, so the preference and App's render, which reaches every
     page's layers, change once a drag. ↑ / ↓ call `onHeight` at each
-    press.
+    press, except during a drag, which owns the height until it ends.
   - The bar `.inkZoomBar` (`role="toolbar"`, aria-label "Zoom window
     controls"): *Previous line* `ChevronLeftIcon`, *Next line*
     `ChevronRightIcon`, *New line* `CornerDownLeftIcon` titled "New line ·
@@ -2623,7 +2644,10 @@ reach.
     already drawn. They are drawn at `mag` × the device pixel ratio, never
     the whole page (a 4× page would pass the canvas caps), into two
     canvases, the hidden one drawn and then shown, and drawn again 80 ms
-    after the window leaves what `zoomRasterNeed` says is covered.
+    after the window leaves what `zoomRasterNeed` says is covered. During
+    a grip drag, which sizes the window only at the release, both plan for
+    the window as large as the view, so a taller panel fills with the page
+    whenever the drag pauses.
   - The panel's paper and raster take the viewer's treatment for the
     theme and for Flip page colors (`.inkZoomPanel.pdfDark`), in the
     viewer's rule order. So Gamma Dark keeps its paper with the flip on
@@ -2894,8 +2918,9 @@ reach.
     `base_ids`, that file's stroke ids. That is a server-side writer, so
     the change fans out over the page socket and reaches this tree like a
     remote op. Only the group's block itself (first stroke) is inserted
-    through the tree. The answer's `ink_conflict` goes on the pill
-    (`reportInkConflict`, "Two writers, one group").
+    through the tree. The answer's `ink_conflict` (its block's merge
+    report) goes on the pill (`reportInkConflict`, "Two writers, one
+    group").
   - A draft remembers its base (`inkStore` drafts: `{ink, dirty, url,
     base, baseIds}`). When the answer names another file than the upload, the
     server merged someone else's strokes: `markSaved` loads the merged
@@ -3245,7 +3270,10 @@ reach.
     drops every point within 3 units of a path's end and a dash or band
     run shorter than 3 pt would outline as a blot. A run of two samples
     gets a midpoint first, since its two-point path reads their pressure
-    as 0.5.
+    as 0.5. `pen_outline(stroke)` is the whole of a stroke without `o` as
+    the client's `penOutline` draws it: at the page's own scale, so a hook
+    in its last 3 pt drops as on the screen, with perfect-freehand's own
+    points between two samples. `tests/shared/inkoutline.json` pins it.
   - The calligraphy nib, as the screen draws it: `NIB_HAIR` (0.12),
     `DEFAULT_NIB` (45), `nib_outline(samples, size, nib)` (the client's
     `nibOutline`, `woundPath` and `sweepSegment`, operation for operation,
@@ -3257,8 +3285,10 @@ reach.
     tile's pixels a side), `GRAIN_UNITS` (32, the page units it spans),
     `grain_rgb(colour)` (the client's `rgbOf`:
     `#rrggbb`, `#rgb` or `rgb[a](…)`, black for anything else) and
-    `grain_png(colour)`, `grainUri`'s PNG byte for byte, cached per
-    colour. `tests/shared/inkgrain.json` pins it.
+    `grain_png(colour)`, `grainUri`'s PNG byte for byte: the chunks
+    before and after the palette are made once and nothing is kept per
+    colour, since the colours are a writer's data.
+    `tests/shared/inkgrain.json` pins it.
   - `bounding_box` (over the raw integer arrays, no per-sample objects:
     the running sums of x, y and w, which `routers/ink.py` computes on
     every flush) and `pdf_position` (the shape is `gamma/highlights.py`'s).
@@ -3275,9 +3305,14 @@ reach.
     itself, as stroked segments under an alpha would, and a pencil's grain
     is never painted twice. Each run is round only at the stroke's own
     ends and flat where it meets the next (the client's `runOutline`), so
-    two bands meet without overlapping. A pen with the pencil brush, a
+    two bands meet without overlapping; a stroke without `o` is one band,
+    its whole outline (`pen_outline`). A pen with the pencil brush, a
     dashed one too, is painted with its grain (`_grained`); a highlighter
-    or an unknown tool never is.
+    or an unknown tool never is. Each draws at the opacity the screen
+    does (`drawn_alpha`): its own times its colour's alpha, as the screen
+    fills an `rgba()` colour under `fill-opacity`, except a pencil's,
+    whose grain tile takes the colour's r, g and b alone. The `/Ink`
+    annotation's `/CA` is the same.
   - `to_svg` writes them as a `<path>` with `stroke-opacity` and
     `mix-blend-mode: multiply`, one `<path>` of the nib's pieces whose `d`
     is the screen's own string (`_fixed` writes the digits of
@@ -3287,7 +3322,10 @@ reach.
     `<pattern patternUnits="userSpaceOnUse">` per pencil colour,
     `GRAIN_UNITS` page units square from the page's corner whatever the
     crop, holding the tile as an `<image>` (`preserveAspectRatio="none"`),
-    as the layer draws it.
+    as the layer draws it. So the SVG needs a renderer with `<pattern>` and
+    data-URI `<image>` support: every browser, Inkscape and librsvg draw it
+    as the screen does, and one without patterns (MuPDF's SVG reader)
+    fills a pencil black.
   - `pdf_path_ops(ink, to_pdf, scale, band?, frame?)` (the notes-as-PDF
     writer, the notebook PDF and the AI's page picture; `band` keeps one
     band, for a writer drawing several groups band by band; `frame` is the
@@ -3315,7 +3353,9 @@ reach.
     for every grain some ops paint with, read from the names (None when
     they paint none). A document holds one soft mask (the tile's alpha,
     DeviceGray), one 64 × 64 DeviceRGB image per colour with that
-    `/SMask`, and one coloured tiling pattern per colour and matrix
+    `/SMask` and `/Interpolate` (smoothed when magnified, as on the screen:
+    pdf.js draws it in blocks without), and one coloured tiling pattern
+    per colour and matrix
     (`PatternType` 1, `PaintType` 1, `TilingType` 1; `/BBox`, `/XStep` and
     `/YStep` 32; the cell `q 32 0 0 32 0 0 cm /Tile Do Q`), which its pages
     share. `notebook_pdf` passes the frame `(1, 0, 0, -1, 0, h)` and
@@ -3327,8 +3367,8 @@ reach.
     size, opacity) and `from_pdf_ink` (a foreign `/Ink` whose `/BS` has
     `/S /D` imports as `dash: "dashed"`, whatever its `/D` array, since
     the pattern follows the width). `from_pdf_ink` raises `InkError` for a
-    coordinate whose hundredths of a point are not finite, so the importer
-    skips that annotation as any unreadable one. `upgrade_v1` clamps an
+    coordinate past ±10 000 000 pt (`MAX_XY`), infinite or not a number,
+    so the importer skips that annotation as any unreadable one. `upgrade_v1` clamps an
     integer pressure as it is, never through a float, so a version 1
     `/GammaInk` holding one past the largest double falls back to the
     `/InkList` like any payload that does not parse.

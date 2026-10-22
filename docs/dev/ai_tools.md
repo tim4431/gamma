@@ -287,7 +287,8 @@ Nothing is drawn by hand. Both paths reuse an export
   copied page's content through `ink.pdf_path_ops`, as the notes-as-PDF
   export draws it. So the model sees the looks as drawn (baked widths and
   tapers, dashes, the pencil's three shades in the screen's grain, the
-  calligraphy nib), every group's highlighters under every group's pens.
+  calligraphy nib; a dashed or dotted pencil as one dashed line at its
+  mean shade), every group's highlighters under every group's pens.
   A highlighter is
   multiplied onto the page through a graphics state, so the text under
   it stays as dark as it was. `/Ink` annotations could not do this: a

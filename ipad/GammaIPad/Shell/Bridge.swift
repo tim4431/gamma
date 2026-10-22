@@ -182,7 +182,8 @@ struct InkTool: Decodable, Equatable {
     }
 }
 
-/// What a `haptic` is for (PencilHaptics plays each as a light tick).
+/// What a `haptic` is for (PencilHaptics plays each as its own feedback,
+/// HapticFeel).
 enum HapticKind: String {
     /// A held stroke snapped to a shape.
     case snap
@@ -202,8 +203,8 @@ enum WebMessage: Equatable {
     case theme(bg: String, scheme: Scheme)
     /// Show the server picker.
     case servers
-    /// Play a tick (PencilHaptics), sent once per event. `at` is where, in
-    /// viewport CSS px, when the page says.
+    /// Play the kind's feedback (PencilHaptics), sent once per event. `at`
+    /// is where, in viewport CSS px, when the page says.
     case haptic(kind: HapticKind, at: CGPoint?)
 
     enum Scheme: String, Decodable { case light, dark }

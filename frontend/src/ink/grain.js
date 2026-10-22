@@ -88,6 +88,11 @@ function rgbOf(color) {
   return [0, 0, 0];
 }
 
+// The tile a colour is painted with, named: its r, g, b as six hex digits
+// (gamma/ink.py names an SVG's patterns inkGrain-<rrggbb> the same way), so
+// two colours share a name only when they share a tile.
+export const grainHex = (color) => rgbOf(color).map((v) => (v | 0).toString(16).padStart(2, "0")).join("");
+
 const uris = new Map();
 // The grain tile in `color` as a PNG data URI, built once per colour.
 export function grainUri(color = "#000000") {

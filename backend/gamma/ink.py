@@ -56,6 +56,7 @@ MAX_BYTES = 6 * 1024 * 1024
 COORD_UNIT = 100        # stored x/y are hundredths of a point
 PRESSURE_UNIT = 1000    # stored p is 0..1000
 MULT_UNIT = 1000        # stored w / o are multipliers × 1000
+MAX_XY = 10 ** 9        # the running x and y sums: ±10 000 000 pt, a hundred times the largest page
 MAX_W = 4000            # the running w sum (0..4.000 decoded; a slanted pencil reaches 3.5)
 MAX_O = 1000
 MAX_CH = 12
@@ -218,6 +219,10 @@ class Stroke(BaseModel):
             float(min(self.pts)), float(max(self.pts))
         except OverflowError:
             raise ValueError("pts: not a finite number") from None
+        for slot in (0, 1):   # a coordinate past MAX_XY is one no writer can place (a PDF's numbers stop at 28 digits)
+            sums = list(accumulate(self.pts[slot::n]))
+            if not -MAX_XY <= min(sums) <= max(sums) <= MAX_XY:
+                raise ValueError(f"channel {self.ch[slot]} out of ±{MAX_XY}")
         for letter, cap in (("w", MAX_W), ("o", MAX_O)):
             slot = self.ch.find(letter)
             if slot < 0:
@@ -262,12 +267,15 @@ def _reject_constant(name: str):
 def load_json(data: bytes | str) -> dict:
     """``json.loads`` for an ink file: refuses NaN / Infinity (pydantic would
     keep one in an extra key, and every browser's JSON.parse then fails on
-    the file) and anything that is not an object."""
+    the file) and anything that is not an object. Whatever the parser
+    refuses is an ``InkError``: bad UTF-8 or JSON, an integer past Python's
+    digit limit (a ``ValueError``), nesting deeper than its stack (a
+    ``RecursionError``)."""
     try:
         if isinstance(data, (bytes, bytearray)):
             data = data.decode("utf-8")
         obj = json.loads(data, parse_constant=_reject_constant)
-    except (UnicodeDecodeError, json.JSONDecodeError) as e:
+    except (ValueError, RecursionError) as e:
         raise InkError(str(e)) from e
     if not isinstance(obj, dict):
         raise InkError("an ink file is a JSON object")
@@ -644,10 +652,12 @@ def stroke_bands(stroke: Stroke, samples: list[dict] | None = None) -> list[tupl
 
 # perfect-freehand 1.2.2 (MIT, Steve Ruiz) — the client's outline — at its
 # ``outlineOptions``: thinning 1, smoothing 0.5, streamline 0.4, no
-# simulated pressure, no tapers, round caps, ``last``. Run at ten times the
-# page's scale: its one absolute constant, the 3 units at the end of a path
-# whose points it drops, would otherwise blot a dash or a band run shorter
-# than 3 pt into a disc about its length across.
+# simulated pressure, no tapers, round caps, ``last``. A whole stroke is
+# outlined at the page's scale, as the screen's ``penOutline`` does; a run
+# of one (a band, a dash) at ten times it, as ``runOutline`` does: the one
+# absolute constant, the 3 units at the end of a path whose points it
+# drops, would otherwise blot a run shorter than 3 pt into a disc about its
+# length across.
 _PF_SCALE = 10.0
 _PF_T = 0.15 + (1 - 0.4) * 0.85      # getStrokePoints' step toward each point at streamline 0.4
 _PF_PI = math.pi + 1e-4
@@ -660,9 +670,13 @@ def _pf_rotate(p, c, r):
 
 
 def _pf_points(pts: list, size: float) -> list:
-    """getStrokePoints over ``(x, y, pressure)`` — never two of them: the
-    caller adds a midpoint, since perfect-freehand's two-point path drops
-    their pressure — → ``[point, pressure, vector, running length]``."""
+    """getStrokePoints over ``(x, y, pressure)`` → ``[point, pressure,
+    vector, running length]``. Two points get perfect-freehand's own three
+    between them, at pressure 0.5 like the last, so a run's caller adds a
+    midpoint first to keep its pressure."""
+    if len(pts) == 2:
+        (x0, y0, _), (x1, y1, _) = pts
+        pts = [pts[0], *((x0 + (x1 - x0) * (i / 4), y0 + (y1 - y0) * (i / 4), 0.5) for i in range(1, 5))]
     if len(pts) == 1:
         x, y, p = pts[0]
         pts = [pts[0], (x + 1, y + 1, p)]
@@ -777,6 +791,19 @@ def _pf_outline(points: list, size: float, caps: tuple = (True, True)) -> list:
         end_cap = [(last[0] + dx * radius * f, last[1] + dy * radius * f) for f in (1, 0.99)] + \
                   [(last[0] - dx * radius * f, last[1] - dy * radius * f) for f in (0.99, 1)]
     return left + end_cap + right[::-1] + start_cap
+
+
+def pen_outline(stroke: Stroke, samples: list[dict] | None = None) -> list[tuple[float, float]]:
+    """The filled outline polygon of a whole stroke without ``o`` as the
+    screen draws it (the client's ``penOutline``): perfect-freehand at the
+    page's own scale, its radius ``size × w / 2`` (``size / 2`` without
+    ``w``), round caps, so a hook in its last 3 pt is dropped as on the
+    screen. ``tests/shared/inkoutline.json`` pins it."""
+    samples = decode_stroke(stroke) if samples is None else samples
+    if not samples:
+        return []
+    pts = [(s["x"], s["y"], s["w"] / 2 if "w" in s else 0.5) for s in samples]
+    return _pf_outline(_pf_points(pts, stroke.size), stroke.size)
 
 
 def stroke_outline(stroke: Stroke, samples: list[dict] | None = None,
@@ -967,9 +994,6 @@ def grain_rgb(color) -> tuple[int, int, int]:
     return (0, 0, 0)
 
 
-_grain_pngs: dict = {}
-
-
 def grain_png(color) -> bytes:
     """The grain tile in ``color`` as the PNG the screen fills a pencil
     with (grain.js ``grainUri``, its bytes): only the palette differs from
@@ -977,11 +1001,17 @@ def grain_png(color) -> bytes:
     return _grain_png(grain_rgb(color))
 
 
+def _png_chunk(kind: bytes, data: bytes) -> bytes:
+    return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data))
+
+
+# The PNG before its palette and after it, the same for every colour: made
+# once, so nothing is kept per colour (the colours are a writer's data).
+_grain_chunks: list = []
+
+
 def _grain_png(rgb: tuple) -> bytes:
-    png = _grain_pngs.get(rgb)
-    if png is None:
-        def chunk(kind: bytes, data: bytes) -> bytes:
-            return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data))
+    if not _grain_chunks:
         row = 1 + GRAIN_PX // 4             # a filter byte (0) and four pixels a byte, the first in the high bits
         raw = bytearray(row * GRAIN_PX)
         for i, index in enumerate(_grain_indices()):
@@ -989,12 +1019,10 @@ def _grain_png(rgb: tuple) -> bytes:
             raw[y * row + 1 + (x >> 2)] |= index << (6 - 2 * (x & 3))
         n = len(raw)                        # a zlib stream of one stored block
         idat = bytes((0x78, 0x01, 0x01, n & 255, n >> 8, ~n & 255, (~n >> 8) & 255)) + raw + struct.pack(">I", zlib.adler32(raw))
-        png = _grain_pngs[rgb] = (b"\x89PNG\r\n\x1a\n"
-                                  + chunk(b"IHDR", struct.pack(">IIBBBBB", GRAIN_PX, GRAIN_PX, 2, 3, 0, 0, 0))
-                                  + chunk(b"PLTE", bytes(rgb) * len(_GRAIN_ALPHAS))
-                                  + chunk(b"tRNS", bytes(_GRAIN_ALPHAS))
-                                  + chunk(b"IDAT", idat) + chunk(b"IEND", b""))
-    return png
+        _grain_chunks[:] = [b"\x89PNG\r\n\x1a\n" + _png_chunk(b"IHDR", struct.pack(">IIBBBBB", GRAIN_PX, GRAIN_PX, 2, 3, 0, 0, 0)),
+                            _png_chunk(b"tRNS", bytes(_GRAIN_ALPHAS)) + _png_chunk(b"IDAT", idat) + _png_chunk(b"IEND", b"")]
+    head, tail = _grain_chunks
+    return head + _png_chunk(b"PLTE", bytes(rgb) * len(_GRAIN_ALPHAS)) + tail
 
 
 # --- renderers ------------------------------------------------------------------
@@ -1026,7 +1054,10 @@ def _band_outlines(stroke: Stroke, samples: list[dict]) -> list[tuple[float, lis
     """The outlines of ``stroke_bands`` gathered per band, lightest first:
     each band is one filled path, painted once, so it never darkens where
     the stroke crosses itself, and a run's cut ends are flat, so two bands
-    meet without overlapping."""
+    meet without overlapping. A stroke without ``o`` is one band, its
+    whole outline (``pen_outline``), as the screen draws it."""
+    if "o" not in stroke.ch:
+        return [(1.0, [pen_outline(stroke, samples)])]
     runs = stroke_bands(stroke, samples)
     out: dict = {}
     for i, (band, run) in enumerate(runs):
@@ -1060,6 +1091,14 @@ def _grained(stroke: Stroke) -> bool:
     """A pencil, which the screen fills with its grain (``grain`` in
     ink.js ``buildOutline``)."""
     return stroke.tool == "pen" and stroke.brush == "pencil"
+
+
+def drawn_alpha(stroke: Stroke, a: float) -> float:
+    """A stroke's drawn opacity for its colour's alpha ``a``, as the screen
+    paints it: the stroke's opacity times ``a`` (an ``rgba()`` fill under
+    ``fill-opacity``), except a pencil's (``_grained``), whose grain tile
+    is painted in the colour's r, g and b alone (grain.js ``rgbOf``)."""
+    return stroke.opacity if _grained(stroke) else a * stroke.opacity
 
 
 def _drawn_as(stroke: Stroke, alpha: float) -> str:
@@ -1096,8 +1135,8 @@ def to_svg(ink: InkFile, box=None, pad: float = 4.0) -> str:
     band 0 then band 1. An opaque solid pen (and any tool this code does
     not know) draws one round-capped segment per sample pair at that pair's
     baked width; a translucent one, and a pencil, one filled outline per
-    opacity band (``stroke_bands``, ``stroke_outline``) at ``fill-opacity``
-    band × opacity; a dashed stroke one centreline path at its mean drawn
+    opacity band (``_band_outlines``) at ``fill-opacity`` band × its drawn
+    opacity (``drawn_alpha``); a dashed stroke one centreline path at its mean drawn
     width and opacity with ``stroke-dasharray``; a highlighter one
     constant-width path with its opacity, multiplied onto what lies
     beneath; a calligraphy pen without a shape one path of its nib
@@ -1124,7 +1163,7 @@ def to_svg(ink: InkFile, box=None, pad: float = 4.0) -> str:
         r, g, b, a = parse_color(stroke.color)
         color = f"rgb({round(r * 255)},{round(g * 255)},{round(b * 255)})"
         paint = f"url(#inkGrain-{bytes(grain_rgb(stroke.color)).hex()})" if _grained(stroke) else color
-        alpha = min(a, stroke.opacity)
+        alpha = drawn_alpha(stroke, a)
         pattern = dash_pattern(stroke)
         dash = f' stroke-dasharray="{_fmt(pattern[0])} {_fmt(pattern[1])}"' if pattern else ""
         kind = _drawn_as(stroke, alpha)
@@ -1261,8 +1300,9 @@ def pdf_path_ops(ink: InkFile, to_pdf, scale: float = 1.0, band: int | None = No
     ops are drawn under), which the pencil's grain needs. An opaque solid
     pen is a round-capped segment per sample pair at its baked width; a
     translucent pen, and a pencil, one filled outline per opacity band
-    under the ExtGState of its opacity (``/GSink<α>``, ``/CA`` and
-    ``/ca``); a dashed stroke one path at its mean drawn width between
+    (``_band_outlines``) under the ExtGState of its drawn opacity
+    (``drawn_alpha``; ``/GSink<α>``, ``/CA`` and ``/ca``); a dashed stroke
+    one path at its mean drawn width between
     ``[on off] 0 d`` and ``[] 0 d``; a highlighter its centreline under
     ``/GSinkM<α>``, which multiplies like the screen; a calligraphy pen
     without a shape its nib (``nib_shape``), every piece filled at once
@@ -1284,7 +1324,7 @@ def pdf_path_ops(ink: InkFile, to_pdf, scale: float = 1.0, band: int | None = No
     grain_matrix = None
     for stroke in strokes:
         r, g, b, a = parse_color(stroke.color)
-        alpha = min(a, stroke.opacity)
+        alpha = drawn_alpha(stroke, a)
         rgb = b"%s %s %s" % (num(r), num(g), num(b))
         fill_paint, stroke_paint = rgb + b" rg", rgb + b" RG"
         if _grained(stroke):
@@ -1394,8 +1434,10 @@ class GrainPatterns:
 
     def _tile(self, rgb: str):
         """The tile in ``rgb`` (six hex digits): an image of the colour
-        whose soft mask is the tile's alpha."""
-        from PyPDF2.generic import NameObject
+        whose soft mask is the tile's alpha, smoothed when magnified as the
+        screen's pattern is (``/Interpolate``: pdf.js draws it in blocks
+        without)."""
+        from PyPDF2.generic import BooleanObject, NameObject
         ref = self._images.get(rgb)
         if ref is None:
             if self._mask is None:
@@ -1403,6 +1445,7 @@ class GrainPatterns:
                 self._mask = self.writer._add_object(self._image(alpha, "/DeviceGray"))
             image = self._image(bytes.fromhex(rgb) * (GRAIN_PX * GRAIN_PX), "/DeviceRGB")
             image[NameObject("/SMask")] = self._mask
+            image[NameObject("/Interpolate")] = BooleanObject(True)
             ref = self._images[rgb] = self.writer._add_object(image)
         return ref
 
@@ -1449,8 +1492,9 @@ def from_pdf_ink(ink_list, width_pt: float, color: str, opacity: float, page: in
     of every stroke); one written before release T is a version 1 file and
     is upgraded first. ``dash`` is a foreign annotation's border style
     (``"dashed"`` for a ``/BS /S /D``), given to each of its strokes.
-    InkError for a coordinate the file cannot hold (not finite in 1/100
-    pt), as for any other bad annotation."""
+    InkError for a coordinate the file cannot hold (past ``MAX_XY``
+    hundredths of a point, or not a number), as for any other bad
+    annotation."""
     if private_json:
         try:
             ink = parse_ink(upgrade_v1(load_json(private_json)))
@@ -1465,8 +1509,8 @@ def from_pdf_ink(ink_list, width_pt: float, color: str, opacity: float, page: in
         samples = [{"x": nums[i], "y": page_h - nums[i + 1]} for i in range(0, len(nums) - 1, 2)]
         if not samples:
             continue
-        if not all(math.isfinite(s[k] * COORD_UNIT) for s in samples for k in ("x", "y")):
-            raise InkError(f"/InkList path {n}: a coordinate past the largest number")
+        if not all(abs(s[k] * COORD_UNIT) <= MAX_XY for s in samples for k in ("x", "y")):
+            raise InkError(f"/InkList path {n}: a coordinate out of ±{MAX_XY // COORD_UNIT} pt")
         strokes.append({"id": f"i{n}", "tool": "pen", "pen": False, "color": color,
                         "size": max(0.2, min(100.0, width_pt or 1.0)), "opacity": max(0.05, min(1.0, opacity)),
                         **({"dash": dash} if dash in DASH else {}),

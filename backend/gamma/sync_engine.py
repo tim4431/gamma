@@ -1023,6 +1023,34 @@ def _push_files(ws: str, remote: Remote, names: set[str], report: dict, *, page_
     return refused
 
 
+def _push_bases(ws: str, remote: Remote, ops: list[dict], report: dict) -> None:
+    """The files the drawings of ``ops`` the remote may merge
+    (``_merges_ink``) were edited from, uploaded where the remote lacks one
+    (purged there since), so it merges three-way: by ``base_ids`` alone it
+    would count every stroke erased there and kept here as a change of this
+    copy's it could not apply. Only a file this copy reads as a drawing
+    goes (not a version 1 base from before step 40), and one the remote
+    refuses is let be: the push still carries ``base_ids``."""
+    uploads = ws_uploads_dir(ws)
+    for op in ops:
+        url = op["base_props"]["ink_url"] if _merges_ink(op) else ""
+        name = _upload_name(url)
+        if not UPLOAD_NAME_RE.match(name) or inkmod.read_upload(uploads, url) is None \
+                or remote.head_ok(f"/api/uploads/{name}"):
+            continue
+        path = find_upload_file(name, ws)
+        if path is None:
+            continue
+        try:
+            remote.post_file("/api/upload-file", name, path.read_bytes())
+        except RemoteError as e:
+            if e.status != 400:
+                raise
+            log.info(f"[mirror] {ws}: the remote refused the base drawing {name} ({e.detail}); merged by stroke ids")
+            continue
+        report["files_pushed"] += 1
+
+
 def _without_files(ops: list[dict], refused: set[str], blocks: dict) -> list[dict]:
     """``ops`` minus the ink keys (``INK_KEYS``) of the blocks that name a
     file the remote refused (``blocks``: this copy's tree): the block's
@@ -1260,7 +1288,7 @@ def _push(remote: Remote, page_id: str, batches: list[dict]) -> list:
 
 def _send(ws: str, remote: Remote, page_id: str, seq: int, base: dict, ops: list[dict]) -> dict:
     """Push ``ops`` (from ``base``, the remote's tree as this copy knows it)
-    in batches (``_batches``), each under an id of its own, all of them
+    in batches of MAX_OPS, each under an id of its own, all of them
     written into the page's state (``pending``) before the first goes. A
     push whose answer never comes back (the link dropped on the way back, a
     proxy's 504, the app quit) is then confirmed or sent again under the
@@ -1270,7 +1298,8 @@ def _send(ws: str, remote: Remote, page_id: str, seq: int, base: dict, ops: list
     answer saying the remote merged it is read (``_ink_merged``). Returns
     what the remote holds once they landed: ``base`` with the ops applied."""
     if ops:
-        batches = _batches(_with_base_ids(ws, ops))
+        sent = _with_base_ids(ws, ops)
+        batches = [{"id": secrets.token_urlsafe(12), "ops": sent[i:i + MAX_OPS]} for i in range(0, len(sent), MAX_OPS)]
         with connect_pages_db(ws) as conn:
             _store_state(conn, page_id, seq, base, {"batches": batches, "at": page_now()})
         # (a wrapped ``_push`` that answers nothing, as test_mirror_edges' does, reads nothing)
@@ -1285,23 +1314,6 @@ def _merges_ink(op: dict) -> bool:
     return op["op"] == "set" and bool((op.get("props") or {}).get("ink_url")) \
         and "ink_url" in (op.get("base_props") or {})
 
-
-def _batches(ops: list[dict]) -> list[dict]:
-    """``ops`` in order, in batches of at most MAX_OPS, each under an id of
-    its own and holding at most one drawing the remote may merge
-    (``_merges_ink``): an answer reports one ink merge, the batch's last
-    (ops.py ``ink_conflict``), so the report names its block."""
-    chunks, chunk, inked = [], [], False
-    for op in ops:
-        ink = _merges_ink(op)
-        if chunk and (len(chunk) == MAX_OPS or (ink and inked)):
-            chunks.append(chunk)
-            chunk, inked = [], False
-        chunk.append(op)
-        inked = inked or ink
-    if chunk:
-        chunks.append(chunk)
-    return [{"id": secrets.token_urlsafe(12), "ops": c} for c in chunks]
 
 
 def _with_base_ids(ws: str, ops: list[dict]) -> list[dict]:
@@ -1323,27 +1335,29 @@ def _upload_name(url: str) -> str:
 
 
 def _ink_merged(ws: str, page_id: str, ops: list[dict], answer) -> None:
-    """A batch's answer saying the remote merged this copy's drawing into
-    one changed there since and could not keep every change of both
-    (``ink_conflict`` with ``clean`` false, ops.py merge_ink): one open
-    ``ink_merged`` row on the group, ``mine`` the drawing sent, ``theirs``
-    the remote's report as JSON (``{clean, lost_ours, returned}``),
-    ``result`` the merged drawing both sides now hold, ``base`` the one the
-    change was made from (upload names). Nothing for a clean merge, an
-    answer without the key (a remote of an older release), or a batch
-    holding more than one drawing (stored by an earlier version of this
-    engine: which one the report is about cannot be told)."""
-    report = answer.get("ink_conflict") if isinstance(answer, dict) else None
-    drawn = [op for op in ops if _merges_ink(op)]
-    if not isinstance(report, dict) or report.get("clean") is not False or len(drawn) != 1:
+    """A batch's answer saying the remote merged a drawing of this copy's
+    into one changed there since and could not keep every change of both
+    (the group's report in ``ink_conflicts`` with ``clean`` false, ops.py
+    merge_ink): one open ``ink_merged`` row on each such group, ``mine``
+    the drawing sent, ``theirs`` the remote's report as JSON (``{clean,
+    lost_ours, returned}``), ``result`` the merged drawing both sides now
+    hold, ``base`` the one the change was made from (upload names).
+    Nothing for a clean merge, nor for an answer without reports: a remote
+    of an older release, or a resend the remote answers from its log (the
+    batch landed, its answer was lost), whose report is gone."""
+    reports = answer.get("ink_conflicts") if isinstance(answer, dict) else None
+    if not isinstance(reports, dict):
         return
-    op = drawn[0]
-    echo = next((o for o in answer.get("ops") or [] if o.get("op") == "set" and o.get("id") == op["id"]), {})
-    now = (echo.get("props") or {}).get("ink_url") or op["props"]["ink_url"]
-    with connect_pages_db(ws) as conn:
-        _conflict(conn, page_id, op["id"], "ink_merged", mine=_upload_name(op["props"]["ink_url"]),
-                  theirs=json.dumps(report), result=_upload_name(now),
-                  base=_upload_name(op["base_props"]["ink_url"]), once=True)
+    for op in ops:
+        report = reports.get(op["id"]) if _merges_ink(op) else None
+        if not isinstance(report, dict) or report.get("clean") is not False:
+            continue
+        echo = next((o for o in answer.get("ops") or [] if o.get("op") == "set" and o.get("id") == op["id"]), {})
+        now = (echo.get("props") or {}).get("ink_url") or op["props"]["ink_url"]
+        with connect_pages_db(ws) as conn:
+            _conflict(conn, page_id, op["id"], "ink_merged", mine=_upload_name(op["props"]["ink_url"]),
+                      theirs=json.dumps(report), result=_upload_name(now),
+                      base=_upload_name(op["base_props"]["ink_url"]), once=True)
 
 
 def _unlanded(op: dict, base: dict, remote: dict) -> tuple[dict | None, dict | None]:
@@ -1960,6 +1974,7 @@ def _sync_page(ws: str, remote: Remote, page_id: str, *, remote_seq_hint: int | 
     if not push_ops:
         _deferred_files(page_id, refused)
         return
+    _push_bases(ws, remote, push_ops, report)
     try:
         after = _send(ws, remote, page_id, seq, remote_tree, push_ops)
     except RemoteError as e:

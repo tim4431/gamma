@@ -382,7 +382,8 @@ def _ink_annotations(ink, rotation, crop, note, author, block_id=""):
     the bucket's mean drawn width, ``/BS /S /D /D [on off]`` when the
     bucket's first stroke is dashed or dotted (a bucket mixing dashes takes
     that one's: the bucket key has no dash, so a re-export keeps its
-    ``/NM`` set), ``/C`` + ``/CA`` its colour. Every annotation also carries
+    ``/NM`` set), ``/C`` + ``/CA`` its colour at the opacity the screen
+    draws it (``ink.drawn_alpha``). Every annotation also carries
     its strokes as ``/GammaInk`` (the gamma-ink version 2 JSON, verbatim)
     so a Gamma re-import keeps pressure, time, the dash and every key;
     other readers ignore the private key. The note rides on the first
@@ -435,7 +436,7 @@ def _ink_annotations(ink, rotation, crop, note, author, block_id=""):
         })
         if block_id:
             annot[NameObject("/NM")] = TextStringObject(f"Zotero-{zotero_annot_key(f'{block_id}:{n}')}")
-        out.append((inkmod.band_of(first), _finish_annotation(annot, (r, g, b, min(a, first.opacity)),
+        out.append((inkmod.band_of(first), _finish_annotation(annot, (r, g, b, inkmod.drawn_alpha(first, a)),
                                                               note if n == 0 else "", author)))
     return out
 

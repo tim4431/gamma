@@ -203,6 +203,17 @@ export function nearestColor(color, colors) {
   return best;
 }
 
+// The swatches of `colors` ({hex, alpha}) a picker marks for `color` at
+// `alpha` (what a selection shares; either missing for a mix): those of
+// that hex, or, where the palette holds the hex at more than one alpha, the
+// one at `alpha`, so one hex at two alphas never marks two swatches.
+// → (swatch) → boolean.
+export function swatchMarker(colors, color, alpha) {
+  const hex = String(color || "").toLowerCase();
+  const alphas = new Set(colors.filter((c) => c.hex === hex).map((c) => c.alpha));
+  return (c) => c.hex === hex && (alphas.size < 2 || (Number.isFinite(alpha) && Math.abs(c.alpha - alpha) < 0.005));
+}
+
 // Words for colours, so a swatch reads "Pink highlighter", not "#f9a8d4":
 // a fixed table of reference colours, and any colour takes the name of the
 // nearest one — a user's own swatch included. The table holds the default

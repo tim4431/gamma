@@ -79,8 +79,9 @@ A page with sheets of paper and no PDF has none to annotate:
 size, painted with the paper, its text boxes typeset on it as real,
 selectable text, and the ink groups under it drawn over them as vectors
 in the content, as the screen draws them, the pencil's grain and the
-calligraphy nib included (the page is the drawing, so no `/FreeText` or
-`/Ink` layer). The switches do not apply.
+calligraphy nib included (a dashed or dotted pressure stroke as one
+dashed line at its mean width and shade). The page is the drawing, so
+there is no `/FreeText` or `/Ink` layer. The switches do not apply.
 
 ### Notes drawn on the page
 

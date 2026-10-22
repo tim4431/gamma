@@ -40,7 +40,7 @@ const clampHeight = (px) => Math.round(Math.max(ZOOM_HEIGHT_MIN, Math.min(ZOOM_H
 // viewer's bottom controls stand above the panel). The renders after the
 // release write the same values.
 function previewHeight(panel, px) {
-  const scroller = panel?.parentElement?.querySelector(":scope > .pdfViewer");
+  const scroller = panel?.parentElement?.querySelector(":scope > .pdfViewer");   // i18n-ignore: a selector
   if (scroller) scroller.style.height = `calc(100% - ${px}px)`;
   panel?.closest(".viewerWrap")?.style.setProperty("--ink-zoom-h", `${px}px`);
 }
@@ -81,12 +81,15 @@ export function ZoomWindow({ zoom, size, page, marks, height, onHeight, onChange
 
   // The raster: two canvases in one slot (pageRaster.js `pair`'s reason),
   // the hidden one drawn into and then shown, so the panel never shows a
-  // half-painted region. Drawn again only when the window leaves what is
-  // drawn, at another magnification or on another page.
+  // half-painted region. Drawn again only when what the view shows leaves
+  // what is drawn, at another magnification or on another page. That is
+  // the window, or during a grip drag, which sizes the window only at the
+  // release, the window as large as the view.
   const canvasA = useRef(null), canvasB = useRef(null);
   const raster = useRef({ front: 0, drawn: null });
+  const shown = dragging && view?.width && view.height ? { ...zoom, w: view.width / zoom.mag, h: view.height / zoom.mag } : zoom;
   useEffect(() => {
-    const r = raster.current, need = page ? zoomRasterNeed(zoom, size) : null;
+    const r = raster.current, need = page ? zoomRasterNeed(shown, size) : null;
     // another page's pixels never stand under this one's ink
     if (r.drawn && r.drawn.page !== page) {
       for (const c of [canvasA.current, canvasB.current]) if (c) { c.style.display = "none"; c.width = 0; c.height = 0; }
@@ -98,7 +101,7 @@ export function ZoomWindow({ zoom, size, page, marks, height, onHeight, onChange
     let task = null, dead = false;
     const timer = setTimeout(() => {
       const canvases = [canvasA.current, canvasB.current];
-      const plan = zoomRasterPlan(zoom, size, window.devicePixelRatio || 1);
+      const plan = zoomRasterPlan(shown, size, window.devicePixelRatio || 1);
       const back = canvases[1 - r.front], front = canvases[r.front];
       if (!plan || !back) return;
       try {
@@ -121,7 +124,7 @@ export function ZoomWindow({ zoom, size, page, marks, height, onHeight, onChange
       });
     }, d && d.page === page ? RASTER_REST_MS : 0);
     return () => { dead = true; clearTimeout(timer); task?.cancel(); };
-  }, [page, zoom.x, zoom.y, zoom.w, zoom.h, zoom.mag, size.width, size.height, annotationMode]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [page, shown.x, shown.y, shown.w, shown.h, shown.mag, size.width, size.height, annotationMode]); // eslint-disable-line react-hooks/exhaustive-deps
   // The canvases give their pixels up with the panel.
   useEffect(() => () => {
     for (const c of [canvasA.current, canvasB.current]) if (c) { c.width = 0; c.height = 0; }
@@ -131,7 +134,8 @@ export function ZoomWindow({ zoom, size, page, marks, height, onHeight, onChange
   // A drag shows its height on the panel and beside it as it moves
   // (previewHeight) and hands it to onHeight once, as it ends, so the
   // preference and App, whose render reaches every page's layers, change
-  // once a drag; each key press applies at once.
+  // once a drag; each key press applies at once, except during a drag,
+  // which owns the height until it ends.
   const grip = useRef(null);
   const gripDown = (e) => {
     if (e.button !== 0) return;
@@ -174,7 +178,7 @@ export function ZoomWindow({ zoom, size, page, marks, height, onHeight, onChange
         onKeyDown={(e) => {
           if (e.key !== "ArrowUp" && e.key !== "ArrowDown") return;
           e.preventDefault();
-          onHeight(clampHeight(height + (e.key === "ArrowUp" ? 10 : -10)));
+          if (!grip.current) onHeight(clampHeight(height + (e.key === "ArrowUp" ? 10 : -10)));
         }} />
       <InkTooltips className="inkZoomBar" role="toolbar" aria-label={t("Zoom window controls")}>
         {seg(t("Previous line"), <ChevronLeftIcon size={16} />, () => update(prevLine))}

@@ -321,6 +321,22 @@ def test_ink_nib(case):
     _close_pieces(_pdf_pieces(ops), _d_pieces(case["d"]), 0.02 if dotted else 0.01 + 1e-9)
 
 
+# tests/shared/inkoutline.json: a stroke the screen outlines whole
+# (penOutline), which the exporters draw the same.
+INKOUTLINE = _load("inkoutline.json")
+
+
+@pytest.mark.parametrize("case", INKOUTLINE["strokes"], ids=[c["note"] for c in INKOUTLINE["strokes"]])
+def test_ink_whole_outline(case):
+    """pen_outline is penOutline: perfect-freehand at the page's own scale,
+    so the SVG export's outline is the screen's, number for number (each
+    written to the hundredth; toFixed and Python round a tie apart)."""
+    ink = inkmod.parse_ink({"format": "gamma-ink", "version": 2, "space": NIB_SPACE, "strokes": [case["stroke"]]})
+    (d,) = re.findall(r'<path d="([^"]*)"', inkmod.to_svg(ink))
+    got, want = ([float(v) for v in re.findall(_NUM, path)] for path in (d, case["d"]))
+    assert len(got) == len(want) and all(abs(a - b) <= 0.01 + 1e-9 for a, b in zip(got, want))
+
+
 def test_ink_nib_fixture_covers_the_cases():
     cases, strokes = INKNIB["cases"], INKNIB["strokes"]
     assert {0, 45, 90, 135, 179} <= {c["nib"] for c in cases}

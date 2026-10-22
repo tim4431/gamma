@@ -240,7 +240,7 @@ class _Batch:
         self.merges = {} if merges is None else merges  # text merges by their texts (``_merged``)
         self._page_of: dict[str, str | None] = {page_id: page_id}
         self.applied: list[dict] = []
-        self.ink_conflict: dict | None = None  # the last ink merge's {clean, lost_ours, returned}
+        self.ink_conflicts: dict[str, dict] = {}  # each ink merge's {clean, lost_ours, returned}, by block
         self.deleted: list[str] = []
         # upload names the ops stopped / started referencing (gamma/upload_gc.py)
         self.dropped: set[str] = set()
@@ -315,7 +315,7 @@ class _Batch:
             patch = _attachment_patch(patch, props)
         base_props = op.get("base_props")
         if patch and base_props:
-            patch = self.merge_ink(props, patch, base_props, op.get("base_ids"))
+            patch = self.merge_ink(block_id, props, patch, base_props, op.get("base_ids"))
             if "text_box" in patch and "text_box" in base_props:
                 patch = {**patch, "text_box": merge_text_box(props.get("text_box"), patch["text_box"],
                                                               base_props["text_box"])}
@@ -345,18 +345,20 @@ class _Batch:
         self.refs_changed(upload_refs(row[0] or "", row[1] or "{}"), upload_refs(new_content, new_props))
         self.applied.append(echo)
 
-    def merge_ink(self, props: dict, patch: dict, base_props: dict, base_ids=None) -> dict:
-        """``patch`` for an ink group whose drawing changed since the writer
-        read it (its base ``ink_url`` is not the stored one): the writer's
-        file merged into the stored one stroke by stroke (gamma/ink.py
-        ``merge_ink``), and the patch naming the result with its stroke
-        count and box. ``base_ids`` (the base file's stroke ids as the
-        writer loaded it) lets a base that is gone merge by deletions
-        instead of a blind union. As sent when there is nothing to merge, a
-        file cannot be read or the result is over the file budgets. What
-        the merge dropped or brought back goes into the batch result as
-        ``ink_conflict`` (never into the echo, so no op log or mirror
-        carries it).
+    def merge_ink(self, block_id: str, props: dict, patch: dict, base_props: dict, base_ids=None) -> dict:
+        """``patch`` for the ink group ``block_id`` whose drawing changed
+        since the writer read it (its base ``ink_url`` is not the stored
+        one): the writer's file merged into the stored one stroke by stroke
+        (gamma/ink.py ``merge_ink``), and the patch naming the result with
+        its stroke count and box. ``base_ids`` (the base file's stroke ids
+        as the writer loaded it) lets a base that is gone merge by
+        deletions instead of a blind union. As sent when there is nothing to
+        merge, a file cannot be read or the result is over the file budgets.
+        What the merge dropped or brought back goes into the batch result,
+        under the block's id in ``ink_conflicts``: never into the echo, so
+        the op log and a catch-up never carry it, and a retry answered from
+        the log (``_replayed``) has none; a mirror reads it off the answer
+        to its own push.
 
         A merged file is written only when it is new. One that is stored
         already stays: the purge deletes only under the write lock this
@@ -381,7 +383,7 @@ class _Batch:
         except ValueError:
             return patch
         merged = result.ink
-        self.ink_conflict = result.report()
+        self.ink_conflicts[block_id] = result.report()
         if merged is ours:
             url = new
         elif merged is theirs:
@@ -621,7 +623,7 @@ def apply_ops(conn, page_id: str, ops: list[dict], *, actor: str, client: str = 
               share_scoped: bool = False, cursor: dict | None = None, batch_id: str = "") -> dict:
     """Apply one batch inside one transaction (committed here) and log it.
     Returns ``{page_id, seq, at, actor, client, ops (as applied), deleted_ids,
-    dropped_uploads, doc_deleted, chats_filed, cursor?}`` — hand it to
+    dropped_uploads, doc_deleted, chats_filed, cursor?, ink_conflicts?}`` — hand it to
     ``after_commit`` for the derived-data work and the room fan-out.
     ``chats_filed``: the folder conversations a tree delete filed into the
     library chat's history (``after_commit`` adds ``shares_stopped``). ``dropped_uploads``: the
@@ -719,8 +721,8 @@ def _apply(conn, page_id: str, ops: list[dict], *, actor: str, client: str = "",
               "doc_deleted": batch.doc_deleted, "chats_filed": batch.chats_filed}
     if cursor is not None:
         result["cursor"] = cursor
-    if batch.ink_conflict is not None:
-        result["ink_conflict"] = batch.ink_conflict
+    if batch.ink_conflicts:
+        result["ink_conflicts"] = batch.ink_conflicts
     return result
 
 

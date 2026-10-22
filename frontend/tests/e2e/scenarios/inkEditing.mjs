@@ -555,7 +555,7 @@ export async function inkEditingScenarios({ server, browser, alice, bob, makePdf
     await until(async () => (await menu().count()) === 0, { what: "the selection dropped" });
   };
 
-  await step("ink edit: the Color row marks the colour every selected stroke shares and none for a mix; a custom colour recolours, keeps a highlighter's opacity and shows on the custom swatch", async () => {
+  await step("ink edit: the Color row marks the colour every selected stroke shares and none for a mix; a custom colour recolours, keeps a highlighter's opacity and shows on the custom swatch; a pen swatch on pens and a highlighter keeps each opacity", async () => {
     // (after the Style step: "thin" green, "other" blue, and the dashed highlighter "hl", selected)
     const colors = () => menu().locator(".inkEditOptions[aria-label='Selected ink color']");
     const openColors = async () => {
@@ -567,15 +567,19 @@ export async function inkEditingScenarios({ server, browser, alice, bob, makePdf
     const marked = () => colors().locator(".colorBtn.selected").evaluateAll((els) => els.map((el) => el.getAttribute("aria-label") || el.title));
     const custom = () => colors().locator(".inkCustomColor");
     const hlBlock = async () => (await inkBlocks()).find((b) => b.ink.strokes.some((s) => s.id === "hl"));
+    // a lasso through these page points
+    const lassoRound = async (points) => {
+      const start = await point(...points[0]);
+      await page.mouse.move(start.x, start.y); await page.mouse.down();
+      for (const [x, y] of [...points.slice(1), points[0]]) {
+        const p = await point(x, y); await page.mouse.move(p.x, p.y, { steps: 3 });
+      }
+      await page.mouse.up();
+    };
     await dropSelection();
     // a mix: the lasso round both pens
     await page.getByRole("button", { name: /^Lasso \(L\)/ }).tap();
-    const start = await point(65, 205);
-    await page.mouse.move(start.x, start.y); await page.mouse.down();
-    for (const [x, y] of [[215, 205], [215, 285], [65, 285], [65, 205]]) {
-      const p = await point(x, y); await page.mouse.move(p.x, p.y, { steps: 3 });
-    }
-    await page.mouse.up();
+    await lassoRound([[65, 205], [215, 205], [215, 285], [65, 285]]);
     await menu().waitFor();
     await openColors();
     assertEq(JSON.stringify(await marked()), "[]", "green and blue: no swatch is marked");
@@ -594,6 +598,11 @@ export async function inkEditingScenarios({ server, browser, alice, bob, makePdf
     assertEq(await custom().evaluate((el) => el.style.getPropertyValue("--ink-custom")), "#fde047", "in the stroke's colour");
     const input = custom().locator("input[type=color]");
     assertEq(await input.getAttribute("aria-label"), "Custom color", "the custom input is named as every colour picker's");
+    // keyboard focus on the picker, which is invisible, rings its swatch as on every swatch
+    await colors().locator("button.colorBtn").last().focus();
+    await page.keyboard.press("Tab");
+    assert(await input.evaluate((el) => el.matches(":focus-visible")), "Tab reaches the custom colour");
+    assertEq(await custom().evaluate((el) => getComputedStyle(el).outlineStyle), "solid", "its swatch carries the focus ring");
     // a colour picked in the native picker (set as the browser sets it, past React's value tracker)
     await input.evaluate((el, value) => {
       Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set.call(el, value);
@@ -614,6 +623,20 @@ export async function inkEditingScenarios({ server, browser, alice, bob, makePdf
     await page.getByRole("button", { name: "Undo ink", exact: true }).tap();
     await page.getByText("Undone: ink color change (page 1).", { exact: true }).waitFor();
     await until(async () => (await hlBlock()).ink.strokes[0].color === "#fde047", { what: "the colour undone" });
+    // the pens and the highlighter: a pen swatch recolours all three, each keeping its opacity (the
+    // swatch's alpha is a pen's, and would turn the highlighter opaque)
+    if (await menu().count()) await dropSelection();   // (Escape with nothing selected would close the strip)
+    const lasso = page.getByRole("button", { name: /^Lasso \(L\)/ });
+    if ((await lasso.getAttribute("aria-pressed")) !== "true") await lasso.tap();
+    await lassoRound([[65, 205], [215, 205], [215, 345], [65, 345]]);
+    await menu().waitFor();
+    await openColors();
+    await colors().getByRole("button", { name: "Violet", exact: true }).tap();
+    const looks = async () => (await inkBlocks()).flatMap((b) => b.ink.strokes).map((s) => `${s.id} ${s.color} ${s.opacity ?? 1}`).sort();
+    await until(async () => (await looks()).every((look) => look.includes("#7c3aed")), { what: "all three recoloured" });
+    assertEq(JSON.stringify(await looks()), JSON.stringify(["hl #7c3aed 0.6", "other #7c3aed 1", "thin #7c3aed 1"]), "each its own opacity");
+    await page.getByRole("button", { name: "Undo ink", exact: true }).tap();
+    await until(async () => (await hlBlock()).ink.strokes[0].color === "#fde047", { what: "the recolour undone" });
     assertNoProblems(page);
   });
 

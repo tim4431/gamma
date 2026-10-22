@@ -129,7 +129,7 @@ function kindOf(conflict) {
 // The sides: a glyph, a word, where it lives. (The API keeps mine / theirs.)
 const SIDE = {
   mine: { label: T("Local"), hint: T("this clone"), Icon: HardDriveIcon },
-  theirs: { label: T("Remote"), hint: "origin", Icon: ServerIcon },
+  theirs: { label: T("Remote"), hint: T("origin"), Icon: ServerIcon },
   result: { label: T("Merged"), hint: T("both edits in one text"), Icon: MergeIcon },
 };
 
@@ -155,13 +155,14 @@ export function Marked({ parts }) {
 }
 
 // One version of the block: a header naming the side, a tag when it is the
-// text in the block now, a radio to pick it, the text with the marks.
+// text in the block now, a radio to pick it, the text with the marks. Its
+// name is the side and the hint it shows (`hint`, else the side's own).
 function Version({ side, parts, current, hint, group, selected, onSelect, busy }) {
   const s = SIDE[side];
   const pickable = Boolean(onSelect);
   return (
     <section className={`mergeVersion ${side} ${current ? "current" : ""} ${selected === side ? "selected" : ""}`}
-      aria-label={t("{label} ({hint})", { label: t(s.label), hint: t(s.hint) })} onClick={pickable ? () => onSelect(side) : undefined}>
+      aria-label={t("{label} ({hint})", { label: t(s.label), hint: hint || t(s.hint) })} onClick={pickable ? () => onSelect(side) : undefined}>
       <header className="mergeVersionHead">
         {pickable ? (
           <input type="radio" className="mergePick" name={group} value={side} checked={selected === side} disabled={busy}

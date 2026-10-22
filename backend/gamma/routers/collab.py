@@ -41,11 +41,12 @@ def _scope_page(request: Request, ws: str, page_id: str):
 @router.post("/pages/{page_id}/ops")
 def post_ops(page_id: str, payload: OpsRequest, request: Request):
     """Apply a batch of block ops to a page: ``{client, batch?, ops,
-    cursor?}`` → ``{seq, at, ops}`` with the ops as applied (positions the
-    server had to re-key carry their final value). ``cursor`` (``{block,
-    anchor, head}``, the writer's caret in the text after the batch) is
-    fanned out with the batch and stored as the writer's presence. A batch
-    id already applied for this client gets the same answer again, nothing
+    cursor?}`` → ``{seq, at, ops, ink_conflicts?}`` with the ops as applied
+    (positions the server had to re-key carry their final value) and each
+    ink merge's report by block. ``cursor`` (``{block, anchor, head}``, the
+    writer's caret in the text after the batch) is fanned out with the
+    batch and stored as the writer's presence. A batch id already applied
+    for this client gets the same answer again (without reports), nothing
     re-applied. A refused batch: ``{detail, missing?, conflict?, index?}``
     (gamma/ops.py ``OpError``). A workspace editor or an edit share. Sync
     def, like every endpoint that touches a database: the batch may wait on
@@ -68,8 +69,8 @@ def post_ops(page_id: str, payload: OpsRequest, request: Request):
                 **({"conflict": e.conflict, "index": e.index} if e.conflict else {})}
         return JSONResponse(status_code=e.status, content=body)
     out = {"seq": result["seq"], "at": result["at"], "ops": result["ops"]}
-    if "ink_conflict" in result:  # an ink merge's {clean, lost_ours, returned} (handwriting.md "Two writers")
-        out["ink_conflict"] = result["ink_conflict"]
+    if "ink_conflicts" in result:  # each ink merge's {clean, lost_ours, returned} by block (handwriting.md "Two writers")
+        out["ink_conflicts"] = result["ink_conflicts"]
     return out
 
 

@@ -555,8 +555,8 @@ def ub_update_block(block_id: str, payload: UBUpdateRequest, request: Request):
                 op["base_ids"] = payload.base_ids
     result = _ops(ws, page_id, [op], request, scope)
     out = {"ok": True, "updated_at": result["at"], "seq": result["seq"]}
-    if "ink_conflict" in result:
-        out["ink_conflict"] = result["ink_conflict"]
+    if block_id in result.get("ink_conflicts", {}):
+        out["ink_conflict"] = result["ink_conflicts"][block_id]
     if payload.content is not None:
         out["content"] = result["ops"][0].get("content", payload.content)
     if payload.properties is not None:

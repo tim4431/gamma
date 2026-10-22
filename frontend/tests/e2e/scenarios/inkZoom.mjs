@@ -109,7 +109,7 @@ export async function inkZoomScenarios({ server, browser, alice, makePdf, step, 
     assertNoProblems(page);
   });
 
-  await step("ink zoom: a drag of the grip shows the height as it moves, the scroller following, and applies it once at the release; a reload keeps it; ↑ / ↓ apply at once", async () => {
+  await step("ink zoom: a drag of the grip shows the height as it moves, the scroller following and the page's pixels filling the view, and applies it once at the release (a key waits for it); a reload keeps it; ↑ / ↓ apply at once", async () => {
     const grip = () => page.getByRole("separator", { name: "Zoom window height", exact: true });
     const pref = () => page.evaluate(() => localStorage.getItem("gamma-ink-zoom-height"));
     // the panel's height, and whether the scroller ends where the panel starts
@@ -117,12 +117,23 @@ export async function inkZoomScenarios({ server, browser, alice, makePdf, step, 
       const scroller = await page.locator(".pdfViewer").boundingBox(), shown = await panel().boundingBox();
       return { height: shown.height, gap: shown.y - (scroller.y + scroller.height) };
     };
+    // the css px of the page in the view that no drawn raster stands under
+    const unpainted = () => page.locator(".inkZoomView").evaluate((v) => {
+      const view = v.getBoundingClientRect(), pg = v.querySelector(".inkZoomPage").getBoundingClientRect();
+      const top = Math.max(view.top, pg.top), bottom = Math.min(view.bottom, pg.bottom);
+      const drawn = [...v.querySelectorAll(".inkZoomRaster")].find((c) => c.style.display === "block" && c.width > 0);
+      if (!drawn) return bottom - top;
+      const r = drawn.getBoundingClientRect();
+      return Math.max(0, r.top - top) + Math.max(0, bottom - r.bottom);
+    });
     const before = await state();
     assertEq(await pref(), "200");
     const g = await grip().boundingBox();
+    const dragTo = (dy) => page.mouse.move(g.x + g.width / 2, g.y + g.height / 2 - dy, { steps: 6 });
+    await grip().focus();
     await page.mouse.move(g.x + g.width / 2, g.y + g.height / 2);
     await page.mouse.down();
-    await page.mouse.move(g.x + g.width / 2, g.y + g.height / 2 - 60, { steps: 6 });
+    await dragTo(60);
     // while it moves: the panel and the scroller show the height, the viewer's controls above it ...
     await until(async () => Math.abs((await docked()).height - 260) <= 1, { what: "the panel follows the grip" });
     near((await docked()).gap, 0, 1.5, "the scroller ends where the panel starts");
@@ -131,6 +142,18 @@ export async function inkZoomScenarios({ server, browser, alice, makePdf, step, 
     // ... while the preference, and the window every page's layers read, wait for the release
     assertEq(await pref(), "200", "nothing written during the drag");
     sameBox(await box(), before, "the window waits for the release");
+    // a key during the drag waits for it too: the drag owns the height until it ends
+    await page.keyboard.press("ArrowUp");
+    await page.evaluate(() => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done))));
+    assertEq(await pref(), "200", "↑ during the drag applies nothing");
+    near((await docked()).height, 260, 1, "the panel keeps the dragged height");
+    near((await docked()).gap, 0, 1.5, "and the scroller still ends where it starts");
+    // grown past the margin the window's pixels were drawn with, the view fills with the page while held
+    await dragTo(120);
+    await until(async () => Math.abs((await docked()).height - 320) <= 1, { what: "the panel at its tallest" });
+    await until(async () => (await unpainted()) <= 1, { what: "the page's pixels under the whole view while the grip is held" });
+    await dragTo(60);
+    await until(async () => Math.abs((await docked()).height - 260) <= 1, { what: "back to 260" });
     await page.mouse.up();
     await until(async () => (await pref()) === "260", { what: "the height applied at the release" });
     await until(async () => {

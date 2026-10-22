@@ -26,7 +26,7 @@ import {
   CLOSED_SHAPES, DEFAULT_NIB, FILL_OPACITY, NIB_HAIR, encodedStyle, isClosedShape, nibOutline, strokeNib,
 } from "./ink";
 import { brushOpacities, brushWidths, finishStroke, strokeChannels, widthLaw } from "./finishStroke.js";
-import { GRAIN_PX, GRAIN_UNITS, grainImage, grainUri } from "./grain.js";
+import { GRAIN_PX, GRAIN_UNITS, grainHex, grainImage, grainUri } from "./grain.js";
 import { InkLineChoices, InkStyleMenu, InkStylePicker, brushValue } from "./InkStylePicker.jsx";
 import {
   CANCEL_MS, CANCEL_PX, HOLD_MIN_MS, HOLD_MOVE, HOLD_MS, PASTE_MOVE, REFIT_PX, followHold, holdQualifies, recognise,
@@ -43,7 +43,7 @@ import { makeStabilizer } from "./stabilizer.js";
 import { duplicateOffset, measureSurface } from "./surfaceScale.js";
 import { magForWidth, moveWindow, setMag } from "./zoomWindow.js";
 import { makeChordDetector } from "./fingerChords.js";
-import { INK_COLORS, colorName, pickerColors, swatchCss } from "../shared/model/palette.js";
+import { INK_COLORS, colorName, pickerColors, swatchCss, swatchMarker } from "../shared/model/palette.js";
 import { usePalette } from "../shared/ui/paletteContext.js";
 import * as inkStore from "./inkStore";
 import * as playback from "../replay/playback.js";
@@ -199,27 +199,28 @@ export function swallowClick() {
 // <pattern> per pencil colour drawn on the surface, in the SVG's own <defs>
 // (ids are the document's, so every layer and card names its own), its
 // tile GRAIN_UNITS page units from the page's corner, so the grain zooms
-// with the paper and meets the live canvas's. Strokes reads the fill
-// through GrainContext; without it a pencil is filled plain.
+// with the paper and meets the live canvas's. A pattern is named for its
+// tile (grainHex), so colours of one r, g, b share it and no two tiles
+// share a name. Strokes reads the fill through GrainContext; without it a
+// pencil is filled plain.
 const GrainContext = createContext(null);
-const colorKey = (color) => String(color).toLowerCase().replace(/[^a-z0-9]/g, "");
 function useGrain(inks) {
   const prefix = "inkGrain-" + useId().replace(/[^A-Za-z0-9_-]/g, "");
-  const colors = new Set();
-  for (const ink of inks) for (const s of ink?.strokes || []) if (s.brush === "pencil") colors.add(String(s.color || INK_COLORS[0]).toLowerCase());
-  const key = [...colors].sort().join(" ");
+  const tiles = new Set();
+  for (const ink of inks) for (const s of ink?.strokes || []) if (s.brush === "pencil") tiles.add(grainHex(s.color || INK_COLORS[0]));
+  const key = [...tiles].sort().join(" ");
   const fill = useMemo(() => {
     const known = new Set(key ? key.split(" ") : []);
     return (color) => {
-      const c = String(color || INK_COLORS[0]).toLowerCase();
-      return known.has(c) ? `url(#${prefix}-${colorKey(c)})` : null;
+      const hex = grainHex(color || INK_COLORS[0]);
+      return known.has(hex) ? `url(#${prefix}-${hex})` : null;
     };
   }, [prefix, key]);
   const defs = key ? (
     <defs>
-      {key.split(" ").map((c) => (
-        <pattern key={c} id={`${prefix}-${colorKey(c)}`} patternUnits="userSpaceOnUse" width={GRAIN_UNITS} height={GRAIN_UNITS}>
-          <image href={grainUri(c)} width={GRAIN_UNITS} height={GRAIN_UNITS} preserveAspectRatio="none" />
+      {key.split(" ").map((hex) => (
+        <pattern key={hex} id={`${prefix}-${hex}`} patternUnits="userSpaceOnUse" width={GRAIN_UNITS} height={GRAIN_UNITS}>
+          <image href={grainUri(`#${hex}`)} width={GRAIN_UNITS} height={GRAIN_UNITS} preserveAspectRatio="none" />
         </pattern>
       ))}
     </defs>
@@ -2396,19 +2397,20 @@ function InkZoomRect({ wrapRef, page, zoom, width, height, onZoom }) {
 }
 
 // A picker's swatches ({hex, alpha}, shared/model/palette.js pickerColors)
-// and a custom colour, the current `color` (hex) marked; onColor(hex,
-// alpha) — a swatch brings its alpha, the custom picker keeps the current
-// one. A pen preset's colours (markup/MarkupToolbar.jsx), the handwriting
+// and a custom colour, the current `color` (hex) at `alpha` marked
+// (swatchMarker); onColor(hex, alpha) — a swatch brings its alpha, the
+// custom picker keeps the current one. A pen preset's colours (markup/MarkupToolbar.jsx), the handwriting
 // selection menu and a text box's (markup/TextBoxLayer.jsx
 // TextStyleChoices, which ignores the alpha).
 export function ColorChoices({ colors, color, alpha, onColor }) {
   const current = String(color || "").toLowerCase();
   const listed = colors.some((c) => c.hex === current);
+  const marked = swatchMarker(colors, current, alpha);
   return <>
     {colors.map((c, i) => (
-      <button key={c.hex + c.alpha + i} type="button" className={"colorBtn inkSwatch" + (current === c.hex ? " selected" : "")}
+      <button key={c.hex + c.alpha + i} type="button" className={"colorBtn inkSwatch" + (marked(c) ? " selected" : "")}
         style={{ background: swatchCss(c) }} onClick={() => onColor(c.hex, c.alpha)} title={inkColorName(c.hex)} aria-label={inkColorName(c.hex)}
-        aria-pressed={current === c.hex} />
+        aria-pressed={marked(c)} />
     ))}
     {/* no colour (a selection's fill of None, or mixed): nothing is marked */}
     <label className={"colorBtn inkSwatch inkCustomColor" + (listed || !current ? "" : " selected")}
@@ -2618,7 +2620,8 @@ function InkSelectionMenu({ surface, wrapRef, ignoreRef, box, width, strokes, ca
       </div> : null}
       {options === "color" ? <div className="inkEditOptions" aria-label={t("Selected ink color")}>
         <ColorChoices colors={pickerColors(palette, kinds.every((k) => k === "highlighter") ? "highlighter" : "pen")}
-          color={shared("color")} alpha={shared("opacity")} onColor={(color, opacity) => onAction("style", { color, opacity })} />
+          color={shared("color")} alpha={shared("opacity")}
+          onColor={(color, opacity) => onAction("style", kinds.length > 1 ? { color } : { color, opacity })} />
       </div> : null}
       {options === "width" ? kinds.map((kind) => <div className="inkEditOptions" key={kind} aria-label={t("{kind} width", { kind: inkKindName(kind) })}>
         {kinds.length > 1 ? (kind === "highlighter" ? <HighlightIcon aria-label={t("Highlighter")} /> : <PenIcon aria-label={t("Pen")} />) : null}

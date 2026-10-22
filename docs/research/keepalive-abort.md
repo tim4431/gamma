@@ -171,13 +171,14 @@ in 7. Left unread, it was cut every time it came (88 of 90), at 80 to
 With the answer held, every keepalive fetch and beacon of these closes
 kept its connection and took its answer 2 s later (120/120 in the
 shell, 150/150 in Chromium, 90/90 in WebKit). The browsers hung up on
-all but one plain fetch before its answer, 13 to 389 ms after the close.
+every plain fetch before its answer, 13 to 389 ms after the close.
 The median was 44 ms in the shell, 55 ms in Chromium and 44 ms in
 WebKit.
 
-A body left unread for 2 s still came whole up to 65 KiB. Windows had
-taken it into the socket buffers before the browser hung up. Only the
-1 MiB bodies were cut.
+In Chromium a body left unread for 2 s still came whole up to 65 KiB:
+Windows had taken it into the socket buffers before the browser hung
+up, and only its 1 MiB bodies were cut. WebKit cut its 65 KiB bodies
+whatever the server did.
 
 For a slow connection, a SOCKS5 proxy in front of the server answered
 each new connection after 50 or 200 ms, as a new connection over a real
@@ -269,7 +270,9 @@ When the answer's 2-byte body came with its headers, WebKit took the
   new to send. The ledger needs neither order.
 - Nothing queued in `pagehide` is sure to run: WebKit ran no task after
   the two events. A request the page needs at a close starts in the
-  listener itself, as the app's do.
+  listener itself, as the app's do, except a handwriting `PUT` that
+  waits for its upload (a draft not named yet, or one the server will
+  merge), which the draft journal keeps.
 
 ## Still open
 

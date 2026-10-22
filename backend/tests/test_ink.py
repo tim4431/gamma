@@ -179,6 +179,27 @@ def test_a_slanted_pencil_fits_the_w_and_o_ranges():
         assert message in str(e.value)
 
 
+def test_a_coordinate_stays_where_every_writer_can_place_it():
+    """x and y, their running sums, stay within ±MAX_XY hundredths of a
+    point (a hundred times the largest page). A PDF writer cannot place a
+    number past 28 digits, so a file or a foreign /InkList past the bound
+    is refused, rather than taken and then failing every annotated-PDF
+    export of its page."""
+    from gamma.pdf_export import annotate_pdf, page_with_ink
+
+    far = [inkmod.MAX_XY, -inkmod.MAX_XY, -2 * inkmod.MAX_XY, 2 * inkmod.MAX_XY]
+    edge = inkmod.parse_ink(_ink(strokes=[{"id": "far", "ch": "xy", "pts": far}]))
+    assert annotate_pdf(_blank_pdf(), [], ink=[{"ink": edge, "note": "", "id": "blk"}])[1] == 1
+    assert page_with_ink(_blank_pdf(), 1, [edge])[1] == 1
+    for pts, channel in (([inkmod.MAX_XY + 1, 0], "x"), ([0, 0, 1, inkmod.MAX_XY, 0, 1], "y"), ([10 ** 32, 0], "x")):
+        with pytest.raises(inkmod.InkError, match=f"channel {channel}"):
+            inkmod.parse_ink(_ink(strokes=[{"id": "far", "ch": "xy", "pts": pts}]))
+    for x in (1e30, -1e30, 1e306):
+        with pytest.raises(inkmod.InkError):
+            inkmod.from_pdf_ink([[10, 10, x, 40]], 1, "#000000", 1, 1, PAGE_W, PAGE_H)
+    assert inkmod.parse_ink(inkmod.from_pdf_ink([[10, 10, 1e7, 40]], 1, "#000000", 1, 1, PAGE_W, PAGE_H)).strokes
+
+
 def test_nan_is_refused_at_parse_and_never_written():
     body = b'{"format": "gamma-ink", "version": 2, "space": {"kind": "canvas", "width": 1, "height": 1}, "strokes": [], "x": NaN}'
     with pytest.raises(inkmod.InkError):
@@ -259,6 +280,30 @@ def test_svg_and_pdf_ops_render_every_stroke():
     ops = inkmod.pdf_path_ops(ink, lambda x, y: (x, PAGE_H - y))
     # 4 pen segments each stroked alone + the highlighter's one polyline
     assert ops.count(b" l S") == 5 and ops.count(b" m ") == 5 and ops.startswith(b"q 1 J 1 j")
+
+
+def test_a_colour_s_alpha_is_drawn_as_the_screen_draws_it():
+    """The screen fills an rgba() colour under fill-opacity, so the two
+    multiply, but paints a pencil with its grain tile, which takes the
+    colour's r, g and b alone: every exporter draws the same opacity."""
+    from PyPDF2 import PdfReader
+    from gamma.pdf_export import annotate_pdf
+
+    line = inkmod.encode_points([{"x": 100, "y": 100}, {"x": 140, "y": 120}, {"x": 180, "y": 100}], "xy")
+    pencil = {"id": "pc", "brush": "pencil", "pen": False, "color": "rgba(30,136,229,0.5)", "size": 9, "ch": "xy", "pts": line}
+    nib = {"id": "nb", "brush": "calligraphy", "nib": 45, "pen": False, "color": "rgba(198,40,40,0.6)", "opacity": 0.5,
+           "size": 6, "ch": "xyw", "pts": inkmod.encode_points([{"x": 100, "y": 200, "w": 1}, {"x": 160, "y": 230, "w": 1}], "xyw")}
+    marker = {"id": "hl", "tool": "highlighter", "color": "rgba(255,226,143,0.65)", "size": 8, "opacity": 0.5, "ch": "xy", "pts": line}
+    ink = inkmod.parse_ink(_ink(strokes=[pencil, nib, marker]))
+    assert [inkmod.drawn_alpha(s, inkmod.parse_color(s.color)[3]) for s in ink.strokes] == pytest.approx([1, 0.3, 0.325])
+    svg = inkmod.to_svg(ink)
+    assert 'fill="url(#inkGrain-1e88e5)"/>' in svg, "a pencil at its opacity, the colour's alpha left out"
+    assert 'fill="rgb(198,40,40)" fill-opacity="0.3"/>' in svg and 'stroke-opacity="0.33"' in svg
+    ops = inkmod.pdf_path_ops(ink, lambda x, y: (x, PAGE_H - y))
+    assert sorted(inkmod.pdf_path_resources(ops)) == ["/GSink300", "/GSinkM325"]
+    out, _ = annotate_pdf(_blank_pdf(), [], ink=[{"ink": ink, "note": "", "id": "blk"}])
+    alphas = sorted(float(a.get_object()["/CA"]) for a in PdfReader(io.BytesIO(out)).pages[0]["/Annots"])
+    assert alphas == pytest.approx([0.3, 0.325, 1])
 
 
 def test_band_0_is_drawn_first_in_every_renderer():
@@ -370,6 +415,29 @@ def test_a_pencil_is_painted_with_its_grain_anchored_at_the_page_corner():
     assert ops.count("/Pattern cs /Graindc2626_1_0_0_1_0_792 scn") == 1
     assert "q /GSink500 gs\n/Pattern CS /Grain1f1f1f_1_0_0_1_0_792 SCN 3.00 w [6 6] 0 d" in ops
     assert "0.15 0.39 0.92 RG" in ops and "1.00 0.88 0.40 RG" in ops
+    # the tile is smoothed when magnified, as on the screen (pdf.js draws it in blocks otherwise)
+    from PyPDF2 import PdfReader
+    from gamma.pdf_export import page_with_ink
+    page = PdfReader(io.BytesIO(page_with_ink(_blank_pdf(), 1, [ink])[0])).pages[0]
+    tiles = [p.get_object()["/Resources"]["/XObject"]["/Tile"] for p in page["/Resources"]["/Pattern"].values()]
+    assert len(tiles) == 2 and all(t["/Interpolate"].value is True for t in tiles)
+
+
+def test_grain_tiles_keep_nothing_per_colour():
+    """The Markdown export's to_svg writes a tile per pencil colour, and the
+    colours are a writer's data: nothing is kept per colour (only the
+    palette differs; the rest of the PNG is made once)."""
+    import tracemalloc
+    assert inkmod.grain_png("#1F1F1F") == inkmod.grain_png("rgb(31, 31, 31)")
+    tracemalloc.start()
+    try:
+        before = tracemalloc.get_traced_memory()[0]
+        for i in range(3000):
+            inkmod.grain_png(f"rgb({i % 256},{i // 256},7)")
+        kept = tracemalloc.get_traced_memory()[0] - before
+    finally:
+        tracemalloc.stop()
+    assert kept < 100_000, f"{kept} bytes kept for 3000 colours"
 
 
 def test_the_grain_s_pattern_matrix_carries_the_strokes_mapping():
@@ -572,9 +640,13 @@ def test_upload_ink_rejects_bad_files(guest):
                    headers={"Content-Type": "application/json"})
     assert r.status_code == 400 and "finite" in r.json()["detail"]
     # an integer past the largest double in an extra key is a client's Infinity too: refused, not a 500
-    r = guest.post("/api/upload-ink", content=b'{"format": "gamma-ink", "version": 2, "space": {"kind": "canvas", "width": 1, "height": 1}, "strokes": [], "x": 1' + b"0" * 400 + b"}",
-                   headers={"Content-Type": "application/json"})
+    head = b'{"format": "gamma-ink", "version": 2, "space": {"kind": "canvas", "width": 1, "height": 1}, "strokes": [], "x": '
+    r = guest.post("/api/upload-ink", content=head + b"1" + b"0" * 400 + b"}", headers={"Content-Type": "application/json"})
     assert r.status_code == 400 and "finite" in r.json()["detail"]
+    # and what the parser itself refuses: an integer past Python's 4300 digits, nesting deeper than its stack
+    for value in (b"1" + b"0" * 5000, b"[" * 200_000 + b"]" * 200_000):
+        r = guest.post("/api/upload-ink", content=head + value + b"}", headers={"Content-Type": "application/json"})
+        assert r.status_code == 400 and r.json()["detail"].startswith("invalid ink file")
 
 
 def test_orphan_bookkeeping_follows_ink_url(guest, monkeypatch):
@@ -625,6 +697,9 @@ def test_read_upload_caches_the_parsed_file_by_path_and_stat(guest, tmp_path):
     # a stored file no client could read (an extra key past the largest double) is unreadable, not an error
     (tmp_path / ("c" * 24 + ".ink")).write_bytes(_bytes({**_ink(), "x": 10 ** 400}))
     assert inkmod.read_upload(tmp_path, f"/api/uploads/{'c' * 24}.ink") is None
+    # nor one the parser refuses: an integer past Python's 4300 digits
+    (tmp_path / ("d" * 24 + ".ink")).write_bytes(_bytes(_ink())[:-1] + b',"x":1' + b"0" * 5000 + b"}")
+    assert inkmod.read_upload(tmp_path, f"/api/uploads/{'d' * 24}.ink") is None
 
 
 # --- two writers, one group ------------------------------------------------------------
@@ -666,7 +741,7 @@ def test_two_writers_drawing_in_one_group_both_keep_their_strokes(guest):
     r = guest.post(f"/api/pages/{page}/ops", json={"client": "one", "ops": [
         {"op": "set", "id": "mg1", "props": {"ink_url": theirs, "ink_strokes": 2}, "base_props": {"ink_url": u0}}]})
     assert r.json()["ops"][0]["props"]["ink_url"] == theirs  # its base was current: as sent
-    assert "ink_conflict" not in r.json()
+    assert "ink_conflicts" not in r.json()
     r = guest.post(f"/api/pages/{page}/ops", json={"client": "two", "ops": [
         {"op": "set", "id": "mg1", "props": {"ink_url": ours, "ink_strokes": 2, "pdf_position": None},
          "base_props": {"ink_url": u0}}]})
@@ -674,8 +749,8 @@ def test_two_writers_drawing_in_one_group_both_keep_their_strokes(guest):
     applied = r.json()["ops"][0]["props"]
     assert applied["ink_url"] not in (u0, ours, theirs) and applied["ink_strokes"] == 3
     assert applied["pdf_position"]["pageNumber"] == 1 and "pdf_page" not in applied
-    assert r.json()["ink_conflict"] == {"clean": True, "lost_ours": [], "returned": []}
-    assert "ink_conflict" not in r.json()["ops"][0]   # never in the echo (the op log, the fan-out)
+    assert r.json()["ink_conflicts"] == {"mg1": {"clean": True, "lost_ours": [], "returned": []}}   # by block
+    assert "ink_conflicts" not in r.json()["ops"][0]   # never in the echo (the op log, the fan-out)
     props, ink = _stored(guest, "mg1")
     assert props["ink_url"] == applied["ink_url"]
     assert [(s.id, s.color) for s in ink.strokes] == [("a", "#dc2626"), ("x", "#1f1f1f"), ("b", "#1f1f1f")]
@@ -871,9 +946,12 @@ def test_importer_takes_the_ink_list_when_gamma_ink_holds_a_number_no_client_rea
     from gamma.routers.imports import _extract_pdf_annotations
 
     bad = json.dumps(_ink(strokes=[{"id": "huge", "ch": "xy", "pts": [10 ** 400, 100]}]))
-    (found,) = _extract_pdf_annotations(_pdf_with_ink_annotation(gamma_ink=bad))
-    assert [s.id for s in found["ink"].strokes] == ["i0"]
-    assert inkmod.dumps(found["ink"]).startswith(b'{"format":"gamma-ink"')
+    # one the parser refuses (past Python's 4300 digits, nested past its stack) falls back the same way
+    unparsable = [bad.replace(str(10 ** 400), "1" + "0" * 5000), bad[:-1] + ', "x": ' + "[" * 200_000 + "]" * 200_000 + "}"]
+    for payload in (bad, *unparsable):
+        (found,) = _extract_pdf_annotations(_pdf_with_ink_annotation(gamma_ink=payload))
+        assert [s.id for s in found["ink"].strokes] == ["i0"]
+        assert inkmod.dumps(found["ink"]).startswith(b'{"format":"gamma-ink"')
 
 
 def test_foreign_ink_past_the_largest_number_is_refused_as_any_bad_annotation():

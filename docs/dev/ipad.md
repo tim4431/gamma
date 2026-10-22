@@ -119,7 +119,7 @@ The web app reads `platform` and the flags `ink`, `hold`, `pencil`,
 `pencilPhases`, `pencilRoll`, `haptics` and `servers`, never `version`:
 what a shell does not declare it does not do, and the web leaves it out
 (no `hold` listener, no `haptic`, no Apple Pencil settings). `inkLooks`
-is informational, and nothing in the web reads it: it says what of the
+is information only: it says what of the
 claim's look the shell's live line can draw (below), and the page sends
 the whole look in every claim whatever a shell lists. The looks:
 `pressure`, the width from the Pencil's force by the brush; `dash`;
@@ -366,11 +366,11 @@ held squeeze is never lost. Each tool switch a gesture makes posts
 and a hold that snaps posts `snap` (under `haptics`, with *Haptics* on:
 `App.jsx` `hostHaptic` checks both, and the shell plays what it is
 sent). On iPadOS 17.5 and later the shell plays each kind as Apple's
-feedback for its event (`PencilHaptics`, the choice in `HapticFeel`;
-Apple's "Playing haptic feedback in your app" and the WWDC24 session
-"Squeeze the most out of Apple Pencil"), from a generator made for the
-web view (`init(view:)`, the impact's `init(style:view:)`; one per
-feedback, kept), at `at` when there is one:
+feedback for its event (`PencilHaptics`, as `HapticFeel` picks it). The
+sources are Apple's "Playing haptic feedback in your app" and the WWDC24
+session "Squeeze the most out of Apple Pencil". Each feedback has one
+generator made for the web view (`init(view:)`, the impact's
+`init(style:view:)`), kept, and plays at `at` when there is one:
 
 | Kind | Feedback | Apple's use |
 |---|---|---|
@@ -379,8 +379,8 @@ feedback, kept), at `at` when there is one:
 | `tool` | `UIImpactFeedbackGenerator(style: .light)`, `impactOccurred(at:)` | an impact (Apple names no feedback for a tool switch) |
 
 The canvas generator's other feedback, `alignmentOccurred(at:)`, is
-Apple's for an object snapping to a guide or a ruler; the shell does not
-play it (a stroke along the ruler's edge plays nothing). A gesture's
+Apple's for an object snapping to a guide or a ruler. The shell does not
+play it: a stroke along the ruler's edge plays nothing. A gesture's
 `tool` tick comes without a place and plays where the Pencil hovered for
 that gesture: `PencilGestures` keeps the tap's or the squeeze's
 `hoverPose` location, in the web view's points, for a second (none when
@@ -388,9 +388,9 @@ the Pencil was too far off to hover). The system goes by the place to
 play the feedback in an Apple Pencil Pro (device checks 16 and 21).
 Without a place, `select` and `tool` play their generator's call that
 takes none (`selectionChanged()`, `impactOccurred()`), and so does
-`snap`, as the light impact, since its canvas feedback needs one; before
-17.5 every kind is the plain light impact. An iPad has no motor to play
-either.
+`snap`, as the light impact, since its canvas feedback needs one. Before
+17.5 every kind is the plain light impact. An iPad itself has no motor:
+only an Apple Pencil Pro plays these.
 
 ### Gamma Cloud
 
@@ -909,8 +909,10 @@ Only an iPad can show these, and none has been run yet:
     still on its way (the app closed from the app switcher, a server
     switch, a reload): whether their POST lands, with keepalive or as
     its plain copy ([collab.md](collab.md#keepalive)). A closing WebKit
-    tab refuses the keepalive copy, and its plain copy never reached a
-    local server from WebKit on Windows
+    tab refuses the keepalive copy. Its plain copy reached a local server
+    from WebKit on Windows in 13 of 45 closes at 1 KiB and 17 of 90 at
+    60–63 KiB. A 65 KiB one was often cut at about 64.8 KB, and almost none
+    arrived once a connection took 50 or 200 ms to open
     ([research/keepalive-abort.md](../research/keepalive-abort.md)).
 19. The barrel roll on an Apple Pencil Pro: `rollAngle`'s zero and sign
     against the nib (a clockwise roll should turn the nib clockwise), its
@@ -923,9 +925,11 @@ Only an iPad can show these, and none has been run yet:
     `pathCompleted`, a pen lasso's `selectionChanged` and a gesture's
     light impact should each feel distinct, at its place, and *Haptics*
     off (Settings → Reading & editing → Apple Pencil) should
-    silence all three. Their feel is tuned there, in `HapticFeel` alone.
-    The shell calls no `prepare()`, so a tick that lags its shape or its
-    selection is worth noting.
+    silence all three. `HapticFeel` chooses which feedback each kind
+    plays. The impact's style, and a feedback it does not list yet (such
+    as `alignmentOccurred(at:)`), are set in `PencilHaptics.play`. The
+    shell calls no `prepare()`, so note a tick that lags its shape or its
+    selection.
 
 ### Not built yet
 

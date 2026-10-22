@@ -272,6 +272,9 @@ that list and keeps only its layout in its own rule. The kind label on a card
   primitives layer of app.css with only `:focus-visible`'s specificity:
   a widget that draws its own focus overrides it (the switch's track, the
   key chip, a shape handle's dot, rows that highlight like `.chatHistRow`).
+  A control hidden over another takes the ring there: the custom-colour
+  swatch rings itself for its invisible native picker
+  (`.inkCustomColor:has(input:focus-visible)`).
   Rows that fill a list (menu items, popover items, search results, the
   Settings rail) draw it inside (`outline-offset: -2px`), where the list
   can't clip it.

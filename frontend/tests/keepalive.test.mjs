@@ -233,12 +233,17 @@ test("a request that does not fit its priority's room goes as a plain fetch — 
   assert.deepEqual([ledger.inFlight, b.inFlight], [0, 0]);
 });
 
-// A closing tab fires visibilitychange (hidden) before pagehide. Hidden:
-// the profile and the reading position go (normal), and handwriting's flush
-// (low) sends what planFlush fits into the room the ledger leaves it. Pagehide:
-// the queued page edits (critical) — which have no other copy — and then
-// handwriting's second flush, its PUTs beside the uploads on their way.
-async function closeTab({ edits, drafts, profile = 3 * KiB, readPos = 300 }) {
+// A tab hidden before it closes (`hiddenFirst`, as a tab switched away and
+// then closed): on going hidden the profile and the reading position go
+// (normal), and handwriting's flush (low) sends what planFlush fits into the
+// room the ledger leaves it; on pagehide the queued page edits (critical) —
+// which have no other copy — and then handwriting's second flush, its PUTs
+// beside the uploads on their way. A tab closed while it shows fires
+// pagehide first and visibilitychange after it, in one task
+// (docs/research/keepalive-abort.md): pagehide sends the edits, the profile,
+// the reading position and handwriting's one flush, each clearing its
+// timer, so the visibilitychange after it finds nothing to send.
+async function closeTab({ edits, drafts, profile = 3 * KiB, readPos = 300, hiddenFirst = true }) {
   const b = browser();
   const ledger = createKeepaliveLedger({ fetch: b.fetch });
   const bodies = edits.map((n) => text(n));
@@ -248,18 +253,23 @@ async function closeTab({ edits, drafts, profile = 3 * KiB, readPos = 300 }) {
   const inkRequest = (url, body, ka) => (ka && bodyBytes(body) <= ledger.available("low")
     ? ledger.fetch(url, { method: "POST", body }, { priority: "low" }) : b.fetch(url, { method: "POST", body }));
   const groups = drafts.map((k, i) => ({ id: `g${i}`, uploadBytes: k * KiB, putBytes: 600, beside: false, inFlight: null }));
-  // visibilitychange to hidden
-  ledger.fetch("/api/prefs/profile", { method: "PATCH", body: text(profile) }, { priority: "normal" });
-  ledger.fetch("/api/prefs/read-pos", { method: "PUT", body: text(readPos) }, { priority: "normal" });
-  const hidden = planFlush(groups, ledger.available("low"));
+  const normal = () => {
+    ledger.fetch("/api/prefs/profile", { method: "PATCH", body: text(profile) }, { priority: "normal" });
+    ledger.fetch("/api/prefs/read-pos", { method: "PUT", body: text(readPos) }, { priority: "normal" });
+  };
   const uploading = new Set();
-  hidden.forEach((p, i) => {
-    inkRequest("/api/upload-ink", text(groups[i].uploadBytes), p.keepalive);
-    if (p.keepalive && b.sent.at(-1).keepalive) uploading.add(groups[i].id);
-  });
+  if (hiddenFirst) {   // visibilitychange to hidden
+    normal();
+    const hidden = planFlush(groups, ledger.available("low"));
+    hidden.forEach((p, i) => {
+      inkRequest("/api/upload-ink", text(groups[i].uploadBytes), p.keepalive);
+      if (p.keepalive && b.sent.at(-1).keepalive) uploading.add(groups[i].id);
+    });
+  }
   // pagehide: the edits first (usePageCollab registers its listener first), then handwriting again
   for (const body of bodies) ledger.fetch("/api/pages/p/ops", { method: "POST", body }, { priority: "critical" });
   left = true;
+  if (!hiddenFirst) normal();
   const leaving = planFlush(groups.map((g) => ({ ...g, beside: true, inFlight: uploading.has(g.id) ? "upload" : null })), ledger.available("low"));
   leaving.forEach((p, i) => {
     if (p.send === "both") inkRequest("/api/upload-ink", text(groups[i].uploadBytes), p.keepalive);
@@ -289,6 +299,26 @@ test("closing a tab: handwriting flushes on going hidden, and the edits' POST on
   const huge = await closeTab({ edits: [KEEPALIVE_CAP + 1], drafts: [40] });
   assert.deepEqual([huge.posts[0].keepalive, huge.b.of("/api/upload-ink")[0].keepalive], [false, true]);
   assert.deepEqual(huge.b.refused, []);
+});
+
+test("closing a tab while it shows (pagehide, then visibilitychange in one task): the edits' POST goes with keepalive whenever the edits alone fit the cap, and handwriting's one flush takes the room left", async () => {
+  const editSets = [[], [KiB], [20 * KiB], [30 * KiB, 25 * KiB], [KEEPALIVE_CAP - 2 * KiB], [KEEPALIVE_CAP], [40 * KiB, 24 * KiB]];
+  const draftSets = [[10, 10], [50], [20, 30, 5], [1, 1, 1, 1], [60]];
+  for (const edits of editSets) {
+    for (const drafts of draftSets) {
+      const { b, ledger, posts } = await closeTab({ edits, drafts, hiddenFirst: false });
+      const label = `edits ${edits.map((n) => n / KiB)} KiB, drafts ${drafts} KiB`;
+      assert.equal(posts.length, edits.length, label);
+      assert.ok(posts.every((r) => r.keepalive), `${label}: every edit POST goes with keepalive`);
+      assert.equal(b.of("/api/upload-ink").length, drafts.length, `${label}: each drawing uploaded once`);
+      assert.deepEqual(b.refused, [], `${label}: the browser refused nothing`);
+      assert.equal(ledger.inFlight, b.inFlight, label);
+      assert.ok(b.inFlight <= KEEPALIVE_CAP, label);
+    }
+  }
+  // with nothing queued the one flush carries a 50 KiB drawing and its PUT with keepalive
+  const idle = await closeTab({ edits: [], drafts: [50], hiddenFirst: false });
+  assert.deepEqual([idle.b.of("/api/upload-ink")[0].keepalive, idle.b.of("/api/blocks/g")[0].keepalive], [true, true]);
 });
 
 test("a handwriting request from an earlier flush still on its way when the edits have grown past their room: the edits go with keepalive and as a plain copy at once, and nothing is aborted for them", async () => {

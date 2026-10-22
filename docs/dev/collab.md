@@ -810,7 +810,8 @@ goes plain and claims nothing). Once pagehide has sent them the claim is
 handwriting, the profile and the reading position each flush at
 `pagehide` as well as on going hidden. A tab closed while it shows fires
 `pagehide` first and `visibilitychange` (hidden) after it, in one task:
-every close measured in headless Chromium and WebKit did
+so did every close measured that ran the page's listeners, in headless
+Chromium and WebKit
 ([research/keepalive-abort.md](../research/keepalive-abort.md)). So all
 four go from `pagehide`, and `visibilitychange` finds nothing new to
 send. The claim keeps the edits' room whichever listener runs first:
@@ -980,9 +981,9 @@ drive a pagehide.
   that grew past their room while a drawing's upload from an earlier
   flush was still on its way (leaving for another page takes their
   keepalive copy). At a close the plain copy reached a loopback server
-  from most Chromium closes, from WebKit in 13 of 45 at 1 KiB, and from
-  any of them in 2 of 480 once a new connection took 50 or 200 ms to open
-  ([research/keepalive-abort.md](../research/keepalive-abort.md)).
+  from most Chromium closes. From WebKit it arrived in 13 of 45 closes
+  at 1 KiB. Once a new connection took 50 or 200 ms to open, it arrived
+  in 2 of 480 ([research/keepalive-abort.md](../research/keepalive-abort.md)).
   An outage followed by confirming the close, or a crash, still loses
   them.
 - A remote delete of a block with our text edit in flight applies at once;

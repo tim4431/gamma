@@ -58,7 +58,7 @@ There are three parts:
 | `Pencil/HeldShape.swift` | A shape from the web's answer to `hold`: its outline, its refit as the pen moves, and the rule that drops it (`ShapeHold`), held to `tests/shared/inkhold.json` |
 | `Pencil/RulerSnap.swift` | The ruler's edge a claimed stroke runs along (the claim's `snap`): every point projected onto the edge, the live line between the two outermost projections, as the web's `ink/ruler.js` commits it |
 | `Pencil/PencilGestures.swift` | The double tap and the squeeze, with its phases, forwarded with the system's preferred action; where the Pencil hovered for each, for its tick |
-| `Pencil/PencilHaptics.swift` | The web's `haptic`, played as a light impact, in an Apple Pencil Pro from iPadOS 17.5 |
+| `Pencil/PencilHaptics.swift` | The web's `haptic`, each kind as Apple's feedback for its event (a held shape's path completion, a pen lasso's selection change, a gesture's light impact: `HapticFeel`), in an Apple Pencil Pro from iPadOS 17.5 |
 | `python/gamma_ios.py` | The server's entry on the device: output to the log, then uvicorn on `127.0.0.1` at `GAMMA_PORT` under a supervisor the app can ask to run it again |
 | `python/requirements-ios.txt` | The server's dependencies as the iPad installs them |
 | `scripts/build-python.sh` | Prepares Python, the wheels, the server code and the web app for the bundle (below) |

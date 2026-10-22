@@ -6542,11 +6542,13 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   useEffect(() => {
     // Going to the background flushes at once, with requests that outlive
     // the page (a phone may freeze or end a hidden tab without a pagehide).
-    // A closing tab fires visibilitychange before pagehide, so pagehide
-    // flushes every draft still unsaved again, its PUT beside its upload:
-    // the first flush's requests may not be past their first step. A
-    // drawing that flush is uploading with keepalive sends its PUT alone,
-    // beside that upload (planFlush).
+    // A tab closed while it shows fires pagehide, then visibilitychange in
+    // the same task: pagehide's flush clears the timer, so it is the
+    // close's only one. A tab hidden before it closes flushed on going
+    // hidden, and pagehide sends every draft still unsaved again, its PUT
+    // beside its upload: that flush's requests may not be past their first
+    // step. A drawing that flush is uploading with keepalive sends its PUT
+    // alone, beside that upload (planFlush).
     const flush = () => { if (inkTimerRef.current) flushInk({ keepalive: document.visibilityState === "hidden" }); };
     const leave = () => { if (inkTimerRef.current || inkStore.dirtyDrafts().length) flushInk({ keepalive: true, leaving: true }); };
     window.addEventListener("pagehide", leave);

@@ -1664,7 +1664,9 @@ const polyline = (pts) => pts.map((s, i) => `${i ? "L" : "M"}${s.x.toFixed(2)},$
 // piece is wound one way (clockwise as seen), so the nonzero rule fills
 // their union and an overlap never punches a hole. → one path `d`. The
 // nib is `size` long at every pressure: the pressure's share of the law
-// is in `w` alone, which the exporters draw.
+// is in `w` alone, which the hit test, the eraser and the bounds read.
+// gamma/ink.py nib_outline draws the same nib for the exporters
+// (tests/shared/inknib.json).
 const area2 = (poly) => {
   let a = 0;
   for (let i = 0; i < poly.length; i++) {
