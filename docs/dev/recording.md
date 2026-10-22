@@ -201,7 +201,8 @@ What a user sees of the group and sheet replays is unchanged.
   `replayPending` / `replayReached` / `inkPending`, the margin glyph).
 - `app/App.jsx` owns the wiring: the lists `recordingBlocks` and
   `stampedBlocks` (kept while unchanged), `playRecording` (the audio
-  source, the prefs, tools disarmed so taps seek), `toggleRecording`,
+  source, the prefs, the ink tool disarmed through the strip's
+  `disarmInk` so taps seek), `toggleRecording`,
   `transcribeRecording` (`tasks.start("transcribe", {block_id, model,
   language})`), the recovery at start, the mic button, the pill and the
   bar in the viewer (or the `notesReplayDock` over the notes), and the

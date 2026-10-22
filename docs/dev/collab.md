@@ -760,9 +760,9 @@ focus, and `peers` / `me` as React state. The session owns:
   the committed stroke follows by HTTP). An incoming `ink-live` reaches
   App through the session's `onInkLive(msg)` ([handwriting.md](handwriting.md)
   "Live co-drawing"), which hands it to the wet strokes' store
-  (`ink/inkLive.js`). App keeps only the wet strokes of the clients in
-  `peers`, so a `leave` (or the socket closing, which empties `peers`)
-  takes a peer's wet strokes with their cursor.
+  (`ink/inkLive.js`). `ink/useInkLive.js` keeps only the wet strokes of
+  the clients in `peers`, so a `leave` (or the socket closing, which
+  empties `peers`) takes a peer's wet strokes with their cursor.
 
 `diffTrees(base, next, pageId, pos)` emits inserts (unknown ids), moves (a
 known id under another parent, or out of order — the longest increasing run

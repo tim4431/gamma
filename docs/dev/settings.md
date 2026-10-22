@@ -322,8 +322,9 @@ Preferences:
   `SECTION_PREFS.reading.Handwriting`; the strip's own options, such as
   presets, smoothing and the straight highlighter, are set on the strip,
   [handwriting.md](handwriting.md) "What the user sees"): a *Reset
-  presets* button (`uiBtn sm`, a confirm dialog, then `setInkTools` back
-  to `DEFAULT_TOOLS`); **Eraser returns to the last tool** (`Toggle`,
+  presets* button (`uiBtn sm`, a confirm dialog, then the strip's
+  `setInkTools`, `ink/useInkStrip.js`, back to `DEFAULT_TOOLS`);
+  **Eraser returns to the last tool** (`Toggle`,
   `inkEraserReturn`, flag, default off; hint "After erasing, return to the
   tool you had"); **Erases** (`Segmented` All / Pens / Highlighters,
   `inkEraserFilter`, `oneOf(["all", "pen", "highlighter"])`, default

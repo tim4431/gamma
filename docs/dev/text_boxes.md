@@ -187,9 +187,10 @@ ink are in [handwriting.md](handwriting.md#client).
   picture's size ([import_export.md](import_export.md#notability-notes)).
   In an auto-width box, or sized in its Markdown, a picture keeps its own
   size.
+- `ink/useInkStrip.js`: `inkUi.tool === "text"` arms the tool
+  (`textArmed`); `inkPenTool` is null meanwhile, so a stylus places boxes
+  too.
 - `app/App.jsx`:
-  - `inkUi.tool === "text"` arms the tool (`textArmed`); `inkPenTool` is
-    null meanwhile, so a stylus places boxes too.
   - `boxUndo` (the Text tool armed, or a box selected or edited) sends the
     strip's buttons to `undoBlocks` and leaves Ctrl+Z to the block undo.
     Escape goes to a selected or edited box.

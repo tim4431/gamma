@@ -182,8 +182,9 @@ function dependents(ops, gone) {
 //                                     its edits wait — or is back (null)
 //       onInkLive(msg)                a peer's handwriting stroke in progress
 //                                     (`ink-live`, ink/inkLive.js)
-//       onBuild(build)                the server's build, from the hello (App:
-//                                     a tab left open across an update stops drawing)
+//       onBuild(build)                the server's build, from the hello (the build
+//                                     fence, ink/buildFence.js: a tab left open across
+//                                     an update stops drawing)
 //       onComments(msg)               someone wrote a comment on the page
 //                                     ({t: "comments", block_id, thread_id}), or
 //                                     the socket (re)joined (msg null): refetch
@@ -920,7 +921,8 @@ export function createCollabSession({ clientId, api, openSocket, keepalivePost, 
           case "hello": {
             setMe({ client: msg.client, color: msg.color, connected: true });
             // The server's build, compared with the one this page loaded
-            // under (App: a tab left open across an update stops drawing).
+            // under (ink/buildFence.js: a tab left open across an update
+            // stops drawing).
             if (msg.build != null) o().onBuild?.(msg.build);
             setPeers((msg.peers || []).filter((p) => p.client !== msg.client));
             // The tree was fetched before the socket opened (its seq came

@@ -172,10 +172,10 @@ app ([ipad.md](ipad.md)). Typed text on a page is
   local list; otherwise the account's pens stand. The pill appears on that
   first pull only: a later pull that differs is another device's edit of
   the account's list, which applies. Every write of the list goes through
-  `normalizeTools` (App's `setInkTools`), so what this browser keeps and
-  pushes is exactly what a pull reads back. Which pen a stylus writes
-  with stays session state; the eraser's mode and size and the lasso mode
-  stay this browser's.
+  `normalizeTools` (`setInkTools` in `ink/useInkStrip.js`), so what this
+  browser keeps and pushes is exactly what a pull reads back. Which pen a
+  stylus writes with stays session state; the eraser's mode and size and
+  the lasso mode stay this browser's.
 - **Keys while the strip is open** (`ink/stripKeys.js`) arm the presets
   and tools and step the armed preset's width and style. R, S and Z turn
   the ruler, the Shapes tool and the zoom window on and off, and Esc
@@ -1165,11 +1165,11 @@ reach.
   saved: <detail>". 5xx and network errors retry after 2 s.
 - The page socket's hello and `/api/session` carry the server's `build`.
   The client keeps the build its session first reported and compares
-  every hello's with it (App's `noteServerBuild`, "Client"). On a
-  mismatch it shows "Gamma was updated, reload to keep drawing" and
-  refuses to start a stroke or a cut (reads keep working). A tab left
-  open across a server update, or the web app on an iPad home screen,
-  runs the old bundle until reloaded.
+  every hello's with it (`ink/buildFence.js` `noteServerBuild`,
+  "Client"). On a mismatch it shows "Gamma was updated, reload to keep
+  drawing" and refuses to start a stroke or a cut (reads keep working).
+  A tab left open across a server update, or the web app on an iPad home
+  screen, runs the old bundle until reloaded.
 - `ws_backup` refuses to restore a zip stamped above `SCHEMA_VERSION`,
   and `sync_engine` records a `400` on an `.ink` push per file instead of
   failing the page. The byte budget and the decimation above are fences
@@ -1822,23 +1822,24 @@ reach.
   the Pencil's double tap and squeeze as App applies them, and
   `backTool(prefs, state)`, the tool to go back to (the one armed before,
   when it is still on the strip and not the current one, else the stylus
-  pen), which the gestures' *Switch to last tool* and App's `inkBack`
-  both read. `stylusPen(tools, pen)` is that pen. It is `pen`, the last
-  pen armed, while that is a pen preset on the strip, else the strip's
-  first pen, else its first preset (undefined for an empty strip). App's
-  `inkPenPreset` is it, opening the strip (`openInkStrip`) arms it, and
-  `backTool` and the `'options'` gesture with the hand armed fall back
-  to it. `RESERVED_TOOLS` (`"eraser"`,
+  pen), which the gestures' *Switch to last tool* and `useInkStrip`'s
+  `inkBack` both read. `stylusPen(tools, pen)` is that pen. It is `pen`,
+  the last pen armed, while that is a pen preset on the strip, else the
+  strip's first pen, else its first preset (undefined for an empty
+  strip). `useInkStrip`'s `inkPenPreset` is it, opening the strip
+  (`openInkStrip`) arms it, and `backTool` and the `'options'` gesture
+  with the hand armed fall back to it. `RESERVED_TOOLS` (`"eraser"`,
   `"select"`, `"text"`, `"shape"`) are the strip's tools that are no
-  preset; they count as on the strip, and App reads the list too.
+  preset; they count as on the strip, and `useInkStrip` reads the list
+  too.
   - `message`: `{gesture: 'tap' | 'squeeze', action, phase?: 'began' |
     'ended' | 'cancelled'}`: the host's `pencil`, and its `squeeze` as
     the gesture `squeeze`; a bare action string reads as a tap. A squeeze
     in any other phase (a later shell's `changed`) answers null.
   - `prefs`: `{tools, pen, tap, squeeze}`: the presets on the strip, the
-    last pen armed (App's `inkUi.pen`, which `stylusPen` reads), and this
-    browser's `inkPencilTap` and `inkPencilSqueeze`. `'system'` (the
-    default) maps the system's action: `switchEraser` → `'eraser'`,
+    last pen armed (`useInkStrip`'s `inkUi.pen`, which `stylusPen` reads),
+    and this browser's `inkPencilTap` and `inkPencilSqueeze`. `'system'`
+    (the default) maps the system's action: `switchEraser` → `'eraser'`,
     `switchPrevious` → `'previous'`, `showColorPalette` and
     `showInkAttributes` → `'options'`, anything else → `'none'`.
     `'eraser'` toggles the eraser against `backTool`, `'previous'` picks
@@ -2530,11 +2531,11 @@ reach.
     erased, the paste hold, a lost pointer). A committed stroke an edit
     takes off every group before a saved file holds it (an undo, an
     erasure, a cut, a delete within the 700 ms before the first flush)
-    gets a `drop` too, from App: its `liveLedger` (`inkLive.js`) keeps the
-    ids sent live per surface until a save holds them (`saved`, after
-    `markSaved`), and `applyInk` asks it which of an edit's strokes left
-    every group (`removed`; a stroke moved to another group stays), since
-    no file would ever land them on the peers' pages. A host-claimed iPad
+    gets a `drop` too, from `ink/useInkLive.js`: its `liveLedger`
+    (`inkLive.js`) keeps the ids sent live per surface until a save holds
+    them (`saved`, after `markSaved`), and `applyInk` asks it which of an
+    edit's strokes left every group (`removed`; a stroke moved to another
+    group stays), since no file would ever land them on the peers' pages. A host-claimed iPad
     stroke sends nothing: peers see it when its file lands. The peers' chunks
     land in `inkLive`'s store (`receiveInkLive`: a first chunk starts a
     wet stroke, a chunk whose `n` is the count held adds to it, any other
@@ -2550,7 +2551,7 @@ reach.
     A wet stroke goes when any group drawn on its surface holds its id
     (`inkLive.landWet`, run on every paint and render). Its file has
     landed then, and the committed stroke stands where it was. It also
-    goes on `drop`, when its writer leaves the page (App's
+    goes on `drop`, when its writer leaves the page (`useInkLive`'s
     `keepWetOf(peers)`), with the page (`clearWet`), and 60 s after its
     last chunk (`WET_MS`). The canvas's `data-wet` counts the wet strokes
     and `data-wet-ids` names them, for the e2e. A read-only surface
@@ -2679,6 +2680,97 @@ reach.
   - The viewer's own bottom controls (the close and full-screen buttons,
     the recording pill, the player bar) stand above the panel while it is
     open (`.viewerWrap.inkZoomOpen`, `--ink-zoom-h`).
+- `ink/buildFence.js`: the build fence, `useBuildFence({sessionBuild,
+  setStatus}) → {inkStale, noteServerBuild}`, which App calls above the
+  strip's owner with its session's build. `noteServerBuild` keeps the
+  names of the server's build as the session reported it (`/api/session`
+  `build`: commit, label, version) and compares every socket hello's
+  `build` with them (`usePageCollab`'s `onBuild`); a build sharing none
+  of the names sets `inkStale`, which disarms the tools (`inkTool`,
+  `inkPenTool` null) behind the sticky pill "Gamma was updated, reload
+  to keep drawing" with a Reload button. Taps, selection and reading go
+  on.
+- `ink/useInkStrip.js`: the tool strip's state, `useInkStrip({focusedBlockId,
+  readOnly, inkStale, inkTools, setInkToolsRaw, inkAutoPen, inkShapeKind,
+  inkShapeFill, inkEraserReturn})`, which App calls above the text boxes
+  (an armed ink tool makes them inert). It returns the state and what
+  derives from it (`inkUi`, `inkVisible`, `inkPenPreset`, `inkPen`,
+  `inkTool`, `textArmed`, `inkPenTool`), its writes (`setInkTools`,
+  `pickInkTool`, `openInkStrip`, `toggleInkShape`, `inkEraserLifted`),
+  `previousTool()`, and one command for each update the rest of the page
+  makes to the strip, the same function for the page's life:
+  `revealInkStrip` (a lasso selection), `openRulerRow` and
+  `closeRulerRow` (the ruler laid and put away), `closeInkStripUi`
+  (App's `closeInkStrip`), `toggleInkOptions(which)` and
+  `closeInkOptions` (the strip's buttons and keys), `applyPencilUi(ui)`
+  (a Pencil gesture's `{ui}`), `disarmInk` (a recording's Play) and
+  `restorePen` (the guide's `restore("pen")`). Leaving a page disarms
+  the tool; the strip stays open.
+  - `inkUi`: `open`, the armed `tool` (a preset id, `eraser`, `select`,
+    `text` for the Text tool, `shape` for the Shapes tool, or `null` for
+    the hand), its `options` row (`true`, or `"ruler"` for the ruler's),
+    and `pen`, the last pen preset, which a stylus writes with when
+    nothing is armed. `pen` is resolved among the visible presets, so a
+    hidden pen falls back to the first visible pen, else the first visible
+    preset (`pencilActions.js` `stylusPen`, `inkPenPreset`).
+  - `inkTools`, the account's preset list, validated by `ink/ink.js`
+    `normalizeTools`. `setInkTools` runs every write through it, the
+    updater form the pill's *Show* passes included, so the stored and
+    pushed list is the canonical one. `normalizeTools` keeps a preset's
+    `stabilize` 0–4 as an integer, omitted at 0 except on a calligraphy
+    pen, whose 0 is its Off (left out, a calligraphy pen smooths at
+    `CALLIGRAPHY_SMOOTHING`, 2: `presetSmoothing`). It keeps a pen's
+    `brush` among `monoline`, `brush`, `pencil`, `calligraphy`
+    (`KNOWN_BRUSHES`; `'pen'`, an unknown value or any brush on a
+    highlighter is dropped, so the plain pen is the absent key), a `dash`
+    of `dashed` | `dotted` on a pen or a highlighter (omitted when solid),
+    a highlighter's `straight` `'always' | 'off'` (omitted at `'hold'`
+    and dropped from a pen), and a `hidden: true` flag (omitted when
+    false). Any other key a preset carries is kept verbatim, so an older
+    build that edits one preset never strips what a newer one wrote: the
+    known keys first, and the rest only while the preset serialises under
+    512 bytes of UTF-8. A list that hides every preset shows its first, so
+    the row is never empty.
+  - `toolStyle` copies `brush` and `dash` onto the style a stroke is
+    encoded with, and carries the smoothing it draws with
+    (`presetSmoothing`) and straightening onto the armed tool for the
+    layer, never onto a stroke. `inkToolName(preset)` reads "{color}
+    pen", "{color} ballpoint pen", "{color} brush pen", "{color} pencil",
+    "{color} calligraphy pen" and "{color} highlighter" (the line is not
+    named). `visibleTools(list)` is the list without the hidden ones, what
+    the strip, the key table and the stylus's `backTool` read.
+  - `inkBack()` is the previous distinct tool, else the stylus pen
+    (`pencilActions.js` `backTool` over `inkPrevRef`, which follows the
+    armed tool after each commit). `inkEraserLifted()`, the end of App's
+    `handleInkEraseEnd` (`onEraseEnd`), picks it with the options row
+    closed when `inkEraserReturn` is on and the eraser armed; App's part
+    first marks a held E and stops while a held squeeze is open
+    (`squeezeRef`'s `hold`: its release goes back). A squeeze that
+    toggles the eraser still toggles it; with the return on, the lift
+    re-arms the pen and the next squeeze arms the eraser again.
+- `ink/useInkLive.js`: live co-drawing, this tab's side,
+  `useInkLive({focusedBlockId, readOnly, inkStale, peers, sendInkLive})
+  → {handleInkLive, liveRemoved, liveSaved}`, which App calls after the
+  page's collab session with the session's `peers` and a `sendInkLive`
+  that reads the session when it runs.
+  - **Live co-drawing**: `onInkLive(page, msg)` (`handleInkLive`) adds
+    the surface as `page` and hands the chunk to the page's collab
+    session. Its `sendInkLive(msg)` writes `{t: "ink-live", ...msg}` on
+    the socket when it is open and drops it otherwise (never queued, never
+    retried: the committed stroke follows). Incoming `ink-live` messages
+    (the session's `onInkLive`) go to `inkLive.receiveInkLive`, the wet
+    strokes' store ("Wet strokes" above), not App state. An effect on the
+    session's `peers` keeps only the wet strokes of peers still on the
+    page (`keepWetOf`: a `leave`, or the socket closing, which empties the
+    peers), and leaving the page clears them (`clearWet`). Only a peer who
+    `can_edit` sends (a read-only page has no edit actions, and the server
+    drops a viewer's); a viewer only receives.
+  - The ledger of the strokes sent live (`inkLive.js` `liveLedger`) is
+    its own: `liveRemoved(changes)`, which `applyInk` runs, sends the
+    `drop` of each stroke an edit took off every group before a save
+    held it; `liveSaved(ink)`, which the flush runs after `markSaved`,
+    forgets the strokes a saved file holds; leaving the page forgets the
+    rest.
 - `markup/` ([text_boxes.md](text_boxes.md) "Client"):
   - `MarkupToolbar.jsx` `MarkupToolbar` is the strip. Its first row
     (`.pdfInkRow`) is five groups split by `.pdfInkSep`: the presets; the
@@ -2868,40 +2960,7 @@ reach.
     {mag} | {at, size})`, and `onAction` takes `transcribe`.
     `armedClasses(tools)` gives a surface's container its armed-tool
     classes (`inkArmed`, `inkTouchDraw`, `textArmed`).
-- `app/App.jsx` owns the tool state:
-  - `inkUi`: `open`, the armed `tool` (a preset id, `eraser`, `select`,
-    `text` for the Text tool, `shape` for the Shapes tool, or `null` for
-    the hand), its `options` row (`true`, or `"ruler"` for the ruler's),
-    and `pen`, the last pen preset, which a stylus writes with when
-    nothing is armed. `pen` is resolved among the visible presets, so a
-    hidden pen falls back to the first visible pen, else the first visible
-    preset (`pencilActions.js` `stylusPen`, App's `inkPenPreset`).
-  - `inkTools`, the account's preset list, validated by `ink/ink.js`
-    `normalizeTools`. App's `setInkTools` runs every write through it, the
-    updater form the pill's *Show* passes included, so the stored and
-    pushed list is the canonical one. `normalizeTools` keeps a preset's
-    `stabilize` 0–4 as an integer, omitted at 0 except on a calligraphy
-    pen, whose 0 is its Off (left out, a calligraphy pen smooths at
-    `CALLIGRAPHY_SMOOTHING`, 2: `presetSmoothing`). It keeps a pen's
-    `brush` among `monoline`, `brush`, `pencil`, `calligraphy`
-    (`KNOWN_BRUSHES`; `'pen'`, an unknown value or any brush on a
-    highlighter is dropped, so the plain pen is the absent key), a `dash`
-    of `dashed` | `dotted` on a pen or a highlighter (omitted when solid),
-    a highlighter's `straight` `'always' | 'off'` (omitted at `'hold'`
-    and dropped from a pen), and a `hidden: true` flag (omitted when
-    false). Any other key a preset carries is kept verbatim, so an older
-    build that edits one preset never strips what a newer one wrote: the
-    known keys first, and the rest only while the preset serialises under
-    512 bytes of UTF-8. A list that hides every preset shows its first, so
-    the row is never empty.
-  - `toolStyle` copies `brush` and `dash` onto the style a stroke is
-    encoded with, and carries the smoothing it draws with
-    (`presetSmoothing`) and straightening onto the armed tool for the
-    layer, never onto a stroke. `inkToolName(preset)` reads "{color}
-    pen", "{color} ballpoint pen", "{color} brush pen", "{color} pencil",
-    "{color} calligraphy pen" and "{color} highlighter" (the line is not
-    named). `visibleTools(list)` is the list without the hidden ones, what
-    the strip, the key table and the stylus's `backTool` read.
+- `app/App.jsx` composes the owners above and owns the rest of the state:
   - The other prefs: the eraser's mode and size; the lasso mode; the
     account's `inkDrawHold`, `inkScribbleErase`, `inkEraserReturn` and
     `inkEraserFilter`; and this browser's `inkFingerUndo`,
@@ -2943,13 +3002,6 @@ reach.
     server merged someone else's strokes: `markSaved` loads the merged
     file and replaces the draft with it, with strokes drawn meanwhile
     merged on top.
-  - The build fence: `noteServerBuild` keeps the names of the server's
-    build as the session reported it (`/api/session` `build`: commit,
-    label, version) and compares every socket hello's `build` with them;
-    a build sharing none of the names sets `inkStale`, which disarms the
-    tools (`inkTool`, `inkPenTool` null) behind the sticky pill "Gamma
-    was updated, reload to keep drawing" with a Reload button. Taps,
-    selection and reading go on.
   - An empty group with no caption and no notes is deleted the same way.
     Its empty draft keeps masking the saved strokes until the tree sees
     the deletion (the HTTP response can land before the socket op).
@@ -2983,13 +3035,6 @@ reach.
     group whose drawing is no longer the entry's `after` (a save that
     merged someone's strokes in meanwhile) starts a new entry instead, so
     undoing the pass never takes their strokes away.
-  - `inkBack()` is the previous distinct tool, else the stylus pen
-    (`pencilActions.js` `backTool` over `inkPrevRef`); `onEraseEnd` with
-    `inkEraserReturn` on and the eraser armed picks it with the options
-    row closed, except while a held squeeze is open (`squeezeRef`'s
-    `hold`: its release goes back). A squeeze that toggles the eraser
-    still toggles it; with the return on, the lift re-arms the pen and the
-    next squeeze arms the eraser again.
   - **The Pencil's gestures** (`pencilRef`, listening to the host's
     `pencil` and `squeeze` under `nativeHost().pencil`, on a page that
     takes ink): each goes through `pencilAction(message, {tools, pen,
@@ -3109,18 +3154,6 @@ reach.
     change")`, and a colour or a size to `restyleStrokes` with "ink color
     change" or "ink width change"; each is one entry and goes through
     `applyInk`'s byte budget like any edit.
-  - **Live co-drawing**: `onInkLive(page, msg)` (`handleInkLive`) adds
-    the surface as `page` and hands the chunk to the page's collab
-    session. Its `sendInkLive(msg)` writes `{t: "ink-live", ...msg}` on
-    the socket when it is open and drops it otherwise (never queued, never
-    retried: the committed stroke follows). Incoming `ink-live` messages
-    (the session's `onInkLive`) go to `inkLive.receiveInkLive`, the wet
-    strokes' store ("Wet strokes" above), not App state. An effect on the
-    session's `peers` keeps only the wet strokes of peers still on the
-    page (`keepWetOf`: a `leave`, or the socket closing, which empties the
-    peers), and leaving the page clears them (`clearWet`). Only a peer who
-    `can_edit` sends (a read-only page has no edit actions, and the server
-    drops a viewer's); a viewer only receives.
   - **The journal pill**: `inkStore.onInkRestored` raises "Unsaved
     handwriting from a previous visit was restored." with `{label:
     t("Discard"), run}`, once per block (a block is restored at most once
@@ -3150,9 +3183,10 @@ reach.
     reorder a drop and Move left / right share).
   - **The Shapes tool, the ruler and the zoom window.**
     - `"shape"` is one of the reserved tool ids, `pencilActions.js`
-      `RESERVED_TOOLS`, which App's effect that drops a removed or hidden
-      preset, the guide's `restore` and `backTool` read. `inkTool` for it
-      is `{tool: "shape", kind: inkShapeKind, fill: inkShapeFill, style}`.
+      `RESERVED_TOOLS`, which the strip's effect that drops a removed or
+      hidden preset, its `restorePen` (the guide's `restore`) and
+      `backTool` read. `inkTool` for it is `{tool: "shape", kind:
+      inkShapeKind, fill: inkShapeFill, style}`.
     - `inkRuler` (`{surface, x, y, angle, length, snap}`, or null) and
       `inkZoom` (`{page, x, y, w, h, mag, line, x0}`, or null) are session
       state, cleared when the strip closes (`closeInkStrip()`, which all
@@ -3173,8 +3207,8 @@ reach.
       `inkRulerOptions({snap} | {units} | {hide})` is the row's (*Snap
       15°* puts the angle on the grid at once). `onRuler` sets `inkRuler`
       (null hides it).
-    - `toggleInkShape()` arms `"shape"` with its row open, or gives back
-      `inkBack()`.
+    - `toggleInkShape()` (`useInkStrip`) arms `"shape"` with its row open,
+      or gives back `inkBack()`.
     - `toggleInkZoom()` opens `openWindow` on the PDF page in view, or
       closes it. The window's middle goes at the middle of what shows of
       the page above where the panel will stand (`visiblePart` less the
