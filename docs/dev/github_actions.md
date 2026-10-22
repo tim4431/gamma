@@ -224,11 +224,11 @@ red check is fixed on the branch as normal work.
 One macOS job (`macos-15`, 50 minutes) for the iPad app, which carries
 the Gamma server and the built web app ([ipad.md](ipad.md#the-local-server)).
 It runs for the server's dependencies and the frontend's build helper as
-well as for `ipad/`, and for the two ink fixtures the Swift ports of the
-brush table and the held shape are held to (`tests/shared/inkwidth.json`,
-`inkhold.json`, resources of the test bundle), but not for backend or
-frontend code, which the other checks test. A change that matters on the
-device is dispatched by hand.
+well as for `ipad/`, but not for backend or frontend code, which the
+other checks test. It also runs for the two ink fixtures the Swift ports
+of the brush table and the held shape are held to
+(`tests/shared/inkwidth.json`, `inkhold.json`, resources of the test
+bundle). A change that matters on the device is dispatched by hand.
 
 - Python 3.13 (`setup-python`), so pip's environment markers match the
   device's, and Node 22 with `npm ci` in `frontend/`.

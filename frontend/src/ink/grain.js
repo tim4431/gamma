@@ -7,6 +7,8 @@
 // 2 pt line is four grains wide). Pure: the PNG is written here from a
 // fixed seed — a 2-bit palette image, so another colour is another palette
 // and nothing else — and every client draws the same grain.
+import { crc32 } from "../transfers/folderZip.js";
+
 export const GRAIN_PX = 64;
 export const GRAIN_UNITS = 32;
 // The palette's alpha per index: no grain, and three strengths.
@@ -61,20 +63,6 @@ function scanlines() {
   return out;
 }
 
-const CRC = (() => {
-  const table = new Uint32Array(256);
-  for (let n = 0; n < 256; n++) {
-    let c = n;
-    for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
-    table[n] = c >>> 0;
-  }
-  return table;
-})();
-function crc32(bytes) {
-  let c = 0xffffffff;
-  for (const b of bytes) c = CRC[(c ^ b) & 0xff] ^ (c >>> 8);
-  return (c ^ 0xffffffff) >>> 0;
-}
 const u32 = (v) => [(v >>> 24) & 255, (v >>> 16) & 255, (v >>> 8) & 255, v & 255];
 function chunk(type, data) {
   const body = [...type].map((c) => c.charCodeAt(0)).concat([...data]);
@@ -119,8 +107,6 @@ export function grainUri(color = "#000000") {
   uris.set(key, uri);
   return uri;
 }
-// The tile in black, the colour a pattern is tinted from.
-export const GRAIN_URI = grainUri("#000000");
 
 const images = new Map();
 // The tile in `color` decoded, for a canvas's createPattern: null until the

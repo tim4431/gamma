@@ -9,8 +9,8 @@ pages. Each claim is tagged **[verified]** when a converter reproduces the
 app's own render or export from the stored bytes, or the vendor states it,
 and **[inferred]** when it is a reading of names, numbers or community
 reports. The earlier interaction survey is
-[handwriting.md](handwriting.md); its "File format" paragraph on Notability
-was corrected from this note.
+[handwriting.md](handwriting.md), whose "File format" paragraph on
+Notability follows this note.
 
 ## Notability (`.note`, `.ntb`)
 
@@ -219,9 +219,9 @@ document warns writers not to rely on missing arrays being tolerated.
   content-addressed uploads and the merge want. Baking once on the client
   (`finishStroke.bakeWidths`) is what both apps do: the file holds what
   was drawn, and the server, the SVG, both PDFs and the AI picture read
-  it rather than re-deriving it. GoodNotes' pencil is the exception that
-  proves the rule — it keeps raw channels because its look is a shader —
-  and v2 reserves the `o` channel for that case.
+  it rather than re-deriving it. GoodNotes' pencil is the exception: it
+  keeps raw channels because its look is a shader. v2 bakes the pencil
+  too, its shade per sample in the `o` channel beside `w`.
 - **An explicit tool and band, not an alpha inference.** Both apps store
   the highlighter as a flag or a style byte with a fixed alpha and leave
   the draw order to the renderer; v2 keeps `tool` and adds `band` (omitted
@@ -246,8 +246,8 @@ document warns writers not to rely on missing arrays being tolerated.
 - **Merge by stroke id, not a clock.** GoodNotes' `{version, nonce}`
   register exists to sync through CloudKit with no server; Gamma has a
   server three-way merge by stroke id already, so v2 keeps it and splits a
-  stroke into geometry and look so two writers' edits compose where the
-  gv/sv idea of per-stroke rows would have.
+  stroke into geometry and look so two writers' edits compose where
+  per-stroke rows with a geometry and a style version would have.
 - **One file per group, not an op log or per-stroke rows.** Notability's
   `.ntb` log and GoodNotes' record stream are their sync transport; Gamma
   transports pages, trees and files, and every existing path (orphan

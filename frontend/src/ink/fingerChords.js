@@ -7,17 +7,17 @@
 // a lift (a pinch cancels both touches, so it never undoes), a fourth or a
 // late contact voids the chord, and touches while a pen is down are a palm.
 // 'double' needs two chords of the same N within DOUBLE_MS and DOUBLE_SLOP
-// of each other, the values shared/ui/press.js uses for a double tap; a
-// chord that fails between two good ones breaks the pair.
+// of each other, shared/ui/press.js's values for a double tap; a chord that
+// fails between two good ones breaks the pair.
 // A contact whose lift never arrives (iPad Safari drops one now and then,
 // and a finger a native gesture swallows gets no pointerup) is forgotten
 // once it is CONTACT_STALE_MS old, so it never pins every later chord.
+import { DOUBLE_MS, DOUBLE_SLOP } from "../shared/ui/press.js";
 
+export { DOUBLE_MS, DOUBLE_SLOP };
 export const CHORD_START_MS = 80;
 export const CHORD_SLOP = 10;
 export const CHORD_LIFT_MS = 250;
-export const DOUBLE_MS = 400;
-export const DOUBLE_SLOP = 30;
 export const CONTACT_STALE_MS = 1000;
 export const CHORD_MODES = ["off", "tap", "double"];
 
@@ -40,8 +40,8 @@ export function makeChordDetector({ onChord, mode = "off", now = () => Date.now(
     for (const [id, c] of contacts) {
       if (time - c.t <= CONTACT_STALE_MS) continue;
       contacts.delete(id);
-      if (c.chord) { c.chord.live--; if (c.chord === chord && chord.live <= 0) endChord(); }
-      c.chord = null;
+      c.chord.live--;
+      if (c.chord === chord && chord.live <= 0) endChord();
     }
   };
 
@@ -81,7 +81,7 @@ export function makeChordDetector({ onChord, mode = "off", now = () => Date.now(
     },
     move(e) {
       const c = contacts.get(e.pointerId);
-      if (!c || !c.chord) return;
+      if (!c) return;
       if (Math.hypot(e.clientX - c.x, e.clientY - c.y) > CHORD_SLOP) c.chord.voided = true;
     },
     up(e) {
@@ -90,7 +90,6 @@ export function makeChordDetector({ onChord, mode = "off", now = () => Date.now(
       if (!c) return;
       contacts.delete(e.pointerId);
       const owner = c.chord;
-      if (!owner) return;
       owner.live--;
       if (owner === chord && owner.live === 0) complete(at(e));
     },
@@ -100,7 +99,6 @@ export function makeChordDetector({ onChord, mode = "off", now = () => Date.now(
       if (!c) return;
       contacts.delete(e.pointerId);
       const owner = c.chord;
-      if (!owner) return;
       owner.voided = true;
       owner.live--;
       if (owner === chord && owner.live === 0) { endChord(); previous = null; }

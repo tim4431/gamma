@@ -4,7 +4,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
-  RULER_MIN, RULER_PX, RULER_SNAP_PX, defaultRuler, hostSnap, moveRuler, onBand, onRail, pinchRuler, railLine, rulerDir,
+  RULER_MIN, RULER_PX, RULER_SNAP_PX, defaultRuler, hostSnap, moveRuler, onRail, pinchRuler, railLine, rulerDir,
   rulerEdges, rulerEnds, rulerTicks, snapAngle, snapRail, stampLine, stepAngle, stretchRuler, turnRuler,
 } from "../src/ink/ruler.js";
 import { decodeStroke } from "../src/ink/ink.js";
@@ -65,7 +65,7 @@ test("snapRail: a pen on the band takes the nearer edge; any pointer within the 
   assert.deepEqual(snapRail(turned, { x: 300 - half - 2, y: 450 }, k), left);
   assert.deepEqual(snapRail(turned, { x: 302, y: 450 }, k, { band: true }), right);
   assert.equal(snapRail(null, { x: 0, y: 0 }, k), null);
-  assert.ok(onBand(level, { x: 300, y: 400 + half }, k) && !onBand(level, { x: 300, y: 400 + half + 0.5 }, k), "onBand: the edge is on it");
+  assert.equal(snapRail(level, { x: 300, y: 400 + half }, k), null, "the edge itself is on the band");
 });
 
 test("onRail projects a sample onto the rail's line and keeps its other keys", () => {

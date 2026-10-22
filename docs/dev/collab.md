@@ -391,7 +391,8 @@ Messages:
 
 - server → client: `hello {client, color, seq, peers, build}` on join (`build`
   as `/api/session` reports it: the client's handwriting fence compares it
-  with the build the tab loaded under, [handwriting](handwriting.md)); `join {peer}`
+  with the build the tab loaded under, [handwriting.md](handwriting.md)
+  "Fences"); `join {peer}`
   / `leave {client}`; `cursor {client, block, anchor, head}`; `ops {seq, at,
   actor, client, ops, cursor?}` for every applied batch (the sender's own
   included, it filters by client id; `cursor` is the writer's caret in the
@@ -421,30 +422,37 @@ sends, at most every 50 ms while a stroke is in progress:
  "k": 1.5, "n": 24, "samples": [[120.4, 305.12, 0.62, 410, 71, 203]], "done": true}
 ```
 
-`page` is the surface: the PDF page number, or a sheet's block id for a
-sheet; `g` the group block the stroke joins (null before the group's
-first flush, when the writer has no block yet); `id` the stroke id the
-committed stroke will carry; `style` the preset's look as the stroke
-will be encoded (`brush` and `dash` only when set, and a calligraphy
-pen's `nib`, its angle 0..179); `k` the writer's
-css px per pt; `n` the index of this chunk's first sample in the stroke;
-`samples` the samples since the last chunk as `[x, y, p, t, a, z]` —
-page points to two decimals, pressure 0..1 or null, ms since the
-stroke's first sample, altitude and azimuth in integer degrees or null;
-`done: true` marks the last chunk (the lift; its `samples` may be
-empty), `drop: true` a stroke to take away (no `samples`): one cancelled
-before it was committed, or one committed and then undone, erased or cut
-before a saved file held it, which no file will ever replace. The server
-(`routers/collab.py`, `collab.ink_live`) relays the message to the
-room's other peers with `client` set to the sender's when the sender
-`can_edit`, `id` is a string, `samples` holds at most 64 entries and the
-relayed message is at most 16 KB; anything else is dropped silently, and
-nothing goes into the op log (`backend/tests/test_collab.py`). Peers draw
-it on a canvas of its own through the client's own brush table, bake its
-width as the samples come, and let the committed stroke of the same `id`
-replace it when a loaded file holds it; a wet stroke whose file never
-lands goes 60 s after its last chunk, and a peer leaving the page (a
-`leave`, or this socket closing) takes all of theirs.
+- `page`: the surface, the PDF page number or a sheet's block id.
+- `g`: the group block the stroke joins, null before the group's first
+  flush (the writer has no block yet).
+- `id`: the stroke id the committed stroke will carry.
+- `style`: the preset's look as the stroke will be encoded. `brush` and
+  `dash` come only when set, and a calligraphy pen's `nib` (its angle,
+  0..179).
+- `k`: the writer's css px per pt.
+- `n`: the index of this chunk's first sample in the stroke.
+- `samples`: the samples since the last chunk as `[x, y, p, t, a, z]`:
+  page points to two decimals, pressure 0..1 or null, ms since the
+  stroke's first sample, and altitude and azimuth in integer degrees or
+  null.
+- `done: true` marks the last chunk (the lift; its `samples` may be
+  empty).
+- `drop: true` takes the stroke away (no `samples`). It is sent for a
+  stroke cancelled before it was committed, or committed and then
+  undone, erased or cut before a saved file held it: no file will ever
+  replace it.
+
+The server (`routers/collab.py`, `collab.ink_live`) relays the message to
+the room's other peers with `client` set to the sender's. It relays only
+when the sender `can_edit`, `id` is a string, `samples` holds at most 64
+entries and the relayed message is at most 16 KB. Anything else is
+dropped silently, and nothing goes into the op log
+(`backend/tests/test_collab.py`). Peers draw it on a canvas of its own
+through the client's own brush table and bake its width as the samples
+come. The committed stroke of the same `id` replaces it when a loaded
+file holds it. A wet stroke whose file never lands goes 60 s after its
+last chunk, and a peer leaving the page (a `leave`, or this socket
+closing) takes all of theirs.
 
 A peer is `{client, user, name, color, can_edit, block, anchor, head}` —
 `user` the account's username, which the handshake reads with the session;
@@ -724,10 +732,10 @@ focus, and `peers` / `me` as React state. The session owns:
   with none. A socket the server closed with 4403 (access revoked) is not
   reopened. `sendInkLive(msg)` writes an `ink-live` chunk on the open
   socket and drops it when the socket is down (never queued or retried:
-  the committed stroke follows by HTTP), and an incoming `ink-live`
-  reaches App through the session's `onInkLive(msg)` ([handwriting.md](handwriting.md)
+  the committed stroke follows by HTTP). An incoming `ink-live` reaches
+  App through the session's `onInkLive(msg)` ([handwriting.md](handwriting.md)
   "Live co-drawing"), which hands it to the wet strokes' store
-  (`ink/inkLive.js`); App keeps only the wet strokes of the clients in
+  (`ink/inkLive.js`). App keeps only the wet strokes of the clients in
   `peers`, so a `leave` (or the socket closing, which empties `peers`)
   takes a peer's wet strokes with their cursor.
 
@@ -769,9 +777,9 @@ state in App instead of the tree.
 A closing tab's last requests go with `fetch` `keepalive`, which outlives
 the page. Browsers carry at most 64 KiB of keepalive request bodies in
 flight per page and refuse a keepalive fetch past that (a network error:
-nothing is sent), so every keepalive request of the page goes through one
-ledger, `shared/lib/keepalive.js`. It counts the body bytes of each from
-the moment it starts until its answer's body is in, or it fails, and
+nothing is sent). So every keepalive request of the page goes through one
+ledger, `shared/lib/keepalive.js`. It counts each request's body bytes
+from the moment it starts until its answer's body is in or it fails, and
 gives a request the room of its priority:
 
 - `critical`, no other copy: the queued page edits `pagehide()` sends.
@@ -785,9 +793,9 @@ gives a request the room of its priority:
   (8 KiB), kept for the normal senders.
 
 A sender with no other copy claims what it will send at pagehide
-(`registerKeepaliveClaim(key, fn)`, `fn() → bytes`), and a claim is read
-only when a `normal` or `low` request asks for room, never on an edit,
-and once a task: the ledger keeps each claim's bytes until a microtask
+(`registerKeepaliveClaim(key, fn)`, `fn() → bytes`). A claim is read only
+when a `normal` or `low` request asks for room, never on an edit, and at
+most once a task. The ledger keeps each claim's bytes until a microtask
 (a flush asks before every request it sends), and reads them afresh at
 once after a claim is registered or dropped or a `critical` request goes.
 `usePageCollab` claims `page-edits`. The session's
@@ -796,44 +804,42 @@ sending it: per page with unsaved edits (not one in Recently deleted), the
 batch out under its own id, then the queue in batches of `MAX_OPS` under
 the ids they will take. The claim is the bytes of those bodies that go
 with keepalive from an empty page (`keepaliveShare`: a batch over the cap
-goes plain and claims nothing), and nothing once pagehide has sent them,
-until the page is shown again from the back-forward cache. A closing tab
-fires `visibilitychange` (hidden) before `pagehide`: handwriting, the
+goes plain and claims nothing). Once pagehide has sent them the claim is
+0, until the page is shown again from the back-forward cache. A closing
+tab fires `visibilitychange` (hidden) before `pagehide`. Handwriting, the
 profile and the reading position flush at the first, the edits at the
 second, and their POST goes with keepalive whenever the edits alone fit
 the cap.
 
 The claim holds what the edits needed when a lower priority asked. A
-tab hidden with a drawing to save sends it with keepalive; back on the
+tab hidden with a drawing to save sends it with keepalive. Back on the
 page, the edits can grow past the room that upload leaves them while it
 is still on its way, and the tab can close before it is answered. Then
 the edits' POST goes both ways at once: with keepalive, and as the plain
 copy it would be otherwise. `keepaliveFetch` does this for a `critical`
 request whose body fits beside the critical requests on their way but
-not beside everything; its batch id makes the copy that lands second a
-replay. Measured in Chromium and WebKit, a page leaving for another (a
-navigation, a reload) no longer counts its keepalive requests from
-before, so the keepalive copy goes; a closing tab refuses it, and the
-plain copy is what is left, as before. No request is aborted to make
-room: both browsers keep an aborted keepalive request going and free its
-share a task later (Chromium) or once it is answered (WebKit), so a
-keepalive sent in the abort's own task is refused
+not beside everything. Its batch id makes the copy that lands second a
+replay. In Chromium and WebKit, a page leaving for another (a
+navigation, a reload) stops counting its earlier keepalive requests, so
+the keepalive copy goes. A closing tab refuses it, and only the plain
+copy goes. No request is aborted to make room: both browsers keep an
+aborted keepalive request going and free its share a task later
+(Chromium) or once it is answered (WebKit). So a keepalive sent in the
+abort's own task is refused
 ([research/keepalive-abort.md](../research/keepalive-abort.md)).
 
 `keepaliveFetch(url, init, {priority})` sends with keepalive when the
 body (`bodyBytes`: a string's UTF-8, a Blob's size, a buffer's bytes; a
 body whose length is not known before it goes counts as too long) fits
-the priority's room, else as a plain fetch, which a closing page may cut
-off but the browser never refuses (a `critical` request short of room
-only because lower priorities hold it goes both ways, above).
-`available(priority)` is the room, for
-a planner (`ink/inkFlush.js`), never below 0: a request with no body (a
-`DELETE`) always goes with keepalive, since it takes none and the browser
-never refuses it. `apiJson(url, init, {keepalive: priority})` sends
-through the ledger. A request counts until its answer's body is in, as
-the browser counts it: the fetch's promise settles a moment before, with
-the answer's headers, so the ledger reads a copy of the answer to its end
-(`Response.clone()`), and a request that fails counts no more.
+the priority's room. Otherwise it sends a plain fetch, which a closing
+page may cut off but the browser never refuses. `available(priority)` is
+the room, for a planner (`ink/inkFlush.js`), never below 0: a request
+with no body (a `DELETE`) always goes with keepalive, since it takes none
+and the browser never refuses it. `apiJson(url, init, {keepalive:
+priority})` sends through the ledger. The fetch's promise settles with
+the answer's headers, a moment before the browser stops counting the
+request, so the ledger reads a copy of the answer to its end
+(`Response.clone()`).
 `frontend/tests/keepalive.test.mjs` pins the policy and runs a closing
 tab's requests over a model of the browser's rule, since the e2e cannot
 drive a pagehide.
@@ -958,13 +964,13 @@ drive a pagehide.
 
 - Queued edits live in memory, not in durable offline storage. The tab asks
   before it closes with edits unsaved. Keepalive saves on tab close are best
-  effort: the edits come first in the page's 64 KiB of keepalive bodies
+  effort. The edits come first in the page's 64 KiB of keepalive bodies
   ("Keepalive"), but a batch past that goes as a plain fetch the closing
-  page may cut off, so edits past 64 KiB may be lost, and so may edits
+  page may cut off. So a closing tab may lose edits past 64 KiB, and edits
   that grew past their room while a drawing's upload from an earlier
-  flush was still on its way, when the tab closes (leaving for another
-  page takes their keepalive copy). An outage followed by confirming the
-  close, or a crash, still loses them.
+  flush was still on its way (leaving for another page takes their
+  keepalive copy). An outage followed by confirming the close, or a crash,
+  still loses them.
 - A remote delete of a block with our text edit in flight applies at once;
   the edit then comes back as a rescue only if our base still held the
   block, else it is dropped with the block (the screen already showed the

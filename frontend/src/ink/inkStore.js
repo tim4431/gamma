@@ -17,7 +17,7 @@
 // the server deleted since. Plain module state with a version counter —
 // React subscribes through useInkVersion (ink/InkLayer.jsx).
 import { API, apiJson, getCurrentWorkspace, sha256 } from "../shared/lib/utils";
-import { mergeInk, sameStroke, serializeInk, upgradeV1, withDefaults } from "./ink.js";
+import { loadedInk, mergeInk, sameStroke, serializeInk } from "./ink.js";
 import * as journal from "./inkJournal.js";
 
 const files = new Map();     // url → ink | null (null: fetch failed)
@@ -63,15 +63,19 @@ export function adoptStrokes(ink, known) {
   return reused ? { ...ink, strokes } : ink;
 }
 
+// A stored file fetched by its `/api/uploads/…` URL (ink.js loadedInk
+// makes it a drawing).
+const fetchUpload = (url) => apiJson(`${API}${url.replace(/^\/api/, "")}`);
+
 // `known()` (optional): the drawing the file replaces on screen, asked
 // when the file arrives, for adoptStrokes.
 export function loadInk(url, known = null) {
   if (!url) return Promise.resolve(null);
   if (files.has(url)) return Promise.resolve(files.get(url));
   if (loading.has(url)) return loading.get(url);
-  const p = apiJson(`${API}${url.replace(/^\/api/, "")}`)
+  const p = fetchUpload(url)
     .then((ink) => {
-      const file = ink && ink.format === "gamma-ink" ? withDefaults(upgradeV1(ink)) : null;
+      const file = loadedInk(ink);
       const before = file && typeof known === "function" ? known() : null;
       files.set(url, before ? adoptStrokes(file, before) : file);
       return files.get(url);
@@ -176,10 +180,10 @@ export function markSaved(id, ink, url, stored = url) {
     if (!loaded || !cur || cur.url !== stored) return;
     const merged = adoptStrokes(loaded, cur.ink);
     files.set(stored, merged);
-    drafts.set(id, cur.ink === ink
-      ? { ...cur, ink: merged, dirty: false, url: stored, base: stored, baseIds: strokeIds(merged) }
-      : { ...cur, ink: mergeInk(ink, cur.ink, merged).ink, dirty: true, url: stored, base: stored, baseIds: strokeIds(merged) });
-    if (drafts.get(id).dirty) journalLater(id);
+    const drawn = cur.ink !== ink;   // strokes added meanwhile, merged onto the merged file
+    drafts.set(id, { ...cur, ink: drawn ? mergeInk(ink, cur.ink, merged).ink : merged, dirty: drawn, url: stored, base: stored,
+      baseIds: strokeIds(merged) });
+    if (drawn) journalLater(id);
     bump();
   });
 }
@@ -199,8 +203,7 @@ export function markSending(id, url) {
   const d = drafts.get(id);
   if (!d?.dirty || !url) return Promise.resolve(null);
   drafts.set(id, { ...d, sent: [...(d.sent || []).filter((u) => u !== url), url].slice(-SENT_KEEP) });
-  clearTimeout(journalTimers.get(id));
-  journalTimers.delete(id);
+  journalCancel(id);
   const write = journalNow(id);
   if (!write) return Promise.resolve(null);
   let timer = 0;
@@ -273,6 +276,11 @@ function journalLater(id) {
   clearTimeout(journalTimers.get(id));
   journalTimers.set(id, setTimeout(() => { journalTimers.delete(id); journalNow(id); }, JOURNAL_MS));
 }
+// Calls off the draft's pending write: one goes at once instead, or none is due.
+function journalCancel(id) {
+  clearTimeout(journalTimers.get(id));
+  journalTimers.delete(id);
+}
 const entryOf = (d) => ({ bytes: bytesOf(d.ink), base: d.base || "", baseIds: d.baseIds || [], at: Date.now(), tab: TAB, sent: d.sent || [] });
 function keyOf(id) {
   const key = journalKeys.get(id) || journal.journalKey(getCurrentWorkspace(), id, TAB);
@@ -286,9 +294,8 @@ function journalNow(id) {
   return journal.putEntry(keyOf(id), entryOf(d));
 }
 function journalDrop(id) {
-  clearTimeout(journalTimers.get(id));
-  journalTimers.delete(id);
-  const key = journalKeys.get(id) || journal.journalKey(getCurrentWorkspace(), id, TAB);
+  journalCancel(id);
+  const key = keyOf(id);
   journalKeys.delete(id);
   journal.deleteEntry(key);
 }
@@ -297,8 +304,7 @@ export function journalAll() {
   const writes = [];
   for (const [id, d] of drafts) {
     if (!d.dirty) continue;
-    clearTimeout(journalTimers.get(id));
-    journalTimers.delete(id);
+    journalCancel(id);
     writes.push(journalNow(id));
   }
   return Promise.all(writes);
@@ -366,8 +372,7 @@ const blockUrl = (block) => blockUrls.get(block.id) ?? (block.properties?.ink_ur
 // The block's file as the server has it: {ink}, {gone} for a 404, {error}.
 async function fetchFile(url) {
   try {
-    const ink = await apiJson(`${API}${url.replace(/^\/api/, "")}`);
-    return { ink: ink?.format === "gamma-ink" ? withDefaults(upgradeV1(ink)) : null };
+    return { ink: loadedInk(await fetchUpload(url)) };
   } catch (err) {
     return err?.status === 404 ? { gone: true } : { error: true };
   }

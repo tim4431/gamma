@@ -167,10 +167,10 @@ No schema change: sheets are blocks and properties.
   size, in the top-left frame the notes PDF uses (`q 1 0 0 -1 0 h cm`):
   the paper, then the sheet's text boxes with text as real, selectable
   text (`text_box.pdf_ops`, with the page's font resources), then every
-  ink group on the sheet through `ink.pdf_path_ops`, every group's band 0
-  before any group's band 1, with the graphics states the strokes set (a
-  highlighter's multiply, a pencil's shades: `ink.pdf_path_resources`) in
-  the page's resources. `notebook_pdf` takes
+  ink group on the sheet through `ink.pdf_path_ops`. Every group's band 0
+  is drawn before any group's band 1, and the graphics states the strokes
+  set (a highlighter's multiply, a pencil's shades:
+  `ink.pdf_path_resources`) go in the page's resources. `notebook_pdf` takes
   `(paper, [(content, text_box)], [InkFile])` per sheet.
   `X-Annotations-Written` counts the boxes and groups drawn. A page with
   neither is refused (400, "page has no PDF").

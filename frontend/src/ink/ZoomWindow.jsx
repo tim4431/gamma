@@ -19,7 +19,7 @@
 // included (this browser's inkZoomHeight); onChange(update): an update of
 // the window, `update(window) → next`; onClose(); annotationMode, isCancel:
 // the viewer's, for the raster; dark: the viewer flips page colours.
-import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { MarkupLayers } from "../markup/MarkupLayers";
 import { armedClasses, usePageTools } from "../markup/PageTools";
 import { covers, renderRegion, zoomRasterNeed, zoomRasterPlan } from "../pdf/pageRaster.js";

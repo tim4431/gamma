@@ -2,7 +2,7 @@
 // "Client"): is a finished pen stroke a fast dense back-and-forth, and which
 // strokes under it go. Pure; finishStroke's scribble stage calls both.
 // Fixture: tests/shared/inkscribble.json.
-import { strokeBounds } from "./ink.js";
+import { arcLengths, strokeBounds } from "./ink.js";
 
 // Thresholds. Those in css px divide by k; the rest are points, ms or ratios.
 const MIN_REVERSALS = 4;
@@ -84,8 +84,7 @@ export function isScribble(samples, { k = 1, durationMs } = {}) {
   const w = x1 - x0, h = y1 - y0, diag = Math.hypot(w, h);
   if (!diag) return false;
   if (h > FLAT_RATIO * w && h > FLAT_PX / k) return false;
-  const cum = [0];
-  for (let i = 1; i < samples.length; i++) cum[i] = cum[i - 1] + dist(samples[i - 1], samples[i]);
+  const cum = arcLengths(samples);
   const path = cum[cum.length - 1];
   if (path < PATH_DIAG * diag) return false;
   if ((path * k * 1000) / duration < MIN_SPEED) return false;

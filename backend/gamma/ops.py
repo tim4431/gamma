@@ -377,7 +377,7 @@ class _Batch:
         base_file = inkmod.read_upload(uploads, base) if base else empty()
         ids = [i for i in base_ids if isinstance(i, str)] if isinstance(base_ids, list) else None
         try:
-            result = inkmod.merge_ink(base_file, ours, theirs or empty(), ids if base_file is None else None)
+            result = inkmod.merge_ink(base_file, ours, theirs or empty(), ids)
         except ValueError:
             return patch
         merged = result.ink

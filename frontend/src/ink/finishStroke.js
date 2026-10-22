@@ -10,12 +10,13 @@
 import { T, t } from "../shared/i18n/i18n.js";
 import { shapeName, shapeSamples } from "./shapes.js";
 import { isScribble, scribbleTargets } from "./gestures.js";
-import { DEFAULT_NIB, DEFAULT_SIZE, KNOWN_BRUSHES, MAX_STROKE_SIZE, NIB_HAIR, decodeStroke, encodePoints } from "./ink.js";
+import {
+  DEFAULT_NIB, DEFAULT_SIZE, KNOWN_BRUSHES, MAX_STROKE_SIZE, NIB_HAIR, arcLengths, clamp, decodeStroke, encodePoints, round2, round3,
+} from "./ink.js";
 
 // Coalesced samples closer than this to the previous kept one (in points,
 // scale 1) are dropped: a 240 Hz trace roughly halves with no visible change.
 export const DECIMATE_PT = 0.1;
-const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 
 // The brush table (docs/dev/handwriting.md "The brush table";
 // tests/shared/inkwidth.json pins every law, its `about` the normative
@@ -80,7 +81,6 @@ export function travelAt(samples, i) {
 // perfect-freehand's simulatePressure step (its RATE_OF_PRESSURE_CHANGE).
 const SIMULATE_RATE = 0.275;
 const easeOutSine = (x) => Math.sin(x * Math.PI / 2);
-const round3 = (v) => Math.round(v * 1000) / 1000;
 
 // A style's ({tool, brush, pen}) entry in the table, or null.
 function brushOf({ tool = "pen", brush } = {}) {
@@ -158,11 +158,7 @@ export function brushWidths(samples, style, { live = false } = {}) {
   if (!b.taper) return samples.map((s) => round3(law(s)));
   const size = Math.max(0.01, style.size ?? DEFAULT_SIZE);
   const simulated = hasPressure(style, samples) ? null : simulatedPressure(samples, size);
-  const arc = new Array(samples.length);
-  for (let i = 0, run = 0; i < samples.length; i++) {
-    if (i) run += Math.hypot(samples[i].x - samples[i - 1].x, samples[i].y - samples[i - 1].y);
-    arc[i] = run;
-  }
+  const arc = arcLengths(samples);
   const total = arc[arc.length - 1], most = live ? Infinity : total / 2;
   const start = Math.min(b.taper.start * size, most), end = Math.min(b.taper.end * size, most);
   return samples.map((s, i) => {
@@ -282,7 +278,7 @@ export function restyleBrush(ink, ids, brush) {
 const STRAIGHT_CAP_PT = 6;
 const STRAIGHT_MIN_SIZES = 4;
 const STRAIGHT_SNAP_DEG = 4;
-export function straightChord(samples, size) {
+function straightChord(samples, size) {
   const a = samples[0], b = samples[samples.length - 1];
   const dx = b.x - a.x, dy = b.y - a.y, len = Math.hypot(dx, dy);
   if (!(len >= STRAIGHT_MIN_SIZES * size)) return null;
@@ -295,7 +291,6 @@ export function straightChord(samples, size) {
   return { x1: mx - sign * half, y1: my, x2: mx + sign * half, y2: my };
 }
 
-const r2 = (v) => Math.round(v * 100) / 100;
 // The shape record a snapped stroke carries: a circle is written as an
 // ellipse with equal radii, since the file's kinds (and the server's
 // SHAPE_KINDS) have no circle; `circle` stays the recogniser's answer for
@@ -330,7 +325,7 @@ export function finishStroke(samples, ctx) {
   // brush key stays, for the Style picker), and it is written xyt.
   if (ctx.hold?.kind) {
     const { kind, params } = ctx.hold;
-    const shaped = shapeSamples(kind, params, { span, p: r2(meanP) });
+    const shaped = shapeSamples(kind, params, { span, p: round2(meanP) });
     if (shaped.length) {
       const line = kind === "line" || kind === "arrow";
       // a nib only on a calligraphy pen's, and the preset's Lock angle never on a stroke
@@ -348,10 +343,10 @@ export function finishStroke(samples, ctx) {
   if (tool === "highlighter" && ctx.straight === "always" && samples.length >= 2) {
     const chord = straightChord(samples, style.size ?? 14);
     if (chord) {
-      const p = r2(meanP);
+      const p = round2(meanP);
       return { commit: [{ x: chord.x1, y: chord.y1, p, t: 0 }, { x: chord.x2, y: chord.y2, p, t: span }], erase: null,
         label: T("ink straight line"),
-        style: { ...ctx.style, pen: false, shape: { kind: "line", params: { x1: r2(chord.x1), y1: r2(chord.y1), x2: r2(chord.x2), y2: r2(chord.y2) } } },
+        style: { ...ctx.style, pen: false, shape: { kind: "line", params: { x1: round2(chord.x1), y1: round2(chord.y1), x2: round2(chord.x2), y2: round2(chord.y2) } } },
         status: { text: t("Straightened."), once: true } };
     }
   }

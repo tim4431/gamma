@@ -26,11 +26,11 @@ const NAMES = {
   pencil: [T("Pencil"), T("Pencil: tilt widens the line, pressure darkens it")],
   calligraphy: [T("Calligraphy"), T("Calligraphy: a flat nib, thick across it and thin along it")],
 };
-export const BRUSH_CHOICES = BRUSH_ORDER.map((brush) => [brush || "pen", ...NAMES[brush || "pen"]]);
+const BRUSH_CHOICES = BRUSH_ORDER.map((brush) => [brush || "pen", ...NAMES[brush || "pen"]]);
 // A stroke's or a preset's brush key → the picker's value.
 export const brushValue = (brush) => (brush && BRUSH_CHOICES.some(([v]) => v === brush) ? brush : "pen");
 // The brush's name in words: "Pen", "Ballpoint", "Brush", "Pencil", "Calligraphy".
-export const brushName = (brush) => t(BRUSH_CHOICES.find(([v]) => v === brushValue(brush))[1]);
+const brushName = (brush) => t(BRUSH_CHOICES.find(([v]) => v === brushValue(brush))[1]);
 
 // A short wave in a brush's look, drawn by the stroke renderer itself
 // (ink.js strokePath over samples baked by the brush table), pressure
@@ -53,7 +53,7 @@ function previewPath(brush) {
   previews.set(brush, path);
   return path;
 }
-export function BrushPreview({ brush = "pen" }) {
+function BrushPreview({ brush = "pen" }) {
   const p = previewPath(brushValue(brush));
   return (
     <svg className="inkBrushPreview" width="28" height="10" viewBox="0 0 28 10" aria-hidden="true" focusable="false">
@@ -122,7 +122,7 @@ export function NibPreview({ nib = DEFAULT_NIB }) {
 // line. `value` null (solid), 'dashed' or 'dotted' — undefined when a
 // selection's strokes differ, so no pill is pressed; onLine(null |
 // 'dashed' | 'dotted').
-export const LINE_CHOICES = [
+const LINE_CHOICES = [
   [null, T("Solid"), T("Solid line")],
   ["dashed", T("Dashed"), T("Dashed line: dashes two widths long")],
   ["dotted", T("Dotted"), T("Dotted line: a dot every two widths")],

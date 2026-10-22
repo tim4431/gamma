@@ -5,7 +5,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
 
 from ..auth import require_ws_writer
-from ..ink import UPDATE_GAMMA, InkError, InkVersionError, bounding_box, parse_ink, pdf_position
+from ..ink import InkError, InkFile, InkVersionError, bounding_box, parse_ink, pdf_position
 from ..storage import store_file
 
 router = APIRouter(prefix="/api", tags=["ink"])
@@ -30,12 +30,7 @@ async def upload_ink(request: Request):
 
 def _store_ink(request: Request, body: bytes) -> dict:
     ws = require_ws_writer(request)
-    try:
-        ink = parse_ink(body)
-    except InkVersionError:
-        raise HTTPException(status_code=400, detail=UPDATE_GAMMA)
-    except InkError as e:
-        raise HTTPException(status_code=400, detail=f"invalid ink file: {e}")
+    ink = parse_upload(body)
     filename, already_existed = store_file(ws, body, ".ink")
     return {
         "url": f"/api/uploads/{filename}",
@@ -45,3 +40,15 @@ def _store_ink(request: Request, body: bytes) -> dict:
         "pdf_position": pdf_position(ink),
         "already_existed": already_existed,
     }
+
+
+def parse_upload(body: bytes) -> InkFile:
+    """An uploaded stroke file, parsed, or the 400 both routes that take one
+    answer (this one and ``POST /api/upload-file``): ``"update Gamma"`` for
+    a version 1 file, the schema's complaint for anything else off."""
+    try:
+        return parse_ink(body)
+    except InkVersionError:
+        raise HTTPException(status_code=400, detail="update Gamma")
+    except InkError as e:
+        raise HTTPException(status_code=400, detail=f"invalid ink file: {e}")

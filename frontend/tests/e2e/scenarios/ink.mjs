@@ -6,7 +6,7 @@
 // (in the Markdown export's SVG too), a group's Transcribe with AI, and the draft
 // journal bringing back what a crashed tab never saved. /Ink in the annotated PDF is
 // backend/tests/test_ink.py; the chat's view_ink is test_ai_tools_ink.py.
-import { PYTHON, assertOpensInPlace, fakeAiModels } from "../harness.mjs";
+import { PYTHON, assertOpensInPlace, fakeAiModels, until } from "../harness.mjs";
 import { waitForPdf } from "./pdf.mjs";
 import { decodeStroke, encodeStroke, newInk, strokeWidth } from "../../../src/ink/ink.js";
 import { execFileSync } from "node:child_process";
@@ -19,6 +19,29 @@ async function drawLine(page, from, to) {
   await page.mouse.down();
   await page.mouse.move(to[0], to[1], { steps: 12 });
   await page.mouse.up();
+}
+
+// The strokes saved on a page, by id, over every group (a stroke joins the
+// current group, so a new one is found by its id, not its block).
+export async function savedInkStrokes(account, pageId) {
+  const out = new Map();
+  for (const b of (await account.api(`/api/blocks/${pageId}/subtree`)).block.children) {
+    if (!b.properties?.ink_url?.endsWith(".ink")) continue;
+    for (const st of (await account.api(b.properties.ink_url)).strokes) out.set(st.id, st);
+  }
+  return out;
+}
+// The strokes saved since `before` (savedInkStrokes'), once there are `n`.
+export const newInkStrokes = (account, pageId, before, n, what) => until(async () => {
+  const fresh = [...(await savedInkStrokes(account, pageId)).values()].filter((st) => !before.has(st.id));
+  return fresh.length >= n ? fresh : null;
+}, { what });
+
+// The armed preset's Style picker (its options row open): a style from its menu.
+export async function pickPenStyle(page, name) {
+  await page.locator(".pdfInkSub .inkStyleBtn").click();
+  await page.getByRole("menu", { name: "Pen style" }).getByRole("menuitemradio", { name, exact: true }).click();
+  await page.locator(".pdfInkSub").getByRole("button", { name: `Style: ${name}`, exact: true }).waitFor();
 }
 
 export async function inkScenarios({ server, browser, alice, makePdf, step, until, sleep, assert, assertEq, assertNoProblems, openPage, flags }) {
@@ -921,24 +944,12 @@ export async function inkScenarios({ server, browser, alice, makePdf, step, unti
     assertNoProblems(page);
   });
 
-  // --- milestone 1: the pen feel (docs/dev/handwriting.md "What the user sees") ---
+  // --- the pen feel (docs/dev/handwriting.md "What the user sees") ---
   const pathCount = () => page.locator('[data-page="1"] .inkLayer path').count();
   const pillText = async () => (await page.locator(".statusPill").allInnerTexts().catch(() => [])).join(" | ");
-  // The strokes saved on the page, by id, over every group (a stroke joins
-  // the current group, so a new one is found by its id, not its block).
-  const savedStrokes = async () => {
-    const d = await account.api(`/api/blocks/${pageId}/subtree`);
-    const out = new Map();
-    for (const b of d.block.children) {
-      if (!b.properties?.ink_url?.endsWith(".ink")) continue;
-      for (const st of (await account.api(b.properties.ink_url)).strokes) out.set(st.id, st);
-    }
-    return out;
-  };
-  const newStrokes = (before, n, what) => until(async () => {
-    const fresh = [...(await savedStrokes()).values()].filter((st) => !before.has(st.id));
-    return fresh.length >= n ? fresh : null;
-  }, { what });
+  // The strokes saved on the page, and the ones saved since.
+  const savedStrokes = () => savedInkStrokes(account, pageId);
+  const newStrokes = (before, n, what) => newInkStrokes(account, pageId, before, n, what);
   // The armed preset's options row: a tap on the armed tool opens it.
   const openOptions = async () => {
     await page.locator(".pdfInkBar .inkToolBtn.modeActive").click();
@@ -1235,7 +1246,7 @@ export async function inkScenarios({ server, browser, alice, makePdf, step, unti
     assertNoProblems(page);
   });
 
-  // --- milestone 3: pen styles and lines (docs/dev/handwriting.md "The brush table", "Dash geometry") ---
+  // --- pen styles and lines (docs/dev/handwriting.md "The brush table", "Dash geometry") ---
   // A stylus stroke of synthetic pointer events on their own clock: points
   // [x, y, ms, pressure, altitude°, azimuth°] from the page's corner (the
   // tilt optional, as altitudeAngle / azimuthAngle), the lift at the last.
@@ -1255,12 +1266,7 @@ export async function inkScenarios({ server, browser, alice, makePdf, step, unti
     const last = points[points.length - 1];
     send("pointerup", [last[0], last[1], last[2] + 8, 0, last[4], last[5]]);
   }, points);
-  // The armed preset's Style picker, a style from its menu.
-  const pickStyle = async (name) => {
-    await page.locator(".pdfInkSub .inkStyleBtn").click();
-    await page.getByRole("menu", { name: "Pen style" }).getByRole("menuitemradio", { name, exact: true }).click();
-    await page.locator(".pdfInkSub").getByRole("button", { name: `Style: ${name}`, exact: true }).waitFor();
-  };
+  const pickStyle = (name) => pickPenStyle(page, name);
   const lineRow = () => page.locator(".pdfInkSub").getByRole("group", { name: "Line", exact: true });
   // The group (block id) a saved stroke is in, and the last path drawn for that group.
   const groupOf = async (strokeId) => {
@@ -1272,12 +1278,22 @@ export async function inkScenarios({ server, browser, alice, makePdf, step, unti
     return null;
   };
   const lastPath = (gid) => page.locator(`[data-page="1"] .inkLayer g[data-ink-id="${gid}"] path`).last();
-  // The presets are the account's, which the scenarios after these share:
-  // wait until preset 1 is a solid plain pen there again.
-  const presetsPushed = () => until(async () => {
-    const first = ((await account.api("/api/prefs/profile")).value?.inkTools || [])[0];
-    return !first || (!first.brush && !first.dash && !first.stabilize);
-  }, { what: "preset 1 a solid plain pen on the account again" }).catch(() => {});
+  // Preset 1 back to a solid plain pen, for the steps (and scenarios) after:
+  // the Pen style from its options row (with `line`, the Solid line too), the
+  // row closed. The presets are the account's, which the scenarios after
+  // these share: then wait until preset 1 is a solid plain pen there again.
+  const resetPreset = async ({ line = false } = {}) => {
+    if (!(await page.locator(".pdfInkSub").count())) await openOptions().catch(() => {});
+    if (await page.locator(".pdfInkSub .inkStyleBtn").count()) {
+      if ((await page.locator(".pdfInkSub .inkStyleBtn").getAttribute("aria-label")) !== "Style: Pen") await pickStyle("Pen").catch(() => {});
+      if (line) await lineRow().getByRole("button", { name: "Solid", exact: true }).click().catch(() => {});
+    }
+    if (await page.locator(".pdfInkSub").count()) await page.locator(".pdfInkBar .inkToolBtn.modeActive").click().catch(() => {});
+    await until(async () => {
+      const first = ((await account.api("/api/prefs/profile")).value?.inkTools || [])[0];
+      return !first || (!first.brush && !first.dash && !first.stabilize);
+    }, { what: "preset 1 a solid plain pen on the account again" }).catch(() => {});
+  };
 
   await step("ink: the Style picker's Brush bakes a tapered pressure stroke; Dashed cuts it into dashes and dashes an even line; Shift+[ ] step the style", async () => {
     await openStrip();
@@ -1334,14 +1350,7 @@ export async function inkScenarios({ server, browser, alice, makePdf, step, unti
       await until(async () => { const first = JSON.parse(await page.evaluate(() => localStorage.getItem("gamma-ink-tools")) || "[]")[0];
         return first?.brush === "pencil" && !("stabilize" in first); }, { what: "a pencil with no smoothing left behind by Calligraphy" });
     } finally {
-      // preset 1 back to a solid plain pen, for the steps (and scenarios) after
-      if (!(await page.locator(".pdfInkSub").count())) await openOptions().catch(() => {});
-      if (await page.locator(".pdfInkSub .inkStyleBtn").count()) {
-        if ((await page.locator(".pdfInkSub .inkStyleBtn").getAttribute("aria-label")) !== "Style: Pen") await pickStyle("Pen").catch(() => {});
-        await lineRow().getByRole("button", { name: "Solid", exact: true }).click().catch(() => {});
-      }
-      if (await page.locator(".pdfInkSub").count()) await page.locator(".pdfInkBar .inkToolBtn.modeActive").click().catch(() => {});
-      await presetsPushed();
+      await resetPreset({ line: true });
     }
     assertNoProblems(page);
   });
@@ -1395,10 +1404,7 @@ export async function inkScenarios({ server, browser, alice, makePdf, step, unti
       assertEq(segments.length, 1, `the line is one segment of the group's SVG (${svgName})`);
       assert(near(segments[0][4], size), `drawn ${segments[0][4]} pt wide, the preset's ${size} pt (a hairline would be ${0.1 * size})`);
     } finally {
-      if (!(await page.locator(".pdfInkSub").count())) await openOptions().catch(() => {});
-      if (await page.locator(".pdfInkSub .inkStyleBtn").count()) await pickStyle("Pen").catch(() => {});
-      if (await page.locator(".pdfInkSub").count()) await page.locator(".pdfInkBar .inkToolBtn.modeActive").click().catch(() => {});
-      await presetsPushed();
+      await resetPreset();
     }
     assertNoProblems(page);
   });
@@ -1445,10 +1451,7 @@ export async function inkScenarios({ server, browser, alice, makePdf, step, unti
       const pattern = fills[0][0].slice(5, -1);
       assertEq(await page.locator(`[data-page="1"] .inkLayer defs pattern[id="${pattern}"] image`).count(), 1, "one grain pattern in the layer's defs");
     } finally {
-      if (!(await page.locator(".pdfInkSub").count())) await openOptions().catch(() => {});
-      if (await page.locator(".pdfInkSub .inkStyleBtn").count()) await pickStyle("Pen").catch(() => {});
-      if (await page.locator(".pdfInkSub").count()) await page.locator(".pdfInkBar .inkToolBtn.modeActive").click().catch(() => {});
-      await presetsPushed();
+      await resetPreset();
     }
     assertNoProblems(page);
   });
@@ -1481,13 +1484,7 @@ export async function inkScenarios({ server, browser, alice, makePdf, step, unti
         await settingRow("Hover preview").locator("input[type=checkbox]").check().catch(() => {});
         await closeSettings(dialog).catch(() => {});
       }
-      if (!(await page.locator(".pdfInkSub").count())) await openOptions().catch(() => {});
-      if (await page.locator(".pdfInkSub .inkStyleBtn").count()) {
-        await pickStyle("Pen").catch(() => {});
-        await lineRow().getByRole("button", { name: "Solid", exact: true }).click().catch(() => {});
-      }
-      if (await page.locator(".pdfInkSub").count()) await page.locator(".pdfInkBar .inkToolBtn.modeActive").click().catch(() => {});
-      await presetsPushed();
+      await resetPreset({ line: true });
     }
     assertNoProblems(page);
   });

@@ -13,7 +13,7 @@
 // block's chip, as Transcribe with AI does (the AI stubbed: no provider is
 // called). The window's rules themselves are tests/zoomWindow.test.mjs; the
 // server's side of a selection is backend/tests/test_ai_tools_ink.py.
-import { fakeAiModels } from "../harness.mjs";
+import { assertNear as near, fakeAiModels } from "../harness.mjs";
 import { waitForPdf } from "./pdf.mjs";
 import { decodeStroke, encodeStroke, newInk, strokeBounds } from "../../../src/ink/ink.js";
 import { advance, moveTo, moveWindow, newLine, nextLine, prevLine } from "../../../src/ink/zoomWindow.js";
@@ -41,7 +41,6 @@ export async function inkZoomScenarios({ server, browser, alice, makePdf, step, 
     ({ x: Number(el.dataset.x), y: Number(el.dataset.y), w: Number(el.dataset.w), h: Number(el.dataset.h) }));
   let x0 = 0;
   const state = async () => ({ page: 1, ...(await box()), mag: Number(await panel().getAttribute("data-mag")), line: 24, x0 });
-  const near = (a, b, tol, what) => assert(Math.abs(a - b) <= tol, `${what}: ${a} vs ${b}`);
   const sameBox = (a, b, what) => { for (const k of ["x", "y", "w", "h"]) near(a[k], b[k], 0.06, `${what} (${k})`); };
   // A page point where the panel shows it, and where the page itself does.
   const inPanel = async (x, y) => {

@@ -98,7 +98,8 @@ struct InkTool: Decodable, Equatable {
     var opacity: Double
     var brush: Brush
     /// The stroke reads the Pencil's pressure (false: *Pressure-sensitive
-    /// strokes* off, and only a Brush still varies, by its speed law).
+    /// strokes* off, and only a Brush, by its speed law, and a Calligraphy
+    /// pen, by its travel against the nib, still vary).
     var pressure: Bool
     /// The dash, `[on, off]` in CSS px (ink.js DASH × size × zoom); nil for a solid line.
     var dash: [Double]?

@@ -5,6 +5,7 @@
 // it, and the committed stroke stays the web's: the look only lets the
 // shell's live line come close to it.
 import { DEFAULT_SIZE, KNOWN_BRUSHES, dashPattern, mapShape, strokeNib } from "./ink.js";
+import { MAX_STABILIZE } from "./stabilizer.js";
 
 const RAD = Math.PI / 180;
 
@@ -31,7 +32,7 @@ export function claimTool(look, { k = 1 } = {}) {
   if (dash) tool.dash = dash.map((v) => v * k);
   if (kind === "highlighter") tool.blend = "multiply";
   const level = Math.round(Number(look.stabilize));
-  if (level >= 1 && level <= 4) tool.stabilize = level;
+  if (level >= 1 && level <= MAX_STABILIZE) tool.stabilize = level;
   if (tool.brush === "calligraphy") {
     tool.nib = strokeNib(look.nib);
     if (!look.nibLock) tool.nibRoll = true;

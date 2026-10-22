@@ -7,6 +7,7 @@
 // view {width, height} in css px, so w × mag is the view's width. Every
 // answer is clamped to its page, and one that changes nothing is the window
 // itself, so a state update with it renders nothing.
+import { round2 } from "./ink.js";
 
 export const ZOOM_MAGS = [2, 3, 4];
 export const ZOOM_MAG = 3;
@@ -30,7 +31,6 @@ export const ZOOM_CHROME = 45;
 export const ADVANCE_AT = 0.8;
 export const ADVANCE_BY = 0.6;
 
-const r2 = (v) => Math.round(v * 100) / 100;
 const KEYS = ["page", "x", "y", "w", "h", "mag", "line", "x0"];
 const same = (a, b) => KEYS.every((k) => a[k] === b[k]);
 
@@ -39,8 +39,8 @@ const same = (a, b) => KEYS.every((k) => a[k] === b[k]);
 // keeps its top-left corner on it.
 export function clampWindow(win, size) {
   const W = size?.width || 0, H = size?.height || 0;
-  const inX = (v) => r2(Math.max(0, Math.min(W - win.w, v)));
-  const next = { ...win, x: inX(win.x), y: r2(Math.max(0, Math.min(H - win.h, win.y))), x0: inX(win.x0 ?? win.x) };
+  const inX = (v) => round2(Math.max(0, Math.min(W - win.w, v)));
+  const next = { ...win, x: inX(win.x), y: round2(Math.max(0, Math.min(H - win.h, win.y))), x0: inX(win.x0 ?? win.x) };
   return same(win, next) ? win : next;
 }
 // `next` held to the page, or `win` itself when that is where it ends up.
@@ -55,7 +55,7 @@ const settle = (win, next, size) => {
 // middle at the visible part's; the line starts there.
 export function openWindow(page, size, visible, panel) {
   const mag = ZOOM_MAG;
-  const w = r2(Math.max(1, panel?.width || 0) / mag), h = r2(Math.max(1, panel?.height || 0) / mag);
+  const w = round2(Math.max(1, panel?.width || 0) / mag), h = round2(Math.max(1, panel?.height || 0) / mag);
   const v = visible || { x: 0, y: 0, width: size.width, height: size.height };
   const x = Math.max(0, v.x) + size.width / 20;
   const y = v.y + v.height / 2 - h / 2;
@@ -66,7 +66,7 @@ export function openWindow(page, size, visible, panel) {
 // css px over the magnification, the top-left kept.
 export function sized(win, panel, size) {
   if (!(panel?.width > 0 && panel?.height > 0)) return win;
-  const w = r2(panel.width / win.mag), h = r2(panel.height / win.mag);
+  const w = round2(panel.width / win.mag), h = round2(panel.height / win.mag);
   return settle(win, { ...win, w, h }, size);
 }
 
@@ -105,10 +105,10 @@ export function moveTo(win, page, point, size) {
 // the panel's view (the window's own w × mag without one), the left edge
 // and the vertical middle kept, so the line being written stays in view.
 export function setMag(win, mag, panel, size) {
-  const m = r2(Math.max(ZOOM_MAG_MIN, Math.min(ZOOM_MAG_MAX, Number(mag) || ZOOM_MAG)));
+  const m = round2(Math.max(ZOOM_MAG_MIN, Math.min(ZOOM_MAG_MAX, Number(mag) || ZOOM_MAG)));
   if (m === win.mag) return win;
   const view = panel?.width > 0 && panel?.height > 0 ? panel : { width: win.w * win.mag, height: win.h * win.mag };
-  const w = r2(view.width / m), h = r2(view.height / m);
+  const w = round2(view.width / m), h = round2(view.height / m);
   return settle(win, { ...win, mag: m, w, h, y: win.y + win.h / 2 - h / 2 }, size);
 }
 

@@ -261,6 +261,15 @@ def ink_selection_bytes(value) -> int:
     return len(json.dumps(value, separators=(",", ":"), ensure_ascii=False).encode("utf-8"))
 
 
+def _context_pages(payload) -> set[str]:
+    """The ids of the request's context pages: ``pages`` and the open
+    ``page_id``."""
+    pages = {str(p) for p in (getattr(payload, "pages", None) or []) if p}
+    if getattr(payload, "page_id", ""):
+        pages.add(str(payload.page_id))
+    return pages
+
+
 def request_ink_selections(payload) -> list[dict]:
     """The handwriting the user selected for this message: ``[{page_id,
     block_id, ink}]``, ``ink`` the selected strokes as a version 2 file in
@@ -271,9 +280,7 @@ def request_ink_selections(payload) -> list[dict]:
     entries = getattr(payload, "ink_selections", None) or []
     if not entries:
         return []
-    pages = {str(p) for p in (getattr(payload, "pages", None) or []) if p}
-    if getattr(payload, "page_id", ""):
-        pages.add(str(payload.page_id))
+    pages = _context_pages(payload)
     out = []
     for raw in entries[:MAX_INK_SELECTIONS]:
         if not isinstance(raw, dict):
@@ -371,9 +378,7 @@ def notes_focus_section(ws: str, payload, notes_seen: dict | None = None,
     selections = request_ink_selections(payload)
     if not focus and not chips and not selections:
         return ""
-    pages = {str(p) for p in (payload.pages or []) if p}
-    if payload.page_id:
-        pages.add(payload.page_id)
+    pages = _context_pages(payload)
     if not pages:
         return ""
     out = []

@@ -10,8 +10,10 @@
 // selection's Style row. The rules themselves are node tests
 // (tests/shapeTool.test.mjs, ruler.test.mjs, stripKeys.test.mjs); the iPad
 // claim's `snap` is in ipad.mjs.
+import { assertNear as near } from "../harness.mjs";
 import { decodeStroke, encodeStroke, newInk } from "../../../src/ink/ink.js";
 import { shapeSamples } from "../../../src/ink/shapes.js";
+import { pickPenStyle } from "./ink.mjs";
 import { waitForPdf } from "./pdf.mjs";
 
 export async function inkShapesScenarios({ server, browser, alice, makePdf, step, until, assert, assertEq, assertNoProblems, openPage }) {
@@ -40,7 +42,6 @@ export async function inkShapesScenarios({ server, browser, alice, makePdf, step
   // The ruler as it lies: its middle, angle and length in page points.
   const rulerOf = () => page.locator('[data-page="1"] .inkRuler').evaluate((el) =>
     ({ x: Number(el.dataset.x), y: Number(el.dataset.y), angle: Number(el.dataset.angle), length: Number(el.dataset.length) }));
-  const near = (a, b, tol, what) => assert(Math.abs(a - b) <= tol, `${what}: ${a} vs ${b}`);
   const bar = () => page.locator(".pdfInkBar");
   const more = () => page.locator(".pdfInkBar button[aria-label='More handwriting tools']");
   const stripMenu = () => page.locator(".inkStripMenu");
@@ -72,7 +73,7 @@ export async function inkShapesScenarios({ server, browser, alice, makePdf, step
     const shapes = bar().locator("button[aria-label='Shapes']");
     assertEq(await shapes.getAttribute("aria-pressed"), "true", "a pressed Shapes button in the second group");
     assertEq(await shapes.getAttribute("data-guide"), "ink.shape");
-    assert(await page.locator(".pdfViewer.inkShapeArmed").count(), "the crosshair class");
+    assert(await page.locator(".pdfViewer.inkArmed").count(), "the crosshair class");
     assertEq(JSON.stringify(await row.locator(".inkShapeKinds button").evaluateAll((els) => els.map((el) => el.getAttribute("aria-label")))),
       JSON.stringify(["Line", "Arrow", "Rectangle", "Ellipse"]));
     assertEq(await row.getByRole("button", { name: "Line", exact: true }).getAttribute("aria-pressed"), "true", "Line to start");
@@ -256,17 +257,12 @@ export async function inkShapesScenarios({ server, browser, alice, makePdf, step
   await ctx?.close().catch(() => {});
   await alice.api("/api/prefs/profile", { method: "PATCH", body: { set: { inkShapeKind: null, inkShapeFill: null } } }).catch(() => {});
 
-  // --- the calligraphy pen, shape handles and fills (the PEN track's steps) -------------
-  // The armed preset's options row and a style from its picker's menu.
+  // --- the calligraphy pen, shape handles and fills -------------
+  // The armed preset's options row.
   const openOptions = async () => {
     if (await page.locator(".pdfInkSub[data-ink-options='tool']").count()) return;
     await bar().locator(".inkToolBtn.modeActive").first().click();
     await page.waitForSelector(".pdfInkSub[data-ink-options='tool']");
-  };
-  const pickStyle = async (name) => {
-    await page.locator(".pdfInkSub .inkStyleBtn").click();
-    await page.getByRole("menu", { name: "Pen style" }).getByRole("menuitemradio", { name, exact: true }).click();
-    await page.locator(".pdfInkSub").getByRole("button", { name: `Style: ${name}`, exact: true }).waitFor();
   };
   const firstPreset = async () => ((await alice.api("/api/prefs/profile")).value?.inkTools || [])[0] || null;
   const editMenu = () => page.getByRole("toolbar", { name: "Edit handwriting", exact: true });
@@ -283,7 +279,7 @@ export async function inkShapesScenarios({ server, browser, alice, makePdf, step
       await page.waitForSelector(".pdfInkBar .inkToolBtn.modeActive .inkToolInk");
       await page.keyboard.press("1");
       await openOptions();
-      await pickStyle("Calligraphy");
+      await pickPenStyle(page, "Calligraphy");
       const armed = await bar().locator(".inkToolBtn.modeActive").first().getAttribute("aria-label");
       assert(/ calligraphy pen · /.test(armed), `the preset is named a calligraphy pen (${armed})`);
       await until(async () => { const p = await firstPreset(); return p?.brush === "calligraphy" && !("stabilize" in p) && !("nib" in p); },

@@ -9,6 +9,7 @@
 // Pencil settings and the Server row. Chromium in a tablet-sized touch
 // context — emulation, not an iPad.
 import { decodeStroke } from "../../../src/ink/ink.js";
+import { newInkStrokes, savedInkStrokes } from "./ink.mjs";
 import { same, tree } from "./notes.mjs";
 import { waitForPdf } from "./pdf.mjs";
 
@@ -29,6 +30,8 @@ function fakeShell(flags = {}) {
     return Promise.resolve(msg.type === "claim" ? { taken: true } : {});
   } } } };
 }
+// An iPad's own Safari, which would be offered Add to Home Screen; the shell never is.
+const SHELL_UA = "Mozilla/5.0 (iPad; CPU OS 18_2 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.2 Mobile/15E148 Safari/604.1";
 
 export async function ipadScenarios({ server, browser, alice, makePdf, step, until, sleep, assert, assertEq, assertNoProblems, openPage }) {
   await step("ipad: install manifest, icons, status-bar colour and standalone mode", async () => {
@@ -177,9 +180,7 @@ export async function ipadScenarios({ server, browser, alice, makePdf, step, unt
   await step("ipad shell: a Pencil stroke is claimed and committed from the host's samples; theme, gestures, Server row", async () => {
     const up = await alice.upload("/api/uploads", makePdf([["A page the Pencil writes on."]]), "shell.pdf", "application/pdf");
     const paper = await alice.api(`/api/blocks/by-doc/${up.doc_id}`, { method: "POST", body: { default_title: "Shell paper", source_url: up.source_url } });
-    // An iPad's own Safari would be offered Add to Home Screen; the shell never is.
-    const ctx = await alice.context(browser, { hasTouch: true, viewport: { width: 1194, height: 834 },
-      userAgent: "Mozilla/5.0 (iPad; CPU OS 18_2 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.2 Mobile/15E148 Safari/604.1" });
+    const ctx = await alice.context(browser, { hasTouch: true, viewport: { width: 1194, height: 834 }, userAgent: SHELL_UA });
     await ctx.addInitScript(fakeShell);
     try {
       const page = await openPage(ctx, `${server.base}/?ws=${alice.ws}&block=${paper.id}`);
@@ -298,14 +299,13 @@ export async function ipadScenarios({ server, browser, alice, makePdf, step, unt
     } finally { await anon.close(); }
   });
 
-  // --- the shell's milestone 4: the claim's look, the hold, the gestures' choices, the haptics ---
+  // --- the shell: the claim's look, the hold, the gestures' choices, the haptics ---
   // A PDF page in a shell context (the stand-in with `flags`), the strip open
   // with the stylus pen, and the shell's side played in the page: the Pencil
   // going down on page 1 (the page claims it, the stand-in takes it), the
   // host's `hold` and `stroke` with samples [x, y, p, t, a?, z?] in px from
   // the page's corner (a `stroke` naming, as `held`, the hold whose shape
   // the shell drew), and what the page posted.
-  const SHELL_UA = "Mozilla/5.0 (iPad; CPU OS 18_2 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.2 Mobile/15E148 Safari/604.1";
   async function shellPaper(name, flags) {
     const up = await alice.upload("/api/uploads", makePdf([[`A page the Pencil ${name} on.`]]), `${name}.pdf`, "application/pdf");
     const paper = await alice.api(`/api/blocks/by-doc/${up.doc_id}`, { method: "POST", body: { default_title: `Shell ${name}`, source_url: up.source_url } });
@@ -340,19 +340,9 @@ export async function ipadScenarios({ server, browser, alice, makePdf, step, unt
       stroke: async (pointerId, rows, held) => receive({ type: "stroke", pointerId, samples: await toViewport(rows), ...(held == null ? {} : { held }) }) };
     return { ctx, page, paper, shell };
   }
-  // The strokes saved on a page, by id, over every group.
-  const savedStrokes = async (paperId) => {
-    const out = new Map();
-    for (const b of (await alice.api(`/api/blocks/${paperId}/subtree`)).block.children) {
-      if (!b.properties?.ink_url?.endsWith(".ink")) continue;
-      for (const st of (await alice.api(b.properties.ink_url)).strokes) out.set(st.id, st);
-    }
-    return out;
-  };
-  const newStrokes = (paperId, before, n, what) => until(async () => {
-    const fresh = [...(await savedStrokes(paperId)).values()].filter((st) => !before.has(st.id));
-    return fresh.length >= n ? fresh : null;
-  }, { what });
+  // The strokes saved on a page (ink.mjs), and the ones saved since.
+  const savedStrokes = (paperId) => savedInkStrokes(alice, paperId);
+  const newStrokes = (paperId, before, n, what) => newInkStrokes(alice, paperId, before, n, what);
   // A line drawn left to right over 300 ms at `y`, then held still to 780 ms
   // (six-value samples, the Pencil at 50°): the stillness anchor is its end
   // at 300 ms, so the hold's snap time is 900 ms.

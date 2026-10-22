@@ -4,13 +4,13 @@
 // the host's platform, its version and what it can do: {platform, version,
 // ink (it captures claimed Pencil strokes), inkLooks (what of the claim's
 // look its live line draws, `snap` the line along the ruler's edge among
-// them), hold (it sends `hold` when a captured Pencil
-// stays still), pencil (it forwards the double tap and the squeeze),
-// pencilPhases (a squeeze's start and cancel come too, as `squeeze`),
-// haptics (it plays `haptic`), servers (it has a server picker)} — and a
-// `receive(msg)` stub that queues what native sends until this module takes
-// over. A flag the host leaves out is a thing it does not do, and the web
-// leaves it out too; `version` only names the build.
+// them), hold (it sends `hold` when a captured Pencil stays still), pencil
+// (it forwards the double tap and the squeeze), pencilPhases (a squeeze's
+// start and cancel come too, as `squeeze`), pencilRoll (its samples carry
+// the Pencil's barrel roll), haptics (it plays `haptic`), servers (it has a
+// server picker)} — and a `receive(msg)` stub that queues what native sends
+// until this module takes over. A flag the host leaves out is a thing it
+// does not do, and the web leaves it out too; `version` only names the build.
 // The messages: the web posts `claim` (the ink layer), `theme`, `servers`
 // and `haptic` (App); native sends `stroke` and `hold` (the ink layer),
 // `pencil` and `squeeze` (App). Feature code asks nativeHost() for a

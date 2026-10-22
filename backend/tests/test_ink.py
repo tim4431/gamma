@@ -65,7 +65,6 @@ def test_codec_round_trips_and_delta_encodes():
                                           "pts": inkmod.encode_points(_samples(), "xyp")}])).strokes[0]
     assert {w for _, _, w in inkmod.stroke_polyline(flat)} == {3}
     assert "w" not in inkmod.decode_stroke(flat)[0]
-    assert not hasattr(inkmod, "THINNING")   # the old width law is gone
 
 
 def test_unknown_channel_letters_ride_along_by_stride():
@@ -662,7 +661,7 @@ def test_block_update_with_base_ids_merges_a_purged_base_by_deletions(guest):
     _, ink = _stored(guest, "mg4")
     assert [s.id for s in ink.strokes] == ["x", "c"]
     assert r.json()["ink_conflict"] == {"clean": False, "lost_ours": ["a"], "returned": []}
-    # without base_ids a gone base is the union by id, as before
+    # without base_ids a gone base is the union by id
     r = guest.put("/api/blocks/mg4", json={"properties": {"ink_url": ours}, "base_properties": {"ink_url": gone}})
     _, ink = _stored(guest, "mg4")
     assert sorted(s.id for s in ink.strokes) == ["a", "c", "x"]
@@ -972,7 +971,7 @@ def test_a_filled_closed_shape_draws_its_fill_under_its_outline():
     # the AI's picture: the page's content stamped with the fill, its state declared
     from PyPDF2 import PdfReader
     from gamma.pdf_export import page_with_ink
-    out, _ = page_with_ink(_blank_pdf(), 1, [ink], vector=True)
+    out, _ = page_with_ink(_blank_pdf(), 1, [ink])
     page = PdfReader(io.BytesIO(out)).pages[0]
     stamped = b"".join(part.get_object().get_data() for part in page["/Contents"])
     assert b" h f" in stamped and "/GSink250" in page["/Resources"]["/ExtGState"]

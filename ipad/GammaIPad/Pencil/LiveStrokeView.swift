@@ -5,16 +5,16 @@ import UIKit
 /// page could paint: a ribbon as wide as the brush's law makes each sample
 /// (InkWidth; a calligraphy pen's from the travel against the claim's nib,
 /// turned by the first sample's roll, its ends round where the page's are
-/// the nib's flat corners), a dashed line, or the plain polyline at the tool's colour,
-/// width and opacity; a highlighter multiplied onto the page; the samples
-/// smoothed through the lazy brush when the preset smooths; along the
-/// ruler (the claim's `snap`), the line between the outermost projections
-/// of the samples onto its edge (RulerSnap), even end to end; and, once the
-/// page snapped a held stroke, that shape instead (HeldShape), in the
-/// selection blue for its first frames. The saved stroke is the web's (its
-/// pen outline); each line stays until the web says it painted that stroke,
-/// so the swap never blinks, and strokes written in quick succession each
-/// keep theirs. It takes no touches.
+/// the nib's flat corners), a dashed line, or the plain polyline at the
+/// tool's colour, width and opacity; a highlighter multiplied onto the
+/// page; the samples smoothed through the lazy brush when the preset
+/// smooths; along the ruler (the claim's `snap`), the line between the
+/// outermost projections of the samples onto its edge (RulerSnap), even
+/// end to end; and, once the page snapped a held stroke, that shape instead
+/// (HeldShape), in the selection blue for its first frames. The saved
+/// stroke is the web's (its pen outline); each line stays until the web
+/// says it painted that stroke, so the swap never blinks, and strokes
+/// written in quick succession each keep theirs. It takes no touches.
 final class LiveStrokeView: UIView {
     /// A finished stroke's line, waiting for the web's paint.
     struct Handle {

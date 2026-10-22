@@ -130,20 +130,13 @@ def test_page_with_ink_draws_the_strokes_on_that_page(tmp_path):
     # The stroke runs corner to corner through the middle; the corner is paper.
     assert _pixel(data, 150, 200) == (255, 0, 0)
     assert _pixel(data, 290, 10) == (255, 255, 255)
-    assert page_with_ink(path, 3, []) == (b"", 2)
-
-
-def test_the_vector_page_stamps_the_strokes_into_its_content(tmp_path):
-    path = _pdf(tmp_path / "two.pdf", pages=2)
-    data, pages = page_with_ink(path, 2, [inkmod.parse_ink(_ink())], vector=True)
-    assert pages == 2 and _page_count(data) == 1
-    assert _pixel(data, 150, 200) == (255, 0, 0) and _pixel(data, 290, 10) == (255, 255, 255)
     doc = pymupdf.open(stream=data, filetype="pdf")
     try:
-        assert list(doc[0].annots()) == []          # drawn, not annotated
+        assert list(doc[0].annots()) == []          # drawn into the content, not annotated
     finally:
         doc.close()
-    assert page_with_ink(path, 2, [], vector=True)[0]   # nothing to stamp: the page as it is
+    assert page_with_ink(path, 2, [])[0]   # nothing to stamp: the page as it is
+    assert page_with_ink(path, 3, []) == (b"", 2)
 
 
 @pytest.mark.parametrize("rotation", [0, 90, 180, 270])
@@ -165,7 +158,7 @@ def test_stamped_strokes_land_where_they_were_drawn_on_a_turned_page(rotation):
                             "strokes": [_line("pen", 40, x0=30, x1=80, color="#ff0000", size=6),
                                         _line("hl", 90, x0=30, x1=80, tool="highlighter", color="#0000ff",
                                               size=10, opacity=0.5)]})
-    pixel = _raster(page_with_ink(buf.getvalue(), 1, [ink], vector=True)[0])
+    pixel = _raster(page_with_ink(buf.getvalue(), 1, [ink])[0])
     assert pixel(55, 40) == (255, 0, 0) and pixel(55, 60) == (255, 255, 255)
     r, g, b = pixel(55, 90)
     assert b == 255 and 120 < r == g < 136                    # blue at half strength, multiplied
@@ -175,11 +168,11 @@ def test_text_under_a_highlighter_stays_legible(tmp_path):
     """The highlighter multiplies onto the page's text: every glyph pixel
     under it stays dark, and the paper around them turns yellow."""
     path = _text_pdf(tmp_path / "text.pdf")
-    bare = _raster(page_with_ink(path, 1, [], vector=True)[0])
+    bare = _raster(page_with_ink(path, 1, [])[0])
     glyphs = [(x, y) for x in range(40, 280) for y in range(74, 100) if max(bare(x, y)) < 60]
     assert len(glyphs) > 300
     marker = _line("hl", 88, x0=30, tool="highlighter", color="#ffe066", size=30, opacity=0.6)
-    lit = _raster(page_with_ink(path, 1, [_drawing(marker)], vector=True)[0])
+    lit = _raster(page_with_ink(path, 1, [_drawing(marker)])[0])
     assert all(max(lit(x, y)) < 80 for x, y in glyphs)
     r, g, b = lit(32, 88)                      # paper under the highlighter, left of the text
     assert r > 240 and b < 200 and lit(32, 160) == (255, 255, 255)
@@ -191,7 +184,7 @@ def test_a_pen_stays_over_a_highlighter_drawn_after_it(tmp_path):
     pen = _line("pen", 200, color="#0000ff", size=6)
     marker = {**_line("hl", 0, x0=150, x1=150), "tool": "highlighter", "color": "#ffe066", "size": 30,
               "pts": inkmod.encode_points([{"x": 150, "y": 100}, {"x": 150, "y": 300}], "xy")}
-    data, _ = page_with_ink(path, 1, [_drawing(pen), _drawing(marker)], vector=True)
+    data, _ = page_with_ink(path, 1, [_drawing(pen), _drawing(marker)])
     assert _pixel(data, 150, 200) == (0, 0, 255)                # the crossing: the pen on top
     r, g, b = _pixel(data, 150, 150)
     assert r > 240 and b < 200                                  # the highlighter itself
@@ -203,7 +196,7 @@ def test_a_pencil_shows_its_three_shades(tmp_path):
     path = _pdf(tmp_path / "blank.pdf")
     pencil = _line("pc", 200, x0=30, x1=270, ch="xyptwo", brush="pencil", color="#000000", size=6,
                    p=lambda f: f, w=lambda f: 1 + (f - 0.5), o=lambda f: 0.15 + 0.85 * f)
-    shade = _raster(page_with_ink(path, 1, [_drawing(pencil)], vector=True)[0])
+    shade = _raster(page_with_ink(path, 1, [_drawing(pencil)])[0])
     light, mid, dark = (shade(x, 200)[0] for x in (55, 130, 240))   # o 0.33, 0.66, 1 bands
     assert light == pytest.approx(255 * 0.67, abs=4) and mid == pytest.approx(255 * 0.34, abs=4) and dark < 4
 
@@ -213,11 +206,11 @@ def test_a_dashed_stroke_renders_with_gaps(tmp_path):
     centreline (round caps eat 4 pt of every gap)."""
     path = _pdf(tmp_path / "blank.pdf")
     dashed = _line("d", 300, ch="xyptw", color="#000000", size=4, dash="dashed", p=lambda f: 0.5, w=lambda f: 1.0)
-    pixel = _raster(page_with_ink(path, 1, [_drawing(dashed)], vector=True)[0])
+    pixel = _raster(page_with_ink(path, 1, [_drawing(dashed)])[0])
     ink = [max(pixel(x, 300)) < 128 for x in range(10, 290)]
     runs = sum(1 for a, b in zip([False] + ink, ink) if b and not a)
     assert runs == 17 and not all(ink)
-    solid = _raster(page_with_ink(path, 1, [_drawing({**dashed, "dash": None})], vector=True)[0])
+    solid = _raster(page_with_ink(path, 1, [_drawing({**dashed, "dash": None})])[0])
     assert all(max(solid(x, 300)) < 128 for x in range(20, 281))
 
 

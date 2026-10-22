@@ -9,7 +9,7 @@
 // the central moments (Xournal++'s circle recogniser). Fixtures:
 // tests/shared/inkshapes.json, and inkhold.json for the hold's own rules.
 import { t } from "../shared/i18n/i18n.js";
-import { decodeStroke, encodePoints } from "./ink.js";
+import { decodeStroke, encodePoints, mod, round2 } from "./ink.js";
 
 // Draw and hold's numbers, one table for the layer and the iPad host, whose
 // Swift constants mirror it (docs/dev/ipad.md "The pen"): the tip still for
@@ -24,8 +24,10 @@ import { decodeStroke, encodePoints } from "./ink.js";
 export const HOLD_MS = 600, HOLD_MOVE = 3, HOLD_MIN_MS = 250, REFIT_PX = 6, CANCEL_PX = 12, CANCEL_MS = 150, PASTE_MOVE = 2;
 
 // Thresholds. Those in css px divide by k; the rest are points or ratios.
-const MIN_EXTENT_PX = 24;        // a stroke smaller than this on screen …
-const MIN_EXTENT_PT = 18;        // … or on the page is never a shape
+// The size floor is also the one InkLayer's hold puts under a stroke's
+// chord before it asks (holdFire, and the iPad claim's hold).
+export const MIN_EXTENT_PX = 24; // a stroke smaller than this on screen …
+export const MIN_EXTENT_PT = 18; // … or on the page is never a shape
 const MIN_SAMPLES = 8;
 const RESAMPLE_DIV = 40;         // ShortStraw spacing: bbox diagonal / 40
 const STRAW_W = 3;               // ShortStraw window
@@ -50,13 +52,18 @@ export const SHAPE_KINDS = ["line", "arrow", "triangle", "rect", "polygon", "cir
 
 const DEG = 180 / Math.PI;
 const dist = (a, b) => Math.hypot(b.x - a.x, b.y - a.y);
-const round2 = (v) => Math.round(v * 100) / 100;
-const mod = (v, m) => ((v % m) + m) % m;
 // Snap an angle (degrees) to the nearest multiple of `step` when within
 // `within` of it; else the angle as given.
 function snapAngle(deg, step, within) {
   const near = Math.round(deg / step) * step;
   return Math.abs(deg - near) <= within ? near : deg;
+}
+// The point `to` turned about `from` to the nearest 15°, its distance kept:
+// Shift on a line's or an arrow's end (refitShape, dragHandle and
+// shapeTool.js toolShape).
+export function snapEnd(from, to) {
+  const len = dist(from, to), rad = (Math.round(Math.atan2(to.y - from.y, to.x - from.x) * DEG / 15) * 15) / DEG;
+  return { x: from.x + Math.cos(rad) * len, y: from.y + Math.sin(rad) * len };
 }
 
 function bbox(pts) {
@@ -162,13 +169,12 @@ function intersect(a, b) {
 
 // A line's endpoints from the first and last of `pts` projected on the
 // least-squares line, snapped to 0°, 45° or 90° about the midpoint.
-function fitLine(pts, { snap = true } = {}) {
+function fitLine(pts) {
   const m = moments(pts);
   const first = pts[0], last = pts[pts.length - 1];
   const s0 = (first.x - m.cx) * m.ux + (first.y - m.cy) * m.uy;
   const s1 = (last.x - m.cx) * m.ux + (last.y - m.cy) * m.uy;
-  let a = { x: m.cx + m.ux * s0, y: m.cy + m.uy * s0 }, b = { x: m.cx + m.ux * s1, y: m.cy + m.uy * s1 };
-  if (snap) [a, b] = snapSegment(a, b, 45, AXIS_SNAP);
+  const [a, b] = snapSegment({ x: m.cx + m.ux * s0, y: m.cy + m.uy * s0 }, { x: m.cx + m.ux * s1, y: m.cy + m.uy * s1 }, 45, AXIS_SNAP);
   return { x1: a.x, y1: a.y, x2: b.x, y2: b.y, rms: rmsToLine(pts, m) };
 }
 // Rotate the segment a–b about its midpoint so its angle sits on the
@@ -352,7 +358,6 @@ function arrowFrom(samples) {
 }
 
 const rounded = (params) => Object.fromEntries(Object.entries(params).map(([k, v]) => [k, k === "n" ? v : round2(v)]));
-const allowed = (kinds, kind) => !kinds || kinds.includes(kind);
 
 // samples: decoded page-pt samples [{x, y, p?, t?}] as the layer holds them
 // when the hold timer fires; k css px per pt; kinds (optional) the kinds
@@ -368,7 +373,7 @@ export function recognise(samples, { k = 1, kinds } = {}) {
   const chord = dist(r[0], r[r.length - 1]);
   const path = pathLength(r);
   const closed = chord <= CLOSE_FRAC * box.diag;
-  const only = (kind) => allowed(kinds, kind);
+  const only = (kind) => !kinds || kinds.includes(kind);
 
   if (!closed) {
     // a line: straight enough and no longer than its chord allows
@@ -498,12 +503,7 @@ const rotate = (c, q, rad, s = 1) => {
 // proportions. Normalised as `recognise` returns it.
 export function refitShape(kind, params, { pointer, from, shift = false }) {
   if (kind === "line" || kind === "arrow") {
-    const a = { x: params.x1, y: params.y1 };
-    let b = { x: pointer.x, y: pointer.y };
-    if (shift) {
-      const len = dist(a, b), ang = Math.round(Math.atan2(b.y - a.y, b.x - a.x) * DEG / 15) * 15;
-      b = { x: a.x + Math.cos(ang / DEG) * len, y: a.y + Math.sin(ang / DEG) * len };
-    }
+    const b = shift ? snapEnd({ x: params.x1, y: params.y1 }, pointer) : pointer;
     const out = { x1: params.x1, y1: params.y1, x2: round2(b.x), y2: round2(b.y) };
     if (kind === "arrow") out.head = params.head;
     return out;
@@ -604,13 +604,7 @@ const MIN_SIDE = 0.5;   // pt: a dragged rectangle or ellipse keeps at least thi
 export function dragHandle(kind, params, id, point, { shift = false } = {}) {
   const p = params || {};
   if ((kind === "line" || kind === "arrow") && (id === "p1" || id === "p2")) {
-    const [fx, fy] = id === "p1" ? [p.x2, p.y2] : [p.x1, p.y1];
-    let { x, y } = point;
-    if (shift) {
-      const len = Math.hypot(x - fx, y - fy), ang = (Math.round(Math.atan2(y - fy, x - fx) * DEG / 15) * 15) / DEG;
-      x = fx + Math.cos(ang) * len;
-      y = fy + Math.sin(ang) * len;
-    }
+    const { x, y } = shift ? snapEnd(id === "p1" ? { x: p.x2, y: p.y2 } : { x: p.x1, y: p.y1 }, point) : point;
     return rounded(id === "p1" ? { ...p, x1: x, y1: y } : { ...p, x2: x, y2: y });
   }
   const corner = /^c(\d+)$/.exec(id || "");

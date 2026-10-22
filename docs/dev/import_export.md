@@ -33,11 +33,11 @@ app that writes 0.831 means 212); PyPDF2 dict access returns `IndirectObject`s, 
 `.get_object()` them. `/Ink` (freehand drawings from any PDF app, or a Gamma
 export) becomes a handwriting block: the strokes are stored as an `.ink`
 upload (`gamma/ink.py`), the block gets `ink_url` / `ink_strokes` /
-`pdf_position`; a Gamma export's private `/GammaInk` key restores pressure,
+`pdf_position`. A Gamma export's private `/GammaInk` key restores pressure,
 time, the dash, a calligraphy pen's nib and a closed shape's record and
-fill (an export writes a filled shape as its outline's `/Ink` alone, never
-a `/Square`, `/Circle` or `/Polygon`), foreign ink is polylines at the annotation's width,
-dashed when its border style is (`/BS /S /D`)
+fill. An export writes a filled shape as its outline's `/Ink` alone, never
+a `/Square`, `/Circle` or `/Polygon`. Foreign ink is polylines at the
+annotation's width, dashed when its border style is (`/BS /S /D`)
 ([handwriting.md](handwriting.md)). `/FreeText` (typed text) and `/Text`
 (a sticky note) become text-box blocks (`text_box`, `pdf_page`), not
 highlights, by the rules in

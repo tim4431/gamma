@@ -965,15 +965,15 @@ def missing_uploads(ws: str, pages=None) -> set[str]:
     return {n for n in upload_refs(blocks) if UPLOAD_NAME_RE.match(n) and n not in stored}
 
 
-def _push_files(ws: str, remote: Remote, names: set[str], report: dict, *, page_id: str = "",
-                blocks: dict | None = None) -> set[str]:
+def _push_files(ws: str, remote: Remote, names: set[str], report: dict, *, page_id: str,
+                blocks: dict) -> set[str]:
     """The files of ``names`` the remote lacks, uploaded. Returns the names
     the remote refused as a drawing (a ``400`` on an ``.ink``: a file this
     copy wrote in a shape the remote does not take — see ``_without_files``
     for what then happens to the page's ops); each is one open
     ``sync_conflicts`` row of kind ``file`` on the block that names it,
     written once, and the page's other work goes on. Every other error
-    raises as before."""
+    raises."""
     refused: set[str] = set()
     for name in sorted(names):
         if not UPLOAD_NAME_RE.match(name) or not storage.exists(ws, name) or remote.head_ok(f"/api/uploads/{name}"):
@@ -995,7 +995,7 @@ def _push_files(ws: str, remote: Remote, names: set[str], report: dict, *, page_
             if e.status != 400 or not name.endswith(".ink"):
                 raise
             refused.add(name)
-            block_id = next((bid for bid, b in (blocks or {}).items()
+            block_id = next((bid for bid, b in blocks.items()
                              if name in json.dumps(b.get("props") or {})), "")
             with connect_pages_db(ws) as conn:
                 _conflict(conn, page_id, block_id, "file", mine=name, theirs=e.detail or "refused", once=True)

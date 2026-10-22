@@ -283,18 +283,16 @@ Nothing is drawn by hand. Both paths reuse an export
   export's one-page PDF, `notebook.notebook_pdf`: the paper painted and the
   strokes as vectors.
 - **A PDF page** is that page on its own with the groups stamped on it
-  (`pdf_export.page_with_ink(…, vector=True)`): every stroke is drawn as
-  vectors into the copied page's content through `ink.pdf_path_ops`,
-  exactly as the notes-as-PDF export draws it, so the model sees the
-  looks as drawn — every brush with its baked widths and tapers, dashes,
-  the pencil's three shades (its grain excepted) — in the layers' order,
-  every group's highlighters under every group's pens. A highlighter is
+  (`pdf_export.page_with_ink`). Every stroke is drawn as vectors into the
+  copied page's content through `ink.pdf_path_ops`, as the notes-as-PDF
+  export draws it. So the model sees the looks as drawn (baked widths and
+  tapers, dashes, the pencil's three shades without its grain), every
+  group's highlighters under every group's pens. A highlighter is
   multiplied onto the page through a graphics state, so the text under
-  it stays as dark as it was; `/Ink` annotations, which a viewer draws
-  over the page's content, could neither keep it under the ink nor leave
-  the text under it at full contrast. `backend/tests/test_ai_tools_ink.py`
-  renders text under a highlighter and asserts every glyph pixel stays
-  dark. Ink imported
+  it stays as dark as it was. `/Ink` annotations could not do this: a
+  viewer draws them over the page's content.
+  `backend/tests/test_ai_tools_ink.py` renders text under a highlighter
+  and asserts every glyph pixel stays dark. Ink imported
   from the PDF and still embedded in it (`pdf_export.still_embedded`) is
   not added twice. When the PDF
   is missing or PyPDF2 cannot copy the page (an encrypted file), the
@@ -318,21 +316,16 @@ block's ⋮⋮ menu) sends exactly that request with the block attached as a
 chip, and an attached handwriting block's picture rides with the message
 (see "Pointing the chat at notes" in [ai.md](ai.md)). So a chat without
 tools still answers with the transcription. The selection menu's
-**Transcribe** does the same for a selection of whole groups; for a
-selection that takes only part of a group it sends the selected strokes
-instead, as `ink_selections` (`[{page_id, block_id, space, strokes}]`,
-at most 8 entries and 64 KB together): each is drawn alone where it lies,
-through `ink_view.picture(…, ink=file)` — the same page with the inline
-file in place of the block's stored one, so strokes not saved yet are
-seen too — labelled "selected handwriting on p. N, K strokes" with its
-block's id, with the request "Transcribe the selected handwriting.". The
-notes section says each picture holds only the selected strokes, to be
-transcribed exactly, and the prompt's handwriting paragraph says a
-selection is read from its picture, not with view_ink, whose picture is
-the whole block as it was saved (the rest of the group, and none of the
-strokes not saved yet). The
-answer comes in the chat; with `edit_block` armed the agent appends it to
-that block's caption, as for a whole group.
+**Transcribe** does the same for a selection of whole groups. For part of
+a group it sends the selected strokes instead, as `ink_selections`
+("Pointing the chat at notes" in [ai.md](ai.md)). Each is drawn alone
+where it lies through `ink_view.picture(…, ink=file)`: the same page with
+the inline file in place of the block's stored one, so strokes not saved
+yet are seen too. The prompt's handwriting paragraph says a selection is
+read from its picture, not with view_ink, whose picture is the whole
+block as it was saved. The answer comes in the chat, and with
+`edit_block` armed the agent appends it to that block's caption, as for a
+whole group.
 
 ### view_image (both scopes)
 

@@ -55,8 +55,8 @@ plain copy C once B was refused), and sent a plain POST D of its own:
 | reloads | B sent, D sent in one run of two | B sent, D lost |
 | closes (`page.close`), A aborted or not | B refused, C and D sent | B refused, C and D lost |
 
-A page that leaves for another (a navigation, a reload) no longer counts
-its keepalive requests from before, in both engines: B went with
+A page that leaves for another (a navigation, a reload) stops counting
+its earlier keepalive requests, in both engines: B went with
 keepalive beside the held A, where a ledger counting A would have sent it
 plain. That plain copy was lost in WebKit and in one Chromium reload. A
 closing tab counts A whatever the page does, and refuses B.

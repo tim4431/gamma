@@ -5,9 +5,10 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import {
-  BRUSHES, DECIMATE_PT, bakeWidths, brushOpacities, brushWidths, decimate, finishStroke, opacityLaw, restyleBrush, strokeChannels, widthLaw,
+  BRUSHES, DECIMATE_PT, bakeWidths, brushOpacities, brushWidths, decimate, finishStroke, opacityLaw, restyleBrush, strokeChannels, travelAt,
+  widthLaw,
 } from "../src/ink/finishStroke.js";
-import { decodeStroke, encodePoints, encodeStroke, newInk, strokeMaxWidth, strokeOpacity, strokeWidth } from "../src/ink/ink.js";
+import { DEFAULT_NIB, decodeStroke, encodePoints, encodeStroke, newInk, strokeMaxWidth, strokeOpacity, strokeWidth } from "../src/ink/ink.js";
 
 const line = (n = 5) => Array.from({ length: n }, (_, i) => ({ x: 100 + 10 * i, y: 200, p: 0.2 + 0.15 * i, t: 16 * i }));
 
@@ -354,8 +355,6 @@ test("restyleBrush holds a w that would draw past the server's 100 pt cap there;
 });
 
 // --- the calligraphy pen (docs/dev/handwriting.md "The brush table") ------------
-import { travelAt } from "../src/ink/finishStroke.js";
-import { DEFAULT_NIB } from "../src/ink/ink.js";
 
 test("calligraphy: the law reads the travel and the nib, a mouse stroke has it too (xytw), a shape has none", () => {
   const style = { tool: "pen", brush: "calligraphy", size: 2, nib: 45 };

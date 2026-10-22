@@ -79,9 +79,6 @@ def test_ink_merge(case):
         assert sorted(got.lost_ours) == sorted(case["lost_ours"])
     if "returned" in case:
         assert sorted(got.returned) == sorted(case["returned"])
-    # the two-tuple unpacking the older callers used still works
-    ink, clean = got
-    assert ink is got.ink and clean is got.clean
 
 
 INKV2 = _load("inkv2.json")

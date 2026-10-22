@@ -127,11 +127,11 @@ import { makeStableActions, useStableActions } from "../shared/lib/stableActions
 import { keepIfSame, sameMap, sameObject } from "../shared/lib/keepIfSame.js";
 import { isTextBox, normalizeTextBox } from "../markup/textBox.js";
 import { useTextBoxes } from "../markup/useTextBoxes";
-import { GROUP_SPLIT_BYTES, MAX_BYTES, MAX_STROKES, appendStroke, appendStrokes, boundsOf, cloneStrokes, duplicateStrokes, eraseAlong, eraserKeep, flipStrokes, hitStrokesAlong, inkBounds, inkBytes, inkProps, mergeInk, newCanvasInk, newInk, pdfPositionOf, removeStrokes, restyleStrokes, serializeInk, strokeBounds, strokeBytes, toolStyle, transformStrokes, translateStrokes, unionBox } from "../ink/ink";
+import { GROUP_SPLIT_BYTES, MAX_BYTES, MAX_STROKES, appendStroke, appendStrokes, boundsOf, cloneStrokes, duplicateStrokes, eraseAlong, eraserKeep, flipStrokes, hitStrokesAlong, inkBounds, inkBytes, inkProps, mergeInk, newCanvasInk, newInk, pdfPositionOf, removeStrokes, restyleStrokes, round2, serializeInk, strokeBounds, strokeBytes, toolStyle, transformStrokes, translateStrokes, unionBox } from "../ink/ink";
 import { stripKey } from "../ink/stripKeys.js";
 import { ZOOM_CHROME, moveTo, moveWindow as moveZoomWindow, newLine, openWindow, setMag } from "../ink/zoomWindow.js";   // the zoom window's rules (moveWindow is the dock layout's here)
 import { defaultRuler, snapAngle, stampLine } from "../ink/ruler.js";   // the ruler's first place, its Snap 15° and its Stamp line
-import { backTool, pencilAction } from "../ink/pencilActions.js";
+import { RESERVED_TOOLS, backTool, pencilAction } from "../ink/pencilActions.js";
 import { inkBusy } from "../ink/InkLayer";
 import { NotebookViewer, PaperMenu, readPlace, showPlace } from "../notebook/NotebookViewer";
 import { NoteSheetContext } from "../notebook/NoteSheet";
@@ -144,24 +144,6 @@ import * as inkStore from "../ink/inkStore";
 import * as inkLive from "../ink/inkLive";
 import { planFlush } from "../ink/inkFlush";
 import { KEEPALIVE_CAP, available as keepaliveRoom, bodyBytes, keepaliveFetch } from "../shared/lib/keepalive.js";
-// The system clipboard's copy of the handwriting clipboard, best effort
-// (docs/dev/handwriting.md "Copy, cut and paste"): text/html a <div
-// data-gamma-ink> whose text is the gamma/ink JSON, text/plain the JSON. A
-// browser that refuses the write (no permission, no focus, plain http)
-// loses nothing: App's inkClipRef is what a paste reads.
-function writeInkClipboard(clip) {
-  try {
-    if (!navigator.clipboard?.write || typeof ClipboardItem === "undefined") return;
-    const json = JSON.stringify(clip);
-    const div = document.createElement("div");
-    div.setAttribute("data-gamma-ink", "");
-    div.textContent = json;
-    navigator.clipboard.write([new ClipboardItem({
-      "text/html": new Blob([div.outerHTML], { type: "text/html" }),
-      "text/plain": new Blob([json], { type: "text/plain" }),
-    })]).catch(() => {});
-  } catch { /* the ref stands */ }
-}
 import * as playback from "../replay/playback.js";
 import { recordingClock } from "../replay/clock.js";
 import { audioSource } from "../recording/audioSource.js";
@@ -221,6 +203,25 @@ import {
   PATH_SEP,
 } from "../library/libraryUtils";
 import { createLibraryMatcher } from "../library/librarySearch";
+
+// The system clipboard's copy of the handwriting clipboard, best effort
+// (docs/dev/handwriting.md "Copy, cut and paste"): text/html a <div
+// data-gamma-ink> whose text is the gamma/ink JSON, text/plain the JSON. A
+// browser that refuses the write (no permission, no focus, plain http)
+// loses nothing: App's inkClipRef is what a paste reads.
+function writeInkClipboard(clip) {
+  try {
+    if (!navigator.clipboard?.write || typeof ClipboardItem === "undefined") return;
+    const json = JSON.stringify(clip);
+    const div = document.createElement("div");
+    div.setAttribute("data-gamma-ink", "");
+    div.textContent = json;
+    navigator.clipboard.write([new ClipboardItem({
+      "text/html": new Blob([div.outerHTML], { type: "text/html" }),
+      "text/plain": new Blob([json], { type: "text/plain" }),
+    })]).catch(() => {});
+  } catch { /* the ref stands */ }
+}
 
 // Surfaces fetched on first use, each mounted inside a LazyBoundary
 // (docs/dev/frontend-refactor.md, "Lazy boundaries"). `preload()` fetches
@@ -3800,14 +3801,16 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // after a jump, and the identity-stable list of ink groups the page marks
   // are built from.
   const [inkUi, setInkUi] = useState({ open: false, tool: null, options: false, pen: null });
+  const [inkFlash, setInkFlash] = useState(null);
+  const inkActiveRef = useRef(null);
+  const inkTimerRef = useRef(0);
+  const prevInkRef = useRef({ json: "", value: [] });
   // The ruler (ink/ruler.js): {surface, x, y, angle, length, snap} in the
   // surface's page points, or null — session state, gone with the strip and
   // with the page — and the size of the surface it was laid on, for Stamp
   // line's group.
   const [inkRuler, setInkRuler] = useState(null);
   const inkRulerSizeRef = useRef(null);
-  const [inkFlash, setInkFlash] = useState(null);
-  const inkActiveRef = useRef(null);
   // The handwriting clipboard (docs/dev/handwriting.md "Copy, cut and
   // paste"): {type: "gamma/ink", version: 2, space, box: {x1, y1, x2, y2},
   // strokes} — the file's space, the selection's box in points and the raw
@@ -3827,8 +3830,6 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // — and the size of its page in points.
   const [inkZoom, setInkZoom] = useState(null);
   const inkZoomSizeRef = useRef(null);
-  const inkTimerRef = useRef(0);
-  const prevInkRef = useRef({ json: "", value: [] });
   // Sheets: the open page's (for handlers that run after an await); in the
   // notebook view the sheet under the middle of the view, the viewer's scroller.
   const nbSheetsRef = useRef([]);
@@ -6375,6 +6376,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // Undo / Redo (the strip's buttons, Ctrl+Z while it is open) step the
   // block history for text boxes, the stroke history otherwise.
   const boxUndo = textArmed || !!textBoxes.sel;
+  // The strip's Undo and Redo buttons, and a Pencil gesture's Undo.
+  const stripUndo = (redo) => (boxUndo ? undoBlocks(redo) : inkUndo(redo));
   // Arm a tool; a pen preset also becomes the stylus pen. The options row
   // closes unless the caller keeps it (a duplicate stays editable) or opens
   // it (`open`: the Shapes tool armed from More or S).
@@ -6387,7 +6390,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   const openInkStrip = () => pickInkTool(inkVisible.find((t) => t.id === inkUi.pen)?.id || inkVisible[0].id);
   // A removed or hidden preset leaves the strip's hand armed.
   useEffect(() => {
-    if (inkUi.tool && !["eraser", "select", "text", "shape"].includes(inkUi.tool) && !inkVisible.some((t) => t.id === inkUi.tool)) {
+    if (inkUi.tool && !RESERVED_TOOLS.includes(inkUi.tool) && !inkVisible.some((t) => t.id === inkUi.tool)) {
       setInkUi((s) => ({ ...s, tool: null, options: false }));
     }
   }, [inkVisible, inkUi.tool]);
@@ -6548,8 +6551,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   }, [flushInk]);
   useEffect(() => () => {
     // Leaving a page: pending strokes still save (through the block API,
-    // which needs no open tree); the tool disarms, the next stroke starts
-    // a fresh group.
+    // which needs no open tree); the tool disarms, the ruler goes (its row
+    // with it), the next stroke starts a fresh group.
     if (inkTimerRef.current) flushInk();
     inkActiveRef.current = null;
     inkLiveSentRef.current.clear();
@@ -6559,12 +6562,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     setInkHistoryState({ undo: 0, redo: 0 });
     setInkSelection(null);
     setInkUi((s) => (s.tool ? { ...s, tool: null } : s));
-  }, [focusedBlockId, flushInk]);
-  // Leaving a page takes the ruler away (its row with it).
-  useEffect(() => () => {
-    setInkRuler(null);
-    setInkUi((s) => (s.options === "ruler" ? { ...s, options: false } : s));
-  }, [focusedBlockId]);
+    hideInkRuler();
+  }, [focusedBlockId, flushInk]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // The strokes a group has right now: its draft, else its loaded file.
   function inkOf(blockId) {
@@ -6880,7 +6879,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // else a new group takes them all — a paste is never split across groups
   // — as one entry. → {id, ids} of the group they landed in, null when no
   // group could hold them.
-  async function handleInkStrokes(page, strokes, size, label = T("ink paste")) {
+  async function handleInkStrokes(page, strokes, size) {
     if (readOnly || !focusedBlockId || inkStale || !strokes.length || !size) return null;
     const onSheet = typeof page === "string";
     const fresh = () => (onSheet ? newCanvasInk(size.width, size.height) : newInk(page, size.width, size.height));
@@ -6901,7 +6900,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     }
     inkActiveRef.current = { page, id };
     const { ink: after, ids } = appendStrokes(before, strokes);
-    applyInk([{ id, page, before, after }], { label });
+    applyInk([{ id, page, before, after }], { label: T("ink paste") });
     return { id, ids };
   }
   // The clipboard's strokes onto `page` ({width, height} in points): fresh
@@ -7274,7 +7273,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   inkKeysRef.current = { inkUndo, deleteInkSelection, selectionStill, hasSelection: !!inkSelection, selection: inkSelection, tools: inkVisible,
     allTools: inkTools, setInkTools, tool: inkUi.tool, pickInkTool, boxUndo, hasBox: !!textBoxes.sel, optionsOpen: !!inkUi.options,
     // the modifiers: R, S, Z, the zoom window's Enter and their places in Esc's order
-    ruler: !!inkRuler, toggleInkRuler, hideInkRuler, toggleInkShape, closeInkStrip,
+    ruler: !!inkRuler, toggleInkRuler, toggleInkShape, closeInkStrip,
     zoom: !!inkZoom, toggleInkZoom, inkZoomNewLine };
   const inkHoldRef = useRef(null);
   useEffect(() => {
@@ -7297,11 +7296,12 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       else if (action.kind === "closeOptions") setInkUi((s) => ({ ...s, options: false }));
       else if (action.kind === "close") K.closeInkStrip();
       else if (action.kind === "toggle" || action.kind === "off") {
-        // R / S / Z, and Esc taking the Shapes tool, the ruler or the zoom window away
-        if (action.what === "ruler") { if (action.kind === "toggle") K.toggleInkRuler(); else K.hideInkRuler(); }
-        else if (action.what === "shape") { if (action.kind === "toggle" || K.tool === "shape") K.toggleInkShape(); }
-        else if (action.what === "zoom") K.toggleInkZoom?.();
-      } else if (action.kind === "newLine") K.inkZoomNewLine?.();
+        // R / S / Z, and Esc taking the Shapes tool, the ruler or the zoom
+        // window away: stripKey says "off" only for one that is on
+        if (action.what === "ruler") K.toggleInkRuler();
+        else if (action.what === "shape") K.toggleInkShape();
+        else if (action.what === "zoom") K.toggleInkZoom();
+      } else if (action.kind === "newLine") K.inkZoomNewLine();
       else if (action.kind === "delete") K.deleteInkSelection();
       else if (action.kind === "pick") K.pickInkTool(action.id);
       else if (action.kind === "width") {
@@ -7590,8 +7590,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       hold(result.release.pick);
       if (result.release.pick === "select" && open?.hold?.selection) setInkSelection(selectionStill(open.hold.selection));
     } else if (result.undo) {
-      // the strip's Undo: the block history while a text box has it, else the stroke history
-      if (boxUndo) undoBlocks(false); else inkUndo(false);
+      stripUndo(false);
     } else if ("pick" in result) {
       if (result.pick !== inkUi.tool) hostHaptic("tool");
       pickInkTool(result.pick);
@@ -7612,7 +7611,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   function hostHaptic(kind, at) {
     if (!nativeHost()?.haptics || !inkHaptics) return;
     const point = at && Number.isFinite(at.x) && Number.isFinite(at.y)
-      ? { at: { x: Math.round(at.x * 100) / 100, y: Math.round(at.y * 100) / 100 } } : {};
+      ? { at: { x: round2(at.x), y: round2(at.y) } } : {};
     postToHost({ type: "haptic", kind, ...point }).catch(() => {});
   }
   // The tool to go back to: the one armed before the current one, else the
@@ -7658,7 +7657,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       g = block?.properties?.ink_url ? block.id : null;
       inkLiveGroupRef.current = { id: msg.id, g };
     }
-    collabRef.current?.sendInkLive?.({ ...msg, page, g });
+    collabRef.current.sendInkLive({ ...msg, page, g });
     inkLiveSentRef.current.sent(msg.id, page, !!msg.drop);
   }
   // Handwriting a closed tab left unsaved, restored from the draft journal
@@ -7739,10 +7738,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     onEraseMany: handleInkEraseMany, onSelect: handleInkSelect, onUndoGesture: handleUndoGesture, onHoldStatus: handleHoldStatus,
     onAction: handleInkAction, onMoveSelection: handleInkMoveSelection, onJump: showInNotes, ...textBoxes.actions,
     // a held pen or mouse, or a right-click, asking for the clipboard at a page point
-    onPaste: (page, pt, size) => pasteInk(page, pt, size),
+    onPaste: pasteInk,
     onInkLive: handleInkLive,
     // a held shape or a pen lasso's selection, ticking in an Apple Pencil Pro under the iPad host
-    onHaptic: (kind, at) => hostHaptic(kind, at),
+    onHaptic: hostHaptic,
     // the zoom window's box dragged or resized, or a blank tap sending it there
     onZoom: handleInkZoom,
     // the ruler moved, turned or stretched on its surface (null: put away)
@@ -7765,12 +7764,12 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   const pageTools = useMemo(() => ({
     readOnly,
     ink: { tool: inkTool, penTool: inkPenTool, penOnly: inkPenOnly, pressure: inkPressure, eraserMode: inkEraserMode,
-      eraserSize: inkEraserSize, eraserReturn: inkEraserReturn, eraserFilter: inkEraserFilter, drawHold: inkDrawHold,
+      eraserSize: inkEraserSize, eraserFilter: inkEraserFilter, drawHold: inkDrawHold,
       scribble: inkScribbleErase, fingerUndo: inkFingerUndo, lassoMode: inkLassoMode, clip: inkClip, keys: inkKeys,
       hoverPreview: inkHoverPreview, ruler: readOnly ? null : inkRuler, rulerUnits: inkRulerUnits, zoom: readOnly ? null : inkZoom },
     text: { armed: textArmed, style: textBoxStyle },
     actions: pageActions,
-  }), [readOnly, inkTool, inkPenTool, inkPenOnly, inkPressure, inkEraserMode, inkEraserSize, inkEraserReturn, inkEraserFilter, inkClip, inkKeys,
+  }), [readOnly, inkTool, inkPenTool, inkPenOnly, inkPressure, inkEraserMode, inkEraserSize, inkEraserFilter, inkClip, inkKeys,
     inkDrawHold, inkScribbleErase, inkFingerUndo, inkLassoMode, inkHoverPreview, textArmed, textBoxStyle, pageActions, inkRuler, inkRulerUnits,
     inkZoom]);
   // --- Recordings (docs/dev/recording.md) ---------------------------------------
@@ -8087,7 +8086,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       // when the handwriting tour leaves the eraser, the lasso or Text armed.
       restore: (what) => {
         if (what !== "pen") return;
-        setInkUi((s) => (s.open && s.pen && ["eraser", "select", "text", "shape"].includes(s.tool) ? { ...s, tool: s.pen, options: false } : s));
+        setInkUi((s) => (s.open && s.pen && RESERVED_TOOLS.includes(s.tool) ? { ...s, tool: s.pen, options: false } : s));
       },
       // the first tour's finish card: "Connect an AI provider"
       openSettings: (pane) => appCmdRef.current.openSettings(pane),
@@ -9089,7 +9088,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       eraserMode={inkEraserMode} eraserSize={inkEraserSize} eraserReturn={inkEraserReturn} eraserFilter={inkEraserFilter}
       lassoMode={inkLassoMode} textStyle={textBoxes.shownStyle}
       onPick={pickInkTool} onTextStyle={textBoxes.restyle} blockHistory={boxUndo}
-      onUndo={() => (boxUndo ? undoBlocks(false) : inkUndo(false))} onRedo={() => (boxUndo ? undoBlocks(true) : inkUndo(true))}
+      onUndo={() => stripUndo(false)} onRedo={() => stripUndo(true)}
       // the block history keeps no count to disable its buttons by: a step with nothing to undo says so
       canUndo={boxUndo || inkHistoryState.undo > 0} canRedo={boxUndo || inkHistoryState.redo > 0}
       // no argument: the armed tool's row; "ruler": the ruler's

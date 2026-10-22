@@ -318,8 +318,8 @@ Preferences:
   **Notes**: **Linked from** (`backlinksVisible`, off by default) shows or
   hides a page's "Linked from" section ([ui-design.md](ui-design.md); off,
   App fetches no backlinks at all). **Handwriting** (account scope,
-  `SECTION_PREFS.reading.Handwriting`; the strip's own options — presets,
-  smoothing, the straight highlighter — are set on the strip,
+  `SECTION_PREFS.reading.Handwriting`; the strip's own options, such as
+  presets, smoothing and the straight highlighter, are set on the strip,
   [handwriting.md](handwriting.md) "What the user sees"): a *Reset
   presets* button (`uiBtn sm`, a confirm dialog, then `setInkTools` back
   to `DEFAULT_TOOLS`); **Eraser returns to the last tool** (`Toggle`,
@@ -332,42 +332,42 @@ Preferences:
   (`Toggle`, `inkScribbleErase`, flag, default off; hint "A dense
   back-and-forth with the pen erases the ink under it"; the first switch
   on shows a status pill explaining the gesture). The presets themselves,
-  **`inkTools`**, are this section's too, edited on the strip rather than
-  here: scope `account`, codec `json(normalizeTools)` (`profileValue`
-  accepts an array), up to 12 presets, each `{id, kind, color, size}` with
-  its optional `opacity`, `brush`, `dash`, `stabilize`, `straight`, a
+  **`inkTools`**, belong to this section too but are edited on the strip:
+  scope `account`, codec `json(normalizeTools)` (`profileValue` accepts
+  an array), up to 12 presets. Each is `{id, kind, color, size}` with its
+  optional `opacity`, `brush`, `dash`, `stabilize`, `straight`, a
   calligraphy pen's `nib` (an integer from −60 to 60, omitted at 45) and
   `nibLock` (`true`, omitted when false), and `hidden: true` (a preset
-  taken off the strip through its ⋯ menu's *Hide*; omitted when false) —
-  and any other key a preset carries is kept verbatim as
-  long as the preset serialises under 512 bytes of UTF-8, so an older build editing
-  one preset never strips what a newer one wrote. Sign-in follows the
-  profile rules above: the server's list wins and an account without one
-  is seeded from the browser; when the server's list replaces a list this
+  taken off the strip through its ⋯ menu's *Hide*; omitted when false).
+  Any other key a preset carries is kept verbatim as long as the preset
+  serialises under 512 bytes of UTF-8, so an older build editing one
+  preset never strips what a newer one wrote. Sign-in follows the profile
+  rules above: the server's list wins, and an account without one is
+  seeded from the browser. When the server's list replaces a list this
   browser had changed itself (not the defaults), `useProfileSync`'s
   `onReplaced({name, local})` lets App ask once, on the account's first
-  pull, on the status pill, "Use this browser's pens instead?" with *Use
-  this browser's*, which sets the local list again and so pushes it (a
+  pull. The status pill asks "Use this browser's pens instead?" with *Use
+  this browser's*, which sets the local list again and so pushes it. A
   later pull that differs is another device's edit and applies without
-  asking). App writes the list through `normalizeTools` every time, so
+  asking. App writes the list through `normalizeTools` every time, so
   the pushed value is the canonical one a pull reads back. The pen a stylus
-  writes with stays session state, and the eraser's mode and size and the
-  lasso mode stay browser preferences (`gamma-ink-eraser`,
+  writes with is session state, and the eraser's mode and size and the
+  lasso mode are browser preferences (`gamma-ink-eraser`,
   `gamma-ink-eraser-size`, `gamma-ink-lasso`). The Shapes tool's, the
   ruler's and the zoom window's choices are set where they act and have
-  no Settings row:
+  no Settings row.
   **`inkShapeKind`** (scope `account`, `oneOf(["line", "arrow", "rect",
   "ellipse"])`, default `line`: what the Shapes tool draws) and
   **`inkShapeFill`** (account, flag, default off: whether it fills its
-  rectangles and ellipses), both listed in `sectionPrefs.js` with the
-  Handwriting rows, as `inkTools` is; **`inkRulerUnits`** (browser,
-  `oneOf(["pt", "cm"])`, default `pt`: the ruler's ticks) and
-  **`inkZoomHeight`** (browser, `intClamped(160, 320)` with `serialize:
-  String`, default 200: the zoom window's height in CSS px, set by
-  dragging its top edge), like the eraser's. The ruler's place and angle
-  and the zoom window's place, magnification and line height are session
+  rectangles and ellipses) are listed in `sectionPrefs.js` with the
+  Handwriting rows, as `inkTools` is. **`inkRulerUnits`**
+  (`oneOf(["pt", "cm"])`, default `pt`: the ruler's ticks) and
+  **`inkZoomHeight`** (`intClamped(160, 320)` with `serialize: String`,
+  default 200: the zoom window's height in CSS px, set by dragging its
+  top edge) are browser preferences, like the eraser's. The ruler's place
+  and angle and the zoom window's place, magnification and line height are session
   state ([handwriting.md](handwriting.md) "What the user sees"). **This device** (browser
-  scope, the section the handwriting input rules moved to): two
+  scope): two
   `IconChoices` tiles ("Draws with": pen only / pen and
   finger — the stored preference is `inkPenOnly`), the
   stylus-draws-right-away and pressure switches, **Undo with fingers**
@@ -384,9 +384,9 @@ Preferences:
   "options", "undo", "none"])`, default `system`: System setting · Switch
   to eraser · Switch to last tool · Show tool options · Undo · Nothing;
   hint "What a double tap on the Pencil does"), **Squeeze** (`MenuSelect`,
-  `inkPencilSqueeze`, the same values and `holdEraser`, `holdPrevious` —
+  `inkPencilSqueeze`, the same values and `holdEraser`, `holdPrevious`:
   Eraser while held · Last tool while held, offered only under
-  `nativeHost()?.pencilPhases` or while one is the stored choice — default
+  `nativeHost()?.pencilPhases` or while one is the stored choice; default
   `system`; hint "What squeezing
   Apple Pencil Pro does") and, under `nativeHost()?.haptics`,
   **Haptics** (`Toggle`, `inkHaptics`, flag, default on; hint "A tick in
@@ -394,12 +394,10 @@ Preferences:
   changes"). Its choices are `MenuSelect`s: the settings pane is no
   `InkTooltips` host, and six or eight choices are too many for a
   `Segmented`. Every row of these sections has a `settingsSearch.js`
-  entry under its section's title (the three input rules now say "This
-  device"; an Apple Pencil row is listed only under a host with the flags
-  its row shows under, `hostOnly(flags, entry)` beside `admin()`: *Haptics*
-  under `pencil` and `haptics`), and the Handwriting
-  rows' preferences, `inkTools` among them, are listed in
-  `sectionPrefs.js`. **Search opens as**: on the
+  entry under its section's title. An Apple Pencil row is listed only
+  under a host with the flags its row shows under (`hostOnly(flags,
+  entry)`, beside `admin()`; *Haptics* needs `pencil` and `haptics`).
+  **Search opens as**: on the
   home page and on a page (Full panel / Find bar).
 - **Language and Translation** (pane id `translation`,
   [SettingsTranslation.jsx](../../frontend/src/settings/SettingsTranslation.jsx)),
@@ -666,11 +664,11 @@ pane itself that the jump focuses. Every query word must appear in the
 label, synonyms, hint or section. Entries whose label holds them all come
 first; inaccessible management pages are filtered out, and so is an
 admin-only section of a pane everyone has (Backups › Off-site copies,
-marked `admin()` in the catalog) unless the Server pane is offered, and a
-setting only a native host shows (Reading & editing › Apple Pencil, marked
-`hostOnly(flags, entry)`, a flag or a list) unless `nativeHost()` has every
-one of them (the dialog passes it as `searchSettings(query, panes,
-{host})`). A result is a
+marked `admin()` in the catalog) unless the Server pane is offered. So is
+a setting only a native host shows (Reading & editing › Apple Pencil,
+marked `hostOnly(flags, entry)`, a flag or a list), unless `nativeHost()`
+has every one of its flags (the dialog passes it as
+`searchSettings(query, panes, {host})`). A result is a
 row-like button: the pane's icon, the label with the query marked, the
 hint, and "Pane › Section" on the right. Past six results they group under
 one caption per pane. Picking one opens the pane and focuses the matching

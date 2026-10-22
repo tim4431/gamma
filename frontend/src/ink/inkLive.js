@@ -10,14 +10,13 @@
 // stroke goes when a loaded file on its surface holds its id (the layer
 // reports it, `landWet`), on the writer's `drop`, when the writer leaves
 // the page (`keepWetOf`), and WET_MS after its last chunk.
+import { round2, round3 } from "./ink.js";
 
 export const LIVE_MS = 50;         // a writer sends a chunk at most this often
 export const LIVE_SAMPLES = 64;    // samples per chunk at most (the server relays no more)
 export const WET_MS = 60000;       // a wet stroke without news goes after this
 const MAX_WET_SAMPLES = 20000;     // one wet stroke holds at most this many
 
-const r2 = (v) => Math.round(v * 100) / 100;
-const r3 = (v) => Math.round(v * 1000) / 1000;
 const finite = (v) => typeof v === "number" && Number.isFinite(v);
 const WORD = /^[a-z][a-z0-9-]{0,15}$/;
 
@@ -43,7 +42,7 @@ export function liveSamples(samples, from, pen = true) {
   const out = [];
   for (let i = from; i < samples.length && out.length < LIVE_SAMPLES; i++) {
     const s = samples[i];
-    out.push([r2(s.x), r2(s.y), pen && finite(s.p) ? r3(s.p) : null, Math.round(s.t || 0),
+    out.push([round2(s.x), round2(s.y), pen && finite(s.p) ? round3(s.p) : null, Math.round(s.t || 0),
       finite(s.a) ? Math.round(s.a) : null, finite(s.z) ? Math.round(s.z) : null]);
   }
   return out;
@@ -132,19 +131,14 @@ function decodeSamples(list, last) {
 // its samples when its `n` is the count held, and a gap (a chunk missed)
 // drops the stroke: nothing more is drawn of it until its file lands.
 // `drop` cancels it. → whether anything changed.
-export function receiveInkLive(msg, now = Date.now()) {
+export function receiveInkLive(msg) {
   if (!msg || typeof msg.client !== "string" || typeof msg.id !== "string") return false;
   const surface = msg.page;
   if (!(finite(surface) || (typeof surface === "string" && surface))) return false;
   const key = `${msg.client}/${msg.id}`;
   const held = wet.get(surface)?.get(key) || null;
-  if (msg.drop) {
-    const gone = remove(surface, key);
-    if (gone) notify(surface);
-    return gone;
-  }
   const n = Number.isInteger(msg.n) ? msg.n : 0;
-  if (n !== (held ? held.samples.length : 0)) {
+  if (msg.drop || n !== (held ? held.samples.length : 0)) {
     const gone = remove(surface, key);
     if (gone) notify(surface);
     return gone;
@@ -153,7 +147,7 @@ export function receiveInkLive(msg, now = Date.now()) {
   if (!stroke) {
     const style = plainStyle(msg.style);
     if (!style) return false;
-    stroke = { key, client: msg.client, id: msg.id, surface, style, k: finite(msg.k) ? msg.k : 1, samples: [], done: false };
+    stroke = { key, client: msg.client, id: msg.id, style, samples: [], done: false };
     if (!wet.has(surface)) wet.set(surface, new Map());
     wet.get(surface).set(key, stroke);
   }
@@ -161,9 +155,7 @@ export function receiveInkLive(msg, now = Date.now()) {
   if (stroke.samples.length + add.length > MAX_WET_SAMPLES) add.length = Math.max(0, MAX_WET_SAMPLES - stroke.samples.length);
   // Replaced, never mutated: a painter holding the old list keeps its frame.
   stroke.samples = add.length ? [...stroke.samples, ...add] : stroke.samples;
-  stroke.g = typeof msg.g === "string" ? msg.g : stroke.g ?? null;
   stroke.done = stroke.done || !!msg.done;
-  stroke.at = now;
   clearTimeout(stroke.timer);
   stroke.timer = setTimeout(() => { if (remove(surface, key)) notify(surface); }, WET_MS);
   stroke.timer?.unref?.();

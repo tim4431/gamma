@@ -253,7 +253,8 @@ is `uiClose` with an `XIcon` inside (14, inline with the title it closes;
 ### Section labels
 
 Panel and section names (dock titles, Library, Recently viewed, Pinned, the
-popover, search and menu section captions, the Keyboard pane's groups) share
+popover, search and menu section captions, the Keyboard pane's groups, the
+handwriting strip's option-row captions) share
 one rule in app.css: sentence case, `--fs-xs`, weight 600, `--text-secondary`
 (dock titles a step up, `--fs-sm`), the Settings rail's look.
 Labels get no `text-transform: uppercase` or letter-spacing: the text keeps
@@ -411,11 +412,11 @@ Escape closes it first (`NestCtx` in Menus.jsx).
 A menu that lists commands lists their ids: `CommandMenuItem`
 (`app/CommandMenuItem.jsx`) draws a catalog command ([hotkeys.md](hotkeys.md))
 as a `MenuItem` with its label, its glyph (`app/commandIcons.jsx`) and the
-key this account gave it, greyed while its `when` fails (`disabledTitle`
-is the row's title then, the reason it does not apply), and runs it with
-the context its key runs it with; `onRun` is told afterwards (a menu that
-closes itself), any other prop is the row's, and an id the catalog does
-not know renders nothing. The View menu's Undo, Redo, Go to page and
+key this account gave it. The row is greyed while the command's `when`
+fails, with `disabledTitle` as its title then (the reason it does not
+apply). It runs the command with the context its key runs it with and
+then tells `onRun` (a menu that closes itself). Any other prop is the
+row's, and an id the catalog does not know renders nothing. The View menu's Undo, Redo, Go to page and
 Command palette are such rows: the way to them without a keyboard.
 
 Submenus open on hover, and the hover-switching is guarded by
@@ -606,6 +607,10 @@ never learns which gesture it was.
   same element, within 400 ms and 30 px, are counted here, each once, by
   the innermost element it reaches. The browser's `dblclick` after a
   counted double tap is ignored.
+- **The timings** are exported (`HOLD_MS`, `HOLD_SLOP`, `DOUBLE_MS`,
+  `DOUBLE_SLOP`) for gestures these helpers do not cover: the strip's
+  preset drag (`markup/MarkupToolbar.jsx`) and the finger-undo chords
+  (`ink/fingerChords.js`) read them.
 - **Where they are.** `menuPress`: the library's rows, cards and chips,
   tabs, the Back button, highlights, their note badges and PDF links, the
   translate button, the note object frame, file chips, chat history rows.
@@ -817,7 +822,7 @@ the ordinary row editor. The card footer navigates to the source.
 | `transfers/ImportExport.jsx`, `transfers/transferFormats.js`, `shared/illustrations/` | the Import/Export dialogs, their format/source rules (`resolveExport` / `resolveImport`) and the decorative previews ([import_export.md](import_export.md)) |
 | `transfers/ImportReviewDialog.jsx`, `transfers/ImportTree.jsx`, `transfers/importApi.js`, `transfers/importReview.js` | the import review: upload → review → import → summary in one `SubDialog` (filter `Segmented`, source and destination trees with checkboxes), the `/api/import/review` calls, and the pure selection/filter/tree helpers ([import_export.md](import_export.md)) |
 | `shared/lib/xhrUpload.js` | the one multipart upload: progress, a processing callback, abort by function or `AbortSignal`, the workspace and tab-identity headers; behind `FileChip.postFile`, PDF uploads, backup restores and the import review |
-| `shared/lib/keepalive.js` | the page's one ledger of `fetch` `keepalive` requests: a browser carries at most 64 KiB of their bodies in flight per page and refuses one past that, so every sender asks it for room by priority — the queued page edits (`critical`), then the profile, the reading position and an upload's discard (`normal`), then handwriting (`low`) — and a request that does not fit goes as a plain fetch ([collab.md](collab.md) "Keepalive") |
+| `shared/lib/keepalive.js` | the page's one ledger of `fetch` `keepalive` requests: each sender asks it for room in the browser's 64 KiB of keepalive bodies by priority (the queued page edits, then the small recoverable requests, then handwriting), and a request that does not fit goes as a plain fetch ([collab.md](collab.md) "Keepalive") |
 | `pdf/noteAnchor.js` | where a highlight's note badge sits: the geometric last line of its rects, not the last stored rect |
 | `shared/model/gammaLinks.js`, `GammaLinkCard` / `CitationPill` in `shared/ui/Widgets.jsx` | links into this library (page / block / citation) classified once and drawn the same in the chat and in notes: a page or block link as a card, a citation as a compact pill with a hover preview ([pdf_citations.md](pdf_citations.md)) |
 | `pdf/pdfCitation.js`, `pdf/PdfCitationOverlay.jsx` | a citation link → the quoted passage highlighted on the cited PDF page ([pdf_citations.md](pdf_citations.md)) |
@@ -827,7 +832,7 @@ the ordinary row editor. The card footer navigates to the source.
 | `shared/lib/stableActions.js`, `shared/lib/keepIfSame.js` | what a memoized row or page relies on: one stable wrapper per handler name calling the latest handler (`useStableActions` for the page tools, `makeStableActions` for the outliner's `rowProps`), and a derived map or object kept by identity while it reads the same (`keepIfSame` with `sameMap` / `sameObject`) ([frontend-refactor.md](frontend-refactor.md)) |
 | `chat/ChatDock.jsx` | the AI chat panel (incl. agent wiring); header = a `.ctlBtnRow` of `.ctlBtn` icon buttons (the PDF zoom column's buttons laid flat) with the ⚙ settings popover |
 | `pdf/PdfViewer.jsx` | the custom pdf.js viewer. A highlight's colour (`#rrggbbaa`, `shared/model/palette.js`) rides in `--hl` beside the dark-page variant the viewer derives for it (`darkPageColor`: the same hue, saturated, at a middle lightness, mostly transparent; `--hl-dark`, and `--hl-dark-line` for an area outline), so on a dark page — Flip page colors or Gamma Dark — app.css draws that with normal blending in place of the screened pastel, whatever app the colour came from. The selection popup's swatches are the account's wash palette (`usePalette`, `shared/ui/paletteContext.js`). A jump to a highlight (its note's dot, a deep link, a search hit) pulses it once in its own hue: App's `triggerFlash` → `flashHighlightId` → `.pdfHlFlash` on its rects, a still ring under reduced motion |
-| `ink/ink.js`, `ink/finishStroke.js`, `ink/inkInput.js`, `ink/stabilizer.js`, `ink/shapes.js`, `ink/gestures.js`, `ink/fingerChords.js`, `ink/stripKeys.js`, `ink/pencilActions.js`, `ink/inkStore.js`, `ink/inkFlush.js`, `ink/inkJournal.js`, `ink/inkLive.js`, `ink/grain.js`, `ink/InkStylePicker.jsx`, `ink/InkLayer.jsx` | handwriting ([handwriting.md](handwriting.md)): the stroke codec + geometry (pure), the finish pipeline and brush table (the only width laws), pointer sampling, Smoothing, the shape recogniser, scribble detection, finger chords, the strip's keys, the Pencil mapping, the files/drafts store, the flush plan, the drafts journal, the peers' wet strokes, the pencil grain, the Style picker, and the page layer + selection menu (`.inkEditMenu`, placed by `useSelectionMenuAnchor`) + notes card + `ColorChoices`, the swatches and custom colour that a pen preset's row and a text box's style share |
+| `ink/ink.js`, `ink/finishStroke.js`, `ink/inkInput.js`, `ink/stabilizer.js`, `ink/shapes.js`, `ink/gestures.js`, `ink/fingerChords.js`, `ink/stripKeys.js`, `ink/pencilActions.js`, `ink/hostInk.js`, `ink/ruler.js`, `ink/shapeTool.js`, `ink/zoomWindow.js`, `ink/inkStore.js`, `ink/inkFlush.js`, `ink/inkJournal.js`, `ink/inkLive.js`, `ink/grain.js`, `ink/InkStylePicker.jsx`, `ink/ZoomWindow.jsx`, `ink/InkLayer.jsx` | handwriting ([handwriting.md](handwriting.md)): the stroke codec + geometry (pure), the finish pipeline and brush table (the only width laws), pointer sampling, Smoothing, the shape recogniser, scribble detection, finger chords, the strip's keys, the Pencil mapping, the iPad shell's side of a stroke, the ruler, the Shapes tool's drag, the zoom window's rules, the files/drafts store, the flush plan, the drafts journal, the peers' wet strokes, the pencil grain, the Style picker, the zoom window's panel, and the page layer + selection menu (`.inkEditMenu`, placed by `useSelectionMenuAnchor`) + notes card + `ColorChoices`, the swatches and custom colour that a pen preset's row and a text box's style share |
 | `markup/MarkupToolbar.jsx`, `markup/MarkupLayers.jsx`, `markup/PageTools.jsx` | the tool strip (`.pdfInkBar`: `ctlBtn`s and `colorBtn` swatches; the Text tool's `TypeIcon`), the one mount of a page surface's layers (text boxes, then ink), and the tools context they read, with `armedClasses` for a surface's armed-tool classes ([handwriting.md](handwriting.md)) |
 | `markup/TextBoxLayer.jsx`, `markup/useTextBoxes.js`, `markup/textBox.js`, `markup/markup.css` | text boxes ([text_boxes.md](text_boxes.md)): the boxes of a page (frame, width handle and band in screen pixels over a box sized in the page's points), the box menu (the handwriting menu's `inkEditMenu` rows: `TextSizeIcon`, `PaletteIcon`, `PaintBucketIcon`, then Duplicate, Show note, Delete), and `TextStyleChoices`, the size numbers, the pen palette through `ColorChoices`, and the four backgrounds ("none" a struck-out swatch, `.textNoBackground`) that the menu and the strip's Text row share; the notes row's `TypeIcon` marker (`.textBoxMarker`) |
 | `search/SearchPanel.jsx`, `search/snippets.js`, `library/librarySearch.js` | workspace search (Ctrl+F); `MarkedText`, the query's matches as `mark.searchMark` (quick open's rows and the `[[` picker's too), over the pure result text of `snippets.js`; the title scorer it shares with chat, and the library matcher (title + folder/label chips) shared by the home filter box and quick open |

@@ -114,7 +114,7 @@ export function detailPlan(slice, dpr) {
 // scale; null for a window off its page. zoomRasterNeed is the window's own
 // rect in the same css px, what a drawn plan must still cover (`covers`)
 // before the panel draws again.
-export const ZOOM_RASTER_MARGIN = { x: 0.65, y: 0.5 };
+const ZOOM_RASTER_MARGIN = { x: 0.65, y: 0.5 };
 export function zoomRasterNeed(win, page) {
   const x0 = Math.max(0, win.x), y0 = Math.max(0, win.y);
   const x1 = Math.min(page.width, win.x + win.w), y1 = Math.min(page.height, win.y + win.h);

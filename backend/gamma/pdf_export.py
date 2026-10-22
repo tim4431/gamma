@@ -390,7 +390,7 @@ def _ink_annotations(ink, rotation, crop, note, author, block_id=""):
     index. → ``[(band, annotation)]`` in bucket order: the caller appends a
     page's annotations band 0 (drawn under) first, across every group on
     the page, so a viewer paints them in the layer order
-    (``_add_ink_annotations``)."""
+    (``annotate_pdf``)."""
     from . import ink as inkmod
     sw, sh = float(ink.space.width), float(ink.space.height)
     k = _ink_scale(ink, rotation, crop)
@@ -599,8 +599,14 @@ def annotate_pdf(pdf_bytes: bytes, highlights, author: str = "", ink=(),
         crop, rotation = page_frame(writer.pages[page_num - 1])
         by_page.setdefault(page_num - 1, []).extend(_ink_annotations(
             ink_file, rotation, crop, group.get("note") or "", author, block_id=group.get("id") or ""))
+    # A page's annotations from every group on it go band 0 first (a stable
+    # sort: groups and buckets keep their order within a band), as the layers
+    # draw: /Ink has no blend mode, so the order alone keeps a later group's
+    # highlighter from painting over an earlier group's pen.
     for page_index, annots in by_page.items():
-        written += _add_ink_annotations(writer, page_index, annots)
+        for _, annot in sorted(annots, key=lambda pair: pair[0]):
+            writer.add_annotation(page_number=page_index, annotation=annot)
+            written += 1
     for h in highlights:
         pos = h.get("position") or {}
         page_num = pos.get("pageNumber")
@@ -628,27 +634,12 @@ def annotate_pdf(pdf_bytes: bytes, highlights, author: str = "", ink=(),
     return out.getvalue(), written
 
 
-def _add_ink_annotations(writer, page_index: int, annots) -> int:
-    """A page's ``(band, annotation)`` pairs from every group on it, added
-    band 0 first (a stable sort: groups and buckets keep their order within
-    a band), as the layers draw: every group's highlighters under every
-    group's ink. ``/Ink`` has no blend mode, so the order is the only
-    thing that keeps a later group's highlighter from painting over an
-    earlier group's pen. → how many were added."""
-    for _, annot in sorted(annots, key=lambda pair: pair[0]):
-        writer.add_annotation(page_number=page_index, annotation=annot)
-    return len(annots)
-
-
-def page_with_ink(src, page_no: int, inks, vector: bool = False) -> tuple[bytes, int]:
+def page_with_ink(src, page_no: int, inks) -> tuple[bytes, int]:
     """Page ``page_no`` (1-based) of the PDF ``src`` (a path or bytes) on
     its own, with the handwriting groups ``inks`` (``gamma.ink.InkFile``s
-    drawn on that page) on it → ``(pdf bytes, the source's page count)``;
-    ``b""`` for a page past the end. ``vector``: the strokes are stamped
-    into the page's content (``_stamp_ink``), every look as drawn; else
-    they are written as ``/Ink`` like ``annotate_pdf``, which a viewer
-    draws at one width per bucket. The agent's view_ink renders the
-    vector page (gamma/ink_view.py)."""
+    drawn on that page) stamped into its content (``_stamp_ink``), every
+    look as drawn → ``(pdf bytes, the source's page count)``; ``b""`` for a
+    page past the end. The agent's view_ink renders it (gamma/ink_view.py)."""
     reader = ExportPdfReader(io.BytesIO(src) if isinstance(src, (bytes, bytearray)) else str(src))
     pages = len(reader.pages)
     if not 1 <= page_no <= pages:
@@ -657,10 +648,7 @@ def page_with_ink(src, page_no: int, inks, vector: bool = False) -> tuple[bytes,
     writer.add_page(reader.pages[page_no - 1])
     page = writer.pages[0]
     crop, rotation = page_frame(page)
-    if vector:
-        _stamp_ink(writer, page, inks, rotation, crop)
-    else:
-        _add_ink_annotations(writer, 0, [a for ink in inks for a in _ink_annotations(ink, rotation, crop, "", "")])
+    _stamp_ink(writer, page, inks, rotation, crop)
     out = io.BytesIO()
     writer.write(out)
     return out.getvalue(), pages

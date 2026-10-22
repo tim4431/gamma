@@ -33,6 +33,7 @@ function socketUrl(pageId) {
 //   onSaveNotice(text, kind)  — the lasting save notice (collabSession.js)
 //   onGone(pageId, gone)      — the page went to Recently deleted, or is back (null)
 //   onInkLive(msg)            — a peer's handwriting stroke in progress (ink/inkLive.js)
+//   onBuild(build)            — the server's build, from the socket's hello
 // Returns the session's commit/flush/hasPending/sendCursor/sendInkLive/overlay/
 // reloadFailed/tooLong/gone, `peers`, `me`, and `reconnect` (reopen the
 // socket — after a display-name change, since the name travels in the

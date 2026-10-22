@@ -344,8 +344,8 @@ test("a critical request short of room because of the critical requests on their
 });
 
 test("closing a tab: the edits' claim is held off handwriting's room, so a drawing that would crowd them out goes plain", async () => {
-  // without the ledger (release T): the drawing's 50 KiB upload went with keepalive on going hidden,
-  // and the edits' 20 KiB POST on pagehide passed the cap — refused, the typed text lost
+  // without the ledger: the drawing's 50 KiB upload goes with keepalive on going hidden,
+  // and the edits' 20 KiB POST on pagehide passes the cap — refused, the typed text lost
   const unshared = browser();
   unshared.fetch("/api/upload-ink", { method: "POST", body: text(50 * KiB), keepalive: true });
   unshared.fetch("/api/pages/p/ops", { method: "POST", body: text(20 * KiB), keepalive: true }).catch(() => {});

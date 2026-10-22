@@ -10,7 +10,13 @@ import {
   inkAtTime, inkTimeline, REPLAY_MAX, REPLAY_PAUSE,
   DEFAULT_SIZE, STROKE_DEFAULTS, byBand, cloneStrokes, encodePoints, inkBytes, inkFeatures, strokeBand, strokeBounds, strokeBytes,
   upgradeV1, withDefaults, appendStrokes, flipStrokes,
+  transformPoint, visibleTools, BRUSH_ORDER, KNOWN_BRUSHES, bandRuns, dashArray, dashDots, dashPattern, dashRuns, opacityBand, strokeOpacity,
+  outlineOptions, runOutline, cachedStrokePath as cachedPath, strokePlaceholder as placeholderOf,
+  CALLIGRAPHY_SMOOTHING, CLOSED_SHAPES, DEFAULT_NIB, FILL_OPACITY, NIB_HAIR, NIB_MAX, NIB_MIN, NIB_REACH, NIB_STEP, isClosedShape, nibOutline,
+  presetSmoothing, strokeNib,
 } from "../src/ink/ink.js";
+import { shapeSamples } from "../src/ink/shapes.js";
+import { bakeWidths, brushWidths, restyleBrush } from "../src/ink/finishStroke.js";
 
 const samples = (n = 5, x0 = 100, y0 = 200) =>
   Array.from({ length: n }, (_, i) => ({ x: x0 + 10 * i, y: y0 + 3 * i, p: 0.2 + 0.15 * i, t: 16 * i }));
@@ -625,8 +631,6 @@ test("flipStrokes mirrors the samples about the centre, keeps everything else, a
 // --- a shape record follows the samples -----------------------------------------
 // (docs/dev/handwriting.md "Client": the params an editor rebuilds `pts`
 // from go through every edit that moves the samples)
-import { shapeSamples } from "../src/ink/shapes.js";
-import { transformPoint } from "../src/ink/ink.js";
 
 const segmentGap = (p, a, b) => {
   const dx = b.x - a.x, dy = b.y - a.y, len2 = dx * dx + dy * dy;
@@ -748,7 +752,6 @@ test("a key a record leaves out follows too: an arrow's head drawn by default is
 // The preset list on the account (docs/dev/handwriting.md "Presets follow
 // the account"): a hidden flag, and keys this build does not know kept as
 // they are, under a byte cap per preset.
-import { visibleTools } from "../src/ink/ink.js";
 test("normalizeTools keeps a hidden flag and unknown keys per preset, capped at 512 bytes; visibleTools filters the hidden ones", () => {
   const stored = [
     { ...DEFAULT_TOOLS[0], hidden: true, dash: "dotted", grip: "soft" },
@@ -782,7 +785,6 @@ test("normalizeTools keeps a hidden flag and unknown keys per preset, capped at 
 });
 
 // --- pen styles and lines (docs/dev/handwriting.md "The brush table", "Dash geometry") ----
-import { BRUSH_ORDER, KNOWN_BRUSHES, bandRuns, dashArray, dashDots, dashPattern, dashRuns, opacityBand, strokeOpacity } from "../src/ink/ink.js";
 
 test("normalizeTools keeps a pen's known brush and a line on pens and highlighters; toolStyle carries both to the stroke", () => {
   const [brush, pencil, plain, odd, hl, hlBrush] = normalizeTools([
@@ -822,7 +824,6 @@ test("restyleStrokes sets or clears a line on every selected tool, ignores other
   assert.equal(restyleStrokes(ink, ["pen"], { dash: null }), ink, "solid already");
 });
 
-import { restyleBrush } from "../src/ink/finishStroke.js";
 test("restyleBrush on a stroke with a shape record changes its brush key alone: it stays constant width, no w and no o", () => {
   const line = { kind: "line", params: { x1: 100, y1: 200, x2: 180, y2: 200 } };
   const shaped = encodeStroke({ id: "s", brush: "brush", pen: false, size: 3, shape: line, t0: 5, ch: "xyt",
@@ -932,7 +933,6 @@ test("the pencil: its shades are up to three paths, o quantised up to 0.33 / 0.6
   assert.equal(strokeOpacity({}, { o: 0.4 }), 0.4);
 });
 
-import { outlineOptions, runOutline } from "../src/ink/ink.js";
 // The box around an outline path's points.
 const pathBox = (d) => {
   const pts = [...d.matchAll(/(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)/g)].map((m) => [Number(m[1]), Number(m[2])]);
@@ -975,8 +975,6 @@ test("a band run of no length is left out, as the server leaves it out (stroke_b
 });
 
 // --- the caches: keyed by the pts array (docs/dev/handwriting.md "Client", Caches) ---
-
-import { cachedStrokePath as cachedPath, strokePlaceholder as placeholderOf } from "../src/ink/ink.js";
 
 test("caches: a colour restyle and a clone with the same pts arrays reuse the polygon; a move or a new size builds it again", () => {
   const ink = { ...newInk(1, 612, 792), strokes: [pen({ id: "a" }), pen({ id: "b", samples: baked(6, 300, 400) })] };
@@ -1031,11 +1029,6 @@ test("caches: cachedStrokePath only looks, and a placeholder is the samples as a
 });
 
 // --- the calligraphy pen (docs/dev/handwriting.md "Calligraphy", "Client") ------------
-import {
-  CALLIGRAPHY_SMOOTHING, CLOSED_SHAPES, DEFAULT_NIB, FILL_OPACITY, NIB_HAIR, NIB_MAX, NIB_MIN, NIB_REACH, NIB_STEP, isClosedShape, nibOutline,
-  presetSmoothing, strokeNib,
-} from "../src/ink/ink.js";
-import { bakeWidths, brushWidths } from "../src/ink/finishStroke.js";
 
 // nibOutline's subpaths ("Mx,y Lx,y … Z") as polygons, and the nonzero
 // winding of a point against them.

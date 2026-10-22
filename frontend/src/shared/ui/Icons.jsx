@@ -145,6 +145,9 @@ export const ArrowUpDownIcon = (p) => (
 export const PlusIcon = (p) => (
   <Icon {...p}><path d="M12 5v14" /><path d="M5 12h14" /></Icon>
 );
+export const MinusIcon = (p) => (
+  <Icon {...p}><path d="M5 12h14" /></Icon>
+);
 
 // Status & tasks.
 export const InfoIcon = (p) => (
@@ -642,9 +645,6 @@ export const ZoomWindowIcon = (p) => (
 // A ruler with its ticks, and the line drawn along it.
 export const StampLineIcon = (p) => (
   <Icon {...p}><rect x="3" y="4" width="18" height="7" rx="1" /><path d="M7 4v3" /><path d="M11 4v2" /><path d="M15 4v3" /><path d="M3 17.5h18" /></Icon>
-);
-export const MinusIcon = (p) => (
-  <Icon {...p}><path d="M5 12h14" /></Icon>
 );
 export const ShapeLineIcon = (p) => (
   <Icon {...p}><path d="M5 19 19 5" /></Icon>

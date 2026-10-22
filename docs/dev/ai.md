@@ -941,30 +941,30 @@ notes. The server resolves all four against the request's context pages.
   waits until the conversation has loaded, and while a reply streams the
   request goes into the composer instead.
 - `ink_selections` — handwriting the user selected on a page,
-  `[{page_id, block_id, space, strokes}]`: the selection menu's
-  **Transcribe** on a selection that takes only part of a group
-  ([handwriting.md](handwriting.md) "Transcribe a selection") sends the
-  selected strokes of each group, as the client holds them (strokes not
-  saved yet included), in the group's file `space`. At most 8 entries and
-  64 KB of JSON together (`MAX_INK_SELECTIONS`,
-  `MAX_INK_SELECTION_BYTES`, a 422 past either; App refuses a bigger
-  selection with a status line before sending). The composer shows one
-  chip per group, "Selected handwriting · K strokes", dropped once sent.
+  `[{page_id, block_id, space, strokes}]`. The selection menu's
+  **Transcribe** on a selection that takes only part of a group, or a
+  group not saved yet ([handwriting.md](handwriting.md) "Transcribe a
+  selection"), sends the selected strokes of each group in the group's
+  file `space`, as the client holds them. At most 8 entries and 64 KB of
+  JSON together (`MAX_INK_SELECTIONS`, `MAX_INK_SELECTION_BYTES`). Past
+  either the server answers 422, and App refuses the selection with a
+  status line before sending. The composer shows one chip per group,
+  "Selected handwriting · K strokes", dropped once sent.
   `ai_context.request_ink_selections` keeps an entry whose `page_id` is a
-  context page and whose strokes parse as a version 2 file in that space;
-  the notes-focus section lists each as `- [block_id] (selected
+  context page and whose strokes parse as a version 2 file in that space.
+  The notes-focus section lists each as `- [block_id] (selected
   handwriting on p. N, K strokes)` under "Handwriting the user selected
-  for this message (part of the note block in brackets):", and each sends
-  its picture — `ink_view.picture` with the inline file, the selected
-  strokes alone on their page, cropped to them — within the picture
-  budget, as an attached handwriting block's does; after the list the
+  for this message (part of the note block in brackets):". Each sends its
+  picture within the picture budget, as an attached handwriting block's
+  does: `ink_view.picture` with the inline file draws the selected
+  strokes alone on their page, cropped to them. After the list the
   section says "Each picture holds only the selected strokes, saved or
   not: transcribe exactly those, not the rest of the block's
-  handwriting.", and the agent's prompt says to read a selection from
-  its picture, not with `view_ink` (which shows the whole block as it was
-  saved, without the strokes not saved yet). The request it comes
-  with is "Transcribe the selected handwriting."; an agent that may edit
-  appends the text to that block's caption, as for a whole block.
+  handwriting." The agent's prompt says to read a selection from its
+  picture, not with `view_ink`, which shows the whole block as it was
+  saved. The request is "Transcribe the selected handwriting.", and an
+  agent that may edit appends the text to that block's caption, as for a
+  whole block.
 - `note_selections` — selected note text as exact ranges of block sources,
   `[{block_id, from, to, text}]`; `text` is the source slice the client saw.
   Two sources feed it:

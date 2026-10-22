@@ -82,7 +82,6 @@ export function useProfileSync(prefs, user, { onReplaced } = {}) {
   const snap = JSON.stringify(values);
   const latest = useRef(null);
   latest.current = { prefs, snap, user, onReplaced };
-  const replacedRef = useRef(new Set()); // the names onReplaced was told of since this account loaded
   const syncedRef = useRef(null); // the server's profile as last seen/sent; null = not loaded
   const confirmedRef = useRef(null); // {name: JSON} the server confirmed holding; null = not loaded
   const timerRef = useRef(null);
@@ -105,10 +104,7 @@ export function useProfileSync(prefs, user, { onReplaced } = {}) {
       if (keep.has(name)) continue;
       const local = JSON.stringify(current[name]);
       if (local === JSON.stringify(v)) continue;
-      if (first && local !== JSON.stringify(PREFS[name].default) && !replacedRef.current.has(name)) {
-        replacedRef.current.add(name);
-        replaced.push({ name, local: current[name] });
-      }
+      if (first && local !== JSON.stringify(PREFS[name].default)) replaced.push({ name, local: current[name] });
       current[setterName(name)](v);
     }
     for (const entry of replaced) latest.current.onReplaced?.(entry);
@@ -219,7 +215,6 @@ export function useProfileSync(prefs, user, { onReplaced } = {}) {
   useEffect(() => {
     syncedRef.current = null;
     confirmedRef.current = null;
-    replacedRef.current = new Set();
     clearTimeout(timerRef.current);
     timerRef.current = null;
     setFlight(IDLE);

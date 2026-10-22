@@ -154,7 +154,7 @@
    its own case, so only real acronyms are uppercase. Each class's own rule
    holds its layout (dock titles also a size step up). */
 :is(.dockGrip, .homeListLabel, .pinnedLabel, .carouselLabel, .popoverLabel, .popoverSection,
-  .searchSection, .ctxMenuLabel, .slashMenuTitle, .refPopupHead, .keyGroupLabel, .quickOpenSection) {
+  .searchSection, .ctxMenuLabel, .slashMenuTitle, .refPopupHead, .keyGroupLabel, .quickOpenSection, .inkOptCaption) {
   font-size: var(--fs-xs);
   font-weight: 600;
   letter-spacing: 0;
@@ -6343,8 +6343,6 @@ a.shareBrand:hover { background: var(--bg-hover); }
    click over a link. */
 .pdfViewer.inkArmed .pdfPageWrap { cursor: crosshair; }
 .pdfViewer.inkTouchDraw .pdfPageWrap { touch-action: none; }
-/* The Shapes tool draws from a crosshair, with no hover footprint (InkLayer hides it). */
-:is(.pdfViewer, .nbViewer, .noteSheet).inkShapeArmed :is(.pdfPageWrap, .nbSheet) { cursor: crosshair; }
 .inkLayer, .inkCanvas, .inkWetCanvas {
   position: absolute;
   left: 0;
@@ -6395,7 +6393,7 @@ a.shareBrand:hover { background: var(--bg-hover); }
 .inkShapeDot { width: 12px; height: 12px; box-sizing: border-box; border-radius: 50%; pointer-events: none;
   border: 2px solid rgba(80, 140, 255, 0.95); /* ds-allow: the selection's blue (.inkSelRect), drawn over the page */
   background: var(--bg-elevated); }
-.inkShapeHandle:focus-visible .inkShapeDot { outline: 2px solid var(--accent); outline-offset: 2px; }
+.inkShapeHandle:focus-visible .inkShapeDot { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
 .inkTooltip { position: fixed; z-index: var(--z-tip); pointer-events: none; width: max-content; max-width: min(280px, calc(100vw - 16px));
   padding: 6px 9px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-elevated);
   color: var(--text-primary); font-size: var(--fs-xs); line-height: var(--lh-ui); box-shadow: var(--shadow-2); }
@@ -6408,8 +6406,6 @@ a.shareBrand:hover { background: var(--bg-hover); }
 .inkEditOptions .ctlBtn, .inkEditOptions .colorBtn { min-width: 32px; min-height: 32px; }
 /* The selection menu's second row (More edits): the first row's targets. */
 .inkEditOptions.inkEditMore .ctlBtn { flex: 1; min-width: 36px; min-height: 36px; }
-/* The selection's Style row: the Style picker and the Line trio as the strip's pills. */
-.inkEditOptions .inkSegBtn { width: auto; padding: 0 8px; gap: 5px; font-size: var(--fs-xs); border-radius: var(--radius-full); }
 :is(.pdfViewer.pdfDark, [data-theme="gamma-dark"] .pdfViewer) :is(.inkLayer, .inkCanvas, .inkWetCanvas, .textBoxBody) { filter: invert(1) hue-rotate(180deg); }
 /* The brief outline after a jump from the notes. */
 .inkFlash {
@@ -6511,14 +6507,13 @@ a.shareBrand:hover { background: var(--bg-hover); }
   pointer-events: none;
   opacity: 0.9;
 }
-.inkDragGhost .inkToolInk { left: 6px; right: 6px; }
 /* A preset's options: three captioned sub-rows, Style, Color and Width
    (the caption a 14 px line); on a phone the captions go, Style and Width
    share one wrapping line and Color takes the next, so the open strip
    stays low over the page. */
 .pdfInkSub.inkPresetOptions { flex-direction: column; align-items: stretch; gap: 2px; }
 .inkOptRow { display: flex; align-items: center; flex-wrap: wrap; gap: 2px; }
-.inkOptCaption { flex: none; min-width: 44px; font-size: var(--fs-xs); font-weight: 600; line-height: 14px; color: var(--text-secondary); }
+.inkOptCaption { flex: none; min-width: 44px; line-height: 14px; }
 @media (max-width: 480px) {
   .inkOptCaption { display: none; }
   .pdfInkSub.inkPresetOptions { flex-direction: row; flex-wrap: wrap; align-items: center; justify-content: center; }
@@ -6551,18 +6546,16 @@ a.shareBrand:hover { background: var(--bg-hover); }
 .inkEraserDot { border: 1.5px solid currentColor; box-sizing: border-box; }
 /* A smoothing level: a hollow dot growing with the string's length. */
 .inkSmoothDot { border: 1.5px solid currentColor; box-sizing: border-box; opacity: 0.8; }
-/* Labelled groups in the options row: real boxes (display: contents would drop them, and their name, from Safari's accessibility tree). */
-.inkSmoothing, .inkStraight, .inkErases, .inkLine { display: inline-flex; align-items: center; gap: 2px; }
+/* Labelled groups in the options rows and the zoom window's bar: real boxes (display: contents would drop them, and their name, from Safari's accessibility tree). */
+.inkSmoothing, .inkStraight, .inkErases, .inkLine, .inkNib, .inkRulerRotation, .inkRulerUnits, .inkShapeKinds, .inkZoomGroup { display: inline-flex; align-items: center; gap: 2px; }
 /* A calligraphy pen's Nib angle: − and + (or a slider with a fine pointer) around the degrees, then the nib drawn at its angle. */
-.inkNib { display: inline-flex; align-items: center; gap: 2px; }
 .inkNibReadout { min-width: 30px; text-align: center; font-size: var(--fs-xs); font-variant-numeric: tabular-nums; }
 .inkNibRange { width: 84px; }
 .inkNibPreview { flex: none; color: var(--text-primary); }
 /* The selection's Fill: None and the swatches, for the closed shapes selected. */
 .inkFillChoices { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 4px; }
 .inkFillGlyph { flex: none; color: var(--text-secondary); }
-/* The ruler's row and the Shapes tool's (data-ink-options="ruler" / "shape"): their groups as the trios above, and the readouts. */
-.inkRulerRotation, .inkRulerUnits, .inkShapeKinds { display: inline-flex; align-items: center; gap: 2px; }
+/* The ruler's row and the Shapes tool's (data-ink-options="ruler" / "shape"): the readouts, and the unit pills. */
 .inkRulerAngle, .inkShapeUses { padding: 0 6px; font-size: var(--fs-xs); color: var(--text-secondary); white-space: nowrap; font-variant-numeric: tabular-nums; }
 .pdfInkSub .inkRulerUnits .inkSegBtn { min-width: 32px; justify-content: center; }
 /* The pen's Style picker (ink/InkStylePicker.jsx): a short stroke drawn in
@@ -6571,8 +6564,8 @@ a.shareBrand:hover { background: var(--bg-hover); }
 .ctlBtn.inkStyleBtn { width: auto; padding: 0 6px 0 8px; gap: 5px; font-size: var(--fs-xs); border-radius: var(--radius-full); }
 .inkStyleBtn .inkBrushPreview, .inkStyleMenu .inkBrushPreview { flex: none; color: var(--text-primary); }
 .inkStyleMenu .ctxMenuIcon { width: 28px; }
-/* Eraser / lasso mode choices: icon + word, a pill when active. */
-.pdfInkBar .inkSegBtn { width: auto; padding: 0 8px; gap: 5px; font-size: var(--fs-xs); border-radius: var(--radius-full); }
+/* The pills, icon + word (pressed when chosen): the strip's options rows, the selection menu's Style row and the zoom window's bar. */
+:is(.pdfInkBar, .inkEditOptions, .inkZoomBar) .inkSegBtn { width: auto; padding: 0 8px; gap: 5px; font-size: var(--fs-xs); border-radius: var(--radius-full); }
 /* The Text tool's sizes as their numbers; "no background" as a struck-out swatch. */
 .pdfInkBar .inkTextSize { width: auto; min-width: calc(var(--ctl-icon-btn) - 2px); padding: 0 4px; font-size: var(--fs-xs); }
 .textNoBackground { background: linear-gradient(135deg, transparent 43%, var(--danger) 43% 57%, transparent 57%), var(--bg-elevated); }
@@ -6698,8 +6691,7 @@ a.shareBrand:hover { background: var(--bg-hover); }
 .inkZoomGrip::after { content: ""; width: 36px; height: 3px; border-radius: var(--radius-full); background: var(--border-hover); }
 .inkZoomGrip:is(:hover, :focus-visible)::after { background: var(--accent); }
 .inkZoomBar { flex: none; height: 36px; box-sizing: border-box; display: flex; align-items: center; gap: 2px; padding: 0 6px 4px; overflow-x: auto; }
-.inkZoomBar .inkSegBtn { width: auto; padding: 0 8px; gap: 5px; font-size: var(--fs-xs); border-radius: var(--radius-full); white-space: nowrap; }
-.inkZoomGroup { display: inline-flex; align-items: center; gap: 2px; }
+.inkZoomBar .inkSegBtn { white-space: nowrap; }
 .inkZoomReadout { min-width: 40px; text-align: center; font-size: var(--fs-xs); color: var(--text-secondary); font-variant-numeric: tabular-nums; }
 .inkZoomClose { margin-left: auto; flex: none; }
 .inkZoomView { position: relative; flex: 1; min-height: 0; overflow: hidden; touch-action: none; background: var(--bg-deeper); }

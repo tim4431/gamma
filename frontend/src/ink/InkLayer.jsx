@@ -9,7 +9,7 @@
 // a surface mounts its layer through markup/MarkupLayers.jsx. Strokes come
 // from inkStore (drafts ahead of uploads, files behind block URLs); App owns
 // the tool state, the selection, the stroke history and the commits.
-import React, { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
+import React, { createContext, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal, flushSync } from "react-dom";
 import { ContextMenu, MenuItem } from "../shared/ui/Menus";
 import { getStroke } from "perfect-freehand";
@@ -23,14 +23,14 @@ import {
   inkBounds, inkFeatures, inkUntil, lerpSample, nearestInkStroke, opacityBand, outlineOptions, outlinePressure, runOutline,
   sizesFor, strokeBand, strokeBounds, strokeId, strokeMaxWidth, strokePath, strokePlaceholder, strokeWalls, strokesInLasso, svgPathFromPoints,
   transformPoint, unionBox,
-  CLOSED_SHAPES, DEFAULT_NIB, FILL_OPACITY, NIB_HAIR, isClosedShape, nibOutline, strokeNib,
+  CLOSED_SHAPES, DEFAULT_NIB, FILL_OPACITY, NIB_HAIR, encodedStyle, isClosedShape, nibOutline, strokeNib,
 } from "./ink";
 import { brushOpacities, brushWidths, finishStroke, strokeChannels, widthLaw } from "./finishStroke.js";
 import { GRAIN_PX, GRAIN_UNITS, grainImage, grainUri } from "./grain.js";
 import { InkLineChoices, InkStyleMenu, InkStylePicker, brushValue } from "./InkStylePicker.jsx";
 import {
-  CANCEL_MS, CANCEL_PX, HOLD_MIN_MS, HOLD_MOVE, HOLD_MS, PASTE_MOVE, REFIT_PX, followHold, recognise, refitShape, shapeSamples, stillSince,
-  dragHandle, reshapeStroke, shapeHandles,
+  CANCEL_MS, CANCEL_PX, HOLD_MIN_MS, HOLD_MOVE, HOLD_MS, MIN_EXTENT_PT, MIN_EXTENT_PX, PASTE_MOVE, REFIT_PX, followHold, recognise,
+  refitShape, shapeSamples, stillSince, dragHandle, reshapeStroke, shapeHandles,
 } from "./shapes.js";
 import { claimTool, hostEvent, shapeFromHost, shapeToHost } from "./hostInk.js";
 import {
@@ -71,9 +71,10 @@ export function useInkVersion() {
 export const ERASER_SIZES = [5, 9, 16];
 // What a press on never starts ink, even from a stylus that writes right
 // away: the menus (portalled), the lasso's handles, the ruler's knob and
-// ends, and a text box's width handle, its move band and its open editor
-// (markup/TextBoxLayer.jsx). The ruler's band is the pointer's kind's: a pen
-// about to write writes along it, any other pointer moves it (writesOnBand).
+// ends, the zoom window's band and corner, and a text box's width handle,
+// its move band and its open editor (markup/TextBoxLayer.jsx). The ruler's
+// band is the pointer's kind's: a pen about to write writes along it, any
+// other pointer moves it (writesOnBand).
 const NOT_INK = ".inkEditMenu, .inkTransformHandle, .inkRulerKnob, .inkRulerEnd, .inkZoomBand, .inkZoomResize, .textBoxWidth, .textBoxBand, .textBox.editing";
 // The tools that write a stroke: a pen or a highlighter preset (the
 // stylus's pen with nothing armed included).
@@ -83,6 +84,11 @@ const strokeTool = (use) => use?.tool === "pen" || use?.tool === "highlighter";
 // or the Shapes tool armed, and for a finger or the mouse, the band is the
 // ruler's, which moves.
 const writesOnBand = (L, e) => e.pointerType === "pen" && !(e.buttons & 34) && strokeTool(L.tool || L.penTool);
+// Every position a pointer move carries: its coalesced events, else the move itself.
+const coalesced = (e) => {
+  const events = e.getCoalescedEvents?.() || [];
+  return events.length ? events : [e];
+};
 // What takes a click above a stroke of a read-only page (whose tap shows
 // the stroke's note): the page's own clickable marks. The strokes are drawn
 // above them all, text boxes included (app.css), but take no pointer.
@@ -127,9 +133,7 @@ export function inkBusy() {
 // Whether a finger scrolling under an armed tool is still worth explaining
 // (onFingerScroll): once a session, and never once a pen has drawn.
 let fingerHint = true;
-// Draw and hold's timer and slops are shapes.js's (HOLD_MS and the rest),
-// one table for this layer and the iPad host.
-const SNAP_BLUE = "rgb(80, 140, 255)"; // .inkSelRect's stroke
+const SNAP_BLUE = "rgb(80, 140, 255)"; // a held shape's snap flash: .inkSelRect's stroke
 // Two- and three-finger undo chords (fingerChords.js): one detector for the
 // document — several page layers must never count a contact twice — fed by
 // document-level listeners while at least one layer with an onUndoGesture is
@@ -196,14 +200,14 @@ export function swallowClick() {
 // tile GRAIN_UNITS page units from the page's corner, so the grain zooms
 // with the paper and meets the live canvas's. Strokes reads the fill
 // through GrainContext; without it a pencil is filled plain.
-const GrainContext = React.createContext(null);
+const GrainContext = createContext(null);
 const colorKey = (color) => String(color).toLowerCase().replace(/[^a-z0-9]/g, "");
 function useGrain(inks) {
   const prefix = "inkGrain-" + useId().replace(/[^A-Za-z0-9_-]/g, "");
   const colors = new Set();
   for (const ink of inks) for (const s of ink?.strokes || []) if (s.brush === "pencil") colors.add(String(s.color || INK_COLORS[0]).toLowerCase());
   const key = [...colors].sort().join(" ");
-  const fill = React.useMemo(() => {
+  const fill = useMemo(() => {
     const known = new Set(key ? key.split(" ") : []);
     return (color) => {
       const c = String(color || INK_COLORS[0]).toLowerCase();
@@ -230,7 +234,7 @@ function useGrain(inks) {
 // `band` restricts the drawing to one band, for a layer that interleaves
 // several groups' bands.
 export function Strokes({ ink, hide, band, lazy = false }) {
-  const grainFill = React.useContext(GrainContext);
+  const grainFill = useContext(GrainContext);
   const strokes = band == null ? byBand(ink.strokes) : ink.strokes.filter((s) => strokeBand(s) === band);
   return strokes.map((s) => {
     if (hide?.has(s.id)) return null;
@@ -299,19 +303,20 @@ function seekToStroke(groups, hit) {
 // stroke without pressure, whose Brush follows the speed law. A dashed
 // constant-width line is stroked with setLineDash, a dashed pressure line
 // cut into its runs (dotted: a circle per dot); a pencil is stamped from
-// round dabs of its grain (paintPencil). `law` null draws an even line
-// at the nominal size (a style with no width law, and a held shape's
-// preview: a shape commits at constant width whatever its brush, with no
-// tapers and no shading); `color` the fill (the held shape's snap flash is
-// blue); `flash` that flash's frames.
+// round dabs of its grain (paintPencil). A style with no width law
+// (widthLaw) draws an even line at the nominal size: a held shape's
+// preview among them, whose style carries its `shape` (a shape commits at
+// constant width whatever its brush, with no tapers and no shading).
+// `color` is the fill (the held shape's snap flash is blue); `flash` that
+// flash's frames.
 // A calligraphy pen drawn freehand is its nib (ink.js nibOutline over the
 // samples so far: one Path2D filled once, nonzero, the shape it commits),
 // its dash runs each a nib; and a closed shape with a `fill` (a Shapes drag
 // with Fill on: `use.shape` its kind or record) has its inside filled
 // first, under the line.
-export function paintLiveStroke(ctx, samples, use, { law, color = use.color, flash = false, done = false } = {}) {
+function paintLiveStroke(ctx, samples, use, { color = use.color, flash = false, done = false } = {}) {
   if (!samples.length) return;
-  const dash = dashPattern(use);
+  const dash = dashPattern(use), law = widthLaw(use);
   paintFill(ctx, samples, use);
   if (use.brush === "calligraphy" && use.tool !== "highlighter" && law !== null && use.dash !== "dotted") {
     ctx.globalCompositeOperation = "source-over";
@@ -324,16 +329,7 @@ export function paintLiveStroke(ctx, samples, use, { law, color = use.color, fla
   if (use.tool === "highlighter") {
     ctx.globalAlpha = flash ? 0.95 : use.opacity ?? 1;
     ctx.globalCompositeOperation = flash ? "source-over" : "multiply";
-    ctx.strokeStyle = color;
-    ctx.lineWidth = use.size;
-    ctx.lineCap = ctx.lineJoin = "round";
-    ctx.setLineDash(dash || []);
-    ctx.lineDashOffset = 0;
-    ctx.beginPath();
-    samples.forEach((s, i) => (i ? ctx.lineTo(s.x, s.y) : ctx.moveTo(s.x, s.y)));
-    if (samples.length === 1) ctx.lineTo(samples[0].x + 0.01, samples[0].y);
-    ctx.stroke();
-    ctx.setLineDash([]);
+    strokeCentreline(ctx, samples, color, use.size, dash);
     return;
   }
   const ws = law === null ? null : brushWidths(samples, use, { live: !done });
@@ -343,20 +339,8 @@ export function paintLiveStroke(ctx, samples, use, { law, color = use.color, fla
   ctx.globalCompositeOperation = "source-over";
   if (use.brush === "pencil" && !flash) { paintPencil(ctx, pts, use, color, alpha, dash); return; }
   ctx.globalAlpha = alpha;
-  if (dash && !ws) {
-    // a constant-width line: its centreline stroked with the pattern, as the SVG draws it
-    ctx.strokeStyle = color;
-    ctx.lineWidth = use.size;
-    ctx.lineCap = ctx.lineJoin = "round";
-    ctx.setLineDash(dash);
-    ctx.lineDashOffset = 0;
-    ctx.beginPath();
-    pts.forEach((s, i) => (i ? ctx.lineTo(s.x, s.y) : ctx.moveTo(s.x, s.y)));
-    if (pts.length === 1) ctx.lineTo(pts[0].x + 0.01, pts[0].y);
-    ctx.stroke();
-    ctx.setLineDash([]);
-    return;
-  }
+  // a constant-width dashed line: its centreline stroked with the pattern, as the SVG draws it
+  if (dash && !ws) { strokeCentreline(ctx, pts, color, use.size, dash); return; }
   ctx.fillStyle = color;
   const opts = outlineOptions({ size: use.size });
   const outline = (run) => svgPathFromPoints(getStroke(run.map((s) => [s.x, s.y, outlinePressure(s)]), opts));
@@ -388,6 +372,21 @@ function paintFill(ctx, samples, use) {
   samples.forEach((s, i) => (i ? ctx.lineTo(s.x, s.y) : ctx.moveTo(s.x, s.y)));
   ctx.closePath();
   ctx.fill();
+}
+// A constant-width line along the samples: its centreline stroked round,
+// solid or with the dash pattern `dash`, as the SVG strokes it (a lone
+// sample a dot).
+function strokeCentreline(ctx, samples, color, width, dash) {
+  ctx.strokeStyle = color;
+  ctx.lineWidth = width;
+  ctx.lineCap = ctx.lineJoin = "round";
+  ctx.setLineDash(dash || []);
+  ctx.lineDashOffset = 0;
+  ctx.beginPath();
+  samples.forEach((s, i) => (i ? ctx.lineTo(s.x, s.y) : ctx.moveTo(s.x, s.y)));
+  if (samples.length === 1) ctx.lineTo(samples[0].x + 0.01, samples[0].y);
+  ctx.stroke();
+  ctx.setLineDash([]);
 }
 // The canvas pattern of a colour's grain, per context: GRAIN_PX pixels over
 // GRAIN_UNITS page units from the page's corner, as the SVG's pattern.
@@ -473,7 +472,7 @@ function useWetStrokes(surface, wrapRef, wetRef, live) {
     };
     const blank = (canvas) => {
       shown = null;
-      if (canvas.width || canvas.style.display === "block") { canvas.width = 0; canvas.height = 0; canvas.style.display = "none"; }
+      if (canvas.width || canvas.style.display === "block") releaseCanvas(canvas);
     };
     const paintWet = () => {
       raf = 0;
@@ -509,7 +508,7 @@ function useWetStrokes(surface, wrapRef, wetRef, live) {
         ctx.globalAlpha = 1;
         ctx.globalCompositeOperation = "source-over";
         ctx.setLineDash([]);
-        paintLiveStroke(ctx, s.samples, s.style, { law: widthLaw(s.style), done: s.done });
+        paintLiveStroke(ctx, s.samples, s.style, { done: s.done });
       }
     };
     paintRef.current = schedule;
@@ -538,9 +537,9 @@ export function useHasWet(surface) {
 // changes what is drawn, only when and how: a tap's selection, the lasso
 // and the eraser keep reading the samples, and a picture takes no presses
 // (the page under a group's box stays the page's).
-export const IDLE_STROKES = 200;      // a group past this mounts with placeholders
+const IDLE_STROKES = 200;             // a group past this mounts with placeholders
 const IDLE_SLICE = 50;                // outlines built per idle slice
-export const RASTER_STROKES = 1500;   // a surface past this shows its finished groups as pictures
+const RASTER_STROKES = 1500;          // a surface past this shows its finished groups as pictures
 const RASTER_QUIET_MS = 1000;         // a group unchanged this long is finished
 const RASTER_PIXELS = 16 * 1024 * 1024;   // device pixels a layer's pictures hold at most (64 MB decoded)
 const idleLater = typeof requestIdleCallback === "function"
@@ -599,7 +598,7 @@ function useVisibleGroups(wrapRef, groups, width, height, enabled) {
       raf = 0;
       const ids = new Set(), r = el.getBoundingClientRect();
       if (near && r.width && r.height) {
-        const v = view ? view.getBoundingClientRect() : { left: 0, top: 0, right: window.innerWidth, bottom: window.innerHeight };
+        const v = viewRect(view);
         const ky = r.height / height, kx = r.width / width, my = (v.bottom - v.top) / 2, mx = (v.right - v.left) / 2;
         const y0 = (v.top - my - r.top) / ky, y1 = (v.bottom + my - r.top) / ky;
         const x0 = (v.left - mx - r.left) / kx, x1 = (v.right + mx - r.left) / kx;
@@ -645,7 +644,7 @@ const NO_GROUPS = new Set();
 // room): those keep their paths. → raster(key "id:band", ink) → {url, box:
 // [x, y, w, h]} | null.
 function useGroupRasters(svgRef, wrapRef, groups, width, enabled, busy, shown, lazy) {
-  const store = useRef(new Map());   // key → {ink, markup, scale, box, px (device pixels), url, working, failed}
+  const store = useRef(new Map());   // key → {ink, markup, scale, box, px (device pixels), url, working}
   const lazyRef = useRef(lazy);
   lazyRef.current = lazy;            // the groups this render drew with placeholders
   const [, setTick] = useState(0);
@@ -706,7 +705,7 @@ function useGroupRasters(svgRef, wrapRef, groups, width, enabled, busy, shown, l
           // its paths show at this zoom; a picture made at another zoom goes
           if (r?.url) URL.revokeObjectURL(r.url);
           used -= had;
-          map.set(key, { ink: g.ink, markup: r?.markup, scale, failed: true });
+          map.set(key, { ink: g.ink, markup: r?.markup, scale });
           continue;
         }
         let markup = r?.markup;
@@ -727,7 +726,7 @@ function useGroupRasters(svgRef, wrapRef, groups, width, enabled, busy, shown, l
         const done = (url) => {
           if (rec.dead || map.get(key) !== rec) { if (url) URL.revokeObjectURL(url); return; }
           if (rec.url && rec.url !== url) URL.revokeObjectURL(rec.url);
-          Object.assign(rec, { url, working: false, failed: !url });
+          Object.assign(rec, { url, working: false });
           setTick((n) => n + 1);
         };
         const img = new Image();
@@ -829,8 +828,7 @@ export function InkLayer({ pageNumber, wrapRef, width, height, blocks, tool, pen
   const [reshape, setReshape] = useState(null);
   // The one-row "Paste here" menu: {x, y} on screen and `pt` on the page.
   const [pasteMenu, setPasteMenu] = useState(null);
-  useLayoutEffect(() => { setTransform(null); }, [selection]);
-  useLayoutEffect(() => { setReshape(null); }, [selection]);
+  useLayoutEffect(() => { setTransform(null); setReshape(null); }, [selection]);
   const live = useRef({});
   // Whether a pen is writing on this layer, the page's own stroke or one
   // the native host took (the pointer effect sets it; the finger chords ask).
@@ -884,10 +882,7 @@ export function InkLayer({ pageNumber, wrapRef, width, height, blocks, tool, pen
   live.current = { tool, penTool, penOnly, pressure, eraserMode, eraserSize, eraserFilter, drawHold, scribble, fingerUndo, lassoMode,
     width, height, groups, selBox, replay, clip, hoverPreview, ruler: rulerOn, penBusy: () => penBusy.current(),
     onStroke, onEraseAlong, onEraseEnd, onEraseMany, onSelect, onMoveSelection, onJump, onPaste, onFingerScroll, onUndoGesture,
-    onHoldStatus, onInkLive, onHaptic };
-  // The zoom window's handlers for the pointer code: a blank tap moves it
-  // (onZoom, while one is open), and the panel's layer reports its strokes.
-  Object.assign(live.current, { onZoom, onZoomStroke });
+    onHoldStatus, onInkLive, onHaptic, onZoom, onZoomStroke };
   useWetStrokes(pageNumber, wrapRef, wetRef, live);
   // Dense pages ("dense pages" above): culling past IDLE_STROKES strokes on
   // the surface, outlines built in idle time, and past RASTER_STROKES the
@@ -930,8 +925,8 @@ export function InkLayer({ pageNumber, wrapRef, width, height, blocks, tool, pen
     let hostOwned = null;
     penBusy.current = () => drawing?.pointerType === "pen" || hostOwned != null;
     // inkBusy: anything this layer is drawing, or a stroke the host draws for it
-    const busy = () => drawing != null || hostOwned != null;
-    busyLayers.add(busy);
+    const layerBusy = () => drawing != null || hostOwned != null;
+    busyLayers.add(layerBusy);
     let pending = null; // A possible tap/hold; swipes retain native scrolling.
     let pasteHold = null; // the pointer whose hold opened "Paste here": its lift is not a click
     const contacts = new Set();
@@ -1001,6 +996,12 @@ export function InkLayer({ pageNumber, wrapRef, width, height, blocks, tool, pen
       }
     };
     const trackUp = (e) => contacts.delete(e.pointerId);
+    // A draft that ends stops its frame, its prediction's expiry and its hold timer.
+    const stopTimers = (d) => {
+      if (d.raf) cancelAnimationFrame(d.raf);
+      clearTimeout(d.predictionTimer);
+      clearTimeout(d.holdTimer);
+    };
 
     const setup = (e, forcedTool) => {
       const L = live.current;
@@ -1020,18 +1021,19 @@ export function InkLayer({ pageNumber, wrapRef, width, height, blocks, tool, pen
       return { use, eraser, eraseSource: use.tool === "eraser" ? "tool" : "barrel", rect, k, pointerType: e.pointerType,
         toPt: (ev) => ({ x: (ev.clientX - rect.left) / k, y: (ev.clientY - rect.top) / k }) };
     };
-    // A pointer sample into the draw context: through the preset's
-    // stabilizer when it has one (the brush position comes back, or nothing
-    // while the pointer is within the string), else as it is. `ending` is
-    // the lift's pressure rule (inkInput.js); `lift` appends the
-    // stabilizer's catch-up to the lift point.
+    // A stabilised sample onto the draft, unless it repeats the last.
     const pushSample = (d, s) => {
       const previous = d.samples.at(-1);
       if (previous && s.x === previous.x && s.y === previous.y && s.p === previous.p) return;
       d.samples.push(s);
     };
-    // Along the ruler (`d.rail`) every sample is projected onto the edge's
-    // line, p and t kept; such a stroke has no smoothing.
+    // A pointer sample into the draw context: through the preset's
+    // stabilizer when it has one (the brush position comes back, or nothing
+    // while the pointer is within the string), else as it is. `ending` is
+    // the lift's pressure rule (inkInput.js); `lift` appends the
+    // stabilizer's catch-up to the lift point. Along the ruler (`d.rail`)
+    // every sample is projected onto the edge's line, p and t kept; such a
+    // stroke has no smoothing.
     const takeSample = (d, ev, ending = false, lift = ending) => {
       if (!d.stab) {
         appendInkSample(d, ev, ending);
@@ -1064,6 +1066,12 @@ export function InkLayer({ pageNumber, wrapRef, width, height, blocks, tool, pen
       if (d.pen) live.current.onHaptic?.("snap", { x: d.rect.left + tip.x * d.k, y: d.rect.top + tip.y * d.k });
       return true;
     };
+    // "Paste here" opens where the draft went down; the lift of its pointer
+    // is not a click (pasteHold).
+    const openPasteHere = (d) => {
+      pasteHold = d.id;
+      setPasteMenu({ x: d.downAt.x, y: d.downAt.y, pt: d.toPt({ clientX: d.downAt.x, clientY: d.downAt.y }) });
+    };
     // A pen or mouse held still from its down, before it drew PASTE_MOVE css
     // px, with strokes on the clipboard: the draft goes (nothing commits)
     // and "Paste here" opens at the point. Fingers never arm it (a resting
@@ -1071,13 +1079,11 @@ export function InkLayer({ pageNumber, wrapRef, width, height, blocks, tool, pen
     const pasteHere = (d) => {
       if (drawing !== d) return;
       drawing = null;
-      pasteHold = d.id;
       try { el.releasePointerCapture(d.id); } catch { /* already released */ }
-      if (d.raf) cancelAnimationFrame(d.raf);
-      clearTimeout(d.predictionTimer);
+      stopTimers(d);
       hideCanvas();
       liveEnd(d);
-      setPasteMenu({ x: d.downAt.x, y: d.downAt.y, pt: d.toPt({ clientX: d.downAt.x, clientY: d.downAt.y }) });
+      openPasteHere(d);
     };
     const holdFire = (d) => {
       d.holdTimer = 0;
@@ -1087,7 +1093,7 @@ export function InkLayer({ pageNumber, wrapRef, width, height, blocks, tool, pen
       if (d.pasteArmed && d.travel <= PASTE_MOVE) { pasteHere(d); return; }
       if (!d.holdOn || d.samples.length < 2) return;
       const a = d.samples[0], b = d.samples.at(-1);
-      if (Math.hypot(b.x - a.x, b.y - a.y) < Math.max(24 / d.k, 18)) return;
+      if (Math.hypot(b.x - a.x, b.y - a.y) < Math.max(MIN_EXTENT_PX / d.k, MIN_EXTENT_PT)) return;
       if (d.tail.at - d.startTime < HOLD_MIN_MS) return;
       snapHold(d, false);
     };
@@ -1237,9 +1243,8 @@ export function InkLayer({ pageNumber, wrapRef, width, height, blocks, tool, pen
       if (!ctx) return;
       // A held shape draws as it commits (finishStroke's hold stage): pen
       // false and a shape, so constant width whatever the brush — no law.
-      const look = d.look || use;
-      paintLiveStroke(ctx, samples, even ? { ...look, pen: false, shape: hold ? hold.kind : "line" } : look,
-        { law: even ? null : d.law, color: flash ? SNAP_BLUE : use.color, flash, done: !!even });
+      paintLiveStroke(ctx, samples, even ? { ...d.look, pen: false, shape: hold ? hold.kind : "line" } : d.look,
+        { color: flash ? SNAP_BLUE : use.color, flash, done: !!even });
       if (flash && !d.raf) d.raf = requestAnimationFrame(paint);
       // At the longest string, a faint line from the brush to the pointer
       // shows what the smoothing is doing.
@@ -1269,7 +1274,7 @@ export function InkLayer({ pageNumber, wrapRef, width, height, blocks, tool, pen
       const ctx = canvasCtx(d, unionBox(d.lastBox, box) || [0, 0, 0, 0]);
       d.lastBox = box;
       if (!ctx || !samples.length) return;
-      paintLiveStroke(ctx, samples, { ...style, pen: false, shape: shape.kind, ...shapeFill(d.use, shape.kind) }, { law: null, done: true });
+      paintLiveStroke(ctx, samples, { ...style, pen: false, shape: shape.kind, ...shapeFill(d.use, shape.kind) }, { done: true });
     };
     // At the down: the canvas on what shows of the layer (the window the
     // draw context carries, `cw`), blank.
@@ -1279,12 +1284,7 @@ export function InkLayer({ pageNumber, wrapRef, width, height, blocks, tool, pen
       ctx.cw = canvasWindow(ctx.rect, viewRect(viewOf())) || { x: 0, y: 0, width: ctx.rect.width, height: ctx.rect.height };
       fitCanvas(canvas, ctx.cw, ctx.rect, true);
     };
-    const hideCanvas = () => {
-      const canvas = canvasRef.current;
-      if (!canvas) return;
-      canvas.width = 0; canvas.height = 0;
-      canvas.style.display = "none";
-    };
+    const hideCanvas = () => { if (canvasRef.current) releaseCanvas(canvasRef.current); };
 
     // Live co-drawing (inkLive.js, collab.md "ink-live"): the stroke's id is
     // minted at the down, and its samples go to the page's other peers as
@@ -1297,8 +1297,7 @@ export function InkLayer({ pageNumber, wrapRef, width, height, blocks, tool, pen
       if (!live.current.onInkLive) return;
       // the look the stroke commits with (a stylus with the pressure
       // preference off writes as a mouse does: pen false, no pressure)
-      const look = d.look || d.use, pen = d.look ? d.look.pen : d.pen;
-      d.live = { sent: 0, timer: 0, last: -Infinity, style: inkLive.liveStyle(look, pen), k: Math.round(d.k * 1000) / 1000 };
+      d.live = { sent: 0, timer: 0, last: -Infinity, style: inkLive.liveStyle(d.look, d.look.pen), k: Math.round(d.k * 1000) / 1000 };
       liveTick(d);
     };
     const liveChunk = (d, done) => {
@@ -1337,6 +1336,13 @@ export function InkLayer({ pageNumber, wrapRef, width, height, blocks, tool, pen
       d.live = null;
     };
 
+    // A stroke ready to save: to the page's ink under its history label
+    // (onStroke), and its box to the zoom window (onZoomStroke).
+    const saveStroke = (stroke, label) => {
+      const L = live.current;
+      L.onStroke?.(pageNumber, stroke, { width: L.width, height: L.height }, { label });
+      L.onZoomStroke?.(strokeBounds(stroke));
+    };
     // A finished stroke's samples (page units) through finishStroke (the
     // held shape, a straight highlight, a scribble that erases, else
     // decimated with the widths baked) to the page's ink.
@@ -1344,9 +1350,8 @@ export function InkLayer({ pageNumber, wrapRef, width, height, blocks, tool, pen
       if (!d.samples.length) return false;
       // the preset's look, a stylus with the pressure preference off writing
       // like a mouse (pen false: an even line, the Brush's speed law)
-      const L = live.current, { use } = d, pen = d.look ? d.look.pen : d.pen;
-      const style = { tool: use.tool, brush: use.brush, dash: use.dash, color: use.color, size: use.size, opacity: use.opacity ?? 1, pen,
-        nib: d.nib };
+      const L = live.current, { use } = d, pen = d.look.pen;
+      const style = { ...encodedStyle(use), pen, nib: d.nib };
       // a stroke along the ruler commits through the hold stage as its line (no pill)
       const rail = d.rail ? railLine(d.samples, d.rail) : null;
       const result = finishStroke(d.samples, { style, pen, k: d.k,
@@ -1359,39 +1364,34 @@ export function InkLayer({ pageNumber, wrapRef, width, height, blocks, tool, pen
       if (!commit?.length) return !!erase?.length;
       const stroke = encodeStroke({ ...look, id: d.liveId, t0: d.t0, samples: commit, ch: strokeChannels(look, commit) });
       d.liveCommitted = true;
-      L.onStroke?.(pageNumber, stroke, { width: L.width, height: L.height }, { label: result.label });
-      L.onZoomStroke?.(strokeBounds(stroke));
+      saveStroke(stroke, result.label);
+      return true;
+    };
+    // The Shapes tool's lift: the shape of the drag (nothing under the
+    // floor) through finishStroke's hold stage — constant width, xyt, t
+    // spread over the drag, t0 the down's — with its fill while Fill is on
+    // (a rectangle or an ellipse), to the page's ink as any stroke.
+    const commitShape = (d, e) => {
+      const { kind, style } = d.use, to = d.toPt(e);
+      const shape = toolShape(kind, d.from, to, { shift: !!e.shiftKey, k: d.k });
+      if (!shape) return false;
+      const span = Math.max(0, Math.round(e.timeStamp - d.startTime));
+      const look = { ...encodedStyle(style), ...shapeFill(d.use, shape.kind) };
+      const result = finishStroke([{ ...d.from, p: 0.5, t: 0 }, { ...to, p: 0.5, t: span }], { style: look, pen: false, k: d.k, hold: shape });
+      if (!result.commit?.length) return false;
+      const stroke = encodeStroke({ ...result.style, t0: d.t0, samples: result.commit, ch: strokeChannels(result.style, result.commit) });
+      saveStroke(stroke, result.label);
       return true;
     };
     // The host took the draft's pointer: the draft goes now, without saving,
     // whatever events WebKit sends that pointer afterwards (a pointercancel,
     // a pointerup, or more moves), so a stroke is never saved twice. The
     // pointer capture stays, so its events keep coming here to be ignored.
-    // The Shapes tool's lift: the shape of the drag (nothing under the
-    // floor) through finishStroke's hold stage — constant width, xyt, t
-    // spread over the drag, t0 the down's — with its fill while Fill is on
-    // (a rectangle or an ellipse), to the page's ink as any stroke.
-    const commitShape = (d, e) => {
-      const L = live.current, { kind, style } = d.use, to = d.toPt(e);
-      const shape = toolShape(kind, d.from, to, { shift: !!e.shiftKey, k: d.k });
-      if (!shape) return false;
-      const span = Math.max(0, Math.round(e.timeStamp - d.startTime));
-      const look = { tool: style.tool, brush: style.brush, dash: style.dash, color: style.color, size: style.size, opacity: style.opacity ?? 1,
-        ...shapeFill(d.use, shape.kind) };
-      const result = finishStroke([{ ...d.from, p: 0.5, t: 0 }, { ...to, p: 0.5, t: span }], { style: look, pen: false, k: d.k, hold: shape });
-      if (!result.commit?.length) return false;
-      const stroke = encodeStroke({ ...result.style, t0: d.t0, samples: result.commit, ch: strokeChannels(result.style, result.commit) });
-      L.onStroke?.(pageNumber, stroke, { width: L.width, height: L.height }, { label: result.label });
-      L.onZoomStroke?.(strokeBounds(stroke));
-      return true;
-    };
     const handOver = (d) => {
       if (drawing !== d) return;
       drawing = null;
       hostOwned = d.id;
-      if (d.raf) cancelAnimationFrame(d.raf);
-      clearTimeout(d.predictionTimer);
-      clearTimeout(d.holdTimer);
+      stopTimers(d);
       hideCanvas();
       liveEnd(d);
     };
@@ -1434,12 +1434,12 @@ export function InkLayer({ pageNumber, wrapRef, width, height, blocks, tool, pen
           if (d.pasteArmed && pts.every((q) => Math.hypot(q.x - first.x, q.y - first.y) <= PASTE_MOVE)) {
             hostClaims.delete(d.id);
             if (hostOwned === d.id) hostOwned = null;
-            pasteHold = d.id;
-            setPasteMenu({ x: d.downAt.x, y: d.downAt.y, pt: d.toPt({ clientX: d.downAt.x, clientY: d.downAt.y }) });
+            openPasteHere(d);
             return { cancel: true };
           }
           const still = stillSince(pts);
-          if (!d.holdOn || Math.hypot(last.x - first.x, last.y - first.y) < Math.max(24, 18 * d.k) || pts[still].t < HOLD_MIN_MS) return {};
+          if (!d.holdOn || Math.hypot(last.x - first.x, last.y - first.y) < Math.max(MIN_EXTENT_PX, MIN_EXTENT_PT * d.k)
+            || pts[still].t < HOLD_MIN_MS) return {};
           const c = hostDraft(d, samples, false);
           const hit = recognise(holdPath(c, d.toPt({ clientX: last.x, clientY: last.y })), { k: d.k, kinds: d.kinds });
           const shape = hit && shapeToHost(hit, at);
@@ -1470,9 +1470,9 @@ export function InkLayer({ pageNumber, wrapRef, width, height, blocks, tool, pen
       };
       hostClaims.set(d.id, claim);
       const drop = () => { if (hostClaims.get(d.id) === claim) hostClaims.delete(d.id); };
-      // Along the ruler the claim carries `snap`, the edge for the shell's live line (claim.commit projects either way).
       // a calligraphy pen claims the preset's nib: the shell turns it by the Pencil's own roll (nibRoll)
-      const tool = claimTool({ ...(d.look || d.use), ...(d.nib != null ? { nib: d.use.nib } : {}) }, { k: d.k });
+      const tool = claimTool({ ...d.look, ...(d.nib != null ? { nib: d.use.nib } : {}) }, { k: d.k });
+      // Along the ruler the claim carries `snap`, the edge for the shell's live line (claim.commit projects either way).
       if (d.rail) tool.snap = hostSnap(d.rail, d.railAngle, at);
       postToHost({ type: "claim", pointerId: d.id, at: { x: e.clientX, y: e.clientY }, tool })
         .then((reply) => {
@@ -1586,7 +1586,6 @@ export function InkLayer({ pageNumber, wrapRef, width, height, blocks, tool, pen
         // the look the live canvas draws and the stroke commits with: a
         // stylus with the pressure preference off has no pressure to read
         look: { ...ctx.use, pen: pen && !!live.current.pressure, ...(nib != null ? { nib } : {}) },
-        law: widthLaw({ tool: ctx.use.tool, brush: ctx.use.brush, pen: pen && !!live.current.pressure }),
         // smoothing (stabilizer.js) and draw-and-hold (shapes.js), both
         // snapshotted at the down like the pressure preference
         level, stab: level ? makeStabilizer(level, { k: ctx.k }) : null, tip: null,
@@ -1615,8 +1614,7 @@ export function InkLayer({ pageNumber, wrapRef, width, height, blocks, tool, pen
       if (!d || e.pointerId !== d.id) return;
       e.preventDefault();
       if (d.mode === "erase") {
-        const events = e.getCoalescedEvents?.() || [];
-        sweepAdd(d, events.length ? events : [e]);
+        sweepAdd(d, coalesced(e));
         sweepLater(d);
         return;
       }
@@ -1633,8 +1631,7 @@ export function InkLayer({ pageNumber, wrapRef, width, height, blocks, tool, pen
         if (!d.raf) d.raf = requestAnimationFrame(paint);
         return;
       }
-      const events = e.getCoalescedEvents?.() || [];
-      for (const ev of events.length ? events : [e]) {
+      for (const ev of coalesced(e)) {
         if (d.mode === "lasso") {
           const pt = d.toPt(ev);
           // A box is the rectangle from the start to the pointer, as a polygon.
@@ -1688,9 +1685,7 @@ export function InkLayer({ pageNumber, wrapRef, width, height, blocks, tool, pen
       if (!d || e.pointerId !== d.id) return;
       drawing = null;
       try { el.releasePointerCapture(e.pointerId); } catch { /* already released */ }
-      if (d.raf) cancelAnimationFrame(d.raf);
-      clearTimeout(d.predictionTimer);
-      clearTimeout(d.holdTimer);
+      stopTimers(d);
       const L = live.current;
       if (d.mode === "erase") {
         // the rest of the pass: to the lift's own point, or at a cancel as
@@ -1811,7 +1806,7 @@ export function InkLayer({ pageNumber, wrapRef, width, height, blocks, tool, pen
     document.addEventListener("pointercancel", trackUp, true);
     window.addEventListener("blur", onBlur);
     return () => {
-      busyLayers.delete(busy);
+      busyLayers.delete(layerBusy);
       el.removeEventListener("touchstart", onTouch, true);
       el.removeEventListener("touchmove", onTouch, true);
       el.removeEventListener("pointerdown", onDown, true);
@@ -1829,10 +1824,8 @@ export function InkLayer({ pageNumber, wrapRef, width, height, blocks, tool, pen
       document.removeEventListener("pointerup", trackUp, true);
       document.removeEventListener("pointercancel", trackUp, true);
       clearPending();
-      if (drawing?.raf) cancelAnimationFrame(drawing.raf);
-      clearTimeout(drawing?.predictionTimer);
-      clearTimeout(drawing?.holdTimer);
       if (drawing) {
+        stopTimers(drawing);
         try { el.releasePointerCapture(drawing.id); } catch { /* already released */ }
         liveEnd(drawing);
       }
@@ -1861,10 +1854,11 @@ export function InkLayer({ pageNumber, wrapRef, width, height, blocks, tool, pen
     [selBox[2] + 4, selBox[3] + 4], [selBox[0] - 4, selBox[3] + 4]].map(([x, y]) => previewPoint(x, y)) : null;
   const hitBox = hitCorners ? [Math.min(...hitCorners.map(([x]) => x)), Math.min(...hitCorners.map(([, y]) => y)),
     Math.max(...hitCorners.map(([x]) => x)), Math.max(...hitCorners.map(([, y]) => y))] : null;
+  const selectedStrokes = selectedIds.size ? groups.flatMap((g) => g.ink.strokes.filter((s) => selectedIds.has(s.id))) : [];
   // Editable shapes: a selection of exactly one stroke whose shape record
   // has handles (shapes.js shapeHandles) shows them, and a drag of one draws
   // the stroke reshaped (`reshape`) in its place until the release commits.
-  const lone = selectedIds.size === 1 ? groups.flatMap((g) => g.ink.strokes.filter((s) => selectedIds.has(s.id))) : [];
+  const lone = selectedIds.size === 1 ? selectedStrokes : [];
   const shaped = lone.length === 1 && lone[0].shape && shapeHandles(lone[0].shape.kind, lone[0].shape.params).length ? lone[0] : null;
   const reshaped = reshape && shaped && reshape.id === shaped.id ? reshape : null;
   return (
@@ -1875,11 +1869,12 @@ export function InkLayer({ pageNumber, wrapRef, width, height, blocks, tool, pen
             page a group off the view is left empty and a finished one drawn as its picture */}
         {[0, 1].map((band) => groups.map((g) => {
           if (!g.ink.strokes.some((s) => strokeBand(s) === band)) return null;
-          const pic = shown && !shown.has(g.id) ? null : raster(`${g.id}:${band}`, g.ink);
+          const culled = shown && !shown.has(g.id);
+          const pic = culled ? null : raster(`${g.id}:${band}`, g.ink);
           return (
             <g key={`${g.id}:${band}`} data-ink-id={g.id} data-ink-band={band}
               style={{ pointerEvents: armed || !onSelect ? "none" : "visiblePainted", cursor: "pointer" }}>
-              {shown && !shown.has(g.id) ? null : pic ? (
+              {culled ? null : pic ? (
                 // the picture takes no presses: an image is hit over its whole box, the paths
                 // on their ink only, and a tap selects from the samples (nearestInkStroke)
                 <image className="inkRaster" href={pic.url} x={pic.box[0]} y={pic.box[1]} width={pic.box[2]} height={pic.box[3]}
@@ -1911,10 +1906,10 @@ export function InkLayer({ pageNumber, wrapRef, width, height, blocks, tool, pen
         ) : null}
       </svg>
       {selBox && onSelect ? <div className="inkSelectionHit" data-guide="ink.selection" aria-label={t("Move selected handwriting")}
-        style={{ left: `${hitBox[0] / width * 100}%`, top: `${hitBox[1] / height * 100}%`,
-          width: `${(hitBox[2] - hitBox[0]) / width * 100}%`, height: `${(hitBox[3] - hitBox[1]) / height * 100}%` }} /> : null}
+        style={{ left: pct(hitBox[0], width), top: pct(hitBox[1], height),
+          width: pct(hitBox[2] - hitBox[0], width), height: pct(hitBox[3] - hitBox[1], height) }} /> : null}
       {selBox && onAction && chrome && !dragging ? <InkSelectionMenu wrapRef={wrapRef} ignoreRef={menuIgnore} box={selBox} width={width}
-        strokes={groups.flatMap((g) => g.ink.strokes.filter((s) => selectedIds.has(s.id)))}
+        strokes={selectedStrokes}
         canMerge={canMergeSelection(groups, selectedIds)} keys={keys}
         onAction={onAction} onClose={() => onSelect(pageNumber, [])} /> : null}
       {pasteMenu && onPaste ? (
@@ -1926,7 +1921,7 @@ export function InkLayer({ pageNumber, wrapRef, width, height, blocks, tool, pen
       ) : null}
       {selBox && onAction && chrome ? <InkTransformHandles wrapRef={wrapRef} box={selBox} width={width} height={height}
         positions={handlePositions}
-        maxScale={Math.min(10, MAX_STROKE_SIZE / Math.max(...groups.flatMap((g) => g.ink.strokes.filter((s) => selectedIds.has(s.id)).map(strokeMaxWidth))))}
+        maxScale={Math.min(10, MAX_STROKE_SIZE / Math.max(...selectedStrokes.map(strokeMaxWidth)))}
         onPreview={setTransform} onCommit={(value) => onAction("transform", value)}
         shape={shaped} place={previewPoint} onShapePreview={setReshape}
         onShapeCommit={(params) => onAction("reshape", { id: shaped.id, params })} /> : null}
@@ -1944,10 +1939,19 @@ export function InkLayer({ pageNumber, wrapRef, width, height, blocks, tool, pen
   );
 }
 
+// A length as a percentage of `of`: the controls laid over a page and its
+// canvases are placed in the page's percentages, so they follow it through
+// the viewer's zoom. A focused control's arrow keys: the step each one
+// moves (ARROWS, y down) and its sign (arrowSign: right and up are 1, left
+// and down -1).
+const pct = (v, of) => `${(v / of) * 100}%`;
+const ARROWS = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] };
+const arrowSign = (key) => (key === "ArrowRight" || key === "ArrowUp" ? 1 : key === "ArrowLeft" || key === "ArrowDown" ? -1 : 0);
+
 // The selection's resize and rotate buttons, and, for a shape held alone
 // in the selection (`shape`, a stroke with a shape record), its own
 // handles (InkShapeHandles).
-function InkTransformHandles({ wrapRef, box, width, height, positions, maxScale, onPreview, onCommit, shape = null, place,
+function InkTransformHandles({ wrapRef, box, width, height, positions, maxScale, onPreview, onCommit, shape, place,
   onShapePreview, onShapeCommit }) {
   const drag = useRef(null);
   const cancel = () => { drag.current = null; onPreview(null); };
@@ -1991,19 +1995,19 @@ function InkTransformHandles({ wrapRef, box, width, height, positions, maxScale,
     {["resize", "rotate"].map((mode) => <button key={mode} type="button" className={`inkTransformHandle inkTransform-${mode}`}
       aria-label={mode === "resize" ? t("Resize selected handwriting") : t("Rotate selected handwriting")}
       title={mode === "resize" ? t("Drag to resize; arrow keys change size") : t("Drag to rotate; hold Shift to snap to 15°; arrow keys rotate")}
-      style={{ left: `${positions[mode][0] / width * 100}%`, top: `${positions[mode][1] / height * 100}%` }}
+      style={{ left: pct(positions[mode][0], width), top: pct(positions[mode][1], height) }}
       onPointerDown={(e) => begin(e, mode)} onPointerMove={move} onPointerUp={finish}
       onPointerCancel={cancel} onLostPointerCapture={cancel} onClick={(e) => e.stopPropagation()}
       onKeyDown={(e) => {
-        if (!["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(e.key)) return;
+        const sign = arrowSign(e.key);
+        if (!sign) return;
         e.preventDefault(); e.stopPropagation();
-        const sign = e.key === "ArrowLeft" || e.key === "ArrowDown" ? -1 : 1;
         onCommit({ cx: (box[0] + box[2]) / 2, cy: (box[1] + box[3]) / 2,
           scale: mode === "resize" ? Math.min(maxScale, sign > 0 ? 1.1 : 1 / 1.1) : 1,
           angle: mode === "rotate" ? sign * Math.PI / 12 : 0 });
       }}>{mode === "resize" ? <ResizeIcon /> : <RedoIcon />}</button>)}
-    {shape && onShapeCommit ? <InkShapeHandles wrapRef={wrapRef} stroke={shape} width={width} height={height}
-      place={place || ((x, y) => [x, y])} onPreview={onShapePreview || (() => {})} onCommit={onShapeCommit} /> : null}
+    {shape ? <InkShapeHandles wrapRef={wrapRef} stroke={shape} width={width} height={height}
+      place={place} onPreview={onShapePreview} onCommit={onShapeCommit} /> : null}
   </>;
 }
 
@@ -2066,12 +2070,12 @@ function InkShapeHandles({ wrapRef, stroke, width, height, place, onPreview, onC
     return (
       <button key={h.id} type="button" className="inkTransformHandle inkShapeHandle" data-handle={h.id}
         aria-label={handleName(kind, h.id, i)} title={t("Drag to reshape; arrow keys move it")}
-        style={{ left: `${x / width * 100}%`, top: `${y / height * 100}%` }}
+        style={{ left: pct(x, width), top: pct(y, height) }}
         onPointerDown={(e) => begin(e, h.id)} onPointerMove={move} onPointerUp={finish}
         onPointerCancel={cancel} onLostPointerCapture={(e) => { if (drag.current?.pointer === e.pointerId) cancel(); }}
         onClick={(e) => e.stopPropagation()}
         onKeyDown={(e) => {
-          const step = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }[e.key];
+          const step = ARROWS[e.key];
           if (!step || drag.current) return;
           e.preventDefault(); e.stopPropagation();
           const by = e.shiftKey ? 10 : 1;
@@ -2096,8 +2100,6 @@ function InkShapeHandles({ wrapRef, stroke, width, height, place, onPreview, onC
 // takes the arrow keys, each press one change. A pen with a stroke tool
 // never reaches the band: the layer takes it to write along an edge.
 const TICK_PX = [5, 8, 12];
-const ARROWS = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] };
-const arrowSign = (key) => (key === "ArrowRight" || key === "ArrowUp" ? 1 : key === "ArrowLeft" || key === "ArrowDown" ? -1 : 0);
 function InkRuler({ wrapRef, ruler, width, height, units, onRuler }) {
   const [preview, setPreview] = useState(null);
   const previewRef = useRef(null);
@@ -2278,7 +2280,6 @@ function InkRuler({ wrapRef, ruler, width, height, units, onRuler }) {
   };
   const r = preview || ruler;
   const len = Math.max(r.length, 1);
-  const pct = (v, of) => `${(v / of) * 100}%`;
   const deg = Math.round(r.angle) % 180;
   const ticks = rulerTicks(r, units, k);
   return (
@@ -2365,7 +2366,7 @@ function InkZoomRect({ wrapRef, page, zoom, width, height, onZoom }) {
     if (d.patch) onZoom(page, d.patch);
   };
   const keys = (e, mode) => {
-    const step = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }[e.key];
+    const step = ARROWS[e.key];
     if (!step) return;
     e.preventDefault(); e.stopPropagation();
     const n = e.shiftKey ? 10 : 1;
@@ -2380,7 +2381,7 @@ function InkZoomRect({ wrapRef, page, zoom, width, height, onZoom }) {
   const box = preview || zoom;
   return (
     <div className="inkZoomRect" data-x={box.x} data-y={box.y} data-w={box.w} data-h={box.h}
-      style={{ left: `${box.x / width * 100}%`, top: `${box.y / height * 100}%`, width: `${box.w / width * 100}%`, height: `${box.h / height * 100}%` }}>
+      style={{ left: pct(box.x, width), top: pct(box.y, height), width: pct(box.w, width), height: pct(box.h, height) }}>
       {handle("move", t("Zoom window: drag to move"), t("Zoom window: drag to move it; the arrow keys move it too"))}
       {handle("resize", t("Zoom window: drag to resize"), t("Zoom window: drag to resize it; a smaller box writes larger"))}
     </div>
@@ -2476,9 +2477,13 @@ function fitCanvas(canvas, win, rect, fresh = false) {
   if (fresh || canvas.width !== size.width || canvas.height !== size.height) {
     canvas.width = 0; canvas.height = size.height; canvas.width = size.width;
   }
-  const pct = (v, of) => `${(v / of) * 100}%`;
   Object.assign(canvas.style, { left: pct(win.x, rect.width), top: pct(win.y, rect.height), width: pct(win.width, rect.width),
     height: pct(win.height, rect.height), display: "block" });
+}
+// A canvas fitCanvas laid, its backing store released and the canvas hidden.
+function releaseCanvas(canvas) {
+  canvas.width = 0; canvas.height = 0;
+  canvas.style.display = "none";
 }
 
 // Where a selection's menu goes (the handwriting's, a text box's): above
@@ -2501,8 +2506,7 @@ export function useSelectionMenuAnchor(ref, rectOf, deps) {
     if (!el) return;
     const view = viewportOf(el);
     const update = (now) => {
-      const viewport = view ? view.getBoundingClientRect()
-        : { left: 0, top: 0, right: window.innerWidth, bottom: window.innerHeight };
+      const viewport = viewRect(view);
       const bar = document.querySelector(".pdfInkBar")?.getBoundingClientRect();
       const roof = bar && bar.bottom > viewport.top && bar.top < viewport.bottom ? Math.max(viewport.top, bar.bottom) : viewport.top;
       const { left, top, right, bottom } = rectRef.current(el.getBoundingClientRect());
@@ -2539,16 +2543,16 @@ function canMergeSelection(groups, selectedIds) {
 let moreOpen = false;
 
 // The selection's menu: two rows of 36 px buttons, at most seven each (a
-// hard cap for every later addition), the first fixed — Color, Width, Style
-// (greyed until the pen styles land), Copy, Duplicate, More, Delete — and
-// More adding the second: Cut, Flip horizontal, Flip vertical, New note —
-// Merge into note in its place when `canMerge` (New note would change
-// nothing then) —, Select note, Show note and Transcribe. The Color and
-// Width rows open under whichever rows show, one at a time. `keys` names
-// the chords the titles carry ("Copy · Ctrl+C"; the label alone unbound).
-// `ignoreRef`: what a press in leaves the menu open (the page, and the
-// zoom window, whose layer drags the selection too).
-function InkSelectionMenu({ wrapRef, ignoreRef = wrapRef, box, width, strokes, canMerge = false, keys, onAction, onClose }) {
+// hard cap for every later addition), the first fixed — Color, Width,
+// Style, Copy, Duplicate, More, Delete — and More adding the second: Cut,
+// Flip horizontal, Flip vertical, New note — Merge into note in its place
+// when `canMerge` (New note would change nothing then) —, Select note,
+// Show note and Transcribe. The Color, Width and Style rows open under
+// whichever rows show, one at a time. `keys` names the chords the titles
+// carry ("Copy · Ctrl+C"; the label alone unbound). `ignoreRef`: what a
+// press in leaves the menu open (the page, and the zoom window, whose
+// layer drags the selection too).
+function InkSelectionMenu({ wrapRef, ignoreRef, box, width, strokes, canMerge, keys, onAction, onClose }) {
   const [options, setOptions] = useState(null);
   const [more, setMoreState] = useState(moreOpen);
   // The Style row's brush menu: {x, y} under its picker while open.
@@ -2615,7 +2619,7 @@ function InkSelectionMenu({ wrapRef, ignoreRef = wrapRef, box, width, strokes, c
           aria-pressed={strokes.filter((s) => s.tool === kind).every((s) => s.size === size)}
           onClick={() => onAction("style", { tool: kind, size })}><span className="inkSizeDot" aria-hidden="true" style={{ width: 4 + i * 2, height: 4 + i * 2, background: "currentColor" }} /></button>)}
       </div>) : null}
-      {options === "style" ? <div className="inkEditOptions inkEditStyle" aria-label={t("Selected ink style")}>
+      {options === "style" ? <div className="inkEditOptions" aria-label={t("Selected ink style")}>
         {pens.length ? <InkStylePicker brush={penBrush} mixed={penBrush === undefined} open={!!styleMenu} title={t("Pen style")} onOpen={toggleStyleMenu} /> : null}
         <InkLineChoices value={line} onLine={(dash) => onAction("style", { dash })} />
         {closed.length ? <span className="inkFillChoices" role="group" aria-label={t("Fill")}>

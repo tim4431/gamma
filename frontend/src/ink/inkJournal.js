@@ -13,7 +13,7 @@
 // module is the storage and the one rule for what an entry brings back
 // (restoredInk). Every IndexedDB call is wrapped: a browser without it, or
 // a private window, loses only the journal.
-import { FORMAT, mergeInk, sameStroke, upgradeV1, withDefaults } from "./ink.js";
+import { loadedInk, mergeInk, sameStrokes } from "./ink.js";
 
 const DB = "gamma-ink-journal", STORE = "drafts";
 export const JOURNAL_DAYS = 7;
@@ -28,7 +28,7 @@ export function keyBlock(rest) {
   return i < 0 ? rest : rest.slice(0, i);
 }
 // Whether an entry is older than JOURNAL_DAYS (or carries no date).
-export const expired = (entry, now = Date.now()) => !(now - (entry?.at || 0) <= JOURNAL_DAYS * DAY_MS);
+const expired = (entry, now = Date.now()) => !(now - (entry?.at || 0) <= JOURNAL_DAYS * DAY_MS);
 
 let opening = null;
 function openDb() {
@@ -75,8 +75,8 @@ function prefixRange(prefix) {
 // than JOURNAL_DAYS is deleted as it is found, never returned: an entry
 // whose block never comes back, or whose file never loads again, goes
 // with time.
-export async function readEntries(prefix, now = Date.now()) {
-  const range = prefixRange(prefix);
+export async function readEntries(prefix) {
+  const now = Date.now(), range = prefixRange(prefix);
   const found = await transact("readonly", (s) => [s.getAllKeys(range), s.getAll(range)], ([keys, values]) => {
     const out = new Map();
     keys.result.forEach((key, i) => { if (String(key).startsWith(prefix)) out.set(String(key), values.result[i]); });
@@ -89,8 +89,6 @@ export async function readEntries(prefix, now = Date.now()) {
   }
   return found;
 }
-
-const sameDrawing = (a, b) => a.strokes.length === b.strokes.length && a.strokes.every((s, i) => sameStroke(s, b.strokes[i]));
 
 // `ink` without what the server deleted since `base`: a stroke `base` had
 // that `current` lacks, and a piece cut from one of those that `current`
@@ -120,17 +118,17 @@ function withoutDeleted(ink, base, current) {
 // older than JOURNAL_DAYS, cannot be read, or holds the drawing the block
 // has. → {ink, ids}: the drawing to make the block's draft, and the
 // strokes it adds to the current file.
-export function restoredInk(entry, { url = "", current = null, base = null, baseUrl = entry?.base || "", lost = false, now = Date.now() } = {}) {
-  if (!entry || typeof entry.bytes !== "string" || expired(entry, now)) return null;
+export function restoredInk(entry, { url = "", current = null, base = null, baseUrl = entry?.base || "", lost = false } = {}) {
+  if (!entry || typeof entry.bytes !== "string" || expired(entry)) return null;
   let ink;
-  try { ink = withDefaults(upgradeV1(JSON.parse(entry.bytes))); } catch { return null; }
-  if (ink?.format !== FORMAT || !Array.isArray(ink.strokes)) return null;
+  try { ink = loadedInk(JSON.parse(entry.bytes)); } catch { return null; }
+  if (!Array.isArray(ink?.strokes)) return null;
   const here = current || { ...ink, strokes: [] };
   let out;
   if (lost || (baseUrl || "") === (url || "")) out = ink;
   else if (base) out = withoutDeleted(mergeInk(base, ink, here).ink, base, here);
   else return null;
-  if (sameDrawing(out, here)) return null;
+  if (sameStrokes(out.strokes, here.strokes)) return null;
   const known = new Set(here.strokes.map((s) => s.id));
   return { ink: out, ids: out.strokes.filter((s) => !known.has(s.id)).map((s) => s.id) };
 }

@@ -6,9 +6,10 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import {
-  CANCEL_MS, CANCEL_PX, HOLD_MIN_MS, HOLD_MOVE, HOLD_MS, PASTE_MOVE, REFIT_PX, SHAPE_KINDS, followHold, recognise, refitShape,
-  shapeName, shapeSamples, stillSince,
+  CANCEL_MS, CANCEL_PX, HOLD_MIN_MS, HOLD_MOVE, HOLD_MS, PASTE_MOVE, REFIT_PX, SHAPE_KINDS, dragHandle, followHold, recognise, refitShape,
+  reshapeInk, reshapeStroke, shapeHandles, shapeName, shapeSamples, stillSince,
 } from "../src/ink/shapes.js";
+import { decodeStroke, encodeStroke, newInk, translateStrokes } from "../src/ink/ink.js";
 
 const FIX = JSON.parse(readFileSync(new URL("../../tests/shared/inkshapes.json", import.meta.url), "utf8"));
 const decode = (rows) => rows.map(([x, y, p, t]) => ({ x, y, p, t }));
@@ -187,8 +188,6 @@ test("stillSince: no samples is the first index; followHold never reads the samp
 });
 
 // --- editable shapes (docs/dev/handwriting.md "Editable shapes") ---------------------
-import { dragHandle, reshapeInk, reshapeStroke, shapeHandles } from "../src/ink/shapes.js";
-import { decodeStroke, encodeStroke, newInk, translateStrokes } from "../src/ink/ink.js";
 
 const near2 = (a, b, tol = 0.011) => Math.abs(a - b) <= tol;
 const at = (handles, id) => handles.find((h) => h.id === id);

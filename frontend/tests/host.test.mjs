@@ -22,8 +22,8 @@ async function load({ native, standalone = false } = {}) {
 
 // The user script's stub: what native sends before the bundle runs waits in
 // `queue`. The flags are HostInfo's (ipad/GammaIPad/Shell/Bridge.swift).
-const FLAGS = { ink: true, inkLooks: ["pressure", "dash", "blend", "stabilize", "pencil"], hold: true, pencil: true, pencilPhases: true,
-  haptics: true, servers: true };
+const FLAGS = { ink: true, inkLooks: ["pressure", "dash", "blend", "stabilize", "pencil", "calligraphy", "snap"], hold: true, pencil: true,
+  pencilPhases: true, pencilRoll: true, haptics: true, servers: true };
 function stub(fields) {
   const native = { platform: "ipad", version: "0.2.0", ...FLAGS, ...fields };
   native.receive = (msg) => new Promise((resolve, reject) => (native.queue ||= []).push({ msg, resolve, reject }));

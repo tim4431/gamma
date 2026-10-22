@@ -3,12 +3,12 @@ import XCTest
 @testable import Gamma
 
 /// The Pencil layer's pure parts (Pencil/): which touch a claim takes, the
-/// samples a stroke hands back with their tilt and stillness anchor, when a
-/// hold is asked, the lazy brush, the ribbon, the held shape and how it
-/// follows the pen, the ruler's edge (RulerSnap), and the gesture actions'
-/// names. The recognizer's life
-/// among WebKit's own recognizers needs a device (docs/dev/ipad.md "Device
-/// checks").
+/// samples a stroke hands back with their tilt, roll and stillness anchor,
+/// when a hold is asked, the lazy brush, the ribbon, the held shape and how
+/// it follows the pen, the ruler's edge (RulerSnap), where the Pencil
+/// hovered for a gesture, and the gesture actions' names. The recognizer's
+/// life among WebKit's own recognizers needs a device (docs/dev/ipad.md
+/// "Device checks").
 final class ClaimQueueTests: XCTestCase {
     private let here = CGPoint(x: 100, y: 200)
     private let there = CGPoint(x: 300, y: 260)
@@ -548,7 +548,7 @@ struct FixtureSample: Decodable {
 
 /// A file of the repository's tests/shared, which the test bundle carries
 /// as a resource (project.yml), so the Swift ports are held to the rows the
-/// web's and the server's tests read.
+/// web's tests read (the server's read inkwidth.json too).
 enum SharedFixture {
     private final class Token {}
 

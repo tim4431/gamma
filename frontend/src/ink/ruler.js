@@ -11,25 +11,23 @@
 // its samples projected onto the edge's line (a rail, {origin, dir}), the
 // committed stroke the line between the two farthest projections.
 import { finishStroke, strokeChannels } from "./finishStroke.js";
-import { encodeStroke } from "./ink.js";
+import { encodeStroke, encodedStyle, mod, round2 } from "./ink.js";
 
 export const RULER_PX = 36;       // the band's width on the screen, css px
 export const RULER_SNAP_PX = 12;  // the reach outside each edge, css px
 export const RULER_MIN = 36;      // its shortest length, pt
 export const RULER_STEP = 15;     // the knob's snap, degrees
 
-const DEG = Math.PI / 180;
-const r2 = (v) => Math.round(v * 100) / 100;
-const mod180 = (v) => ((v % 180) + 180) % 180;
+const RAD = Math.PI / 180;
 // an angle on the 1/100 degree grid, in [0, 180) (180 itself wraps to 0)
 const angleOf = (deg) => {
-  const a = r2(mod180(deg));
+  const a = round2(mod(deg, 180));
   return a >= 180 ? 0 : a;
 };
 
 // The ruler's direction, a unit page vector.
 export function rulerDir(ruler) {
-  const a = (ruler.angle || 0) * DEG;
+  const a = (ruler.angle || 0) * RAD;
   return { x: Math.cos(a), y: -Math.sin(a) };
 }
 // The normal on the ruler's counterclockwise side as seen (up for a level
@@ -58,8 +56,8 @@ export function rulerEdges(ruler, k = 1) {
 // four fifths of its width long (at least RULER_MIN), turning freely.
 export function defaultRuler(surface, visible) {
   const v = visible || { x: 0, y: 0, width: 0, height: 0 };
-  return { surface, x: r2(v.x + v.width / 2), y: r2(v.y + v.height / 2), angle: 0,
-    length: r2(Math.max(RULER_MIN, v.width * 0.8)), snap: false };
+  return { surface, x: round2(v.x + v.width / 2), y: round2(v.y + v.height / 2), angle: 0,
+    length: round2(Math.max(RULER_MIN, v.width * 0.8)), snap: false };
 }
 
 // The point in the ruler's own frame: `u` along it from its middle, `v`
@@ -67,12 +65,6 @@ export function defaultRuler(surface, visible) {
 function local(ruler, point) {
   const d = rulerDir(ruler), n = normalOf(d), rx = point.x - ruler.x, ry = point.y - ruler.y;
   return { u: rx * d.x + ry * d.y, v: rx * n.x + ry * n.y };
-}
-
-// Whether a point (page points) lies on the band at `k` css px per pt.
-export function onBand(ruler, point, k = 1) {
-  const { u, v } = local(ruler, point);
-  return Math.abs(u) <= ruler.length / 2 + 0.5 / k && Math.abs(v) <= RULER_PX / 2 / k;
 }
 
 // The edge a stroke that starts at `point` is drawn along, or null: the
@@ -116,7 +108,7 @@ export function railLine(samples, rail) {
   const first = along(samples[0], rail);
   const [a, b] = first - lo <= hi - first ? [lo, hi] : [hi, lo];
   const { origin: o, dir: d } = rail;
-  return { x1: r2(o.x + a * d.x), y1: r2(o.y + a * d.y), x2: r2(o.x + b * d.x), y2: r2(o.y + b * d.y) };
+  return { x1: round2(o.x + a * d.x), y1: round2(o.y + a * d.y), x2: round2(o.x + b * d.x), y2: round2(o.y + b * d.y) };
 }
 
 // An angle snapped to the nearest `step` degrees, in [0, 180).
@@ -140,7 +132,7 @@ export function turnRuler(ruler, deg, { snap = false } = {}) {
 
 // The ruler moved by (dx, dy) page points.
 export function moveRuler(ruler, dx, dy) {
-  return { ...ruler, x: r2(ruler.x + dx), y: r2(ruler.y + dy) };
+  return { ...ruler, x: round2(ruler.x + dx), y: round2(ruler.y + dy) };
 }
 
 // The ruler turned and moved by two fingers: `from` the two points (page
@@ -151,7 +143,7 @@ export function pinchRuler(ruler, from, to, { snap = false } = {}) {
   const a0 = Math.atan2(from[1].y - from[0].y, from[1].x - from[0].x);
   const a1 = Math.atan2(to[1].y - to[0].y, to[1].x - to[0].x);
   // page y runs down: a positive atan2 change turns clockwise as seen
-  const raw = -(a1 - a0) / DEG;
+  const raw = -(a1 - a0) / RAD;
   const next = turnRuler(ruler, raw, { snap });
   // the turn the ruler made, the snap's and the wrap at 180° folded back
   // next to the fingers' own (the middle follows the fingers, not the fold)
@@ -162,9 +154,9 @@ export function pinchRuler(ruler, from, to, { snap = false } = {}) {
   // the middle, turned about the first midpoint as the ruler turned (a
   // standard rotation in page coordinates turns clockwise as seen), then
   // carried with it
-  const rad = -turn * DEG, c = Math.cos(rad), s = Math.sin(rad);
+  const rad = -turn * RAD, c = Math.cos(rad), s = Math.sin(rad);
   const rx = ruler.x - m0.x, ry = ruler.y - m0.y;
-  return { ...next, x: r2(m1.x + rx * c - ry * s), y: r2(m1.y + rx * s + ry * c) };
+  return { ...next, x: round2(m1.x + rx * c - ry * s), y: round2(m1.y + rx * s + ry * c) };
 }
 
 // The ruler with one end (0 the start, 1 the other) dragged to `point`:
@@ -175,7 +167,7 @@ export function stretchRuler(ruler, end, point) {
   const fixed = end === 0 ? b : a, sign = end === 0 ? -1 : 1;
   const t = ((point.x - fixed.x) * d.x + (point.y - fixed.y) * d.y) * sign;
   const length = Math.max(RULER_MIN, t);
-  return { ...ruler, x: r2(fixed.x + sign * d.x * length / 2), y: r2(fixed.y + sign * d.y * length / 2), length: r2(length) };
+  return { ...ruler, x: round2(fixed.x + sign * d.x * length / 2), y: round2(fixed.y + sign * d.y * length / 2), length: round2(length) };
 }
 
 // What the band draws at `k` css px per pt: ticks measured from the start
@@ -193,7 +185,7 @@ export function rulerTicks(ruler, units = "pt", k = 1) {
   for (let i = 0; i * unit <= length + 1e-6; i++) {
     const size = i % major === 0 ? 2 : i % mid === 0 ? 1 : 0;
     if (size === 0 && !minor) continue;
-    const tick = { at: r2(i * unit), size };
+    const tick = { at: round2(i * unit), size };
     if (size === 2 && labels && i) tick.label = String(cm ? i / major : i * unit);
     out.push(tick);
   }
@@ -207,9 +199,8 @@ export function rulerTicks(ruler, units = "pt", k = 1) {
 // with `t0` the wall clock it was stamped at.
 export function stampLine(ruler, look, { t0 = null } = {}) {
   const [a, b] = rulerEnds(ruler);
-  const params = { x1: r2(a.x), y1: r2(a.y), x2: r2(b.x), y2: r2(b.y) };
-  const style = { tool: look.tool || "pen", brush: look.brush, dash: look.dash, color: look.color, size: look.size,
-    opacity: look.opacity ?? 1, ...(look.nib != null ? { nib: look.nib } : {}) };
+  const params = { x1: round2(a.x), y1: round2(a.y), x2: round2(b.x), y2: round2(b.y) };
+  const style = { ...encodedStyle(look), tool: look.tool || "pen", ...(look.nib != null ? { nib: look.nib } : {}) };
   const { commit, style: shaped } = finishStroke([{ x: a.x, y: a.y, p: 0.5, t: 0 }, { x: b.x, y: b.y, p: 0.5, t: 0 }],
     { style, pen: false, hold: { kind: "line", params } });
   return encodeStroke({ ...shaped, t0, samples: commit, ch: strokeChannels(shaped, commit) });
@@ -220,5 +211,5 @@ export function stampLine(ruler, look, { t0 = null } = {}) {
 // corner is at (left, top) at k css px per pt, and the ruler's angle, each
 // on the 1/100 grid.
 export function hostSnap(rail, angle, { left = 0, top = 0, k = 1 } = {}) {
-  return { x0: r2(left + rail.origin.x * k), y0: r2(top + rail.origin.y * k), angle: angleOf(angle || 0) };
+  return { x0: round2(left + rail.origin.x * k), y0: round2(top + rail.origin.y * k), angle: angleOf(angle || 0) };
 }

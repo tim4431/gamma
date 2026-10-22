@@ -1515,15 +1515,6 @@ def _v38_recording_kind(ws: str, pages: sqlite3.Connection, data) -> None:
         block_columns(pages)
 
 
-def _uploads_dir_of(pages: sqlite3.Connection) -> Path | None:
-    """The uploads directory beside a pages.db, the live workspace's or a
-    backup's unpacked copy (its ``PRAGMA database_list`` names the file)."""
-    for _seq, name, file in pages.execute("PRAGMA database_list").fetchall():
-        if name == "main" and file:
-            return Path(file).with_name("uploads")
-    return None
-
-
 def _v40_ink_v2(ws: str, pages: sqlite3.Connection, data) -> None:
     """The stroke file moves to ``gamma-ink`` version 2 (gamma/ink.py
     ``upgrade_v1``, docs/dev/handwriting.md "Upgrading version 1"): for
@@ -1541,9 +1532,11 @@ def _v40_ink_v2(ws: str, pages: sqlite3.Connection, data) -> None:
     from . import ink as inkmod
     if not _columns(pages, "unified_blocks"):
         return  # an old copy without the table gets it from the schema statements
-    uploads = _uploads_dir_of(pages)
-    if uploads is None:
-        return
+    # the uploads beside this pages.db: the live workspace's or a backup's unpacked copy
+    file = pages.execute("PRAGMA database_list").fetchone()[2]
+    if not file:
+        return  # an in-memory database has none
+    uploads = Path(file).with_name("uploads")
     where = f"workspace {ws}" if ws else "a backup's copy"
     converted: dict[str, str] = {}  # old upload name -> new (one file, many blocks)
     changed = []

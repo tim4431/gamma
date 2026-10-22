@@ -14,14 +14,15 @@
 // inkmerge.json pin both.
 import { getStroke } from "perfect-freehand";
 import { INK_COLORS, INK_HIGHLIGHT_ALPHA, INK_HIGHLIGHT_COLORS } from "../shared/model/palette.js";
+import { MAX_STABILIZE } from "./stabilizer.js";
 
 export const FORMAT = "gamma-ink";
 export const VERSION = 2;
 export const COORD_UNIT = 100;
 export const PRESSURE_UNIT = 1000;
 export const WIDTH_UNIT = 1000;   // w and o: a multiplier × 1000
-// The w channel's ceiling, decoded: the pencil's slant reaches 3.5 (it was
-// 2 before the pencil); the drawn ceiling stays size × max(w) ≤ 100.
+// The w channel's ceiling, decoded: the pencil's slant reaches 3.5; the
+// drawn ceiling stays size × max(w) ≤ 100.
 export const MAX_W = 4;
 export const MAX_STROKES = 5000;
 // The server's cap on one file (gamma/ink.py MAX_BYTES); applyInk refuses
@@ -97,6 +98,12 @@ export function strokeId() {
   for (let i = 0; i < 8; i++) s += ID_CHARS[Math.floor(Math.random() * ID_CHARS.length)];
   return s;
 }
+// A fresh stroke id that is not in `used`.
+function freshId(used) {
+  let id;
+  do { id = strokeId(); } while (used.has(id));
+  return id;
+}
 
 // --- tool presets ------------------------------------------------------------
 // The strip is a row of presets, Notability-style: each pen or highlighter
@@ -127,7 +134,7 @@ const HEX_RE = /^#[0-9a-f]{6}$/i;
 // the order the Style picker lists them and Shift+[ / ] step through
 // them. A highlighter has none. Their laws are ink/finishStroke.js BRUSHES.
 export const BRUSH_ORDER = [null, "monoline", "brush", "pencil", "calligraphy"];
-export const KNOWN_BRUSHES = new Set(["monoline", "brush", "pencil", "calligraphy"]);
+export const KNOWN_BRUSHES = new Set(BRUSH_ORDER.filter(Boolean));
 // The calligraphy pen's nib (docs/dev/handwriting.md "Calligraphy"): a
 // preset's angle is an integer from NIB_MIN to NIB_MAX degrees, stepped by
 // NIB_STEP on the strip, DEFAULT_NIB to start, counterclockwise as seen (45
@@ -157,7 +164,7 @@ export const presetSmoothing = (preset) => preset?.stabilize
 export function strokeNib(nib, twist = null, lock = false) {
   const angle = Number.isFinite(nib) ? nib : DEFAULT_NIB;
   const turn = !lock && Number.isFinite(twist) ? twist : 0;
-  return ((Math.round(angle - turn) % 180) + 180) % 180;
+  return mod(Math.round(angle - turn), 180);
 }
 // A line: dashed or dotted, solid when absent (DASH below).
 export const isDash = (v) => v === "dashed" || v === "dotted";
@@ -205,9 +212,9 @@ export function normalizeTools(list) {
     // stays on any other preset.
     const calligraphy = kind === "pen" && t.brush === "calligraphy";
     const nib = t.nib == null ? NaN : Math.round(Number(t.nib));
-    const preset = { id, kind, color: t.color.toLowerCase(), size: Math.round(size * 100) / 100,
+    const preset = { id, kind, color: t.color.toLowerCase(), size: round2(size),
       ...(Number.isFinite(opacity) && opacity >= 0.1 && opacity <= 1 && opacity !== defaultOpacity(kind)
-        ? { opacity: Math.round(opacity * 100) / 100 } : {}),
+        ? { opacity: round2(opacity) } : {}),
       // a pen's brush among the known ones ('pen', an unknown value or any
       // brush on a highlighter is dropped: the plain pen is the absent
       // key); a line, pens and highlighters alike, left out when solid
@@ -215,7 +222,7 @@ export function normalizeTools(list) {
       ...(calligraphy && Number.isFinite(nib) && nib >= NIB_MIN && nib <= NIB_MAX && nib !== DEFAULT_NIB ? { nib } : {}),
       ...(calligraphy && t.nibLock === true ? { nibLock: true } : {}),
       ...(isDash(t.dash) ? { dash: t.dash } : {}),
-      ...(Number.isFinite(stabilize) && stabilize >= (calligraphy ? 0 : 1) && stabilize <= 4 ? { stabilize } : {}),
+      ...(Number.isFinite(stabilize) && stabilize >= (calligraphy ? 0 : 1) && stabilize <= MAX_STABILIZE ? { stabilize } : {}),
       ...(kind === "highlighter" && (t.straight === "always" || t.straight === "off") ? { straight: t.straight } : {}),
       ...(t.hidden === true ? { hidden: true } : {}) };
     // The keys this build does not know, verbatim and after the known ones,
@@ -259,6 +266,11 @@ export function toolStyle(preset) {
       ...(preset.brush === "calligraphy" ? { nib: strokeNib(preset.nib), ...(preset.nibLock ? { nibLock: true } : {}) } : {}),
       ...line };
 }
+// The keys of such a style a stroke is encoded with, the style
+// finishStroke takes: tool, brush, dash, color, size and opacity (1 when
+// absent). The nib and `pen` are each caller's to add (InkLayer's commits,
+// ruler.js stampLine).
+export const encodedStyle = ({ tool, brush, dash, color, size, opacity }) => ({ tool, brush, dash, color, size, opacity: opacity ?? 1 });
 
 
 // --- codec -----------------------------------------------------------------
@@ -270,8 +282,14 @@ export function toolStyle(preset) {
 // predates the letter keeps the stride.
 export const KNOWN_CHANNELS = "xyptazwo";
 const DELTA = new Set(["x", "y", "t", "w", "o"]);
-const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+// The arithmetic the ink modules share: v held to [lo, hi], a remainder in
+// [0, m) whatever the sign of a, and v to two decimals (the 1/100 grid) or
+// three (a baked w or o, a pressure).
+export const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 const clamp01 = (v) => clamp(v, 0, 1);
+export const mod = (a, m) => ((a % m) + m) % m;
+export const round2 = (v) => Math.round(v * 100) / 100;
+export const round3 = (v) => Math.round(v * 1000) / 1000;
 const unknownLetters = (ch) => [...ch].filter((c) => !KNOWN_CHANNELS.includes(c));
 
 // samples: [{x, y, p?, t?, a?, z?, w?, o?, rest?}] with x/y in points, p
@@ -374,10 +392,7 @@ export function strokePlaceholder(stroke) {
   const hit = lines.get(stroke);
   if (hit) return hit;
   const pts = decodeStroke(stroke);
-  const d = pts.map((s, i) => `${i ? "L" : "M"}${s.x.toFixed(2)},${s.y.toFixed(2)}`).join(" ")
-    + (pts.length === 1 ? ` L${(pts[0].x + 0.01).toFixed(2)},${pts[0].y.toFixed(2)}` : "");
-  const width = pts.length ? pts.reduce((sum, s) => sum + strokeWidth(stroke, s), 0) / pts.length : stroke.size ?? DEFAULT_SIZE;
-  const out = { d, stroke: true, width, multiply: stroke.tool === "highlighter" };
+  const out = { d: polyline(pts), stroke: true, width: meanWidth(stroke, pts), multiply: stroke.tool === "highlighter" };
   lines.set(stroke, out);
   return out;
 }
@@ -448,6 +463,8 @@ export function strokeMaxWidth(stroke) {
   for (const s of decodeStroke(stroke)) max = Math.max(max, strokeWidth(stroke, s));
   return max || (stroke.size ?? DEFAULT_SIZE);
 }
+// The mean drawn width over a stroke's decoded samples; its size when it has none.
+const meanWidth = (stroke, pts) => (pts.length ? pts.reduce((sum, s) => sum + strokeWidth(stroke, s), 0) / pts.length : stroke.size ?? DEFAULT_SIZE);
 // Which layer a stroke draws on: 0 under (a highlighter's default), 1 as ink.
 export const strokeBand = (stroke) => stroke.band ?? (stroke.tool === "highlighter" ? 0 : 1);
 // Strokes in drawing order: every band-0 stroke, then the band-1 ones,
@@ -486,6 +503,10 @@ export function upgradeV1(file) {
   });
   return { ...file, version: 2, strokes };
 }
+// A parsed file (fetched, or read back from the draft journal) → the
+// drawing this client keeps: version 1 upgraded, omitted keys filled in;
+// null for anything that is no gamma-ink file.
+export const loadedInk = (file) => (file?.format === FORMAT ? withDefaults(upgradeV1(file)) : null);
 
 // What a drawing carries that this build does not know: tools, brushes,
 // stroke keys and channel letters, or a newer file version — null when
@@ -549,8 +570,7 @@ export function inkBounds(ink) {
 export function pdfPositionOf(ink) {
   const b = inkBounds(ink);
   if (!b || ink.space?.kind !== "pdf-page") return null;
-  const r2 = (v) => Math.round(v * 100) / 100;
-  const rect = { x1: r2(b[0]), y1: r2(b[1]), x2: r2(b[2]), y2: r2(b[3]) };
+  const rect = { x1: round2(b[0]), y1: round2(b[1]), x2: round2(b[2]), y2: round2(b[3]) };
   return { pageNumber: ink.space.page, width: ink.space.width, height: ink.space.height,
     boundingRect: rect, rects: [{ ...rect }] };
 }
@@ -618,7 +638,7 @@ function fillOf(value) {
   if (value === null) return null;
   if (!value || !HEX_RE.test(value.color || "")) return undefined;
   const opacity = Number(value.opacity);
-  const kept = Number.isFinite(opacity) && opacity > 0 && opacity <= 1 ? Math.round(opacity * 100) / 100 : FILL_OPACITY;
+  const kept = Number.isFinite(opacity) && opacity > 0 && opacity <= 1 ? round2(opacity) : FILL_OPACITY;
   return { color: value.color.toLowerCase(), ...(kept !== FILL_OPACITY ? { opacity: kept } : {}) };
 }
 const sameFill = (a, b) => (a?.color ?? null) === (b?.color ?? null) && (a?.opacity ?? FILL_OPACITY) === (b?.opacity ?? FILL_OPACITY);
@@ -640,8 +660,8 @@ export function restyleStrokes(ink, ids, patch) {
     const color = HEX_RE.test(patch.color || "") ? patch.color.toLowerCase() : s.color;
     const sizes = sizesFor(s.tool);
     const size = Number.isFinite(patch.size)
-      ? Math.round(Math.max(sizes[0], Math.min(sizes.at(-1), patch.size)) * 100) / 100 : s.size;
-    const opacity = Number.isFinite(patch.opacity) ? Math.round(Math.min(1, Math.max(0.1, patch.opacity)) * 100) / 100 : s.opacity;
+      ? round2(Math.max(sizes[0], Math.min(sizes.at(-1), patch.size))) : s.size;
+    const opacity = Number.isFinite(patch.opacity) ? round2(Math.min(1, Math.max(0.1, patch.opacity))) : s.opacity;
     const dash = line ? line.dash : s.dash ?? null;
     const filled = fill !== undefined && isClosedShape(s) ? fill : s.fill ?? null;
     if (color === s.color && size === s.size && opacity === s.opacity && dash === (s.dash ?? null) && sameFill(filled, s.fill)) return s;
@@ -662,13 +682,9 @@ export function cloneStrokes(strokes, dx = 0, dy = 0, used = new Set()) {
   const ex = Math.round((dx || 0) * COORD_UNIT), ey = Math.round((dy || 0) * COORD_UNIT);
   const shift = ex || ey ? movedBy(ex, ey) : null;
   return strokes.map(({ from, ...s }) => {
-    let id;
-    do { id = strokeId(); } while (used.has(id));
+    const id = freshId(used);
     used.add(id);
-    const pts = [...s.pts];
-    if (pts.length < 2 || !shift) return { ...s, id, pts };
-    pts[0] += ex; pts[1] += ey;
-    return carryShape(s, { ...s, id, pts }, shift);
+    return s.pts.length < 2 || !shift ? { ...s, id, pts: [...s.pts] } : { ...moveStroke(s, ex, ey, shift), id };
   });
 }
 
@@ -688,8 +704,7 @@ export function appendStrokes(ink, strokes) {
   if (!strokes?.length) return { ink, ids: [] };
   const used = new Set((ink.strokes || []).map((s) => s.id));
   const added = strokes.map((s) => {
-    let id = s.id;
-    if (!id || used.has(id)) { do { id = strokeId(); } while (used.has(id)); }
+    const id = s.id && !used.has(s.id) ? s.id : freshId(used);
     used.add(id);
     return id === s.id ? s : { ...s, id };
   });
@@ -748,8 +763,7 @@ export function flipStrokes(ink, ids, { cx, cy, axis }) {
 const SHAPE_RECORDS = new Set(["line", "arrow", "triangle", "rect", "polygon", "circle", "ellipse", "curve"]);
 const SHAPE_LENGTHS = ["w", "h", "r", "rx", "ry", "head"];
 const SHAPE_TURNED = new Set(["rect", "polygon", "ellipse"]);
-const mod = (a, m) => ((a % m) + m) % m;
-const onGrid = (v) => Math.round(v * 100) / 100 || 0;
+const onGrid = (v) => round2(v) || 0;
 export function mapShape(shape, { point, scale = 1, turn = null }) {
   if (!SHAPE_RECORDS.has(shape?.kind)) return undefined;
   const p = shape.params;
@@ -790,6 +804,14 @@ function carryShape(s, out, map) {
 }
 // The map of a move by (ex, ey), in 1/100 pt.
 const movedBy = (ex, ey) => ({ point: (x, y) => [x + ex / COORD_UNIT, y + ey / COORD_UNIT] });
+// `s` moved by (ex, ey) in 1/100 pt: its first sample's two absolutes, and
+// its shape record through `shift` (movedBy) with them.
+function moveStroke(s, ex, ey, shift) {
+  const pts = s.pts.slice();
+  pts[0] += ex;
+  pts[1] += ey;
+  return carryShape(s, { ...s, pts }, shift);
+}
 
 // Deep equality over JSON values; a missing key equals a null one.
 function sameValue(x, y) {
@@ -813,7 +835,8 @@ export function sameStroke(a, b) {
   return sameValue(a, b);
 }
 
-const sameStrokes = (a, b) => a.length === b.length && a.every((s, i) => sameStroke(s, b[i]));
+// Two stroke lists are the same when they hold the same strokes in order.
+export const sameStrokes = (a, b) => a.length === b.length && a.every((s, i) => sameStroke(s, b[i]));
 
 // --- merge -----------------------------------------------------------------
 // A stroke is compared as two halves (docs/dev/handwriting.md "Two writers,
@@ -831,7 +854,7 @@ function lookOf(s) {
   const out = { tool: "pen", color: INK_COLORS[0], opacity: 1, pen: true };
   for (const k of Object.keys(s)) if (!NOT_LOOK.has(k) && s[k] != null) out[k] = s[k];
   out.band = strokeBand(s);
-  if (out.fill) out.fill = { color: out.fill.color, opacity: out.fill.opacity ?? 0.25 };
+  if (out.fill) out.fill = { color: out.fill.color, opacity: out.fill.opacity ?? FILL_OPACITY };
   return out;
 }
 const sameGeom = (a, b) => sameValue(geomOf(a), geomOf(b));
@@ -1020,13 +1043,7 @@ export function translateStrokes(ink, ids, dx, dy) {
   const ex = Math.round(dx * COORD_UNIT), ey = Math.round(dy * COORD_UNIT);
   if (!ex && !ey) return ink;
   const shift = movedBy(ex, ey);
-  return { ...ink, strokes: (ink.strokes || []).map((s) => {
-    if (!move.has(s.id) || s.pts.length < 2) return s;
-    const pts = s.pts.slice();
-    pts[0] += ex;
-    pts[1] += ey;
-    return carryShape(s, { ...s, pts }, shift);
-  }) };
+  return { ...ink, strokes: (ink.strokes || []).map((s) => (!move.has(s.id) || s.pts.length < 2 ? s : moveStroke(s, ex, ey, shift))) };
 }
 
 // (x, y) scaled by `scale` and rotated by `angle` (radians) about (cx, cy).
@@ -1044,7 +1061,8 @@ export function transformPoint(x, y, { cx, cy, scale, angle }) {
 export function transformStrokes(ink, ids, { cx, cy, scale = 1, angle = 0 }) {
   if (![cx, cy, scale, angle].every(Number.isFinite) || scale <= 0 || (scale === 1 && angle === 0)) return ink;
   const selected = new Set(ids);
-  const map = { point: (x, y) => transformPoint(x, y, { cx, cy, scale, angle }), scale, turn: (a) => a + (angle * 180) / Math.PI };
+  const degrees = (angle * 180) / Math.PI;
+  const map = { point: (x, y) => transformPoint(x, y, { cx, cy, scale, angle }), scale, turn: (a) => a + degrees };
   let changed = false;
   const strokes = ink.strokes.map((s) => {
     if (!selected.has(s.id)) return s;
@@ -1059,7 +1077,7 @@ export function transformStrokes(ink, ids, { cx, cy, scale = 1, angle = 0 }) {
       px = nx; py = ny;
     });
     const out = carryShape(s, { ...s, pts, size: Math.max(0.01, Math.min(MAX_STROKE_SIZE, s.size * scale)) }, map);
-    if (Number.isFinite(s.nib) && angle) out.nib = ((Math.round(s.nib - (angle * 180) / Math.PI) % 180) + 180) % 180;
+    if (Number.isFinite(s.nib) && angle) out.nib = mod(Math.round(s.nib - degrees), 180);
     return out;
   });
   return changed ? { ...ink, strokes } : ink;
@@ -1374,16 +1392,15 @@ export function inkTimeline(ink, { pause = REPLAY_PAUSE, max = REPLAY_MAX } = {}
     before = wallStart ?? before;
     return { stroke, index, samples, timed, wallStart, key: before };
   }).sort((a, b) => a.key - b.key || a.index - b.index);
-  const clamp = (v) => Math.max(0, Math.min(pause, v));
   const strokes = [];
   let clock = 0, lastEnd = null;   // lastEnd: the wall-clock end of the stroke before
   for (const { stroke, index, samples, timed, wallStart } of order) {
     if (!samples.length) continue;
     const offsets = [0];
     for (let i = 1; i < samples.length; i++) {
-      offsets.push(offsets[i - 1] + (timed ? clamp(samples[i].t - samples[i - 1].t) : UNTIMED_MS / (samples.length - 1)));
+      offsets.push(offsets[i - 1] + (timed ? clamp(samples[i].t - samples[i - 1].t, 0, pause) : UNTIMED_MS / (samples.length - 1)));
     }
-    const gap = !strokes.length ? 0 : wallStart != null && lastEnd != null ? clamp(wallStart - lastEnd) : pause / 2;
+    const gap = !strokes.length ? 0 : wallStart != null && lastEnd != null ? clamp(wallStart - lastEnd, 0, pause) : pause / 2;
     const start = clock + gap;
     const times = offsets.map((o) => start + o);
     strokes.push({ id: stroke.id, index, start, end: times[times.length - 1], times });
@@ -1504,7 +1521,7 @@ export function dashPattern(stroke) {
   const { on, off } = DASH[stroke.dash], size = stroke.size ?? DEFAULT_SIZE;
   return [on * size, off * size];
 }
-const num = (v) => String(Math.round(v * 1000) / 1000);
+const num = (v) => String(round3(v));
 // A stroked line's stroke-dasharray ("4 4"; the live canvas hands
 // dashPattern to setLineDash); null when solid.
 export function dashArray(stroke) {
@@ -1512,8 +1529,9 @@ export function dashArray(stroke) {
   return p ? `${num(p[0])} ${num(p[1])}` : null;
 }
 
-// The arc length at each sample.
-function arcLengths(samples) {
+// The arc length at each sample (also the Brush's tapers, finishStroke.js,
+// and a scribble's runs, gestures.js).
+export function arcLengths(samples) {
   const out = new Array(samples.length);
   let run = 0;
   for (let i = 0; i < samples.length; i++) {
@@ -1522,6 +1540,8 @@ function arcLengths(samples) {
   }
   return out;
 }
+// How far arc `v` lies along segment j, j + 1 of `arc` (0 on one of no length).
+const arcFraction = (arc, j, v) => (arc[j + 1] > arc[j] ? (v - arc[j]) / (arc[j + 1] - arc[j]) : 0);
 // The sample a fraction `f` of the way from `a` to `b`: x, y, p, t, w and o
 // linear, tilt (a, z) and anything else from `a`, the sample before.
 const LERPED = ["x", "y", "p", "t", "w", "o"];
@@ -1535,13 +1555,12 @@ export function lerpSample(a, b, f) {
 // segment to start looking from (the runs come in order, so a stroke is
 // walked once) → [samples, the segment the run began in].
 function arcSlice(samples, arc, from, to, at = 0) {
-  const span = (j, v) => (arc[j + 1] > arc[j] ? (v - arc[j]) / (arc[j + 1] - arc[j]) : 0);
   let i = at;
   while (i < arc.length - 2 && arc[i + 1] <= from) i++;
-  const run = [arc[i] === from ? samples[i] : lerpSample(samples[i], samples[i + 1], span(i, from))];
+  const run = [arc[i] === from ? samples[i] : lerpSample(samples[i], samples[i + 1], arcFraction(arc, i, from))];
   let j = i + 1;
   for (; j < arc.length && arc[j] < to; j++) if (arc[j] > from) run.push(samples[j]);
-  run.push(j < arc.length && arc[j] === to ? samples[j] : lerpSample(samples[j - 1], samples[j], span(j - 1, to)));
+  run.push(j < arc.length && arc[j] === to ? samples[j] : lerpSample(samples[j - 1], samples[j], arcFraction(arc, j - 1, to)));
   return [run, i];
 }
 // A dashed pressure stroke's on-runs by arc length from phase 0 —
@@ -1579,8 +1598,7 @@ export function dashDots(samples, stroke) {
   for (let k = 0; k * (on + off) < length; k++) {
     const at = Math.min(k * (on + off) + on / 2, length);
     while (i < arc.length - 2 && arc[i + 1] < at) i++;
-    const f = arc[i + 1] > arc[i] ? (at - arc[i]) / (arc[i + 1] - arc[i]) : 0;
-    out.push(dot(lerpSample(samples[i], samples[i + 1], Math.min(1, f)), at));
+    out.push(dot(lerpSample(samples[i], samples[i + 1], Math.min(1, arcFraction(arc, i, at))), at));
   }
   return out;
 }
@@ -1598,10 +1616,10 @@ export const opacityBand = (o) => OPACITY_BANDS[bandIndex(o ?? 1)];
 // at a sample) is left out, as gamma/ink.py stroke_bands leaves it out: it
 // would outline as a dot of its own shade; a stroke of no length at all is
 // one run, in its last sample's band.
-const runLength = (run) => run.some((s, i) => i && (s.x !== run[i - 1].x || s.y !== run[i - 1].y));
+const hasLength = (run) => run.some((s, i) => i && (s.x !== run[i - 1].x || s.y !== run[i - 1].y));
 export function bandRuns(samples) {
   const runs = cutBands(samples);
-  const kept = runs.filter((r) => runLength(r.samples));
+  const kept = runs.filter((r) => hasLength(r.samples));
   return kept.length || !runs.length ? kept : [{ band: runs.at(-1).band, samples }];
 }
 function cutBands(samples) {
@@ -1612,7 +1630,7 @@ function cutBands(samples) {
     const a = samples[i - 1], b = samples[i], oa = a.o ?? 1, ob = b.o ?? 1, next = bandIndex(ob);
     while (band !== next) {
       const up = next > band, edge = BAND_EDGES[up ? band : band - 1];
-      const cut = lerpSample(a, b, ob !== oa ? Math.max(0, Math.min(1, (edge - oa) / (ob - oa))) : 0);
+      const cut = lerpSample(a, b, ob !== oa ? clamp01((edge - oa) / (ob - oa)) : 0);
       run.push(cut);
       runs.push({ band: OPACITY_BANDS[band], samples: run });
       band += up ? 1 : -1;
@@ -1729,7 +1747,7 @@ function buildOutline(stroke, pts) {
   const tool = stroke.tool || "pen";
   const size = stroke.size ?? DEFAULT_SIZE;
   if (tool !== "pen") {
-    const width = tool === "highlighter" || !pts.length ? size : pts.reduce((sum, s) => sum + strokeWidth(stroke, s), 0) / pts.length;
+    const width = tool === "highlighter" ? size : meanWidth(stroke, pts);
     return { d: polyline(pts), stroke: true, width, multiply: tool === "highlighter", dash: dashArray(stroke) };
   }
   const grain = stroke.brush === "pencil";

@@ -49,7 +49,7 @@ final class BridgeTests: XCTestCase {
     }
 
     func testAClaimCarriesThePresetsLook() throws {
-        // docs/dev/ipad.md's example claim
+        // the claim hostInk.test.mjs makes for a dashed Brush preset, plus a blend and a snap
         let look = try tool(["opacity": 1, "brush": "brush", "pressure": false, "dash": [6, 6], "blend": "multiply",
                              "stabilize": 2, "snap": ["x0": 10, "y0": 20, "angle": 15]])
         XCTAssertEqual(look, InkTool(kind: .pen, color: "#1f4fd8", size: 3, opacity: 1, brush: .brush, pressure: false,

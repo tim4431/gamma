@@ -60,11 +60,9 @@ EXTRA_STRING = 1024
 EXTRA_ARRAY = 256
 SHAPE_PARAMS = 64
 DELTA_CH = frozenset("xytwo")      # delta-encoded after the first sample
-KNOWN_CH = frozenset("xyptazwo")
 TOOL_RE = r"^[a-z][a-z0-9-]{0,15}$"
 _CH_RE = re.compile(r"^(?!.*(.).*\1)xy[a-z]*$")
 _COLOR_RE = re.compile(r"^(#[0-9a-fA-F]{6}|rgba?\(\s*\d+\s*,\s*\d+\s*,\s*\d+\s*(,\s*[0-9.]+\s*)?\))$")
-_HEX_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
 _EXTRA_KEY_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]{0,31}$")
 _UPLOAD_RE = re.compile(r"/api/uploads/([0-9a-f]{24}\.ink)$")
 SHAPE_KINDS = ("line", "arrow", "rect", "ellipse", "triangle", "polygon", "curve")
@@ -81,7 +79,6 @@ NIB_REACH = math.hypot(1, 0.12)
 DASH = {"dashed": (2.0, 2.0), "dotted": (0.1, 2.0)}
 # The shades a pencil is drawn in: ``o`` quantised up to one of these.
 OPACITY_BANDS = (0.33, 0.66, 1.0)
-UPDATE_GAMMA = "update Gamma"  # the 400 detail for a version 1 upload: every writer is version 2 since release T
 
 
 class InkError(ValueError):
@@ -1004,10 +1001,7 @@ def from_pdf_ink(ink_list, width_pt: float, color: str, opacity: float, page: in
     (``"dashed"`` for a ``/BS /S /D``), given to each of its strokes."""
     if private_json:
         try:
-            obj = load_json(private_json)
-            if obj.get("version", 1) == 1:
-                obj = upgrade_v1(obj)
-            ink = parse_ink(obj)
+            ink = parse_ink(upgrade_v1(load_json(private_json)))
             if ink.space.kind == "pdf-page":
                 ink.space.page = page
             return to_dict(ink)
@@ -1117,10 +1111,6 @@ class MergeResult:
     clean: bool
     lost_ours: list = field(default_factory=list)   # the writer's changes the result dropped
     returned: list = field(default_factory=list)    # strokes theirs had erased that come back
-
-    def __iter__(self):  # (ink, clean) for the callers that unpack two
-        yield self.ink
-        yield self.clean
 
     def report(self) -> dict:
         return {"clean": self.clean, "lost_ours": list(self.lost_ours), "returned": list(self.returned)}
@@ -1357,7 +1347,6 @@ def _merge_by_ids(ours: InkFile, theirs: InkFile, base_ids: set) -> MergeResult:
     both ways — and the merge is unclean when one was applied; the rest is
     the union by id."""
     o = {s.id: s for s in ours.strokes}
-    t = {s.id: s for s in theirs.strokes}
     clean, lost = True, []
     out: list[Stroke] = []
     for tp in theirs.strokes:

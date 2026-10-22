@@ -441,6 +441,7 @@ async function saveFailureArtifacts(name, err, closed = []) {
 
 export function assert(cond, msg) { if (!cond) throw new Error(msg || "assertion failed"); }
 export function assertEq(a, b, msg) { if (a !== b) throw new Error(`${msg || "not equal"}: ${JSON.stringify(a)} !== ${JSON.stringify(b)}`); }
+export function assertNear(a, b, tol, msg) { if (!(Math.abs(a - b) <= tol)) throw new Error(`${msg || "not near"}: ${a} vs ${b}`); }
 
 // Poll until `fn` returns truthy (state that lands after a debounce or a
 // websocket round trip).

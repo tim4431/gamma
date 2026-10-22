@@ -18,6 +18,7 @@ import {
 import { ColorChoices, ERASER_SIZES, InkTooltips, inkColorName, swallowClick } from "../ink/InkLayer";
 import { InkLineChoices, InkStyleMenu, InkStylePicker, NibPreview, brushValue } from "../ink/InkStylePicker.jsx";
 import { nativeHost } from "../shared/lib/host.js";
+import { HOLD_MS, HOLD_SLOP } from "../shared/ui/press.js";
 import { pickerColors } from "../shared/model/palette.js";
 import { usePalette } from "../shared/ui/paletteContext.js";
 import { TextStyleChoices } from "./TextBoxLayer";
@@ -30,7 +31,7 @@ const SIZE_LABELS = [t("Small"), t("Medium"), t("Large")];
 // lasso, the Text tool, a hand, More (⋯) and close, Undo / Redo last.
 // Tapping the armed tool again opens its options row — for a preset three
 // captioned sub-rows, Style (a pen's Style picker — Pen, Ballpoint, Brush,
-// Pencil, ink/InkStylePicker.jsx — or a highlighter's Straight trio, then
+// Pencil, Calligraphy, ink/InkStylePicker.jsx — or a highlighter's Straight trio, then
 // the Line trio and the Smoothing ladder), Color (palette + custom) and Width
 // (eight dots, duplicate, remove and the Tool menu: move, hide, hidden
 // tools, reset); whole / partial + size for the eraser; freeform / box for
@@ -47,7 +48,7 @@ const SIZE_LABELS = [t("Small"), t("Medium"), t("Large")];
 // (the Text tool armed, a box selected or edited; App routes Ctrl+Z the
 // same way). onStatus(text, action?) is App's setStatus; cmdCtx and
 // bindings feed the More menu's command rows (app/CommandMenuItem.jsx);
-// onOpenSettings(pane, section) opens Settings.
+// onOpenSettings() opens Settings at its Handwriting section.
 // A preset's row also carries its Smoothing ladder (`stabilize` 0–4,
 // ink/stabilizer.js) and a highlighter's Straight trio (`straight`: hold /
 // always / off, ink/finishStroke.js). The eraser's row carries, after the
@@ -149,17 +150,25 @@ export function moveTool(tools, id, to) {
   const at = j >= restVisible.length ? rest.length : rest.indexOf(restVisible[j]);
   return [...rest.slice(0, at), item, ...rest.slice(at)];
 }
+// The pill after a move: "Blue pen is now key 3.", or "Blue pen moved."
+// past the digit keys.
+function movedStatus(tools, id) {
+  const name = inkToolName(tools.find((x) => x.id === id));
+  const n = visibleTools(tools).findIndex((x) => x.id === id) + 1;
+  return n <= 9 ? t("{name} is now key {n}.", { name, n }) : t("{name} moved.", { name });
+}
 
 // The handwriting strip's reorder-by-drag (docs/dev/handwriting.md
 // "Reorder by dragging"): a mouse past DRAG_PX, or a finger or pen held
-// HOLD_MS, takes the pointer (setPointerCapture) and rides a ghost of the
-// preset along the row; `to` is the visible slot under the pointer, drawn
-// as a 2 px bar. The release inside the strip writes the order and
-// swallows the click the button would get; outside, or Escape, leaves it.
+// HOLD_MS (shared/ui/press.js's long press, with its HOLD_SLOP), takes the
+// pointer (setPointerCapture) and rides a ghost of the preset along the
+// row; `to` is the visible slot under the pointer, drawn as a 2 px bar.
+// The release inside the strip writes the order and swallows the click
+// the button would get; outside, or Escape, leaves it.
 // A hold that never moved is the button's ordinary click (a tap arms the
 // tool). Returns the preset buttons' props, the live drag for the row
 // (ghost and bar) and the dragged id.
-const DRAG_PX = 6, HOLD_MS = 500, HOLD_SLOP = 10;
+const DRAG_PX = 6;
 function usePresetDrag({ tools, rowRef, onChangeTools, onStatus }) {
   const [drag, setDrag] = useState(null);     // {id, x, y, to, bar: {left, top, height}} while live
   const press = useRef(null);                 // the press: {id, pointerId, el, x, y, timer, live, moved}
@@ -191,7 +200,7 @@ function usePresetDrag({ tools, rowRef, onChangeTools, onStatus }) {
     setDrag({ id: p.id, x: p.x, y: p.y, ...slotAt(p.x) });
   };
   useEffect(() => {
-    const escape = (e) => { if (e.key === "Escape" && press.current?.live) { e.stopPropagation(); press.current.cancelled = true; end(); } };
+    const escape = (e) => { if (e.key === "Escape" && press.current?.live) { e.stopPropagation(); end(); } };
     window.addEventListener("keydown", escape, true);
     window.addEventListener("blur", end);
     return () => { window.removeEventListener("keydown", escape, true); window.removeEventListener("blur", end); end(); };
@@ -230,9 +239,7 @@ function usePresetDrag({ tools, rowRef, onChangeTools, onStatus }) {
       const moved = moveTool(list, p.id, to);
       if (moved === list) return;
       write(moved);
-      const preset = moved.find((x) => x.id === p.id);
-      const n = visibleTools(moved).findIndex((x) => x.id === p.id) + 1;
-      say?.(n <= 9 ? t("{name} is now key {n}.", { name: inkToolName(preset), n }) : t("{name} moved.", { name: inkToolName(preset) }));
+      say?.(movedStatus(moved, p.id));
     },
     onPointerCancel: (e) => { if (press.current?.pointerId === e.pointerId) { if (press.current.live) swallowClick(); end(); } },
     onLostPointerCapture: (e) => { if (press.current?.pointerId === e.pointerId && !press.current.live) end(); },
@@ -298,7 +305,6 @@ export function MarkupToolbar({ tools, active, options, eraserMode, eraserSize, 
     return rest.length ? rest[Math.min(i, rest.length - 1)].id : null;
   };
   const remove = () => {
-    if (visible.length <= 1) return;
     const next = neighbour();
     onChangeTools(tools.filter((x) => x.id !== active));
     onPick(next);
@@ -310,7 +316,6 @@ export function MarkupToolbar({ tools, active, options, eraserMode, eraserSize, 
     return shown;
   }));
   const hide = () => {
-    if (visible.length <= 1) return;
     const id = active, name = inkToolName(preset), next = neighbour();
     onChangeTools(tools.map((x) => (x.id === id ? { ...x, hidden: true } : x)));
     onPick(next);
@@ -321,8 +326,7 @@ export function MarkupToolbar({ tools, active, options, eraserMode, eraserSize, 
     const moved = moveTool(tools, active, dir < 0 ? from - 1 : from + 2);
     if (moved === tools) return;
     onChangeTools(moved);
-    const n = visibleTools(moved).findIndex((x) => x.id === active) + 1;
-    onStatus?.(n <= 9 ? t("{name} is now key {n}.", { name: inkToolName(preset), n }) : t("{name} moved.", { name: inkToolName(preset) }));
+    onStatus?.(movedStatus(moved, active));
   };
   // Colour, width and style back to the default pen or highlighter of its kind.
   const reset = () => {
@@ -544,7 +548,7 @@ export function MarkupToolbar({ tools, active, options, eraserMode, eraserSize, 
         {onToggleZoom && !phone ? modifierRow(ZoomWindowIcon, t("Zoom window"), "Z", !!zoomOpen, onToggleZoom,
           { disabled: !zoomAvailable, title: zoomAvailable ? undefined : t("The zoom window works on PDF pages") }) : null}
         <MenuDivider />
-        <MenuItem icon={SettingsIcon} onMouseDown={keepFocus} onClick={() => { closeMenu(); onOpenSettings?.("reading", "Handwriting"); }}>
+        <MenuItem icon={SettingsIcon} onMouseDown={keepFocus} onClick={() => { closeMenu(); onOpenSettings?.(); }}>
           {t("Handwriting settings…")}
         </MenuItem>
       </ContextMenu>

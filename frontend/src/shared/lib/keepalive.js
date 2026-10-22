@@ -31,18 +31,7 @@ export const NORMAL_RESERVE = 8 * 1024;
 
 // A string's UTF-8 length, as a fetch encodes it (a lone surrogate as
 // U+FFFD, three bytes).
-function utf8Length(text) {
-  let n = 0;
-  for (let i = 0; i < text.length; i++) {
-    const c = text.charCodeAt(i);
-    if (c < 0x80) n += 1;
-    else if (c < 0x800) n += 2;
-    else if (c >= 0xd800 && c <= 0xdbff && i + 1 < text.length
-      && text.charCodeAt(i + 1) >= 0xdc00 && text.charCodeAt(i + 1) <= 0xdfff) { n += 4; i++; }
-    else n += 3;
-  }
-  return n;
-}
+const utf8Length = (text) => new TextEncoder().encode(text).length;
 
 // The bytes a fetch sends `body` as: a string's UTF-8 (a string longer than
 // `cap` is not measured: its UTF-8 is no shorter, so its length, past the
@@ -62,19 +51,19 @@ export function bodyBytes(body, cap = Infinity) {
 // What a claim stands for: the bytes of `bodies` that go with keepalive
 // when they are sent in order, each when it fits, on a page with nothing
 // else in flight. A body over the cap goes plain, so it claims nothing.
-export function keepaliveShare(bodies, cap = KEEPALIVE_CAP) {
-  let left = cap;
+export function keepaliveShare(bodies) {
+  let left = KEEPALIVE_CAP;
   for (const body of bodies) {
-    const n = bodyBytes(body, cap);
+    const n = bodyBytes(body, KEEPALIVE_CAP);
     if (n <= left) left -= n;
   }
-  return cap - left;
+  return KEEPALIVE_CAP - left;
 }
 
 // A ledger: `fetch(url, init)` is the transport (the global fetch, looked
 // up at each call, by default). → {available, fetch, registerClaim,
 // unregisterClaim, inFlight}.
-export function createKeepaliveLedger({ cap = KEEPALIVE_CAP, reserve = NORMAL_RESERVE, fetch: transport } = {}) {
+export function createKeepaliveLedger({ fetch: transport } = {}) {
   const send = transport || ((url, init) => globalThis.fetch(url, init));
   let inFlight = 0;
   const claims = new Map();   // key → fn() → bytes
@@ -106,8 +95,8 @@ export function createKeepaliveLedger({ cap = KEEPALIVE_CAP, reserve = NORMAL_RE
   // never below 0, so a request with no body (a DELETE) always fits: it
   // takes no room, and the browser never refuses it.
   function available(priority = "normal") {
-    let room = cap - inFlight;
-    if (priority !== "critical") room -= claimed() + (priority === "low" ? reserve : 0);
+    let room = KEEPALIVE_CAP - inFlight;
+    if (priority !== "critical") room -= claimed() + (priority === "low" ? NORMAL_RESERVE : 0);
     return Math.max(0, room);
   }
   // fetch(url, init) with keepalive when the body fits the priority's room,
@@ -122,9 +111,9 @@ export function createKeepaliveLedger({ cap = KEEPALIVE_CAP, reserve = NORMAL_RE
   function keepaliveFetch(url, init = {}, { priority = "normal" } = {}) {
     if (priority === "critical") memo = null;
     const { keepalive: _asked, ...plain } = init || {};
-    const bytes = bodyBytes(plain.body, cap);
+    const bytes = bodyBytes(plain.body, KEEPALIVE_CAP);
     if (bytes <= available(priority)) return counted(url, plain, bytes, priority);
-    if (priority !== "critical" || !(bytes <= cap - criticalInFlight)) return send(url, plain);
+    if (priority !== "critical" || !(bytes <= KEEPALIVE_CAP - criticalInFlight)) return send(url, plain);
     const sent = counted(url, plain, bytes, priority);
     const copy = Promise.resolve(send(url, plain));
     copy.catch(() => { /* the keepalive copy's answer stands for it */ });
@@ -179,4 +168,3 @@ const page = createKeepaliveLedger();
 export const keepaliveFetch = page.fetch;
 export const available = page.available;
 export const registerKeepaliveClaim = page.registerClaim;
-export const unregisterKeepaliveClaim = page.unregisterClaim;

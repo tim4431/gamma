@@ -870,7 +870,7 @@ def test_a_page_pushed_whole_with_a_refused_drawing_is_looked_at_again(monkeypat
     deferred the same way: the drawing goes the round after the remote
     takes it, with no other edit here."""
     from gamma import ink as inkmod
-    from gamma.routers import uploads as uploads_router
+    from gamma.routers import ink as ink_router
 
     remote, local, _ = _pair()
     page = local.page("New here, drawn on")
@@ -881,7 +881,7 @@ def test_a_page_pushed_whole_with_a_refused_drawing_is_looked_at_again(monkeypat
 
     def refuse(data):
         raise inkmod.InkVersionError("pretend the remote is older")
-    monkeypatch.setattr(uploads_router, "parse_ink", refuse)
+    monkeypatch.setattr(ink_router, "parse_ink", refuse)
     status = _sync(local)
     assert status["pages_pushed"] == 1
     assert remote.texts(page["id"])["txt"] == "words", "the page went over whole, but for the drawing"
@@ -889,7 +889,7 @@ def test_a_page_pushed_whole_with_a_refused_drawing_is_looked_at_again(monkeypat
     assert "ink_url" not in there["properties"]
     conflicts = local.client.get(f"/api/mirrors/{local.ws}/conflicts").json()["conflicts"]
     assert [(c["kind"], c["block_id"]) for c in conflicts] == [("file", "inkW")]
-    monkeypatch.setattr(uploads_router, "parse_ink", inkmod.parse_ink)
+    monkeypatch.setattr(ink_router, "parse_ink", inkmod.parse_ink)
     status = _sync(local)
     assert status["files_pushed"] == 1 and _strokes(remote, "inkW") == (ul, ["a"])
 
@@ -946,7 +946,7 @@ def test_a_drawing_the_remote_refuses_waits_in_a_conflict_row(monkeypatch):
     other changes land; the next round does not write the row twice."""
     from gamma import ink as inkmod
     from gamma.db import connect_pages_db
-    from gamma.routers import uploads as uploads_router
+    from gamma.routers import ink as ink_router
 
     remote, local, _ = _pair()
     page = remote.page("Ink refused")
@@ -960,7 +960,7 @@ def test_a_drawing_the_remote_refuses_waits_in_a_conflict_row(monkeypatch):
 
     def refuse(data):
         raise inkmod.InkVersionError("pretend the remote is older")
-    monkeypatch.setattr(uploads_router, "parse_ink", refuse)
+    monkeypatch.setattr(ink_router, "parse_ink", refuse)
     status = _sync(local)
     assert status["pages_pushed"] == 1
     assert remote.texts(page["id"])["txt"] == "after", "the page's other ops landed"
@@ -974,7 +974,7 @@ def test_a_drawing_the_remote_refuses_waits_in_a_conflict_row(monkeypatch):
     with connect_pages_db(local.ws) as conn:
         assert conn.execute("SELECT COUNT(*) FROM sync_conflicts WHERE kind = 'file'").fetchone()[0] == 1
     # the remote updated: the drawing goes with the next round
-    monkeypatch.setattr(uploads_router, "parse_ink", inkmod.parse_ink)
+    monkeypatch.setattr(ink_router, "parse_ink", inkmod.parse_ink)
     assert _strokes(local, "inkR") == (ul, ["a"]), "the drawing never left this copy"
     status = _sync(local)
     assert status["files_pushed"] == 1 and _strokes(remote, "inkR") == (ul, ["a"])

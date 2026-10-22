@@ -1,3 +1,5 @@
+import { mod } from "./ink.js";
+
 // Pointer samples stay in page units; predictions are a disposable preview.
 // A pen's sample carries its tilt as integer degrees, `a` (altitude) and
 // `z` (azimuth), when the pen reports one (penTilt); the lift keeps the
@@ -33,7 +35,7 @@ export function penTilt(event) {
   } else return null;
   const a = Math.round(altitude * 180 / Math.PI);
   if (!(a < 90)) return null;
-  return { a: Math.max(0, a), z: ((Math.round(azimuth * 180 / Math.PI) % 360) + 360) % 360 };
+  return { a: Math.max(0, a), z: mod(Math.round(azimuth * 180 / Math.PI), 360) };
 }
 // A pen's barrel roll as integer degrees 0..359, clockwise as seen
 // (PointerEvent.twist, which a pen without the sensor reports as 0; the
@@ -42,7 +44,7 @@ export function penTilt(event) {
 // stroke's first sample: it turns the stroke's nib (ink.js strokeNib).
 export function penTwist(event) {
   if (event?.pointerType && event.pointerType !== "pen") return null;
-  return Number.isFinite(event?.twist) ? ((Math.round(event.twist) % 360) + 360) % 360 : null;
+  return Number.isFinite(event?.twist) ? mod(Math.round(event.twist), 360) : null;
 }
 // tiltX / tiltY (degrees, −90..90) → altitude and azimuth (radians).
 function fromTilt(tiltX, tiltY) {

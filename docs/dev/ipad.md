@@ -159,7 +159,7 @@ pen, a brush the shell does not know as the plain Pen.
 | `brush` | `"monoline"`, `"brush"`, `"pencil"` or `"calligraphy"` on a pen; absent for the plain Pen | the brush's width law (`InkWidth`): the Pen and the Brush follow the force, the Pencil the force and the tilt, the Calligraphy pen the travel against `nib` (and a little the force), the Ballpoint is even |
 | `nib` | a calligraphy pen's angle, an integer 0..179, in degrees counterclockwise as seen (the nib's edge the vector `(cos nib, −sin nib)` in the view's y-down space): the preset's | the calligraphy widths, `w = max(0.12, s) × (0.85 + 0.3p)` per sample with `s` the sine between the travel (from the sample before to the one after) and the edge, as a round-ended ribbon `size × w` wide; the web's committed stroke draws the flat nib itself. Absent, a calligraphy pen takes 45 |
 | `nibRoll` | `true` when the preset leaves its angle to the Pencil's roll (*Lock angle* off) | the nib turned by the roll of the stroke's first sample, `(nib − r) mod 180` (`InkTool.liveNib`), the rule the page applies to the `stroke`'s samples; ignored by a shell without `pencilRoll` |
-| `pressure` | `false` when the stroke reads no pressure (*Pressure-sensitive strokes* off) | even, except a Brush, which follows its speed law, as its committed stroke does |
+| `pressure` | `false` when the stroke reads no pressure (*Pressure-sensitive strokes* off) | even, except a Brush, which follows its speed law, and a Calligraphy pen, which follows its travel against the nib, as their committed strokes do |
 | `dash` | `[on, off]` in CSS px: the preset's `DASH` lengths (`ink.js`) × size × zoom | stroked at `size` with that pattern from phase 0, round caps, constant width even under pressure |
 | `blend` | `"multiply"`, on every highlighter | multiplied onto the page (`compositingFilter`) |
 | `stabilize` | the smoothing the preset draws with, 1 to 4 (a calligraphy pen's 2 when its preset sets none) | the samples through a lazy brush of 3, 6, 10 or 16 pt (the web's radii), without prediction |
@@ -261,57 +261,57 @@ claimed.
      paste"). The shell takes the line away and keeps the touch, so palms
      stay swallowed, and at the lift sends `stroke` with no samples;
    - with *Draw and hold* on (and for a highlighter its preset's
-     straight not *Off*), a chord of at least max(24 CSS px, 18 pt), and
-     at least 250 ms from the first sample to the anchor's, `recognise`
-     runs over the samples in page points (lines only for a
+     straight not *Off*), a chord of at least max(24 CSS px, 18 pt)
+     (`shapes.js` `MIN_EXTENT_PX`, `MIN_EXTENT_PT`, the recogniser's own
+     floor), and at least 250 ms from the first sample to the anchor's,
+     `recognise` runs over the samples in page points (lines only for a
      highlighter; through the preset's smoothing, as the page's own
-     hold). A shape comes back as `{shape: {kind, params}}` in
-     viewport CSS px (`shapeToHost`); the page keeps it on the claim with
-     `n`, the samples the hold carried, `from`, the last of them, and
-     `tSnap`, the anchor's `t` + 600, and posts `haptic` `snap` at `from`;
+     hold). A shape comes back as `{shape: {kind, params}}` in viewport
+     CSS px (`shapeToHost`). The page keeps it on the claim with `n`, the
+     samples the hold carried, `from`, the last of them, and `tSnap`, the
+     anchor's `t` + 600, and posts `haptic` `snap` at `from`;
    - otherwise `{}`.
 
    On a shape the live line shows the shape instead of the trace, at the
    tool's width end to end (a committed shape has no `w`) and in the
-   preset's dash, in the selection blue for its first 34 ms. While the pen keeps moving the
-   shell refits it every frame from the snap's params (`HeldShape.refit`,
-   `shapes.js` `refitShape` without Shift: a line or an arrow takes the
-   latest sample as its end, a closed shape scales about its centre and
-   turns with it), by the rule both sides run (`ShapeHold.current`,
-   `shapes.js` `followHold`, both held to `tests/shared/inkhold.json`): a
-   sample more than 12 pt from `from` within 150 ms of `tSnap` drops the
-   shape for the rest of the stroke, and the freehand line comes back;
-   once a sample has been 6 pt from `from`, the shape follows the latest
-   one. After a shape or a cancel the stroke sends no more holds; after
-   `{}` its next still spell asks again. A reply that comes after the
-   lift changes nothing in the shell, which drew the freehand line and
-   sent it naming no hold, so the page commits that line as well, though
-   it kept the shape when it answered (and its snap tick may have
-   played).
+   preset's dash, in the selection blue for its first 34 ms. While the
+   pen keeps moving the shell refits it every frame from the snap's
+   params (`HeldShape.refit`, `shapes.js` `refitShape` without Shift): a
+   line or an arrow takes the latest sample as its end, and a closed
+   shape scales about its centre and turns with it. Both sides run one
+   rule for it (`ShapeHold.current`, `shapes.js` `followHold`, both held
+   to `tests/shared/inkhold.json`). A sample more than 12 pt from `from`
+   within 150 ms of `tSnap` drops the shape for the rest of the stroke,
+   and the freehand line comes back. Once a sample has been 6 pt from
+   `from`, the shape follows the latest one. After a shape or a cancel
+   the stroke sends no more holds; after `{}` its next still spell asks
+   again. A reply that comes after the lift changes nothing in the shell:
+   it drew the freehand line and sent it naming no hold. So the page
+   commits that line too, though it kept the shape when it answered (and
+   its snap tick may have played).
 7. **The lift.** The shell draws its line once more from the samples
    with the lift's own, without the prediction, and sends `stroke` with
    them. The layer converts them with the rect and zoom of the down
    (`hostEvent`, the tilt back to radians for `penTilt`, the roll as
-   `twist`) and applies the repeated-point rule of `appendInkSample`; a
+   `twist`) and applies the repeated-point rule of `appendInkSample`. A
    calligraphy stroke takes its `nib` from the first sample's roll
-   (`strokeNib`, unless the preset locks it), and a stroke that started
-   on the ruler's edge has its samples projected onto it, page points,
+   (`strokeNib`, unless the preset locks it). A stroke that started on
+   the ruler's edge has its samples projected onto it, in page points,
    and commits as the line between the farthest projections, through
    `finishStroke`'s hold stage ([handwriting.md](handwriting.md) "The
-   ruler"). When its claim kept a shape
-   and the `stroke` names that hold (`held`, the hold's `n`), `followHold`
-   runs over the final samples in the shell's own space and gives the
-   shape the shell last drew, or none when it was dropped, and that
-   shape goes in page points (`shapeFromHost`) to `finishStroke`'s hold
-   stage. It commits through the same
-   `commitStroke` as its own strokes: `finishStroke` decimates the
-   samples and bakes the drawn width from their pressure (`w`, the brush
-   law in `ink/finishStroke.js`), then `encodeStroke` writes the stroke
-   with `strokeChannels(style)` (`ch: "xyptw"` for a pressure pen, `az`
-   after the `t` when the samples carry tilt) and
-   `t0` the web's wall clock at the down, and `onStroke` saves it
-   ([handwriting.md](handwriting.md) "Width"). Undo, replay and saving
-   are unchanged.
+   ruler"). When its claim kept a shape and the `stroke` names that hold
+   (`held`, the hold's `n`), `followHold` runs over the final samples in
+   the shell's own space. It gives the shape the shell last drew, or none
+   when it was dropped, and that shape goes in page points
+   (`shapeFromHost`) to `finishStroke`'s hold stage. The stroke commits
+   through the same `commitStroke` as the page's own strokes.
+   `finishStroke` decimates the samples and bakes the drawn width from
+   their pressure (`w`, the brush law in `ink/finishStroke.js`). Then
+   `encodeStroke` writes the stroke with `strokeChannels(style)`
+   (`ch: "xyptw"` for a pressure pen, `az` after the `t` when the samples
+   carry tilt) and `t0` the web's wall clock at the down, and `onStroke`
+   saves it ([handwriting.md](handwriting.md) "Width"). Undo, replay and
+   saving work as for the page's own strokes.
    The live line stays until the reply, which comes after the page has
    painted the stroke, so the swap never blinks. A page that never
    answers loses the line after three seconds.
@@ -345,26 +345,26 @@ shows only in the app; [settings.md](settings.md) "Reading & editing"):
   (under `pencilPhases`). Its start arms what the choice toggles to: for
   *Eraser while held* the eraser, or, with the eraser armed already, the
   tool to go back to; for *Last tool while held* the last tool. It keeps
-  the lasso's selection aside; its end, or its
-  cancel, goes back to the tool armed before and restores what is left
-  of the selection (none when the squeeze erased it all), except after a
-  squeeze shorter than 300 ms that neither erased nor drew: then the tool
-  stays armed, as a toggle, so short squeezes take the eraser and give it
-  back. *Eraser returns to the last tool* waits while the squeeze is
-  held. A squeeze without phases (an older shell) toggles.
+  the lasso's selection aside. Its end, or its cancel, goes back to the
+  tool armed before and restores what is left of the selection (none
+  when the squeeze erased it all). A squeeze shorter than 300 ms that
+  neither erased nor drew leaves the tool armed instead, as a toggle, so
+  short squeezes take the eraser and give it back. *Eraser returns to the
+  last tool* waits while the squeeze is held. A squeeze without phases
+  (an older shell) toggles.
 
 A gesture that comes while a stroke or a claim is in progress does
 nothing, and nor does the end of a squeeze that began then; the end of a
 held squeeze is never lost. Each tool switch a gesture makes posts
 `haptic` `tool`, a pen lasso that selects posts `select` at its lift,
 and a hold that snaps posts `snap` (under `haptics`, with *Haptics* on).
-The shell plays each as a light impact (`PencilHaptics`): on iPadOS 17.5
-and later through `UIImpactFeedbackGenerator(style: .light, view:)`, at
-`at` when there is one, and a gesture's `tool` tick, which comes without
-one, where the Pencil hovered for that gesture (`PencilGestures` keeps
+The shell plays each as a light impact (`PencilHaptics`), on iPadOS 17.5
+and later through `UIImpactFeedbackGenerator(style: .light, view:)` at
+`at` when there is one. A gesture's `tool` tick comes without one and
+plays where the Pencil hovered for that gesture: `PencilGestures` keeps
 the tap's or the squeeze's `hoverPose` location, in the web view's
-points, for a second; none when the Pencil was too far off to hover):
-the system goes by the place to play a tick in an Apple Pencil Pro
+points, for a second (none when the Pencil was too far off to hover).
+The system goes by the place to play a tick in an Apple Pencil Pro
 (device check 16). Before 17.5 it is the plain light impact, which an
 iPad does not play.
 
@@ -770,32 +770,31 @@ confirm: [research/pymupdf-ios.md](../research/pymupdf-ios.md).
   draft, and the pointer's own events save nothing. The host's samples
   commit as an ink block with the right page units, pressures and times,
   six-value samples with their tilt (`xyptazwo` for a Pencil preset), and
-  a stroke with no samples saves nothing. The stand-in sends `hold`: a
+  a stroke with no samples saves nothing. The stand-in sends `hold`. A
   still line answers `shape` in CSS px and posts `haptic` `snap`, and the
   lift after a slow move commits the refit line (`xyt`, with its `shape`
-  record); a fast move right after the snap commits the freehand stroke,
-  and so does a lift whose `stroke` names no hold (it beat the answer);
-  with strokes copied, a hold that never moved answers `cancel` and opens
+  record). A fast move right after the snap commits the freehand stroke,
+  and so does a lift whose `stroke` names no hold (it beat the answer).
+  With strokes copied, a hold that never moved answers `cancel` and opens
   *Paste here*; under a stand-in without `hold` nothing answers it. A
   calligraphy preset's claim carries `brush: "calligraphy"`, its `nib`
-  and `nibRoll`; a `stroke` whose first sample rolls commits with the nib
-  turned by it, and with *Lock angle* on without; with the ruler on, a
+  and `nibRoll`. A `stroke` whose first sample rolls commits with the nib
+  turned by it, and with *Lock angle* on without. With the ruler on, a
   claim that starts by its edge carries `snap`, and the stroke commits as
-  the projected line (`xyt`, a `line` shape record). The
-  theme message matches `theme-color`. The gestures switch tools under
-  *System setting*, a double tap set to *Undo* undoes, a squeeze set to
+  the projected line (`xyt`, a `line` shape record). The theme message
+  matches `theme-color`. The gestures switch tools under *System
+  setting*, and a double tap set to *Undo* undoes. A squeeze set to
   *Eraser while held* (`squeeze` `began`, then `pencil` `ended`) arms the
-  eraser and goes back, as its cancel does, a short one stays and the
+  eraser and goes back, as its cancel does. A short one stays, and the
   next short one gives the pen back (a held one, with the eraser armed,
-  holds the pen), a squeeze in a phase the page does not know does
-  nothing, the lasso's selection comes back with the lasso, and none when
-  the squeeze erased it, a gesture during a claim
-  does nothing, and each switch posts `haptic` `tool`, a pen lasso that
-  selects `select` at its lift, none with *Haptics* off; the Apple Pencil
+  holds the pen). A squeeze in a phase the page does not know does
+  nothing. The lasso's selection comes back with the lasso, and none
+  when the squeeze erased it. A gesture during a claim does nothing. Each
+  switch posts `haptic` `tool`, and a pen lasso that selects posts
+  `select` at its lift, none with *Haptics* off. The Apple Pencil
   settings show only under the stand-in (`ink.mjs` checks a browser has
-  none). The
-  account menu's Server… row and the sign-in page's Server… link post
-  `servers`, and no install offer shows.
+  none). The account menu's Server… row and the sign-in page's Server…
+  link post `servers`, and no install offer shows.
 
 A change to the bridge (`host.js`, the ink layer's claim, App's theme,
 gesture or Server wiring, the sign-in pages, or anything under `ipad/`)
@@ -845,7 +844,7 @@ Only an iPad can show these, and none has been run yet:
    the ribbon's width and the Brush's start taper, a pencil's shade, a
    dashed line, a highlighter multiplied (`compositingFilter`, which
    Apple documents as unsupported on iOS layers: if it does not blend,
-   the highlighter shows at its opacity, as before), and a held shape
+   the highlighter shows at its plain opacity), and a held shape
    refitting under the pen.
 9. A terminated web content process: the reload and the web app's
    restoration.
@@ -876,10 +875,10 @@ Only an iPad can show these, and none has been run yet:
 17. The live line's frame time on a long Brush or Pencil stroke:
     `LiveStrokeView` builds the whole ribbon again every frame, a disc
     and a quadrilateral per kept sample, filled at once. If it drops
-    frames, the settled part goes into a finished sublayer and only the
-    tail is built again: a live width never changes once known (the live
-    Brush's start taper reads only a sample's own arc length), and the
-    Pencil's shade is the layer's one colour.
+    frames, the fix is to move the settled part into a finished sublayer
+    and build only the tail again: a live width never changes once known
+    (the live Brush's start taper reads only a sample's own arc length),
+    and the Pencil's shade is the layer's one colour.
 18. The page edits when the web view goes away with a drawing's upload
     still on its way (the app closed from the app switcher, a server
     switch, a reload): whether their POST lands, with keepalive or as
@@ -1126,7 +1125,7 @@ the panes scroll.
   through its own server ([The local server](#the-local-server)).
 - **Pencil double tap and squeeze** are not exposed to web content by
   iPadOS, and nor are the Apple Pencil Pro's haptics. Pencil hover is
-  exposed (a `pen` pointer with no buttons) and already shows the tool
+  exposed (a `pen` pointer with no buttons) and shows the tool
   footprint. The iPad app forwards the gestures and plays the haptics
   ([The pen](#the-pen)).
 

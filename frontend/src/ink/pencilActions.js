@@ -41,18 +41,25 @@ const PHASES = ["began", "ended", "cancelled"];
 // nothing.
 const SYSTEM = { switchEraser: "eraser", switchPrevious: "previous", showColorPalette: "options", showInkAttributes: "options" };
 
+// The pen a stylus writes with: the last pen armed (prefs.pen) while it is
+// on the strip, else the first preset; null for none.
+const stylusPen = (prefs) => {
+  const tools = prefs.tools || [];
+  return tools.find((x) => x.id === prefs.pen)?.id || tools[0]?.id || null;
+};
+
+// The strip's tools that are no preset; App reads the list too.
+export const RESERVED_TOOLS = ["eraser", "select", "text", "shape"];
+
 // The tool to go back to: the one armed before the current one when it is
 // still on the strip and not the current one, else the pen a stylus writes
-// with (the last pen armed, else the first preset). The gestures' Switch to
-// last tool, the eraser's return to the last tool and the Shapes tool's off
-// (App's inkBack) all pick it. The reserved tools count as on the strip.
-const RESERVED = ["eraser", "select", "text", "shape"];
+// with (stylusPen). The gestures' Switch to last tool, the eraser's return
+// to the last tool and the Shapes tool's off (App's inkBack) all pick it.
+// The reserved tools count as on the strip.
 export function backTool(prefs = {}, state = {}) {
-  const tools = prefs.tools || [];
-  const pen = tools.find((x) => x.id === prefs.pen)?.id || tools[0]?.id || null;
   const { tool = null, previous = null } = state;
-  const known = RESERVED.includes(previous) || tools.some((x) => x.id === previous);
-  return known && previous !== tool ? previous : pen;
+  const known = RESERVED_TOOLS.includes(previous) || (prefs.tools || []).some((x) => x.id === previous);
+  return known && previous !== tool ? previous : stylusPen(prefs);
 }
 
 // The choice in effect for a gesture: this browser's, or under 'system'
@@ -66,8 +73,6 @@ function choiceOf(gesture, action, prefs) {
 
 // What a choice does at once; a hold choice acts as its toggle.
 function act(choice, prefs, state) {
-  const tools = prefs.tools || [];
-  const pen = tools.find((x) => x.id === prefs.pen)?.id || tools[0]?.id || null;
   const { tool = null, options = false } = state;
   switch (choice) {
     case "eraser":
@@ -78,7 +83,7 @@ function act(choice, prefs, state) {
       return { pick: backTool(prefs, state) };
     case "options":
       // With the hand armed the Pencil writes with the stylus pen: its row.
-      return { ui: tool ? { open: true, options: options !== true } : { open: true, tool: pen, options: true } };
+      return { ui: tool ? { open: true, options: options !== true } : { open: true, tool: stylusPen(prefs), options: true } };
     case "undo":
       return { undo: true };
     default:

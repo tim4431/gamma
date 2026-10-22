@@ -56,6 +56,7 @@ There are three parts:
 | `Pencil/LiveStrokeView.swift` | The stroke being drawn, in the claim's look (a ribbon from the force, a dash, a multiplied highlighter, smoothing through the lazy brush) or as the held shape, until the web has painted it |
 | `Pencil/InkWidth.swift` | The brush table of the web's `ink/finishStroke.js`, ported: the width and opacity laws the ribbon is drawn with, held to `tests/shared/inkwidth.json` |
 | `Pencil/HeldShape.swift` | A shape from the web's answer to `hold`: its outline, its refit as the pen moves, and the rule that drops it (`ShapeHold`), held to `tests/shared/inkhold.json` |
+| `Pencil/RulerSnap.swift` | The ruler's edge a claimed stroke runs along (the claim's `snap`): every point projected onto the edge, the live line between the two outermost projections, as the web's `ink/ruler.js` commits it |
 | `Pencil/PencilGestures.swift` | The double tap and the squeeze, with its phases, forwarded with the system's preferred action; where the Pencil hovered for each, for its tick |
 | `Pencil/PencilHaptics.swift` | The web's `haptic`, played as a light impact, in an Apple Pencil Pro from iPadOS 17.5 |
 | `python/gamma_ios.py` | The server's entry on the device: output to the log, then uvicorn on `127.0.0.1` at `GAMMA_PORT` under a supervisor the app can ask to run it again |

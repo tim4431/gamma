@@ -182,6 +182,8 @@ function dependents(ops, gone) {
 //                                     its edits wait — or is back (null)
 //       onInkLive(msg)                a peer's handwriting stroke in progress
 //                                     (`ink-live`, ink/inkLive.js)
+//       onBuild(build)                the server's build, from the hello (App:
+//                                     a tab left open across an update stops drawing)
 //     onRemoteOps also gets the base the ops were applied to (`before`, what
 //     the server held before them), for the undo history's text rebase.
 //   onPeers(peers), onMe(me) — presence changes (the hook's React state)
@@ -191,10 +193,12 @@ export function createCollabSession({ clientId, api, openSocket, keepalivePost, 
   const later = timers?.set || ((fn, ms) => globalThis.setTimeout(fn, ms));
   const cancel = timers?.clear || ((id) => globalThis.clearTimeout(id));
   const o = () => opts();
-  // Batch ids: this tab's own (the server keys them by client id too).
+  // Batch ids: this tab's own (the server keys them by client id too);
+  // batchId(n) is the n-th.
   const batchPrefix = Math.random().toString(36).slice(2, 8);
   let batchCount = 0;
-  const nextBatchId = () => `${batchPrefix}${(++batchCount).toString(36)}`;
+  const batchId = (n) => `${batchPrefix}${n.toString(36)}`;
+  const nextBatchId = () => batchId(++batchCount);
 
   const st = {
     session: pageSession(),   // queued writes retain their page after navigation
@@ -759,7 +763,7 @@ export function createCollabSession({ clientId, api, openSocket, keepalivePost, 
       const path = `/pages/${encodeURIComponent(s.pageId)}/ops`;
       const batches = s.out ? [s.out] : [];
       for (let i = 0; i < s.queue.length; i += MAX_OPS) {
-        batches.push({ id: `${batchPrefix}${(++count).toString(36)}`, ops: s.queue.slice(i, i + MAX_OPS) });
+        batches.push({ id: batchId(++count), ops: s.queue.slice(i, i + MAX_OPS) });
       }
       for (const b of batches) out.push({ path, body: JSON.stringify({ client: clientId, batch: b.id, ops: b.ops }) });
     }

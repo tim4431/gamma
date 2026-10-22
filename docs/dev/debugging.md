@@ -472,13 +472,14 @@ those before adding workers.
 (staged, unstaged, untracked) against `HEAD`, or everything since the branch
 left `ref`. `RULES` in `select.mjs` maps each source path (first matching
 glob wins) to the groups that exercise it: `frontend/src/guide/**` to the
-three tour groups, `backend/gamma/ink.py` to the ink groups,
+three tour groups, `backend/gamma/ink.py` to the ink groups, and
 `frontend/src/markup/**` (the page layers and the tool strip, whose
 anchors the ink tour uses) to the ink groups (ink, ink-editing, inkShapes,
-inkZoom), pdf-touch, notebooks, triggered-guide and textbox, the chat's
-pictures of handwriting (`backend/gamma/ink_view.py`) to the groups of the AI
-modules (`ai_*.py`: the chat's, settings and inkZoom), docs, desktop,
-extension and backend tests to none, and what every scenario goes through
+inkZoom), pdf-touch, touch, notebooks, triggered-guide and textbox. The
+chat's pictures of handwriting (`backend/gamma/ink_view.py`) go to the
+groups of the AI modules (`ai_*.py`: the chat's, settings and inkZoom).
+Docs, desktop, extension and backend tests go to none, and what every
+scenario goes through
 (`src/app/`, `src/shared/`, the home library, the page's live session, the
 backend core: auth, db, blocks, ops, uploads) to all of them. A changed
 scenario file also selects every scenario that imports its helpers, and a
@@ -586,7 +587,17 @@ The scenarios live in `tests/e2e/scenarios/`:
   swipe/hold arbitration, a pen resuming through a selection, menu
   placement on a small screen, view/edit shares. Native Chromium touch/pen,
   asserting on the persisted stroke files. `--only "ink edit:"`; `--only
-  ink` runs both files.
+  ink` runs all four ink files.
+- `inkShapes.mjs`: the strip's modifiers ([handwriting.md](handwriting.md)
+  "What the user sees"). The Shapes tool's dragged rectangle stored with
+  its shape record, the ruler and a stroke begun by its edge, Stamp line,
+  Escape one layer at a time, the calligraphy pen and its nib, a shape's
+  handles and a Fill. `--group inkShapes`.
+- `inkZoom.mjs`: the zoom window (a stroke written in the panel saved at
+  page coordinates, Previous / Next / New line, the advance along the
+  line, the box dragged) and the selection menu's Transcribe, with the AI
+  stubbed: part of a group goes as `ink_selections`, a whole group as its
+  block's chip. `--group inkZoom`.
 - `textBoxes.mjs`: text boxes ([text_boxes.md](text_boxes.md)) on a PDF
   page and on a sheet in both views. It covers the Text tool's click and
   drag, typing, the stored block after a reload, the notes marker's jump,

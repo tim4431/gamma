@@ -6,13 +6,13 @@
 import { createContext, useContext } from "react";
 
 // {readOnly, ink: {tool, penTool, penOnly, pressure, eraserMode, eraserSize,
-// eraserReturn, eraserFilter, drawHold, scribble, fingerUndo, lassoMode,
-// clip, keys, hoverPreview}, text: {armed, style}, actions}. ink.tool is the
+// eraserFilter, drawHold, scribble, fingerUndo, lassoMode, clip, keys,
+// hoverPreview}, text: {armed, style}, actions}. ink.tool is the
 // armed tool and ink.penTool what a stylus writes with when nothing is
 // armed; both are null on a read-only page and while the Text tool is
-// armed. eraserReturn, drawHold and scribble are the account's flags,
-// eraserFilter 'all' | 'pen' | 'highlighter', fingerUndo 'off' | 'tap' |
-// 'double' and hoverPreview (the hover footprint in the preset's look) this
+// armed. drawHold, scribble and eraserFilter ('all' | 'pen' |
+// 'highlighter') are the account's, fingerUndo ('off' | 'tap' | 'double')
+// and hoverPreview (the hover footprint in the preset's look) this
 // browser's. ink.clip: the handwriting clipboard holds strokes (a held pen
 // or a right-click may then offer Paste here); ink.keys: {copy, cut,
 // duplicate}, the chord labels the selection menu puts in its titles (""
@@ -30,7 +30,8 @@ import { createContext, useContext } from "react";
 // arg) — style, transform, delete, duplicate, copy, cut, flip {axis},
 // split, merge, select-note, show-note, transcribe —, onMoveSelection, onPaste(page,
 // pt, {width, height}): the clipboard at a page point, onFingerScroll,
-// onUndoGesture, onHoldStatus, onInkLive(page, msg): a chunk of the
+// onUndoGesture, onHoldStatus, onInkFeatures(features): a drawing holds
+// what this build cannot show (ink.js inkFeatures), onInkLive(page, msg): a chunk of the
 // stroke in progress for the page's other peers, ink/inkLive.js,
 // onHaptic(kind, at): a held shape or a pen lasso's selection, for the
 // iPad host's haptics, onRuler(next | null): the ruler moved, turned,
@@ -46,7 +47,7 @@ export const PageToolsContext = createContext(null);
 export const usePageTools = () => useContext(PageToolsContext);
 
 // The classes a surface's container takes for the armed tool (app.css,
-// markup.css): inkArmed, inkTouchDraw when a finger draws too,
-// inkShapeArmed for the Shapes tool (a crosshair, no footprint), textArmed.
+// markup.css): inkArmed (the crosshair, the Shapes tool's too),
+// inkTouchDraw when a finger draws too, textArmed.
 export const armedClasses = ({ ink, text }) => (ink.tool ? " inkArmed" : "") + (ink.tool && !ink.penOnly ? " inkTouchDraw" : "")
-  + (ink.tool?.tool === "shape" ? " inkShapeArmed" : "") + (text.armed ? " textArmed" : "");
+  + (text.armed ? " textArmed" : "");

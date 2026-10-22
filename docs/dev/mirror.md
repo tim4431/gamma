@@ -216,18 +216,17 @@ does not hide it. When the two differ the round stops (`FormatMismatch`):
 - **A remote from before the check** names no `format`, and its rounds run
   as before. The check runs in the copy's engine, so it protects copies
   that run this release or a later one.
-- **Release T's step 40** (`ink_v2`, [migrations.md](migrations.md)) is a
-  format move of this kind: it rewrites every stroke file to `gamma-ink`
-  version 2 as a new content-addressed upload, deterministically, so a
-  pair that has run it on both sides agrees on every file's hash with
-  nothing to send ([handwriting.md](handwriting.md) "Upgrading version 1");
-  until then the pause above holds. A copy whose drawing a remote still
-  refuses (`400` on an `.ink` push, a remote of an older release the
-  format check did not reach) records one `file` conflict row for it and
-  pushes the block's other changes; the page is looked at again next round
-  (`_deferred_files`, from `_sync_page`, `_adopt_page` and `_push_whole`
-  alike) and the drawing goes once the remote takes it
-  (`sync_engine._push_files`, `_without_files`).
+- **Step 40** (`ink_v2`, [migrations.md](migrations.md)) is a format move
+  of this kind. It rewrites every stroke file to `gamma-ink` version 2 as
+  a new content-addressed upload, deterministically, so a pair that has
+  run it on both sides agrees on every file's hash with nothing to send
+  ([handwriting.md](handwriting.md) "Upgrading version 1"). Until then the
+  pause above holds. A remote of an older release that the format check
+  did not reach may still refuse a drawing (`400` on an `.ink` push). The
+  copy then records one `file` conflict row for it and pushes the block's
+  other changes (`sync_engine._push_files`, `_without_files`). From
+  `_sync_page` and `_push_whole` the page is looked at again next round
+  (`_deferred_files`), and the drawing goes once the remote takes it.
 
 ## One round, one page (`sync_engine._sync_page`)
 
