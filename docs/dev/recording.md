@@ -195,7 +195,8 @@ What a user sees of the group and sheet replays is unchanged.
   store for the live state, `useOwnReplay` for the playing one, and
   `RecordingContext` for `play` and `transcribe`), `PlayerBar.jsx` (the
   player: `useReplay`, the marks from `writingTicks`, Follow through App's
-  `showTick`, the keys), `RecordingContext.js` (`{play, transcribe,
+  `showTick`, the keys, the mode and speed menus (`useMenuTrigger`,
+  opening above the bar)), `RecordingContext.js` (`{play, transcribe,
   leadIn, covers(t0), playAt(wall)}`, what the notes rows need), and
   `recording.css` (the pill, the card, the bar, the shading classes
   `replayPending` / `replayReached` / `inkPending`, the margin glyph).

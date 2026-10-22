@@ -39,6 +39,24 @@ export function placeFloating({ width, height }, { x, y, anchorRight = false, an
   return { left, top };
 }
 
+// Gap between a button and the menu it opens.
+const MENU_GAP = 4;
+
+// Where a menu that opens from a button goes, as ContextMenu's anchor, from
+// the button's rect `r`. `side` "below" puts it 4 px under the button;
+// "above" puts its bottom edge 4 px over it. `align` "left" lines up its
+// left edge with the button's; "right" lines up the right edges. Spread the
+// result on the ContextMenu, which keeps the menu inside the window
+// (placeFloating).
+export function menuAnchor(r, { side = "below", align = "left" } = {}) {
+  return {
+    x: align === "right" ? r.right : r.left,
+    y: side === "above" ? r.top - MENU_GAP : r.bottom + MENU_GAP,
+    anchorRight: align === "right",
+    anchorBottom: side === "above",
+  };
+}
+
 // The {left, top} of the element `ref` holds, from place(element) — which
 // measures it — again whenever `deps` change, its size or the window's
 // does, and with `follow` whenever anything scrolls (an anchor that moves

@@ -11,7 +11,7 @@
 // the tool state, the selection, the stroke history and the commits.
 import React, { createContext, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal, flushSync } from "react-dom";
-import { ContextMenu, MenuItem } from "../shared/ui/Menus";
+import { ContextMenu, MenuItem, useMenuTrigger } from "../shared/ui/Menus";
 import { getStroke } from "perfect-freehand";
 import {
   ClipboardIcon, CopyIcon, DuplicateIcon, FileTextIcon, FlipHIcon, FlipVIcon, HighlightIcon, LineWidthIcon, MergeIcon, MoreIcon, NotebookPenIcon,
@@ -2582,9 +2582,8 @@ let moreOpen = false;
 function InkSelectionMenu({ surface, wrapRef, ignoreRef, box, width, strokes, canMerge, keys, onAction, onClose }) {
   const [options, setOptions] = useState(null);
   const [more, setMoreState] = useState(moreOpen);
-  // The Style row's brush menu: {x, y} under its picker while open.
-  const [styleMenu, setStyleMenu] = useState(null);
-  const styleBtnRef = useRef(null);
+  // The Style row's brush menu, under its picker (Menus.jsx useMenuTrigger).
+  const style = useMenuTrigger();
   const setMore = (on) => { moreOpen = on; setMoreState(on); };
   const palette = usePalette();
   const [x0, y0, x1, y1] = box;
@@ -2608,12 +2607,7 @@ function InkSelectionMenu({ surface, wrapRef, ignoreRef, box, width, strokes, ca
   // (undefined: they differ, so no swatch is marked, and a custom colour
   // keeps each stroke's opacity).
   const shared = (key) => (strokes.every((s) => s[key] === strokes[0]?.[key]) ? strokes[0]?.[key] : undefined);
-  const toggleOptions = (row) => { setStyleMenu(null); setOptions(options === row ? null : row); };
-  const toggleStyleMenu = (button) => {
-    styleBtnRef.current = button;
-    const r = button.getBoundingClientRect();
-    setStyleMenu((open) => (open ? null : { x: r.left, y: r.bottom + 4 }));
-  };
+  const toggleOptions = (row) => { style.close(); setOptions(options === row ? null : row); };
   return <ContextMenu {...anchor} ignoreRef={ignoreRef} onClose={onClose} className="inkEditMenu">
     <InkTooltips role="toolbar" aria-label={t("Edit handwriting")} onPointerDown={(e) => e.stopPropagation()}>
       <div className="inkEditRow">
@@ -2647,7 +2641,7 @@ function InkSelectionMenu({ surface, wrapRef, ignoreRef, box, width, strokes, ca
           onClick={() => onAction("style", { tool: kind, size })}><span className="inkSizeDot" aria-hidden="true" style={{ width: 4 + i * 2, height: 4 + i * 2, background: "currentColor" }} /></button>)}
       </div>) : null}
       {options === "style" ? <div className="inkEditOptions" aria-label={t("Selected ink style")}>
-        {pens.length ? <InkStylePicker brush={penBrush} mixed={penBrush === undefined} open={!!styleMenu} title={t("Pen style")} onOpen={toggleStyleMenu} /> : null}
+        {pens.length ? <InkStylePicker brush={penBrush} mixed={penBrush === undefined} title={t("Pen style")} trigger={style.trigger("style")} /> : null}
         <InkLineChoices value={line} onLine={(dash) => onAction("style", { dash })} />
         {closed.length ? <span className="inkFillChoices" role="group" aria-label={t("Fill")}>
           <PaintBucketIcon className="inkFillGlyph" size={14} aria-hidden="true" />
@@ -2660,8 +2654,8 @@ function InkSelectionMenu({ surface, wrapRef, ignoreRef, box, width, strokes, ca
     </InkTooltips>
     {/* The brush menu, outside the InkTooltips host (InkStylePicker.jsx); a
         menu of this menu, so a press in it does not dismiss this one. */}
-    {styleMenu && options === "style" && pens.length ? <InkStyleMenu x={styleMenu.x} y={styleMenu.y} value={penBrush ?? null} ignoreRef={styleBtnRef}
-      onPick={(brush) => onAction("style", { brush: brush === "pen" ? null : brush })} onClose={() => setStyleMenu(null)} /> : null}
+    {style.menu && options === "style" && pens.length ? <InkStyleMenu menu={style.menu} value={penBrush ?? null}
+      onPick={(brush) => onAction("style", { brush: brush === "pen" ? null : brush })} /> : null}
   </ContextMenu>;
 }
 

@@ -1,9 +1,10 @@
 // Where a floating surface goes from its measured size (shared/ui/placement.js):
 // its own side of the point, the other side of what it opens from when its own
-// has no room, and always inside the window or the band it is given.
+// has no room, and always inside the window or the band it is given; and the
+// point a button's menu opens from (menuAnchor).
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { placeFloating } from "../src/shared/ui/placement.js";
+import { menuAnchor, placeFloating } from "../src/shared/ui/placement.js";
 
 const view = { width: 1000, height: 800 };
 const menu = { width: 200, height: 120 };
@@ -45,4 +46,16 @@ test("bounds: the band a menu stays in, such as a scroller under a tool strip", 
   assert.deepEqual(placeFloating(menu, { x: 100, y: 300, anchorBottom: true, flipY: 360, bounds }, view), { left: 100, top: 180 });
   // Neither fits: clamped into the band, its top under the strip.
   assert.deepEqual(placeFloating({ width: 200, height: 400 }, { x: 100, y: 300, anchorBottom: true, flipY: 400, bounds }, view), { left: 100, top: 158 });
+});
+
+test("a menu from a button: 4 px under or over it, by the button's left or right edge", () => {
+  const button = { left: 300, right: 332, top: 400, bottom: 432 };
+  assert.deepEqual(menuAnchor(button), { x: 300, y: 436, anchorRight: false, anchorBottom: false });
+  assert.deepEqual(menuAnchor(button, { side: "above" }), { x: 300, y: 396, anchorRight: false, anchorBottom: true });
+  assert.deepEqual(menuAnchor(button, { align: "right" }), { x: 332, y: 436, anchorRight: true, anchorBottom: false });
+  // placed: the player's menu stands on its button, the strip's hangs under
+  // it, and a right-aligned one ends at the button's right edge
+  assert.deepEqual(placeFloating(menu, menuAnchor(button, { side: "above" }), view), { left: 300, top: 276 });
+  assert.deepEqual(placeFloating(menu, menuAnchor(button), view), { left: 300, top: 436 });
+  assert.deepEqual(placeFloating(menu, menuAnchor(button, { align: "right" }), view), { left: 132, top: 436 });
 });

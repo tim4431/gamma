@@ -5,12 +5,13 @@
 // and nested flyouts (SubMenuItem) live here too, so every menu gets the
 // same iconed row and the same submenu-hover behaviour for free — popover
 // menus included (the account menu hosts its flyout through MenuScope).
-import React, { createContext, useContext, useEffect, useLayoutEffect, useRef, useState } from "react";
+// A toolbar button's menu, opened on the press, is useMenuTrigger's.
+import React, { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { CheckIcon, ChevronDownIcon, ChevronRightIcon, MoreIcon } from "./Icons";
 import { useMenuAim } from "./menuAim";
-import { VIEWPORT_PAD, placeFloating, useFloatingPosition } from "./placement.js";
-import { pressAt } from "./press.js";
+import { VIEWPORT_PAD, menuAnchor, placeFloating, useFloatingPosition } from "./placement.js";
+import { pressAt, triggerPress } from "./press.js";
 import { t } from "../../shared/i18n/i18n.js";
 
 // Every ContextMenu publishes its submenu state so the rows inside it — at
@@ -234,6 +235,44 @@ function SubMenuItem({ id, icon: Icon, label, title, children, ...rest }) {
   );
 }
 
+// The menus a row of buttons opens, one at a time, each from its own button
+// (docs/dev/ui-design.md "Menus and submenus"): the recording player's mode
+// and speed menus, the tool strip's More, Tool and Style menus, and the
+// selection menu's Style menu. A menu opens on its button's press
+// (press.js triggerPress), not on the click that follows. The press takes the
+// button's tooltip away (InkTooltips), and the menu comes in the same frame.
+// A click with no press behind it (Enter, Space) toggles it too.
+// A press on the open menu's own button closes it, because that button is
+// the menu's ignoreRef. A press on another button in the row swaps the menus:
+// the open menu's outside press queues its close first, so the updater sees
+// nothing open. `side` and `align` say where the menus open from their buttons
+// (placement.js menuAnchor). Render the menu outside any InkTooltips host:
+// React bubbles a portal's events up to the host, which would raise a tooltip
+// for every row the pointer crosses.
+// Returns `kind` (the open menu's, or null), `trigger(kind)` (the props its
+// button spreads: the press, the keyboard's click, aria-haspopup and
+// aria-expanded; the button sets no onPointerDown or onClick of its own),
+// `menu` (the open menu's ContextMenu props, {x, y, anchorRight,
+// anchorBottom, ignoreRef, onClose}, the same object until the next toggle;
+// null while none is open) and `close()` (stable).
+function useMenuTrigger({ side = "below", align = "left" } = {}) {
+  const [open, setOpen] = useState(null);   // {kind, anchor}
+  const triggerRef = useRef(null);          // the open menu's button
+  const close = useCallback(() => setOpen(null), []);
+  const menu = useMemo(() => (open ? { ...open.anchor, ignoreRef: triggerRef, onClose: close } : null), [open, close]);
+  const toggle = (kind, button) => {
+    triggerRef.current = button;
+    const anchor = menuAnchor(button.getBoundingClientRect(), { side, align });
+    setOpen((cur) => (cur?.kind === kind ? null : { kind, anchor }));
+  };
+  const trigger = (kind) => ({
+    "aria-haspopup": "menu",
+    "aria-expanded": open?.kind === kind,
+    ...triggerPress((e) => toggle(kind, e.currentTarget)),
+  });
+  return { kind: open?.kind ?? null, trigger, menu, close };
+}
+
 // One dropdown story for every choice control (Codex-style): a pill trigger
 // showing the current value, opening a ContextMenu below it. The hook gives
 // the trigger props (including its ref — passed to ContextMenu as ignoreRef
@@ -339,4 +378,4 @@ function ActionMenu({ label, icon: Icon, items, disabled, iconOnly = false }) {
   );
 }
 
-export { ContextMenu, MenuScope, MenuItem, MenuButton, MenuLabel, MenuDivider, menuGroups, SubMenuItem, MenuSelect, ActionMenu };
+export { ContextMenu, useMenuTrigger, MenuScope, MenuItem, MenuButton, MenuLabel, MenuDivider, menuGroups, SubMenuItem, MenuSelect, ActionMenu };

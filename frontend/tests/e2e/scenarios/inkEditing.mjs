@@ -523,6 +523,18 @@ export async function inkEditingScenarios({ server, browser, alice, bob, makePdf
       "pressure, time and place untouched");
     await menu().waitFor();
     await until(async () => (await menu().getByRole("button", { name: "Style: Brush", exact: true }).count()) === 1, { what: "the picker names the Brush" });
+    // From the keyboard: Enter on the focused picker opens its menu, and
+    // Escape closes that menu alone (a menu of the selection menu takes
+    // Escape first), the selection menu and the focus staying.
+    const picker = menu().getByRole("button", { name: "Style: Brush", exact: true });
+    await picker.focus();
+    await page.keyboard.press("Enter");
+    await styles.getByRole("menuitemradio", { name: "Brush", exact: true }).waitFor();
+    assertEq(await picker.getAttribute("aria-expanded"), "true", "opened from the keyboard");
+    await page.keyboard.press("Escape");
+    await styles.waitFor({ state: "detached" });
+    assertEq(await menu().count(), 1, "the selection menu stays: Escape went to its Style menu");
+    assert(await picker.evaluate((el) => el === document.activeElement), "the focus stays on the picker");
     await menu().getByRole("button", { name: "Dotted", exact: true }).tap();
     await until(async () => (await stored()).strokes[0].dash === "dotted", { what: "the stroke dotted" });
     assertEq((await stored()).strokes[0].brush, "brush", "the line leaves the brush");

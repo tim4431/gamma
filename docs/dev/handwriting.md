@@ -2057,8 +2057,9 @@ reach.
   `InkStylePicker` (`ink/InkStylePicker.jsx`) when the selection holds a
   pen stroke: its button names the brush every selected pen shares, else
   "Mixed" (aria-label "Style: Mixed", title "Pen style"). Its menu,
-  `InkStyleMenu`, the same five rows, opens on the press like the
-  strip's, outside the `InkTooltips` host: a `ContextMenu` rendered inside
+  `InkStyleMenu`, the same five rows, is the selection menu's own
+  `useMenuTrigger()`, opening on the press under the picker, outside the
+  `InkTooltips` host: a `ContextMenu` rendered inside
   the selection's, so a press in it never dismisses the selection menu
   and Escape closes it first ([ui-design.md](ui-design.md#menus-and-submenus)).
   It calls `onAction("style", {brush})` with `null` | `'monoline'` |
@@ -2100,7 +2101,7 @@ reach.
   button opens belongs outside the `InkTooltips` host: React bubbles a
   portal's events to the host, so every row the pointer crossed would raise
   a tooltip. It opens on the press, not the click, so the menu takes the
-  tooltip's place in the same frame (the recording player's `PlayerBar`).
+  tooltip's place in the same frame (`useMenuTrigger`, [ui-design.md](ui-design.md#menus-and-submenus)).
   A tip goes below its button unless that is near the window's bottom;
   `above` keeps a strip's tips above, on the side its menus open.
   `InkCard` is the picture in the notes. For `markup/` the file
@@ -2684,12 +2685,13 @@ reach.
     (`.pdfInkRow`) is five groups split by `.pdfInkSep`: the presets; the
     eraser, the lasso and the Text tool; the hand; **More** and close; and
     the history buttons last, whose labels follow its `blockHistory`
-    flag. Its menus share one hoisted `menu` state `{kind, x, y, id?}`
-    (`'more'`, or `'tool'` with the preset's id) rendered as a
-    `ContextMenu` **after** the `InkTooltips` element and opened on the
-    press (`onPointerDown` for button 0, `onClick` only for a keyboard's
-    `e.detail === 0`: the recording player's `menuButton`), never through
-    `MenuButton` or `ActionMenu`, which open on the click inside the host.
+    flag. More, the Tool menu and the Style picker's menu are one
+    `useMenuTrigger()` (`'more'`, `'tool'`, `'style'`, one open at a time,
+    below their buttons; [ui-design.md](ui-design.md#menus-and-submenus)),
+    each a `ContextMenu` rendered **after** the `InkTooltips` element and
+    opened on the press, never through `MenuButton` or `ActionMenu`, which
+    open on the click inside the host. An effect closes the Tool and Style
+    menus when the preset's options row closes.
     The More button (`ctlBtn`, `MoreIcon`, aria-label and title "More
     handwriting tools", `aria-haspopup="menu"`, `aria-expanded`,
     `data-guide="ink.more"`) lists `CommandMenuItem`s for `ink.paste`
@@ -2721,11 +2723,15 @@ reach.
       and title "Pen style · Shift+[ ]", holding a `BrushPreview` glyph (a
       28 × 10 SVG stroke drawn in that brush's look), the brush's name and
       a 14 px `ChevronDownIcon`.
-    - Its `onPointerDown` opens the hoisted `menu` state as `{kind:
-      'style', id}`, rendered after the `InkTooltips` element like the
-      others: `InkStyleMenu`, a `ContextMenu` holding a `role="menu"` "Pen
-      style" of five `MenuItem`s in the order Pen · Ballpoint · Brush ·
-      Pencil · Calligraphy. Each is `role="menuitemradio"` with
+    - Its button spreads the strip's `trigger("style")` (`InkStylePicker`'s
+      `trigger` prop: the press, the keyboard's click, `aria-haspopup` and
+      `aria-expanded`; the button shows `modeActive` while its menu is
+      open). The menu, rendered after the `InkTooltips` element like the
+      others, takes the same hook's `menu` prop (its place under the
+      picker, the picker as `ignoreRef`, `onClose`): `InkStyleMenu`, a
+      `ContextMenu` holding a `role="menu"` "Pen style" of five
+      `MenuItem`s in the order Pen · Ballpoint · Brush · Pencil ·
+      Calligraphy. Each is `role="menuitemradio"` with
       `aria-checked` on the current one and the `BrushPreview` as its icon
       (the calligraphy one drawn by `nibOutline` at 45°), titled "Pen:
       width follows stylus pressure", "Ballpoint: an even line at every

@@ -6,6 +6,7 @@
 //
 //   <div {...menuPress(openPageMenu(id))}>      right-click, or a held finger
 //   <span {...doublePress(toggleFold)}>         double-click, or a double tap
+//   <button {...triggerPress(toggleMenu)}>      a press, or Enter / Space
 //
 // The browser cannot be left to it: iPadOS Safari sends no `contextmenu` for
 // a long press, and its `dblclick` for a double tap is not dependable.
@@ -83,6 +84,21 @@ export function menuPress(open) {
       hold = { press, timer, x, y, drag };
       for (const type of ["pointermove", "pointerup", "pointercancel"]) window.addEventListener(type, watchHold, true);
     },
+  };
+}
+
+// --- a menu button ---------------------------------------------------------------------
+
+// A button's menu opens on the press, as a native menu does, not on the
+// click that follows. `run(event)` is called for a press with the primary
+// button (a mouse's left button; a finger's or a pen's contact is button 0
+// too), and for a click that no press led to (`detail` 0: Enter or Space on
+// the focused button). The click after a press belongs to the press, which
+// was already answered. useMenuTrigger (Menus.jsx) is built on it.
+export function triggerPress(run) {
+  return {
+    onPointerDown(e) { if (e.button === 0) run(e); },
+    onClick(e) { if (e.detail === 0) run(e); },
   };
 }
 
