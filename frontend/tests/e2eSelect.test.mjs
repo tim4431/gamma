@@ -59,6 +59,24 @@ test("a change selects the groups that exercise it", () => {
   for (const file of ["backend/gamma/ink.py", "backend/gamma/notebook.py"]) assert.ok(pick([file]).includes("transfers"), file);
   // a comment card stands in the page's box, where the ink layer and the text boxes leave its presses alone
   for (const file of ["frontend/src/ink/InkLayer.jsx", "frontend/src/markup/TextBoxLayer.jsx"]) assert.ok(pick([file]).includes("comments"), file);
+  // the handwriting's owners in src/ink/: the ink-live socket, the build fence and the save are
+  // collab's too; what Play disarms, clears, stops or lists is the recording's; the Pencil and the
+  // strip keys are the iPad's; and each keeps every group the rest of src/ink/ selects
+  const ink = (name) => `frontend/src/ink/${name}`;
+  const inkGroups = pick([ink("ink.js")]);
+  assert.ok(!inkGroups.includes("collab") && !inkGroups.includes("recording"), "the rest of src/ink/ selects neither");
+  const owners = {
+    collab: ["inkLive.js", "useInkLive.js", "buildFence.js", "inkSaver.js", "useInkSave.js", "useInkDocument.js"],
+    recording: ["useInkStrip.js", "stripState.js", "useInkSelection.js", "useInkSurfaces.js", "useInkDocument.js"],
+    ipad: ["usePencil.js", "useStripKeys.js"],
+  };
+  for (const [id, names] of Object.entries(owners)) {
+    for (const name of names) {
+      const groups = pick([ink(name)]);
+      assert.ok(groups.includes(id), `${name} selects ${id}`);
+      for (const g of inkGroups) assert.ok(groups.includes(g), `${name} keeps ${g}`);
+    }
+  }
   // the chat's pictures of handwriting are the AI modules' groups
   assert.deepEqual(pick(["backend/gamma/ink_view.py"]).sort(), pick(["backend/gamma/ai_context.py"]).sort());
   // a scenario helper selects the scenarios importing it

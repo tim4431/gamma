@@ -254,6 +254,73 @@ export async function inkEditingScenarios({ server, browser, alice, bob, makePdf
     assertNoProblems(page);
   });
 
+  await step("ink edit: New note on a note's whole drawing, and Merge into note on a note with a caption, are refused on the pill and change nothing", async () => {
+    // A page of its own in a mouse browser: a group with no caption, alone on
+    // the page, and then a second group, with a caption, beside it.
+    const up = await alice.upload("/api/uploads", makePdf([["Refused edits"]]), "refused.pdf", "application/pdf");
+    const paper = (await alice.api(`/api/blocks/by-doc/${up.doc_id}`, { method: "POST", body: { default_title: "Refused edits", source_url: up.source_url } })).id;
+    const seed = async (id, y, caption) => {
+      const ink = { ...newInk(1, 612, 792), strokes: [encodeStroke({ id, color: "#1f1f1f", size: 2, ch: "xyt", t0: 1000,
+        samples: Array.from({ length: 13 }, (_, i) => ({ x: 80 + i * 10, y, t: i * 8 })) })] };
+      const file = await alice.api("/api/upload-ink", { method: "POST", body: ink });
+      return (await alice.api("/api/blocks", { method: "POST", body: { parent_id: paper, content: caption,
+        properties: { ink_url: file.url, pdf_position: file.pdf_position, ink_strokes: 1 } } })).id;
+    };
+    // the page's groups as stored: id, file and stroke count
+    const groups = async () => ((await alice.api(`/api/blocks/${paper}/subtree`)).block.children || [])
+      .filter((b) => b.properties?.ink_url).map((b) => `${b.id} ${b.properties.ink_url} ${b.properties.ink_strokes}`).join(" | ");
+    await seed("alone", 220, "");
+    const rctx = await alice.context(browser);
+    try {
+      const rpage = await openPage(rctx, `${server.base}/?page=${paper}&ws=${alice.ws}`);
+      const rmenu = rpage.getByRole("toolbar", { name: "Edit handwriting", exact: true });
+      // the hand, and a click on a group's one stroke: the group selected whole, the menu's second row open
+      const selectGroup = async (y) => {
+        if (!await rpage.locator(".pdfInkBar").count()) await rpage.getByRole("button", { name: "Handwriting tools", exact: true }).click();
+        await rpage.waitForSelector(".pdfInkBar");
+        await rpage.keyboard.press("v");
+        const at = await rpage.locator('[data-page="1"]').evaluate((el, y) => {
+          const rect = el.getBoundingClientRect(), k = rect.width / 612;
+          return { x: Math.round(rect.left + 140 * k), y: Math.round(rect.top + y * k) };
+        }, y);
+        // (clicked again only while no menu shows, as the shapes steps do)
+        await until(async () => {
+          if (await rmenu.count()) return true;
+          await rpage.mouse.click(at.x, at.y);
+          return rmenu.waitFor({ timeout: 2000 }).then(() => true, () => false);
+        }, { timeout: 10000, what: `the group at ${y} selected` });
+        const more = rmenu.getByRole("button", { name: "More", exact: true });
+        if (await more.getAttribute("aria-expanded") !== "true") await more.click();
+        await rmenu.getByRole("button", { name: "Cut", exact: true }).waitFor();
+      };
+      const undoInk = rpage.getByRole("button", { name: "Undo ink", exact: true });
+      await waitForPdf(rpage, 1);
+      await until(async () => await rpage.locator(paths).count() === 1, { what: "the group drawn" });
+      // the only group on the page, whole: New note (no other note to merge into) has nothing to move out
+      const alone = await groups();
+      await selectGroup(220);
+      assertEq(await rmenu.getByRole("button", { name: "Merge into note", exact: true }).count(), 0, "no other note: no Merge into note");
+      await rmenu.getByRole("button", { name: "New note", exact: true }).click();
+      await rpage.getByText("This handwriting is already a note of its own.", { exact: true }).waitFor();
+      assert(await undoInk.isDisabled(), "New note made no edit");
+      assertEq(await rpage.locator(paths).count(), 1);
+      assertEq(await groups(), alone, "the group as it was");
+      // a second group with a caption: Merge into note, offered on its whole drawing, would leave the caption's block empty
+      await seed("captioned", 300, "A caption");
+      await rpage.reload();
+      await waitForPdf(rpage, 1);
+      await until(async () => await rpage.locator(paths).count() === 2, { what: "both groups drawn" });
+      const both = await groups();
+      await selectGroup(300);
+      await rmenu.getByRole("button", { name: "Merge into note", exact: true }).click();
+      await rpage.getByText("Not merged: this note has a caption or notes under it.", { exact: true }).waitFor();
+      assert(await undoInk.isDisabled(), "Merge into note made no edit");
+      assertEq(await rpage.locator(paths).count(), 2);
+      assertEq(await groups(), both, "both groups as they were");
+      assertNoProblems(rpage);
+    } finally { await rctx.close(); }
+  });
+
   await step("ink edit: a right-click on blank page with a tool armed offers Paste here, which pastes at the point", async () => {
     await page.getByRole("button", { name: / pen · .* · key 1\b/ }).tap();
     await tapInk();
@@ -425,7 +492,7 @@ export async function inkEditingScenarios({ server, browser, alice, bob, makePdf
     assertNoProblems(page);
   });
 
-  await step("ink edit: view shares hide editing; an edit share can restyle saved ink", async () => {
+  await step("ink edit: view shares hide editing; an edit share can restyle saved ink, and its Transcribe says a shared page has no AI chat", async () => {
     await alice.api(`/api/share/${pageId}`, { method: "POST" });
     await alice.api(`/api/share-settings/${pageId}`, { method: "PUT", body: { audience: "anyone", role: "view" } });
     const { token } = await alice.api(`/api/share-settings/${pageId}`);
@@ -454,6 +521,11 @@ export async function inkEditingScenarios({ server, browser, alice, bob, makePdf
     await editMenu.getByRole("button", { name: "Color", exact: true }).tap();
     await editMenu.getByRole("button", { name: "Green", exact: true }).tap();
     await until(async () => (await stored()).strokes[0].color === "#15803d");
+    // Transcribe asks the AI chat, which a share view has not
+    const more = editMenu.getByRole("button", { name: "More", exact: true });
+    if (await more.getAttribute("aria-expanded") !== "true") await more.tap();
+    await editMenu.getByRole("button", { name: "Transcribe", exact: true }).tap();
+    await edit.getByText("Transcribing needs the AI chat, which a shared page cannot use.", { exact: true }).waitFor();
     assertNoProblems(edit);
     await editCtx.close();
   });

@@ -2,7 +2,8 @@
 // sheets, shown in the notebook view or among its notes. A new notebook
 // opens in the notebook view; it is written on with the same ink tools, a
 // click on a stroke selects it, a page is added by writing low on the last
-// one and by the button, the paper menu sets a page's paper and the page
+// one and by the button, Z says the zoom window is for PDF pages, the
+// paper menu sets a page's paper and the page
 // added after it takes that paper; the notebook view's side bar switches
 // to the notes view, a sheet's own switch back, remembered over a reload;
 // the export is a PDF of the sheets, on a touch screen two fingers
@@ -111,6 +112,14 @@ export async function notebookScenarios({ server, browser, alice, step, until, s
     await page.waitForSelector(".blockInkCard", { timeout: 5000 });
     b = await sheetBox(0);
     assert(b.width > 300, "the page fits the viewer's width");
+    assertNoProblems(page);
+  });
+
+  await step("notebook: Z with the strip open says the zoom window works on PDF pages, and opens none", async () => {
+    await page.waitForSelector(".pdfInkBar");
+    await page.keyboard.press("z");
+    await page.getByText("The zoom window works on PDF pages.", { exact: true }).waitFor();
+    assertEq(await page.locator(".inkZoomPanel").count(), 0, "no zoom window on a sheet");
     assertNoProblems(page);
   });
 

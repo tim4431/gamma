@@ -75,6 +75,10 @@ const CHAT = ["chat-navigation", "mentions", "contextual-guide", "triggered-guid
 // every group that opens a PDF in the viewer
 const PDF_VIEW = ["notes-pdf-share", "pdf-load", "pdf-touch", "ink", "ink-editing", "ink-shapes", "ink-zoom", "textbox", "collab", "comments", "files", "transfers", "touch", ...GUIDES];
 const EXPORTS = ["transfers", "files", "ink", "diagrams"];
+// what a change to the handwriting (src/ink/) can break: a text box's menu is
+// placed and labelled by the ink layer's helpers; ipad: the host claim path;
+// comments: a press with a pen or the Text tool armed leaves a margin card alone
+const INK = ["ink", "ink-editing", "ink-shapes", "ink-zoom", "pdf-touch", "triggered-guide", "notebooks", "textbox", "touch", "ipad", "comments"];
 
 // [glob, groups], first match wins. `**` spans folders, `*` stays in one.
 // ALL is for what every scenario goes through (the app shell, shared UI,
@@ -97,9 +101,21 @@ export const RULES = [
   ["frontend/src/app/**", ALL],
   ["frontend/src/main.jsx", ALL],
   ["frontend/src/guide/**", GUIDES],
-  // (a text box's menu is placed and labelled by the ink layer's helpers;
-  // comments: a press with a pen or the Text tool armed leaves a margin card alone)
-  ["frontend/src/ink/**", ["ink", "ink-editing", "ink-shapes", "ink-zoom", "pdf-touch", "triggered-guide", "notebooks", "textbox", "touch", "ipad", "comments"]], // ipad: the host claim path
+  // the handwriting state App composes (docs/dev/handwriting.md "Client"): a
+  // file on collab's paths (the ink-live socket, the build fence, the save)
+  // or on the player's (Play disarms the strip, clears the lasso, stops a
+  // group's replay, lists the page's ink groups) selects that group too
+  ["frontend/src/ink/inkLive.js", [...INK, "collab"]], // collab.mjs holds the ink-live steps
+  ["frontend/src/ink/useInkLive.js", [...INK, "collab"]],
+  ["frontend/src/ink/buildFence.js", [...INK, "collab"]], // the socket hello's build
+  ["frontend/src/ink/inkSaver.js", [...INK, "collab"]], // the save marks live strokes saved (collab's drop step)
+  ["frontend/src/ink/useInkSave.js", [...INK, "collab"]],
+  ["frontend/src/ink/useInkDocument.js", [...INK, "collab", "recording"]], // applyInk's live drop, a group's replay stop
+  ["frontend/src/ink/useInkStrip.js", [...INK, "recording"]], // Play disarms through it
+  ["frontend/src/ink/stripState.js", [...INK, "recording"]],
+  ["frontend/src/ink/useInkSelection.js", [...INK, "recording"]], // Play clears the lasso through it
+  ["frontend/src/ink/useInkSurfaces.js", [...INK, "recording"]], // the player's ink groups
+  ["frontend/src/ink/**", INK],
   // what a page surface carries (ink and text boxes) and the tool strip, whose anchors the ink tour uses
   ["frontend/src/markup/**", ["ink", "ink-editing", "ink-shapes", "ink-zoom", "pdf-touch", "triggered-guide", "notebooks", "textbox", "touch", "comments"]],
   ["frontend/src/notebook/**", ["notebooks", "textbox", "touch"]],

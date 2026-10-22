@@ -6,8 +6,9 @@
 // closed where they began), the keys of a stroke's ink-live chunks, a Brush
 // preset's held line at constant width
 // (in the Markdown export's SVG too), a group's Transcribe with AI, the draft
-// journal bringing back what a crashed tab never saved, and a browser with pens
-// of its own asked once whether to keep them over the account's. /Ink in the
+// journal bringing back what a crashed tab never saved, a browser with pens
+// of its own asked once whether to keep them over the account's, and the
+// build fence stopping a page the server was updated under. /Ink in the
 // annotated PDF is backend/tests/test_ink.py; the chat's view_ink is
 // test_ai_tools_ink.py.
 import { PYTHON, assertOpensInPlace, fakeAiModels, until } from "../harness.mjs";
@@ -584,9 +585,11 @@ export async function inkScenarios({ server, browser, alice, makePdf, step, unti
     assertNoProblems(page);
   });
 
-  await step("ink: [ and ] step the armed preset's width with a pill; E held across an erasing pass returns to the tool before it, a lasso selection with it", async () => {
+  await step("ink: [ and ] step the armed preset's width with a pill, ] at the widest saying the same width again without a write; E held across an erasing pass returns to the tool before it, a lasso selection with it", async () => {
     const armed = () => page.locator(".pdfInkBar .inkToolBtn.modeActive");
     const pillText = async () => (await page.locator(".statusPill .pillText").textContent()) || "";
+    // what the pill says, "" with none up (never waiting for one)
+    const shown = async () => (await page.locator(".statusPill .pillText").allTextContents()).join(" | ");
     await page.keyboard.press("1");
     const [first, width] = (await armed().getAttribute("aria-label")).split(" · ");
     assertEq(width, "2 pt", "the first default pen");
@@ -598,6 +601,37 @@ export async function inkScenarios({ server, browser, alice, makePdf, step, unti
     await page.keyboard.press("BracketRight");
     await until(async () => (await pillText()).includes(`${first} · 2.8 pt.`), { what: "the width pill" });
     assert((await armed().getAttribute("aria-label")).includes(" · 2.8 pt · "), "the preset is thicker, options row closed or not");
+    // Up the ladder to its widest, 8 pt, each step a write of the presets; one ] more raises
+    // the same pill again and leaves the preset as it is: nothing is written.
+    await page.evaluate(() => {
+      const setItem = Storage.prototype.setItem;
+      window.__presetWrites = { n: 0, setItem };
+      Storage.prototype.setItem = function (key, value) {
+        if (key === "gamma-ink-tools") window.__presetWrites.n += 1;
+        return setItem.call(this, key, value);
+      };
+    });
+    const presetWrites = () => page.evaluate(() => window.__presetWrites.n);
+    try {
+      for (const size of [4, 5.6, 8]) {
+        await page.keyboard.press("BracketRight");
+        await until(async () => (await shown()).includes(`${first} · ${size} pt.`), { what: `the ${size} pt pill` });
+      }
+      await until(async () => !(await shown()).includes(`${first} · 8 pt.`), { what: "the 8 pt pill gone" });
+      const writes = await presetWrites();
+      assert(writes >= 3, `each step up wrote the presets (${writes})`);
+      await page.keyboard.press("BracketRight");
+      await until(async () => (await shown()).includes(`${first} · 8 pt.`), { what: "the 8 pt pill again" });
+      await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+      assertEq(await presetWrites(), writes, "] at the widest writes no preset");
+      assert((await armed().getAttribute("aria-label")).includes(" · 8 pt · "), "the preset stays at 8 pt");
+    } finally {
+      await page.evaluate(() => { if (window.__presetWrites) Storage.prototype.setItem = window.__presetWrites.setItem; });
+    }
+    for (const size of [5.6, 4, 2.8]) {
+      await page.keyboard.press("BracketLeft");
+      await until(async () => (await shown()).includes(`${first} · ${size} pt.`), { what: `back to ${size} pt` });
+    }
     await page.keyboard.press("BracketLeft");
     await until(async () => (await pillText()).includes(`${first} · 2 pt.`), { what: "thinner again" });
     // A tap on E arms the eraser and it stays; E held while a pass is made goes back to the tool before it.
@@ -961,12 +995,16 @@ export async function inkScenarios({ server, browser, alice, makePdf, step, unti
     assertNoProblems(page);
   });
 
-  await step("ink: two tabs changing one group at once keep both changes (the save merges by stroke)", async () => {
+  await step("ink: two tabs changing one group at once keep both changes (the save merges by stroke); a change to a stroke the other tab changed meanwhile is dropped, and that tab's pill says so", async () => {
     // Tab A draws two strokes into a fresh group; tab B erases one of them
     // while A draws a third. B's save is held until A's has landed, so it
     // arrives with a base the server has moved past: the server merges
     // (ops.py merge_ink) and both tabs end with A's new stroke and without
-    // the erased one.
+    // the erased one. Then both change one stroke: B erases the third while
+    // A moves it, and B's save, held again, loses to A's move; the PUT's
+    // answer names the dropped change (ink_conflict.lost_ours) and B's pill
+    // says so (a merge of different strokes, as before, is clean and says
+    // nothing).
     await page.reload();
     await waitForPdf(page, 1);
     await page.click("button[aria-label='Handwriting tools']");
@@ -1016,6 +1054,39 @@ export async function inkScenarios({ server, browser, alice, makePdf, step, unti
       await until(async () => await page.locator(paths).count() === countA, { what: "tab A shows the merge" });
       await until(async () => await other.locator(paths).count() === countA, { what: "tab B shows the merge" });
       await other.unroute(url);
+      // One stroke changed in both tabs: B erases A's third stroke while A moves it 60 px right.
+      const strokesNow = async () => (await account.api((await account.api(`/api/blocks/${group.id}`)).properties.ink_url)).strokes;
+      const third = (await strokesNow()).reduce((a, b) => (b.pts[1] > a.pts[1] ? b : a));   // the lowest
+      const movedRight = async () => {
+        const st = (await strokesNow()).find((s) => s.id === third.id);
+        return !!st && st.pts[0] > third.pts[0] + 2000;   // over 20 pt to the right
+      };
+      let releaseAgain;
+      const heldAgain = new Promise((resolve) => { releaseAgain = resolve; });
+      let holdingAgain = false;
+      await other.route(url, async (route) => {
+        if (route.request().method() === "PUT") { holdingAgain = true; await heldAgain; }
+        await route.continue();
+      });
+      const b3 = await other.locator('[data-page="1"]').boundingBox();
+      await drawLine(other, [b3.x + 175, b3.y + 690], [b3.x + 175, b3.y + 710]); // through the third stroke
+      await until(async () => await other.locator(paths).count() === countA - 1, { what: "tab B erased the third stroke" });
+      await until(() => holdingAgain, { what: "tab B's second save held in flight" });
+      box = await page.locator('[data-page="1"]').boundingBox();
+      await page.keyboard.press("l");                                    // this browser's lasso draws a box
+      await drawLine(page, [box.x + 80, box.y + 685], [box.x + 270, box.y + 715]);
+      await page.waitForSelector('[data-page="1"] .inkSelRect', { timeout: 5000 });
+      await drawLine(page, [box.x + 175, box.y + 700], [box.x + 235, box.y + 700]);   // the selection dragged right
+      await until(movedRight, { what: "tab A's move saved first" });
+      releaseAgain();
+      await other.locator(".statusPill", { hasText: "Your change to 1 stroke was not applied: someone changed it since" }).waitFor();
+      await until(async () => (await account.api(`/api/blocks/${group.id}`)).properties.ink_strokes === 2 && await movedRight(),
+        { what: "the merge kept A's move" });
+      await until(async () => await page.locator(paths).count() === countA, { what: "tab A keeps the moved stroke" });
+      await until(async () => await other.locator(paths).count() === countA, { what: "tab B shows the moved stroke" });
+      await other.unroute(url);
+      await page.keyboard.press("Escape");                               // drops A's selection
+      await until(async () => !(await page.$('[data-page="1"] .inkSelRect')), { what: "A's selection dropped" });
       assertNoProblems(other);
     } finally { await ctx2.close(); }
     assertNoProblems(page);
@@ -1857,6 +1928,55 @@ export async function inkScenarios({ server, browser, alice, makePdf, step, unti
       // the account back on the default pens for the groups after this one
       await account.api("/api/prefs/profile", { method: "PATCH", body: { set: { inkTools: null } } }).catch(() => {});
     }
+  });
+
+  await step("ink: a page whose session names another build than the socket's hello stops drawing: a sticky pill with Reload, the strip opens with nothing armed, and a drag saves nothing", async () => {
+    // The build fence (docs/dev/handwriting.md "Two writers, one group",
+    // "Fences"): the server was updated under an open page. Here the session
+    // this browser loads names an older build than the page socket's hello.
+    const up = await account.upload("/api/uploads", makePdf([["A page after an update"]]), "fence.pdf", "application/pdf");
+    const paper = await account.api(`/api/blocks/by-doc/${up.doc_id}`, { method: "POST", body: { default_title: "Fence paper", source_url: up.source_url } });
+    const url = `${server.base}/?page=${paper.id}&ws=${account.ws}`;
+    const fctx = await account.context(browser);
+    try {
+      const fpage = await openPage(fctx, url);
+      await waitForPdf(fpage, 1);
+      // the same build: the strip arms the pen on the page
+      await fpage.click("button[aria-label='Handwriting tools']");
+      await fpage.waitForSelector(".pdfInkBar");
+      await until(async () => (await fpage.locator(".pdfViewer").getAttribute("class")).includes("inkArmed"), { what: "the pen armed on the page" });
+      await fctx.route("**/api/session", async (route) => {
+        const response = await route.fetch();
+        const json = await response.json();
+        await route.fulfill({ response, json: { ...json, build: { commit: "e2e-old", label: "e2e-old", version: "0.0.0-e2e" } } });
+      });
+      const uploads = [];
+      fpage.on("request", (r) => { if (r.url().includes("/api/upload-ink")) uploads.push(r.url()); });
+      await fpage.reload();
+      await waitForPdf(fpage, 1);
+      const pill = fpage.locator(".statusPill", { hasText: "Gamma was updated, reload to keep drawing" });
+      await pill.waitFor();
+      const raised = Date.now();
+      assertEq(await pill.getByRole("button", { name: "Reload", exact: true }).count(), 1, "the pill's Reload");
+      await fpage.click("button[aria-label='Handwriting tools']");
+      await fpage.waitForSelector(".pdfInkBar");
+      assert(!(await fpage.locator(".pdfViewer").getAttribute("class")).includes("inkArmed"), "nothing armed on the page");
+      const fbox = await fpage.locator('[data-page="1"]').boundingBox();
+      await drawLine(fpage, [fbox.x + 100, fbox.y + 300], [fbox.x + 250, fbox.y + 330]);
+      // An action pill goes at 8 s; this one stays. By 9 s a save of the drag (700 ms after it) would be on its way.
+      let left = false;
+      await until(async () => {
+        if (!(await pill.count())) left = true;
+        return Date.now() - raised >= 9000;
+      }, { timeout: 15000, what: "9 s since the pill came up" });
+      assert(!left && await pill.count(), "the pill is still up after 9 s");
+      assertEq(await fpage.locator('[data-page="1"] .inkLayer path').count(), 0, "the drag drew nothing");
+      assertEq(uploads.length, 0, "and posted no upload");
+      const groups = ((await account.api(`/api/blocks/${paper.id}/subtree`)).block.children || [])
+        .filter((b) => b.properties && "ink_url" in b.properties);
+      assertEq(groups.length, 0, "the page has no ink block");
+      assertNoProblems(fpage);
+    } finally { await fctx.close(); }
   });
 
   if (ctx) await ctx.close();
