@@ -25,7 +25,7 @@ from starlette.background import BackgroundTask
 
 from .. import bibtex as bibtex_mod
 from .. import ink as inkmod
-from .. import jobs, notebook
+from .. import comments, jobs, notebook
 from ..auth import require_user, require_ws, resolve_ws, share_scope
 from ..blocks_store import (
     BLOCK_COLUMNS, PATH_SEP, STORED_COLUMNS, TREES, assert_block_in_scope, block_to_dict,
@@ -615,8 +615,8 @@ class _ZoteroBuilder(_Builder):
 class _GammaBuilder(_Builder):
     """A scoped account backup in the ``gamma-backup-1`` layout (/api/export's
     format): a pages.db holding just the selected page subtrees verbatim
-    with their AI chats, each bucket's active conversation and its history,
-    and the folder and label blocks they are filed under (every folder a
+    with their comments and their AI chats, each bucket's active
+    conversation and its history, and the folder and label blocks they are filed under (every folder a
     page is in with the folders above it, every label it carries) — plus,
     on a folder export, the exported folder's whole subtree (empty
     subfolders too) with the folders above it and the chats of the folder
@@ -672,6 +672,8 @@ class _GammaBuilder(_Builder):
             # the pages' chats, and on a folder export its folder views'
             copy_chats(src, self.db, "bucket IN (SELECT value FROM json_each(?))",
                        [json.dumps(self.page_ids + sorted(subtree))])
+            # the threads shown on the pages; their authors' names travel with them (author_name)
+            comments.copy_rows(self.db, comments.rows_of_pages(src, self.page_ids))
         self.db.commit()
         pages_bytes = self.db.serialize()
         self.db.close()

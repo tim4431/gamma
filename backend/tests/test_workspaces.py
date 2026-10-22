@@ -374,6 +374,30 @@ def test_a_member_who_goes_takes_their_prefs_there(boss, ann, ben):
     assert boss.delete(f"/api/workspaces/{room}").status_code == 200
 
 
+def test_set_member_says_whether_it_added_and_tells_the_new_member(boss, ann, ben):
+    from gamma import workspaces
+    from gamma.db import connect_users_db
+    room = boss.post("/api/workspaces", json={"name": "Invite room", "kind": "shared", "owner": "ws_ann"}).json()["id"]
+    a, b = account_of("ws_ann"), account_of("ws_ben")
+
+    def invited():
+        with connect_users_db() as conn:
+            return conn.execute("SELECT actor, snippet FROM inbox_items WHERE kind = 'invited' AND user_id = ? "
+                                "AND workspace_id = ?", (b, room)).fetchall()
+
+    assert workspaces.set_member(room, b, "viewer", by=a) is True
+    assert invited() == [(a, "Invite room")]
+    assert workspaces.set_member(room, b, "editor", by=a) is False  # a new role: no new invitation
+    assert invited() == [(a, "Invite room")]
+    # the router's PUT goes the same way; leaving takes the items along
+    assert ann.delete(f"/api/workspaces/{room}/members/ws_ben").status_code == 200
+    assert invited() == []
+    assert ann.put(f"/api/workspaces/{room}/members/ws_ben", json={"role": "viewer"}).status_code == 200
+    assert invited() == [(a, "Invite room")]
+    assert boss.delete(f"/api/workspaces/{room}").status_code == 200
+    assert invited() == []  # the workspace's items went with it
+
+
 def test_only_personal_workspaces_count_as_usage(boss, ann, ben, lab):
     """An account's usage is its personal workspace's uploads, nothing else;
     a shared workspace has its own optional quota that admins set."""

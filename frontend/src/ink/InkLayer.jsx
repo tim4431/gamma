@@ -48,9 +48,11 @@ export function useInkVersion() {
 // Eraser radius on screen (css px) per S/M/L index.
 export const ERASER_SIZES = [5, 9, 16];
 // What a press on never starts ink, even from a stylus that writes right
-// away: the menus (portalled), the lasso's handles, and a text box's width
-// handle, its move band and its open editor (markup/TextBoxLayer.jsx).
-const NOT_INK = ".inkEditMenu, .inkTransformHandle, .textBoxWidth, .textBoxBand, .textBox.editing";
+// away: the menus (portalled), the lasso's handles, a text box's width
+// handle, its move band and its open editor (markup/TextBoxLayer.jsx), and
+// the comment cards beside a PDF page (comments/CommentMargin.jsx).
+const BESIDE_PAGE = ".commentMargin";
+const NOT_INK = `.inkEditMenu, .inkTransformHandle, .textBoxWidth, .textBoxBand, .textBox.editing, ${BESIDE_PAGE}`;
 // What takes a click above a stroke of a read-only page (whose tap shows
 // the stroke's note): the page's own clickable marks. The strokes are drawn
 // above them all, text boxes included (app.css), but take no pointer.
@@ -546,6 +548,8 @@ export function InkLayer({ pageNumber, wrapRef, width, height, blocks, tool, pen
     const onTouch = (e) => {
       const L = live.current;
       if (!L.width || !(L.tool || L.penTool)) return;
+      // a Pencil on a comment card scrolls and presses it, as a finger does
+      if (!drawing && e.target.closest?.(BESIDE_PAGE)) return;
       const pencil = Array.from(e.changedTouches).some((t) =>
         t.touchType === "stylus" || (!t.touchType && drawing?.pointerType === "pen"));
       // While the pen is down, direct contacts are palms, not pan/pinch.

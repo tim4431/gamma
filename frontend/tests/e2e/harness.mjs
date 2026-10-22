@@ -23,6 +23,23 @@ export const PYTHON = process.env.GAMMA_E2E_PYTHON || (process.platform === "win
 
 export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// Node's fetch keeps a connection open for the next request, and the backend
+// (uvicorn) closes one after 5 s idle. A scenario that blocks the event loop
+// past that (server.manage() runs manage.py synchronously) sends its next
+// request down a socket the server has closed before Node has seen the
+// close; on Linux that fails as "fetch failed" (other side closed), as the
+// inbox group's first login did in CI. Such a request never reached the app:
+// the suite's fetch, the scenarios' too, sends it again on a new connection.
+const STALE_SOCKET = new Set(["UND_ERR_SOCKET", "ECONNRESET", "EPIPE"]);
+const nodeFetch = globalThis.fetch;
+globalThis.fetch = async (url, init) => {
+  for (let attempt = 1; ; attempt++) {
+    try { return await nodeFetch(url, init); } catch (e) {
+      if (attempt === 3 || !STALE_SOCKET.has(e?.cause?.code)) throw e;
+    }
+  }
+};
+
 export const flags = {
   keep: process.argv.includes("--keep"),
   headed: process.argv.includes("--headed"),

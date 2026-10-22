@@ -756,8 +756,9 @@ def create_page(conn, title: str, props: dict | None = None, *, actor: str,
     (``free_position``); ``block_id`` reuses an id (a page brought back) — its
     row of the change log turns live again, and a copy of it in
     Recently deleted gives way, as it would to a hard delete and a
-    re-create (a mirror bringing the page back with its own tree; files
-    only that copy held are left to upload_gc's ``reconcile`` pass).
+    re-create (a mirror bringing the page back with its own tree; its
+    comments go with it; files only that copy held are left to upload_gc's
+    ``reconcile`` pass).
     ``properties.folders`` / ``labels`` are kept when they are lists of
     ids (``filing_ids``), else dropped, and a ``source_url`` that is the
     ``doc_id``'s stored copy is not stored (``page_attachment`` derives it).
@@ -778,7 +779,11 @@ def create_page(conn, title: str, props: dict | None = None, *, actor: str,
         del props["source_url"]
     if conn.execute("SELECT 1 FROM unified_blocks WHERE id = ? AND parent_id = ?",
                     (block_id, TRASH)).fetchone():
+        from . import comments  # local: comments imports this module
+
+        gone = [r[0] for r in fetch_subtree(conn, block_id)]
         delete_subtree(conn, block_id)
+        comments.purge(conn, block_id, gone)  # that copy's threads go with its blocks
         conn.execute("DELETE FROM page_ops WHERE page_id = ?", (block_id,))
     new_pos = free_position(conn, "root", position or None, block_id)
     conn.execute(

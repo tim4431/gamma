@@ -1,6 +1,6 @@
 // The [[ link picker's popup: anchored at the caret like the "/" menu, pages
 // then blocks under their section titles, the typed text marked as in
-// Search and Quick Open (MarkedText), and a key-hint footer. editor/BlockTree.jsx owns the trigger, the lists
+// Search and Quick Open (MarkedText), and a key-hint footer. useRefPicker.js owns the trigger, the lists
 // (editor/refLists.js) and the keys; `rows` are
 // {kind: "page" | "block", id, title, meta, isPdf}. `partial`: the block
 // search stopped at the server's time budget, so the footer asks for more

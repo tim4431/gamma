@@ -75,6 +75,7 @@ READ_ONLY_MESSAGE = ("This server is read-only: its plan has lapsed. You can sti
 # person leaves with their data through (the downloads themselves are
 # GETs: page and folder exports, workspace backups, server snapshots), the
 # file chips' page lookup (a read sent as a POST), marking notices seen and
+# Inbox items read or archived (the account's own bookkeeping), and
 # the admin's Sync now, by which a paid-up server comes back. An entry
 # ending in "/" is a prefix, any other the whole path.
 READ_ONLY_ALLOWED = (
@@ -85,6 +86,7 @@ READ_ONLY_ALLOWED = (
     "/api/jobs/workspace-export",
     "/api/pages/by-docs",
     "/api/notices/",
+    "/api/inbox/",
     "/api/admin/hosted/sync",
 )
 WRITE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})

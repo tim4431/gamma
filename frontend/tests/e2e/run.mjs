@@ -39,6 +39,8 @@ import { mcpScenarios } from "./scenarios/mcp.mjs";
 import { mirrorScenarios } from "./scenarios/mirror.mjs";
 import { mentionScenarios } from "./scenarios/mentions.mjs";
 import { noteMentionScenarios } from "./scenarios/noteMentions.mjs";
+import { commentScenarios } from "./scenarios/comments.mjs";
+import { inboxScenarios } from "./scenarios/inbox.mjs";
 import { chatNavigationScenarios } from "./scenarios/chatNavigation.mjs";
 import { transferScenarios } from "./scenarios/transfers.mjs";
 import { inkScenarios } from "./scenarios/ink.mjs";
@@ -83,6 +85,8 @@ const RUNNERS = {
   "chat-navigation": chatNavigationScenarios,
   "mentions": mentionScenarios,
   "note-mentions": noteMentionScenarios,
+  "comments": commentScenarios,
+  "inbox": inboxScenarios,
   "collab": collabScenarios,
   "mirror": mirrorScenarios,
   "transfers": transferScenarios,
@@ -188,7 +192,10 @@ async function sequential(ids) {
     console.log(`  ${env.server.base}  data: ${env.server.dataDir}`);
     for (const id of ids) await RUNNERS[id](env);
   } catch (e) {
-    if (!results.length || results[results.length - 1].ok) console.log(`\nsetup failed: ${e.stack || e}`);
+    if (!results.length || results[results.length - 1].ok) {
+      console.log(`\nsetup failed: ${e.stack || e}`);
+      results.push({ name: "aborted outside a step (the groups after it did not run)", ok: false });
+    }
   } finally {
     await stopEnv(env);
   }
@@ -221,6 +228,8 @@ async function parallel(ids, jobs) {
         return child.send({ done: true });
       }
       all.push(...m.results);
+      // a group that threw outside its steps ran none of the rest: a failure
+      if (m.error) all.push({ name: `${m.group} (group aborted)`, ok: false });
       const bad = m.results.some((r) => !r.ok) || m.error;
       if (bad && !flags.continueOnFail) stopping = true;
       if (m.output.length || m.error) {
@@ -268,7 +277,8 @@ async function worker() {
       await run(env);
     } catch (e) {
       // A failed step already printed itself; anything else is the group's own setup.
-      if (results.length === before || results[results.length - 1].ok) error = String(e.stack || e);
+      // (with its cause: a "fetch failed" says why only there)
+      if (results.length === before || results[results.length - 1].ok) error = `${e.stack || e}${e?.cause ? `\n    cause: ${e.cause.code || ""} ${e.cause.message || e.cause}` : ""}`;
     } finally {
       console.log = log;
     }

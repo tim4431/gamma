@@ -1,7 +1,9 @@
 # LaTeX editing
 
-These aids apply inside `$...$` and `$$...$$` in notes and editable embedded
-notes. Ordinary prose and fenced code retain their usual typing behavior.
+These aids apply inside `$...$` and `$$...$$` in notes, editable embedded
+notes and a comment's field ([comments.md](comments.md) "The composer"),
+which share `editor/useMathUi.js`. Ordinary prose and fenced code retain
+their usual typing behavior.
 
 `BlockCmEditor.jsx` auto-pairs `$`: the first press inserts `$|$` (the bar is
 the caret), and a second press inside that freshly created pair makes `$$|$$`.
@@ -108,6 +110,16 @@ insertion, the math span under the caret and Tab navigation;
 components with their placement (`useCaretAnchored`, also used by the "/"
 menu). `editor/BlockTree.jsx` computes the preview's docked anchor from the
 editor's box and the span's first/last lines.
+
+KaTeX's fonts (`katex.min.css`, imported by `shared/styles/app.css`) use
+`font-display: block`: a glyph stays invisible until its face has loaded,
+and the browser fetches each face only when a formula first needs it, so the
+first formula in a view (a comment's thread, the preview) would appear piece
+by piece as its faces arrive. `shared/lib/katexFonts.js` asks for the faces
+most formulas use (Main in three styles, Math italic, Size1 to Size4, AMS)
+once, at startup (`main.jsx`, as soon as the styles are in), so they load
+beside the app's own code and a formula shown the moment its page has
+drawn still draws whole.
 
 Validation (from `frontend`):
 

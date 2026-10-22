@@ -24,6 +24,7 @@ One module per API area. Mounted under `/api` in `gamma/app.py`.
 | `ai_handoffs.py` | `/api/ai/handoffs/{id}*`         | the chat's fetch handoffs (gamma/fetch_handoff.py): a PDF the user's browser fetches for the chat, from the card or the Gamma Connector |
 | `chats.py`    | `/api/chats/*`, `/api/chat-history*` | the AI chats per bucket (a page, a folder, `home`) and their history (workspace data) |
 | `collab.py`   | `/api/pages/{id}/ops`, `/api/ws/page/{id}` | the op write path + the page websocket (pages, and the `folders` / `labels` trees) |
+| `comments.py` | `/api/pages/{id}/comments`, `/api/comments/{id}*` | comment threads on a page's blocks (gamma/comments.py): list, write, edit, delete, resolve; any member or a signed-in share visitor (`auth.require_commenter`) |
 | `sync.py`     | `/api/sync/whoami`, `/sync/changes`, `/sync/folders*` | the workspace change feed, for anything that keeps a copy in step (a desktop mirror), and the folder manifest and notes files the gamma-sync client reads (`gamma/folder_sync.py`) |
 | `mirrors.py`  | `/api/mirrors*`                     | mirrors of a workspace on another Gamma server (gamma/sync_engine.py): create, run a round, status, log, conflicts; the owner only |
 | `folder_links.py` | `/api/folder-links*`               | folders kept as directories on this computer (gamma/folder_links.py) — of the server's workspaces, or of another Gamma server read with a token of it: list, make, change, a round now, remove; the desktop app's own server only (404 elsewhere), session only, editors (a remote source's link: its account) |
@@ -31,6 +32,7 @@ One module per API area. Mounted under `/api` in `gamma/app.py`.
 | `folders.py`  | `/api/folders/{id}`, `/api/labels/{id}` (DELETE) | deleting a folder or a label: the subtree, the ids on the pages, the folder chats and shares |
 | `prefs.py`    | `/api/prefs/*`, `/api/page-snaps*`  | per-account (and per-workspace) synced prefs, cover snapshots |
 | `notices.py`  | `/api/notices*`                     | the red dot's feed (gamma/notices.py) and the ack when a notice is seen |
+| `inbox.py`    | `/api/inbox*`                       | the account's Inbox (gamma/inbox.py): its items, the unread count, marks read and archived; a signed-in session only |
 | `mentions.py` | `/api/people`, `/api/reminders*`    | the note editor's @ menu (gamma/mentions.py): a workspace's people, the account's reminders and the ones it dismissed |
 | `search.py`   | `/api/search`, `/pdf-search`, `/search-reindex` | FTS5 search over notes (`block_fts`) and PDF text (`pdf_fts`; PyMuPDF, normalized via `gamma/textnorm.py`), the PDF index built by the workspace's indexing job |
 | `links.py`    | `/api/link-preview`                 | a web page's title for link chips (through the SSRF guard, cached in-process) |

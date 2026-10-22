@@ -131,7 +131,11 @@ export function folderPositions(tree, parent, before = "", moving = []) {
 export const folderPosition = (tree, parent, before = "", moving = "") => folderPositions(tree, parent, before, [moving])[0];
 
 // A stored timestamp → a Date (a bare one is UTC, as the server writes it).
-const parseStamp = (iso) => new Date(/[Zz]|[+-]\d\d:?\d\d$/.test(iso) ? iso : `${iso}Z`);
+export const parseStamp = (iso) => new Date(/[Zz]|[+-]\d\d:?\d\d$/.test(iso) ? iso : `${iso}Z`);
+
+// Now in the server's stamp shape (db.page_now: microseconds, Z), so a
+// stamp made here orders with the server's.
+export const nowStamp = () => new Date().toISOString().replace("Z", "000Z");
 
 export function formatRelativeTime(iso, now = Date.now()) {
   if (!iso) return "";

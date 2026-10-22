@@ -2,7 +2,7 @@
 // visitor may do — view or edit — and whose page it is, with the sentence
 // behind it as the hover title. On phones only the icon and the role show.
 import React from "react";
-import { PeerAvatar, nameColor } from "../collaboration/Presence";
+import { PersonAvatar } from "../collaboration/Presence";
 import { EyeIcon, PencilIcon } from "../shared/ui/Icons";
 import { t } from "../shared/i18n/i18n.js";
 
@@ -26,7 +26,7 @@ export function ShareAccessPill({ info, folder = false }) {
       {owner ? (
         <span className="shareAccessOwner">
           {t(" · shared by {owner}", {
-            owner: <><PeerAvatar peer={{ name: owner, color: nameColor(owner), anchor: 0 }} title={owner} />{owner}</>,
+            owner: <><PersonAvatar name={owner} title={owner} />{owner}</>,
           })}
         </span>
       ) : null}
