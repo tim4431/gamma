@@ -801,8 +801,9 @@ state in App instead of the tree.
 
 A closing tab's last requests go with `fetch` `keepalive`, which outlives
 the page. Browsers carry at most 64 KiB of keepalive request bodies in
-flight per page, `sendBeacon`'s included (the app sends none), and
-refuse a keepalive fetch past that (a network error: nothing is sent).
+flight per page, `sendBeacon`'s included in Chromium and WebKit (the app
+sends none), and refuse a keepalive fetch past that (a network error:
+nothing is sent).
 So every keepalive request of the page goes through one
 ledger, `shared/lib/keepalive.js`. It counts each request's body bytes
 from the moment it starts until its answer's body is in or it fails, and
@@ -870,8 +871,9 @@ body whose length is not known before it goes counts as too long) fits
 the priority's room. Otherwise it sends a plain fetch, which a closing
 page may cut off but the browser never refuses. `available(priority)` is
 the room, for a planner (`ink/inkFlush.js`), never below 0: a request
-with no body (a `DELETE`) always goes with keepalive, since it takes none
-and the browser never refuses it. `apiJson(url, init, {keepalive:
+with no body (a `DELETE`) always goes with keepalive, since it takes
+none. Chromium and Firefox refuse one only past 256 keepalive requests in
+flight, far more than the app sends. `apiJson(url, init, {keepalive:
 priority})` sends through the ledger. The fetch's promise settles with
 the answer's headers, a moment before the browser stops counting the
 request, so the ledger reads a copy of the answer to its end
