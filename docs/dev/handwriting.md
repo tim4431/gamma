@@ -21,7 +21,9 @@ app ([ipad.md](ipad.md)). Typed text on a page is
   `ink/inkInput.js`, and the owners of App's handwriting state,
   `ink/buildFence.js`, `ink/useInkStrip.js`, `ink/useInkLive.js`,
   `ink/useInkSave.js`, `ink/useInkSurfaces.js`,
-  `ink/useInkDocument.js` and `ink/useInkStrokes.js`. The tool
+  `ink/useInkDocument.js`, `ink/useInkStrokes.js`,
+  `ink/useInkSelection.js`, `ink/useInkRuler.js` and
+  `ink/useInkZoom.js`. The tool
   strip and the page plumbing it shares with text boxes are in
   `markup/MarkupToolbar.jsx`, `markup/MarkupLayers.jsx` and
   `markup/PageTools.jsx`.
@@ -1627,7 +1629,7 @@ reach.
     after every other edit.
     `reshapeInk(ink, id, params) → ink` is it on the group's stroke of
     that id (the same group when it has no such stroke with a shape), what
-    App's `reshape` action applies.
+    the selection's `reshape` action applies (`ink/useInkSelection.js`).
   - `snapEnd(from, to)`: the Shift 15° end snap that `refitShape`,
     `dragHandle` and `shapeTool.js` `toolShape` share.
 - `ink/shapeTool.js` (pure; `tests/shared/inkshapes.json` `tool`, whose
@@ -1681,8 +1683,8 @@ reach.
   t 0, encoded); and `hostSnap(rail, angle, {left, top, k})`, the claim's
   `snap` in viewport css px.
 - `ink/zoomWindow.js` (pure; `frontend/tests/zoomWindow.test.mjs`): the
-  zoom window's rules over App's `inkZoom` (`{page, x, y, w, h, mag,
-  line, x0}`: the PDF page's number, the window's top-left, width and
+  zoom window's rules over `useInkZoom`'s `inkZoom` (`{page, x, y, w, h,
+  mag, line, x0}`: the PDF page's number, the window's top-left, width and
   height in page points, the magnification in css px per pt in the panel,
   2 to 4, the line height in points and where the line began, `x0`) and
   the page's `{width, height}` in points. `ZOOM_MAGS` ([2, 3, 4]),
@@ -2094,7 +2096,7 @@ reach.
   Duplicate take their title's chord from `ink.keys` on the context
   (`"Copy · Ctrl+C"`; the label alone when unbound). `usePalette` is
   called before the early return, so the hooks' order never changes. The
-  buttons dispatch `onAction(page, kind, arg)` with `copy`, `cut`, `flip`
+  buttons dispatch `onAction(kind, value)` with `copy`, `cut`, `flip`
   `{axis: 'h' | 'v'}`, `split`, `merge`, `transcribe` and, from the
   shape handles, `reshape` `{id, params}`, beside the other kinds.
   A text box's menu is placed the same way. `InkTransformHandles` are the resize/rotate
@@ -2396,7 +2398,7 @@ reach.
     "Arrow tip", "Corner {n}", "Ellipse length" / "Ellipse width"; title
     "Drag to reshape; arrow keys move it") at the params' points, through
     the live preview's transform. A drag previews `reshapeStroke(stroke,
-    dragHandle(…))` and the release calls `onAction(page, "reshape", {id,
+    dragHandle(…))` and the release calls `onAction("reshape", {id,
     params})`; the arrow keys move a focused one 1 pt (Shift 10 pt), each
     press one commit. The handles are `InkShapeHandles`, which
     `InkTransformHandles` renders beside its two. Each is drawn as a small
@@ -2438,7 +2440,7 @@ reach.
     the capture phase, before the page's layers (a text box's Text tool
     included) and the viewer see it. A drag draws the box where the
     window would go (`preview`, by `zoomWindow.js` `moveWindow` and
-    `setMag`, App's own rules), at most once a frame. At the release a
+    `setMag`, `useInkZoom`'s rules), at most once a frame. At the release a
     drag of the band calls `onZoom(page, {x, y})`, one of the corner
     `onZoom(page, {mag})` (`magForWidth`: `w × mag` over the new width,
     held to 2..4). The window is the page tools' for every page, so moving
@@ -2616,13 +2618,13 @@ reach.
   another layer has registered the surface since. `surfaceUnits(surface,
   px)` converts with `pxToUnits(px, css, width)`, a scale of 1 when
   nothing is measured. `duplicateOffset(surface)` is `DUPLICATE_PX` (12)
-  css px as `{dx, dy}`, which the menu's Duplicate and App's Ctrl+D both
-  send.
+  css px as `{dx, dy}`, which the menu's Duplicate and Ctrl+D
+  (`ink/useInkSelection.js` `duplicateInkSelection`) both send.
 - `ink/ZoomWindow.jsx`: the zoom window's panel, which `PdfViewer`
   renders docked under its scroller while the page tools' `ink.zoom` is on
   one of its document's pages (the scroller gives up the panel's height:
   PdfViewer's `zoomHeight`, `onZoomHeight(px)` and `onZoomChange(update)`
-  props, App's `inkZoomHeight` and `changeInkZoom`).
+  props, App's `inkZoomHeight` and `useInkZoom`'s `changeInkZoom`).
   - Props: `zoom`, `size` (the page's `{width, height}` in points), `page`
     (the pdf.js page, null until it loads), its `marks`, `height` and
     `onHeight(px)`, `onChange(update)` (an update of the window,
@@ -2631,8 +2633,8 @@ reach.
     `annotationMode`, `isCancel` and `dark` (its flipped page colours).
   - `.inkZoomPanel` (`role="region"`, aria-label "Zoom window",
     `data-guide="ink.zoom"`, `data-page`, `data-mag`, the surface's
-    `armedClasses`; App closes it under the phone layout) holds the grip,
-    the bar and the view.
+    `armedClasses`; `useInkZoom` closes it under the phone layout) holds
+    the grip, the bar and the view.
   - The grip `.inkZoomGrip`: `role="separator"`,
     `aria-orientation="horizontal"`, aria-label "Zoom window height",
     `aria-valuenow` in css px, 160 to 320; a drag or ↑ / ↓ by 10 px.
@@ -2939,6 +2941,148 @@ reach.
   - `handleHoldStatus({text, once})` (`onHoldStatus`) raises
     `undoableInkStatus(text)`, a `once` status at most once a session
     (`straightHintRef`).
+- `ink/useInkSelection.js`: the lasso selection and the handwriting
+  clipboard, `useInkSelection({focusedBlockId, readOnly, inkUi,
+  blocksRef, inkOf, applyInk, flushInk, handleInkStrokes, pickInkTool,
+  revealInkStrip, inkBySurface, pasteTarget, onBoxDeselect, showInNotes,
+  transcribe, setStatus}) → {inkSelection, inkClip, clearInkSelection,
+  restoreInkSelection, handleInkSelect, handleInkMoveSelection,
+  deleteInkSelection, selectionStill, handleInkAction, copyInkSelection,
+  pasteInk, pasteAtCentre, duplicateInkSelection, selectAllInk}`, which
+  App calls after the strokes.
+  - The lasso selection (`inkSelection`, `{page, items: [{id, ids}]}`).
+    `handleInkSelect(page, items)` (the layers' `onSelect`) sets it and,
+    when it holds strokes, shows the strip with its options row closed,
+    lets go of a selected text box (`onBoxDeselect()`) and emits
+    `ink.selected`. The selection belongs to the lasso: arming another
+    tool drops it, and so does leaving the page. `clearInkSelection()`
+    and `restoreInkSelection(selection)`, stable for App's life, are its
+    commands for App and the other owners (an undo, a selected box, Play,
+    Esc; the end of a held E or squeeze). `selectionStill(selection)` is
+    a selection kept aside as it stands now, without the strokes erased
+    meanwhile, or null when none is left.
+  - Each edit of the selection is one `applyInk` across its groups
+    (`editInkSelection(edit, label)`, `edit(ink, ids) → ink`): the
+    layers' `onMoveSelection` (`handleInkMoveSelection`, "ink move")
+    and Delete (`deleteInkSelection`, "ink deletion", which lets go of
+    the selection too).
+  - **The handwriting clipboard** is `inkClipRef`, `{type: "gamma/ink",
+    version: 2, space, box, strokes}`: the file's `space`, the selection's
+    `inkBounds` box `{x1, y1, x2, y2}` in points and the raw stroke objects
+    as the file holds them. Copy and cut fill it and, best effort, write a
+    `ClipboardItem` beside it (`writeInkClipboard`: `text/html` a `<div
+    data-gamma-ink>` whose text is that JSON, `text/plain` the JSON), so
+    another app or a later build can read it. A browser that refuses the
+    write loses nothing, since the ref is the one source a paste reads
+    (reading the system clipboard back is not built). The ref does not
+    survive a reload. `inkClip` says whether it holds strokes, for the
+    commands' guards and the layers' *Paste here*.
+  - `handleInkAction(action, value)` (the layers' `onAction`) handles
+    these, the selection's strokes, box and space coming from
+    `selectedInk()`:
+    - `copy`, and `cut` (copy, then `deleteInkSelection` with the entry
+      `T("ink cut")`). Both raise `setStatus(tn("Copied {n} stroke.",
+      "Copied {n} strokes.", n) | tn("Cut {n} stroke.", "Cut {n}
+      strokes.", n), {label: t("Paste"), run: pasteAtCentre})`.
+    - `flip` (`{axis}` → `flipStrokes` about the selection box's centre,
+      `T("ink flip")`, the selection kept).
+    - `split` (`T("ink split")`): the strokes leave their groups and a new
+      ink block on the same surface takes them, positioned by
+      `pdfPositionOf`. It is one entry whose changes name the old groups
+      and the new block, which `applyInk` inserts; undo removes it again.
+    - `merge` (`T("ink merge")`): the selection's whole group is appended
+      to the page's previous group (`inkBySurface`'s order, the nearest
+      before it, else the first after) through `appendStrokes`, and
+      emptied. `flushInk` deletes the empty block when it has no caption
+      or children; one that has them is refused before anything moves,
+      with "Not merged: this note has a caption or notes under it." A
+      merge that would put the target past `MAX_STROKES` is refused with
+      the byte budget's pill.
+  - `pasteInk(page, at, size)` makes the copies with `cloneStrokes(strokes,
+    dx, dy)`, `dx, dy` taking the clipboard box's top-left to `at` and then
+    clamped so the box stays inside the surface (on a surface too small
+    for it, its top-left corner stays on), hands them to
+    `handleInkStrokes`, selects them and arms the lasso. `pasteAtCentre()`
+    is it with the box centred on the surface in view (`pasteTarget()`,
+    `ink/useInkSurfaces.js`). The commands, the pill's *Paste* and the
+    More menu's row all run it; the page's `onPaste(page, pt, size)` (a
+    held pen or mouse, a right-click) runs `pasteInk` at the point.
+    `duplicateInkSelection()` (Ctrl+D) sends
+    `duplicateOffset(inkSelection.page)`, the offset the menu's Duplicate
+    sends (`ink/surfaceScale.js`); `selectAllInk()` takes the selection's
+    surface, else the one in view.
+  - The selection's `style` action: `handleInkAction("style", value)`
+    routes `value.brush` (present, `null` for the plain pen) to
+    `restyleBrush` with the entry `T("ink style change")`, `value.dash`
+    (present, `null` for solid) to `restyleStrokes` with `T("ink line
+    change")`, and a colour or a size to `restyleStrokes` with "ink color
+    change" or "ink width change"; each is one entry and goes through
+    `applyInk`'s byte budget like any edit.
+  - **Transcribe a selection** (`handleInkAction("transcribe")`,
+    `transcribeInkSelection()`), its ink half; the chat half is
+    `transcribe`'s, App's `askToTranscribe` (below). In a shared page's
+    view App passes none, and Transcribe only says "Transcribing needs
+    the AI chat, which a shared page cannot use."
+    - A selection whose strokes are whole groups flushes the page's drafts
+      first (`flushInk()`, awaited, so the stored files hold what the
+      screen shows), then hands over the groups' blocks
+      (`transcribe({blocks})`). When a group's save has not landed (its
+      draft still dirty after the flush, or its block not in the tree),
+      its strokes go as chips, as below, instead.
+    - Otherwise it makes one chip per group, `{kind: "ink", id: the
+      block, page_id: the open page, space: the group's file space,
+      strokes: the selected strokes as the draft holds them, text:
+      tn("Selected handwriting · {n} stroke", "Selected handwriting · {n}
+      strokes", n)}`, and hands them over (`transcribe({chips})`).
+- `ink/useInkRuler.js`: the ruler, `useInkRuler({focusedBlockId,
+  readOnly, inkStale, pdfHidden, notebook, inkUi, inkVisible, inkPen,
+  setInkRulerUnits, pasteTarget, openRulerRow, closeRulerRow,
+  handleInkStroke, undoableInkStatus}) → {inkRuler, toggleInkRuler,
+  hideInkRuler, clearInkRuler, inkRulerOptions, stampRulerLine,
+  onRuler}`, which App calls after the selection.
+  - `inkRuler` (`{surface, x, y, angle, length, snap}`, or null) is
+    session state, gone when the strip closes (App's `closeInkStrip()`
+    runs `clearInkRuler()`) and when the open page changes. It also goes,
+    its row with it (`hideInkRuler()`), when the viewer stops showing
+    its surface: a PDF page's when the PDF is hidden or the notebook
+    view opens, a sheet's when it closes (`inkRulerShown`).
+  - `toggleInkRuler()` shows `defaultRuler` on the surface in view with
+    its row open (`pasteTarget()`'s, across `visiblePart(page, size)`,
+    the part of its box inside its viewer and the window, in page
+    points), or hides it (`hideInkRuler()`, the ruler's row with it).
+    `inkRulerOptions({snap} | {units} | {hide})` is the row's (*Snap
+    15°* puts the angle on the grid at once). `onRuler` (the layers')
+    sets `inkRuler` (null hides it).
+  - `stampRulerLine()` draws a line along the ruler's middle between its
+    ends with the armed preset (else the stylus pen), through
+    `finishStroke`'s hold stage (a span of 0, `t0` now: `ruler.js`
+    `stampLine`) and `handleInkStroke` on the ruler's surface (the size
+    of the surface it was laid on, kept beside it). It is one entry,
+    then `undoableInkStatus(t("Line stamped along the ruler."))`.
+- `ink/useInkZoom.js`: the zoom window, `useInkZoom({focusedBlockId,
+  readOnly, isPhone, pdfHidden, notebook, inkZoomHeight, viewerWrapRef,
+  pasteTarget, setStatus}) → {inkZoom, toggleInkZoom, inkZoomNewLine,
+  changeInkZoom, handleInkZoom, clearInkZoom}`, which App calls after
+  the ruler.
+  - `inkZoom` (`{page, x, y, w, h, mag, line, x0}`, or null) is session
+    state, gone when the strip closes (`closeInkStrip()` runs
+    `clearInkZoom()`) and when the open page changes. The window also
+    closes when the PDF is hidden, the notebook view opens or the layout
+    turns to a phone's.
+  - `toggleInkZoom()` opens `openWindow` on the PDF page in view, or
+    closes it. The window's middle goes at the middle of what shows of
+    the page above where the panel will stand (`visiblePart` less the
+    panel's height), and its size comes from the scroller's width and
+    `inkZoomHeight` less `ZOOM_CHROME`. It does nothing on a phone, and
+    on a sheet (or with no PDF page in view) says "The zoom window works
+    on PDF pages."
+  - `onZoom(page, patch)` (`handleInkZoom`) moves the window: `moveTo`
+    for `{at, size}`, the window going to that page; `moveWindow` for
+    `{x, y}` (both moves by hand set `x0`); `{mag}` through `setMag`.
+    The panel's own buttons, its auto-advance and its view's size go
+    through `changeInkZoom(update)`, and Enter through
+    `inkZoomNewLine()`, all by `zoomWindow.js`. The size of the window's
+    page in points is kept beside it.
 - `markup/` ([text_boxes.md](text_boxes.md) "Client"):
   - `MarkupToolbar.jsx` `MarkupToolbar` is the strip. Its first row
     (`.pdfInkRow`) is five groups split by `.pdfInkSep`: the presets; the
@@ -3071,8 +3215,8 @@ reach.
     angle, `aria-hidden`), and each change is `edit({nib})`.
     Under a host with `pencilRoll` the row adds *Lock angle*
     (`aria-pressed`, title "Lock angle: rolling Apple Pencil Pro does not
-    turn the nib"; `edit({nibLock})`). Its props for these: `ruler` (App's
-    `inkRuler`, or null), `rulerUnits`, `onToggleRuler()`,
+    turn the nib"; `edit({nibLock})`). Its props for these: `ruler`
+    (`useInkRuler`'s `inkRuler`, or null), `rulerUnits`, `onToggleRuler()`,
     `onRulerOptions({snap} | {units} | {hide: true})`, `onStampLine()`,
     `shapeKind`, `shapeFill`, `onShape({kind} | {fill})`,
     `onToggleShape()`, `stylusPen` (the preset a stylus writes with),
@@ -3120,8 +3264,8 @@ reach.
     `ink` also carries `clip` (the clipboard holds strokes) and `keys`
     (`{copy, cut, duplicate}`: the chord labels the selection menu puts
     in its titles), `ruler` (`{surface, x, y, angle, length, snap}`, or
-    null), `rulerUnits` (`'pt' | 'cm'`) and `zoom` (App's `inkZoom`, or
-    null); for the Shapes tool `ink.tool` is `{tool: "shape", kind, fill,
+    null), `rulerUnits` (`'pt' | 'cm'`) and `zoom` (`useInkZoom`'s
+    `inkZoom`, or null); for the Shapes tool `ink.tool` is `{tool: "shape", kind, fill,
     style}` (`style` the stylus pen's look with brush `monoline`, as
     `toolStyle` gives it, smoothing and straightening left out). The
     actions also carry `onRuler(next | null)` and `onZoom(page, {x, y} |
@@ -3134,7 +3278,6 @@ reach.
     `inkEraserFilter`; and this browser's `inkFingerUndo`,
     `inkHoverPreview`, `inkPencilTap`, `inkPencilSqueeze` and `inkHaptics`
     ([settings.md](settings.md) "Reading & editing").
-  - The lasso selection (`inkSelection`).
   - Turning `inkScribbleErase` on from Settings shows a pill explaining
     the gesture once.
   - **The Pencil's gestures** (`pencilRef`, listening to the host's
@@ -3161,49 +3304,6 @@ reach.
     and, from the layer, `select` for a pen lasso that selected (at its
     lift) and `snap` for a held shape (at the tip), both in viewport CSS
     px.
-  - **The handwriting clipboard** is `inkClipRef`, `{type: "gamma/ink",
-    version: 2, space, box, strokes}`: the file's `space`, the selection's
-    `inkBounds` box `{x1, y1, x2, y2}` in points and the raw stroke objects
-    as the file holds them. Copy and cut fill it and, best effort, write a
-    `ClipboardItem` beside it (`writeInkClipboard`: `text/html` a `<div
-    data-gamma-ink>` whose text is that JSON, `text/plain` the JSON), so
-    another app or a later build can read it. A browser that refuses the
-    write loses nothing, since the ref is the one source a paste reads
-    (reading the system clipboard back is not built). The ref does not
-    survive a reload.
-  - `handleInkAction(page, kind, arg)` handles these, the selection's
-    strokes, box and space coming from `selectedInk()`:
-    - `copy`, and `cut` (copy, then `deleteInkSelection` with the entry
-      `T("ink cut")`). Both raise `setStatus(tn("Copied {n} stroke.",
-      "Copied {n} strokes.", n) | tn("Cut {n} stroke.", "Cut {n}
-      strokes.", n), {label: t("Paste"), run: pasteAtCentre})`.
-    - `flip` (`{axis}` → `flipStrokes` about the selection box's centre,
-      `T("ink flip")`, the selection kept).
-    - `split` (`T("ink split")`): the strokes leave their groups and a new
-      ink block on the same surface takes them, positioned by
-      `pdfPositionOf`. It is one entry whose changes name the old groups
-      and the new block, which `applyInk` inserts; undo removes it again.
-    - `merge` (`T("ink merge")`): the selection's whole group is appended
-      to the page's previous group (`inkBySurface`'s order, the nearest
-      before it, else the first after) through `appendStrokes`, and
-      emptied. `flushInk` deletes the empty block when it has no caption
-      or children; one that has them is refused before anything moves,
-      with "Not merged: this note has a caption or notes under it." A
-      merge that would put the target past `MAX_STROKES` is refused with
-      the byte budget's pill.
-  - `pasteInk(page, at, size)` makes the copies with `cloneStrokes(strokes,
-    dx, dy)`, `dx, dy` taking the clipboard box's top-left to `at` and then
-    clamped so the box stays inside the surface (on a surface too small
-    for it, its top-left corner stays on), hands them to
-    `handleInkStrokes`, selects them and arms the lasso. `pasteAtCentre()`
-    is it with the box centred on the surface in view (`pasteTarget()`,
-    `ink/useInkSurfaces.js`). The commands, the pill's *Paste* and the
-    More menu's row all run it; the page's `onPaste(page, pt, size)` (a
-    held pen or mouse, a right-click) runs `pasteInk` at the point.
-    `duplicateInkSelection()` (Ctrl+D) sends
-    `duplicateOffset(inkSelection.page)`, the offset the menu's Duplicate
-    sends (`ink/surfaceScale.js`); `selectAllInk()` takes the selection's
-    surface, else the one in view.
   - The commands (`appCommands.js`, group `GROUP_HANDWRITING`
     "Handwriting", after Library in `GROUPS`; [hotkeys.md](hotkeys.md)
     "Widget keys"): `ink.copy` "Copy handwriting" Mod-c, `ink.cut` "Cut
@@ -3221,13 +3321,6 @@ reach.
     `commandIcons.jsx`: `CopyIcon`, `ScissorsIcon`, `ClipboardIcon`,
     `CopyIcon`, `RectSelectIcon`, from `Icons.jsx` (as are the menu's
     `FlipHIcon` and `FlipVIcon`).
-  - The selection's `style` action: `handleInkAction(page, "style",
-    value)` routes `value.brush` (present, `null` for the plain pen) to
-    `restyleBrush` with the entry `T("ink style change")`, `value.dash`
-    (present, `null` for solid) to `restyleStrokes` with `T("ink line
-    change")`, and a colour or a size to `restyleStrokes` with "ink color
-    change" or "ink width change"; each is one entry and goes through
-    `applyInk`'s byte budget like any edit.
   - **Hold-E**: the strip handler takes `stripKey`'s `eraser` action.
     `down` arms the eraser as a tap does and keeps `inkHoldRef = {since,
     erased: false, selection, tool}` (the lasso selection and the tool
@@ -3257,81 +3350,39 @@ reach.
       hidden preset, its `restorePen` (the guide's `restore`) and
       `backTool` read. `inkTool` for it is `{tool: "shape", kind:
       inkShapeKind, fill: inkShapeFill, style}`.
-    - `inkRuler` (`{surface, x, y, angle, length, snap}`, or null) and
-      `inkZoom` (`{page, x, y, w, h, mag, line, x0}`, or null) are session
-      state, cleared when the strip closes (`closeInkStrip()`, which all
-      three closers call) and when the open page changes. The zoom window
-      also closes when the PDF is hidden, the notebook view opens or the
-      layout turns to a phone's. The ruler (`hideInkRuler()`, its row with
-      it) also goes when the viewer stops showing its surface: a PDF
-      page's when the PDF is hidden or the notebook view opens, a sheet's
-      when it closes (`inkRulerShown`).
+    - The strip's three closers (its ✕, Esc, the viewer's pen button)
+      call `closeInkStrip()`: the strip's `closeInkStripUi()`, then the
+      ruler's `clearInkRuler()` and the zoom window's `clearInkZoom()`.
     - `handleInkStroke(page, stroke, size, {label})` (`useInkStrokes`)
       takes the history entry's label the layer's `onStroke` passes
       (`finishStroke`'s: "ink stroke", "ink straight line", "ink shape");
       *Stamp line* passes "ink straight line".
-    - `toggleInkRuler()` shows `defaultRuler` on the surface in view with
-      its row open (`pasteTarget()`'s, across `visiblePart(page, size)`,
-      the part of its box inside its viewer and the window, in page
-      points), or hides it (`hideInkRuler()`, the ruler's row with it).
-      `inkRulerOptions({snap} | {units} | {hide})` is the row's (*Snap
-      15°* puts the angle on the grid at once). `onRuler` sets `inkRuler`
-      (null hides it).
     - `toggleInkShape()` (`useInkStrip`) arms `"shape"` with its row open,
       or gives back `inkBack()`.
-    - `toggleInkZoom()` opens `openWindow` on the PDF page in view, or
-      closes it. The window's middle goes at the middle of what shows of
-      the page above where the panel will stand (`visiblePart` less the
-      panel's height), and its size comes from the scroller's width and
-      `inkZoomHeight` less `ZOOM_CHROME`. It does nothing on a phone, and
-      on a sheet (or with no PDF page in view) says "The zoom window works
-      on PDF pages."
-    - `stampRulerLine()` draws a line along the ruler's middle between its
-      ends with the armed preset (else the stylus pen), through
-      `finishStroke`'s hold stage (a span of 0, `t0` now: `ruler.js`
-      `stampLine`) and `handleInkStroke` on the ruler's surface (the size
-      of the surface it was laid on, kept beside it). It is one entry,
-      then `undoableInkStatus(t("Line stamped along the ruler."))`.
-    - `onZoom(page, patch)` (`handleInkZoom`) moves the window: `moveTo`
-      for `{at, size}`, the window going to that page; `moveWindow` for
-      `{x, y}` (both moves by hand set `x0`); `{mag}` through `setMag`.
-      The panel's own buttons, its auto-advance and its view's size go
-      through `changeInkZoom(update)`, and Enter through
-      `inkZoomNewLine()`, all by `zoomWindow.js`. The size of the window's
-      page in points is kept beside it.
     - The prefs: `inkShapeKind` and `inkShapeFill` the account's,
       `inkRulerUnits` and `inkZoomHeight` this browser's
       ([settings.md](settings.md) "Reading & editing").
-    - `handleInkAction` also takes `reshape` (`{id, params}` →
-      `reshapeInk`, the entry `T("ink shape edit")`) and `transcribe`
-      (below), and the `style` action's `fill` (`restyleStrokes`, `T("ink
-      fill change")`). A style change, by Shift+[ / ] as by the menu,
-      writes the brush alone (a calligraphy pen's smoothing of 2 is
-      `presetSmoothing`'s default, never stored).
+    - `handleInkAction` (`useInkSelection`) also takes `reshape` (`{id,
+      params}` → `reshapeInk`, the entry `T("ink shape edit")`) and
+      `transcribe` ("Transcribe a selection"), and the `style` action's
+      `fill` (`restyleStrokes`, `T("ink fill change")`). A style change,
+      by Shift+[ / ] as by the menu, writes the brush alone (a calligraphy
+      pen's smoothing of 2 is `presetSmoothing`'s default, never stored).
     - The strip's key handler takes `stripKey`'s `toggle` and `off`
       (`what`: `ruler`, `shape`, `zoom`) and `newLine`, its state carrying
       `ruler`, `zoom` and `onControl` (the target inside a button, a link,
       a menu row or a comment thread). An open menu, a preset being
       dragged and a focused comment thread keep Escape from it.
-  - **Transcribe a selection** (`handleInkAction("transcribe")`,
-    `transcribeInkSelection()`). In a shared page's view it only says
-    "Transcribing needs the AI chat, which a shared page cannot use."
-    - A selection whose strokes are whole groups flushes the page's drafts
-      first (`flushInk()`, awaited, so the stored files hold what the
-      screen shows). Then it attaches each group's block as
-      `transcribeInk` does (the oldest attached block making room, said on
-      the pill) and asks "Transcribe this handwriting into its caption."
-      once. When a group's save has not landed (its draft still dirty
-      after the flush, or its block not in the tree), its strokes go
-      inline as below instead.
-    - Otherwise it puts one chip per group on `chatNotes`, `{kind: "ink",
-      id: the block, page_id: the open page, space: the group's file
-      space, strokes: the selected strokes as the draft holds them, text:
-      tn("Selected handwriting · {n} stroke", "Selected handwriting · {n}
-      strokes", n)}`, replacing an earlier ink chip of that block. When,
-      with the ink chips already waiting, they are more than
-      `MAX_INK_SELECTIONS` (8) groups or their JSON passes
-      `MAX_INK_SELECTION_BYTES` (65 536) together (both in
+  - **Transcribe a selection**, the chat half (`askToTranscribe({blocks}
+    | {chips})`, which `transcribeInkSelection` in
+    `ink/useInkSelection.js` calls):
+    - `{blocks}` attaches each block as `transcribeInk` does (the oldest
+      attached block making room, said on the pill) and asks
+      "Transcribe this handwriting into its caption." once.
+    - `{chips}` puts the chips on `chatNotes`, each replacing an earlier
+      ink chip of its block. When, with the ink chips already waiting,
+      they are more than `MAX_INK_SELECTIONS` (8) groups or their JSON
+      passes `MAX_INK_SELECTION_BYTES` (65 536) together (both in
       `chat/passageBudget.js`, the server's caps), it raises "Too much
       handwriting selected to transcribe; select less." and sends
       nothing. Else it runs `showChat()` and `setChatAsk` "Transcribe the

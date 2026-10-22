@@ -2353,7 +2353,7 @@ function InkRuler({ wrapRef, ruler, width, height, units, onRuler }) {
 // 2…4); both take the press in the capture phase, before the page's layers
 // and the viewer see it, and keep their screen size. A drag previews here,
 // the box drawn where the window would go (zoomWindow.js moveWindow and
-// setMag, App's own rules) at most once a frame, and hands its patch to
+// setMag, useInkZoom's rules) at most once a frame, and hands its patch to
 // onZoom at the release — the window is the page tools' for every page, so
 // a drag that moved it each frame would draw every page's layers again
 // each frame. A focused band's arrow keys move the window 1 pt (Shift 10),
@@ -2554,7 +2554,8 @@ export function useSelectionMenuAnchor(ref, rectOf, deps) {
 
 // Whether the selection can be merged into another note: the selected ids
 // are exactly one group's strokes, and the surface has another group with
-// strokes (an emptied captioned block is not one, as App's merge sees it).
+// strokes (an emptied captioned block is not one, as the selection's merge
+// sees it, useInkSelection.js).
 function canMergeSelection(groups, selectedIds) {
   if (!selectedIds.size) return false;
   const full = groups.filter((g) => g.ink.strokes.length);

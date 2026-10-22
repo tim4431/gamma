@@ -372,7 +372,8 @@ Preferences:
   its top edge is let go and at each ↑ / ↓ on it) are browser
   preferences, like the eraser's. The ruler's place
   and angle and the zoom window's place, magnification and line height are session
-  state ([handwriting.md](handwriting.md) "What the user sees"). **This device** (browser
+  state (`inkRuler` in `ink/useInkRuler.js`, `inkZoom` in `ink/useInkZoom.js`;
+  [handwriting.md](handwriting.md) "What the user sees"). **This device** (browser
   scope): two
   `IconChoices` tiles ("Draws with": pen only / pen and
   finger — the stored preference is `inkPenOnly`), the

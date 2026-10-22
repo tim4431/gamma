@@ -779,7 +779,7 @@ where the thing happens:
 | `peer.joined` | App, when another account or a link visitor appears on the open page (a peer whose `user` is not this account) |
 | `ink.stroke` | `ink/useInkStrokes.js`'s `handleInkStroke` |
 | `ink.options`, `ink.erased`, `ink.undone` | App, when the armed tool's options row opens; `ink/useInkDocument.js`'s `handleInkEraseAlong` / `handleInkEraseMany`; its `inkUndo` (not redo) |
-| `ink.selected` | App's `handleInkSelect`, when a selection of handwriting comes up |
+| `ink.selected` | `ink/useInkSelection.js`'s `handleInkSelect`, when a selection of handwriting comes up |
 | `table.shown` | MdTableWrap, when an editable table mounts |
 | `sheet.created` `{id}` | App's three ways to make a sheet of paper: `addSheetAfter` (**+**, Add page, writing low on the last sheet), `insertSheetAt` (`/note` in an empty block) and `createNotebook` |
 | `job.started` `{kind}` | the tasks store's `adopt` — the one place both `start()` and `upload()` hand this tab a server job, so every kind counts once ([tasks.md](tasks.md)) |

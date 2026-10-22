@@ -26,8 +26,8 @@ import { createContext, useContext } from "react";
 // actions carries the handlers: the ink ones (onStroke(page, stroke,
 // {width, height}, {label}): a stroke and its history entry's label, onEraseAlong(page,
 // path, r, {mode, pass}): the path the eraser swept since its last call,
-// onEraseEnd, onEraseMany, onSelect, onAction(page, kind,
-// arg) — style, transform, delete, duplicate, copy, cut, flip {axis},
+// onEraseEnd, onEraseMany, onSelect, onAction(kind,
+// value) — style, transform, delete, duplicate, copy, cut, flip {axis},
 // split, merge, select-note, show-note, transcribe —, onMoveSelection, onPaste(page,
 // pt, {width, height}): the clipboard at a page point, onFingerScroll,
 // onUndoGesture, onHoldStatus, onInkFeatures(features): a drawing holds

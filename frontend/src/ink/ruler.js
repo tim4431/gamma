@@ -1,5 +1,5 @@
 // The ruler (docs/dev/handwriting.md "What the user sees" and "Client"),
-// pure: a straight edge App keeps as session state and the ink layer draws
+// pure: a straight edge (session state, useInkRuler.js) the ink layer draws
 // over its surface. A ruler is {surface, x, y, angle, length, snap}: its
 // middle in page points, its angle in degrees counterclockwise as seen, in
 // [0, 180) — its direction the page vector (cos angle, −sin angle), page y

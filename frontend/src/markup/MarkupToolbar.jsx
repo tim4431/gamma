@@ -55,7 +55,7 @@ const SIZE_LABELS = [t("Small"), t("Medium"), t("Large")];
 // sizes, the account's Erases filter (`eraserFilter`) and the Back to last
 // tool toggle (`eraserReturn`), both through onEraser({filter} | {return}).
 // The modifiers (docs/dev/handwriting.md "What the user sees"): `ruler`
-// (App's inkRuler, or null), `rulerUnits` and onToggleRuler(),
+// (useInkRuler.js's inkRuler, or null), `rulerUnits` and onToggleRuler(),
 // onRulerOptions({snap} | {units} | {hide: true}), onStampLine(); the Shapes
 // tool's `shapeKind`, `shapeFill`, onShape({kind} | {fill}),
 // onToggleShape() and `stylusPen` (the preset a stylus writes with, whose

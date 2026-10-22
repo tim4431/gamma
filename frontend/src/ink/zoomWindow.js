@@ -1,8 +1,9 @@
 // The zoom window's rules (docs/dev/handwriting.md "Zoom window"), pure:
-// App's `inkZoom` is the window, {page, x, y, w, h, mag, line, x0}: the PDF
-// page's number; the window's top-left, width and height in page points;
-// the magnification, css px per point in the panel (ZOOM_MAG_MIN to
-// ZOOM_MAG_MAX); the line height in points; and where the line began, `x0`.
+// useInkZoom.js's `inkZoom` is the window, {page, x, y, w, h, mag, line,
+// x0}: the PDF page's number; the window's top-left, width and height in
+// page points; the magnification, css px per point in the panel
+// (ZOOM_MAG_MIN to ZOOM_MAG_MAX); the line height in points; and where the
+// line began, `x0`.
 // `size` is the page's {width, height} in points and `panel` the panel's
 // view {width, height} in css px, so w × mag is the view's width. Every
 // answer is clamped to its page, and one that changes nothing is the window

@@ -1,10 +1,11 @@
 // The zoom window (docs/dev/handwriting.md "Zoom window"): a panel docked
 // under the PDF viewer's scroller (pdf/PdfViewer.jsx) showing a strip of one
 // PDF page two to four times as large as at 100 %, so small handwriting is
-// written large. App's inkZoom is the window, {page, x, y, w, h, mag, line,
-// x0} in page points (ink/zoomWindow.js), and the one source of truth: the
-// page inside the panel is the whole page at `mag` css px per point, moved
-// so the window is what shows, and nothing reads a scroll position back.
+// written large. The window is useInkZoom.js's inkZoom, {page, x, y, w, h,
+// mag, line, x0} in page points (ink/zoomWindow.js), and the one source of
+// truth: the page inside the panel is the whole page at `mag` css px per
+// point, moved so the window is what shows, and nothing reads a scroll
+// position back.
 // Behind it the page's pixels for the window and a margin around it
 // (pdf/pageRaster.js zoomRasterPlan; never the whole page, which at 4× would
 // pass the canvas caps), in front of it the page's own ink layer
