@@ -5,8 +5,10 @@
 // and nested flyouts (SubMenuItem) live here too, so every menu gets the
 // same iconed row and the same submenu-hover behaviour for free — popover
 // menus included (the account menu hosts its flyout through MenuScope).
+// The roles are WAI-ARIA's menu (docs/dev/ui-design.md, "Menus and
+// submenus"): the surface is the menu, its rows the menu items.
 // A toolbar button's menu, opened on the press, is useMenuTrigger's.
-import React, { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import React, { createContext, useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { CheckIcon, ChevronDownIcon, ChevronRightIcon, MoreIcon } from "./Icons";
 import { useMenuAim } from "./menuAim";
@@ -15,13 +17,20 @@ import { pressAt, triggerPress } from "./press.js";
 import { t } from "../../shared/i18n/i18n.js";
 
 // Every ContextMenu publishes its submenu state so the rows inside it — at
-// any nesting depth — can open/close flyouts without the caller wiring state.
+// any nesting depth — can open/close flyouts without the caller wiring state,
+// and whether it is a menu (`menu`): a row is a menu item inside one and a
+// plain button anywhere else (a dialog's list, a settings popover).
 const MenuCtx = createContext(null);
 // A ContextMenu opened from inside another's rows (rendered in its React
 // tree, such as the handwriting selection menu's Style picker) is a part of
 // it: it registers its element here, a press inside it never dismisses the
 // menu it came from, and Escape closes it first.
 const NestCtx = createContext(null);
+
+// Whether a control sits in a menu, where it takes a menu item's role.
+function useInMenu() {
+  return !!useContext(MenuCtx)?.menu;
+}
 
 // How far a flyout rides above its trigger row so their first items line up.
 const SUB_TOP_NUDGE = -4;
@@ -39,7 +48,10 @@ const SUB_TOP_NUDGE = -4;
 // ignoreRef: element whose pointerdowns must NOT dismiss the menu — the
 // dropdown trigger, so its own click can toggle instead of fighting the
 // outside-pointerdown dismissal.
-function ContextMenu({ x, y, onClose, className = "", anchorRight = false, anchorBottom = false, flipY, bounds, ignoreRef, children }) {
+// Other props go to the surface (MenuScope): its name, `aria-label` or
+// `aria-labelledby` (the control that opens it), and `role="none"` for a
+// surface that is not a menu (a toolbar, a listbox).
+function ContextMenu({ x, y, onClose, className = "", anchorRight = false, anchorBottom = false, flipY, bounds, ignoreRef, children, ...rest }) {
   const ref = useRef(null);
   const parent = useContext(NestCtx);
   const nested = useRef(new Set());
@@ -80,6 +92,7 @@ function ContextMenu({ x, y, onClose, className = "", anchorRight = false, ancho
   return createPortal(
     <MenuScope
       ref={ref}
+      {...rest}
       className={`ctxMenu ${className}`}
       style={pos ? { left: pos.left, top: pos.top } : { left: x, top: y, visibility: "hidden" }}
       onContextMenu={(e) => e.preventDefault()}
@@ -94,8 +107,11 @@ function ContextMenu({ x, y, onClose, className = "", anchorRight = false, ancho
 // open flyout (SubMenuItem id) and the pointer-intent guard that keeps a
 // diagonal move into it from being read as "hovered the row below". The
 // ContextMenu is one; a popover menu under a topbar button (the account
-// menu) renders its panel as one so its rows can open flyouts too.
-const MenuScope = React.forwardRef(function MenuScope({ children, ...rest }, ref) {
+// and View menus) renders its panel as one so its rows can open flyouts
+// too. It is the rows' one role="menu" (vertical, the role's default
+// orientation); a caller names it, and `role="none"` keeps a surface that
+// holds something else from claiming to be a menu.
+const MenuScope = React.forwardRef(function MenuScope({ role = "menu", children, ...rest }, ref) {
   const [openSub, setOpenSub] = useState(null);
   const aim = useMenuAim();
   // Hovering anywhere in the menu that is NOT the open flyout (or its own
@@ -108,8 +124,8 @@ const MenuScope = React.forwardRef(function MenuScope({ children, ...rest }, ref
     aim.guard(() => setOpenSub(null));
   }
   return (
-    <div ref={ref} {...rest} onPointerOver={onPointerOver}>
-      <MenuCtx.Provider value={{ openSub, setOpenSub, aim }}>{children}</MenuCtx.Provider>
+    <div ref={ref} role={role} {...rest} onPointerOver={onPointerOver}>
+      <MenuCtx.Provider value={{ openSub, setOpenSub, aim, menu: role === "menu" }}>{children}</MenuCtx.Provider>
     </div>
   );
 });
@@ -117,11 +133,16 @@ const MenuScope = React.forwardRef(function MenuScope({ children, ...rest }, ref
 // One menu row: optional leading glyph, label, optional trailing node.
 // `danger` tints destructive actions; `keys` shows the row's shortcut on the
 // right (a chord label, e.g. "F2"). Everything that isn't a row prop is
-// forwarded, so callers keep their own title/disabled/onClick.
+// forwarded, so callers keep their own title/disabled/onClick. In a menu
+// it is a menuitem; a row that shows a check passes its own role with
+// aria-checked: menuitemcheckbox for a toggle, menuitemradio for one of a
+// set.
 function MenuItem({ icon: Icon, children, trailing, keys, danger = false, className = "", ...rest }) {
+  const inMenu = useInMenu();
   return (
     <button
       type="button"
+      role={inMenu ? "menuitem" : undefined}
       className={`ctxMenuItem ctxMenuItemIconed ${danger ? "danger" : ""} ${className}`}
       {...rest}
     >
@@ -152,9 +173,10 @@ function MenuButton({ open, label = t("Actions"), className = "", ...rest }) {
   );
 }
 
-// A section heading inside a menu (the shared sentence-case label).
-function MenuLabel({ children }) {
-  return <div className="ctxMenuLabel">{children}</div>;
+// A section heading inside a menu (the shared sentence-case label); `id`
+// lets the group under it be named by it.
+function MenuLabel({ id, children }) {
+  return <div className="ctxMenuLabel" id={id}>{children}</div>;
 }
 
 // A thin rule between a menu's groups of rows.
@@ -176,10 +198,13 @@ function menuGroups(...groups) {
 // would dismiss itself before a click on a flyout row could land. `id` just
 // has to be unique within its menu. A click opens it and never toggles it
 // shut (the hover that led there has opened it already). The panel is a
-// menu named after `label`; other props go to the trigger row.
+// menu of its own, named by its row (aria-labelledby), inside the parent
+// menu as WAI-ARIA's submenu is; other props go to the trigger row.
 function SubMenuItem({ id, icon: Icon, label, title, children, ...rest }) {
-  const { openSub, setOpenSub, aim } = useContext(MenuCtx) || {};
+  const scope = useContext(MenuCtx) || {};
+  const { openSub, setOpenSub, aim } = scope;
   const open = openSub === id;
+  const rowId = useId();
   const panelRef = useRef(null);
   const wrapRef = useRef(null);
   const [style, setStyle] = useState({ left: "100%", top: SUB_TOP_NUDGE });
@@ -211,6 +236,7 @@ function SubMenuItem({ id, icon: Icon, label, title, children, ...rest }) {
   return (
     <div className="ctxSubWrap" ref={wrapRef}>
       <MenuItem
+        id={rowId}
         icon={Icon}
         className={`ctxSubTrigger ${open ? "open" : ""}`}
         data-submenu={id}
@@ -226,9 +252,8 @@ function SubMenuItem({ id, icon: Icon, label, title, children, ...rest }) {
         {label}
       </MenuItem>
       {open ? (
-        <div ref={panelRef} className="ctxMenu ctxSubMenu" style={style} role="menu"
-          aria-label={typeof label === "string" ? label : undefined}>
-          {children}
+        <div ref={panelRef} className="ctxMenu ctxSubMenu" style={style} role="menu" aria-labelledby={rowId}>
+          <MenuCtx.Provider value={{ ...scope, menu: true }}>{children}</MenuCtx.Provider>
         </div>
       ) : null}
     </div>
@@ -250,23 +275,28 @@ function SubMenuItem({ id, icon: Icon, label, title, children, ...rest }) {
 // or above them (placement.js menuAnchor). Render the menu outside any
 // InkTooltips host: React bubbles a portal's events up to the host, which
 // would raise a tooltip for every row the pointer crosses.
+// Each menu is named by its button: the button takes an id, which the menu's
+// aria-labelledby points at.
 // Returns `kind` (the open menu's, or null), `trigger(kind)` (the props its
-// button spreads: the press, the keyboard's click, aria-haspopup and
+// button spreads: its id, the press, the keyboard's click, aria-haspopup and
 // aria-expanded; the button sets no onPointerDown or onClick of its own),
 // `menu` (the open menu's ContextMenu props, {x, y, anchorBottom, ignoreRef,
-// onClose}, the same object until the next toggle; null while none is open)
-// and `close()` (stable).
+// onClose, aria-labelledby}, the same object until the next toggle; null
+// while none is open) and `close()` (stable).
 function useMenuTrigger({ side = "below" } = {}) {
   const [open, setOpen] = useState(null);   // {kind, anchor}
   const triggerRef = useRef(null);          // the open menu's button
+  const id = useId();                       // `${id}-${kind}`: a button's id
   const close = useCallback(() => setOpen(null), []);
-  const menu = useMemo(() => (open ? { ...open.anchor, ignoreRef: triggerRef, onClose: close } : null), [open, close]);
+  const menu = useMemo(() => (open ? { ...open.anchor, ignoreRef: triggerRef, onClose: close, "aria-labelledby": `${id}-${open.kind}` } : null),
+    [open, close, id]);
   const toggle = (kind, button) => {
     triggerRef.current = button;
     const anchor = menuAnchor(button.getBoundingClientRect(), { side });
     setOpen((cur) => (cur?.kind === kind ? null : { kind, anchor }));
   };
   const trigger = (kind) => ({
+    id: `${id}-${kind}`,
     "aria-haspopup": "menu",
     "aria-expanded": open?.kind === kind,
     ...triggerPress((e) => toggle(kind, e.currentTarget)),
@@ -311,20 +341,25 @@ function useDropdown(up = false) {
 function MenuSelect({ value, onChange, options, label, block, icon: TriggerIcon, iconOnly = false,
   display, heading, sections = [], up = false, disabled = false }) {
   const [menu, close, triggerProps, triggerRef] = useDropdown(up);
+  const id = useId(); // the trigger's: it names the menu
   const current = options.find(([v]) => v === value) || options[0];
   const CurrentIcon = current?.[2];
   const title = TriggerIcon ? `${t(current?.[1])} — ${label}` : label;
   const choice = (val, lab, OptIcon, selected, pick) => (
-    <button key={val} className="ctxMenuItem ctxMenuItemIconed"
+    <button key={val} role="menuitemradio" aria-checked={selected} className="ctxMenuItem ctxMenuItemIconed"
       onClick={() => { close(); pick(val); }}>
       {OptIcon ? <span className="ctxMenuIcon"><OptIcon size={14} /></span> : null}
       {t(lab)}
       {selected ? <CheckIcon size={14} className="ctxMenuCheck" /> : null}
     </button>
   );
+  // A menu holding more than one choice keeps each one's radios in a group
+  // named by its heading, so each has its own checked row.
+  const choices = (headingId, rows) => (headingId ? <div role="group" aria-labelledby={headingId}>{rows}</div> : rows);
   return (
     <>
-      <button type="button" className={`uiBtn sm uiSelectBtn ${block ? "block" : ""} ${TriggerIcon && iconOnly ? "iconSq" : ""}`}
+      <button type="button" id={id} aria-haspopup="menu" aria-expanded={!!menu}
+        className={`uiBtn sm uiSelectBtn ${block ? "block" : ""} ${TriggerIcon && iconOnly ? "iconSq" : ""}`}
         aria-label={title} title={title} disabled={disabled} {...triggerProps}>
         {TriggerIcon ? (
           <TriggerIcon size={16} />
@@ -337,13 +372,14 @@ function MenuSelect({ value, onChange, options, label, block, icon: TriggerIcon,
         {!iconOnly ? <ChevronDownIcon size={14} className="uiSelectChev" /> : null}
       </button>
       {menu ? (
-        <ContextMenu x={menu.x} y={menu.y} anchorRight anchorBottom={up} onClose={close} ignoreRef={triggerRef} className="uiSelectMenu">
-          {heading ? <MenuLabel>{heading}</MenuLabel> : null}
-          {options.map(([val, lab, OptIcon]) => choice(val, lab, OptIcon, val === value, onChange))}
-          {sections.map((section) => (
+        <ContextMenu x={menu.x} y={menu.y} anchorRight anchorBottom={up} onClose={close} ignoreRef={triggerRef} className="uiSelectMenu"
+          aria-labelledby={id}>
+          {heading ? <MenuLabel id={`${id}-0`}>{heading}</MenuLabel> : null}
+          {choices(heading ? `${id}-0` : null, options.map(([val, lab, OptIcon]) => choice(val, lab, OptIcon, val === value, onChange)))}
+          {sections.map((section, i) => (
             <React.Fragment key={section.label}>
-              <MenuLabel>{section.label}</MenuLabel>
-              {section.options.map(([val, lab, OptIcon]) => choice(val, lab, OptIcon, val === section.value, section.onChange))}
+              <MenuLabel id={`${id}-${i + 1}`}>{section.label}</MenuLabel>
+              {choices(`${id}-${i + 1}`, section.options.map(([val, lab, OptIcon]) => choice(val, lab, OptIcon, val === section.value, section.onChange)))}
             </React.Fragment>
           ))}
         </ContextMenu>
@@ -358,15 +394,17 @@ function MenuSelect({ value, onChange, options, label, block, icon: TriggerIcon,
 // label is its tooltip.
 function ActionMenu({ label, icon: Icon, items, disabled, iconOnly = false }) {
   const [menu, close, triggerProps, triggerRef] = useDropdown();
+  const id = useId(); // the trigger's: it names the menu
   return (
     <>
-      <button type="button" className={`uiBtn sm uiSelectBtn ${iconOnly ? "iconSq" : ""}`} disabled={disabled}
+      <button type="button" id={id} aria-haspopup="menu" aria-expanded={!!menu}
+        className={`uiBtn sm uiSelectBtn ${iconOnly ? "iconSq" : ""}`} disabled={disabled}
         aria-label={t(label)} title={iconOnly ? t(label) : undefined} {...triggerProps}>
         {Icon ? <Icon size={iconOnly ? 16 : 14} /> : null}{iconOnly ? null : t(label)}
         {iconOnly ? null : <ChevronDownIcon size={14} className="uiSelectChev" />}
       </button>
       {menu ? (
-        <ContextMenu x={menu.x} y={menu.y} anchorRight onClose={close} ignoreRef={triggerRef}>
+        <ContextMenu x={menu.x} y={menu.y} anchorRight onClose={close} ignoreRef={triggerRef} aria-labelledby={id}>
           {items.map(({ icon: ItemIcon, label: lab, title, onClick, danger, disabled: off }) => (
             <MenuItem key={lab} icon={ItemIcon} title={t(title)} danger={danger} disabled={off}
               onClick={() => { close(); onClick(); }}>
@@ -379,4 +417,4 @@ function ActionMenu({ label, icon: Icon, items, disabled, iconOnly = false }) {
   );
 }
 
-export { ContextMenu, useMenuTrigger, MenuScope, MenuItem, MenuButton, MenuLabel, MenuDivider, menuGroups, SubMenuItem, MenuSelect, ActionMenu };
+export { ContextMenu, useMenuTrigger, MenuScope, MenuItem, MenuButton, MenuLabel, MenuDivider, menuGroups, SubMenuItem, MenuSelect, ActionMenu, useInMenu };

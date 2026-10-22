@@ -10,7 +10,10 @@ Playwright 1.63's headless Chromium 153 and WebKit 26.6 on Windows; what
 the ledger does instead is in [dev/collab.md](../dev/collab.md#keepalive).
 A second round on 21 October 2026 measured what each close the
 automation offers lets through, and the counting rules the ledger rests
-on ("Every close the automation offers").
+on ("Every close the automation offers"). A third round on 22 October
+2026 ran the same cases in Playwright's Firefox 155. Its results stand
+beside the others, and what only Firefox does is in "Firefox stops the
+first `pagehide` listener".
 
 ## An abort frees nothing in time
 
@@ -22,29 +25,34 @@ Together they come to 80 KiB, so B is refused while A counts. Each run
 aborts A through the `AbortController` its fetch was given, then sends B
 at a different moment:
 
-| B sent | Chromium | WebKit |
-|---|---|---|
-| A not aborted | refused | refused |
-| right after `abort()` | refused | refused |
-| after a microtask | refused | refused |
-| after A's `AbortError` was handled | refused | refused |
-| in the event listener that aborted A | refused | refused |
-| a task later (`setTimeout` 0) | sent | refused |
-| 50 ms or 500 ms later | sent | refused |
-| once the server answered A | sent | sent |
-| A's headers in and its body held, aborted, B at once | refused | refused |
+| B sent | Chromium | WebKit | Firefox |
+|---|---|---|---|
+| A not aborted | refused | refused | refused |
+| right after `abort()` | refused | refused | refused |
+| after a microtask | refused | refused | refused |
+| after A's `AbortError` was handled | refused | refused | refused |
+| in the event listener that aborted A | refused | refused | refused |
+| a task later (`setTimeout` 0) | sent | refused | refused |
+| 50 ms or 500 ms later | sent | refused | sent |
+| once the server answered A | sent | sent | sent |
+| A's headers in and its body held, aborted, B at once | refused | refused | refused |
+
+Firefox ran each row 5 times, with the same answer every time.
 
 A refused B is a network error (`TypeError: Failed to fetch`, `Load
-failed`) and never reaches the server. Neither browser stopped an aborted
+failed`, `NetworkError when attempting to fetch resource.`) and never
+reaches the server. Chromium and WebKit did not stop an aborted
 keepalive request on the wire: the server's socket for A stayed open for
 the 3 s watched, while an aborted plain request's socket closed (at once
-in Chromium, within a second in WebKit). An abort only rejects the
-caller's promise with an `AbortError`. Chromium stops counting the
-request's bytes one task later, WebKit only once its answer is in, and in
-both engines the request carries on and may land. So a keepalive sent in
-the task that aborted A is refused, and a ledger that freed A's bytes to
-send the edits with keepalive would lose them where a plain fetch might
-have landed.
+in Chromium, within a second in WebKit). In those two an abort only
+rejects the caller's promise with an `AbortError`, and the request
+carries on and may land. Firefox closed A's socket at the abort, as it
+did a plain request's (45 of 45 aborted keepalive requests). Chromium
+stops counting the request's bytes one task later, Firefox after a task
+but within 50 ms, and WebKit only once its answer is in. So a keepalive
+sent in the task that aborted A is refused, and a ledger that freed A's
+bytes to send the edits with keepalive would lose them where a plain
+fetch might have landed.
 
 ## What a real pagehide lets through
 
@@ -52,28 +60,32 @@ The same held A, then the page went away. Its `pagehide` listener sent
 a 1-byte keepalive marker, aborted A or not, sent B with keepalive (and a
 plain copy C once B was refused), and sent a plain POST D of its own:
 
-| The page | Chromium | WebKit |
-|---|---|---|
-| navigates away, A aborted or not | B sent, D sent | B sent, D lost |
-| reloads | B sent, D sent in one run of two | B sent, D lost |
-| closes (`page.close`), A aborted or not | B refused, C and D sent | B refused, C and D lost |
+| The page | Chromium | WebKit | Firefox |
+|---|---|---|---|
+| navigates away, A aborted or not | B sent, D sent | B sent, D lost | B refused, C and D sent |
+| reloads | B sent, D sent in one run of two | B sent, D lost | B refused, C and D sent |
+| closes (`page.close`), A aborted or not | B refused, C and D sent | B refused, C and D lost | B, C and D lost |
 
 A page that leaves for another (a navigation, a reload) stops counting
-its earlier keepalive requests, in both engines: B went with
+its earlier keepalive requests in Chromium and WebKit: B went with
 keepalive beside the held A, where a ledger counting A would have sent it
-plain. That plain copy was lost in WebKit and in one Chromium reload. A
-closing tab counts A whatever the page does, and refuses B.
+plain. That plain copy was lost in WebKit and in one Chromium reload.
+Firefox kept counting A and refused B in all 41 of its navigations and
+reloads, and C and D arrived in each. A closing tab counts A whatever the
+page does, and refuses B. Closing the page, Firefox let only the marker
+through (20 of 20 runs).
 
 ## Every close the automation offers
 
-Measured on 21 October 2026 on Windows 11, headless only, with
-Playwright 1.63.0:
+Measured on Windows 11, headless only, with Playwright 1.63.0, on 21
+October 2026 (Firefox on 22 October):
 
 | Build | Version | Playwright's build |
 |---|---|---|
 | Chromium headless shell, Playwright's default headless | 153.0.8010.12 | `chromium_headless_shell-1243` |
 | Chromium in its new headless mode (`channel: "chromium"`) | 153.0.8010.12 | `chromium-1243` |
 | WebKit | 26.6 | `webkit-2359` |
+| Firefox | 155.0 | `firefox-1543` |
 
 The server was Python's `ThreadingHTTPServer` on 127.0.0.1. For each
 request it logged when it came, its body's bytes, whether the body came
@@ -84,7 +96,8 @@ In `pagehide` and in `visibilitychange` (hidden), the page sent a
 keepalive fetch, a plain fetch and a `sendBeacon`, in that order. Each
 carried a body of 1, 60, 63 or 65 KiB, or 1 MiB. The page logged each
 event to a second origin with bodiless keepalive POSTs, which take none
-of the 64 KiB. Each case ran 5 times, the three builds side by side.
+of the 64 KiB. Each case ran 5 times: the Chromium builds and WebKit
+side by side, Firefox a day later.
 
 The closes:
 
@@ -96,39 +109,84 @@ The closes:
 - `chrome.tabs.remove` from an extension, in the new headless mode. It
   closes the tab through the tab strip, as the tab's close button does.
 - `context.close()` and `browser.close()`.
+- In Firefox, `page.close()` either way on a tab the page had opened,
+  beside its opener. Playwright's Firefox opens each page of `newPage` in
+  a window of its own, so the first two closes close a page alone.
 
 ### The events
 
-| Close | Chromium shell | Chromium | WebKit |
-|---|---|---|---|
-| `page.close({runBeforeUnload: true})` | `beforeunload`, `pagehide`, `visibilitychange`: 75/75 | the same: 75/75 | the same: 75/75 |
-| `page.close()` | `pagehide`, `visibilitychange`: 75/75 | the same: 75/75 | the same: 75/75 |
-| `Target.closeTarget` | `pagehide`, `visibilitychange`: 75/75 | the same: 75/75 | – |
-| `window.close()` | `beforeunload`, `pagehide`, `visibilitychange`: 75/75 | the same: 75/75 | the same: 75/75 |
-| `chrome.tabs.remove` | – | `beforeunload`, `pagehide`, `visibilitychange`: 75/75 | – |
-| `context.close()` | nothing: 75/75 | `pagehide`, `visibilitychange`: 69/75 | `pagehide`, `visibilitychange`: 50/75; nothing: 13/75 |
-| `browser.close()` | nothing: 75/75 | nothing: 75/75 | `pagehide`, `visibilitychange`: 50/75; nothing: 7/75 |
+| Close | Chromium shell | Chromium | WebKit | Firefox |
+|---|---|---|---|---|
+| `page.close({runBeforeUnload: true})` | `beforeunload`, `pagehide`, `visibilitychange`: 75/75 | the same: 75/75 | the same: 75/75 | the same, the `pagehide` listener stopped: 75/75 |
+| `page.close()` | `pagehide`, `visibilitychange`: 75/75 | the same: 75/75 | the same: 75/75 | the same, the `pagehide` listener stopped: 75/75 |
+| `page.close()` either way, a tab beside its opener | – | – | – | `beforeunload` (with `runBeforeUnload`), `pagehide`, `visibilitychange`: 150/150 |
+| `Target.closeTarget` | `pagehide`, `visibilitychange`: 75/75 | the same: 75/75 | – | – |
+| `window.close()` | `beforeunload`, `pagehide`, `visibilitychange`: 75/75 | the same: 75/75 | the same: 75/75 | the same: 75/75 |
+| `chrome.tabs.remove` | – | `beforeunload`, `pagehide`, `visibilitychange`: 75/75 | – | – |
+| `context.close()` | nothing: 75/75 | `pagehide`, `visibilitychange`: 69/75 | `pagehide`, `visibilitychange`: 50/75; nothing: 13/75 | `pagehide`, `visibilitychange`, the `pagehide` listener stopped: 75/75 |
+| `browser.close()` | nothing: 75/75 | nothing: 75/75 | `pagehide`, `visibilitychange`: 50/75; nothing: 7/75 | no event logged, the beacon from `visibilitychange` arrived: 74/75 |
 
 The other runs of those two closes lost some of their logs. In a run
 marked nothing, no event was logged and no request arrived whole. In 2
 of Chromium's 75 `browser.close()` runs a request's headers came and its
-body never did; 75 more runs, alone on the machine, had none.
+body never did; 75 more runs, alone on the machine, had none. Firefox's
+`browser.close()` ran the `visibilitychange` listener, whose beacon
+arrived, but lost its keepalive fetches.
 
-No close fired `visibilitychange` before `pagehide`. Each close that ran
-the page's listeners fired `pagehide`, then `visibilitychange`
-(hidden), in one task. A timer or a message queued in `pagehide` never
-ran before `visibilitychange`. The two came 0.8 to 33 ms apart, the time
-the `pagehide` listener took. Headless Chromium keeps every tab visible,
-a background tab too, with or without Playwright's backgrounding
-switches, and every WebKit page was visible. So each close began from a
-visible page. After both events, the page still ran a timer or a message
-it had queued, and logged it, in 330 of 744 Chromium runs. It did so in
-none of 325 WebKit runs.
+No close fired `visibilitychange` before `pagehide`, in any build. Each
+close that ran the page's listeners fired `pagehide`, then
+`visibilitychange` (hidden), in one task. A timer or a message queued in
+`pagehide` never ran before `visibilitychange`. The two came 0.8 to 33 ms
+apart (up to 7 ms in Firefox), the time the `pagehide` listener took.
+Headless Chromium keeps every tab visible, a background tab too, with or
+without Playwright's backgrounding switches. Every WebKit and Firefox
+page was visible, a Firefox opener beside its tab too. So each close
+began from a visible page. After both events, the page still ran a timer
+or a message it had queued, and logged it, in 330 of 744 Chromium runs.
+It did so in none of 325 WebKit runs and none of 225 Firefox runs.
 
 Chromium's `browser.close()` and the shell's `context.close()` let
 nothing through. WebKit's `context.close()` and `browser.close()` ran
 the listeners in most runs, but the page's requests went down with its
 network session. The server got some of them, and some bodies cut.
+Firefox's `context.close()` closes each page as `page.close()` does.
+
+### Firefox stops the first `pagehide` listener
+
+Closing a page alone, Firefox stopped its `pagehide` listener as it
+started, in every run of both `page.close` forms and `context.close()`
+(225 of 225). None of that listener's requests arrived. The
+`visibilitychange` listener after it ran in full. A probe page shows the
+pattern. It has two `pagehide` listeners, then a `visibilitychange` and
+an `unload` listener, and each loops over three items, then sends a
+keepalive fetch. Ten runs a close:
+
+| Firefox close | First `pagehide` listener | Second | `visibilitychange` and `unload` |
+|---|---|---|---|
+| `page.close()` either way, the page alone | stopped: 20/20 | ran: 20/20 | ran: 20/20 |
+| `context.close()` | stopped: 10/10 | stopped: 4/10 | ran: 10/10 |
+| `page.close()` either way or `window.close()`, a tab beside its opener | ran: 30/30 | ran: 30/30 | ran: 30/30 |
+
+They fired in that order in every run. The same probe ran every listener
+in each close of the Chromium shell and WebKit (5 runs a close), but for
+the shell's `context.close()`, which runs none.
+
+A stop comes within the listener's first statements. A first listener
+whose first statement sent its keepalive fetch sent nothing (0/10). A
+first listener of one assignment ran, and the stop fell on the next
+listener in 3 of 10 runs (2 of 10 with `context.close()`).
+
+The stop follows the page's content process, not its window. A popup
+window closed beside its opener ran every listener (10/10). Playwright's
+Firefox allows a content process per page (`dom.ipc.processCount`
+60000), and a page opened by `window.open` shares its opener's. There a
+page closed beside another page of its context, both from `newPage`, was
+stopped too (10/10). With every page in one process
+(`dom.ipc.processCount` 1), a page closed beside another page of its
+context ran every listener (10/10). A page closed alone was stopped in 9
+of 10. So the stop came when the closing page was the last one in its
+process. A user's Firefox assigns processes by its own rules, and
+whether a tab's close stops a listener there was not measured.
 
 ### What reached the server
 
@@ -141,39 +199,53 @@ these, with bodies of 1 KiB and the three server answers pooled:
 | Chromium shell | 60 | 240/240 | 59/60 | 13/60 |
 | Chromium | 75 | 300/300 | 75/75 | 61/75 |
 | WebKit | 45 | 180/180 | 13/45 | 5/45 |
+| Firefox, the page alone | 30 | 60/120, all from `visibilitychange` | 0/30 | 0/30 |
+| Firefox, a tab beside its opener | 45 | 180/180 | 0/45 | 0/45 |
+
+No Firefox close let a plain fetch through whole. Of the 675 the page
+logged as sent, at every size, 6 arrived cut and the rest not at all.
 
 At 60 and 63 KiB, the keepalive fetch from `pagehide` arrived in every
-run of these closes. The beacon after it returned `false`, and the
-keepalive fetch and the beacon from `visibilitychange` never arrived:
-the closing page still counted the first fetch. Plain fetches of 60 or
-63 KiB from `pagehide` arrived in 95/120 shell runs, 134/150 Chromium
-runs and 17/90 WebKit runs.
+run of these closes. The keepalive fetch from `visibilitychange` never
+did: the closing page still counted the first. In Chromium and WebKit no
+beacon arrived either, and the one after the first fetch returned
+`false`. Firefox sent both beacons beside the fetch (180/180), since it
+counts no beacon. A Firefox page alone sent nothing from `pagehide`, and
+its `visibilitychange` fetch and beacon arrived (60/60 each). Plain
+fetches of 60 or 63 KiB from `pagehide` arrived in 95/120 shell runs,
+134/150 Chromium runs, 17/90 WebKit runs and none of 90 Firefox runs.
 
-At 65 KiB, no keepalive fetch reached the server, and `sendBeacon`
-returned `false`, in every run. The plain fetches, from `pagehide` and
-`visibilitychange` together:
+At 65 KiB, no keepalive fetch reached the server in any build.
+`sendBeacon` returned `false` in every Chromium and WebKit run. Firefox's
+returned `true`, and its 65 KiB beacons arrived (149 of 150). The plain
+fetches, from `pagehide` and `visibilitychange` together:
 
-| Server | Chromium shell | Chromium | WebKit |
-|---|---|---|---|
-| Answers at once | 34 whole, 6 none | 49 whole, 1 none | 10 whole, 3 cut, 17 none |
-| Holds the answer | 37 whole, 3 none | 49 whole, 1 none | 4 whole, 5 cut, 21 none |
-| Leaves the body unread | 36 whole, 4 none | 49 whole, 1 none | 7 whole, 6 cut, 17 none |
+| Server | Chromium shell | Chromium | WebKit | Firefox |
+|---|---|---|---|---|
+| Answers at once | 34 whole, 6 none | 49 whole, 1 none | 10 whole, 3 cut, 17 none | 40 none |
+| Holds the answer | 37 whole, 3 none | 49 whole, 1 none | 4 whole, 5 cut, 21 none | 40 none |
+| Leaves the body unread | 36 whole, 4 none | 49 whole, 1 none | 7 whole, 6 cut, 17 none | 40 none |
 
 WebKit cut its 65 KiB bodies at 64,844 to 64,892 bytes. A plain body of
 1 MiB that the server read at once came whole from Chromium in 130 of
 180 sends. It was cut in 43, 41 of them at 192 or 256 KiB, and not sent
 in 7. Left unread, it was cut every time it came (88 of 90), at 80 to
 144 KiB. WebKit never sent a whole 1 MiB body: it cut 50 of 90 at 63 to
-511 KiB and sent nothing for the rest.
+511 KiB and sent nothing for the rest. Firefox never did either: 6 came
+cut, from `pagehide` beside the opener. Its `sendBeacon` took 1 MiB
+bodies, and each one sent beside the opener came whole (90/90). Of the
+60 sent from a page alone, `context.close()` and `browser.close()`, 8
+came whole and 26 cut.
 
 ### A slow server and a slow connection
 
 With the answer held, every keepalive fetch and beacon of these closes
 kept its connection and took its answer 2 s later (120/120 in the
-shell, 150/150 in Chromium, 90/90 in WebKit). The browsers hung up on
-every plain fetch before its answer, 13 to 389 ms after the close.
-The median was 44 ms in the shell, 55 ms in Chromium and 44 ms in
-WebKit.
+shell, 150/150 in Chromium, 90/90 in WebKit). So did each of the 281
+that came whole in Firefox. The browsers hung up on every plain fetch
+before its answer, 13 to 389 ms after the close. The median was 44 ms in the
+shell, 55 ms in Chromium and 44 ms in WebKit. Firefox's plain fetches
+never came whole.
 
 In Chromium a body left unread for 2 s still came whole up to 65 KiB:
 Windows had taken it into the socket buffers before the browser hung
@@ -191,10 +263,14 @@ no plain fetch did:
 | Chromium shell | 40 | 100/100 | 0/80 | 0/80 |
 | Chromium | 50 | 125/125 | 0/100 | 2/100 |
 | WebKit | 30 | 75/75 | 0/60 | 0/60 |
+| Firefox, the page alone | 20 | 40/40 | 0/20 | 0/20 |
+| Firefox, a tab beside its opener | 30 | 105/105 | 0/60 | 0/60 |
 
 The browsers cancelled the plain fetches while their connections were
 still opening. Chromium let the proxy finish those connections and
 wrote nothing on them. WebKit closed them 12 to 20 ms after the close.
+Firefox asked the proxy for no connection for them: each of its
+connections to the server carried a request.
 
 ### Aborting on going hidden
 
@@ -207,14 +283,16 @@ plain copy. Each close ran 5 times:
 
 - B from `pagehide` was refused in every close but `window.close()`,
   since the abort came after it.
-- `window.close()` let B go in all three builds (15/15): the browser
-  had stopped counting A before `pagehide`. Chromium failed A's fetch
-  with a `TypeError` there, and WebKit gave the page no sign.
+- `window.close()` let B go in both Chromium builds and WebKit (15/15):
+  the browser had stopped counting A before `pagehide`. Chromium failed
+  A's fetch with a `TypeError` there, and WebKit gave the page no sign.
 - B from the timer arrived in 20/20 runs of the new headless mode's
-  other page closes and in 2/15 of the shell's. In WebKit the timer
-  never ran.
+  other page closes and in 2/15 of the shell's. In WebKit and Firefox
+  the timer never ran.
 - B's plain copy from `pagehide` arrived in 18/20 shell runs, 23/25
-  Chromium runs and 4/15 WebKit runs.
+  Chromium runs, 4/15 WebKit runs and 0/15 Firefox runs.
+- Firefox let no B through from any close (0/35). Its `window.close()`
+  still counted A at `pagehide`, and the abort closed A's connection.
 
 So an abort on going hidden lands after `pagehide` has sent everything,
 and a timer after it is no surer than the plain copy.
@@ -222,67 +300,95 @@ and a timer after it is no surer than the plain copy.
 ### The ledger's rules in a page that lives
 
 Each check ran 5 times (the release checks 10, with the answer's body
-sent at once or held), and the three builds agreed:
+sent at once or held). Both Chromium builds and WebKit agreed, and
+Firefox differed from them only on beacons:
 
-| Request | Result |
-|---|---|
-| A body of 65,536 bytes, alone | sent |
-| 65,537 bytes, alone | refused |
-| 1 byte, beside two 32 KiB requests on their way | refused |
-| No body, or an empty string, beside them | sent |
-| 21,845 `€` (65,535 bytes of UTF-8); 21,846 `€` (65,538 bytes) | sent; refused |
-| 65,536 bytes with an 8 KiB query string | sent |
-| 8 KiB once a 60 KiB request's answer headers are in, its body held 800 ms | refused |
-| 8 KiB once that answer's `clone().arrayBuffer()` has resolved: in its continuation, a microtask, a task or 50 ms later | sent |
-| An 8 KiB beacon beside a 60 KiB keepalive fetch; an 8 KiB keepalive fetch beside a 60 KiB beacon | refused; refused |
-| A 4 KiB beacon beside a 60 KiB keepalive fetch | sent |
-| A 65 KiB beacon, alone | refused (`false`) |
-| 60 KiB from a second page while the first holds 60 KiB | sent |
+| Request | Chromium and WebKit | Firefox |
+|---|---|---|
+| A body of 65,536 bytes, alone | sent | sent |
+| 65,537 bytes, alone | refused | refused |
+| 1 byte, beside two 32 KiB requests on their way | refused | refused |
+| No body, or an empty string, beside them | sent | sent |
+| 21,845 `€` (65,535 bytes of UTF-8); 21,846 `€` (65,538 bytes) | sent; refused | sent; refused |
+| 65,536 bytes with an 8 KiB query string | sent | sent |
+| 8 KiB once a 60 KiB request's answer headers are in, its body held 800 ms | refused | refused |
+| 8 KiB once that answer's `clone().arrayBuffer()` has resolved: in its continuation, a microtask, a task or 50 ms later | sent | sent |
+| An 8 KiB beacon beside a 60 KiB keepalive fetch; an 8 KiB keepalive fetch beside a 60 KiB beacon | refused; refused | sent; sent |
+| A 4 KiB beacon beside a 60 KiB keepalive fetch | sent | sent |
+| A 65 KiB beacon, alone | refused (`false`) | sent (`true`) |
+| 60 KiB from a second page while the first holds 60 KiB | sent | sent |
 
 When the answer's 2-byte body came with its headers, WebKit took the
 8 KiB at the headers in 2 of 5 runs: that body was already in.
 
+A page also has a cap on the number of keepalive requests in flight,
+with bodies or without. A page started 256 or 257 bodiless keepalive
+POSTs in one task, each held 200 ms by the server. Both Chromium builds
+and Firefox sent 256 and refused the 257th, 5 runs each. WebKit sent all
+257.
+
 ## What follows
 
-- The ledger never aborts a request to make room for another.
+- The ledger never aborts a request to make room for another. No build
+  frees an aborted request's share in the task that aborts it, and
+  Firefox ends the request.
 - A critical request that lacks room only because lower priorities hold
-  it goes both ways at once: with keepalive, which a page leaving for
-  another lets through, and as the plain copy it would have been
-  otherwise. Its batch id makes whichever copy lands second a replay.
+  it goes both ways at once: with keepalive and as the plain copy it
+  would have been otherwise. Its batch id makes whichever copy lands
+  second a replay.
+- A page leaving for another lets the keepalive copy through in Chromium
+  and WebKit. Firefox refuses it there, and the plain copy went in every
+  navigation and reload.
 - A closing tab with a drawing's upload still on its way stays a
   residual risk: there the edits' plain copy is all that goes, except
-  after `window.close()`. That copy reached a local server from Chromium
-  in most closes, from WebKit in few, and almost never once a new
-  connection took 50 or 200 ms to open (2 of 480).
-- The ledger's rules match both engines: the 64 KiB includes its last
-  byte, counts a body's UTF-8 bytes and not its URL, and never refuses a
-  request without a body. Each page has its own 64 KiB.
-- A request counts until its answer's body is in. It has stopped
-  counting by the time `clone().arrayBuffer()` resolves, where the
-  ledger releases it.
-- A beacon takes from the same 64 KiB. The app sends none, and a beacon
-  sent outside the ledger would take room the ledger does not count.
+  after `window.close()` in Chromium and WebKit.
+- That copy reached a local server from Chromium in most closes, from
+  WebKit in few and from Firefox never. Once a new connection took 50
+  or 200 ms to open, it almost never did (2 of 640).
+- The ledger's rules match all three engines: the 64 KiB includes its
+  last byte and counts a body's UTF-8 bytes, not its URL. Each page has
+  its own 64 KiB.
+- A request without a body takes none of the 64 KiB, but Chromium and
+  Firefox refuse a page's 257th keepalive request in flight, a body or
+  none. The app's close sends far fewer.
+- In every build a request counts until its answer's body is in. It has
+  stopped counting by the time `clone().arrayBuffer()` resolves, where
+  the ledger releases it.
+- In Chromium and WebKit a beacon takes from the same 64 KiB, and
+  Firefox counts no beacon. The app sends none, and a beacon sent
+  outside the ledger would take room the ledger does not count.
 - A tab closed while visible fires `pagehide` first and
-  `visibilitychange` after it, in one task. `visibilitychange` comes
-  first only for a tab hidden before it closes.
+  `visibilitychange` after it, in one task, in every build.
+  `visibilitychange` comes first only for a tab hidden before it closes.
 - So at a close the edits, handwriting, the profile and the reading
   position all go from `pagehide`, and `visibilitychange` finds nothing
   new to send. The ledger needs neither order.
-- Nothing queued in `pagehide` is sure to run: WebKit ran no task after
-  the two events. A request the page needs at a close starts in the
-  listener itself, as the app's do, except a handwriting `PUT` that
-  waits for its upload (a draft not named yet, or one the server will
-  merge), which the draft journal keeps.
+- Nothing queued in `pagehide` is sure to run: WebKit and Firefox ran no
+  task after the two events. A request the page needs at a close starts
+  in the listener itself, as the app's do, except a handwriting `PUT`
+  that waits for its upload (a draft not named yet, or one the server
+  will merge), which the draft journal keeps.
+- Firefox can stop a `pagehide` listener before it sends: closing the
+  last page of a content process stopped the first one, and the second
+  in 4 of 10 `context.close()` runs. The listeners after a stop ran in
+  full.
+- The app's first `pagehide` listener is `journalAll`
+  (`ink/inkStore.js`), registered when that module loads, so a stop
+  there skips the draft journal's write at the close. A second stop
+  could reach the edits' `pagehide()`, and their flush on going hidden
+  is a plain fetch, which no Firefox close let through.
 
 ## Still open
 
-- Firefox, which was not measured: Playwright's Firefox is not installed
-  here, and its download (about 100 MB) was not approved.
 - Safari, and the app's WKWebView on a device. The Windows WebKit shares
   WebCore's keepalive accounting but not Apple's network stack.
 - A user closing a tab in a headed Chrome. Headless Chromium never hides
   a tab, so it cannot show whether a headed one hides the closing tab
   before `pagehide` (the tab strip's own close fired `pagehide` first).
+- A user's Firefox, headed and with its own process rules: whether
+  closing a tab there stops its first `pagehide` listener. The app
+  itself was not run in Firefox, so which of its listeners a stop
+  reaches was not seen.
 - A user quitting the browser: Playwright's `browser.close()` ran no
   listener in Chromium, so it stands for nothing a user does.
 - A real network. The proxy delayed only a connection's setup, not a

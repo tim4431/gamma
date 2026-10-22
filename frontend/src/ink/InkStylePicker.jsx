@@ -71,9 +71,9 @@ const PREVIEW_ICONS = Object.fromEntries(BRUSH_CHOICES.map(([value]) => [value, 
 // The picker's button. `brush` the current brush (a key or 'pen'), `mixed`
 // when the selection's pens differ (the button then says "Mixed"),
 // `trigger` the props its owner's useMenuTrigger gives the button
-// (trigger(kind)): the press, the keyboard's click (a click with no press
-// behind it, e.detail 0), aria-haspopup and aria-expanded. The button shows
-// modeActive while its menu stands open.
+// (trigger(kind)): its id, the press, the keyboard's click (a click with no
+// press behind it, e.detail 0), aria-haspopup and aria-expanded. The button
+// shows modeActive while its menu stands open.
 export function InkStylePicker({ brush, mixed = false, title, trigger }) {
   const name = mixed ? t("Mixed") : brushName(brush);
   return (
@@ -92,20 +92,20 @@ export function InkStylePicker({ brush, mixed = false, title, trigger }) {
 // open menu's ContextMenu props from the same useMenuTrigger as the
 // picker's `trigger`: its place under the picker, the picker as its
 // ignoreRef (so the picker's own press toggles the menu instead of
-// dismissing it) and onClose, which a row calls before it picks.
+// dismissing it) and onClose, which a row calls before it picks. The menu
+// is named Pen style, not by the picker, whose name is the brush it shows.
+// A press in it is the menu's, never the page's under it.
 export function InkStyleMenu({ menu, value, onPick }) {
   return (
-    <ContextMenu {...menu} className="inkStripMenu inkStyleMenu">
-      {/* a press here is the menu's, never the page's under it */}
-      <div role="menu" aria-label={t("Pen style")} onPointerDown={(e) => e.stopPropagation()}>
-        {BRUSH_CHOICES.map(([choice, label, title]) => (
-          <MenuItem key={choice} role="menuitemradio" aria-checked={value === choice} icon={PREVIEW_ICONS[choice]} title={t(title)}
-            trailing={value === choice ? <CheckIcon size={14} className="ctxMenuCheck" /> : null}
-            onMouseDown={(e) => e.preventDefault()} onClick={() => { menu.onClose(); onPick(choice); }}>
-            {t(label)}
-          </MenuItem>
-        ))}
-      </div>
+    <ContextMenu {...menu} aria-labelledby={undefined} aria-label={t("Pen style")} className="inkStripMenu inkStyleMenu"
+      onPointerDown={(e) => e.stopPropagation()}>
+      {BRUSH_CHOICES.map(([choice, label, title]) => (
+        <MenuItem key={choice} role="menuitemradio" aria-checked={value === choice} icon={PREVIEW_ICONS[choice]} title={t(title)}
+          trailing={value === choice ? <CheckIcon size={14} className="ctxMenuCheck" /> : null}
+          onMouseDown={(e) => e.preventDefault()} onClick={() => { menu.onClose(); onPick(choice); }}>
+          {t(label)}
+        </MenuItem>
+      ))}
     </ContextMenu>
   );
 }

@@ -1011,7 +1011,7 @@ export async function noteScenarios({ server, browser, alice, step, until, sleep
     // Out of the block being edited, with a real mouse drag of the editor's
     // picture widget: back to the (now empty) block it came from.
     await frameOf(landing.id, "image").click({ button: "right", position: { x: 2, y: 2 } });
-    await p.getByRole("button", { name: "Edit markdown source" }).click();
+    await p.getByRole("menuitem", { name: "Edit markdown source" }).click();
     await p.waitForSelector(".blockEditorCm .cm-content", { timeout: 5000 });
     await p.keyboard.press("Control+End");
     const widget = p.locator(".blockEditorCm .cmImgWidget");
@@ -1080,7 +1080,7 @@ export async function noteScenarios({ server, browser, alice, step, until, sleep
     // inside the table, so its source shows; with the caret past its end the
     // table is a widget again, and that widget drags like the frame does.
     await frameOf(tableBlock.id, "table").click({ button: "right", position: { x: 2, y: 2 } });
-    await p.getByRole("button", { name: "Edit markdown source" }).click();
+    await p.getByRole("menuitem", { name: "Edit markdown source" }).click();
     await p.waitForSelector(".blockEditorCm .cm-content", { timeout: 5000 });
     assertEq(await p.locator(".blockEditorCm .cmTableWidget").count(), 0, "the source shows with the caret inside the table");
     assert((await p.$eval(".blockEditorCm .cm-content", (el) => el.textContent)).includes("| a"), "raw table text in the editor");
@@ -1131,7 +1131,7 @@ export async function noteScenarios({ server, browser, alice, step, until, sleep
         await p.evaluate(() => navigator.clipboard.writeText("before"));
         const box = await imgs.nth(n).boundingBox();
         await imgs.nth(n).click({ button: "right", position: { x: box.width / 2, y: box.height - 4 } }); // clear of the toolbar and the grips
-        await p.getByRole("button", { name: "Copy image", exact: true }).click();
+        await p.getByRole("menuitem", { name: "Copy image", exact: true }).click();
         await until(async () => !(await clipboard())["text/plain"], { what: `picture ${n} reached the clipboard` });
         return clipboard();
       };
@@ -1144,8 +1144,8 @@ export async function noteScenarios({ server, browser, alice, step, until, sleep
         `the SVG at its shown size, scaled: ${vector["image/svg+xml"]}`);
       // A table has no picture to copy.
       await p.locator(`.blockRowWrap[data-block-id="${withTable.id}"] .mdObject-table`).click({ button: "right", position: { x: 2, y: 2 } });
-      await p.getByRole("button", { name: "Copy as markdown", exact: true }).waitFor();
-      assertEq(await p.getByRole("button", { name: "Copy image", exact: true }).count(), 0, "no Copy image on a table");
+      await p.getByRole("menuitem", { name: "Copy as markdown", exact: true }).waitFor();
+      assertEq(await p.getByRole("menuitem", { name: "Copy image", exact: true }).count(), 0, "no Copy image on a table");
       await p.keyboard.press("Escape");
       assertNoProblems(p);
     } finally { await ctxC.close(); }
