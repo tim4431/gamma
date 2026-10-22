@@ -113,6 +113,17 @@ targets:
           # The standard library into python/lib, then every .so of it and of
           # the wheels into Frameworks/<module>.framework, as iOS requires.
           install_python Python.xcframework python/app_packages
+          # Apple refuses a build whose _ssl and _hashlib frameworks carry no
+          # privacy manifest (ITMS-91061: both link OpenSSL). install_python
+          # moves the one build-python.sh puts beside each module into its
+          # framework as PrivacyInfo.xcprivacy; a build without them fails
+          # here rather than in App Store Connect.
+          for module in _ssl _hashlib; do
+            if [ ! -f "$CODESIGNING_FOLDER_PATH/Frameworks/$module.framework/PrivacyInfo.xcprivacy" ]; then
+              echo "error: Frameworks/$module.framework has no PrivacyInfo.xcprivacy: run bash ipad/scripts/build-python.sh, which puts OpenSSL's manifest beside the module in Python.xcframework"
+              exit 1
+            fi
+          done
           # PyMuPDF's wheel carries MuPDF as two plain dylibs beside its
           # extension modules (app_packages/pymupdf/libmupdf.dylib and
           # libmupdfcpp.dylib). install_python converts .so files only, and iOS
@@ -251,6 +262,13 @@ targets:
     platform: iOS
     sources:
       - path: GammaIPadTests
+      # The shared ink fixtures the Swift ports are held to (InkWidthTests,
+      # HeldShapeTests), the files the web's tests read (the server's read
+      # inkwidth.json too).
+      - path: ../tests/shared/inkwidth.json
+        buildPhase: resources
+      - path: ../tests/shared/inkhold.json
+        buildPhase: resources
     dependencies:
       - target: GammaIPad
     settings:

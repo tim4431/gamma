@@ -5,10 +5,11 @@
 // its paper, a replay of all its handwriting (replay/playback.js, under the
 // sheet's id) and the switch to the notebook view (opening at this sheet);
 // a new page after it is "+" under the paper. In the notebook view the viewer draws the
-// sheets and the notes list them as rows. App owns the tree, the tools, the
-// stroke history and the commits; the tools come through PageToolsContext
-// (markup/PageTools.jsx), the sheet's marks and actions through
-// NoteSheetContext.
+// sheets and the notes list them as rows. App owns the tree; the tools,
+// the stroke history and the commits are in the owners App composes
+// (ink/useInkStrip.js, ink/useInkDocument.js, ink/useInkStrokes.js); the
+// tools come through PageToolsContext (markup/PageTools.jsx), the sheet's
+// marks and actions through NoteSheetContext.
 import React, { createContext, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { InkReplayButton, useInkVersion } from "../ink/InkLayer";
 import * as playback from "../replay/playback.js";

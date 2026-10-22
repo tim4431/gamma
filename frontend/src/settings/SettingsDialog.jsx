@@ -9,6 +9,9 @@ import {
   Stat, Empty, QuotaMeter, LogBox, NavAccountCard, SettingsDraftContext, SettingsSyncContext, useSettingsDraft,
 } from "./SettingsKit";
 import { SECTION_PREFS } from "./sectionPrefs.js";
+import { DEFAULT_TOOLS } from "../ink/ink.js";
+import { SQUEEZE_HOLDS } from "../ink/pencilActions.js";
+import { nativeHost } from "../shared/lib/host.js";
 import { DEFAULT_PICTURE_BUDGET, MAX_PICTURE_BUDGET } from "../chat/chatPictures.js";
 import { EFFORT_ORDER, SPEED_ORDER } from "../chat/modelPrefs.js";
 import { AppearanceSettings } from "./SettingsAppearance";
@@ -33,6 +36,10 @@ import {
   CloudDownloadIcon,
   ContrastIcon,
   DatabaseIcon,
+  EraserIcon,
+  EraseStrokeIcon,
+  EyeIcon,
+  LineWidthIcon,
   FileTextIcon,
   ImageIcon,
   FolderIcon,
@@ -46,9 +53,11 @@ import {
   ListIcon,
   MessageSquareIcon,
   MicIcon,
+  MinimizeIcon,
   MoveVerticalIcon,
   OutlineIcon,
   PaperIcon,
+  PencilIcon,
   PenIcon,
   RectSelectIcon,
   RefreshIcon,
@@ -103,6 +112,15 @@ const DRAW_WITH = [
   { value: "pen", label: T("Pen only"), hint: T("fingers scroll and zoom"), Icon: PenIcon },
   { value: "any", label: T("Pen and finger"), hint: T("for screens without a stylus"), Icon: HandIcon },
 ];
+// What the Apple Pencil's double tap and squeeze do in the iPad app
+// (prefDefs.js inkPencilTap, inkPencilSqueeze; ink/pencilActions.js): the
+// system's choice, or one of the strip's own. The two hold choices are the
+// squeeze's alone, and need a shell that sends its start (pencilPhases).
+const PENCIL_GESTURES = [
+  ["system", T("System setting")], ["eraser", T("Switch to eraser")], ["previous", T("Switch to last tool")],
+  ["options", T("Show tool options")], ["undo", T("Undo")], ["none", T("Nothing")],
+];
+const SQUEEZE_WHILE_HELD = [["holdEraser", T("Eraser while held")], ["holdPrevious", T("Last tool while held")]];
 
 function ViewerSettings({ value }) {
   return (
@@ -161,7 +179,57 @@ function ViewerSettings({ value }) {
           onChange={value.setBacklinksVisible}
         />
       </Section>
-      <Section title={t("Handwriting")} scope="browser">
+      {/* The handwriting habits that follow the account; the presets, smoothing
+          and the straight highlighter are set on the strip (docs/dev/handwriting.md). */}
+      <Section title={t("Handwriting")} scope="account" prefs={SECTION_PREFS.reading["Handwriting"]}>
+        <Row
+          label={t("Reset presets")}
+          icon={LineWidthIcon}
+          hint={t("The strip's pens and highlighters back to the default seven")}
+          title={t("The tool strip's row of pens and highlighters, with their colours, widths, smoothing and straightening, goes back to the default four pens and three highlighters. Your handwriting is untouched.")}
+        >
+          <button type="button" className="uiBtn sm" onClick={() => value.confirm?.({
+            title: T("Reset presets"),
+            message: T("Put the default four pens and three highlighters back on the tool strip? The presets you made are forgotten; your handwriting stays."),
+            confirmLabel: t("Reset"),
+            onConfirm: () => value.setInkTools(DEFAULT_TOOLS.map((tool) => ({ ...tool }))),
+          })}>{t("Reset")}</button>
+        </Row>
+        <Toggle
+          label={t("Eraser returns to the last tool")}
+          icon={EraserIcon}
+          hint={t("After erasing, return to the tool you had")}
+          title={t("Lifting the eraser tool arms the tool you had before it again, whether or not the pass erased anything. The pen's eraser end and barrel button never switch tools: lifting them is the switch.")}
+          checked={value.inkEraserReturn}
+          onChange={value.setInkEraserReturn}
+        />
+        <Row
+          label={t("Erases")}
+          icon={EraseStrokeIcon}
+          hint={t("Everything, pens only or highlighters only")}
+          title={t("What any erasure may remove — the eraser tool, the pen's eraser end and a scribble: everything it touches, pen strokes only, or highlights only.")}
+        >
+          <Segmented value={value.inkEraserFilter} onChange={value.setInkEraserFilter}
+            options={[["all", T("All")], ["pen", T("Pens")], ["highlighter", T("Highlighters")]]} />
+        </Row>
+        <Toggle
+          label={t("Draw and hold")}
+          icon={RectSelectIcon}
+          hint={t("Hold the pen still to straighten a line or clean up a shape")}
+          title={t("Draw a line or a shape and keep the pen still at its end: after a moment the stroke snaps to a straight line, an arrow, a triangle, a rectangle, a regular polygon, a circle or an ellipse. Keep holding and move to resize or rotate it; Undo takes it back.")}
+          checked={value.inkDrawHold}
+          onChange={value.setInkDrawHold}
+        />
+        <Toggle
+          label={t("Scribble to erase")}
+          icon={ActivityIcon}
+          hint={t("A dense back-and-forth with the pen erases the ink under it")}
+          title={t("A fast, dense back-and-forth with a pen — at least four sharp reversals within two seconds — erases the pen strokes under it, as one undo step. Highlights are never erased this way.")}
+          checked={value.inkScribbleErase}
+          onChange={value.setInkScribbleErase}
+        />
+      </Section>
+      <Section title={t("This device")} scope="browser">
         <div data-setting={t("Draws with")}>
           <IconChoices label={t("Draws with")} value={value.inkPenOnly ? "pen" : "any"}
             onChange={(choice) => value.setInkPenOnly(choice === "pen")} options={DRAW_WITH} />
@@ -182,7 +250,25 @@ function ViewerSettings({ value }) {
           checked={value.inkPressure}
           onChange={value.setInkPressure}
         />
+        <Row
+          label={t("Undo with fingers")}
+          icon={HandIcon}
+          hint={t("Two fingers undo, three redo")}
+          title={t("Two fingers tapped together on the page undo the last stroke, three redo it, like the strip's buttons. Tap: one tap is enough; Double tap: two quick taps, so a stray touch never undoes.")}
+        >
+          <Segmented value={value.inkFingerUndo} onChange={value.setInkFingerUndo}
+            options={[["off", T("Off")], ["tap", T("Tap")], ["double", T("Double tap")]]} />
+        </Row>
+        <Toggle
+          icon={EyeIcon}
+          label={t("Hover preview")}
+          hint={t("The footprint over the page shows the pen's style")}
+          title={t("A mouse or a hovering pen shows the armed pen's footprint over the page in its style: a teardrop for a brush pen, an ellipse that leans with a tilted pencil, a dashed or dotted ring for a dashed or dotted line. Off shows a plain round ring at the pen's width.")}
+          checked={value.inkHoverPreview}
+          onChange={value.setInkHoverPreview}
+        />
       </Section>
+      <PencilSettings value={value} />
       <Section title={t("Recordings")} scope="account" prefs={SECTION_PREFS.reading["Recordings"]}>
         <Row
           icon={MicIcon}
@@ -203,6 +289,48 @@ function ViewerSettings({ value }) {
         />
       </Section>
     </>
+  );
+}
+
+// The Apple Pencil's gestures and haptics, this browser's: only in the iPad
+// app, whose shell forwards the gestures (nativeHost().pencil) and plays the
+// haptics (nativeHost().haptics). Its choices are MenuSelects: the settings
+// pane has no InkTooltips host, and six or eight choices are too many for
+// a Segmented.
+function PencilSettings({ value }) {
+  const host = nativeHost();
+  if (!host?.pencil) return null;
+  const holds = !!host.pencilPhases || SQUEEZE_HOLDS.includes(value.inkPencilSqueeze);
+  return (
+    <Section title={t("Apple Pencil")} scope="browser">
+      <Row
+        icon={PencilIcon}
+        label={t("Double tap")}
+        hint={t("What a double tap on the Pencil does")}
+        title={t("A double tap on the Apple Pencil's flat side. System setting does what the iPad's Apple Pencil settings ask for: the eraser, the last tool or the tool's options.")}
+      >
+        <MenuSelect label={t("Double tap")} value={value.inkPencilTap} onChange={value.setInkPencilTap} options={PENCIL_GESTURES} />
+      </Row>
+      <Row
+        icon={MinimizeIcon}
+        label={t("Squeeze")}
+        hint={t("What squeezing Apple Pencil Pro does")}
+        title={t("Squeezing an Apple Pencil Pro. System setting does what the iPad's Apple Pencil settings ask for. While held arms the eraser or the last tool only while you squeeze, and the tool you had comes back when you let go; a quick squeeze that draws nothing leaves it armed.")}
+      >
+        <MenuSelect label={t("Squeeze")} value={value.inkPencilSqueeze} onChange={value.setInkPencilSqueeze}
+          options={holds ? [...PENCIL_GESTURES, ...SQUEEZE_WHILE_HELD] : PENCIL_GESTURES} />
+      </Row>
+      {host.haptics ? (
+        <Toggle
+          icon={ZapIcon}
+          label={t("Haptics")}
+          hint={t("A tick in Apple Pencil Pro when a shape snaps, the lasso selects or the tool changes")}
+          title={t("Apple Pencil Pro ticks in your hand when a held stroke snaps to a shape, when the lasso selects strokes, and when a Pencil gesture switches the tool.")}
+          checked={value.inkHaptics}
+          onChange={value.setInkHaptics}
+        />
+      ) : null}
+    </Section>
   );
 }
 
@@ -979,7 +1107,7 @@ export default function SettingsDialog({
   React.useEffect(() => {
     if (!activePane) { setQuery(""); setPending(null); setMobileIndex(false); return; }
     const legacyTarget = { notes: t("Enter makes"), search: t("On the home page"), viewer: t("Imported annotations"),
-      context: t("Single paper"), "ai-advanced": t("Context size"), prompts: t("Prompts") }[activePane];
+      context: t("Single paper"), "ai-advanced": t("Context size"), prompts: t("Prompts"), handwriting: t("Reset presets") }[activePane];
     if (legacyTarget) setJump({ label: legacyTarget });
   }, [activePane]);
   // Looking at a pane resolves the notices pointing at it (app/useNotices.js).
@@ -1015,7 +1143,7 @@ export default function SettingsDialog({
     return () => previous?.focus?.();
   }, [!!activePane]);
   if (!activePane) return null;
-  const results = searchSettings(query, allowed.map(([id]) => id));
+  const results = searchSettings(query, allowed.map(([id]) => id), { host: nativeHost() });
 
   const aiValue = { ...ai, aiInfo: prompts.aiInfo };
   const paperValue = { ...papers, chatModelName: (ai.aiModels || []).find((m) => m.id === ai.chatModel)?.model };

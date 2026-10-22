@@ -62,7 +62,9 @@ export function TextBoxLayer({ surface, wrapRef, width, height, marks }) {
       const L = live.current;
       if (!L.armed || !L.width) return;
       if (press) { end(); return; } // a second finger: a pinch, not a box
-      if (e.button !== 0 || e.target.closest?.(".textBox, .commentMargin")) return; // a box, or a comment card beside the page
+      // a box, the ruler (its band moves it, ink/InkLayer.jsx InkRuler) or a
+      // comment card beside the page keeps its press
+      if (e.button !== 0 || e.target.closest?.(".textBox, .inkRuler, .commentMargin")) return;
       e.preventDefault();
       e.stopPropagation();
       // The box being typed in is left at the press, an edit before the new box exists.

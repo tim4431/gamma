@@ -9,7 +9,7 @@ import zipfile
 
 import pytest
 
-from gamma import markdown_import, markdown_zip_import as mzi
+from gamma import import_zip, markdown_import, markdown_zip_import as mzi
 from gamma.markdown_import import md_to_blocks
 from conftest import folder_names, label_names, login, make_folder, make_user
 
@@ -232,7 +232,7 @@ def test_nested_zips_left_unopened_are_named(guest, monkeypatch):
         "deeper.zip": "a zip nested more than 2 deep is not opened: its notes are not imported",
         "broken.zip": "not a readable zip: not opened"}
 
-    monkeypatch.setattr(mzi, "MAX_NESTED_ZIPS", 2)
+    monkeypatch.setattr(import_zip, "MAX_NESTED_ZIPS", 2)
     report = _preview(guest, outer)
     assert sorted(p["title"] for p in report["pages"]) == ["in-export", "in-part", "top"]
     assert _reasons(report)["Other.zip"] == ("more than 2 zips inside the zip: this one is not opened, "

@@ -3,7 +3,9 @@
 # (ipad/README.md "Python on the device"):
 #
 #   ipad/Python.xcframework              CPython 3.13 for iOS (BeeWare's
-#                                        Python-Apple-support), linked and embedded
+#                                        Python-Apple-support), linked and embedded,
+#                                        OpenSSL's privacy manifest put beside its
+#                                        _ssl and _hashlib (python/OpenSSL.xcprivacy)
 #   ipad/GammaIPad/Resources/python/
 #     app_packages.iphoneos/             the server's dependencies as iOS device wheels
 #     app_packages.iphonesimulator/      ... and as simulator wheels; a build keeps
@@ -183,6 +185,35 @@ install_support() {
   say "unpacked Python.xcframework"
 }
 
+# Apple requires a privacy manifest in every framework that carries OpenSSL
+# (ITMS-91061, https://developer.apple.com/support/third-party-SDK-requirements),
+# and the standard library's _ssl and _hashlib link it statically. The
+# support package's install_dylib moves a <module>.xcprivacy lying beside a
+# module's .so into the module's framework as PrivacyInfo.xcprivacy, and its
+# Makefile means to ship one for each of the two, but 3.13-b16 copies
+# lib-dynload into the package before it writes them, so the tarball has
+# none: App Store Connect refused TestFlight build 9 for both. So OpenSSL's
+# own manifest (python/OpenSSL.xcprivacy, the file OpenSSL ships for its
+# macOS framework) is put beside each of the two modules here, in every
+# slice and architecture of the framework. On every run, since the framework
+# is unpacked once and stamped: a copy already there costs a comparison, and
+# a tarball that brings its own needs nothing. The post-build phase in
+# project.yml fails a build whose two frameworks end up without it.
+install_privacy_manifests() {
+  local manifest=$ipad_dir/python/OpenSSL.xcprivacy framework=$ipad_dir/Python.xcframework
+  local so name target found=0
+  while IFS= read -r so; do
+    name=$(basename "$so")
+    target=$(dirname "$so")/${name%%.*}.xcprivacy
+    if [ ! -f "$target" ] || ! cmp -s "$manifest" "$target"; then
+      cp "$manifest" "$target"
+    fi
+    found=$((found + 1))
+  done < <(find "$framework" -path '*/lib-dynload/*' -type f \( -name '_ssl.*.so' -o -name '_hashlib.*.so' \))
+  [ "$found" -gt 0 ] || die "no _ssl or _hashlib module under $framework: the support package's layout changed"
+  say "OpenSSL's privacy manifest is beside _ssl and _hashlib ($found modules)"
+}
+
 # One pip install per platform, each into its own folder. The stamp is the
 # hash of the requirements and the flags, so an edit to either reinstalls
 # and nothing else does; pip's cache makes a reinstall a copy, not a
@@ -285,6 +316,7 @@ esac
 
 [ "$(uname -s)" = Darwin ] || die "this step runs on macOS (only --check runs elsewhere)"
 install_support
+install_privacy_manifests
 install_packages
 install_app
 install_frontend

@@ -9,7 +9,7 @@
 // iPad (docs/dev/ipad.md has the device checks). The last step reads the
 // menus these steps open as assistive technology does: one role="menu"
 // around each menu's items, named by what opens it.
-import { fakeAiModels, wanted } from "../harness.mjs";
+import { assertMenuRoles, fakeAiModels, wanted } from "../harness.mjs";
 import { waitForPdf } from "./pdf.mjs";
 import { PNG_1PX } from "./notes.mjs";
 
@@ -862,51 +862,10 @@ export async function touchScenarios({ server, browser, alice, makePdf, step, un
   // --- 13. a menu as assistive technology reads it ------------------------------------
 
   // WAI-ARIA's menu (ui-design.md, "Menus and submenus"): the surface is the
-  // one role="menu" around its items, vertical (no aria-orientation: the
-  // role's default), a flyout a menu of its own inside its parent menu, and
-  // a menu a control opens is named by that control. `menuShape` reads an
-  // open menu: how many menus sit around it, the items of its own level
-  // with the menus around each (one more than around the menu, so none sits
-  // in a second menu of its level), and any control in it that is no item.
-  const ITEMS = '[role="menuitem"], [role="menuitemcheckbox"], [role="menuitemradio"]';
-  const menuShape = (menu) => menu.evaluate((el, ITEMS) => {
-    const menusAround = (node) => {
-      let n = 0;
-      for (let p = node.parentElement; p; p = p.parentElement) if (p.getAttribute("role") === "menu") n++;
-      return n;
-    };
-    const own = (node) => node.closest('[role="menu"]') === el;
-    return {
-      role: el.getAttribute("role"),
-      orientation: el.getAttribute("aria-orientation"),
-      around: menusAround(el),
-      items: [...el.querySelectorAll(ITEMS)].filter(own).map((item) => ({
-        text: (item.querySelector(".ctxMenuText") || item).textContent.trim(),
-        role: item.getAttribute("role"),
-        checked: item.getAttribute("aria-checked"),
-        menus: menusAround(item),
-        // the nearest element with a role around it: its menu, or a group in it
-        container: item.parentElement.closest("[role]")?.getAttribute("role"),
-      })),
-      strays: [...el.querySelectorAll("button, input, select, textarea, a[href], [tabindex]")]
-        .filter((node) => own(node) && !node.matches(ITEMS)).map((node) => node.outerHTML.slice(0, 120)),
-    };
-  }, ITEMS);
-  // One open menu (a flyout: `around` 1) checked; its items returned.
-  const checkMenu = async (menu, what, around = 0) => {
-    const shape = await menuShape(menu);
-    assertEq(shape.role, "menu", `${what} is a menu`);
-    assertEq(shape.orientation, null, `${what} is vertical, the menu role's default`);
-    assertEq(shape.around, around, around ? `${what} sits inside its parent menu` : `${what} sits inside no other menu`);
-    assert(shape.items.length > 0, `${what} has items`);
-    for (const item of shape.items) {
-      assertEq(item.menus, around + 1, `${what}: "${item.text}" is inside exactly one menu of its level`);
-      assert(["menu", "group"].includes(item.container), `${what}: "${item.text}" sits in its menu or a group of it, not a ${item.container}`);
-      if (item.role !== "menuitem") assert(["true", "false"].includes(item.checked), `${what}: "${item.text}" (${item.role}) says whether it is checked`);
-    }
-    assertEq(shape.strays.join(" | "), "", `${what}: every control in it is a menu item`);
-    return shape.items;
-  };
+  // one role="menu" around its items, a flyout a menu of its own inside its
+  // parent menu, and a menu a control opens is named by that control
+  // (harness.mjs assertMenuRoles reads an open menu so; the handwriting and
+  // replay steps read the strip's, the selection's and the player's menus).
   const named = (page, name) => page.getByRole("menu", { name, exact: true });
   // Menus open and in no other menu (a flyout the pointer rests on is in
   // its parent's).
@@ -927,7 +886,7 @@ export async function touchScenarios({ server, browser, alice, makePdf, step, un
       await row.locator(".rowMenuBtn").click();
       await menu(page).waitFor();
       assertEq(await topMenus(page), 1, "the page menu is the one menu open");
-      const pageItems = await checkMenu(menu(page), "the page menu");
+      const pageItems = await assertMenuRoles(menu(page), "the page menu");
       for (const text of ["Open", "Rename", "Duplicate"]) hasItem(pageItems, text, "the page menu");
       const flyoutRow = page.locator(".ctxMenu .ctxSubTrigger", { hasText: "Move to folder" });
       await flyoutRow.click();
@@ -935,7 +894,7 @@ export async function touchScenarios({ server, browser, alice, makePdf, step, un
       await flyout.waitFor();
       assertEq(await flyoutRow.getAttribute("aria-haspopup"), "menu", "the flyout's row says it opens a menu");
       assertEq(await flyoutRow.getAttribute("aria-expanded"), "true", "and that it is open");
-      await checkMenu(flyout, "the Move to folder flyout", 1);
+      await assertMenuRoles(flyout, "the Move to folder flyout", 1);
       await closeMenu(page);
 
       // The sort: a select named by its button, its choices radios with the
@@ -946,7 +905,7 @@ export async function touchScenarios({ server, browser, alice, makePdf, step, un
       const sortName = await sort.getAttribute("aria-label");
       await named(page, sortName).waitFor();
       assertEq(await sort.getAttribute("aria-expanded"), "true", "the sort's button is expanded while its menu is open");
-      const choices = await checkMenu(named(page, sortName), "the sort menu");
+      const choices = await assertMenuRoles(named(page, sortName), "the sort menu");
       assert(choices.every((c) => c.role === "menuitemradio"), `the sort's choices are radios: ${JSON.stringify(choices)}`);
       const current = choices.filter((c) => c.checked === "true");
       assertEq(current.length, 1, "one choice is checked");
@@ -961,14 +920,14 @@ export async function touchScenarios({ server, browser, alice, makePdf, step, un
       const accountMenu = named(page, "Account & settings");
       await accountMenu.waitFor();
       assertEq(await account.getAttribute("aria-expanded"), "true", "the account button is expanded while its menu is open");
-      const accountItems = await checkMenu(accountMenu, "the account menu");
+      const accountItems = await assertMenuRoles(accountMenu, "the account menu");
       for (const text of ["Settings…", "Log out"]) hasItem(accountItems, text, "the account menu");
       const workspaces = accountItems.filter((i) => i.role === "menuitemradio");
       assert(workspaces.length && workspaces.filter((w) => w.checked === "true").length === 1,
         `the open workspace is the one checked radio: ${JSON.stringify(workspaces)}`);
       await page.locator('[data-guide="account.tour"]').click();
       await named(page, "Tours").waitFor();
-      await checkMenu(named(page, "Tours"), "the Tours flyout", 1);
+      await assertMenuRoles(named(page, "Tours"), "the Tours flyout", 1);
       await page.keyboard.press("Escape");
       await accountMenu.waitFor({ state: "detached" });
       assertNoProblems(page);
@@ -982,7 +941,7 @@ export async function touchScenarios({ server, browser, alice, makePdf, step, un
       const viewMenu = named(paperPage, "View");
       await viewMenu.waitFor();
       assertEq(await view.getAttribute("aria-expanded"), "true", "the View button is expanded while its menu is open");
-      const viewItems = await checkMenu(viewMenu, "the View menu");
+      const viewItems = await assertMenuRoles(viewMenu, "the View menu");
       assert(viewItems.some((i) => i.text === "Notes" && i.role === "menuitemcheckbox"), `a window's row is a checkbox: ${JSON.stringify(viewItems)}`);
       hasItem(viewItems, "Command palette", "the View menu");
       await paperPage.keyboard.press("Escape");
@@ -992,7 +951,7 @@ export async function touchScenarios({ server, browser, alice, makePdf, step, un
       await wrap.locator(".dragHandle").first().click();
       await menu(paperPage).waitFor();
       assertEq(await topMenus(paperPage), 1, "the handle menu is the one menu open");
-      hasItem(await checkMenu(menu(paperPage), "a note's handle menu"), "Copy link to block", "a note's handle menu");
+      hasItem(await assertMenuRoles(menu(paperPage), "a note's handle menu"), "Copy link to block", "a note's handle menu");
       await closeMenu(paperPage);
       assertNoProblems(paperPage);
     } finally { await ctx.close(); }

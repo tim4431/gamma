@@ -14,11 +14,11 @@ import { closeEditor, editRow, tree } from "./notes.mjs";
 
 export async function inboxScenarios({ server, browser, step, until, assert, assertEq, assertNoProblems, openPage }) {
   if (!wanted("inbox")) return;
-  for (const name of ["ib-ann", "ib-ben", "ib-cal"]) server.manage("create-user", name, `${name}-pw`);
-  const out = server.manage("create-workspace", "Inbox lab", "ib-ann", "shared");
+  for (const name of ["ib-ann", "ib-ben", "ib-cal"]) await server.manage("create-user", name, `${name}-pw`);
+  const out = await server.manage("create-workspace", "Inbox lab", "ib-ann", "shared");
   const wsId = (out.match(/workspace (\S+)/) || [])[1];
   assert(wsId, `shared workspace id from: ${out}`);
-  server.manage("set-member", wsId, "ib-ben", "editor");
+  await server.manage("set-member", wsId, "ib-ben", "editor");
   const login = async (name, ws = wsId) => {
     const a = await new Account(server, name, `${name}-pw`).login();
     if (ws) a.ws = ws;

@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { makeBlockId } from "../model/blockModel";
 import { t, T } from "../../shared/i18n/i18n.js";
 import { fmtBytes } from "./format.js";
+import { keepaliveFetch } from "./keepalive.js";
 import { isCheckableType, itemTypeLabel, itemTypeOf } from "./itemTypes.js";
 
 const API = "/api";
@@ -364,8 +365,12 @@ function withShare(url) {
   return `${url}${url.includes("?") ? "&" : "?"}share=${encodeURIComponent(SHARE_TOKEN)}`;
 }
 
-async function apiJson(url, options = {}) {
-  const r = await fetch(withShare(url), { ...options, credentials: "include" });
+// `keepalive`, a priority ('critical' | 'normal' | 'low'): the request goes
+// through the page's keepalive ledger (shared/lib/keepalive.js), with
+// keepalive when its body fits that priority's room, else as a plain fetch.
+async function apiJson(url, options = {}, { keepalive } = {}) {
+  const init = { ...options, credentials: "include" };
+  const r = await (keepalive ? keepaliveFetch(withShare(url), init, { priority: keepalive }) : fetch(withShare(url), init));
   if (r.status === 401) {
     if (!SHARE_VIEW) {
       window.dispatchEvent(new CustomEvent("gamma-auth-expired"));

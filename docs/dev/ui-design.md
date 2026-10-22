@@ -185,6 +185,7 @@ already exists. Bespoke CSS classes are for **layout only**.
 | `aiKeyInput` | every text/number/password input in dialogs and settings |
 | `switch` / `switchTrack` | every on/off toggle |
 | `MenuSelect` / `ActionMenu` ([Menus.jsx](../../frontend/src/shared/ui/Menus.jsx)) | every dropdown: Codex-style pill trigger + checkmarked `ContextMenu`. No native `<select>` anywhere |
+| `useMenuTrigger` ([Menus.jsx](../../frontend/src/shared/ui/Menus.jsx)) | the menus a toolbar's buttons open on the press, one at a time per toolbar: the recording player's mode and speed, the tool strip's More, Tool and Style, the selection menu's Style ([below](#menus-and-submenus)) |
 | `MenuItem` / `MenuLabel` / `MenuDivider` / `SubMenuItem` ([Menus.jsx](../../frontend/src/shared/ui/Menus.jsx)) | every row inside a menu, context or popover: icon column + ellipsizing label (+ `danger`, `trailing`, `keys`); `MenuDivider` between groups. `SubMenuItem` is the nested flyout — hover-opened, safe-triangle guarded; a popover menu hosts one through `MenuScope` |
 | `categoryTag`, `uiTag` | chips and small badges |
 | `KeyCaps` / `KeyBinding` ([SettingsKit.jsx](../../frontend/src/settings/SettingsKit.jsx); `KeyCaps` lives in [shared/ui/KeyCaps.jsx](../../frontend/src/shared/ui/KeyCaps.jsx), shared with the guide) | a keyboard chord as `.keyCap` key caps; `KeyBinding` is the rebindable version (click, press the new keys; reset button when changed) — [hotkeys.md](hotkeys.md) |
@@ -253,7 +254,8 @@ is `uiClose` with an `XIcon` inside (14, inline with the title it closes;
 ### Section labels
 
 Panel and section names (dock titles, Library, Recently viewed, Pinned, the
-popover, search and menu section captions, the Keyboard pane's groups) share
+popover, search and menu section captions, the Keyboard pane's groups, the
+handwriting strip's option-row captions) share
 one rule in app.css: sentence case, `--fs-xs`, weight 600, `--text-secondary`
 (dock titles a step up, `--fs-sm`), the Settings rail's look.
 Labels get no `text-transform: uppercase` or letter-spacing: the text keeps
@@ -270,9 +272,13 @@ that list and keeps only its layout in its own rule. The kind label on a card
   `:focus-visible`, so mouse clicks never show it. The rule sits in the
   primitives layer of app.css with only `:focus-visible`'s specificity:
   a widget that draws its own focus overrides it (the switch's track, the
-  key chip, rows that highlight like `.chatHistRow`). Rows that fill a list
-  (menu items, popover items, search results, the Settings rail) draw it
-  inside (`outline-offset: -2px`), where the list can't clip it.
+  key chip, a shape handle's dot, rows that highlight like `.chatHistRow`).
+  A control hidden over another takes the ring there: the custom-colour
+  swatch rings itself for its invisible native picker
+  (`.inkCustomColor:has(input:focus-visible)`).
+  Rows that fill a list (menu items, popover items, search results, the
+  Settings rail) draw it inside (`outline-offset: -2px`), where the list
+  can't clip it.
 - **Fields** show focus as the accent border plus a 3 px `--accent-bg` halo,
   on click and keyboard alike. The field list is next to the ring rule. A
   field inside a framing box (`.searchInputWrap`, `.homeFindBox`,
@@ -405,7 +411,43 @@ In the compact shell's More sheet a flyout opens inline under its row
 instead (`.phoneBottomBar .popover .ctxSubMenu`): beside it, the sheet's
 own scroll box would clip it. An open menu takes Escape first, on the
 capture phase. So Escape in a dropdown inside a dialog or a popover closes
-only the dropdown.
+only the dropdown. A `ContextMenu` rendered inside another one's rows
+(the handwriting selection menu's Style picker opens one) is a part of
+that menu: a press in it never dismisses the menu it came from, and
+Escape closes it first (`NestCtx` in Menus.jsx).
+
+A menu a toolbar's button opens comes from `useMenuTrigger({side})`
+(Menus.jsx). It opens on the button's press, as a native menu does, not on
+the click that follows (`triggerPress`, [below](#gestures-shareduipressjs)).
+A primary press opens or closes it: a mouse's left button, a finger or a
+pen. The click after the press does nothing. A click no press led to
+(Enter or Space on the focused button) toggles the menu too. While the
+recording player is open, Space plays and pauses wherever the focus is
+outside a text field ([recording.md](recording.md)), so then only Enter
+opens these menus from the keyboard. The press takes the button's tooltip
+away (`InkTooltips`), and the menu comes in the same frame.
+
+One hook holds the menus of one toolbar, one open at a time.
+`trigger(kind)` is a button's props: its id, the press, the keyboard's
+click, `aria-haspopup="menu"` and `aria-expanded`. `menu` is the open
+menu's `ContextMenu` props, which name it by its button
+(`aria-labelledby`). `close()` is what a row calls before it acts. The
+pressed button is the open menu's `ignoreRef`, so a press on it closes the
+menu rather than closing and reopening it. A press on another button of
+the toolbar swaps the menus: the open menu's outside press queues its
+close first, so the new kind opens. `side` (`"below"` or `"above"`)
+places the menus from their buttons, each by its button's left edge
+(`menuAnchor`, [below](#menus-and-popups-open-in-place)).
+
+The menu is rendered outside any `InkTooltips` host. React bubbles a
+portal's events up to the host, which would raise a tooltip for every row
+the pointer crosses. Nothing moves the focus: the menu takes none, so
+after Escape closes it the focus is where it was (on the button, when the
+keyboard opened it). The recording player's mode and speed menus open
+above the bar. The tool strip's More, Tool and Style menus and the
+selection menu's Style menu open below their buttons. `MenuSelect` and
+`ActionMenu` open on the click (`useDropdown`), and `MenuButton` is a
+row's stand-in for its right-click menu ([below](#menubutton)).
 
 To assistive technology a menu is WAI-ARIA's
 [menu](https://www.w3.org/WAI/ARIA/apg/patterns/menubar/). The element
@@ -413,14 +455,15 @@ around its rows, the `MenuScope`, has `role="menu"`: every `ContextMenu`
 and the account, View and Document menus. A menu is vertical, the role's
 default, so nothing sets `aria-orientation`. Inside a menu a `MenuItem` is
 a `menuitem` and a `MenuDivider` a `separator`. A row whose check the
-row itself sets passes its own role with `aria-checked`: `menuitemcheckbox`
-for a toggle (the View menu's windows, a page's labels), `menuitemradio`
-for one of a set (`MenuSelect`'s choices, the account menu's workspaces,
-the player's mode and speed, a `Segmented` inside a menu). A folder row's
-check in Move to folder (a page's) or Move to (a folder's), where it is
-already, is no state the row sets: it stays a `menuitem`, and its title
-says so. A `MenuSelect` with
-headings puts each set of radios in a `group` named by its heading. Every
+row itself sets passes its own role with `aria-checked`. A toggle is a
+`menuitemcheckbox` (the View menu's windows, a page's labels, the strip
+More's Ruler, Shapes and Zoom window). One of a set is a `menuitemradio`
+(`MenuSelect`'s choices, the account menu's workspaces, the player's mode
+and speed, the Style menu's brushes, a `Segmented` inside a menu). A
+folder row's check in Move to folder (a page's) or Move to (a folder's),
+where it is already, is no state the row sets: it stays a `menuitem`, and
+its title says so. A `MenuSelect` with headings puts each set of radios
+in a `group` named by its heading. Every
 other control in a menu is a `menuitem` too (the account card, a notice's
 link, which the notice's sentence describes, the highlight menu's
 colours), with no other role between it and its menu or group: a
@@ -432,30 +475,38 @@ two menus and every other row in exactly one; no element adds a second
 `role="menu"` around rows that already have one. Outside a menu (a dialog's
 list, the Add popover, a settings popover) a `MenuItem` stays a plain
 button, and a `ContextMenu` that holds something else passes
-`role="none"`: the handwriting and text box menus are toolbars, the model
-picker's list is a listbox.
+`role="none"`: the handwriting selection menu and the text box menu are
+toolbars, the model picker's list is a listbox. The selection menu's Style
+picker opens a menu of its own, portalled outside that toolbar.
 
 A menu is named by what opens it. `MenuSelect`, `ActionMenu`, a flyout
-and the player's mode and speed menus point `aria-labelledby` at their
-button or row; another menu with a button of its own takes that button's
-name as its `aria-label` (Account & settings, View, Document, Export chat,
-Translate, Comment actions, Recording actions, Table options). The
-dropdowns' buttons, a flyout's row, the account, View and Document
-buttons, the chat's export button and the player's buttons say
-`aria-haspopup="menu"` and `aria-expanded`; a `MenuButton` says
+and every `useMenuTrigger` menu (the player's mode and speed, the strip's
+More and Tool) point `aria-labelledby` at their button or row. Another
+menu with a button of its own takes that button's name as its
+`aria-label` (Account & settings, View, Document, Export chat, Translate,
+Comment actions, Recording actions, Table options). The Style menu is
+named Pen style, not by its picker, whose name is the brush it shows. The
+dropdowns' buttons, every `useMenuTrigger` button, a flyout's row, the
+account, View and Document buttons and the chat's export button say
+`aria-haspopup="menu"` and `aria-expanded`. A `MenuButton` says
 `aria-haspopup` alone. A context menu, opened at the pointer by a
 right-click, a held finger or a row's "⋯" standing in for them, has no
 control of its own to name it and goes without a name, as a native
 context menu does. The roles leave the keyboard and focus as they were:
 the rows are Tab stops, and the pattern's arrow keys and focus moving
-into a menu as it opens are not built. The last step of the browser
-suite's `touch.mjs` reads the menus this way.
+into a menu as it opens are not built. The browser suite's
+`assertMenuRoles` (harness.mjs) reads an open menu this way. The last
+step of `touch.mjs` calls it, and so do the handwriting and replay steps
+that open the strip's, the selection's and the player's menus.
 
 A menu that lists commands lists their ids: `CommandMenuItem`
 (`app/CommandMenuItem.jsx`) draws a catalog command ([hotkeys.md](hotkeys.md))
 as a `MenuItem` with its label, its glyph (`app/commandIcons.jsx`) and the
-key this account gave it, greyed while its `when` fails, and runs it with
-the context its key runs it with. The View menu's Undo, Redo, Go to page and
+key this account gave it. The row is greyed while the command's `when`
+fails, with `disabledTitle` as its title then (the reason it does not
+apply). It runs the command with the context its key runs it with and
+then tells `onRun` (a menu that closes itself). Any other prop is the
+row's, and an id the catalog does not know renders nothing. The View menu's Undo, Redo, Go to page and
 Command palette are such rows: the way to them without a keyboard.
 
 Submenus open on hover, and the hover-switching is guarded by
@@ -481,6 +532,12 @@ to place it:
   is the pure geometry (`tests/placement.test.mjs`): its own side of the
   point, the other side (`flipY`) when its own has no room and that one
   has, then inside the window and the `bounds` band.
+- `menuAnchor(rect, {side})` is where a menu that opens from a button
+  goes, as `ContextMenu`'s anchor, from the button's rect: its left edge
+  on the button's, 4 px under it (`side: "below"`) or over it (`"above"`,
+  with `anchorBottom`). Pure too (`tests/placement.test.mjs`);
+  `useMenuTrigger` places its menus with it, and the browser suite's
+  `assertMenuFrom` (harness.mjs) checks each of them there.
 - `useFloatingPosition(ref, place, deps, {follow})` measures and places it
   in a layout effect, before the browser paints it, and returns null until
   then, while the surface stands hidden. When its size changes later (a row
@@ -544,9 +601,20 @@ it to the floating pill: one ending in "…" is in progress and spins,
 anything else is final and fades after a second. `setStatus(msg, action)`
 with an `action` `{label, run}` puts its button on the pill
 (`.statusPill.interactive`), which then stays 8 seconds to be pressed.
-`undoableStatus(msg)` is that with Undo, which runs the `app.undo`
-command: a deleted note says "Block deleted." with Undo beside it, in
-reach without a keyboard. A finger that scrolls a page while a tool is
+Each source posts to a channel of its own (`postPill(channel, entry)`),
+and the pill shows one entry: an error first, then a final message, then
+any other, the newest first among equals. An entry with `question: true`
+ranks with the final messages. So a question on its own channel stays
+over a spinner or another button, and a newer final message shows over
+it for its second and goes. The pens question is one
+([handwriting.md](handwriting.md) "Presets follow the account").
+`sayUndoable(msg, run)` is that with Undo, which clears the pill and
+runs `run`. `undoableStatus(msg)` is the one whose Undo runs the
+`app.undo` command: a deleted note says "Block deleted." with Undo
+beside it, in reach without a keyboard. A stroke edit's pill (a snapped
+shape, a scribble erase, a stamped line) comes from
+`ink/useInkDocument.js`'s `undoableInkStatus(msg)`, whose Undo steps
+the stroke history. A finger that scrolls a page while a tool is
 armed and only a pen draws gets "Fingers scroll while a pen draws" with
 **Draw with finger**, once a session and never after a pen has drawn
 ([handwriting.md](handwriting.md)).
@@ -648,14 +716,33 @@ never learns which gesture it was.
   same element, within 400 ms and 30 px, are counted here, each once, by
   the innermost element it reaches. The browser's `dblclick` after a
   counted double tap is ignored.
-- **Where they are.** `menuPress`: the library's rows, cards and chips,
-  tabs, the Back button, highlights, their note badges and PDF links, the
-  translate button, the note object frame, file chips, chat history rows.
-  `doublePress`: the dock grip's fold, a diagram's source, a picture's
-  zoom, a resize grip's natural size. A widget built outside React (the
-  editor's picture and table widgets, `BlockCmEditor.jsx`) attaches the
-  same handlers with `addEventListener`. `tests/press.test.mjs` covers the
-  counting.
+- **`triggerPress(run)`**: a button whose menu opens on the press, as a
+  native menu does, not on the click that follows. `useMenuTrigger`
+  ([Menus and submenus](#menus-and-submenus)) is built on it.
+  - `run` is called for a press with the primary button: a mouse's left
+    button, or a finger's or a pen's contact, which is button 0 too.
+  - It is called for a click no press led to as well (`detail` 0: Enter
+    or Space on the focused button).
+  - The click after a press belongs to the press, so it does nothing. The
+    right and middle buttons do nothing either.
+- **The timings** are exported (`HOLD_MS`, `HOLD_SLOP`, `DOUBLE_MS`,
+  `DOUBLE_SLOP`) for gestures these helpers do not cover: the strip's
+  preset drag (`markup/MarkupToolbar.jsx`) and the finger-undo chords
+  (`ink/fingerChords.js`) read them.
+- **Where they are.**
+  - `menuPress`: the library's rows, cards and chips, tabs, the Back
+    button, highlights, their note badges and PDF links, the translate
+    button, the note object frame, file chips, chat history rows.
+  - `doublePress`: the dock grip's fold, a diagram's source, a picture's
+    zoom, a resize grip's natural size.
+  - `triggerPress`: the buttons `useMenuTrigger` drives (the recording
+    player's mode and speed, the tool strip's More, Tool and Style, the
+    selection menu's Style).
+  - A widget built outside React (the editor's picture and table widgets,
+    `BlockCmEditor.jsx`) attaches the same handlers with
+    `addEventListener`.
+  - `tests/press.test.mjs` covers the counting and which press or click
+    `triggerPress` answers.
 
 ### Device questions: `shared/lib/pointer.js`
 
@@ -782,21 +869,24 @@ own controls.
 1. A menu on an item: spread `menuPress(open)` where `onContextMenu`
    would go, and give the menu a visible way in, a `MenuButton` in a
    `.rowMenuHost` row or a button of its own.
-2. A second action on an item: spread `doublePress(run)`, never
+2. A menu from a toolbar button: `useMenuTrigger`, the button spreading
+   its `trigger(kind)` and the menu rendered outside the `InkTooltips`
+   host ([Menus and submenus](#menus-and-submenus)).
+3. A second action on an item: spread `doublePress(run)`, never
    `onDoubleClick` alone.
-3. No `pointerType`, `(pointer: coarse)` or `maxTouchPoints` in feature
+4. No `pointerType`, `(pointer: coarse)` or `maxTouchPoints` in feature
    code: ask `pointer.js`.
-4. A control shown on hover: hide it under `@media (hover: hover)` or
+5. A control shown on hover: hide it under `@media (hover: hover)` or
    with `pointer-events: none` beside its `opacity: 0`, add the
    `:focus-visible` twin, and decide what shows it where nothing hovers.
-5. Sizes from `--ctl-*`, and what sits around them by `calc()` of them.
-6. Drag alone is not enough: what a drag files or orders has a menu row
+6. Sizes from `--ctl-*`, and what sits around them by `calc()` of them.
+7. Drag alone is not enough: what a drag files or orders has a menu row
    too (the folder menu's Move to, Move up, Move down).
-7. A text field's Enter handler returns early while an input method
+8. A text field's Enter handler returns early while an input method
    composes (`composing` in `chat/enterKey.js`), and an `autoFocus` that
    would raise an on-screen keyboard is `!touchTyping()`. A username or
    account field turns capitalization and correction off.
-8. A file pick goes through `pickFiles`.
+9. A file pick goes through `pickFiles`.
 
 ## Block editor interactions
 
@@ -849,7 +939,7 @@ preview), and image/table paste with the ordinary row editor. The card footer na
 |---|---|
 | `app/App.jsx` | routing, block-tree editor state, docks, the page's live session glue, AI chat glue (decomposition in progress) |
 | `collaboration/usePageCollab.js`, `shared/model/blockOps.js`, `collaboration/Presence.jsx` | the live session (ops out, ops + presence in), the pure tree diff/apply, the avatar stack / row chips ([collab.md](collab.md)), and `PersonAvatar`, the avatar of someone not on the page by username (a share's owner, a person to mention, a comment's author, an Inbox item's actor) |
-| `collaboration/MirrorPopover.jsx`, `collaboration/MergeResolver.jsx`, `settings/SettingsMirrors.jsx` | a clone's sync pill with its settings and conflicts views, the conflict card + the row chip, Settings → Workspaces → Clones ([mirror.md](mirror.md)) |
+| `collaboration/MirrorPopover.jsx`, `collaboration/MergeResolver.jsx`, `collaboration/conflictKinds.js`, `settings/SettingsMirrors.jsx` | a clone's sync pill with its settings and conflicts views, the conflict card + the row chip, what each kind of conflict row says (pure), Settings → Workspaces → Clones ([mirror.md](mirror.md)) |
 | `app/prefDefs.js`, `app/prefs.js` | every preference's key, default, codec and scope (`PREFS`); the hooks that make them state (`useAppPrefs`) and sync the account-scoped ones (`useProfileSync`) |
 | `settings/SettingsDialog.jsx` + the `settings/Settings*.jsx` panes | the Settings dialog (`SettingsKit.jsx` holds the shared primitives incl. `AccountPicker`, the search-box-over-account-rows people picker, and `LogBox`) |
 | `settings/sectionPrefs.js`, `settings/syncState.js` | which account preferences each settings section holds (`SECTION_PREFS`), and how their sync reads: a section's scope tag (`profileSyncState`) and the Settings sync row's hint (`cloudSyncHint`) ([settings.md](settings.md)) |
@@ -859,6 +949,7 @@ preview), and image/table paste with the ordinary row editor. The card footer na
 | `transfers/ImportExport.jsx`, `transfers/transferFormats.js`, `shared/illustrations/` | the Import/Export dialogs, their format/source rules (`resolveExport` / `resolveImport`) and the decorative previews ([import_export.md](import_export.md)) |
 | `transfers/ImportReviewDialog.jsx`, `transfers/ImportTree.jsx`, `transfers/importApi.js`, `transfers/importReview.js` | the import review: upload → review → import → summary in one `SubDialog` (filter `Segmented`, source and destination trees with checkboxes), the `/api/import/review` calls, and the pure selection/filter/tree helpers ([import_export.md](import_export.md)) |
 | `shared/lib/xhrUpload.js` | the one multipart upload: progress, a processing callback, abort by function or `AbortSignal`, the workspace and tab-identity headers; behind `FileChip.postFile`, PDF uploads, backup restores and the import review |
+| `shared/lib/keepalive.js` | the page's one ledger of `fetch` `keepalive` requests: each sender asks it for room in the browser's 64 KiB of keepalive bodies by priority (the queued page edits, then the small recoverable requests, then handwriting), and a request that does not fit goes as a plain fetch ([collab.md](collab.md) "Keepalive") |
 | `pdf/noteAnchor.js` | where a highlight's note badge sits: the geometric last line of its rects, not the last stored rect |
 | `shared/model/gammaLinks.js`, `GammaLinkCard` / `CitationPill` in `shared/ui/Widgets.jsx` | links into this library (page / block / citation) classified once and drawn the same in the chat and in notes: a page or block link as a card, a citation as a compact pill with a hover preview ([pdf_citations.md](pdf_citations.md)) |
 | `pdf/pdfCitation.js`, `pdf/PdfCitationOverlay.jsx` | a citation link → the quoted passage highlighted on the cited PDF page ([pdf_citations.md](pdf_citations.md)) |
@@ -868,7 +959,7 @@ preview), and image/table paste with the ordinary row editor. The card footer na
 | `shared/lib/stableActions.js`, `shared/lib/keepIfSame.js` | what a memoized row or page relies on: one stable wrapper per handler name calling the latest handler (`useStableActions` for the page tools, `makeStableActions` for the outliner's `rowProps`), and a derived map or object kept by identity while it reads the same (`keepIfSame` with `sameMap` / `sameObject`) ([frontend-refactor.md](frontend-refactor.md)) |
 | `chat/ChatDock.jsx` | the AI chat panel (incl. agent wiring); header = a `.ctlBtnRow` of `.ctlBtn` icon buttons (the PDF zoom column's buttons laid flat) with the ⚙ settings popover |
 | `pdf/PdfViewer.jsx` | the custom pdf.js viewer. A highlight's colour (`#rrggbbaa`, `shared/model/palette.js`) rides in `--hl` beside the dark-page variant the viewer derives for it (`darkPageColor`: the same hue, saturated, at a middle lightness, mostly transparent; `--hl-dark`, and `--hl-dark-line` for an area outline, which also draws a commented passage's underline on a light page), so on a dark page — Flip page colors or Gamma Dark — app.css draws that with normal blending in place of the screened pastel, whatever app the colour came from. The selection popup's swatches are the account's wash palette (`usePalette`, `shared/ui/paletteContext.js`). A jump to a highlight (its note's dot, a deep link, a search hit) pulses it once in its own hue: App's `triggerFlash` → `flashHighlightId` → `.pdfHlFlash` on its rects, a still ring under reduced motion |
-| `ink/ink.js`, `ink/inkStore.js`, `ink/inkInput.js`, `ink/InkLayer.jsx` | handwriting ([handwriting.md](handwriting.md)): the stroke codec + geometry (pure), the files/drafts store, pointer sampling, and the page layer + selection menu (`.inkEditMenu`, placed by `useSelectionMenuAnchor`) + notes card + `ColorChoices`, the swatches and custom colour that a pen preset's row and a text box's style share |
+| `ink/ink.js`, `ink/finishStroke.js`, `ink/inkInput.js`, `ink/stabilizer.js`, `ink/shapes.js`, `ink/gestures.js`, `ink/fingerChords.js`, `ink/stripKeys.js`, `ink/pencilActions.js`, `ink/hostInk.js`, `ink/ruler.js`, `ink/shapeTool.js`, `ink/zoomWindow.js`, `ink/surfaceScale.js`, `ink/inkStore.js`, `ink/inkFlush.js`, `ink/inkJournal.js`, `ink/inkLive.js`, `ink/grain.js`, `ink/InkStylePicker.jsx`, `ink/ZoomWindow.jsx`, `ink/InkLayer.jsx` | handwriting ([handwriting.md](handwriting.md)): the stroke codec + geometry (pure), the finish pipeline and brush table (the only width laws), pointer sampling, Smoothing, the shape recogniser, scribble detection, finger chords, the strip's keys, the Pencil mapping, the iPad shell's side of a stroke, the ruler, the Shapes tool's drag, the zoom window's rules, a screen distance in a surface's points (Duplicate's offset), the files/drafts store, the flush plan, the drafts journal, the peers' wet strokes, the pencil grain, the Style picker, the zoom window's panel, and the page layer + selection menu (`.inkEditMenu`, placed by `useSelectionMenuAnchor`) + notes card + `ColorChoices`, the swatches and custom colour that a pen preset's row, a text box's style and the selection menu's Color and Fill rows share |
 | `markup/MarkupToolbar.jsx`, `markup/MarkupLayers.jsx`, `markup/PageTools.jsx` | the tool strip (`.pdfInkBar`: `ctlBtn`s and `colorBtn` swatches; the Text tool's `TypeIcon`), the one mount of a page surface's layers (text boxes, then ink), and the tools context they read, with `armedClasses` for a surface's armed-tool classes ([handwriting.md](handwriting.md)) |
 | `markup/TextBoxLayer.jsx`, `markup/useTextBoxes.js`, `markup/textBox.js`, `markup/markup.css` | text boxes ([text_boxes.md](text_boxes.md)): the boxes of a page (frame, width handle and band in screen pixels over a box sized in the page's points), the box menu (the handwriting menu's `inkEditMenu` rows: `TextSizeIcon`, `PaletteIcon`, `PaintBucketIcon`, then Duplicate, Show note, Delete), and `TextStyleChoices`, the size numbers, the pen palette through `ColorChoices`, and the four backgrounds ("none" a struck-out swatch, `.textNoBackground`) that the menu and the strip's Text row share; the notes row's `TypeIcon` marker (`.textBoxMarker`) |
 | `search/SearchPanel.jsx`, `search/snippets.js`, `library/librarySearch.js` | workspace search (Ctrl+F); `MarkedText`, the query's matches as `mark.searchMark` (quick open's rows and the `[[` picker's too), over the pure result text of `snippets.js`; the title scorer it shares with chat, and the library matcher (title + folder/label chips) shared by the home filter box and quick open |
@@ -900,10 +991,10 @@ preview), and image/table paste with the ordinary row editor. The card footer na
 | `editor/LatexEditor.jsx` | LaTeX aids while editing: the live preview docked to the editor column with a caret marker, the `\command` popup, `renderKatex`/`useCaretAnchored` shared helpers; `editor/latexCompletion.js` is the pure catalog (prefix/abbreviation/fuzzy tiers, snippets, Tab-out navigation) it re-exports; `editor/latexInput.js` supplies scalable delimiter pairing. See [LaTeX editing](latex_editing.md) for shortcuts and browser checks |
 | `library/RecentlyDeleted.jsx` | the Recently deleted dialog: a `SubDialog` of `aiProvRow` rows (title, who deleted it and when, days left, folder) with Restore and a delete-for-good icon button behind App's confirm box, Empty in its `DialogButtons` ([home_library.md](home_library.md) "Recently deleted") |
 | `library/libraryUtils.js` | the library's folder and label helpers over the folder and label trees ([home_library.md](home_library.md) "Folders and labels"), and `pageAttachment`, what a page carries |
-| `shared/ui/Widgets.jsx`, `shared/ui/Menus.jsx`, `shared/ui/Icons.jsx` | shared components; `OpenTabs` in Widgets is the topbar's tab strip (a kind icon per tab, pinned tabs first, full width with a pin in place of the close button, the active tab kept in view clear of the right-edge fade, and on overflow a "⌄ n" popover listing every tab with a filter) |
+| `shared/ui/Widgets.jsx`, `shared/ui/Menus.jsx`, `shared/ui/Icons.jsx` | shared components; `OpenTabs` in Widgets is the topbar's tab strip (a kind icon per tab, pinned tabs first, full width with a pin in place of the close button, the active tab kept in view clear of the right-edge fade, and on overflow a "⌄ n" popover listing every tab with a filter); `useMenuTrigger` in Menus is the menus a toolbar's buttons open on the press ([Menus and submenus](#menus-and-submenus)) |
 | `shared/ui/wheelPan.js` | `useWheelPan`: a plain mouse wheel pans a sideways strip (the card strips, the tab strip) |
 | `shared/ui/listKeys.js` | `stepList`: ↑/↓ between a search box and the results listed under it (Settings search, the move-to-page filter, the chat's page picker) |
 | `shared/ui/DiagramFigure.jsx`, `shared/ui/ResizeGrip.jsx` | the diagram figure (a Mermaid diagram inline, or a sanitized SVG drawing shown as an image) with its toolbar of `ctlBtn`s, ended by a note's object "⋯" (`tools`) ([diagrams.md](diagrams.md)); the two-sided drag grips (`ResizeGrips`) + `useDragResize` hook that size centred note images and diagrams alike, a double-click or double tap on a grip restoring the natural size |
-| `shared/ui/press.js`, `shared/lib/pointer.js`, `shared/lib/pickFiles.js` | one behaviour for mouse and finger (above): `menuPress` / `doublePress` / `pressAt`, the three device questions, and the system file picker opened from code |
+| `shared/ui/press.js`, `shared/lib/pointer.js`, `shared/lib/pickFiles.js` | one behaviour for mouse and finger (above): `menuPress` / `doublePress` / `pressAt` / `triggerPress`, the three device questions, and the system file picker opened from code |
 | `app/CommandMenuItem.jsx` | a catalog command as a menu row (the View menu's Undo, Redo, Go to page, Command palette; [Menus and submenus](#menus-and-submenus)) |
 | `shared/ui/menuAim.js` | pointer-trajectory ("safe triangle") hover intent for hierarchical menus — UI-agnostic, consumed by `shared/ui/Menus.jsx` |

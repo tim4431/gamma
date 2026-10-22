@@ -20,9 +20,14 @@ async function load({ native, standalone = false } = {}) {
   return { host, attrs, posted };
 }
 
-// The user script's stub: what native sends before the bundle runs waits in `queue`.
+// The user script's stub: what native sends before the bundle runs waits in
+// `queue`. The flags are HostInfo's (ipad/GammaIPad/Shell/Bridge.swift):
+// host.js hands them over as declared, and the web acts on every one but
+// inkLooks, which only says what the shell's live line can draw.
+const FLAGS = { ink: true, inkLooks: ["pressure", "dash", "blend", "stabilize", "pencil", "calligraphy", "snap"], hold: true, pencil: true,
+  pencilPhases: true, pencilRoll: true, haptics: true, servers: true };
 function stub(fields) {
-  const native = { platform: "ipad", version: "0.2.0", ink: true, pencil: true, servers: true, ...fields };
+  const native = { platform: "ipad", version: "0.2.0", ...FLAGS, ...fields };
   native.receive = (msg) => new Promise((resolve, reject) => (native.queue ||= []).push({ msg, resolve, reject }));
   return native;
 }
@@ -94,4 +99,36 @@ test("unsubscribing an old listener leaves its replacement", async () => {
   host.onHostMessage("pencil", () => "second");
   offFirst();
   assert.equal(await native.receive({ type: "pencil" }), "second");
+});
+
+test("the host's flags are read as declared, and a flag it leaves out is no capability", async () => {
+  const { host } = await load({ native: stub() });
+  const h = host.nativeHost();
+  for (const [flag, value] of Object.entries(FLAGS)) assert.deepEqual(h[flag], value, flag);
+  const { host: older } = await load({ native: stub({ inkLooks: undefined, hold: undefined, pencilPhases: undefined, haptics: undefined }) });
+  for (const flag of ["inkLooks", "hold", "pencilPhases", "haptics"]) assert.ok(!older.nativeHost()[flag], `an older shell: no ${flag}`);
+});
+
+test("hold and squeeze from native: answered by their listeners, and at once with nothing on a page without one", async () => {
+  const native = stub();
+  const early = native.receive({ type: "hold", pointerId: 4, samples: [[1, 2, 0.5, 0, 50, 90]] });
+  const { host, posted } = await load({ native });
+  // no hold listener when the queue was drained: the shell reads nothing as {}
+  assert.equal(await early, undefined);
+  host.onHostMessage("hold", ({ samples }) => (samples.length > 1 ? { shape: { kind: "line", params: { x1: 0, y1: 0, x2: 1, y2: 1 } } } : {}));
+  assert.deepEqual(await native.receive({ type: "hold", pointerId: 4, samples: [[0, 0, 0.5, 0], [1, 1, 0.5, 700]] }),
+    { shape: { kind: "line", params: { x1: 0, y1: 0, x2: 1, y2: 1 } } });
+  assert.deepEqual(await native.receive({ type: "hold", pointerId: 4, samples: [[0, 0, 0.5, 0]] }), {});
+  assert.equal(await native.receive({ type: "squeeze", phase: "began", action: "switchEraser" }), undefined, "no squeeze listener yet");
+  const phases = [];
+  host.onHostMessage("squeeze", ({ phase }) => { phases.push(phase); });
+  host.onHostMessage("pencil", ({ gesture, phase }) => { phases.push(`${gesture}:${phase ?? "-"}`); });
+  await native.receive({ type: "squeeze", phase: "began", action: "switchEraser" });
+  await native.receive({ type: "pencil", gesture: "squeeze", action: "switchEraser", phase: "ended" });
+  await native.receive({ type: "pencil", gesture: "tap", action: "switchEraser" });
+  await native.receive({ type: "squeeze", phase: "cancelled", action: "switchEraser" });
+  assert.deepEqual(phases, ["began", "squeeze:ended", "tap:-", "cancelled"]);
+  // the web's haptic goes out like any other message, with its reply
+  assert.deepEqual(await host.postToHost({ type: "haptic", kind: "snap", at: { x: 10, y: 20 } }), { taken: true });
+  assert.deepEqual(posted.at(-1), { type: "haptic", kind: "snap", at: { x: 10, y: 20 } });
 });

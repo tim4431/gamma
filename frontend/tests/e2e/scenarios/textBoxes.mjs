@@ -757,10 +757,10 @@ export async function textBoxScenarios({ server, browser, alice, bob, makePdf, s
 
   await step("text box: two people on one box: a move made while the other types keeps both, on the server and both screens; its undo keeps the other's typing", async () => {
     // A shared workspace: alice owns it, bob edits (manage.py: admin-only setup).
-    const out = server.manage("create-workspace", "Box team", "alice", "shared");
+    const out = await server.manage("create-workspace", "Box team", "alice", "shared");
     const teamId = (out.match(/workspace (\S+)/) || [])[1];
     assert(teamId, `shared workspace id from: ${out}`);
-    server.manage("set-member", teamId, "bob", "editor");
+    await server.manage("set-member", teamId, "bob", "editor");
     const aliceT = Object.assign(Object.create(Object.getPrototypeOf(alice)), alice, { ws: teamId });
     const bobT = Object.assign(Object.create(Object.getPrototypeOf(bob)), bob, { ws: teamId });
     const up = await aliceT.upload("/api/uploads", makePdf([["A page for two", "with some text"]]), "two.pdf", "application/pdf");

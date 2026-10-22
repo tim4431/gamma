@@ -167,7 +167,13 @@ No schema change: sheets are blocks and properties.
   size, in the top-left frame the notes PDF uses (`q 1 0 0 -1 0 h cm`):
   the paper, then the sheet's text boxes with text as real, selectable
   text (`text_box.pdf_ops`, with the page's font resources), then every
-  ink group on the sheet through `ink.pdf_path_ops`. `notebook_pdf` takes
+  ink group on the sheet through `ink.pdf_path_ops`. Every group's band 0
+  is drawn before any group's band 1, and the graphics states the strokes
+  set (a highlighter's multiply, a pencil's shades:
+  `ink.pdf_path_resources`) go in the page's resources. So do the
+  pencil's grain patterns (`ink.GrainPatterns`: one tile image per colour
+  for the whole PDF), placed through the sheet's flipped frame
+  (`pdf_path_ops`' `frame`). `notebook_pdf` takes
   `(paper, [(content, text_box)], [InkFile])` per sheet.
   `X-Annotations-Written` counts the boxes and groups drawn. A page with
   neither is refused (400, "page has no PDF").
@@ -175,6 +181,12 @@ No schema change: sheets are blocks and properties.
   handwriting under it is written on it"), a group on one ("handwriting
   on the page of paper above") and a text box on one ("text box on the
   page of paper above").
+- The Notability import ([import_export.md](import_export.md#notability-notes))
+  makes notebooks on the server: a note with no PDF page becomes a page of
+  sheets, one per Notability page, folded, each on the note's paper
+  (`notability_map.paper`: its size, colour and ruling, normalized), with
+  its ink groups (`canvas` space, the sheet's size) and text boxes under
+  it.
 
 ## Client
 
@@ -245,11 +257,14 @@ No schema change: sheets are blocks and properties.
   - In the notes view the rows get `inlineSheets`, the numbers
     `sheetNumbers` and `NoteSheetContext`. The strip shows over the notes
     (`notesInkStrip`) when the page has sheets and no viewer holds it.
-  - `handleInkStroke` takes a sheet id where a PDF page number goes: the
-    group's file is `newCanvasInk`, and a new group's block is inserted
-    under its sheet. Writing low on the last sheet calls `addSheetAfter`
-    with `once`. A text box made on a sheet is inserted as the sheet's
-    last child the same way (`markup/useTextBoxes.js` `onBoxCreate`).
+  - `handleInkStroke` (`ink/useInkStrokes.js`) takes a sheet id where a
+    PDF page number goes: the group's file is `newCanvasInk`, and a new
+    group's block is inserted under its sheet (`applyInk`,
+    `ink/useInkDocument.js`). Writing below three quarters of the last
+    sheet's height (`notebook.js` `wantsSheetAfter`) calls App's
+    `addSheetAfter` with `once`. A text box made on a sheet is inserted
+    as the sheet's last child the same way (`markup/useTextBoxes.js`
+    `onBoxCreate`).
   - `addSheetAfter` (right after a block), `addPageAtEnd` (after the last
     sheet), `insertSheetAt` ("/note"), `setSheetPaper` and
     `applyPaperToAll` (every sheet, at any depth) are thin `setBlocks`
@@ -281,6 +296,7 @@ No schema change: sheets are blocks and properties.
   groups export as drawings, like any group's, and its text boxes as
   notes.
 - Templates beyond the four patterns (music staves, Cornell margins),
-  and a paper image.
+  and a paper image. A Notability template paper comes in as plain paper
+  of its colour.
 - Virtualizing a long notebook's sheets. Every sheet mounts, which suits
   notebooks of tens of pages.

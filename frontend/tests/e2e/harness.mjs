@@ -2,12 +2,13 @@
 // over a throwaway data dir serving frontend/dist, accounts + API helpers,
 // browser contexts logged in as those accounts, a real-PDF generator, and the
 // step runner. Nothing here touches the developer's own data directory.
-import { spawn, execFileSync } from "node:child_process";
+import { spawn, execFile, execFileSync } from "node:child_process";
 import fs from "node:fs";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 import { chromium, webkit } from "playwright";
 
 export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
@@ -22,23 +23,7 @@ export const PYTHON = process.env.GAMMA_E2E_PYTHON || (process.platform === "win
   : path.join(BACKEND, "venv", "bin", "python"));
 
 export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-
-// Node's fetch keeps a connection open for the next request, and the backend
-// (uvicorn) closes one after 5 s idle. A scenario that blocks the event loop
-// past that (server.manage() runs manage.py synchronously) sends its next
-// request down a socket the server has closed before Node has seen the
-// close; on Linux that fails as "fetch failed" (other side closed), as the
-// inbox group's first login did in CI. Such a request never reached the app:
-// the suite's fetch, the scenarios' too, sends it again on a new connection.
-const STALE_SOCKET = new Set(["UND_ERR_SOCKET", "ECONNRESET", "EPIPE"]);
-const nodeFetch = globalThis.fetch;
-globalThis.fetch = async (url, init) => {
-  for (let attempt = 1; ; attempt++) {
-    try { return await nodeFetch(url, init); } catch (e) {
-      if (attempt === 3 || !STALE_SOCKET.has(e?.cause?.code)) throw e;
-    }
-  }
-};
+const execFileAsync = promisify(execFile);
 
 export const flags = {
   keep: process.argv.includes("--keep"),
@@ -80,10 +65,14 @@ export class Server {
     this.proc = null;
   }
   get base() { return `http://127.0.0.1:${this.port}`; }
-  manage(...args) {
-    return execFileSync(PYTHON, ["manage.py", ...args], {
+  // manage.py on this server's data dir; its output. Not synchronous: a run
+  // of them (a second each) would block the event loop past the backend's
+  // 5 s keep-alive, and the next request would go down a socket it had closed.
+  async manage(...args) {
+    const { stdout } = await execFileAsync(PYTHON, ["manage.py", ...args], {
       cwd: BACKEND, env: { ...baseEnv(), GAMMA_DATA_DIR: this.dataDir, ...this.env }, encoding: "utf8",
     });
+    return stdout;
   }
   async start() {
     if (!fs.existsSync(path.join(DIST, "index.html"))) throw new Error("frontend/dist is missing: run `npm run build` first");
@@ -93,7 +82,7 @@ export class Server {
     // replaces dist/ and would otherwise 500 every page load until it ends.
     const dist = path.join(this.dir, "dist");
     fs.cpSync(DIST, dist, { recursive: true });
-    this.manage("setup");
+    await this.manage("setup");
     this.port = await freePort();
     const log = fs.openSync(this.logPath, "a");
     this.proc = spawn(PYTHON, ["-m", "uvicorn", "app:app", "--host", "127.0.0.1", "--port", String(this.port)], {
@@ -364,6 +353,65 @@ export async function assertOpensInPlace(page, selector, act, { ms = 600, what =
   if (!seen) throw new Error(`${what} never showed`);
 }
 
+// Asserts where an open menu stands from the button that opened it
+// (useMenuTrigger, placement.js menuAnchor): its left edge on the button's,
+// and its top 4 px under the button (`side` "below") or its bottom 4 px
+// over it ("above").
+export async function assertMenuFrom(menu, button, side, what = "the menu") {
+  const m = await menu.boundingBox(), b = await button.boundingBox();
+  const gap = side === "above" ? b.y - (m.y + m.height) : m.y - (b.y + b.height);
+  if (Math.abs(gap - 4) > 1 || Math.abs(m.x - b.x) > 1) {
+    throw new Error(`${what} is not 4 px ${side} its button, by its left edge: menu ${JSON.stringify(m)}, button ${JSON.stringify(b)}`);
+  }
+}
+
+// Asserts an open menu reads as WAI-ARIA's menu (docs/dev/ui-design.md,
+// "Menus and submenus"): `menu` is the one role="menu" around its items,
+// vertical (no aria-orientation: the role's default), and sits inside
+// `around` other menus (a flyout: 1, its parent). Each item of its own
+// level sits in exactly one menu of that level, directly in the menu or in
+// a group of it; a checkbox or radio item says whether it is checked; and
+// every control in it is an item. Returns those items: {text, role,
+// checked}. Find the menu by its name (getByRole("menu", {name})) to
+// check its name too.
+export async function assertMenuRoles(menu, what, around = 0) {
+  const ITEMS = '[role="menuitem"], [role="menuitemcheckbox"], [role="menuitemradio"]';
+  const shape = await menu.evaluate((el, ITEMS) => {
+    const menusAround = (node) => {
+      let n = 0;
+      for (let p = node.parentElement; p; p = p.parentElement) if (p.getAttribute("role") === "menu") n++;
+      return n;
+    };
+    const own = (node) => node.closest('[role="menu"]') === el;
+    return {
+      role: el.getAttribute("role"),
+      orientation: el.getAttribute("aria-orientation"),
+      around: menusAround(el),
+      items: [...el.querySelectorAll(ITEMS)].filter(own).map((item) => ({
+        text: (item.querySelector(".ctxMenuText") || item).textContent.trim(),
+        role: item.getAttribute("role"),
+        checked: item.getAttribute("aria-checked"),
+        menus: menusAround(item),
+        // the nearest element with a role around it: its menu, or a group in it
+        container: item.parentElement.closest("[role]")?.getAttribute("role"),
+      })),
+      strays: [...el.querySelectorAll("button, input, select, textarea, a[href], [tabindex]")]
+        .filter((node) => own(node) && !node.matches(ITEMS)).map((node) => node.outerHTML.slice(0, 120)),
+    };
+  }, ITEMS);
+  assertEq(shape.role, "menu", `${what} is a menu`);
+  assertEq(shape.orientation, null, `${what} is vertical, the menu role's default`);
+  assertEq(shape.around, around, around ? `${what} sits inside its parent menu` : `${what} sits inside no other menu`);
+  assert(shape.items.length > 0, `${what} has items`);
+  for (const item of shape.items) {
+    assertEq(item.menus, around + 1, `${what}: "${item.text}" is inside exactly one menu of its level`);
+    assert(["menu", "group"].includes(item.container), `${what}: "${item.text}" sits in its menu or a group of it, not a ${item.container}`);
+    if (item.role !== "menuitem") assert(["true", "false"].includes(item.checked), `${what}: "${item.text}" (${item.role}) says whether it is checked`);
+  }
+  assertEq(shape.strays.join(" | "), "", `${what}: every control in it is a menu item`);
+  return shape.items.map(({ text, role, checked }) => ({ text, role, checked }));
+}
+
 // ---------------------------------------------------------------------------
 // PDFs: a small but real PDF (Helvetica text, one content stream per page)
 // that pdf.js renders with a selectable text layer.
@@ -458,6 +506,7 @@ async function saveFailureArtifacts(name, err, closed = []) {
 
 export function assert(cond, msg) { if (!cond) throw new Error(msg || "assertion failed"); }
 export function assertEq(a, b, msg) { if (a !== b) throw new Error(`${msg || "not equal"}: ${JSON.stringify(a)} !== ${JSON.stringify(b)}`); }
+export function assertNear(a, b, tol, msg) { if (!(Math.abs(a - b) <= tol)) throw new Error(`${msg || "not near"}: ${a} vs ${b}`); }
 
 // Poll until `fn` returns truthy (state that lands after a debounce or a
 // websocket round trip).

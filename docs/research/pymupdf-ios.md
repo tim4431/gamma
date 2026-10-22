@@ -149,8 +149,13 @@ one library.
   the simulator's confirmation. A device with a real team is not
   covered: it enforces the code signature of everything it loads, where
   the simulator does not, and nothing has run there.
-- App Store validation of the hand-made frameworks (ITMS-90171,
-  ITMS-90208, ITMS-91065 territory); the app has not been submitted.
+- App Store validation of the hand-made frameworks beyond the upload.
+  TestFlight build 9 was uploaded and processed with them, and App Store
+  Connect's report named only the standard library's `_ssl` and
+  `_hashlib` frameworks, for their missing OpenSSL privacy manifests
+  (ITMS-91061, [dev/ipad.md](../dev/ipad.md#how-the-bundle-is-made));
+  ITMS-90171, ITMS-90208 and ITMS-91065 did not come up. App Review has
+  not seen the app.
 - The server's code against Flet's build of 1.27.2.3 itself. The server
   runs on 1.28.2; its PDF test files (208 tests) pass against PyPI's
   1.27.2.3 for Windows, so the calls it makes (`get_text`, `rawdict`,

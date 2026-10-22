@@ -12,7 +12,7 @@ import { TOURS } from "../../../src/guide/tours/index.js";
 export async function triggeredGuideScenarios(env) {
   const { server, browser, step, until, assert, assertEq, assertNoProblems, openPage, makePdf } = env;
   if (!wanted("triggered guide")) return;
-  server.manage("create-user", "tourist", "tourist-pw");
+  await server.manage("create-user", "tourist", "tourist-pw");
   const user = await new Account(server, "tourist", "tourist-pw").login();
   // The guides offered on everyday moves — a line break, "/", a paste, a
   // closed window, a few highlights, a fourth tab — would take the load's
@@ -354,7 +354,7 @@ export async function triggeredGuideScenarios(env) {
   });
 
   await step("triggered guide: joining a shared workspace offers its tour, which opens the account menu", async () => {
-    server.manage("create-workspace", "Tour lab", "tourist", "shared");
+    await server.manage("create-workspace", "Tour lab", "tourist", "shared");
     const { ctx, page } = await open("");
     try {
       await page.waitForSelector('[data-guide-offer="workspaces"] .guideCard', { timeout: 10000 });
@@ -372,11 +372,11 @@ export async function triggeredGuideScenarios(env) {
 
   await step("triggered guide: another person on the page offers the presence tour; your own second tab does not", async () => {
     // A shared workspace the tourist owns and a second account edits.
-    server.manage("create-user", "visitor", "visitor-pw");
-    const out = server.manage("create-workspace", "Presence lab", "tourist", "shared");
+    await server.manage("create-user", "visitor", "visitor-pw");
+    const out = await server.manage("create-workspace", "Presence lab", "tourist", "shared");
     const labId = (out.match(/workspace (\S+)/) || [])[1];
     assert(labId, `shared workspace id from: ${out}`);
-    server.manage("set-member", labId, "visitor", "editor");
+    await server.manage("set-member", labId, "visitor", "editor");
     const visitor = await new Account(server, "visitor", "visitor-pw").login();
     visitor.ws = labId;
     const inLab = Object.assign(Object.create(Object.getPrototypeOf(user)), user, { ws: labId });
@@ -595,7 +595,7 @@ export async function triggeredGuideScenarios(env) {
   });
 
   await step("triggered guide: a library past 20 pages offers the organizing tour, passing over the strips it has not got", async () => {
-    server.manage("create-user", "filer", "filer-pw");
+    await server.manage("create-user", "filer", "filer-pw");
     const big = await new Account(server, "filer", "filer-pw").login();
     const attention = await big.folder("ml/attention");
     for (let i = 0; i < 20; i++) {

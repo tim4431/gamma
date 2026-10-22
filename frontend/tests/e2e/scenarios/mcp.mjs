@@ -8,8 +8,8 @@ export async function mcpScenarios(env) {
   const { server, browser, alice, step, openPage, assert, assertEq, assertNoProblems, flags, sleep, until } = env;
   if (!wanted("mcp")) return;
   await step("mcp: administrator confirms the suggested server URL and it persists", async () => {
-    server.manage("create-user", "mcp-admin", "mcp-admin-pw");
-    server.manage("set-admin", "mcp-admin", "on");
+    await server.manage("create-user", "mcp-admin", "mcp-admin-pw");
+    await server.manage("set-admin", "mcp-admin", "on");
     const admin = await new Account(server, "mcp-admin", "mcp-admin-pw").login();
     const ctx = await admin.context(browser);
     try {

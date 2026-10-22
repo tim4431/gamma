@@ -2,9 +2,10 @@
 // machine: op batches out, remote ops and presence in, same-block
 // reconciliation, catch-up) wired to the app. ONE hook per open page. This
 // file owns only what needs the browser or React: the fetch wrapper, the
-// socket URL (share token / workspace), the keepalive POST on pagehide, and
-// `peers` / `me` as React state.
+// socket URL (share token / workspace), the keepalive POST on pagehide and
+// its claim on the page's keepalive room, and `peers` / `me` as React state.
 import { useEffect, useRef, useState } from "react";
+import { keepaliveFetch, keepaliveShare, registerKeepaliveClaim } from "../shared/lib/keepalive.js";
 import { API, apiJson, getLinkName, makeId, withShare, withWorkspace } from "../shared/lib/utils";
 import { createCollabSession } from "./collabSession";
 
@@ -31,11 +32,13 @@ function socketUrl(pageId) {
 //   onStatus(text)            — the status line
 //   onSaveNotice(text, kind)  — the lasting save notice (collabSession.js)
 //   onGone(pageId, gone)      — the page went to Recently deleted, or is back (null)
+//   onInkLive(msg)            — a peer's handwriting stroke in progress (ink/inkLive.js)
+//   onBuild(build)            — the server's build, from the socket's hello
 //   onComments(msg)           — a comment was written on the page, or the socket
 //                               (re)joined (null): refetch its threads
 // A `{t: "inbox"}` nudge (the account's inbox has news) becomes the window
 // event gamma:inbox, whatever page it arrived on.
-// Returns the session's commit/flush/hasPending/sendCursor/overlay/
+// Returns the session's commit/flush/hasPending/sendCursor/sendInkLive/overlay/
 // reloadFailed/tooLong/gone, `peers`, `me`, and `reconnect` (reopen the
 // socket — after a display-name change, since the name travels in the
 // handshake). While edits are unsaved, leaving the tab asks first
@@ -55,11 +58,13 @@ export function usePageCollab(opts) {
       clientId: CLIENT_ID,
       api: (path, init) => apiJson(`${API}${path}`, init),
       openSocket: (id) => new WebSocket(socketUrl(id)),
+      // The queued edits have no other copy: they come first in the page's
+      // keepalive room (shared/lib/keepalive.js, docs/dev/collab.md "Keepalive").
       keepalivePost: (path, body) => {
-        fetch(withShare(`${API}${path}`), {
+        keepaliveFetch(withShare(`${API}${path}`), {
           method: "POST", headers: { "Content-Type": "application/json" },
-          body, keepalive: true, credentials: "include",
-        }).catch(() => {});
+          body, credentials: "include",
+        }, { priority: "critical" }).catch(() => {});
       },
       opts: () => o.current,
       onPeers: setPeers,
@@ -72,9 +77,17 @@ export function usePageCollab(opts) {
   const session = ref.current;
 
   // Tab closing / reloading: a keepalive POST of what is still queued, and
-  // the browser's "leave site?" while anything is unsaved.
+  // the browser's "leave site?" while anything is unsaved. Until then the
+  // bytes that POST will carry are claimed from the page's keepalive room,
+  // so the lower priorities (handwriting, the profile) leave it free; none
+  // once pagehide has sent them, until the page is shown again (from the
+  // back-forward cache).
   useEffect(() => {
-    const onHide = () => session.pagehide();
+    let sent = false;
+    const unclaim = registerKeepaliveClaim("page-edits",
+      () => (sent ? 0 : keepaliveShare(session.pendingKeepaliveBodies().map((b) => b.body))));
+    const onHide = () => { session.pagehide(); sent = true; };
+    const onShow = () => { sent = false; };
     const onLeave = (e) => {
       if (!session.hasPending()) return;
       e.preventDefault();
@@ -83,12 +96,15 @@ export function usePageCollab(opts) {
     const onVisibility = () => { if (document.visibilityState === "hidden") session.flush(); };
     const onOnline = () => session.retryNow();
     window.addEventListener("pagehide", onHide);
+    window.addEventListener("pageshow", onShow);
     window.addEventListener("beforeunload", onLeave);
     document.addEventListener("visibilitychange", onVisibility);
     window.addEventListener("online", onOnline);
     window.addEventListener("focus", onOnline);
     return () => {
+      unclaim();
       window.removeEventListener("pagehide", onHide);
+      window.removeEventListener("pageshow", onShow);
       window.removeEventListener("beforeunload", onLeave);
       document.removeEventListener("visibilitychange", onVisibility);
       window.removeEventListener("online", onOnline);
@@ -104,7 +120,7 @@ export function usePageCollab(opts) {
 
   return {
     commit: session.commit, flush: session.flush, hasPending: session.hasPending, peers, me,
-    sendCursor: session.sendCursor, overlay: session.overlay, reloadFailed: session.reloadFailed,
+    sendCursor: session.sendCursor, sendInkLive: session.sendInkLive, overlay: session.overlay, reloadFailed: session.reloadFailed,
     tooLong: session.tooLong, gone: session.gone,
     reconnect: () => { if (enabled && pageId) session.connect(pageId); },
   };

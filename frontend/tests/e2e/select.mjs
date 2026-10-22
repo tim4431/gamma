@@ -12,50 +12,73 @@ import { fileURLToPath } from "node:url";
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const SCENARIOS = path.join(ROOT, "frontend", "tests", "e2e", "scenarios");
 
-// Longest first (seconds on one worker, roughly), so the long ones never
-// start last. A group must not need another group's data: scenarios that
-// hand data along share a group (notes → pdf → share).
+// Longest first, so the long ones never start last. `s` is the seconds a
+// group took in CI (3 workers on the runner's 4 cores; its log's
+// "── <group>  (N s" lines): the queue order, and what --shard balances.
+// A group must not need another group's data: scenarios that hand data
+// along share a group (notes → pdf → share).
 export const GROUPS = [
-  { id: "guide", files: ["guide.mjs"] }, // ~55
-  { id: "touch", files: ["touch.mjs"] }, // ~50
-  { id: "settings", files: ["settings.mjs"] }, // ~45
-  { id: "notes-pdf-share", files: ["notes.mjs", "pdf.mjs", "share.mjs"] }, // ~40
-  { id: "textbox", files: ["textBoxes.mjs"] }, // ~40
-  { id: "contextual-guide", files: ["contextualGuide.mjs"] }, // ~27
-  { id: "triggered-guide", files: ["triggeredGuide.mjs"] }, // ~27
-  { id: "ink-editing", files: ["inkEditing.mjs"] }, // ~22
-  { id: "pdf-load", files: ["pdfload.mjs"] }, // ~20
-  { id: "ink", files: ["ink.mjs"] }, // ~19
-  { id: "notebooks", files: ["notebooks.mjs"] }, // ~15
-  { id: "recording", files: ["recording.mjs"] }, // ~15
-  { id: "pdf-touch", files: ["pdfTouch.mjs"] }, // ~15
-  { id: "publish", files: ["publish.mjs"] }, // ~15
-  { id: "chat-navigation", files: ["chatNavigation.mjs"] }, // ~12
-  { id: "mentions", files: ["mentions.mjs"] }, // ~11
-  { id: "note-mentions", files: ["noteMentions.mjs"] },
-  { id: "comments", files: ["comments.mjs"] },
-  { id: "inbox", files: ["inbox.mjs"] },
-  { id: "collab", files: ["collab.mjs"] }, // ~11
-  { id: "mirror", files: ["mirror.mjs"] }, // ~9
-  { id: "transfers", files: ["transfers.mjs"] }, // ~9
-  { id: "diagrams", files: ["diagrams.mjs"] }, // ~9
-  { id: "mcp", files: ["mcp.mjs"] }, // ~8
-  { id: "files", files: ["files.mjs"] }, // ~7
-  { id: "i18n", files: ["i18n.mjs"] }, // ~6
-  { id: "cloud-sign-in", files: ["cloudSignIn.mjs"] },
-  { id: "auth", files: ["auth.mjs"] },
-  { id: "quick-open", files: ["quickOpen.mjs"] },
-  { id: "folders", files: ["folders.mjs"] },
-  { id: "trash", files: ["trash.mjs"] },
-  { id: "ipad", files: ["ipad.mjs"] },
+  { id: "settings", files: ["settings.mjs"], s: 148 },
+  { id: "notes-pdf-share", files: ["notes.mjs", "pdf.mjs", "share.mjs"], s: 121 },
+  { id: "ink", files: ["ink.mjs"], s: 108 },
+  { id: "ink-editing", files: ["inkEditing.mjs"], s: 97 },
+  { id: "triggered-guide", files: ["triggeredGuide.mjs"], s: 78 },
+  { id: "chat-navigation", files: ["chatNavigation.mjs"], s: 67 },
+  { id: "touch", files: ["touch.mjs"], s: 63 },
+  { id: "guide", files: ["guide.mjs"], s: 61 },
+  { id: "contextual-guide", files: ["contextualGuide.mjs"], s: 60 },
+  { id: "transfers", files: ["transfers.mjs"], s: 45 },
+  { id: "textbox", files: ["textBoxes.mjs"], s: 42 },
+  { id: "ipad", files: ["ipad.mjs"], s: 37 },
+  { id: "collab", files: ["collab.mjs"], s: 33 },
+  { id: "comments", files: ["comments.mjs"], s: 27 },
+  { id: "pdf-load", files: ["pdfload.mjs"], s: 25 },
+  { id: "publish", files: ["publish.mjs"], s: 25 },
+  { id: "pdf-touch", files: ["pdfTouch.mjs"], s: 23 },
+  { id: "files", files: ["files.mjs"], s: 22 },
+  { id: "cloud-sign-in", files: ["cloudSignIn.mjs"], s: 20 },
+  { id: "diagrams", files: ["diagrams.mjs"], s: 19 },
+  { id: "mentions", files: ["mentions.mjs"], s: 18 },
+  { id: "ink-shapes", files: ["inkShapes.mjs"], s: 18 },
+  { id: "notebooks", files: ["notebooks.mjs"], s: 17 },
+  { id: "auth", files: ["auth.mjs"], s: 17 },
+  { id: "inbox", files: ["inbox.mjs"], s: 15 },
+  { id: "quick-open", files: ["quickOpen.mjs"], s: 14 },
+  { id: "folders", files: ["folders.mjs"], s: 14 },
+  { id: "mcp", files: ["mcp.mjs"], s: 12 },
+  { id: "note-mentions", files: ["noteMentions.mjs"], s: 10 },
+  { id: "recording", files: ["recording.mjs"], s: 10 },
+  { id: "mirror", files: ["mirror.mjs"], s: 7 },
+  { id: "ink-zoom", files: ["inkZoom.mjs"], s: 7 },
+  { id: "trash", files: ["trash.mjs"], s: 5 },
+  { id: "i18n", files: ["i18n.mjs"], s: 4 },
 ];
+
+// The groups of `ids` that shard k of n runs: each group, longest first,
+// goes to the shard with the least time so far, so the shards end close
+// together. Every shard computes the same split.
+export function shardOf(ids, k, n) {
+  const time = Object.fromEntries(GROUPS.map((g) => [g.id, g.s]));
+  const load = Array(n).fill(0);
+  const mine = new Set();
+  for (const id of [...ids].sort((a, b) => time[b] - time[a])) {
+    const i = load.indexOf(Math.min(...load));
+    load[i] += time[id];
+    if (i === k - 1) mine.add(id);
+  }
+  return ids.filter((id) => mine.has(id));
+}
 
 const ALL = "all";
 const GUIDES = ["guide", "contextual-guide", "triggered-guide"];
 const CHAT = ["chat-navigation", "mentions", "contextual-guide", "triggered-guide", "notes-pdf-share", "touch"];
 // every group that opens a PDF in the viewer
-const PDF_VIEW = ["notes-pdf-share", "pdf-load", "pdf-touch", "ink", "ink-editing", "textbox", "collab", "comments", "files", "transfers", "touch", ...GUIDES];
+const PDF_VIEW = ["notes-pdf-share", "pdf-load", "pdf-touch", "ink", "ink-editing", "ink-shapes", "ink-zoom", "textbox", "collab", "comments", "files", "transfers", "touch", ...GUIDES];
 const EXPORTS = ["transfers", "files", "ink", "diagrams"];
+// what a change to the handwriting (src/ink/) can break: a text box's menu is
+// placed and labelled by the ink layer's helpers; ipad: the host claim path;
+// comments: a press with a pen or the Text tool armed leaves a margin card alone
+const INK = ["ink", "ink-editing", "ink-shapes", "ink-zoom", "pdf-touch", "triggered-guide", "notebooks", "textbox", "touch", "ipad", "comments"];
 
 // [glob, groups], first match wins. `**` spans folders, `*` stays in one.
 // ALL is for what every scenario goes through (the app shell, shared UI,
@@ -78,10 +101,28 @@ export const RULES = [
   ["frontend/src/app/**", ALL],
   ["frontend/src/main.jsx", ALL],
   ["frontend/src/guide/**", GUIDES],
-  // (a text box's menu is placed and labelled by the ink layer's helpers)
-  ["frontend/src/ink/**", ["ink", "ink-editing", "pdf-touch", "triggered-guide", "notebooks", "textbox", "touch", "ipad"]], // ipad: the host claim path
+  // the handwriting state App composes (docs/dev/handwriting.md "Client"): a
+  // file on collab's paths (the ink-live socket, the build fence, the save)
+  // or on the player's (Play disarms the strip, clears the lasso, stops a
+  // group's replay, lists the page's ink groups) selects that group too;
+  // an owner's pure parts select its groups (inkEdits.js: both owners')
+  ["frontend/src/ink/inkLive.js", [...INK, "collab"]], // collab.mjs holds the ink-live steps
+  ["frontend/src/ink/useInkLive.js", [...INK, "collab"]],
+  ["frontend/src/ink/buildFence.js", [...INK, "collab"]], // the socket hello's build
+  ["frontend/src/ink/inkSaver.js", [...INK, "collab"]], // the save marks live strokes saved (collab's drop step)
+  ["frontend/src/ink/useInkSave.js", [...INK, "collab"]],
+  ["frontend/src/ink/useInkDocument.js", [...INK, "collab", "recording"]], // applyInk's live drop, a group's replay stop
+  ["frontend/src/ink/inkHistory.js", [...INK, "collab", "recording"]], // collab's drop is an undo before the save
+  ["frontend/src/ink/inkEdits.js", [...INK, "collab", "recording"]], // a recorded or shared stroke's group block
+  ["frontend/src/ink/useInkStrip.js", [...INK, "recording"]], // Play disarms through it
+  ["frontend/src/ink/stripState.js", [...INK, "recording"]],
+  ["frontend/src/ink/useInkSelection.js", [...INK, "recording"]], // Play clears the lasso through it
+  ["frontend/src/ink/selectionEdits.js", [...INK, "recording"]],
+  ["frontend/src/ink/useInkSurfaces.js", [...INK, "recording"]], // the player's ink groups
+  ["frontend/src/ink/inkSurfaces.js", [...INK, "recording"]],
+  ["frontend/src/ink/**", INK], // inkCommands.js too: the commands' keys are ink-editing's and ipad's steps
   // what a page surface carries (ink and text boxes) and the tool strip, whose anchors the ink tour uses
-  ["frontend/src/markup/**", ["ink", "ink-editing", "pdf-touch", "triggered-guide", "notebooks", "textbox", "touch"]],
+  ["frontend/src/markup/**", ["ink", "ink-editing", "ink-shapes", "ink-zoom", "pdf-touch", "triggered-guide", "notebooks", "textbox", "touch", "comments"]],
   ["frontend/src/notebook/**", ["notebooks", "textbox", "touch"]],
   // the replay store every handwriting replay and a recording's player run on
   ["frontend/src/replay/**", ["ink", "ink-editing", "notebooks", "recording"]],
@@ -98,10 +139,10 @@ export const RULES = [
   // the @ menu's state and keys, a note row's and a comment field's
   ["frontend/src/editor/useMentionMenu.js", ["note-mentions", "notes-pdf-share", "comments", "inbox"]],
   ["frontend/src/editor/**", ["notes-pdf-share", "diagrams", "files", "collab", "comments", "transfers", "mcp", "guide", "triggered-guide", "textbox", "touch"]],
-  ["frontend/src/chat/**", CHAT],
+  ["frontend/src/chat/**", [...CHAT, "ink-zoom"]], // ink-zoom: a selection's Transcribe reaches the chat's request
   // the Inbox notifications row
-  ["frontend/src/settings/SettingsAppearance.jsx", ["settings", "i18n", "mirror", "cloud-sign-in", "mcp", "publish", "triggered-guide", "inbox"]],
-  ["frontend/src/settings/**", ["settings", "i18n", "mirror", "cloud-sign-in", "mcp", "publish", "triggered-guide"]],
+  ["frontend/src/settings/SettingsAppearance.jsx", ["settings", "i18n", "mirror", "cloud-sign-in", "mcp", "publish", "triggered-guide", "ipad", "inbox"]],
+  ["frontend/src/settings/**", ["settings", "i18n", "mirror", "cloud-sign-in", "mcp", "publish", "triggered-guide", "ipad"]], // ipad: Apple Pencil, under its host
   ["frontend/src/collaboration/MirrorPopover.jsx", ["mirror", "publish"]],
   ["frontend/src/collaboration/MergeResolver.jsx", ["mirror"]],
   ["frontend/src/collaboration/**", ALL], // the page's live session carries every edit
@@ -120,11 +161,12 @@ export const RULES = [
   ["frontend/package.json", ALL],
   ["frontend/package-lock.json", ALL],
 
+  ["backend/tests/notability_fixtures.py", ["transfers"]], // the Notability note the transfers scenario imports
   ["backend/tests/**", []],
   ["backend/gamma/ai_protocols/**", [...CHAT, "settings"]],
-  ["backend/gamma/ai_*.py", [...CHAT, "settings"]],
+  ["backend/gamma/ai_*.py", [...CHAT, "settings", "ink-zoom"]],
   ["backend/gamma/chatgpt_oauth.py", ["settings"]],
-  ["backend/gamma/routers/ai.py", [...CHAT, "settings"]],
+  ["backend/gamma/routers/ai.py", [...CHAT, "settings", "ink-zoom"]],
   ["backend/gamma/routers/chats.py", CHAT],
   ["backend/gamma/mcp_*", ["mcp"]],
   ["backend/gamma/integrations.py", ["mcp", "mirror", "settings"]],
@@ -143,9 +185,10 @@ export const RULES = [
   ["backend/gamma/hosted.py", ["cloud-sign-in"]], // a hosted container's plan (read-only gates every write only there)
   ["backend/gamma/publish.py", ["publish"]],
   ["backend/gamma/routers/publish.py", ["publish"]],
-  ["backend/gamma/ink.py", ["ink", "ink-editing", "triggered-guide", "notebooks"]],
-  ["backend/gamma/routers/ink.py", ["ink", "ink-editing", "triggered-guide", "notebooks"]],
-  ["backend/gamma/notebook.py", ["notebooks"]],
+  // transfers: the Notability import writes its strokes through ink.py (encode_points, the file's checks, group_files)
+  ["backend/gamma/ink.py", ["ink", "ink-editing", "ink-shapes", "triggered-guide", "notebooks", "transfers"]],
+  ["backend/gamma/routers/ink.py", ["ink", "ink-editing", "ink-shapes", "triggered-guide", "notebooks"]],
+  ["backend/gamma/notebook.py", ["notebooks", "transfers"]], // transfers: a Notability note's paper pages (paper_ops)
   ["backend/gamma/recording.py", ["recording", ...EXPORTS]],
   ["backend/gamma/routers/recordings.py", ["recording"]],
   // what the exports, the notebook PDF and the agent's outline read of a text box
@@ -162,6 +205,7 @@ export const RULES = [
   ["backend/gamma/logseq_*.py", EXPORTS],
   ["backend/gamma/zotero_*.py", EXPORTS],
   ["backend/gamma/import_*.py", EXPORTS],
+  ["backend/gamma/notability*.py", EXPORTS],
   ["backend/gamma/pdf_export.py", EXPORTS],
   ["backend/gamma/pdf_document.py", EXPORTS],
   ["backend/gamma/pdf_typeset.py", EXPORTS],
@@ -205,6 +249,8 @@ export const RULES = [
   ["backend/gamma/offsite.py", ["settings"]], // the Off-site copies section of Backups
   ["backend/gamma/s3.py", ["settings"]],
   // the core every scenario goes through: app, auth, db, migrations, workspaces, blocks, ops, uploads, prefs, collab …
+  // the chat's pictures of handwriting (view_ink, an attached group, a transcribed selection): the AI modules' groups
+  ["backend/gamma/ink_view.py", [...CHAT, "settings", "ink-zoom"]],
   ["backend/gamma/**", ALL],
   ["backend/app.py", ALL],
   ["backend/manage.py", ALL],

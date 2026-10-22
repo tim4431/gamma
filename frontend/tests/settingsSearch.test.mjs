@@ -77,3 +77,18 @@ test("an admin-only section is found only by admins (the Server pane is theirs a
   const member = all.filter((pane) => pane !== "server" && pane !== "users");
   assert.ok(!searchSettings("bucket", member).some((r) => r.label === "Off-site copies"));
 });
+
+test("an Apple Pencil setting is found only under a native host with its flag (the iPad app)", () => {
+  const all = Object.keys(PANE_FILES);
+  const labels = (query, opts) => searchSettings(query, all, opts).map((r) => r.label);
+  for (const opts of [undefined, {}, { host: null }, { host: { ink: true } }]) {
+    assert.deepEqual(labels("squeeze", opts), [], `no host, no Pencil: ${JSON.stringify(opts)}`);
+    assert.ok(!labels("haptics", opts).includes("Haptics"));
+  }
+  assert.deepEqual(labels("squeeze", { host: { pencil: true } }), ["Squeeze"]);
+  assert.ok(labels("apple pencil", { host: { pencil: true } }).includes("Double tap"));
+  assert.ok(!labels("haptic", { host: { pencil: true } }).includes("Haptics"), "haptics need a host that plays them");
+  assert.ok(!labels("haptic", { host: { haptics: true } }).includes("Haptics"), "and its row is in the Apple Pencil section, shown under pencil");
+  assert.ok(labels("haptic", { host: { pencil: true, haptics: true } }).includes("Haptics"));
+  assert.ok(labels("hover", {}).includes("Hover preview"), "a browser's own row is everyone's");
+});

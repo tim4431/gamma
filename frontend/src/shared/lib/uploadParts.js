@@ -15,6 +15,7 @@
 // (transfers/importApi.js) and a restore's zip (tasks/tasksApi.js) go
 // through here; the browser extension speaks the protocol itself
 // (extension/worker.js uploadBlob).
+import { keepaliveFetch } from "./keepalive.js";
 import { API, apiJson } from "./utils";
 import { xhrUpload } from "./xhrUpload";
 
@@ -99,7 +100,8 @@ export async function uploadInParts(file, { url, fields = {}, discard = (token) 
     onProcessing?.();
     return await post(`${url}/${token}/finish`);
   } catch (err) {
-    if (token) fetch(discard(token), { method: "DELETE", credentials: "include", keepalive: true }).catch(() => {});
+    // no body: always with keepalive, since it takes none of the page's keepalive room
+    if (token) keepaliveFetch(discard(token), { method: "DELETE", credentials: "include" }, { priority: "normal" }).catch(() => {});
     throw err;
   } finally {
     signal?.removeEventListener("abort", stop);

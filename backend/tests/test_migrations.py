@@ -175,7 +175,7 @@ def test_v36_reshapes_the_folder_links_release_0_2_16_made(data_dir):
         assert conn.execute("SELECT id, path, remote_url FROM folder_links").fetchall() == [("l1", "Papers", "")]
         conn.execute("INSERT INTO folder_links (id, workspace_id, folder_id, path, created_by, created_at, remote_url) "
                      "VALUES ('l2', 'wsOfAnotherServer', 'root', 'Shared', 'u1', '2026-01-02T00:00:00Z', 'https://nas')")
-    assert migrations.data_version() == SCHEMA_VERSION == 40
+    assert migrations.data_version() == SCHEMA_VERSION == 41
     assert migrations.ensure_current()["applied"] == []  # 0.2.16's own step 36 left it here: current
     with connect_users_db() as conn:
         assert conn.execute("SELECT COUNT(*) FROM folder_links").fetchone() == (2,)
@@ -226,8 +226,8 @@ def test_v40_adds_the_inbox_and_the_invitation_time(data_dir):
         conn.execute("PRAGMA user_version = 39")
         conn.commit()
     result = migrations.ensure_current()
-    assert result["applied"] == ["comments_inbox"] and result["workspace_steps"] == []
-    assert migrations.workspace_format() == 38  # a global step only: clones and publications keep syncing
+    assert result["applied"] == ["comments_inbox"] and result["workspace_steps"] == ["ink_v2"]
+    assert 40 not in [v for v, _, _ in migrations.WORKSPACE_STEPS]  # a global step only: it does not move workspace_format()
     with connect_users_db() as conn:
         assert conn.execute("SELECT token, user_id, role, added_at FROM share_users").fetchall() == [
             ("ws1.secret", "u-a", "edit", "")]
@@ -1270,8 +1270,8 @@ def test_v34_moves_the_workspace_prefs_into_the_workspace(data_dir, monkeypatch)
 
     result = migrations.ensure_current()
     assert result["applied"] == ["folder_links", "folder_links_remote", "reminders_done", "comments_inbox"]
-    assert result["workspace_steps"] == ["workspace_prefs", "highlight_colors", "recording_kind"]
-    assert migrations.data_version() == SCHEMA_VERSION == 40
+    assert result["workspace_steps"] == ["workspace_prefs", "highlight_colors", "recording_kind", "ink_v2"]
+    assert migrations.data_version() == SCHEMA_VERSION == 41
     assert migrations.is_behind(WS34)
     with closing(sqlite3.connect(str(pages_db))) as conn:  # the upgrade left the workspace as it was
         assert conn.execute("PRAGMA user_version").fetchone()[0] == 0
@@ -1308,6 +1308,219 @@ def test_v34_moves_the_workspace_prefs_into_the_workspace(data_dir, monkeypatch)
     with closing(sqlite3.connect(str(restored / "pages.db"))) as conn:
         assert conn.execute("SELECT COUNT(*) FROM workspace_prefs").fetchone()[0] == 0
         assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
+
+
+WS41 = "wsInk41"
+_V1_INK = {"format": "gamma-ink", "version": 1,
+           "space": {"kind": "pdf-page", "page": 1, "width": 612, "height": 792},
+           "strokes": [{"id": "a", "tool": "pen", "color": "#1f1f1f", "size": 1.6, "opacity": 1, "pen": True,
+                        "ch": "xyp", "pts": [12040, 30512, 620, 18, -3, 700]},
+                       {"id": "h", "tool": "highlighter", "color": "#ffe066", "size": 14, "opacity": 0.6,
+                        "pen": True, "ch": "xyp", "pts": [5000, 5000, 1000, 2000, 0, 1000]}]}
+
+
+def _ink_workspace(tmp: Path, files: dict, blocks: list) -> Path:
+    """A pages.db beside an ``uploads`` dir, as a workspace or a backup's
+    copy is laid out: ``files`` {name: bytes} stored, ``blocks`` [(id,
+    props)] rows."""
+    from gamma.db import PAGES_SCHEMA
+    (tmp / "uploads").mkdir(parents=True)
+    for name, data in files.items():
+        (tmp / "uploads" / name).write_bytes(data)
+    with closing(sqlite3.connect(str(tmp / "pages.db"))) as conn:
+        register_functions(conn)
+        for stmt in PAGES_SCHEMA:
+            conn.execute(stmt)
+        conn.executemany("INSERT INTO unified_blocks (id, parent_id, position, content, properties, created_at, updated_at) "
+                         "VALUES (?, 'pg41', 'a0', '', ?, 't0', 't0')", [(bid, json.dumps(props)) for bid, props in blocks])
+        conn.commit()
+    return tmp
+
+
+def test_v41_moves_every_stroke_file_to_version_2(data_dir):
+    # Every block's version 1 stroke file is converted (gamma/ink.py
+    # upgrade_v1), written as a new upload named by its bytes' hash, and the
+    # block points at it; version 2 files, unreadable ones and other
+    # properties are left alone; a rerun changes nothing; a backup's copy
+    # goes through the same step on restore.
+    from gamma import ink as inkmod
+    from gamma.storage import content_digest
+
+    old = json.dumps(_V1_INK, sort_keys=True, separators=(",", ":")).encode()
+    old_name = f"{content_digest(old)}.ink"
+    new = inkmod.dumps(inkmod.upgrade_v1(json.loads(old)))
+    new_name = f"{content_digest(new)}.ink"
+    v2 = inkmod.dumps({**_V1_INK, "version": 2, "strokes": _V1_INK["strokes"][1:]})
+    v2_name = f"{content_digest(v2)}.ink"
+    bad_name = "f" * 24 + ".ink"
+    position = {"pageNumber": 1, "width": 612, "height": 792, "boundingRect": {"x1": 1, "y1": 2, "x2": 3, "y2": 4},
+                "rects": [{"x1": 1, "y1": 2, "x2": 3, "y2": 4}]}
+    blocks = [
+        ("g1", {"ink_url": f"/api/uploads/{old_name}", "ink_strokes": 2, "pdf_position": position, "color": "#ff0000ff"}),
+        ("g2", {"ink_url": f"/api/uploads/{old_name}", "ink_strokes": 2}),   # the same file twice: one new upload
+        ("g3", {"ink_url": f"/api/uploads/{v2_name}", "ink_strokes": 1}),
+        ("g4", {"ink_url": f"/api/uploads/{bad_name}", "ink_strokes": 1}),
+        ("g5", {"ink_url": "/api/uploads/" + "0" * 24 + ".ink"}),          # a file that is gone
+        ("g6", {"ink_url": ""}),                                            # between the first stroke and its upload
+        ("n1", {"quote": "no ink"}),
+    ]
+    ws_dir = _ink_workspace(data_dir / "ws41", {old_name: old, v2_name: v2, bad_name: b"{not ink"}, blocks)
+    with closing(sqlite3.connect(str(ws_dir / "pages.db"))) as conn:
+        migrations._v41_ink_v2(WS41, conn, None)
+        conn.commit()
+        got = {bid: json.loads(raw) for bid, raw in conn.execute("SELECT id, properties FROM unified_blocks")}
+    assert got["g1"] == {**blocks[0][1], "ink_url": f"/api/uploads/{new_name}"}, "the url alone moves"
+    assert got["g2"]["ink_url"] == f"/api/uploads/{new_name}"
+    assert got["g3"] == blocks[2][1] and got["g4"] == blocks[3][1] and got["g5"] == blocks[4][1]
+    assert got["g6"] == blocks[5][1] and got["n1"] == blocks[6][1]
+    assert (ws_dir / "uploads" / new_name).read_bytes() == new
+    assert (ws_dir / "uploads" / old_name).read_bytes() == old, "the old file stays for the orphan cleanup"
+    assert sorted(p.name for p in (ws_dir / "uploads").iterdir() if p.is_file()) == sorted([old_name, new_name, v2_name, bad_name])
+    converted = inkmod.parse_ink(new)
+    assert [s.ch for s in converted.strokes] == ["xypw", "xyp"] and converted.strokes[0].pts[3] == 1120
+    # re-runnable: every block names a version 2 file now
+    with closing(sqlite3.connect(str(ws_dir / "pages.db"))) as conn:
+        before = sorted(conn.execute("SELECT id, properties FROM unified_blocks"))
+        migrations._v41_ink_v2(WS41, conn, None)
+        assert sorted(conn.execute("SELECT id, properties FROM unified_blocks")) == before
+    assert (41, "ink_v2", migrations._v41_ink_v2) in migrations.WORKSPACE_STEPS
+    assert migrations.workspace_format() == 41
+
+    # a copy without the table (an old backup): nothing to do
+    migrations._v41_ink_v2("", sqlite3.connect(":memory:"), None)
+
+    # a backup made before the upgrade comes back converted: the step runs
+    # on the unpacked copy, whose uploads lie beside its pages.db
+    from gamma import ws_backup
+    copy = _ink_workspace(data_dir / "restore41", {old_name: old}, blocks[:1])
+    with closing(sqlite3.connect(str(copy / "pages.db"))) as conn:
+        conn.execute("PRAGMA user_version = 40")
+        conn.commit()
+    ws_backup._normalize_copies(copy)
+    with closing(sqlite3.connect(str(copy / "pages.db"))) as conn:
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
+        props = json.loads(conn.execute("SELECT properties FROM unified_blocks WHERE id = 'g1'").fetchone()[0])
+    assert props["ink_url"] == f"/api/uploads/{new_name}" and (copy / "uploads" / new_name).read_bytes() == new
+
+
+def test_a_workspace_with_version_1_files_serves_version_2_after_its_first_open(data_dir):
+    """End to end through the app: a workspace from before release T holds
+    a group whose file is version 1 (stored through the storage layer; the
+    upload route refuses that version now). Its first request opens the
+    workspace, step 41 runs, and the block names a new version 2 file with
+    the baked width while the old file stays for the orphan cleanup; a
+    second open leaves everything as it is."""
+    from conftest import login, make_page, make_user
+    from gamma import db, storage
+    from gamma import ink as inkmod
+
+    ws = make_user("mg_ink41", "pw")
+    c = login("mg_ink41", "pw")
+    old = json.dumps(_V1_INK, sort_keys=True, separators=(",", ":")).encode()
+    old_name, _ = storage.store_file(ws, old, ".ink")
+    old_url = f"/api/uploads/{old_name}"
+    page = make_page(c, "Written before the upgrade")
+    r = c.post("/api/blocks", json={"parent_id": page["id"], "content": "",
+                                    "properties": {"ink_url": old_url, "ink_strokes": 2}})
+    assert r.status_code == 200, r.text
+    bid = r.json()["id"]
+    uploads = config.WORKSPACES_DIR / ws / "uploads"
+    files_before = sorted(p.name for p in uploads.iterdir() if p.is_file())
+    assert files_before == [old_name]
+    # the workspace as a copy from before release T: stamped 40
+    db.close_workspace_connections(ws)
+    with closing(sqlite3.connect(str(config.WORKSPACES_DIR / ws / "pages.db"))) as conn:
+        conn.execute("PRAGMA user_version = 40")
+        conn.commit()
+
+    # the first request opens the workspace: step 41 ran before it was served
+    block = c.get(f"/api/blocks/{bid}").json()
+    new_url = block["properties"]["ink_url"]
+    assert new_url != old_url and new_url.startswith("/api/uploads/") and new_url.endswith(".ink")
+    assert block["properties"]["ink_strokes"] == 2
+    served = c.get(new_url)
+    assert served.status_code == 200
+    converted = inkmod.parse_ink(served.content)
+    assert converted.version == 2
+    assert [s.ch for s in converted.strokes] == ["xypw", "xyp"], "the pen stroke gained the baked width"
+    assert converted.strokes[0].pts[3] == 1120, "w = 1 + (0.62 - 0.5)"
+    assert new_url.rsplit("/", 1)[1] == f"{storage.content_digest(served.content)}.ink", "named by its bytes"
+    assert c.get(old_url).status_code == 200, "the old file stays for the orphan cleanup"
+    with closing(sqlite3.connect(str(config.WORKSPACES_DIR / ws / "pages.db"))) as conn:
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
+    files_after = sorted(p.name for p in uploads.iterdir() if p.is_file())
+    assert files_after == sorted([old_name, new_url.rsplit("/", 1)[1]])
+
+    # a second open changes nothing
+    db.close_workspace_connections(ws)
+    assert c.get(f"/api/blocks/{bid}").json()["properties"] == block["properties"]
+    assert sorted(p.name for p in uploads.iterdir() if p.is_file()) == files_after
+    assert c.get(new_url).content == served.content
+
+
+def test_a_data_directory_at_40_gets_only_the_ink_upgrade(data_dir, monkeypatch):
+    """A data directory release 40 left (comments and the Inbox): users.db
+    at 40 with its Inbox, a workspace from before it at 38 and one it
+    created, stamped 40, each holding a version 1 stroke file. The upgrade
+    runs no global step (step 40 not again) and stamps users.db 41, copying
+    users.db alone; each workspace runs step 41 alone on its first open and
+    names the version 2 file."""
+    from gamma import db
+    from gamma import ink as inkmod
+    from gamma.storage import content_digest
+
+    monkeypatch.setattr(migrations, "_snapshot", ())
+    connect_users_db().close()
+    old = json.dumps(_V1_INK, sort_keys=True, separators=(",", ":")).encode()
+    old_name = f"{content_digest(old)}.ink"
+    new_name = f"{content_digest(inkmod.dumps(inkmod.upgrade_v1(json.loads(old))))}.ink"
+    stamps = {"wsInk41at38": 38, "wsInk41at40": 40}
+    for ws, stamp in stamps.items():
+        _ink_workspace(config.WORKSPACES_DIR / ws, {old_name: old},
+                       [("g1", {"ink_url": f"/api/uploads/{old_name}", "ink_strokes": 2})])
+        with closing(sqlite3.connect(str(config.WORKSPACES_DIR / ws / "pages.db"))) as conn:
+            conn.execute(f"PRAGMA user_version = {stamp}")
+    with closing(sqlite3.connect(str(config.USERS_DB))) as conn:  # users.db as release 40 left it
+        conn.execute("INSERT INTO share_users VALUES ('ws1.secret', 'u-a', 'edit', ?)", (OLD,))
+        conn.execute("INSERT INTO inbox_items (id, user_id, kind, actor, workspace_id, at) "
+                     "VALUES ('i1', 'u-a', 'shared', 'u-b', 'ws1', ?)", (OLD,))
+        conn.execute("PRAGMA user_version = 40")
+        conn.commit()
+        shape = users_db_shape(conn)
+
+    result = migrations.ensure_current()
+    assert result["applied"] == [] and result["workspace_steps"] == ["ink_v2"]
+    assert migrations.data_version() == SCHEMA_VERSION == 41
+    assert backups.info(Path(result["backup"]).name)["files"] == ["users.db"]
+    with closing(sqlite3.connect(str(config.USERS_DB))) as conn:  # only its stamp moved
+        assert users_db_shape(conn) == shape
+        assert conn.execute("SELECT * FROM share_users").fetchall() == [("ws1.secret", "u-a", "edit", OLD)]
+        assert conn.execute("SELECT id FROM inbox_items").fetchall() == [("i1",)]
+    assert sorted(migrations.workspaces_behind()) == sorted(stamps)
+    for ws, stamp in stamps.items():
+        assert [name for _, name, _ in migrations.workspace_steps_after(stamp)] == ["ink_v2"]
+        with db.connect_pages_db(ws) as conn:  # the first open runs step 41
+            props = json.loads(conn.execute("SELECT properties FROM unified_blocks WHERE id = 'g1'").fetchone()[0])
+        db.close_workspace_connections(ws)
+        assert props == {"ink_url": f"/api/uploads/{new_name}", "ink_strokes": 2}
+        assert (config.WORKSPACES_DIR / ws / "uploads" / new_name).is_file()
+        with closing(sqlite3.connect(str(config.WORKSPACES_DIR / ws / "pages.db"))) as conn:
+            assert conn.execute("PRAGMA user_version").fetchone()[0] == 41
+    assert migrations.ensure_current()["applied"] == [] and not migrations.workspaces_behind()
+
+
+def test_each_version_is_one_step_and_the_newest_is_the_schema_version():
+    """A version names one step (migrations.md rule 2): its global part
+    (STEPS) and its workspace part (WORKSPACE_STEPS) share its name, each
+    list runs in order with every version once, and the newest step is
+    SCHEMA_VERSION."""
+    names = {}
+    for steps in (migrations.STEPS, migrations.WORKSPACE_STEPS):
+        versions = [v for v, _, _ in steps]
+        assert versions == sorted(set(versions)), versions
+        for v, name, _ in steps:
+            assert names.setdefault(v, name) == name, f"step {v} is both {names[v]} and {name}"
+    assert max(names) == migrations._newest_step() == SCHEMA_VERSION
 
 
 def users_db_shape(conn) -> dict:

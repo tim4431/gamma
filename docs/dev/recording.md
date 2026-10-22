@@ -49,7 +49,8 @@ tests `backend/tests/test_recordings.py`, `frontend/tests/replay.test.mjs`,
   to 2×), then **Follow** (the page and the notes scroll to what is being
   written) and Done. Every control is an icon button of one height and
   the scrubber takes the width that is left. Space, ← → and Escape work
-  while no editor has the focus.
+  while no editor has the focus. Space plays and pauses even on a focused
+  button, so the keyboard opens the mode and speed menus with Enter.
 - During playback, a note written during the recording is **shaded**
   until its moment and shown plainly after; a text box on the page the
   same; a stroke faded, hidden or drawn whole by the mode. **A tap on a
@@ -195,13 +196,15 @@ What a user sees of the group and sheet replays is unchanged.
   store for the live state, `useOwnReplay` for the playing one, and
   `RecordingContext` for `play` and `transcribe`), `PlayerBar.jsx` (the
   player: `useReplay`, the marks from `writingTicks`, Follow through App's
-  `showTick`, the keys), `RecordingContext.js` (`{play, transcribe,
+  `showTick`, the keys, the mode and speed menus (`useMenuTrigger`,
+  opening above the bar)), `RecordingContext.js` (`{play, transcribe,
   leadIn, covers(t0), playAt(wall)}`, what the notes rows need), and
   `recording.css` (the pill, the card, the bar, the shading classes
   `replayPending` / `replayReached` / `inkPending`, the margin glyph).
 - `app/App.jsx` owns the wiring: the lists `recordingBlocks` and
   `stampedBlocks` (kept while unchanged), `playRecording` (the audio
-  source, the prefs, tools disarmed so taps seek), `toggleRecording`,
+  source, the prefs, the ink tool disarmed through the strip's
+  `disarmInk` so taps seek), `toggleRecording`,
   `transcribeRecording` (`tasks.start("transcribe", {block_id, model,
   language})`), the recovery at start, the mic button, the pill and the
   bar in the viewer (or the `notesReplayDock` over the notes), and the
@@ -223,7 +226,15 @@ What a user sees of the group and sheet replays is unchanged.
 - `gamma/recording.py`: `is_recording`, `recording_label` (what the
   agent's `read_block` says of the block), `fmt_duration`,
   `transcript_paragraphs` (segments joined on sentence ends to about 400
-  characters), and the transcription job.
+  characters), `mp4_duration_ms` (the length an `.m4a` states in its movie
+  header, read from box headers only), and the transcription job.
+- The Notability import ([import_export.md](import_export.md#notability-notes))
+  makes a recording block per recording a note holds: one `audio/mp4`
+  segment streamed into storage, `dur` from `mp4_duration_ms`, `started`
+  when Notability made it, `state: "done"`. No stroke is placed on it:
+  Notability times a stroke drawn during a recording as an event (seconds
+  into it, and a duration), never its samples, and a stroke's place in a
+  replay comes only from its own `t0` and `t`, which are never invented.
 - `POST /api/jobs/transcribe` (`routers/recordings.py`, body `{block_id,
   model?, language?}`): a job per recording (`key` = the block id,
   [tasks.md](tasks.md)) that reads each segment's file from storage (25 MB
@@ -245,7 +256,10 @@ What a user sees of the group and sheet replays is unchanged.
 ## Not built yet
 
 Trim, split and merge (trim as `in` / `out` offsets on a segment would
-need no re-encoding), importing an audio file as a recording, live
+need no re-encoding), importing an audio file as a recording (the
+Notability import brings a note's own), strokes placed on a recording the
+Notability import brought, transcribing a segment over 25 MB (an imported
+lecture can be one), live
 transcription, per-word reveal of a note's text (a block is shaded whole),
 strokes drawn during playback linked to the moment heard, the iPad app's
 native capture, a record button on a page without a viewer, re-encoding

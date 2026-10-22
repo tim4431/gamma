@@ -4,7 +4,8 @@
 # no upload: running on a device takes a developer's own team. The app
 # carries the backend and the built web app, so a change to the server's
 # dependencies starts this workflow too; the code itself is the one the
-# other checks test.
+# other checks test. The two ink fixtures the Swift ports are held to
+# (tests/shared/inkwidth.json, inkhold.json) start it as well.
 # Overview: docs/dev/github_actions.md.
 
 name: ipad
@@ -13,6 +14,8 @@ on:
   pull_request:
     paths:
       - "ipad/**"
+      - "tests/shared/inkwidth.json"
+      - "tests/shared/inkhold.json"
       - "backend/requirements.txt"
       - "tools/build_frontend_if_needed.mjs"
       - ".github/workflows/ipad.yml"

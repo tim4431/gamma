@@ -495,3 +495,59 @@ def test_unknown_export_mode_is_rejected(guest):
     page = make_page(guest, "Mode check")
     r = guest.get(f"/api/pages/{page['id']}/export", params={"mode": "notes-pdff"})
     assert r.status_code == 400
+
+
+def test_handwriting_keeps_the_pencil_s_grain_at_its_scale_with_one_tile_per_colour(tmp_path):
+    """A drawing fitted to the column keeps its pencil's grain at its own
+    scale, anchored at its own corner: every pixel inside a pencil drawn
+    at half size is as dark as the screen's tile is at that point of the
+    drawing. The document holds one tile image per colour (and one soft
+    mask), shared by every group and page that paints with it."""
+    import statistics
+
+    import pymupdf
+    from PyPDF2 import PdfReader, PdfWriter
+
+    from gamma import ink as inkmod
+    from gamma.pdf_document import MARGIN_TOP, _Canvas
+
+    def upload(name, color):
+        samples = [{"x": 40 + 2 * i, "y": 100, "t": 8 * i} for i in range(281)]   # 40 .. 600, a box 600 wide
+        data = {"format": "gamma-ink", "version": 2, "space": {"kind": "canvas", "width": 700, "height": 200},
+                "strokes": [{"id": "p", "brush": "pencil", "color": color, "size": 40, "ch": "xyt",
+                             "pts": inkmod.encode_points(samples, "xyt")}]}
+        (tmp_path / f"{name * 24}.ink").write_bytes(inkmod.dumps(data))
+        return f"/api/uploads/{name * 24}.ink"
+
+    cv = _Canvas(PdfWriter(), uploads_dir=tmp_path)
+    black, red = upload("a", "#000000"), upload("b", "#dc2626")
+    assert cv.y == MARGIN_TOP and cv.ink(black, 60, 300)    # scale 300 / 600: drawn at (60, 54), half size
+    assert cv.ink(red, 60, 300)
+    cv.page_break()
+    assert cv.ink(black, 60, 600)                            # full size on the next page
+    pdf = cv.write()
+    # half size: the drawing's point (x, y) is at (60 + (x − 20) / 2, 54 + (y − 80) / 2), so at 4 px a pt
+    # pixel (px, py) is the tile's pixel (px − 200, py − 56)
+    doc = pymupdf.open(stream=pdf, filetype="pdf")
+    try:
+        pix = doc[0].get_pixmap(matrix=pymupdf.Matrix(4, 4), alpha=False)
+    finally:
+        doc.close()
+    tile = inkmod._grain_indices()
+    inside = [(px, py) for py in range(236, 276) for px in range(400, 1200)]
+    got = [1 - pix.pixel(px, py)[0] / 255 for px, py in inside]
+    want = [inkmod._GRAIN_ALPHAS[tile[((py - 56) % 64) * 64 + (px - 200) % 64]] / 255 for px, py in inside]
+    assert statistics.correlation(got, want) > 0.95
+    # one tile image per colour and one soft mask for the document; a pattern per colour and placement
+    def refs(d):        # a dictionary's values as the references they are (PyPDF2's [] resolves them)
+        return {k: d.raw_get(k) for k in d}
+    pages = [refs(page["/Resources"]["/Pattern"]) for page in PdfReader(io.BytesIO(pdf)).pages]
+    assert [len(p) for p in pages] == [2, 1]
+    tile = {name: refs(ref.get_object()["/Resources"]["/XObject"])["/Tile"] for p in pages for name, ref in p.items()}
+    assert len({t.idnum for t in tile.values()}) == 2
+    assert len({t.get_object().raw_get("/SMask").idnum for t in tile.values()}) == 1
+    (first,) = [name for name in pages[0] if "Grain000000" in name]
+    (second,) = pages[1]
+    assert first != second and tile[first].idnum == tile[second].idnum, "the black tile, on both pages"
+    assert [float(v) for v in pages[0][first].get_object()["/Matrix"]][:4] == [0.5, 0, 0, 0.5]
+    assert [float(v) for v in pages[1][second].get_object()["/Matrix"]][:4] == [1, 0, 0, 1]

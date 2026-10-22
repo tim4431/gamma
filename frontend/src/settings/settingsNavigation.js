@@ -9,5 +9,8 @@ const PANE_ALIASES = {
   general: "appearance", papers: "appearance", viewer: "reading", notes: "keyboard", search: "reading",
   context: "assistant", "ai-advanced": "assistant", prompts: "assistant", library: "appearance",
   workspace: "workspaces", advanced: "diagnostics", sync: "account",
+  // The markup strip's More → Handwriting settings…: Reading & editing, at
+  // the Handwriting section (SettingsDialog jumps to its first row).
+  handwriting: "reading",
 };
 export const resolveSettingsPane = (pane) => PANE_ALIASES[pane] || pane;

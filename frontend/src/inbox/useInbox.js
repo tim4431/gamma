@@ -37,8 +37,11 @@ const RUNG_KEY = "gamma-inbox-rung"; // the item ids this browser has rung, the 
 const RUNG_CAP = 200;
 const EMPTY = { filter: "unread", items: [], more: false, loaded: false, failed: false };
 const post = (body) => ({
-  method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body), keepalive: true,
+  method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
 });
+// A mark goes through the page's keepalive ledger, small and recoverable
+// (shared/lib/keepalive.js 'normal'): a navigation does not cut it off.
+const MARK = { keepalive: "normal" };
 
 function rungIds() {
   try { return JSON.parse(localStorage.getItem(RUNG_KEY) || "[]"); } catch { return []; }
@@ -229,9 +232,9 @@ export function useInbox({ enabled, open, notify = false, onOpen, onStatus }) {
     try {
       const ids = target.ids || [];
       let got = null;
-      if (target.all) got = await apiJson(`${API}/inbox/mark`, post({ all: true, ...change }));
+      if (target.all) got = await apiJson(`${API}/inbox/mark`, post({ all: true, ...change }), MARK);
       for (let i = 0; i < ids.length; i += MARK_BATCH) {
-        got = await apiJson(`${API}/inbox/mark`, post({ ids: ids.slice(i, i + MARK_BATCH), ...change }));
+        got = await apiJson(`${API}/inbox/mark`, post({ ids: ids.slice(i, i + MARK_BATCH), ...change }), MARK);
       }
       marking.current -= 1;
       // the mark's own answer counts once it is the latest and the last on its way

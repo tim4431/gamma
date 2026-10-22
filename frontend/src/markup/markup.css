@@ -84,6 +84,18 @@
 .textBoxText a { color: #2959ad; }
 .textBoxText mark { background: #ffed8c; color: inherit; }
 /* ds-allow-end */
+/* A picture with no width of its own (![alt](…), not ![alt|300](…)) fills
+   a fixed-width box's text width, and so do its frames, so it zooms with
+   the page as the box's text does; a Notability picture's box is made to
+   its size (gamma/notability_map.py). In an auto-width box it keeps its
+   own size. */
+.textBox:not(.auto) :is(.mdObject-image, .mdImgWrap, .mdImgFrame):has(.mdImg:not([width])) {
+  display: block;
+  width: auto;
+  margin: 0;
+  padding: 0;
+}
+.textBox:not(.auto) .mdImg:not([width]) { width: 100%; height: auto; }
 /* The block editor in the box's own type, not the notes'. */
 .textBoxEditor.blockEditorCm { min-height: 0; }
 .textBoxEditor.blockEditorCm .cm-scroller { font-size: inherit; line-height: inherit; }

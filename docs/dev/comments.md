@@ -56,9 +56,9 @@ The workspace's migration needs no step of its own for the table: it is
 additive, and `db._open_ws_db` applies `PAGES_SCHEMA` to every `pages.db` it
 opens, as do `seed.create_workspace_files`, `ws_backup._normalize_copies`
 and the Gamma export's in-memory database. Step 40 (`comments_inbox`) is a
-global step only ([migrations.md](migrations.md) rule 2), so
-`migrations.workspace_format()` stays where it was and clones and
-publications keep syncing across the upgrade.
+global step only ([migrations.md](migrations.md) rule 2), so it does not
+move `migrations.workspace_format()`: the comments never pause clones and
+publications.
 
 ## Who may comment
 
@@ -712,7 +712,12 @@ stronger: its wash mixed with its own strong line colour (`--hl-line`, or
 the card away and makes none active. The page's pens, lasso, eraser and
 Text tool leave a press on a card alone (`.commentMargin` is in
 `ink/InkLayer.jsx`'s `NOT_INK`, and `markup/TextBoxLayer.jsx` skips it),
-so a card is pressed, read and typed in with a tool armed. A link visitor without an account
+and a right-click on one opens no "Paste here" (`BESIDE_PAGE`), so a card
+is pressed, read and typed in with a tool armed. A press on a card lets go
+of a handwriting selection, as a press off the page does, so the strip's
+Delete and the handwriting's Ctrl+C, X and D reach no strokes while a card
+is read; a focused card or thread popover keeps its Enter and Escape from
+the strip ([hotkeys.md](hotkeys.md) "Widget keys"). A link visitor without an account
 can make a card active to read it and gets "Sign in to comment" under
 the thread, as in the popover.
 
@@ -791,8 +796,9 @@ scrolls to the note. An item reached through a share navigates to
 `?ws=&page=&block=&thread=` (a folder share's to `?ws=&folder=`); App
 reads `thread` at boot. An invitation
 switches to its workspace. A folder shared with a member opens the folder
-in the library. The mark goes with `keepalive`, so a navigation never cuts
-it off.
+in the library. The mark goes through the page's keepalive ledger at
+`normal` priority (`apiJson`'s `keepalive`, [collab.md](collab.md)
+"Keepalive"), so a navigation does not cut it off.
 
 **System notifications.** The browser pref `inboxSystemNotifications`
 (Settings → Appearance › Interface › Inbox notifications; off by default;
@@ -878,7 +884,10 @@ has notifications; the iPad's WKWebView has none, and the row says so.
   composer as a note's editor (pickers, math, the "/" menu, Enter and
   Shift+Enter, the send button), drafts, `?thread=` and Copy link, the
   selection popup's Comment, and the PDF margin's cards (placement,
-  activation, a reply, Escape, Resolve, no margin at fit-width).
+  activation, a reply, Escape, Resolve, no margin at fit-width; beside
+  the pen strip, a press with a tool armed, a handwriting selection let
+  go, the right-click, Enter and Escape). `frontend/src/ink/**` and
+  `frontend/src/markup/**` select it too.
 - Browser: the `inbox` group (`tests/e2e/scenarios/inbox.mjs`): an
   invitation's jump, a mention's nudge reaching an open page within 3 s and
   the home library catching up on focus, the jumps in place, into another

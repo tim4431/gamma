@@ -284,15 +284,16 @@ const toolCallText = (a) => {
 };
 
 // One chip in the composer's strip: a PDF passage, the cursor block, an
-// attached block or selected note text. Two lines: what it is, in words
+// attached block, selected note text or selected handwriting (its label
+// alone, "Selected handwriting · 4 strokes"). Two lines: what it is, in words
 // (`label`, plus a muted `note` — the PDF page, or how to leave an automatic
 // one out — and `cut`, what the message keeps of a passage too long to go
 // whole), over a plain-text preview of the text (chat/chipText.js: the
 // markdown dropped, inline math typeset). `auto` marks context nobody
 // attached — it rides along because of where the cursor is — with a dashed
-// border; `kind` is the modifier class (isCursor / isBlock / isNote; none
-// for a PDF passage).
-const SEL_CHIP_ICONS = { cursor: TextCursorIcon, selection: HighlightIcon, passage: QuoteIcon, block: OutlineIcon };
+// border; `kind` is the modifier class (isCursor / isBlock / isNote /
+// isInk; none for a PDF passage).
+const SEL_CHIP_ICONS = { cursor: TextCursorIcon, selection: HighlightIcon, passage: QuoteIcon, block: OutlineIcon, ink: PenIcon };
 
 function ChipPreview({ text }) {
   const segments = useMemo(() => chipSegments((text || "").slice(0, 600)), [text]);
@@ -1078,6 +1079,11 @@ export default function ChatDock({
       context_blocks: notes.filter((n) => n.kind === "block").map((n) => n.id),
       note_selections: [...cursorSel, ...notes.filter((n) => n.kind === "note")]
         .map((n) => ({ block_id: n.id, from: n.from, to: n.to, text: n.text })),
+      // Handwriting selected on a page (the selection menu's Transcribe):
+      // the strokes themselves, saved or not, in their group's space; the
+      // server draws them where they lie (ai_context.request_ink_selections).
+      ink_selections: notes.filter((n) => n.kind === "ink")
+        .map((n) => ({ page_id: n.page_id, block_id: n.id, space: n.space, strokes: n.strokes })),
       attach_pdf: attach,
       effort,
       speed,
@@ -2091,7 +2097,12 @@ export default function ChatDock({
                 onRemove={() => setPdfSelections((prev) => prev.filter((_, j) => j !== i))}
                 removeTitle={t("Remove this passage")} />
             ))}
-            {(chatNotes || []).map((n, i) => (
+            {(chatNotes || []).map((n, i) => (n.kind === "ink" ? (
+              <SelChip key={`n${i}`} kind="isInk" icon="ink" label={n.text} text=""
+                title={t("Handwriting selected with the lasso: the assistant gets a picture of these strokes and the id of their note")}
+                onRemove={() => setChatNotes?.((prev) => prev.filter((_, j) => j !== i))}
+                removeTitle={t("Remove this handwriting")} />
+            ) : (
               <SelChip key={`n${i}`} kind={n.kind === "block" ? "isBlock" : "isNote"} text={n.text}
                 icon={n.kind === "block" ? "block" : "selection"}
                 label={n.kind === "block" ? t("Attached block") : t("Selected note text")}
@@ -2100,7 +2111,7 @@ export default function ChatDock({
                   n.kind === "note" ? keptHint(n) : "", n.text.slice(0, 2000)].filter(Boolean).join("\n\n")}
                 onRemove={() => setChatNotes?.((prev) => prev.filter((_, j) => j !== i))}
                 removeTitle={n.kind === "block" ? t("Detach this block") : t("Remove this passage")} />
-            ))}
+            )))}
           </div>
         ) : null}
         {chatDocs.length ? (
@@ -2172,7 +2183,8 @@ export default function ChatDock({
             chatFiles.length ? tn("Ask about the attached file…", "Ask about the attached files…", chatFiles.length)
             : chatImages.length ? t("Ask about the attached picture…") : pdfSelections.length > 1 ? t("Ask about the {n} selected passages…", { n: pdfSelections.length })
             : pdfSelections.length ? t("Ask about the selection…") : chatNotes?.length > 1 ? t("Ask about the {n} attached notes…", { n: chatNotes.length })
-            : chatNotes?.length ? (chatNotes[0].kind === "block" ? t("Ask about the attached block…") : t("Ask about the selected note…"))
+            : chatNotes?.length ? (chatNotes[0].kind === "block" ? t("Ask about the attached block…")
+              : chatNotes[0].kind === "ink" ? t("Ask about the selected handwriting…") : t("Ask about the selected note…"))
             : cursorChip?.sel ? t("Ask about the selection…") : cursorChip ? t("Ask about this block…") : chatDocs.length ? tn("Ask about {n} attached page…", "Ask about {n} attached pages…", chatDocs.length)
             : agentAsk || t("Ask…")
           ) + t(" (@ paper)")}

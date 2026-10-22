@@ -70,7 +70,7 @@ test("Zotero's effective highlights follow file bundling while preserving the us
 });
 
 test("imports show options only for embedded annotations and omit inapplicable strip flags", () => {
-  for (const source of ["gamma", "markdown", "logseq"]) {
+  for (const source of ["gamma", "markdown", "logseq", "notability"]) {
     const result = resolveImport(source, { hasPdf: true, strip: true });
     assert.equal(result.needsReview, false);
     assert.deepEqual(result.payload, { source });

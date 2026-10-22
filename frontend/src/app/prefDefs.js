@@ -18,7 +18,11 @@
 import { DEFAULT_PICTURE_BUDGET, MAX_PICTURE_BUDGET } from "../chat/chatPictures.js";
 import { PERMISSION_KEYS, defaultPerm, normalizePerm } from "../chat/chatSettings.js";
 import { normalizeTourProgress } from "../guide/triggers.js";
+import { CHORD_MODES } from "../ink/fingerChords.js";
 import { DEFAULT_TOOLS, normalizeTools } from "../ink/ink.js";
+import { PENCIL_CHOICES, SQUEEZE_HOLDS } from "../ink/pencilActions.js";
+import { SHAPE_TOOL_KINDS } from "../ink/shapeTool.js";
+import { ZOOM_HEIGHT, ZOOM_HEIGHT_MAX, ZOOM_HEIGHT_MIN } from "../ink/zoomWindow.js";
 import { textStyle } from "../markup/textBox.js";
 import { LANGUAGES } from "../shared/i18n/locales.js";
 import { normalizeChord } from "../shared/lib/hotkeys.js";
@@ -344,15 +348,58 @@ export const PREFS = {
   inkPenOnly: flag("gamma-ink-pen-only", BROWSER, COARSE),
   inkAutoPen: flag("gamma-ink-auto-pen", BROWSER, true),
   inkPressure: flag("gamma-ink-pressure", BROWSER, true),
-  // The strip's tool presets: [{id, kind: pen|highlighter, color, size}],
-  // the user's own row of pens and highlighters (ink.js DEFAULT_TOOLS).
-  inkTools: pref("gamma-ink-tools", BROWSER, DEFAULT_TOOLS, json(normalizeTools)),
+  // Two fingers tapped together undo, three redo (ink/fingerChords.js): a
+  // single chord, a double one, or nothing; on by default where a finger is
+  // the primary pointer, since a mouse has Ctrl+Z.
+  inkFingerUndo: pref("gamma-ink-finger-undo", BROWSER, COARSE ? "double" : "off", oneOf(CHORD_MODES)),
+  // The hover footprint shows the armed preset's look (its brush, its dash,
+  // a pencil's lean), else a plain ring at its width.
+  inkHoverPreview: flag("gamma-ink-hover-preview", BROWSER, true),
+  // In the iPad app (Settings → Reading & editing › Apple Pencil, shown
+  // under its host): what the Pencil's double tap and squeeze do
+  // (ink/pencilActions.js) — the system's preferred action by default, else
+  // one of the strip's own; the squeeze also has a tool armed only while it
+  // is held — and whether a snap, a lasso's selection and a gesture's tool
+  // switch tick in an Apple Pencil Pro.
+  inkPencilTap: pref("gamma-ink-pencil-tap", BROWSER, "system", oneOf(PENCIL_CHOICES)),
+  inkPencilSqueeze: pref("gamma-ink-pencil-squeeze", BROWSER, "system", oneOf([...PENCIL_CHOICES, ...SQUEEZE_HOLDS])),
+  inkHaptics: flag("gamma-ink-haptics", BROWSER, true),
+  // The handwriting habits that follow the account (Settings → Reading &
+  // editing › Handwriting): a stroke held still at its end snaps to a line
+  // or a shape (ink/shapes.js); a fast back-and-forth with the pen erases
+  // the ink under it (ink/gestures.js; off until turned on); lifting the
+  // eraser tool returns to the tool armed before it; and what any erasure
+  // may remove — everything, pens only or highlighters only (ink.js
+  // eraserKeep).
+  inkDrawHold: flag("gamma-ink-draw-hold", ACCOUNT, true),
+  inkScribbleErase: flag("gamma-ink-scribble-erase", ACCOUNT, false),
+  inkEraserReturn: flag("gamma-ink-eraser-return", ACCOUNT, false),
+  inkEraserFilter: pref("gamma-ink-eraser-filter", ACCOUNT, "all", oneOf(["all", "pen", "highlighter"])),
+  // The Shapes tool (ink/shapeTool.js): what its drag draws, and whether its
+  // rectangles and ellipses get a light tint of the pen's colour inside —
+  // set on its options row, no Settings row.
+  inkShapeKind: pref("gamma-ink-shape-kind", ACCOUNT, "line", oneOf(SHAPE_TOOL_KINDS)),
+  inkShapeFill: flag("gamma-ink-shape-fill", ACCOUNT, false),
+  // The strip's tool presets: [{id, kind: pen|highlighter, color, size, …}],
+  // the user's own row of pens and highlighters (ink.js DEFAULT_TOOLS,
+  // normalizeTools), the account's: a browser that signs in takes the
+  // account's list, an account without one is seeded from the browser
+  // (useProfileSync), and a browser whose own edited list the account's
+  // replaced is offered a pill to push it. Which pen a stylus writes with
+  // stays session state; the eraser and lasso modes below stay this browser's.
+  inkTools: pref("gamma-ink-tools", ACCOUNT, DEFAULT_TOOLS, json(normalizeTools)),
   // "stroke" erases whole strokes, "partial" cuts through them; the size
   // is an S/M/L index (ink/InkLayer.jsx ERASER_SIZES).
   inkEraserMode: pref("gamma-ink-eraser", BROWSER, "stroke", oneOf(["stroke", "partial"])),
   inkEraserSize: pref("gamma-ink-eraser-size", BROWSER, 1, { ...intIn(0, 2), serialize: String }),
   // The lasso draws a freeform loop or a box.
   inkLassoMode: pref("gamma-ink-lasso", BROWSER, "free", oneOf(["free", "box"])),
+  // The ruler's ticks, in points or centimetres (ink/ruler.js rulerTicks),
+  // and the zoom window's height in css px (ink/ZoomWindow.jsx, its top
+  // edge's drag): set where they act, like the eraser's. The ruler's place
+  // and the window's are session state.
+  inkRulerUnits: pref("gamma-ink-ruler-units", BROWSER, "pt", oneOf(["pt", "cm"])),
+  inkZoomHeight: pref("gamma-ink-zoom-height", BROWSER, ZOOM_HEIGHT, { ...intClamped(ZOOM_HEIGHT_MIN, ZOOM_HEIGHT_MAX), serialize: String }),
   // --- Recordings and their replay (docs/dev/recording.md) ---
   // How the player draws the strokes not yet reached (replay/playback.js
   // MODES): faded, hidden until written, or as they are; its speed; and

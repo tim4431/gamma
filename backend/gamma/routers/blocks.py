@@ -67,6 +67,7 @@ class UBUpdateRequest(StorableBody):
     base: str | None = None     # the text `content` was edited from: merged, not replaced (ops.py)
     properties: dict | None = None
     base_properties: dict | None = None  # the values `properties` was computed from (an ink merge, ops.py)
+    base_ids: list[str] | None = None    # an ink merge: the base file's stroke ids as the client loaded it
 
 
 class UBReorderRequest(BaseModel):
@@ -531,7 +532,10 @@ def ub_update_block(block_id: str, payload: UBUpdateRequest, request: Request):
     ``base_properties``: an ink group's ``ink_url`` whose base is not the
     stored one is merged by stroke, a text box's ``text_box`` key by key,
     and the answer's ``properties`` is the patch actually applied (it names
-    the merged file or box)."""
+    the merged file or box). An ink merge may carry ``base_ids`` (the base
+    file's stroke ids) and answers ``ink_conflict: {clean, lost_ours,
+    returned}`` ([handwriting.md](../../docs/dev/handwriting.md) "Two
+    writers, one group")."""
     ws = require_ws_writer(request)
     scope = share_scope(request)
     with connect_pages_db(ws) as conn:
@@ -547,8 +551,12 @@ def ub_update_block(block_id: str, payload: UBUpdateRequest, request: Request):
         op["props"] = payload.properties
         if payload.base_properties:
             op["base_props"] = payload.base_properties
+            if payload.base_ids is not None:
+                op["base_ids"] = payload.base_ids
     result = _ops(ws, page_id, [op], request, scope)
     out = {"ok": True, "updated_at": result["at"], "seq": result["seq"]}
+    if block_id in result.get("ink_conflicts", {}):
+        out["ink_conflict"] = result["ink_conflicts"][block_id]
     if payload.content is not None:
         out["content"] = result["ops"][0].get("content", payload.content)
     if payload.properties is not None:
