@@ -172,16 +172,24 @@ app ([ipad.md](ipad.md)). Typed text on a page is
 - **Presets follow the account.** `inkTools` lives in the profile
   ([settings.md](settings.md) "Reading & editing"): a browser that signs
   in takes the account's list, and an account without one is seeded from
-  the browser. When the server's list differs from a list this browser
-  had changed itself (not the defaults), one pill asks "Use this
-  browser's pens instead?" with *Use this browser's*, which pushes the
-  local list; otherwise the account's pens stand. The pill appears on that
-  first pull only: a later pull that differs is another device's edit of
-  the account's list, which applies. Every write of the list goes through
-  `normalizeTools` (`setInkTools` in `ink/useInkStrip.js`), so what this
-  browser keeps and pushes is exactly what a pull reads back. Which pen a
-  stylus writes with stays session state; the eraser's mode and size and
-  the lasso mode stay this browser's.
+  the browser.
+  - When a load's first pull puts the account's list in place of a list
+    this browser changed itself, one pill asks "Use this browser's pens
+    instead?" with *Use this browser's*, which pushes the local list;
+    otherwise the account's pens stand. A list this browser changed
+    itself is neither the defaults nor the list it last took from the
+    account or sent there, which it remembers per account.
+  - A later pull that differs, and a later load that finds the list this
+    browser last took or sent replaced, bring another device's edit,
+    which applies without a question.
+  - The question stays on the pill for its 8 seconds, or until it is
+    answered. A page opening under it (a `?page=` link) puts its
+    "Ready." in the system log only.
+  - Every write of the list goes through `normalizeTools` (`setInkTools`
+    in `ink/useInkStrip.js`), so what this browser keeps and pushes is
+    exactly what a pull reads back. Which pen a stylus writes with stays
+    session state; the eraser's mode and size and the lasso mode stay
+    this browser's.
 - **Keys while the strip is open** (`ink/stripKeys.js`) arm the presets
   and tools and step the armed preset's width and style. R, S and Z turn
   the ruler, the Shapes tool and the zoom window on and off, and Esc
@@ -426,7 +434,9 @@ app ([ipad.md](ipad.md)). Typed text on a page is
     pen/highlighter selection gets a width row per kind. Duplicate puts
     fresh-id copies 12 px right of and below the originals and selects
     them. The 12 px are measured at the zoom of the page or sheet the
-    selection is on, from the menu and Ctrl+D alike. A full group refuses.
+    selection is on, from the menu and Ctrl+D alike. A full group refuses,
+    whether by its strokes or by the bytes one file holds, and the
+    selection stays on the originals.
     Flip mirrors the strokes about the selection box's centre, widths and
     timing untouched, the box staying put; a second flip puts them back.
   - One action across several blocks is one undo entry, and every action
@@ -452,7 +462,9 @@ app ([ipad.md](ipad.md)). Typed text on a page is
     them at the same point size.
   - Three ways say where. **Ctrl+V** (or the pill, or More → Paste
     handwriting) centres the copied box on the page nearest the
-    viewport's centre (the sheet in view on a notebook). A **pen or mouse
+    viewport's centre (the sheet in view on a notebook). A paper just
+    opened has no such page until its pages are laid out, and Ctrl+V
+    pastes nothing meanwhile. A **pen or mouse
     held still** on the page for 600 ms, with a writing tool armed and
     something on the clipboard, before it has drawn 2 css px, opens a
     one-row menu, *Paste here*, at the point (in the iPad app through the
@@ -2868,7 +2880,9 @@ reach.
     height})` (one `IntersectionObserver` over the page boxes keeps the
     intersecting ones, and per scroll frame the one whose centre lies
     nearest the scroller's centre is reported when it changes, with its
-    size at scale 1).
+    size at scale 1). Another document (`pdfUrl`) forgets it until its
+    own viewer reports a page, so a paste while it loads never lands on a
+    page of the last one.
   - `inkPageNumber(page)` is what messages call a surface: a PDF page's
     number, or a sheet's place among the sheets ("?" for one gone).
   - `visiblePart(page, size)`, exported beside the hook, is the part of
@@ -3450,14 +3464,18 @@ reach.
     `commandIcons.jsx`: `CopyIcon`, `ScissorsIcon`, `ClipboardIcon`,
     `CopyIcon`, `RectSelectIcon`, from `Icons.jsx` (as are the menu's
     `FlipHIcon` and `FlipVIcon`).
-  - **Presets on the account**: `useProfileSync` reports, on the
-    account's first pull only, an account entry whose server value
-    replaced a local one that was neither the default nor equal to it
-    (`onReplaced({name, local})`; a later pull that differs is another
-    device's change and applies silently); for `inkTools` App raises
-    "Use this browser's pens instead?" with *Use this browser's*, whose
-    action sets `inkTools` to the local list (and so pushes it), once a
-    session.
+  - **Presets on the account**: `useProfileSync` reports, on a load's
+    first pull of the account only, an account entry whose server value
+    replaced a local one this browser made itself
+    (`onReplaced({name, local})`). That local value is neither the
+    default nor the account's value as this browser last took it or sent
+    it, kept per account in `gamma-profile-seen:<user>` (written on each
+    pull and each push the server confirmed). Any other change applies
+    silently. For `inkTools` App raises "Use this browser's pens
+    instead?" with *Use this browser's*, once a session, as
+    `setStatus(…, {keep: true})`: a status without a button meanwhile
+    leaves it up. The action takes the pill down and sets `inkTools` to
+    the local list, which pushes it.
   - The strip's pills: *Move left* / *Move right* and a drop say "Blue
     pen is now key 3." (or "Blue pen moved." past the ninth place), *Hide*
     says "Blue pen hidden." with *Show*, `[` / `]` say "Blue pen · 2.8
@@ -3491,9 +3509,10 @@ reach.
       pen's smoothing of 2 is `presetSmoothing`'s default, never stored).
   - **Transcribe a selection**, the chat half (`askToTranscribe({blocks}
     | {chips})`, which `transcribeInkSelection` in
-    `ink/useInkSelection.js` calls):
-    - `{blocks}` attaches each block as `transcribeInk` does (the oldest
-      attached block making room, said on the pill) and asks
+    `ink/useInkSelection.js` calls; a group's *Transcribe with AI* in the
+    ⋮⋮ menu is `askToTranscribe({blocks: [block]})`):
+    - `{blocks}` attaches each block not attached yet, the oldest
+      attached block making room (said on the pill), and asks
       "Transcribe this handwriting into its caption." once.
     - `{chips}` puts the chips on `chatNotes`, each replacing an earlier
       ink chip of its block. When, with the ink chips already waiting,

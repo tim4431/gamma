@@ -5,10 +5,13 @@
 // the pen styles and lines, draw and hold (a line, and a circle and a rectangle
 // closed where they began), the keys of a stroke's ink-live chunks, a Brush
 // preset's held line at constant width
-// (in the Markdown export's SVG too), a group's Transcribe with AI, the draft
-// journal bringing back what a crashed tab never saved, a browser with pens
-// of its own asked once whether to keep them over the account's, and the
-// build fence stopping a page the server was updated under. /Ink in the
+// (in the Markdown export's SVG too), a group's Transcribe with AI (the
+// oldest attached block making room), the draft journal bringing back what a
+// crashed tab never saved, a browser with pens of its own asked once whether
+// to keep them over the account's (the question staying up while a page
+// opens; a browser that only took or sent the account's list never asked on
+// a later load), and the build fence stopping a page the server was updated
+// under. /Ink in the
 // annotated PDF is backend/tests/test_ink.py; the chat's view_ink is
 // test_ai_tools_ink.py.
 import { PYTHON, assertMenuFrom, assertOpensInPlace, fakeAiModels, until } from "../harness.mjs";
@@ -1745,6 +1748,9 @@ export async function inkScenarios({ server, browser, alice, makePdf, step, unti
     const group = await account.api("/api/blocks", { method: "POST", body: {
       parent_id: pageId, content: "", properties: { ink_url: up.url, pdf_position: up.pdf_position, ink_strokes: 1 },
     } });
+    // as many notes as a message takes attached (chat/passageBudget.js MAX_CHAT_PASSAGES, 12)
+    const notes = [];
+    for (let i = 1; i <= 12; i++) notes.push(await account.api("/api/blocks", { method: "POST", body: { parent_id: pageId, content: `Attached note ${i}` } }));
     const tctx = await account.context(browser);
     try {
       await fakeAiModels(tctx);
@@ -1765,6 +1771,22 @@ export async function inkScenarios({ server, browser, alice, makePdf, step, unti
       await tpage.locator(".chatBubble.ai", { hasText: "It says: hello." }).waitFor();
       await tpage.locator(".chatBubble.user", { hasText: "Transcribe this handwriting" }).waitFor();
       assertEq(sent.length, 1, "sent once");
+      // with the twelve notes attached, the group takes the oldest one's place, and the pill says so
+      for (const note of notes) {
+        const row = tpage.locator(`.sortableBlockWrap[data-block-id="${note.id}"]`).first();
+        await row.hover();
+        await row.locator(".dragHandle").first().click();
+        await tpage.locator(".ctxMenuItem", { hasText: "Add to chat" }).click();
+      }
+      await wrap.hover();
+      await wrap.locator(".dragHandle").first().click();
+      await tpage.locator(".ctxMenuItem", { hasText: "Transcribe with AI" }).click();
+      await tpage.getByText("The oldest attached block was detached to make room.", { exact: true }).waitFor();
+      await until(() => sent.length === 2, { what: "the second request" });
+      assertEq(sent[1].prompt, "Transcribe this handwriting into its caption.", "the same request");
+      assert(sent[1].context_blocks.includes(group.id), "the group rides with it");
+      assert(!sent[1].context_blocks.includes(notes[0].id), "the oldest note made room");
+      assert(notes.slice(1).every((n) => sent[1].context_blocks.includes(n.id)), "the other eleven ride along");
       assertNoProblems(tpage);
     } finally { await tctx.close(); }
   });
@@ -1872,9 +1894,9 @@ export async function inkScenarios({ server, browser, alice, makePdf, step, unti
 
   await step("ink: a browser with pens of its own is asked once, on the account's first pull, whether to keep them; Use this browser's pushes them; a later pull, and a browser on the defaults, never ask", async () => {
     const ask = "Use this browser's pens instead?";
-    // B's own pens and another device's later edit, each its own first pen's colour
+    // B's own pens and another device's two later edits, each its own first pen's colour
     const pens = (color) => DEFAULT_TOOLS.map((tool, i) => (i ? tool : { ...tool, color }));
-    const [ownPens, laterPens] = [pens("#7c3aed"), pens("#ea580c")];
+    const [ownPens, laterPens, lastPens] = [pens("#7c3aed"), pens("#ea580c"), pens("#0891b2")];
     const accountFirst = async () => ((await account.api("/api/prefs/profile")).value?.inkTools || [])[0]?.color;
     const localFirst = (p) => p.evaluate(() => JSON.parse(localStorage.getItem("gamma-ink-tools") || "[]")[0]?.color);
     // how many times this session asked: Settings → Help & diagnostics lists every status the pill showed
@@ -1894,6 +1916,7 @@ export async function inkScenarios({ server, browser, alice, makePdf, step, unti
     const up = await account.upload("/api/uploads", makePdf([["Pens on the account"]]), "pens.pdf", "application/pdf");
     const paper = await account.api(`/api/blocks/by-doc/${up.doc_id}`, { method: "POST", body: { default_title: "Pens paper", source_url: up.source_url } });
     const library = `${server.base}/?ws=${account.ws}`;
+    const paperUrl = `${server.base}/?page=${paper.id}&ws=${account.ws}`;
     // a browser signed in to the account, with this localStorage before its first load
     const contexts = [];
     const browserWith = async (storageState) => {
@@ -1903,7 +1926,7 @@ export async function inkScenarios({ server, browser, alice, makePdf, step, unti
     };
     try {
       // A saves a pen list of its own to the account: its first pen made green on the strip
-      const A = await openPage(await browserWith(), `${server.base}/?page=${paper.id}&ws=${account.ws}`);
+      const A = await openPage(await browserWith(), paperUrl);
       await waitForPdf(A, 1);
       await A.click("button[aria-label='Handwriting tools']");
       await A.waitForSelector(".pdfInkBar");
@@ -1915,24 +1938,35 @@ export async function inkScenarios({ server, browser, alice, makePdf, step, unti
       // C, a browser on the defaults, takes the account's pens without a question
       const C = await openPage(await browserWith(), library);
       await until(async () => (await localFirst(C)) === "#15803d", { what: "C takes the account's pens" });
-      // B had pens of its own when it signed in: the account's stand, and it is asked once (in the
-      // library: a page opening as the pull lands says "Ready." on the same pill, in the question's place)
-      const B = await openPage(await browserWith({ cookies: [], origins: [{ origin: server.base,
-        localStorage: [{ name: "gamma-ink-tools", value: JSON.stringify(ownPens) }] }] }), library);
+      // B had pens of its own when it signed in: the account's stand, and it is asked once. B opens the
+      // paper, the page held back until the question is up: the "Ready." of the page opening then goes to
+      // the log only, and the question stays on the pill (under the PDF's loading pill, another channel,
+      // while that lasts) until it is answered
+      const bContext = await browserWith({ cookies: [], origins: [{ origin: server.base,
+        localStorage: [{ name: "gamma-ink-tools", value: JSON.stringify(ownPens) }] }] });
+      let release;
+      const held = new Promise((resolve) => { release = resolve; });
+      await bContext.route(`**/api/blocks/${paper.id}/subtree*`, async (route) => { await held; await route.continue(); });
+      const B = await openPage(bContext, paperUrl);
       const pill = B.locator(".statusPill", { hasText: ask });
       await pill.waitFor();
+      release();
+      await waitForPdf(B, 1);
+      await pill.waitFor({ timeout: 4000 });
       assertEq(await localFirst(B), "#15803d", "the account's pens stand until B answers");
       const pushed = B.waitForResponse((r) => r.url().endsWith("/api/prefs/profile") && r.request().method() === "PATCH");
       await pill.getByRole("button", { name: "Use this browser's", exact: true }).click();
       await pushed;
+      await pill.waitFor({ state: "hidden", timeout: 2000 });
       await until(async () => (await accountFirst()) === "#7c3aed", { what: "B's own pens on the account" });
       assertEq(await localFirst(B), "#7c3aed", "and in B");
-      // A sees them after a reload
+      // A sees them after a reload, and is not asked: the list A had is the one it sent the account
       await A.reload();
       await waitForPdf(A, 1);
       await A.click("button[aria-label='Handwriting tools']");
       await until(async () => (await A.$eval(".pdfInkBar .inkToolInk", (el) => getComputedStyle(el).backgroundColor)) === "rgb(124, 58, 237)",
         { what: "A's strip shows B's first pen" });
+      assertEq(await asked(A), 0, "A, on the list it sent the account, takes B's on its next load without a question");
       // another device edits the account's pens: B's next pull takes the edit and does not ask again
       await account.api("/api/prefs/profile", { method: "PATCH", body: { set: { inkTools: laterPens } } });
       const pulled = B.waitForResponse((r) => r.url().endsWith("/api/prefs/profile") && r.request().method() === "GET");
@@ -1947,6 +1981,11 @@ export async function inkScenarios({ server, browser, alice, makePdf, step, unti
       await pulledC;
       await until(async () => (await localFirst(C)) === "#ea580c", { what: "C takes the later edit" });
       assertEq(await asked(C), 0, "a browser on the defaults is never asked, on its first pull or a later one");
+      // nor on its next load, after another edit: C only took the account's lists, so they are not its own
+      await account.api("/api/prefs/profile", { method: "PATCH", body: { set: { inkTools: lastPens } } });
+      await C.reload();
+      await until(async () => (await localFirst(C)) === "#0891b2", { what: "C's next load takes the next edit" });
+      assertEq(await asked(C), 0, "a browser that only took the account's pens is not asked on a later load");
       for (const p of [A, B, C]) assertNoProblems(p);
     } finally {
       for (const c of contexts) await c.close();

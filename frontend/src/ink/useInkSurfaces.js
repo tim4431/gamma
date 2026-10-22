@@ -3,7 +3,7 @@
 // sheet's by its id), the surface a paste without a point lands on, and
 // what messages call a surface (the pure parts in inkSurfaces.js). App
 // composes it with the page's blocks and sheets and the viewer's state.
-import { useCallback, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import { inkBySheet } from "../notebook/notebook.js";
 import { flattenBlocks } from "../shared/model/blockModel.js";
 import { groupsBySurface, pasteTargetOf, surfaceLabel } from "./inkSurfaces.js";
@@ -48,9 +48,12 @@ export function useInkSurfaces({ blocks, nbSheets, nbSheetsRef, nbCurrent, noteb
   const inkBySurface = useMemo(() => groupsBySurface(inkBlocks, nbInk), [inkBlocks, nbInk]);
   // The PDF page in view and its size at scale 1 (PdfViewer's onPageInView:
   // the page whose centre lies nearest the scroller's), where Ctrl+V and
-  // the pill's Paste land; a notebook pastes on nbCurrent.
+  // the pill's Paste land; a notebook pastes on nbCurrent. Another
+  // document forgets it: until its viewer reports a page of its own (once
+  // it is laid out), nothing pastes onto a page of the last one.
   const pageInViewRef = useRef(null);
   const onPageInView = useCallback((page, size) => { pageInViewRef.current = { page, size }; }, []);
+  useEffect(() => { pageInViewRef.current = null; }, [pdfUrl]);
   // Where a paste without a point goes: the notebook's current sheet, else
   // the PDF page in view, with its size.
   function pasteTarget() {

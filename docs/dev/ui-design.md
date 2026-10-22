@@ -543,6 +543,11 @@ it to the floating pill: one ending in "…" is in progress and spins,
 anything else is final and fades after a second. `setStatus(msg, action)`
 with an `action` `{label, run}` puts its button on the pill
 (`.statusPill.interactive`), which then stays 8 seconds to be pressed.
+With `{keep: true}` it is a question that holds the pill for those 8
+seconds or until its `run` clears it (`postPill("status", null)`). A
+status without a button posted meanwhile goes to the log only, while
+another button or an error replaces it. The pens question uses it
+([handwriting.md](handwriting.md) "Presets follow the account").
 `sayUndoable(msg, run)` is that with Undo, which clears the pill and
 runs `run`. `undoableStatus(msg)` is the one whose Undo runs the
 `app.undo` command: a deleted note says "Block deleted." with Undo

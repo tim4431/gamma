@@ -3,11 +3,13 @@
 // audio, the note typed and the stroke drawn meanwhile carry the moment they
 // were made, the card plays the recording back with the stroke faded until
 // its moment and the note shaded, a tap on the stroke seeks, and Escape
-// closes the player. The browser has no microphone and no decoder here:
-// an init script stands in for MediaRecorder and Audio. The server's side
-// is backend/tests/test_recordings.py.
+// closes the player; in a notebook view, Follow scrolls the viewer to the
+// sheet being written on. The browser has no microphone and no decoder
+// here: an init script stands in for MediaRecorder and Audio. The server's
+// side is backend/tests/test_recordings.py.
 import { waitForPdf } from "./pdf.mjs";
 import { assertMenuFrom } from "../harness.mjs";
+import { encodeStroke, newCanvasInk } from "../../../src/ink/ink.js";
 
 async function drawLine(page, from, to) {
   await page.mouse.move(from[0], from[1]);
@@ -218,5 +220,48 @@ export async function recordingScenarios({ server, browser, alice, makePdf, step
     await until(async () => !(await page.$(".replayBar")), { what: "player closed by Escape" });
     assert(!(await page.$(".blockRow.replayPending")), "no row stays shaded once the player closes");
     assertNoProblems(page);
+  });
+
+  await step("recording: in the notebook view, Follow scrolls the viewer to the sheet being written on", async () => {
+    // Follow is App's showTick, one function for the app's life: a group is shown through the page as it
+    // is when its mark is reached, not as the app's first render had it (no notebook view). A notebook
+    // made through the API: two sheets, a recording four seconds long and, on the second sheet, a stroke
+    // written a second and a half into it.
+    const audio = await account.upload("/api/upload-file", Buffer.from([0x1a, 0x45, 0xdf, 0xa3, 0x84, 0x42, 0x86, 0x81, 0x01]), "follow.webm", "audio/webm");
+    const started = Date.now() - 60_000;
+    const stroke = encodeStroke({ id: "followed", color: "#1f1f1f", size: 2, ch: "xyt", t0: started + 1500,
+      samples: Array.from({ length: 13 }, (_, i) => ({ x: 80 + i * 10, y: 120, t: i * 40 })) });
+    const notebook = await account.api("/api/blocks", { method: "POST", body: { parent_id: "root", content: "Followed notebook" } });
+    const paper = { width: 595.28, height: 841.89, color: "#ffffff", pattern: "blank", spacing: 24, line: "#c8d1dc" };
+    const sheets = [];
+    for (let i = 0; i < 2; i++) {
+      sheets.push(await account.api("/api/blocks", { method: "POST", body: { parent_id: notebook.id, content: "", properties: { sheet: paper, collapsed: true } } }));
+    }
+    const sheetInk = await account.api("/api/upload-ink", { method: "POST", body: { ...newCanvasInk(paper.width, paper.height), strokes: [stroke] } });
+    await account.api("/api/blocks", { method: "POST", body: { parent_id: sheets[1].id, content: "", properties: { ink_url: sheetInk.url, ink_strokes: 1 } } });
+    await account.api("/api/blocks", { method: "POST", body: { parent_id: notebook.id, content: "Followed audio",
+      properties: { t0: started, recording: { started, state: "done", dur: 4000,
+        segments: [{ url: audio.url, started, dur: 4000, bytes: 9, mime: "audio/webm" }] } } } });
+    const fctx = await account.context(browser);
+    await fctx.addInitScript(fakeMedia);
+    try {
+      // the notebook view, at its first sheet: Follow brings the second into view
+      const npage = await openPage(fctx, `${server.base}/?page=${notebook.id}&ws=${account.ws}`);
+      await npage.locator(".noteSheetBar button[aria-label='Notebook view']").first().click();
+      await npage.waitForSelector(".nbViewer .nbSheet", { timeout: 15000 });
+      const secondInView = () => npage.evaluate((id) => {
+        const viewer = document.querySelector(".nbViewer"), sheet = viewer?.querySelector(`.nbSheet[data-sheet-id="${id}"]`);
+        if (!sheet) return false;
+        const v = viewer.getBoundingClientRect(), s = sheet.getBoundingClientRect();
+        return s.top < v.bottom - 100 && s.bottom > v.top + 100;
+      }, sheets[1].id);
+      assert(!(await secondInView()), "the second sheet starts out of view");
+      await npage.click(".recordingCard button[aria-label='Play recording']");
+      await npage.waitForSelector(".replayBar", { timeout: 5000 });
+      await until(secondInView, { what: "Follow scrolls the notebook view to the second sheet", timeout: 10000 });
+      await npage.keyboard.press("Escape");
+      await until(async () => !(await npage.$(".replayBar")), { what: "the player closed" });
+      assertNoProblems(npage);
+    } finally { await fctx.close(); }
   });
 }

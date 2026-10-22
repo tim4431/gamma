@@ -67,16 +67,33 @@ const PULL_MIN_MS = 15000;
 //   Settings replaced entries on the server.
 const NONE = new Set();
 const perName = (values) => Object.fromEntries(ACCOUNT_PREFS.map((name) => [name, JSON.stringify(values[name])]));
+// The account's profile as this browser last took it from the server or
+// sent it there ({name: JSON}, perName's), kept per account
+// (`gamma-profile-seen:<user>`): on a later load, a local value equal to it
+// is the account's, not one this browser made. Without it (another
+// browser profile, storage cleared) every local value that is not the
+// default counts as this browser's.
+const seenKey = (user) => `gamma-profile-seen:${user}`;
+function seenOf(user) {
+  try {
+    const seen = JSON.parse(localStorage.getItem(seenKey(user)) || "null");
+    return seen && typeof seen === "object" && !Array.isArray(seen) ? seen : {};
+  } catch { return {}; }
+}
+function rememberSeen(user, seen) {
+  try { localStorage.setItem(seenKey(user), JSON.stringify(seen)); } catch { /* the next load asks as if none were kept */ }
+}
 // failed: {name: the value whose push failed}; awaitingAt: the server time of the last push
 const IDLE = { inflight: NONE, failed: {}, awaiting: NONE, awaitingAt: "" };
 
-// `onReplaced({name, local})`, when given, is told on the first pull of an
-// account (once per entry) of an entry whose server value replaced a local
-// one that was neither the default nor equal to it — the browser had its
-// own, and the account's won — so the caller can offer to push the local
-// value back (the strip's presets: "Use this browser's pens instead?"). A
-// later pull that differs is another device's change to a list this browser
-// took from the account, so it never asks.
+// `onReplaced({name, local})`, when given, is told on a load's first pull of
+// an account (once per entry) of an entry whose server value replaced a
+// local one this browser made itself: neither the default nor the account's
+// value as this browser last took it or sent it (`seenOf` above). The
+// browser had its own and the account's won, so the caller can offer to
+// push the local value back (the strip's presets: "Use this browser's pens
+// instead?"). A later pull, or a later load, that finds the account changed
+// since is another device's change, so it never asks.
 export function useProfileSync(prefs, user, { onReplaced } = {}) {
   const values = profileOf(prefs);
   const snap = JSON.stringify(values);
@@ -94,17 +111,18 @@ export function useProfileSync(prefs, user, { onReplaced } = {}) {
   const mark = (state, error = "") => setStatus((was) => (was.state === state && was.error === error ? was : { state, error }));
 
   // The server's profile onto the settings, except the names in `keep`;
-  // `first` on the account's first pull, the only one that can replace a
-  // value this browser had on its own.
+  // `first` on the account's first pull of this load, the only one that can
+  // replace a value this browser had on its own.
   function apply(value, keep = NONE, first = false) {
     const read = readProfile(value);
     const current = latest.current.prefs;
+    const seen = first ? seenOf(latest.current.user) : {};
     const replaced = [];
     for (const [name, v] of Object.entries(read)) {
       if (keep.has(name)) continue;
       const local = JSON.stringify(current[name]);
       if (local === JSON.stringify(v)) continue;
-      if (first && local !== JSON.stringify(PREFS[name].default)) replaced.push({ name, local: current[name] });
+      if (first && local !== JSON.stringify(PREFS[name].default) && local !== seen[name]) replaced.push({ name, local: current[name] });
       current[setterName(name)](v);
     }
     for (const entry of replaced) latest.current.onReplaced?.(entry);
@@ -146,6 +164,7 @@ export function useProfileSync(prefs, user, { onReplaced } = {}) {
       sendingRef.current -= 1;
       if (latest.current.user !== u) return;
       confirmedRef.current = sent;
+      rememberSeen(u, sent);
       settle((f) => ({ ...f, failed: {}, awaiting: new Set([...f.awaiting, ...names]), awaitingAt: d?.updated_at || f.awaitingAt }));
       if (!timerRef.current && syncedRef.current === now) mark("loaded");
     }, (err) => {
@@ -198,6 +217,7 @@ export function useProfileSync(prefs, user, { onReplaced } = {}) {
           settled = true;
         }
         confirmedRef.current = perName(read);
+        rememberSeen(u, confirmedRef.current);
       }
       if (settled) setFlight((f) => ({ ...f, failed: {} }));
       mark("loaded");

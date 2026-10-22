@@ -291,7 +291,7 @@ def _pdf_pieces(ops: str) -> list:
     for sub in re.findall(r"(\S+ \S+ m .*? h)", ops):
         nums = [float(v) for v in re.findall(_NUM, sub)]
         if " c " in sub + " ":       # a dot: four cubics from (cx + r, cy)
-            xs, ys = nums[0::2], nums[1::2]
+            xs = nums[0::2]
             r = (max(xs) - min(xs)) / 2
             out.append(("dot", nums[0] - r, nums[1], r))
         else:

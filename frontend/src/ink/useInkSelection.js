@@ -120,8 +120,9 @@ export function useInkSelection({ focusedBlockId, readOnly, inkUi, blocksRef, in
         setStatus(plan.refused);
         return;
       }
-      applyInk(plan.changes, { label: T("ink duplication") });
-      handleInkSelect(inkSelection.page, plan.items);
+      // the copies become the selection once they are on the page (the
+      // byte budget may refuse them, leaving the selection as it was)
+      if (applyInk(plan.changes, { label: T("ink duplication") })) handleInkSelect(inkSelection.page, plan.items);
     } else if (action === "copy") copyInkSelection(false);
     else if (action === "cut") copyInkSelection(true);
     else if (action === "transcribe") transcribeInkSelection();

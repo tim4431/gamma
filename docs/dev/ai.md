@@ -936,8 +936,9 @@ notes. The server resolves all four against the request's context pages.
   picture budget ("Pictures" below). The cursor block never sends a
   picture, since it goes with every message. A handwriting
   block's **Transcribe with AI** (⋮⋮ menu, `onTranscribe` → App's
-  `transcribeInk`) attaches the block and sends "Transcribe this
-  handwriting into its caption." through ChatDock's `askSignal`. The send
+  `askToTranscribe({blocks: [block]})`, the oldest attached block making
+  room) attaches the block and sends "Transcribe this handwriting into
+  its caption." through ChatDock's `askSignal`. The send
   waits until the conversation has loaded, and while a reply streams the
   request goes into the composer instead.
 - `ink_selections` — handwriting the user selected on a page,

@@ -785,5 +785,117 @@ export async function inkEditingScenarios({ server, browser, alice, bob, makePdf
     assertNoProblems(page);
   });
 
+  await step("ink edit: a Duplicate that would take the note past the server's cap is refused on the pill, and the selection stays on the strokes it had", async () => {
+    // A group over half the cap on one file (ink.js MAX_BYTES, 6 MiB) and far under MAX_STROKES:
+    // duplicatePlan lets its copies through, and applyInk refuses them for their bytes. Each stroke is
+    // a small scribble of a thousand samples a hundred seconds apart (big numbers, little to paint).
+    const up = await alice.upload("/api/uploads", makePdf([["A note too full to copy"]]), "full-note.pdf", "application/pdf");
+    const paper = (await alice.api(`/api/blocks/by-doc/${up.doc_id}`, { method: "POST", body: { default_title: "Full note", source_url: up.source_url } })).id;
+    const strokes = Array.from({ length: 240 }, (_, i) => encodeStroke({ id: `full${i}`, color: "#1f1f1f", size: 1, ch: "xyt", t0: 1000 + i,
+      samples: Array.from({ length: 1000 }, (_, j) => ({ x: 100 + (i % 20) * 20 + (j % 2) * 7.31,
+        y: 100 + Math.floor(i / 20) * 20 + (Math.floor(j / 2) % 2) * 7.37, t: j * 99999 })) }));
+    const file = await alice.api("/api/upload-ink", { method: "POST", body: { ...newInk(1, 612, 792), strokes } });
+    const group = (await alice.api("/api/blocks", { method: "POST", body: { parent_id: paper, content: "",
+      properties: { ink_url: file.url, pdf_position: file.pdf_position, ink_strokes: strokes.length } } })).id;
+    const savedFile = async () => ((await alice.api(`/api/blocks/${paper}/subtree`)).block.children || []).find((b) => b.id === group)?.properties.ink_url;
+    const fctx = await alice.context(browser);
+    try {
+      const fpage = await openPage(fctx, `${server.base}/?page=${paper}&ws=${alice.ws}`);
+      const fmenu = fpage.getByRole("toolbar", { name: "Edit handwriting", exact: true });
+      await waitForPdf(fpage, 1);
+      await until(async () => (await fpage.locator(paths).count()) > 0, { what: "the group drawn", timeout: 15000 });
+      // the pen armed on the strip, Ctrl+A: every stroke of the group selected
+      await fpage.getByRole("button", { name: "Handwriting tools", exact: true }).click();
+      await fpage.waitForSelector(".pdfInkBar");
+      await fpage.keyboard.press("Control+a");
+      await fmenu.waitFor();
+      // what the pill says, as it changes: a final message is up a second, which a long task can outlast
+      await fpage.evaluate(() => {
+        window.pillSaid = [];
+        new MutationObserver(() => {
+          const said = document.querySelector(".statusPill .pillText")?.textContent;
+          if (said && window.pillSaid.at(-1) !== said) window.pillSaid.push(said);
+        }).observe(document.body, { subtree: true, childList: true, characterData: true });
+      });
+      await fmenu.getByRole("button", { name: "Duplicate", exact: true }).click();
+      await until(() => fpage.evaluate(() => window.pillSaid.includes("This handwriting note is full. Move part of it to a new note, or start a new one.")),
+        { what: "the refusal on the pill", timeout: 15000 });
+      await fpage.waitForTimeout(300);
+      assertEq(await fpage.locator('[data-page="1"] .inkSelRect').count(), 1, "the selection's box still around the strokes");
+      assert(await fmenu.isVisible(), "the selection menu still up");
+      assert(await fpage.getByRole("button", { name: "Undo ink", exact: true }).isDisabled(), "no edit made");
+      assertEq(await savedFile(), file.url, "the group's file as it was");
+      assertNoProblems(fpage);
+    } finally { await fctx.close(); }
+  });
+
+  await step("ink edit: Ctrl+V while the next paper's PDF loads pastes nothing, never onto the last paper's page; once a page of it is in view, there", async () => {
+    // Ctrl+V lands on the page in view (PdfViewer's onPageInView). Here the first paper is read at its
+    // third page, and the next one, a page long, opens with its PDF held back while the strip has a pen
+    // armed and the clipboard holds a stroke: until that PDF reports a page of its own, no page is in view.
+    const paperOf = async (title, pages) => {
+      const up = await alice.upload("/api/uploads", makePdf(pages), "paste-wait.pdf", "application/pdf");
+      const id = (await alice.api(`/api/blocks/by-doc/${up.doc_id}`, { method: "POST", body: { default_title: title, source_url: up.source_url } })).id;
+      return { id, source: up.source_url };
+    };
+    const read = await paperOf("Read at its third page", [["Paste waits, page one"], ["Paste waits, page two"], ["Paste waits, page three"]]);
+    const next = await paperOf("Slow to load", [["Paste waits, the slow paper"]]);
+    const ink = { ...newInk(3, 612, 792), strokes: [encodeStroke({ id: "third", color: "#1f1f1f", size: 2, ch: "xyt", t0: 1000,
+      samples: Array.from({ length: 13 }, (_, i) => ({ x: 80 + i * 10, y: 220, t: i * 8 })) })] };
+    const file = await alice.api("/api/upload-ink", { method: "POST", body: ink });
+    await alice.api("/api/blocks", { method: "POST", body: { parent_id: read.id, content: "",
+      properties: { ink_url: file.url, pdf_position: file.pdf_position, ink_strokes: 1 } } });
+    // the PDF pages the next paper's groups are on
+    const groupPages = async () => ((await alice.api(`/api/blocks/${next.id}/subtree`)).block.children || [])
+      .filter((b) => b.properties && "ink_url" in b.properties).map((b) => b.properties.pdf_position?.pageNumber ?? null);
+    const vctx = await alice.context(browser);
+    try {
+      const vpage = await openPage(vctx, `${server.base}/?page=${read.id}&ws=${alice.ws}`);
+      const vmenu = vpage.getByRole("toolbar", { name: "Edit handwriting", exact: true });
+      await waitForPdf(vpage, 1);
+      // the third page in view; the hand's click selects its stroke and Ctrl+C copies it
+      await vpage.locator('[data-page="3"]').evaluate((el) => el.scrollIntoView({ block: "center" }));
+      await waitForPdf(vpage, 3);
+      await until(async () => (await vpage.locator('[data-page="3"] .inkLayer path').count()) === 1, { what: "the stroke on page 3 drawn" });
+      await vpage.getByRole("button", { name: "Handwriting tools", exact: true }).click();
+      await vpage.waitForSelector(".pdfInkBar");
+      await vpage.keyboard.press("v");
+      const at = await vpage.locator('[data-page="3"]').evaluate((el) => {
+        const rect = el.getBoundingClientRect(), k = rect.width / 612;
+        return { x: Math.round(rect.left + 140 * k), y: Math.round(rect.top + 220 * k) };
+      });
+      await until(async () => {
+        if (await vmenu.count()) return true;
+        await vpage.mouse.click(at.x, at.y);
+        return vmenu.waitFor({ timeout: 2000 }).then(() => true, () => false);
+      }, { timeout: 10000, what: "the stroke on page 3 selected" });
+      await vpage.keyboard.press("Control+c");
+      await vpage.getByText("Copied 1 stroke.", { exact: true }).waitFor();
+      // the next paper, its manifest and its bytes held back
+      let release;
+      const held = new Promise((resolve) => { release = resolve; });
+      const hold = async (route) => { await held; await route.continue(); };
+      await vctx.route("**/api/pdf-info/**", hold);
+      await vctx.route(`**${next.source}*`, hold);
+      await vpage.keyboard.press("Control+p");
+      const palette = vpage.getByRole("dialog", { name: "Open a page" });
+      await palette.waitFor();
+      await palette.getByRole("textbox", { name: "Search pages by title or label" }).fill("Slow to load");
+      await palette.locator('[role="option"][data-kind="page"]', { hasText: "Slow to load" }).click();
+      await until(() => new URL(vpage.url()).searchParams.get("block") === next.id, { what: "the next paper open" });
+      // the strip stays open with nothing armed: the pen, then Ctrl+V
+      await vpage.keyboard.press("1");
+      await until(async () => (await vpage.locator(".pdfInkBar .inkToolBtn.modeActive").count()) === 1, { what: "the pen armed" });
+      await vpage.keyboard.press("Control+v");
+      await vpage.waitForTimeout(2500);
+      assertEq(JSON.stringify(await groupPages()), "[]", "nothing pasted while the paper loads");
+      release();
+      await vpage.locator('[data-page="1"] .textLayer span', { hasText: "the slow paper" }).waitFor({ timeout: 15000 });
+      await vpage.keyboard.press("Control+v");
+      await until(async () => JSON.stringify(await groupPages()) === "[1]", { what: "the paste on the next paper's page 1", timeout: 15000 });
+      assertNoProblems(vpage);
+    } finally { await vctx.close(); }
+  });
+
   if (ctx) await ctx.close();
 }

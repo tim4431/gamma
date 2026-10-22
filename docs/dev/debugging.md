@@ -639,12 +639,15 @@ The scenarios live in `tests/e2e/scenarios/`:
     grain, and the hover footprint.
   - A stroke's `ink-live` chunks: its page, id, look, `n` and samples,
     and no `g` or `k`.
-  - Transcribe with AI, the Handwriting rows in Settings, and the draft
-    journal bringing back strokes a crashed tab never saved.
+  - Transcribe with AI (the oldest attached block making room), the
+    Handwriting rows in Settings, and the draft journal bringing back
+    strokes a crashed tab never saved.
   - A browser with pens of its own asked once, on the account's first
-    pull, whether to keep them: *Use this browser's* pushes them, and
-    another browser shows them after a reload. A later pull, and a
-    browser on the defaults, never ask.
+    pull, whether to keep them, the question staying up while a page
+    opens: *Use this browser's* pushes them, and another browser shows
+    them after a reload. A later pull, a later load of a browser that
+    only took or sent the account's list, and a browser on the defaults
+    never ask.
 - `inkEditing.mjs`: tap-to-select and the selection menu, which opens and
   grows in place, frame by frame. Colour/width
   edits keeping pressure and time, duplicate ids, selective delete, the
@@ -657,7 +660,9 @@ The scenarios live in `tests/e2e/scenarios/`:
   colour every selected stroke shares, none for a mix, and a colour off
   the palette on the custom swatch; a custom colour keeps a highlighter's
   opacity. Ctrl+D and the menu's Duplicate set the copy off by the same
-  12 css px at two zooms. Native Chromium touch/pen,
+  12 css px at two zooms, and a Duplicate past the bytes one file holds
+  is refused with the selection kept. Ctrl+V while the next paper's PDF
+  loads pastes nothing. Native Chromium touch/pen,
   asserting on the persisted stroke files. `--only "ink edit:"`; `--only
   ink` runs all four ink files.
 - `inkShapes.mjs`: the strip's modifiers ([handwriting.md](handwriting.md)

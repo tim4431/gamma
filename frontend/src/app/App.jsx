@@ -1732,7 +1732,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // or clears it (entry = null). Final entries linger 1s, then fade out. An
   // action is the pill's one button (Retry a PDF, Download a finished export).
   // When several channels are active: error > lingering final > ongoing,
-  // ties broken by recency.
+  // ties broken by recency. `keep` marks a question: a plain entry (no
+  // action, no error) posted to its channel meanwhile is dropped. It holds
+  // the channel until it is cleared, another action or error takes the
+  // channel, or its `after` ends it.
   const [status, setStatusRaw] = useState(t("Ready."));
   // System log (Settings → Diagnostics): status messages, PDF load activity,
   // and uncaught errors from this session. In-memory only.
@@ -1768,14 +1771,17 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   const [pillChannels, setPillChannels] = useState({}); // channel -> entry (+ seq, fading)
   const pillSeqRef = useRef(0);
   const pillTimersRef = useRef({}); // channel -> pending linger/fade timers
+  const pillKeptRef = useRef({}); // channel -> seq of the `keep` entry holding it
   // opts.after = [ms, patch]: once ms elapse — if this entry still owns the
   // channel — merge patch into it, or clear the channel when patch is null.
   // Callers use it for escalations and stuck-spinner caps without touching
   // the timer bookkeeping themselves.
   const postPill = useCallback((channel, entry, opts) => {
-    const timers = pillTimersRef.current;
+    const timers = pillTimersRef.current, kept = pillKeptRef.current;
+    if (entry && kept[channel] && !entry.action && !entry.error) return;
     (timers[channel] || []).forEach(clearTimeout);
     delete timers[channel];
+    delete kept[channel];
     if (!entry) {
       setPillChannels((prev) => {
         if (!(channel in prev)) return prev;
@@ -1786,6 +1792,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       return;
     }
     const seq = ++pillSeqRef.current;
+    if (entry.keep) kept[channel] = seq;
     setPillChannels((prev) => ({ ...prev, [channel]: { ...entry, seq, fading: false } }));
     // Only touch the entry we posted — a newer post owns the channel.
     const ifMine = (fn) => setPillChannels((prev) => (prev[channel]?.seq === seq ? fn(prev) : prev));
@@ -1797,12 +1804,15 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     }
     if (opts?.after) {
       const [ms, patch] = opts.after;
-      (timers[channel] ||= []).push(setTimeout(() => ifMine((prev) => {
-        const next = { ...prev };
-        if (patch === null) delete next[channel];
-        else next[channel] = { ...next[channel], ...patch };
-        return next;
-      }), ms));
+      (timers[channel] ||= []).push(setTimeout(() => {
+        if (patch === null) delete kept[channel];
+        ifMine((prev) => {
+          const next = { ...prev };
+          if (patch === null) delete next[channel];
+          else next[channel] = { ...next[channel], ...patch };
+          return next;
+        });
+      }, ms));
     }
   }, []);
   useEffect(() => () => Object.values(pillTimersRef.current).forEach((ts) => ts.forEach(clearTimeout)), []);
@@ -1815,14 +1825,17 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // "…"/"..." are in-progress; anything else is final. An `action`
   // ({label, run}) puts its button on the pill, which stays to be pressed.
   // `sticky`: the pill stays, as an error, until the next status replaces
-  // it (a save that will not succeed on a retry).
-  const setStatus = useCallback((msg, action, { sticky = false } = {}) => {
+  // it (a save that will not succeed on a retry). `keep`: a question with
+  // its action that holds the pill for its 8 s, or until its run clears it
+  // (postPill("status", null)): a status without an action meanwhile goes
+  // to the log only.
+  const setStatus = useCallback((msg, action, { sticky = false, keep = false } = {}) => {
     const text = String(msg);
     setStatusRaw(text);
     logSys(text, sticky ? "error" : "");
     const ongoing = /(\.\.\.|…)\s*$/.test(text);
     if (sticky) postPill("status", { msg: text, action: action || undefined, error: true });
-    else if (action) postPill("status", { msg: text, action }, { after: [8000, null] });
+    else if (action) postPill("status", { msg: text, action, keep }, { after: [8000, null] });
     else postPill("status", { msg: text, spinner: ongoing, final: !ongoing });
   }, [postPill, logSys]);
   const [loading, setLoading] = useState(false);
@@ -2566,13 +2579,18 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   const appPrefs = useAppPrefs();
   // The account's presets replaced this browser's own edited list on load
   // (prefs.js `onReplaced`): one pill a session offers to push the local
-  // list instead (docs/dev/handwriting.md "Presets follow the account").
+  // list instead (docs/dev/handwriting.md "Presets follow the account"). The
+  // question holds the pill (`keep`) while a page opens under it; the answer
+  // takes it down.
   const inkAdoptAskedRef = useRef(false);
   const profileSync = useProfileSync(appPrefs, authUser?.user && !authUser.is_guest && !shareMode ? authUser.user : "", {
     onReplaced: ({ name, local }) => {
       if (name !== "inkTools" || inkAdoptAskedRef.current) return;
       inkAdoptAskedRef.current = true;
-      setStatus(t("Use this browser's pens instead?"), { label: t("Use this browser's"), run: () => appPrefs.setInkTools(local) });
+      setStatus(t("Use this browser's pens instead?"), { label: t("Use this browser's"), run: () => {
+        postPill("status", null);
+        appPrefs.setInkTools(local);
+      } }, { keep: true });
     },
   });
   const {
@@ -2981,30 +2999,18 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       || prev.filter((n) => n.kind === "block").length >= MAX_CHAT_PASSAGES ? prev : [...prev, blockChip(block)]));
     setStatus(t("Block attached to your next chat message."));
   }
-  // "Transcribe with AI" on a handwriting block: the block goes to the chat
-  // as a chip (its picture rides with the message, ai_context) with the
-  // request, sent at once — the agent writes the text into its caption
-  // (view_ink, edit_block), or answers with it where it may not edit.
+  // The request ChatDock sends at once (its askSignal): Transcribe's, below.
   const [chatAsk, setChatAsk] = useState(null);
-  function transcribeInk(block) {
-    if (!block?.id) return;
-    // The block the request is about always goes: with as many blocks
-    // attached as a message takes, the oldest makes room, and says so.
-    const attached = attachedBlocks();
-    if (!attached.some((n) => n.id === block.id)) {
-      const oldest = attached.length >= MAX_CHAT_PASSAGES ? attached[0] : null;
-      setChatNotes((prev) => [...prev.filter((n) => n !== oldest), blockChip(block)]);
-      if (oldest) setStatus(t("The oldest attached block was detached to make room."));
-    }
-    showChat();
-    setChatAsk({ id: Date.now(), text: t("Transcribe this handwriting into its caption.") });
-  }
-  // Transcribe on a lasso selection (ink/useInkSelection.js
-  // transcribeInkSelection), its chat half: whole groups, saved, as
-  // their blocks, attached as transcribeInk attaches one (the oldest
-  // attached block making room) with one request; else the selected
-  // strokes as ink chips, each taking the place of an earlier chip of its
-  // group, within the server's caps (past them nothing is sent).
+  // Transcribe, its chat half: a handwriting block's "Transcribe with AI"
+  // ({blocks: [block]}) and a lasso selection's Transcribe
+  // (ink/useInkSelection.js transcribeInkSelection, whole groups saved).
+  // Blocks go to the chat as chips (a group's picture rides with the
+  // message, ai_context) with one request: the blocks the request is about
+  // always go, the oldest attached block making room and the pill saying
+  // so. The agent writes the text into a caption (view_ink, edit_block), or
+  // answers with it where it may not edit. Else the selected strokes go as
+  // ink chips, each taking the place of an earlier chip of its group,
+  // within the server's caps (past them nothing is sent).
   function askToTranscribe({ blocks, chips }) {
     if (blocks) {
       let next = chatNotesRef.current, dropped = false;
@@ -7024,9 +7030,13 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       else playRecording(b.id, { atWall: wall });
     },
   }), [playRecording, transcribeRecording, readOnly, recordingBlocks]);
-  // Follow the writing: what the player names, shown.
+  // Follow the writing: what the player names, shown. The player keeps the
+  // one showTick; a group is shown through the latest render's showOnPage,
+  // so the notebook view and the PDF are taken as they are now.
+  const showOnPageRef = useRef(showOnPage);
+  showOnPageRef.current = showOnPage;
   const showTick = useCallback((tick) => {
-    if (tick.kind === "ink") { showOnPage(tick.group); return; }
+    if (tick.kind === "ink") { showOnPageRef.current(tick.group); return; }
     reveal(tick.id);
     requestAnimationFrame(() => {
       document.querySelector(`.blockRowWrap[data-block-id="${CSS.escape(tick.id)}"]`)?.scrollIntoView({ block: "center", behavior: "smooth" });
@@ -9614,7 +9624,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                   // Attach a block to the next chat message (chip with its id).
                   onAddToChat: shareMode ? null : addBlockToChat,
                   // A handwriting block's "Transcribe with AI".
-                  onTranscribe: shareMode ? null : transcribeInk,
+                  onTranscribe: shareMode ? null : (block) => askToTranscribe({ blocks: [block] }),
                   // Comments: a row's control opens (or closes) the block's
                   // thread popover from where it sits; the handle menu and
                   // block.comment open it ready to write. Every row reads
