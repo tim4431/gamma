@@ -92,7 +92,10 @@ export function useCaretAnchored(anchor, preferAbove, deps) {
 // a \begin{…}/\end{…} name, or an optional [] argument — and the preview
 // falls back to the unmarked source when KaTeX still rejects the marked one
 // (its render carries a katex-error span; both renders are memoized).
-const CARET_MARK = "\\textcolor{#3b82f6}{\\vert}";
+// The bar is `|`, not `\vert`: `|` is a bar in math and in text mode alike,
+// while `\vert` is math-only and inside \text{…} KaTeX prints it as red
+// source, which carries no katex-error span to fall back on.
+const CARET_MARK = "\\textcolor{#3b82f6}{|}";
 export function withCaretMark(tex, caret) {
   if (caret == null || caret < 0 || caret > tex.length) return null;
   const before = tex.slice(0, caret), after = tex.slice(caret);

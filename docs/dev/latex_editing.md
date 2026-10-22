@@ -80,9 +80,10 @@ handles or spill across the PDF beside a narrow notes column. It sits above
 the math span's first line, so it holds still while the caret moves through a
 multi-line `$$` block; when there is no room above it goes below the span's
 last line, and when both edges are off screen it hugs the caret's own line.
-A thin accent bar in the rendered formula marks the caret position (skipped
-inside a `\command` name, an environment name or an `[...]` argument, and
-whenever KaTeX would reject the marked source). Positions are clamped to the
+A thin accent bar in the rendered formula marks the caret position, in math
+and inside `\text{…}` alike (skipped inside a `\command` name, an environment
+name or an `[...]` argument, and whenever KaTeX would reject the marked
+source). Positions are clamped to the
 visible viewport and refreshed after scrolling, resizing, or font/layout
 changes. Long and tall equations scroll within the preview; clicking it
 retains editor focus; its height is capped at 45% of the window.
