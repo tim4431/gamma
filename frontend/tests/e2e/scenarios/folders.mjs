@@ -9,7 +9,7 @@ import { Account, wanted } from "../harness.mjs";
 export async function folderScenarios(env) {
   const { server, browser, step, openPage, assert, assertEq, assertNoProblems, until } = env;
   if (!wanted("folders")) return;
-  server.manage("create-user", "folders-user", "folders-pw");
+  await server.manage("create-user", "folders-user", "folders-pw");
   const user = await new Account(server, "folders-user", "folders-pw").login();
   const tree = async (name) => (await user.api(`/api/blocks/${name}/subtree`)).block.children;
   const pageOf = async (id) => (await user.api("/api/blocks/root/children")).children.find((b) => b.id === id);

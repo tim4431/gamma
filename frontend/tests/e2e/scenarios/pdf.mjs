@@ -4,7 +4,7 @@
 // PDF text on another page.
 import { execFileSync } from "node:child_process";
 import { tree, same, partialBlockSearch } from "./notes.mjs";
-import { PYTHON, fakeAiModels } from "../harness.mjs";
+import { PYTHON, fakeAiModels, until } from "../harness.mjs";
 import { DEFAULT_PALETTE, darkPageColor } from "../../../src/shared/model/palette.js";
 
 // Select `needle` inside one text-layer span of `pageNo` and release the
@@ -25,6 +25,42 @@ export async function selectPdfText(page, pageNo, needle) {
     return true;
   }, [pageNo, needle]);
   if (!ok) throw new Error(`text "${needle}" not found on page ${pageNo}'s text layer`);
+}
+
+// The same with the mouse: a drag over the needle's text, released at its
+// end. Returns the point it was released at (the selection popup opens by it).
+// The text is measured once two readings agree: a page still moving (cards
+// settling beside it) would put the release off the text's spans, which
+// selects to the end of its line (pdf.js's spans are absolute; only each
+// line's <br> is in the flow).
+export async function dragSelectPdfText(page, pageNo, needle) {
+  const measure = () => page.evaluate(([pageNo, needle]) => {
+    const span = [...document.querySelectorAll(`[data-page="${pageNo}"] .textLayer span`)].find((s) => s.textContent.includes(needle));
+    if (!span?.firstChild) return null;
+    span.scrollIntoView({ block: "nearest" }); // the drag is made in viewport pixels
+    const off = span.textContent.indexOf(needle);
+    const range = document.createRange();
+    range.setStart(span.firstChild, off);
+    range.setEnd(span.firstChild, off + needle.length);
+    const r = range.getBoundingClientRect();
+    return { x1: r.left + 1, x2: r.right - 1, y: r.top + r.height / 2 };
+  }, [pageNo, needle]);
+  let last = null;
+  const box = await until(async () => {
+    const next = await measure();
+    if (!next) throw new Error(`text "${needle}" not found on page ${pageNo}'s text layer`);
+    const still = last && next.x1 === last.x1 && next.x2 === last.x2 && next.y === last.y;
+    last = next;
+    return still && next;
+  }, { what: `"${needle}" to hold still` });
+  await page.mouse.move(box.x1, box.y);
+  await page.mouse.down();
+  await page.mouse.move((box.x1 + box.x2) / 2, box.y, { steps: 4 });
+  await page.mouse.move(box.x2, box.y, { steps: 4 });
+  await page.mouse.up();
+  const got = await page.evaluate(() => window.getSelection().toString().trim());
+  if (got !== needle) throw new Error(`the drag over "${needle}" selected "${got}"`);
+  return { x: box.x2, y: box.y };
 }
 
 export async function waitForPdf(page, pageNo = 1) {
@@ -927,11 +963,18 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
     await mockTranslate(requests);
     const { value: profile } = await account.api("/api/prefs/profile");
     try {
-      await selectPdfText(page, 2, "says hello");
+      // A mouse selection: the popup opens at the pointer, and a press
+      // inside it never moves it (a release there is not a new selection's).
+      await dragSelectPdfText(page, 2, "says hello");
+      await page.locator(".plainTip").waitFor();
+      const corner = () => page.locator(".plainTip").evaluate((el) => { const b = el.getBoundingClientRect(); return `${Math.round(b.left)},${Math.round(b.top)}`; });
+      await sleep(100);
+      const opened = await corner();
       await page.getByRole("button", { name: "Translate selection", exact: true }).click();
       const body = page.locator(".plainTip .selTransBody");
       await until(async () => (await body.textContent()) === "译:says hello", { what: "the translation under the colors" });
       assertEq(JSON.stringify(requests.at(-1).texts), JSON.stringify(["says hello"]));
+      assertEq(await corner(), opened, "the popup stays put on Translate");
       // The header folds the result; clicking into the text keeps the popup.
       await page.locator(".selTransToggle").click();
       assertEq(await body.count(), 0);
@@ -939,6 +982,7 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
       await body.click();
       await sleep(150);
       assertEq(await page.locator(".plainTip").count(), 1, "the popup stays while reading the translation");
+      assertEq(await corner(), opened, "and stays put on its header and text");
 
       // A refusal says why (a used-up shared AI allowance is a 429 whose
       // detail tells what to do): the popup shows the server's reason.

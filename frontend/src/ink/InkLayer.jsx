@@ -72,11 +72,13 @@ export function useInkVersion() {
 export const ERASER_SIZES = [5, 9, 16];
 // What a press on never starts ink, even from a stylus that writes right
 // away: the menus (portalled), the lasso's handles, the ruler's knob and
-// ends, the zoom window's band and corner, and a text box's width handle,
-// its move band and its open editor (markup/TextBoxLayer.jsx). The ruler's
-// band is the pointer's kind's: a pen about to write writes along it, any
-// other pointer moves it (writesOnBand).
-const NOT_INK = ".inkEditMenu, .inkTransformHandle, .inkRulerKnob, .inkRulerEnd, .inkZoomBand, .inkZoomResize, .textBoxWidth, .textBoxBand, .textBox.editing";
+// ends, the zoom window's band and corner, a text box's width handle, its
+// move band and its open editor (markup/TextBoxLayer.jsx), and the comment
+// cards beside a PDF page (comments/CommentMargin.jsx). The ruler's band is
+// the pointer's kind's: a pen about to write writes along it, any other
+// pointer moves it (writesOnBand).
+const BESIDE_PAGE = ".commentMargin";
+const NOT_INK = `.inkEditMenu, .inkTransformHandle, .inkRulerKnob, .inkRulerEnd, .inkZoomBand, .inkZoomResize, .textBoxWidth, .textBoxBand, .textBox.editing, ${BESIDE_PAGE}`;
 // The tools that write a stroke: a pen or a highlighter preset (the
 // stylus's pen with nothing armed included).
 const strokeTool = (use) => use?.tool === "pen" || use?.tool === "highlighter";
@@ -590,6 +592,11 @@ function useVisibleGroups(wrapRef, groups, width, height, enabled) {
   const boxes = useRef([]);
   boxes.current = enabled ? groups.map((g) => [g.id, inkBounds(g.ink)]) : [];
   const measureRef = useRef(null);
+  // A layer mounted together with its surface (a view switched to with its
+  // ink loaded) finds no surface below: React attaches the surface's ref
+  // after its children's layout effects. `attached` runs the setup again
+  // once the ref is there (the passive effect at the end).
+  const [attached, setAttached] = useState(0);
   useLayoutEffect(() => {
     if (!enabled) { measureRef.current = null; setVisible(null); return undefined; }
     const el = wrapRef.current;
@@ -627,9 +634,12 @@ function useVisibleGroups(wrapRef, groups, width, height, enabled) {
       cancelAnimationFrame(raf);
       measureRef.current = null;
     };
-  }, [enabled, wrapRef, width, height]);
+  }, [enabled, wrapRef, width, height, attached]);
   // the groups changed (a stroke, a file): measured again before the paint
   useLayoutEffect(() => { measureRef.current?.(); });
+  useEffect(() => {
+    if (enabled && width && height && !measureRef.current && wrapRef.current) setAttached((n) => n + 1);
+  });
   return enabled ? visible || NO_GROUPS : null;
 }
 const NO_GROUPS = new Set();
@@ -837,8 +847,12 @@ export function InkLayer({ pageNumber, wrapRef, width, height, blocks, tool, pen
   const penBusy = useRef(() => false);
   // What a press in leaves the selection menu open: this page, and the zoom
   // window under the viewer, whose layer draws and drags the same selection.
+  // A comment card beside the page (BESIDE_PAGE, inside the page's box) is
+  // off the page: a press there lets go of the selection, so the strip's
+  // Delete and Ctrl+C / X / D never reach strokes while a card is read.
   const menuIgnore = useRef(null);
-  menuIgnore.current = { contains: (node) => !!(wrapRef.current?.contains(node) || node?.closest?.(".inkZoomPanel")) };
+  menuIgnore.current = { contains: (node) => !!((wrapRef.current?.contains(node) && !node.closest?.(BESIDE_PAGE))
+    || node?.closest?.(".inkZoomPanel")) };
   // What a css px is in this surface's points, for a screen distance on it
   // (surfaceScale.js: Duplicate's offset, the menu's and Ctrl+D's): measured
   // by this layer, the page's own, never the zoom window's copy.
@@ -1766,6 +1780,8 @@ export function InkLayer({ pageNumber, wrapRef, width, height, blocks, tool, pen
     const onTouch = (e) => {
       const L = live.current;
       if (!L.width || !(L.tool || L.penTool)) return;
+      // a Pencil on a comment card scrolls and presses it, as a finger does
+      if (!drawing && e.target.closest?.(BESIDE_PAGE)) return;
       const pencil = Array.from(e.changedTouches).some((t) =>
         t.touchType === "stylus" || (!t.touchType && drawing?.pointerType === "pen"));
       // While the pen is down, direct contacts are palms, not pan/pinch.
@@ -1797,6 +1813,7 @@ export function InkLayer({ pageNumber, wrapRef, width, height, blocks, tool, pen
     // clipboard opens "Paste here"; over ink, the selection or without a
     // clipboard the page's own menus run (prevented only over a hit).
     const onContext = (e) => {
+      if (e.target.closest?.(BESIDE_PAGE)) return; // a comment card keeps its own menu
       if (pending?.hit || e.target.closest?.(".inkSelectionHit")) { e.preventDefault(); return; }
       const L = live.current;
       if (e.button !== 2 || !L.tool || !L.clip || !L.onPaste || !L.width || drawing) return;

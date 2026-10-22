@@ -27,6 +27,9 @@ does not show comes in chunks of its own, through `lazySurface` and
 | Ctrl+P / Ctrl+Shift+P palette | on first opening, then stays | nothing |
 | Import, Export, import review, Recently deleted, Report a problem | while open | nothing |
 | Share popover | while open | nothing |
+| Thread popover (comments) | while open | nothing |
+| Comments window | with its dock window | the window's frame (`DockWindow`), body empty |
+| Inbox panel | while open | nothing |
 | pdf.js and its worker | `loadPdfEngine()` in `pdf/PdfViewer.jsx`, awaited just before `getDocument` | the viewer's skeleton and status pill |
 
 Mermaid was already loaded this way (`shared/lib/mermaidRenderer.js`).
@@ -37,13 +40,16 @@ screen downloads only what it paints.
 - A surface opened from a button is fetched when the pointer enters or focus
   reaches the button: the account button (Settings, Tours, Report a problem,
   and the View rows a phone shows there), the View menu (Import/Export, the
-  AI Chat toggle), Share, Recently deleted. The import review is fetched
+  AI Chat toggle and the Comments window), Share, Recently deleted, a
+  comment control (a row's, the page title's: the thread popover), the
+  Inbox's bell and its row in the phone's More sheet (the Inbox panel). The
+  import review is fetched
   while the Import dialog is open, since a picked file opens it already
   uploading. The palette has no button: it is fetched when the main thread
   is idle after the library is up.
 - A surface on the first screen is fetched with the startup requests: the
   chat dock on a desktop, the PDF engine when the address names a page, a
-  share or a PDF. On the library the engine waits until the listing has been
+  share or a PDF, the thread popover when it names a thread. On the library the engine waits until the listing has been
   in for 1.5 s and the main thread is idle, so it is warm for the first PDF
   without competing with the library.
 - What every page paints at first render stays in the `App` chunk: the

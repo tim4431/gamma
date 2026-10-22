@@ -1,9 +1,9 @@
 """Imports: Logseq PDF-highlight exports (PDF + EDN + optional MD), annotations
 embedded in the PDF itself (e.g. saved by SumatraPDF/Acrobat/Zotero), Markdown
-notes, and whole libraries — a Zotero RDF export, a zip of Markdown notes, a
-Gamma export — through the reviewed import: the upload is staged and
-previewed (``/import/review``), then the chosen items are imported by a
-background job (``POST /api/jobs/import``, gamma/jobs.py)."""
+notes, and whole libraries — a Zotero RDF export, a zip of Markdown notes,
+Notability notes, a Gamma export — through the reviewed import: the upload
+is staged and previewed (``/import/review``), then the chosen items are
+imported by a background job (``POST /api/jobs/import``, gamma/jobs.py)."""
 
 import hashlib
 import html
@@ -35,13 +35,14 @@ from ..logbuf import log
 from ..ops import MAX_OPS, after_commit, apply_ops, commit_ops, ensure_filing, note_reload, props_patch
 from ..markdown_import import MAX_MARKDOWN_BYTES, TooManyBlocks, md_to_blocks
 from ..markdown_zip_import import import_markdown_zip, markdown_page
+from ..notability_import import import_notes
 from ..ink import InkError, dumps as ink_dumps, from_pdf_ink, parse_ink, pdf_position as ink_position
 from ..pdf_text import GlyphPages, quote_under
 from ..pdf_export import (TEXT_BOX_TYPES, _resolve, annotation_key, annotation_shown, display_size,
                           drop_annotations, first_rect, page_frame, pdf_point_to_viewer, reply_parent)
-from ..text_box import escape_markdown, markdown_of, measure, normalize_text_box, plain_text
-from ..storage import (SPOOL_CHUNK, Spool, content_refusal, display_filename, find_upload_file, is_pdf, pdf_url,
-                       put_upload, store_file, store_file_path, store_pdf)
+from ..text_box import escape_markdown, keep_on_surface, markdown_of, measure, normalize_text_box, plain_text
+from ..storage import (display_filename, find_upload_file, is_pdf, pdf_url, put_upload, store_file, store_file_stream,
+                       store_pdf)
 from ..logseq_import import (
     edn_highlight_position,
     edn_highlight_to_block,
@@ -73,6 +74,7 @@ def _review_source(source):
         "zotero": (_preview_zotero, _commit_zotero),
         "markdown-zip": (_preview_markdown_zip, _commit_markdown_zip),
         "markdown-file": (_preview_markdown_file, _commit_markdown_file),
+        "notability": (_preview_notability, _commit_notability),
         "gamma": (_preview_gamma, _commit_gamma),
     }
     if source not in sources:
@@ -380,6 +382,22 @@ def _commit_markdown_file(ws, actor, data, meta, selection, progress=jobs.no_pro
     return _markdown_file(ws, data, meta, actor=actor, selection=selection, progress=progress)
 
 
+def _notability(ws, data, meta, *, actor="", preview=False, selection=None, progress=jobs.no_progress):
+    """Notability notes (one .note, or a .zip of them) → a page each
+    (gamma/notability_import.py)."""
+    with connect_pages_db(ws) as conn:  # the import commits note by note
+        return {"ok": True, **import_notes(ws, data, conn, meta.get("folder", ""), name=meta.get("filename", ""),
+                                           actor=actor, preview=preview, selected=selection, progress=progress)}
+
+
+def _preview_notability(ws, data, meta):
+    return _notability(ws, data, meta, preview=True)
+
+
+def _commit_notability(ws, actor, data, meta, selection, progress=jobs.no_progress):
+    return _notability(ws, data, meta, actor=actor, selection=selection, progress=progress)
+
+
 def _gamma_zip(ws, data, work):
     """Refuses a guest's workspace; spools the export to ``work``."""
     if is_guest_workspace(ws):
@@ -445,6 +463,21 @@ def import_reviewed_markdown_file(request: Request, file: UploadFile = File(...)
                                  folder: str = Form(""), selected: str | None = Form(None)):
     ws = require_ws(request, write=True)
     return _commit_markdown_file(ws, actor_of(request), file.file, _meta(file, folder), parse_selection(selected))
+
+
+@router.post("/import/notability/preview")
+def preview_notability(request: Request, file: UploadFile = File(...), folder: str = Form("")):
+    return _preview_notability(require_ws(request, write=True), file.file, _meta(file, folder))
+
+
+@router.post("/import/notability")
+def import_notability(request: Request, file: UploadFile = File(...), folder: str = Form(""),
+                      selected: str | None = Form(None)):
+    """Notability notes (one .note, or a .zip of them) → a page each; the
+    web app goes through the review (``/import/review``, source
+    ``notability``)."""
+    ws = require_ws(request, write=True)
+    return _commit_notability(ws, actor_of(request), file.file, _meta(file, folder), parse_selection(selected))
 
 
 @router.post("/import/gamma/preview")
@@ -630,14 +663,6 @@ def _zotero_rect(obj):
     return (min(x0, x1), min(y0, y1), max(x0, x1), max(y0, y1)) if x0 != x1 and y0 != y1 else None
 
 
-def _on_page(box: dict, disp_w: float, disp_h: float) -> dict:
-    """The box kept inside the page, as the client keeps a moved box: no
-    wider or taller than the page, its corner moved in."""
-    w, h = min(box["w"], disp_w), min(box["h"], disp_h)
-    return normalize_text_box({**box, "w": w, "h": h, "x": min(max(box["x"], 0), disp_w - w),
-                               "y": min(max(box["y"], 0), disp_h - h)})
-
-
 def _text_box_from_annotation(obj, subtype: str, pnum: int, page, contents: str):
     """A /FreeText or /Text annotation → an importer record carrying a text
     box (``kind: "text_box"``), placed from its /Rect through the page's
@@ -687,7 +712,7 @@ def _text_box_from_annotation(obj, subtype: str, pnum: int, page, contents: str)
     if not md.strip():
         return None
     return {"key": key, "page": pnum, "content": md, "kind": "text_box",
-            "box": _on_page(normalize_text_box(box), disp_w, disp_h)}
+            "box": keep_on_surface(normalize_text_box(box), disp_w, disp_h)}
 
 
 def _extract_pdf_annotations(reader, glyphs=None):
@@ -1043,21 +1068,8 @@ def _zotero_store_file(ws, zf, extra) -> str:
     streamed from the zip so a large one is never in memory. → the stored
     name. Raises ValueError for a file that is not what its extension says
     and HTTPException (413/507) past the storage limits."""
-    spool = Spool(ws)
-    try:
-        with zf.open(extra["entry"]) as src:
-            while chunk := src.read(SPOOL_CHUNK):
-                spool.write(chunk)
-        spool.close()
-        with open(spool.path, "rb") as f:
-            refused = content_refusal(extra["ext"], f.read(16))
-        if refused:
-            raise ValueError(refused)
-    except BaseException:
-        spool.discard()
-        raise
-    filename, _ = store_file_path(ws, spool.path, spool.size, spool.doc_id(), extra["ext"])
-    return filename
+    with zf.open(extra["entry"]) as src:
+        return store_file_stream(ws, src, extra["ext"])[0]
 
 
 def _link_target(url: str) -> str:

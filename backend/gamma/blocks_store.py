@@ -756,8 +756,9 @@ def create_page(conn, title: str, props: dict | None = None, *, actor: str,
     (``free_position``); ``block_id`` reuses an id (a page brought back) — its
     row of the change log turns live again, and a copy of it in
     Recently deleted gives way, as it would to a hard delete and a
-    re-create (a mirror bringing the page back with its own tree; files
-    only that copy held are left to upload_gc's ``reconcile`` pass).
+    re-create (a mirror bringing the page back with its own tree; its
+    comments go with it; files only that copy held are left to upload_gc's
+    ``reconcile`` pass).
     ``properties.folders`` / ``labels`` are kept when they are lists of
     ids (``filing_ids``), else dropped, and a ``source_url`` that is the
     ``doc_id``'s stored copy is not stored (``page_attachment`` derives it).
@@ -778,7 +779,11 @@ def create_page(conn, title: str, props: dict | None = None, *, actor: str,
         del props["source_url"]
     if conn.execute("SELECT 1 FROM unified_blocks WHERE id = ? AND parent_id = ?",
                     (block_id, TRASH)).fetchone():
+        from . import comments  # local: comments imports this module
+
+        gone = [r[0] for r in fetch_subtree(conn, block_id)]
         delete_subtree(conn, block_id)
+        comments.purge(conn, block_id, gone)  # that copy's threads go with its blocks
         conn.execute("DELETE FROM page_ops WHERE page_id = ?", (block_id,))
     new_pos = free_position(conn, "root", position or None, block_id)
     conn.execute(
@@ -790,6 +795,43 @@ def create_page(conn, title: str, props: dict | None = None, *, actor: str,
     conn.commit()
     return block_to_dict(conn.execute(f"SELECT {BLOCK_COLUMNS} FROM unified_blocks WHERE id = ?",
                                       (block_id,)).fetchone())
+
+
+def insert_page_tree(conn, page_id: str, title: str, props: dict, tree: list, actor: str) -> int:
+    """Insert a root page (last on root) and its ``{content, properties?,
+    id?, children?}`` tree (a node's own ``id`` is honoured), touched by
+    ``actor`` (``touch_page``); returns the number of blocks written under
+    the page. Takes the write lock first (the position is read under it);
+    the caller commits. This is the bulk writer of the library imports:
+    they put pages in short transactions of their own, where
+    ``create_page`` commits each one. Iterative, so a deep tree never meets
+    the recursion limit ``flatten_tree`` would."""
+    write_lock(conn)
+    now = page_now()
+    pos = generate_key_between(last_child_position(conn, "root"), None)
+    conn.execute(
+        f"INSERT INTO unified_blocks ({STORED_COLUMNS}) VALUES (?,'root',?,?,?,?,?,?)",
+        (page_id, pos, title, json.dumps(props), now, now, page_id),
+    )
+    written = 0
+    pending = [(page_id, tree)]
+    while pending:
+        parent_id, nodes = pending.pop()
+        if not nodes:
+            continue
+        positions = generate_n_keys_between(None, None, n=len(nodes))
+        for node, child_pos in zip(nodes, positions):
+            child_id = node.get("id") or new_block_id()
+            conn.execute(
+                f"INSERT INTO unified_blocks ({STORED_COLUMNS}) VALUES (?,?,?,?,?,?,?,?)",
+                (child_id, parent_id, child_pos, node.get("content", ""), json.dumps(node.get("properties") or {}),
+                 now, now, page_id),
+            )
+            written += 1
+            if node.get("children"):
+                pending.append((child_id, node["children"]))
+    touch_page(conn, page_id, actor, now=now)
+    return written
 
 
 def get_or_create_doc_page(conn, doc_id: str, default_title: str = "",

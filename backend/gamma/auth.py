@@ -10,8 +10,9 @@ Two questions every endpoint answers through this module:
 - WHICH WORKSPACE the data comes from — ``require_ws`` (session member of
   the workspace named by ``?ws=`` / ``X-Gamma-Workspace`` / the account's
   default), ``resolve_ws`` (a ``?share=`` token's workspace, else
-  ``require_ws``) and ``require_ws_writer`` (an edit share, else a member
-  with the editor or owner role). The returned id is what every data helper
+  ``require_ws``), ``require_ws_writer`` (an edit share, else a member
+  with the editor or owner role) and ``require_commenter`` (a comment's
+  writer: any member, or a signed-in account a share admits). The returned id is what every data helper
   takes (``connect_pages_db``, ``ws_uploads_dir``, ...). docs/dev/workspaces.md.
 """
 
@@ -30,7 +31,7 @@ from fastapi.responses import JSONResponse
 
 from . import guests, publisher_sessions
 from .blocks_store import folder_subtree_ids, page_in_folder, page_root_id, pages_in_folder
-from .db import account_names, connect_users_db, parse_stamp, share_token_workspace
+from .db import account_names, connect_pages_db, connect_users_db, parse_stamp, share_token_workspace
 from .logbuf import log
 
 SESSION_COOKIE = "session"
@@ -716,6 +717,15 @@ def share_scope(request: Request) -> ShareScope | None:
     return grant[1]
 
 
+def share_via(request: Request) -> str:
+    """The share token a request came through, when its ?share= grants
+    it, else "": the one way in an Inbox item of the request's write may
+    hand someone who is not a member, beside a share that names them
+    (gamma/inbox.py ``reach``)."""
+    token = request.query_params.get("share") or ""
+    return token if token and share_grant(request) else ""
+
+
 def resolve_ws(request: Request) -> str:
     """The workspace whose data to READ: the one named by a ?share=<token>
     when one is present (and permits this viewer), else the session's
@@ -743,3 +753,24 @@ def require_ws_writer(request: Request) -> str:
             raise HTTPException(status_code=403, detail="this share link is view-only")
         return grant[0]
     return require_ws(request, write=True)
+
+
+def require_commenter(request: Request, page_id: str) -> str:
+    """The workspace in which this request may write a comment on the page
+    ``page_id`` (docs/dev/comments.md "Who may comment"): the one
+    ``resolve_ws`` reads — any member, viewers included, or any signed-in
+    account a share admits, view or edit, confined to the share's pages.
+    403 for a link visitor (no account to sign the comment with: "sign in
+    to comment") and for an integration token without the write scope.
+    Whether the page is a page of the library is the writer's check."""
+    ws = resolve_ws(request)
+    if is_link_visitor(request):
+        raise HTTPException(status_code=403, detail="sign in to comment")
+    if is_token(request) and request.state.token_scope != "write":
+        raise HTTPException(status_code=403, detail="this token is read-only")
+    scope = share_scope(request)
+    if scope is not None:
+        with connect_pages_db(ws) as conn:
+            if not scope.allows_page(conn, page_id):
+                raise HTTPException(status_code=403, detail="not accessible via this share link")
+    return ws

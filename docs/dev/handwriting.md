@@ -378,7 +378,9 @@ app ([ipad.md](ipad.md)). Typed text on a page is
   handwriting"), up to two rows of 36 px buttons. The first row never
   changes: Color, Width, Style, Copy, Duplicate, More and Delete. Color,
   Width and Style open their option row under whichever rows show, one at
-  a time. A blank tap or Escape dismisses the menu.
+  a time. A blank tap, a press off the page or Escape dismisses the menu
+  and lets go of the selection; a comment card beside a PDF page
+  ([comments.md](comments.md) "In the app") is off the page.
   - **Color** opens the palette's swatches, the highlighter's when every
     selected stroke is a highlighter and the pen's otherwise, and a custom
     colour. The colour every selected stroke shares is ringed, a mix
@@ -967,8 +969,8 @@ stroke exports as it looked on screen.
 
 Version 1 is handled in these places and nowhere else:
 
-- **Workspace migration step 40 `ink_v2`** ([migrations.md](migrations.md)
-  step 40, `db.SCHEMA_VERSION` 40): every block's version 1 (or
+- **Workspace migration step 41 `ink_v2`** ([migrations.md](migrations.md)
+  step 41, `db.SCHEMA_VERSION` 41): every block's version 1 (or
   unversioned) file becomes a **new** upload named by the sha256 of its
   `ink.dumps` bytes, and the block's `ink_url` names it; a version 2 file
   is skipped, so the step is re-runnable. Because the conversion is pure,
@@ -1783,7 +1785,8 @@ reach.
   hasBox, optionsOpen, eraserDown, ruler, zoom, onControl}` (`eraserDown`
   the timeStamp of the `E` keydown still held, or null, so the keyup's
   `held` is pure arithmetic; `ruler` and `zoom` whether they are on;
-  `onControl` the key's target is a button, a link or a menu row).
+  `onControl` the key's target is a button, a link, a menu row or a
+  comment thread: a margin card, or the thread popover).
   The actions:
   - `{kind: "pick", id}` for `1`–`9` (the visible list), `P` / `H`
     (forward; with Shift backward, wrapping), `L`, `T`, `V`.
@@ -2020,7 +2023,10 @@ reach.
   per page visit on it: "Some handwriting here comes from a newer Gamma
   and is drawn plainly; update to see it as drawn". `InkSelectionMenu`
   is a portalled `ContextMenu` (its controls sit outside the page's pointer
-  listeners); `useSelectionMenuAnchor` gives it the selection's edges and
+  listeners). A press in the page's box or in the zoom window's panel
+  leaves it open (its `ignoreRef`), except one on a comment card in the
+  page's box (`BESIDE_PAGE`); any other press closes it.
+  `useSelectionMenuAnchor` gives it the selection's edges and
   the band it stays in, and the menu, from its own measured height, picks
   above or below before it is painted ([ui-design.md](ui-design.md#menus-and-popups-open-in-place)).
   Its first row is fixed: Color, Width, Style (`ctlBtn`, `BrushIcon`,
@@ -2554,7 +2560,11 @@ reach.
     side, renders its `<g>` empty; the layer measures it itself, before
     the paint of every render and on every scroll frame, and an
     `IntersectionObserver` on the page (root the scroller, margin 50 %)
-    tells when the whole page is that far off. **Idle outlines**: a group
+    tells when the whole page is that far off. A layer mounted with its
+    surface (a switch between the notes and notebook views, the ink
+    already loaded) finds the surface's ref unset in its layout effects,
+    since React attaches a parent's ref after its children's, and sets
+    the measuring up one render later. **Idle outlines**: a group
     of more than `IDLE_STROKES` strokes with more than a slice (50) of
     them not built yet draws those as `strokePlaceholder` polylines and
     builds the outlines in `requestIdleCallback` slices of 50 (`setTimeout`
@@ -3190,8 +3200,9 @@ reach.
       `presetSmoothing`'s default, never stored).
     - The strip's key handler takes `stripKey`'s `toggle` and `off`
       (`what`: `ruler`, `shape`, `zoom`) and `newLine`, its state carrying
-      `ruler`, `zoom` and `onControl` (the target inside a button, a link
-      or a menu row).
+      `ruler`, `zoom` and `onControl` (the target inside a button, a link,
+      a menu row or a comment thread). An open menu, a preset being
+      dragged and a focused comment thread keep Escape from it.
   - **Transcribe a selection** (`handleInkAction("transcribe")`,
     `transcribeInkSelection()`). In a shared page's view it only says
     "Transcribing needs the AI chat, which a shared page cannot use."
@@ -3415,6 +3426,19 @@ reach.
     graphics states its ink sets and the grain patterns it paints with.
   - The agent's `read_block` outline labels an ink block "handwriting on
     p. N, K strokes" before its caption.
+- The Notability import ([import_export.md](import_export.md#notability-notes),
+  `gamma/notability_map.py`) writes v2 files of its own. Notability keeps
+  fitted Bézier chains, so each curve is flattened in page points to
+  samples at most a point apart (the client's input spacing: sparser ones
+  would let the pen outline's streamline round a corner) and within 0.05 pt
+  of the curve, then decimated as `finishStroke.js` does. `w` comes from
+  Notability's fractional widths, raw force and tilt become `p`, `a` and
+  `z` only where they are real, and there is no `t` or `t0`: the note stores
+  no sample times. A page's strokes are split into groups by
+  `ink.group_files`, the client's rule (`GROUP_SPLIT_BYTES`, `MAX_STROKES`,
+  `MAX_SAMPLES`), stroke ids `n0`, `n1`, … in each file as `from_pdf_ink`
+  numbers them, so the same note makes the same files. Shapes keep their
+  `shape` records, and a sticky note is a filled `rect` in band 0.
 - `gamma/ink_view.py`: the picture the chat sees of a group (`view_ink`,
   and an attached handwriting block), drawn where it was written. A sheet
   goes through `notebook_pdf`, a PDF page through
@@ -3513,6 +3537,10 @@ reach.
 - A snap of straight highlights to the PDF's text lines, the gap left
   from the Notability comparison in the research note.
 - Xournal++ `.xopp` import.
+- Notability `.ntb` import: its op log's deletes and undos are not mapped
+  ([research/notability-format.md](../research/notability-format.md)).
+- Strokes placed on a recording the Notability import brings: the note
+  times a stroke as an event, not its samples.
 - Handwriting in the Obsidian vault export, which writes an ink block's
   caption only.
 - A replay of erasures and edits: it shows the drawing as it is, in the

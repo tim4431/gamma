@@ -30,7 +30,7 @@ The rules that keep this safe and small:
   every workspace's databases when a pending step walks them — is
   snapshotted with the SQLite backup API into ``backups/<time>-v<N>/``
   (``gamma/backups.py``; uploads are never copied — steps move them, never
-  rewrite them; step 40 is the one exception, writing a new
+  rewrite them; step 41 is the one exception, writing a new
   content-addressed file beside each stroke file it converts). A
   workspace's own steps copy its two databases into that
   snapshot first (``workspaces/<id>/``). An upgrade that does not finish
@@ -1515,7 +1515,85 @@ def _v38_recording_kind(ws: str, pages: sqlite3.Connection, data) -> None:
         block_columns(pages)
 
 
-def _v40_ink_v2(ws: str, pages: sqlite3.Connection, data) -> None:
+# users.db ``reminders_done`` as schema version 39 shaped it, frozen: step
+# 39 creates it from this.
+_V39_REMINDERS_DONE = """CREATE TABLE IF NOT EXISTS reminders_done (
+        user_id TEXT NOT NULL,
+        key TEXT NOT NULL,
+        workspace_id TEXT NOT NULL DEFAULT '',
+        done_at TEXT NOT NULL,
+        PRIMARY KEY (user_id, key)
+    )"""
+
+
+def _v39_reminders_done(conn: sqlite3.Connection) -> None:
+    """users.db gains ``reminders_done`` (gamma/mentions.py), a row per
+    reminder an account has dismissed, in place of the account-wide
+    ``reminders-done`` pref, one JSON object ``{key: when}`` that kept the
+    latest 500. Each account's pref becomes its rows, under workspace ''
+    (the account's next listing of its reminders places them). Re-runnable:
+    a row there already is kept. The pref rows stay for the release before
+    (rule 6). No workspace is touched."""
+    conn.execute(_V39_REMINDERS_DONE)
+    # keyed by account id since step 25; the tests' v24 copies stamped later are not, and hold none
+    if "user_id" in _columns(conn, "user_prefs"):
+        for user_id, raw in conn.execute("SELECT user_id, value FROM user_prefs "
+                                         "WHERE workspace_id = '' AND key = 'reminders-done'").fetchall():
+            try:
+                marks = json.loads(raw)
+            except ValueError:
+                continue
+            if isinstance(marks, dict):
+                conn.executemany("INSERT OR IGNORE INTO reminders_done (user_id, key, done_at) VALUES (?, ?, ?)",
+                                 [(user_id, key, str(at)) for key, at in marks.items()])
+    conn.commit()
+
+
+# users.db ``inbox_items`` and its indexes, and the column ``share_users``
+# gains, as schema version 40 shaped them, frozen: step 40 creates and adds
+# them from these.
+_V40_INBOX_ITEMS = [
+    """CREATE TABLE IF NOT EXISTS inbox_items (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        actor TEXT NOT NULL,
+        workspace_id TEXT NOT NULL,
+        page_id TEXT NOT NULL DEFAULT '',
+        block_id TEXT NOT NULL DEFAULT '',
+        thread_id TEXT NOT NULL DEFAULT '',
+        comment_id TEXT NOT NULL DEFAULT '',
+        share_token TEXT NOT NULL DEFAULT '',
+        snippet TEXT NOT NULL DEFAULT '',
+        at TEXT NOT NULL,
+        read_at TEXT,
+        archived_at TEXT
+    )""",
+    "CREATE INDEX IF NOT EXISTS idx_inbox_user ON inbox_items(user_id, at)",
+    "CREATE INDEX IF NOT EXISTS idx_inbox_unread ON inbox_items(user_id) WHERE read_at IS NULL AND archived_at IS NULL",
+    "CREATE INDEX IF NOT EXISTS idx_inbox_comment ON inbox_items(comment_id) WHERE comment_id != ''",
+]
+_V40_SHARE_USERS_ADDED_AT = "ALTER TABLE share_users ADD COLUMN added_at TEXT NOT NULL DEFAULT ''"
+
+
+def _v40_comments_inbox(conn: sqlite3.Connection) -> None:
+    """users.db gains ``inbox_items`` (each account's Inbox,
+    docs/dev/comments.md "The inbox") with its indexes, and ``share_users``
+    gains ``added_at`` (when a person was invited; '' on the rows already
+    there). Re-runnable: the table and indexes are ``IF NOT EXISTS``, the
+    column is added only where it is missing (a ``share_users`` that is
+    missing altogether gets it from the schema statements). No workspace is
+    touched: the comments table is additive, and every pages.db gets it from
+    ``db.PAGES_SCHEMA`` when it opens (migrations.md rule 2)."""
+    for stmt in _V40_INBOX_ITEMS:
+        conn.execute(stmt)
+    cols = _columns(conn, "share_users")
+    if cols and "added_at" not in cols:
+        conn.execute(_V40_SHARE_USERS_ADDED_AT)
+    conn.commit()
+
+
+def _v41_ink_v2(ws: str, pages: sqlite3.Connection, data) -> None:
     """The stroke file moves to ``gamma-ink`` version 2 (gamma/ink.py
     ``upgrade_v1``, docs/dev/handwriting.md "Upgrading version 1"): for
     every block whose properties name an ``ink_url``, the file is read from
@@ -1583,40 +1661,6 @@ def _upgrade_ink_file(uploads: Path, name: str, where: str) -> str:
     return new
 
 
-# users.db ``reminders_done`` as schema version 39 shaped it, frozen: step
-# 39 creates it from this.
-_V39_REMINDERS_DONE = """CREATE TABLE IF NOT EXISTS reminders_done (
-        user_id TEXT NOT NULL,
-        key TEXT NOT NULL,
-        workspace_id TEXT NOT NULL DEFAULT '',
-        done_at TEXT NOT NULL,
-        PRIMARY KEY (user_id, key)
-    )"""
-
-
-def _v39_reminders_done(conn: sqlite3.Connection) -> None:
-    """users.db gains ``reminders_done`` (gamma/mentions.py), a row per
-    reminder an account has dismissed, in place of the account-wide
-    ``reminders-done`` pref, one JSON object ``{key: when}`` that kept the
-    latest 500. Each account's pref becomes its rows, under workspace ''
-    (the account's next listing of its reminders places them). Re-runnable:
-    a row there already is kept. The pref rows stay for the release before
-    (rule 6). No workspace is touched."""
-    conn.execute(_V39_REMINDERS_DONE)
-    # keyed by account id since step 25; the tests' v24 copies stamped later are not, and hold none
-    if "user_id" in _columns(conn, "user_prefs"):
-        for user_id, raw in conn.execute("SELECT user_id, value FROM user_prefs "
-                                         "WHERE workspace_id = '' AND key = 'reminders-done'").fetchall():
-            try:
-                marks = json.loads(raw)
-            except ValueError:
-                continue
-            if isinstance(marks, dict):
-                conn.executemany("INSERT OR IGNORE INTO reminders_done (user_id, key, done_at) VALUES (?, ?, ?)",
-                                 [(user_id, key, str(at)) for key, at in marks.items()])
-    conn.commit()
-
-
 STEPS = [
     (20, "guest_accounts", _v20_guest_accounts),
     (21, "folder_shares", _v21_folder_shares),
@@ -1636,6 +1680,7 @@ STEPS = [
     (36, "folder_links_remote", _v36_folder_links_remote),
     # Next release: a global step deletes the user_prefs rows of the reminders-done key (39 kept them).
     (39, "reminders_done", _v39_reminders_done),
+    (40, "comments_inbox", _v40_comments_inbox),
 ]
 
 # The workspace parts of the steps from version 34 on: (version, name,
@@ -1646,5 +1691,5 @@ WORKSPACE_STEPS = [
     (34, "workspace_prefs", _v34_workspace_prefs),
     (37, "highlight_colors", _v37_highlight_colors),
     (38, "recording_kind", _v38_recording_kind),
-    (40, "ink_v2", _v40_ink_v2),
+    (41, "ink_v2", _v41_ink_v2),
 ]

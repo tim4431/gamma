@@ -30,6 +30,7 @@ const entries = [
   e("appearance", t("Text boxes"), t("Colors"), t("Typed text boxes on a page; boxes are opaque."), "palette text box colours"),
   e("appearance", t("Interface size"), t("Interface"), t("Text, buttons, icons and switches."), "zoom text buttons controls scale touch"),
   e("appearance", t("Status bar"), t("Interface"), t("Show the latest activity below your tabs."), "notifications messages"),
+  e("appearance", t("Inbox notifications"), t("Interface"), t("New inbox items pop up on this device, once each."), "system notifications desktop alerts bell mentions comments replies push"),
   e("appearance", t("Recents thumbnails"), t("Library"), t("Preview the page you last read."), "snapshots library home display cards"),
   e("appearance", t("File labels"), t("Library"), t("Show the folders a file belongs to."), "folders chips library display cards"),
   e("appearance", t("Sync pill"), t("Sync status"), t("Where the header shows a page's sync with Gamma Cloud."), "sync status publish published pages Gamma Cloud header"),

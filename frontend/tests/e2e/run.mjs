@@ -6,6 +6,7 @@
 //   npm run e2e -- --changed    # only the groups the working tree's changes need (select.mjs)
 //   npm run e2e -- --changed main --list   # what a branch needs, without running it
 //   npm run e2e -- --group ink,collab      # these groups
+//   npm run e2e -- --shard 1/2  # the first of two near-equal shares (CI runs each on its own runner)
 //   npm run e2e -- --only pdf   # steps whose name contains "pdf" (one worker unless --jobs)
 //   npm run e2e -- --continue   # keep going after a failure
 //   npm run e2e -- --headed     # watch it
@@ -24,6 +25,7 @@
 import { fork } from "node:child_process";
 import os from "node:os";
 import { fileURLToPath } from "node:url";
+import { inspect } from "node:util";
 import {
   Account, Server, assert, assertEq, assertNoProblems, flags, launchBrowser, makePdf,
   openPage, results, sleep, step, until,
@@ -39,6 +41,8 @@ import { mcpScenarios } from "./scenarios/mcp.mjs";
 import { mirrorScenarios } from "./scenarios/mirror.mjs";
 import { mentionScenarios } from "./scenarios/mentions.mjs";
 import { noteMentionScenarios } from "./scenarios/noteMentions.mjs";
+import { commentScenarios } from "./scenarios/comments.mjs";
+import { inboxScenarios } from "./scenarios/inbox.mjs";
 import { chatNavigationScenarios } from "./scenarios/chatNavigation.mjs";
 import { transferScenarios } from "./scenarios/transfers.mjs";
 import { inkScenarios } from "./scenarios/ink.mjs";
@@ -62,7 +66,7 @@ import { cloudSignInScenarios } from "./scenarios/cloudSignIn.mjs";
 import { publishScenarios } from "./scenarios/publish.mjs";
 import { i18nScenarios } from "./scenarios/i18n.mjs";
 import { authScenarios } from "./scenarios/auth.mjs";
-import { GROUPS, changedFromGit, selectGroups } from "./select.mjs";
+import { GROUPS, changedFromGit, selectGroups, shardOf } from "./select.mjs";
 
 const RUNNERS = {
   "guide": guideScenarios,
@@ -87,6 +91,8 @@ const RUNNERS = {
   "chat-navigation": chatNavigationScenarios,
   "mentions": mentionScenarios,
   "note-mentions": noteMentionScenarios,
+  "comments": commentScenarios,
+  "inbox": inboxScenarios,
   "collab": collabScenarios,
   "mirror": mirrorScenarios,
   "transfers": transferScenarios,
@@ -114,10 +120,13 @@ const argValue = (name) => {
 
 if (process.argv.includes("--worker")) await worker();
 else {
-  const selected = selection();
+  const selected = shard(selection());
   const jobs = Math.max(1, Number(argValue("--jobs")) ||
     (flags.only ? 1 : Math.min(6, Math.floor((os.availableParallelism?.() || os.cpus().length) / 2))));
-  if (process.argv.includes("--list")) process.exit(0);
+  if (process.argv.includes("--list")) {
+    if (!process.argv.includes("--changed")) console.log(selected.join("\n"));
+    process.exit(0);
+  }
   if (!selected.length) { console.log("no browser-suite group covers these changes"); process.exit(0); }
   if (Math.min(jobs, selected.length) === 1) await sequential(selected);
   else await parallel(selected, jobs);
@@ -154,16 +163,30 @@ function selection() {
     console.log(`${groups.length} of ${known.length} groups selected\n`);
     return groups;
   }
-  if (process.argv.includes("--list")) console.log(known.join("\n"));
   return known;
+}
+
+// --shard k/n: the k-th of n shares of the selection that take about as long
+// (shardOf), for a run split across machines.
+function shard(ids) {
+  const value = argValue("--shard");
+  if (!value) return ids;
+  const [k, n] = value.split("/").map(Number);
+  if (!(Number.isInteger(k) && Number.isInteger(n) && k >= 1 && k <= n)) {
+    console.log(`--shard takes k/n with 1 <= k <= n, e.g. 1/2 (got ${value})`);
+    process.exit(2);
+  }
+  const mine = shardOf(ids, k, n);
+  console.log(`shard ${k}/${n}: ${mine.length} of ${ids.length} groups (${mine.join(", ")})`);
+  return mine;
 }
 
 // A backend with alice and bob, and a browser: what every group runs against.
 async function startEnv() {
   const server = new Server();
   await server.start();
-  server.manage("create-user", "alice", "alice-pw");
-  server.manage("create-user", "bob", "bob-pw");
+  await server.manage("create-user", "alice", "alice-pw");
+  await server.manage("create-user", "bob", "bob-pw");
   const alice = await new Account(server, "alice", "alice-pw").login();
   const bob = await new Account(server, "bob", "bob-pw").login();
   const browser = await launchBrowser();
@@ -192,7 +215,10 @@ async function sequential(ids) {
     console.log(`  ${env.server.base}  data: ${env.server.dataDir}`);
     for (const id of ids) await RUNNERS[id](env);
   } catch (e) {
-    if (!results.length || results[results.length - 1].ok) console.log(`\nsetup failed: ${e.stack || e}`);
+    if (!results.length || results[results.length - 1].ok) {
+      console.log(`\nsetup failed: ${inspect(e)}`);
+      results.push({ name: "aborted outside a step (the groups after it did not run)", ok: false });
+    }
   } finally {
     await stopEnv(env);
   }
@@ -225,6 +251,8 @@ async function parallel(ids, jobs) {
         return child.send({ done: true });
       }
       all.push(...m.results);
+      // a group that threw outside its steps ran none of the rest: a failure
+      if (m.error) all.push({ name: `${m.group} (group aborted)`, ok: false });
       const bad = m.results.some((r) => !r.ok) || m.error;
       if (bad && !flags.continueOnFail) stopping = true;
       if (m.output.length || m.error) {
@@ -251,7 +279,7 @@ async function worker() {
   try {
     env = await startEnv();
   } catch (e) {
-    process.send({ setupFailed: String(e.stack || e) });
+    process.send({ setupFailed: inspect(e) });
   }
   process.on("message", async (m) => {
     if (m.done) {
@@ -271,8 +299,9 @@ async function worker() {
     try {
       await run(env);
     } catch (e) {
-      // A failed step already printed itself; anything else is the group's own setup.
-      if (results.length === before || results[results.length - 1].ok) error = String(e.stack || e);
+      // A failed step already printed itself; anything else is the group's own
+      // setup (inspect prints the error's cause: a "fetch failed" says why only there).
+      if (results.length === before || results[results.length - 1].ok) error = inspect(e);
     } finally {
       console.log = log;
     }

@@ -49,8 +49,9 @@ All state is SQLite + files on disk under a data directory (env
     `(workspace_id, folder)` (`folder` a folder block's id; the other
     column `''`), with `created_by`,
     `audience` anyone/users/list and `role` view/edit; `share_users`
-    (`token`, `user_id`, `role`) — the people a link invites, each with
-    their own role ([api.md](api.md) "Shares");
+    (`token`, `user_id`, `role`, `added_at`) — the people a link invites,
+    each with their own role, and when they were invited (`''` on the
+    invitations from before step 40) ([api.md](api.md) "Shares");
   - `user_prefs` — small JSON values per `(user_id, workspace_id, key)`,
     under workspace `''`: the account-wide keys (`db.USER_PREF_KEYS`: the
     preference `profile` and its sync base `profile-base`, the active AI
@@ -73,6 +74,19 @@ All state is SQLite + files on disk under a data directory (env
     the account's reminders drops the rows whose reminder is gone, and the
     rest go with their workspace and their account ([mentions.md](mentions.md)
     "Reminders");
+  - `inbox_items` — each account's Inbox, a row per event that concerns
+    it: the recipient (`user_id`), the `kind` (`mention`,
+    `comment_mention`, `reply`, `resolved`, `shared`, `invited`), the
+    `actor`, where it happened (`workspace_id`, `page_id`, `block_id` — a
+    folder share's folder —, `thread_id`, `comment_id`, `''` where the kind
+    has none), the `share_token` when the recipient reaches the page only
+    through a share (one naming it, or the one the event came through), a `snippet` of the text at the time, `at`, and the
+    recipient's `read_at` / `archived_at`; indexed per recipient and time,
+    per recipient's unread rows (partial) and per comment (partial). No
+    unique index: the writers dedupe. A listing archives the items that
+    lead nowhere any more, a daily sweep deletes old ones, and they go
+    with their workspace, their recipient, a member who leaves and their
+    comment ([comments.md](comments.md) "The inbox");
   - `settings` — admin-tunable server settings (KV), including the
     admin-confirmed `public_url`, the shared AI provider entries
     (`ai_providers`, keys encrypted, [ai.md](ai.md)), the `cloud_*`
@@ -189,6 +203,15 @@ All state is SQLite + files on disk under a data directory (env
     export carry them with no code of their own; a page's chats go when the
     page is deleted for good (`ops.delete_page`), not while it is in
     Recently deleted; a deleted folder's are filed into `home`'s history;
+  - `comments` — the threads on notes, pages and highlights
+    ([comments.md](comments.md)): a row per comment with its thread (the
+    root's id), its anchor block, the page it was on (a hint for the
+    purges), the author's id and username at the time, the text, its
+    times, the root's resolution, a tombstone mark and `orphaned_at` (its
+    block was deleted; swept seven days on). Kept beside the blocks, never
+    in them, so no block reader skips them; a backup and a Gamma export
+    carry them, a page deleted for good takes its own with it, and a
+    comment write touches no page;
   - `workspace_prefs` — each account's prefs that name the workspace's
     pages, per `(user_id, key)`: open tabs (`open-tabs`), recents
     (`recent-views`), reading positions (`read-pos`), every key but the
@@ -593,7 +616,9 @@ for choosing whose data is read) and confine reads to the pages in reach
 (`share_scope` + `assert_block_in_scope`); write endpoints require a member
 with the editor or owner role (`require_ws(write=True)`), except the block
 writers, which accept an `edit` share through `require_ws_writer` under the
-same scope. Keep that distinction when touching endpoints. Full
+same scope, and the comment writers, which take any member and any signed-in
+account a share admits (`require_commenter`, [comments.md](comments.md) "Who
+may comment"). Keep that distinction when touching endpoints. Full
 endpoint/auth table: [api.md](api.md).
 
 **Sign in with Gamma Cloud** (`gamma/cloud_auth.py`,

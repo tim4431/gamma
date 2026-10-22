@@ -41,16 +41,23 @@ export async function pdfLoadScenarios({ server, browser, alice, makePdf, step, 
   // What the browser actually pulled over the wire for the PDF file: CDP's
   // encodedDataLength counts bytes received, not what a cancelled request
   // would have been, and the status tells ranges (206) from whole files (200).
+  // The viewer's HEAD (the file's size, raced against the manifest) carries
+  // no file: it usually ends aborted, but finishes, 200, when it completes
+  // first, which counted it as a whole file now and then.
   async function meter(page, throttle = true) {
     const cdp = await page.context().newCDPSession(page);
     await cdp.send("Network.enable");
     if (throttle) await cdp.send("Network.emulateNetworkConditions", NET);
     const byId = new Map();
+    const heads = new Set();
     const stat = { ranges: 0, whole: 0, bytes: 0, manifest: 0 };
+    cdp.on("Network.requestWillBeSent", (e) => {
+      if (e.request.method === "HEAD") heads.add(e.requestId);
+    });
     cdp.on("Network.responseReceived", (e) => {
       const u = e.response.url;
       if (u.includes("/api/pdf-info/")) stat.manifest += 1;
-      if (u.includes("/api/uploads/") && u.includes(".pdf")) byId.set(e.requestId, e.response.status);
+      if (u.includes("/api/uploads/") && u.includes(".pdf") && !heads.has(e.requestId)) byId.set(e.requestId, e.response.status);
     });
     cdp.on("Network.loadingFinished", (e) => {
       const status = byId.get(e.requestId);

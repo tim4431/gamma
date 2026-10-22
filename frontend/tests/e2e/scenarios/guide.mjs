@@ -192,7 +192,7 @@ export async function guideScenarios(env) {
   });
 
   await step("guide: a new account's empty library is offered the first tour as its welcome card", async () => {
-    server.manage("create-user", "newcomer", "newcomer-pw");
+    await server.manage("create-user", "newcomer", "newcomer-pw");
     const newcomer = await new Account(server, "newcomer", "newcomer-pw").login();
     const ctx = await newcomer.context(browser, { suggestTours: true });
     const page = await openPage(ctx, `${server.base}/?ws=${newcomer.ws}`);

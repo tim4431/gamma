@@ -1029,7 +1029,7 @@ def _push_bases(ws: str, remote: Remote, ops: list[dict], report: dict) -> None:
     (purged there since), so it merges three-way: by ``base_ids`` alone it
     would count every stroke erased there and kept here as a change of this
     copy's it could not apply. Only a file this copy reads as a drawing
-    goes (not a version 1 base from before step 40), and one the remote
+    goes (not a version 1 base from before step 41), and one the remote
     refuses is let be: the push still carries ``base_ids``."""
     uploads = ws_uploads_dir(ws)
     for op in ops:

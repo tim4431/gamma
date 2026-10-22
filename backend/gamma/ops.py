@@ -80,7 +80,7 @@ from fastapi import HTTPException
 from fractional_indexing import FIError, generate_key_between, validate_order_key
 from pydantic import BaseModel, Field, model_validator
 
-from . import collab, pdf_index, textmerge, upload_gc
+from . import collab, comments, inbox, mentions, pdf_index, textmerge, upload_gc
 from . import ink as inkmod
 from .text_box import merge_text_box
 from .blocks_store import (
@@ -247,6 +247,46 @@ class _Batch:
         self.added: set[str] = set()
         self.doc_deleted = False  # a deleted block carried a PDF (doc_id)
         self.chats_filed = 0  # folder chats a tree delete filed into the library's history
+        # block id → (the people its text named before the batch, and names now), for the Inbox
+        self.people: dict[str, tuple[set, set]] = {}
+        self.texts: dict[str, str] = {}  # and the text now
+
+    def note_mentions(self, block_id: str, old: str, new: str) -> None:
+        """A block's text went from ``old`` to ``new`` (``""`` for a block
+        inserted or deleted): the people each names, kept for the Inbox
+        (``mention_changes``). The folder and label trees mention no one."""
+        if self.tree:
+            return
+        before, after = mentions.people_in(old), mentions.people_in(new)
+        if block_id in self.people:
+            before = self.people[block_id][0]
+        elif not (before or after):
+            return
+        self.people[block_id] = (before, after)
+        self.texts[block_id] = new
+
+    def mention_changes(self) -> dict:
+        """The batch's mentions diffed whole, so a name that moves from one
+        note to another (a split before ``@name``, a join) is no new one:
+        ``mentions_added`` (``[{block_id, users, text}]``, a block's text
+        gained people no text of the batch lost), ``mentions_moved``
+        (``[{user, from, to}]``, a person some texts lost and the ``to``
+        block's gained) and ``mentions_dropped`` (``[{block_id, users}]``,
+        a text still there that names people no more whom no text gained;
+        a deleted block's are left to the Inbox's settle)."""
+        gained = {b: after - before for b, (before, after) in self.people.items() if after - before}
+        lost = {b: before - after for b, (before, after) in self.people.items() if before - after}
+        every_gained = set().union(*gained.values()) if gained else set()
+        every_lost = set().union(*lost.values()) if lost else set()
+        gone = set(self.deleted)
+        return {
+            "mentions_added": [{"block_id": b, "users": sorted(users - every_lost), "text": self.texts[b]}
+                               for b, users in gained.items() if users - every_lost],
+            "mentions_moved": [{"user": u, "from": sorted(b for b, users in lost.items() if u in users),
+                                "to": next(b for b, users in gained.items() if u in users)}
+                               for u in sorted(every_gained & every_lost)],
+            "mentions_dropped": [{"block_id": b, "users": sorted(users - every_gained)}
+                                 for b, users in lost.items() if b not in gone and users - every_gained]}
 
     def refs_changed(self, old: set, new: set) -> None:
         self.dropped |= old - new
@@ -325,6 +365,7 @@ class _Batch:
             sets.append("content = ?")
             values.append(content)
             echo["content"] = content
+            self.note_mentions(block_id, row[0] or "", content)
             # An explicit title write is user intent: drop the automatic-title
             # marker so a slow metadata lookup can't overwrite the rename.
             if props.pop("auto_title", None) is not None and not (patch and "auto_title" in patch):
@@ -423,6 +464,7 @@ class _Batch:
             for r in gone:
                 self._page_of.pop(r[0], None)
             self.refs_changed(subtree_refs(gone), set())
+            comments.orphan(self.conn, [r[0] for r in gone if r[0] != block_id], self.now)
             existing = None
         if existing:
             # A retried batch, or a client re-sending a block it thought the
@@ -442,6 +484,10 @@ class _Batch:
             f"INSERT INTO unified_blocks ({STORED_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             (block_id, parent, position, content, json.dumps(props), self.now, self.now, self.page_id))
         self._page_of[block_id] = self.page_id
+        # an undo or a revert brings its threads back; a share editor only this page's, since
+        # another page's hidden threads are no business of a writer the share confines here
+        comments.place(self.conn, [block_id], self.page_id, any_page=not self.share_scoped)
+        self.note_mentions(block_id, "", content)
         self.refs_changed(set(), upload_refs(content, props))
         self.applied.append({"op": "insert", "id": block_id, "parent": parent,
                              "position": position, "content": content, "props": props})
@@ -469,9 +515,12 @@ class _Batch:
             raise OpError(403, "the page itself cannot be deleted through ops")
         rows = fetch_subtree(self.conn, block_id)
         delete_subtree(self.conn, block_id)
+        comments.orphan(self.conn, [r[0] for r in rows], self.now)  # hidden, and swept unless the blocks return
         for r in rows:
             self._page_of[r[0]] = None
             self.deleted.append(r[0])
+            if r[0] in self.people or "@" in (r[3] or ""):
+                self.note_mentions(r[0], r[3] or "", "")
             self.doc_deleted = self.doc_deleted or '"doc_id"' in (r[4] or "")
         self.dropped |= subtree_refs(rows)
         if self.page_id == FOLDERS:
@@ -623,8 +672,12 @@ def apply_ops(conn, page_id: str, ops: list[dict], *, actor: str, client: str = 
               share_scoped: bool = False, cursor: dict | None = None, batch_id: str = "") -> dict:
     """Apply one batch inside one transaction (committed here) and log it.
     Returns ``{page_id, seq, at, actor, client, ops (as applied), deleted_ids,
-    dropped_uploads, doc_deleted, chats_filed, cursor?, ink_conflicts?}`` — hand it to
-    ``after_commit`` for the derived-data work and the room fan-out.
+    dropped_uploads, doc_deleted, chats_filed, mentions_added, mentions_moved,
+    mentions_dropped, cursor?, ink_conflicts?}`` — hand it to ``after_commit``
+    for the derived-data work and the room fan-out. The ``mentions_*`` are the
+    batch's person mentions (``@name`` outside code; an insert counts every
+    one it has) diffed across the whole batch, for the Inbox
+    (``_Batch.mention_changes``).
     ``chats_filed``: the folder conversations a tree delete filed into the
     library chat's history (``after_commit`` adds ``shares_stopped``). ``dropped_uploads``: the
     upload names the batch stopped referencing (the names it started
@@ -718,7 +771,7 @@ def _apply(conn, page_id: str, ops: list[dict], *, actor: str, client: str = "",
     seq = _log(conn, page_id, actor, client, now, batch.applied, batch_id=batch_id, cursor=cursor)
     result = {"page_id": page_id, "seq": seq, "at": now, "actor": actor, "client": client,
               "ops": batch.applied, "deleted_ids": batch.deleted, "dropped_uploads": sorted(dropped),
-              "doc_deleted": batch.doc_deleted, "chats_filed": batch.chats_filed}
+              "doc_deleted": batch.doc_deleted, "chats_filed": batch.chats_filed, **batch.mention_changes()}
     if cursor is not None:
         result["cursor"] = cursor
     if batch.ink_conflicts:
@@ -742,7 +795,7 @@ def notify_commit(ws: str, client: str = "", page_id: str = "") -> None:
             log.warning(f"[ops] commit listener: {e}")
 
 
-def after_commit(ws: str, conn, result: dict) -> dict:
+def after_commit(ws: str, conn, result: dict, *, via: str = "") -> dict:
     """After a committed batch: the fan-out to the page's room first, so
     batches committed one after the other by several worker threads reach
     the room in seq order as a rule (the client's ordered inbox copes with
@@ -754,7 +807,10 @@ def after_commit(ws: str, conn, result: dict) -> dict:
     that changed what a folder holds — a page refiled, a folder moved or
     deleted — re-checks the room peers a folder share admitted, and the
     shares of folders that are gone stop (``shares_stopped`` in the
-    result), whichever path deleted them."""
+    result), whichever path deleted them. Then the people the batch
+    mentioned hear of it in their Inbox (``inbox.from_ops``, which never
+    raises; ``via``: the share token the writer came through, the one way
+    in such an item may hand a non-member beside a share that names them)."""
     collab.publish_ops(ws, result)
     if _refiles(result):
         collab.revalidate_shares(ws)
@@ -764,6 +820,7 @@ def after_commit(ws: str, conn, result: dict) -> dict:
     upload_gc.schedule(ws, result["dropped_uploads"])
     if result["doc_deleted"]:
         pdf_index.purge_unused(ws, conn)
+    inbox.from_ops(ws, result, via)
     notify_commit(ws, result.get("client") or "", result.get("page_id") or "")
     return result
 
@@ -778,7 +835,8 @@ def _refiles(result: dict) -> bool:
 
 
 def commit_ops(ws: str, page_id: str, ops: list[dict], *, actor: str, client: str = "",
-               share_scoped: bool = False, cursor: dict | None = None, batch_id: str = "") -> dict:
+               share_scoped: bool = False, cursor: dict | None = None, batch_id: str = "",
+               via: str = "") -> dict:
     """``apply_ops`` + ``after_commit`` on a fresh connection. ``cursor``
     (``{block, anchor, head}``): the writer's caret in the text the batch
     produces, fanned out with the batch so peers place it against the same
@@ -791,7 +849,7 @@ def commit_ops(ws: str, page_id: str, ops: list[dict], *, actor: str, client: st
                            share_scoped=share_scoped, cursor=cursor, batch_id=batch_id)
         if result.get("replayed"):
             return result
-        return after_commit(ws, conn, result)
+        return after_commit(ws, conn, result, via=via)
 
 
 def ensure_filing(ws: str, conn, *, paths=(), labels=(), under: str = "",
@@ -812,9 +870,10 @@ def ensure_filing(ws: str, conn, *, paths=(), labels=(), under: str = "",
 
 def delete_page(ws: str, conn, page_id: str, *, actor: str, client: str = "") -> dict:
     """Delete a page for good, in one transaction committed here: the
-    subtree (its notes index rows with it), its op log and its AI chats —
-    the active conversation and the history of its bucket; this is the one
-    path that drops them — go, and its row of the change log turns
+    subtree (its notes index rows with it), its comments
+    (``comments.purge``), its op log and its AI chats — the active
+    conversation and the history of its bucket; this is the one path that
+    drops them — go, and its row of the change log turns
     ``deleted`` (``touch_page``), so a copy of the workspace can tell a
     deleted page from one it never had (a page purged from Recently deleted
     keeps the row its trashing wrote: to a copy it went then). Then the
@@ -834,6 +893,7 @@ def delete_page(ws: str, conn, page_id: str, *, actor: str, client: str = "") ->
         rows = fetch_subtree(conn, page_id)
         trashed = any(r[0] == page_id and r[1] == TRASH for r in rows)
         delete_subtree(conn, page_id)
+        comments.purge(conn, page_id, [r[0] for r in rows])
         conn.execute("DELETE FROM page_ops WHERE page_id = ?", (page_id,))
         conn.execute("DELETE FROM chats WHERE bucket = ?", (page_id,))
         conn.execute("DELETE FROM chat_history WHERE bucket = ?", (page_id,))
@@ -935,10 +995,12 @@ def move_across_pages(ws: str, conn, block_id: str, parent_id: str, position: st
     """Move a block with its subtree under ``parent_id`` on another page.
     The op vocabulary is per page, so this is its own SQL: the subtree's
     rows take the page's id, a delete is logged on the page it leaves and a
-    reload on the page it joins (each touching its page). Commits."""
+    reload on the page it joins (each touching its page); the subtree's
+    comments follow it (``comments.place``). Commits."""
     conn.execute("UPDATE unified_blocks SET parent_id = ?, position = ?, updated_at = ? WHERE id = ?",
                  (parent_id, position, page_now(), block_id))
     move_subtree_to_page(conn, block_id, page_id)
+    comments.place(conn, [r[0] for r in fetch_subtree(conn, block_id)], page_id)
     record_ops(ws, conn, src_page_id, [{"op": "delete", "id": block_id}], actor=actor)
     note_reload(ws, conn, page_id, actor)
 

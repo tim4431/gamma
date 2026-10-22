@@ -265,8 +265,10 @@ def create(name: str, owner: str, *, kind: str = "personal", by: str | None = No
     owner (``by`` — who created it, default the owner — is recorded as
     ``created_by``). A
     personal workspace ignores access and quota. ``welcome`` seeds the
-    Welcome page (gamma/seed.py ``seed_welcome``) once the rows exist.
-    Raises ValueError on an unknown owner or a bad setting (the guest may
+    Welcome page (gamma/seed.py ``seed_welcome``) once the rows exist. A
+    shared workspace made for another account tells its owner in the
+    Inbox (``invited``), as any other way of being added does. Raises
+    ValueError on an unknown owner or a bad setting (the guest may
     own only its personal workspace — the API refuses it as an owner, see
     ``accounts``). Commits."""
     ws_id = ws_id or new_workspace_id()
@@ -292,6 +294,8 @@ def create(name: str, owner: str, *, kind: str = "personal", by: str | None = No
         conn.commit()
     if welcome:
         seed_welcome(ws_id, actor=owner, guest=bool(account[0]))
+    if kind == "shared" and by and by != owner:
+        _tell_invited(ws_id, owner, by)
     return get(ws_id)
 
 
@@ -408,11 +412,12 @@ def update(ws: str, changes: dict, *, default_for: str = "") -> dict:
     return info
 
 
-def set_member(ws: str, user_id: str, role: str, by: str) -> None:
+def set_member(ws: str, user_id: str, role: str, by: str) -> bool:
     """Add or change one membership (shared workspaces) — ``user_id`` the
-    member, ``by`` who adds them. Raises ValueError on a bad role, an
-    unknown / guest account, a personal workspace, or demoting the last
-    owner."""
+    member, ``by`` who adds them. Returns whether the account was added
+    (not a member before); a new member gets an ``invited`` Inbox item.
+    Raises ValueError on a bad role, an unknown / guest account, a
+    personal workspace, or demoting the last owner."""
     if role not in ROLES:
         raise ValueError("role must be owner, editor or viewer")
     with connect_users_db() as conn:
@@ -424,16 +429,32 @@ def set_member(ws: str, user_id: str, role: str, by: str) -> None:
         _check_account(conn, user_id)
         if role != "owner" and _is_last_owner(conn, ws, user_id):
             raise ValueError("a workspace needs at least one owner")
+        added = not conn.execute("SELECT 1 FROM workspace_members WHERE workspace_id = ? AND user_id = ?",
+                                 (ws, user_id)).fetchone()
         conn.execute(
             "INSERT INTO workspace_members (workspace_id, user_id, role, added_by, added_at) "
             "VALUES (?, ?, ?, ?, ?) ON CONFLICT(workspace_id, user_id) DO UPDATE SET role = excluded.role",
             (ws, user_id, role, by, page_now()))
         conn.commit()
+    if added:
+        _tell_invited(ws, user_id, by)
+    return added
+
+
+def _tell_invited(ws: str, user_id: str, by: str) -> None:
+    """The ``invited`` Inbox item of an account just added to ``ws`` by
+    ``by``, the workspace's name as its snippet (gamma/inbox.py; never
+    raises). Local import: inbox imports this module."""
+    from . import inbox
+
+    info = get(ws)
+    inbox.emit("invited", [user_id], by, ws, snippet=info["name"] if info else "")
 
 
 def remove_member(ws: str, user_id: str) -> None:
-    """Drop a membership (also "leave"), and the account's prefs in the
-    workspace (its tabs, recents, reading positions: ``_drop_prefs``). The
+    """Drop a membership (also "leave"), the account's Inbox items from the
+    workspace, and its prefs there (its tabs, recents, reading positions:
+    ``_drop_prefs``). The
     last owner cannot go, a personal workspace has nobody to remove, and
     public access is not a membership — there is nothing to remove."""
     with connect_users_db() as conn:
@@ -449,6 +470,7 @@ def remove_member(ws: str, user_id: str) -> None:
                      (ws, user_id))
         conn.execute("DELETE FROM user_prefs WHERE workspace_id = ? AND user_id = ?",  # their copies from before step 34
                      (ws, user_id))
+        conn.execute("DELETE FROM inbox_items WHERE workspace_id = ? AND user_id = ?", (ws, user_id))
         conn.commit()
     _drop_prefs(ws, user_id)
 
@@ -563,6 +585,7 @@ def invite_cloud(ws: str, name, role: str, by: str) -> dict:
         raise ValueError(f"no Gamma Cloud account is named {name}")
     subject, username = found["sub"], found["username"]
     now = page_now()
+    joined = None
     with connect_users_db() as conn:
         conn.execute("BEGIN IMMEDIATE")
         _check_shared(conn, ws)  # again: the lookup went over the network
@@ -578,18 +601,22 @@ def invite_cloud(ws: str, name, role: str, by: str) -> dict:
                          "VALUES (?, ?, ?, ?, ?)", (ws, local, role, by, now))
             conn.execute("DELETE FROM pending_memberships WHERE workspace_id = ? AND subject = ?", (ws, subject))
             conn.commit()
-            return {"member": local_name, "username": username}
-        waiting = conn.execute("SELECT COUNT(*) FROM pending_memberships WHERE workspace_id = ? AND subject != ?",
-                               (ws, subject)).fetchone()[0]
-        if waiting >= MAX_PENDING_PER_WORKSPACE:
-            raise ValueError("too many pending invitations in this workspace")
-        conn.execute(
-            "INSERT INTO pending_memberships (workspace_id, subject, username, role, invited_by, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(workspace_id, subject) DO UPDATE SET "
-            "username = excluded.username, role = excluded.role, invited_by = excluded.invited_by",
-            (ws, subject, username, role, by, now))
-        conn.commit()
-        inviter = account_name(conn, by)
+            joined = local
+        else:
+            waiting = conn.execute("SELECT COUNT(*) FROM pending_memberships WHERE workspace_id = ? AND subject != ?",
+                                   (ws, subject)).fetchone()[0]
+            if waiting >= MAX_PENDING_PER_WORKSPACE:
+                raise ValueError("too many pending invitations in this workspace")
+            conn.execute(
+                "INSERT INTO pending_memberships (workspace_id, subject, username, role, invited_by, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(workspace_id, subject) DO UPDATE SET "
+                "username = excluded.username, role = excluded.role, invited_by = excluded.invited_by",
+                (ws, subject, username, role, by, now))
+            conn.commit()
+            inviter = account_name(conn, by)
+    if joined:
+        _tell_invited(ws, joined, by)
+        return {"member": local_name, "username": username}
     return {"pending": {"subject": subject, "username": username, "role": role, "invited_by": inviter,
                         "created_at": now}}
 
@@ -628,9 +655,10 @@ def claim_pending_memberships(user_id: str, subject: str) -> list[str]:
     ``user_id`` (created, claimed or linked): every invitation waiting for
     that subject becomes a membership with its role, and the pending rows
     go. An existing membership keeps its own role; an invitation into a
-    workspace that is gone or no longer shared is dropped. Returns the
-    workspace ids joined. Cheap when nothing waits — it runs on every cloud
-    sign-in."""
+    workspace that is gone or no longer shared is dropped. Each workspace
+    joined gives the account an ``invited`` Inbox item from its inviter.
+    Returns the workspace ids joined. Cheap when nothing waits — it runs on
+    every cloud sign-in."""
     with connect_users_db() as conn:
         rows = conn.execute(
             "SELECT p.workspace_id, p.role, p.invited_by, w.kind FROM pending_memberships p "
@@ -641,7 +669,7 @@ def claim_pending_memberships(user_id: str, subject: str) -> list[str]:
         if not account or account[0]:
             return []
         now = page_now()
-        joined = []
+        joined, inviters = [], {}
         for ws, role, by, kind in rows:
             if kind != "shared" or role not in INVITE_ROLES:
                 continue
@@ -651,8 +679,11 @@ def claim_pending_memberships(user_id: str, subject: str) -> list[str]:
                 (ws, user_id, role, by, now))
             if cur.rowcount:
                 joined.append(ws)
+                inviters[ws] = by
         conn.execute("DELETE FROM pending_memberships WHERE subject = ?", (subject,))
         conn.commit()
+    for ws in joined:
+        _tell_invited(ws, user_id, inviters[ws])
     if joined:
         log.info(f"[workspaces] {account[1]} joined {len(joined)} workspace(s) they were invited to by cloud username")
     return joined
@@ -742,6 +773,7 @@ def _delete_rows(conn, ws: str) -> None:
     # the prefs from before step 34 (later ones go with the workspace's pages.db)
     conn.execute("DELETE FROM user_prefs WHERE workspace_id = ?", (ws,))
     conn.execute("DELETE FROM reminders_done WHERE workspace_id = ?", (ws,))
+    conn.execute("DELETE FROM inbox_items WHERE workspace_id = ?", (ws,))
     conn.execute("DELETE FROM workspaces WHERE id = ?", (ws,))
 
 
@@ -844,8 +876,8 @@ def delete_account_workspaces(user_id: str) -> list[str]:
     workspaces where it was the only owner are deleted too (their other
     members lose them — the admin UI says so before). Its prefs go from
     every workspace that stays where it could keep some: those it was a
-    member of, and the public ones (a guest has no public access). Returns
-    the deleted workspace ids."""
+    member of, and the public ones (a guest has no public access), and so
+    does its Inbox. Returns the deleted workspace ids."""
     with connect_users_db() as conn:
         deleted = _deleted_with(conn, user_id)
         kept = [ws for ws, in conn.execute(
@@ -860,6 +892,7 @@ def delete_account_workspaces(user_id: str) -> list[str]:
             _delete_rows(conn, ws)
         conn.execute("DELETE FROM user_prefs WHERE user_id = ?", (user_id,))
         conn.execute("DELETE FROM reminders_done WHERE user_id = ?", (user_id,))
+        conn.execute("DELETE FROM inbox_items WHERE user_id = ?", (user_id,))
         conn.commit()
     for ws in deleted:
         remove_files(ws)
@@ -873,7 +906,7 @@ def delete_account(user_id: str, *, release_now: bool = False, by: str = "") -> 
     Gamma Cloud identity (its grant released — off the person's server
     list, refresh token revoked; in the background unless ``release_now``,
     which a CLI process that exits right after wants), integration tokens,
-    publisher sessions, prefs, done reminders, the workspaces
+    publisher sessions, prefs, done reminders, Inbox items, the workspaces
     ``delete_account_workspaces`` removes, its background jobs and their
     files, its AI usage rows and the users row. Each of those workspaces
     is first copied to backups/deleted/ (``keep_final_copies``; a guest's

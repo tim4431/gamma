@@ -1,4 +1,4 @@
-import { t } from "../shared/i18n/i18n.js";
+import { t, tn } from "../shared/i18n/i18n.js";
 export const IMPORT_FILTERS = [
   ["all", t("All")], ["missing", t("Missing")], ["warnings", t("Warnings")], ["selected", t("Selected")],
 ];
@@ -61,17 +61,25 @@ export function resultPages(data) {
   return [...unique.values()];
 }
 export const importWarnings = data => [...(data.skipped || []), ...(data.warnings || [])];
+// An import report in one line; a count the source left at 0 (or never
+// reports) is left out, the new pages excepted.
 export function importSummary(data) {
   const created = data.pages_created ?? data.pages_added ?? (data.block_id ? 1 : 0);
+  const stored = data.pdfs_stored || data.assets_stored || data.uploads_added;
+  const warnings = importWarnings(data).length;
   return [
-    `${created} new page${created === 1 ? "" : "s"}`,
-    data.pages_merged ? `${data.pages_merged} updated` : "",
-    data.pages_skipped ? `${data.pages_skipped} already in library` : "",
-    (data.pdfs_stored || data.assets_stored || data.uploads_added) ? `${data.pdfs_stored || data.assets_stored || data.uploads_added} files stored` : "",
-    data.annotations_imported ? `${data.annotations_imported} annotations` : "",
-    data.notes_imported ? `${data.notes_imported} notes` : "",
-    data.attachments_imported ? `${data.attachments_imported} attachments` : "",
-    data.chats_added ? `${data.chats_added} chats` : "",
-    importWarnings(data).length ? `${importWarnings(data).length} warnings` : "",
+    tn("{n} new page", "{n} new pages", created),
+    data.pages_merged ? tn("{n} updated", "{n} updated", data.pages_merged) : "",
+    data.pages_skipped ? tn("{n} already in library", "{n} already in library", data.pages_skipped) : "",
+    stored ? tn("{n} file stored", "{n} files stored", stored) : "",
+    data.annotations_imported ? tn("{n} annotation", "{n} annotations", data.annotations_imported) : "",
+    data.notes_imported ? tn("{n} note", "{n} notes", data.notes_imported) : "",
+    data.attachments_imported ? tn("{n} attachment", "{n} attachments", data.attachments_imported) : "",
+    data.chats_added ? tn("{n} chat", "{n} chats", data.chats_added) : "",
+    data.strokes_imported ? tn("{n} stroke", "{n} strokes", data.strokes_imported) : "",
+    data.text_boxes_imported ? tn("{n} text box", "{n} text boxes", data.text_boxes_imported) : "",
+    data.pictures_imported ? tn("{n} picture", "{n} pictures", data.pictures_imported) : "",
+    data.recordings_imported ? tn("{n} recording", "{n} recordings", data.recordings_imported) : "",
+    warnings ? tn("{n} warning", "{n} warnings", warnings) : "",
   ].filter(Boolean).join(" · ");
 }

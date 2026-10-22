@@ -11,8 +11,10 @@ still shows something that reads right:
     @alice                              a person, by username
 
 The editor draws them as chips (frontend/src/editor/mentions.js holds the
-same syntax; tests/shared/mentions.json pins both). The server's one use is
-the reminders: an account's are found through the notes index (a reminder
+same syntax; tests/shared/mentions.json pins both). The server uses them
+twice. A person's mention newly typed in a note tells that person in their
+Inbox (``people_in`` is the rule the op writer diffs by; gamma/inbox.py).
+And the reminders: an account's are found through the notes index (a reminder
 has the words "remind" and the username in it) and read back from the
 blocks, in every workspace the account can open. Which reminders are done
 is the account's rows of users.db ``reminders_done``, a mark each, kept for
@@ -78,6 +80,15 @@ def scan(text: str) -> list[dict]:
 def reminders_in(content: str) -> list[dict]:
     """The reminders of a block's text, outside its code."""
     return [t for t in scan(_CODE_RE.sub(" ", content or "")) if t.get("remind")]
+
+
+def people_in(content: str) -> set[str]:
+    """The usernames a text mentions (``@alice``), outside its code; a
+    reminder's ``(remind @alice)`` is no mention of alice. What the Inbox's
+    producers diff (gamma/inbox.py)."""
+    if "@" not in (content or ""):
+        return set()
+    return {t["user"] for t in scan(_CODE_RE.sub(" ", content)) if t["kind"] == "person"}
 
 
 def reminder_key(block_id: str, token: dict) -> str:

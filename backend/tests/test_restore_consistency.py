@@ -444,9 +444,10 @@ def test_fresh_ids_never_keep_a_row_outside_the_copy():
     rows = [("P", "root", "a0", "", "{}", OLD, OLD, "P"), ("X", "P", "a0", "", "{}", OLD, OLD, "P"),
             ("Y", "X", "a0", "", "{}", OLD, OLD, "P"), ("Q", "elsewhere", "a1", "", "{}", OLD, OLD, "P")]
     taken = {"X"}
-    out = ws_backup._fresh_ids(rows, taken)
+    out, remap = ws_backup._fresh_ids(rows, taken)
     ids = [r[0] for r in out]
     assert ids[0] == "P" and ids[1] != "X" and ids[2] == "Y" and len(out) == 3
+    assert remap == {"P": "P", "X": ids[1], "Y": "Y"}  # every row kept, by its backup id; Q left out
     assert out[2][1] == ids[1]  # Y follows its renamed parent
     assert all(len(r) == 8 and r[7] == "P" for r in out)  # STORED_COLUMNS, every row in the copy's page
     assert set(ids) <= taken

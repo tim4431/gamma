@@ -254,6 +254,31 @@ def test_ops_share_editor_is_confined_to_the_page(owner, editor, client):
 
 # --- the websocket -------------------------------------------------------------
 
+def test_publish_account_reaches_that_accounts_sockets_only(owner, editor):
+    """``collab.publish_account``: every page socket of one account, in any
+    room (a share link's too), and no one else's."""
+    from gamma import collab
+    one, two = make_page(owner, "Account nudge one"), make_page(owner, "Account nudge two")
+    token = _share(owner, two["id"], audience="list", users=[{"name": "editor_collab", "role": "view"}])
+    quiet = ("join", "leave", "cursor")
+    with owner.websocket_connect(f"/api/ws/page/{one['id']}?client=nA") as a:
+        recv_hello(a)
+        with editor.websocket_connect(f"/api/ws/page/{two['id']}?client=nB&share={token}") as b:
+            recv_hello(b)
+            with owner.websocket_connect(f"/api/ws/page/{two['id']}?client=nC") as c:
+                recv_hello(c)
+                collab.publish_account(account_of("editor_collab"), {"t": "inbox"})
+                assert recv(b, "inbox", quiet) == {"t": "inbox"}
+                collab.publish_account(account_of("owner_collab"), {"t": "inbox"})
+                assert recv(a, "inbox", quiet) == {"t": "inbox"} and recv(c, "inbox", quiet) == {"t": "inbox"}
+                # the editor's socket heard nothing more: the next it gets is a write to its room
+                assert _ops(owner, two["id"], [{"op": "insert", "id": "nudgeA", "parent": two["id"],
+                                                "content": "x"}]).status_code == 200
+                assert recv(b, "ops", quiet)["ops"][0]["id"] == "nudgeA"
+    collab.publish_account(account_of("owner_collab"), {"t": "inbox"})  # no socket open: a no-op
+    collab.publish_account("", {"t": "inbox"})
+
+
 def test_socket_hello_and_fanout(guest):
     page = make_page(guest, "Socket page")
     with guest.websocket_connect(f"/api/ws/page/{page['id']}?client=aa") as a:

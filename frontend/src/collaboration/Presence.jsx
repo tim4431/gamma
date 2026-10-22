@@ -1,7 +1,8 @@
 // Who else is on the page (collaboration/usePageCollab.js `peers`): the avatar stack in the page
 // header, and the small chips on the block a person is on. Colours are the
 // room's per-peer index (CSS --peer-N); an open editor shows as a full
-// avatar, a mere viewer as a faded one.
+// avatar, a mere viewer as a faded one. `PersonAvatar` draws someone who is
+// not on the page, by username alone.
 import React, { useLayoutEffect, useState } from "react";
 import { t } from "../shared/i18n/i18n.js";
 import { renderedCaretRect } from "../editor/clickToSource";
@@ -19,14 +20,14 @@ function describe(peer) {
 }
 
 // A stable colour index for a name (the --peer-0…7 palette), for an avatar
-// of someone who is not on the page: a share's owner, a person to mention.
-export function nameColor(name) {
+// of someone who is not on the page (PersonAvatar).
+function nameColor(name) {
   let hash = 0;
   for (const ch of name) hash = (hash * 31 + ch.codePointAt(0)) >>> 0;
   return hash % 8;
 }
 
-export function PeerAvatar({ peer, onClick, title }) {
+function PeerAvatar({ peer, onClick, title }) {
   return (
     <span
       className={`peerAvatar peer-${peer.color % 8}${peer.anchor >= 0 ? "" : " viewing"}`}
@@ -35,6 +36,12 @@ export function PeerAvatar({ peer, onClick, title }) {
       role={onClick ? "button" : undefined}
     >{initial(peer)}</span>
   );
+}
+
+// The avatar of someone who is not on the page, by username: a share's
+// owner, a person to mention, a comment's author, an Inbox item's actor.
+export function PersonAvatar({ name, title }) {
+  return <PeerAvatar peer={{ name, color: nameColor(name), anchor: 0 }} title={title} />;
 }
 
 // Chips on a block row: up to three avatars, then a "+n".

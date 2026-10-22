@@ -1,7 +1,7 @@
 // The "/" command menu's popup in the block editor, Notion-style. The
 // catalog and its matching live in editor/slashCommands.js (pure,
-// re-exported here); editor/BlockTree.jsx owns the trigger detection,
-// keyboard handling and state.
+// re-exported here); editor/useSlashMenu.js owns the trigger detection,
+// keyboard handling and state (a note row's and a comment's field).
 import React, { useEffect } from "react";
 import { Matched, useCaretAnchored } from "./LatexEditor";
 import { SLASH_GROUPS } from "./slashCommands.js";

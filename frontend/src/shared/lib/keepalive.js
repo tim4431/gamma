@@ -5,8 +5,8 @@
 //   'critical' — no other copy: the queued page edits (collabSession's
 //                pagehide). The cap, less what is in flight.
 //   'normal'   — small and recoverable: the profile, the reading position,
-//                the discard of an unfinished upload. That, less what the
-//                critical senders claim.
+//                the discard of an unfinished upload, an Inbox mark. That,
+//                less what the critical senders claim.
 //   'low'      — journal-backed: handwriting (App's flushInk). That, less
 //                NORMAL_RESERVE kept for the normal senders.
 // A sender with no other copy claims what it will send at pagehide

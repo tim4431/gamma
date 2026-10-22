@@ -540,7 +540,9 @@ a recording ends:
   becomes a recording block with one segment, `started` at the drop and
   `dur` from decoding it once; what is written while it plays stamps to
   its virtual clock, which is Notability's imported-audio rule for free.
-  A `.zip` of PDF + recordings from Notability is not worth a reader.
+  Notability's `.note` export is now read, its recordings with it
+  ([dev/import_export.md](../dev/import_export.md#notability-notes)); its
+  "PDF + Recording" backup zip still has no reader.
 - Trim is metadata: `in`/`out` offsets on a segment the player honours;
   no re-encoding. Split and merge need re-encoding or container surgery
   and are left out, with the recordings list standing in.

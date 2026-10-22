@@ -528,8 +528,8 @@ def _text_box_annotation(writer, glyphs, tb, rotation, crop, author, resolve_ref
 
 
 def highlight_note_text(block, children_by_id):
-    """The annotation popup text: the highlight's own comment plus its nested
-    notes as an indented bullet list. A text box on a PDF page among them is
+    """The annotation popup text: the highlight's own note plus its nested
+    notes as an indented bullet list (comment threads are no part of it). A text box on a PDF page among them is
     left out with the notes under it: it is written as its own /FreeText,
     whose text speaks for itself on the page. A box under a sheet among them
     is on that sheet (the nearest sheet wins), so it stays a note line."""

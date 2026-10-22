@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { crc32 } from "../src/shared/lib/crc32.js";
-import { folderDrop, folderPick, zipFolder } from "../src/transfers/folderZip.js";
+import { filesUpload, folderDrop, folderPick, zipFolder } from "../src/transfers/folderZip.js";
 
 // A picked folder's file: the browser sets webkitRelativePath from the folder down.
 function picked(path, text) {
@@ -23,6 +23,19 @@ test("a dropped folder's files keep their paths from the folder down", () => {
   assert.equal(pick.name, "My Library");
   assert.deepEqual(pick.entries.map(({ path }) => path), ["My Library/My Library.rdf", "My Library/files/7/a.pdf"]);
   assert.equal(pick.entries[1].file, pdf);
+});
+
+test("picked files pack as a folder of the given name; a name picked twice is numbered", async () => {
+  const files = [new File(["a"], "Lecture.note"), new File(["bb"], "Lecture.note"), new File(["c"], "lecture.NOTE"),
+    new File(["d"], "README"), new File(["e"], "README"), new File(["f"], "Library.zip")];
+  const pick = filesUpload(files, "Notability notes");
+  assert.equal(pick.name, "Notability notes");
+  assert.equal(pick.size, 7);
+  assert.ok(pick.folder && pick.picked, "packed like a folder, shown as picked files");
+  assert.deepEqual(pick.entries.map(({ path }) => path), ["Notability notes/Lecture.note", "Notability notes/Lecture (2).note",
+    "Notability notes/lecture (3).NOTE", "Notability notes/README", "Notability notes/README (2)", "Notability notes/Library.zip"]);
+  assert.equal(pick.entries[1].file, files[1]);
+  assert.equal((await zipFolder(pick)).name, "Notability notes.zip");
 });
 
 test("the folder packs into a stored zip whose entries read back", async () => {

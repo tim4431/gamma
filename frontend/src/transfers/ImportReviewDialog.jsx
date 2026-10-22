@@ -19,6 +19,10 @@ import { T, t } from "../shared/i18n/i18n.js";
 const STEPS = [T("Upload"), T("Review"), T("Import"), T("Summary")];
 const PHASE_STEP = { packing: 0, upload: 0, scanning: 0, review: 1, importing: 2, ended: 2, complete: 3 };
 const PHASE_LABEL = { packing: t("Reading the folder"), upload: t("Uploading for review"), scanning: t("Checking files and library destinations") };
+// The answers that refuse the file itself (400: nothing this source reads,
+// such as a Notability .ntb; 413: too large; 415: a type it does not take):
+// sending it again cannot help, so the dialog offers no retry.
+const REFUSED = [400, 413, 415];
 
 // `folder`: the destination folder's id ("" = the library root);
 // `folderPath(id)` names it, for a review opened again from its job too.
@@ -37,6 +41,7 @@ export default function ImportReviewDialog({ source, file, strip, folder = "", f
   const [selected, setSelected] = React.useState(new Set());
   const [filter, setFilter] = React.useState("all");
   const [error, setError] = React.useState("");
+  const [refused, setRefused] = React.useState(false); // the preview's error is the server's refusal
   const [ended, setEnded] = React.useState(null); // the job once over, with its report
   const [attempt, setAttempt] = React.useState(0);
   const reviewId = React.useRef(null);
@@ -48,7 +53,7 @@ export default function ImportReviewDialog({ source, file, strip, folder = "", f
   React.useEffect(() => {
     if (reopened) return undefined;
     const ctl = new AbortController();
-    setError(""); setReviewPhase("upload");
+    setError(""); setRefused(false); setReviewPhase("upload");
     requestImport({ source, file, strip, folder }, {
       signal: ctl.signal, onProgress: update => {
         if (ctl.signal.aborted) return;
@@ -60,7 +65,7 @@ export default function ImportReviewDialog({ source, file, strip, folder = "", f
       reviewId.current = data.review_id;
       setPlan(data); setSelected(new Set(allItemIds(data.pages))); setReviewPhase("review");
     }).catch(err => {
-      if (!ctl.signal.aborted) { setError(err.message); setReviewPhase("review"); }
+      if (!ctl.signal.aborted) { setError(err.message); setRefused(REFUSED.includes(err.status)); setReviewPhase("review"); }
     });
     return () => ctl.abort();
   }, [reopened, source, file, folder, strip, attempt]);
@@ -90,6 +95,7 @@ export default function ImportReviewDialog({ source, file, strip, folder = "", f
   const destination = buildImportTree(shown, true);
   const warnings = importWarnings(result || plan || {});
   const reviewBusy = phase === "packing" || phase === "upload" || phase === "scanning";
+  const phaseLabel = phase === "packing" && file?.picked ? t("Reading the files") : PHASE_LABEL[phase];
   const uploading = phase === "packing" || phase === "upload"; // bytes counted
 
   const submit = async () => {
@@ -120,7 +126,8 @@ export default function ImportReviewDialog({ source, file, strip, folder = "", f
     </section>
   );
   const sourceColumn = (
-    <section aria-label={t("ZIP contents")}><h3>{file?.folder ? t("Inside the folder") : /\.zip$/i.test(fileName) ? t("Inside the ZIP") : t("Source file")}</h3>
+    <section aria-label={t("ZIP contents")}><h3>{file?.picked ? t("Selected files") : file?.folder ? t("Inside the folder")
+      : /\.zip$/i.test(fileName) ? t("Inside the ZIP") : t("Source file")}</h3>
       <div className="importTreeScroll"><ImportTree node={sourceTree} /></div>
     </section>
   );
@@ -132,15 +139,15 @@ export default function ImportReviewDialog({ source, file, strip, folder = "", f
     <div className="importReviewHeader">
       <strong>{fileName}</strong>{fileSize != null ? <span className="importFileSize">{fmtBytes(fileSize)}</span> : null}
       {result ? <p ref={reportHeading} tabIndex={-1} role="status">{importSummary(result)}</p>
-        : <p>{reviewBusy ? PHASE_LABEL[phase] : phase === "review" ? t("Choose what to import and review its destination.") : ""}</p>}
+        : <p>{reviewBusy ? phaseLabel : phase === "review" && plan ? t("Choose what to import and review its destination.") : ""}</p>}
     </div>
     {error ? <p role="alert" className="importWarning">{error}</p> : null}
     {reviewBusy ? <div className="importUploadProgress" role="status">
-      <div><strong>{PHASE_LABEL[phase]}{uploading && percent !== null ? `… ${percent}%` : "…"}</strong>
+      <div><strong>{phaseLabel}{uploading && percent !== null ? `… ${percent}%` : "…"}</strong>
         {uploading ? <span>{fmtBytes(progress.loaded)}{progress.total ? ` / ${fmtBytes(progress.total)}` : ` / ${fmtBytes(file.size)}`}</span>
           : <span>{t("Upload complete. Reading the archive…")}</span>}
       </div>
-      <progress aria-label={phase === "packing" ? PHASE_LABEL.packing : uploading ? t("Upload progress") : t("Import processing")} max={100} value={uploading ? percent ?? undefined : undefined} />
+      <progress aria-label={phase === "packing" ? phaseLabel : uploading ? t("Upload progress") : t("Import processing")} max={100} value={uploading ? percent ?? undefined : undefined} />
     </div> : null}
     {phase === "importing" ? <>
       <TaskProgress task={job} label={t("Import progress")} />
@@ -181,7 +188,7 @@ export default function ImportReviewDialog({ source, file, strip, folder = "", f
     <div className="reportModalBtns importReviewFooter">
       {phase === "upload" || phase === "scanning" || phase === "review"
         ? <button type="button" className="uiBtn" onClick={onClose}>{t("Cancel")}</button> : null}
-      {error && !plan && phase === "review" ? <button type="button" className="uiBtn" onClick={() => setAttempt(n => n + 1)}>{t("Retry preview")}</button> : null}
+      {error && !plan && !refused && phase === "review" ? <button type="button" className="uiBtn" onClick={() => setAttempt(n => n + 1)}>{t("Retry preview")}</button> : null}
       {phase === "upload" || phase === "scanning" || phase === "review" ? (
         <button type="button" className="uiBtn primary" disabled={!plan || reviewBusy || !chosenCount} onClick={submit}>{t("Import to library")}</button>
       ) : null}

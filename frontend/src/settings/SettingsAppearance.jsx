@@ -4,7 +4,7 @@ import { MenuSelect } from "../shared/ui/Menus";
 import { SECTION_PREFS } from "./sectionPrefs.js";
 import { LibraryDisplaySettings } from "./SettingsLibraryDisplay";
 import {
-  CloudIcon, ContrastIcon, CopyIcon, HelpCircleIcon, HighlightIcon, LayoutIcon, MaximizeIcon, MoonIcon, PaletteIcon, PenIcon,
+  BellIcon, CloudIcon, ContrastIcon, CopyIcon, HelpCircleIcon, HighlightIcon, LayoutIcon, MaximizeIcon, MoonIcon, PaletteIcon, PenIcon,
   PlusIcon, TrashIcon, TypeIcon, XIcon,
 } from "../shared/ui/Icons";
 import { ThemePreview, PdfPreview } from "../shared/illustrations";
@@ -79,6 +79,30 @@ function PaletteGroup({ group, canAdd, canDelete, onChange, onDelete, onDuplicat
         </div>
       ) : null}
     </div>
+  );
+}
+
+// Inbox items as this device's notifications (inbox/useInbox.js); not for
+// a guest account, which has no inbox (`value.hasInbox`). Turning it
+// on asks the browser's permission, inside the click a prompt needs; a
+// browser without notifications (the iPad app) or one that blocks them
+// says so in the hint.
+const notificationPermission = () => (typeof Notification === "undefined" ? "unsupported" : Notification.permission);
+function InboxNotifications({ value }) {
+  const [permission, setPermission] = React.useState(notificationPermission);
+  const turn = (on) => {
+    value.setInboxSystemNotifications(on);
+    if (on && permission === "default") {
+      Notification.requestPermission().then(setPermission, () => setPermission(notificationPermission()));
+    }
+  };
+  const hint = permission === "unsupported" ? t("This browser has no system notifications.")
+    : permission === "denied" ? t("The browser blocks notifications from this site; allow them in its site settings.")
+      : t("New inbox items pop up on this device, once each.");
+  return (
+    <Toggle icon={BellIcon} label={t("Inbox notifications")} hint={hint}
+      checked={!!value.inboxSystemNotifications && permission !== "unsupported"} disabled={permission === "unsupported"}
+      onChange={turn} />
   );
 }
 
@@ -163,6 +187,7 @@ export function AppearanceSettings({ value, diagnostics }) {
           </Row>
           <Toggle icon={LayoutIcon} label={t("Status bar")} hint={t("Show the latest activity below your tabs.")}
             checked={diagnostics.statusBarVisible} onChange={diagnostics.setStatusBarVisible} />
+          {value.hasInbox ? <InboxNotifications value={value} /> : null}
         </div>
       </Section>
 

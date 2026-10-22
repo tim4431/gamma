@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { SLASH_COMMANDS, SLASH_GROUPS, filterSlashCommands, fuzzyIndices } from "../src/editor/slashCommands.js";
 
-const ALL = { newPage: true, sheet: true };
+const ALL = { newPage: true, sheet: true, image: true, embed: true };
 const names = (q, can = ALL) => filterSlashCommands(q, can).map((c) => c.name);
 
 test("the bare / lists every command but the colors, group by group", () => {
@@ -64,4 +64,13 @@ test("a command the editor cannot run is left out", () => {
   assert.ok(!names("page", {}).includes("page"));
   assert.ok(!names("note", {}).includes("note"));
   assert.ok(!filterSlashCommands("", {}).some((c) => c.needs));
+});
+
+test("a comment's field, which writes text only, offers no page, sheet, upload or embed", () => {
+  const offered = names("", {});
+  for (const gone of ["page", "note", "image", "embed"]) assert.ok(!offered.includes(gone), gone);
+  for (const kept of ["h1", "h2", "h3", "todo", "bullet", "number", "quote", "callout", "divider", "math", "equation",
+    "table", "code", "mermaid", "date", "link", "highlight"]) assert.ok(offered.includes(kept), kept);
+  assert.deepEqual(names("red", {}), ["red-text", "red-background"], "the colors stay");
+  assert.ok(names("image").includes("image") && names("embed").includes("embed"), "a note row has them");
 });

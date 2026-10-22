@@ -484,29 +484,36 @@ class Spool:
         return digest_id(self.digest)
 
 
-def store_pdf_stream(ws: str, stream) -> tuple[str, bool, int]:
-    """:func:`store_pdf` for a PDF read from ``stream`` (``.read(n)``: an
-    upload's spooled body): spooled to disk and hashed as it is read, then
-    stored by a rename. ``(doc_id, already_existed, size)``. The limits are
-    asked every SPOOL_CHECK_BYTES while the bytes arrive, so a file past
-    the per-file cap is refused (413 / 507, ``check_upload_allowed``) a few
-    MB in, not after it was written whole; a body that is no PDF is a
-    ValueError. Nothing is left on disk either way."""
+def _spool_stream(ws: str, stream) -> Spool:
+    """``stream`` (``.read(n)``) spooled into ``partial_dir(ws)`` and hashed
+    as it is read, the limits asked every SPOOL_CHECK_BYTES
+    (``check_upload_allowed``: 413 / 507), so a file past the per-file cap
+    is refused a few MB in, not after it was written whole. The spool is
+    discarded on any exception; the caller stores or discards the one it
+    gets."""
     spool = Spool(ws)
     try:
-        while True:
-            chunk = stream.read(SPOOL_CHUNK)
-            if not chunk:
-                break
+        while chunk := stream.read(SPOOL_CHUNK):
             spool.write(chunk)
             if spool.due_check():
                 check_upload_allowed(ws, spool.size)
         spool.close()
-        if not is_pdf(spool.head):
-            raise ValueError("not a valid PDF (missing %PDF header)")
     except BaseException:
         spool.discard()
         raise
+    return spool
+
+
+def store_pdf_stream(ws: str, stream) -> tuple[str, bool, int]:
+    """:func:`store_pdf` for a PDF read from ``stream`` (``.read(n)``: an
+    upload's spooled body): spooled to disk and hashed as it is read
+    (``_spool_stream``, which asks the limits as the bytes arrive), then
+    stored by a rename. ``(doc_id, already_existed, size)``; a body that is
+    no PDF is a ValueError. Nothing is left on disk either way."""
+    spool = _spool_stream(ws, stream)
+    if not is_pdf(spool.head):
+        spool.discard()
+        raise ValueError("not a valid PDF (missing %PDF header)")
     doc_id, already_existed = store_pdf_path(ws, spool.path, spool.size, spool.doc_id())
     return doc_id, already_existed, spool.size
 
@@ -525,6 +532,26 @@ def store_file_path(ws: str, path: Path, size: int, digest: str, ext: str) -> tu
     ``<digest><ext>`` by a rename; ``path`` is consumed either way."""
     filename = f"{digest}{ext}"
     return filename, _store_path(ws, filename, path, size)
+
+
+def store_file_stream(ws: str, stream, ext: str) -> tuple[str, bool]:
+    """:func:`store_file` for a file read from ``stream`` (``.read(n)``, a
+    zip member). The file is spooled to disk and hashed as it is read
+    (``Spool``), and the limits are asked every SPOOL_CHECK_BYTES
+    (``check_upload_allowed``: 413/507). A file ``content_refusal`` refuses
+    is a ValueError. The file is then stored by a rename
+    (``store_file_path``) → ``(filename, already_existed)``. Nothing is
+    left on disk either way."""
+    spool = _spool_stream(ws, stream)
+    try:
+        with open(spool.path, "rb") as f:
+            refused = content_refusal(ext, f.read(16))
+        if refused:
+            raise ValueError(refused)
+    except BaseException:
+        spool.discard()
+        raise
+    return store_file_path(ws, spool.path, spool.size, spool.doc_id(), ext)
 
 
 def find_upload_file(filename: str, ws: str) -> Path | None:
