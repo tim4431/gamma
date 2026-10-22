@@ -7,6 +7,7 @@
 // an init script stands in for MediaRecorder and Audio. The server's side
 // is backend/tests/test_recordings.py.
 import { waitForPdf } from "./pdf.mjs";
+import { assertMenuFrom } from "../harness.mjs";
 
 async function drawLine(page, from, to) {
   await page.mouse.move(from[0], from[1]);
@@ -165,6 +166,8 @@ export async function recordingScenarios({ server, browser, alice, makePdf, step
     assert(held.menu && !held.tooltip, `the press swaps the tooltip for the menu at once: ${JSON.stringify(held)}`);
     await page.mouse.up();
     await page.waitForSelector(".ctxMenu .ctxMenuItem", { timeout: 5000 });
+    // up from the bar, by the button's left edge
+    await assertMenuFrom(page.locator(".ctxMenu"), page.locator(".replayBar button[data-role='mode']"), "above", "the mode menu");
     await onMode(9, 0);                   // the smallest move a hand makes, off the glyph
     await sleep(500);
     assert(!(await page.$(".inkTooltip")), "the press keeps the trigger's tooltip away while the pointer stays on it");
@@ -186,6 +189,7 @@ export async function recordingScenarios({ server, browser, alice, makePdf, step
     assertEq(await page.locator(".ctxMenu").count(), 1, "one menu at a time");
     assertEq(await page.getAttribute(".replayBar button[data-role='mode']", "aria-expanded"), "false", "the mode button no longer expanded");
     assertEq(await page.getAttribute(".replayBar .replayRate", "aria-expanded"), "true", "the speed button expanded");
+    await assertMenuFrom(page.locator(".ctxMenu"), page.locator(".replayBar .replayRate"), "above", "the speed menu, from its own button");
     await page.click(".replayBar .replayRate");
     await until(async () => !(await page.$(".ctxMenu")), { what: "speed menu closed by a second press" });
     // Enter (a click with no press behind it) opens it too; Escape closes

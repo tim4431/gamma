@@ -1,6 +1,6 @@
 import { encodeStroke, newInk, decodeStroke, strokeBounds } from "../../../src/ink/ink.js";
 import { waitForPdf } from "./pdf.mjs";
-import { assertNear as near, assertOpensInPlace } from "../harness.mjs";
+import { assertNear as near, assertMenuFrom, assertOpensInPlace } from "../harness.mjs";
 
 export async function inkEditingScenarios({ server, browser, alice, bob, makePdf, step, until, assert, assertEq, assertNoProblems, openPage, flags }) {
   let ctx, page, cdp, pageId, noteId, secondId;
@@ -512,6 +512,7 @@ export async function inkEditingScenarios({ server, browser, alice, bob, makePdf
     await row.getByRole("button", { name: "Style: Pen", exact: true }).click();
     const styles = page.getByRole("menu", { name: "Pen style" });
     assertEq(await styles.getByRole("menuitemradio", { name: "Pen", exact: true }).getAttribute("aria-checked"), "true");
+    await assertMenuFrom(page.locator(".inkStyleMenu"), row.getByRole("button", { name: "Style: Pen", exact: true }), "below", "the Pen style menu");
     await styles.getByRole("menuitemradio", { name: "Brush", exact: true }).click();
     await until(async () => (await stored()).strokes[0].brush === "brush", { what: "the stroke restyled to Brush" });
     const brushed = (await stored()).strokes[0];
@@ -535,6 +536,15 @@ export async function inkEditingScenarios({ server, browser, alice, bob, makePdf
     await styles.waitFor({ state: "detached" });
     assertEq(await menu().count(), 1, "the selection menu stays: Escape went to its Style menu");
     assert(await picker.evaluate((el) => el === document.activeElement), "the focus stays on the picker");
+    // A finger: the tap's press opens the menu and the click the tap ends
+    // with leaves it open; a second tap closes it.
+    await picker.evaluate((el) => el.addEventListener("click", () => { window.__pickerClicked = true; }, { once: true }));
+    await picker.tap();
+    await until(() => page.evaluate(() => window.__pickerClicked === true), { what: "the tap's click" });
+    assertEq(await picker.getAttribute("aria-expanded"), "true", "the tap opened the menu, and its click left it open");
+    assertEq(await styles.getByRole("menuitemradio").count(), 5, "the five brushes");
+    await picker.tap();
+    await styles.waitFor({ state: "detached" });
     await menu().getByRole("button", { name: "Dotted", exact: true }).tap();
     await until(async () => (await stored()).strokes[0].dash === "dotted", { what: "the stroke dotted" });
     assertEq((await stored()).strokes[0].brush, "brush", "the line leaves the brush");

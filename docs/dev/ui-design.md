@@ -185,7 +185,7 @@ already exists. Bespoke CSS classes are for **layout only**.
 | `aiKeyInput` | every text/number/password input in dialogs and settings |
 | `switch` / `switchTrack` | every on/off toggle |
 | `MenuSelect` / `ActionMenu` ([Menus.jsx](../../frontend/src/shared/ui/Menus.jsx)) | every dropdown: Codex-style pill trigger + checkmarked `ContextMenu`. No native `<select>` anywhere |
-| `useMenuTrigger` ([Menus.jsx](../../frontend/src/shared/ui/Menus.jsx)) | the menus a toolbar's buttons open on the press, one at a time per row of buttons: the recording player's mode and speed, the tool strip's More, Tool and Style, the selection menu's Style ([below](#menus-and-submenus)) |
+| `useMenuTrigger` ([Menus.jsx](../../frontend/src/shared/ui/Menus.jsx)) | the menus a toolbar's buttons open on the press, one at a time per toolbar: the recording player's mode and speed, the tool strip's More, Tool and Style, the selection menu's Style ([below](#menus-and-submenus)) |
 | `MenuItem` / `MenuLabel` / `MenuDivider` / `SubMenuItem` ([Menus.jsx](../../frontend/src/shared/ui/Menus.jsx)) | every row inside a menu, context or popover: icon column + ellipsizing label (+ `danger`, `trailing`, `keys`); `MenuDivider` between groups. `SubMenuItem` is the nested flyout — hover-opened, safe-triangle guarded; a popover menu hosts one through `MenuScope` |
 | `categoryTag`, `uiTag` | chips and small badges |
 | `KeyCaps` / `KeyBinding` ([SettingsKit.jsx](../../frontend/src/settings/SettingsKit.jsx); `KeyCaps` lives in [shared/ui/KeyCaps.jsx](../../frontend/src/shared/ui/KeyCaps.jsx), shared with the guide) | a keyboard chord as `.keyCap` key caps; `KeyBinding` is the rebindable version (click, press the new keys; reset button when changed) — [hotkeys.md](hotkeys.md) |
@@ -414,26 +414,27 @@ only the dropdown. A `ContextMenu` rendered inside another one's rows
 that menu: a press in it never dismisses the menu it came from, and
 Escape closes it first (`NestCtx` in Menus.jsx).
 
-A menu a toolbar's button opens comes from `useMenuTrigger({side, align})`
+A menu a toolbar's button opens comes from `useMenuTrigger({side})`
 (Menus.jsx). It opens on the button's press, as a native menu does, not on
 the click that follows (`triggerPress`, [below](#gestures-shareduipressjs)):
 a primary press, from a mouse's left button, a finger or a pen, opens or
 closes it, the click after it does nothing, and a click no press led to
 (Enter or Space on the focused button) toggles it. The press takes the
 button's tooltip away (`InkTooltips`) and the menu comes in the same frame.
-One hook holds the menus of one row of buttons, one open at a time:
+One hook holds the menus of one toolbar, one open at a time:
 `trigger(kind)` is a button's props (the press, the keyboard's click,
 `aria-haspopup="menu"` and `aria-expanded`), `menu` the open menu's
 `ContextMenu` props, and `close()` what a row calls before it acts. The
 pressed button is the open menu's `ignoreRef`, so a press on it closes the
 menu rather than closing and reopening it. A press on another button of
-the row swaps the menus: the open menu's outside press queues its close
-first, so the new kind opens. `side` (`"below"` or `"above"`) and `align`
-(`"left"` or `"right"`) place the menus from their buttons (`menuAnchor`,
+the toolbar swaps the menus: the open menu's outside press queues its close
+first, so the new kind opens. `side` (`"below"` or `"above"`) places the
+menus from their buttons, each by its button's left edge (`menuAnchor`,
 [below](#menus-and-popups-open-in-place)). The menu is rendered outside any
 `InkTooltips` host: React bubbles a portal's events up to the host, which
 would raise a tooltip for every row the pointer crosses. Nothing moves the
-focus: Escape closes the menu, and the focus stays on the button. The recording
+focus: the menu takes none, so after Escape closes it the focus is where it
+was (on the button, when the keyboard opened it). The recording
 player's mode and speed menus open above the bar; the tool strip's More,
 Tool and Style menus and the selection menu's Style menu open below their
 buttons. `MenuSelect` and `ActionMenu` still open on the click
@@ -473,12 +474,12 @@ to place it:
   is the pure geometry (`tests/placement.test.mjs`): its own side of the
   point, the other side (`flipY`) when its own has no room and that one
   has, then inside the window and the `bounds` band.
-- `menuAnchor(rect, {side, align})` is where a menu that opens from a
-  button goes, as `ContextMenu`'s anchor, from the button's rect: 4 px
-  under it (`side: "below"`) or over it (`"above"`, with `anchorBottom`),
-  its left edge on the button's or, with `align: "right"`, its right edge
-  (`anchorRight`). Pure too (`tests/placement.test.mjs`);
-  `useMenuTrigger` places its menus with it.
+- `menuAnchor(rect, {side})` is where a menu that opens from a button
+  goes, as `ContextMenu`'s anchor, from the button's rect: its left edge
+  on the button's, 4 px under it (`side: "below"`) or over it (`"above"`,
+  with `anchorBottom`). Pure too (`tests/placement.test.mjs`);
+  `useMenuTrigger` places its menus with it, and the browser suite's
+  `assertMenuFrom` (harness.mjs) checks each of them there.
 - `useFloatingPosition(ref, place, deps, {follow})` measures and places it
   in a layout effect, before the browser paints it, and returns null until
   then, while the surface stands hidden. When its size changes later (a row

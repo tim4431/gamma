@@ -10,7 +10,7 @@
 // of its own asked once whether to keep them over the account's. /Ink in the
 // annotated PDF is backend/tests/test_ink.py; the chat's view_ink is
 // test_ai_tools_ink.py.
-import { PYTHON, assertOpensInPlace, fakeAiModels, until } from "../harness.mjs";
+import { PYTHON, assertMenuFrom, assertOpensInPlace, fakeAiModels, until } from "../harness.mjs";
 import { waitForPdf } from "./pdf.mjs";
 import { DEFAULT_TOOLS, decodeStroke, encodeStroke, newInk, strokeWidth } from "../../../src/ink/ink.js";
 import { execFileSync } from "node:child_process";
@@ -326,6 +326,7 @@ export async function inkScenarios({ server, browser, alice, makePdf, step, unti
       assertEq(JSON.stringify(await styles.getByRole("menuitemradio").allTextContents()), JSON.stringify(["Pen", "Ballpoint", "Brush", "Pencil", "Calligraphy"]),
         "Pen · Ballpoint · Brush · Pencil · Calligraphy");
       assertEq(await styles.getByRole("menuitemradio", { name: "Pen", exact: true }).getAttribute("aria-checked"), "true");
+      await assertMenuFrom(page.locator(".inkStyleMenu"), picker, "below", "the strip's Pen style menu");
       assertEq(await styles.locator(".inkBrushPreview").count(), 5, "each row led by a stroke in its look");
       await styles.getByRole("menuitemradio", { name: "Ballpoint", exact: true }).click();
       await page.locator(".pdfInkSub").getByRole("button", { name: "Style: Ballpoint", exact: true }).waitFor();
@@ -415,6 +416,7 @@ export async function inkScenarios({ server, browser, alice, makePdf, step, unti
     assertEq(await more.getAttribute("data-guide"), "ink.more");
     await assertOpensInPlace(page, ".inkStripMenu", () => more.click(), { what: "the More menu" });
     assertEq(await more.getAttribute("aria-expanded"), "true");
+    await assertMenuFrom(page.locator(".inkStripMenu"), more, "below", "the More menu");
     const menu = page.locator(".inkStripMenu");
     const paste = menu.locator("[data-command='ink.paste']");
     assert(await paste.isDisabled(), "nothing on the handwriting clipboard: Paste is greyed");
@@ -464,6 +466,7 @@ export async function inkScenarios({ server, browser, alice, makePdf, step, unti
     await armed().click();                                               // its options row
     await page.waitForSelector(".pdfInkSub[data-ink-options='tool']");
     let menu = await toolMenu();
+    await assertMenuFrom(menu, page.locator(".pdfInkSub button[aria-label='Tool menu']"), "below", "the Tool menu");
     assert(await menu.getByRole("button", { name: "Move left", exact: true }).isDisabled(), "nothing to the left of key 1");
     assert(await menu.getByRole("button", { name: "Hidden tools", exact: true }).isDisabled(), "no hidden tools yet");
     // A press on More while the Tool menu stands open swaps the two: one
@@ -474,6 +477,7 @@ export async function inkScenarios({ server, browser, alice, makePdf, step, unti
     assertEq(await page.locator(".inkStripMenu").count(), 1, "one strip menu at a time");
     assertEq(await page.locator(".pdfInkSub button[aria-label='Tool menu']").getAttribute("aria-expanded"), "false", "the Tool button no longer expanded");
     assertEq(await more.getAttribute("aria-expanded"), "true", "More expanded");
+    await assertMenuFrom(page.locator(".inkStripMenu"), more, "below", "More's menu, from its own button");
     await page.keyboard.press("Escape");
     await until(async () => !(await page.$(".inkStripMenu")), { what: "More's menu closed by Escape" });
     menu = await toolMenu();
