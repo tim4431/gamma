@@ -127,7 +127,7 @@ import { makeStableActions, useStableActions } from "../shared/lib/stableActions
 import { keepIfSame, sameMap, sameObject } from "../shared/lib/keepIfSame.js";
 import { isTextBox, normalizeTextBox } from "../markup/textBox.js";
 import { useTextBoxes } from "../markup/useTextBoxes";
-import { GROUP_SPLIT_BYTES, MAX_BYTES, MAX_STROKES, appendStroke, appendStrokes, boundsOf, cloneStrokes, duplicateStrokes, eraseAlong, eraserKeep, flipStrokes, hitStrokesAlong, inkBounds, inkBytes, inkProps, mergeInk, newCanvasInk, newInk, pdfPositionOf, removeStrokes, restyleStrokes, round2, serializeInk, strokeBounds, strokeBytes, toolStyle, transformStrokes, translateStrokes, unionBox } from "../ink/ink";
+import { GROUP_SPLIT_BYTES, MAX_BYTES, MAX_STROKES, appendStroke, appendStrokes, boundsOf, cloneStrokes, duplicateStrokes, eraseAlong, eraserKeep, flipStrokes, hitStrokesAlong, inkBounds, inkBytes, mergeInk, newCanvasInk, newInk, pdfPositionOf, removeStrokes, restyleStrokes, round2, strokeBounds, strokeBytes, toolStyle, transformStrokes, translateStrokes, unionBox } from "../ink/ink";
 import { stripKey } from "../ink/stripKeys.js";
 import { ZOOM_CHROME, moveTo, moveWindow as moveZoomWindow, newLine, openWindow, setMag } from "../ink/zoomWindow.js";   // the zoom window's rules (moveWindow is the dock layout's here)
 import { defaultRuler, snapAngle, stampLine } from "../ink/ruler.js";   // the ruler's first place, its Snap 15° and its Stamp line
@@ -137,17 +137,18 @@ import { inkBusy } from "../ink/InkLayer";
 import { useBuildFence } from "../ink/buildFence.js";
 import { useInkStrip } from "../ink/useInkStrip.js";
 import { useInkLive } from "../ink/useInkLive.js";
+import { useInkSave } from "../ink/useInkSave.js";
+import { useInkSurfaces, visiblePart } from "../ink/useInkSurfaces.js";   // visiblePart: the ruler's and the zoom window's first place
 import { NotebookViewer, PaperMenu, readPlace, showPlace } from "../notebook/NotebookViewer";
 import { NoteSheetContext } from "../notebook/NoteSheet";
 import {
-  blockToSheet, firstSheetId, inkBySheet, insertSheetAfter, isSheet, newSheet, normalizePaper, sheetAfterPlan, sheetOfBlock,
+  blockToSheet, firstSheetId, insertSheetAfter, isSheet, newSheet, normalizePaper, sheetAfterPlan, sheetOfBlock,
   sheetsOf, withAllSheetsPaper, withSheetPaper,
 } from "../notebook/notebook";
 import { generateKeyBetween } from "fractional-indexing";
 import * as inkStore from "../ink/inkStore";
 import * as inkLive from "../ink/inkLive";
-import { planFlush } from "../ink/inkFlush";
-import { KEEPALIVE_CAP, available as keepaliveRoom, bodyBytes, keepaliveFetch } from "../shared/lib/keepalive.js";
+import { keepaliveFetch } from "../shared/lib/keepalive.js";
 import * as playback from "../replay/playback.js";
 import { recordingClock } from "../replay/clock.js";
 import { audioSource } from "../recording/audioSource.js";
@@ -3833,9 +3834,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // Handwriting (docs/dev/handwriting.md): the tool strip (ink/useInkStrip.js:
   // its state, the presets on it, the armed tool and the commands that
   // change it), which the text boxes below read; the group the
-  // next stroke on a page joins, the pending-upload timer, the group outlined
-  // after a jump, and the identity-stable list of ink groups the page marks
-  // are built from.
+  // next stroke on a page joins and the group outlined after a jump.
   const {
     inkUi, inkVisible, inkPenPreset, inkPen, inkTool, textArmed, inkPenTool,
     setInkTools, pickInkTool, openInkStrip, toggleInkShape, previousTool, inkEraserLifted,
@@ -3845,8 +3844,6 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     inkShapeKind, inkShapeFill, inkEraserReturn });
   const [inkFlash, setInkFlash] = useState(null);
   const inkActiveRef = useRef(null);
-  const inkTimerRef = useRef(0);
-  const prevInkRef = useRef({ json: "", value: [] });
   // The ruler (ink/ruler.js): {surface, x, y, angle, length, snap} in the
   // surface's page points, or null — session state, gone with the strip and
   // with the page — and the size of the surface it was laid on, for Stamp
@@ -3861,11 +3858,6 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // whether it holds strokes, for the command guards and the layers.
   const inkClipRef = useRef(null);
   const [inkClip, setInkClip] = useState(false);
-  // The PDF page in view and its size at scale 1 (PdfViewer's onPageInView:
-  // the page whose centre lies nearest the scroller's), where Ctrl+V and
-  // the pill's Paste land; a notebook pastes on nbCurrent.
-  const pageInViewRef = useRef(null);
-  const onPageInView = useCallback((page, size) => { pageInViewRef.current = { page, size }; }, []);
   // The zoom window (ink/zoomWindow.js, docs/dev/handwriting.md "Zoom
   // window"): {page, x, y, w, h, mag, line, x0} in the PDF page's points
   // while it is open — session state, gone with the strip and with the page
@@ -6534,164 +6526,21 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   const boxUndo = textArmed || !!textBoxes.sel;
   // The strip's Undo and Redo buttons, and a Pencil gesture's Undo.
   const stripUndo = (redo) => (boxUndo ? undoBlocks(redo) : inkUndo(redo));
-  const inkBlocks = useMemo(() => {
-    const next = flattenBlocks(blocks).filter((b) => b.properties?.ink_url !== undefined)
-      .map((b) => ({ id: b.id, properties: b.properties }));
-    const json = JSON.stringify(next);
-    if (json === prevInkRef.current.json) return prevInkRef.current.value;
-    prevInkRef.current = { json, value: next };
-    return next;
-  }, [blocks]);
+  // The save (ink/useInkSave.js over ink/inkSaver.js): the drafts go to the
+  // server 700 ms after the last edit, at most 5 s after the first unsaved
+  // one, and at once when the tab is hidden, the page goes away or another
+  // page opens. Called after the page's collab session, so its pagehide
+  // and visibilitychange listeners come after collab's.
+  const { flushInk, scheduleInk } = useInkSave({ focusedBlockId, blocksRef, setStatus, liveSaved });
+  // The page's ink by surface (ink/useInkSurfaces.js): its groups, each
+  // surface's, where a paste without a point goes, a surface's name in
+  // messages.
+  const { inkBlocks, inkBySurface, onPageInView, pasteTarget, inkPageNumber } = useInkSurfaces({
+    blocks, nbSheets, nbSheetsRef, nbCurrent, notebook, pdfUrl, pdfHidden });
 
-  // What the server's merge dropped or brought back (the PUT answer's
-  // `ink_conflict`, "Two writers, one group"), on the pill.
-  function reportInkConflict(conflict) {
-    if (!conflict || conflict.clean) return;
-    const lost = conflict.lost_ours?.length || 0, back = conflict.returned?.length || 0;
-    if (lost) setStatus(tn("Your change to {n} stroke was not applied: someone changed it since",
-      "Your change to {n} strokes was not applied: someone changed them since", lost));
-    else if (back) setStatus(tn("{n} stroke someone erased came back", "{n} strokes someone erased came back", back));
-    else setStatus(t("Merged with changes made meanwhile"));
-  }
-  // The flush's keepalive requests on their way, by drawing: the upload,
-  // the PUT and an empty group's DELETE, each until it settles, so a later
-  // flush of the same drawing (pagehide after the flush on going hidden)
-  // sends only what is not on its way already (ink/inkFlush.js planFlush).
-  // Their bytes are the page's keepalive ledger's (shared/lib/keepalive.js).
-  const inkFlightRef = useRef(null);
-  if (!inkFlightRef.current) inkFlightRef.current = { uploads: new Map(), puts: new Map(), deletes: new Map() };
-  // Every dirty group's requests start at once, none waiting for another
-  // group's: nothing is sure to run once a closing page is gone, so a loop
-  // waiting for each group would send the first alone. `keepalive`: the
-  // page may be going away (hidden, or pagehide), so the requests outlive
-  // it — those of the groups planFlush fits, group by group in order, into
-  // the page's keepalive room at ink's priority, the lowest (64 KiB of
-  // keepalive bodies in flight at most, or the browser refuses the fetch;
-  // the page's edits and its small requests come first); the rest go as
-  // plain fetches, which a closing page may cut off, and the draft journal
-  // (inkStore) brings what they carried back on the next visit.
-  // `leaving`: the page is going away (pagehide) and nothing is sure to run
-  // once it is gone, so the block's PUT goes beside the upload, naming the
-  // file by its hash (inkStore names a draft's upload ahead), unless the
-  // server will have to merge it (the block names another file than the
-  // draft's base): then the upload must be there first. Only then: a peer
-  // the PUT's op reaches before the upload has landed finds no file. Every
-  // PUT is told to the journal before it goes (inkStore.markSending), since
-  // its answer may never come.
-  const flushInk = useCallback(async ({ keepalive = false, leaving = false } = {}) => {
-    clearTimeout(inkTimerRef.current);
-    inkTimerRef.current = 0;
-    inkDirtySinceRef.current = 0;
-    const json = { "Content-Type": "application/json" };
-    const flight = inkFlightRef.current;
-    const flat = flattenBlocks(blocksRef.current);
-    const groups = inkStore.dirtyDrafts().map((d) => {
-      const block = flat.find((b) => b.id === d.id);
-      // A group erased empty goes, unless its block holds a caption or
-      // notes: those stay, with an empty drawing an undo can refill.
-      if (!d.ink.strokes.length && !(block?.content || "").trim() && !block?.children?.length) {
-        return { ...d, block, remove: true, inFlight: flight.deletes.has(d.ink) ? "delete" : null };
-      }
-      const body = d.upload?.body || serializeInk(d.ink);
-      const putBody = (url) => JSON.stringify({ properties: inkProps(d.ink, url), base_properties: { ink_url: d.base || "" }, base_ids: d.baseIds || [] });
-      return { ...d, block, body, putBody,
-        uploadBytes: bodyBytes(body, KEEPALIVE_CAP),
-        // sized with the upload's name, or with one as long when it is not named yet
-        putBytes: bodyBytes(putBody(d.upload?.url || ""), KEEPALIVE_CAP) + (d.upload ? 0 : inkStore.UPLOAD_NAME_CHARS),
-        beside: leaving && !!d.upload && (block?.properties?.ink_url || "") === (d.base || ""),
-        inFlight: flight.puts.has(d.ink) ? "put" : flight.uploads.has(d.ink) ? "upload" : null };
-    });
-    // A request: through the page's keepalive ledger when the plan gave
-    // its group keepalive (`ka`) and the ledger still has room for its body
-    // at ink's priority — a PUT that waited for its upload's answer is
-    // asked again then — and `track` (flight.uploads, .puts or .deletes)
-    // holds it by drawing until it settles; else a plain fetch.
-    const go = (ka, track, ink, bytes, request) => {
-      if (!ka || bytes > keepaliveRoom("low")) return request();
-      const sent = request({ keepalive: "low" });
-      track.set(ink, sent);
-      return sent.finally(() => { if (track.get(ink) === sent) track.delete(ink); });
-    };
-    const save = async ({ id, ink, block, body, putBody, uploadBytes, upload, beside }, { send, keepalive: ka }) => {
-      if (!send) return;
-      try {
-        if (send === "delete") {
-          await go(ka, flight.deletes, ink, 0, (o) => apiJson(`${API}/blocks/${id}`, { method: "DELETE" }, o));
-          // Keep the empty draft until the tree observes the deletion; the
-          // HTTP response can arrive before the corresponding socket op.
-          inkStore.markDeleted(id, ink, block?.properties?.ink_url || "");
-          return;
-        }
-        const post = () => go(ka, flight.uploads, ink, uploadBytes,
-          (o) => apiJson(`${API}/upload-ink`, { method: "POST", headers: json, body }, o));
-        const put = (url) => {
-          const sent = putBody(url);
-          return go(ka, flight.puts, ink, bodyBytes(sent),
-            (o) => apiJson(`${API}/blocks/${id}`, { method: "PUT", headers: json, body: sent }, o));
-        };
-        // a PUT answered with an error did not land: the journal forgets it
-        const sendPut = (url) => put(url).catch((err) => { if (err?.status) inkStore.markUnsent(id, url); throw err; });
-        let url, saved;
-        if (send === "put" || beside) {
-          // the PUT beside the upload: this flush's, or the one on its way
-          url = upload.url;
-          inkStore.markSending(id, url);
-          [, saved] = await Promise.all([send === "put" ? flight.uploads.get(ink) : post(), sendPut(url)]);
-        } else {
-          url = (await post()).url;
-          await inkStore.markSending(id, url);
-          saved = await sendPut(url);
-        }
-        inkStore.markSaved(id, ink, url, saved?.properties?.ink_url || url);
-        liveSaved(ink);
-        reportInkConflict(saved?.ink_conflict);
-      } catch (err) {
-        const status = err?.status || 0;
-        // A 5xx or a network error, or the block's insert still queued
-        // (404): try again shortly. Any other 4xx will not change on a
-        // retry: the draft stays, behind a pill that stays too.
-        if (retryableStatus(status) || status === 404) {
-          setStatus(t("Handwriting not saved yet: {err}", { err: err.message || err }));
-          if (!inkTimerRef.current) inkTimerRef.current = setTimeout(flushInk, 2000);
-        } else {
-          setStatus(t("Handwriting not saved: {err}", { err: err.message || err }), null, { sticky: true });
-        }
-      }
-    };
-    // a flush the page will live past asks for no keepalive room
-    const plan = planFlush(groups, keepalive ? keepaliveRoom("low") : -Infinity);
-    await Promise.all(groups.map((g, i) => save(g, plan[i])));
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
-  // 700 ms after the last edit, but never more than 5 s after the first
-  // unsaved one, so files land while writing goes on.
-  const inkDirtySinceRef = useRef(0);
-  function scheduleInk() {
-    clearTimeout(inkTimerRef.current);
-    const now = Date.now();
-    if (!inkDirtySinceRef.current) inkDirtySinceRef.current = now;
-    inkTimerRef.current = setTimeout(flushInk, Math.max(0, Math.min(700, inkDirtySinceRef.current + 5000 - now)));
-  }
-  useEffect(() => {
-    // Going to the background flushes at once, with requests that outlive
-    // the page (a phone may freeze or end a hidden tab without a pagehide).
-    // A tab closed while it shows fires pagehide, then visibilitychange in
-    // the same task: pagehide's flush clears the timer, so it is the
-    // close's only one. A tab hidden before it closes flushed on going
-    // hidden, and pagehide sends every draft still unsaved again, its PUT
-    // beside its upload: that flush's requests may not be past their first
-    // step. A drawing that flush is uploading with keepalive sends its PUT
-    // alone, beside that upload (planFlush).
-    const flush = () => { if (inkTimerRef.current) flushInk({ keepalive: document.visibilityState === "hidden" }); };
-    const leave = () => { if (inkTimerRef.current || inkStore.dirtyDrafts().length) flushInk({ keepalive: true, leaving: true }); };
-    window.addEventListener("pagehide", leave);
-    document.addEventListener("visibilitychange", flush);
-    return () => { window.removeEventListener("pagehide", leave); document.removeEventListener("visibilitychange", flush); };
-  }, [flushInk]);
   useEffect(() => () => {
-    // Leaving a page: pending strokes still save (through the block API,
-    // which needs no open tree); the ruler goes (its row with it), the
-    // next stroke starts a fresh group.
-    if (inkTimerRef.current) flushInk();
+    // Leaving a page: the ruler goes (its row with it), the next stroke
+    // starts a fresh group.
     inkActiveRef.current = null;
     inkHistRef.current = { undo: [], redo: [] };
     setInkHistoryState({ undo: 0, redo: 0 });
@@ -6778,13 +6627,6 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     return true;
   }
 
-  // What a stroke's `page` is called in messages: a PDF page's number, a
-  // notebook sheet's place among the sheets.
-  function inkPageNumber(page) {
-    if (typeof page !== "string") return page;
-    const i = nbSheetsRef.current.findIndex((s) => s.id === page);
-    return i >= 0 ? i + 1 : "?";
-  }
   // `page`: a PDF page number, or a notebook sheet's id; `label` the
   // history entry's (the layer's finishStroke names a straight line or a
   // shape, "Undone: ink shape").
@@ -7053,16 +6895,6 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     pickInkTool("select");
     handleInkSelect(page, [{ id: landed.id, ids: landed.ids }]);
   }
-  // Where a paste without a point goes: the notebook's current sheet, else
-  // the PDF page in view, with its size.
-  function pasteTarget() {
-    if (notebook) {
-      const sheet = nbSheetsRef.current.find((s) => s.id === nbCurrent) || nbSheetsRef.current.at(-1);
-      return sheet ? { page: sheet.id, size: { width: sheet.paper.width, height: sheet.paper.height } } : null;
-    }
-    const v = pageInViewRef.current;
-    return v && pdfUrl && !pdfHidden ? { page: v.page, size: v.size } : null;
-  }
   // Ctrl+V, the pill's Paste and More → Paste handwriting: the copied box
   // centred on the surface in view.
   function pasteAtCentre() {
@@ -7070,22 +6902,6 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     if (!target || !clip) return;
     const { page, size } = target, w = clip.box.x2 - clip.box.x1, h = clip.box.y2 - clip.box.y1;
     pasteInk(page, { x: (size.width - w) / 2, y: (size.height - h) / 2 }, size);
-  }
-  // The part of a surface on the screen, in its page points ({x, y, width,
-  // height}): its box (a PDF page's .pdfPageWrap, a sheet's .nbSheet) cut
-  // to its viewer and the window; null when none of it shows.
-  function visiblePart(page, size) {
-    const el = typeof page === "string"
-      ? document.querySelector(`.nbViewer .nbSheet[data-sheet-id="${CSS.escape(page)}"]`) || document.querySelector(`.nbSheet[data-sheet-id="${CSS.escape(page)}"]`)
-      : document.querySelector(`.pdfPageWrap[data-page="${page}"]`);
-    const r = el?.getBoundingClientRect();
-    if (!r?.width || !size?.width) return null;
-    const view = el.closest(".pdfViewer, .nbViewer")?.getBoundingClientRect();
-    const left = Math.max(r.left, view?.left ?? 0, 0), top = Math.max(r.top, view?.top ?? 0, 0);
-    const right = Math.min(r.right, view?.right ?? Infinity, window.innerWidth), bottom = Math.min(r.bottom, view?.bottom ?? Infinity, window.innerHeight);
-    if (right <= left || bottom <= top) return null;
-    const k = r.width / size.width;
-    return { x: (left - r.left) / k, y: (top - r.top) / k, width: (right - left) / k, height: (bottom - top) / k };
   }
   // The ruler (More → Ruler, R): laid level across the surface in view
   // (pasteTarget's) with its row open, or taken away with its row.
@@ -7811,7 +7627,6 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     });
     return () => cancelAnimationFrame(raf);
   }, [notebook, focusedBlockId]); // eslint-disable-line react-hooks/exhaustive-deps
-  const nbInk = useMemo(() => (nbSheets.length ? inkBySheet(blocks) : new Map()), [nbSheets, blocks]);
   // Kept by identity while the numbering is the same (nbSheets is derived
   // from the tree on every edit): a row prop of every block.
   const sheetNumbersPrev = useRef(new Map());
@@ -7975,17 +7790,6 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       prefs={replayPrefs} onShow={replayFollow ? showTick : null} />
   ) : null;
 
-  const inkBySurface = useMemo(() => {
-    const map = new Map();
-    for (const b of inkBlocks) {
-      const p = b.properties?.pdf_position?.pageNumber;
-      if (!p) continue;
-      if (!map.has(p)) map.set(p, []);
-      map.get(p).push(b);
-    }
-    for (const [id, groups] of nbInk) map.set(id, groups);
-    return map;
-  }, [inkBlocks, nbInk]);
   const marks = useMarks({ ink: inkBySurface, inkSelection, inkFlash, boxes: textBoxes.bySurface, boxSel: textBoxes.sel,
     boxFlash: textBoxes.flash });
   const homeMode = !focusedBlockId && lib.browse;

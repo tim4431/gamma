@@ -122,7 +122,7 @@ test("a claim is read once a task: a flush asking for room before every request 
   const ledger = createKeepaliveLedger({ fetch: b.fetch });
   let reads = 0, claim = 10 * KiB;
   ledger.registerClaim("page-edits", () => { reads++; return claim; });
-  // App's flushInk on going hidden: the plan's ask, then each request's own and its fetch's; the reading position
+  // the saver's flushInk (ink/inkSaver.js) on going hidden: the plan's ask, then each request's own and its fetch's; the reading position
   assert.equal(ledger.available("low"), KEEPALIVE_CAP - 10 * KiB - NORMAL_RESERVE);
   for (let i = 0; i < 4; i++) {
     if (2 * KiB <= ledger.available("low")) ledger.fetch("/api/upload-ink", { method: "POST", body: text(2 * KiB) }, { priority: "low" });
@@ -249,7 +249,7 @@ async function closeTab({ edits, drafts, profile = 3 * KiB, readPos = 300, hidde
   const bodies = edits.map((n) => text(n));
   let left = false;   // usePageCollab: nothing more is claimed once pagehide has sent the edits
   ledger.registerClaim("page-edits", () => (left ? 0 : keepaliveShare(bodies)));
-  // App's flushInk: keepalive when the plan fits the group and the ledger still has room, else plain
+  // the saver's flushInk (ink/inkSaver.js): keepalive when the plan fits the group and the ledger still has room, else plain
   const inkRequest = (url, body, ka) => (ka && bodyBytes(body) <= ledger.available("low")
     ? ledger.fetch(url, { method: "POST", body }, { priority: "low" }) : b.fetch(url, { method: "POST", body }));
   const groups = drafts.map((k, i) => ({ id: `g${i}`, uploadBytes: k * KiB, putBytes: 600, beside: false, inFlight: null }));

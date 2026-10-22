@@ -16,9 +16,11 @@ app ([ipad.md](ipad.md)). Typed text on a page is
   `ink/surfaceScale.js`, `ink/gestures.js`, `ink/stabilizer.js`,
   `ink/fingerChords.js`, `ink/stripKeys.js`, `ink/pencilActions.js`,
   `ink/hostInk.js`, `ink/inkStore.js`, `ink/inkJournal.js`,
-  `ink/inkFlush.js`, `ink/inkLive.js`, `ink/grain.js`,
-  `ink/InkStylePicker.jsx`, `ink/InkLayer.jsx`, `ink/ZoomWindow.jsx` and
-  `ink/inkInput.js`. The tool
+  `ink/inkFlush.js`, `ink/inkSaver.js`, `ink/inkLive.js`, `ink/grain.js`,
+  `ink/InkStylePicker.jsx`, `ink/InkLayer.jsx`, `ink/ZoomWindow.jsx`,
+  `ink/inkInput.js`, and the owners of App's handwriting state,
+  `ink/buildFence.js`, `ink/useInkStrip.js`, `ink/useInkLive.js`,
+  `ink/useInkSave.js` and `ink/useInkSurfaces.js`. The tool
   strip and the page plumbing it shares with text boxes are in
   `markup/MarkupToolbar.jsx`, `markup/MarkupLayers.jsx` and
   `markup/PageTools.jsx`.
@@ -28,7 +30,8 @@ app ([ipad.md](ipad.md)). Typed text on a page is
   `gestures.test.mjs`, `stabilizer.test.mjs`, `fingerChords.test.mjs`,
   `stripKeys.test.mjs`, `pencilActions.test.mjs`, `hostInk.test.mjs`,
   `inkInput.test.mjs`, `inkLive.test.mjs`, `inkJournal.test.mjs`,
-  `inkFlush.test.mjs`, `inkRender.test.mjs` and `surfaceScale.test.mjs`.
+  `inkFlush.test.mjs`, `inkSaver.test.mjs`, `inkRender.test.mjs` and
+  `surfaceScale.test.mjs`.
   The benchmarks `tests/bench/inkCache.bench.mjs` and
   `inkErase.bench.mjs` are not part of `npm test`.
 - Shared fixtures in `tests/shared/`: `inkv2.json`, `inkwidth.json`,
@@ -1991,7 +1994,7 @@ reach.
     window, loses only the journal. `frontend/tests/inkJournal.test.mjs`
     runs it on an in-memory IndexedDB.
 - `ink/inkFlush.js` (pure; `frontend/tests/inkFlush.test.mjs` is the
-  proof, since the e2e cannot drive a `pagehide`): what App's `flushInk`
+  proof, since the e2e cannot drive a `pagehide`): what `flushInk`
   sends for each dirty group, and which of it goes with `keepalive`
   ("Fences"). `planFlush(groups, budget) → [{id, send, keepalive}]` takes
   the groups in the flush's order, each `{id, remove, uploadBytes,
@@ -2008,11 +2011,11 @@ reach.
   `PUT` is on its way, or its upload is and the `PUT` cannot go beside
   it). `keepalive` goes to each group, in order, whose bytes
   (`uploadBytes + putBytes`; `putBytes` for a `'put'`; 0 for a `DELETE`,
-  which fits even a room of 0) fit in what is left of `budget`: App
-  passes the room the page's keepalive ledger leaves handwriting
+  which fits even a room of 0) fit in what is left of `budget`: the
+  saver passes the room the page's keepalive ledger leaves handwriting
   (`shared/lib/keepalive.js` `available('low')`, never below 0,
   "Fences"; -Infinity for a flush the page will live past, which asks
-  for none). App sends each request through the ledger
+  for none). The saver sends each request through the ledger
   (`apiJson`'s `{keepalive: 'low'}`), asking again when it starts: a
   `PUT` waiting for its upload's answer may find the room gone and go
   plain. It holds by drawing, until each settles, the upload, the `PUT`
@@ -2771,6 +2774,72 @@ reach.
     held it; `liveSaved(ink)`, which the flush runs after `markSaved`,
     forgets the strokes a saved file holds; leaving the page forgets the
     rest.
+- `ink/useInkSave.js` over `ink/inkSaver.js`: the save. The saver,
+  `createInkSaver({blocksRef, setStatus, liveSaved, inkStore, apiJson,
+  API, keepaliveRoom}) → {flushInk, scheduleInk, pending}`, is handed the
+  draft store, the API and the keepalive room rather than importing them,
+  so `frontend/tests/inkSaver.test.mjs` drives it with fakes and mock
+  timers (the e2e cannot drive a `pagehide` or a failing request).
+  `useInkSave({focusedBlockId, blocksRef, setStatus, liveSaved}) →
+  {flushInk, scheduleInk}`, which App calls after the page's collab
+  session (so its listeners register after collab's), keeps one for the
+  page's life over the real ones. It flushes on `visibilitychange` when
+  a save is pending (with keepalive when hidden), on `pagehide` when one
+  is pending or any draft is dirty (keepalive, `leaving`), and when the
+  open page changes. `scheduleInk()` puts the flush 700 ms after the
+  last edit and at most 5 s after the first unsaved one ("Fences");
+  `pending()` is whether one waits on its timer.
+  - The flush starts every dirty group's requests at once
+    (`ink/inkFlush.js` `planFlush` says what each sends and which go with
+    `keepalive`). It uploads each draft (`POST /api/upload-ink`, the
+    `serializeInk` bytes) and PATCHes its block through `PUT
+    /api/blocks/{id}` with `inkProps` (the url, count and position),
+    `base_properties: {ink_url}`, the file the draft was edited from, and
+    `base_ids`, that file's stroke ids. That is a server-side writer, so
+    the change fans out over the page socket and reaches this tree like a
+    remote op. Only the group's block itself (first stroke) is inserted
+    through the tree. The answer's `ink_conflict` (its block's merge
+    report) goes on the pill (`reportInkConflict`, "Two writers, one
+    group").
+  - A draft remembers its base (`inkStore` drafts: `{ink, dirty, url,
+    base, baseIds}`). When the answer names another file than the upload, the
+    server merged someone else's strokes: `markSaved` loads the merged
+    file and replaces the draft with it, with strokes drawn meanwhile
+    merged on top.
+  - An empty group with no caption and no notes is deleted the same way.
+    Its empty draft keeps masking the saved strokes until the tree sees
+    the deletion (the HTTP response can land before the socket op).
+    `inkStore.markDeleted` marks it clean only after a successful delete,
+    so a failure retries. An empty group with a caption or notes is saved
+    as an empty drawing instead.
+  - A failed flush retries after two seconds on a 5xx, a network error or
+    a 404 (the block's insert may still be queued behind the tree's save);
+    any other 4xx stops the retry and keeps the draft behind a sticky pill
+    (`setStatus(msg, null, {sticky: true})`, "Two writers, one group",
+    "Fences").
+- `ink/useInkSurfaces.js`: the page's ink by surface,
+  `useInkSurfaces({blocks, nbSheets, nbSheetsRef, nbCurrent, notebook,
+  pdfUrl, pdfHidden}) → {inkBlocks, inkBySurface, onPageInView,
+  pasteTarget, inkPageNumber}`, which App calls after the save.
+  - `inkBlocks` is the page's ink groups as `{id, properties}`, the same
+    array while their JSON is (the page marks and the replay's player
+    are built from it). `inkBySurface` maps a PDF page's number to its
+    groups (by their `pdf_position`'s page) and a sheet's id to its own
+    (`notebook/notebook.js` `inkBySheet`).
+  - `pasteTarget()` is where a paste without a point goes, with its size
+    in points: on a notebook the current sheet (`nbCurrent`, else the
+    last) with its paper, else the PDF page in view while a PDF shows.
+    That page comes from `PdfViewer`'s `onPageInView(pageNumber, {width,
+    height})` (one `IntersectionObserver` over the page boxes keeps the
+    intersecting ones, and per scroll frame the one whose centre lies
+    nearest the scroller's centre is reported when it changes, with its
+    size at scale 1).
+  - `inkPageNumber(page)` is what messages call a surface: a PDF page's
+    number, or a sheet's place among the sheets ("?" for one gone).
+  - `visiblePart(page, size)`, exported beside the hook, is the part of
+    a surface's box inside its viewer and the window, in page points, or
+    null when none of it shows: where the ruler and the zoom window
+    first go.
 - `markup/` ([text_boxes.md](text_boxes.md) "Client"):
   - `MarkupToolbar.jsx` `MarkupToolbar` is the strip. Its first row
     (`.pdfInkRow`) is five groups split by `.pdfInkSep`: the presets; the
@@ -2985,34 +3054,6 @@ reach.
     `handleInkStroke` starts a new group on the same surface when the
     current one would pass `GROUP_SPLIT_BYTES` (3 MB) or `MAX_STROKES`
     with the stroke.
-  - The flush starts every dirty group's requests at once
-    (`ink/inkFlush.js` `planFlush` says what each sends and which go with
-    `keepalive`). It uploads each draft (`POST /api/upload-ink`, the
-    `serializeInk` bytes) and PATCHes its block through `PUT
-    /api/blocks/{id}` with `inkProps` (the url, count and position),
-    `base_properties: {ink_url}`, the file the draft was edited from, and
-    `base_ids`, that file's stroke ids. That is a server-side writer, so
-    the change fans out over the page socket and reaches this tree like a
-    remote op. Only the group's block itself (first stroke) is inserted
-    through the tree. The answer's `ink_conflict` (its block's merge
-    report) goes on the pill (`reportInkConflict`, "Two writers, one
-    group").
-  - A draft remembers its base (`inkStore` drafts: `{ink, dirty, url,
-    base, baseIds}`). When the answer names another file than the upload, the
-    server merged someone else's strokes: `markSaved` loads the merged
-    file and replaces the draft with it, with strokes drawn meanwhile
-    merged on top.
-  - An empty group with no caption and no notes is deleted the same way.
-    Its empty draft keeps masking the saved strokes until the tree sees
-    the deletion (the HTTP response can land before the socket op).
-    `inkStore.markDeleted` marks it clean only after a successful delete,
-    so a failure retries. An empty group with a caption or notes is saved
-    as an empty drawing instead.
-  - A failed flush retries after two seconds on a 5xx, a network error or
-    a 404 (the block's insert may still be queued behind the tree's save);
-    any other 4xx stops the retry and keeps the draft behind a sticky pill
-    (`setStatus(msg, null, {sticky: true})`, "Two writers, one group",
-    "Fences").
   - The eraser filter is one function: `ink.js` `eraserKeep(filter) →
     (stroke) => bool` (`'all'` keeps every stroke, `'pen'` tool `pen` of
     any brush, `'highlighter'` tool `highlighter`; a stroke of an unknown
@@ -3118,15 +3159,11 @@ reach.
     clamped so the box stays inside the surface (on a surface too small
     for it, its top-left corner stays on), hands them to
     `handleInkStrokes`, selects them and arms the lasso. `pasteAtCentre()`
-    is it with the box centred on the surface in view (`pasteTarget()`):
-    `pageInViewRef`, fed by `PdfViewer`'s `onPageInView(pageNumber,
-    {width, height})` (one `IntersectionObserver` over the page boxes
-    keeps the intersecting ones, and per scroll frame the one whose centre
-    lies nearest the scroller's centre is reported when it changes, with
-    its size at scale 1), or `nbCurrent` with its paper on a notebook. The
-    commands, the pill's *Paste* and the More menu's row all run it; the
-    page's `onPaste(page, pt, size)` (a held pen or mouse, a right-click)
-    runs `pasteInk` at the point. `duplicateInkSelection()` (Ctrl+D) sends
+    is it with the box centred on the surface in view (`pasteTarget()`,
+    `ink/useInkSurfaces.js`). The commands, the pill's *Paste* and the
+    More menu's row all run it; the page's `onPaste(page, pt, size)` (a
+    held pen or mouse, a right-click) runs `pasteInk` at the point.
+    `duplicateInkSelection()` (Ctrl+D) sends
     `duplicateOffset(inkSelection.page)`, the offset the menu's Duplicate
     sends (`ink/surfaceScale.js`); `selectAllInk()` takes the selection's
     surface, else the one in view.

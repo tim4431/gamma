@@ -1,12 +1,12 @@
 // What a flush of the drafts sends, group by group, and which of it goes
 // with fetch `keepalive` (docs/dev/handwriting.md "Fences"). Pure, so a
-// node test pins it: the e2e cannot drive a pagehide. App's flushInk starts
-// every group's requests at once — nothing is sure to run once a closing
-// page is gone, so a loop waiting for one group before the next would send
-// the first group alone — and asks planFlush which go with keepalive, in
-// the room the page's keepalive ledger leaves handwriting
-// (shared/lib/keepalive.js: the lowest priority, since the draft journal
-// keeps what a lost request carried).
+// node test pins it: the e2e cannot drive a pagehide. inkSaver.js's
+// flushInk starts every group's requests at once — nothing is sure to
+// run once a closing page is gone, so a loop waiting for one group before
+// the next would send the first group alone — and asks planFlush which
+// go with keepalive, in the room the page's keepalive ledger leaves
+// handwriting (shared/lib/keepalive.js: the lowest priority, since the
+// draft journal keeps what a lost request carried).
 
 // groups: the dirty groups in the flush's order, each {id, remove,
 // uploadBytes, putBytes, beside, inFlight} — `remove` the group goes (a

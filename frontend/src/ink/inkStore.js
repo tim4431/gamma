@@ -140,7 +140,7 @@ export function setDraft(id, ink, base = "") {
 // page is gone. A draft edited again before its turn is skipped.
 const DIGEST_CHARS = 24;
 // How long every upload's name is, for sizing a block PUT before its
-// upload is named (App's flush, its keepalive budget).
+// upload is named (inkSaver.js's flush, its keepalive budget).
 export const UPLOAD_NAME_CHARS = "/api/uploads/".length + DIGEST_CHARS + ".ink".length;
 const named = new WeakMap();   // ink → {body, url}
 const bodies = new WeakMap();  // ink → its serializeInk bytes (the upload's, the journal's)

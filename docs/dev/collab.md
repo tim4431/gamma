@@ -814,7 +814,7 @@ gives a request the room of its priority:
   the reading position's `PUT` (App's `flushReadPos`), the discard of an
   unfinished upload in parts (`uploadParts.js`, no body), an Inbox mark
   (`inbox/useInbox.js`). That less what the critical senders claim.
-- `low`, kept by a journal: handwriting (App's `flushInk`,
+- `low`, kept by a journal: handwriting (`ink/inkSaver.js` `flushInk`,
   [handwriting.md](handwriting.md) "Fences"). That less `NORMAL_RESERVE`
   (8 KiB), kept for the normal senders.
 

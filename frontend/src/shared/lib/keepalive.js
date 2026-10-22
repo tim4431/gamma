@@ -7,8 +7,8 @@
 //   'normal'   — small and recoverable: the profile, the reading position,
 //                the discard of an unfinished upload, an Inbox mark. That,
 //                less what the critical senders claim.
-//   'low'      — journal-backed: handwriting (App's flushInk). That, less
-//                NORMAL_RESERVE kept for the normal senders.
+//   'low'      — journal-backed: handwriting (ink/inkSaver.js flushInk).
+//                That, less NORMAL_RESERVE kept for the normal senders.
 // A sender with no other copy claims what it will send at pagehide
 // (registerKeepaliveClaim); a claim is read only when a lower priority asks
 // for room, once a task however often it asks, never on an edit. A request
