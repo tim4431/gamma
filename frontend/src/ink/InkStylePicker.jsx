@@ -71,9 +71,9 @@ const PREVIEW_ICONS = Object.fromEntries(BRUSH_CHOICES.map(([value]) => [value, 
 // The picker's button. `brush` the current brush (a key or 'pen'), `mixed`
 // when the selection's pens differ (the button then says "Mixed"),
 // `trigger` the props its owner's useMenuTrigger gives the button
-// (trigger(kind)): the press, the keyboard's click (a click with no press
-// behind it, e.detail 0), aria-haspopup and aria-expanded. The button shows
-// modeActive while its menu stands open.
+// (trigger(kind)): its id, the press, the keyboard's click (a click with no
+// press behind it, e.detail 0), aria-haspopup and aria-expanded. The button
+// shows modeActive while its menu stands open.
 export function InkStylePicker({ brush, mixed = false, title, trigger }) {
   const name = mixed ? t("Mixed") : brushName(brush);
   return (

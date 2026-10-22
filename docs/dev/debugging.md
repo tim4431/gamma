@@ -465,6 +465,9 @@ frame: no frame of it where it then moves
 ([ui-design.md](ui-design.md#menus-and-popups-open-in-place)).
 `assertMenuFrom` finds a toolbar button's menu 4 px below or above that
 button, by its left edge ([ui-design.md](ui-design.md#menus-and-submenus)).
+`assertMenuRoles` reads an open menu's roles: one `role="menu"` around its
+items, every control in it an item, and no menu around it but a flyout's
+parent. The locator that finds the menu by its name checks the name.
 
 The run is split into groups (`GROUPS` in `tests/e2e/select.mjs`, one per
 scenario file except `notes-pdf-share`, whose scenarios hand data along;
@@ -647,9 +650,9 @@ The scenarios live in `tests/e2e/scenarios/`:
     under their buttons by the left edge (`assertMenuFrom`). A press on
     More while the Tool menu is open swaps the two, and More opened with
     Enter closes on Escape with the focus left on it.
-  - Each of them, and the Tool menu's Hidden tools flyout, reads as one
-    menu named by its button, the Style menu as Pen style
-    (`assertMenuRoles`).
+  - Each of them reads as one menu named by its button, the Style menu as
+    Pen style (`assertMenuRoles`). The Tool menu's Hidden tools flyout is
+    a menu inside it, named by its row.
   - Mouse strokes becoming an ink block with an `.ink` upload, persistence
     across a reload, the eraser, stroke undo/redo, a lasso move + delete
     and the notes card's jump + outline (`/Ink` in the exported PDF is
@@ -814,10 +817,11 @@ The scenarios live in `tests/e2e/scenarios/`:
   the View menu's command rows, the pill's Undo, a notebook's place across
   its views and tabs, the viewer's touch tools, the editing bar's marks,
   and the chat's composer and history rows. Its last step reads those
-  menus as assistive technology does: one `role="menu"` around each
-  menu's items and no other role between (a group aside), a flyout inside
-  its parent, the names
-  ([ui-design.md](ui-design.md#menus-and-submenus)). `--group touch`.
+  menus as assistive technology does
+  ([ui-design.md](ui-design.md#menus-and-submenus)). Each is one
+  `role="menu"` around its items, with no role between them but a group.
+  A flyout sits inside its parent, and a menu a control opens is named by
+  it. `--group touch`.
 - `pdfTouch.mjs`: 400% rendering under an emulated canvas limit, distant-page
   release/repaint, live ink, native touch swipes ([pdf_loading.md](pdf_loading.md)).
   `--only "pdf touch"`.

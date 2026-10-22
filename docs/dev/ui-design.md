@@ -460,24 +460,26 @@ row itself sets passes its own role with `aria-checked`. A toggle is a
 More's Ruler, Shapes and Zoom window). One of a set is a `menuitemradio`
 (`MenuSelect`'s choices, the account menu's workspaces, the player's mode
 and speed, the Style menu's brushes, a `Segmented` inside a menu). A
-folder row's check in Move to folder (a page's) or Move to (a folder's),
-where it is already, is no state the row sets: it stays a `menuitem`, and
-its title says so. A `MenuSelect` with headings puts each set of radios
-in a `group` named by its heading. Every
-other control in a menu is a `menuitem` too (the account card, a notice's
-link, which the notice's sentence describes, the highlight menu's
-colours), with no other role between it and its menu or group: a
-notice is no `status` region there. The one control that is no item is
-the page menu's "New label…" field, a text box in the labels flyout,
-which the menu role has no place for. A flyout is a menu of its own inside its
-row's wrapper, as the pattern nests a submenu, so a flyout's rows sit in
-two menus and every other row in exactly one; no element adds a second
-`role="menu"` around rows that already have one. Outside a menu (a dialog's
-list, the Add popover, a settings popover) a `MenuItem` stays a plain
-button, and a `ContextMenu` that holds something else passes
-`role="none"`: the handwriting selection menu and the text box menu are
-toolbars, the model picker's list is a listbox. The selection menu's Style
-picker opens a menu of its own, portalled outside that toolbar.
+`MenuSelect` with headings puts each set of radios in a `group` named by
+its heading. In Move to folder (a page's) and Move to (a folder's) a check
+marks the folder it is in. That is no state the row sets, so the row stays
+a `menuitem`, and its title says so.
+
+Every other control in a menu is a `menuitem` too: the account card, a
+notice's link and the highlight menu's colours. No other role stands
+between an item and its menu or group, so a notice is no `status` region
+there, and its sentence describes its link. The one control that is no
+item is the page menu's "New label…" field, a text box in the labels
+flyout, which the menu role has no place for. A flyout is a menu of its
+own inside its row's wrapper, as the pattern nests a submenu. So a
+flyout's rows sit in two menus and every other row in exactly one. No
+element adds a second `role="menu"` around rows that already have one.
+Outside a menu (a dialog's list, the Add popover, a settings popover) a
+`MenuItem` stays a plain button. A `ContextMenu` that holds something
+else passes `role="none"`: the handwriting selection menu and the text
+box menu are toolbars, and the model picker's list is a listbox. The
+selection menu's Style picker opens a menu of its own, portalled outside
+that toolbar.
 
 A menu is named by what opens it. `MenuSelect`, `ActionMenu`, a flyout
 and every `useMenuTrigger` menu (the player's mode and speed, the strip's
@@ -485,16 +487,16 @@ More and Tool) point `aria-labelledby` at their button or row. Another
 menu with a button of its own takes that button's name as its
 `aria-label` (Account & settings, View, Document, Export chat, Translate,
 Comment actions, Recording actions, Table options). The Style menu is
-named Pen style, not by its picker, whose name is the brush it shows. The
-dropdowns' buttons, every `useMenuTrigger` button, a flyout's row, the
-account, View and Document buttons and the chat's export button say
+named Pen style, not by its picker, whose name is the brush it shows. A
+context menu opens at the pointer, on a right-click, a held finger or a
+row's "⋯" standing in for them. No control of its own names it, so it
+goes without a name, as a native context menu does. The dropdowns'
+buttons, every `useMenuTrigger` button, a flyout's row, the account, View
+and Document buttons and the chat's export button say
 `aria-haspopup="menu"` and `aria-expanded`. A `MenuButton` says
-`aria-haspopup` alone. A context menu, opened at the pointer by a
-right-click, a held finger or a row's "⋯" standing in for them, has no
-control of its own to name it and goes without a name, as a native
-context menu does. The roles leave the keyboard and focus as they were:
-the rows are Tab stops, and the pattern's arrow keys and focus moving
-into a menu as it opens are not built. The browser suite's
+`aria-haspopup` alone. The roles change neither the keyboard nor the
+focus. The rows are Tab stops, and the pattern's arrow keys and its focus
+moving into an opening menu are not built. The browser suite's
 `assertMenuRoles` (harness.mjs) reads an open menu this way. The last
 step of `touch.mjs` calls it, and so do the handwriting and replay steps
 that open the strip's, the selection's and the player's menus.
