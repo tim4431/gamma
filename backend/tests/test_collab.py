@@ -167,6 +167,14 @@ def test_ops_insert_retry_is_idempotent(guest):
 
 def test_ops_that_drop_an_upload_hand_it_to_the_orphan_check(guest, monkeypatch):
     from gamma import upload_gc
+    ws = workspace_of(guest_name())
+    # The guest workspace serves every file on this worker: names another
+    # file's ops dropped (test_ink.py's replaced ink files) can still be
+    # waiting out their debounce in its queue. Check them now, and keep the
+    # thread off this test's own, so the flush at the end holds only this
+    # test's names.
+    upload_gc.flush(ws)
+    monkeypatch.setattr(upload_gc, "DEBOUNCE_S", 3600)
     monkeypatch.setattr(upload_gc, "UPLOAD_GRACE_S", 0)
     scheduled = []
     real = upload_gc.schedule
@@ -181,7 +189,7 @@ def test_ops_that_drop_an_upload_hand_it_to_the_orphan_check(guest, monkeypatch)
     # a plain text edit hands over nothing (no reference could have gone)
     assert _ops(guest, page["id"], [{"op": "set", "id": "swA", "content": "plainer"}]).status_code == 200
     assert scheduled == [[], [name], []]
-    assert upload_gc.flush(workspace_of(guest_name())) == {workspace_of(guest_name()): [name]}
+    assert upload_gc.flush(ws) == {ws: [name]}
 
 
 def test_ops_log_prunes_and_catchup_reports_gap(guest, monkeypatch):

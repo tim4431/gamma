@@ -1149,9 +1149,17 @@ const BlockCmEditor = React.forwardRef(function BlockCmEditor({
   // An own history starts afresh on them: a sent comment's field emptying
   // is no edit to undo, and the typing before it belongs to the sent text
   // (dropping history() and adding it back gives it a new, empty state).
+  // Not on the first run: the view was made from this same value at mount,
+  // so a difference then is typing that came first. An editor opened
+  // outside an input event (a new block from the command palette) runs its
+  // effects a task after it has the focus, and the browser handles a key
+  // before that task: the sync took the letter out and put it back behind
+  // the caret ("before" typed as "eforeb").
+  const mountedRef = useRef(false);
   useEffect(() => {
     const view = viewRef.current;
     if (!view) return;
+    if (!mountedRef.current) { mountedRef.current = true; return; }
     const cur = view.state.doc.toString();
     const next = value || "";
     if (next === cur) return;

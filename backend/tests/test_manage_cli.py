@@ -269,9 +269,12 @@ def test_offsite_and_litestream_config_run_before_the_schema_guard(tmp_path):
     env["GAMMA_DATA_DIR"] = str(tmp_path)
     backend = Path(__file__).resolve().parents[1]
 
+    # UTF-8 both ways: the output says "Settings → Backups", and the
+    # locale's codec (cp936 on a Chinese Windows) cannot read what a child
+    # that inherited PYTHONIOENCODING=utf-8 writes.
     def run(*args, **extra):
-        return subprocess.run([sys.executable, "manage.py", *args], cwd=backend, capture_output=True, text=True,
-                              timeout=60, env={**env, **extra})
+        return subprocess.run([sys.executable, "manage.py", *args], cwd=backend, capture_output=True,
+                              encoding="utf-8", timeout=60, env={**env, "PYTHONIOENCODING": "utf-8", **extra})
 
     listed = run("offsite", "--list")
     assert listed.returncode == 2 and "The bucket cannot be used: no bucket is set" in listed.stdout, listed.stderr

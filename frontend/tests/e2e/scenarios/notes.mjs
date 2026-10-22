@@ -319,7 +319,15 @@ export async function noteScenarios({ server, browser, alice, step, until, sleep
     await palette.getByRole("textbox").fill(">new block above");
     await until(async () => /New block above/.test(await palette.locator('[role="option"][aria-selected="true"]').textContent()));
     await page.keyboard.press("Enter");
-    await page.waitForSelector(".blockEditorCm .cm-content", { timeout: 5000 });
+    // The new block's editor has the focus, the caret at its start (the
+    // empty doc shows its placeholder widget after the caret).
+    await until(() => page.evaluate(() => {
+      const ed = document.activeElement?.closest(".blockEditorCm .cm-content");
+      const sel = document.getSelection();
+      if (!ed || !(ed.querySelector(".cm-placeholder") || ed.textContent === "") || !sel?.anchorNode || !ed.contains(sel.anchorNode)) return false;
+      const r = document.createRange(); r.setStart(ed, 0); r.setEnd(sel.anchorNode, sel.anchorOffset);
+      return r.toString() === "";
+    }), { what: "the new block's editor focused, caret at its start" });
     await page.keyboard.type("before");
     await saved([{ content: "first", children: [{ content: "second", children: [] }] }, { content: "before", children: [] }, { content: "third", children: [] }], "new block above");
     await page.keyboard.press("Control+Shift+p");

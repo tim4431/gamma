@@ -346,11 +346,22 @@ names with the module's area (`bk_admin`, `ca_alice`), create them through
 `guest` fixture's workspace. That fixture's account is
 `conftest.guest_name()`, a fresh `guest-…` name per run; never write
 `"guest"`. `make_user` fails the run when a second module asks for a name
-another module already created. Run them with the project venv's
-interpreter (`venv/Scripts/python.exe` on Windows): the two vector-math
-tests need `ziamath` from `requirements.txt`, and a system/conda `python`
-without it fails them with "ziamath is not importable" rather than a
-puzzling path count.
+another module already created. The upload GC's queue is shared the same
+way: the names a batch dropped wait `DEBOUNCE_S` in their workspace's queue
+for the module's thread, so a test that checks what `upload_gc.flush`
+returns for the `guest` workspace flushes it first, or it also gets the
+names another file dropped a moment before (`test_ink.py`'s ink files),
+and sets `DEBOUNCE_S` high, so the thread leaves its own names to that
+flush (as `test_upload_gc.py`'s `gc` fixture does).
+Run them with the project venv's interpreter (`venv/Scripts/python.exe` on
+Windows): the two vector-math tests need `ziamath` from `requirements.txt`,
+and a system/conda `python` without it fails them with "ziamath is not
+importable" rather than a puzzling path count. A test that reads a child
+Python's output (`manage.py` in a subprocess) decodes it as UTF-8 and sets
+`PYTHONIOENCODING=utf-8` in the child's environment: `text=True` decodes
+with the locale's codec (cp936 on a Chinese Windows), and a child that
+inherited `PYTHONIOENCODING=utf-8` writes UTF-8, so a "→" in its output
+fails the read.
 
 `conftest.py` also holds what several files share: the `data_dir` fixture
 (a data directory of the test's own, for the migration, backup and startup
@@ -517,6 +528,19 @@ past flakes, and their fixes:
 - A slow round the app runs by itself (a 20 s poll, a 30 s scheduler round):
   trigger it the way a user would (the tab regaining visibility), or make
   the app start it at once when that is the right behaviour anyway.
+- Typing the moment an editor opens outside an input event (a palette
+  command runs from a timer): React runs that commit's effects a task later,
+  and the browser handles a key before them. `BlockCmEditor`'s value sync
+  took such a first letter out and put it back behind the caret ("before"
+  saved as "eforeb") until it skipped its mount run. An effect that undoes
+  typing is the app's bug; the step still waits for the editor's focus and
+  caret before it types.
+- A wait whose condition an earlier state already meets. The chat's Retry
+  step waited for two messages with an error kind, which the refused first
+  request had already saved. It now waits for the retried answer's
+  `overloaded` kind. In the same way the chat offers the generic effort
+  levels until `model-info` answers, so the effort step waits with
+  `until()` for the model's own levels instead of reading the menu once.
 
 Open: `ink edit: pen resumes writing…` once missed a tap on the stroke on a
 loaded 4-core run. Stale layout, a long-press cancel and the undo's
