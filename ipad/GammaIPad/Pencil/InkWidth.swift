@@ -55,7 +55,10 @@ enum InkWidth {
         case .pen: return clamp(1 + (p - 0.5), 0, 2)
         case .monoline: return nil
         case .brush: return 2 * p
-        case .pencil: return clamp((1 + (p - 0.5)) * (1 + 2 * (1 - clamp(s.a ?? 90, 0, 90) / 90)), 0, 4)
+        case .pencil:
+            let lean: Double = 1 - clamp(s.a ?? 90, 0, 90) / 90
+            let growth: Double = 1 + 2 * lean
+            return clamp((1 + (p - 0.5)) * growth, 0, 4)
         case .calligraphy: return calligraphy(s, travel: nil, nib: 45)
         }
     }
@@ -68,10 +71,14 @@ enum InkWidth {
     /// a little wider with pressure, capped at 4 (finishStroke.js
     /// BRUSHES.calligraphy).
     static func calligraphy(_ s: Sample, travel: (dx: Double, dy: Double)?, nib: Double) -> Double {
-        let r = nib * .pi / 180
+        let r: Double = nib * .pi / 180
         var across = 1.0
-        if let d = travel { across = abs(d.dx * sin(r) + d.dy * cos(r)) / hypot(d.dx, d.dy) }
-        return clamp(max(nibHair, across) * (0.85 + 0.3 * pressureOf(s)), 0, 4)
+        if let d = travel {
+            let sine: Double = d.dx * sin(r) + d.dy * cos(r)
+            across = abs(sine) / hypot(d.dx, d.dy)
+        }
+        let press: Double = 0.85 + 0.3 * pressureOf(s)
+        return clamp(max(nibHair, across) * press, 0, 4)
     }
 
     /// The direction a stroke travels at sample `i` (finishStroke.js
@@ -87,7 +94,7 @@ enum InkWidth {
         var tries = [step(max(i - 1, 0), min(i + 1, n - 1))]
         if i > 0 { tries.append(step(i - 1, i)) }
         if i < n - 1 { tries.append(step(i, i + 1)) }
-        return tries.first { hypot($0.dx, $0.dy) > 1e-9 }
+        return tries.first { (t: (dx: Double, dy: Double)) -> Bool in hypot(t.dx, t.dy) > 1e-9 }
     }
 
     /// The Pencil's opacity law: pressure darkens it.
@@ -119,8 +126,8 @@ enum InkWidth {
         guard hasWidths(tool: tool, brush: brush, pressure: pressure, shape: shape), !samples.isEmpty else { return nil }
         if brush == .calligraphy {
             let read = pressure && samples[0].p != nil
-            return samples.indices.map { i -> Double in
-                let s = read ? samples[i] : Sample(x: samples[i].x, y: samples[i].y, p: 0.5, a: nil)
+            return samples.indices.map { (i: Int) -> Double in
+                let s: Sample = read ? samples[i] : Sample(x: samples[i].x, y: samples[i].y, p: 0.5, a: nil)
                 return round3(calligraphy(s, travel: travel(samples, at: i), nib: nib))
             }
         }
@@ -130,16 +137,20 @@ enum InkWidth {
         let simulated = read ? nil : simulatedPressure(samples, size: size)
         var arc = [Double](repeating: 0, count: samples.count)
         for i in samples.indices.dropFirst() {
-            arc[i] = arc[i - 1] + hypot(samples[i].x - samples[i - 1].x, samples[i].y - samples[i - 1].y)
+            let dx: Double = samples[i].x - samples[i - 1].x
+            let dy: Double = samples[i].y - samples[i - 1].y
+            arc[i] = arc[i - 1] + hypot(dx, dy)
         }
         let total = arc[arc.count - 1]
         let most = live ? Double.infinity : total / 2
         let start = min(taperStart * size, most)
         let end = min(taperEnd * size, most)
-        return samples.indices.map { i -> Double in
-            let ts = arc[i] < start ? easeOutSine(arc[i] / start) : 1
-            let te = !live && total - arc[i] < end ? easeOutSine((total - arc[i]) / end) : 1
-            let s = simulated.map { Sample(x: samples[i].x, y: samples[i].y, p: $0[i], a: nil) } ?? samples[i]
+        return samples.indices.map { (i: Int) -> Double in
+            let ts: Double = arc[i] < start ? easeOutSine(arc[i] / start) : 1
+            let te: Double = !live && total - arc[i] < end ? easeOutSine((total - arc[i]) / end) : 1
+            let s: Sample = simulated.map { (pressures: [Double]) -> Sample in
+                Sample(x: samples[i].x, y: samples[i].y, p: pressures[i], a: nil)
+            } ?? samples[i]
             return round3(clamp((law(.brush, s) ?? 0) * min(ts, te), brushMin, brushMax))
         }
     }
@@ -168,8 +179,11 @@ enum InkWidth {
         var p = 0.5
         for i in samples.indices {
             if i > 0 {
-                let step = min(1, hypot(samples[i].x - samples[i - 1].x, samples[i].y - samples[i - 1].y) / size)
-                p = min(1, p + (1 - step - p) * step * simulateRate)
+                let dx: Double = samples[i].x - samples[i - 1].x
+                let dy: Double = samples[i].y - samples[i - 1].y
+                let step: Double = min(1, hypot(dx, dy) / size)
+                let next: Double = p + (1 - step - p) * step * simulateRate
+                p = min(1, next)
             }
             out.append(p)
         }

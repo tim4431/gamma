@@ -49,7 +49,7 @@ final class LiveStrokeView: UIView {
         let line = active ?? newLayer(for: tool)
         active = line
         line.frame = bounds
-        let width = CGFloat(max(tool.size, 0.5))
+        let width: CGFloat = CGFloat(max(tool.size, 0.5))
         let color = UIColor(cssHex: tool.color) ?? .label
         let ink = color.withAlphaComponent(CGFloat(tool.opacity))
         if let shape {
@@ -81,7 +81,7 @@ final class LiveStrokeView: UIView {
             } else if let widths = InkWidth.widths(read, tool: tool.kind, brush: tool.brush, pressure: tool.pressure,
                                                     size: tool.size, live: true,
                                                     nib: tool.liveNib(roll: samples.first.flatMap { $0.count > 6 ? $0[6] : nil })) {
-                var radii = widths.map { CGFloat(max(tool.size * $0, 0.5)) / 2 }
+                var radii: [CGFloat] = widths.map { (w: Double) -> CGFloat in CGFloat(max(tool.size * w, 0.5)) / 2 }
                 // the predicted points at the width the stroke has reached
                 if let last = radii.last, points.count > radii.count {
                     radii += Array(repeating: last, count: points.count - radii.count)
@@ -90,7 +90,11 @@ final class LiveStrokeView: UIView {
                 // A Pencil shades with its pressure: here at the band of its
                 // mean so far, untextured (its grain comes with the web's stroke).
                 let shades = InkWidth.opacities(read, tool: tool.kind, brush: tool.brush, pressure: tool.pressure)
-                let shade = shades.map { InkWidth.opacityBand($0.reduce(0, +) / Double(max($0.count, 1))) } ?? 1
+                let shade: Double = shades.map { (o: [Double]) -> Double in
+                    let sum: Double = o.reduce(0, +)
+                    let n: Double = Double(max(o.count, 1))
+                    return InkWidth.opacityBand(sum / n)
+                } ?? 1
                 Self.fill(line, path: Self.ribbon(kept, radii: keptRadii),
                           color: color.withAlphaComponent(CGFloat(tool.opacity * shade)))
             } else {
@@ -166,7 +170,9 @@ final class LiveStrokeView: UIView {
     }
 
     private static func point(_ sample: [Double]) -> CGPoint {
-        CGPoint(x: sample.first ?? 0, y: sample.count > 1 ? sample[1] : 0)
+        let x: Double = sample.first ?? 0
+        let y: Double = sample.count > 1 ? sample[1] : 0
+        return CGPoint(x: x, y: y)
     }
 
     /// The ribbon's points without those closer than half a point to the
@@ -179,7 +185,8 @@ final class LiveStrokeView: UIView {
         for i in 1..<n {
             let p = points[i], q = keptPoints[keptPoints.count - 1]
             let dx = p.x - q.x, dy = p.y - q.y
-            if dx * dx + dy * dy >= 0.25 || i == n - 1 {
+            let distanceSquared: CGFloat = dx * dx + dy * dy
+            if distanceSquared >= 0.25 || i == n - 1 {
                 keptPoints.append(p)
                 keptRadii.append(radii[i])
             }
@@ -222,10 +229,11 @@ final class LiveStrokeView: UIView {
             // the unit normal to the left of the direction of travel
             let nx = -dy / length, ny = dx / length
             let ra = max(radii[i - 1], 0), rb = max(radii[i], 0)
-            path.addLines(between: [
-                CGPoint(x: a.x - nx * ra, y: a.y - ny * ra), CGPoint(x: b.x - nx * rb, y: b.y - ny * rb),
-                CGPoint(x: b.x + nx * rb, y: b.y + ny * rb), CGPoint(x: a.x + nx * ra, y: a.y + ny * ra),
-            ])
+            let rightA: CGPoint = CGPoint(x: a.x - nx * ra, y: a.y - ny * ra)
+            let rightB: CGPoint = CGPoint(x: b.x - nx * rb, y: b.y - ny * rb)
+            let leftB: CGPoint = CGPoint(x: b.x + nx * rb, y: b.y + ny * rb)
+            let leftA: CGPoint = CGPoint(x: a.x + nx * ra, y: a.y + ny * ra)
+            path.addLines(between: [rightA, rightB, leftB, leftA])
             path.closeSubpath()
         }
         return path

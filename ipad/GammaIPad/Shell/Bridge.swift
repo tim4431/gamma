@@ -137,7 +137,7 @@ struct InkTool: Decodable, Equatable {
     /// the roll, (nib − roll) mod 180 — the page's strokeNib.
     func liveNib(roll: Double?) -> Double {
         guard nibRoll, let roll, roll.isFinite else { return Double(nib) }
-        let turned = (Double(nib) - roll).rounded().truncatingRemainder(dividingBy: 180)
+        let turned: Double = (Double(nib) - roll).rounded().truncatingRemainder(dividingBy: 180)
         return turned < 0 ? turned + 180 : turned
     }
 
@@ -158,7 +158,8 @@ struct InkTool: Decodable, Equatable {
         // A level is a number, rounded and held to 0…4.
         let level = (try? c.decodeIfPresent(Double.self, forKey: .stabilize)).flatMap { value -> Int? in
             guard value.isFinite else { return nil }
-            return Int(min(4, max(0, value.rounded())))
+            let clamped: Double = min(4, max(0, value.rounded()))
+            return Int(clamped)
         }
         // A nib is a number, rounded and turned into 0…179.
         let nib = (try? c.decodeIfPresent(Double.self, forKey: .nib)).flatMap { value -> Int? in
@@ -228,7 +229,7 @@ extension WebMessage: Decodable {
             self = .servers
         case "haptic":
             let kind = (try? c.decodeIfPresent(String.self, forKey: .kind)).flatMap { HapticKind(rawValue: $0) } ?? .tool
-            let at = (try? c.decodeIfPresent(Point.self, forKey: .at)).map { CGPoint(x: $0.x, y: $0.y) }
+            let at: CGPoint? = (try? c.decodeIfPresent(Point.self, forKey: .at)).map { (p: Point) -> CGPoint in CGPoint(x: p.x, y: p.y) }
             self = .haptic(kind: kind, at: at)
         default:
             throw DecodingError.dataCorruptedError(forKey: .type, in: c, debugDescription: "unknown message \(type)")

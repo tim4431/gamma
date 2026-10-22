@@ -60,13 +60,16 @@ struct HeldShape: Equatable {
             path.addLines(between: corners)
             path.closeSubpath()
         case .circle:
-            let r = value("r")
-            path.addEllipse(in: CGRect(x: value("cx") - r, y: value("cy") - r, width: 2 * r, height: 2 * r))
+            let r: Double = value("r")
+            let x: Double = value("cx") - r, y: Double = value("cy") - r, diameter: Double = 2 * r
+            path.addEllipse(in: CGRect(x: x, y: y, width: diameter, height: diameter))
         case .ellipse:
-            let rx = value("rx"), ry = value("ry")
-            let place = CGAffineTransform(translationX: CGFloat(value("cx")), y: CGFloat(value("cy")))
-                .rotated(by: CGFloat(value("angle") / Self.degrees))
-            path.addEllipse(in: CGRect(x: -rx, y: -ry, width: 2 * rx, height: 2 * ry), transform: place)
+            let rx: Double = value("rx"), ry: Double = value("ry")
+            let turn: CGFloat = CGFloat(value("angle") / Self.degrees)
+            let place: CGAffineTransform = CGAffineTransform(translationX: CGFloat(value("cx")), y: CGFloat(value("cy")))
+                .rotated(by: turn)
+            let x: Double = -rx, y: Double = -ry, width: Double = 2 * rx, height: Double = 2 * ry
+            path.addEllipse(in: CGRect(x: x, y: y, width: width, height: height), transform: place)
         }
         return path
     }
@@ -74,35 +77,46 @@ struct HeldShape: Equatable {
     /// An arrow's polyline (shapes.js arrowPolyline): the barbs at 30° to the shaft.
     private var arrowPoints: [CGPoint] {
         let tail = point("x1", "y1"), tip = point("x2", "y2")
-        let tx = Double(tip.x), ty = Double(tip.y)
-        let along = hypot(Double(tail.x) - tx, Double(tail.y) - ty)
-        let length = along > 0 ? along : 1
-        let head = params["head"] ?? min(length / 4, 24)
+        let tx: Double = Double(tip.x), ty: Double = Double(tip.y)
+        let along: Double = hypot(Double(tail.x) - tx, Double(tail.y) - ty)
+        let length: Double = along > 0 ? along : 1
+        let head: Double = params["head"] ?? min(length / 4, 24)
         // back along the shaft, from the tip
-        let bx = (Double(tail.x) - tx) / length, by = (Double(tail.y) - ty) / length
-        let barbs = [1.0, -1.0].map { sign -> CGPoint in
-            let a = sign * 30 / Self.degrees
-            return CGPoint(x: tx + head * (bx * cos(a) - by * sin(a)), y: ty + head * (bx * sin(a) + by * cos(a)))
+        let bx: Double = (Double(tail.x) - tx) / length, by: Double = (Double(tail.y) - ty) / length
+        let signs: [Double] = [1.0, -1.0]
+        let barbs: [CGPoint] = signs.map { (sign: Double) -> CGPoint in
+            let a: Double = sign * 30 / Self.degrees
+            let x: Double = tx + head * (bx * cos(a) - by * sin(a))
+            let y: Double = ty + head * (bx * sin(a) + by * cos(a))
+            return CGPoint(x: x, y: y)
         }
         return [tail, tip, barbs[0], tip, barbs[1]]
     }
 
     /// A rectangle's or a polygon's corners in order (shapes.js shapeCorners).
     private var corners: [CGPoint] {
-        let cx = value("cx"), cy = value("cy"), angle = value("angle")
+        let cx: Double = value("cx"), cy: Double = value("cy"), angle: Double = value("angle")
         if kind == .rect {
-            let turn = angle / Self.degrees, c = cos(turn), s = sin(turn)
-            let hw = value("w") / 2, hh = value("h") / 2
-            return [(-hw, -hh), (hw, -hh), (hw, hh), (-hw, hh)].map { corner -> CGPoint in
-                CGPoint(x: cx + corner.0 * c - corner.1 * s, y: cy + corner.0 * s + corner.1 * c)
+            let turn: Double = angle / Self.degrees, c: Double = cos(turn), s: Double = sin(turn)
+            let hw: Double = value("w") / 2, hh: Double = value("h") / 2
+            // Typed step by step: as one inferred expression (the offsets, the
+            // closure and the point at once) it was more than Swift's type
+            // checker would solve in reasonable time.
+            let offsets: [(Double, Double)] = [(-hw, -hh), (hw, -hh), (hw, hh), (-hw, hh)]
+            return offsets.map { (corner: (Double, Double)) -> CGPoint in
+                let x: Double = cx + corner.0 * c - corner.1 * s
+                let y: Double = cy + corner.0 * s + corner.1 * c
+                return CGPoint(x: x, y: y)
             }
         }
-        let sides = Self.jsRound(value("n"))
-        let n = sides.isFinite ? Int(min(max(sides, 3), 64)) : 3
-        let r = value("r")
-        return (0..<n).map { i -> CGPoint in
-            let a = (angle + 360 / Double(n) * Double(i)) / Self.degrees
-            return CGPoint(x: cx + r * cos(a), y: cy + r * sin(a))
+        let sides: Double = Self.jsRound(value("n"))
+        let n: Int = sides.isFinite ? Int(min(max(sides, 3), 64)) : 3
+        let r: Double = value("r")
+        return (0..<n).map { (i: Int) -> CGPoint in
+            let a: Double = (angle + 360 / Double(n) * Double(i)) / Self.degrees
+            let x: Double = cx + r * cos(a)
+            let y: Double = cy + r * sin(a)
+            return CGPoint(x: x, y: y)
         }
     }
 
@@ -116,26 +130,29 @@ struct HeldShape: Equatable {
     /// to `pointer`, a rectangle or a triangle keeping its proportions.
     /// Normalised and rounded as the web's recogniser returns a shape.
     func refit(pointer: CGPoint, from: CGPoint) -> HeldShape {
-        let px = Double(pointer.x), py = Double(pointer.y)
+        let px: Double = Double(pointer.x), py: Double = Double(pointer.y)
         if kind == .line || kind == .arrow {
-            var out = ["x1": value("x1"), "y1": value("y1"), "x2": Self.round2(px), "y2": Self.round2(py)]
+            var out: [String: Double] = ["x1": value("x1"), "y1": value("y1"), "x2": Self.round2(px), "y2": Self.round2(py)]
             if kind == .arrow, let head = params["head"] { out["head"] = head }
             return HeldShape(kind: kind, params: out)
         }
         let centre = self.centre
-        let ox = Double(from.x) - centre.x, oy = Double(from.y) - centre.y
-        let reach = hypot(ox, oy)
-        let scale = reach > 1e-6 ? hypot(px - centre.x, py - centre.y) / reach : 1
-        let deg = reach > 1e-6 ? (atan2(py - centre.y, px - centre.x) - atan2(oy, ox)) * Self.degrees : 0
-        let rad = deg / Self.degrees
-        let angle = value("angle") + deg
+        let ox: Double = Double(from.x) - centre.x, oy: Double = Double(from.y) - centre.y
+        let reach: Double = hypot(ox, oy)
+        let scale: Double = reach > 1e-6 ? hypot(px - centre.x, py - centre.y) / reach : 1
+        let deg: Double = reach > 1e-6 ? (atan2(py - centre.y, px - centre.x) - atan2(oy, ox)) * Self.degrees : 0
+        let rad: Double = deg / Self.degrees
+        let angle: Double = value("angle") + deg
         switch kind {
         case .triangle:
             var out: [String: Double] = [:]
-            for (xKey, yKey) in [("x1", "y1"), ("x2", "y2"), ("x3", "y3")] {
-                let dx = (value(xKey) - centre.x) * scale, dy = (value(yKey) - centre.y) * scale
-                out[xKey] = centre.x + dx * cos(rad) - dy * sin(rad)
-                out[yKey] = centre.y + dx * sin(rad) + dy * cos(rad)
+            let keys: [(String, String)] = [("x1", "y1"), ("x2", "y2"), ("x3", "y3")]
+            for (xKey, yKey) in keys {
+                let dx: Double = (value(xKey) - centre.x) * scale, dy: Double = (value(yKey) - centre.y) * scale
+                let x: Double = centre.x + dx * cos(rad) - dy * sin(rad)
+                let y: Double = centre.y + dx * sin(rad) + dy * cos(rad)
+                out[xKey] = x
+                out[yKey] = y
             }
             return HeldShape(kind: kind, params: Self.rounded(out))
         case .rect:
@@ -167,7 +184,9 @@ struct HeldShape: Equatable {
     /// centroid, else its centre.
     private var centre: (x: Double, y: Double) {
         if kind == .triangle {
-            return ((value("x1") + value("x2") + value("x3")) / 3, (value("y1") + value("y2") + value("y3")) / 3)
+            let x: Double = (value("x1") + value("x2") + value("x3")) / 3
+            let y: Double = (value("y1") + value("y2") + value("y3")) / 3
+            return (x, y)
         }
         return (value("cx"), value("cy"))
     }
@@ -256,11 +275,11 @@ struct ShapeHold: Equatable {
     /// The shape for the stroke's samples so far (`[x, y, p, t, …]`, as
     /// StrokeRecorder makes them), or nil once it was dropped.
     func current(_ samples: [[Double]]) -> HeldShape? {
-        let fx = Double(from.x), fy = Double(from.y)
+        let fx: Double = Double(from.x), fy: Double = Double(from.y)
         var refitting = false
         var latest: CGPoint?
         for s in samples.dropFirst(max(0, n)) where s.count >= 4 {
-            let moved = hypot(s[0] - fx, s[1] - fy)
+            let moved: Double = hypot(s[0] - fx, s[1] - fy)
             if moved > Self.cancelSlop && s[3] - tSnap <= Self.cancelWindow { return nil }
             if moved >= Self.refitSlop { refitting = true }
             latest = CGPoint(x: s[0], y: s[1])

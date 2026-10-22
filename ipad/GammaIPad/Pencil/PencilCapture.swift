@@ -314,8 +314,9 @@ struct HoldWatch: Equatable {
         guard let next = due(recorder), now >= next.time - 0.005 else { return false }
         let samples = recorder.samples
         let last = samples[samples.count - 1]
-        pending = Ask(anchor: next.anchor, n: samples.count, from: CGPoint(x: last[0], y: last[1]),
-                      tSnap: samples[next.anchor][3] + PencilCapture.holdDelay * 1000)
+        let from: CGPoint = CGPoint(x: last[0], y: last[1])
+        let tSnap: Double = samples[next.anchor][3] + PencilCapture.holdDelay * 1000
+        pending = Ask(anchor: next.anchor, n: samples.count, from: from, tSnap: tSnap)
         return true
     }
 
@@ -385,7 +386,11 @@ struct ClaimQueue<Touch: Hashable> {
     mutating func claim(near point: CGPoint, at now: TimeInterval) -> Touch? {
         forget(before: now)
         let reach = self.reach
-        guard let i = entries.firstIndex(where: { hypot(Double($0.at.x - point.x), Double($0.at.y - point.y)) <= Double(reach) }) else {
+        guard let i = entries.firstIndex(where: { (candidate: Entry) -> Bool in
+            let dx: Double = Double(candidate.at.x - point.x)
+            let dy: Double = Double(candidate.at.y - point.y)
+            return hypot(dx, dy) <= Double(reach)
+        }) else {
             return nil
         }
         let entry = entries.remove(at: i)
@@ -430,11 +435,13 @@ struct StrokeRecorder {
         let measured = maximumForce > 0 ? force / maximumForce : 0.5
         let p = measured > 0 ? min(1, measured) : (samples.last?[2] ?? 0.5)
         let t = max(samples.last?[3] ?? 0, (time - begin) * 1000)
-        var sample = [x, y, p, t]
+        var sample: [Double] = [x, y, p, t]
         if let altitude, let azimuth {
-            sample += [altitude * 180 / .pi, azimuth * 180 / .pi]
+            let altitudeDegrees: Double = altitude * 180 / .pi
+            let azimuthDegrees: Double = azimuth * 180 / .pi
+            sample += [altitudeDegrees, azimuthDegrees]
             if let roll, roll.isFinite {
-                let degrees = (roll * 180 / .pi).truncatingRemainder(dividingBy: 360)
+                let degrees: Double = (roll * 180 / .pi).truncatingRemainder(dividingBy: 360)
                 sample.append(degrees < 0 ? degrees + 360 : degrees)
             }
         }
