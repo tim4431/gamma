@@ -4,7 +4,7 @@
 // PDF text on another page.
 import { execFileSync } from "node:child_process";
 import { tree, same, partialBlockSearch } from "./notes.mjs";
-import { PYTHON, fakeAiModels } from "../harness.mjs";
+import { PYTHON, fakeAiModels, until } from "../harness.mjs";
 import { DEFAULT_PALETTE, darkPageColor } from "../../../src/shared/model/palette.js";
 
 // Select `needle` inside one text-layer span of `pageNo` and release the
@@ -29,42 +29,38 @@ export async function selectPdfText(page, pageNo, needle) {
 
 // The same with the mouse: a drag over the needle's text, released at its
 // end. Returns the point it was released at (the selection popup opens by it).
-// The text is measured once it holds still for two frames, and the drag is
-// made again when it selected something else: the page can still move
-// between the measure and the release (cards settling beside it), and a
-// release off the text's spans selects to the end of its line (pdf.js's
-// spans are absolute; only each line's <br> is in the flow), as a margin
-// card's step did once in CI.
+// The text is measured once two readings agree: a page still moving (cards
+// settling beside it) would put the release off the text's spans, which
+// selects to the end of its line (pdf.js's spans are absolute; only each
+// line's <br> is in the flow).
 export async function dragSelectPdfText(page, pageNo, needle) {
-  for (let attempt = 1; ; attempt++) {
-    const box = await page.evaluate(async ([pageNo, needle]) => {
-      const span = [...document.querySelectorAll(`[data-page="${pageNo}"] .textLayer span`)].find((s) => s.textContent.includes(needle));
-      if (!span?.firstChild) return null;
-      span.scrollIntoView({ block: "nearest" }); // the drag is made in viewport pixels
-      const off = span.textContent.indexOf(needle);
-      const range = document.createRange();
-      range.setStart(span.firstChild, off);
-      range.setEnd(span.firstChild, off + needle.length);
-      const frame = () => new Promise((r) => requestAnimationFrame(r));
-      let r = range.getBoundingClientRect();
-      for (let i = 0; i < 30; i++) {
-        await frame(); await frame();
-        const next = range.getBoundingClientRect();
-        const still = next.left === r.left && next.top === r.top && next.right === r.right;
-        r = next;
-        if (still) break;
-      }
-      return { x1: r.left + 1, x2: r.right - 1, y: r.top + r.height / 2 };
-    }, [pageNo, needle]);
-    if (!box) throw new Error(`text "${needle}" not found on page ${pageNo}'s text layer`);
-    await page.mouse.move(box.x1, box.y);
-    await page.mouse.down();
-    await page.mouse.move((box.x1 + box.x2) / 2, box.y, { steps: 4 });
-    await page.mouse.move(box.x2, box.y, { steps: 4 });
-    await page.mouse.up();
-    const got = await page.evaluate(() => window.getSelection().toString().trim());
-    if (got === needle || attempt === 3) return { x: box.x2, y: box.y };
-  }
+  const measure = () => page.evaluate(([pageNo, needle]) => {
+    const span = [...document.querySelectorAll(`[data-page="${pageNo}"] .textLayer span`)].find((s) => s.textContent.includes(needle));
+    if (!span?.firstChild) return null;
+    span.scrollIntoView({ block: "nearest" }); // the drag is made in viewport pixels
+    const off = span.textContent.indexOf(needle);
+    const range = document.createRange();
+    range.setStart(span.firstChild, off);
+    range.setEnd(span.firstChild, off + needle.length);
+    const r = range.getBoundingClientRect();
+    return { x1: r.left + 1, x2: r.right - 1, y: r.top + r.height / 2 };
+  }, [pageNo, needle]);
+  let last = null;
+  const box = await until(async () => {
+    const next = await measure();
+    if (!next) throw new Error(`text "${needle}" not found on page ${pageNo}'s text layer`);
+    const still = last && next.x1 === last.x1 && next.x2 === last.x2 && next.y === last.y;
+    last = next;
+    return still && next;
+  }, { what: `"${needle}" to hold still` });
+  await page.mouse.move(box.x1, box.y);
+  await page.mouse.down();
+  await page.mouse.move((box.x1 + box.x2) / 2, box.y, { steps: 4 });
+  await page.mouse.move(box.x2, box.y, { steps: 4 });
+  await page.mouse.up();
+  const got = await page.evaluate(() => window.getSelection().toString().trim());
+  if (got !== needle) throw new Error(`the drag over "${needle}" selected "${got}"`);
+  return { x: box.x2, y: box.y };
 }
 
 export async function waitForPdf(page, pageNo = 1) {

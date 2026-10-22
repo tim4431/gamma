@@ -10,7 +10,7 @@ import { Account, wanted } from "../harness.mjs";
 export async function mirrorScenarios(env) {
   const { server, browser, step, openPage, assert, assertEq, assertNoProblems, until, flags } = env;
   if (!wanted("mirror")) return;
-  server.manage("create-user", "mirror-user", "mirror-pw");
+  await server.manage("create-user", "mirror-user", "mirror-pw");
   const user = await new Account(server, "mirror-user", "mirror-pw").login();
   const paper = await user.api("/api/pages", { method: "POST", body: { title: "Mirrored paper" } });
   await user.api(`/api/pages/${paper.id}/ops`, { method: "POST", body: { client: "e2e", ops: [

@@ -409,6 +409,7 @@ npm run e2e -- --jobs 1         # one worker, groups in order, live output (~8 m
 npm run e2e -- --changed        # only the groups the working tree's changes select
 npm run e2e -- --changed main --list  # a branch's selection and why, without running
 npm run e2e -- --group ink,collab     # these groups (ids: `--list`)
+npm run e2e -- --shard 1/2      # half the groups by time (CI runs each half on its own runner)
 npm run e2e -- --only collab    # steps whose name contains "collab" (one worker)
 npm run e2e -- --continue       # keep going after a failure
 npm run e2e -- --headed         # watch the browser
@@ -441,7 +442,7 @@ the step closed on its way out (the usual `finally { await ctx.close() }`)
 is there too, as `-closed.jpg`: closing a context or a page during a step
 first keeps its last look. The
 `check` workflow runs the suite on every PR and uploads those folders as the
-`e2e-failures` artifact. `harness.mjs` holds the server lifecycle, `Account` (session
+`e2e-failures-<shard>` artifact. `harness.mjs` holds the server lifecycle, `Account` (session
 cookie + `X-Gamma-Workspace` for API seeding, browser contexts logged in as
 that account), `makePdf` (a small real PDF with a text layer), `step()`, and
 `assertOpensInPlace` (a menu or card read frame by frame: no frame of it
@@ -452,8 +453,8 @@ scenario file except `notes-pdf-share`, whose scenarios hand data along;
 `run.mjs` maps each id to its scenario functions). `--jobs N` (default:
 half the CPUs, at most 6; one with `--only`) forks N workers, each with its
 own backend, data dir and browser; a worker takes the next group off the
-queue, longest first, and the group's lines print as one block when it
-ends. A group must not rely on another group's data: put scenarios that do
+queue, longest first (each group's `s`, its seconds in a CI run), and the
+group's lines print as one block when it ends. A group must not rely on another group's data: put scenarios that do
 in the same group. Workers reuse their accounts between groups: restore an
 account preference changed for one scenario in `finally`, after closing its
 browser context. Otherwise a later group can inherit a different Enter-key
@@ -465,18 +466,24 @@ before testing citations).
 
 Without `--continue` a failure stops handing out groups
 and the ones running finish. The wall time is bounded by the longest group
-(settings and the first-run guide, about a minute each), so split one of
-those before adding workers.
+(settings, about two and a half minutes in CI), so split it before adding
+workers or shards.
+
+`--shard k/n` runs the k-th of n shares of the selection: each group,
+longest first by its `s`, goes to the share with the least time so far
+(`shardOf` in `select.mjs`), so the shares take about as long. CI runs the
+two halves (`--shard 1/2`, `--shard 2/2`) on two runners, about three
+minutes each. When a group's time drifts far from its `s` (a CI log prints
+each group's seconds as `── <group>  (N s`), update it.
 
 A group that throws outside its steps (its own setup: accounts, seeded
 pages) runs none of them. The summary counts it as a failure,
-`<group> (group aborted)`, and prints the error with its cause. The suite's
-`fetch` (the harness's and the scenarios') sends a request again when it
-went down a keep-alive connection the backend had already closed: `server.manage()`
-runs manage.py synchronously, and a few calls in a row can block Node past
-uvicorn's 5 s idle timeout, so the next request finds its socket closed
-(`fetch failed`, "other side closed", on Linux). The inbox group aborted that
-way in CI, uncounted, before both were fixed.
+`<group> (group aborted)`, and prints the error with its cause.
+`server.manage()` runs manage.py asynchronously: run synchronously, a few
+calls in a row (about a second each) blocked Node past uvicorn's 5 s
+keep-alive timeout, and the next request went down a socket the backend had
+closed (`fetch failed`, "other side closed", on Linux). The inbox group
+aborted that way in CI.
 
 `--changed [ref]` picks the groups from what changed: the working tree
 (staged, unstaged, untracked) against `HEAD`, or everything since the branch
@@ -498,7 +505,7 @@ catch-all (a new folder or module needs its rule), when a group's scenario
 files drift from `scenarios/`, or when a rule names an unknown group. When a
 change reaches less than its rule says (a new prop threaded through
 App.jsx into one pane), the selection errs wide: narrow it with `--group`.
-CI runs everything.
+CI runs everything, in its two shards.
 
 **Flaky steps.** A step that passes here and fails on CI is almost always a
 timing assumption that a slow machine breaks, and the CI runner has 4 cores.

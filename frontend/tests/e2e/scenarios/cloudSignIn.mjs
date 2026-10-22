@@ -10,8 +10,8 @@ import { FakeCloud } from "../fakeCloud.mjs";
 export async function cloudSignInScenarios(env) {
   const { server, browser, step, openPage, assert, assertEq, assertNoProblems, until, flags } = env;
   if (!wanted("cloud sign-in")) return;
-  server.manage("create-user", "cloud-admin", "cloud-admin-pw");
-  server.manage("set-admin", "cloud-admin", "on");
+  await server.manage("create-user", "cloud-admin", "cloud-admin-pw");
+  await server.manage("set-admin", "cloud-admin", "on");
   const admin = await new Account(server, "cloud-admin", "cloud-admin-pw").login();
   const settingsNav = (page, name) => page.getByRole("navigation", { name: "Settings categories" }).getByRole("button", { name, exact: true });
   async function openSettings(page, pane) {
@@ -26,7 +26,7 @@ export async function cloudSignInScenarios(env) {
   // Off, the account pane still says what Gamma Cloud gives: a member sees it
   // marked off, an admin gets Set up, which lands on the switch.
   await step("cloud sign-in: while it is off the account pane offers it", async () => {
-    server.manage("create-user", "cloud-member", "cloud-member-pw");
+    await server.manage("create-user", "cloud-member", "cloud-member-pw");
     const member = await new Account(server, "cloud-member", "cloud-member-pw").login();
     const memberCtx = await member.context(browser);
     const ctx = await admin.context(browser);
@@ -189,8 +189,8 @@ export async function cloudSignInScenarios(env) {
     let ctx = null;
     try {
       await hosted.start();
-      hosted.manage("create-user", "host-admin", "host-admin-pw");
-      hosted.manage("set-admin", "host-admin", "on");
+      await hosted.manage("create-user", "host-admin", "host-admin-pw");
+      await hosted.manage("set-admin", "host-admin", "on");
       const owner = await new Account(hosted, "host-admin", "host-admin-pw").login();
       await until(() => owner.api("/api/admin/settings").then((v) => v.hosted?.limits?.plan === "pro"), { what: "the startup sync" });
       ctx = await owner.context(browser);

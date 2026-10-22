@@ -25,13 +25,13 @@ import { Account, assertOpensInPlace, sleep, wanted } from "../harness.mjs";
 export async function commentScenarios({ server, browser, makePdf, step, until, assert, assertEq, assertNoProblems, openPage, flags }) {
   if (!wanted("comments")) return;
   for (const [name, pw] of [["cm-ann", "cm-ann-pw"], ["cm-ben", "cm-ben-pw"], ["cm-vic", "cm-vic-pw"]]) {
-    server.manage("create-user", name, pw);
+    await server.manage("create-user", name, pw);
   }
-  const out = server.manage("create-workspace", "Comment lab", "cm-ann", "shared");
+  const out = await server.manage("create-workspace", "Comment lab", "cm-ann", "shared");
   const wsId = (out.match(/workspace (\S+)/) || [])[1];
   assert(wsId, `shared workspace id from: ${out}`);
-  server.manage("set-member", wsId, "cm-ben", "editor");
-  server.manage("set-member", wsId, "cm-vic", "viewer");
+  await server.manage("set-member", wsId, "cm-ben", "editor");
+  await server.manage("set-member", wsId, "cm-vic", "viewer");
   const login = async (name) => {
     const a = await new Account(server, name, `${name}-pw`).login();
     a.ws = wsId;
@@ -274,6 +274,44 @@ export async function commentScenarios({ server, browser, makePdf, step, until, 
       await popover(D).locator(`.commentThread[data-thread-id="${thread.id}"]`).waitFor({ timeout: 10000 });
       assert((await popover(D).innerText()).includes("Yes, see the appendix"), "the thread's reply is there");
       assertNoProblems(D);
+    } finally {
+      await ctx.close();
+    }
+  });
+
+  await step("comments: a formula draws whole: held hidden while its faces load in a fresh browser, shown once they are in", async () => {
+    // Faces outside the warmed set (shared/lib/katexFonts.js FACES), so even
+    // a browser that has the common ones must fetch these first.
+    const root = await ann.api(`/api/pages/${pg.id}/comments`, { method: "POST",
+      body: { block_id: "cmnote2", body: "The space $\\mathcal{H}$ and the algebra $\\mathfrak{g}$ over $\\mathbb{R}$" } });
+    const ctx = await ben.context(browser);
+    // Every mark put on a formula and taken off again, from the first script on.
+    await ctx.addInitScript(() => {
+      window.__mathHold = { held: 0, released: 0 };
+      new MutationObserver((records) => {
+        for (const r of records) {
+          if (r.attributeName !== "data-fonts") continue;
+          if (r.target.getAttribute("data-fonts") === "loading") window.__mathHold.held++;
+          else window.__mathHold.released++;
+        }
+      }).observe(document, { attributes: true, attributeFilter: ["data-fonts"], subtree: true });
+    });
+    const E = await openPage(ctx, `${server.base}/?ws=${wsId}&page=${pg.id}&block=cmnote2&thread=${root.thread.id}`);
+    try {
+      const formula = popover(E).locator(`.commentThread[data-thread-id="${root.thread.id}"] .commentBody .katex`);
+      await formula.first().waitFor({ timeout: 10000 });
+      await until(async () => (await E.locator(".katex[data-fonts]").count()) === 0, { what: "the formulas are shown again", timeout: 5000 });
+      const hold = await E.evaluate(() => window.__mathHold);
+      assert(hold.held >= 1, `the first formula found its faces loading and was held: ${JSON.stringify(hold)}`);
+      assert(hold.released >= 1, `a held formula was released: ${JSON.stringify(hold)}`);
+      const faces = await E.evaluate(() => {
+        const out = {};
+        for (const f of document.fonts) if (/^KaTeX_(Caligraphic|Fraktur|AMS)$/.test(f.family) && f.weight === "400") out[f.family] = f.status;
+        return out;
+      });
+      assertEq(faces.KaTeX_Caligraphic, "loaded", "the calligraphic face is in");
+      assertEq(faces.KaTeX_Fraktur, "loaded", "the fraktur face is in");
+      assertNoProblems(E);
     } finally {
       await ctx.close();
     }

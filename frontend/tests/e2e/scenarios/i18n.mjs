@@ -7,7 +7,7 @@ import { Account, wanted } from "../harness.mjs";
 export async function i18nScenarios(env) {
   const { server, browser, step, openPage, assertEq, assertNoProblems, until } = env;
   if (!wanted("i18n")) return;
-  server.manage("create-user", "i18n-user", "i18n-pw");
+  await server.manage("create-user", "i18n-user", "i18n-pw");
   const user = await new Account(server, "i18n-user", "i18n-pw").login();
   // An account with a saved profile: the server's copy wins on every load,
   // so a switch that is not pushed before the reload would revert.

@@ -16,7 +16,7 @@ const server = new Server();
 let browser;
 try {
   await server.start();
-  server.manage("create-user", "citation-test", "test-password");
+  await server.manage("create-user", "citation-test", "test-password");
   const account = await new Account(server, "citation-test", "test-password").login();
   const up = await account.upload("/api/uploads", fs.readFileSync(input), path.basename(input), "application/pdf");
   const created = await account.api(`/api/blocks/by-doc/${up.doc_id}`, { method: "POST", body: {
