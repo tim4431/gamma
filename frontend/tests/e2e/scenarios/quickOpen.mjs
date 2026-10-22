@@ -4,7 +4,7 @@ import { Account, wanted } from "../harness.mjs";
 export async function quickOpenScenarios(env) {
   const { server, browser, step, openPage, assert, assertEq, assertNoProblems, until, flags } = env;
   if (!wanted("quickopen")) return;
-  server.manage("create-user", "quickopen-user", "quickopen-pw");
+  await server.manage("create-user", "quickopen-user", "quickopen-pw");
   const user = await new Account(server, "quickopen-user", "quickopen-pw").login();
   const titles = ["Cavity readout", "Cavity sensors", "Quantum correction", "Atomic clocks"];
   const papers = {};

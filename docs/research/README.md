@@ -91,6 +91,12 @@ the dev doc named there describes how it works now.
 | [website.md](website.md) | What thirteen note and reading apps put on their front page, which patterns recur, and the section order and tone gammapdf.com took from them. | Nothing. Mechanics: [sites/README.md](../../sites/README.md). |
 | [demo-production.md](demo-production.md) | How scripted demos and screen-recording editors achieve smooth motion, readable framing and repeatable exports; animated WebP delivery measured on Gamma's demos. | Nothing. Rules: [tools/readme-media/README.md](../../tools/readme-media/README.md). |
 
+## Testing
+
+| Note | Question it answers | Still open |
+|---|---|---|
+| [test-speed.md](test-speed.md) | Where the `check` workflow and the browser suite spend their time as of October 2026, which steps were actually flaky, which workarounds hid a cause (the fetch retry over a blocked event loop, the PDF drag helper's re-drag), and why the suite was sharded rather than cut. | Splitting the settings group, cheaper `manage.py` imports, keeping each group's time current. Built: [dev/debugging.md](../dev/debugging.md#browser-end-to-end-suite). |
+
 Conventions: one file per topic in kebab-case, dated where the survey has a
 shelf life, written after the fact from what was actually found. When a gap
 a note lists is closed, mark it there with one clause and describe the

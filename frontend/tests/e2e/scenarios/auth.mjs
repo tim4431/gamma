@@ -78,8 +78,8 @@ export async function authScenarios({ server, browser, alice, step, until, asser
   });
 
   await step("auth: demo mode is a small landing that leads with Try the demo, folds the sign-in and offers the first tour", async () => {
-    server.manage("create-user", "auth-admin", "auth-admin-pw");
-    server.manage("set-admin", "auth-admin", "on");
+    await server.manage("create-user", "auth-admin", "auth-admin-pw");
+    await server.manage("set-admin", "auth-admin", "on");
     const admin = await new Account(server, "auth-admin", "auth-admin-pw").login();
     await admin.api("/api/admin/settings", { method: "PUT", body: { demo_mode: true } });
     const ctx = await browser.newContext({ suggestTours: true });
@@ -126,7 +126,7 @@ export async function authScenarios({ server, browser, alice, step, until, asser
   });
 
   await step("library: a new account's library offers Start your library above the Welcome page, gone with the first page", async () => {
-    server.manage("create-user", "fresh-user", "fresh-user-pw");
+    await server.manage("create-user", "fresh-user", "fresh-user-pw");
     const fresh = await new Account(server, "fresh-user", "fresh-user-pw").login();
     const ctx = await fresh.context(browser);
     try {

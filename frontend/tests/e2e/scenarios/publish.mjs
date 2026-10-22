@@ -25,11 +25,11 @@ export async function publishScenarios(env) {
   try {
     await host.start();
     cloud.shareHost = host.base;
-    server.manage("create-user", "pub-admin", "pub-admin-pw");
-    server.manage("set-admin", "pub-admin", "on");
+    await server.manage("create-user", "pub-admin", "pub-admin-pw");
+    await server.manage("set-admin", "pub-admin", "on");
     admin = await new Account(server, "pub-admin", "pub-admin-pw").login();
     await admin.api("/api/admin/settings", { method: "PUT", body: { cloud_issuer: cloud.issuer } });
-    server.manage("create-user", "pubber", "pubber-pw");
+    await server.manage("create-user", "pubber", "pubber-pw");
     const user = await new Account(server, "pubber", "pubber-pw").login();
     cloud.person("sub-pubber", "pubber");
     const paper = await user.api("/api/pages", { method: "POST", body: { title: "Published paper" } });
@@ -238,7 +238,7 @@ export async function publishScenarios(env) {
       await p.getByRole("button", { name: "Link Gamma Cloud account", exact: true }).click();
     };
     await step("publish: a first settings sync asks Fetch from cloud or Push to cloud; Sync now merges", async () => {
-      server.manage("create-user", "syncer", "syncer-pw");
+      await server.manage("create-user", "syncer", "syncer-pw");
       const syncer = await new Account(server, "syncer", "syncer-pw").login();
       await syncer.api("/api/prefs/profile", { method: "PUT", body: { value: { theme: "sepia", enterNewNote: false } } });
       const cloudCopy = "sub-syncer /api/me/prefs/profile";
@@ -280,7 +280,7 @@ export async function publishScenarios(env) {
       } finally { await sctx.close(); }
     });
     await step("publish: Push to cloud from the conflict dialog makes this server's settings the cloud's", async () => {
-      server.manage("create-user", "pusher", "pusher-pw");
+      await server.manage("create-user", "pusher", "pusher-pw");
       const pusher = await new Account(server, "pusher", "pusher-pw").login();
       await pusher.api("/api/prefs/profile", { method: "PUT", body: { value: { theme: "sepia" } } });
       const cloudCopy = "sub-pusher /api/me/prefs/profile";

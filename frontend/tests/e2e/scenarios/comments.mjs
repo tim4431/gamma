@@ -25,13 +25,13 @@ import { Account, assertOpensInPlace, sleep, wanted } from "../harness.mjs";
 export async function commentScenarios({ server, browser, makePdf, step, until, assert, assertEq, assertNoProblems, openPage, flags }) {
   if (!wanted("comments")) return;
   for (const [name, pw] of [["cm-ann", "cm-ann-pw"], ["cm-ben", "cm-ben-pw"], ["cm-vic", "cm-vic-pw"]]) {
-    server.manage("create-user", name, pw);
+    await server.manage("create-user", name, pw);
   }
-  const out = server.manage("create-workspace", "Comment lab", "cm-ann", "shared");
+  const out = await server.manage("create-workspace", "Comment lab", "cm-ann", "shared");
   const wsId = (out.match(/workspace (\S+)/) || [])[1];
   assert(wsId, `shared workspace id from: ${out}`);
-  server.manage("set-member", wsId, "cm-ben", "editor");
-  server.manage("set-member", wsId, "cm-vic", "viewer");
+  await server.manage("set-member", wsId, "cm-ben", "editor");
+  await server.manage("set-member", wsId, "cm-vic", "viewer");
   const login = async (name) => {
     const a = await new Account(server, name, `${name}-pw`).login();
     a.ws = wsId;

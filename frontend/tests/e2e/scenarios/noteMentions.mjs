@@ -8,15 +8,15 @@ import { closeEditor, editRow, row, tree } from "./notes.mjs";
 export async function noteMentionScenarios({ server, browser, step, until, assert, assertEq, assertNoProblems, openPage }) {
   if (!wanted("note mentions")) return;
   for (const [name, pw] of [["nm-admin", "nm-admin-pw"], ["nm-ann", "nm-ann-pw"], ["nm-ben", "nm-ben-pw"]]) {
-    server.manage("create-user", name, pw);
+    await server.manage("create-user", name, pw);
   }
-  server.manage("set-admin", "nm-admin", "on");
+  await server.manage("set-admin", "nm-admin", "on");
   const admin = await new Account(server, "nm-admin", "nm-admin-pw").login();
   const ann = await new Account(server, "nm-ann", "nm-ann-pw").login();
   const personal = ann.ws;
   // A shared workspace: ann owns it, ben edits. The admin is no member.
   const lab = await admin.api("/api/workspaces", { method: "POST", body: { name: "Mention lab", kind: "shared", owner: "nm-ann" } });
-  server.manage("set-admin", "nm-admin", "off");
+  await server.manage("set-admin", "nm-admin", "off");
   ann.ws = lab.id;
   await ann.api(`/api/workspaces/${lab.id}/members/nm-ben`, { method: "PUT", body: { role: "editor" } });
   const target = await ann.api("/api/pages", { method: "POST", body: { title: "Powerloss" } });

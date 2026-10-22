@@ -14,10 +14,10 @@ import { waitForPdf, selectPdfText } from "./pdf.mjs";
 
 export async function collabScenarios({ server, browser, alice, bob, makePdf, step, until, sleep, assert, assertEq, assertNoProblems, openPage }) {
   // A shared workspace: alice owns it, bob edits. (manage.py: admin-only setup.)
-  const out = server.manage("create-workspace", "Team", "alice", "shared");
+  const out = await server.manage("create-workspace", "Team", "alice", "shared");
   const teamId = (out.match(/workspace (\S+)/) || [])[1];
   assert(teamId, `shared workspace id from: ${out}`);
-  server.manage("set-member", teamId, "bob", "editor");
+  await server.manage("set-member", teamId, "bob", "editor");
   const aliceT = Object.assign(Object.create(Object.getPrototypeOf(alice)), alice, { ws: teamId });
   const bobT = Object.assign(Object.create(Object.getPrototypeOf(bob)), bob, { ws: teamId });
 

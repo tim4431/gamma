@@ -12,43 +12,60 @@ import { fileURLToPath } from "node:url";
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const SCENARIOS = path.join(ROOT, "frontend", "tests", "e2e", "scenarios");
 
-// Longest first (seconds on one worker, roughly), so the long ones never
-// start last. A group must not need another group's data: scenarios that
-// hand data along share a group (notes → pdf → share).
+// Longest first, so the long ones never start last. `s` is the seconds a
+// group took in CI (3 workers on the runner's 4 cores; its log's
+// "── <group>  (N s" lines): the queue order, and what --shard balances.
+// A group must not need another group's data: scenarios that hand data
+// along share a group (notes → pdf → share).
 export const GROUPS = [
-  { id: "guide", files: ["guide.mjs"] }, // ~55
-  { id: "touch", files: ["touch.mjs"] }, // ~50
-  { id: "settings", files: ["settings.mjs"] }, // ~45
-  { id: "notes-pdf-share", files: ["notes.mjs", "pdf.mjs", "share.mjs"] }, // ~40
-  { id: "textbox", files: ["textBoxes.mjs"] }, // ~40
-  { id: "contextual-guide", files: ["contextualGuide.mjs"] }, // ~27
-  { id: "triggered-guide", files: ["triggeredGuide.mjs"] }, // ~27
-  { id: "ink-editing", files: ["inkEditing.mjs"] }, // ~22
-  { id: "pdf-load", files: ["pdfload.mjs"] }, // ~20
-  { id: "ink", files: ["ink.mjs"] }, // ~19
-  { id: "notebooks", files: ["notebooks.mjs"] }, // ~15
-  { id: "recording", files: ["recording.mjs"] }, // ~15
-  { id: "pdf-touch", files: ["pdfTouch.mjs"] }, // ~15
-  { id: "publish", files: ["publish.mjs"] }, // ~15
-  { id: "chat-navigation", files: ["chatNavigation.mjs"] }, // ~12
-  { id: "mentions", files: ["mentions.mjs"] }, // ~11
-  { id: "note-mentions", files: ["noteMentions.mjs"] },
-  { id: "comments", files: ["comments.mjs"] },
-  { id: "inbox", files: ["inbox.mjs"] },
-  { id: "collab", files: ["collab.mjs"] }, // ~11
-  { id: "mirror", files: ["mirror.mjs"] }, // ~9
-  { id: "transfers", files: ["transfers.mjs"] }, // ~9
-  { id: "diagrams", files: ["diagrams.mjs"] }, // ~9
-  { id: "mcp", files: ["mcp.mjs"] }, // ~8
-  { id: "files", files: ["files.mjs"] }, // ~7
-  { id: "i18n", files: ["i18n.mjs"] }, // ~6
-  { id: "cloud-sign-in", files: ["cloudSignIn.mjs"] },
-  { id: "auth", files: ["auth.mjs"] },
-  { id: "quick-open", files: ["quickOpen.mjs"] },
-  { id: "folders", files: ["folders.mjs"] },
-  { id: "trash", files: ["trash.mjs"] },
-  { id: "ipad", files: ["ipad.mjs"] },
+  { id: "settings", files: ["settings.mjs"], s: 148 },
+  { id: "notes-pdf-share", files: ["notes.mjs", "pdf.mjs", "share.mjs"], s: 121 },
+  { id: "triggered-guide", files: ["triggeredGuide.mjs"], s: 78 },
+  { id: "chat-navigation", files: ["chatNavigation.mjs"], s: 67 },
+  { id: "touch", files: ["touch.mjs"], s: 63 },
+  { id: "guide", files: ["guide.mjs"], s: 61 },
+  { id: "contextual-guide", files: ["contextualGuide.mjs"], s: 60 },
+  { id: "textbox", files: ["textBoxes.mjs"], s: 42 },
+  { id: "transfers", files: ["transfers.mjs"], s: 41 },
+  { id: "ink", files: ["ink.mjs"], s: 28 },
+  { id: "comments", files: ["comments.mjs"], s: 27 },
+  { id: "ink-editing", files: ["inkEditing.mjs"], s: 26 },
+  { id: "collab", files: ["collab.mjs"], s: 26 },
+  { id: "pdf-load", files: ["pdfload.mjs"], s: 25 },
+  { id: "publish", files: ["publish.mjs"], s: 25 },
+  { id: "pdf-touch", files: ["pdfTouch.mjs"], s: 23 },
+  { id: "files", files: ["files.mjs"], s: 22 },
+  { id: "cloud-sign-in", files: ["cloudSignIn.mjs"], s: 20 },
+  { id: "diagrams", files: ["diagrams.mjs"], s: 19 },
+  { id: "mentions", files: ["mentions.mjs"], s: 18 },
+  { id: "notebooks", files: ["notebooks.mjs"], s: 17 },
+  { id: "auth", files: ["auth.mjs"], s: 17 },
+  { id: "ipad", files: ["ipad.mjs"], s: 17 },
+  { id: "inbox", files: ["inbox.mjs"], s: 15 },
+  { id: "quick-open", files: ["quickOpen.mjs"], s: 14 },
+  { id: "folders", files: ["folders.mjs"], s: 14 },
+  { id: "mcp", files: ["mcp.mjs"], s: 12 },
+  { id: "note-mentions", files: ["noteMentions.mjs"], s: 10 },
+  { id: "recording", files: ["recording.mjs"], s: 7 },
+  { id: "mirror", files: ["mirror.mjs"], s: 7 },
+  { id: "trash", files: ["trash.mjs"], s: 5 },
+  { id: "i18n", files: ["i18n.mjs"], s: 4 },
 ];
+
+// The groups of `ids` that shard k of n runs: each group, longest first,
+// goes to the shard with the least time so far, so the shards end close
+// together. Every shard computes the same split.
+export function shardOf(ids, k, n) {
+  const time = Object.fromEntries(GROUPS.map((g) => [g.id, g.s]));
+  const load = Array(n).fill(0);
+  const mine = new Set();
+  for (const id of [...ids].sort((a, b) => time[b] - time[a])) {
+    const i = load.indexOf(Math.min(...load));
+    load[i] += time[id];
+    if (i === k - 1) mine.add(id);
+  }
+  return ids.filter((id) => mine.has(id));
+}
 
 const ALL = "all";
 const GUIDES = ["guide", "contextual-guide", "triggered-guide"];

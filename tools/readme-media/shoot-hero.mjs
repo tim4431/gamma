@@ -35,7 +35,7 @@ const server = new Server();
 let browser;
 try {
   await server.start();
-  server.manage('create-user', 'demo', 'isolated-media-only');
+  await server.manage('create-user', 'demo', 'isolated-media-only');
   const account = await new Account(server, 'demo', 'isolated-media-only').login();
   await account.upload('/api/import-data', fs.readFileSync(path.join(ROOT, 'artifacts/readme-media/demo.zip')), 'demo.zip', 'application/zip');
   // the folder and labels made where missing (harness.mjs Account.file)

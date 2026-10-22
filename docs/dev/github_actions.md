@@ -19,7 +19,7 @@ Watchtower (the `update-demo-server`, `update-share-host` and
 
 | Workflow | File | Runs when | Produces |
 |---|---|---|---|
-| `check` | `check.yml` | every pull request to `main`, except one that only touches the account server or the website | pass/fail: brand asset consistency, the iPad's pins resolved, backend pytest, frontend unit tests + build, the browser suite (3 parallel workers), extension unit tests + zip (~5 min) |
+| `check` | `check.yml` | every pull request to `main`, except one that only touches the account server or the website | pass/fail: brand asset consistency, the iPad's pins resolved, backend pytest, frontend unit tests + build, the browser suite (two shards on two runners, 3 workers each), extension unit tests + zip (~5 min) |
 | `desktop` | `desktop.yml` | manual dispatch only (`release` skill) | Windows installer, macOS dmg + zip, Debian/Ubuntu deb, the update-feed files, the browser extension's `gamma-connector-<version>.zip` → GitHub Release `v<version>`; the MSIX artifact + a Microsoft Store submission when the secrets exist; a Docker tag `<version>` |
 | `chrome-store` | `chrome-store.yml` | dispatched by the desktop release (not a pre-release) when the `CWS_*` variables exist; daily at 09:17 UTC for a release the store skipped; manual dispatch with a tag | the release's Connector zip uploaded to the Chrome Web Store and submitted for review (API V2) |
 | `docker` | `docker.yml` | every push to `main` except one that only touches the account server or the website; dispatched by the desktop release with a version; manual dispatch from any branch (a `sha-<short>` image only) | `ghcr.io/tim4431/gamma:sha-<short>` on every run; `:latest` only from `main`; `:<version>` and `:<major.minor>` when dispatched with a version; linux/amd64 + arm64 |
@@ -203,12 +203,13 @@ backend pytest (Python 3.12, `requirements.txt` + `requirements-dev.txt`,
 test at 300 s, after which it fails with every thread's stack instead of
 holding the job), the frontend unit tests + build (Node 22,
 `npm test` then `npm run build`), the browser suite
-(`npm run e2e -- --continue --jobs 3` against a backend started from the checkout with
+(`npm run e2e -- --continue --jobs 3 --shard <k>/2`, the two shards as a
+matrix of two jobs of about equal time, against a backend started from the checkout with
 `GAMMA_E2E_PYTHON=python` — both requirements files, since a scenario
 builds its Zotero fixture from a backend test module — Playwright's
 Chromium installed with its system deps; on a failure the harness's
 `failures/` folders — screenshots, page problems, the error, the server
-log tail — are uploaded as the `e2e-failures` artifact), and the extension's unit
+log tail — are uploaded as the `e2e-failures-<shard>` artifact), and the extension's unit
 tests (Node 22, `node --test extension/tests/*.test.mjs` — the pure
 modules; its `.e2e.mjs` files need Playwright's full Chromium and are run
 by hand) followed by a manifest parse + zip of the extension. No installers. A PR that changes only
