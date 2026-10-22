@@ -30,12 +30,12 @@ let recorder, peers, capture;
 try {
   await server.start();
   const password = 'isolated-media-only';
-  for (const name of ['Alex', 'Maya', 'Sam']) server.manage('create-user', name, password);
-  const out = server.manage('create-workspace', 'Quantum lab', 'Alex', 'shared');
+  for (const name of ['Alex', 'Maya', 'Sam']) await server.manage('create-user', name, password);
+  const out = await server.manage('create-workspace', 'Quantum lab', 'Alex', 'shared');
   const team = (out.match(/workspace (\S+)/) || [])[1];
   if (!team) throw new Error(`No workspace id in: ${out}`);
-  server.manage('set-member', team, 'Maya', 'editor');
-  server.manage('set-member', team, 'Sam', 'editor');
+  await server.manage('set-member', team, 'Maya', 'editor');
+  await server.manage('set-member', team, 'Sam', 'editor');
   const [alex, maya, sam] = await Promise.all(['Alex', 'Maya', 'Sam'].map(n => new Account(server, n, password).login()));
   for (const a of [alex, maya, sam]) a.ws = team;
   await alex.upload('/api/import-data', fs.readFileSync(path.join(ROOT, 'artifacts/readme-media/demo.zip')), 'demo.zip', 'application/zip');

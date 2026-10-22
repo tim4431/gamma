@@ -2,12 +2,13 @@
 // over a throwaway data dir serving frontend/dist, accounts + API helpers,
 // browser contexts logged in as those accounts, a real-PDF generator, and the
 // step runner. Nothing here touches the developer's own data directory.
-import { spawn, execFileSync } from "node:child_process";
+import { spawn, execFile, execFileSync } from "node:child_process";
 import fs from "node:fs";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 import { chromium, webkit } from "playwright";
 
 export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
@@ -22,6 +23,7 @@ export const PYTHON = process.env.GAMMA_E2E_PYTHON || (process.platform === "win
   : path.join(BACKEND, "venv", "bin", "python"));
 
 export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const execFileAsync = promisify(execFile);
 
 export const flags = {
   keep: process.argv.includes("--keep"),
@@ -63,10 +65,14 @@ export class Server {
     this.proc = null;
   }
   get base() { return `http://127.0.0.1:${this.port}`; }
-  manage(...args) {
-    return execFileSync(PYTHON, ["manage.py", ...args], {
+  // manage.py on this server's data dir; its output. Not synchronous: a run
+  // of them (a second each) would block the event loop past the backend's
+  // 5 s keep-alive, and the next request would go down a socket it had closed.
+  async manage(...args) {
+    const { stdout } = await execFileAsync(PYTHON, ["manage.py", ...args], {
       cwd: BACKEND, env: { ...baseEnv(), GAMMA_DATA_DIR: this.dataDir, ...this.env }, encoding: "utf8",
     });
+    return stdout;
   }
   async start() {
     if (!fs.existsSync(path.join(DIST, "index.html"))) throw new Error("frontend/dist is missing: run `npm run build` first");
@@ -76,7 +82,7 @@ export class Server {
     // replaces dist/ and would otherwise 500 every page load until it ends.
     const dist = path.join(this.dir, "dist");
     fs.cpSync(DIST, dist, { recursive: true });
-    this.manage("setup");
+    await this.manage("setup");
     this.port = await freePort();
     const log = fs.openSync(this.logPath, "a");
     this.proc = spawn(PYTHON, ["-m", "uvicorn", "app:app", "--host", "127.0.0.1", "--port", String(this.port)], {

@@ -184,12 +184,18 @@ function dependents(ops, gone) {
 //                                     (`ink-live`, ink/inkLive.js)
 //       onBuild(build)                the server's build, from the hello (App:
 //                                     a tab left open across an update stops drawing)
+//       onComments(msg)               someone wrote a comment on the page
+//                                     ({t: "comments", block_id, thread_id}), or
+//                                     the socket (re)joined (msg null): refetch
+//                                     the page's threads (comments/useComments.js)
 //     onRemoteOps also gets the base the ops were applied to (`before`, what
 //     the server held before them), for the undo history's text rebase.
 //   onPeers(peers), onMe(me) — presence changes (the hook's React state)
 //   onQueued()                — a local edit was queued (the clone's sync pill shows it as pending)
+//   onInbox()                 — the account has something new in its inbox ({t: "inbox"},
+//                               content-free; the hook dispatches the window event gamma:inbox)
 //   timers                — {set(fn, ms) → id, clear(id)}; default the globals
-export function createCollabSession({ clientId, api, openSocket, keepalivePost, opts, onPeers, onMe, onQueued, timers }) {
+export function createCollabSession({ clientId, api, openSocket, keepalivePost, opts, onPeers, onMe, onQueued, onInbox, timers }) {
   const later = timers?.set || ((fn, ms) => globalThis.setTimeout(fn, ms));
   const cancel = timers?.clear || ((id) => globalThis.clearTimeout(id));
   const o = () => opts();
@@ -908,7 +914,8 @@ export function createCollabSession({ clientId, api, openSocket, keepalivePost, 
         let msg;
         try { msg = JSON.parse(ev.data); } catch { return; }
         const session = st.session;
-        if (session.pageId !== pageId && msg.t !== "hello") return;
+        // (the inbox's nudge is the account's, whichever page carries it)
+        if (session.pageId !== pageId && msg.t !== "hello" && msg.t !== "inbox") return;
         switch (msg.t) {
           case "hello": {
             setMe({ client: msg.client, color: msg.color, connected: true });
@@ -925,6 +932,8 @@ export function createCollabSession({ clientId, api, openSocket, keepalivePost, 
             if (cursor.latest) { cursor.pending = cursor.latest; armCursor(); }
             // Connected again: a save waiting for its retry goes now.
             retryNow();
+            // Comments written while the socket was away reach no nudge.
+            if (session.pageId === pageId) o().onComments?.(null);
             break;
           }
           case "join":
@@ -952,6 +961,12 @@ export function createCollabSession({ clientId, api, openSocket, keepalivePost, 
             // The page went to Recently deleted: what is typed here waits
             // for it to be restored (its `reload` then refetches).
             park(session, msg.trashed || null);
+            break;
+          case "comments":
+            o().onComments?.(msg);
+            break;
+          case "inbox":
+            onInbox?.();
             break;
           default:
         }

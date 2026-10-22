@@ -134,6 +134,21 @@ past the viewer's edge. The viewer's load effect composes them:
    the layout or the fit-width zoom) and refines in the background. Bytes from the cache wait at most
    250 ms for the manifest; measuring is still correct, only slower.
 
+**Where a page stands.** Pages are laid out one under another,
+`PAGE_GAP` (8 px) apart. Each page box is centred in the viewer by its auto
+margins, and starts at the viewer's left edge once it is wider than the
+viewer. While the document has a highlight with an open comment thread, a
+page with room for the comment column stands beside it instead, the two
+centred together, and a page without room stays centred
+([comments.md](comments.md#the-pdf-margin)). The column is inside the page
+box, so it scrolls and zooms with the page; the pages' columns stack as
+one, each page's cards under the ones above. The zoom anchor's horizontal
+arithmetic reads the same three layouts (`pageLeft`,
+`comments/marginLayout.js`), before and after the scale changes. A zoom
+that makes the column appear or go moves a page that fits the viewer
+sideways under the pointer, since there is no horizontal scroll to take
+that up; the vertical anchor holds.
+
 **The worker.** pdf.js does its parsing in a Web Worker whose script is 1.3 MB.
 It is imported as a Vite asset (`pdf.worker.min.mjs?url`), so it is always the
 installed `pdfjs-dist` legacy build and is served content-hashed and immutable

@@ -410,10 +410,10 @@ export async function chatNavigationScenarios(env) {
   // the AI too, but the conversation stays in the tab (ChatDock's canSave,
   // App's chat session saving nothing).
   await step("chat navigation: a workspace viewer's chat is not saved — the tag shows, no History, New chat stays in the tab", async () => {
-    const out = server.manage("create-workspace", "Chat readers", "alice", "shared");
+    const out = await server.manage("create-workspace", "Chat readers", "alice", "shared");
     const labId = (out.match(/workspace (\S+)/) || [])[1];
     assert(labId, `shared workspace id from: ${out}`);
-    server.manage("set-member", labId, "bob", "viewer");
+    await server.manage("set-member", labId, "bob", "viewer");
     const owner = Object.assign(Object.create(Object.getPrototypeOf(alice)), alice, { ws: labId });
     const pg = await owner.api("/api/pages", { method: "POST", body: { title: "Read-only chat page" } });
     const kept = [{ role: "user", text: "The owner's question" }, { role: "ai", text: "The owner's stored answer." }];

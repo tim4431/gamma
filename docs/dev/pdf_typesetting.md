@@ -42,10 +42,11 @@ the viewer stores positions in (scaled by the position's `width` /
 `height`, the page as measured when it was taken): the crop box clipped to the media box, as
 pdf.js, pdfium and MuPDF show a page, or the media box when the two do not
 meet. `pdf_notes` places its notes in the same frame. A popup's text
-(`highlight_note_text`) is the annotation's comment and the notes under it.
+(`highlight_note_text`) is the highlight's own note and the notes under it.
 A text box on a PDF page among them is left out with the notes under it,
 since the box is written as its own `/FreeText`. A box under a sheet stays
-a line: the nearest sheet wins.
+a line: the nearest sheet wins. The highlight's comment threads are no
+part of it: they live beside the blocks ([comments.md](comments.md)).
 
 Handwriting blocks (`ink_url`) become `/Ink` annotations: one per look
 bucket (colour × tool × size × opacity) of the group, `/InkList` polylines

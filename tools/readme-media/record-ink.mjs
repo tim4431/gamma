@@ -14,7 +14,7 @@ let browser, context, page, capture;
 const { width: W, height: H } = VIEW;
 try {
   await server.start();
-  server.manage('create-user', 'media-demo', 'isolated-media-only');
+  await server.manage('create-user', 'media-demo', 'isolated-media-only');
   const account = await new Account(server, 'media-demo', 'isolated-media-only').login();
   await account.upload('/api/import-data', fs.readFileSync(archive), 'demo.zip', 'application/zip');
   browser = await launchRetina();

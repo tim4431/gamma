@@ -7,7 +7,7 @@
 import React, { createContext, useContext, useEffect } from "react";
 import { useCaretAnchored } from "./LatexEditor";
 import { MarkedText } from "../search/SearchPanel";
-import { PeerAvatar, nameColor } from "../collaboration/Presence";
+import { PersonAvatar } from "../collaboration/Presence";
 import { AlarmClockIcon, ClockIcon, FileGlyph, UserPlusIcon } from "../shared/ui/Icons";
 import { fmtDate, t } from "../shared/i18n/i18n.js";
 import { guideEvents } from "../guide/events.js";
@@ -34,7 +34,7 @@ export function MentionChip({ raw }) {
 function RowIcon({ row }) {
   if (row.kind === "date") return <ClockIcon size={16} />;
   if (row.kind === "remind") return <AlarmClockIcon size={16} />;
-  if (row.kind === "person") return <PeerAvatar peer={{ name: row.user, color: nameColor(row.user), anchor: 0 }} title={row.user} />;
+  if (row.kind === "person") return <PersonAvatar name={row.user} title={row.user} />;
   if (row.kind === "invite") return <UserPlusIcon size={16} />;
   return <FileGlyph isPdf={row.isPdf} size={16} />;
 }

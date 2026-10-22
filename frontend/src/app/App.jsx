@@ -31,7 +31,7 @@ import {
 } from "../shared/ui/Widgets";
 import { BlockTree, _dragState } from "../editor/BlockTree";
 import { MentionClock, MentionContext } from "../editor/MentionMenu";
-import { refIdsOf, refLabelsByBlock } from "../editor/refLabels.js";
+import { REF_RE, refIdsOf, refLabelOf, refLabelsByBlock } from "../editor/refLabels.js";
 import { BacklinksPanel } from "../editor/BacklinksPanel";
 import { dropGapAtPoint, findObject } from "../editor/MdObject";
 import { cutObject, moveObjectInTree } from "../editor/mdObjects";
@@ -64,7 +64,7 @@ import {
   FilePlusIcon, PaperclipIcon, FolderIcon, FolderOpenIcon, FolderPlusIcon, HardDriveIcon, HelpCircleIcon, HomeIcon, ImportIcon, InfoIcon, LabelGlyph, LabelIcon,
   LanguagesIcon, LanguagesOffIcon, LinkIcon, LogOutIcon, MaximizeIcon, MenuIcon, MinimizeIcon, MoveVerticalIcon, PenIcon, PinIcon, PlusIcon,
   RectSelectIcon, RefreshIcon, ServerIcon, SettingsIcon, SparklesIcon, TextCursorIcon, Trash2Icon, TrashIcon, TypeIcon, UploadIcon,
-  ScissorsIcon, ShareIcon, UserIcon, UsersIcon, XIcon, ZoomInIcon, ZoomOutIcon, NotebookIcon, SheetIcon, MicIcon,
+  ScissorsIcon, ShareIcon, UserIcon, UsersIcon, XIcon, ZoomInIcon, ZoomOutIcon, NotebookIcon, SheetIcon, MicIcon, MessageSquareIcon, BellIcon,
 } from "../shared/ui/Icons";
 
 
@@ -203,6 +203,12 @@ import {
   PATH_SEP,
 } from "../library/libraryUtils";
 import { createLibraryMatcher } from "../library/librarySearch";
+import { useComments } from "../comments/useComments";
+import { abandonedCommentHighlight, isOpen, shortCount, threadLink } from "../comments/comments.js";
+import { preloadCommentMargin } from "../comments/marginSlot";
+import { useInbox } from "../inbox/useInbox";
+import { InboxBadge, InboxButton } from "../inbox/InboxButton";
+import { inboxJump, isUnread } from "../inbox/inboxText.js";
 
 // The system clipboard's copy of the handwriting clipboard, best effort
 // (docs/dev/handwriting.md "Copy, cut and paste"): text/html a <div
@@ -237,13 +243,21 @@ const SharePopover = lazySurface(() => import("../sharing/SharePopover"), (m) =>
 const ImportDialog = lazySurface(() => import("../transfers/ImportExport"), (m) => m.ImportDialog);
 const ExportDialog = lazySurface(() => import("../transfers/ImportExport"), (m) => m.ExportDialog);
 const ImportReviewDialog = lazySurface(() => import("../transfers/ImportReviewDialog"));
+// Comments (docs/dev/comments.md "In the app"): a block's thread popover,
+// fetched when the pointer or focus reaches a comment control, and the
+// Comments window, with the View menu.
+const ThreadPopover = lazySurface(() => import("../comments/ThreadPopover"));
+const CommentsPanel = lazySurface(() => import("../comments/CommentsPanel"));
+// The Inbox's panel (docs/dev/comments.md "In the app"), fetched when the
+// pointer or the focus reaches the bell.
+const InboxPanel = lazySurface(() => import("../inbox/InboxPanel"));
 // What a header menu opens, fetched when the pointer or focus reaches its
 // button so nothing waits on the network after the click: the account menu
 // (Settings, Tours, Report a problem and, on a phone, the View rows) and the
 // View menu (Import/Export, the AI Chat toggle).
 const preloading = (...surfaces) => () => { for (const surface of surfaces) surface.preload(); };
 const preloadAccountMenu = preloading(SettingsDialog, GuideOverlay, ReportProblem, ImportDialog, ChatDock);
-const preloadViewMenu = preloading(ImportDialog, ChatDock);
+const preloadViewMenu = preloading(ImportDialog, ChatDock, CommentsPanel);
 
 // PDF load phases that own a row in the background-transfers popover; every
 // other phase is viewer-local. Allowlist on purpose — the transfer handling's
@@ -496,6 +510,11 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   const initialUrl = params.get("src") || params.get("url") || "";
   const initialShare = publicPage ? (publicPage.share || "") : (params.get("share") || "");
   const initialBlockId = params.get("block") || params.get("page") || "";
+  // `page=` alone: a folder share opens that page of the folder even when
+  // `block=` names a note or a highlight on it (a thread's link).
+  const initialPageId = params.get("page") || "";
+  // A thread to open once its page's comments are in (Copy link, the inbox).
+  const initialThreadId = params.get("thread") || "";
   const initialLabel = params.get("unlabelled") ? NO_LABEL : (params.get("label") || "");
   const initialFolder = params.get("folder") || "";
   // shareMode: this tab shows a page through a ?share= link (or a page
@@ -1715,6 +1734,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   const [refCache, setRefCache] = useState({}); // { [blockId]: { content, page_title } }
   const [backlinks, setBacklinks] = useState([]);
   const [chatHidden, setChatHidden] = useState(false);
+  // The Comments window (comments/CommentsPanel.jsx): closed until the View
+  // menu, the command or the phone's More sheet shows it.
+  const [commentsHidden, setCommentsHidden] = useState(true);
   const [homeEditingId, setHomeEditingId] = useState(null);
   // ---- Unified floating message pill ---------------------------------------
   // ONE pill, many sources. Each source posts into its own named channel
@@ -2541,6 +2563,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       if (appCmdRef.current && dispatchHotkey(liveAppCommands(), e, appCmdRef.current, bindingsRef.current)) return;
       if (e.key === "Escape") {
         setOpenPopover(null);
+        setThreadPop(null);
         setQuickOpen(null);
         setHomeMenu(null);
         setSelectedPages((prev) => (prev.size ? new Set() : prev));
@@ -2591,6 +2614,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     enterNewNote, setEnterNewNote, backlinksVisible, setBacklinksVisible,
     keybindings, setKeybindings,
     statusBarVisible, setStatusBarVisible, suggestTours, setSuggestTours, tourProgress, setTourProgress,
+    inboxSystemNotifications, setInboxSystemNotifications,
     syncPillScope, setSyncPillScope,
     chatEffort, setChatEffort, chatSpeed, setChatSpeed, aiLoginCheck, setAiLoginCheck, metaModel, setMetaModel,
     dictationModel, setDictationModel, dictationLang, setDictationLang,
@@ -3741,13 +3765,19 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // A closed window forgets its fold: shown again, from wherever, it comes
   // back whole rather than as a bare header bar.
   useEffect(() => {
-    setCollapsedWins((prev) => ((chatHidden && prev.chat) || (!notesVisible && prev.notes)
-      ? { ...prev, chat: prev.chat && !chatHidden, notes: prev.notes && notesVisible } : prev));
-  }, [chatHidden, notesVisible]);
+    setCollapsedWins((prev) => ((chatHidden && prev.chat) || (!notesVisible && prev.notes) || (commentsHidden && prev.comments)
+      ? { ...prev, chat: prev.chat && !chatHidden, notes: prev.notes && notesVisible, comments: prev.comments && !commentsHidden } : prev));
+  }, [chatHidden, notesVisible, commentsHidden]);
   // Phone layout: which overlay panel covers the center ('notes' | 'chat' |
   // null = the main view). Reset on navigation so a new page opens on its content.
   const isPhone = useIsPhone();
   const [phonePanel, setPhonePanel] = useState(null);
+  // The Comments window's first showing: the right-hand column, last, when
+  // no slot holds it yet (a page's own saved layout may not).
+  useEffect(() => {
+    if (commentsHidden || isPhone) return;
+    if (!["left", "right", "bottom"].some((side) => layout[side].includes("comments"))) moveWindow("comments", "right", 99);
+  }, [commentsHidden, isPhone, layout]); // eslint-disable-line react-hooks/exhaustive-deps
   // A phone overlay stays MOUNTED once it has been opened, hidden rather than
   // unmounted while another tab is up: unmounting threw away the notes scroll
   // position (and the chat's draft) on every flip to the PDF and back. Panels
@@ -3783,6 +3813,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   useEffect(() => {
     if (!isPhone) ChatDock.preload();
     if (initialUrl || initialShare || initialBlockId) preloadPdfEngine();
+    if (initialThreadId) ThreadPopover.preload();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (!homeLoaded) return undefined;
@@ -4143,10 +4174,28 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // entry when the server named it) — its edits wait, unsent — or null.
   const [pageGone, setPageGone] = useState(null);
   useEffect(() => { setPageGone(null); }, [focusedBlockId]);
+  // The open page's comment threads (comments/useComments.js, docs/dev/
+  // comments.md "In the app"). Who reads them reads the page; who writes
+  // is signed in: a member (a viewer too), or an account a share admits —
+  // not a link visitor without one, nor a guest account through a link.
+  const commentMe = shareMode ? (shareInfo?.viewerIsGuest ? "" : shareInfo?.viewer || "") : authUser?.user || "";
+  const canComment = !!commentMe;
+  // The workspace's owner deletes anyone's comment; not through a share link.
+  const commentOwner = !shareMode && workspace?.role === "owner";
+  const comments = useComments({ pageId: focusedBlockId, enabled: !!focusedBlockId, me: commentMe, onStatus: (msg) => setStatus(msg),
+    flush: () => collabRef.current?.flush() });
+  const commentsRef = useRef(comments);
+  commentsRef.current = comments;
+  // Where the comment controls show: not on a page host's publication
+  // (comments stay off the share host), nor on a page whose comments
+  // answer 404 or 403.
+  const commentsOn = !publicPage && comments.readable;
   const collab = usePageCollab({
     pageId: focusedBlockId,
     enabled: !!focusedBlockId,
     canWrite: !readOnly,
+    // Someone wrote a comment on the page, or the socket came back: refetch its threads.
+    onComments: () => commentsRef.current.refresh(),
     onRemoteOps: (ops, pageId, pos, before, own) => applyRemoteRef.current?.(ops, pageId, pos, before, own),
     onReload: (pageId) => {
       if (pageId === focusedBlockIdRef.current) loadBlocksForBlock(pageId);
@@ -4172,6 +4221,130 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // every wet stroke goes with the page.
   useEffect(() => { inkLive.keepWetOf(collab.peers.map((p) => p.client)); }, [collab.peers]);
   useEffect(() => () => inkLive.clearWet(), [focusedBlockId]);
+
+  // The thread popover (comments/ThreadPopover.jsx): {blockId, threadId
+  // (one to show and scroll to), anchor (the element it opened from, null
+  // for the block's row control), compose (focus "New comment"), margin
+  // (shown as the active card in the PDF's margin instead)}, or null.
+  // A second press on the control it hangs from closes it.
+  const [threadPop, setThreadPop] = useState(null);
+  useEffect(() => { setThreadPop(null); }, [focusedBlockId]);
+  // `pdf`: opened from the PDF (a highlight, its menu, the selection
+  // popup) or a jump to a thread: a highlight whose page has room for the
+  // margin opens its card there, its threadId the active card (an open
+  // thread's; a resolved one has no card and opens in the popover).
+  const pdfMarginRef = useRef(null); // set by PdfViewer: (hlId) => whether its card would show
+  // A highlight's element on the PDF page, where its thread popover hangs.
+  const highlightEl = (id) => document.querySelector(`[data-hl-id="${CSS.escape(id)}"]`);
+  function openThread(blockId, anchor = null, { threadId = "", compose = false, toggle = true, pdf = false } = {}) {
+    const thread = threadId ? commentsRef.current.threads.find((th) => th.id === threadId) : null;
+    const margin = pdf && !(thread && !isOpen(thread)) && !!pdfMarginRef.current?.(blockId);
+    if (margin) preloadCommentMargin(); else ThreadPopover.preload();
+    setThreadPop((cur) => (toggle && cur?.blockId === blockId && !threadId ? null : { blockId, threadId, anchor, compose, margin }));
+  }
+  // Escape gives the focus back to the control it opened from.
+  function closeThread(returnFocus) {
+    const pop = threadPop;
+    setThreadPop(null);
+    if (!returnFocus || !pop || pop.margin) return;
+    const el = pop.anchor?.isConnected ? pop.anchor : document.querySelector(`[data-comment-for="${CSS.escape(pop.blockId)}"]`);
+    el?.focus();
+  }
+  // The selection popup's Comment: the highlight it just made ({id,
+  // opened}), whose popover opens on it, from the passage once that is
+  // drawn, with "New comment" focused. When the popover closes with
+  // nothing on the highlight it is deleted again (the effect after
+  // `highlights`).
+  const freshCommentRef = useRef(null);
+  function commentOnNewHighlight(id) {
+    freshCommentRef.current = { id, opened: false };
+    let frames = 0;
+    const open = () => {
+      if (freshCommentRef.current?.id !== id) return;
+      const el = highlightEl(id);
+      if (!el && ++frames < 30) { requestAnimationFrame(open); return; }
+      openThread(id, el, { compose: true, toggle: false, pdf: true });
+    };
+    requestAnimationFrame(open);
+  }
+  // A thread of this page, from the Comments window or a deep link: its
+  // block scrolled to, flashed, and the popover open on the thread. A
+  // note's thread brings the notes over a phone's PDF tab (showInNotes), so
+  // the note it is about shows under it.
+  function showThread(thread) {
+    if (thread.block_id !== focusedBlockId) {
+      if (isHighlightBlock(treeById.get(thread.block_id))) {
+        scrollToBlock(thread.block_id);
+        reveal(thread.block_id);
+      } else showInNotes(thread.block_id);
+      triggerFlash(thread.block_id);
+    }
+    openThread(thread.block_id, null, { threadId: thread.id, toggle: false, pdf: true });
+  }
+  // A thread to open once its page's comments are in: the boot's ?thread=,
+  // or one in this workspace named by its page and block (the inbox), as
+  // {threadId, pageId} (pageId "": the first page that opens). The first
+  // page whose comments load takes it: its own page opens the thread, any
+  // other page drops it (the linked one never opened).
+  const pendingThreadRef = useRef(initialThreadId ? { threadId: initialThreadId, pageId: initialPageId } : null);
+  const threadGone = () => setStatus(t("That comment thread is no longer on this page."));
+  async function openThreadAt(threadId, blockId, pageId) {
+    if (pageId !== focusedBlockId) {
+      pendingThreadRef.current = { threadId, pageId };
+      openBlockLink(blockId || pageId, pageId);
+      return;
+    }
+    pendingThreadRef.current = null;
+    const here = commentsRef.current.threads.find((th) => th.id === threadId);
+    if (here) { showThread(here); return; }
+    // Not here yet: this refetch's own answer says.
+    const got = await commentsRef.current.refresh();
+    if (!got || got.pageId !== focusedBlockIdRef.current) return;
+    const thread = got.threads.find((th) => th.id === threadId);
+    if (thread) showThread(thread); else threadGone();
+  }
+  useEffect(() => {
+    const want = pendingThreadRef.current;
+    if (!want || !comments.loaded || !focusedBlockId) return;
+    pendingThreadRef.current = null;
+    if (want.pageId && want.pageId !== focusedBlockId) return;
+    const thread = comments.threads.find((th) => th.id === want.threadId);
+    if (thread) showThread(thread); else threadGone();
+  }, [comments.loaded, comments.threads, focusedBlockId]); // eslint-disable-line react-hooks/exhaustive-deps
+  // The address of a thread, for its comment's Copy link: the share's in a
+  // share view, else this workspace's.
+  function copyThreadLink(comment) {
+    const link = threadLink(window.location.origin,
+      { pageId: focusedBlockId, blockId: threadPop?.blockId || "", threadId: comment.thread_id },
+      shareMode ? { share: initialShare } : {});
+    copyText(shareMode ? link : withWorkspace(link));
+    setStatus(t("Link to the comment copied."));
+  }
+  // The labels a comment's [[links]] show: the page's own blocks, else the
+  // reference cache.
+  function commentLabels(body) {
+    const out = {};
+    for (const m of String(body || "").matchAll(REF_RE)) {
+      const rb = treeById.get(m[1]) || refCache[m[1]];
+      if (rb) out[m[1]] = refLabelOf(rb);
+    }
+    return out;
+  }
+  // A comment's [[link]] to a block outside this page: its label is fetched
+  // once into the reference cache when the threads arrive, as a note's is
+  // (BlockTree's onFetchRefs), so the chip names the page, not its id.
+  useEffect(() => {
+    const unknown = new Set();
+    for (const th of comments.threads || []) {
+      for (const c of th.comments || []) {
+        for (const m of String(c.body || "").matchAll(REF_RE)) {
+          if (!treeById.get(m[1]) && !refCache[m[1]]) unknown.add(m[1]);
+        }
+      }
+    }
+    if (unknown.size) onFetchRefs([...unknown]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [comments.threads]);
   // Set while the tree's transition effect hands a tree to the session: a
   // load there may apply held-back batches at once, inside React's commit.
   const committingRef = useRef(false);
@@ -5257,8 +5430,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         // once the listing is in)
         setFolderFilter(initialFolder || data.folder);
         const pages = await fetchHomeBlocks();
-        if (initialBlockId && pages.some((b) => b.id === initialBlockId)) {
-          await openSharedPage(token, initialBlockId, data);
+        const want = [initialPageId, initialBlockId].find((id) => id && pages.some((b) => b.id === id));
+        if (want) {
+          await openSharedPage(token, want, data);
         } else {
           setStatus(t("Loaded shared folder."));
         }
@@ -6303,19 +6477,24 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     }
   }
 
-  function addHighlight(highlight) {
-    if (readOnly) return;
+  // Returns the new highlight's id. `edit` false: its note is not opened
+  // for typing (a comment is written instead).
+  function addHighlight(highlight, { edit = true } = {}) {
+    if (readOnly) return "";
     const withId = { ...highlight, id: highlight.id || makeId() };
     const nextBlocks = addHighlightAsBlock(blocks, withId);
     // Open the new block immediately so the user can type the note without
     // an extra click. addHighlightAsBlock appends at the top level.
-    startEditing(withId.id);
-    pendingFocusRef.current = withId.id;
+    if (edit) {
+      startEditing(withId.id);
+      pendingFocusRef.current = withId.id;
+    }
     scrollToBlock(withId.id);
     setBlocks(nextBlocks);
     // autosave effect will persist
     setStatus(t("Highlight saved."));
     guideEvents.emit("highlight.created", { id: withId.id, kind: withId.position?.area ? "area" : "text" });
+    return withId.id;
   }
 
   // --- Handwriting ----------------------------------------------------------
@@ -7295,11 +7474,14 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       // whose E is let go after a click into a caption.
       if (e.type !== "keyup" && isTextField(e.target)) return;
       const K = inkKeysRef.current;
-      // a focused button, link or menu row keeps its Enter
-      const onControl = !!e.target?.closest?.("button, a[href], [role^='menuitem']");   // i18n-ignore: a selector
+      // a focused button, link, menu row or comment thread (a margin card or the
+      // thread popover, whose Enter opens it) keeps its Enter
+      const onControl = !!e.target?.closest?.("button, a[href], [role^='menuitem'], .commentMargin, .commentPopover");   // i18n-ignore: a selector
       const action = stripKey(e, { ...K, onControl, eraserDown: inkHoldRef.current?.since ?? null });
       if (!action) return;
-      if (e.code === "Escape" && document.querySelector(".ctxMenu, .inkDragGhost")) return;
+      // an open menu, a preset being dragged and a focused comment thread take Escape first
+      if (e.code === "Escape" && (document.querySelector(".ctxMenu, .inkDragGhost")
+        || e.target?.closest?.(".commentMargin, .commentPopover"))) return;   // i18n-ignore: a selector
       if (action.prevent) e.preventDefault();
       if (action.stop) e.stopPropagation();
       if (action.kind === "undo") K.inkUndo(action.redo);
@@ -7930,7 +8112,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   }
   bindingsRef.current = keybindings;
   appCmdRef.current = {
-    shareMode, homeMode, readOnly, hasPage: !!focusedBlockId, hasPdf: !!pdfUrl && !homeMode,
+    shareMode, homeMode, readOnly, hasPage: !!focusedBlockId, hasPdf: !!pdfUrl && !homeMode, commentsOn,
     search: (all) => {
       if (!all) {
         const homeFind = document.querySelector(".homeFindInput");
@@ -7971,6 +8153,12 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       if (isPhone) { setPhonePanel((p) => (p === "chat" ? null : "chat")); return; }
       if (chatHidden) guideEvents.emit("window.shown", { id: "chat" });
       setChatHidden((v) => !v);
+    },
+    // The Comments window; on a phone, its panel over the page.
+    toggleComments: () => {
+      if (isPhone) { setPhonePanel((p) => (p === "comments" ? null : "comments")); return; }
+      if (commentsHidden) guideEvents.emit("window.shown", { id: "comments" });
+      setCommentsHidden((v) => !v);
     },
     togglePdf: () => {
       if (pdfHidden) guideEvents.emit("window.shown", { id: "pdf" });
@@ -8016,10 +8204,11 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       .map((cmd) => entry(cmd, () => cmd.run(ctx)));
     const row = rowPropsRef.current;
     const block = !homeMode && focusedId ? findBlock(blocks, focusedId) : null;
-    if (row && block && !readOnly) {
+    // read-only, as the hotkeys: only the ones that change no note (a viewer comments)
+    if (row && block) {
       const bctx = { block, tree: blocks, view, folded: isFolded(block, view), readOnly, editor: null, row };
       for (const cmd of BLOCK_COMMANDS) {
-        if (cmd.palette === false || cmd.needsEditor || (cmd.when && !cmd.when(bctx))) continue;
+        if (cmd.palette === false || cmd.needsEditor || (cmd.edits && readOnly) || (cmd.when && !cmd.when(bctx))) continue;
         out.push(entry(cmd, () => cmd.run(bctx)));
       }
     }
@@ -8368,6 +8557,44 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     window.location.href = `${window.location.pathname}?${q}`;
   }
   const reminders = useReminders(!shareMode && !!authUser?.user, { labelOf: refText, onOpen: openReminder });
+  // The account's Inbox (inbox/useInbox.js, docs/dev/comments.md "In the
+  // app"): the bell's count, and the panel's items while it is open. A
+  // click marks the item read, closes the panel and goes where it points:
+  // a page of this workspace in place (the thread open, via openThreadAt),
+  // another workspace or a share by navigation (with ?thread=), an
+  // invitation by the workspace switch.
+  const inbox = useInbox({
+    enabled: !!authUser?.user && !authUser.is_guest && !shareMode,
+    open: openPopover === "inbox",
+    notify: inboxSystemNotifications,
+    onOpen: (item) => openInboxItemRef.current?.(item),
+    onStatus: (msg) => setStatus(msg),
+  });
+  async function openInboxItem(item) {
+    setOpenPopover(null);
+    const jump = inboxJump(item, wsId, window.location.pathname);
+    const marked = isUnread(item) ? inbox.markRead(item, true) : null;
+    if (jump.to === "workspace") {
+      if (jump.workspaceId !== wsId) { await marked; switchWorkspace(jump.workspaceId); }
+      return;
+    }
+    if (jump.to === "url") {
+      await marked; // (sent with keepalive, so the navigation never cuts it off)
+      leaveCurrentPage();
+      window.location.href = jump.url;
+      return;
+    }
+    if (isPhone) setPhonePanel(null);
+    if (!jump.pageId) {
+      // a folder shared with a member: the folder in the library
+      if (jump.blockId) { if (!homeMode) goHome(true, true); openFolder(jump.blockId); }
+      return;
+    }
+    if (jump.threadId) await openThreadAt(jump.threadId, jump.blockId, jump.pageId);
+    else await openBlockLink(jump.blockId || jump.pageId, jump.pageId);
+  }
+  const openInboxItemRef = useRef(openInboxItem);
+  openInboxItemRef.current = openInboxItem;
   // Folders shown at the current level: the open folder's subfolders (the
   // top level at the root), in their order.
   const levelFolders = useMemo(() => childFolders(libTree, folderFilter), [libTree, folderFilter]);
@@ -8659,13 +8886,67 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       const p = byId.get(h.id)?.properties || {};
       const url = p.link_url || "";
       const pageId = p.link_page_id || "";
-      return (url || pageId) ? { ...h, linkTarget: { url, pageId, blockId: p.link_block_id || "" } } : h;
+      // its open comment threads: the note badge shows for them too
+      const threads = comments.countByBlock.get(h.id) || 0;
+      const out = threads ? { ...h, threadCount: threads } : h;
+      return (url || pageId) ? { ...out, linkTarget: { url, pageId, blockId: p.link_block_id || "" } } : out;
     });
     const json = JSON.stringify(next);
     if (json === prevHighlightsRef.current.json) return prevHighlightsRef.current.value;
     prevHighlightsRef.current = { json, value: next };
     return next;
-  }, [blocks, treeBlocks]);
+  }, [blocks, treeBlocks, comments.countByBlock]);
+  // The selection popup's Comment highlight (commentOnNewHighlight): its
+  // popover open marks it opened; once that popover is closed, or another
+  // block's took its place, a highlight with no note and no thread is
+  // deleted through the tree, as the highlight menu's Delete does. When
+  // nothing else was edited since it was made, the deletion is folded into
+  // its making (blockHistory takesBack): the undo history is as before the
+  // Comment press, as a text box left empty leaves none.
+  useEffect(() => {
+    const fresh = freshCommentRef.current;
+    if (!fresh) return;
+    if (threadPop?.blockId === fresh.id) { fresh.opened = true; return; }
+    if (!fresh.opened) return;
+    freshCommentRef.current = null;
+    if (readOnly || !findBlock(blocks, fresh.id)) return;
+    if (abandonedCommentHighlight(highlights.find((h) => h.id === fresh.id), comments.threadsByBlock.get(fresh.id))) {
+      const remove = (prev) => (findBlock(prev, fresh.id) ? removeBlockTree(prev, fresh.id) : prev);
+      (blockHistory.takesBack(remove(blocks)) ? foldBlocks : setBlocks)(remove);
+    }
+  }, [threadPop]); // eslint-disable-line react-hooks/exhaustive-deps
+  // A link visitor without an account signs in through the share's own gate.
+  const commentSignIn = shareMode && shareInfo && !shareInfo.viewer && !publicPage
+    ? () => { setThreadPop(null); setLoginError(""); setShareGate("login"); } : undefined;
+  // The PDF's comment margin (comments/marginSlot.jsx, docs/dev/comments.md
+  // "The PDF margin"): what its cards read, the popover's props with the
+  // active card's target; none on a phone. The handlers reach App's latest
+  // through a ref, so the value changes only with what the cards show.
+  const marginFns = useRef(null);
+  marginFns.current = { commentLabels, openBlockLink, copyThreadLink, onCacheRef, commentSignIn, openThread };
+  const commentMargin = useMemo(() => (commentsOn && !isPhone ? {
+    threadsByBlock: comments.threadsByBlock,
+    target: threadPop?.margin ? threadPop : null,
+    me: commentMe,
+    owner: commentOwner,
+    canComment,
+    people,
+    labelsFor: (body) => marginFns.current.commentLabels(body),
+    links: {
+      pages: pageBlocks, rootId: focusedBlockId, lookupBlock: (id) => treeById.get(id), refCache,
+      onCacheRef: (...args) => marginFns.current.onCacheRef(...args),
+    },
+    onBlockRefClick: (...args) => marginFns.current.openBlockLink(...args),
+    onAdd: comments.add,
+    onEdit: comments.edit,
+    onDelete: comments.remove,
+    onResolve: comments.resolve,
+    onCopyLink: (comment) => marginFns.current.copyThreadLink(comment),
+    onSignIn: commentSignIn ? () => marginFns.current.commentSignIn?.() : undefined,
+    onActivate: (blockId, threadId) => marginFns.current.openThread(blockId, null, { threadId, toggle: false, pdf: true }),
+    onClose: () => setThreadPop(null),
+  } : null), [commentsOn, isPhone, comments.threadsByBlock, threadPop, commentMe, shareMode, workspace?.role, canComment, people, // eslint-disable-line react-hooks/exhaustive-deps
+    pageBlocks, focusedBlockId, treeById, refCache, !!commentSignIn, comments.add, comments.edit, comments.remove, comments.resolve]);
   // Kept by identity while the colours are the same (highlights are rebuilt
   // from the tree on every edit): a row prop of every block.
   const highlightColorsPrev = useRef({});
@@ -9294,8 +9575,28 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
             {/* The right of the header: the page's buttons, with who else is
                 here under them. */}
             <div className="pageHeadSide">
-            {!shareMode && focusedBlockId ? (
+            {focusedBlockId ? (
               <div className="pageActionCol">
+                {/* The page's own thread, for a share's visitors too. */}
+                {commentsOn ? (
+                <button
+                  type="button"
+                  className={`pageActionBtn pageCommentBtn${comments.countByBlock.get(focusedBlockId) ? " has" : ""}`}
+                  data-comment-for={focusedBlockId}
+                  title={comments.countByBlock.get(focusedBlockId)
+                    ? tn("{n} open comment on this page", "{n} open comments on this page", comments.countByBlock.get(focusedBlockId))
+                    : t("Comment on this page")}
+                  aria-label={t("Comment on this page")}
+                  onPointerEnter={ThreadPopover.preload}
+                  onFocus={ThreadPopover.preload}
+                  onClick={(e) => openThread(focusedBlockId, e.currentTarget)}
+                >
+                  <MessageSquareIcon size={16} />
+                  {comments.countByBlock.get(focusedBlockId)
+                    ? <span className="pageCommentCount">{shortCount(comments.countByBlock.get(focusedBlockId))}</span> : null}
+                </button>
+                ) : null}
+                {!shareMode ? (<>
                 {hasSheets && !notebook ? (
                   // the way to the notebook view that stays in sight, opening at the sheet in view
                   <button className="uiBtn sm ghost" onClick={() => setNotebookView(focusedBlockId, true)}
@@ -9644,6 +9945,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                 >
                   <TrashIcon size={16} />
                 </button>
+                </>) : null}
               </div>
             ) : null}
             {focusedBlockId && collab.peers.length ? (
@@ -10350,6 +10652,16 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                   onAddToChat: shareMode ? null : addBlockToChat,
                   // A handwriting block's "Transcribe with AI".
                   onTranscribe: shareMode ? null : transcribeInk,
+                  // Comments: a row's control opens (or closes) the block's
+                  // thread popover from where it sits; the handle menu and
+                  // block.comment open it ready to write. Every row reads
+                  // its own open count (BlockTree takes the map apart).
+                  onComment: commentsOn
+                    ? (id, anchor) => openThread(id, anchor || null, anchor ? {} : { compose: true, toggle: false }) : null,
+                  onCommentPreload: ThreadPopover.preload,
+                  commentCounts: comments.countByBlock,
+                  // the block whose popover is open: its control stays shown, expanded
+                  commentOpenFor: commentsOn && threadPop ? threadPop.blockId : "",
                   // `above` puts the copy before the original (Duplicate
                   // block above).
                   onDuplicate: (id, { above = false } = {}) => {
@@ -10532,6 +10844,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   const winVisible = {
     notes: Boolean(notesWindow) && !centerNotes,
     chat: !chatHidden && (!shareMode || !!focusedBlockId),
+    comments: !commentsHidden && !!focusedBlockId && !homeMode && commentsOn,
   };
   function renderWindow(id) {
     // Phone: windows are full-screen overlays — no dock dragging or collapsing,
@@ -10613,6 +10926,31 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         </LazyBoundary>
       );
     }
+    if (id === "comments") {
+      const closeComments = closeWindow(() => setCommentsHidden(true));
+      return (
+        // Until its module is in, the window's frame with an empty body.
+        <LazyBoundary fallback={(
+          <DockWindow title={t("Comments")} guide="comments.grip" {...common} onClose={closeComments}>
+            <div className="commentsPanel" />
+          </DockWindow>
+        )}>
+          <CommentsPanel
+            {...common}
+            onClose={closeComments}
+            threads={comments.threads}
+            pageId={focusedBlockId}
+            // what a thread is on: a highlight's quote, else the note's text
+            anchorText={(id) => { const b = treeById.get(id); return b ? blockQuote(b) || b.content || "" : ""; }}
+            labelOf={(id) => { const rb = treeById.get(id) || refCache[id]; return rb ? refLabelOf(rb) : null; }}
+            onOpen={(thread) => {
+              if (isPhone) { setNotesVisible(true); setPhonePanel("notes"); }
+              showThread(thread);
+            }}
+          />
+        </LazyBoundary>
+      );
+    }
     return null;
   }
   // Windows per slot, in stored order, visibility-filtered. On a phone the
@@ -10679,6 +11017,11 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         ),
         (!menuReadOnly || focusedBlockId) && !isPhone && (
           <MenuItem key="chat" icon={SparklesIcon} trailing={shown(!chatHidden)} onClick={toggleWindow("chat", !chatHidden, () => setChatHidden((v) => !v))}>{t("AI Chat")}</MenuItem>
+        ),
+        !homeMode && focusedBlockId && commentsOn && !isPhone && (
+          <MenuItem key="comments" icon={MessageSquareIcon} trailing={shown(!commentsHidden)}
+            onPointerEnter={CommentsPanel.preload}
+            onClick={toggleWindow("comments", !commentsHidden, () => setCommentsHidden((v) => !v))}>{t("Comments")}</MenuItem>
         ),
       ],
       focusedBlockId && !readOnly ? ["app.undo", "app.redo"].map(commandRow) : [],
@@ -10754,8 +11097,22 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         trailing={<TaskBadge badge={tasks.badge} inline />}>
         {t("Background tasks")}
       </MenuItem>
+      {inbox.enabled ? (
+        <MenuItem icon={BellIcon} onPointerEnter={InboxPanel.preload} onClick={() => setOpenPopover("inbox")}
+          trailing={<InboxBadge unread={inbox.unread} inline />}>
+          {t("Inbox")}
+        </MenuItem>
+      ) : null}
       {folderShareable ? (
         <MenuItem icon={LinkIcon} onClick={() => openFolderShare(folderFilter)}>{t("Share this folder")}</MenuItem>
+      ) : null}
+      {focusedBlockId && !homeMode && commentsOn ? (
+        // the Comments window, as a panel over the page (no bottom tab of its own)
+        <MenuItem icon={MessageSquareIcon} onPointerEnter={CommentsPanel.preload}
+          onClick={() => { setOpenPopover(null); setPhonePanel("comments"); }}
+          trailing={comments.countByBlock.size ? <span className="ctxMenuKey">{shortCount([...comments.countByBlock.values()].reduce((a, n) => a + n, 0))}</span> : null}>
+          {t("Comments")}
+        </MenuItem>
       ) : null}
       <MenuDivider />
       {viewMenuItems(false)}
@@ -10908,6 +11265,20 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           onOpenSettings={() => openSettingsPane(workspace.mirror_of ? "workspaces" : "account")}
         />
       ) : null}
+      {inbox.enabled ? (
+        // The Inbox: on a phone, a row of the More sheet opens the panel.
+        <span data-popover="inbox" className={`popoverAnchor ${isPhone ? "sheetOnly" : ""}`}>
+          {isPhone ? null : (
+            <InboxButton unread={inbox.unread} open={openPopover === "inbox"} onPreload={InboxPanel.preload}
+              onToggle={() => setOpenPopover((p) => (p === "inbox" ? null : "inbox"))} />
+          )}
+          {openPopover === "inbox" ? (
+            <LazyBoundary>
+              <InboxPanel inbox={inbox} workspaceId={wsId} onOpen={openInboxItem} />
+            </LazyBoundary>
+          ) : null}
+        </span>
+      ) : null}
       {authUser?.user && (
         <span data-popover="user" className="popoverAnchor">
           <button
@@ -10922,14 +11293,19 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
             data-guide="header.account"
             // The name stays put (every script finds the button by it); the
             // hover title counts what wants a look.
-            title={isPhone ? t("More — account, settings, background tasks, import and export")
+            title={isPhone ? (inbox.unread ? tn("More — {n} unread in the inbox; account, settings, background tasks, import and export",
+              "More — {n} unread in the inbox; account, settings, background tasks, import and export", inbox.unread)
+              : inbox.enabled ? t("More — inbox, account, settings, background tasks, import and export")
+                : t("More — account, settings, background tasks, import and export"))
               : notices.list.length ? tn("Account & settings — {n} notice", "Account & settings — {n} notices", notices.list.length)
               : t("Account & settings")}
             aria-label={isPhone ? t("More") : t("Account & settings")}
           >
             {isPhone ? <MenuIcon size={20} /> : <UserIcon size={20} />}
             {isPhone ? <span className="barLabel">{t("More")}</span> : null}
+            {/* On a phone: the running spinner, then the Inbox's count, then the notice dot. */}
             {isPhone && tasks.badge === "running" ? <span className="transferSpin" aria-hidden="true" />
+              : isPhone && inbox.unread ? <InboxBadge unread={inbox.unread} />
               : notices.tone ? <span className={`noticeDot ${dotTone(notices.tone)}`} data-tone={notices.tone} aria-hidden="true" /> : null}
           </button>
           {openPopover === "user" ? (
@@ -11540,8 +11916,17 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                 addHighlightToChat(highlights.find(h => h.id === hlId), additive);
               }}
               onHighlightContext={setHighlightMenu}
+              // a note badge's click on a highlight with threads: its popover, from the badge
+              onHighlightThread={commentsOn ? (hlId, anchor) => openThread(hlId, anchor, { toggle: false, pdf: true }) : undefined}
+              // its threads as cards beside the pages (comments/marginSlot.jsx)
+              commentMargin={commentMargin}
+              marginRef={pdfMarginRef}
+              onMarginLost={() => setThreadPop((cur) => (cur?.margin
+                ? { ...cur, margin: false, anchor: highlightEl(cur.blockId) } : cur))}
               onAreaSelection={(sel) => addChatPicture(regionPicture("area", focusedBlockId, sel.pageNumber,
                 regionBox({ boundingRect: sel.rect, width: sel.width, height: sel.height })))}
+              // the selection popup's Comment: a highlight with its thread popover open on it
+              selComment={commentsOn && canComment}
               onSelectionFinished={readOnly ? undefined : (position, content, hideTip, extras) => {
                 if (extras?.link) {
                   setLinkDialog({ position, content });
@@ -11549,14 +11934,15 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                   hideTip?.();
                   return;
                 }
-                addHighlight({
+                const id = addHighlight({
                   content: content || { text: "" },
                   position,
                   comment: { text: extras?.commentText || "" },
                   // the popup's swatch is a palette colour; a highlight stores it at the wash alpha
                   color: highlightColor(extras?.color) || DEFAULT_HIGHLIGHT,
-                });
+                }, { edit: !extras?.comment });
                 hideTip?.();
+                if (extras?.comment && id) commentOnNewHighlight(id);
               }}
             />
           ) : notebook ? (
@@ -11594,6 +11980,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       </PanelGroup>
       {isPhone && winVisible.notes && (phonePanel === "notes" || phoneSeen.current.notes) ? (
         <div className={`phonePanel ${phonePanel === "notes" ? "" : "phonePanelHidden"}`}>{renderWindow("notes")}</div>
+      ) : null}
+      {isPhone && focusedBlockId && !homeMode && commentsOn && (phonePanel === "comments" || phoneSeen.current.comments) ? (
+        <div className={`phonePanel ${phonePanel === "comments" ? "" : "phonePanelHidden"}`}>{renderWindow("comments")}</div>
       ) : null}
       {isPhone && (!shareMode || focusedBlockId) && (phonePanel === "chat" || phoneSeen.current.chat) ? (
         <div className={`phonePanel ${phonePanel === "chat" ? "" : "phonePanelHidden"}`}>{renderWindow("chat")}</div>
@@ -12017,6 +12406,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           setSyncPillScope,
           backlinksVisible,
           setBacklinksVisible,
+          inboxSystemNotifications,
+          setInboxSystemNotifications,
+          hasInbox: !!authUser?.user && !authUser.is_guest, // a guest has none
           isAdmin: !!authUser?.is_admin,
           setStatus,
           refreshQuota, // keep the client-side pre-upload size check in sync without a re-login
@@ -12489,6 +12881,19 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
             >
               {t("Copy as reference point")}
             </button>
+            {commentsOn ? (
+            <button
+              className="ctxMenuItem"
+              onClick={() => {
+                // the popover hangs from the highlight on the page
+                const id = highlightMenu.id;
+                setHighlightMenu(null);
+                openThread(id, highlightEl(id), { compose: true, toggle: false, pdf: true });
+              }}
+            >
+              {t("Comment")}
+            </button>
+            ) : null}
             <button
               className="ctxMenuItem"
               onClick={() => {
@@ -12499,6 +12904,33 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
               {t("Delete")}
             </button>
         </ContextMenu>
+      ) : null}
+      {threadPop && focusedBlockId && commentsOn && !threadPop.margin ? (
+        // One per app, keyed by its block: another block's is a fresh one.
+        <LazyBoundary>
+          <ThreadPopover
+            key={threadPop.blockId}
+            target={threadPop}
+            threads={comments.threadsByBlock.get(threadPop.blockId)}
+            kind={threadPop.blockId === focusedBlockId ? "page" : isHighlightBlock(treeById.get(threadPop.blockId)) ? "highlight" : "note"}
+            me={commentMe}
+            owner={commentOwner}
+            canComment={canComment}
+            people={people}
+            labelsFor={commentLabels}
+            // the fields' [[ and @ pickers, as a note row's (rowProps)
+            links={{ pages: pageBlocks, rootId: focusedBlockId, lookupBlock: (id) => treeById.get(id), refCache, onCacheRef }}
+            onBlockRefClick={openBlockLink}
+            onAdd={comments.add}
+            onEdit={comments.edit}
+            onDelete={comments.remove}
+            onResolve={comments.resolve}
+            onCopyLink={copyThreadLink}
+            // a visitor without an account: the share's own sign-in gate
+            onSignIn={commentSignIn}
+            onClose={closeThread}
+          />
+        </LazyBoundary>
       ) : null}
       <ReminderAlerts due={reminders.due} now={reminders.now} labelOf={refText} phone={isPhone}
         onOpen={openReminder} onDismiss={reminders.dismiss} />

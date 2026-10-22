@@ -12,8 +12,8 @@ import {
   DownloadIcon, ExpandIcon, ExportIcon, FilePlusIcon, FileTextIcon, FolderFilesIcon, HighlightIcon,
   ImportIcon, IndentIcon, InfoIcon, InsertAboveIcon, InsertBelowIcon, ItalicIcon, KeyboardIcon, LinkIcon,
   MarkdownIcon, MessageSquareIcon, OutdentIcon, OutlineIcon, PaperclipIcon, PaperIcon, PencilIcon, PlusIcon, QuoteMarkIcon,
-  RectSelectIcon, RedoIcon, ScissorsIcon, SearchIcon, SettingsIcon, SigmaIcon, SlashIcon, SquareCheckIcon, StrikethroughIcon,
-  TerminalIcon, TextCursorIcon, TextSearchIcon, Trash2Icon, UndoIcon, UsersIcon, XIcon,
+  RectSelectIcon, RedoIcon, ScissorsIcon, SearchIcon, SettingsIcon, SigmaIcon, SlashIcon, SparklesIcon, SquareCheckIcon,
+  StrikethroughIcon, TerminalIcon, TextCursorIcon, TextSearchIcon, Trash2Icon, UndoIcon, UsersIcon, XIcon,
 } from "../shared/ui/Icons";
 
 const COMMAND_ICONS = {
@@ -25,7 +25,8 @@ const COMMAND_ICONS = {
   "app.undo": UndoIcon,
   "app.redo": RedoIcon,
   "app.renameTitle": PencilIcon,
-  "app.toggleChat": MessageSquareIcon,
+  "app.toggleChat": SparklesIcon, // the View menu's AI Chat
+  "app.toggleComments": MessageSquareIcon,
   "app.togglePdf": PaperIcon,
   "app.toggleNotes": OutlineIcon,
   "app.settings": SettingsIcon,
@@ -74,7 +75,8 @@ const COMMAND_ICONS = {
   "block.link": LinkIcon,
   "block.math": SigmaIcon,
   "block.nextSlot": ChevronRightIcon,
-  "block.addToChat": MessageSquareIcon,
+  "block.addToChat": SparklesIcon, // as the handle menu's Add to chat
+  "block.comment": MessageSquareIcon,
   "block.moveToPage": ExportIcon,
   "block.delete": Trash2Icon,
 };

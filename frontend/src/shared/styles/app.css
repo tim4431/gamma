@@ -1,4 +1,8 @@
 @import "katex/dist/katex.min.css";
+/* A formula whose fonts are still loading, until they are in: hidden whole,
+   rather than its box and rules drawn with its glyphs still to come
+   (shared/lib/katexFonts.js holdMathForFonts). */
+.katex[data-fonts="loading"] { visibility: hidden; }
 
 /* The tokens (theme colours, type, radii, layers) live in tokens.css, which
    index.html links ahead of this file; this file only reads them. */
@@ -102,7 +106,7 @@
 }
 /* Rows that fill their list draw the ring inside, where the list can't
    clip it and it doesn't overlap the next row. */
-:is(.ctxMenuItem, .popoverItem, .searchResult, .chatMentionOption, .settingsNavBtn, .backlinkPage, .backlinkItem):focus-visible {
+:is(.ctxMenuItem, .popoverItem, .searchResult, .chatMentionOption, .settingsNavBtn, .backlinkPage, .backlinkItem, .commentsPanelRow):focus-visible {
   outline-offset: -2px;
 }
 /* Fields: the accent as border plus a soft halo, on click and keyboard
@@ -123,7 +127,7 @@
   .metaInput,
   .mdImgCaptionInput
 ):focus-visible,
-:is(.homeFindBox, .searchInputWrap, .pdfPageWidget, .chatComposer):focus-within {
+:is(.homeFindBox, .searchInputWrap, .pdfPageWidget, .chatComposer, .commentBox):focus-within {
   outline: none;
   border-color: var(--accent);
   box-shadow: 0 0 0 3px var(--accent-bg);
@@ -1375,6 +1379,16 @@ html[data-shell] .app { padding-bottom: env(safe-area-inset-bottom); }
 .colorBtn.selected {
   border-color: var(--border);
   box-shadow: 0 0 0 2px var(--border);
+}
+
+/* The selection popup's line between its colours and its tools (Comment,
+   Link, Translate): a swatch tall, with room either side of it. */
+.plainTip .tipDivider {
+  align-self: center;
+  width: 1px;
+  height: 22px;
+  margin: 0 var(--space-1);
+  background: var(--border);
 }
 
 /* The selection translator under the color row (PdfViewer SelTranslation):

@@ -34,6 +34,10 @@ function socketUrl(pageId) {
 //   onGone(pageId, gone)      — the page went to Recently deleted, or is back (null)
 //   onInkLive(msg)            — a peer's handwriting stroke in progress (ink/inkLive.js)
 //   onBuild(build)            — the server's build, from the socket's hello
+//   onComments(msg)           — a comment was written on the page, or the socket
+//                               (re)joined (null): refetch its threads
+// A `{t: "inbox"}` nudge (the account's inbox has news) becomes the window
+// event gamma:inbox, whatever page it arrived on.
 // Returns the session's commit/flush/hasPending/sendCursor/sendInkLive/overlay/
 // reloadFailed/tooLong/gone, `peers`, `me`, and `reconnect` (reopen the
 // socket — after a display-name change, since the name travels in the
@@ -67,6 +71,7 @@ export function usePageCollab(opts) {
       onMe: setMe,
       // a clone's sync pill (MirrorPopover) marks local edits as not pushed yet
       onQueued: () => window.dispatchEvent(new CustomEvent("gamma:local-edit")),
+      onInbox: () => window.dispatchEvent(new CustomEvent("gamma:inbox")),
     });
   }
   const session = ref.current;

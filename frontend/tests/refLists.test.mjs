@@ -3,7 +3,9 @@
 // [[title]] rule.
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { pageByTitle, pickerCounts, rankRefPages, refBlockPath, refBlockText } from "../src/editor/refLists.js";
+import {
+  pageByTitle, pickerCounts, rankRefPages, refBlockPath, refBlockText, refInsertEdit, refQueryAt, typedTitleLink,
+} from "../src/editor/refLists.js";
 
 const page = (id, content, extra = {}) => ({ id, content, _folders: [], _labels: [], _updatedAt: "", ...extra });
 const PAGES = [
@@ -54,4 +56,28 @@ test("a hand-typed [[title]] links only the one page with exactly that title", (
   assert.equal(pageByTitle(PAGES, "Attention"), null, "a prefix is not a title");
   assert.equal(pageByTitle([...PAGES, page("dup", "Rydberg Atom Arrays")], "Rydberg Atom Arrays"), null, "two pages share it");
   assert.equal(pageByTitle(PAGES, "  "), null);
+});
+
+test("the [[query typed before the caret opens the picker; a closed or broken one does not", () => {
+  assert.equal(refQueryAt("see [[Att"), "Att");
+  assert.equal(refQueryAt("see [["), "");
+  assert.equal(refQueryAt("see [[Att]] and"), null);
+  assert.equal(refQueryAt("see [[Att\nnext"), null);
+  assert.equal(refQueryAt(""), null);
+});
+
+test("a picked row puts [[id]] in place of the typed [[query, the caret after it", () => {
+  const value = "see ![[Att and more";
+  const edit = refInsertEdit(value, 10, "paper");
+  assert.deepEqual(edit, { from: 5, to: 10, insert: "[[paper]]", value: "see ![[paper]] and more", caret: 14 });
+  assert.equal(refInsertEdit("no picker here", 5, "paper"), null);
+});
+
+test("]] typed after a page's exact title links it; an id or an unknown title stays", () => {
+  const value = "read [[attention is all you need]]";
+  assert.deepEqual(typedTitleLink(value, value.length, PAGES), {
+    from: 5, to: value.length, insert: "[[paper]]", page: PAGES[1],
+  });
+  assert.equal(typedTitleLink("read [[paper]]", 14, PAGES), null, "an id already");
+  assert.equal(typedTitleLink("read [[Nothing like it]]", 24, PAGES), null);
 });

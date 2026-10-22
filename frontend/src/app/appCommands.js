@@ -5,11 +5,12 @@
 // Keyboard rebinds them. Only the long-standing keys, Ctrl+Shift+P, F2,
 // Delete and Ctrl+, have defaults; the rest are palette entries until the
 // account gives them a chord.
-// ctx: { shareMode, homeMode, hasPage, hasPdf, readOnly, homePick (the one
+// ctx: { shareMode, homeMode, hasPage, hasPdf, readOnly, commentsOn (the
+// page shows comments: not a publication, readable), homePick (the one
 // page selected on the home library), homePicks (how many), organize (the
 // library may be changed: library/libraryAccess.js), search(all),
 // palette(prefix), back(), undo(redo), renameTitle(), deletePages(), recentlyDeleted(), toggleChat(),
-// togglePdf(), toggleNotes(), openSettings(pane), exportAs(format),
+// toggleComments(), togglePdf(), toggleNotes(), openSettings(pane), exportAs(format),
 // downloadPdf(), importDialog(), newPage(), share(), metadata(), attach(),
 // reportProblem(), and for the handwriting group (docs/dev/handwriting.md
 // "Copy, cut and paste"): inkOpen (the markup strip is open), inkTool (a
@@ -100,6 +101,7 @@ export const APP_COMMANDS = [
   cmd("app.downloadPdf", t("Download the PDF file"), GROUP_PAGE, null, (c) => { c.downloadPdf(); }, { when: (c) => c.hasPdf }),
 
   cmd("app.toggleChat", t("Show or hide the chat"), GROUP_VIEW, null, (c) => { c.toggleChat(); }, { when: (c) => !c.shareMode }),
+  cmd("app.toggleComments", t("Show or hide the comments"), GROUP_VIEW, null, (c) => { c.toggleComments(); }, { when: (c) => c.hasPage && c.commentsOn }),
   cmd("app.togglePdf", t("Show or hide the PDF"), GROUP_VIEW, null, (c) => { c.togglePdf(); }, { when: (c) => c.hasPdf }),
   cmd("app.toggleNotes", t("Show or hide the notes"), GROUP_VIEW, null, (c) => { c.toggleNotes(); }, { when: (c) => c.hasPdf }),
 

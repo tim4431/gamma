@@ -27,11 +27,15 @@ import { lastPointer } from "../shared/lib/pointer.js";
 import { PdfCitationOverlay } from "./PdfCitationOverlay";
 import { citationRuns, runChars } from "./pdfCitation.js";
 import { noteBadgeAnchor } from "./noteAnchor.js";
+import { nearRelease, tipAnchor } from "./selectionTip.js";
+import { commentOnlyHighlight } from "../comments/comments.js";
+import { marginLeft as besideMargin, pageLeft } from "../comments/marginLayout.js";
+import { CommentMarginContext, CommentMarginSlot, MarginStackContext, createMarginStack } from "../comments/marginSlot";
 import { useRecentIn } from "../guide/recent.js";
 import { DEFAULT_HIGHLIGHT, colorName, darkPageColor, darkPageLine, normalizeColor, pickerColors, swatchCss } from "../shared/model/palette.js";
 import { usePalette } from "../shared/ui/paletteContext.js";
 import { placeFloating, useFloatingPosition } from "../shared/ui/placement.js";
-import { t } from "../shared/i18n/i18n.js";
+import { t, tn } from "../shared/i18n/i18n.js";
 import { TRANSLATE_PARALLEL_MAX } from "../app/prefDefs.js";
 import { ZOOM_MIN, clampZoom } from "../shared/model/zoom.js";
 import { installViewerZoom } from "../shared/lib/viewerZoom.js";
@@ -158,7 +162,7 @@ function sameHighlights(a, b) {
   if (a.length !== b.length) return false;
   for (let i = 0; i < a.length; i++) {
     const x = a[i], y = b[i];
-    if (x.id !== y.id || x.color !== y.color || x.hasNote !== y.hasNote || x.position !== y.position
+    if (x.id !== y.id || x.color !== y.color || x.hasNote !== y.hasNote || x.threadCount !== y.threadCount || x.position !== y.position
       || x.comment?.text !== y.comment?.text || x.content?.text !== y.content?.text
       || x.linkTarget?.url !== y.linkTarget?.url || x.linkTarget?.pageId !== y.linkTarget?.pageId
       || x.linkTarget?.blockId !== y.linkTarget?.blockId) return false;
@@ -450,11 +454,19 @@ async function fetchPdfData(url, onLoadState, isCancelled) {
 // that box on position.pageNumber.
 // flashHighlightId: the highlight a jump just landed on, which pulses once
 // (.pdfHlFlash; App's triggerFlash sets it for about a second).
+// selComment: the selection popup offers Comment (the reader may comment on
+// the page); a press reaches onSelectionFinished with {comment: true}.
+// commentMargin: what the comment cards beside the pages read (App's
+// CommentMarginContext value, comments/marginSlot.jsx: the threads, the
+// active card's `target`, the handlers), or null for no margin (a phone, a
+// page without comments). marginRef.current(hlId) says whether that
+// highlight's page has room for its card; onMarginLost() is called when the
+// active card's page no longer has (docs/dev/comments.md "The PDF margin").
 // The zoom window (ink/ZoomWindow.jsx) docks under the scroller while the
 // page tools' ink.zoom is on one of the document's pages: zoomHeight is its
 // height in css px and onZoomHeight(px) sets it (inkZoomHeight);
 // onZoomChange(update) changes the window, `update(window) → next | null`.
-function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef, onJump, onHighlightJump, onLinkHighlight, onSelectionFinished, onAreaSelection, onHighlightContext, searchRef, captureRef, onEffectiveScale, onZoomTo, findMarks, onExternalLink, onLinkContext, onBeforeLinkJump, onLoadState, retryRef, areaMode, hideEmbeddedAnnots, darkPage = false, translateKey = "", translateParallel = 3, onTranslate, translateCtlRef, onTranslateState, selTranslate = "", translateLangLabel = "", marks, flashHighlightId = null, smoothWheel = false, onPageInView, zoomHeight = 200, onZoomHeight, onZoomChange }) {
+function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef, onJump, onHighlightJump, onLinkHighlight, onSelectionFinished, onAreaSelection, onHighlightContext, onHighlightThread, searchRef, captureRef, onEffectiveScale, onZoomTo, findMarks, onExternalLink, onLinkContext, onBeforeLinkJump, onLoadState, retryRef, areaMode, hideEmbeddedAnnots, darkPage = false, translateKey = "", translateParallel = 3, onTranslate, translateCtlRef, onTranslateState, selTranslate = "", translateLangLabel = "", selComment = false, marks, flashHighlightId = null, smoothWheel = false, commentMargin = null, marginRef = null, onMarginLost, onPageInView, zoomHeight = 200, onZoomHeight, onZoomChange }) {
   const tools = usePageTools(), { ink, text } = tools;
   const viewerRef = useRef(null);
   const [pdfDoc, setPdfDoc] = useState(null);
@@ -515,12 +527,13 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
   // parent state change recreates the handler closures. The wrappers always
   // dispatch to the latest handlers via the ref.
   const cbRef = useRef({});
-  cbRef.current = { onJump, onHighlightJump, onLinkHighlight, onHighlightContext, onExternalLink, onLinkContext, onLoadState, onZoomTo, onAreaSelection, onTranslate, onTranslateState };
+  cbRef.current = { onJump, onHighlightJump, onLinkHighlight, onHighlightContext, onHighlightThread, onExternalLink, onLinkContext, onLoadState, onZoomTo, onAreaSelection, onTranslate, onTranslateState };
   const stableCbs = useMemo(() => ({
     onJump: (...a) => cbRef.current.onJump?.(...a),
     onHighlightJump: (...a) => cbRef.current.onHighlightJump?.(...a),
     onLinkHighlight: (...a) => cbRef.current.onLinkHighlight?.(...a),
     onHighlightContext: (...a) => cbRef.current.onHighlightContext?.(...a),
+    onHighlightThread: (...a) => cbRef.current.onHighlightThread?.(...a),
     onExternalLink: (...a) => cbRef.current.onExternalLink?.(...a),
     onLinkContext: (...a) => cbRef.current.onLinkContext?.(...a),
   }), []);
@@ -649,6 +662,32 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
     hlsPrevRef.current = map;
     return map;
   }, [highlights, displayedUrl, url]);
+
+  // The comment margin (docs/dev/comments.md "The PDF margin"). While the
+  // document has a highlight with an open thread, or a new comment's card
+  // is open, each page with room for the card column stands beside it, the
+  // two centred together (comments/marginLayout.js); pages without room are
+  // centred and keep the badge and the popover.
+  const [viewerW, setViewerW] = useState(0);
+  useEffect(() => {
+    const el = viewerRef.current;
+    if (!el) return undefined;
+    const read = () => setViewerW(el.clientWidth);
+    read();
+    const ro = new ResizeObserver(read);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  const marginTarget = commentMargin?.target || null;
+  const withMargin = useMemo(() => {
+    if (!commentMargin) return false;
+    for (const list of hlsByPage.values()) {
+      if (list.some((h) => (h.threadCount || 0) > 0 || (marginTarget?.compose && h.id === marginTarget.blockId))) return true;
+    }
+    return false;
+  }, [hlsByPage, commentMargin, marginTarget]);
+  const withMarginRef = useRef(withMargin);
+  withMarginRef.current = withMargin;
 
   // Expose full-text search over the loaded document (used by the search
   // panel). Each page's text runs are joined into one string — so matches can
@@ -1049,17 +1088,18 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
     }
 
     // Content-x under the anchor, in base (scale-1) page coordinates. A page
-    // narrower than the viewport is centered by its auto margins; a wider one
-    // sits at x=0 — max(0, …) covers both layouts, before and after.
+    // narrower than the viewport is centered by its auto margins, or stands
+    // beside its comment margin; a wider one sits at x=0 — pageLeft covers
+    // the three layouts, before and after.
     const clientW = v.clientWidth;
     const pw = pageWidthsRef.current[anchorIdx] || FALLBACK_W;
-    const oldLeft = Math.max(0, (clientW - pw * prev) / 2);
+    const oldLeft = pageLeft(clientW, pw * prev, withMarginRef.current);
     const baseX = (lastScrollLeftRef.current + ax - oldLeft) / prev;
 
     const place = () => {
       v.scrollTop = pageTopAt(heights, anchorIdx, scale)
         + fracInPage * (heights[anchorIdx] || FALLBACK_H) * scale + gapPx - ay;
-      const newLeft = Math.max(0, (clientW - pw * scale) / 2);
+      const newLeft = pageLeft(clientW, pw * scale, withMarginRef.current);
       v.scrollLeft = newLeft + baseX * scale - ax;
       lastScrollRef.current = v.scrollTop;
       lastScrollLeftRef.current = v.scrollLeft;
@@ -1091,6 +1131,34 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
   // Populated by the load flow above, before the document is shown.
   const [pageHeights, setPageHeights] = useState([]);
   const [pageWidths, setPageWidths] = useState([]);
+
+  // A page's left edge beside its comment margin at this zoom, or null when
+  // it has no room for the column (comments/marginLayout.js).
+  const pageMargin = (pn) => besideMargin(viewerW, (pageWidths[pn - 1] || 0) * scale);
+  // The pages' margins stack as one column: each page's top, and where the
+  // cards of the pages above end (comments/marginSlot.jsx).
+  const [marginStack] = useState(createMarginStack);
+  const pageTops = useMemo(() => {
+    if (!withMargin) return [];
+    const out = [];
+    for (let i = 0, y = 0; i < numPages; i++) { out.push(y); y += (pageHeights[i] || FALLBACK_H) * scale + PAGE_GAP; }
+    return out;
+  }, [withMargin, numPages, pageHeights, scale]);
+  const marginPageOf = (hlId) => (displayedUrl === url ? (highlights || []).find((h) => h.id === hlId)?.position?.pageNumber || 0 : 0);
+  // App asks, as it opens a highlight's thread, whether it opens as a card.
+  if (marginRef) marginRef.current = (hlId) => !!commentMargin && !!marginPageOf(hlId) && pageMargin(marginPageOf(hlId)) != null;
+  useEffect(() => () => { if (marginRef) marginRef.current = null; }, [marginRef]);
+  // The active card's page lost its room (a zoom, a narrower pane): App
+  // shows its thread in the popover instead.
+  const targetPage = marginTarget ? marginPageOf(marginTarget.blockId) : 0;
+  const targetRoom = !targetPage || pageMargin(targetPage) != null;
+  // Its highlight is drawn stronger while it has a card (a thread resolved
+  // meanwhile takes the card away).
+  const targetHl = targetPage ? hlsByPage.get(targetPage)?.find((h) => h.id === marginTarget.blockId) : null;
+  const activeHl = targetHl && (marginTarget.compose || (targetHl.threadCount || 0) > 0) ? targetHl.id : null;
+  const lostRef = useRef(onMarginLost);
+  lostRef.current = onMarginLost;
+  useEffect(() => { if (marginTarget && !targetRoom) lostRef.current?.(); }, [marginTarget, targetRoom]);
 
   // Scroll to exact highlight position. Long jumps snap instantly — smooth
   // scrolling across many pages is what made find-next feel sluggish.
@@ -1526,10 +1594,16 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
   // pending selectionchange timer below.
   useEffect(() => {
     if (!canAnnotate) return;
-    function onMouseUp() {
-      setTimeout(syncSelPopup, 10);
+    // A mouse selection's popup opens where the button was released, when
+    // that is near the selection (pdf/selectionTip.js). A press inside the
+    // popup (Translate, the translation's header and copy button keep it
+    // open) leaves it where it is: rebuilt from that release, it would move.
+    function onMouseUp(e) {
+      if (document.querySelector(".plainTip")?.contains(e.target)) return;
+      const point = { x: e.clientX, y: e.clientY };
+      setTimeout(() => syncSelPopup(point), 10);
     }
-    function syncSelPopup() {
+    function syncSelPopup(point = null) {
       // "No text selected" must not dismiss an area popup — the drag that
       // created it ends in a mouseup with an empty selection by design.
       const keepArea = (p) => (p && p.kind === "area" ? p : null);
@@ -1578,8 +1652,9 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
         const pageRect = pageEl.getBoundingClientRect();
         const pageW = parseFloat(pageEl.style.width) || pageEl.offsetWidth || 1;
         const pageH = parseFloat(pageEl.style.height) || pageEl.offsetHeight || 1;
+        const rect = { top: r.top, left: r.left, width: r.width, bottom: r.bottom };
         setSelPopup({
-          text, rect: { top: r.top, left: r.left, width: r.width, bottom: r.bottom }, lineRects, pageNumber,
+          text, rect, point: nearRelease(point, rect), lineRects, pageNumber,
           pageLeft: pageRect.left, pageTop: pageRect.top, pageW, pageH,
         });
       }
@@ -1594,7 +1669,7 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
     function onSelectionChange() {
       if (lastPointer() === "mouse") return;
       clearTimeout(selTimer);
-      selTimer = setTimeout(syncSelPopup, 350);
+      selTimer = setTimeout(() => syncSelPopup(), 350);
     }
     document.addEventListener("mouseup", onMouseUp);
     document.addEventListener("selectionchange", onSelectionChange);
@@ -1718,11 +1793,16 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
       {/* pdfZoomLayer: the pinch preview's transform target — spans the full
           scroll content so transform-origin 0 0 coincides with content (0,0) */}
       <div ref={zoomLayerRef} className="pdfZoomLayer">
+      <CommentMarginContext.Provider value={commentMargin}>
+      <MarginStackContext.Provider value={marginStack}>
       {Array.from({ length: numPages }, (_, i) => (
         <PdfPage key={`${docSeq}-${i + 1}`} pageNumber={i + 1} pdfDoc={pdfDoc} scale={scale}
+          marginLeft={withMargin ? pageMargin(i + 1) : null} pageTop={pageTops[i] || 0}
+          activeHl={targetPage === i + 1 ? activeHl : null}
           highlights={hlsByPage.get(i + 1) || EMPTY_MARKS} onJump={stableCbs.onJump} onHighlightJump={stableCbs.onHighlightJump}
           flashId={flashHighlightId && hlsByPage.get(i + 1)?.some((h) => h.id === flashHighlightId) ? flashHighlightId : null}
           onLinkHighlight={stableCbs.onLinkHighlight} onHighlightContext={stableCbs.onHighlightContext}
+          onHighlightThread={stableCbs.onHighlightThread}
           citation={displayedUrl === url && activeCitation?.page === i + 1 ? activeCitation : null}
           readOnly={!onSelectionFinished} forceRender={forcePages.has(i + 1) || activeCitation?.page === i + 1}
           hideEmbeddedAnnots={!!hideEmbeddedAnnots}
@@ -1744,14 +1824,15 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
           marks={(displayedUrl === url && marks.get(i + 1)) || NO_MARKS}
         />
       ))}
+      </MarginStackContext.Provider>
+      </CommentMarginContext.Provider>
       </div>
       {selPopup && onSelectionFinished && (
-        <TipFrame anchor={selPopup.kind === "area"
-          ? { top: selPopup.tip.top, bottom: selPopup.tip.top, left: selPopup.tip.left, gap: 0 }
-          : { top: selPopup.rect.top, bottom: selPopup.rect.bottom, left: selPopup.rect.left, gap: 8 }}>
+        <TipFrame anchor={tipAnchor(selPopup)}>
           {/* keyed by the selection: a new one starts with no translation */}
           <PlainTip key={selPopup.kind === "area" ? "area" : selPopup.text}
             onConfirm={handleSelConfirm} onLink={() => handleSelConfirm("", null, { link: true })}
+            onComment={selComment ? (color) => handleSelConfirm("", color, { comment: true }) : null}
             translate={selTranslate && selPopup.kind !== "area" && selPopup.text && onTranslate ? {
               text: selPopup.text, auto: selTranslate === "auto", langLabel: translateLangLabel,
               run: (...args) => cbRef.current.onTranslate?.(...args),
@@ -1823,7 +1904,10 @@ function OutlineNode({ item, depth, onDest, onUrl }) {
 // keep these in sync with app.css.
 const NOTE_TIP_W = 520;
 const VIEWPORT_PAD = 8;
-function NoteBadge({ hlId, text, style, onClick, onContextMenu }) {
+// `threads`: the highlight's open comment threads. Such a badge is drawn in
+// the accent and its click (a tap too) also opens them (`onThread(badge)`),
+// besides the jump; its tip counts them under the note.
+function NoteBadge({ hlId, text, hasNote = true, threads = 0, style, onClick, onContextMenu, onThread }) {
   const [tip, setTip] = useState(null);
   const btnRef = useRef(null);
   const tipRef = useRef(null);
@@ -1869,12 +1953,14 @@ function NoteBadge({ hlId, text, style, onClick, onContextMenu }) {
   return (
     <>
       <span className="pdfNoteAnchor" style={style}>
-        <button ref={btnRef} type="button" className="pdfNoteBadge" data-hl-id={hlId} aria-label={t("Show highlight note")}
+        <button ref={btnRef} type="button" className={`pdfNoteBadge${threads ? " hasThread" : ""}`} data-hl-id={hlId}
+          aria-label={threads ? tn("{n} comment", "{n} comments", threads) : t("Show highlight note")}
           {...menu}
           onMouseEnter={show} onMouseLeave={hide}
           onClick={(e) => {
-            if (tapped()) { e.stopPropagation(); clearTimeout(timerRef.current); if (tip) setTip(null); else place(); return; }
+            if (tapped() && !threads) { e.stopPropagation(); clearTimeout(timerRef.current); if (tip) setTip(null); else place(); return; }
             hideNow(); onClick(e);
+            if (threads) onThread?.(btnRef.current);
           }}
         >
           <MessageSquareIcon size={10} />
@@ -1882,7 +1968,8 @@ function NoteBadge({ hlId, text, style, onClick, onContextMenu }) {
       </span>
       {tip ? createPortal(
         <div ref={tipRef} className="pdfNoteTip" style={tip} onMouseEnter={hold} onMouseLeave={hide}>
-          {text ? <ChatMarkdown text={text} /> : t("This highlight has a note")}
+          {hasNote ? (text ? <ChatMarkdown text={text} /> : t("This highlight has a note")) : null}
+          {threads ? <div className="pdfNoteTipThreads">{tn("{n} comment", "{n} comments", threads)}</div> : null}
         </div>,
         document.body
       ) : null}
@@ -1939,7 +2026,12 @@ function TransPending({ lines, busy }) {
   );
 }
 
-const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, scale, highlights, flashId, onJump, onHighlightJump, onLinkHighlight, onHighlightContext, readOnly, forceRender, reservedHeight, reservedWidth, findMarks, onInternalLink, onExternalLink, onLinkContext, onPainted, onAreaSelected, pendingArea, areaMode, hideEmbeddedAnnots, trans, transKey, transShown, toolArmed, marks }) {
+// marginLeft: the page's left edge beside its comment margin, or null for
+// none (centred, with the badge and the popover); pageTop: the page's top,
+// px from the first page's top, where its margin's column goes on from the
+// pages above; activeHl: the highlight
+// whose card is the active one, drawn stronger.
+const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, scale, highlights, flashId, onJump, onHighlightJump, onLinkHighlight, onHighlightContext, onHighlightThread, readOnly, forceRender, reservedHeight, reservedWidth, findMarks, onInternalLink, onExternalLink, onLinkContext, onPainted, onAreaSelected, pendingArea, areaMode, hideEmbeddedAnnots, trans, transKey, transShown, toolArmed, marks, marginLeft = null, pageTop = 0, activeHl = null }) {
   const wrapRef = useRef(null);
   const baseRef = useRef(null);
   const detailRef = useRef(null);
@@ -2132,6 +2224,7 @@ const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, scal
   const [marquee, setMarquee] = useState(null); // live drag rect, current-render px
   function beginAreaDrag(e) {
     if (readOnly || !onAreaSelected) return;
+    if (e.target.closest?.(".commentMargin")) return; // a comment card beside the page
     if (e.button !== 0 || !e.isPrimary) return;
     const viaCtrl = e.pointerType === "mouse" && e.ctrlKey && !e.metaKey && !e.shiftKey && !e.altKey;
     if (!areaMode && !viaCtrl) return;
@@ -2218,7 +2311,7 @@ const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, scal
     <div ref={wrapRef} data-page={pageNumber} data-guide="pdf.page" className={"pdfPageWrap" + (transActive ? " transShown" : "")}
       onPointerDown={beginAreaDrag}
       style={{
-        margin: `0 auto ${PAGE_GAP}px`, position: "relative", background: "#fff",
+        margin: marginLeft != null ? `0 0 ${PAGE_GAP}px ${marginLeft}px` : `0 auto ${PAGE_GAP}px`, position: "relative", background: "#fff",
         width: pageSize || reservedWidth ? curW : undefined,
         height: pageSize || reservedHeight ? curH : undefined,
         minHeight: pageSize || reservedHeight ? undefined : 200,
@@ -2342,6 +2435,15 @@ const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, scal
         const storedW = h.position.width || 1;
         const storedH = h.position.height || 1;
         const isLink = !!h.linkTarget;
+        // A passage with comments and no note reads as Notion's commented
+        // text: a lighter wash under a 2px line in a strong tone of its
+        // colour (--hl-dark-line, which a flipped page also draws).
+        const commented = !isLink && commentOnlyHighlight(h);
+        // Its threads as cards in the margin beside the page (they leave
+        // the badge), and the active card's highlight drawn stronger.
+        const carded = marginLeft != null && (h.threadCount || 0) > 0;
+        const active = activeHl === h.id;
+        const strong = "color-mix(in srgb, var(--hl-line, var(--hl-dark-line)) 35%, var(--hl))";
         // Area notes (Ctrl+drag rectangles) draw as an outline with a faint
         // wash — a solid multiply fill would tint the figure underneath.
         const isArea = !!h.position?.area;
@@ -2370,8 +2472,12 @@ const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, scal
             ...(isArea ? {
               boxSizing: "border-box", borderRadius: 3,
               border: "2px solid var(--hl-line, var(--hl))",
-              background: "color-mix(in srgb, var(--hl) 25%, transparent)",
-            } : { background: "var(--hl)" }),
+              background: `color-mix(in srgb, var(--hl) ${active ? 50 : 25}%, transparent)`,
+            } : commented ? {
+              background: active ? strong : "color-mix(in srgb, var(--hl) 55%, transparent)",
+              borderBottom: "2px solid var(--hl-line, var(--hl-dark-line))", borderRadius: 1,
+            } : { background: active ? strong : "var(--hl)" }),
+            ...(commented && isArea ? { border: "2px solid var(--hl-line, var(--hl-dark-line))" } : {}),
             ...(isLink ? (isArea
               ? { border: "2px solid rgba(70, 130, 255, 0.9)" }
               : { borderBottom: "2px solid rgba(70, 130, 255, 0.9)", borderRadius: 1 }) : {}),
@@ -2380,20 +2486,24 @@ const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, scal
               e.stopPropagation();
               if (isLink) onLinkHighlight?.(h);
               else onHighlightJump?.(h.id, e.ctrlKey || e.metaKey);
+              // a highlight with cards: its card becomes the active one
+              if (carded) onHighlightThread?.(h.id, e.currentTarget);
             }}
             {...menuPress(openMenu)}
           />);
         }
         // Speech-bubble badge at the end of the passage when the user typed a
-        // note on the highlight — click behaves like clicking the highlight.
+        // note on the highlight or someone commented on it — click behaves
+        // like clicking the highlight (and opens the comments, if any).
         // The end is found by geometry (noteBadgeAnchor), not by taking the
         // last stored rect: imported highlights keep per-glyph rects in no
         // particular order, and a stray sliver rect would put it anywhere.
-        const r = h.hasNote ? noteBadgeAnchor(rects) : null;
+        const r = h.hasNote || (h.threadCount && !carded) ? noteBadgeAnchor(rects) : null;
         if (r) {
           elements.push(
             <NoteBadge key={h.id + "-note"} hlId={h.id}
-              text={h.comment?.text?.trim() || ""}
+              text={h.comment?.text?.trim() || ""} hasNote={!!h.hasNote} threads={carded ? 0 : h.threadCount || 0}
+              onThread={(badge) => onHighlightThread?.(h.id, badge)}
               style={{
                 left: r.x2 * curW / storedW + 2,
                 top: r.y1 * curH / storedH - 8,
@@ -2405,6 +2515,7 @@ const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, scal
         }
         return elements;
       })}
+      {overlays && marginLeft != null ? <CommentMarginSlot pageNumber={pageNumber} highlights={highlights} pageH={curH} pageTop={pageTop} /> : null}
       {/* Over the highlights, note badges and link boxes: text boxes, then ink (app.css). */}
       <MarkupLayers surface={pageNumber} wrapRef={wrapRef} width={baseW} height={baseH} marks={marks} active={renderVisible} />
       {marquee ? (
@@ -2449,8 +2560,9 @@ const SEL_TRANSLATE_MAX = 5000;
 // null} — run is the page translator's request, so the same model/engine,
 // language and server cache apply. Auto starts it on open; the button starts
 // it, then folds/unfolds the result.
-function PlainTip({ onConfirm, onLink, translate }) {
+function PlainTip({ onConfirm, onLink, onComment, translate }) {
   const palette = usePalette();
+  const colors = pickerColors(palette, "highlight");
   const [trans, setTrans] = useState(null); // {status: "loading"|"done"|"error", text, open}
   const ctlRef = useRef(null);
   const source = useMemo(() => (translate ? selectionParagraphs(translate.text) : ""), [translate?.text]);
@@ -2478,7 +2590,7 @@ function PlainTip({ onConfirm, onLink, translate }) {
   return (
     <div className="plainTip">
       <div className="colorRow">
-        {pickerColors(palette, "highlight").map((c, i) => (
+        {colors.map((c, i) => (
           <button
             key={c.hex + c.alpha + i}
             className="colorBtn"
@@ -2490,6 +2602,19 @@ function PlainTip({ onConfirm, onLink, translate }) {
             aria-label={t("Highlight in {color}", { color: t(colorName(c)) })}
           />
         ))}
+        {/* the colours, then the tools */}
+        {onComment || onLink || translate ? <span className="tipDivider" aria-hidden="true" /> : null}
+        {onComment ? (
+          <button
+            className="colorBtn linkTipBtn"
+            onMouseDown={(e) => { keep(e); onComment(colors[0]); }}
+            type="button"
+            title={t("Comment on this passage")}
+            aria-label={t("Comment on this passage")}
+          >
+            <MessageSquareIcon size={14} />
+          </button>
+        ) : null}
         {onLink ? (
           <button
             className="colorBtn linkTipBtn"

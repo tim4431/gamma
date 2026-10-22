@@ -944,8 +944,8 @@ stroke exports as it looked on screen.
 
 Version 1 is handled in these places and nowhere else:
 
-- **Workspace migration step 40 `ink_v2`** ([migrations.md](migrations.md)
-  step 40, `db.SCHEMA_VERSION` 40): every block's version 1 (or
+- **Workspace migration step 41 `ink_v2`** ([migrations.md](migrations.md)
+  step 41, `db.SCHEMA_VERSION` 41): every block's version 1 (or
   unversioned) file becomes a **new** upload named by the sha256 of its
   `ink.dumps` bytes, and the block's `ink_url` names it; a version 2 file
   is skipped, so the step is re-runnable. Because the conversion is pure,
@@ -1742,7 +1742,8 @@ reach.
   hasBox, optionsOpen, eraserDown, ruler, zoom, onControl}` (`eraserDown`
   the timeStamp of the `E` keydown still held, or null, so the keyup's
   `held` is pure arithmetic; `ruler` and `zoom` whether they are on;
-  `onControl` the key's target is a button, a link or a menu row).
+  `onControl` the key's target is a button, a link, a menu row or a
+  comment thread: a margin card, or the thread popover).
   The actions:
   - `{kind: "pick", id}` for `1`–`9` (the visible list), `P` / `H`
     (forward; with Shift backward, wrapping), `L`, `T`, `V`.
@@ -3101,8 +3102,9 @@ reach.
       `presetSmoothing`'s default, never stored).
     - The strip's key handler takes `stripKey`'s `toggle` and `off`
       (`what`: `ruler`, `shape`, `zoom`) and `newLine`, its state carrying
-      `ruler`, `zoom` and `onControl` (the target inside a button, a link
-      or a menu row).
+      `ruler`, `zoom` and `onControl` (the target inside a button, a link,
+      a menu row or a comment thread). An open menu, a preset being
+      dragged and a focused comment thread keep Escape from it.
   - **Transcribe a selection** (`handleInkAction("transcribe")`,
     `transcribeInkSelection()`). In a shared page's view it only says
     "Transcribing needs the AI chat, which a shared page cannot use."

@@ -1,13 +1,13 @@
 // The browser suite's change-based selection (tests/e2e/select.mjs): the
 // groups cover every scenario file once, the rules name real groups, and
 // every source file is placed by a rule of its own, never by the final
-// catch-all that selects nothing.
+// catch-all that selects nothing; and the shards CI splits the suite into.
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { GROUPS, RULES, ruleFor, selectGroups } from "./e2e/select.mjs";
+import { GROUPS, RULES, ruleFor, selectGroups, shardOf } from "./e2e/select.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const ids = GROUPS.map((g) => g.id);
@@ -61,4 +61,19 @@ test("a change selects the groups that exercise it", () => {
   const anchored = pick(["frontend/src/sharing/SharePopover.jsx"], () => ['+  <button data-guide="share.copy">']);
   for (const id of ["guide", "contextual-guide", "triggered-guide", "publish"]) assert.ok(anchored.includes(id), id);
   assert.ok(!pick(["frontend/src/sharing/SharePopover.jsx"], () => ["+  <button>"]).includes("guide"));
+});
+
+test("the shards split a selection whole, in shares of about equal time", () => {
+  const time = Object.fromEntries(GROUPS.map((g) => [g.id, g.s]));
+  assert.ok(ids.every((id) => time[id] > 0), "every group has its time");
+  for (const n of [1, 2, 3]) {
+    const shards = Array.from({ length: n }, (_, k) => shardOf(ids, k + 1, n));
+    assert.deepEqual(shards.flat().sort(), [...ids].sort(), `${n} shards: every group once`);
+    const loads = shards.map((s) => s.reduce((sum, id) => sum + time[id], 0));
+    assert.ok(Math.max(...loads) - Math.min(...loads) <= Math.max(...Object.values(time)), `${n} shards: ${loads}`);
+  }
+  // a shard keeps the selection's order
+  const picked = ["guide", "ink", "trash", "settings"];
+  const mine = shardOf(picked, 1, 2);
+  assert.deepEqual(mine, picked.filter((id) => mine.includes(id)));
 });

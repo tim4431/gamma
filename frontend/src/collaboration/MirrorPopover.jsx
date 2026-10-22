@@ -555,6 +555,8 @@ export function MirrorPopover({ wsId, mirrorOf, publication: listedAsPublication
                   </span>
                 </div>
                 <StateBlock info={info} busy={busy} pending={Boolean(editAt)} onConflicts={() => setView("review")} />
+                {/* docs/dev/comments.md "Not built": threads are no part of what travels */}
+                <div className="popoverHint">{t("Comments stay on each server: a sync carries none.")}</div>
                 <div className="popoverLabel"><HistoryIcon size={14} /><span>{t("Log")}</span></div>
                 {log === null ? <div className="popoverHint">{t("Loading…")}</div>
                   : log.length ? <LogList log={log} jumpTo={jumpTo} />

@@ -32,6 +32,8 @@ blocks_store.py    block tree helpers: subtrees, the change log (touch_page), th
 ops.py             block operations: THE write path for a page's blocks
 textmerge.py       three-way merge of one block's text (ops.py `set` with `base`)
 collab.py          live rooms: who is on a page, the fan-out of applied operations
+comments.py        comments: threads on a note, a page or a highlight, following their blocks (docs/dev/comments.md)
+inbox.py           each account's Inbox: mentions, replies, resolves, shares and invitations, settled when read (docs/dev/comments.md)
 sync_tree.py       a page's tree as a flat snapshot, and the ops between two (the mirror's pure half)
 sync_engine.py     mirrors: a local workspace kept in step with one on another Gamma server (docs/dev/mirror.md)
 publish.py         publishing a page to the free share host (docs/dev/mirror.md "Publishing")
