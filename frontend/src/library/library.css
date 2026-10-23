@@ -406,6 +406,12 @@
 }
 .homeViewBtn:hover { color: var(--text-primary); }
 .homeViewBtn.active { background: var(--bg-input); color: var(--accent); box-shadow: var(--shadow-1); }
+/* The chosen one's plate slides under the buttons (.slidePill, motion.css)
+   once it is placed. */
+.homeViewToggle { position: relative; }
+.homeViewBtn { position: relative; z-index: 1; transition: color var(--dur-fast); }
+.homeViewToggle > .slidePill { background: var(--bg-input); box-shadow: var(--shadow-1); }
+.homeViewToggle[data-pill] > .homeViewBtn.active { background: none; box-shadow: none; }
 
 /* selected state — a solid border (not outline) so it never clips at the
    scroll-container edge */

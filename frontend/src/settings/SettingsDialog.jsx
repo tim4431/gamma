@@ -3,6 +3,7 @@ import { stepList } from "../shared/ui/listKeys.js";
 import { backdropPress } from "../shared/ui/press.js";
 import { API, apiJson, fmtBytes, isUnverifiedPaperMeta, metaSourceInfo, getCurrentWorkspace } from "../shared/lib/utils";
 import { MenuSelect } from "../shared/ui/Menus";
+import { Collapse, MorphText } from "../shared/ui/MotionWidgets";
 import { fmtDate, T, t, tn } from "../shared/i18n/i18n.js";
 import {
   PaneHead, Section, Row, Toggle, Segmented, IconChoices, UnitInput, CharSlider, Stepper, approxPages,
@@ -414,7 +415,7 @@ function MaintenanceSettings({ value }) {
           title={t("Full-text search reads a per-user index built from the extracted PDF text. Rebuild it when library-wide results look stale or incomplete.")}
         >
           <button className="uiBtn sm" disabled={value.indexing} onClick={() => requestReindex(value.setStatus, t("in the background."), value.wakeTasks)}>
-            {value.indexing ? t("Indexing…") : t("Rebuild")}
+            <MorphText>{value.indexing ? t("Indexing…") : t("Rebuild")}</MorphText>
           </button>
         </Row>
       </Section>
@@ -746,7 +747,7 @@ function MetaStatusSection({ value }) {
               <button className="uiBtn sm" disabled={!indexTargets.length || indexing}
                 onClick={() => indexDocs(indexTargets.map((p) => p.doc_id))}
                 title={indexing ? t("Indexing is already running — progress in the tasks popover") : selected.size ? t("Extract the selected papers' text into the search index") : t("Extract only the papers the search index is missing or holds at an older extractor version")}>
-                <RefreshIcon size={14} />{indexing ? t("Indexing…") : selected.size ? t("Reindex selected") : t("Reindex needed")}
+                <RefreshIcon size={14} /><MorphText>{indexing ? t("Indexing…") : selected.size ? t("Reindex selected") : t("Reindex needed")}</MorphText>
               </button>
             </div>
           )}
@@ -775,9 +776,9 @@ function PromptAccordion({ items }) {
               <span className="setIcon"><Icon size={14} /></span>
               <span className="setAccName">{t(label)}</span>
               {custom ? <span className="uiTag">{t("custom")}</span> : null}
-              <span className="setAccChevron">{isOpen ? "▾" : "▸"}</span>
+              <span className={`setAccChevron turnCaret${isOpen ? " open" : ""}`}>▸</span>
             </button>
-            {isOpen ? (
+            <Collapse open={isOpen}>
               <div className="setAccBody">
                 <textarea className="promptTextarea" value={draft} rows={6}
                   onChange={(event) => setDraft(event.target.value)} />
@@ -787,7 +788,7 @@ function PromptAccordion({ items }) {
                   </button>
                 </div>
               </div>
-            ) : null}
+            </Collapse>
           </div>
         );
       })}

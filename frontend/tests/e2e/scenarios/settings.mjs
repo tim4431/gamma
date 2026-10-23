@@ -1,4 +1,4 @@
-import { Account, FAKE_AI_MODELS, ROOT, Server, fakeAiModels, wanted } from "../harness.mjs";
+import { Account, FAKE_AI_MODELS, ROOT, Server, arrived, fakeAiModels, wanted } from "../harness.mjs";
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import http from "node:http";
@@ -917,6 +917,8 @@ export async function settingsScenarios(env) {
       await dialog.getByPlaceholder("e.g. Nightly research backup").fill("Nightly");
       // Text selected with a drag let go past the dialog's edge is no click
       // on the backdrop (press.js backdropPress); a real click there asks.
+      // (Its edge is read once it has grown in.)
+      await arrived(dialog);
       const keep = await dialog.getByRole("spinbutton", { name: "Keep for", exact: true }).boundingBox();
       const edge = await dialog.boundingBox();
       await page.mouse.move(keep.x + keep.width / 2, keep.y + keep.height / 2);

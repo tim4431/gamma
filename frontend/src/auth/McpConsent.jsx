@@ -1,5 +1,6 @@
 import React from "react";
 import { MenuSelect } from "../shared/ui/Menus";
+import { MorphText } from "../shared/ui/MotionWidgets";
 import { API, apiJson, setExpectedUser } from "../shared/lib/utils";
 import { AuthLoading, LoginPage, SessionConflictPage } from "./LoginPage";
 import { t } from "../shared/i18n/i18n.js";
@@ -120,7 +121,7 @@ export default function McpConsent({ requestId }) {
       </details>
       <div className="mcpConsentActions">
       <button className="loginBtn" disabled={busy || !workspace} onClick={() => decide(true)}>
-        {busy ? t("Connecting…") : t("Allow read-only access")}
+        <MorphText>{busy ? t("Connecting…") : t("Allow read-only access")}</MorphText>
       </button>
       <button className="loginGuestBtn" disabled={busy} onClick={() => decide(false)}>{t("Cancel")}</button>
       </div>

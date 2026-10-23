@@ -214,6 +214,7 @@ import { useInbox } from "../inbox/useInbox";
 import { InboxBadge, InboxButton } from "../inbox/InboxButton";
 import { inboxJump, isUnread } from "../inbox/inboxText.js";
 import { DialogOverlay, Popover } from "../shared/ui/Surfaces";
+import { IconSwap, MorphText } from "../shared/ui/MotionWidgets";
 
 // Surfaces fetched on first use, each mounted inside a LazyBoundary
 // (docs/dev/frontend-refactor.md, "Lazy boundaries"). `preload()` fetches
@@ -8776,7 +8777,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                                         aria-label={t("Copy {site} link", { site: site })}
                                         onClick={() => copyFlash(key, url)}
                                       >
-                                        {copiedKey === key ? <CheckIcon size={14} /> : <CopyIcon size={14} />}
+                                        <IconSwap swap={copiedKey === key} from={<CopyIcon size={14} />} to={<CheckIcon size={14} />} />
                                       </button>
                                     </>
                                   );
@@ -8892,7 +8893,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                                   aria-label={t("Copy source URL")}
                                   onClick={() => copyFlash("source", inputUrl)}
                                 >
-                                  {copiedKey === "source" ? <CheckIcon size={14} /> : <CopyIcon size={14} />}
+                                  <IconSwap swap={copiedKey === "source"} from={<CopyIcon size={14} />} to={<CheckIcon size={14} />} />
                                 </button>
                               </span>
                             </div>
@@ -8922,7 +8923,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                         {metaDirty ? (
                           <div className="reportModalBtns">
                             <button className="uiBtn primary" disabled={metaSaving} onClick={saveMetaEdits}>
-                              {metaSaving ? t("Saving…") : t("Save metadata")}
+                              <MorphText>{metaSaving ? t("Saving…") : t("Save metadata")}</MorphText>
                             </button>
                           </div>
                         ) : null}
@@ -10532,7 +10533,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                 aria-label={t("Back")}
               >
                 <ArrowLeftIcon size={16} />
-                <span className="navBackBadge">{Math.min(navStackLen, 30)}</span>
+                <span className="navBackBadge"><span key={Math.min(navStackLen, 30)} className="countIn">{Math.min(navStackLen, 30)}</span></span>
               </button>
             ) : null}
             <OpenTabs
@@ -10735,7 +10736,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
             role="status"
           >
             {pillShown.spinner ? <span className="pillSpin" aria-hidden="true" /> : null}
-            <span className="pillText">{pillShown.msg}</span>
+            {/* A new message morphs out of the one it replaces. An error
+                wraps to be read in full, which a morph (one line while it
+                moves) would cut, so it shows at once. */}
+            <span className="pillText">{pillShown.error ? pillShown.msg : <MorphText>{pillShown.msg}</MorphText>}</span>
             {pillShown.action ? (
               <button type="button" className="pillRetryBtn" onClick={pillShown.action.run}>{pillShown.action.label}</button>
             ) : null}
@@ -10859,7 +10863,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                   title={areaSelectMode ? t("Rectangle mode — drag draws an area note (tap to switch to text selection)") : t("Text mode — drag selects text (tap to switch to rectangle drawing)")}
                   aria-label={t("Toggle selection mode")}
                 >
-                  {areaSelectMode ? <RectSelectIcon size={16} /> : <TextCursorIcon size={16} />}
+                  <IconSwap swap={areaSelectMode} from={<TextCursorIcon size={16} />} to={<RectSelectIcon size={16} />} />
                 </button>
               ) : null}
             </div>

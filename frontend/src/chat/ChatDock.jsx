@@ -10,6 +10,7 @@ import { pictureSrc } from "./pictureSrc.js";
 import { postFile } from "../transfers/FileChip";
 import { stepList } from "../shared/ui/listKeys.js";
 import { DockWindow, ChatMarkdown, AutoGrowTextarea, useCopied, useTextScale } from "../shared/ui/Widgets";
+import { Chevron, Collapse, IconSwap, MorphText } from "../shared/ui/MotionWidgets";
 import PaperMentionInput from "./PaperMentionInput";
 import FetchHandoffCards, { LiveHandoffCards } from "./FetchHandoffCards";
 import ReplyPapers from "./ReplyPapers";
@@ -89,6 +90,7 @@ function relAge(iso) {
 // and a reply cut off at the output limit (chat/coverage.js).
 function ContextCoverage({ items, actions, tools, trimmed, shortened, truncated }) {
   const [open, setOpen] = useState(-1); // the pill whose explanation is unfolded
+  const [shown, setShown] = useState(-1); // the explanation under them, kept while it folds away
   const notes = (items || []).flatMap((c) => {
     const out = [];
     const note = coverageNote(c, { actions, tools });
@@ -113,20 +115,26 @@ function ContextCoverage({ items, actions, tools, trimmed, shortened, truncated 
   for (const extra of [trimmedNote(trimmed), shortenedNote(shortened), truncatedNote(truncated)]) if (extra) notes.push(extra);
   if (!notes.length) return null;
   // Pills like the agent's steps: a click unfolds the explanation under them.
+  const unfold = (i) => {
+    setOpen(open === i ? -1 : i);
+    if (open !== i) setShown(i);
+  };
   return (
     <div className="chatCoverage">
       {notes.map((n, i) => (
         <button key={i} type="button" className="chatPill" aria-expanded={open === i}
-          title={open === i ? undefined : n.long} onClick={() => setOpen(open === i ? -1 : i)}>
+          title={open === i ? undefined : n.long} onClick={() => unfold(i)}>
           {n.refused ? <AlertCircleIcon size={14} /> : <InfoIcon size={14} />}
           <span className="chatPillText">{n.short}</span>
-          {open === i ? <ChevronUpIcon size={14} /> : <ChevronDownIcon size={14} />}
+          <Chevron open={open === i} dir="down" size={14} />
         </button>
       ))}
-      {notes[open] ? <p className="chatCoverageNote">{notes[open].long}</p> : null}
-      {notes[open]?.pictures?.map((src) => (
-        <img key={src} className="chatCoverageCrop" src={src} alt={t("Picture of the selection sent")} draggable={false} />
-      ))}
+      <Collapse open={!!notes[open]} className="chatCoverageMore">
+        <p className="chatCoverageNote">{notes[shown]?.long}</p>
+        {notes[shown]?.pictures?.map((src) => (
+          <img key={src} className="chatCoverageCrop" src={src} alt={t("Picture of the selection sent")} draggable={false} />
+        ))}
+      </Collapse>
     </div>
   );
 }
@@ -158,7 +166,7 @@ function ChatErrorCard({ message, compact, actions }) {
 // steps, which expands to every call's chip (arguments and output), and
 // under it the changes — renamed or filed pages, edited or added notes —
 // each old → new with a link to what changed. While the reply streams, the
-// pill names the step running now.
+// pill names the step running now, each new one morphing in over the last.
 // `waiting`: what the running call waits for — the user's answer on an
 // approval card, or a blocked paper from their browser — so nothing spins.
 // `helpers`: the helpers the running call handed documents to, a row each
@@ -173,13 +181,15 @@ function AgentSteps({ actions, running, waiting, helpers = [], open, onToggle, t
         title={open ? t("Hide the steps") : t("Show every step with its arguments and output")}>
         {waiting ? <ShieldIcon size={14} /> : live ? <span className="transferSpin inline" aria-hidden="true" /> : <CheckIcon size={14} />}
         <span className="chatPillText">
-          {waiting === "paper" ? t("Waiting for the paper from your browser")
-            : waiting ? t("Waiting for your approval")
-              : live ? runningLabel(running, titleOf) : stepsSummary(actions)}
+          <MorphText>
+            {waiting === "paper" ? t("Waiting for the paper from your browser")
+              : waiting ? t("Waiting for your approval")
+                : live ? runningLabel(running, titleOf) : stepsSummary(actions)}
+          </MorphText>
         </span>
         {failed && !live ? <span className="chatStepsFailed">{t("{n} failed", { n: failed })}</span> : null}
         {declined && !live ? <span className="chatStepsDeclined">{t("{n} not allowed", { n: declined })}</span> : null}
-        {actions.length ? (open ? <ChevronUpIcon size={14} /> : <ChevronDownIcon size={14} />) : null}
+        {actions.length ? <Chevron open={open} dir="down" size={14} /> : null}
       </button>
       {live && helpers.length ? (
         <div className="chatHelpers" role="status">
@@ -193,7 +203,7 @@ function AgentSteps({ actions, running, waiting, helpers = [], open, onToggle, t
           ))}
         </div>
       ) : null}
-      {open ? children : null}
+      <Collapse open={open}>{children}</Collapse>
     </div>
   );
 }
@@ -283,6 +293,37 @@ const toolCallText = (a) => {
   const head = `${a.tool || a.kind}(${args})`;
   return [head, a.result].filter(Boolean).join("\n\n");
 };
+
+// What a tool chip unfolds to: the calls a helper made for it, the picture
+// it looked at, and the raw call with its output. A component of its own,
+// so none of it is built while the chip is shut.
+function ToolCallDetail({ action: a }) {
+  const picture = chipPicture(a);
+  return (
+    <>
+      {a.children?.length ? (
+        // What a helper did for this call: its own calls, without their output.
+        <div className="chatToolChildren">
+          {a.children.map((child, k) => {
+            const ChildIcon = ACTION_ICONS[child.kind] || FolderIcon;
+            return (
+              <div key={k} className={`chatToolActionHead plain${child.error ? " err" : ""}`} title={child.summary}>
+                <ChildIcon size={14} />
+                <span>{child.summary}</span>
+                {chipNote(child) ? <span className="chatToolActionNote">{chipNote(child)}</span> : null}
+              </div>
+            );
+          })}
+        </div>
+      ) : null}
+      {picture ? (
+        // What the assistant looked at or clipped, drawn again by the server.
+        <img className="chatToolPicture" src={pictureSrc(picture)} alt={a.summary} loading="lazy" />
+      ) : null}
+      <pre className="chatToolDetail">{toolCallText(a)}</pre>
+    </>
+  );
+}
 
 // One chip in the composer's strip: a PDF passage, the cursor block, an
 // attached block, selected note text or selected handwriting (its label
@@ -1790,7 +1831,7 @@ export default function ChatDock({
           title={discardArmed ? t("Discard chat — it isn't kept in history")
             : canSave ? t("New chat — keeps this conversation in history and starts a fresh one (Alt+click: discard it)") : t("New chat")}
           aria-label={discardArmed ? t("Discard chat") : t("New chat")}>
-          {discardArmed ? <TrashIcon size={16} /> : <PlusIcon size={16} />}
+          <IconSwap swap={discardArmed} from={<PlusIcon size={16} />} to={<TrashIcon size={16} />} />
         </button>
       </div>
     </>
@@ -1955,7 +1996,7 @@ export default function ChatDock({
                                   <Icon size={14} />
                                   <span>{a.declined ? declinedSummary(a, pageTitleOf) : a.summary}</span>
                                   {chipNote(a) ? <span className="chatToolActionNote">{chipNote(a)}</span> : null}
-                                  {open ? <ChevronUpIcon size={10} /> : <ChevronDownIcon size={10} />}
+                                  <Chevron open={open} dir="down" size={10} />
                                 </button>
                               ) : (
                                 <div className="chatToolActionHead plain" title={a.summary}>
@@ -1963,26 +2004,7 @@ export default function ChatDock({
                                   <span>{a.summary}</span>
                                 </div>
                               )}
-                              {open && a.children?.length ? (
-                                // What a helper did for this call: its own calls, without their output.
-                                <div className="chatToolChildren">
-                                  {a.children.map((child, k) => {
-                                    const ChildIcon = ACTION_ICONS[child.kind] || FolderIcon;
-                                    return (
-                                      <div key={k} className={`chatToolActionHead plain${child.error ? " err" : ""}`} title={child.summary}>
-                                        <ChildIcon size={14} />
-                                        <span>{child.summary}</span>
-                                        {chipNote(child) ? <span className="chatToolActionNote">{chipNote(child)}</span> : null}
-                                      </div>
-                                    );
-                                  })}
-                                </div>
-                              ) : null}
-                              {open && chipPicture(a) ? (
-                                // What the assistant looked at or clipped, drawn again by the server.
-                                <img className="chatToolPicture" src={pictureSrc(chipPicture(a))} alt={a.summary} loading="lazy" />
-                              ) : null}
-                              {open ? <pre className="chatToolDetail">{toolCallText(a)}</pre> : null}
+                              <Collapse open={open} className="chatToolMore"><ToolCallDetail action={a} /></Collapse>
                             </div>
                           );
                         })}
@@ -2022,8 +2044,9 @@ export default function ChatDock({
                     ) : null}
                     {isResponding && !m.step ? (
                       <div className="chatThinking" role="status" aria-label={m.text ? t("AI is responding") : t("AI is thinking")}>
-                        <span aria-hidden="true">{m.text ? t("Responding") : t("Thinking")}</span>
-                        <span className="chatTyping" aria-hidden="true"><span /><span /><span /></span>
+                        <span className="shimmerText" aria-hidden="true">
+                          <MorphText>{m.text ? t("Responding") : t("Thinking")}</MorphText>
+                        </span>
                         <UsageLine usage={liveUsage(m.usage, m.live)} className="chatMsgUsage live" />
                       </div>
                     ) : null}
@@ -2039,9 +2062,7 @@ export default function ChatDock({
                     <div className="chatMsgActions">
                     <button type="button" className="chatMsgActionBtn" title={t("Copy message")}
                       onClick={() => copyChatMessage(i, m.text)}>
-                      {copiedMsgIdx === i
-                        ? <CheckIcon size={14} />
-                        : <CopyIcon size={14} />}
+                      <IconSwap swap={copiedMsgIdx === i} from={<CopyIcon size={14} />} to={<CheckIcon size={14} />} />
                     </button>
                     {!readOnly && isUser && !busyHere ? (
                       <button type="button" className="chatMsgActionBtn" title={t("Edit and re-send (removes later messages)")}

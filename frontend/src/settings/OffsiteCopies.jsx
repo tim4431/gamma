@@ -16,6 +16,7 @@ import { MenuSelect } from "../shared/ui/Menus";
 import { DialogButtons, Field, PasswordInput, Row, Section, SubDialog, Toggle, UnitInput } from "./SettingsKit";
 import { fmtWhen } from "./SettingsBackups";
 import { CheckIcon, CloudIcon, CloudUploadIcon, RefreshIcon, XIcon } from "../shared/ui/Icons";
+import { MorphText } from "../shared/ui/MotionWidgets";
 import { t, tn } from "../shared/i18n/i18n.js";
 
 const ENDPOINT = `${API}/admin/offsite`;
@@ -157,7 +158,7 @@ function OffsiteDialog({ settings, onClose, onSaved }) {
         {error ? <p className="settingsPaneHint aiKeysError" role="alert">{error}</p> : null}
         <DialogButtons>
           <button type="button" className="uiBtn" onClick={onClose}>{t("Cancel")}</button>
-          <button type="submit" className="uiBtn primary" disabled={busy}>{busy ? t("Saving…") : t("Save")}</button>
+          <button type="submit" className="uiBtn primary" disabled={busy}><MorphText>{busy ? t("Saving…") : t("Save")}</MorphText></button>
         </DialogButtons>
       </form>
     </SubDialog>
@@ -233,12 +234,12 @@ export function OffsiteCopies({ setStatus }) {
         <Row icon={CloudIcon} label={settings.bucket || t("No bucket yet")} hint={summaryHint}
           title={managed ? summary(settings) : undefined}>
           {managed ? <button className="uiBtn sm" disabled={!!test?.busy} onClick={testEnvironment}>{t("Test")}</button>
-            : <button className="uiBtn sm" onClick={() => { setError(""); setEditing(true); }}>{settings.bucket ? t("Edit…") : t("Set up…")}</button>}
+            : <button className="uiBtn sm" onClick={() => { setError(""); setEditing(true); }}><MorphText>{settings.bucket ? t("Edit…") : t("Set up…")}</MorphText></button>}
         </Row>
         {round?.enabled || round?.last_round_at ? <>
           <Row icon={RefreshIcon} label={t("Status")} hint={roundHint(round)}>
             <button className="uiBtn sm" disabled={running || starting || !round.enabled} onClick={copyNow}>
-              {running ? t("Copying…") : t("Copy now")}
+              <MorphText>{running ? t("Copying…") : t("Copy now")}</MorphText>
             </button>
           </Row>
           {round.error ? <p className="settingsPaneHint aiKeysError" role="alert">{round.error}</p> : null}

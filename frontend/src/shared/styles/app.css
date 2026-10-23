@@ -913,7 +913,8 @@ html[data-shell] .app { padding-bottom: env(safe-area-inset-bottom); }
   border-right: 2px solid var(--co-color);
   border-bottom: 2px solid var(--co-color);
   transform: rotate(-45deg);
-  transition: transform var(--dur-fast);
+  /* it turns with the body opening under it (motion.css, details) */
+  transition: transform var(--dur-slow) var(--ease-out);
 }
 .blockRendered details.callout[open] > summary.calloutTitle::before { transform: rotate(45deg); }
 .blockRendered details.callout[open] > summary.calloutTitle:not(:last-child) { margin-bottom: 4px; }
@@ -1404,8 +1405,6 @@ html[data-shell] .app { padding-bottom: env(safe-area-inset-bottom); }
   cursor: pointer; text-align: left;
 }
 .selTransToggle:hover { background: var(--bg-hover); }
-.selTransChev { transition: transform var(--dur-slow) var(--ease-out); flex-shrink: 0; }
-.selTransChev.open { transform: rotate(90deg); }
 .selTransLang { font-weight: 400; color: var(--text-tertiary); }
 .selTransCopy { flex-shrink: 0; }
 .selTransBody {
@@ -1967,8 +1966,6 @@ html[data-shell] .app { padding-bottom: env(safe-area-inset-bottom); }
 }
 /* translucent gray so it stays visible on top of the row's own hover tint */
 button.pdfOutlineChevron:hover { background: rgba(128, 128, 128, 0.28); color: var(--text-primary); }
-.pdfOutlineChevron svg { transition: transform var(--dur-fast); }
-.pdfOutlineChevron.open svg { transform: rotate(90deg); }
 .pdfOutlineTitle {
   flex: 1 1 auto;
   min-width: 0;
@@ -2184,8 +2181,9 @@ button.pdfOutlineChevron:hover { background: rgba(128, 128, 128, 0.28); color: v
   cursor: pointer;
 }
 .backlinksHead:hover { background: var(--bg-hover); color: var(--text-secondary); }
-.backlinksCaret { font-size: var(--fs-2xs); width: 10px; }
+.backlinksCaret { font-size: var(--fs-2xs); width: 10px; text-align: center; }
 .backlinkGroup { margin-bottom: 6px; }
+.backlinkGroup:last-child { margin-bottom: 0; }
 .backlinkPage,
 .backlinkItem {
   border-radius: var(--radius-sm);
@@ -2745,7 +2743,8 @@ mark.merge-del { background: color-mix(in srgb, var(--danger) 16%, transparent);
   border-radius: 50%;
   background: #fff;
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
-  transition: transform var(--dur-base) var(--ease-out);
+  /* the thumb travels with a small overshoot (docs/dev/ui-design.md, "Motion") */
+  transition: transform var(--dur-slow) var(--ease-pop);
 }
 .switch input:checked + .switchTrack { background: var(--accent-fill); }
 .switch input:checked + .switchTrack::after { transform: translateX(14px); }
@@ -3705,10 +3704,11 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
 /* A reply's papers (chat/ReplyPapers.jsx): one pill, opening to a checklist
    saved into the library together. */
 .chatPapersWrap { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; margin-top: 8px; min-width: 0; }
+/* The list folds under its pill (Collapse) at the card's full width. */
+.chatPapersFold { align-self: stretch; }
 .chatPapers {
   display: flex;
   flex-direction: column;
-  align-self: stretch;
   gap: 2px;
   padding: 6px 8px;
   border: 1px solid var(--border-subtle);
@@ -3832,23 +3832,6 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
   line-height: 1.5;
 }
 .chatThinking:first-child { margin-top: 0; }
-.chatTyping { display: inline-flex; align-items: center; gap: 0.3em; }
-.chatTyping span {
-  width: 0.4em;
-  height: 0.4em;
-  border-radius: 50%;
-  background: var(--text-dim);
-  animation: chatTypingBlink 1.2s infinite ease-in-out;
-}
-.chatTyping span:nth-child(2) { animation-delay: 0.2s; }
-.chatTyping span:nth-child(3) { animation-delay: 0.4s; }
-@keyframes chatTypingBlink {
-  0%, 80%, 100% { opacity: 0.25; transform: translateY(0); }
-  40% { opacity: 1; transform: translateY(-2px); }
-}
-@media (prefers-reduced-motion: reduce) {
-  .chatTyping span { animation: none; opacity: 0.6; }
-}
 /* Model + effort switchers use shared MenuSelect/uiBtn sizing; this block is
    layout-only so chat controls cannot drift from buttons elsewhere. */
 /* prompt editor */
@@ -4570,8 +4553,6 @@ a.shareBrand:hover { background: var(--bg-hover); }
   cursor: pointer;
 }
 .loginDisclosure:hover { color: var(--text-primary); }
-.loginDisclosureChev { transition: transform var(--dur-base); }
-.loginDisclosureChev.open { transform: rotate(90deg); }
 .loginDisclosureBody { margin-top: 12px; }
 /* a demo server's landing (LoginPage's `scene`): the product pictured on the
    left, what it does and Try the demo on the right; stacked on narrow screens */
@@ -4893,6 +4874,9 @@ a.shareBrand:hover { background: var(--bg-hover); }
 .chatPill svg { flex: none; }
 .chatPillText { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .chatCoverage { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 6px; min-width: 0; }
+/* A pill's note and its pictures fold open under the pills (Collapse). */
+.chatCoverageMore { flex-basis: 100%; min-width: 0; }
+.chatCoverageMore > .collapseBody { display: flex; flex-wrap: wrap; gap: 6px; }
 .chatCoverageNote {
   flex-basis: 100%;
   margin: 0;
@@ -4967,6 +4951,8 @@ a.shareBrand:hover { background: var(--bg-hover); }
    arguments and the output the model got back. */
 .chatToolActions { display: flex; flex-direction: column; gap: 3px; }
 .chatToolAction { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+/* A chip's calls, picture and output fold open under it (Collapse). */
+.chatToolMore > .collapseBody { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
 .chatToolActionHead {
   display: flex;
   align-items: center;

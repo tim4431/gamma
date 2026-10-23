@@ -22,6 +22,7 @@ import {
   AlertCircleIcon, ArrowDownIcon, ArrowUpDownIcon, CheckIcon, CloudDownloadIcon, CloudIcon, CloudOffIcon, HardDriveIcon, LinkIcon,
   MoreIcon, PlusIcon, RefreshIcon, TrashIcon, UnlinkIcon, UploadIcon,
 } from "../shared/ui/Icons";
+import { MorphText } from "../shared/ui/MotionWidgets";
 import { clock, hostOf, isPublication, isPullOnly, mirrorState, n, roundSummary, versionGap } from "../collaboration/MirrorPopover";
 import { ConflictCard, useConflicts } from "../collaboration/MergeResolver";
 import { T, t } from "../shared/i18n/i18n.js";
@@ -134,7 +135,7 @@ export function MirrorDialog({ busy, error, onSubmit, onClose, candidates = [] }
         <button className="uiBtn" onClick={onClose} disabled={busy}>{t("Cancel")}</button>
         <button className="uiBtn primary" disabled={!ok || busy}
           onClick={() => onSubmit({ remote_url: url.trim(), token: token.trim(), name: name.trim(), mode, workspace_id: into, adopt })}>
-          {busy ? t("Connecting…") : t("Clone")}
+          <MorphText>{busy ? t("Connecting…") : t("Clone")}</MorphText>
         </button>
       </DialogButtons>
       </div>

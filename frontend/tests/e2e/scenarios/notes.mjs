@@ -867,7 +867,8 @@ export async function noteScenarios({ server, browser, alice, step, until, sleep
       await p2.goto(url);
       await panel.waitFor();
       await panel.locator(".backlinksHead").click();
-      assertEq(await panel.locator(".backlinkItem").count(), 0, "folding hides the entries");
+      // the entries fold away (a closing body stays, inert, until it has folded)
+      await until(async () => (await panel.locator(".backlinkItem").count()) === 0, { what: "folding hides the entries" });
       await p2.reload();
       await panel.waitFor();
       assertEq(await panel.locator(".backlinksHead").getAttribute("aria-expanded"), "false", "the fold is remembered");

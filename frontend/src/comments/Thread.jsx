@@ -7,6 +7,7 @@
 import React, { startTransition, useCallback, useEffect, useRef, useState } from "react";
 import { ContextMenu, MenuButton, MenuItem } from "../shared/ui/Menus";
 import { CheckIcon, LinkIcon, PencilIcon, RefreshIcon, Trash2Icon } from "../shared/ui/Icons";
+import { IconSwap } from "../shared/ui/MotionWidgets";
 import { PersonAvatar } from "../collaboration/Presence";
 import { BlockMarkdown } from "../editor/BlockTree";
 import { fmtDate, t, tn } from "../shared/i18n/i18n.js";
@@ -69,7 +70,7 @@ function Comment({ comment, me, owner, canComment, people, labelsFor, later, fie
             <button type="button" className="ctlBtn commentResolve" onClick={resolve.onClick}
               aria-label={resolve.open ? t("Resolve") : t("Reopen")}
               title={resolve.open ? t("Resolve this thread: it leaves the note and stays in the Comments window") : t("Reopen this thread")}>
-              {resolve.open ? <CheckIcon size={14} /> : <RefreshIcon size={14} />}
+              <IconSwap swap={!resolve.open} from={<CheckIcon size={14} />} to={<RefreshIcon size={14} />} />
             </button>
           ) : null}
           {!comment.deleted && actions ? <MenuButton open={openMenu} label={t("Comment actions")} /> : null}

@@ -16,6 +16,7 @@ import { PaneHead, Section, Row, SubDialog, Field, UnitInput, Empty, QuotaMeter,
 import { CloudIdentityRow } from "./SettingsCloudSignIn";
 import { ManageWorkspaceDialog, useAccounts } from "./SettingsWorkspace";
 import { BookIcon, HardDriveIcon, PenIcon, ShieldIcon, Trash2Icon, UserIcon, UsersIcon } from "../shared/ui/Icons";
+import { MorphText } from "../shared/ui/MotionWidgets";
 import { T, t } from "../shared/i18n/i18n.js";
 
 // `onServer` (admins) opens Settings → Server at the Gamma Cloud sign-in.
@@ -393,7 +394,7 @@ export function UsersSettings({ value, selfOnly = false, onServer }) {
           <div className="reportModalBtns">
             <button className="uiBtn" onClick={() => { setAddForm(null); setError(""); }}>{t("Cancel")}</button>
             <button className="uiBtn primary" disabled={busy} onClick={submitAdd}>
-              {busy ? t("Creating…") : t("Create user")}
+              <MorphText>{busy ? t("Creating…") : t("Create user")}</MorphText>
             </button>
           </div>
           </div>

@@ -35,6 +35,7 @@ import {
   ClockIcon, CloudDownloadIcon, DownloadIcon, ExternalLinkIcon, HandIcon, HistoryIcon, LinkIcon, PenIcon, RefreshIcon,
   SettingsIcon, TrashIcon, UnlinkIcon, UploadIcon,
 } from "../shared/ui/Icons";
+import { Collapse } from "../shared/ui/MotionWidgets";
 import { Popover } from "../shared/ui/Surfaces";
 
 // The server's sync_log actions, in git's words.
@@ -412,7 +413,9 @@ function LogList({ log, jumpTo }) {
                 <ExternalLinkIcon size={16} />
               </button>
             </div>
-            {open ? (c.changes?.length ? <ChangeList changes={c.changes} /> : <div className="popoverHint mirrorChangesNone">{t("No block-level detail for this row.")}</div>) : null}
+            <Collapse open={open}>
+              {c.changes?.length ? <ChangeList changes={c.changes} /> : <div className="popoverHint mirrorChangesNone">{t("No block-level detail for this row.")}</div>}
+            </Collapse>
           </li>
         );
       })}

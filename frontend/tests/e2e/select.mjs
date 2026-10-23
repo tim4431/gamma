@@ -51,6 +51,7 @@ export const GROUPS = [
   { id: "mirror", files: ["mirror.mjs"], s: 7 },
   { id: "ink-zoom", files: ["inkZoom.mjs"], s: 7 },
   { id: "trash", files: ["trash.mjs"], s: 5 },
+  { id: "motion", files: ["motion.mjs"], s: 5 },
   { id: "i18n", files: ["i18n.mjs"], s: 4 },
 ];
 

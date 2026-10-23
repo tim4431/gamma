@@ -8,6 +8,7 @@
 import React from "react";
 import { Empty, Segmented } from "../settings/SettingsKit";
 import { ArchiveIcon, ArchiveRestoreIcon, BellIcon, CheckIcon, MailIcon } from "../shared/ui/Icons";
+import { IconSwap } from "../shared/ui/MotionWidgets";
 import { PersonAvatar } from "../collaboration/Presence";
 import { t } from "../shared/i18n/i18n.js";
 import { formatRelativeTime } from "../library/libraryUtils";
@@ -43,12 +44,12 @@ function InboxRow({ item, inbox, workspaceId, now, onOpen }) {
         {item.archived_at ? null : (
           <button type="button" className="ctlBtn inboxRead" title={readLabel} aria-label={readLabel}
             onClick={() => inbox.markRead(item, unread)}>
-            {unread ? <CheckIcon size={14} /> : <MailIcon size={14} />}
+            <IconSwap swap={unread} from={<MailIcon size={14} />} to={<CheckIcon size={14} />} />
           </button>
         )}
         <button type="button" className="ctlBtn inboxArchive" title={archiveLabel} aria-label={archiveLabel}
           onClick={() => inbox.archive(item, !item.archived_at)}>
-          {item.archived_at ? <ArchiveRestoreIcon size={14} /> : <ArchiveIcon size={14} />}
+          <IconSwap swap={!!item.archived_at} from={<ArchiveIcon size={14} />} to={<ArchiveRestoreIcon size={14} />} />
         </button>
       </span>
       {unread ? <span className="inboxDot" aria-hidden="true" /> : null}

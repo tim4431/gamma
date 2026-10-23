@@ -611,7 +611,10 @@ backup restore) is a `danger` row.
 
 App's `setStatus(msg)` logs a message (Settings → Diagnostics) and posts
 it to the floating pill: one ending in "…" is in progress and spins,
-anything else is final and fades after a second. `setStatus(msg, action)`
+anything else is final and fades after a second. It rises into place
+when it comes, and a new message morphs out of the one it replaces
+(`MorphText`, [Motion](#motion)); an error, which wraps to be read in
+full, shows at once. `setStatus(msg, action)`
 with an `action` `{label, run}` puts its button on the pill
 (`.statusPill.interactive`), which then stays 8 seconds to be pressed.
 Each source posts to a channel of its own (`postPill(channel, entry)`),
@@ -978,6 +981,48 @@ appCommands.js does). A box read while a surface is arriving is the
 smaller one it grows from: the guide's card waits for its anchor to land
 (`arriving(el)`, `shared/ui/motion.js`, which counts only the arrivals
 that move or size what they hold).
+
+A pane that takes another's place comes into focus where it stands (a
+Settings pane, keyed by its name; a window the compact shell's bottom
+bar shows), and the guide's card rises `--move-sm` into place.
+
+### Things that change in place
+
+What changes without leaving its place uses a widget from
+`shared/ui/MotionWidgets.jsx`, whose recipe is in motion.css. At rest each
+is plain markup, and a first render never moves.
+
+- **`IconSwap`** `swap from to`: two icons in one slot (copy and its
+  check, play and pause, an eye and a struck eye). The one going shrinks
+  into `--blur-swap` as the other grows out of it, on `--ease-swap`. Both
+  stay in the DOM, so the slot never changes size. Not for an icon chosen
+  by an item's kind, and not for a state with a spinner.
+- **`MorphText`**: a short label that changes in place (Copy → Copied,
+  Save → Saving…). The letters both texts share at each end stay; the
+  part between cross-fades and its width eases, so the button around it
+  resizes smoothly. Mid-swap, assistive technology reads the new label
+  whole. Not inside a surface placed from its size (the selection
+  popup): its width would move it every frame.
+- **`Collapse`** `open`: a body under the header that opens it. Its row
+  grows from nothing over `--dur-slow` while it comes into focus, and
+  folds over `--dur-base`; shut, nothing is rendered, and while it folds
+  the body stays, inert. Not inside a surface placed from its size,
+  which would move as it grows. A native `<details>` opens the same way
+  where the browser animates `::details-content`.
+- **`Chevron`** `open dir`: one glyph that turns with what it opens:
+  `"right"` turns down, `"down"` flips up. A text caret ▸ turns the
+  same way with `.turnCaret`.
+- **`useSlidingPill(ref, value)`**: the chosen option's frame in a
+  segmented group slides to the next one chosen (`Segmented`, the
+  library's view and kind toggles). The group renders a `.slidePill` as
+  its first child; its stylesheet gives the pill its look.
+- **`.shimmerText`**: text that says work is under way (the chat's
+  Thinking) carries a soft light across its letters while it holds.
+- **`.countIn`**, keyed by the number: a badge's number rises into
+  place when it changes; the Inbox badge also pops on when it comes.
+- **`FADE_IN`**, spread on an `<img>`: a picture fades in once loaded
+  (the library cards' snapshots); one already in the cache shows at once.
+- A switch's thumb travels with `--ease-pop`, its one overshoot.
 
 ## Block editor interactions
 

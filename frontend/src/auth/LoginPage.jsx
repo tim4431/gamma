@@ -1,7 +1,8 @@
 import React from "react";
 import { PasswordInput } from "../settings/SettingsKit";
-import { AlertCircleIcon, ArrowLeftIcon, CheckIcon, ChevronRightIcon, MailIcon, ServerIcon } from "../shared/ui/Icons";
+import { AlertCircleIcon, ArrowLeftIcon, CheckIcon, MailIcon, ServerIcon } from "../shared/ui/Icons";
 import { BrandMark } from "../shared/ui/BrandMark";
+import { Chevron, Collapse } from "../shared/ui/MotionWidgets";
 import { nativeHost, postToHost } from "../shared/lib/host.js";
 import { T, t, tn } from "../shared/i18n/i18n.js";
 
@@ -270,7 +271,7 @@ export function LoginPage({
   const adminSignIn = (
     <button type="button" className="loginDisclosure" aria-expanded={signInOpen}
       onClick={() => setSignInOpen((open) => !open)}>
-      <ChevronRightIcon size={14} className={`loginDisclosureChev ${signInOpen ? "open" : ""}`} />
+      <Chevron open={signInOpen} dir="right" size={14} />
       {t("Admin sign-in")}
     </button>
   );
@@ -284,7 +285,7 @@ export function LoginPage({
         {cloudError ? <LoginError>{cloudError}</LoginError> : null}
         {joinOutcome}
         {adminSignIn}
-        {signInOpen ? <div className="loginDisclosureBody">{passwordForm}</div> : null}
+        <Collapse open={signInOpen}><div className="loginDisclosureBody">{passwordForm}</div></Collapse>
         {onBack ? (
           <button type="button" className="loginDisclosure" onClick={onBack}>
             <ArrowLeftIcon size={14} />{t("Back to the shared page")}
@@ -338,7 +339,7 @@ export function LoginPage({
       {cloudError && !signInOpen ? <LoginError>{cloudError}</LoginError> : null}
       {!signInOpen ? joinOutcome : null}
       {adminSignIn}
-      {signInOpen ? <div className="loginDisclosureBody">{signIn}</div> : null}
+      <Collapse open={signInOpen}><div className="loginDisclosureBody">{signIn}</div></Collapse>
     </AuthShell>
   );
 }

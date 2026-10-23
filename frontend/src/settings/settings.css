@@ -134,14 +134,26 @@
 .setNum { width: 92px; flex: 0 0 auto; margin-bottom: 0; text-align: right; }
 .setRange { width: 108px; cursor: pointer; }
 
-/* Joined pill buttons (segmented choice). Layout only — the buttons are
-   .uiBtn, and .uiBtn.on (app.css) carries the selected look. */
-.segGroup { display: inline-flex; flex-shrink: 0; }
+/* Joined pill buttons (segmented choice). The buttons are .uiBtn, and
+   .uiBtn.on (app.css) carries the selected look until the sliding frame
+   (.slidePill, motion.css) is placed: then the frame draws the choice
+   over the buttons and slides to the next one chosen. */
+.segGroup { position: relative; display: inline-flex; flex-shrink: 0; }
 .segGroup .uiBtn { border-radius: 0; padding: 4px 10px; }
-.segGroup .uiBtn:first-child { border-radius: var(--radius-md) 0 0 var(--radius-md); }
+.segGroup .uiBtn:first-of-type { border-radius: var(--radius-md) 0 0 var(--radius-md); }
 .segGroup .uiBtn:last-child { border-radius: 0 var(--radius-md) var(--radius-md) 0; }
 .segGroup .uiBtn + .uiBtn { margin-left: -1px; }
 .segGroup .uiBtn.on { z-index: 1; }
+.segGroup > .slidePill {
+  z-index: 2;
+  border: 1px solid var(--accent);
+  background: var(--accent-bg-light);
+}
+.segGroup[data-pill] > .uiBtn.on,
+.segGroup[data-pill] > .uiBtn.on:hover:not(:disabled) {
+  background: var(--bg-elevated);
+  border-color: var(--border);
+}
 
 /* Stepper: −/+ around a readout; the readout is a quiet button (click = reset). */
 .stepper { display: inline-flex; align-items: center; gap: 2px; flex-shrink: 0; }

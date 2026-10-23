@@ -18,6 +18,7 @@ import { SECTION_PREFS } from "./sectionPrefs.js";
 import { useAccounts } from "./SettingsWorkspace";
 import { accessSummary, aiServiceTiles, modelList, onThisMachine, serviceGroups, signInAddress, useProviderEditor } from "./providerEditor.js";
 import { ActivityIcon, CheckIcon, ExternalLinkIcon, GlobeIcon, KeyIcon, MicIcon, PaperIcon, RefreshIcon, SparklesIcon, Trash2Icon, UserIcon, UsersIcon, XIcon } from "../shared/ui/Icons";
+import { MorphText } from "../shared/ui/MotionWidgets";
 import { T, getLocale, t, tn } from "../shared/i18n/i18n.js";
 
 // Spoken languages for dictation, by native name. The pick "" follows the
@@ -568,9 +569,9 @@ function ProviderForm({ value, onCancel }) {
       <div className="reportModalBtns">
         <button className="uiBtn" onClick={onCancel}>{t("Cancel")}</button>
         <button className="uiBtn primary" disabled={aiKeysBusy} onClick={submitAiProvider}>
-          {aiKeysBusy
+          <MorphText>{aiKeysBusy
             ? t("Saving…")
-            : !aiKeysForm.id || (oauth && (aiKeysForm.oauthCallback || "").trim()) ? t("Connect") : t("Save changes")}
+            : !aiKeysForm.id || (oauth && (aiKeysForm.oauthCallback || "").trim()) ? t("Connect") : t("Save changes")}</MorphText>
         </button>
       </div>
     </div>

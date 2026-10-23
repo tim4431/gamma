@@ -18,6 +18,7 @@ import { GuestSettings } from "./SettingsGuests";
 import { SharedAiProviderSettings } from "./SettingsAi";
 import { ActivityIcon, AlertCircleIcon, CloudDownloadIcon, CloudIcon, DatabaseIcon, ExternalLinkIcon, ImportIcon, ServerIcon,
   UsersIcon } from "../shared/ui/Icons";
+import { MorphText } from "../shared/ui/MotionWidgets";
 import { fmtDate, t, tn } from "../shared/i18n/i18n.js";
 
 export function ServerSettings({ value }) {
@@ -130,7 +131,7 @@ function ServerDashboard() {
           <button className="uiBtn sm" onClick={() => window.open(info.latest.url, "_blank", "noopener")}>{t("Release notes")}</button>
         ) : null}
         <button className={`uiBtn sm ${updateTone ? "primary" : ""}`} disabled={checking} onClick={() => load(true)}>
-          {checking ? t("Checking…") : t("Check now")}
+          <MorphText>{checking ? t("Checking…") : t("Check now")}</MorphText>
         </button>
       </span>
     </Row>
@@ -199,7 +200,7 @@ function HostedPlan({ setStatus, onSynced }) {
             <a className="uiBtn sm" href={`${pane.issuer}/plan`} target="_blank" rel="noopener">
               <ExternalLinkIcon size={14} /> {t("Manage plan")}
             </a>) : null}
-          <button className="uiBtn sm" disabled={busy} onClick={sync}>{busy ? t("Syncing…") : t("Sync now")}</button>
+          <button className="uiBtn sm" disabled={busy} onClick={sync}><MorphText>{busy ? t("Syncing…") : t("Sync now")}</MorphText></button>
         </span>
       </Row>
       {plan ? (
@@ -316,7 +317,7 @@ function DatabaseCheck({ setStatus }) {
   return <>
     <Row icon={DatabaseIcon} label={t("Check databases")} hint={hint}
       title={t("Runs SQLite's quick_check on users.db and on every workspace's pages.db and data.db. Nothing is changed; a damaged file is best replaced from a backup.")}>
-      <button className="uiBtn sm" disabled={busy} onClick={run}>{busy ? t("Checking…") : t("Check now")}</button>
+      <button className="uiBtn sm" disabled={busy} onClick={run}><MorphText>{busy ? t("Checking…") : t("Check now")}</MorphText></button>
     </Row>
     {bad.map((f) => (
       <p key={f.file} className="settingsPaneHint aiKeysError" role="alert">

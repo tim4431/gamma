@@ -57,6 +57,7 @@ import {
   XIcon,
 } from "../shared/ui/Icons";
 import { Popover } from "../shared/ui/Surfaces";
+import { IconSwap, MorphText } from "../shared/ui/MotionWidgets";
 
 const ROLE_SEGMENTS = {
   page: [
@@ -138,8 +139,8 @@ function AccessSummary({ settings, kind, cloud = false, saving = false }) {
 function CopyLinkButton({ url, copied, onCopy, primary = false }) {
   return (
     <button type="button" className={`uiBtn sm ${copied ? "on" : primary ? "primary" : ""}`} onClick={onCopy} title={url}>
-      {copied ? <CheckIcon size={14} /> : <LinkIcon size={14} />}
-      {copied ? t("Copied") : t("Copy link")}
+      <IconSwap swap={!!copied} from={<LinkIcon size={14} />} to={<CheckIcon size={14} />} />
+      <MorphText>{copied ? t("Copied") : t("Copy link")}</MorphText>
     </button>
   );
 }

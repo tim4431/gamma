@@ -20,6 +20,7 @@ import {
   Back10Icon, CheckIcon, ContrastIcon, EyeIcon, Forward10Icon, LocateIcon, PauseIcon, PenIcon, PlayIcon, SkipBackIcon,
   SkipForwardIcon, XIcon,
 } from "../shared/ui/Icons";
+import { IconSwap } from "../shared/ui/MotionWidgets";
 import { T, t } from "../shared/i18n/i18n.js";
 import "./recording.css";
 
@@ -104,7 +105,7 @@ export function PlayerBar({ block, inkBlocks, blocks, prefs, onShow }) {
         <div className="replayRow">
           <button type="button" onMouseDown={keepFocus} className="ctlBtn replayPlay" onClick={() => playback.toggle()} aria-pressed={playing}
             aria-label={playing ? t("Pause (Space)") : t("Play (Space)")}>
-            {playing ? <PauseIcon size={16} /> : <PlayIcon size={16} />}
+            <IconSwap swap={playing} from={<PlayIcon size={16} />} to={<PauseIcon size={16} />} />
           </button>
           <button type="button" onMouseDown={keepFocus} className="ctlBtn" onClick={() => playback.seek(at - SKIP_MS)} aria-label={t("Back 10 seconds (←)")}>
             <Back10Icon size={16} />

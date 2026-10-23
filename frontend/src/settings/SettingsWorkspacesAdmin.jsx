@@ -11,6 +11,7 @@ import { MenuSelect } from "../shared/ui/Menus";
 import { Section, SubDialog, Field, DialogButtons, Empty, UnitInput, AccountPicker } from "./SettingsKit";
 import { ManageWorkspaceDialog, useAccounts, ACCESS_OPTIONS, PUBLIC_ROLE_OPTIONS } from "./SettingsWorkspace";
 import { GlobeIcon, PenIcon, PlusIcon, UsersIcon } from "../shared/ui/Icons";
+import { MorphText } from "../shared/ui/MotionWidgets";
 import { t, tn } from "../shared/i18n/i18n.js";
 
 export function WorkspacesAdmin({ value }) {
@@ -161,7 +162,7 @@ function NewWorkspaceDialog({ me, accounts, setStatus, onCreated, onClose }) {
         <DialogButtons footnote={form.name.trim() && form.owner ? null : t("Give it a name and an owner to continue.")}>
           <button className="uiBtn" onClick={onClose}>{t("Cancel")}</button>
           <button className="uiBtn primary" disabled={busy || !form.name.trim() || !form.owner} onClick={submit}>
-            {busy ? t("Creating…") : t("Create")}
+            <MorphText>{busy ? t("Creating…") : t("Create")}</MorphText>
           </button>
         </DialogButtons>
       </div>

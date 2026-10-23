@@ -8,7 +8,7 @@ import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
 import "katex/dist/katex.min.css";
-import { CheckIcon, ChevronDownIcon, CopyIcon, ExternalLinkIcon, FileGlyph, FileTextIcon, PinIcon, XIcon } from "./Icons";
+import { CheckIcon, CopyIcon, ExternalLinkIcon, FileGlyph, FileTextIcon, PinIcon, XIcon } from "./Icons";
 import { useWheelPan } from "./wheelPan";
 import { doublePress, menuPress } from "./press.js";
 import { assetUrl, copyText } from "../lib/utils";
@@ -19,6 +19,7 @@ import { DiagramFigure, diagramCodeProps } from "./DiagramFigure";
 import { highlightCode } from "../../editor/codeHighlight.js";
 import { t } from "../../shared/i18n/i18n.js";
 import { Popover } from "./Surfaces";
+import { Chevron, IconSwap, MorphText } from "./MotionWidgets";
 
 // Shared chrome for every dockable window: one grip (drag to move or
 // reorder, double press to fold), the close button right beside it, then
@@ -181,8 +182,8 @@ function ChatCopyBlock({ as: Tag, children }) {
         <button type="button" className="chatCopyButton" onClick={copyContent}
           aria-label={isCode ? t("Copy code") : t("Copy quoted text")}
           title={failed ? t("Copy failed — select the text and press Ctrl+C") : t("Copy only this block's content")}>
-          {copied ? <CheckIcon size={14} /> : <CopyIcon size={14} />}
-          <span aria-live="polite">{failed ? t("Try again") : copied ? t("Copied") : t("Copy")}</span>
+          <IconSwap swap={!!copied} from={<CopyIcon size={14} />} to={<CheckIcon size={14} />} />
+          <span aria-live="polite"><MorphText>{failed ? t("Try again") : copied ? t("Copied") : t("Copy")}</MorphText></span>
         </button>
       </div>
       <Tag ref={contentRef}>{children}</Tag>
@@ -420,7 +421,7 @@ function CopyBox({ children, copied, onCopy, title, label }) {
     <div className="copyBox">
       <div className="copyBoxBody">{children}</div>
       <button type="button" className={`uiBtn sm iconSq copyBoxBtn ${copied ? "on" : ""}`} onClick={onCopy} title={title} aria-label={label}>
-        {copied ? <CheckIcon size={16} /> : <CopyIcon size={16} />}
+        <IconSwap swap={!!copied} from={<CopyIcon size={16} />} to={<CheckIcon size={16} />} />
       </button>
     </div>
   );
@@ -592,7 +593,7 @@ function OpenTabs({
             aria-label={t("All open tabs")}
             aria-expanded={menuOpen}
           >
-            <ChevronDownIcon size={14} />
+            <Chevron open={menuOpen} dir="down" size={14} />
             <span className="tabsMenuCount">{tabs.length}</span>
           </button>
           {menuOpen ? (

@@ -23,6 +23,7 @@ import { cloudSyncHint } from "./syncState.js";
 import { REOPEN_SETTINGS_KEY } from "./settingsNavigation.js";
 import { formatRelativeTime } from "../library/libraryUtils";
 import { CloudIcon, ExternalLinkIcon, GlobeIcon, KeyIcon, RefreshIcon, Trash2Icon, UserIcon, UsersIcon, XIcon } from "../shared/ui/Icons";
+import { MorphText } from "../shared/ui/MotionWidgets";
 import { T, t, tn } from "../shared/i18n/i18n.js";
 
 const POLICIES = [
@@ -92,7 +93,7 @@ export function CloudSignInSettings({ setStatus, action }) {
   const set = (key) => (value) => setDraft((d) => ({ ...d, [key]: value }));
   const disabled = !saved || managed || busy;
   React.useEffect(() => {
-    action?.(dirty ? <button className="uiBtn sm primary" disabled={busy} onClick={save}>{busy ? t("Saving…") : t("Save sign-in")}</button> : null);
+    action?.(dirty ? <button className="uiBtn sm primary" disabled={busy} onClick={save}><MorphText>{busy ? t("Saving…") : t("Save sign-in")}</MorphText></button> : null);
     return () => action?.(null);
   }, [dirty, busy, draft]); // eslint-disable-line react-hooks/exhaustive-deps
   return <>
@@ -337,7 +338,7 @@ function CloudSyncRow({ setStatus, confirm }) {
           <button className={`uiBtn sm ${choosing ? "primary" : ""}`} disabled={!!busy} onClick={() => (choosing ? ask() : run("sync"))}
             title={choosing ? t("Choose whether the cloud's settings or this server's are kept")
               : t("Merge with Gamma Cloud now: each side keeps what the other did not change")}>
-            {busy ? { sync: t("Syncing…"), fetch: t("Fetching…"), push: t("Pushing…") }[busy] : t("Sync now")}
+            <MorphText>{busy ? { sync: t("Syncing…"), fetch: t("Fetching…"), push: t("Pushing…") }[busy] : t("Sync now")}</MorphText>
           </button>
         </span>
       )}

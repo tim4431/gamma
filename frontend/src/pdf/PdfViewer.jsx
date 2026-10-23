@@ -10,7 +10,7 @@ import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useSta
 import pdfWorkerUrl from "pdfjs-dist/legacy/build/pdf.worker.min.mjs?url";
 import "pdfjs-dist/web/pdf_viewer.css";
 import { createPortal } from "react-dom";
-import { CheckIcon, ChevronRightIcon, CopyIcon, LanguagesIcon, LinkIcon, MessageSquareIcon, OutlineIcon } from "../shared/ui/Icons";
+import { CheckIcon, CopyIcon, LanguagesIcon, LinkIcon, MessageSquareIcon, OutlineIcon } from "../shared/ui/Icons";
 import { MarkupLayers, NO_MARKS } from "../markup/MarkupLayers";
 import { armedClasses, usePageTools } from "../markup/PageTools";
 import { ZoomWindow } from "../ink/ZoomWindow.jsx";
@@ -22,6 +22,7 @@ import { BACKFILL_DELAY_MS, chooseTransport, docIdOf, layoutFromManifest, rangeO
 import { normalizeChars } from "../shared/lib/textnorm";
 import { apiJson, copyText, withShare, withWorkspace } from "../shared/lib/utils";
 import { ChatMarkdown, useCopied } from "../shared/ui/Widgets";
+import { Chevron, Collapse, IconSwap } from "../shared/ui/MotionWidgets";
 import { menuPress } from "../shared/ui/press.js";
 import { lastPointer } from "../shared/lib/pointer.js";
 import { PdfCitationOverlay } from "./PdfCitationOverlay";
@@ -1863,12 +1864,12 @@ function OutlineNode({ item, depth, onDest, onUrl }) {
       <div className="pdfOutlineRow">
         {kids.length ? (
           <button
-            className={"pdfOutlineChevron" + (open ? " open" : "")}
+            className="pdfOutlineChevron"
             onClick={() => setOpen((o) => !o)}
             aria-label={open ? t("Collapse section") : t("Expand section")}
             type="button"
           >
-            <ChevronRightIcon size={10} />
+            <Chevron open={open} dir="right" size={10} />
           </button>
         ) : (
           <span className="pdfOutlineChevron" />
@@ -1884,12 +1885,14 @@ function OutlineNode({ item, depth, onDest, onUrl }) {
           {item.title}
         </span>
       </div>
-      {open && kids.length ? (
-        <div className="pdfOutlineKids">
-          {kids.map((k, i) => (
-            <OutlineNode key={i} item={k} depth={depth + 1} onDest={onDest} onUrl={onUrl} />
-          ))}
-        </div>
+      {kids.length ? (
+        <Collapse open={open}>
+          <div className="pdfOutlineKids">
+            {kids.map((k, i) => (
+              <OutlineNode key={i} item={k} depth={depth + 1} onDest={onDest} onUrl={onUrl} />
+            ))}
+          </div>
+        </Collapse>
       ) : null}
     </div>
   );
@@ -2659,7 +2662,7 @@ function SelTranslation({ trans, langLabel, tooLong, onToggle, keep }) {
       <div className="selTransHead">
         <button type="button" className="selTransToggle" aria-expanded={trans.open}
           onMouseDown={keep} onClick={onToggle}>
-          <ChevronRightIcon size={14} className={`selTransChev ${trans.open ? "open" : ""}`} />
+          <Chevron open={trans.open} dir="right" size={14} />
           <span>{t("Translation")}</span>
           <span className="selTransLang">{langLabel}</span>
           {loading ? <span className="pillSpin" aria-hidden="true" /> : null}
@@ -2668,10 +2671,14 @@ function SelTranslation({ trans, langLabel, tooLong, onToggle, keep }) {
           <button type="button" className="ctlBtn selTransCopy" title={t("Copy translation")} aria-label={t("Copy translation")}
             onMouseDown={keep}
             onClick={async () => { if (await copyText(trans.text)) flashCopied(); }}>
-            {copied ? <CheckIcon size={16} /> : <CopyIcon size={16} />}
+            <IconSwap swap={copied} from={<CopyIcon size={16} />} to={<CheckIcon size={16} />} />
           </button>
         ) : null}
       </div>
+      {/* It opens at once: the popup it grows is placed again in every frame
+          its size changes (TipFrame), and growing over frames could move it
+          to the other side of the selection partway (docs/dev/ui-design.md,
+          "Menus and popups open in place"). Only its chevron turns. */}
       {trans.open ? (
         <div className={`selTransBody ${trans.status === "error" ? "error" : ""}`} aria-live="polite">
           {trans.status === "error"

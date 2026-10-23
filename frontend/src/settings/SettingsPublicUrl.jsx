@@ -2,6 +2,7 @@ import React from "react";
 import { API, apiJson } from "../shared/lib/utils";
 import { Row, useSettingsDraft } from "./SettingsKit";
 import { LinkIcon } from "../shared/ui/Icons";
+import { MorphText } from "../shared/ui/MotionWidgets";
 import { t } from "../shared/i18n/i18n.js";
 
 export function PublicUrlSettings({ setStatus }) {
@@ -50,7 +51,7 @@ export function PublicUrlSettings({ setStatus }) {
           onChange={(event) => setDraft(event.target.value)}
           onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); save(); } }} />
         {needsAction ? (
-          <button className="uiBtn sm primary" disabled={busy} onClick={save}>{busy ? t("Saving…") : t("Confirm")}</button>
+          <button className="uiBtn sm primary" disabled={busy} onClick={save}><MorphText>{busy ? t("Saving…") : t("Confirm")}</MorphText></button>
         ) : null}
       </span>
     </Row>

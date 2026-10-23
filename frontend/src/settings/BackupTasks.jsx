@@ -2,6 +2,7 @@ import React from "react";
 import { API, apiJson, fmtBytes } from "../shared/lib/utils";
 import { ActionMenu, MenuSelect } from "../shared/ui/Menus";
 import { ClockIcon, DatabaseIcon, HardDriveIcon, MoreIcon, PlusIcon, Trash2Icon } from "../shared/ui/Icons";
+import { MorphText } from "../shared/ui/MotionWidgets";
 import { DialogButtons, Empty, Field, Section, Segmented, SubDialog, Toggle, ToggleGroup } from "./SettingsKit";
 import { fmtWhen } from "./SettingsBackups";
 import { fromUtcCron, localOffset, observesDst, parseCron, shiftTime, toUtcCron } from "./backupSchedule.js";
@@ -200,7 +201,7 @@ function TaskEditor({ initial, workspaces, onClose, onSaved }) {
           : draft.scope === "selected" && !draft.workspaces.length ? t("Pick at least one workspace to continue.") : null}>
           <button type="button" className="uiBtn" onClick={onClose}>{t("Cancel")}</button>
           <button type="submit" className="uiBtn primary" disabled={!preview || !draft.name.trim() || (draft.scope === "selected" && !draft.workspaces.length)}>
-            {busy ? t("Saving…") : initial?.id ? t("Save changes") : t("Create task")}
+            <MorphText>{busy ? t("Saving…") : initial?.id ? t("Save changes") : t("Create task")}</MorphText>
           </button>
         </DialogButtons>
       </fieldset>

@@ -10,6 +10,7 @@ import { friendlyApiError } from "../library/libraryUtils";
 import { MenuSelect } from "../shared/ui/Menus";
 import { Row, SubDialog, Field, PasswordInput } from "./SettingsKit";
 import { BookIcon, GlobeIcon, KeyIcon, ServerIcon, Trash2Icon } from "../shared/ui/Icons";
+import { MorphText } from "../shared/ui/MotionWidgets";
 import { T, t } from "../shared/i18n/i18n.js";
 
 // Per service: the form's fields, where to get them, and the row's icon.
@@ -149,7 +150,7 @@ export function OnlineSearchSettings() {
           {error ? <div className="settingsPaneHint aiKeysError">{error}</div> : null}
           <div className="reportModalBtns">
             <button className="uiBtn" onClick={() => { setForm(null); setError(""); }}>{t("Cancel")}</button>
-            <button className="uiBtn primary" disabled={busy} onClick={save}>{busy ? t("Saving…") : t("Save")}</button>
+            <button className="uiBtn primary" disabled={busy} onClick={save}><MorphText>{busy ? t("Saving…") : t("Save")}</MorphText></button>
           </div>
         </div>
       </SubDialog>

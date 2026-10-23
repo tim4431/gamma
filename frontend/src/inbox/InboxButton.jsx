@@ -33,5 +33,7 @@ export function InboxButton({ unread, open, onToggle, onPreload }) {
 // The count: on the button's corner, or `inline` after a menu row's label.
 export function InboxBadge({ unread, inline = false }) {
   if (!unread) return null;
-  return <span className={`inboxBadge${inline ? " inline" : ""}`} aria-hidden="true">{shortCount(unread)}</span>;
+  // it pops on when it comes; a new number rises into place (motion.css)
+  const n = shortCount(unread);
+  return <span className={`inboxBadge${inline ? " inline" : ""}`} aria-hidden="true"><span key={n} className="countIn">{n}</span></span>;
 }

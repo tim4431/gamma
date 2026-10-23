@@ -17,6 +17,7 @@ import { BROWSER_TAG, profileSyncState } from "./syncState.js";
 import { t, tn } from "../shared/i18n/i18n.js";
 import { fmtTokens } from "../chat/tokenUsage";
 import { DialogOverlay } from "../shared/ui/Surfaces";
+import { IconSwap, useSlidingPill } from "../shared/ui/MotionWidgets";
 
 export const SettingsDraftContext = React.createContext(null);
 
@@ -147,14 +148,18 @@ export function Toggle({ checked, onChange, disabled, label, ...row }) {
   );
 }
 
-// Joined pill buttons for a single mutually-exclusive choice.
+// Joined pill buttons for a single mutually-exclusive choice; the chosen
+// one's frame slides to the next one chosen (useSlidingPill).
 // `options` are [value, label, Icon, tooltip].
 export function Segmented({ value, onChange, options, disabled }) {
   // In a menu (the table column menu's alignment) its choices are the
   // menu's radio items; anywhere else, pressed buttons.
   const inMenu = useInMenu();
+  const ref = React.useRef(null);
+  useSlidingPill(ref, value);
   return (
-    <span className="segGroup">
+    <span className="segGroup" ref={ref}>
+      <span className="slidePill" aria-hidden="true" />
       {options.map(([val, label, Icon, tip]) => (
         <button
           key={val} type="button" title={t(tip || label)} disabled={disabled}
@@ -343,7 +348,7 @@ export function CopyField({ label, value, action, rows = 2 }) {
       <textarea className="aiKeyInput" aria-label={label} readOnly rows={rows} value={value}
         onFocus={(event) => event.target.select()} />
       <button type="button" className={`uiBtn sm iconSq integrationCopy${copied ? " on" : ""}`} aria-label={action} title={action} onClick={copy}>
-        {copied ? <CheckIcon size={16} /> : <CopyIcon size={16} />}
+        <IconSwap swap={copied} from={<CopyIcon size={16} />} to={<CheckIcon size={16} />} />
       </button>
     </div>
     <span className={`settingDesc integrationCopyStatus${copied ? " srOnly" : ""}`} role="status">{status}</span>
@@ -380,7 +385,7 @@ export function PasswordInput({ className = "aiKeyInput", inputRef, ...props }) 
         onMouseDown={(event) => event.preventDefault()} // keep the input's focus + caret
         onClick={() => setShown((v) => !v)}
       >
-        {shown ? <EyeOffIcon size={16} /> : <EyeIcon size={16} />}
+        <IconSwap swap={shown} from={<EyeIcon size={16} />} to={<EyeOffIcon size={16} />} />
       </button>
     </span>
   );

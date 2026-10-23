@@ -1465,7 +1465,9 @@ const BlockRow = React.memo(function BlockRow({
               onToggle(block.id);
             }}
           >
-            {collapsed ? "▸" : "▾"}
+            {/* one caret that turns (motion.css .turnCaret); turning the
+                glyph rather than the button keeps the button's hit box */}
+            <span className={`turnCaret${collapsed ? "" : " open"}`}>▸</span>
           </button>
         ) : (
           <span className="collapseSpacer" />
