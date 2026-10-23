@@ -263,11 +263,12 @@ const NEXT_STEP = {
   bibtex: T("Put it beside your .tex file, or upload it to Overleaf."),
   obsidian: T("Unzip it into a vault, or open the folder as one."),
   gamma: T("In the other Gamma: Import → Gamma export (.zip)."),
+  notability: T("Open it in Notability: on the iPad or the Mac, open the .note from Files (or AirDrop it) and choose Notability. Unzip a folder's .zip first."),
 };
 // The reasons the server gives for a page an export left out
 // (routers/export.py), listed so the catalogs translate them.
 const SKIP_REASONS = [T("page has no PDF"), T("PDF not stored on the server"),
-  T("page has no paper metadata")];
+  T("page has no paper metadata"), T("the PDF has no pages")];
 // And the refusals a BibTeX export job fails with (its failed step shows them).
 const EXPORT_REFUSALS = [T("none of these pages has paper metadata to cite"),
   T("this page has no paper metadata to cite")];
@@ -330,6 +331,15 @@ function ExportJobStep({ job, folder, folderName, fetchJob, onClose, onDownload,
           <details className="importWarnings" open>
             <summary>{tn("{n} page left out", "{n} pages left out", result.skipped.length)}</summary>
             <ul>{result.skipped.map((skip, i) => <li key={i}><strong>{skip.title}</strong><span>{t(skip.reason)}</span></li>)}</ul>
+          </details>
+        ) : null}
+        {/* What the pages lost on the way (a Notability note keeps no
+            highlights, …): counted per page by the server, as the
+            import's warnings are. */}
+        {result?.warnings?.length ? (
+          <details className="importWarnings" open>
+            <summary>{tn("{n} thing the file could not keep", "{n} things the file could not keep", result.warnings.length)}</summary>
+            <ul>{result.warnings.map((warning, i) => <li key={i}><strong>{warning.title}</strong><span>{warning.reason}</span></li>)}</ul>
           </details>
         ) : null}
         {format?.id === "zotero" ? <ZoteroSteps folder={folder} bundle={params.pdf} highlights={params.highlights} open />

@@ -4362,6 +4362,13 @@ reach.
   - Shapes keep their `shape` records, sampled as `shapes.js` draws their
     params (`ink.shape_samples`), and a sticky note is a filled `rect` in
     band 0.
+- The Notability export ([import_export.md](import_export.md#notability-export),
+  `gamma/notability_export.py`) writes each stroke as a straight Bézier
+  chain whose anchors are its samples, each with its `w`, `p` and `a`/`z`,
+  under a UUID the import knows (`notability.GAMMA_UUID`), so the import
+  reads the samples back exactly; the stroke verbatim (its time, a
+  pencil's `o`, every key) rides in the note's private copy, which the
+  import takes while the curve still has those samples.
 - `gamma/ink_view.py`: the picture the chat sees of a group (`view_ink`,
   and an attached handwriting block), drawn where it was written.
   - A sheet goes through `notebook_pdf`, and a PDF page through

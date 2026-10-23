@@ -484,6 +484,66 @@ open(sys.argv[3], 'wb').write(b"noteSN_FILE_VER_20230015" + bytes(64))
     } finally { await ctx.close(); }
   });
 
+  await step("transfer: a page out as a Notability note and back in is the page it was", async () => {
+    const { ctx, page } = await setup();
+    try {
+      // The note the step before imported: a PDF page with ink on both its
+      // pages, a text box, a picture and a recording.
+      const original = (await alice.api("/api/blocks/root/children")).children.find((p) => p.content === "E2E Notability note");
+      await page.goto(`${server.base}/?page=${original.id}&ws=${alice.ws}`);
+      await page.locator(".pdfPageWrap").first().waitFor();
+      const dialog = await openDialog(page, "Export");
+      const card = choice(dialog, "Notability");
+      assert(await card.isVisible(), "Notability is offered beside the notes' formats");
+      const request = page.waitForRequest((r) => r.method() === "POST" && new URL(r.url()).pathname === "/api/jobs/export");
+      const download = page.waitForEvent("download");
+      await card.dblclick(); // no switches: it exports straight from the first step
+      assertEq((await request).postDataJSON().mode, "notability");
+      const file = await download;
+      assertEq(file.suggestedFilename(), "E2E Notability note.note");
+      const saved = path.join(server.dir, "Exported.note");
+      fs.copyFileSync(await file.path(), saved);
+      assertEq(fs.readFileSync(saved).subarray(0, 2).toString(), "PK");
+      await dialog.getByText("1 page exported.", { exact: true }).waitFor();
+      assert((await dialog.innerText()).includes("Open it in Notability"), "the step says where the file goes");
+      await choice(dialog, "Done").click();
+      await dialog.waitFor({ state: "detached" });
+
+      // Back in through the Notability import: a page of its own, the same.
+      const importer = await openDialog(page, "Import");
+      await choice(importer, "Notability notes").click();
+      const chooser = page.waitForEvent("filechooser");
+      await choice(importer, "Choose files…").click();
+      await (await chooser).setFiles(saved);
+      const review = page.getByRole("dialog", { name: "Review Notability import", exact: true });
+      await review.getByRole("region", { name: "Library after import", exact: true })
+        .getByText("E2E Notability note", { exact: true }).waitFor();
+      await choice(review, "Import to library").click();
+      const report = page.getByRole("dialog", { name: "Import complete", exact: true });
+      await report.waitFor();
+      await choice(report, "Done").click();
+      const copies = (await alice.api("/api/blocks/root/children")).children.filter((p) => p.content === "E2E Notability note");
+      assertEq(copies.length, 2, "the note came in as a page of its own");
+      const back = copies.find((p) => p.id !== original.id);
+      assertEq(back.properties.doc_id, original.properties.doc_id, "the same PDF");
+      const content = async (pageId) => {
+        const blocks = (await alice.api(`/api/blocks/${pageId}/subtree`)).block.children;
+        const strokes = [];
+        for (const b of blocks.filter((b) => b.properties?.ink_url)) {
+          const ink = await alice.api(b.properties.ink_url);
+          strokes.push(...ink.strokes.map(({ id: _id, ...s }) => JSON.stringify({ page: ink.space.page, ...s })));
+        }
+        return { strokes: strokes.sort(), boxes: blocks.filter((b) => b.properties?.text_box && !b.content.startsWith("!["))
+          .map((b) => `${b.properties.pdf_page} ${b.content} ${JSON.stringify(b.properties.text_box)}`),
+        recordings: blocks.filter((b) => b.properties?.recording).map((b) => b.content) };
+      };
+      const [was, now] = [await content(original.id), await content(back.id)];
+      assert(was.strokes.length >= 3, "the note has its strokes");
+      assertEq(JSON.stringify(now), JSON.stringify(was), "stroke for stroke, box for box");
+      assertNoProblems(page);
+    } finally { await ctx.close(); }
+  });
+
   await step("transfer: format selection, live options, back navigation and a real notes PDF", async () => {
     const { ctx, page } = await setup();
     try {

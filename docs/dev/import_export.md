@@ -742,6 +742,38 @@ lists the upload's notes and, not imported, its other files.
 - A long paper note is a notebook of as many sheets, and the notebook view
   mounts every sheet ([notebooks.md](notebooks.md) "Not built yet").
 
+**A note Gamma wrote** ([Notability export](#notability-export)) reads
+as any other, but for three things the export put there for it:
+
+- A curve whose UUID begins `GAMMAI` (`notability.GAMMA_UUID`, a version 8
+  UUID no random one can be) is read as the stroke it was
+  (`notability_map.exact_stroke`): its anchors are its samples, taken as
+  they are, not a Bézier chain to flatten. It has a channel where some
+  anchor holds more than Notability's unknown, a stroke with force is one
+  a stylus drew (`pen`), and its opacity is the alpha's value of fewest
+  decimals that writes the same alpha back. The curves one such stroke was cut into, each starting
+  on the anchor the last ended on, are joined into one
+  (`notability._joined`); a piece Notability's eraser left starts
+  elsewhere and stays a stroke.
+- Gamma's copy (the root's `GammaNoteKey`, `notability.PRIVATE_KEY`:
+  zlib-compressed JSON, read up to 64 MiB inflated) is used item by item,
+  only where the note still holds what it describes: a stroke whose
+  samples are the curve's (as many, each within 0.05 pt, the float32 the
+  note stores), a shape whose samples span the same box (both
+  `copied_stroke`), a text box or picture at the same place and width and
+  a text box with the same text (`copied_box`), the notes when the typed
+  text is the one written (`copied_flow`), the sheets' papers when the
+  pages are as many (`copied_papers`), and a recording file's place among
+  its recording's segments. What the copy holds is checked as the import's
+  own output is (`ink.Stroke`, `normalize_text_box`, `normalize_paper`,
+  `MAX_CONTENT`, `MAX_BLOCKS`), so it can only say what a note could.
+  The copy's order of the page's notes, sheets and recordings (a PDF's
+  handwriting and boxes counted as one) orders the page when the note
+  brings as many of each (`notability_import._ordered`); else the page is
+  its notes, its sheets or markup, then its recordings.
+- A line separator (U+2028) in the typed text is a line break inside one
+  note: the export joins a note's lines with it.
+
 **Real notes.** `backend/tests/test_notability_samples.py` imports every
 `.note` and `.ntb` of `backend/tests/samples/notability/` and fails on
 anything left out for want of reading it. The folder holds the example
@@ -754,6 +786,122 @@ point. `test_notability_ntb.py` covers what the sample does not (a log's
 versions and erase records, text boxes, a PDF's pages, damage) on bundles
 `ntb_fixtures.py` writes. `GAMMA_NOTABILITY_SAMPLES` names a folder of
 more notes to import the same way.
+
+## Notability export
+
+`?mode=notability` (`_NotabilityBuilder`; `gamma/notability_export.py` maps
+the page, `gamma/notability_write.py` writes the file) is each page as a
+Notability note, the `.note` its "Note" export writes, for Notability to
+open and for Gamma's own Notability import to bring back as the page it
+was. One page: the `.note` itself, `<Title>.note`. A folder: a zip of
+them, `<dir>/<Title>.note`, filed as the annotated PDFs are. The job's
+result lists what each page lost (`warnings`: `{page_id, title,
+reason}`), one line per kind as the import's warnings, and the finished
+step shows them. There are no switches.
+
+**The file** is what Notability 16.1.5 writes, class for class and key for
+key, each value inline or behind a UID as the app puts it (the sample's
+Note export is the model, and `test_the_note_is_written_as_notability_writes_one`
+holds the two to it): a stored zip of one folder named after the note,
+`Session.plist` (GLKeyedArchiver, format 9), `metadata.plist` (unfiled),
+`Recordings/library.plist`, `thumb12x.png` (a blank page of the paper),
+`PDFs/<UUID>.pdf`, `Images/Image n.<ext>`, `Assets/<id>/media.gif`,
+`Recordings/Recording n.m4a`, and the empty folders the app keeps. What is
+known of Notability opening such a file, and what is not, is in
+[research/notability-format.md](../research/notability-format.md#writing-a-note).
+
+**Pages** are the import's frames (`notability_map.frames`) run backwards,
+computed by the same function on the note's own layout:
+
+- A PDF page: the stored PDF as it is, all its pages in order, W the first
+  page's display width, so its points are document units. A sheet of paper
+  on a PDF page is left out.
+- A notebook: a paper page per sheet, W the page's width (612, an A4 page
+  595.28), so a unit is a point. Notability gives a note one paper, so every
+  page has the first sheet's: A4, letter (`lockedWidth`, 612 × 803.25 pt),
+  US Letter (`staticWidth`, 612 × 792), legal, or one of them landscape, as
+  the import sizes them (`paper_size`), its colour `Color:#RRGGBB`, a ruling
+  `Lines:false:false:<inches>`. A sheet of another size goes on the nearest
+  one's page, and grid and dot paper are plain; both said.
+- A page of neither: its notes alone, on letter paper.
+
+**Handwriting.**
+
+- A stroke is a Bézier chain whose segments are straight, the controls at
+  a third and two thirds of each chord: Notability draws the polyline its
+  samples make, each anchor with the sample's width multiplier (`w`), force
+  (`p` × 25/6) and tilt (`a`; `z` as a unit vector), 1.0, π/2 and (1, 0)
+  where it has none. A highlighter is style 4, a pencil style 5, any other
+  pen style 3; the colour's alpha is the opacity the stroke is drawn at
+  (`ink.drawn_alpha`); a dash is the stroke's entry in `dashStyles`.
+- Its UUID begins `GAMMAI` (`notability.gamma_uuid`), so the import reads
+  its samples back exactly, also after Notability has saved the note. A
+  stroke longer than 3,334 anchors (10,000 points, the reader's cap) is
+  written as curves of one UUID, each starting on the anchor the last
+  ended on, which the reader joins.
+- A page's strokes go in the order the screen draws them (band 0 of every
+  group, then band 1, each in file order), which is the note's z-order.
+- A shape record Notability has a shape for (a line, an arrow, a
+  rectangle, an ellipse, a triangle, a regular polygon) is a shape of the
+  shape list, with its fill and head, so Notability edits it as a shape;
+  the import makes the record again (a polygon comes back an outline). A
+  sticky (the import's band 0 rectangle) is a sticky again when it comes
+  before the page's other band 0 strokes.
+
+**Boxes, pictures, notes, recordings.**
+
+- A text box is a text box at its place and size, its fill its paper
+  colour, its Markdown Notability's runs (`box_runs`: a paragraph per line,
+  lists by indent, bold and italic in the font's name, code in Menlo,
+  strikes and marks as Notability keeps them, a link underlined, a
+  `[[ref]]` as the text of the block it names, math as its TeX), as the
+  import's `box_markdown` reads them back.
+- A box holding one picture is a picture in the box less its padding, as
+  tall as the picture shown that wide (`picture_box` grows it back), its
+  file as it is; an animated GIF is its still frame under `Images/` and
+  the GIF under `Assets/`, as Notability keeps one.
+- The page's notes (each block that is on no surface, in document order)
+  are the typed text (`flow_runs`): a paragraph per note at its depth, a
+  top-level note plain and a deeper one a bullet, "n. …" a numbered item,
+  "- [ ] …" a checklist item, a heading bold, a note's lines joined by a
+  line separator.
+- A recording's segments are each a recording of Notability's, named after
+  it.
+
+**Gamma's copy.** What Notability's model has no place for travels in the
+note as Gamma's own copy, which Notability does not decode and drops once
+it saves the note (`Draft.private`, the root's `GammaNoteKey`): every
+stroke verbatim by its UUID (its time, a pencil's `o`, a brush and nib
+Notability lacks, its band and keys), each box's Markdown and box, a
+picture's alt text, the notes as blocks, each sheet's paper, which
+recording each file is a segment of, and the order of the page's notes,
+sheets and recordings. The import uses each item of it only
+while the note still holds what it describes ([above](#notability-notes)).
+So a note out and back in is the page it was, stroke for stroke and key
+for key; a note Notability has saved comes in as Notability holds it:
+every sample with its force, tilt and width, the shapes' records, every box
+and note Notability can format, but no time, no pencil opacity, no brush
+it lacks, no empty note, one paper, no empty last sheet, and the order an
+import gives a page.
+
+**Left out, and said:** highlights on a PDF's text (Notability keeps none;
+the Annotated PDF does), a PDF page's sheets of paper, a recording that is
+no `.m4a` (a browser's WebM or Ogg) or is still being made, the notes under
+a recording, handwriting on no page and a file missing on the server.
+Changed, and said: a sheet of a size Notability lacks, grid and dot paper,
+a sheet of another paper than the first.
+
+**Tests.** `test_notability_export.py` round-trips a notebook with a stroke
+of every kind (pressure, tilt, time, a pencil's opacity, a calligraphy nib,
+dashes, band 0, an `rgba()` colour, an extra key, 4,000 samples), shapes,
+boxes, pictures, an animated GIF, notes and a recording of two segments; a
+PDF page of three page sizes; and the sample's Note export, each the same
+page after. With the copy stripped it holds every stroke to what Notability
+keeps of it; with an item edited, that item comes as the note has it; and
+the file is held to the sample's classes and keys. The browser suite
+exports a page from the dialog and imports it back
+(`transfer: a page out as a Notability note and back in is the page it
+was`).
 
 ## Zotero RDF export
 
@@ -839,8 +987,8 @@ folders outside it left out), its labels' names — for the builders that
 write directories, collections or tags. It walks the selected pages exactly once (subtree
 fetch, `build_tree`, a progress report) and feeds each page to a per-format
 `_Builder` keyed by the mode: `_MarkdownBuilder`, `_ObsidianBuilder`,
-`_NotesPdfBuilder`, `_AnnotatedPdfBuilder`, `_LogseqBuilder`,
-`_ZoteroBuilder`, `_GammaBuilder`. The builder accumulates zip parts, and
+`_NotesPdfBuilder`, `_AnnotatedPdfBuilder`, `_NotabilityBuilder`,
+`_LogseqBuilder`, `_ZoteroBuilder`, `_GammaBuilder`. The builder accumulates zip parts, and
 `save(dest)` writes the download, returning its name and media type. The
 job saves to its file; `response()` saves to a temporary file and answers
 with it. `begin(conn, root_ids)` shows a builder the whole export set before
@@ -852,7 +1000,8 @@ uploads directory. `skip(page, reason)` leaves a page out, and `summary()`
 export format means adding a builder; the endpoints, the job and the zip
 writer stay untouched. A builder whose download isn't a zip overrides
 `save`: `_NotesPdfBuilder` writes one PDF, `_MarkdownBuilder` a bare `.md`
-for one page with no local files, `_AnnotatedPdfBuilder` one page's PDF.
+for one page with no local files, `_AnnotatedPdfBuilder` one page's PDF,
+`_NotabilityBuilder` one page's `.note`.
 
 `annotated-pdf` (`_AnnotatedPdfBuilder`) is each page's PDF with its
 highlights, handwriting and text boxes as standard annotations and, with
@@ -941,14 +1090,14 @@ status line and the task's row.
 ## The Export dialog
 
 The View menu's single "Export…" entry → `ExportDialog` in `transfers/ImportExport.jsx`.
-Step one is a format card. The PDF row holds Annotated PDF, the Notes row PDF
-and Markdown, the ZIP row Obsidian, Logseq, Zotero and Gamma. Double-click or
+Step one is a format card. The PDF row holds Annotated PDF, the Notes row PDF,
+Markdown and Notability, the ZIP row Obsidian, Logseq, Zotero and Gamma. Double-click or
 Next confirms. Formats with editable options get a review step: the
 Highlights, Notes and Bundle-the-files switches beside an illustrative page
 (`shared/illustrations/TransferPreview.jsx`, an example of the options, not
-a render of the document). Gamma has fixed contents, and a PDF without a
-stored copy can only be the original file, so both export straight from step
-one. Logseq
+a render of the document). Gamma and Notability have fixed contents, and a
+PDF without a stored copy can only be the original file, so these export
+straight from step one. Logseq
 shows only the bundle switch. BibTeX has no switches but still gets a step:
 it previews the real bibliography
 ([below](#bibtex-bibliography)). `hasReviewStep` answers that question for
@@ -971,8 +1120,8 @@ in `localStorage` (`gamma-export-opts`).
 Export starts the export as a background job ([tasks.md](tasks.md)).
 `exportJobBody` turns the payload into the job's body: the page or folder,
 the server's mode for the format (each format's `mode`: `annotated-pdf`,
-`notes-pdf`, `readable`, `obsidian`, `logseq-graph`, `zotero-rdf`, `bibtex`,
-`gamma`)
+`notes-pdf`, `readable`, `notability`, `obsidian`, `logseq-graph`,
+`zotero-rdf`, `bibtex`, `gamma`)
 and the three flags. The dialog then shows its last step, the job's
 (`ExportJobStep`). While the job runs it shows its progress (pages, then
 the packing of the zip) with Stop, and says the window may close. The job
@@ -982,9 +1131,10 @@ file is offered in the pill with a Download button, and waits in the tray.
 The finished step names the file and its size, says "Saved to your
 downloads" once the automatic download has happened (`job.downloaded`;
 the button then reads "Download again"), counts the pages, lists the
-pages left out with the reason, and says what to do next: Zotero's steps,
-Obsidian's unzip-into-a-vault, Gamma's Import → Gamma export, BibTeX's
-beside-your-.tex. A failed or
+pages left out with the reason, what the file could not keep of a page
+(the result's `warnings`, a Notability note's), and says what to do next:
+Zotero's steps, Obsidian's unzip-into-a-vault, Gamma's Import → Gamma
+export, BibTeX's beside-your-.tex, Notability's open-it-there. A failed or
 stopped export offers Start again. A share view has no background tasks:
 its Export downloads through the endpoints below, with the same mode and
 flags as query parameters.

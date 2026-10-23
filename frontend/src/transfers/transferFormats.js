@@ -58,6 +58,11 @@ const EXPORT_FORMATS = [
     hint: T("A typeset document of highlights and notes"), editable: ["highlights", "notes"], fixed: { bundle: false } },
   { id: "markdown", mode: "readable", label: T("Markdown"), category: "Notes",
     hint: T("Readable notes for any Markdown editor"), editable: ["highlights", "notes", "bundle"] },
+  // A note holds everything a page has but its highlights, so it has no switches.
+  { id: "notability", mode: "notability", label: "Notability", category: "Notes",
+    hint: T("A .note with the handwriting, to open in Notability"), editable: [],
+    fixed: { highlights: false, notes: true, bundle: true },
+    folder: { hint: T("Each page as a .note, in one .zip") } },
   { id: "obsidian", mode: "obsidian", label: T("Obsidian"), category: "Library",
     hint: T("A vault with notes, links and attachments"), editable: ["highlights", "notes", "bundle"] },
   { id: "logseq", mode: "logseq-graph", label: T("Logseq"), category: "Library",
@@ -140,6 +145,10 @@ export function exportSummary({ payload, noPdfCopy }, folder) {
         : t("This paper's citation entry as a .bib file, under its citation key.");
     case "gamma":
       return t("A complete copy{folder}: pages, highlights, notes, metadata, AI chats and files. Ready to import into another Gamma library.", { folder: folder ? t(" of the folder") : "" });
+    case "notability":
+      return folder
+        ? t("Every page in the folder as a Notability note, in one .zip, its subfolders as folders: each page's PDF or sheets of paper, its handwriting, shapes, text boxes, pictures, notes and recordings. Highlights stay behind: Notability keeps none on a PDF's text.")
+        : t("This page as a Notability note: its PDF or sheets of paper, its handwriting (pressure and tilt included), shapes, text boxes, pictures, notes and recordings. Highlights stay behind: Notability keeps none on a PDF's text. Importing the note into Gamma brings the page back as it was.");
     case "logseq":
       return t("Highlights and notes are always included in a Logseq graph. Choose whether to include the PDF and images too.");
     case "obsidian":

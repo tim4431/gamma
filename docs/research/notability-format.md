@@ -24,6 +24,8 @@ Tags:
 - **`.ntb`**, the "NTB" export (Notability Cloud's format and the Mac app's
   Save As), is read into the same model (below, ".ntb"), all but its
   recordings.
+- **Writing**: Gamma's Notability export writes `.note` files (below,
+  "Writing a note").
 - GoodNotes is out of scope.
 
 ## Sources
@@ -380,6 +382,56 @@ What the op log keeps of a stroke deleted, undone, moved or restyled is
 taken as nokcha0 found it, versions and erase records; a bundle that kept
 it some other way would bring back what was erased.
 
+## Writing a note
+
+Gamma's Notability export writes `.note` files
+([dev/import_export.md](../dev/import_export.md#notability-export),
+gamma/notability_write.py). What is known of what the app accepts:
+
+- **Ink is proven** [V1]: gnnote's proof of concept wrote strokes into a
+  10.4 template (format 5, GLKeyedArchiver, `$top` `$0`): the parallel
+  arrays with exact lengths and the counts to match, `eventTokens` all −1,
+  `curvesstyles` 3 and 4, empty `groupsArrays` and
+  `bezierPathsDataDictionary`, a random version 4 `uuidKey`, white
+  thumbnails; the current iPad app opened it. Its recipe for PDF pages,
+  pictures and text boxes was never tried in the app [I].
+- **Gamma writes what 16.1.5 writes** instead, the sample's Note export
+  taken class for class and key for key [V against the sample; not yet
+  opened in the app]:
+  - strings always behind a UID, numbers and booleans inline, except the
+    ink counts and the shape list's and dash styles' data, which are behind
+    one; a dictionary's values always behind one;
+  - `$classes` as the app writes them: none for InkedSpatialHash, a class
+    of the app's own Swift module listed without the module
+    (`Notability.NoteDocumentPaperLayoutModel` →
+    `NoteDocumentPaperLayoutModel`), a GLModel one with it;
+  - a UIColor's components as floats, a `-Double` key with the exact value
+    where the float is not it, `NSRGB` with three significant digits and
+    the alpha only when it is not 1;
+  - `options` 8 zero bytes a stroke, as the sample's are; no
+    `eventTokens` (16.1.5 writes none); `bezierPathsDataDictionary` empty
+    (the app's cache of stroke outlines, which the sample lacks for its
+    first 64 curves);
+  - a stored zip with Unix attributes and a directory entry per folder.
+- **Written from gnnote's description**, no sample having one [I]: a
+  TextBlockMediaObject (a CanvasMediaObject's keys and a `textStore`, a
+  whole FormattedString with an empty ink hash and an
+  NBReflowStateReflowable), a PDFFile (`pdfFileName` a UUID name,
+  `contentBoxVersion` 1, `highlights` [], `version` 2, `type` 0), 15.3's
+  page layout entries (`kPageLayoutPDFPageNumberKey`,
+  `kPageLayoutPDFFileNameKey`, `kPageLayoutDocumentPageNumberKey`,
+  `kPageLayoutPDFIsOriginalPageKey`, `kPageLayoutPageIsBookmarkedKey`), in
+  both page lists.
+- **Not written**: a formula as a MathMediaObject (no sample shows its
+  keys beyond `latex` and `color`, so it goes as a text box of its TeX),
+  thumbnails but `thumb12x.png`, `HandwritingIndex`, the recording
+  timeline's events, a picture's crop path.
+- **Gamma's own keys** [I]: a curve UUID beginning `GAMMAI` (a version 8
+  UUID), which the app keeps as a stroke's identity, as it keeps its own;
+  and the root's `GammaNoteKey`, data no class of the app decodes, which
+  keyed unarchiving skips and the app's next save, writing its model
+  again, leaves out.
+
 ## What Gamma decided where the sources conflict or say nothing
 
 - **A static-width letter page's height** is floored to a whole unit, as
@@ -431,6 +483,11 @@ it some other way would bring back what was erased.
   sample supports.
 
 ## Still open
+
+- Writing: whether the app opens what Gamma writes (only gnnote's ink has
+  been tried), text boxes, PDF pages and pictures above all; what
+  `staticWidth` does in the app (Gamma writes it for US Letter sheets);
+  whether a blank page at the end of a note survives.
 
 - `.ntb`: a bundle that is an edit log (read as nokcha0 describes it, with
   none to check it on); recordings; shape fills and arrowheads; checklist
