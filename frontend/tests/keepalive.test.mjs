@@ -2,7 +2,8 @@
 // keepalive ledger (shared/lib/keepalive.js, docs/dev/collab.md
 // "Keepalive"): how a body is counted, the room of each priority, the
 // claims (read once a task), the release, and a closing tab's requests over
-// a model of the browser's 64 KiB rule. The e2e cannot drive a pagehide, so
+// a model of the browser's 64 KiB rule. No step of the browser suite checks
+// what a closing tab sends (the scratch tests/e2e/tabClose.mjs does), so
 // this is the proof.
 import assert from "node:assert/strict";
 import { test } from "node:test";

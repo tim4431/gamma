@@ -837,13 +837,16 @@ handwriting, the profile and the reading position each flush at
 `pagehide` as well as on going hidden. A tab closed while it shows fires
 `pagehide` first and `visibilitychange` (hidden) after it, in one task:
 so did every close measured that ran the page's listeners, in headless
-Chromium and WebKit
+Chromium, WebKit and Firefox
 ([research/keepalive-abort.md](../research/keepalive-abort.md)). So all
 four go from `pagehide`, and `visibilitychange` finds nothing new to
-send. The claim keeps the edits' room whichever listener runs first:
-their POST goes with keepalive whenever the edits alone fit the cap. A
-tab hidden before it closes flushed the lower priorities when it was
-hidden.
+send. Firefox stops the first `pagehide` listener of a tab that is the
+last page of its content process. In the app that is the draft journal's
+`journalAll` (`ink/inkStore.js`, registered as the module loads), and the
+four senders after it run. The claim keeps the edits' room whichever
+listener runs first: their POST goes with keepalive whenever the edits
+alone fit the cap. A tab hidden before it closes flushed the lower
+priorities when it was hidden.
 
 The claim holds what the edits needed when a lower priority asked. A
 tab hidden with a drawing to save sends it with keepalive. Back on the
@@ -879,8 +882,9 @@ the answer's headers, a moment before the browser stops counting the
 request, so the ledger reads a copy of the answer to its end
 (`Response.clone()`).
 `frontend/tests/keepalive.test.mjs` pins the policy and runs a closing
-tab's requests over a model of the browser's rule, since the e2e cannot
-drive a pagehide.
+tab's requests over a model of the browser's rule. The scratch scenario
+`tests/e2e/tabClose.mjs` closes a real tab right after a change
+([debugging.md](debugging.md#browser-end-to-end-suite)).
 
 ## What the user sees (`src/collaboration/Presence.jsx`, CSS in `shared/styles/app.css`)
 
@@ -1001,6 +1005,10 @@ drive a pagehide.
   the stranger typing through an anyone-with-the-link edit share under a
   renamed display name, and `textBoxes.mjs` a text box one person moves
   while the other types in it.
+- A closing tab: `node tests/e2e/tabClose.mjs` from `frontend/`, a scratch
+  scenario apart from the groups
+  ([debugging.md](debugging.md#browser-end-to-end-suite)). It types in a
+  note, closes the tab at once and asserts that the server got the typing.
 
 ## Limits and next steps
 

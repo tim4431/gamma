@@ -13,7 +13,9 @@ automation offers lets through, and the counting rules the ledger rests
 on ("Every close the automation offers"). A third round on 22 October
 2026 ran the same cases in Playwright's Firefox 155. Its results stand
 beside the others, and what only Firefox does is in "Firefox stops the
-first `pagehide` listener".
+first `pagehide` listener". A fourth round, the same day, closed the app
+itself right after a change, in all three engines ("The app at a
+close").
 
 ## An abort frees nothing in time
 
@@ -327,6 +329,137 @@ POSTs in one task, each held 200 ms by the server. Both Chromium builds
 and Firefox sent 256 and refused the 257th, 5 runs each. WebKit sent all
 257.
 
+## The app at a close
+
+The app ran on dev at `73fd244c`, built and served by the browser
+suite's harness on an isolated backend. The engines were Playwright's
+Chromium headless shell, WebKit and Firefox, and each tab was alone in
+its browser context.
+
+### Its `pagehide` listeners
+
+The app registers six `pagehide` listeners, on a notes page and on a
+paper alike, in this order:
+
+1. `journalAll` (`ink/inkStore.js`, as the module loads) writes every
+   dirty drawing to the draft journal.
+2. `flushSession` (`app/sessionState.js`, as the module loads) writes the
+   viewer's layout to `localStorage`.
+3. `flushReadPos` (App) sends the reading position's `PUT`.
+4. The profile's flush (`app/prefs.js` `useProfileSync`) sends its
+   `PATCH`.
+5. `onHide` (`collaboration/usePageCollab.js`) sends the queued edits'
+   `POST`.
+6. `leave` (`ink/useInkSave.js`) flushes the handwriting.
+
+An Inbox mark goes with keepalive when it is made, not from `pagehide`.
+A probe wrapped each listener to report its start and its end with
+bodiless keepalive requests to a second origin. It ran twice on a notes
+page and twice on a paper for each close:
+
+| Close | Chromium shell | WebKit | Firefox |
+|---|---|---|---|
+| `page.close()` | all six ran: 4/4 | all six ran: 4/4 | `journalAll` stopped before its first statement, the other five ran: 4/4 |
+| `context.close()` | none ran: 4/4 | all six ran: 4/4 | as `page.close()`: 4/4 |
+
+### What a close right after a change keeps
+
+`frontend/tests/e2e/tabClose.mjs` makes a change in a fresh browser
+context and closes it at once:
+
+- A note gets text typed at its end, inside the edits' 350 ms debounce.
+- A paper gets a stroke, with its tab closed as the pen lifts or 400 ms
+  later. The journal writes a drawing 300 ms after the edit, and the save
+  goes at 700 ms.
+- A setting (Dark PDF pages) is turned on in Settings, inside the
+  profile's 1 s push delay.
+
+A stroke the server lacks after a `page.close()` gets a next visit in the
+same context, which may restore it from the journal. Each case ran 5
+times, one engine at a time:
+
+| Change | Close | Chromium shell | WebKit | Firefox |
+|---|---|---|---|---|
+| A note typed | `page.close()` | saved 5/5 | saved 5/5 | saved 5/5 |
+| | `context.close()` | lost 5/5 | saved 5/5 | lost 5/5 |
+| A paper's first stroke, closed as the pen lifts | `page.close()` | lost 5/5 | lost 5/5 | lost 5/5 |
+| | `context.close()` | lost 5/5 | lost 5/5 | lost 5/5 |
+| A stroke added to a saved group, closed as the pen lifts | `page.close()` | lost 5/5 | lost 5/5 | saved 5/5 |
+| | `context.close()` | lost 5/5 | lost 5/5 | lost 5/5 |
+| A paper's first stroke, closed 400 ms after the pen lifts | `page.close()` | saved 5/5 | saved 5/5 | saved 5/5 |
+| | `context.close()` | lost 5/5 | saved 5/5 | lost 5/5 |
+| A setting changed | `page.close()` | saved 5/5 | saved 5/5 | saved 5/5 |
+| | `context.close()` | lost 5/5 | saved 5/5 | lost 5/5 |
+
+After a `page.close()` the journal held none of the strokes closed as the
+pen lifts (0/30) and every stroke closed 400 ms later (15/15). No lost
+stroke came back on the next visit. The server's log showed why:
+
+- Chromium's shell sent nothing at `context.close()`. Firefox sent every
+  request without the session cookie. Each was answered 409, since it
+  named the tab's account (`X-Gamma-User`) and came signed out.
+- A paper's first stroke, closed as the pen lifts by `page.close()`:
+  Chromium and WebKit sent the group's insert and the upload, and no
+  `PUT` (10/10). The drawing had no name yet, since `nameLater` waits for
+  the page to idle. So its `PUT` waited for the upload's answer, which
+  the closed page never read.
+- Firefox named the drawing in time and sent the `PUT` beside the upload.
+  The `PUT` reached the server before the group's insert and was answered
+  404 (5/5).
+- A stroke added to a saved group: Chromium and WebKit sent the upload
+  alone (10/10), for the same reason. Firefox sent the upload and the
+  `PUT`, and both landed (5/5).
+- Closed 400 ms after the pen lifts, every engine sent the upload and
+  the `PUT` side by side and saved the stroke at `page.close()`. In one
+  later Chromium run the drawing still had no name at 400 ms. The
+  journal, written at 300 ms, brought the stroke back on the next visit.
+
+### The journal's write at a close
+
+A close before the journal's 300 ms write leaves the write to
+`pagehide`: `journalAll`, and `markSending` before a `PUT` sent beside its
+upload.
+
+A probe page opened an IndexedDB database at load. Its second
+`pagehide` listener, after one of a single assignment, put one record
+each way. One went at once on the open connection and one after a
+microtask, as the journal does. Both went again followed by
+`IDBTransaction.commit()`. The next page of the context read the store.
+Five runs each of a page closed beside another page of its context, the
+same with `runBeforeUnload`, and a page alone:
+
+| Put | Chromium shell | WebKit | Firefox |
+|---|---|---|---|
+| In `pagehide`, no `commit()`, at once or after a microtask | landed 15/15 | 0/15 | 0/13 |
+| In `pagehide`, then `commit()` | 15/15 | 0/15 | 13/13 |
+| In `visibilitychange`, no `commit()` | 7/15 | 0/15 | 0/15 |
+
+In Firefox the listener's own keepalive marker arrived in 13 of the 15
+runs: the stop fell on it in the other 2. In the app, a second probe
+logged every put on the journal's store, three runs a case, the tab
+closed as the pen lifts. In another three it called `commit()` after
+each put:
+
+- A stroke added to a saved group: a put went from `pagehide` in every
+  run. It came from `journalAll` in Chromium and WebKit, and from the
+  flush's `markSending` in Firefox.
+- None of these puts landed (0/9). With `commit()` the entry landed in
+  Chromium, and the next visit restored and saved the stroke (3/3). It
+  landed in Firefox (3/3) and not in WebKit (0/3).
+- A paper's first stroke: the journal's database opens when the group's
+  block first shows, and the open had not completed in Chromium or WebKit
+  (0/6 each). No put went.
+- Firefox's database was open, and with `commit()` its entry landed
+  (3/3). The next visit restored nothing (3/3): the restore counts the
+  entry's sent upload, which the server has, as landed. The block names
+  no file, so it took the stroke for one deleted since.
+
+The probe page's Chromium result did not hold in the app. After a
+stroke added to a saved group, closed as the pen lifts, the journal held
+nothing in 8 of 8 Chromium closes (3 here, 5 in the table above). In an
+earlier round, its engines run side by side, it held the stroke after 7
+of 8 Chromium closes made 0 or 150 ms after the pen lifted.
+
 ## What follows
 
 - The ledger never aborts a request to make room for another. No build
@@ -367,16 +500,33 @@ and Firefox sent 256 and refused the 257th, 5 runs each. WebKit sent all
   task after the two events. A request the page needs at a close starts
   in the listener itself, as the app's do, except a handwriting `PUT`
   that waits for its upload (a draft not named yet, or one the server
-  will merge), which the draft journal keeps.
+  will merge). The draft journal keeps that drawing only when it wrote
+  it before the close ("The app at a close").
 - Firefox can stop a `pagehide` listener before it sends: closing the
   last page of a content process stopped the first one, and the second
   in 4 of 10 `context.close()` runs. The listeners after a stop ran in
   full.
-- The app's first `pagehide` listener is `journalAll`
-  (`ink/inkStore.js`), registered when that module loads, so a stop
-  there skips the draft journal's write at the close. A second stop
-  could reach the edits' `pagehide()`, and their flush on going hidden
-  is a plain fetch, which no Firefox close let through.
+- In the app the stop falls on `journalAll`, the first of its six
+  `pagehide` listeners. The edits', the profile's, the reading
+  position's and the handwriting's listeners run after it.
+- A note typed or a setting changed just before `page.close()` reached
+  the server in every run of every engine.
+- A stroke drawn as the tab closed was lost in all three engines when it
+  was a paper's first, and in Chromium and WebKit when it joined a saved
+  group. A stroke 400 ms old was saved by every `page.close()`.
+- The journal's write at a close does not land as the app makes it.
+  Firefox and WebKit never kept it. Chromium kept it in one round of
+  closes and in neither of the other two. So Firefox's stop of
+  `journalAll` loses nothing more.
+- `commit()` lands a put from `pagehide` in Chromium and Firefox. In
+  Firefox it must come from a listener after the first, and WebKit keeps
+  only what the journal wrote while the page lived.
+- A `PUT` sent beside its upload can reach the server before the group's
+  insert, which the edits' `POST` carries. A 404 at a close is never
+  retried.
+- `context.close()` stands for no user's close. Chromium's shell runs no
+  listener there, and Firefox sends the page's requests without the
+  session cookie.
 
 ## Still open
 
@@ -386,9 +536,11 @@ and Firefox sent 256 and refused the 257th, 5 runs each. WebKit sent all
   a tab, so it cannot show whether a headed one hides the closing tab
   before `pagehide` (the tab strip's own close fired `pagehide` first).
 - A user's Firefox, headed and with its own process rules: whether
-  closing a tab there stops its first `pagehide` listener. The app
-  itself was not run in Firefox, so which of its listeners a stop
-  reaches was not seen.
+  closing a tab there stops its first `pagehide` listener. In
+  Playwright's Firefox the stop reaches the app's `journalAll` ("The app
+  at a close").
+- Timing. Whether a drawing is named before the close, and whether
+  Chromium keeps an uncommitted put, varied between rounds.
 - A user quitting the browser: Playwright's `browser.close()` ran no
   listener in Chromium, so it stands for nothing a user does.
 - A real network. The proxy delayed only a connection's setup, not a
