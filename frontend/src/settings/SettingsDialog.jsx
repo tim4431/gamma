@@ -772,11 +772,11 @@ function PromptAccordion({ items }) {
         const modified = (draft || "").trim() !== (defaultValue || "").trim();
         return (
           <div key={key} className={`setAcc ${isOpen ? "open" : ""}`}>
-            <button className="setAccHead" onClick={() => setOpen(isOpen ? null : key)}>
+            <button className="setAccHead" aria-expanded={isOpen} onClick={() => setOpen(isOpen ? null : key)}>
               <span className="setIcon"><Icon size={14} /></span>
               <span className="setAccName">{t(label)}</span>
               {custom ? <span className="uiTag">{t("custom")}</span> : null}
-              <span className={`setAccChevron turnCaret${isOpen ? " open" : ""}`}>▸</span>
+              <span className={`setAccChevron turnCaret${isOpen ? " open" : ""}`} aria-hidden="true">▸</span>
             </button>
             <Collapse open={isOpen}>
               <div className="setAccBody">

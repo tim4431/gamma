@@ -134,7 +134,9 @@
 /* Mid-swap the label's text stays, unseen, for assistive technology and
    whatever reads it; what moves is drawn beside it from its data-text. */
 .morphShow [data-text]::before {
-  content: attr(data-text);
+  /* the zero-width space gives an empty piece a line, so its cell keeps
+     the text's baseline */
+  content: attr(data-text) "\200b";
   white-space: pre;
 }
 .morph.moving > .morphText {
@@ -169,18 +171,20 @@
    nothing to its content's height while the content fades in and
    sharpens; it folds back faster than it opened. Until it has settled
    open, the row clips what it holds. */
-@keyframes collapse-open { from { grid-template-rows: 0fr; } }
+@keyframes collapse-open { from { grid-template-rows: 0fr; margin-top: calc(-1 * var(--fold-gap, 0px)); } }
 .collapse {
   display: grid;
   grid-template-rows: 1fr;
+  grid-template-columns: minmax(0, 1fr);
 }
-.collapseBody { min-height: 0; }
+.collapseBody { min-height: 0; min-width: 0; }
 .collapse:not([data-phase="open"]) > .collapseBody { overflow: hidden; }
 .collapse[data-phase="opening"] { animation: collapse-open var(--dur-slow) var(--ease-out); }
 .collapse[data-phase="opening"] > .collapseBody { animation: sharpen-in var(--dur-slow); }
 .collapse[data-phase="closing"] {
   grid-template-rows: 0fr;
-  transition: grid-template-rows var(--dur-base) var(--ease-out);
+  margin-top: calc(-1 * var(--fold-gap, 0px));
+  transition: grid-template-rows var(--dur-base) var(--ease-out), margin-top var(--dur-base) var(--ease-out);
 }
 .collapse[data-phase="closing"] > .collapseBody {
   opacity: 0;
@@ -246,11 +250,17 @@
     interpolate-size: allow-keywords;
     block-size: 0;
     overflow: clip;
+    /* a focus ring or a field's halo at its edge stays whole */
+    overflow-clip-margin: 4px;
     transition: block-size var(--dur-base) var(--ease-out), content-visibility var(--dur-base) allow-discrete;
   }
   details[open]::details-content {
     block-size: auto;
     transition-duration: var(--dur-slow);
+  }
+  /* app.css's reduced-motion rule does not reach this pseudo-element */
+  @media (prefers-reduced-motion: reduce) {
+    details::details-content { transition: none; }
   }
 }
 

@@ -18,23 +18,45 @@ export function IconSwap({ swap, from, to, className = "" }) {
   );
 }
 
+// A label that changes faster than this shows each new text at once: a
+// count or a progress line would never rest between swaps.
+const QUICK_MS = 600;
+
+// Whether a label's box cuts its text (an ellipsis): a moving part that
+// crosses that edge is hidden whole, so such a label swaps at once.
+const cut = (el) => {
+  const box = el?.parentElement;
+  return !!box && box.scrollWidth > box.clientWidth + 1;
+};
+
 // A short label that changes in place (Copy → Copied, Save → Saved): the
 // letters both texts share at the start and the end stay where they are,
 // the part between cross-fades through a soft blur, and its width eases
 // from the old text's to the new one's, so the control around it resizes
 // smoothly (motion.css .morph). Two texts that share nothing cross-fade
-// whole. One span of plain text at rest.
+// whole. One span of plain text at rest. It shows the new text at once
+// under reduced motion, when the text changes faster than a swap takes,
+// and when the old or the new text is cut by its box.
 export function MorphText({ children, className = "" }) {
   const text = String(children ?? "");
   const [morph, setMorph] = useState(null); // {text, head, from, to, tail}
   const shown = useRef(text);
+  const changed = useRef(-Infinity); // when the text last changed
+  const fits = useRef(true); // the text shown at rest fits its box
+  const rootRef = useRef(null);
   const swapRef = useRef(null);
 
+  useLayoutEffect(() => { fits.current = !cut(rootRef.current); }, []);
   useLayoutEffect(() => {
     if (shown.current === text) return;
     const from = shown.current;
     shown.current = text;
-    setMorph(reducedMotion() ? null : { text, ...textSplit(from, text) });
+    const now = performance.now(), quick = now - changed.current < QUICK_MS;
+    changed.current = now;
+    // this render shows the new text plainly: its fit is measured now
+    const fitted = fits.current;
+    fits.current = !cut(rootRef.current);
+    setMorph(reducedMotion() || quick || !fitted || !fits.current ? null : { text, ...textSplit(from, text) });
   }, [text]);
 
   useLayoutEffect(() => {
@@ -43,11 +65,14 @@ export function MorphText({ children, className = "" }) {
     // a label changed again mid-swap: the cell React kept starts over
     swap.classList.remove("go");
     swap.style.width = "";
+    // widths in the cell's own CSS pixels (a button's interface zoom, an
+    // ancestor's arrival scale, are not in them)
     const [was, now] = swap.children;
-    swap.style.width = `${was.getBoundingClientRect().width}px`;
+    const width = (el) => `${parseFloat(getComputedStyle(el).width) || 0}px`;
+    swap.style.width = width(was);
     void swap.offsetWidth; // the old width stands, so the new one is a change
     swap.classList.add("go");
-    swap.style.width = `${now.getBoundingClientRect().width}px`;
+    swap.style.width = width(now);
     const timer = setTimeout(() => setMorph(null), longestMs(getComputedStyle(swap).transitionDuration) + 50);
     return () => clearTimeout(timer);
   }, [morph]);
@@ -58,7 +83,7 @@ export function MorphText({ children, className = "" }) {
   // it as generated content (motion.css), which holds no text of its own.
   const live = morph?.text === text ? morph : null;
   return (
-    <span className={`morph ${live ? "moving" : ""} ${className}`.trim()}>
+    <span ref={rootRef} className={`morph ${live ? "moving" : ""} ${className}`.trim()}>
       <span className="morphText">{text}</span>
       {live ? (
         <span className="morphShow" aria-hidden="true">
@@ -78,7 +103,9 @@ export function MorphText({ children, className = "" }) {
 // nothing and its content's through a grid row (no measuring), and the
 // content fades in and sharpens as it opens (motion.css .collapse). Shut,
 // nothing is rendered; while it closes the content stays, inert, until the
-// row has folded. A first render, open or shut, does not move.
+// row has folded. A first render, open or shut, does not move. In a column
+// with a gap the gap above it folds with it (--fold-gap), and while it
+// moves nothing scrolls it (a field focusing itself as it mounts).
 export function Collapse({ open, children, className = "", ...rest }) {
   // shut → opening → open → closing → shut; `open` starts a move, the
   // move's end (its recipe's own length) settles it
@@ -86,19 +113,24 @@ export function Collapse({ open, children, className = "", ...rest }) {
   if (open && (phase === "shut" || phase === "closing")) setPhase("opening");
   if (!open && (phase === "open" || phase === "opening")) setPhase("closing");
   const ref = useRef(null);
+  const moving = phase === "opening" || phase === "closing";
   useLayoutEffect(() => {
-    if (phase !== "opening" && phase !== "closing") return undefined;
+    if (!moving) return undefined;
     const el = ref.current;
+    if (el?.parentElement) {
+      const gap = parseFloat(getComputedStyle(el.parentElement).rowGap) || 0;
+      el.style.setProperty("--fold-gap", `${gap}px`);
+    }
     const cs = el && !reducedMotion() ? getComputedStyle(el) : null;
     const ms = cs ? Math.max(longestMs(cs.transitionDuration), longestMs(cs.animationDuration)) : 0;
     const timer = setTimeout(() => setPhase(phase === "opening" ? "open" : "shut"), ms);
     return () => clearTimeout(timer);
-  }, [phase]);
+  }, [phase, moving]);
   if (phase === "shut") return null;
   return (
     <div ref={ref} className={`collapse ${className}`.trim()} data-phase={phase}
       inert={phase === "closing" ? "" : undefined} {...rest}>
-      <div className="collapseBody">{children}</div>
+      <div className="collapseBody" onScroll={moving ? (e) => { e.currentTarget.scrollTop = 0; } : undefined}>{children}</div>
     </div>
   );
 }
@@ -116,8 +148,9 @@ export function Chevron({ open, dir = "down", size = 14, className = "" }) {
 // next (motion.css .slidePill): render a `<span className="slidePill" />`
 // as the group's first child and call this with the group's ref and the
 // chosen value. The chosen option is the child marked aria-pressed or
-// aria-checked; the pill takes its layout box (offsets, which a surface's
-// arrival scale leaves alone) and its corners. Placed still the first
+// aria-checked; the pill takes its box and its corners, in the group's own
+// CSS pixels (an option carries the interface zoom the group does not; a
+// surface arriving around the group scales both). Placed still the first
 // time, when the group resizes, and under reduced motion.
 export function useSlidingPill(ref, value) {
   const placed = useRef(false);
@@ -129,11 +162,14 @@ export function useSlidingPill(ref, value) {
     const still = !slide || !placed.current;
     if (still) group.setAttribute("data-pill-still", "");
     const set = (name, v) => group.style.setProperty(name, v);
-    set("--pill-x", `${on.offsetLeft}px`);
-    set("--pill-y", `${on.offsetTop}px`);
-    set("--pill-w", `${on.offsetWidth}px`);
-    set("--pill-h", `${on.offsetHeight}px`);
-    set("--pill-r", getComputedStyle(on).borderRadius);
+    const g = group.getBoundingClientRect(), r = on.getBoundingClientRect();
+    const k = group.offsetWidth ? g.width / group.offsetWidth : 1; // the group's px to the window's
+    const z = on.offsetWidth ? r.width / on.offsetWidth / k : 1; // the option's px to the group's
+    set("--pill-x", `${(r.left - g.left) / k - group.clientLeft}px`);
+    set("--pill-y", `${(r.top - g.top) / k - group.clientTop}px`);
+    set("--pill-w", `${r.width / k}px`);
+    set("--pill-h", `${r.height / k}px`);
+    set("--pill-r", getComputedStyle(on).borderRadius.replace(/[\d.]+px/g, (v) => `${parseFloat(v) * z}px`));
     group.setAttribute("data-pill", "");
     if (still) { void group.offsetWidth; group.removeAttribute("data-pill-still"); }
     placed.current = true;

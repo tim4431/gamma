@@ -1001,12 +1001,16 @@ is plain markup, and a first render never moves.
   Save → Saving…). The letters both texts share at each end stay; the
   part between cross-fades and its width eases, so the button around it
   resizes smoothly. Mid-swap, assistive technology reads the new label
-  whole. Not inside a surface placed from its size (the selection
-  popup): its width would move it every frame.
+  whole. It shows the new label at once under reduced motion, when the
+  label changes faster than a swap takes (a progress count), and when an
+  ellipsis cuts the old or the new one. Not inside a surface placed from
+  its size (the selection popup): its width would move it every frame.
 - **`Collapse`** `open`: a body under the header that opens it. Its row
   grows from nothing over `--dur-slow` while it comes into focus, and
   folds over `--dur-base`; shut, nothing is rendered, and while it folds
-  the body stays, inert. Not inside a surface placed from its size,
+  the body stays, inert. In a column with a gap, the gap above it folds
+  with it; while it moves nothing scrolls it (a field focusing itself as
+  it mounts). Not inside a surface placed from its size,
   which would move as it grows. A native `<details>` opens the same way
   where the browser animates `::details-content`.
 - **`Chevron`** `open dir`: one glyph that turns with what it opens:

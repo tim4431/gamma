@@ -1460,6 +1460,8 @@ const BlockRow = React.memo(function BlockRow({
         {hasChildren ? (
           <button
             className="collapseBtn"
+            aria-expanded={!collapsed}
+            aria-label={collapsed ? t("Expand children") : t("Collapse children")}
             onClick={(e) => {
               e.stopPropagation();
               onToggle(block.id);
@@ -1467,7 +1469,7 @@ const BlockRow = React.memo(function BlockRow({
           >
             {/* one caret that turns (motion.css .turnCaret); turning the
                 glyph rather than the button keeps the button's hit box */}
-            <span className={`turnCaret${collapsed ? "" : " open"}`}>▸</span>
+            <span className={`turnCaret${collapsed ? "" : " open"}`} aria-hidden="true">▸</span>
           </button>
         ) : (
           <span className="collapseSpacer" />
