@@ -27,16 +27,20 @@ const SESSION_FIELDS = [
 let saveTimer = null;
 let pendingWrite = null; // the debounced write, run early when the page is leaving
 
-// The debounce would lose a change made within 300 ms of a reload or a
-// navigation away: write it now instead.
+// The debounce would lose a change made within 300 ms of a reload, a
+// navigation away or a close: write it now instead. A close fires pagehide
+// and visibilitychange (hidden) in one task, and Firefox can stop a
+// pagehide listener part way, so both write; the write is forgotten once
+// it is made, not before.
 export function flushSession() {
   if (!pendingWrite) return;
   clearTimeout(saveTimer);
-  const write = pendingWrite;
-  pendingWrite = null;
-  write();
+  pendingWrite();
 }
-if (typeof window !== "undefined") window.addEventListener("pagehide", flushSession);
+if (typeof window !== "undefined" && typeof document !== "undefined") {
+  window.addEventListener("pagehide", flushSession);
+  document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") flushSession(); });
+}
 
 export function loadSession() {
   if (!scope) return {};
@@ -54,7 +58,6 @@ export function saveSession(state) {
   pendingWrite = null;
   if (!scope) return;
   const write = () => {
-    pendingWrite = null;
     try {
       const merged = { ...loadSession(), ...state };
       // Only keep known fields
@@ -66,6 +69,7 @@ export function saveSession(state) {
     } catch {
       // localStorage full or blocked; silently ignore
     }
+    if (pendingWrite === write) pendingWrite = null;
   };
   pendingWrite = write;
   saveTimer = setTimeout(write, 300);

@@ -1,13 +1,14 @@
 // What a tab closed right after a change keeps: a note typed, a stroke
 // drawn or a setting changed, then the tab closed before the save that
 // change waits for (docs/dev/collab.md "Keepalive", handwriting.md
-// "Fences"). A scratch scenario of its own, outside the suite's groups:
-// today's app loses some of these in every engine
-// (docs/research/keepalive-abort.md "The app at a close"), and its steps
-// join the suite once they pass.
+// "Fences"). A scratch scenario of its own, outside the suite's groups: it
+// counts outcomes over runs, closes and engines, one engine at a time
+// (docs/research/keepalive-abort.md "The app at a close"), and
+// `context.close()` keeps no change in Chromium's shell or Firefox.
 //
 //   node tests/e2e/tabClose.mjs                        # each case once, closed by page.close()
 //   node tests/e2e/tabClose.mjs --runs 5 --close page,context
+//   node tests/e2e/tabClose.mjs --stop pagehide        # no pagehide listener of the app runs
 //   GAMMA_E2E_BROWSER=firefox node tests/e2e/tabClose.mjs --runs 5
 //
 // `page.close()` closes the tab alone and runs its pagehide listeners
@@ -18,7 +19,9 @@
 // stroke closed by page.close(), the draft journal brings it back on the
 // next visit in the same profile and it is saved then. The table at the
 // end counts each case's outcomes and what the journal held after each
-// page.close(). Exit 1 on any loss.
+// page.close(). `--stop pagehide` keeps every pagehide listener the app adds
+// from running, as Firefox stops a closing page's first one: what the close
+// keeps then went from visibilitychange alone. Exit 1 on any loss.
 import { Account, Server, flags, launchBrowser, makePdf, openPage, results, sleep, step, until } from "./harness.mjs";
 import { editRow } from "./scenarios/notes.mjs";
 import { waitForPdf } from "./scenarios/pdf.mjs";
@@ -32,6 +35,8 @@ const closes = argValue("--close", "page").split(",").map((s) => s.trim()).filte
 if (!closes.length || closes.some((how) => !["page", "context"].includes(how))) {
   throw new Error(`--close takes page and/or context, got ${closes.join(",")}`);
 }
+const stop = argValue("--stop", "");
+if (stop && stop !== "pagehide") throw new Error(`--stop takes pagehide, got ${stop}`);
 flags.continueOnFail = true;   // every run of every case, then the table
 
 const server = new Server();
@@ -60,7 +65,22 @@ try {
   await server.manage("create-user", "closer", "closer-pw");
   const user = await new Account(server, "closer", "closer-pw").login();
   browser = await launchBrowser();
-  console.log(`${browser.browserType().name()} ${browser.version()}: ${runs} run(s) of each case, closed by ${closes.map((how) => `${how}.close()`).join(" and ")}`);
+  console.log(`${browser.browserType().name()} ${browser.version()}: ${runs} run(s) of each case, closed by ${closes.map((how) => `${how}.close()`).join(" and ")}${stop ? ", no pagehide listener running" : ""}`);
+  // A fresh profile, signed in; with --stop pagehide, one where the app's
+  // pagehide listeners are never added.
+  const context = async () => {
+    const ctx = await user.context(browser);
+    if (stop) {
+      await ctx.addInitScript(() => {
+        const add = EventTarget.prototype.addEventListener;
+        EventTarget.prototype.addEventListener = function (type, ...rest) {
+          if (type === "pagehide" && this === window) return undefined;
+          return add.call(this, type, ...rest);
+        };
+      });
+    }
+    return ctx;
+  };
 
   // The strokes the paper's saved files hold (a block naming a file the
   // server lacks holds none).
@@ -110,7 +130,7 @@ try {
     const up = await user.upload("/api/uploads", makePdf([[title, "a page to write on"]]), "close.pdf", "application/pdf");
     const created = await user.api(`/api/blocks/by-doc/${up.doc_id}`, { method: "POST", body: { default_title: title, source_url: up.source_url } });
     const paper = { id: created.id, url: `${server.base}/?page=${created.id}&ws=${user.ws}` };
-    const ctx = await user.context(browser);
+    const ctx = await context();
     try {
       const page = await openPage(ctx, paper.url);
       await waitForPdf(page, 1);
@@ -153,7 +173,7 @@ try {
         const pg = await user.api("/api/pages", { method: "POST", body: { title: `Typed then closed ${how} ${n}` } });
         const text = `typed then closed ${how} ${n}`;
         await user.api("/api/blocks", { method: "POST", body: { parent_id: pg.id, content: text } });
-        const ctx = await user.context(browser);
+        const ctx = await context();
         try {
           const page = await openPage(ctx, `${server.base}/?page=${pg.id}&ws=${user.ws}`);
           await editRow(page, text);
@@ -184,7 +204,7 @@ try {
       name: "a setting changed just before the close reaches the account",
       run: async (how) => {
         await user.api("/api/prefs/profile", { method: "PATCH", body: { set: { pdfDarkPage: false } } });
-        const ctx = await user.context(browser);
+        const ctx = await context();
         try {
           const page = await openPage(ctx);
           const pulled = page.waitForResponse((r) => r.url().includes("/api/prefs/profile") && r.request().method() === "GET");

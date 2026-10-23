@@ -451,12 +451,16 @@ note is typed, a stroke drawn or a setting changed, and `page.close()` follows
 at once, in the engine `GAMMA_E2E_BROWSER` names. Each step asserts that the
 server has the change or, for a stroke, that the draft journal brings it back
 on the next visit. `--runs N` repeats each case, `--close page,context` adds
-`context.close()`, and a table counts the outcomes. Today's app loses strokes
-in every engine
-([research/keepalive-abort.md](../research/keepalive-abort.md#the-app-at-a-close)),
-so the scenario stays apart until a fix makes it pass. A step that times a
-close passes `{lastLook: false}` to `page.close` or `context.close`, which
-skips the screenshot the harness takes first.
+`context.close()`, and a table counts the outcomes. `--stop pagehide` keeps
+every `pagehide` listener the app adds from running, as Firefox stops a
+closing page's first one. Every `page.close()` case passes in Chromium,
+WebKit and Firefox, with or without `--stop pagehide`.
+`context.close()` loses the changes in Chromium's headless shell, which
+runs no listener there, and in Firefox, which sends without the session
+cookie
+([research/keepalive-abort.md](../research/keepalive-abort.md#the-app-at-a-close)).
+A step that times a close passes `{lastLook: false}` to `page.close` or
+`context.close`, which skips the screenshot the harness takes first.
 
 `frontend/tests/e2e/run.mjs` starts an ISOLATED backend (the project venv's
 python — or the interpreter `GAMMA_E2E_PYTHON` names — over a fresh

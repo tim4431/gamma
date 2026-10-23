@@ -75,7 +75,7 @@ export function useInkDocument({ focusedBlockId, readOnly, blocksRef, setBlocks,
       setBlocks((prev) => withGroupBlocks(prev, missing));
     }
     const byId = new Map(flattenBlocks(blocksRef.current).map((b) => [b.id, b]));
-    for (const c of changes) inkStore.setDraft(c.id, c.after, byId.get(c.id)?.properties?.ink_url || "");
+    for (const c of changes) inkStore.setDraft(c.id, c.after, byId.get(c.id)?.properties?.ink_url || "", !!pass);
     // a stroke sent live and taken away before any save held it: its wet stroke goes from the peers' pages
     liveRemoved(changes);
     if (record) {

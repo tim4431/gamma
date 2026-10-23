@@ -322,6 +322,64 @@ test("closing a tab while it shows (pagehide, then visibilitychange in one task)
   assert.deepEqual([idle.b.of("/api/upload-ink")[0].keepalive, idle.b.of("/api/blocks/g")[0].keepalive], [true, true]);
 });
 
+// A close while the tab shows, one sender's pagehide listener stopped, as
+// Firefox stops a closing page's first one (docs/research/keepalive-abort.md):
+// that sender sends from visibilitychange, after the others' pagehide
+// listeners. The edits stopped go last, after handwriting's flush, which
+// left them the room their claim holds; handwriting stopped flushes on going
+// hidden, each PUT after its upload's answer, which a closing page never
+// reads (the draft journal keeps the drawing).
+async function closeStopped({ edits, drafts, stopped, profile = 3 * KiB, readPos = 300 }) {
+  const b = browser();
+  const ledger = createKeepaliveLedger({ fetch: b.fetch });
+  const bodies = edits.map((n) => text(n));
+  let sent = false;   // usePageCollab: nothing more is claimed once hide() has sent the edits
+  ledger.registerClaim("page-edits", () => (sent ? 0 : keepaliveShare(bodies)));
+  const inkRequest = (url, body, ka) => (ka && bodyBytes(body) <= ledger.available("low")
+    ? ledger.fetch(url, { method: "POST", body }, { priority: "low" }) : b.fetch(url, { method: "POST", body }));
+  const groups = drafts.map((k, i) => ({ id: `g${i}`, uploadBytes: k * KiB, putBytes: 600, beside: false, inFlight: null }));
+  const send = {
+    edits: () => {
+      for (const body of bodies) ledger.fetch("/api/pages/p/ops", { method: "POST", body }, { priority: "critical" });
+      sent = true;
+    },
+    normal: () => {
+      ledger.fetch("/api/prefs/profile", { method: "PATCH", body: text(profile) }, { priority: "normal" });
+      ledger.fetch("/api/prefs/read-pos", { method: "PUT", body: text(readPos) }, { priority: "normal" });
+    },
+    ink: (leaving) => planFlush(groups.map((g) => ({ ...g, beside: leaving })), ledger.available("low")).forEach((p, i) => {
+      inkRequest("/api/upload-ink", text(groups[i].uploadBytes), p.keepalive);
+      if (leaving) inkRequest("/api/blocks/g", text(groups[i].putBytes), p.keepalive);
+    }),
+  };
+  for (const sender of ["edits", "normal", "ink"]) if (sender !== stopped) send[sender](true);   // pagehide
+  send[stopped](false);   // visibilitychange, hidden
+  return { b, ledger, posts: b.of("/api/pages/p/ops") };
+}
+
+test("a close whose pagehide listener of one sender is stopped: it sends from visibilitychange, the edits with keepalive whenever they alone fit the cap, and nothing is refused", async () => {
+  const editSets = [[], [KiB], [20 * KiB], [30 * KiB, 25 * KiB], [KEEPALIVE_CAP - 2 * KiB], [KEEPALIVE_CAP], [40 * KiB, 24 * KiB]];
+  const draftSets = [[10, 10], [50], [20, 30, 5], [1, 1, 1, 1], [60]];
+  for (const stopped of ["edits", "normal", "ink"]) {
+    for (const edits of editSets) {
+      for (const drafts of draftSets) {
+        const { b, ledger, posts } = await closeStopped({ edits, drafts, stopped });
+        const label = `${stopped} stopped, edits ${edits.map((n) => n / KiB)} KiB, drafts ${drafts} KiB`;
+        assert.equal(posts.length, edits.length, label);
+        assert.ok(posts.every((r) => r.keepalive), `${label}: every edit POST goes with keepalive`);
+        assert.deepEqual([b.of("/api/upload-ink").length, b.of("/api/prefs/profile").length], [drafts.length, 1], label);
+        assert.deepEqual(b.refused, [], `${label}: the browser refused nothing`);
+        assert.equal(ledger.inFlight, b.inFlight, label);
+        assert.ok(b.inFlight <= KEEPALIVE_CAP, label);
+      }
+    }
+  }
+  // the edits stopped: handwriting's flush on pagehide left them the room they claim, so a 20 KiB drawing that would
+  // have crowded them out (and gone with keepalive beside 44 KiB of edits not yet sent) went plain
+  const crowded = await closeStopped({ edits: [44 * KiB], drafts: [20], stopped: "edits" });
+  assert.deepEqual([crowded.posts[0].keepalive, crowded.b.of("/api/upload-ink")[0].keepalive], [true, false]);
+});
+
 test("a handwriting request from an earlier flush still on its way when the edits have grown past their room: the edits go with keepalive and as a plain copy at once, and nothing is aborted for them", async () => {
   // browsers free an aborted keepalive request's share a task later (Chromium) or once its answer is in
   // (WebKit), so a keepalive sent at once in the room an abort freed would be refused: the ledger never aborts
