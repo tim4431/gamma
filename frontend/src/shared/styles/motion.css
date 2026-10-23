@@ -59,6 +59,15 @@
 /* A dialog opened as another closes takes its place on the dim that was
    there (data-over, leave.js): only the dialog grows in. */
 .reportOverlay[data-over] { animation: none; }
+/* One opened inside a dialog still arriving waits, unseen, for it to land
+   (data-wait, DialogOverlay), then arrives itself. It can take the focus
+   meanwhile, not a press. */
+.reportOverlay[data-wait],
+.reportOverlay[data-wait] > * {
+  opacity: 0;
+  animation: none;
+}
+.reportOverlay[data-wait] { pointer-events: none; }
 
 /* Tips fade in where they stand: hovering along a row of buttons shows one
    after another, and a tip that grew would trail the pointer. The PDF

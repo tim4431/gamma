@@ -971,7 +971,11 @@ DOM but over the window (a sub-dialog, the caret's popups) goes at once,
 so the copy holds none of it. A surface that arrives takes the place of
 a copy of its kind still leaving, as a native menu does: only one of a
 kind is ever seen going, and never while another stands. A dialog opened
-as one closes keeps the dim that was there (`data-over`). Toasts stand
+as one closes keeps the dim that was there (`data-over`). One opened
+inside a dialog still arriving (Settings opened straight onto an editor,
+as the chat's AI tiles do) waits for it to land, unseen, then arrives
+itself (`data-wait`): growing together, its backdrop was laid out inside
+the growing dialog and snapped to the window as it landed. Toasts stand
 side by side, so a toast takes no other's place, and one leaving a stack
 that moves (the reminders, hung from the window's bottom) leaves from
 where it was seen. Under reduced motion there is no copy. Code that asks
