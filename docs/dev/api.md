@@ -603,7 +603,7 @@ tree's `delete` op (`DELETE /folders/{id}`, or a tree batch).
 | GET | `/chat-history/{id}/export` | an archived conversation as the same file; 404 for an unknown id |
 | GET | `/chat-history?bucket=` | the bucket's archived conversations, newest first (`{sessions: [{id, title, preview, count, created_at, updated_at}]}`) |
 | POST | `/chat-history/archive` | "New chat": file `{bucket, messages, title, updated_at?, discard?}` into history and clear the active row (→ `{id}`, null when empty); when `updated_at` isn't the stored version, the newer stored conversation is archived too (unless the copy holds all of it; alone when it holds all of the copy). `discard: true` (Alt+click) drops the copy instead of filing it; the newer stored one is still archived |
-| POST | `/chat-history/{id}/open` | make an entry the active conversation; the body's `{bucket, messages, title, updated_at?}` (the current one) is archived first, as for `archive` (→ `{messages, title, updated_at}`) |
+| POST | `/chat-history/{id}/open` | make an entry the active conversation; the body's `{bucket, messages, title, updated_at?}` (the current one) is archived first, as for `archive` (→ `{messages, title, updated_at, archived}`, `archived` the id it was filed under, null when empty) |
 | PUT/DELETE | `/chat-history/{id}` | rename (`{title}`) / delete an archived conversation |
 | POST | `/chat-history/delete` | delete several at once (the history popover's ticked rows): `{ids}` → `{deleted}`, the rows that were still there |
 

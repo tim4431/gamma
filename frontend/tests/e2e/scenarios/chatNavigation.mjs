@@ -1555,6 +1555,60 @@ export async function chatNavigationScenarios(env) {
     }
   });
 
+  await step("chat navigation: the history popover shows an open and a New chat made here at once — the conversation filed leads, the one opened is gone", async () => {
+    const swap = await alice.api("/api/pages", { method: "POST", body: { title: "Swap page" } });
+    await alice.api("/api/chat-history/archive", { method: "POST", body: { bucket: swap.id, title: "Older talk",
+      messages: [{ role: "user", text: "Older talk question" }] } });
+    await alice.api(`/api/chats/${swap.id}`, { method: "PUT", body: { title: "Current talk", messages: [
+      { role: "user", text: "Current talk question" }, { role: "ai", text: "Current answer" },
+    ] } });
+    const ctx = await alice.context(browser);
+    await fakeAiModels(ctx);
+    await ctx.addInitScript(() => localStorage.setItem("gamma-ai-login-check", "off"));
+    // The list's reads wait while held: what shows meanwhile is the list as
+    // this tab changed it.
+    let held = null;
+    await ctx.route((url) => url.pathname === "/api/chat-history" && url.searchParams.get("bucket") === swap.id, async (route) => {
+      if (held) await held.promise;
+      await route.continue();
+    });
+    const hold = () => { let release; held = { promise: new Promise((resolve) => { release = resolve; }) }; return () => { held = null; release(); }; };
+    const page = await openPage(ctx, `${server.base}/?ws=${alice.ws}&page=${swap.id}`);
+    const historyButton = page.getByRole("button", { name: "Chat history", exact: true });
+    const listed = () => page.locator(".chatHistoryPop:not([data-leaving]) .chatHistRow:not(.active) .chatHistTitle").allInnerTexts();
+    try {
+      await page.locator(".chatBubbleRow.ai", { hasText: "Current answer" }).waitFor();
+      await page.waitForLoadState("networkidle");
+      await historyButton.click();
+      await page.locator(".chatHistRow:not(.active)", { hasText: "Older talk" }).click();
+      await page.locator(".chatBubbleRow.user", { hasText: "Older talk question" }).waitFor();
+      let release = hold();
+      await historyButton.click();
+      await page.locator(".chatHistoryPop .chatHistRow.active", { hasText: "Older talk" }).waitFor();
+      assertEq((await listed()).join(), "Current talk", "the conversation it replaced is listed, the one opened is not");
+      // The row shown before the read is the server's own: it opens.
+      await page.locator(".chatHistRow:not(.active)", { hasText: "Current talk" }).click();
+      await page.locator(".chatBubbleRow.ai", { hasText: "Current answer" }).waitFor();
+      release();
+      await page.waitForLoadState("networkidle");
+      // New chat files the conversation: it leads the list before the read.
+      await page.getByRole("button", { name: "New chat", exact: true }).click();
+      await page.locator(".chatBubbleRow").first().waitFor({ state: "detached" });
+      release = hold();
+      await historyButton.click();
+      await until(async () => (await listed()).join() === "Current talk,Older talk", { what: "the conversation kept leads the list" });
+      release();
+      await page.waitForLoadState("networkidle");
+      assertEq((await listed()).join(), "Current talk,Older talk", "the read agrees");
+      assertEq((await alice.api(`/api/chat-history?bucket=${swap.id}`)).sessions.map((e) => e.title).join(), "Current talk,Older talk",
+        "the server holds the same");
+      assertNoProblems(page);
+    } finally {
+      await ctx.close();
+      await alice.api(`/api/blocks/${swap.id}`, { method: "DELETE" });
+    }
+  });
+
   await step("chat navigation: until the chat knows its AI it is a plain frame — no header tools, no empty-state text", async () => {
     await alice.api("/api/chats/home", { method: "PUT", body: { messages: [] } });
     const ctx = await alice.context(browser);

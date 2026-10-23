@@ -63,6 +63,16 @@ function deriveTitle(messages) {
   return (line || "").replace(/\s+/g, " ").slice(0, 80);
 }
 
+// The History row for a conversation the server just filed under `id` (the
+// archive and the open answer with it), as the list's next read gives it.
+function filedRow(id, { title, messages }) {
+  const first = messages.find((m) => m.role === "user");
+  return {
+    id, title: title || deriveTitle(messages), preview: (first?.text || "").replace(/\s+/g, " ").trim().slice(0, 120),
+    count: messages.length, updated_at: new Date().toISOString(),
+  };
+}
+
 // Compact age for a history row: "now", "5m", "3h", "2d", "4mo", "1y".
 function relAge(iso) {
   const ms = Date.now() - Date.parse(iso || "");
@@ -842,13 +852,15 @@ export default function ChatDock({
   // opening an entry swaps it with the current one. Both send the client's
   // copy of the conversation, so a reply still sitting in the autosave
   // debounce is kept. The list loads lazily when the popover opens. Each
-  // bucket's list as last read stays (`histories`): after any change (a
-  // bucket switch, an archive, an open) the popover opens on it at once and
-  // reads it again in place (`historyRead`, the bucket read since).
+  // bucket's list as last read stays (`histories`), and an archive or an
+  // open made here changes it as the server did. After any change (a bucket
+  // switch, an archive, an open) the popover opens on it at once and reads
+  // it again in place (`historyRead`, the bucket read since).
   const [histories, setHistories] = useState(() => new Map()); // bucket -> its entries
   const [historyRead, setHistoryRead] = useState("");
   const history = histories.get(chatKey) ?? null; // null = never read here
-  const editHistory = (change) => setHistories((all) => new Map(all).set(chatKey, change(all.get(chatKey) || [])));
+  // A change to the bucket's list as last read; a list never read stays so.
+  const editHistory = (change) => setHistories((all) => (all.has(chatKey) ? new Map(all).set(chatKey, change(all.get(chatKey))) : all));
   const [historyQuery, setHistoryQuery] = useState("");
   const [renaming, setRenaming] = useState(null); // {id: "" = the active chat | entry id, text}
   const [picked, setPicked] = useState(() => new Set()); // history entries ticked for deleting
@@ -911,7 +923,11 @@ export default function ChatDock({
       const kept = chatMessages.length > 0;
       try {
         await session.flush(chatKey);
-        await apiJson(`${API}/chat-history/archive`, { method: "POST", headers: JSON_HEADERS, body: JSON.stringify({ ...currentPayload(), discard }) });
+        const payload = currentPayload();
+        const { id } = await apiJson(`${API}/chat-history/archive`, { method: "POST", headers: JSON_HEADERS, body: JSON.stringify({ ...payload, discard }) });
+        // The conversation kept leads the list (one discarded is not listed;
+        // a newer stored copy filed with it comes with the next read).
+        if (id && !discard) editHistory((rows) => [filedRow(id, payload), ...rows]);
       } catch (err) {
         setStatus(discard ? t("Couldn't discard the conversation: {message}", { message: err.message })
           : t("Couldn't keep the conversation in history: {message}", { message: err.message }));
@@ -938,8 +954,13 @@ export default function ChatDock({
     if (busyHere) return;
     try {
       await session.flush(chatKey);
+      const payload = currentPayload();
       const data = await apiJson(`${API}/chat-history/${id}/open`,
-        { method: "POST", headers: JSON_HEADERS, body: JSON.stringify(currentPayload()) });
+        { method: "POST", headers: JSON_HEADERS, body: JSON.stringify(payload) });
+      // The swap: the entry opened leaves the list, the conversation it
+      // replaced leads it.
+      const filed = data.archived ? [filedRow(data.archived, payload)] : [];
+      editHistory((rows) => [...filed, ...rows.filter((s) => s.id !== id)]);
       session.forget(chatKey);
       session.seen(chatKey, data.messages || [], data.updated_at);
       if (chatKeyRef.current !== chatKey) return;
@@ -950,6 +971,7 @@ export default function ChatDock({
       chatStickRef.current = true;
     } catch (err) {
       setStatus(t("Couldn't open the conversation: {message}", { message: err.message }));
+      setHistoryRead(""); // the list may be out of date (another tab opened or deleted the entry)
     }
   }
 
