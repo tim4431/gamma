@@ -9,9 +9,9 @@
 // The list moves as it changes (ListMotion): a row that comes fades in, one
 // that goes (marked read in Unread, archived) leaves from where it stood
 // while the rest close up, and a day's header goes with its last row. A tab
-// opens on what it showed last (useInbox) and its first listing comes into
-// focus where it will stand (Reveal).
-import React, { useEffect, useRef } from "react";
+// opens at its top, on what it showed last (useInbox), and its first
+// listing comes into focus where it will stand (Reveal).
+import React, { useEffect, useLayoutEffect, useRef } from "react";
 import { Empty, Segmented } from "../settings/SettingsKit";
 import { ArchiveIcon, ArchiveRestoreIcon, BellIcon, CheckIcon, MailIcon } from "../shared/ui/Icons";
 import ListMotion from "../shared/ui/ListMotion";
@@ -73,6 +73,10 @@ export default function InboxPanel({ inbox, workspaceId, onOpen }) {
   // together, would say nothing.
   const markedAll = useRef(false);
   useEffect(() => { markedAll.current = false; });
+  // A tab opens at its top, before it is drawn: the scroller holds another
+  // list now, whatever the last one was scrolled to.
+  const scroller = useRef(null);
+  useLayoutEffect(() => { scroller.current.scrollTop = 0; }, [inbox.filter]);
   const empty = !inbox.items.length && inbox.loaded;
   // the list's items in order: each day's header, then its rows
   const keys = [];
@@ -92,7 +96,7 @@ export default function InboxPanel({ inbox, workspaceId, onOpen }) {
       <div className="inboxTabs">
         <Segmented value={inbox.filter} onChange={inbox.setFilter} options={filters} />
       </div>
-      <div className="inboxList">
+      <div className="inboxList" ref={scroller}>
         <Reveal className="inboxRows" k="inbox" ready={inbox.loaded || inbox.items.length > 0}
           fallback={<div className="popoverHint inboxLoading">{t("Loading…")}</div>}>
           <ListMotion keys={keys} scope={inbox.filter} leave="row" strip={["data-inbox-id"]} still={markedAll.current}>

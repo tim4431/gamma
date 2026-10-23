@@ -13,9 +13,11 @@
 // a comment on the open page also sends `comments`).
 //
 // Items load when the panel opens, 50 at a time ("Show older"). Each tab
-// keeps the listing it last showed, so the panel opens, and a tab comes
-// back, on what it held while a fresh look is on its way, and that look
-// changes it in place (`loaded` turns true once it is in). Marks show
+// keeps the listing it last showed: the panel opens, and a tab comes back,
+// on the first page of it while a fresh look is on its way, and the
+// server's first page that look brings takes its place, changing it in
+// place (`loaded` turns true once it is in). Show older waits for that
+// look, and the looks after it keep the older rows it loads. Marks show
 // at once; an answer to a request sent before the latest mark, or while a
 // mark was on its way (the server may have answered it before the mark was
 // stored), is dropped, so a poll never undoes a mark, and a count or
@@ -29,7 +31,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { API, apiJson } from "../shared/lib/utils";
 import { nowStamp } from "../library/libraryUtils";
 import { t } from "../shared/i18n/i18n.js";
-import { applyMark, inboxSentence, inboxSnippet, itemsToRing, mergeListing, sameListing } from "./inboxText.js";
+import { applyMark, inboxSentence, inboxSnippet, itemsToRing, lookedListing, reopenedListing, sameListing } from "./inboxText.js";
 
 const IDLE_MS = 30 * 1000;
 const OPEN_MS = 5 * 1000;
@@ -39,9 +41,6 @@ const MARK_BATCH = 100; // the ids one POST /api/inbox/mark takes
 const RUNG_KEY = "gamma-inbox-rung"; // the item ids this browser has rung, the latest kept
 const RUNG_CAP = 200;
 const EMPTY = { filter: "unread", items: [], more: false, loaded: false, failed: false };
-// The tab `filter` as `kept` holds it from when it was last seen (nothing
-// the first time), its fresh look still to come.
-const reopened = (kept, filter) => ({ ...(kept.get(filter) || EMPTY), filter, loaded: false, failed: false });
 const post = (body) => ({
   method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
 });
@@ -120,12 +119,13 @@ export function useInbox({ enabled, open, notify = false, onOpen, onStatus }) {
       takeCount(got.unread, sent);
       setList((cur) => {
         if (cur.filter !== filter) return cur;
-        const { items, more } = mergeListing(cur.items, got, cur.more);
-        const next = { filter, items, more, loaded: true, failed: false };
+        const next = lookedListing(cur, got);
         return sameListing(cur, next) ? cur : next; // an unchanged poll renders nothing
       });
     } catch {
-      setList((cur) => (cur.filter === filter ? { ...cur, loaded: true, failed: !cur.items.length } : cur));
+      // what is held stays, still to be replaced by the next look; with
+      // nothing held, the tab says it could not load
+      setList((cur) => (cur.filter !== filter || cur.items.length ? cur : { ...cur, loaded: true, failed: true }));
     }
   }, [takeCount]);
 
@@ -155,8 +155,10 @@ export function useInbox({ enabled, open, notify = false, onOpen, onStatus }) {
   useEffect(() => {
     if (!enabled) { setUnread(0); known.current = 0; kept.current.clear(); setList(EMPTY); return undefined; }
     if (open) {
-      // the panel opens on the tab it showed last, as it was, and looks again
-      const next = reopened(kept.current, listRef.current.filter);
+      // the panel opens on the tab it showed last, its first page as it
+      // was, and looks again
+      const filter = listRef.current.filter;
+      const next = reopenedListing(kept.current.get(filter), filter, PAGE);
       listRef.current = next;
       setList(next);
       fetchList();
@@ -194,7 +196,7 @@ export function useInbox({ enabled, open, notify = false, onOpen, onStatus }) {
 
   const setFilter = useCallback((filter) => {
     if (filter === listRef.current.filter) return;
-    const next = reopened(kept.current, filter);
+    const next = reopenedListing(kept.current.get(filter), filter, PAGE);
     listRef.current = next;
     setList(next);
     fetchList();

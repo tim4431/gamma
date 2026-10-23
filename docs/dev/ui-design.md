@@ -1049,7 +1049,7 @@ is plain markup, and a first render never moves.
   reduced motion the fallback shows at once. Content already there is
   better than any placeholder: the share popover keeps a target's
   settings while it asks for them again, the Inbox opens each tab on the
-  listing it showed last and refreshes it in place, and Recently deleted
+  first page it showed last and refreshes it in place, and Recently deleted
   asks for its list with its module, as the pointer or the focus reaches
   its button, so it lands whole. Search results, which change with every
   key, take none.

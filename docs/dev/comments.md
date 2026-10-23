@@ -793,11 +793,14 @@ username asking, `inboxActor`: "cat asks to open Draft"), the note's or the comm
 the workspace's name when it is not this one, and the time. Its actions,
 shown on hover and focus (always under a touch screen), mark it read or
 unread and archive it or move it back. Items load when the panel opens, 50
-at a time, with Show older. Each tab keeps the listing it showed last, so
-the panel opens again, and a tab comes back, on what it held while a
-fresh look is on its way, and the look changes it in place; a tab seen
-for the first time, or empty when it was, keeps its place blank until the
-listing is in (`Reveal`). A mark shows at once and takes the item out
+at a time, with Show older. Each tab keeps the listing it showed last:
+the panel opens again, and a tab comes back, at its top on the first page
+of what it held while a fresh look is on its way, and the server's page
+that look brings takes its place, changing it in place. The older rows
+Show older had loaded are not kept, since no look would refresh them, and
+Show older comes back with the look (`reopenedListing`, `lookedListing`).
+A tab seen for the first time, or empty when it was, keeps its place
+blank until the listing is in (`Reveal`). A mark shows at once and takes the item out
 of a tab it no longer belongs in, the row leaving from where it stood
 while the rest close up (`ListMotion`); a day's header goes with its last
 row, and Mark all read empties Unread at once. A refused one puts back the rows and the
