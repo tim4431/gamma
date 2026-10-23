@@ -7736,6 +7736,33 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     return [...items.filter((it) => it._match), ...items.filter((it) => !it._match)];
   }, [libTree, scopePages, labelFilter, levelFolders, folderMeta, scopeLabels, labelMeta, viewedAtById, homeSort, homeKinds, homeQuery]);
   const homeVisibleItems = useMemo(() => homeItems.slice(0, homeShowCount), [homeItems, homeShowCount]);
+  // The listing is a list that moves (ListMotion, docs/dev/ui-design.md
+  // "Lists that change"): within one listing an item added, removed or
+  // moved by its sort glides the others to their places. Another view,
+  // kind filter, folder, label, sort or filter text is another listing, in
+  // which nothing moves.
+  const homeVisibleKeys = useMemo(() => homeVisibleItems.map((it) => it.key), [homeVisibleItems]);
+  const homeListingScope = `${homeView}|${homeKinds}|${folderFilter}|${labelFilter}|${homeSort}|${homeQuery}`;
+  // A listing that takes another's place (another view, kind filter, folder
+  // or label) comes into focus where it stands, as a pane does: its class is
+  // played again on the listing in place, rather than remounting it, which
+  // would build every card again. Not the listing a load or a page left
+  // brings.
+  const homeListingRef = useRef(null);
+  const homeEmptyRef = useRef(null);
+  const homeListingShownRef = useRef(null);
+  useLayoutEffect(() => {
+    const shown = homeMode && homeLoaded ? `${homeView}|${homeKinds}|${folderFilter}|${labelFilter}` : null;
+    const before = homeListingShownRef.current;
+    homeListingShownRef.current = shown;
+    if (!shown || !before || shown === before) return;
+    for (const el of [homeListingRef.current, homeEmptyRef.current]) {
+      if (!el) continue;
+      el.classList.remove("listingIn");
+      void el.offsetWidth;
+      el.classList.add("listingIn");
+    }
+  }, [homeMode, homeLoaded, homeView, homeKinds, folderFilter, labelFilter]);
   // The filter box matches titles and chips only; past it, the workspace
   // search reads notes and PDF text. With nothing matched a banner hands the
   // query over (Enter in the box does the same); with matches a quiet row
@@ -9149,9 +9176,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
             {homeMode && !homeLoaded ? null : homeMode && homeView === "grid" ? (
                 <>
                   {libraryStart || (homeItems.length === 0 && !newFolderOpen ? (
-                    <div className="empty">{homeEmptyText}</div>
+                    <div className="empty" ref={homeEmptyRef}>{homeEmptyText}</div>
                   ) : null)}
-                  <div className="fileGrid" onClick={(e) => { if (e.target.classList.contains("fileGrid")) clearSelection(); }}>
+                  <div className="fileGrid" ref={homeListingRef} onClick={(e) => { if (e.target.classList.contains("fileGrid")) clearSelection(); }}>
                     {newPageAllowed ? (
                       <PageCard
                         className="pageCardAdd"
@@ -9193,11 +9220,13 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                         onClick={() => { setNewFolderName(""); setNewFolderOpen(true); }}
                       />
                     )}
+                    <ListMotion keys={homeVisibleKeys} scope={homeListingScope} enter="card" leave="card">
                     {withSearchMore(homeVisibleItems.map((item) => {
                       const dim = homeQuery && !item._match ? "homeDim" : "";
                       if (item.kind === "label") { const l = item.label; return (
                       <PageCard
                         key={item.key}
+                        data-motion-key={item.key}
                         className={`${dim} ${folderDragOver === l ? "dragOver" : ""} ${selectedLabels.has(l) ? "selected" : ""}`}
                         glyph={<LabelGlyph dashed={l === NO_LABEL} />}
                         title={labelName(libTree, l)}
@@ -9220,6 +9249,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                       if (item.kind === "folder") { const f = item.folder; return (
                       <PageCard
                         key={item.key}
+                        data-motion-key={item.key}
                         {...folderCardProps(f)}
                         className={`${dim} ${folderDropClass(f)} ${selectedFolders.has(f) ? "selected" : ""}`}
                         tip={lib.organize ? t("Click to select · double-click to open · drop a page or folder to move it in") : t("Click to select · double-click to open")}
@@ -9248,6 +9278,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                       return (
                         <PageCard
                           key={id}
+                          data-motion-key={item.key}
                           className={`${dim} ${selectedPages.has(id) ? "selected" : ""}`}
                           data-guide="home.card"
                           glyph={<FileGlyph isPdf={!!b._attachment} />}
@@ -9287,6 +9318,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                         </PageCard>
                       );
                     }))}
+                    </ListMotion>
                   </div>
                   {homeItems.length > homeVisibleItems.length ? (
                     <button ref={loadMoreRef} className="loadMoreBtn" onClick={() => setHomeShowCount((c) => c + HOME_PAGE_CHUNK)}>
@@ -9297,9 +9329,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
             ) : homeMode ? (
                 <>
                   {libraryStart || (homeItems.length === 0 && !newFolderOpen ? (
-                    <div className="empty">{homeEmptyText}</div>
+                    <div className="empty" ref={homeEmptyRef}>{homeEmptyText}</div>
                   ) : null)}
-                  <div className="fileList" onClick={(e) => { if (e.target.classList.contains("fileList")) clearSelection(); }}>
+                  <div className="fileList" ref={homeListingRef} onClick={(e) => { if (e.target.classList.contains("fileList")) clearSelection(); }}>
                     {newPageAllowed ? (
                       <button className="folderRow folderNewBtn" onClick={() => createPage()} title={t("Start a blank page here")}>
                         <FilePlusIcon size={16} />
@@ -9337,11 +9369,13 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                         {menuSlot}
                       </div>
                     ) : null}
+                    <ListMotion keys={homeVisibleKeys} scope={homeListingScope} enter="fade" leave="row">
                     {withSearchMore(homeVisibleItems.map((item) => {
                       const dim = homeQuery && !item._match ? "homeDim" : "";
                       if (item.kind === "label") { const l = item.label; const menu = l === NO_LABEL ? null : openTagMenu("label", l); return (
                       <div
                         key={item.key}
+                        data-motion-key={item.key}
                         className={`folderRow labelRow rowMenuHost ${dim} ${folderDragOver === l ? "dragOver" : ""} ${selectedLabels.has(l) ? "selected" : ""}`}
                         onClick={(e) => handleLabelClick(l, e)}
                         onDoubleClick={() => openLabel(l)}
@@ -9361,6 +9395,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                       if (item.kind === "folder") { const f = item.folder; const menu = openTagMenu("folder", f); return (
                       <div
                         key={item.key}
+                        data-motion-key={item.key}
                         className={`folderRow rowMenuHost ${dim} ${folderDropClass(f)} ${selectedFolders.has(f) ? "selected" : ""}`}
                         draggable={lib.organize && folderRenaming?.id !== f}
                         onDragStart={(e) => startFolderDrag(e, f)}
@@ -9400,6 +9435,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                       return (
                         <div
                           key={id}
+                          data-motion-key={item.key}
                           className={`fileRow rowMenuHost ${dim} ${selectedPages.has(id) ? "selected" : ""}`}
                           data-guide="home.card"
                           draggable={lib.organize && !isEditing}
@@ -9437,6 +9473,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                         </div>
                       );
                     }))}
+                    </ListMotion>
                   </div>
                   {homeItems.length > homeVisibleItems.length ? (
                     <button ref={loadMoreRef} className="loadMoreBtn" onClick={() => setHomeShowCount((c) => c + HOME_PAGE_CHUNK)}>

@@ -93,6 +93,9 @@
    hidden), each time it is shown. The one before goes at once, under it. */
 .settingsPane { animation: sharpen-in var(--dur-base); }
 .phonePanel:not(.phonePanelHidden) { animation: sharpen-in var(--dur-slow); }
+/* The library's listing taking another's place (another view, kind filter,
+   folder or label): the class is played again on it in place (App.jsx). */
+.listingIn { animation: sharpen-in var(--dur-base); }
 
 /* Toasts rise into place: the reminder cards and the status pill. */
 .reminderCard,

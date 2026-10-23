@@ -286,4 +286,80 @@ export async function motionScenarios(env) {
       await assertNoProblems(page);
     } finally { await ctx.close(); }
   });
+
+  // The library's listing: a row's motion key is its item's (a page's id,
+  // folder:<id>).
+  const listRow = (page, text) => page.locator(live(".fileList > .listMotion > *"), { hasText: text });
+  async function deleteRow(page, text) {
+    await listRow(page, text).click({ button: "right" });
+    await page.locator(".ctxMenuItem", { hasText: "Delete" }).click();
+    const confirm = page.locator(".confirmModal", { hasText: "Move this page to Recently deleted?" });
+    await confirm.getByRole("button", { name: "Delete", exact: true }).click();
+  }
+
+  await step("motion: in the library a new folder fades in as the rows below glide down, a page deleted leaves through a copy as they close up, and another listing comes into focus without a glide", async () => {
+    for (const title of ["Shelved page", "Doomed page"]) await user.api("/api/pages", { method: "POST", body: { title } });
+    const ctx = await user.context(browser);
+    await watch(ctx);
+    const page = await openPage(ctx, home);
+    try {
+      await listRow(page, "Doomed page").waitFor();
+      assertEq((await glides(page)).length, 0, "the listing a load brings moves nothing");
+      await page.locator(".folderNewBtn", { hasText: "New folder" }).click();
+      await page.locator(".folderNewInput").fill("Shelf");
+      await page.keyboard.press("Enter");
+      await listRow(page, "Shelf").waitFor();
+      const added = await glides(page);
+      assert(added.some((g) => g.startsWith("entering folder:")), `the folder fades in: ${added}`);
+      assert(added.includes(`moving ${tabPages[0].id}`), `the rows below glide down: ${added}`);
+      await arrived(listRow(page, "Tab one"));
+
+      await deleteRow(page, "Doomed page");
+      const copy = page.locator('.fileList [data-leaving="row"]', { hasText: "Doomed page" });
+      await copy.waitFor({ state: "attached" });
+      assert(await copy.evaluate((el) => el.getAttribute("aria-hidden") === "true" && el.hasAttribute("inert")
+        && !el.hasAttribute("data-motion-key") && getComputedStyle(el.parentElement.closest(".fileList")).position === "relative"),
+      "the copy is inert, keyless, and stands in the list");
+      const gone = await glides(page);
+      assert(gone.includes(`moving ${tabPages[0].id}`), `the rows below close up: ${gone}`);
+      await copy.waitFor({ state: "detached", timeout: 2000 });
+      await arrived(listRow(page, "Tab one"));
+
+      // a typed filter and a sort are other listings: nothing glides
+      await page.locator(".homeFindInput").fill("Tab");
+      await page.locator(".homeFindInput").fill("");
+      await page.waitForTimeout(100);
+      assertEq((await glides(page)).length, 0, "a typed filter moves nothing");
+      // another kind filter: the listing comes into focus where it stands
+      await page.evaluate(() => {
+        window.__focusIn = new Promise((done) => {
+          document.addEventListener("animationstart", (e) => { if (e.target.classList?.contains("listingIn")) done(e.animationName); });
+          setTimeout(() => done(null), 3000);
+        });
+      });
+      await page.locator(".homeViewToggle").first().locator("button").nth(2).click();
+      assertEq(await page.evaluate(() => window.__focusIn), "sharpen-in", "the listing comes into focus");
+      assertEq((await glides(page)).length, 0, "and nothing in it glides");
+      await page.locator(".homeViewToggle").first().locator("button").nth(0).click();
+      await assertNoProblems(page);
+    } finally { await ctx.close(); }
+  });
+
+  await step("motion: under reduced motion a page deleted from the library goes at once and the rows jump up", async () => {
+    await user.api("/api/pages", { method: "POST", body: { title: "Quietly doomed" } });
+    const ctx = await user.context(browser, { reducedMotion: "reduce" });
+    await watch(ctx);
+    const page = await openPage(ctx, home);
+    try {
+      await listRow(page, "Quietly doomed").waitFor();
+      await glides(page);
+      await deleteRow(page, "Quietly doomed");
+      await page.locator(".fileRow", { hasText: "Quietly doomed" }).waitFor({ state: "detached" });
+      const left = await page.evaluate(() => new Promise((done) =>
+        requestAnimationFrame(() => done(document.querySelectorAll(".fileList [data-leaving]").length))));
+      assertEq(left, 0, "no copy");
+      assertEq((await glides(page)).length, 0, "nothing glides");
+      await assertNoProblems(page);
+    } finally { await ctx.close(); }
+  });
 }

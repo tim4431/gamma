@@ -996,7 +996,9 @@ that move or size what they hold).
 
 A pane that takes another's place comes into focus where it stands (a
 Settings pane, keyed by its name; a window the compact shell's bottom
-bar shows), and the guide's card rises `--move-sm` into place.
+bar shows; the library's listing for another view, kind filter, folder
+or label, its `.listingIn` played again on it in place), and the guide's
+card rises `--move-sm` into place.
 
 ### Things that change in place
 
@@ -1118,6 +1120,15 @@ any change before the person has pressed or typed anything in the window
 (the page it opened on getting its tab): that is the window loading. The
 strip is as tall with no tab as with one, so the topbar never grows as
 the first one opens.
+
+The library's listing, in both views, is a third. A row comes in fading
+and goes fading, a card grows in and shrinks away, and a delete or an
+item its sort moves glides the rest. A listing's `scope` is its view, kind
+filter, folder, label, sort and filter text, so typing in the filter box
+or opening a folder moves nothing; Load more brings more than `most`, so
+its rows arrive at once. Its holders (`.fileList`, `.fileGrid`) position
+the copies. The listing mounts once it has loaded, so the first one a
+load or a page left brings is a first render.
 
 ## Block editor interactions
 

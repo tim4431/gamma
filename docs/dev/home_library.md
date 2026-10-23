@@ -263,6 +263,16 @@ an empty folder is real, shared and synced like any; a name a sibling has
 already makes nothing. The toolbar is filter box → sort → kind → list/grid
 → Select.
 
+**What moves.** The listing shows once it has loaded: before, it is blank,
+so it never says it is empty before its rows arrive. Within one listing
+an item added, removed or moved by its sort glides the others to their
+places (`ListMotion`, [ui-design.md](ui-design.md) "Lists that change"): a
+new row fades in and a new card grows in where it will rest, and one that
+goes fades (a row) or shrinks away (a card) where it stood while the rest
+close up. Another view, kind filter, folder or label is another listing,
+which comes into focus where it stands; a sort, the filter box's text and
+Load more change the listing at once.
+
 **Selecting.** A click selects, Ctrl/⌘+click toggles one item and
 Shift+click extends a range; a finger's tap opens instead, as in a phone's
 file manager (`isTap`). **Select** in the toolbar is the way to pick
