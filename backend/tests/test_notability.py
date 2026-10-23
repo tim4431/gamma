@@ -174,34 +174,38 @@ def test_geometry_strings():
 def test_the_upload_shapes():
     one = fx.note_zip("Older name", session_bytes=fx.session())
     entries, _ = walked(one)
-    bundles, reasons = nb.find_bundles(entries, "Lecture.note")
-    assert [b.path for b in bundles] == ["Lecture.note"] and bundles[0].members and not reasons
+    bundles = nb.find_bundles(entries, "Lecture.note")
+    assert [b.path for b in bundles] == ["Lecture.note"] and bundles[0].members
 
     two = fx.zip_of({"Biology/Cells.note": one, "Physics/Waves.note": one})
-    bundles, _ = nb.find_bundles(walked(two)[0], "notes.zip")
+    bundles = nb.find_bundles(walked(two)[0], "notes.zip")
     assert [(b.path, b.packed is not None) for b in bundles] == [("Biology/Cells.note", True),
                                                                   ("Physics/Waves.note", True)]
 
     unzipped = fx.zip_of({"Lecture.nbn/Session.plist": fx.session(), "Lecture.nbn/metadata.plist": fx.metadata(),
                           "Lecture.nbn/Images/Image .png": fx.png()})
-    bundles, _ = nb.find_bundles(walked(unzipped)[0], "folder.zip")
+    bundles = nb.find_bundles(walked(unzipped)[0], "folder.zip")
     assert [b.path for b in bundles] == ["Lecture.nbn"]
     assert set(bundles[0].members.entries) == {"Session.plist", "metadata.plist", "Images/Image .png"}
 
     inner = fx.zip_of({"Cells.note": one})
-    bundles, _ = nb.find_bundles(walked(fx.zip_of({"Export.zip": inner}))[0], "outer.zip")
+    bundles = nb.find_bundles(walked(fx.zip_of({"Export.zip": inner}))[0], "outer.zip")
     assert [b.path for b in bundles] == ["Cells.note"]
 
     top = fx.zip_of({"Session.plist": fx.session(), "metadata.plist": fx.metadata()})
-    assert [b.path for b in nb.find_bundles(walked(top)[0], "Loose.zip")[0]] == ["Loose.zip"]
+    assert [b.path for b in nb.find_bundles(walked(top)[0], "Loose.zip")] == ["Loose.zip"]
 
 
-def test_ntb_files_and_folders_give_the_ntb_reason():
-    bundles, reasons = nb.find_bundles(walked(fx.ntb())[0], "Cloud.ntb")
-    assert not bundles and reasons == [("Cloud.ntb", nb.NTB_REASON)]
+def test_ntb_files_and_folders_are_notes():
+    """An .ntb is a note as a .note is: one uploaded alone is the upload, one
+    inside a zip is packed, and a folder holding a noteBundle (an unzipped
+    one) is a note of its members."""
+    (alone,) = nb.find_bundles(walked(fx.ntb())[0], "Cloud.ntb")
+    assert alone.path == "Cloud.ntb" and set(alone.members.entries) == {"version", "manifest.json", "noteBundle"}
     upload = fx.zip_of({"Old.ntb": fx.ntb(), "Unzipped/noteBundle": b"x", "Unzipped/version": b"1"})
-    _, reasons = nb.find_bundles(walked(upload)[0], "mixed.zip")
-    assert sorted(reasons) == [("Old.ntb", nb.NTB_REASON), ("Unzipped", nb.NTB_REASON)]
+    bundles = nb.find_bundles(walked(upload)[0], "mixed.zip")
+    assert [(b.path, b.packed is not None) for b in bundles] == [("Old.ntb", True), ("Unzipped", False)]
+    assert set(bundles[1].members.entries) == {"noteBundle", "version"}
 
 
 def test_the_search_cache_is_never_opened_and_the_empty_member_is_skipped():
@@ -999,7 +1003,7 @@ def test_finding_the_notes_of_a_large_upload_stays_linear():
     many = fx.zip_of({f"f{i}/{name}": b"" for i in range(4000) for name in ("Session.plist", "x.png")})
     entries, _ = walked(many)
     started = time.perf_counter()
-    bundles, _ = nb.find_bundles(entries, "many.zip")
+    bundles = nb.find_bundles(entries, "many.zip")
     assert len(bundles) == 4000 and set(bundles[0].members.entries) == {"Session.plist", "x.png"}
     assert time.perf_counter() - started < 2  # each file against each folder took about 9 s
 

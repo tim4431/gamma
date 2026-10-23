@@ -10,7 +10,9 @@
 // pinch-zoom and pan the pages, and a page of hundreds of strokes draws
 // them in either view after a switch. Then pages in a note: "/note",
 // written on in place, the replay of the page and of its group's card (on
-// the page too), and "Add page below". The
+// the page too), and "Add page below". Last, the Sketchbook a new account
+// starts with: its pages drawn with their notes, a replay, and the user's
+// own writing kept apart from the guide's. The
 // rules behind it are backend/tests/test_notebooks.py,
 // frontend/tests/notebook.test.mjs and ink.test.mjs (the replay's timing).
 import { closeEditor, newPageViaUi } from "./notes.mjs";
@@ -412,6 +414,47 @@ export async function notebookScenarios({ server, browser, alice, step, until, s
     await until(async () => (await page.$$(".noteSheet .nbSheet")).length === 2, { what: "both pages after the reload", timeout: 15000 });
     await until(async () => (await page.$$(".noteSheet .inkLayer path")).length === 2, { what: "the strokes after the reload", timeout: 15000 });
     assertEq((await page.locator(".blockSheetLabel").allTextContents()).join("|"), "Page 1|Page 2", "numbered in document order");
+    assertNoProblems(page);
+    await ctx.close();
+  });
+
+  await step("sketchbook: a new account's Sketchbook draws its pages with their notes, replays one, and takes the user's writing as a group of its own", async () => {
+    const book = (await account.api("/api/blocks/root/children")).children.find((b) => b.properties?.seeded === "sketchbook");
+    assertEq(book?.content, "Sketchbook", "seeded beside the Welcome page");
+    const firstSheet = async () => (await account.api(`/api/blocks/${book.id}/subtree`)).block.children[0];
+    const groups = async () => ((await firstSheet()).children || []).filter((c) => c.properties?.ink_url);
+    const [guide] = await groups();
+    ctx = await account.context(browser);
+    page = await openPage(ctx, `${server.base}/?page=${book.id}&ws=${account.ws}`);
+    await until(async () => (await page.$$(".noteSheet .nbSheet")).length === 4, { what: "four pages in the notes view", timeout: 15000 });
+    for (const title of ["Hi there", "Oops? No problem", "Make it yours", "Keep going"]) {
+      // the row's own title; a drawn page on a sheet may show the same words in a text box
+      const shown = await page.locator(".sortableBlockWrap .blockBody").getByText(title, { exact: true }).count();
+      const onSheets = await page.locator(".textBoxLayer").getByText(title, { exact: true }).count();
+      assertEq(shown - onSheets, 1, `a page titled ${title}`);
+    }
+    const sheet = notePage(0);
+    const strokes = () => sheet.locator(".inkLayer path").count();
+    await until(async () => (await strokes()) > 100, { what: "the first page's drawing", timeout: 15000 });
+    const drawn = await strokes();
+    assert((await sheet.locator(".textBoxText").allTextContents()).some((t) => t.includes("Write your name here")), "its notes are text boxes on it");
+    const replay = page.locator(".noteSheetBar .inkReplayBtn").first();
+    await replay.click();
+    assertEq(await replay.getAttribute("aria-pressed"), "true", "the page replays its drawing");
+    await until(async () => (await strokes()) < drawn, { what: "stroke by stroke" });
+    await replay.click();
+    assertEq(await replay.getAttribute("aria-pressed"), "false", "a second press stops it");
+    await until(async () => (await strokes()) === drawn, { what: "the drawing whole again" });
+    // A line low on the first page, under the lanes for the five pens.
+    await page.locator("button[aria-label='Write on this page']").first().click();
+    await page.waitForSelector(".notesInkDock .pdfInkBar", { timeout: 5000 });
+    await sheet.evaluate((n) => n.scrollIntoView({ block: "end" }));
+    const b = await sheet.boundingBox();
+    await drawLine(page, [b.x + b.width * 0.2, b.y + b.height * 0.88], [b.x + b.width * 0.5, b.y + b.height * 0.9]);
+    await until(async () => (await strokes()) === drawn + 1, { what: "the line on the page" });
+    const after = await until(async () => { const g = await groups(); return g.length === 2 ? g : null; }, { what: "a group of the user's own under the page" });
+    assertEq(after.find((g) => g.id === guide.id)?.properties.ink_url, guide.properties.ink_url, "the guide's drawing stays as it was");
+    await page.keyboard.press("Escape");
     assertNoProblems(page);
     await ctx.close();
   });

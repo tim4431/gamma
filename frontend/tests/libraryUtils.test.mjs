@@ -158,6 +158,8 @@ test("findPageForUrl resolves a DOI or arXiv id against the library", () => {
 test("isFreshLibrary: no pages, or only seeded ones", () => {
   assert.equal(isFreshLibrary([]), true);
   assert.equal(isFreshLibrary([{ id: "w", properties: { seeded: "welcome" } }]), true, "the Welcome page alone");
+  assert.equal(isFreshLibrary([{ id: "w", properties: { seeded: "welcome" } }, { id: "s", properties: { seeded: "sketchbook" } }]),
+    true, "the Welcome page and the Sketchbook");
   assert.equal(isFreshLibrary([{ id: "w", properties: { seeded: "welcome" } }, { id: "p", properties: {} }]), false);
   assert.equal(isFreshLibrary([{ id: "p" }]), false, "a page without properties is the user's");
 });

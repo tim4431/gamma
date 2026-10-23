@@ -662,8 +662,8 @@ admin login to an upgraded multi-user instance would be a backdoor — those
 get a startup hint to run `manage.py set-admin`. `seed.create_workspace_files`
 writes a workspace's empty files. `workspaces.ensure_personal` gives an
 account its personal workspace; with `welcome=True` (every account-creating
-path) `seed.seed_welcome` adds the Welcome page and its sample PDF
-([onboarding.md](onboarding.md)). No guest account is seeded: each guest
+path) `seed.seed_welcome` adds the Welcome page, its sample PDF and the
+Sketchbook ([onboarding.md](onboarding.md)). No guest account is seeded: each guest
 login makes its own.
 
 ## manage.py CLI

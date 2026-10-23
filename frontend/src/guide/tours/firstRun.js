@@ -10,7 +10,7 @@ import { T } from "../../shared/i18n/i18n.js";
 // `vars` (overridable through the localStorage key gamma-guide-vars). Start
 // it from the account menu's Tours > Your first paper. It is also offered,
 // as its welcome card, on the library of a demo server once the guest lands
-// and on a library with nothing in it yet but the seeded Welcome page: the
+// and on a library with nothing in it yet but the seeded Welcome page and Sketchbook: the
 // trigger's own `requires` / `anyOf` gate only that offer, so the tour stays
 // startable everywhere.
 //

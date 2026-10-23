@@ -1,16 +1,18 @@
-"""The Notability import: an upload of Notability's "Note" export (one
-``.note``, or a ``.zip`` of them, a library's export, a zipped note folder)
-→ one Gamma page per note, with its PDF, handwriting, shapes, typed text,
-pictures and recordings (docs/dev/import_export.md "Notability notes").
+"""The Notability import: an upload of Notability's "Note" or "NTB" export
+(one ``.note`` or ``.ntb``, or a ``.zip`` of them, a library's export, a
+zipped note folder) → one Gamma page per note, with its PDF, handwriting,
+shapes, typed text, pictures and recordings (docs/dev/import_export.md
+"Notability notes").
 
 It is a source of the reviewed import (routers/imports.py): a preview,
 then a commit run as a background job. The upload is untrusted:
 
 - it is walked through the guarded zip walk (gamma/import_zip.py), with the
   central directory capped (MAX_DIRECTORY_BYTES) before zipfile reads it;
-- a ``.note`` inside it is opened only while it is read, one at a time, in
-  a stack of its own, so the temporary disk a note takes is given back
-  before the next and a library of thousands of notes imports whole;
+- a ``.note`` or ``.ntb`` inside it is opened only while it is read, one at
+  a time, in a stack of its own, so the temporary disk a note takes is
+  given back before the next and a library of thousands of notes imports
+  whole;
 - every member is read only after its size is checked, recordings are
   streamed, and the ink is made and stored one page at a time;
 - every file goes through ``store_pdf``, ``store_file`` or
@@ -19,11 +21,11 @@ then a commit run as a background job. The upload is untrusted:
 
 Files are stored first, outside any transaction; each note's folder and
 page are then written in one short transaction under the write lock, the
-note's Session.plist digest checked again there (``notability_import``, the
-re-import key), so an import that finds the note there writes neither. A
-stopped job keeps the notes it finished. A 413 on one of a note's files
-skips that note; a 507 (the quota, or the disk) stops the import, since
-every later note would meet it too.
+digest of the note's Session.plist or noteBundle checked again there
+(``notability_import``, the re-import key), so an import that finds the
+note there writes neither. A stopped job keeps the notes it finished. A
+413 on one of a note's files skips that note; a 507 (the quota, or the
+disk) stops the import, since every later note would meet it too.
 """
 
 import contextlib
@@ -42,6 +44,7 @@ from . import config, jobs
 from . import ink as inkmod
 from . import notability as nb
 from . import notability_map as nmap
+from . import notability_ntb as ntb
 from .ai_pictures import sniff
 from .blocks_store import (FOLDERS, attachment_props, filing, folder_inserts, folder_paths, insert_page_tree,
                            load_props, new_block_id, write_lock)
@@ -134,8 +137,9 @@ def picture_bytes(data: bytes, media: nb.Media, animation: bytes | None = None) 
     image, an animated GIF's still frame; its ``animation`` comes in its
     place when nothing is to be done and it is a GIF that opens. Something
     is to be done when the picture is cropped (FigureCropRectKey short of
-    the whole image), flipped, turned, or shown at an aspect over 1 % off
-    the cropped image's: then the EXIF orientation is applied, the crop
+    the whole image; an .ntb's crop is in ``media.crop_size`` units, scaled
+    to the image's pixels), flipped, turned, or shown at an aspect over 1 %
+    off the cropped image's: then the EXIF orientation is applied, the crop
     (clamped to the image), the flips, the stretch to the shown aspect and
     the turn (corners transparent), in that order. A turned picture is a PNG, the
     one format the server writes that keeps its transparent corners, its
@@ -154,7 +158,7 @@ def picture_bytes(data: bytes, media: nb.Media, animation: bytes | None = None) 
             width, height = opened.size
             if (opened.getexif() or {}).get(0x0112, 1) in (5, 6, 7, 8):  # EXIF orientation: a quarter turn
                 width, height = height, width
-            crop = _crop_box(media.crop, width, height)
+            crop = _crop_box(_in_pixels(media.crop, media.crop_size, width, height), width, height)
             cw, ch = crop[2] - crop[0], crop[3] - crop[1]
             stretch = abs((media.w / media.h) / (cw / ch) - 1) > 0.01
             if not (angle or media.flip_h or media.flip_v or stretch or crop != (0, 0, width, height)):
@@ -209,6 +213,15 @@ def _opens(data: bytes) -> bool:
         return False
 
 
+def _in_pixels(crop, size, width: int, height: int):
+    """A crop given in ``size`` units (an .ntb's logical asset size, not
+    always the image's pixels) as the image's pixels."""
+    if crop is None or size is None or not (size[0] > 0 and size[1] > 0):
+        return crop
+    sx, sy = width / size[0], height / size[1]
+    return crop[0] * sx, crop[1] * sy, crop[2] * sx, crop[3] * sy
+
+
 def _crop_box(crop, width: int, height: int) -> tuple[int, int, int, int]:
     """FigureCropRectKey (x, y, w, h in source pixels) as a box clamped to
     the image; the whole image when there is none or it holds nothing."""
@@ -223,7 +236,7 @@ def import_notes(ws: str, data, conn, folder: str = "", *, name: str = "", actor
                  preview: bool = False, selected: set[str] | None = None, progress=None) -> dict:
     """Import the Notability notes in the upload ``data`` into ``ws``, through
     the open pages.db connection ``conn``. ``data`` is a seekable binary
-    file: one .note, or a .zip of notes.
+    file: one .note or .ntb, or a .zip of notes.
 
     - One page per note, filed below the folder ``folder`` (an id; "" is
       the top; 400 when it is no folder), made by ``actor``.
@@ -235,8 +248,8 @@ def import_notes(ws: str, data, conn, folder: str = "", *, name: str = "", actor
       A stopped job keeps the notes it finished.
 
     Returns the report. Raises HTTPException 400 (no notes, a Supernote
-    file, an .ntb, a bad destination or selection), 413 (a central
-    directory or an archive past the limits) or 507 (no disk to unpack)."""
+    file, a bad destination or selection), 413 (a central directory or an
+    archive past the limits) or 507 (no disk to unpack)."""
     name = display_filename(name)  # a browser may send a relative path
     zf = open_upload(data, name)
     with zf, contextlib.ExitStack() as stack:
@@ -244,11 +257,11 @@ def import_notes(ws: str, data, conn, folder: str = "", *, name: str = "", actor
         entries: list = []
         walk_zip(zf, "", entries, walk, nested=nb.nested_zip)
         check_ratio(walk)
-        bundles, reasons = nb.find_bundles(entries, name)
+        bundles = nb.find_bundles(entries, name)
         if not bundles:
-            raise HTTPException(status_code=400, detail=nb.NTB_REASON if reasons else nb.NO_NOTES_REASON)
+            raise HTTPException(status_code=400, detail=nb.NO_NOTES_REASON)
         run = _Import(ws, conn, folder, actor, preview, progress or jobs.no_progress)
-        return run.run(bundles, entries, walk["left_out"] + [list(r) for r in reasons], selected)
+        return run.run(bundles, entries, walk["left_out"], selected)
 
 
 class _Import:
@@ -267,6 +280,7 @@ class _Import:
         self.seen = {}     # digest → the page entry of a note earlier in this upload
         self.paths = {}    # folder id → its names from the top
         self.dirs = {}     # bundle path → its folder path below the destination
+        self.opened = {}   # the note at hand's PDFs: member path → (sizes, reader, bytes), or None (_open_pdf)
 
     def warn(self, title: str, reason: str) -> None:
         if len(self.report["warnings"]) < MAX_WARNINGS:
@@ -308,14 +322,19 @@ class _Import:
 
     def _note(self, bundle: nb.Bundle, stack: contextlib.ExitStack) -> None:
         start = len(self.report["warnings"])
+        self.opened = {}
         try:
             members = self._open(bundle, stack)
-            session = self._session(members)
-            digest = content_digest(session)
+            name, data = self._document(members)
+            digest = content_digest(data)
             if self._skip(bundle, digest, start):
                 return
-            note = nb.read_note(members, session, path=bundle.path, digest=digest, ink=not self.preview)
-            del session
+            if name == "Session.plist":
+                note = nb.read_note(members, data, path=bundle.path, digest=digest, ink=not self.preview)
+            else:
+                note = ntb.read_ntb(members, data, path=bundle.path, digest=digest, ink=not self.preview,
+                                    pdf_pages={} if self.preview else self._ntb_pages(members))
+            del data
         except (_Skip, nb.NoteError) as exc:
             self.warn(bundle.path, f"Not imported: {exc}")
             return
@@ -391,18 +410,34 @@ class _Import:
             self.warn(bundle.path, f"{path}: {reason}")
         members = nb.note_members(entries)
         if members is None:
-            ntb = any(e.path.rsplit("/", 1)[-1] == "noteBundle" for e in entries)
-            raise _Skip(nb.NTB_REASON if ntb else "not a Notability note")
+            raise _Skip("not a Notability note")
         return members
 
-    def _session(self, members: nb.Members) -> bytes:
-        entry = members.find("Session.plist")
+    def _document(self, members: nb.Members) -> tuple[str, bytes]:
+        """``(its name, its bytes)`` of the file the note is: a .note's
+        Session.plist, else an .ntb's noteBundle, its size checked against
+        MAX_SESSION_BYTES before it is read."""
+        name = "Session.plist" if members.find("Session.plist") is not None else "noteBundle"
+        entry = members.find(name)
         if entry.size > nb.MAX_SESSION_BYTES:
-            raise _Skip(f"its Session.plist is over {nb.MAX_SESSION_BYTES >> 20} MB")
+            raise _Skip(f"its {name} is over {nb.MAX_SESSION_BYTES >> 20} MB")
         try:
-            return entry.read()
+            return name, entry.read()
         except READ_ERRORS:
-            raise _Skip("its Session.plist could not be read") from None
+            raise _Skip(f"its {name} could not be read") from None
+
+    def _ntb_pages(self, members: nb.Members) -> dict:
+        """The display sizes of an .ntb's PDF's pages, which place the items
+        on them: the PDF opened once for the note (``_pdf_sources`` takes it
+        from ``self.opened``). Empty when the note has several, or its one is
+        past the per-file cap (``_pdf_sources`` then skips the note)."""
+        found = ntb.pdf_assets(members)
+        if len(found) != 1 or members.find(found[0]).size > self.max_mb * MB:
+            return {}
+        key = found[0]
+        if key not in self.opened:
+            self.opened[key] = self._open_pdf(members.find(key), posixpath.basename(key))
+        return {posixpath.basename(key): self.opened[key][0]} if self.opened[key] else {}
 
     def _skip(self, bundle: nb.Bundle, digest: str, start: int) -> bool:
         """A note already in the library, or earlier in this upload, is
@@ -462,13 +497,14 @@ class _Import:
                 media = note.media[i]
                 box = (self._store_picture(members, media, page.frame, title, uses) if media.kind == "picture"
                        else nmap.text_box(media, page.frame, plan.left_out))
+                box = nmap.copied_box(note, media, box, page.frame)
                 if box is not None:
                     found.append(box)
                     counts["pictures" if media.kind == "picture" else "boxes"] += 1
             boxes.append(found)
-        recordings = [r for r in (self._store_recording(members, ref, note) for ref in note.recordings) if r]
+        recordings = self._recordings(members, note)
         self._left_out(title, note.left_out + plan.left_out, note.classes)
-        tree = list(plan.flow) + _markup(plan, groups, boxes) + recordings
+        tree = _ordered(note, plan, list(plan.flow), _markup(plan, groups, boxes), recordings)
         written = self._write(note, props, tree, dirs, entry)
         if written:
             self.report["strokes_imported"] += sum(g["ink_strokes"] for page in groups for g in page)
@@ -524,11 +560,12 @@ class _Import:
     def _pdf_sources(self, members, note: nb.Note) -> tuple[dict, dict, dict]:
         """The PDFs the layout names, each checked against the per-file cap
         before it is read (one past it skips the note), read whole and
-        opened once however many names lead to it: ``(display sizes of
-        their pages, readers, bytes)`` by file name. One that does not open
-        is left out, and its pages become paper."""
+        opened once however many names lead to it (an .ntb's before it was
+        read, ``_ntb_pages``): ``(display sizes of their pages, readers,
+        bytes)`` by file name, which the note's own ``opened`` lets go of.
+        One that does not open is left out, and its pages become paper."""
         pages, readers, sources = {}, {}, {}
-        opened = {}  # member path → (sizes, reader, bytes), or None when it does not open
+        opened, self.opened = self.opened, {}  # member path → (sizes, reader, bytes), or None when it does not open
         for name in dict.fromkeys(e.pdf for e in note.layout if e.pdf in note.pdfs):
             path = note.pdfs[name].path
             if path not in opened:
@@ -625,6 +662,31 @@ class _Import:
         return {"content": f"![{escape_markdown(caption)}](/api/uploads/{stored})",
                 "text_box": nmap.picture_box(media, frame)}
 
+    def _recordings(self, members, note: nb.Note) -> list[dict]:
+        """The note's recordings as recording blocks, each stored
+        (``_store_recording``). A note Gamma's export wrote names in its copy
+        (``Note.private``) the recording each file is a segment of: those
+        files become that recording again, its title, times and segments as
+        they were, the files the note holds."""
+        copies = (note.private or {}).get("recordings")
+        copies = copies if isinstance(copies, dict) else {}
+        out, grouped = [], {}
+        for ref in note.recordings:
+            made = self._store_recording(members, ref, note)
+            if made is None:
+                continue
+            copy = copies.get(posixpath.basename(ref.path or ""))
+            block = copy.get("block") if isinstance(copy, dict) else None
+            joined = _copied_recording(copy, made) if isinstance(block, int) else None
+            if joined is None:
+                out.append(made)
+            elif block in grouped:
+                grouped[block]["properties"]["recording"]["segments"] += joined["properties"]["recording"]["segments"]
+            else:
+                grouped[block] = joined
+                out.append(joined)
+        return out
+
     def _store_recording(self, members, ref: nb.RecordingRef, note: nb.Note) -> dict | None:
         """A recording as a recording block with one segment; None, with a
         warning, when it cannot be stored. No stroke is placed on it: the
@@ -660,12 +722,34 @@ class _Import:
             self.warn(title, f"Recording {ref.name} is left out: {exc.detail}")
             return None
         self.progress(item=ref.name)
-        started = int((ref.created or note.created or datetime.now(UTC)).timestamp() * 1000)
+        started = round((ref.created or note.created or datetime.now(UTC)).timestamp() * 1000)
         return {"content": ref.name or "Recording",
                 "properties": {"recording": {"started": started, "state": "done", "dur": duration,
                                              "segments": [{"url": f"/api/uploads/{stored}", "started": started,
                                                            "dur": duration, "bytes": entry.size,
                                                            "mime": "audio/mp4"}]}}}
+
+
+def _ms(value) -> int | None:
+    return value if isinstance(value, int) and not isinstance(value, bool) and 0 <= value < 1 << 53 else None
+
+
+def _copied_recording(copy: dict, made: dict) -> dict | None:
+    """The recording block ``made`` of one file, as Gamma's copy says the
+    recording it is a segment of was: its title, its start, state and
+    length, and this segment's start and length (the file, its size and
+    type are ``made``'s). None when the copy does not read."""
+    rec, segment, content = copy.get("recording"), copy.get("segment"), copy.get("content")
+    if not isinstance(rec, dict) or not isinstance(segment, dict) or not isinstance(content, str):
+        return None
+    started, dur = _ms(rec.get("started")), _ms(rec.get("dur"))
+    seg_started, seg_dur = _ms(segment.get("started")), _ms(segment.get("dur"))
+    if None in (started, dur, seg_started, seg_dur) or len(content) > 500:
+        return None
+    ours = made["properties"]["recording"]["segments"][0]
+    return {"content": content, "properties": {"recording": {
+        "started": started, "state": "done", "dur": dur,
+        "segments": [{**ours, "started": seg_started, "dur": seg_dur}]}}}
 
 
 def _missing(path: str) -> str:
@@ -685,12 +769,39 @@ def _markup(plan: nmap.NotePlan, groups: list, boxes: list) -> list[dict]:
         inks = [{"content": "", "properties": group} for group in (groups[k - 1] if groups else [])]
         if plan.kind == "notebook":
             placed = [{"content": box["content"], "properties": {"text_box": box["text_box"]}} for box in boxes[k - 1]]
-            tree.append({"id": new_block_id(), "content": "", "properties": {"sheet": plan.paper, "collapsed": True},
+            sheet = plan.papers[k - 1] if plan.papers else plan.paper
+            tree.append({"id": new_block_id(), "content": "", "properties": {"sheet": sheet, "collapsed": True},
                          "children": inks + placed})
         elif plan.kind in ("original", "composed"):
             tree += inks + [{"content": box["content"], "properties": {"text_box": box["text_box"], "pdf_page": k}}
                             for box in boxes[k - 1]]
     return tree
+
+
+def _ordered(note: nb.Note, plan: nmap.NotePlan, notes: list, markup: list, recordings: list) -> list[dict]:
+    """The page's blocks: its notes, then its sheets or its PDF's
+    handwriting and boxes, then its recordings; in the order of Gamma's
+    copy when the note is one Gamma's export wrote and the copy names as
+    many notes, sheets and recordings as the note brings (a PDF's
+    handwriting and boxes go together, where the first of them was)."""
+    canonical = notes + markup + recordings
+    order = (note.private or {}).get("order")
+    if not isinstance(order, list) or len(order) > len(canonical) + 1:
+        return canonical
+    parts = {"note": notes, "recording": recordings}
+    if plan.kind == "notebook":
+        parts["sheet"] = markup
+    else:
+        parts["markup"] = [markup] if markup else []
+    counts = {kind: order.count(kind) for kind in parts}
+    if sum(counts.values()) != len(order) or any(counts[kind] != len(items) for kind, items in parts.items()):
+        return canonical
+    taken = {kind: iter(items) for kind, items in parts.items()}
+    out = []
+    for kind in order:
+        item = next(taken[kind])
+        out += item if kind == "markup" else [item]
+    return out
 
 
 def _note_dirs(bundles: list[nb.Bundle]) -> dict[str, list[str]]:

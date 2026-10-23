@@ -58,6 +58,11 @@ const EXPORT_FORMATS = [
     hint: T("A typeset document of highlights and notes"), editable: ["highlights", "notes"], fixed: { bundle: false } },
   { id: "markdown", mode: "readable", label: T("Markdown"), category: "Notes",
     hint: T("Readable notes for any Markdown editor"), editable: ["highlights", "notes", "bundle"] },
+  // A note holds everything a page has but its highlights, so it has no switches.
+  { id: "notability", mode: "notability", label: "Notability", category: "Notes",
+    hint: T("A .note with the handwriting, to open in Notability"), editable: [],
+    fixed: { highlights: false, notes: true, bundle: true },
+    folder: { hint: T("Each page as a .note, in one .zip") } },
   { id: "obsidian", mode: "obsidian", label: T("Obsidian"), category: "Library",
     hint: T("A vault with notes, links and attachments"), editable: ["highlights", "notes", "bundle"] },
   { id: "logseq", mode: "logseq-graph", label: T("Logseq"), category: "Library",
@@ -140,6 +145,10 @@ export function exportSummary({ payload, noPdfCopy }, folder) {
         : t("This paper's citation entry as a .bib file, under its citation key.");
     case "gamma":
       return t("A complete copy{folder}: pages, highlights, notes, metadata, AI chats and files. Ready to import into another Gamma library.", { folder: folder ? t(" of the folder") : "" });
+    case "notability":
+      return folder
+        ? t("Every page in the folder as a Notability note, in one .zip, its subfolders as folders: each page's PDF or sheets of paper, its handwriting, shapes, text boxes, pictures, notes and recordings. Highlights stay behind: Notability keeps none on a PDF's text.")
+        : t("This page as a Notability note: its PDF or sheets of paper, its handwriting (pressure and tilt included), shapes, text boxes, pictures, notes and recordings. Highlights stay behind: Notability keeps none on a PDF's text. Importing the note into Gamma brings the page back as it was.");
     case "logseq":
       return t("Highlights and notes are always included in a Logseq graph. Choose whether to include the PDF and images too.");
     case "obsidian":
@@ -178,7 +187,7 @@ const IMPORT_SOURCES = [
   { id: "markdown", label: T("Markdown notes"), category: "Notes", hint: T("Markdown files, Obsidian vaults or Notion exports"), actionLabel: T("Choose file…"),
     instructions: T("A single .md becomes a note page. A .zip of Markdown — a zipped Obsidian vault, Notion's Export → Markdown & CSV (subpages included), a Gamma Markdown export, or any zipped folder of notes — becomes one page per file: folders become folders, links between the notes ([[wikilinks]] included) become mentions, ![[block]] embeds synced blocks, tags labels, and images and files come along. Notes already imported are skipped.") },
   { id: "notability", label: T("Notability notes"), category: "Notes", hint: T("Handwriting, PDFs, typed text and recordings"), actionLabel: T("Choose files…"),
-    instructions: T("Pick one or more .note files, or a .zip of them. In Notability, export with File Format “Note”, not “NTB”: in a note, the options icon → Export Options; in the library, press and hold a note → Export Options. Each note becomes a page: a PDF note keeps its PDF, a paper note becomes a notebook, and its handwriting, typed text, pictures and recordings come along. Notes already imported are skipped.") },
+    instructions: T("Pick one or more .note or .ntb files, or a .zip of them: Notability's exports with File Format “Note” or “NTB” (in a note, the options icon → Export Options; in the library, press and hold a note → Export Options). Each note becomes a page: a PDF note keeps its PDF, a paper note becomes a notebook, and its handwriting, typed text and pictures come along, and from a “Note” export its recordings. Notes already imported are skipped.") },
   { id: "logseq", label: T("Logseq highlights"), category: "This paper", hint: T("A PDF and its .edn, with optional notes"), actionLabel: T("Choose files…"),
     instructions: T("Pick a Logseq .pdf and its .edn (a .md of notes is optional). The paper and its highlights land in your library as a new page.") },
   { id: "gamma", label: T("Gamma export (.zip)"), category: "Library", hint: T("Merge pages, files and chats from Gamma"), actionLabel: T("Choose .zip…"),

@@ -1,7 +1,8 @@
 """Notability notes: finding them among an upload's files, and reading one
 into the ``Note`` model (the format: docs/research/notability-format.md;
 what the import makes of a note: docs/dev/import_export.md "Notability
-notes").
+notes"). An .ntb, the "NTB" export, reads into the same model through
+gamma/notability_ntb.py.
 
 A note is Notability's "Note" export, a zip holding one folder with a
 ``Session.plist`` (the whole document, a keyed archive), a
@@ -25,10 +26,13 @@ point.
 """
 
 import bisect
+import json
 import math
+import os
 import posixpath
 import sys
 import unicodedata
+import zlib
 from array import array
 from collections import Counter
 from dataclasses import dataclass, field
@@ -51,17 +55,13 @@ MAX_NOTE_PAGES = 5_000          # pages of one note: its layout is read no furth
 MAX_MEDIA = 10_000              # text boxes, pictures, formulas and stickies in one note
 MAX_NOTE_TEXT = 5_000_000       # characters of typed text in one note, every string together
 MAX_NOTE_RUNS = 200_000         # formatting runs read in one note, every text together
+MAX_RECORDS = 1_500_000         # records read from an .ntb's noteBundle
 COORD_LIMIT = 1e6               # an item with a |coordinate| past this, in document units, is damage
 UNFILED = frozenset({"unsortedNotesKey", "Unfiled Notes", ""})
-NTB_REASON = ("This is a Notability .ntb file, the format of Notability Cloud and of the Mac app's "
-              "Save As, which Gamma cannot read reliably yet. In Notability, export the note again "
-              "with File Format “Note” instead of “NTB” (in the note: the options icon → Export "
-              "Options; in the library: press and hold the note → Export Options), then import the "
-              ".note file.")
 SUPERNOTE_REASON = "This .note file is from a Supernote, not from Notability."
-NO_NOTES_REASON = ("No Notability notes in this file. Gamma reads Notability's “Note” export: a .note "
-                   "file, or a .zip of them. A “PDF + Recording” backup holds a PDF and its audio: "
-                   "add the PDF to the library instead.")
+NO_NOTES_REASON = ("No Notability notes in this file. Gamma reads Notability's “Note” and “NTB” exports: "
+                   ".note and .ntb files, or a .zip of them. A “PDF + Recording” backup holds a PDF and "
+                   "its audio: add the PDF to the library instead.")
 SUPERNOTE_MAGIC = b"noteSN_FILE_VER_"
 NEWEST_FORMAT = 9               # sessionFormatVersion of Notability 15 and 16
 TITLE_CHARS = 500
@@ -77,6 +77,10 @@ _MAX_PAGE_NUMBER = 1_000_000     # past it a layout entry is a blank page (Notab
 _LAST = 1 << 62                  # the z-order position of an ink group that has no index: above the rest
 _PATH_MAGIC = b"\x25\xb3\xe5\x48"  # an archived CGPath (``_path``)
 _PATH_POINTS = (1, 1, 2, 3, 0)   # the points of each CGPath element: move, line, quadratic, cubic, close
+GAMMA_UUID = b"GAMMAI\x80"       # how a curve UUID Gamma's export wrote begins (a version 8 UUID): its anchors
+                                 # are the stroke's samples (``Curve.gamma``)
+PRIVATE_KEY = "GammaNoteKey"     # the root's key for Gamma's own copy of what the note holds (``Note.private``)
+MAX_PRIVATE_BYTES = 64 << 20     # that copy, inflated
 
 # What a note left out, by kind, as its warning says it once per note
 # (``left_out_reasons``); ``{n}`` is the count.
@@ -112,6 +116,12 @@ LEFT_OUT = {
                     f"Past {MAX_MEDIA:,} objects the rest is left out ({{n}} objects)"),
     "text": ("{n} paragraph of typed text past the import's limit is left out",
              "{n} paragraphs of typed text past the import's limit are left out"),
+    "records": (f"Past {MAX_RECORDS:,} records of the note the rest is left out ({{n}} record)",
+                f"Past {MAX_RECORDS:,} records of the note the rest is left out ({{n}} records)"),
+    "record": ("{n} record of a kind this import does not know is left out",
+               "{n} records of a kind this import does not know are left out"),
+    "lost text": ("{n} text that belongs to no page or box is left out",
+                  "{n} texts that belong to no page or box are left out"),
 }
 
 
@@ -167,6 +177,7 @@ class PaperSpec:
     color: str | None = None  # "#rrggbb" from "Color:#…" or "TemplatePDF:<UUID>:#…"; None means white
     legacy: int | None = None  # "Legacy:<n>", or the root's paperIndex (11.x and earlier)
     lines: float | None = None  # the spacing in inches of lineStyle2 "Lines:<b>:<b>:<spacing>"
+    ruling: str = "ruled"     # what is drawn every ``lines`` inches: "ruled", or an .ntb's "grid" or "dots"
     grid: bool = False        # legacy paperLineStyle 5 (a small grid)
     template: bool = False    # a TemplatePDF paper
 
@@ -210,6 +221,7 @@ class Curve:
     style: int                     # 3 pen, 4 highlighter, 5 pencil; any other value reads as a pen
     dash: str | None               # "dashed" | "dotted"
     z: int = 0                     # its place in the note's drawing order, which the shapes share
+    gamma: bytes | None = None     # its UUID when Gamma's export wrote it (GAMMA_UUID): its anchors are samples
 
     @property
     def anchors(self) -> int:
@@ -233,6 +245,7 @@ class Shape:
     segments: tuple = ()           # a path's after its first point: 1 a line to the next, 3 a cubic through
                                    # the next three
     z: int = 0                     # its place in the note's drawing order, which the curves share
+    uuid: bytes | None = None      # its ``uuid``, which Gamma's copy (``Note.private``) is keyed by
 
 
 @dataclass
@@ -268,7 +281,9 @@ class Media:
     picture: str | None = None     # picture: its image below the note's folder; None when missing
     animation: str | None = None   # picture: an animated GIF's animation below the note's folder
     crop: tuple | None = None      # picture: FigureCropRectKey, in source pixels
+    crop_size: tuple | None = None  # picture: the size the crop is given in, when not the image's pixels
     caption: str = ""              # picture: captionFieldText when isCaptionEnabled
+    uuid: bytes | None = None      # its UUID, which Gamma's copy (``Note.private``) is keyed by
 
 
 @dataclass
@@ -286,6 +301,7 @@ class Note:
     created: datetime | None = None
     version: int | None = None     # sessionFormatVersion
     width: float = 565.0           # W
+    page_height: float | None = None  # a plain page's height when the note states it (an .ntb), else its paper's
     paper: PaperSpec = field(default_factory=PaperSpec)
     layout: list = field(default_factory=list)       # [LayoutEntry]
     pdfs: dict = field(default_factory=dict)         # the bundled PDFs the layout can use, by file name
@@ -298,6 +314,7 @@ class Note:
     warnings: list = field(default_factory=list)
     left_out: Counter = field(default_factory=Counter)  # what was left out, counted by kind (LEFT_OUT)
     classes: Counter = field(default_factory=Counter)   # the classes of the media objects left out
+    private: dict | None = None    # Gamma's own copy of what a note its export wrote holds (PRIVATE_KEY), unchecked
 
 
 def left_out_reasons(counts: Counter, classes: Counter | None = None, pages: int = 0) -> list[str]:
@@ -332,16 +349,18 @@ def _inside(path: str, folder: str) -> bool:
 def nested_zip(name: str) -> bool:
     """walk_zip's ``nested`` for this source: a ``*.zip`` opens in place,
     except under an ``NBPDFIndex/`` folder (Notability's own search cache,
-    never read). A .note is not opened by the walk: the import opens each
-    one when it reads it."""
+    never read). A .note or .ntb is not opened by the walk: the import opens
+    each one when it reads it."""
     parts = name.lower().split("/")
     return parts[-1].endswith(".zip") and "nbpdfindex" not in parts[:-1]
 
 
-def _sessions(entries: list[ZipEntry]) -> list[ZipEntry]:
-    """The Session.plist members, shallowest first."""
-    return sorted((e for e in entries if _leaf(e.path).lower() == "session.plist"),
-                  key=lambda e: (e.path.count("/"), e.path))
+def _roots(entries: list[ZipEntry]) -> list[ZipEntry]:
+    """The members that make a note of their folder, shallowest first: a
+    Session.plist (a .note's), or a noteBundle (an .ntb's) after it."""
+    leaves = {"session.plist": 0, "notebundle": 1}
+    return sorted((e for e in entries if _leaf(e.path).lower() in leaves),
+                  key=lambda e: (e.path.count("/"), leaves[_leaf(e.path).lower()], e.path))
 
 
 def _members_below(entries: list[ZipEntry], folder: str) -> Members:
@@ -363,32 +382,29 @@ def _owner(path: str, folders) -> str | None:
 
 
 def note_members(entries: list[ZipEntry]) -> Members | None:
-    """The files below the shallowest Session.plist's folder; None without
-    one. ``find_bundles`` uses it, and so does the import for a packed note
-    once it is opened."""
-    sessions = _sessions(entries)
-    return _members_below(entries, posixpath.dirname(sessions[0].path)) if sessions else None
+    """The files below the folder of the shallowest Session.plist or
+    noteBundle; None without one. ``find_bundles`` uses it, and so does the
+    import for a packed note once it is opened."""
+    roots = _roots(entries)
+    return _members_below(entries, posixpath.dirname(roots[0].path)) if roots else None
 
 
-def find_bundles(entries: list[ZipEntry], upload_name: str) -> tuple[list[Bundle], list[tuple[str, str]]]:
-    """The notes among the walked entries, sorted by path, plus what else is
-    worth a word (``[path, reason]``).
+def find_bundles(entries: list[ZipEntry], upload_name: str) -> list[Bundle]:
+    """The notes among the walked entries, sorted by path.
 
-    - A member named ``*.note`` (any case) is a packed note: a Bundle with
-      ``packed``.
-    - A member named Session.plist (any case) that lies in no other note
-      marks an unzipped note at its folder (the shallowest one when they
-      nest); its members are the entries below that folder.
+    - A member named ``*.note`` or ``*.ntb`` (any case) is a packed note: a
+      Bundle with ``packed``.
+    - A member named Session.plist or noteBundle (any case) that lies in no
+      other note marks an unzipped note at its folder (the shallowest one
+      when they nest); its members are the entries below that folder.
     - A packed note's path is its member's path. An unzipped note's path
       is its folder, except that it is the upload's name when the folder is
       the upload's top, or when the upload is named ``*.note`` and the
       folder is its single top folder (Notability's own export of one note,
-      whose folder may carry an older name).
-    - A folder holding a member named ``noteBundle`` (and no Session.plist)
-      is left out with NTB_REASON, and so is a member named ``*.ntb``."""
+      whose folder may carry an older name)."""
     folders: dict[str, dict] = {}  # each note's folder → its members by their path below it
-    for session in _sessions(entries):
-        folder = posixpath.dirname(session.path)
+    for root in _roots(entries):
+        folder = posixpath.dirname(root.path)
         if _owner(folder, folders) is None:
             folders[folder] = {}
     outside = []
@@ -399,23 +415,16 @@ def find_bundles(entries: list[ZipEntry], upload_name: str) -> tuple[list[Bundle
         elif e.path != folder:
             folders[folder][e.path[len(folder) + 1 if folder else 0:]] = e
     tops = {e.path.split("/", 1)[0] if "/" in e.path else "" for e in entries}
-    bundles, reasons, seen = [], [], set()
+    bundles = []
     for folder, found in folders.items():
         members = Members(found)
         single = upload_name.lower().endswith(".note") and "/" not in folder and tops == {folder}
         path = (upload_name or "Untitled.note") if not folder or single else folder
         bundles.append(Bundle(path=path, size=sum(e.size for e in members.entries.values()), members=members))
-    for e in outside:
-        leaf = _leaf(e.path)
-        if leaf.lower().endswith(".note"):
-            bundles.append(Bundle(path=e.path, size=e.size, packed=e))
-        elif leaf.lower().endswith(".ntb") or leaf == "noteBundle":
-            path = e.path if leaf != "noteBundle" else (posixpath.dirname(e.path) or upload_name or e.path)
-            if path not in seen:
-                seen.add(path)
-                reasons.append((path, NTB_REASON))
+    bundles += [Bundle(path=e.path, size=e.size, packed=e) for e in outside
+                if _leaf(e.path).lower().endswith((".note", ".ntb"))]
     bundles.sort(key=lambda b: b.path)
-    return bundles, reasons
+    return bundles
 
 
 # --- reading a note -------------------------------------------------------------------
@@ -480,7 +489,7 @@ class _Reader:
     def read(self, ink: bool) -> Note:
         arch, root, note = self.arch, self.arch.root, self.note
         name, subject, created = read_meta(self.members)
-        note.title = _title(name, arch.string(root.get("name")), arch.string(root.get("packagePath")), self.path)
+        note.title = note_title(name, arch.string(root.get("name")), arch.string(root.get("packagePath")), self.path)
         subject = next((s.strip() for s in (subject, arch.string(root.get("subject")))
                         if s and s.strip() not in UNFILED), "")
         note.subject = subject[:TITLE_CHARS]
@@ -495,10 +504,32 @@ class _Reader:
         self._layout(model)
         if ink:
             self._ink()
+            note.private = self._private()
         self._media()
         note.flow = self._runs(arch.get(self.rich, "attributedString"))
         self._recordings()
         return note
+
+    def _private(self) -> dict | None:
+        """Gamma's own copy of what the note holds, when Gamma's export wrote
+        it: zlib-compressed JSON under PRIVATE_KEY, at most
+        MAX_PRIVATE_BYTES inflated, an object of its format; None for
+        anything else. It is not checked here: the import uses each part
+        only where the note still holds what it describes
+        (gamma/notability_map.py)."""
+        raw = self.arch.data(self.arch.root.get(PRIVATE_KEY))
+        if raw is None:
+            return None
+        try:
+            self._spend(raw)
+            inflate = zlib.decompressobj()
+            data = inflate.decompress(raw, MAX_PRIVATE_BYTES)
+            if inflate.unconsumed_tail:
+                return None
+            value = json.loads(data, parse_constant=_no_constant)
+        except (ArchiveError, zlib.error, ValueError, RecursionError):
+            return None
+        return value if isinstance(value, dict) and value.get("format") == "gamma-notability" else None
 
     def _spend(self, raw: bytes) -> None:
         """Spend ``raw``'s size from what the plists inside the note (its ink
@@ -685,7 +716,10 @@ class _Reader:
             if n > MAX_CURVE_POINTS:
                 note.left_out["stroke"] += 1
             elif style != STYLE_HIDDEN and rgba[3]:  # style 6 Notability does not draw; alpha 0 shows nothing
-                kept.append((stroke, Curve(ink, p, n, f, r == 0, widths[i] * scale, rgba, style, dashes.get(stroke))))
+                curve = Curve(ink, p, n, f, r == 0, widths[i] * scale, rgba, style, dashes.get(stroke))
+                if uuids is not None and len(uuids) == 16 * n_curves and is_gamma(uuids[16 * i:16 * i + 16]):
+                    curve.gamma = uuids[16 * i:16 * i + 16]
+                kept.append((stroke, curve))
                 self.curve_count += 1
             p += n
             f += anchors
@@ -694,6 +728,7 @@ class _Reader:
             message = "The handwriting's width data does not match its strokes: they are drawn at an even width"
             if (n_anchors or fractional) and message not in note.warnings:
                 note.warnings.append(message)
+        kept = _joined(kept)
         taken = self._shape_list(arch.data(h.get("shapes")), transform, scale, zkey)
         taken += self._groups(arch, h, transform, depth, zkey)
         free, last, key = _free_positions(taken), -1, None
@@ -855,10 +890,11 @@ class _Reader:
         if len(pieces) > room:
             note.left_out["shapes limit"] += len(pieces) - room
         color = _rgba(look.get("strokeColor")) or (group_look and _rgba(group_look.get("strokeColor"))) or (0, 0, 0, 1)
+        uuid = d.get("uuid") if isinstance(d.get("uuid"), bytes) and len(d["uuid"]) == 16 else None
         return [Shape(kind="path" if kind == "partialshape" else kind, points=points, control=control,
                       arrow=kind != "partialshape" and whole(dash_style.get("arrowHead")) == 1, width=width * scale,
                       rgba=color, fill=_rgba(look.get("fillColor")), style=whole(look.get("style")) or STYLE_PEN,
-                      dash={1: "dashed", 2: "dotted"}.get(pattern), grouped=grouped, segments=segments)
+                      dash={1: "dashed", 2: "dotted"}.get(pattern), grouped=grouped, segments=segments, uuid=uuid)
                 for points, segments in pieces[:room]]
 
     # --- media ---------------------------------------------------------------------------
@@ -895,6 +931,8 @@ class _Reader:
             media = Media(kind=kind, x=origin[0], y=origin[1], w=size[0], h=size[1],
                           rotation=arch.number(obj.get("rotationDegrees")) or 0.0,
                           z=arch.number(obj.get("zIndex")) or 0.0)
+            ident = arch.data(arch.get(arch.get(obj, "UUID"), "NS.uuidbytes"))
+            media.uuid = ident if ident is not None and len(ident) == 16 else None
             paper = arch.get(arch.get(obj, "paperStyleObject"), "paperColor")
             if kind == "text":
                 media.runs = self._runs(arch.get(arch.get(obj, "textStore"), "attributedString"))
@@ -973,7 +1011,7 @@ class _Reader:
             span = parse_numbers(arch.string(m.get("subRangeRangeKey")), 2)
             if span is None:
                 continue
-            start, end = _char_at(bounds, span[0], len(text)), _char_at(bounds, span[0] + span[1], len(text))
+            start, end = char_at(bounds, span[0], len(text)), char_at(bounds, span[0] + span[1], len(text))
             if end > start:
                 ranged.append((start, order, end, self._style(m)))
         ranged.sort(key=lambda item: (item[0], item[1]))
@@ -1056,12 +1094,12 @@ class _Reader:
 
 # --- small readers -------------------------------------------------------------------------
 
-def _title(meta: str, name: str | None, package: str | None, path: str) -> str:
+def note_title(meta: str, name: str | None, package: str | None, path: str) -> str:
     """Metadata noteName, else the root's name, else packagePath, else the
-    bundle path's last part without ``.note``/``.nbn``; NFC, stripped, at
-    most TITLE_CHARS characters, "Untitled note" when empty."""
+    bundle path's last part without ``.note``, ``.nbn`` or ``.ntb``; NFC,
+    stripped, at most TITLE_CHARS characters, "Untitled note" when empty."""
     leaf = path.rstrip("/").rsplit("/", 1)[-1]
-    for ext in (".note", ".nbn"):
+    for ext in (".note", ".nbn", ".ntb"):
         if leaf.lower().endswith(ext):
             leaf = leaf[:-len(ext)]
     for value in (meta, name, package, leaf):
@@ -1084,7 +1122,7 @@ def _hex(text: str) -> str | None:
     return None
 
 
-def _char_at(bounds: array | None, offset: float, n: int) -> int:
+def char_at(bounds: array | None, offset: float, n: int) -> int:
     """The character index a UTF-16 offset falls at in a text of ``n``
     characters, clamped to it; an offset inside a surrogate pair moves to
     the character after it. ``bounds`` holds where each character starts
@@ -1157,6 +1195,66 @@ def _rgba(value) -> tuple | None:
     if len(values) == 3:
         values.append(1.0)
     return tuple(min(1.0, max(0.0, v)) for v in values)
+
+
+def gamma_uuid() -> bytes:
+    """A curve UUID as Gamma's export writes it: GAMMA_UUID, then random
+    bits, the variant set (an RFC 9562 version 8 UUID, which no random
+    version 4 one can be)."""
+    raw = bytearray(os.urandom(16))
+    raw[:len(GAMMA_UUID)] = GAMMA_UUID
+    raw[8] = 0x80 | (raw[8] & 0x3F)
+    return bytes(raw)
+
+
+def is_gamma(uuid: bytes) -> bool:
+    return len(uuid) == 16 and uuid[:len(GAMMA_UUID)] == GAMMA_UUID and uuid[8] & 0xC0 == 0x80
+
+
+def _no_constant(name: str):
+    raise ValueError(f"not a finite number: {name}")
+
+
+def _joined(kept: list[tuple[int, Curve]]) -> list[tuple[int, Curve]]:
+    """A stroke Gamma's export cut into curves (one longer than a curve
+    may be) made whole again: consecutive curves of one Gamma UUID, the
+    next starting on the anchor the last ended on, as one curve over
+    arrays of its own. A piece Notability's eraser left, which starts
+    elsewhere, stays a curve."""
+    if not any(c.gamma for _s, c in kept):
+        return kept
+    out: list[tuple[int, Curve]] = []
+    for stroke, curve in kept:
+        last = out[-1][1] if out else None
+        if (last is not None and curve.gamma and last.gamma == curve.gamma and last.bezier and curve.bezier
+                and out[-1][0] == stroke and _point_at(last, last.n - 1) == _point_at(curve, 0)):
+            out[-1] = (stroke, _concat(last, curve))
+        else:
+            out.append((stroke, curve))
+    return out
+
+
+def _point_at(curve: Curve, i: int) -> tuple[float, float]:
+    at = 2 * (curve.p + i)
+    return curve.ink.points[at], curve.ink.points[at + 1]
+
+
+def _concat(a: Curve, b: Curve) -> Curve:
+    """Two curves of one stroke, ``b`` starting on ``a``'s last anchor, as
+    one curve on arrays of its own (that anchor once)."""
+    def part(values, curve, per, skip):
+        if values is None:
+            return None
+        return values[per * (curve.f + skip):per * (curve.f + curve.anchors)]
+
+    ink, other = a.ink, b.ink
+    points = array("f", ink.points[2 * a.p:2 * (a.p + a.n)]) + other.points[2 * (b.p + 1):2 * (b.p + b.n)]
+    arrays = []
+    for name, per in (("fractional", 1), ("force", 1), ("altitude", 1), ("azimuth", 2)):
+        first, second = part(getattr(ink, name), a, per, 0), part(getattr(other, name), b, per, 1)
+        arrays.append(None if first is None or second is None else array("f", first) + second)
+    joined = InkHash(points, *arrays, ink.transform, ink.scale)
+    return Curve(joined, 0, a.n + b.n - 1, 0, True, a.base, a.rgba, a.style, a.dash, a.z, a.gamma)
 
 
 def _free_positions(taken: list[int]):

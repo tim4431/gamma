@@ -20,7 +20,7 @@ const STEPS = [T("Upload"), T("Review"), T("Import"), T("Summary")];
 const PHASE_STEP = { packing: 0, upload: 0, scanning: 0, review: 1, importing: 2, ended: 2, complete: 3 };
 const PHASE_LABEL = { packing: t("Reading the folder"), upload: t("Uploading for review"), scanning: t("Checking files and library destinations") };
 // The answers that refuse the file itself (400: nothing this source reads,
-// such as a Notability .ntb; 413: too large; 415: a type it does not take):
+// such as a Supernote .note; 413: too large; 415: a type it does not take):
 // sending it again cannot help, so the dialog offers no retry.
 const REFUSED = [400, 413, 415];
 

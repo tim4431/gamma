@@ -6364,9 +6364,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       else if (o.source === "notability") {
         // Notes picked together go up as one .zip. Safari on an iPhone or
         // iPad (no folder picker: canPickFolder) greys out a file whose
-        // extension it has no type for, a .note among them, so there the
-        // picker takes any file and the server says what it cannot read.
-        pickFiles({ accept: canPickFolder() ? ".note,.zip,application/zip" : "", multiple: true },
+        // extension it has no type for, a .note or .ntb among them, so there
+        // the picker takes any file and the server says what it cannot read.
+        pickFiles({ accept: canPickFolder() ? ".note,.ntb,.zip,application/zip" : "", multiple: true },
           (files) => review(files.length === 1 ? files[0] : filesUpload(files, t("Notability notes"))));
       } else pickFiles({ accept: o.source === "markdown" ? ".md,.markdown,.zip,text/markdown,application/zip" : ".zip,application/zip" },
         ([file]) => review(file));
@@ -7223,7 +7223,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // The open page carries enough of the user's own work to be worth
   // taking out of Gamma: the export hint.
   const annotatedPage = useMemo(() => blocksToHighlights(blocks).length >= 5, [blocks]);
-  // Nothing in the library yet but the seeded Welcome page, once the listing
+  // Nothing in the library yet but the seeded Welcome page and Sketchbook, once the listing
   // has come back: the first tour is offered on it, and the library shows
   // "Start your library".
   const freshLibrary = useMemo(() => homeLoaded && isFreshLibrary(homeBlocks), [homeLoaded, homeBlocks]);
@@ -7784,7 +7784,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // (pages are created plain, then labelled) nor when only folders show.
   const newPageAllowed = lib.organize && !labelFilter && homeKinds !== "folders" && homeKinds !== "labels";
   // A library with nothing of the user's in it yet (only the seeded Welcome
-  // page, or nothing) shows "Start your library" at its root instead of the
+  // page and Sketchbook, or nothing) shows "Start your library" at its root instead of the
   // empty line; a folder or label view keeps its own message.
   const libraryStart = freshLibrary && lib.organize && !folderFilter && !labelFilter ? (
     <LibraryEmpty

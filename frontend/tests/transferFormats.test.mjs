@@ -124,3 +124,17 @@ test("the bibliography URL is the same path for a fetch and for a pasted link", 
   assert.equal(shared, "https://host/api/folders/f1/export?mode=bibtex&share=tok%20en");
   assert(!shared.includes("ws="));
 });
+
+test("a Notability note has no switches: it exports straight from the first step, a folder's as one .zip", () => {
+  const note = resolveExport({ format: "notability", highlights: true, notes: false, bundle: false }, paper);
+  assert.equal(note.definition.category, "Notes");
+  assert.equal(note.needsReview, false);
+  assert.deepEqual(note.payload, { format: "notability", highlights: false, notes: true, bundle: true });
+  assert.match(exportSummary(note), /brings the page back as it was/);
+  assert.equal(resolveExport({ format: "notability" }, { hasPdf: false }).definition.id, "notability");
+  const folder = resolveExport({ format: "notability" }, { folder: "Reading" });
+  assert.match(folder.definition.hint, /one \.zip/);
+  assert.deepEqual(exportJobBody(folder.payload, { folder: "Reading" }),
+    { folder: "Reading", mode: "notability", pdf: true, highlights: false, notes: true });
+  assert.equal(exportFormatOf("notability").label, "Notability");
+});

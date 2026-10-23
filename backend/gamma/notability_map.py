@@ -74,19 +74,21 @@ class NotePlan:
     kind: str                    # "notebook" | "note" | "original" | "composed"
     pdf: str | None              # for "original": the file's name
     paper: dict                  # the normalized paper of the paper pages
-    flow: list                   # flow_blocks(note.flow)
+    flow: list                   # flow_blocks(note.flow), or Gamma's copy of the notes (copied_flow)
     warnings: list = field(default_factory=list)
     left_out: Counter = field(default_factory=Counter)
+    papers: list | None = None   # a notebook's paper per page, from Gamma's copy (copied_papers); None: ``paper``
 
 
 # --- pages ------------------------------------------------------------------------------
 
 def paper_page(note: Note) -> tuple[float, float, float]:
     """``(page width in pt, page height in pt, H)`` of a paper page, H its
-    height in document units: 612 pt wide (A4 595.28), as tall as its size
-    asks — A4 841.89/595.28, legal 14/8.5, a static-width letter page
-    11/8.5 with H floored to a whole unit (as gnnote and nokcha0 read it),
-    anything else 803.25/612 — and landscape the inverse ratio."""
+    height in document units: 612 pt wide (A4 595.28), as tall as the note
+    says (an .ntb's ``page_height``) or else as its size asks — A4
+    841.89/595.28, legal 14/8.5, a static-width letter page 11/8.5 with H
+    floored to a whole unit (as gnnote and nokcha0 read it), anything else
+    803.25/612 — and landscape the inverse ratio."""
     spec, width = note.paper, note.width
     pw = A4_PT if spec.size == "a4" else LETTER_PT
     static = spec.size == "letter" and spec.sizing == "staticWidth"
@@ -94,22 +96,22 @@ def paper_page(note: Note) -> tuple[float, float, float]:
              else 11 / 8.5 if static else _PAGE_RATIO)
     if spec.landscape:
         ratio = 1 / ratio
-    height = math.floor(width * ratio) if static else width * ratio
+    height = note.page_height or (math.floor(width * ratio) if static else width * ratio)
     return pw, height * pw / width, height
 
 
 def paper(note: Note) -> dict:
     """The note's paper as a sheet's (normalized): its page size; its colour
     (the identifier's, else cream for legacy paper 0, the tinted paper of
-    2014, else white); ruled every ``lines`` inches, a legacy small grid
-    every 18 pt, else blank. The ruling's colour stays the default: the
-    note does not store one."""
+    2014, else white); ruled (or an .ntb's grid or dots) every ``lines``
+    inches, a legacy small grid every 18 pt, else blank. The ruling's
+    colour stays the default: the note does not store one."""
     pw, ph, _height = paper_page(note)
     spec = note.paper
     raw = {"width": pw, "height": ph, "color": spec.color or (CREAM if spec.legacy == 0 else "#ffffff"),
            "pattern": "blank"}
     if spec.lines:
-        raw.update(pattern="ruled", spacing=spec.lines * 72 * pw / LETTER_PT)
+        raw.update(pattern=spec.ruling, spacing=spec.lines * 72 * pw / LETTER_PT)
     elif spec.grid:
         raw.update(pattern="grid", spacing=GRID_PT)
     return normalize_paper(raw)
@@ -261,7 +263,11 @@ def plan_note(note: Note, pdf_pages: dict) -> NotePlan:
     for i, media in enumerate(note.media):
         if _placed(media):
             items.append((media.y + media.h / 2, "media", i))
-    pages_, warnings = frames(note, pdf_pages, [centre for centre, _kind, _i in items])
+    papers = copied_papers(note) if not any(e.pdf for e in note.layout) else None
+    sheets = [(n + 0.5) * paper_page(note)[2] for n in range(len(papers))] if papers else []  # each sheet kept
+    pages_, warnings = frames(note, pdf_pages, [centre for centre, _kind, _i in items] + sheets)
+    if papers and len(pages_) != len(papers):  # the note has pages the copy does not know
+        papers = None
     tops = [f.top for f in pages_]
     pages = [PagePlan(f) for f in pages_]
     capped = len(pages_) >= MAX_NOTE_PAGES
@@ -281,7 +287,7 @@ def plan_note(note: Note, pdf_pages: dict) -> NotePlan:
     names = {f.pdf for f in pages_}
     kind, pdf = "notebook", None
     if names == {None}:
-        if not any(p.curves or p.shapes or p.stickies or p.boxes for p in pages):
+        if not papers and not any(p.curves or p.shapes or p.stickies or p.boxes for p in pages):
             kind = "note"
     else:
         name = next(iter(names))
@@ -292,8 +298,10 @@ def plan_note(note: Note, pdf_pages: dict) -> NotePlan:
             kind = "composed"
     if note.paper.template and any(f.pdf is None for f in pages_) and kind != "note":
         warnings.append("The paper template is not imported: plain paper instead")
-    flow = flow_blocks(note.flow, left_out)
-    return NotePlan(pages, kind, pdf, paper(note), flow, warnings, left_out)
+    flow = copied_flow(note)
+    if flow is None:
+        flow = flow_blocks(note.flow, left_out)
+    return NotePlan(pages, kind, pdf, paper(note), flow, warnings, left_out, papers)
 
 
 # --- ink ----------------------------------------------------------------------------------
@@ -434,7 +442,11 @@ def curve_stroke(curve: Curve, frame: Frame) -> dict | None:
     force and tilt, in the client's channel order) at ``size`` base × k; a
     stroke of constant width is an even one (``pen: false``); a
     highlighter is the highlighter tool at its width. Widths past what a
-    stroke may hold are scaled into it (w ≤ 4, size × max(w) ≤ 100)."""
+    stroke may hold are scaled into it (w ≤ 4, size × max(w) ≤ 100). A
+    curve Gamma's export wrote is read as it was written
+    (``exact_stroke``)."""
+    if curve.gamma:
+        return exact_stroke(curve, frame)
     samples = flatten(curve, frame)
     if samples is None:
         return None
@@ -480,6 +492,76 @@ def curve_stroke(curve: Curve, frame: Frame) -> dict | None:
     if curve.dash:
         stroke["dash"] = curve.dash
     stroke["size"] = round(min(100.0, max(0.1, size)), 3)
+    stroke["ch"] = ch
+    stroke["pts"] = inkmod.encode_points(samples, ch)
+    return _checked(stroke)
+
+
+def _opacity(alpha: int) -> float:
+    """An alpha byte as the opacity of fewest decimals that writes it back
+    (gamma/notability_export.py writes ``round(opacity × 255)``): a preset's
+    two decimals, else three."""
+    two = round(alpha / 255, 2)
+    return two if inkmod.js_round(two * 255) == alpha else round(alpha / 255, 3)
+
+
+def exact_stroke(curve: Curve, frame: Frame) -> dict | None:
+    """A curve Gamma's export wrote (``Curve.gamma``) as the stroke it was:
+    its anchors are its samples, read as they are (no flattening, no
+    decimation), each with its anchor's width ``w``, force ``p`` and tilt
+    ``a``/``z`` when any anchor holds more than Notability's unknown; a
+    stroke with ``p`` was drawn with a stylus (``pen``); its size is
+    curveswidth × k. None past MAX_STROKE_SAMPLES samples, or when
+    ``ink.Stroke`` refuses it."""
+    ink = curve.ink
+    anchors, f = curve.anchors, curve.f
+    if anchors > MAX_STROKE_SAMPLES:
+        return None
+    A, B, C, D, E, F = _affine(ink.transform, frame)
+    raw = ink.points[2 * curve.p:2 * (curve.p + curve.n)]
+    step = 6 if curve.bezier else 2  # an anchor, then two controls
+    samples = [{"x": A * x + C * y + E, "y": B * x + D * y + F} for x, y in zip(raw[0::step], raw[1::step])]
+    fw = ink.fractional[f:f + anchors] if ink.fractional is not None else None
+    force = ink.force[f:f + anchors] if ink.force is not None else None
+    alt = ink.altitude[f:f + anchors] if ink.altitude is not None else None
+    azi = ink.azimuth[2 * f:2 * (f + anchors)] if ink.azimuth is not None else None
+    if not all(math.isfinite(v) for s in samples for v in (s["x"], s["y"])):
+        return None
+    ch = "xy"
+    if force is not None and any(v != 1.0 for v in force):
+        ch += "p"
+        for s, v in zip(samples, force):
+            s["p"] = min(1.0, max(0.0, v / MAX_FORCE))
+    if (alt is not None and azi is not None
+            and (any(abs(v - _ALTITUDE_UNKNOWN) > 1e-6 for v in alt)
+                 or any(abs(azi[i] - 1) > 1e-6 or abs(azi[i + 1]) > 1e-6 for i in range(0, len(azi), 2)))):
+        ch += "az"
+        for i, s in enumerate(samples):
+            s["a"] = min(90.0, max(0.0, math.degrees(alt[i])))
+            s["z"] = round(math.degrees(math.atan2(azi[2 * i + 1], azi[2 * i]))) % 360
+    size = min(100.0, max(0.1, curve.base * frame.k))
+    if fw is not None and any(v != 1.0 for v in fw):
+        ch += "w"
+        peak, cut = max(fw), 1.0  # a width the app scaled past what a stroke holds is scaled into it
+        if peak > 4:
+            cut = 4 / peak
+        if size * peak * cut > 100:
+            cut = 100 / (size * peak) * 0.999
+        for s, v in zip(samples, fw):
+            s["w"] = v * cut
+    r, g, b, alpha = curve.rgba
+    stroke = {"color": "#%02x%02x%02x" % (r, g, b)}
+    if alpha < 255:
+        stroke["opacity"] = max(0.001, _opacity(alpha))
+    if curve.style == STYLE_HIGHLIGHTER:
+        stroke["tool"] = "highlighter"
+    elif curve.style == STYLE_PENCIL:
+        stroke["brush"] = "pencil"
+    if "p" not in ch:
+        stroke["pen"] = False
+    if curve.dash:
+        stroke["dash"] = curve.dash
+    stroke["size"] = round(size, 3)
     stroke["ch"] = ch
     stroke["pts"] = inkmod.encode_points(samples, ch)
     return _checked(stroke)
@@ -679,6 +761,8 @@ def page_strokes(note: Note, page: PagePlan, left_out: Counter, left: list | Non
                    + [(note.shapes[i], lambda shape, at: shape_stroke(shape, at, left_out)) for i in page.shapes],
                    key=lambda pair: pair[0].z)
     makers = [(sticky_stroke, note.media[i]) for i in page.stickies] + [(make, item) for item, make in drawn]
+    private = note.private or {}
+    copies = {Curve: _part(private, "strokes"), Shape: _part(private, "shapes")}
     for make, item in makers:
         if left is not None and left[0] <= 0:
             left_out["samples"] += 1
@@ -687,6 +771,10 @@ def page_strokes(note: Note, page: PagePlan, left_out: Counter, left: list | Non
         if stroke is None:
             left_out["stroke"] += 1
             continue
+        key = item.gamma if isinstance(item, Curve) else getattr(item, "uuid", None)
+        copy = copies.get(type(item), {}).get(key.hex()) if key else None
+        if copy is not None:
+            stroke = copied_stroke(copy, stroke, exact=isinstance(item, Curve)) or stroke
         if left is not None:
             n = len(stroke["pts"]) // len(stroke["ch"])
             if n > left[0]:
@@ -695,6 +783,118 @@ def page_strokes(note: Note, page: PagePlan, left_out: Counter, left: list | Non
                 continue
             left[0] -= n
         yield stroke
+
+
+# --- Gamma's own copy ------------------------------------------------------------------------
+# A note Gamma's export wrote carries Gamma's copy of what it holds
+# (``Note.private``, gamma/notability_export.py), for what Notability's model
+# has no place for: a stroke's time, a pencil's opacity, a brush or a shape
+# Notability lacks, a box's Markdown, the notes as they were. Each part is
+# used only where the note still holds what it describes, so once
+# Notability has changed an item the note's own version is what comes in.
+
+COPY_TOLERANCE = 0.05  # pt: how far a sample of the copy may lie from the note's (float32 coordinates)
+
+
+def _part(private: dict, name: str) -> dict:
+    value = private.get(name)
+    return value if isinstance(value, dict) else {}
+
+
+def _xy(stroke: dict) -> list[tuple[float, float]] | None:
+    try:
+        parsed = inkmod.Stroke.model_validate({**stroke, "id": "n0"})
+    except ValueError:
+        return None
+    return [(s["x"], s["y"]) for s in inkmod.decode_stroke(parsed)]
+
+
+def copied_stroke(copy, made: dict, *, exact: bool) -> dict | None:
+    """Gamma's copy of a stroke, when it is still the stroke the note
+    holds: one ``ink.Stroke`` takes, whose samples are the ones the note's
+    curve gave (``exact``: as many, each within COPY_TOLERANCE), or for a
+    shape whose samples span the same box; None otherwise."""
+    if not isinstance(copy, dict):
+        return None
+    copy = {k: v for k, v in copy.items() if k not in ("id", "from")}
+    theirs, mine = _xy(copy), _xy(made)
+    if not theirs or not mine:
+        return None
+    if exact:
+        if len(theirs) != len(mine) or any(abs(a - c) > COPY_TOLERANCE or abs(b - d) > COPY_TOLERANCE
+                                           for (a, b), (c, d) in zip(theirs, mine)):
+            return None
+    else:
+        box = lambda pts: (min(x for x, _ in pts), min(y for _, y in pts), max(x for x, _ in pts),  # noqa: E731
+                           max(y for _, y in pts))
+        if any(abs(a - b) > COPY_TOLERANCE for a, b in zip(box(theirs), box(mine))):
+            return None
+    return copy
+
+
+def copied_box(note: Note, media: Media, made: dict | None, frame: Frame) -> dict | None:
+    """Gamma's copy of a text box or a picture's box (``{content,
+    text_box}``, ``made`` the note's own), when the note still holds it:
+    a box at the same place and width, a text box with the same text. A
+    picture keeps ``made``'s content but for its alt text."""
+    if made is None or media.uuid is None:
+        return made
+    parts = _part(note.private or {}, "pictures" if media.kind == "picture" else "boxes")
+    copy = parts.get(media.uuid.hex())
+    if not isinstance(copy, dict):
+        return made
+    box = normalize_text_box(copy.get("text_box"))
+    ours = made["text_box"]
+    if box is None or any(abs(box[k] - ours[k]) > COPY_TOLERANCE for k in ("x", "y", "w")):
+        return made
+    box = keep_on_surface(box, frame.width, frame.height)
+    if media.kind == "picture":
+        alt = copy.get("alt")
+        if not isinstance(alt, str) or len(alt) > MAX_CONTENT or "]" in alt:
+            return made
+        return {"content": "![" + alt + made["content"][made["content"].index("]("):], "text_box": box}
+    text, content = copy.get("text"), copy.get("content")
+    if not isinstance(content, str) or len(content) > MAX_CONTENT or text != "".join(r.text for r in media.runs):
+        return made
+    return {"content": content, "text_box": box}
+
+
+def copied_flow(note: Note) -> list | None:
+    """Gamma's copy of the notes, when the note's typed text is still the
+    text the export wrote: ``{content, children}`` nodes, at most
+    MAX_BLOCKS, each content at most MAX_CONTENT characters; None
+    otherwise."""
+    flow = (note.private or {}).get("flow")
+    if not isinstance(flow, dict) or flow.get("text") != "".join(r.text for r in note.flow):
+        return None
+    count = [0]
+
+    def nodes(value, depth):
+        if not isinstance(value, list) or depth > 64:
+            return None
+        out = []
+        for node in value:
+            content = node.get("content") if isinstance(node, dict) else None
+            if not isinstance(content, str) or len(content) > MAX_CONTENT:
+                return None
+            count[0] += 1
+            children = nodes(node.get("children") or [], depth + 1)
+            if children is None or count[0] > MAX_BLOCKS:
+                return None
+            out.append({"content": content, "children": children})
+        return out
+
+    return nodes(flow.get("blocks"), 0)
+
+
+def copied_papers(note: Note) -> list | None:
+    """Gamma's copy of the sheets' papers (normalized), or None."""
+    papers = (note.private or {}).get("papers")
+    if not isinstance(papers, list) or not papers or len(papers) > MAX_NOTE_PAGES:
+        return None
+    if not all(isinstance(p, dict) for p in papers):
+        return None
+    return [normalize_paper(p) for p in papers]
 
 
 # --- text ---------------------------------------------------------------------------------
@@ -747,7 +947,8 @@ def _marker(run: Run) -> str:
 def flow_blocks(runs: list[Run], left_out: Counter | None = None) -> list[dict]:
     """The text typed on the pages as notes (``{content, children}``): it
     has no stored place (Notability lays it out from the top of page 1),
-    so each non-empty paragraph is a block, nested by its list level under
+    so each non-empty paragraph is a block (a line separator in it a line
+    break), nested by its list level under
     the nearest shallower one (a jump of several levels nests one deeper).
     A bullet is its text, a numbered item "n. text", a checklist item the
     editor's to-do, "- [ ] text" or "- [x] text". At most MAX_BLOCKS
@@ -757,7 +958,8 @@ def flow_blocks(runs: list[Run], left_out: Counter | None = None) -> list[dict]:
     stack: list[tuple[int, dict]] = []
     count = 0
     for para in _paragraphs(runs):
-        text = _inline(para)
+        # a line separator breaks a line inside the paragraph: a note of several lines
+        text = _inline([replace(r, text=r.text.replace("\u2028", "\n")) for r in para])
         if not text:
             continue
         if count >= MAX_BLOCKS:

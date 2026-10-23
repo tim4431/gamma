@@ -268,7 +268,8 @@ def create(name: str, owner: str, *, kind: str = "personal", by: str | None = No
     owner (``by`` — who created it, default the owner — is recorded as
     ``created_by``). A
     personal workspace ignores access and quota. ``welcome`` seeds the
-    Welcome page (gamma/seed.py ``seed_welcome``) once the rows exist. A
+    Welcome page and the Sketchbook (gamma/seed.py ``seed_welcome``) once
+    the rows exist. A
     shared workspace made for another account tells its owner in the
     Inbox (``invited``), as any other way of being added does. Raises
     ValueError on an unknown owner or a bad setting (the guest may
@@ -306,7 +307,7 @@ def ensure_personal(user_id: str, *, welcome: bool = False) -> str:
     """The account's default workspace id, created (named after the
     account, and recorded on the users row) when it has none or its files
     are gone. ``welcome``: a workspace created (or recreated) here starts
-    with the Welcome page — what every account-creating path asks for
+    with the Welcome page and the Sketchbook — what every account-creating path asks for
     (gamma/seed.py, guests.py); an existing workspace is never seeded."""
     with connect_users_db() as conn:
         row = conn.execute(
