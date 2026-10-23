@@ -128,14 +128,16 @@ def compose_pdf(frames: list, paper: dict, readers: dict) -> bytes:
     return out.getvalue()
 
 
-def picture_bytes(data: bytes, media: nb.Media) -> tuple[bytes, str]:
+def picture_bytes(data: bytes, media: nb.Media, animation: bytes | None = None) -> tuple[bytes, str]:
     """The picture as stored, ``(bytes, ext)``: the bytes as they came when
-    nothing is to be done to them, else Pillow's. Something is to be done
-    when the picture is cropped (FigureCropRectKey short of the whole
-    image), flipped, turned, or shown at an aspect over 1 % off the cropped
-    image's: then the EXIF orientation is applied, the crop (clamped to
-    the image), the flips, the stretch to the shown aspect and the turn
-    (corners transparent), in that order. A turned picture is a PNG, the
+    nothing is to be done to them, else Pillow's. ``data`` is the picture's
+    image, an animated GIF's still frame; its ``animation`` comes in its
+    place when nothing is to be done and it is a GIF that opens. Something
+    is to be done when the picture is cropped (FigureCropRectKey short of
+    the whole image), flipped, turned, or shown at an aspect over 1 % off
+    the cropped image's: then the EXIF orientation is applied, the crop
+    (clamped to the image), the flips, the stretch to the shown aspect and
+    the turn (corners transparent), in that order. A turned picture is a PNG, the
     one format the server writes that keeps its transparent corners, its
     longer side at most MAX_TURNED_SIDE; any other keeps its pixels as PNG
     when it came as PNG, GIF or WebP or is translucent, else JPEG.
@@ -156,6 +158,8 @@ def picture_bytes(data: bytes, media: nb.Media) -> tuple[bytes, str]:
             cw, ch = crop[2] - crop[0], crop[3] - crop[1]
             stretch = abs((media.w / media.h) / (cw / ch) - 1) > 0.01
             if not (angle or media.flip_h or media.flip_v or stretch or crop != (0, 0, width, height)):
+                if animation is not None and sniff(animation) == "image/gif" and _opens(animation):
+                    return animation, ".gif"
                 return data, ext
             if width * height > MAX_PICTURE_PIXELS:
                 raise ValueError("too large to crop or turn")
@@ -194,6 +198,15 @@ def picture_bytes(data: bytes, media: nb.Media) -> tuple[bytes, str]:
         raise
     except Exception as exc:  # noqa: BLE001 — a decompression bomb, or any file Pillow cannot decode
         raise ValueError(f"not a readable picture ({exc.__class__.__name__})") from None
+
+
+def _opens(data: bytes) -> bool:
+    """Whether Pillow reads the image's header."""
+    try:
+        with Image.open(io.BytesIO(data)):
+            return True
+    except Exception:  # noqa: BLE001 — any file Pillow cannot open
+        return False
 
 
 def _crop_box(crop, width: int, height: int) -> tuple[int, int, int, int]:
@@ -571,7 +584,9 @@ class _Import:
 
     def _store_picture(self, members, media: nb.Media, frame, title: str, uses: Counter) -> dict | None:
         """A picture as a fixed-width text box holding its image; None, with
-        a warning, when it cannot be stored. ``uses`` counts the note's
+        a warning, when it cannot be stored. An animated GIF's animation is
+        read beside its still frame when the note has it within the
+        per-file cap (``picture_bytes`` chooses). ``uses`` counts the note's
         pictures by image file: one file is read for MAX_PICTURE_USES of
         them at most, so a note that names one file over and over is not
         read and decoded each time."""
@@ -588,8 +603,12 @@ class _Import:
             if uses[media.picture] == MAX_PICTURE_USES + 1:
                 self.warn(title, f"Picture {name} is shown more than {MAX_PICTURE_USES} times: the rest are left out")
             return None
+        moving, animation = members.find(media.animation) if media.animation else None, None
+        if moving is not None and moving.size <= self.max_mb * MB:
+            with contextlib.suppress(*READ_ERRORS):  # one that does not read leaves the still frame
+                animation = moving.read()
         try:
-            data, ext = picture_bytes(entry.read(), media)
+            data, ext = picture_bytes(entry.read(), media, animation)
         except (ValueError, *READ_ERRORS) as exc:
             self.warn(title, f"Picture {name} is left out: {exc}")
             return None

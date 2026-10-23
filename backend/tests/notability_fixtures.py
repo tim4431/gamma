@@ -253,7 +253,8 @@ def _paper_style(arch: Archiver, color) -> plistlib.UID:
 
 def media_object(arch: Archiver, item: dict) -> plistlib.UID:
     """One ``mediaObjects`` entry: ``{kind: text|math|picture|sticky|<a
-    class name>, origin, size, rotation?, z?, …}``."""
+    class name>, origin, size, rotation?, z?, …}``; a picture's ``gif`` is
+    the asset id of an animated GIF's animation."""
     kind = item["kind"]
     fields = _geometry(arch, item)
     if kind == "text":
@@ -277,6 +278,8 @@ def media_object(arch: Archiver, item: dict) -> plistlib.UID:
         fields.update(figure=figure, isFlippedHorizontal=item.get("flip_h", False),
                       isFlippedVertical=item.get("flip_v", False), isCaptionEnabled=bool(item.get("caption")),
                       captionFieldText=arch.string(item["caption"]) if item.get("caption") else plistlib.UID(0))
+        if item.get("gif"):  # an animated GIF: its animation is Assets/<gif>/media.gif
+            fields.update(isGif=True, assetsIdKey=arch.string(item["gif"], mutable=True))
         return arch.obj("ImageMediaObject", fields, ("GenericMediaObject",))
     return arch.obj(kind, fields, ("GenericMediaObject",))
 
@@ -387,6 +390,15 @@ def jpeg(w: int = 40, h: int = 30) -> bytes:
     from PIL import Image
     out = io.BytesIO()
     Image.new("RGB", (w, h), (30, 90, 200)).save(out, "JPEG")
+    return out.getvalue()
+
+
+def gif(w: int = 48, h: int = 32, frames: int = 3) -> bytes:
+    """An animated GIF, each frame a colour of its own."""
+    from PIL import Image
+    out = io.BytesIO()
+    first, *rest = [Image.new("RGB", (w, h), (60 * i, 200 - 40 * i, 90)) for i in range(frames)]
+    first.save(out, "GIF", save_all=True, append_images=rest, duration=100, loop=0)
     return out.getvalue()
 
 
