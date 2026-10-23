@@ -35,7 +35,7 @@ Facts only were taken from them; no code was copied.
 | [notesconverter](https://github.com/samuelsadok/notesconverter/blob/master/converter/notability.py) | MIT | The most careful reader, checked against Notability's PDF exports (2013 to 15.3): per-anchor widths interpolated linearly, `3F − 2N = P`, PDFFile versions, `ceil` bottom-aligned slots, the 20/768 inset, dashes and shapes, text runs and list numbering, media keys, the crop path, fiducial page tests |
 | [notability-to-pdf](https://github.com/lh/notability-to-pdf) (`NATIVE_PAGES.md`, `NOTABILITY_FORMAT.md`, `TEXT_RENDERING.md`, `CLOUDKIT_DISCOVERY.md`, its tools) | MIT | Page geometry measured on 6,726 renders and validated on 7,498 notes, the 768 fallback, `lockedWidth`, the indexed-container pitfall; its `NOTABILITY_FORMAT.md` has errors (colours as floats, styles as int32, style 5 an eraser) that its later documents and the others correct |
 | [inkterop](https://github.com/cable729/inkterop) (`docs/formats/notability.md`, `ntb.py`, the erase audit) | docs CC BY 4.0, code MIT, fixtures CC0 | The `.ntb` container, op envelope, stroke payload and point blob, colour order; that erase, move and undo in the op log are unmapped |
-| [nokcha0's converter](https://github.com/nokcha0/Notability-notes-converter) | none | Ink groups, shapes and `partialshape` paths, stickies, styles 5 and 6, `lineStyle2`, rotation in radians; `.ntb` event types and payloads with byte tests |
+| [nokcha0's converter](https://github.com/nokcha0/Notability-notes-converter) | none | Ink groups, shapes and `partialshape` paths, stickies, styles 5 and 6, `lineStyle2`, rotation in radians; `.ntb` event types and payloads with byte tests; that `curvesstyles` and `dashStyles` count strokes and that strokes, shapes and groups share one z-order, checked against the `.ntb` export of its example note. That note, its "Note" export (16.1.5) and its "NTB" export (16.10), is in `backend/tests/samples/notability/` for `test_notability_samples.py` |
 | [bitsandbonds](https://github.com/bitsandbonds/notability-to-onenote) | none | An independent `.ntb` reading on 16.0.1 |
 | [note-core-swift](https://github.com/PsychQuant/note-core-swift) | none | The recording timeline and the curve UUID join |
 | [notability2pdf](https://github.com/wongkang01/notability2pdf) | none | A 941-note corpus of formats 7–9; MathMediaObject; recordings |
@@ -114,8 +114,8 @@ Facts only were taken from them; no code was copied.
 - `sessionFormatVersion`: absent in 2013–14, 4 for 7.x–8.x, 5 for 10.x, 7
   for 11.x, 8 for 12.x–14.x, 9 for 15.x–16.x [V]. What changed: `curvesstyles`
   from 10.x; force, tilt and curve UUIDs from 11.7.2; the paper model from
-  11.x; `GLModel.` classes from 15.3; ink groups, the pencil, stickies and
-  short style arrays from 16.x.
+  11.x; `GLModel.` classes from 15.3; ink groups, the pencil and stickies
+  from 16.x.
 
 ## Pages and geometry
 
@@ -171,10 +171,19 @@ The per-stroke model, beside GoodNotes, is in
 - All curves of a hash are parallel little-endian arrays [V]: `curvesnumpoints`
   (int32 per curve), `curvespoints` (float32 x, y), `curvesfractionalwidths`
   (float32 per anchor), `curveswidth` (float32 per curve), `curvescolors`
-  (RGBA bytes per curve, not floats), `curvesstyles` (one byte per curve,
-  not int32), and from 11.7.2 `curvesforces`, `curvesaltitudeangles`
+  (RGBA bytes per curve, not floats), `curvesstyles` (one byte per stroke,
+  below, not int32), and from 11.7.2 `curvesforces`, `curvesaltitudeangles`
   (radians) and `curvesazimuthunitvector` per anchor (1.0, π/2 and (1, 0)
   when unknown).
+- **A stroke is a curve, or the curves the eraser cut it into**: those
+  follow each other and share an entry of `curveUUIDs` (16 bytes per curve,
+  from 11.7.2), and `curvesstyles`, `options` and the keys of `dashStyles`
+  count strokes [V]. The 16.1.5 sample has 596 curves in 149 runs of one
+  UUID, and 149 styles: read by stroke, its highlighters are exactly its
+  translucent curves; read by curve, 4 curves disagree and 8 strokes
+  change tool partway. gnnote read the same array as cut short; nokcha0
+  (against the note's `.ntb` export) and Gamma read it by stroke. A hash
+  with a style byte for every curve, or without UUIDs, counts curves [I].
 - A curve has `1 + 3k` points, a C1 Bézier chain (anchor, control, control,
   anchor…), `k + 1` anchors, and `3F − 2N = P` holds; a curve whose count is
   not `1 + 3k` is a polyline with every point an anchor (gnnote's
@@ -185,16 +194,19 @@ The per-stroke model, beside GoodNotes, is in
   anchors; that matched Notability's own PDF export [V].
 - Styles: 3 pen, 4 highlighter (alpha 0x6b ≈ 0.42 from 10.2.4, 0x44 in
   8.4.8), 5 pencil [V1/I], 6 not drawn by Notability's export [V1]. Without
-  the array (8.4.8 and earlier), or past its end (16.x writes it short), a
-  translucent curve is a highlighter [V].
-- `dashStyles`: a plain plist mapping a curve's index in its hash to pattern
-  1 (dashed) or 2 (dotted); no lengths are stored [V].
+  the array (8.4.8 and earlier), or past its end, a translucent curve is a
+  highlighter [V].
+- `dashStyles`: a plain plist mapping a stroke's number in its hash to
+  pattern 1 (dashed) or 2 (dotted); no lengths are stored [V].
 - `groupsArrays` (16.x): each a plain plist `{inkGroup: {inkGroupObjects,
-  transform: [a, b, c, d, tx, ty]}, index}`; an item of type 1 is a whole
-  keyed archive of another hash, of type 2 a shape. Groups nest; the index
-  is the group's place among the top-level curves [I] [V gnnote + nokcha0].
-- `eventTokens`, `curveUUIDs` and `options` are per curve and are not
-  drawing data.
+  transform: [a, b, c, d, tx, ty]}, index}`; a member of type 1 is a whole
+  keyed archive of another hash, of type 2 a shape list of its own,
+  `{shapes, kinds, indices}` as a hash's (below) [V: the 16.1.5 sample's 70,
+  which gnnote calls shape dicts]. Groups nest. The index is the group's
+  position in its hash's z-order (Shapes, below) [V]; its members are
+  drawn there in their order [I].
+- `eventTokens` (per curve) and `options` (per stroke) are not drawing
+  data, and `curveUUIDs` only joins curves into strokes and to recordings.
 
 ## Shapes
 
@@ -206,8 +218,19 @@ The per-stroke model, beside GoodNotes, is in
   an arrow's head is not stored), `rectangle` and `square` (4 corners, maybe
   turned), `triangle`, `polygon`, `circle` and `ellipse` (the 4 corners of
   the turned rectangle it is inscribed in), and `partialshape` (a shape
-  partly erased: the outline of what is left, as a CGPath blob) [V].
-- How shapes interleave with curves is not known.
+  partly erased) [V]. Style 5 is a pencil shape here too [V1].
+- A `partialshape` keeps two archived CGPaths: `outlinePath`, what is left
+  of the shape's centre line, a piece per move, and `strokePath`, the
+  outline Notability fills [V on the sample's 23]. Each is the bytes
+  `25 b3 e5 48`, the element count (uint32), a byte per element
+  (CGPathElementType: 0 move, 1 line, 2 quadratic, 3 cubic, 4 close; the
+  sample has 0, 1 and 3), then the elements' points as float64 x, y pairs,
+  little-endian [V]. `rect`, `rotatedRect` and `extremePoints` bound it.
+- **One z-order**: a shape's index and an ink group's are positions in one
+  z-order of their hash, and its strokes take the other positions in turn
+  [V]. In the 16.1.5 sample, 88 shapes and 4 groups take 92 distinct
+  positions below 241 and its 149 strokes the rest; nokcha0 found the same
+  against the note's `.ntb` export, whose events come in that order.
 
 ## Typed content
 
@@ -289,6 +312,10 @@ file says whether such edits happened, so an importer would bring back
 erased ink in an unknown share of notes); the meaning of the two width
 values; PDF placement beyond one PDF in order; text-box ownership edge cases;
 audio; and the schema's stability (its one version marker is a constant).
+Since then nokcha0's converter reads type 25 events as lists of erased
+records and leaves those out, and turns its example's `.ntb` into the
+strokes, shapes, groups, pictures and text of the same note's "Note"
+export [V1]; deletes, undos, moves and restyles in general stay unmapped.
 Gamma refuses an `.ntb` (400) with how to export "Note" instead: Export
 Options → File Format "Note" (in a note: the options icon; in the library:
 press and hold the note). Third-Party Backup offers only NTB, PDF and PDF +
@@ -329,7 +356,10 @@ Recording; 16.1.5 on the iPad still writes `.note`.
   take the same step. Against a 1 pt step, a note of every kind of shape
   stores half the samples and 40 % fewer ink bytes.
 - **Shapes and curves**: on a page the stickies go first, then the curves
-  in drawing order, then the shapes by their indices.
+  and shapes in the note's z-order.
+- **A partly erased shape** is a plain stroke per piece of its
+  `outlinePath`, at the shape's width, so the eraser's gaps stay where
+  they were; `strokePath`, the outline, would need a fill no stroke has.
 - **No sync with recordings**: a recording becomes a recording block that
   plays, but its strokes carry no `t` or `t0`. Gamma's replay places a
   stroke by per-sample times ([dev/handwriting.md](../dev/handwriting.md)),

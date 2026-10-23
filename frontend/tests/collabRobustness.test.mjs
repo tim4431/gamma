@@ -90,6 +90,28 @@ test("a conflict drops only the refused op; the rest goes out again, keeping its
   assert.equal(h.session.hasPending(), false);
 });
 
+test("a conflict drops the vanished block's ops from the batches hide named too: what is left of one keeps its name", async (t) => {
+  const first = deferred();
+  const h = setup(t, async (url, init, body) => (h.calls.length === 1 ? first.promise : ack(1, body.ops)),
+    { tree: [block("x"), block("y", "y", {}, "a1")] });
+  h.edit(setText(h.tree, "x", "x!"));
+  h.fire();   // its batch goes, and waits for its answer
+  h.edit(setText(setText(h.tree, "x", "x!!"), "y", "y typed"));
+  h.session.hide();   // pagehide, into the back-forward cache: the queue behind that batch is named, and copied
+  const named = h.keepalive.at(-1).body;
+  assert.deepEqual(named.ops.map((op) => op.id), ["x", "y"]);
+  // x moved to another page meanwhile: the batch out is refused for it
+  first.reject(httpError(403, "block x is outside this page", { conflict: "moved", index: 0 }));
+  await settle();
+  h.fire();
+  await settle();
+  assert.equal(h.calls.length, 2);
+  assert.equal(h.calls[1].body.batch, named.batch, "what is left of the named batch goes under its name");
+  assert.deepEqual(h.calls[1].body.ops, [{ op: "set", id: "y", content: "y typed", base: "y" }]);
+  assert.deepEqual(h.reloads, ["page-a"]);
+  assert.equal(h.session.hasPending(), false);
+});
+
 test("a cycle drops the move and keeps the text edits of the same batch", async (t) => {
   const h = setup(t, async (url, init, body) => {
     if (h.calls.length === 1) {
@@ -390,8 +412,8 @@ test("the room's `trashed` message parks the page's edits before any save is ref
   assert.equal(h.timers.size, 0);
   await h.session.flush();
   assert.equal(h.calls.length, 0);
-  h.session.pagehide();
-  assert.equal(h.keepalive.length, 0, "no keepalive the server would refuse");
+  h.session.hide();
+  assert.deepEqual([h.keepalive.length, h.calls.length], [0, 0], "no keepalive the server would refuse");
   h.load("page-b", [block("c")]);
   assert.match(lastNotice(h), /Recently deleted/, "seen from another page, the save pill says why edits wait");
   h.load("page-a", [block("a"), block("b", "b", {}, "a1")], 1); // restored and refetched

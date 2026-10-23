@@ -74,6 +74,9 @@ SHAPE_KINDS = ("line", "rectangle", "square", "triangle", "polygon", "circle", "
 _WIDTH_RANGE = (16.0, 10_000.0)  # a page width W outside it is damage
 _MAX_LINE_SPACING = 10.0         # inches between ruled lines
 _MAX_PAGE_NUMBER = 1_000_000     # past it a layout entry is a blank page (Notability writes INT64_MAX)
+_LAST = 1 << 62                  # the z-order position of an ink group that has no index: above the rest
+_PATH_MAGIC = b"\x25\xb3\xe5\x48"  # an archived CGPath (``_path``)
+_PATH_POINTS = (1, 1, 2, 3, 0)   # the points of each CGPath element: move, line, quadratic, cubic, close
 
 # What a note left out, by kind, as its warning says it once per note
 # (``left_out_reasons``); ``{n}`` is the count.
@@ -85,7 +88,8 @@ LEFT_OUT = {
                f"Past {MAX_CURVES:,} strokes the rest is left out ({{n}} strokes)"),
     "group": ("{n} group of handwriting could not be read and was left out",
               "{n} groups of handwriting could not be read and were left out"),
-    "partial shape": ("{n} partly erased shape is left out", "{n} partly erased shapes are left out"),
+    "partial shape": ("{n} partly erased shape could not be read and was left out",
+                      "{n} partly erased shapes could not be read and were left out"),
     "shape": ("{n} shape of a kind this import does not know is left out",
               "{n} shapes of a kind this import does not know are left out"),
     "shapes limit": (f"Past {MAX_SHAPES:,} shapes the rest is left out ({{n}} shape)",
@@ -205,6 +209,7 @@ class Curve:
     rgba: tuple                    # the curvescolors bytes
     style: int                     # 3 pen, 4 highlighter, 5 pencil; any other value reads as a pen
     dash: str | None               # "dashed" | "dotted"
+    z: int = 0                     # its place in the note's drawing order, which the shapes share
 
     @property
     def anchors(self) -> int:
@@ -213,17 +218,21 @@ class Curve:
 
 @dataclass
 class Shape:
-    kind: str                      # "line" "rectangle" "square" "triangle" "polygon" "circle" "ellipse"
+    kind: str                      # "line" "rectangle" "square" "triangle" "polygon" "circle" "ellipse",
+                                   # or "path": a piece of a partly erased shape
     points: list                   # transformed. line: start, end; rectangle to polygon: the vertices;
-                                   # circle and ellipse: the rotated rect's 4 corners
+                                   # circle and ellipse: the rotated rect's 4 corners; path: along ``segments``
     control: tuple | None          # a curved line's quadratic control point
     arrow: bool
     width: float
     rgba: tuple
     fill: tuple | None
-    highlighter: bool
+    style: int                     # as a curve's: 3 pen, 4 highlighter, 5 pencil
     dash: str | None
     grouped: bool                  # from an ink group: drawn as a plain stroke
+    segments: tuple = ()           # a path's after its first point: 1 a line to the next, 3 a cubic through
+                                   # the next three
+    z: int = 0                     # its place in the note's drawing order, which the curves share
 
 
 @dataclass
@@ -279,8 +288,8 @@ class Note:
     paper: PaperSpec = field(default_factory=PaperSpec)
     layout: list = field(default_factory=list)       # [LayoutEntry]
     pdfs: dict = field(default_factory=dict)         # the bundled PDFs the layout can use, by file name
-    curves: list = field(default_factory=list)       # drawing order, ink groups merged in at their index
-    shapes: list = field(default_factory=list)       # sorted by their indices
+    curves: list = field(default_factory=list)       # in drawing order (Curve.z)
+    shapes: list = field(default_factory=list)       # in drawing order (Shape.z), among the curves
     media: list = field(default_factory=list)        # by zIndex, then file order
     flow: list = field(default_factory=list)         # the text typed on the pages, in order
     recordings: list = field(default_factory=list)   # by identifier
@@ -459,8 +468,9 @@ class _Reader:
         self.note = Note(title="", digest=digest)
         self.path = path
         self.curve_count = 0
+        self.shape_count = 0
         self.archives = 0
-        self.shapes: list = []  # (z key, order, Shape)
+        self.drawn: list = []  # (z key, Curve | Shape): the note's drawing order (``_ink``)
         self.inner = MAX_SESSION_BYTES  # bytes the plists inside the note may still take (``_spend``)
         self.text_left = MAX_NOTE_TEXT  # characters of typed text still to read (``_text``)
         self.runs_left = MAX_NOTE_RUNS  # formatting runs still to read (``_runs``)
@@ -603,21 +613,33 @@ class _Reader:
                 self._missing(f"PDFs/{name}")
 
     # --- ink ----------------------------------------------------------------------------
+    # A hash's strokes, shapes and ink groups share one z-order: a shape's
+    # index and a group's are positions in it, and the strokes fill the
+    # other positions in turn. A stroke is a curve, or the consecutive curves
+    # sharing a curveUUID that the eraser cut it into, and the per-stroke
+    # arrays (curvesstyles, the keys of dashStyles) count strokes. A group's
+    # members are ordered within its position, each with a z-order of its
+    # own, so an item's place is a key: for each group around it, the
+    # group's position and the member's order, then its own position.
 
     def _ink(self) -> None:
-        arch = self.arch
+        arch, note = self.arch, self.note
         overlay = arch.get(self.rich, "Handwriting Overlay")
         spatial = arch.get(overlay, "SpatialHash")
         if isinstance(spatial, dict):
-            self.note.curves = self._hash(arch, spatial, IDENTITY, 0, None)
-        self.shapes.sort(key=lambda item: (item[0], item[1]))
-        self.note.shapes = [shape for _key, _order, shape in self.shapes]
+            self._hash(arch, spatial, IDENTITY, 0, ())
+        self.drawn.sort(key=lambda item: item[0])  # stable: one key's items stay in file order
+        for z, (_key, item) in enumerate(self.drawn):
+            item.z = z
+        note.curves = [item for _key, item in self.drawn if isinstance(item, Curve)]
+        note.shapes = [item for _key, item in self.drawn if isinstance(item, Shape)]
+        self.drawn = []
 
-    def _hash(self, arch: Archive, h: dict, transform: tuple, depth: int, zkey) -> list[Curve]:
-        """One InkedSpatialHash's curves in drawing order, its ink groups'
-        merged in before the curve whose index is the group's; its shapes
-        go to ``self.shapes``, keyed by their index (``zkey``, a group's
-        index, for the shapes inside a group)."""
+    def _hash(self, arch: Archive, h: dict, transform: tuple, depth: int, zkey: tuple) -> None:
+        """One InkedSpatialHash's curves, shapes and ink groups into
+        ``self.drawn``, each keyed by its place in the hash's z-order after
+        ``zkey``, the key of the group member the hash is (() for the
+        note's own)."""
         note = self.note
         n_curves = max(0, arch.integer(h.get("numcurves")) or 0)
         n_points = max(0, arch.integer(h.get("numpoints")) or 0)
@@ -627,6 +649,9 @@ class _Reader:
         widths = _unpack(arch.data(h.get("curveswidth")), "f", n_curves)
         colors = arch.data(h.get("curvescolors")) or b""
         styles = arch.data(h.get("curvesstyles"))
+        uuids = arch.data(h.get("curveUUIDs"))
+        # a stroke is a run of one UUID, unless curvesstyles has a byte for every curve
+        by_uuid = uuids is not None and len(uuids) == 16 * n_curves and (styles is None or len(styles) != n_curves)
         fractional = _unpack(arch.data(h.get("curvesfractionalwidths")), "f", n_anchors)
         scale = (math.hypot(transform[0], transform[1]) + math.hypot(transform[2], transform[3])) / 2
         ink = InkHash(points, fractional,
@@ -635,8 +660,9 @@ class _Reader:
                       _unpack(arch.data(h.get("curvesazimuthunitvector")), "f", 2 * n_anchors, exact=True),
                       transform, scale)
         dashes = self._dashes(arch.data(h.get("dashStyles")))
-        kept: list[tuple[int, Curve]] = []
+        kept: list[tuple[int, Curve]] = []  # (its stroke, the curve)
         p = f = 0
+        stroke = -1
         complete = True
         for i in range(n_curves):
             n = counts[i] if i < len(counts) else 0
@@ -648,15 +674,17 @@ class _Reader:
                 note.left_out["curves"] += n_curves - i
                 complete = False
                 break
+            if not by_uuid or not i or uuids[16 * i:16 * i + 16] != uuids[16 * i - 16:16 * i]:
+                stroke += 1
             k, r = divmod(n - 1, 3)
             anchors = k + 1 if r == 0 else n
             rgba = tuple(colors[4 * i:4 * i + 4])
-            style = styles[i] if styles is not None and i < len(styles) else (
+            style = styles[stroke] if styles is not None and stroke < len(styles) else (
                 STYLE_HIGHLIGHTER if rgba[3] < 255 else STYLE_PEN)
             if n > MAX_CURVE_POINTS:
                 note.left_out["stroke"] += 1
             elif style != STYLE_HIDDEN and rgba[3]:  # style 6 Notability does not draw; alpha 0 shows nothing
-                kept.append((i, Curve(ink, p, n, f, r == 0, widths[i] * scale, rgba, style, dashes.get(i))))
+                kept.append((stroke, Curve(ink, p, n, f, r == 0, widths[i] * scale, rgba, style, dashes.get(stroke))))
                 self.curve_count += 1
             p += n
             f += anchors
@@ -665,23 +693,18 @@ class _Reader:
             message = "The handwriting's width data does not match its strokes: they are drawn at an even width"
             if (n_anchors or fractional) and message not in note.warnings:
                 note.warnings.append(message)
-        self._shape_list(arch.data(h.get("shapes")), transform, scale, zkey)
-        groups = self._groups(arch, h, transform, depth, n_curves)
-        out: list[Curve] = []
-        g = 0
-        for i, curve in kept:
-            while g < len(groups) and groups[g][0] <= i:
-                out += groups[g][2]
-                g += 1
-            out.append(curve)
-        for _index, _order, curves in groups[g:]:
-            out += curves
-        return out
+        taken = self._shape_list(arch.data(h.get("shapes")), transform, scale, zkey)
+        taken += self._groups(arch, h, transform, depth, zkey)
+        free, last, key = _free_positions(taken), -1, None
+        for stroke, curve in kept:
+            while last < stroke:  # a stroke left out keeps its position
+                key, last = zkey + (next(free),), last + 1
+            self.drawn.append((key, curve))
 
     def _dashes(self, data: bytes | None) -> dict[int, str]:
-        """``dashStyles``: a plain plist ``{objectPatterns: {"<curve index>":
-        {pattern: 1 dashed | 2 dotted}}}``, keyed by the curve's index in its
-        hash."""
+        """``dashStyles``: a plain plist ``{objectPatterns: {"<stroke>":
+        {pattern: 1 dashed | 2 dotted}}}``, keyed by the stroke's number in
+        its hash."""
         if not data:
             return {}
         try:
@@ -698,13 +721,14 @@ class _Reader:
                     out[int(key)] = dash
         return out
 
-    def _groups(self, arch: Archive, h: dict, transform: tuple, depth: int, n_curves: int) -> list:
-        """The hash's ink groups as ``[(index, order, curves)]`` sorted by
-        their place among its curves. A group's transform is composed with
-        the one around it; a type 1 item is a whole archive of another
-        hash, a type 2 item a shape."""
+    def _groups(self, arch: Archive, h: dict, transform: tuple, depth: int, zkey: tuple) -> list[int]:
+        """The hash's ink groups into ``self.drawn``, each member keyed
+        within its group's index (after ``zkey``) by the group's order in
+        ``groupsArrays`` and its own; returns the indices. A group's
+        transform is composed with the one around it; a type 1 member is a
+        whole archive of another hash, a type 2 member a shape list."""
         note = self.note
-        out = []
+        taken = []
         for order, element in enumerate(arch.array(h.get("groupsArrays"))):
             raw = arch.data(element)
             if raw is None:
@@ -725,16 +749,17 @@ class _Reader:
                 note.left_out["group"] += 1
                 continue
             index = whole(plist.get("index"))
-            index = n_curves if index is None else index
+            index = _LAST if index is None else index
+            taken.append(index)
             composed = _compose(transform, own)
             scale = (math.hypot(composed[0], composed[1]) + math.hypot(composed[2], composed[3])) / 2
             look = group.get("appearance") if isinstance(group.get("appearance"), dict) else {}
-            curves: list[Curve] = []
             items = group.get("inkGroupObjects")
-            for item in items if isinstance(items, list) else ():
+            for member, item in enumerate(items if isinstance(items, list) else ()):
                 if not isinstance(item, dict):
                     continue
                 kind, obj = whole(item.get("type")), item.get("object")
+                key = zkey + (index, order, member)
                 if kind == 1 and isinstance(obj, (bytes, bytearray)):
                     if self.archives >= MAX_GROUP_ARCHIVES:
                         note.left_out["group"] += 1
@@ -746,60 +771,67 @@ class _Reader:
                     except ArchiveError:
                         note.left_out["group"] += 1
                         continue
-                    curves += self._hash(inner, inner.root, composed, depth + 1, index)
+                    self._hash(inner, inner.root, composed, depth + 1, key)
                 elif kind == 2 and isinstance(obj, dict):
-                    if len(self.shapes) >= MAX_SHAPES:
-                        note.left_out["shapes limit"] += 1
-                        continue
-                    shape = self._shape(_grouped_kind(obj), obj, composed, scale, look, grouped=True)
-                    if shape is not None:
-                        self.shapes.append((index, len(self.shapes), shape))
-            out.append((index, order, curves))
-        out.sort(key=lambda item: (item[0], item[1]))
-        return out
+                    self._shapes(obj, composed, scale, key, look, grouped=True)
+        return taken
 
-    def _shape_list(self, raw: bytes | None, transform: tuple, scale: float, zkey) -> None:
-        """A hash's ``shapes`` plist: ``shapes``, ``kinds`` and ``indices``
-        side by side (the shortest wins), up to the note's MAX_SHAPES."""
+    def _shape_list(self, raw: bytes | None, transform: tuple, scale: float, zkey: tuple) -> list[int]:
+        """A hash's ``shapes`` plist (``_shapes``); returns the indices."""
         if not raw:
-            return
+            return []
         try:
             self._spend(raw)
             plist = load_plist(raw, limit=MAX_SESSION_BYTES)
         except ArchiveError:
             self.note.left_out["shape"] += 1
-            return
+            return []
+        return self._shapes(plist, transform, scale, zkey, None, grouped=False)
+
+    def _shapes(self, plist, transform: tuple, scale: float, zkey: tuple, group_look, *, grouped: bool) -> list[int]:
+        """A shape list, ``shapes``, ``kinds`` and ``indices`` side by side
+        (the shortest wins): a hash's own, or a member of an ink group
+        (``grouped``, with the group's appearance). Each shape goes into
+        ``self.drawn`` keyed by its index after ``zkey``, up to the note's
+        MAX_SHAPES; returns the indices."""
         if not isinstance(plist, dict):
-            return
+            return []
         shapes, kinds, indices = (plist.get(k) for k in ("shapes", "kinds", "indices"))
         if not all(isinstance(v, list) for v in (shapes, kinds, indices)):
-            return
+            return []
         listed = min(len(shapes), len(kinds), len(indices))
-        room = max(0, MAX_SHAPES - len(self.shapes))
+        room = max(0, MAX_SHAPES - self.shape_count)
         if listed > room:
             self.note.left_out["shapes limit"] += listed - room
+        taken = []
         for shape_dict, kind, index in islice(zip(shapes, kinds, indices), room):
-            shape = self._shape(kind, shape_dict, transform, scale, None, grouped=False)
-            if shape is not None:
-                key = zkey if zkey is not None else (whole(index) or 0)
-                self.shapes.append((key, len(self.shapes), shape))
+            index = whole(index) or 0
+            taken.append(index)
+            for shape in self._shape(kind, shape_dict, transform, scale, group_look, grouped=grouped):
+                self.drawn.append((zkey + (index,), shape))
+                self.shape_count += 1
+        return taken
 
-    def _shape(self, kind, d, transform: tuple, scale: float, group_look, *, grouped: bool) -> Shape | None:
+    def _shape(self, kind, d, transform: tuple, scale: float, group_look, *, grouped: bool) -> list[Shape]:
+        """A shape dict as what it draws, within the note's MAX_SHAPES: a
+        shape, or for one partly erased (``partialshape``) a path for each
+        piece the eraser left of it, read from its ``outlinePath``, what is
+        left of the centre line (``strokePath`` is the outline Notability
+        fills); none, counted, when it does not read."""
         note = self.note
-        if kind == "partialshape":
-            note.left_out["partial shape"] += 1
-            return None
-        if kind not in SHAPE_KINDS or not isinstance(d, dict):
+        if (kind not in SHAPE_KINDS and kind != "partialshape") or not isinstance(d, dict):
             note.left_out["shape"] += 1
-            return None
+            return []
         look = d.get("appearance") if isinstance(d.get("appearance"), dict) else (group_look or d)
         width = finite(look.get("strokeWidth"))
         if width is None and group_look:
             width = finite(group_look.get("strokeWidth"))
         dash_style = look.get("dashStyle") if isinstance(look.get("dashStyle"), dict) else {}
         pattern = whole(dash_style.get("pattern"))
-        control = None
-        if kind == "line":
+        control = pieces = None
+        if kind == "partialshape":
+            pieces = _path(d.get("outlinePath"), transform)
+        elif kind == "line":
             raw = [d.get("startPt"), d.get("endPt")]
             if d.get("controlPoint1") is not None:
                 control = _point(d.get("controlPoint1"), transform)
@@ -812,15 +844,21 @@ class _Reader:
         else:
             raw = d.get("points") if isinstance(d.get("points"), list) else [None]
             raw = raw if len(raw) <= MAX_CURVE_POINTS else [None]  # a curve's cap: more is damage
-        points = [_point(v, transform) for v in raw]
-        if not points or any(v is None for v in points) or width is None or width <= 0:
-            note.left_out["stroke"] += 1
-            return None
+        if kind != "partialshape":
+            points = [_point(v, transform) for v in raw]
+            pieces = [(points, ())] if points and not any(v is None for v in points) else None
+        if not pieces or width is None or width <= 0:
+            note.left_out["partial shape" if kind == "partialshape" else "stroke"] += 1
+            return []
+        room = max(0, MAX_SHAPES - self.shape_count)
+        if len(pieces) > room:
+            note.left_out["shapes limit"] += len(pieces) - room
         color = _rgba(look.get("strokeColor")) or (group_look and _rgba(group_look.get("strokeColor"))) or (0, 0, 0, 1)
-        return Shape(kind=kind, points=points, control=control, arrow=whole(dash_style.get("arrowHead")) == 1,
-                     width=width * scale, rgba=color, fill=_rgba(look.get("fillColor")),
-                     highlighter=whole(look.get("style")) == STYLE_HIGHLIGHTER,
-                     dash={1: "dashed", 2: "dotted"}.get(pattern), grouped=grouped)
+        return [Shape(kind="path" if kind == "partialshape" else kind, points=points, control=control,
+                      arrow=kind != "partialshape" and whole(dash_style.get("arrowHead")) == 1, width=width * scale,
+                      rgba=color, fill=_rgba(look.get("fillColor")), style=whole(look.get("style")) or STYLE_PEN,
+                      dash={1: "dashed", 2: "dotted"}.get(pattern), grouped=grouped, segments=segments)
+                for points, segments in pieces[:room]]
 
     # --- media ---------------------------------------------------------------------------
 
@@ -1116,11 +1154,64 @@ def _rgba(value) -> tuple | None:
     return tuple(min(1.0, max(0.0, v)) for v in values)
 
 
-def _grouped_kind(shape: dict) -> str:
-    """A shape inside an ink group carries no kind of its own: what its keys
-    hold says what it is."""
-    if "rotatedRect" in shape:
-        return "ellipse"
-    if "startPt" in shape:
-        return "line"
-    return "polygon" if "points" in shape else ""
+def _free_positions(taken: list[int]):
+    """The positions 0, 1, 2… of a hash's z-order that ``taken`` (its
+    shapes' and groups' indices) leaves free, in turn: where its strokes go."""
+    taken = sorted(set(taken))
+    t, position = bisect.bisect_left(taken, 0), 0
+    while True:
+        if t < len(taken) and taken[t] == position:
+            t += 1
+        else:
+            yield position
+        position += 1
+
+
+def _path(data, transform: tuple) -> list[tuple[list, tuple]] | None:
+    """A CGPath as Notability archives one: its magic, the element count
+    (uint32), a byte per element (0 move, 1 line, 2 quadratic, 3 cubic,
+    4 close), then their points as float64 x, y pairs, little-endian. Its
+    pieces, each a move and what follows it, as ``(points, segments)``
+    through the transform (``Shape.segments``: a quadratic becomes the
+    cubic it is, a close a line back), a piece with no segment dropped.
+    None when it does not read: no magic, an element before any move or of
+    no known kind, sizes that disagree, past MAX_CURVE_POINTS points, a
+    point that is not finite or lies past COORD_LIMIT."""
+    if not isinstance(data, (bytes, bytearray)) or len(data) < 8 or data[:4] != _PATH_MAGIC:
+        return None
+    count = int.from_bytes(data[4:8], "little")
+    kinds = data[8:8 + count]
+    if count > 2 * MAX_CURVE_POINTS or len(kinds) != count or max(kinds, default=0) >= len(_PATH_POINTS):
+        return None
+    n = sum(_PATH_POINTS[kind] for kind in kinds)
+    xy = _unpack(data[8 + count:], "d", 2 * n, exact=True) if n <= MAX_CURVE_POINTS else None
+    if xy is None:
+        return None
+    a, b, c, d, tx, ty = transform
+    points = [(a * x + c * y + tx, b * x + d * y + ty) for x, y in zip(xy[0::2], xy[1::2])]
+    if not all(math.isfinite(v) and abs(v) <= COORD_LIMIT for point in points for v in point):
+        return None
+    pieces, at = [], 0
+    for kind in kinds:
+        if kind == 0:
+            pieces.append(([points[at]], []))
+        elif not pieces:
+            return None
+        else:
+            line, segments = pieces[-1]
+            if kind == 1:
+                line.append(points[at])
+                segments.append(1)
+            elif kind == 2:
+                (x0, y0), (qx, qy), end = line[-1], points[at], points[at + 1]
+                line += [(x0 + 2 / 3 * (qx - x0), y0 + 2 / 3 * (qy - y0)),
+                         (end[0] + 2 / 3 * (qx - end[0]), end[1] + 2 / 3 * (qy - end[1])), end]
+                segments.append(3)
+            elif kind == 3:
+                line += points[at:at + 3]
+                segments.append(3)
+            elif line[-1] != line[0]:
+                line.append(line[0])
+                segments.append(1)
+        at += _PATH_POINTS[kind]
+    return [(line, tuple(segments)) for line, segments in pieces if segments] or None

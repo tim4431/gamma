@@ -22,11 +22,14 @@ export function useInkSave({ focusedBlockId, blocksRef, setStatus, liveSaved }) 
     // the page (a phone may freeze or end a hidden tab without a pagehide).
     // A tab closed while it shows fires pagehide, then visibilitychange in
     // the same task: pagehide's flush clears the timer, so it is the
-    // close's only one. A tab hidden before it closes flushed on going
-    // hidden, and pagehide sends every draft still unsaved again, its PUT
-    // beside its upload: that flush's requests may not be past their first
-    // step. A drawing that flush is uploading with keepalive sends its PUT
-    // alone, beside that upload (planFlush).
+    // close's only one. When Firefox stops the pagehide listener first, the
+    // flush on going hidden sends what was waiting, the PUT after the
+    // upload, and the draft journal keeps the drawing (inkStore). A tab
+    // hidden before it closes flushed on going hidden, and pagehide sends
+    // every draft still unsaved again, its PUT beside its upload: that
+    // flush's requests may not be past their first step. A drawing that
+    // flush is uploading with keepalive sends its PUT alone, beside that
+    // upload (planFlush).
     const flush = () => { if (pending()) flushInk({ keepalive: document.visibilityState === "hidden" }); };
     const leave = () => { if (pending() || inkStore.dirtyDrafts().length) flushInk({ keepalive: true, leaving: true }); };
     window.addEventListener("pagehide", leave);

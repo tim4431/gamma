@@ -1,6 +1,6 @@
 // What a flush of the drafts sends, group by group, and which of it goes
 // with fetch `keepalive` (docs/dev/handwriting.md "Fences"). Pure, so a
-// node test pins it: the e2e cannot drive a pagehide. inkSaver.js's
+// node test pins it (tests/e2e/tabClose.mjs closes a real tab). inkSaver.js's
 // flushInk starts every group's requests at once — nothing is sure to
 // run once a closing page is gone, so a loop waiting for one group before
 // the next would send the first group alone — and asks planFlush which

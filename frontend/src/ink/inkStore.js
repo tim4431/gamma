@@ -124,13 +124,15 @@ export function draft(id) { return drafts.get(id) || null; }
 // draft yet (a draft keeps the base it started from, and the ids of the
 // strokes that file had as it was loaded here). `sent`: the uploads whose
 // block PUT went without an answer yet (markSending), oldest first.
-export function setDraft(id, ink, base = "") {
+// `erasing`: a frame of an eraser pass, whose journal write waits for the
+// pass to end (the draft journal, below).
+export function setDraft(id, ink, base = "", erasing = false) {
   const prev = drafts.get(id);
   drafts.set(id, prev
     ? { ...prev, ink, dirty: true }
     : { ink, dirty: true, url: "", base, baseIds: base && files.get(base) ? strokeIds(files.get(base)) : [], sent: [] });
   nameLater(ink);
-  journalLater(id);
+  if (erasing) journalLater(id); else journalWrite(id);
   bump();
 }
 // The upload a draft would be — its bytes and the name the server gives
@@ -172,7 +174,7 @@ export function markSaved(id, ink, url, stored = url) {
   files.set(url, ink);
   const sent = d.sent || [], at = sent.indexOf(url);
   drafts.set(id, { ...d, url: stored, base: url, baseIds: strokeIds(ink), dirty: d.ink !== ink, sent: at < 0 ? sent : sent.slice(at + 1) });
-  if (d.ink === ink) journalDrop(id); else journalLater(id);
+  if (d.ink === ink) journalDrop(id); else journalWrite(id);
   bump();
   if (stored === url) return;
   loadInk(stored).then((loaded) => {
@@ -183,7 +185,7 @@ export function markSaved(id, ink, url, stored = url) {
     const drawn = cur.ink !== ink;   // strokes added meanwhile, merged onto the merged file
     drafts.set(id, { ...cur, ink: drawn ? mergeInk(ink, cur.ink, merged).ink : merged, dirty: drawn, url: stored, base: stored,
       baseIds: strokeIds(merged) });
-    if (drawn) journalLater(id);
+    if (drawn) journalWrite(id);
     bump();
   });
 }
@@ -203,8 +205,7 @@ export function markSending(id, url) {
   const d = drafts.get(id);
   if (!d?.dirty || !url) return Promise.resolve(null);
   drafts.set(id, { ...d, sent: [...(d.sent || []).filter((u) => u !== url), url].slice(-SENT_KEEP) });
-  journalCancel(id);
-  const write = journalNow(id);
+  const write = journalWrite(id);
   if (!write) return Promise.resolve(null);
   let timer = 0;
   return Promise.race([write, new Promise((resolve) => { timer = setTimeout(resolve, SENT_WAIT_MS, null); })])
@@ -215,7 +216,7 @@ export function markUnsent(id, url) {
   const d = drafts.get(id);
   if (!d?.sent?.includes(url)) return;
   drafts.set(id, { ...d, sent: d.sent.filter((u) => u !== url) });
-  journalLater(id);
+  journalWrite(id);
 }
 // An acknowledged deletion still masks the old file while its block is in
 // the tree. Do not cache the empty ink under the old file URL, or discard
@@ -244,20 +245,28 @@ export function dirtyDrafts() {
 }
 
 // --- the draft journal (inkJournal.js) -----------------------------------------
-// A draft's entry is written JOURNAL_MS after it turns dirty, at once when
-// its PUT goes (markSending) and on pagehide, and deleted when its upload
-// lands (markSaved, markDeleted) or the block starts over (dropDraft), so
-// an entry that outlives its tab is what a flush never landed, or may have
-// landed unanswered (its `sent`). Entries carry the tab that wrote them,
-// which holds a Web Lock named after itself while it lives, and are keyed
-// by it: a page open restores only entries of tabs that are gone, never
-// this tab's own or a tab still open (it is about to save them itself).
+// A draft's entry is written at once whenever the draft changes, its PUT
+// goes (markSending) or the page may be going away (journalAll), except
+// during an eraser pass, which changes a group every frame: then JOURNAL_MS
+// after the pass's last frame. It is deleted when its upload lands
+// (markSaved, markDeleted) or the block starts over (dropDraft), so an
+// entry that outlives its tab is what a flush never landed, or may have
+// landed unanswered (its `sent`). WebKit keeps no write a closing page
+// makes, so a stroke drawn as the tab closes is kept by the write its
+// change made at once, and a write put off past a change would leave it an
+// older drawing. Entries carry the tab that wrote them, which holds a Web
+// Lock named after itself while it lives, and are keyed by it: a page open
+// restores only entries of tabs that are gone, never this tab's own or a
+// tab still open (it is about to save them itself).
 const JOURNAL_MS = 300;
 const TAB = Math.random().toString(36).slice(2, 10);
 const LOCK = (tab) => `gamma-ink-tab-${tab}`;
 export const journalTab = () => TAB;
 const journalKeys = new Map();     // block id → the key its entry is written under
-const journalTimers = new Map();   // block id → the pending write
+const journalTimers = new Map();   // block id → the write an eraser pass waits for
+// The journal's database opens as the page loads, not at its first write,
+// which then goes at once (inkJournal.js openDb).
+journal.openDb();
 let lockHeld = false;
 function holdTabLock() {
   if (lockHeld) return;
@@ -293,23 +302,33 @@ function journalNow(id) {
   holdTabLock();
   return journal.putEntry(keyOf(id), entryOf(d));
 }
+// The draft's entry, now, in place of a write an eraser pass waits for;
+// → the write.
+function journalWrite(id) {
+  journalCancel(id);
+  return journalNow(id);
+}
+// No entry of this tab's for a block it never wrote one for: nothing to
+// delete, and no delete for the next write to wait behind (a new group's).
 function journalDrop(id) {
   journalCancel(id);
-  const key = keyOf(id);
+  const key = journalKeys.get(id);
+  if (!key) return;
   journalKeys.delete(id);
   journal.deleteEntry(key);
 }
-// Every dirty draft's entry, now (the page is going away); → the writes.
+// Every dirty draft's entry, now (the page may be going away); → the writes.
 export function journalAll() {
   const writes = [];
-  for (const [id, d] of drafts) {
-    if (!d.dirty) continue;
-    journalCancel(id);
-    writes.push(journalNow(id));
-  }
+  for (const [id, d] of drafts) if (d.dirty) writes.push(journalWrite(id));
   return Promise.all(writes);
 }
-if (typeof window !== "undefined" && typeof window.addEventListener === "function") window.addEventListener("pagehide", journalAll);
+// On pagehide and on going hidden: a close fires both, in one task, and
+// Firefox can stop a pagehide listener (this is the page's first).
+if (typeof window !== "undefined" && typeof window.addEventListener === "function" && typeof document !== "undefined") {
+  window.addEventListener("pagehide", journalAll);
+  document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") journalAll(); });
+}
 
 // Restoring: the workspace's entries are read once per tab (the first
 // block asked for), and a block with any is restored the first time it is
@@ -402,10 +421,13 @@ async function restore(block, { key, entry }) {
   // What the entry's change counts from: the newest upload its tab sent a
   // PUT for that the server has (that PUT may have landed unanswered), else
   // the file its draft was edited from. A lost upload comes back whole, and
-  // its save uploads it again.
+  // its save uploads it again. A block that names no file took none of
+  // those PUTs, since one that lands names a file and nothing names none
+  // again: they did not land (a group's first PUT that reached the server
+  // before the group's insert, answered 404 after its tab was gone).
   let baseUrl = entry?.base || "", base = null;
   if (!lost) {
-    for (const sent of [...(Array.isArray(entry?.sent) ? entry.sent : [])].reverse()) {
+    for (const sent of url && Array.isArray(entry?.sent) ? [...entry.sent].reverse() : []) {
       if (typeof sent !== "string" || !sent) continue;
       if (sent === url) { baseUrl = url; break; }
       const got = await fetchFile(sent);

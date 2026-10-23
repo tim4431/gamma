@@ -31,8 +31,8 @@ A change is pushed one second after it settles (a slider sends one request)
 as a `PATCH /api/prefs/profile` carrying only the entries that changed since
 the copy this tab last saw. A tab's stale value of another entry therefore
 never undoes a change synced in meanwhile. A pending push is flushed when
-the page is hidden (with `keepalive` when the page's keepalive room allows,
-at its normal priority: [collab.md](collab.md) "Keepalive"), focus pulls
+the page is hidden or goes away (with `keepalive` when the page's keepalive
+room allows, at its normal priority: [collab.md](collab.md) "Keepalive"), focus pulls
 at most every 15 seconds, and nothing is pushed before the first load
 succeeds. Signed-out visitors, guests and share views work from
 localStorage alone.
@@ -109,8 +109,9 @@ small caption size; the sentence is its hover `title` and its
 The last open page and viewer layout use `app/sessionState.js`, separately from
 synced preferences. Its key is `gamma-session:<user>@<workspace>`. Reads wait
 for workspace selection; changing scope cancels pending saves. Saves are
-debounced (300 ms) and written early on `pagehide`, so a reload right after a
-change (closing the notes window, say) keeps it. Old unscoped
+debounced (300 ms) and written early on `pagehide` and on going hidden
+(Firefox can stop a `pagehide` listener), so a reload or a close right after
+a change (closing the notes window, say) keeps it. Old unscoped
 session caches are ignored because their account owner cannot be determined.
 
 ## Periodic backup tasks

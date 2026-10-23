@@ -67,7 +67,10 @@ app ([ipad.md](ipad.md)). Typed text on a page is
   `inkEditing.mjs`, `inkShapes.mjs` (group `ink-shapes`: the Shapes tool,
   the ruler, the calligraphy pen, shape handles and fills), `inkZoom.mjs`
   (group `ink-zoom`: the zoom window and transcribing a selection), and the
-  live stroke in `collab.mjs`.
+  live stroke in `collab.mjs`. The scratch scenario `tests/e2e/tabClose.mjs`,
+  apart from the groups, closes the tab as the pen lifts, also with no
+  `pagehide` listener of the app running
+  ([debugging.md](debugging.md#browser-end-to-end-suite)).
 
 ## What the user sees
 
@@ -1263,19 +1266,23 @@ reach.
     bodies still fit in that room, and the others go as plain fetches
     (`ink/inkFlush.js` `planFlush`, "Client").
   - When a closing page cuts a plain fetch off, the draft journal keeps
-    that handwriting and restores it on the next visit ("Client", the
-    journal). That is why handwriting takes the lowest priority: typed
-    edits lost at the close are lost for good.
+    what it wrote of that handwriting before the close and restores it on
+    the next visit ("Client", the journal). That is why handwriting takes
+    the lowest priority: typed edits lost at the close are lost for good.
 - `pagehide` flushes every draft still unsaved.
   - A tab closed while it shows fires `pagehide` first and
     `visibilitychange` after it, in one task (every close measured that
-    fired them, headless Chromium and WebKit:
+    fired them, headless Chromium, WebKit and Firefox:
     [research/keepalive-abort.md](../research/keepalive-abort.md)). So the
     close flushes once, and the flush on going hidden that follows finds
     nothing scheduled.
   - A tab hidden before it closes flushed when it was hidden. Its
     `pagehide` flushes what is still unsaved again, whether or not that
     first flush is still on its way.
+  - Firefox can stop the `pagehide` listener before it flushes
+    ([collab.md](collab.md) "Keepalive"). The flush on going hidden then
+    sends what waits on the save timer, the `PUT` after its upload, and
+    the draft journal keeps the drawing.
 - On `pagehide` the upload and the block's `PUT` go side by side, since
   nothing is sure to run once the page is gone. The `PUT` names the file
   by the hash `inkStore` worked out when the draft changed (`nameLater`,
@@ -1285,6 +1292,13 @@ reach.
   - A flush the page will live past keeps the upload-then-`PUT` order. So
     does a draft the server will have to merge (its block names another
     file than the draft's base), even on `pagehide`.
+  - So does a draft not named yet. Its `PUT` waits for the upload's
+    answer, which a closed page never reads, and the journal brings the
+    drawing back on the next visit.
+  - A group's first `PUT` can reach the server before the group's insert,
+    which the edits' `POST` carries. Its 404 is not retried once the page
+    is gone. The block then names no file, and the journal's restore
+    brings the drawing back whole ("Client", the journal).
 - `pagehide` sends nothing twice.
   - A drawing whose upload the first flush has on its way with keepalive
     sends its `PUT` alone, beside that upload, or nothing when the `PUT`
@@ -1299,6 +1313,16 @@ reach.
     leave handwriting no room.
 - Every `PUT` is written to the draft journal before it goes
   (`inkStore.markSending`, "Client"), since its answer may never come.
+  - Every journal write is committed as it is made (`commit()`), so one
+    made as the page goes lands in Chromium and Firefox. WebKit keeps
+    none made then.
+  - So the journal writes a draft as it changes. That write, made while
+    the page lives, holds a stroke drawn as the tab closes in every
+    engine, WebKit too
+    ([research/keepalive-abort.md](../research/keepalive-abort.md#the-app-at-a-close)).
+  - `journalAll` writes every dirty draft again on `pagehide` and on going
+    hidden. Firefox can stop it on `pagehide`, where it is the page's
+    first listener.
   - A 4xx stops the flush's retries, except a 404 (the block's insert may
     still be queued) and the ones `collabSession.retryableStatus` retries
     (408, 429). The draft is kept behind the sticky pill "Handwriting not
@@ -2216,10 +2240,20 @@ reach.
       - `sent`, the uploads whose block `PUT` that tab sent without an
         answer yet, oldest first.
   - `inkStore` writes a draft's entry:
-    - when it turns dirty (300 ms after the edit);
+    - at once when it changes. A write put off past a change would leave
+      an older drawing for a close that writes nothing more (WebKit), which
+      a restore takes for unsaved work;
+    - during an eraser pass, which changes a group every frame, 300 ms
+      after the pass's last frame. A WebKit close in those 300 ms leaves
+      the drawing from before the pass;
     - at once when a `PUT` goes (`markSending`, awaited, for half a second
       at most, before the `PUT` of a flush the page will live past);
-    - on `pagehide` (`journalAll`).
+    - on `pagehide` and on going hidden (`journalAll`, "Fences").
+  - The database opens as the page loads (`inkJournal.openDb`). A write's
+    transaction then starts in the task of the change that makes it, ahead
+    of the render the change causes, and is committed as it is made.
+  - A block this tab never wrote an entry for gets no delete (a new
+    group's `dropDraft`), so its first write waits behind none.
   - It takes a `PUT` off `sent` when its answer is an error (`markUnsent`:
     it did not land).
   - It deletes the entry when the upload lands (`markSaved` with nothing
@@ -2245,6 +2279,9 @@ reach.
   - What the entry's change counts from is the newest of its `sent`
     uploads that the server has, else the entry's `base`. That `PUT` may
     have landed, so what it carried is the server's, to keep or delete.
+    - A block that names no file took none of those `PUT`s: one that
+      lands names a file, and nothing names none again. The entry then
+      counts from its own base.
     - The upload alone would not tell: a flush the tab did not live
       through may have stored the upload and never sent the `PUT`.
     - Within the journal's 7 days a stored upload is never purged, the
@@ -2300,8 +2337,7 @@ reach.
     runs it on an in-memory IndexedDB.
 - `ink/inkFlush.js` (pure): what `flushInk` sends for each dirty group,
   and which of it goes with `keepalive` ("Fences").
-  `frontend/tests/inkFlush.test.mjs` is the proof, since the e2e cannot
-  drive a `pagehide`.
+  `frontend/tests/inkFlush.test.mjs` pins it.
   - `planFlush(groups, budget) → [{id, send, keepalive}]` takes the groups
     in the flush's order, each `{id, remove, uploadBytes, putBytes,
     beside, inFlight}`:
@@ -3254,15 +3290,17 @@ reach.
     apiJson, API, keepaliveRoom}) → {flushInk, scheduleInk, pending}`, is
     handed the draft store, the API and the keepalive room rather than
     importing them. So `frontend/tests/inkSaver.test.mjs` drives it with
-    fakes and mock timers (the e2e cannot drive a `pagehide` or a failing
-    request).
+    fakes and mock timers. A real close is the scratch scenario
+    `tests/e2e/tabClose.mjs`, apart from the browser suite.
   - `useInkSave({focusedBlockId, blocksRef, setStatus, liveSaved}) →
     {flushInk, scheduleInk}` keeps one for the page's life over the real
     ones. App calls it after the page's collab session, so its listeners
     register after collab's.
   - It flushes on `visibilitychange` when a save is pending (with
     keepalive when hidden), on `pagehide` when one is pending or any draft
-    is dirty (keepalive, `leaving`), and when the open page changes.
+    is dirty (keepalive, `leaving`), and when the open page changes. A
+    close whose `pagehide` listener Firefox stopped flushes on going hidden
+    alone ("Fences").
   - `scheduleInk()` puts the flush 700 ms after the last edit and at most
     5 s after the first unsaved one ("Fences"). `pending()` is whether one
     waits on its timer.

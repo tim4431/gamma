@@ -156,6 +156,13 @@ test("pushOp coalesces consecutive sets of one block", () => {
   assert.equal(q.length, 4);
 });
 
+test("pushOp folds nothing into the first `floor` ops (a batch sent under its name)", () => {
+  const q = [{ op: "set", id: "a", content: "1", base: "" }];
+  assert.equal(pushOp(q, { op: "set", id: "a", content: "12", base: "1" }, 1), null);
+  assert.ok(pushOp(q, { op: "set", id: "a", content: "123", base: "1" }, 1), "a set after them folds as before");
+  assert.deepEqual(q, [{ op: "set", id: "a", content: "1", base: "" }, { op: "set", id: "a", content: "123", base: "1" }]);
+});
+
 test("a changed text box names the box it was changed from, which a run of changes keeps", () => {
   const box = { x: 10, y: 10, w: 60, h: 23, auto: true, size: 12, color: "#1f1f1f", bg: null };
   const ops = roundTrip(

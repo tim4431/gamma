@@ -418,8 +418,10 @@ Messages:
   when no editor is open on that block) and `ink-live`. **Writes never
   travel over the socket**: they are `POST /api/pages/{id}/ops`, so auth
   and scoping live in one place. A dropped socket does not stop HTTP
-  saves; a closing tab attempts to flush queued edits with a keepalive
-  fetch, the first of the page's keepalive requests ("Keepalive" below).
+  saves. A tab that closes sends its unsaved edits at once with
+  keepalive, the first of the page's keepalive requests. One going to the
+  background sends its next batch with keepalive, and the rest in order
+  ("Keepalive" below).
 
 **`ink-live`** is the stroke under someone's pen, shown to the others
 before its file lands ([handwriting.md](handwriting.md) "Live
@@ -494,10 +496,11 @@ machine over injected dependencies — the JSON call, the socket factory, the
 keepalive POST, timers, and callbacks for peers/me — so the node tests drive
 it with fakes. `usePageCollab` (`collaboration/usePageCollab.js`, one per open page in App.jsx)
 only wires it to the browser: `utils.apiJson`, `new WebSocket(...)` on the
-share- or workspace-qualified URL, the pagehide keepalive and its claim on
-the page's keepalive room ("Keepalive" below), a `beforeunload`
-prompt while `hasPending()`, a flush when the tab goes to the background
-(`visibilitychange` to hidden — a phone may kill it without a pagehide), an
+share- or workspace-qualified URL, `hide()` on `pagehide` and
+`hide(false)` on going hidden (a phone may kill a hidden tab without a
+pagehide) with its claim on the page's keepalive room ("Keepalive" below),
+a `beforeunload`
+prompt while `hasPending()`, an
 immediate retry on the browser's `online` and on the window regaining
 focus, and `peers` / `me` as React state. The session owns:
 
@@ -540,9 +543,10 @@ focus, and `peers` / `me` as React state. The session owns:
   `set` ops on one block coalesce (`pushOp`); typing flushes
   after 350 ms, a structural op after 80 ms, an editor closing at once
   (`saveNowRef`), `flush()` before navigation. A batch (`out`) is at most
-  `MAX_OPS` ops of the queue, in order (a paste of 600 blocks is two). It
-  keeps its id (`batch`) until the server answers it, on every retry and in
-  the pagehide keepalive, so a retry of a batch that did land is answered,
+  `MAX_OPS` ops of the queue, in order (a paste of 600 blocks is two), or
+  the next batch `hide()` named, under that name. A batch keeps its id
+  (`batch`) until the server answers it, on every retry and in `hide()`'s
+  keepalive sends, so a retry of a batch that did land is answered,
   not applied again. The POST response is the ack: re-keyed positions are
   adopted from it, and an insert the server already had converges on the
   block as the server has it. A refused batch is handled by why:
@@ -809,8 +813,8 @@ ledger, `shared/lib/keepalive.js`. It counts each request's body bytes
 from the moment it starts until its answer's body is in or it fails, and
 gives a request the room of its priority:
 
-- `critical`, no other copy: the queued page edits `pagehide()` sends.
-  The cap (`KEEPALIVE_CAP`) less what is in flight.
+- `critical`, no other copy: the unsaved page edits the session's `hide()`
+  sends. The cap (`KEEPALIVE_CAP`) less what is in flight.
 - `normal`, small and recoverable: the profile's `PATCH` (`app/prefs.js`),
   the reading position's `PUT` (App's `flushReadPos`), the discard of an
   unfinished upload in parts (`uploadParts.js`, no body), an Inbox mark
@@ -819,31 +823,78 @@ gives a request the room of its priority:
   [handwriting.md](handwriting.md) "Fences"). That less `NORMAL_RESERVE`
   (8 KiB), kept for the normal senders.
 
-A sender with no other copy claims what it will send at pagehide
+A sender with no other copy claims what it will send at a close
 (`registerKeepaliveClaim(key, fn)`, `fn() → bytes`). A claim is read only
 when a `normal` or `low` request asks for room, never on an edit, and at
 most once a task. The ledger keeps each claim's bytes until a microtask
 (a flush asks before every request it sends), and reads them afresh at
 once after a claim is registered or dropped or a `critical` request goes.
 `usePageCollab` claims `page-edits`. The session's
-`pendingKeepaliveBodies()` is what `pagehide()` sends, read without
-sending it: per page with unsaved edits (not one in Recently deleted), the
-batch out under its own id, then the queue in batches of `MAX_OPS` under
-the ids they will take. The claim is the bytes of those bodies that go
-with keepalive from an empty page (`keepaliveShare`: a batch over the cap
-goes plain and claims nothing). Once pagehide has sent them the claim is
-0, until the page is shown again from the back-forward cache. The edits,
-handwriting, the profile and the reading position each flush at
-`pagehide` as well as on going hidden. A tab closed while it shows fires
-`pagehide` first and `visibilitychange` (hidden) after it, in one task:
-so did every close measured that ran the page's listeners, in headless
-Chromium and WebKit
-([research/keepalive-abort.md](../research/keepalive-abort.md)). So all
-four go from `pagehide`, and `visibilitychange` finds nothing new to
-send. The claim keeps the edits' room whichever listener runs first:
-their POST goes with keepalive whenever the edits alone fit the cap. A
-tab hidden before it closes flushed the lower priorities when it was
-hidden.
+`pendingKeepaliveBodies()` is what `hide()` sends at a close, read
+without sending it: per page with unsaved edits (not one in Recently
+deleted), the batch out under its own id, then the queue in batches of
+`MAX_OPS` under the ids they take. The claim is the bytes of those bodies
+that go with keepalive from an empty page (`keepaliveShare`: a batch over
+the cap goes plain and claims nothing). Once `pagehide` has sent them the
+claim is 0, until the next task or until the page shows again.
+
+**When they send.** A tab closed while it shows fires `pagehide` first and
+`visibilitychange` (hidden) after it, in one task. So did every close
+measured that ran the page's listeners, in headless Chromium, WebKit and
+Firefox ([research/keepalive-abort.md](../research/keepalive-abort.md)).
+Firefox can stop a `pagehide` listener before it sends. It stops the first
+one of a tab that is the last page of its content process, and in some
+closes the second. So each sender sends from both events, and marks its
+data sent only once the request has gone. Whichever event runs, the data
+leaves with keepalive, but for the edits' batches behind the next one
+(below). What a stopped listener left unsent goes from the other:
+
+- The edits: `usePageCollab` calls `hide()` on `pagehide`. Going hidden
+  in the same task sends nothing more after a `hide()` that ran, and all
+  again after one stopped part way. The server answers a batch id it has
+  without applying it twice. With no `pagehide` before it, going hidden
+  sends the next batch only (`hide(false)`, below).
+- The profile and the reading position: each sends its armed push on both
+  and drops the timer after the request. A second `PATCH` or `PUT` sets
+  the same values.
+- Handwriting: `pagehide` flushes every unsaved draft, each `PUT` beside
+  its upload. Going hidden flushes what waits on the save timer, each `PUT`
+  after its upload. The draft journal holds each drawing from its change
+  on, so one the close does not land comes back on the next visit
+  ([handwriting.md](handwriting.md) "Fences").
+- The draft journal (`journalAll`) and the viewer's layout
+  (`app/sessionState.js` `flushSession`) write on both.
+
+A tab going to the background sends the same way, since a phone may freeze
+or end a hidden tab without a `pagehide`, but for the edits' batches behind
+the next one. A tab hidden before it closes sent then, and its `pagehide`
+sends what is still unsaved. The claim keeps the edits' room whichever
+listener runs first: their batches go with keepalive whenever the edits
+alone fit the cap.
+
+At a close, `hide()` first names the rest of the queue: batches of
+`MAX_OPS` ops under the ids `pendingKeepaliveBodies()` gave them
+(`sealed`). With no batch on its way, the next one goes through the
+session's own send, with keepalive, so its answer is read if the page lives
+on. A batch on its way goes again as a copy under its id (`keepalivePost`),
+since a closing page may cut a plain request off. The named batches behind
+it go as copies. Nothing is spent: the session sends each named batch later
+under its name, and one whose copy landed first is answered, not applied
+again. Edits made after `hide()` queue behind the named batches and never
+fold into them (`pushOp`'s floor). Copies sent at once can reach the server
+out of order. A copy naming a block an earlier batch inserts is then
+refused (404), and goes again in order if the page lives. A copy that
+applies before the batch it follows is never undone: its in-order send is
+a replay. The server would then keep a word the tab took back.
+
+So only a close sends copies behind a batch. Going hidden, `hide(false)`
+sends the next batch alone with keepalive: the one out, again or as a copy
+while it is on its way, else the next of the queue. The rest follows its
+answer, in order. A close whose `pagehide` listener Firefox stopped before
+its first statement sends just that batch. In the app Firefox stopped only
+`journalAll`, the first of six `pagehide` listeners. The edits' listener is
+the fifth
+([research/keepalive-abort.md](../research/keepalive-abort.md#the-app-at-a-close)).
 
 The claim holds what the edits needed when a lower priority asked. A
 tab hidden with a drawing to save sends it with keepalive. Back on the
@@ -879,8 +930,10 @@ the answer's headers, a moment before the browser stops counting the
 request, so the ledger reads a copy of the answer to its end
 (`Response.clone()`).
 `frontend/tests/keepalive.test.mjs` pins the policy and runs a closing
-tab's requests over a model of the browser's rule, since the e2e cannot
-drive a pagehide.
+tab's requests over a model of the browser's rule. The scratch scenario
+`tests/e2e/tabClose.mjs` closes a real tab right after a change, and
+`--stop pagehide` closes it with no `pagehide` listener of the app
+running ([debugging.md](debugging.md#browser-end-to-end-suite)).
 
 ## What the user sees (`src/collaboration/Presence.jsx`, CSS in `shared/styles/app.css`)
 
@@ -958,18 +1011,23 @@ drive a pagehide.
   late), retries and their backoff, rejection, navigation
   during a save, presence messages, the caret throttle, reconnect backoff,
   read-only sessions, and `pendingKeepaliveBodies` as exactly what
-  `pagehide` sends (every page's batches, none of a page in Recently
-  deleted, its batch ids spent); browser behavior is covered separately
-  below.
+  `hide()` sends at a close (every page's batches, none of a page in
+  Recently deleted, the next one through the session's send with keepalive
+  and the rest as copies), the same ids twice when it runs twice, edits
+  made after it queuing behind the batches it named, and going hidden
+  (`hide(false)`) sending only the batch that goes next; browser behavior
+  is covered separately below.
 - `frontend/tests/keepalive.test.mjs`: the page's keepalive ledger
   ("Keepalive") — body bytes, each priority's room (never below 0, so a
   body-less request always fits), claims read lazily and once a task,
   release once the answer's body is in or the request fails, a plain
   fetch for what does not fit, the edits sent both ways when a drawing
   from an earlier flush holds their room (nothing aborted for them), and
-  a closing tab's requests over a model of the browser's 64 KiB rule.
+  a closing tab's requests over a model of the browser's 64 KiB rule,
+  also with one sender's `pagehide` listener stopped.
 - `frontend/tests/collabRobustness.test.mjs`: the refused-batch paths
-  (conflict, signed out, refused for good), every op on a deleted block
+  (conflict, signed out, refused for good), a conflict dropping ops from
+  a batch `hide()` named, which keeps its name, every op on a deleted block
   dropped in one round trip, a delete racing a move into it, a rescue not
   repeated and its budget restored, ours put back on top of theirs (a block
   both moved, a note a rescue re-created), a remote move this tab can't
@@ -994,13 +1052,20 @@ drive a pagehide.
   reload surviving Ctrl+Z, a failed refresh keeping the page and retrying,
   undo never deleting the text the other wrote in our note, the other
   indenting around an open editor keeping it open, typing at one caret
-  keeping both people's keystrokes, a paste arriving as two batches leaving
+  keeping both people's keystrokes, a word taken back while a save waits
+  for its retry staying taken back on the server through a tab switch, a
+  paste arriving as two batches leaving
   the idle tab silent, typing kept through Recently deleted and saved after
   the restore, a
   highlight made by the other person; `share.mjs` covers the invited editor on a share link and
   the stranger typing through an anyone-with-the-link edit share under a
   renamed display name, and `textBoxes.mjs` a text box one person moves
   while the other types in it.
+- A closing tab: `node tests/e2e/tabClose.mjs` from `frontend/`, a scratch
+  scenario apart from the groups
+  ([debugging.md](debugging.md#browser-end-to-end-suite)). It types in a
+  note, closes the tab at once and asserts that the server got the typing,
+  also with no `pagehide` listener of the app running (`--stop pagehide`).
 
 ## Limits and next steps
 
@@ -1017,6 +1082,10 @@ drive a pagehide.
   in 2 of 480 ([research/keepalive-abort.md](../research/keepalive-abort.md)).
   An outage followed by confirming the close, or a crash, still loses
   them.
+- A close or a reload with a batch unanswered and edits behind it sends
+  them at once, and they can land out of order. A copy that applies before
+  the batch it follows is never undone ("Keepalive"). Keeping their order
+  would take a server that holds a batch until the one it follows lands.
 - A remote delete of a block with our text edit in flight applies at once;
   the edit then comes back as a rescue only if our base still held the
   block, else it is dropped with the block (the screen already showed the
