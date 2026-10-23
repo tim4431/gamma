@@ -144,10 +144,12 @@
 .segGroup .uiBtn:last-child { border-radius: 0 var(--radius-md) var(--radius-md) 0; }
 .segGroup .uiBtn + .uiBtn { margin-left: -1px; }
 .segGroup .uiBtn.on { z-index: 1; }
+/* The frame lies over the labels, so its tint is see-through in every
+   theme (a theme may pin --accent-bg-light to a solid colour). */
 .segGroup > .slidePill {
   z-index: 2;
   border: 1px solid var(--accent);
-  background: var(--accent-bg-light);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
 }
 .segGroup[data-pill] > .uiBtn.on,
 .segGroup[data-pill] > .uiBtn.on:hover:not(:disabled) {
