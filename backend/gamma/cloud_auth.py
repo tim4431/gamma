@@ -15,9 +15,12 @@ and the rules for an identity this server has not seen (``policy``):
 - ``provision``: a new account is created under the username (empty password,
   so only the cloud can sign it in) with its personal workspace — the free
   share host;
-- ``invited``: like ``provision`` for a subject holding an invitation to a
-  shared workspace here (``pending_memberships``), like ``refuse`` for
-  everyone else — a Pro server that invites its members.
+- ``invited``: like ``provision`` for a subject an invitation waits for —
+  to a shared workspace (``pending_memberships``) or to a share
+  (``pending_share_users``, gamma/shares.py) — or whose request to join an
+  admin approved; like ``refuse`` for everyone else, whose refused sign-in
+  asks to join instead (``NotInvited``, gamma/join_requests.py) — a Pro
+  server that invites its members.
 
 On a hosted container the plan's policy replaces ``GAMMA_CLOUD_POLICY``,
 and the plan's ``max_accounts`` stops provisioning once that many accounts
@@ -81,7 +84,8 @@ password, deleted the account): the token is dropped, the identity marked
 ``revoked_at`` and the sessions a cloud sign-in minted for that account
 end. Anything else (no network, a 5xx) changes nothing. What the server
 does with the token (the hourly grant check, the preference profile, the
-server list) is gamma/cloud_sync.py.
+server list) is gamma/cloud_sync.py; the username lookup an invitation
+by Gamma Cloud username makes (``lookup_username``) is here.
 """
 
 import hashlib
@@ -97,12 +101,12 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from urllib.parse import urlsplit
+from urllib.parse import parse_qsl, urlsplit
 
 import jwt
 from cryptography.fernet import InvalidToken
 
-from . import config, mcp_oauth, workspaces
+from . import config, join_requests, mcp_oauth, shares, workspaces
 from .chatgpt_oauth import _b64url
 from .db import account_id, account_name, connect_users_db, page_now
 from .logbuf import log
@@ -118,6 +122,9 @@ DEFAULT_CLIENT_ID = "gamma-desktop"
 SCOPE = "openid email profile offline_access prefs"
 CALLBACK_PATH = "/api/auth/cloud/callback"
 INVITED_ONLY = "This server admits invited people only. Ask its admin for an invitation."
+# What a round trip through the account server reports on the page it comes
+# back to (``?cloud_error=`` and the others): never carried into the next one.
+OUTCOME_PARAMS = ("cloud_error", "cloud_join", "cloud_connect", "cloud_connect_error")
 NOT_CONNECTED = ("This server is not connected to Gamma Cloud yet. An admin connects it in "
                  "Settings → Server → Sign-in.")
 PENDING_TTL = 600
@@ -129,6 +136,10 @@ _APP_KEY = "desktop-app"  # the results' namespace in the pending store; a resul
 _CHALLENGE = re.compile(r"[A-Za-z0-9_-]{43}")
 HTTP_TIMEOUT = 15
 ACCESS_MARGIN = 120   # seconds before its expiry a cached access token is no longer handed out
+# The account server's username rule (cloud/gammacloud/accounts.py USERNAME_RE).
+USERNAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]{1,30}[a-z0-9]$")
+LOOKUP_TIMEOUT = 10
+LOOKUPS_PER_10_MIN = 30  # username lookups per inviting account, a workspace's and a share's together
 _DISCOVERY_TTL = 3600
 _JWKS_TTL = 3600
 
@@ -143,6 +154,20 @@ class CloudAuthError(Exception):
         self.status = status
         self.error = error
         self.body = body or {}
+
+
+class NotInvited(CloudAuthError):
+    """A sign-in the ``invited`` policy refuses: no invitation waits for
+    this cloud account here. The callback turns it into a request to join
+    (gamma/join_requests.py)."""
+
+    def __init__(self):
+        super().__init__(INVITED_ONLY)
+
+
+class CloudLookupError(Exception):
+    """The account server could not answer a username lookup (sign-in off,
+    unreachable, no access token) — a message safe to show the inviter."""
 
 
 def _conn() -> sqlite3.Connection:
@@ -818,6 +843,68 @@ def _grant_refused(subject: str, used: str) -> None:
                 + (f" and {tokens} integration token(s)" if share_host else ""))
 
 
+# --- the username lookup ----------------------------------------------------------
+# An invitation by Gamma Cloud username — to a shared workspace
+# (gamma/workspaces.py invite_cloud) or to a share (gamma/shares.py
+# invite_cloud) — names someone who may have no account here yet: the account
+# server answers username → subject, on the inviter's own grant.
+
+def clean_username(name) -> str:
+    """A cloud username as typed ("@Alice " → "alice"), or ValueError."""
+    name = str(name or "").strip().lstrip("@").lower()
+    if not USERNAME_RE.match(name):
+        raise ValueError("a Gamma Cloud username is 3–32 lowercase letters, digits or dashes")
+    return name
+
+
+def lookup_with_token(issuer: str, access_token: str, name: str) -> dict | None:
+    """The account server's exact username lookup, ``GET
+    <issuer>/api/lookup/username?u=<name>`` with a bearer access token:
+    ``{sub, username}``, None when no account has that username (404),
+    CloudLookupError for anything else."""
+    url = f"{issuer}/api/lookup/username?" + urllib.parse.urlencode({"u": name})
+    status = 200
+    try:
+        body = _http(url, headers={"Authorization": f"Bearer {access_token}"}, timeout=LOOKUP_TIMEOUT)
+    except CloudAuthError as e:
+        if e.status is None:  # unreachable
+            raise CloudLookupError(str(e)) from e
+        if e.status == 404:
+            return None
+        status, body = e.status, e.body
+    if status != 200 or not isinstance(body, dict) or not body.get("sub") or not body.get("username"):
+        body = body if isinstance(body, dict) else {}
+        detail = body.get("error_description") or body.get("error") or f"answered {status}"
+        raise CloudLookupError(f"the account server could not look the username up ({detail})")
+    return {"sub": str(body["sub"]), "username": str(body["username"]).lower()}
+
+
+def _lookup_token(by: str) -> str:
+    """An access token for the account server on behalf of ``by`` (the
+    inviting account's id): its own linked Gamma Cloud grant
+    (``access_token_for``). CloudLookupError when the inviter has no linked
+    identity or the account server hands out no token."""
+    if not grant_of(by)[0]:
+        raise CloudLookupError("Link your own Gamma Cloud account (Settings → Account & sync) to invite by "
+                               "Gamma Cloud username.")
+    token = access_token_for(by)
+    if not token:
+        raise CloudLookupError("Gamma Cloud did not answer for your account. Try again later, or sign in "
+                               "with Gamma Cloud again.")
+    return token
+
+
+def lookup_username(name: str, by: str = "") -> dict | None:
+    """A clean cloud username (``clean_username``) → ``{sub, username}`` of
+    that Gamma Cloud account (exact match only), None for no such username,
+    CloudLookupError when the account server cannot be asked (tests replace
+    this function)."""
+    cfg = settings()
+    if not cfg["enabled"]:
+        raise CloudLookupError("Gamma Cloud sign-in is not set up on this server.")
+    return lookup_with_token(cfg["issuer"], _lookup_token(by), name)
+
+
 # --- this server's address -------------------------------------------------------
 
 def server_url(request=None) -> str:
@@ -875,16 +962,24 @@ def resolve_account(claims: dict) -> tuple[str, str]:
     refresh token the new one replaced."""
     stale: list[str] = []
     user_id, username = _resolve(claims, stale)
-    workspaces.claim_pending_memberships(user_id, claims["sub"])  # invitations by cloud username
+    subject = claims["sub"]
+    # what waited for this cloud account: invitations by its username, its request to join
+    workspaces.claim_pending_memberships(user_id, subject)
+    shares.claim_pending(user_id, subject)
+    join_requests.joined(subject)
     revoke_later(stale)
     return user_id, username
 
 
 def _invited(conn, subject: str) -> bool:
-    """Whether an invitation to a shared workspace here waits for ``subject``."""
-    return conn.execute(
+    """Whether the ``invited`` policy admits ``subject``: an invitation to a
+    shared workspace or to a share waits for it (gamma/workspaces.py,
+    gamma/shares.py), or an admin approved its request to join
+    (gamma/join_requests.py)."""
+    return (conn.execute(
         "SELECT 1 FROM pending_memberships p JOIN workspaces w ON w.id = p.workspace_id "
         "WHERE p.subject = ? AND w.kind = 'shared' LIMIT 1", (subject,)).fetchone() is not None
+        or shares.waiting(conn, subject) or join_requests.approved(conn, subject))
 
 
 def _resolve(claims: dict, stale: list[str]) -> tuple[str, str]:
@@ -943,7 +1038,7 @@ def _resolve(claims: dict, stale: list[str]) -> tuple[str, str]:
         if not is_admin_seed:
             if cfg["policy"] == "invited":
                 if not _invited(conn, subject):
-                    raise CloudAuthError(INVITED_ONLY)
+                    raise NotInvited()
             elif cfg["policy"] != "provision":
                 raise CloudAuthError("Your Gamma Cloud account is not linked to an account on this server. "
                                      "Ask the admin to create one, or sign in with a password and link it.")
@@ -962,10 +1057,18 @@ def _resolve(claims: dict, stale: list[str]) -> tuple[str, str]:
 
 
 def safe_next(raw: str) -> str:
-    """A same-origin path to return to after sign-in, else ``/``."""
+    """A same-origin path to return to after sign-in, else ``/``, without
+    the outcome an earlier round trip left in its query
+    (``OUTCOME_PARAMS``): a sign-in that succeeds lands on the page as it
+    was, and one that is refused reports its own outcome alone."""
     raw = (raw or "").strip()
     if not raw.startswith("/") or raw.startswith("//") or len(raw) > 2048:
         return "/"
-    if urlsplit(raw).netloc:
+    url = urlsplit(raw)
+    if url.netloc:
         return "/"
-    return raw
+    params = parse_qsl(url.query, keep_blank_values=True)
+    if not any(k in OUTCOME_PARAMS for k, _ in params):
+        return raw
+    query = urllib.parse.urlencode([(k, v) for k, v in params if k not in OUTCOME_PARAMS])
+    return (url.path or "/") + (f"?{query}" if query else "") + (f"#{url.fragment}" if url.fragment else "")

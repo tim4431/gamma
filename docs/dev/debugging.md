@@ -631,8 +631,9 @@ The scenarios live in `tests/e2e/scenarios/`:
   `GAMMA_CLOUD_SHARE_HOST=1`), and `fakeCloud.mjs` stands in for the
   account server both servers trust: discovery naming the share host, an
   authorization endpoint that answers at once, PKCE code and refresh
-  grants, EdDSA ID tokens with their JWKS, `/userinfo`, and the profile and
-  server-list endpoints. The account links its identity through the real
+  grants, EdDSA ID tokens with their JWKS, `/userinfo`, the profile and
+  server-list endpoints, and the username lookup (every `person` is in its
+  directory). The account links its identity through the real
   round trip from the share popover, publishes, opens the link on the share
   host anonymously, changes the cloud share's audience, syncs, checks the
   pill and Settings' Publishing row, unpublishes, and stops publishing
@@ -880,7 +881,11 @@ The scenarios live in `tests/e2e/scenarios/`:
 - `settings.mjs`, `folders.mjs`, `trash.mjs`, `quickOpen.mjs`, `mcp.mjs`
   and `cloudSignIn.mjs` are groups of their own. The headers of
   `folders.mjs`, `trash.mjs` and `cloudSignIn.mjs` name the doc each
-  covers.
+  covers. `cloudSignIn.mjs`'s last step starts a Gamma under the `invited`
+  policy against `fakeCloud.mjs`: a page shared by Gamma Cloud username,
+  a newcomer signing in from the link's gate, a request to join approved
+  in the Share popover and one from the login page approved under Server →
+  Sign-in. `--only "cloud sign-in: a page shared"`.
 
 Every step also asserts that no API call failed (4xx/5xx), no console error
 and no page error happened meanwhile (`openPage` records them;

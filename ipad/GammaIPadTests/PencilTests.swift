@@ -106,7 +106,7 @@ final class StrokeRecorderTests: XCTestCase {
         XCTAssertEqual(stroke.samples[0], [10, 20, 0.5, 0])
         XCTAssertEqual(stroke.samples[1][2], 0.75)
         XCTAssertEqual(stroke.samples[1][3], 8, accuracy: 1e-6)
-        XCTAssertEqual(stroke.points, [CGPoint(x: 10, y: 20), CGPoint(x: 12, y: 21)])
+        XCTAssertEqual(Array(stroke.samples[1].prefix(2)), [12, 21])
     }
 
     func testTheLiftKeepsTheLastPressure() {
@@ -148,20 +148,30 @@ final class StrokeRecorderTests: XCTestCase {
         XCTAssertEqual(stroke.samples[0].count, 7, "[x, y, p, t, a, z, r]")
         XCTAssertEqual(stroke.samples[0][6], 30, accuracy: 1e-9, "the roll in degrees")
         stroke.add(x: 11, y: 20, force: 2, maximumForce: 4, time: 0.004, altitude: Double.pi / 4, azimuth: 0, roll: -Double.pi / 2)
-        XCTAssertEqual(stroke.samples[1][6], 270, accuracy: 1e-9, "into 0…360")
+        XCTAssertEqual(stroke.samples[1][6], 270, accuracy: 1e-9, "into [0, 360)")
         stroke.add(x: 12, y: 20, force: 2, maximumForce: 4, time: 0.008, altitude: Double.pi / 4, azimuth: 0)
         XCTAssertEqual(stroke.samples[2].count, 6, "no roll reported: six values")
         stroke.add(x: 13, y: 20, force: 2, maximumForce: 4, time: 0.012, roll: 1)
         XCTAssertEqual(stroke.samples[3].count, 4, "a roll without the tilt is not written: the seventh value follows the sixth")
     }
 
+    func testARollJustBelowZeroComesAsZero() {
+        // −1e-17 rad is −5.7e-16°, and that + 360 rounds to 360 itself:
+        // mod's second remainder folds it to 0, in the contract's [0, 360)
+        var stroke = StrokeRecorder()
+        stroke.add(x: 10, y: 20, force: 2, maximumForce: 4, time: 0, altitude: Double.pi / 4, azimuth: 0, roll: -1e-17)
+        XCTAssertEqual(stroke.samples[0][6], 0, "never 360")
+    }
+
     func testTheStillnessAnchorMovesOnlyPastTheSlop() {
         var stroke = StrokeRecorder()
         XCTAssertEqual(PencilCapture.holdSlop, 3)
-        for (i, x) in [0, 1, 2, 3, 3.5, 3.2, 6.6, 7].enumerated() {
-            stroke.add(x: x, y: 0, force: 1, maximumForce: 2, time: 10 + Double(i) * 0.01)
+        let xs: [Double] = [0, 1, 2, 3, 3.5, 3.2, 6.6, 7]
+        for (i, x) in xs.enumerated() {
+            let time: Double = 10 + Double(i) * 0.01
+            stroke.add(x: x, y: 0, force: 1, maximumForce: 2, time: time)
             // 3 is not past the slop from 0; 3.5 is, and becomes the anchor; 6.6 is 3.1 from it
-            let anchor = i < 4 ? 0 : i < 6 ? 4 : 6
+            let anchor: Int = i < 4 ? 0 : i < 6 ? 4 : 6
             XCTAssertEqual(stroke.stillSince, anchor, "after x = \(x)")
         }
         XCTAssertEqual(stroke.stillTime, 10.06, accuracy: 1e-9, "the anchor's own time")
@@ -173,7 +183,11 @@ final class StrokeRecorderTests: XCTestCase {
         stroke.add(x: 2.2, y: 2.2, force: 1, maximumForce: 2, time: 0.01) // 3.11 away, though under 3 on each axis
         XCTAssertEqual(stroke.stillSince, 1)
         // creeping 0.9 pt a sample from there: each within 3 of the one before, not of the anchor
-        for i in 1...4 { stroke.add(x: 2.2 + 0.9 * Double(i), y: 2.2, force: 1, maximumForce: 2, time: 0.01 + Double(i) * 0.01) }
+        for i in 1...4 {
+            let x: Double = 2.2 + 0.9 * Double(i)
+            let time: Double = 0.01 + Double(i) * 0.01
+            stroke.add(x: x, y: 2.2, force: 1, maximumForce: 2, time: time)
+        }
         XCTAssertEqual(stroke.stillSince, 5, "the fourth step is 3.6 from the anchor")
     }
 }
@@ -186,9 +200,15 @@ final class HoldWatchTests: XCTestCase {
     /// within a point, for `rest` more samples.
     private func stroke(rest: Int) -> StrokeRecorder {
         var stroke = StrokeRecorder()
-        for i in 0..<10 { stroke.add(x: Double(i) * 4, y: 50, force: 1, maximumForce: 2, time: 100 + Double(i) * 0.004) }
+        for i in 0..<10 {
+            let x: Double = Double(i) * 4
+            let time: Double = 100 + Double(i) * 0.004
+            stroke.add(x: x, y: 50, force: 1, maximumForce: 2, time: time)
+        }
         for i in 0..<rest {
-            stroke.add(x: 36 + (i.isMultiple(of: 2) ? 0.5 : -0.5), y: 50, force: 1, maximumForce: 2, time: 100.04 + Double(i) * 0.004)
+            let x: Double = 36 + (i.isMultiple(of: 2) ? 0.5 : -0.5)
+            let time: Double = 100.04 + Double(i) * 0.004
+            stroke.add(x: x, y: 50, force: 1, maximumForce: 2, time: time)
         }
         return stroke
     }
@@ -276,7 +296,11 @@ final class HoldWatchTests: XCTestCase {
     func testAStillPenFromTheDownIsAskedToo() throws {
         // the paste hold: the page answers it from the samples
         var stroke = StrokeRecorder()
-        for i in 0..<50 { stroke.add(x: 200 + (i.isMultiple(of: 3) ? 0.4 : 0), y: 300, force: 1, maximumForce: 2, time: 5 + Double(i) * 0.008) }
+        for i in 0..<50 {
+            let x: Double = 200 + (i.isMultiple(of: 3) ? 0.4 : 0)
+            let time: Double = 5 + Double(i) * 0.008
+            stroke.add(x: x, y: 300, force: 1, maximumForce: 2, time: time)
+        }
         let due = try XCTUnwrap(HoldWatch().due(stroke))
         XCTAssertEqual(due.anchor, 0)
         XCTAssertEqual(due.time, 5.6, accuracy: 1e-9)
@@ -284,7 +308,11 @@ final class HoldWatchTests: XCTestCase {
 }
 
 final class LazyBrushTests: XCTestCase {
-    private let line: [[Double]] = (0...12).map { [Double($0), 10, 0.1 * Double($0 % 10), Double($0) * 4] }
+    private let line: [[Double]] = (0...12).map { (i: Int) -> [Double] in
+        let p: Double = 0.1 * Double(i % 10)
+        let t: Double = Double(i) * 4
+        return [Double(i), 10, p, t]
+    }
 
     func testNoSmoothingGivesTheSamplesBack() {
         XCTAssertEqual(LazyBrush.smooth(line, level: 0), line)
@@ -335,11 +363,16 @@ final class RibbonTests: XCTestCase {
     func testOverlapsAddUpUnderTheNonZeroRule() {
         // Where a disc and a quadrilateral overlap, both wound one way, the
         // point is filled; wound against each other, it would be a hole.
-        for (a, b) in [(CGPoint(x: 0, y: 0), CGPoint(x: 10, y: 0)), (CGPoint(x: 10, y: 0), CGPoint(x: 0, y: 0)),
-                       (CGPoint(x: 0, y: 0), CGPoint(x: 0, y: 10)), (CGPoint(x: 3, y: 7), CGPoint(x: -4, y: -2))] {
+        let segments: [(CGPoint, CGPoint)] = [
+            (CGPoint(x: 0, y: 0), CGPoint(x: 10, y: 0)), (CGPoint(x: 10, y: 0), CGPoint(x: 0, y: 0)),
+            (CGPoint(x: 0, y: 0), CGPoint(x: 0, y: 10)), (CGPoint(x: 3, y: 7), CGPoint(x: -4, y: -2)),
+        ]
+        for (a, b) in segments {
             let path = LiveStrokeView.ribbon([a, b], radii: [2, 2])
-            let middle = CGPoint(x: (a.x + b.x) / 2, y: (a.y + b.y) / 2)
-            for point in [a, b, middle, CGPoint(x: a.x + (b.x - a.x) * 0.05, y: a.y + (b.y - a.y) * 0.05)] {
+            let middleX: CGFloat = (a.x + b.x) / 2, middleY: CGFloat = (a.y + b.y) / 2
+            let nearX: CGFloat = a.x + (b.x - a.x) * 0.05, nearY: CGFloat = a.y + (b.y - a.y) * 0.05
+            let points: [CGPoint] = [a, b, CGPoint(x: middleX, y: middleY), CGPoint(x: nearX, y: nearY)]
+            for point in points {
                 XCTAssertTrue(path.contains(point, using: .winding), "\(point) on \(a) → \(b)")
             }
         }
@@ -415,15 +448,21 @@ final class HeldShapeTests: XCTestCase {
         let snap = HeldShape(kind: .line, params: ["x1": 0, "y1": 0, "x2": 100, "y2": 0])
         let hold = ShapeHold(snap: snap, from: CGPoint(x: 100, y: 0), n: 2, tSnap: 600)
         let held: [[Double]] = [[0, 0, 0.5, 0], [100, 0, 0.5, 400]]
+        // the shape once `more` samples followed the two the hold carried
+        func current(after more: [[Double]]) -> HeldShape? {
+            let samples: [[Double]] = held + more
+            return hold.current(samples)
+        }
         XCTAssertEqual(hold.current(held), snap, "nothing since the snap")
-        XCTAssertEqual(hold.current(held + [[103, 0, 0.5, 620], [104, 0, 0.5, 700]]), snap, "within the refit slop")
-        XCTAssertEqual(hold.current(held + [[110, 0, 0.5, 800]])?.params["x2"], 110, "6 or more out: refit")
-        XCTAssertEqual(hold.current(held + [[110, 0, 0.5, 800], [100.5, 0, 0.5, 850]])?.params["x2"], 100.5,
+        XCTAssertEqual(current(after: [[103, 0, 0.5, 620], [104, 0, 0.5, 700]]), snap, "within the refit slop")
+        XCTAssertEqual(current(after: [[110, 0, 0.5, 800]])?.params["x2"], 110, "6 or more out: refit")
+        XCTAssertEqual(current(after: [[110, 0, 0.5, 800], [100.5, 0, 0.5, 850]])?.params["x2"], 100.5,
                        "once out, it follows the pen back")
-        XCTAssertNil(hold.current(held + [[113, 0, 0.5, 700]]), "far and fast right after the snap: freehand")
-        XCTAssertEqual(hold.current(held + [[113, 0, 0.5, 760]])?.params["x2"], 113, "as far after the window: a refit")
-        XCTAssertNil(hold.current(held + [[113, 0, 0.5, 700], [100, 0, 0.5, 900]]), "dropped for the rest of the stroke")
-        XCTAssertEqual(ShapeHold(snap: snap, from: CGPoint(x: 100, y: 0), n: 3, tSnap: 600).current(held + [[150, 0, 0.5, 610]]),
+        XCTAssertNil(current(after: [[113, 0, 0.5, 700]]), "far and fast right after the snap: freehand")
+        XCTAssertEqual(current(after: [[113, 0, 0.5, 760]])?.params["x2"], 113, "as far after the window: a refit")
+        XCTAssertNil(current(after: [[113, 0, 0.5, 700], [100, 0, 0.5, 900]]), "dropped for the rest of the stroke")
+        let past: [[Double]] = [[150, 0, 0.5, 610]]
+        XCTAssertEqual(ShapeHold(snap: snap, from: CGPoint(x: 100, y: 0), n: 3, tSnap: 600).current(held + past),
                        snap, "the samples the hold carried are not followed")
     }
 
@@ -535,15 +574,18 @@ struct FixtureSample: Decodable {
             }
             switch values.count {
             case 0, 1: throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "not a sample"))
-            case 2: host = values + [0.5, 0]
+            case 2: host = values + ([0.5, 0] as [Double])
             case 3: host = [values[0], values[1], 0.5, values[2]]
             default: host = values
             }
             return
         }
         let c = try decoder.container(keyedBy: Keys.self)
-        host = [try c.decode(Double.self, forKey: .x), try c.decode(Double.self, forKey: .y),
-                try c.decodeIfPresent(Double.self, forKey: .p) ?? 0.5, try c.decodeIfPresent(Double.self, forKey: .t) ?? 0]
+        let x: Double = try c.decode(Double.self, forKey: .x)
+        let y: Double = try c.decode(Double.self, forKey: .y)
+        let p: Double = try c.decodeIfPresent(Double.self, forKey: .p) ?? 0.5
+        let t: Double = try c.decodeIfPresent(Double.self, forKey: .t) ?? 0
+        host = [x, y, p, t]
     }
 }
 
@@ -612,7 +654,8 @@ final class HapticFeelTests: XCTestCase {
 }
 
 /// The ruler's edge (the claim's `snap`): the web's ink/ruler.js onRail and
-/// railLine, the cases of frontend/tests/ruler.test.mjs in view coordinates.
+/// railLine. The line's wobbly and right-to-left strokes are railLine's
+/// cases in frontend/tests/ruler.test.mjs, in view coordinates.
 final class RulerSnapTests: XCTestCase {
     func testAPointIsProjectedOntoTheEdge() {
         let level = InkTool.Snap(x0: 100, y0: 200, angle: 0)
@@ -629,7 +672,7 @@ final class RulerSnapTests: XCTestCase {
 
     func testTheLineRunsBetweenTheOutermostProjectionsFromTheEndNearerTheFirst() {
         let level = InkTool.Snap(x0: 100, y0: 200, angle: 0)
-        let wobbly = [CGPoint(x: 150, y: 195), CGPoint(x: 260, y: 205), CGPoint(x: 330, y: 190), CGPoint(x: 290, y: 199)]
+        let wobbly: [CGPoint] = [CGPoint(x: 150, y: 195), CGPoint(x: 260, y: 205), CGPoint(x: 330, y: 190), CGPoint(x: 290, y: 199)]
         XCTAssertEqual(RulerSnap.project(wobbly, onto: level), [CGPoint(x: 150, y: 200), CGPoint(x: 330, y: 200)],
                        "it went back, but the line reaches the farthest point")
         XCTAssertEqual(RulerSnap.project([CGPoint(x: 450, y: 190), CGPoint(x: 300, y: 185), CGPoint(x: 160, y: 205)], onto: level),
@@ -641,7 +684,7 @@ final class RulerSnapTests: XCTestCase {
 
     func testTheEdgeTheClaimCarriesIsDrawnAndDeclared() throws {
         XCTAssertTrue(HostInfo(version: "0").inkLooks.contains("snap"), "the live line draws a stroke along the ruler")
-        let claim = try JSONDecoder().decode(InkTool.self, from: Data(#"{"kind":"pen","color":"#222222","size":2,"snap":{"x0":10.5,"y0":20,"angle":30}}"#.utf8))
+        let claim = try JSONDecoder().decode(InkTool.self, from: Data(##"{"kind":"pen","color":"#222222","size":2,"snap":{"x0":10.5,"y0":20,"angle":30}}"##.utf8))
         XCTAssertEqual(claim.snap, InkTool.Snap(x0: 10.5, y0: 20, angle: 30))
     }
 }

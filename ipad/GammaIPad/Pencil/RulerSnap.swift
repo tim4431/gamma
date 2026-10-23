@@ -11,23 +11,30 @@ import Foundation
 /// tested (PencilTests).
 enum RulerSnap {
     /// The edge's direction, a unit vector in view coordinates.
-    static func direction(_ snap: InkTool.Snap) -> (dx: Double, dy: Double) {
-        let a = snap.angle * .pi / 180
+    private static func direction(_ snap: InkTool.Snap) -> (dx: Double, dy: Double) {
+        let a: Double = snap.angle * .pi / 180
         return (cos(a), -sin(a))
     }
 
     /// How far along the edge a point lies, from (x0, y0).
     private static func along(_ point: CGPoint, _ snap: InkTool.Snap) -> Double {
         let d = direction(snap)
-        return (Double(point.x) - snap.x0) * d.dx + (Double(point.y) - snap.y0) * d.dy
+        let dx: Double = Double(point.x) - snap.x0
+        let dy: Double = Double(point.y) - snap.y0
+        return dx * d.dx + dy * d.dy
     }
 
     private static func at(_ t: Double, _ snap: InkTool.Snap) -> CGPoint {
         let d = direction(snap)
-        return CGPoint(x: snap.x0 + t * d.dx, y: snap.y0 + t * d.dy)
+        let x: Double = snap.x0 + t * d.dx
+        let y: Double = snap.y0 + t * d.dy
+        return CGPoint(x: x, y: y)
     }
 
-    /// One point projected onto the edge's line.
+    /// One point projected onto the edge's line: ruler.js onRail ported,
+    /// which the page projects each sample with. The live line needs only
+    /// `project`'s two ends; this stays as onRail's port, tested in
+    /// RulerSnapTests.
     static func point(_ point: CGPoint, onto snap: InkTool.Snap) -> CGPoint {
         at(along(point, snap), snap)
     }
@@ -44,7 +51,7 @@ enum RulerSnap {
             hi = max(hi, t)
         }
         let t0 = along(first, snap)
-        let (a, b) = t0 - lo <= hi - t0 ? (lo, hi) : (hi, lo)
+        let (a, b): (Double, Double) = t0 - lo <= hi - t0 ? (lo, hi) : (hi, lo)
         return [at(a, snap), at(b, snap)]
     }
 }

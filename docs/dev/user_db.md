@@ -52,6 +52,18 @@ All state is SQLite + files on disk under a data directory (env
     (`token`, `user_id`, `role`, `added_at`) — the people a link invites,
     each with their own role, and when they were invited (`''` on the
     invitations from before step 40) ([api.md](api.md) "Shares");
+    `pending_share_users` (`token`, `subject`, `username`, `role`,
+    `invited_by`, `created_at`) — a link's invitations by Gamma Cloud
+    username waiting for that person's first sign-in; all three go
+    together (`db.delete_shares`) ([cloud_accounts.md](cloud_accounts.md)
+    "A share's invitations by cloud username");
+  - `join_requests` — Gamma Cloud accounts the `invited` sign-in policy
+    refused, asking to join: one per `subject`, with the `username` and
+    `email` they signed in with, the `share_token` of the link they came
+    through (`''` from the login page), `status` pending/approved/declined,
+    `decided_by`, `created_at` and `updated_at`; a row goes when its
+    person's sign-in is admitted ([cloud_accounts.md](cloud_accounts.md)
+    "Requests to join");
   - `user_prefs` — small JSON values per `(user_id, workspace_id, key)`,
     under workspace `''`: the account-wide keys (`db.USER_PREF_KEYS`: the
     preference `profile` and its sync base `profile-base`, the active AI
@@ -76,8 +88,9 @@ All state is SQLite + files on disk under a data directory (env
     "Reminders");
   - `inbox_items` — each account's Inbox, a row per event that concerns
     it: the recipient (`user_id`), the `kind` (`mention`,
-    `comment_mention`, `reply`, `resolved`, `shared`, `invited`), the
-    `actor`, where it happened (`workspace_id`, `page_id`, `block_id` — a
+    `comment_mention`, `reply`, `resolved`, `shared`, `invited`,
+    `join_request`), the
+    `actor` (an account id; `cloud:<subject>` for a request to join), where it happened (`workspace_id`, `page_id`, `block_id` — a
     folder share's folder —, `thread_id`, `comment_id`, `''` where the kind
     has none), the `share_token` when the recipient reaches the page only
     through a share (one naming it, or the one the event came through), a `snippet` of the text at the time, `at`, and the

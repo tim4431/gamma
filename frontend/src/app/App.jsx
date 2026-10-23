@@ -108,7 +108,7 @@ import { commandById, commandChord } from "./commands.js";
 import { CommandMenuItem } from "./CommandMenuItem.jsx";
 import { loadSession, saveSession, clearSession, setSessionScope } from "./sessionState";
 import { ROLE_LABEL, workspaceMeta } from "../settings/workspaceRoles.js";
-import { AuthLoading, LoginPage, SessionConflictPage, ShareBlockedPage, WorkspaceUnavailablePage } from "../auth/LoginPage";
+import { AuthLoading, LoginPage, SessionConflictPage, ShareBlockedPage, WorkspaceUnavailablePage, cloudOutcomeInUrl } from "../auth/LoginPage";
 import { guestExpiryLabel } from "../auth/guestExpiry";
 import { McpAuthorization } from "../auth/McpConsent";
 import { TRANSLATE_LANGS, themeScheme, translateModelFor, useAppPrefs, useProfileSync } from "./prefs";
@@ -654,14 +654,15 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     setWsReady(true);
   }
 
-  // What the login page offers besides a password: read once, unauthenticated.
+  // What the login page offers besides a password — a share link's sign-in
+  // gate too (its Gamma Cloud button): read once, unauthenticated.
   const [serverConfig, setServerConfig] = useState(initialServerConfig);
   useEffect(() => {
-    if (shareMode || initialServerConfig) return;
+    if (initialServerConfig) return;
     let active = true;
     apiJson(`${API}/server-config`).then((c) => { if (active) setServerConfig(c); }).catch(() => {});
     return () => { active = false; };
-  }, [shareMode]);
+  }, []);
 
   async function checkSession() {
     try {
@@ -5398,7 +5399,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         return;
       }
       const data = await res.json();
-      setShareGate(null);
+      // a Gamma Cloud sign-in started from the open link came back refused,
+      // or asking to join: its sign-in page says so, with the way back
+      setShareGate(cloudOutcomeInUrl() ? "login" : null);
       setShareInfo({ owner: data.username || "", role: data.role || "view", canEdit: Boolean(data.can_edit),
                      audience: data.audience || "anyone", viewer: data.viewer || "",
                      viewerIsGuest: Boolean(data.viewer_is_guest), workspace: data.workspace_id || "" });
@@ -6114,6 +6117,30 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   function removeShareUser(name) {
     updateShareSettings({ users: (shareSettings?.users || []).filter((u) => u.name !== name) });
   }
+  // People named by Gamma Cloud (docs/dev/api.md "Shares"): an invitation by
+  // cloud username (to view), a waiting one's role changed or withdrawn, a
+  // request to join approved (an invitation by its subject) or declined.
+  // Each answers the share's settings; a refusal shows in the popover.
+  async function shareCloudCall(path, method, body) {
+    if (!shareTarget || !shareSettings?.token) return false;
+    try {
+      applyShareSettings(await apiJson(`${shareApi(shareTarget, "share-settings")}${path}`, body ? {
+        method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+      } : { method }));
+      return true;
+    } catch (err) {
+      setShareError(err.message); // e.g. "no Gamma Cloud account is named …"
+      return false;
+    }
+  }
+  const shareCloudInvites = {
+    enabled: !!serverConfig?.cloud?.enabled,
+    onInvite: (username) => shareCloudCall("/invites", "POST", { username, role: "view" }),
+    onSetRole: (subject, role) => shareCloudCall("/invites", "POST", { subject, role }),
+    onWithdraw: (subject) => shareCloudCall(`/invites/${encodeURIComponent(subject)}`, "DELETE"),
+    onApprove: (subject) => shareCloudCall("/invites", "POST", { subject, role: "view" }),
+    onDecline: (subject) => shareCloudCall(`/requests/${encodeURIComponent(subject)}`, "DELETE"),
+  };
   async function stopSharing() {
     if (!shareTarget || !shareSettings?.token) return;
     try {
@@ -7556,6 +7583,13 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       return;
     }
     if (isPhone) setPhonePanel(null);
+    if (jump.to === "share") {
+      // a request to join: decided in the Share popover of its page or folder
+      if (jump.folderId) openFolderShare(jump.folderId);
+      else if (jump.pageId === focusedBlockId) openPageShare(jump.pageId);
+      else openPageThen(jump.pageId, "share");
+      return;
+    }
     if (!jump.pageId) {
       // a folder shared with a member: the folder in the library
       if (jump.blockId) { if (!homeMode) goHome(true, true); openFolder(jump.blockId); }
@@ -8155,6 +8189,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         onSubmit={shareGate === "login" ? doShareLogin : doLibraryLogin}
         cloudLogin={serverConfig?.cloud}
         next={shareGate === "login" ? undefined : "/"}
+        forShare={shareGate === "login"}
         subtitle={shareGate === "login" ? t("Sign in to open this shared page") : t("Sign in to your library")}
         // the share view's own Sign in (the link had opened): back to reading
         onBack={shareGate === "login" && shareInfo?.owner ? () => setShareGate(null) : undefined}
@@ -8223,6 +8258,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       onInvite={inviteShareUser}
       onSetRole={setShareUserRole}
       onRemove={removeShareUser}
+      cloudInvites={shareCloudInvites}
       onStop={stopSharing}
       onClose={() => { setOpenPopover(null); setShareError(""); }}
       publish={publishOffered && shareTarget?.kind !== "folder" ? {

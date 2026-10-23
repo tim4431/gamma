@@ -5,8 +5,10 @@
 // as if they were signed in there), the token endpoint (authorization code
 // with PKCE, refresh with rotation), EdDSA ID tokens and their JWKS,
 // /userinfo (what a share host checks a publishing server's token against),
-// revocation, the preference profile and server list cloud_sync calls, and
-// the plan sync a hosted container makes with its own client
+// revocation, the preference profile and server list cloud_sync calls, the
+// username lookup an invitation by Gamma Cloud username makes (every
+// `person` is in its directory), and the plan sync a hosted container makes
+// with its own client
 // (/api/hosted/sync, gamma/hosted.py: `hosted` holds the client, the answer
 // and the reports it got).
 import crypto from "node:crypto";
@@ -22,6 +24,7 @@ export class FakeCloud {
     this.access = new Map();   // access token -> subject
     this.refresh = new Map();  // live refresh token -> subject
     this.prefs = new Map();    // `${subject} ${path}` -> {value, updated_at}
+    this.directory = new Map(); // cloud username -> subject: what /api/lookup/username finds
     this.shareHost = "";
     this.hosted = null;        // {clientId, secret, answer, reports}: what /api/hosted/sync answers
     this.login = "";           // the subject the authorization endpoint answers for
@@ -34,6 +37,7 @@ export class FakeCloud {
   person(sub, username) {
     this.people.set(sub, { sub, preferred_username: username, email: `${username}@example.org`, email_verified: true,
       plan: "free", name: username });
+    this.directory.set(username, sub);
     this.login = sub;
   }
 
@@ -122,6 +126,12 @@ export class FakeCloud {
     }
     const sub = bearer();
     if (path === "/userinfo") return sub ? json(200, this.people.get(sub)) : json(401, { error: "invalid_token" });
+    if (path === "/api/lookup/username") {
+      if (!sub) return json(401, { detail: "not signed in" });
+      const name = url.searchParams.get("u") || "";
+      const found = this.directory.get(name);
+      return found ? json(200, { sub: found, username: name }) : json(404, { detail: "no such account" });
+    }
     if (path.startsWith("/api/me/")) {
       if (!sub) return json(401, { detail: "not signed in" });
       if (path.startsWith("/api/me/prefs/")) {

@@ -229,7 +229,11 @@ export const RULES = [
   ["backend/gamma/version.py", ["settings"]],
   ["backend/gamma/server_settings.py", ["settings", "mcp", "cloud-sign-in"]],
   ["backend/gamma/routers/admin.py", ["settings", "mcp", "cloud-sign-in"]],
-  ["backend/gamma/routers/shares.py", ["notes-pdf-share", "publish", "collab", "inbox"]],
+  ["backend/gamma/routers/shares.py", ["notes-pdf-share", "publish", "collab", "inbox", "cloud-sign-in"]],
+  // a share's invitations by Gamma Cloud username (claimed on every cloud sign-in) and its Inbox item
+  ["backend/gamma/shares.py", ["notes-pdf-share", "publish", "collab", "inbox", "cloud-sign-in"]],
+  // requests to join: the invited policy's refused sign-ins, their Inbox items and the admins' list
+  ["backend/gamma/join_requests.py", ["cloud-sign-in", "inbox", "settings"]],
   ["backend/gamma/routers/links.py", ["notes-pdf-share", "guide"]],
   ["backend/gamma/routers/metadata.py", ["notes-pdf-share", "guide"]],
   ["backend/gamma/translate_engines.py", ["settings", "notes-pdf-share"]],

@@ -639,9 +639,15 @@ primary button and Stop sharing beside it as a `uiBtn sm iconSq danger` —
 the cloud link's Copy / Unpublish pair — opening the same inline
 `mirrorConfirm`, naming how many invited people lose access), Who has access
 (the invite box on top — a compact `AccountPicker` beside a primary Invite,
-no modal in a popover; then `aiProvRow` rows: you, a shared workspace's
-members as one row tagged *workspace*, each invited account with its own
-View / Edit `Segmented` and a `uiBtn sm iconSq` remove), General access
+no modal in a popover; on a server with Gamma Cloud sign-in the section's
+action is a This server / Gamma Cloud `Segmented`, and Gamma Cloud makes
+the box a plain field for a Gamma Cloud username; then `aiProvRow` rows:
+the requests to join that came through the link, tagged *asks to join*
+with the e-mail address, an Approve `uiBtn sm` and a Decline
+`uiBtn sm iconSq`; you, a shared workspace's members as one row tagged
+*workspace*, each invited account with its own View / Edit `Segmented` and
+a `uiBtn sm iconSq` remove, and each invitation by cloud username still
+waiting, tagged *pending*, with the same toggle and a withdraw), General access
 (pictured, not described: three `IconChoices` tiles — Anyone / Signed in /
 Invited only — and, as the section's action, one View / Edit `Segmented`,
 disabled under Invited only; one summary sentence under the tiles is the
@@ -681,7 +687,14 @@ account signs in through Gamma Cloud) the cloud button is the primary
 (`.loginCloudBtn.lead`) and the password form folds behind Admin sign-in,
 as a demo server folds it behind Try the demo. A failed sign-in says why (wrong password,
 too many attempts, server unreachable) in a `--danger`-tinted `.loginError`
-box, and a refused password also takes the focus and a red border.
+box, and a refused password also takes the focus and a red border. A
+sign-in's outcome that is no failure — a request to join sent, or still
+waiting — is the same box in the accent's tint (`.loginNotice`,
+`role="status"`, a mail icon); a declined request is a `.loginError`. Where
+a newcomer's Gamma Cloud sign-in asks to join (`cloud.join_requests`), the
+`.loginFoot` says so, whom it asks (the person who shared the page, on a
+share link's gate; else the admin) and that they see the username and
+e-mail address.
 
 ## One behaviour for mouse and finger
 

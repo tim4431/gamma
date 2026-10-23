@@ -164,7 +164,8 @@ final class ShellController: UIViewController {
             return [:]
         case let .haptic(kind, at):
             // A gesture's tick comes without a place: where the Pencil hovered for it.
-            PencilHaptics.play(kind, at: at ?? (kind == .tool ? gestures.recentHover : nil), in: shell.webView)
+            let place: CGPoint? = at ?? (kind == .tool ? gestures.recentHover : nil)
+            PencilHaptics.play(kind, at: place, in: shell.webView)
             return [:]
         }
     }

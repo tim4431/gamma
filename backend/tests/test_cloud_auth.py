@@ -232,7 +232,8 @@ def error_of(r):
 
 def test_server_config_and_start(cloud, monkeypatch):
     c = browser()
-    assert c.get("/api/server-config").json()["cloud"] == {"enabled": True, "issuer": ISSUER, "lead": False}
+    assert c.get("/api/server-config").json()["cloud"] == {"enabled": True, "issuer": ISSUER, "lead": False,
+                                                           "join_requests": False}
     # a share host's people all come from Gamma Cloud: its login page leads with that button
     monkeypatch.setenv("GAMMA_CLOUD_SHARE_HOST", "1")
     assert c.get("/api/server-config").json()["cloud"]["lead"] is True
@@ -251,6 +252,9 @@ def test_refuse_policy(cloud):
     assert c.get("/api/session").json()["user"] is None
     # the refused sign-in's refresh token went back: no device is left at the account server
     assert cloud.revoked == ["rt-1"]
+    # the refusal goes back to the page the sign-in started from (a share link's gate keeps its link)
+    r = callback(c, start(c, next="/?share=ws.secret"))
+    assert r.headers["location"].startswith("/?share=ws.secret&cloud_error=") and "not linked" in error_of(r)
 
 
 def test_provision_policy_creates_account(cloud, monkeypatch):
@@ -518,7 +522,7 @@ def test_default_issuer_until_one_is_saved(monkeypatch):
         cfg = c.get("/api/admin/settings").json()["cloud"]
         assert (cfg["issuer"], cfg["enabled"], cfg["source"]) == ("https://account.example", True, "saved")
         assert c.get("/api/server-config").json()["cloud"] == {"enabled": True, "issuer": "https://account.example",
-                                                                "lead": False}
+                                                                "lead": False, "join_requests": False}
         status = c.get("/api/auth/cloud/status").json()
         assert status["enabled"] and status["connected"] and not status["identity"]
         # a saved empty address keeps it off; a saved one replaces the default
@@ -541,7 +545,8 @@ def test_connecting_a_server_at_a_public_address(cloud, monkeypatch):
         admin = login("ca_conn", "pw-ca_conn-123")
         # the desktop client cannot sign in at a public address: no cloud button, no link, a readable refusal
         assert cloud_auth.needs_connect()
-        assert admin.get("/api/server-config").json()["cloud"] == {"enabled": False, "issuer": "", "lead": False}
+        assert admin.get("/api/server-config").json()["cloud"] == {"enabled": False, "issuer": "", "lead": False,
+                                                                   "join_requests": False}
         assert admin.get("/api/admin/settings").json()["cloud"]["needs_connect"] is True
         assert admin.get("/api/auth/cloud/status").json()["connected"] is False
         r = browser().get("/api/auth/cloud/start", follow_redirects=False)
@@ -1055,7 +1060,7 @@ def test_every_outbound_call_identifies_as_gamma(monkeypatch, tmp_path):
     import io
     import urllib.request
 
-    from gamma import sync_engine, workspaces
+    from gamma import sync_engine
 
     seen = []
 
@@ -1078,7 +1083,7 @@ def test_every_outbound_call_identifies_as_gamma(monkeypatch, tmp_path):
         cloud_auth.discovery("https://acct.example")  # the body is not a full discovery document
     except cloud_auth.CloudAuthError:
         pass
-    workspaces.lookup_with_token("https://acct.example", "tok", "alice")
+    cloud_auth.lookup_with_token("https://acct.example", "tok", "alice")
     sync_engine.Remote("https://share.example", "", "gamma_x").get("/api/sync/whoami")
     assert len(seen) == 3 and all(ua.startswith("Gamma/") for ua in seen), seen
 

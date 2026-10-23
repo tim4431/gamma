@@ -211,6 +211,7 @@ and integration tokens get an empty list. The sources:
 | `cloud-sync-choice` | everyone | Account | warn | the first settings sync with Gamma Cloud found two different copies and waits for Fetch from cloud / Push to cloud (state `choose`) | constant: seen once |
 | `cloud-link` | everyone | Account | info | cloud sign-in works here (on, and not waiting for Connect) and the account has no Gamma Cloud identity (`cloud_auth.status_of`); not on the share host. The Account pane's Gamma Cloud row says what linking gives and links it | constant: seen once |
 | `cloud-setup` | admins | Server | info | cloud sign-in is off, or on but the server still has to be connected (`cloud_auth.needs_connect`); Server → Sign-in turns it on | `off` / `connect`, so each state is seen once |
+| `join-requests` | admins | Server | info | Gamma Cloud accounts ask to join this server (`join_requests.waiting`: the waiting requests, [cloud_accounts.md](cloud_accounts.md) "Requests to join"); Server → Sign-in lists them | when the newest waiting one was made: a new request brings it back, a decided one does not |
 | `free-translate` | everyone who met the failures | Translation | warn | Microsoft's free translation service failed `FREE_ALERT_AFTER` (3) times in a row, in memory (`translate_engines.free_failing`); one success ends it, and the Microsoft row names the error | the streak's start time |
 | `hosted` | admins (grace), everyone (read-only) | Server for admins, Account for members | warn / error | a hosted container's cached plan answer (`hosted.limits`, from memory) is in `grace` (admins only; names `grace_until`) or read-only (everyone) — [cloud_accounts.md](cloud_accounts.md) "Hosted containers" | the status and since when it holds (`status_since`), so each episode is seen once |
 | `storage` | everyone | Account | warn / error | personal storage past 90 % of the quota / full; only computed for an account under a quota, and the upload walk is remembered ten minutes (`notices.forget_usage`) | `90` / `full` |
@@ -648,7 +649,15 @@ hosted server enters the client id and write-only secret it was given. The
 secret field shows once an id is typed; the inputs refuse browser autofill.
 Unknown cloud accounts: a `Segmented` policy, Refuse / Claim / Provision /
 Invited. On a hosted container the plan sets it (`policy_source: "plan"`)
-and the row's hint says so.
+and the row's hint says so. Under Invited (and under another policy while
+some are left) the section lists the **Requests to join**
+(`JoinRequests`, `GET /api/admin/join-requests`): a Row counting the
+waiting ones, then one person row each — the cloud username, an
+`approved` / `declined` tag once decided, and a line with the e-mail
+address, where it came from (the login page, or a page someone shared —
+the sharer named, never the page), who decided and when. A waiting
+request has Approve and a Decline icon button, a decided one a Remove
+icon button ([cloud_accounts.md](cloud_accounts.md) "Requests to join").
 Under Provision a fourth row, the Toggle *Accept published pages*
 (`cloud_share_host`), makes this server the share host people publish pages
 to; it also turns the guest account off and limits the account list to
@@ -659,7 +668,9 @@ row here.
 Editing shows one Save button as the section's action. Values are stored in
 the server `settings` table (`cloud_*`), read-only when `GAMMA_CLOUD_ISSUER`
 manages them. The login page reads `GET /api/server-config` and shows "Sign
-in with Gamma Cloud" while it is on. The **Account** pane has a "Gamma
+in with Gamma Cloud" while it is on (a share link's sign-in gate too), and
+under the Invited policy a foot saying that a newcomer's sign-in asks to
+join. The **Account** pane has a "Gamma
 Cloud" row (`CloudIdentityRow`): the linked username and plan with an Unlink
 button, or a "Link Gamma Cloud account" button that round-trips through the
 account server ([cloud_accounts.md](cloud_accounts.md)). Unlinked, its hint

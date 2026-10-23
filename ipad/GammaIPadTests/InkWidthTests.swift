@@ -14,7 +14,12 @@ final class InkWidthTests: XCTestCase {
 
     /// A `samples` row's stroke: `[x, y, p | null, t, a | null]`.
     private func stroke(_ rows: [[Double?]]) -> [InkWidth.Sample] {
-        rows.map { InkWidth.Sample(x: $0[0] ?? 0, y: $0[1] ?? 0, p: $0[2], a: $0.count > 4 ? $0[4] : nil) }
+        rows.map { (row: [Double?]) -> InkWidth.Sample in
+            let x: Double = row[0] ?? 0
+            let y: Double = row[1] ?? 0
+            let a: Double? = row.count > 4 ? row[4] : nil
+            return InkWidth.Sample(x: x, y: y, p: row[2], a: a)
+        }
     }
 
     private func assertNear(_ got: [Double]?, _ want: [Double]?, _ note: String,
@@ -88,11 +93,20 @@ final class InkWidthTests: XCTestCase {
         XCTAssertEqual(InkWidth.widths([sample(0.5)], tool: .pen, brush: .brush, pressure: true, size: 2), [1],
                        "a tap has no length to taper")
         // a 2 pt comma, each taper held to half its length
-        let comma = stroke((0...8).map { [Double($0) * 0.25, 0, 0.5, Double($0) * 8, nil] })
+        let comma = stroke((0...8).map { (i: Int) -> [Double?] in
+            let x: Double = Double(i) * 0.25
+            let t: Double = Double(i) * 8
+            return [x, 0, 0.5, t, nil]
+        })
         assertNear(InkWidth.widths(comma, tool: .pen, brush: .brush, pressure: true, size: 2),
                    [0.1, 0.383, 0.707, 0.924, 1, 0.924, 0.707, 0.383, 0.1], "a short mark")
         // a 20 pt line with pressure rising 0.2 to 1
-        let rising = stroke((0...20).map { [Double($0), 0, 0.2 + 0.04 * Double($0), Double($0) * 8, nil] })
+        let rising = stroke((0...20).map { (i: Int) -> [Double?] in
+            let x: Double = Double(i)
+            let p: Double = 0.2 + 0.04 * Double(i)
+            let t: Double = Double(i) * 8
+            return [x, 0, p, t, nil]
+        })
         assertNear(InkWidth.widths(rising, tool: .pen, brush: .brush, pressure: true, size: 2),
                    [0.1, 0.184, 0.396, 0.591, 0.72, 0.8, 0.88, 0.96, 1.04, 1.12, 1.2, 1.28, 1.36, 1.44, 1.52, 1.545, 1.455,
                     1.245, 0.92, 0.497, 0.1], "the start taper over 4 pt, the end taper over 6")
@@ -100,7 +114,10 @@ final class InkWidthTests: XCTestCase {
 
     func testTheBrushsSpeedLawWithoutPressure() {
         let xs: [Double] = [0, 0.5, 1, 1.5, 2, 4, 6, 8, 10, 12, 12.5, 13, 13.5, 14]
-        let mouse = stroke(xs.enumerated().map { [$0.element, 0, nil, Double($0.offset) * 16, nil] })
+        let mouse = stroke(xs.enumerated().map { (pair: (offset: Int, element: Double)) -> [Double?] in
+            let t: Double = Double(pair.offset) * 16
+            return [pair.element, 0, nil, t, nil]
+        })
         assertNear(InkWidth.simulatedPressure(mouse, size: 2),
                    [0.5, 0.517, 0.533, 0.548, 0.562, 0.407, 0.295, 0.214, 0.155, 0.113, 0.156, 0.197, 0.235, 0.271],
                    "slow is wide, fast is thin")
@@ -110,7 +127,11 @@ final class InkWidthTests: XCTestCase {
     }
 
     func testTheLiveLineHasOnlyTheStartTaper() {
-        let comma = stroke((0...8).map { [Double($0) * 0.25, 0, 0.5, Double($0) * 8, nil] })
+        let comma = stroke((0...8).map { (i: Int) -> [Double?] in
+            let x: Double = Double(i) * 0.25
+            let t: Double = Double(i) * 8
+            return [x, 0, 0.5, t, nil]
+        })
         let live = InkWidth.widths(comma, tool: .pen, brush: .brush, pressure: true, size: 2, live: true)
         // the start taper at its full 4 pt, whatever the length so far, and no end taper
         assertNear(live, [0.1, 0.1, 0.195, 0.29, 0.383, 0.471, 0.556, 0.634, 0.707], "the stroke as it is written")
@@ -142,8 +163,18 @@ final class InkWidthTests: XCTestCase {
 
     func testTheCalligraphyPensNib() {
         // a 45° nib rises to the right: down to the right is across it, up to the right along it
-        let down = stroke((0...5).map { [10 + Double($0), 10 + Double($0), 0.5, Double($0) * 8, nil] })
-        let up = stroke((0...5).map { [10 + Double($0), 10 - Double($0), 0.5, Double($0) * 8, nil] })
+        let down = stroke((0...5).map { (i: Int) -> [Double?] in
+            let x: Double = 10 + Double(i)
+            let y: Double = 10 + Double(i)
+            let t: Double = Double(i) * 8
+            return [x, y, 0.5, t, nil]
+        })
+        let up = stroke((0...5).map { (i: Int) -> [Double?] in
+            let x: Double = 10 + Double(i)
+            let y: Double = 10 - Double(i)
+            let t: Double = Double(i) * 8
+            return [x, y, 0.5, t, nil]
+        })
         assertNear(InkWidth.widths(down, tool: .pen, brush: .calligraphy, pressure: true, size: 2, nib: 45),
                    [1, 1, 1, 1, 1, 1], "across the nib: its whole length")
         assertNear(InkWidth.widths(up, tool: .pen, brush: .calligraphy, pressure: true, size: 2, nib: 45),

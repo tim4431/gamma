@@ -1661,6 +1661,42 @@ def _upgrade_ink_file(uploads: Path, name: str, where: str) -> str:
     return new
 
 
+_V42_CLOUD_INVITATIONS = [
+    """CREATE TABLE IF NOT EXISTS pending_share_users (
+        token TEXT NOT NULL,
+        subject TEXT NOT NULL,
+        username TEXT NOT NULL,
+        role TEXT NOT NULL,
+        invited_by TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL,
+        PRIMARY KEY (token, subject)
+    )""",
+    "CREATE INDEX IF NOT EXISTS idx_pending_share_subject ON pending_share_users(subject)",
+    """CREATE TABLE IF NOT EXISTS join_requests (
+        subject TEXT PRIMARY KEY,
+        username TEXT NOT NULL,
+        email TEXT NOT NULL DEFAULT '',
+        share_token TEXT NOT NULL DEFAULT '',
+        status TEXT NOT NULL DEFAULT 'pending',
+        decided_by TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    )""",
+]
+
+
+def _v42_cloud_invitations(conn: sqlite3.Connection) -> None:
+    """users.db gains ``pending_share_users`` (a share's invitations by
+    Gamma Cloud username, gamma/shares.py) with its subject index, and
+    ``join_requests`` (Gamma Cloud accounts asking to join under the
+    ``invited`` policy, gamma/join_requests.py), from the step's frozen
+    statements. Re-runnable: both are ``IF NOT EXISTS``. No workspace is
+    touched."""
+    for stmt in _V42_CLOUD_INVITATIONS:
+        conn.execute(stmt)
+    conn.commit()
+
+
 STEPS = [
     (20, "guest_accounts", _v20_guest_accounts),
     (21, "folder_shares", _v21_folder_shares),
@@ -1681,6 +1717,7 @@ STEPS = [
     # Next release: a global step deletes the user_prefs rows of the reminders-done key (39 kept them).
     (39, "reminders_done", _v39_reminders_done),
     (40, "comments_inbox", _v40_comments_inbox),
+    (42, "cloud_invitations", _v42_cloud_invitations),
 ]
 
 # The workspace parts of the steps from version 34 on: (version, name,
