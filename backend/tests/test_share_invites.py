@@ -12,7 +12,7 @@ import pytest
 from conftest import account_of, login, make_folder, make_page, make_user
 from test_cloud_auth import browser, callback, cloud, start  # noqa: F401  (the fake account server fixture)
 
-from gamma import cloud_auth, shares
+from gamma import cloud_auth, shares, workspaces
 from gamma.auth import share_access, share_lookup
 from gamma.db import connect_users_db
 from gamma.integrations import create_token
@@ -136,11 +136,12 @@ def test_someone_linked_here_is_invited_at_once(owner, cloud_on):
     r = _invite(owner, page, username="si-dee", role="edit")
     assert r.status_code == 200, r.text
     assert r.json()["invited"] == {"user": "si_dee", "username": "si-dee"}
-    assert r.json()["users"] == [{"name": "si_dee", "role": "edit"}] and r.json()["pending"] == []
+    # its name here is not its cloud name, so the list says which that is
+    assert r.json()["users"] == [{"name": "si_dee", "role": "edit", "cloud": "si-dee"}] and r.json()["pending"] == []
     assert _shared_items(account_of("si_dee")) == [(account_of("si_owner"), token)]
     # again: the role changes, and nobody is told twice
     r = _invite(owner, page, username="si-dee", role="view")
-    assert r.json()["users"] == [{"name": "si_dee", "role": "view"}]
+    assert r.json()["users"] == [{"name": "si_dee", "role": "view", "cloud": "si-dee"}]
     assert len(_shared_items(account_of("si_dee"))) == 1
     # one's own cloud account is no one to invite
     with connect_users_db() as conn:
@@ -201,6 +202,26 @@ def test_lookups_share_the_budget_of_workspace_invitations(cloud_on, monkeypatch
     c = login("si_rate", "si-rate-pw1")
     page, _ = _shared_page(c, "SI rate paper", audience="list")
     assert [_invite(c, page, username="nobody-x").status_code for _ in range(3)] == [400, 400, 429]
+
+
+def test_a_name_here_that_is_not_the_cloud_one_says_which_that_is(owner, cloud_on):
+    # an account linked to a Gamma Cloud account of another name shows that
+    # name beside its own, in a share's people and in a workspace's members;
+    # one that differs only in case shows nothing
+    make_user("si_kim", "si-kim-pw1")
+    make_user("SI-Lee", "si-lee-pw1")
+    with connect_users_db() as conn:
+        cloud_auth.link(conn, account_of("si_kim"), _claims("sub-si-kim", "si-kim-cloud"))
+        cloud_auth.link(conn, account_of("SI-Lee"), _claims("sub-si-lee", "si-lee"))
+        conn.commit()
+    page, _ = _shared_page(owner, "SI named paper", audience="list",
+                           users=[{"name": "si_kim", "role": "view"}, {"name": "SI-Lee", "role": "edit"}])
+    assert owner.get(f"/api/share-settings/{page}").json()["users"] == [
+        {"name": "si_kim", "role": "view", "cloud": "si-kim-cloud"}, {"name": "SI-Lee", "role": "edit"}]
+    lab = workspaces.create("SI lab", account_of("si_owner"), kind="shared")["id"]
+    workspaces.set_member(lab, account_of("si_kim"), "viewer", by=account_of("si_owner"))
+    members = {m["username"]: m for m in owner.get(f"/api/workspaces/{lab}").json()["members"]}
+    assert members["si_kim"]["cloud"] == "si-kim-cloud" and "cloud" not in members["si_owner"]
 
 
 def test_a_folder_share_invites_too(owner, cloud_on, monkeypatch):

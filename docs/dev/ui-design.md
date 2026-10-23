@@ -646,7 +646,8 @@ the requests to join that came through the link, tagged *asks to join*
 with the e-mail address, an Approve `uiBtn sm` and a Decline
 `uiBtn sm iconSq`; you, a shared workspace's members as one row tagged
 *workspace*, each invited account with its own View / Edit `Segmented` and
-a `uiBtn sm iconSq` remove, and each invitation by cloud username still
+a `uiBtn sm iconSq` remove (its sub line names its Gamma Cloud account
+where that differs from its name here), and each invitation by cloud username still
 waiting, tagged *pending*, with the same toggle and a withdraw), General access
 (pictured, not described: three `IconChoices` tiles — Anyone / Signed in /
 Invited only — and, as the section's action, one View / Edit `Segmented`,

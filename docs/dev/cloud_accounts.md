@@ -1000,9 +1000,27 @@ there and still ends in the system browser.
 | the identity is… | policy `refuse` (default) | `claim` | `provision` | `invited` |
 |---|---|---|---|---|
 | linked already | that account | that account | that account | that account |
-| unknown, username = username exists, unlinked (exact, else one case-insensitive match — usernames are lowercase, usernames need not be) | refused with "sign in with its password and link it" | linked to it | refused, as under `refuse` | refused, as under `refuse` |
-| unknown, username = username taken (guest, or linked to another subject) | refused | refused | refused | refused |
+| unknown, username = username exists, unlinked (exact, else one case-insensitive match — usernames are lowercase, usernames need not be) | refused: "if it is yours, sign in with its password and link it; if it is someone else's, ask the admin" | linked to it | refused, as under `refuse` | refused, as under `refuse` |
+| unknown, username in use otherwise (an account linked to another subject, a guest, or several case variants) | refused, as for no such username | refused | a new account under the first free variant of the username, `name-2`, `name-3`, … | as for no such username, the account under that variant |
 | unknown, no such username | refused | refused | a new account under the username, empty password hash, personal workspace | a new account as under `provision` when something here admits the subject — an invitation waiting for it, to a shared workspace or to a share, or its request to join an admin approved —, else refused (`NotInvited`, "This server admits invited people only"), and the sign-in asks to join ("Requests to join" below) |
+
+Admission comes before the name: a policy that refuses the subject, or
+`invited` asking it to join, does so whatever its username, and the name
+only matters once an account is made. A local name is unique whatever its
+case (a page host finds its account by name, case-insensitively), so a
+cloud username some other account here goes by, linked to another cloud
+identity, gives the new account the first variant no account goes by in
+any case (`cloud_auth._free_name`). The link, not the name, signs it in
+again; invitations are keyed by subject, so they land on it all the same.
+An account of that name with no cloud link is left alone: it may be the
+person's own, from before Gamma Cloud, and linking it automatically would
+hand it to anyone with that cloud username, so only `claim` and the admin
+subject link it. Not built: the choice for that case on the sign-in page
+(sign in to it with its password and link it, or continue as a new
+account under a variant); the refusal says what to do. Lists of people
+show an account's Gamma Cloud username beside a name here that differs
+from it in more than case (`cloud_auth.cloud_names`): the share popover's
+invited people and a workspace's members, as `cloud`.
 
 On a hosted container a new account is also refused once the plan's
 account cap is reached ("Hosted containers" below).

@@ -11,7 +11,7 @@ import pytest
 from conftest import account_of, drop_user, login, make_page, make_user
 from test_cloud_auth import RETURN, app_start, browser, callback, cloud, returned, start  # noqa: F401
 
-from gamma import join_requests, notices, workspaces
+from gamma import cloud_auth, join_requests, notices, workspaces
 from gamma.db import connect_users_db
 
 
@@ -114,6 +114,28 @@ def test_approving_a_request_lets_them_in_with_the_page(owner, invited):
     assert location == f"/?share={token}"
     assert c.get("/api/session").json()["user"] == "jr-dot"
     assert c.get(f"/api/share/{token}").json()["can_edit"] is True
+
+
+def test_a_name_in_use_here_asks_to_join_like_any_other(owner, invited):
+    # jr-tim here is linked to its owner's Gamma Cloud account, jr-zsa. A
+    # different cloud account named jr-tim asks to join like anyone (the
+    # name only matters once an account is made) and, approved, signs in
+    # as jr-tim-2; the share's people say which cloud account that is.
+    make_user("jr-tim", "jr-tim-pw1")
+    with connect_users_db() as conn:
+        cloud_auth.link(conn, account_of("jr-tim"), {"sub": "sub-jr-zsa", "preferred_username": "jr-zsa",
+                                                     "email": "jr-zsa@example.org"})
+        conn.commit()
+    page, token = _shared_page(owner, "JR namesake paper", audience="list")
+    _, location = _sign_in(invited, "jr-tim", f"/?share={token}")
+    assert location == f"/?share={token}&cloud_join=sent"
+    r = owner.post(f"/api/share-settings/{page}/invites", json={"subject": "sub-jr-tim", "role": "edit"})
+    assert r.status_code == 200, r.text
+    c, location = _sign_in(invited, "jr-tim", f"/?share={token}")
+    assert location == f"/?share={token}" and c.get("/api/session").json()["user"] == "jr-tim-2"
+    assert c.get(f"/api/share/{token}").json()["can_edit"] is True
+    assert owner.get(f"/api/share-settings/{page}").json()["users"] == [
+        {"name": "jr-tim-2", "role": "edit", "cloud": "jr-tim"}]
 
 
 def test_a_declined_person_asks_nothing_until_an_admin_removes_it(owner, boss, invited):

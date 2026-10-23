@@ -325,6 +325,28 @@ export async function cloudSignInScenarios(env) {
         { what: "the page after the approval" });
       await assertNoProblems(bea, gate);
 
+      // a namesake: another Gamma Cloud account named like the owner here
+      // asks to join like anyone, and approved, signs in as lab-owner-2;
+      // the popover says which Gamma Cloud account that is
+      cloud.person("sub-lab-owner-b", "lab-owner");
+      const twin = await openPage(await context(), link);
+      await twin.getByRole("link", { name: "Sign in with Gamma Cloud", exact: true }).click();
+      await twin.getByRole("status").filter({ hasText: "Asked to join." }).waitFor();
+      await page.keyboard.press("Escape");
+      await pop.waitFor({ state: "detached" });
+      await page.click("button[aria-label='Share']");
+      await pop.locator(".aiProvRow", { hasText: "asks to join" }).getByRole("button", { name: "Approve", exact: true }).click();
+      await pop.locator(".aiProvRow", { hasText: "pending" }).waitFor();
+      await twin.getByRole("link", { name: "Sign in with Gamma Cloud", exact: true }).click();
+      await until(async () => (await twin.textContent(".readOnlyTitle").catch(() => "")).includes("Cloud shared paper"),
+        { what: "the namesake on the page" });
+      await assertNoProblems(twin, gate);
+      await page.keyboard.press("Escape");
+      await pop.waitFor({ state: "detached" });
+      await page.click("button[aria-label='Share']");
+      await pop.locator(".aiProvRow", { hasText: "lab-owner-2" }).getByText("Invited · Gamma Cloud lab-owner", { exact: true }).waitFor();
+      await assertNoProblems(page);
+
       // from the login page the request goes to the admin, whose Server pane lists it
       cloud.person("sub-cyd", "cyd-cloud");
       const cyd = await openPage(await context(), lab.base);
