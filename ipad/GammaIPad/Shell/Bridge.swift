@@ -137,8 +137,8 @@ struct InkTool: Decodable, Equatable {
     /// the roll, (nib − roll) mod 180 — the page's strokeNib.
     func liveNib(roll: Double?) -> Double {
         guard nibRoll, let roll, roll.isFinite else { return Double(nib) }
-        let turned = (Double(nib) - roll).rounded().truncatingRemainder(dividingBy: 180)
-        return turned < 0 ? turned + 180 : turned
+        let turned: Double = (Double(nib) - roll).rounded()
+        return mod(turned, 180)
     }
 
     private enum Keys: String, CodingKey { case kind, color, size, opacity, brush, pressure, dash, blend, stabilize, snap, nib, nibRoll }
@@ -158,9 +158,11 @@ struct InkTool: Decodable, Equatable {
         // A level is a number, rounded and held to 0…4.
         let level = (try? c.decodeIfPresent(Double.self, forKey: .stabilize)).flatMap { value -> Int? in
             guard value.isFinite else { return nil }
-            return Int(min(4, max(0, value.rounded())))
+            let clamped: Double = min(4, max(0, value.rounded()))
+            return Int(clamped)
         }
-        // A nib is a number, rounded and turned into 0…179.
+        // A nib is a number, rounded and turned into 0…179 (on the Int, where
+        // % and + 180 are exact: `mod` is for Doubles).
         let nib = (try? c.decodeIfPresent(Double.self, forKey: .nib)).flatMap { value -> Int? in
             guard value.isFinite, abs(value) < 1e6 else { return nil }
             let degrees = Int(value.rounded()) % 180
@@ -228,7 +230,7 @@ extension WebMessage: Decodable {
             self = .servers
         case "haptic":
             let kind = (try? c.decodeIfPresent(String.self, forKey: .kind)).flatMap { HapticKind(rawValue: $0) } ?? .tool
-            let at = (try? c.decodeIfPresent(Point.self, forKey: .at)).map { CGPoint(x: $0.x, y: $0.y) }
+            let at: CGPoint? = (try? c.decodeIfPresent(Point.self, forKey: .at)).map { (p: Point) -> CGPoint in CGPoint(x: p.x, y: p.y) }
             self = .haptic(kind: kind, at: at)
         default:
             throw DecodingError.dataCorruptedError(forKey: .type, in: c, debugDescription: "unknown message \(type)")
@@ -238,13 +240,20 @@ extension WebMessage: Decodable {
     /// A message as WebKit hands it over (`WKScriptMessage.body`: the
     /// posted object as Foundation types), through the same Codable path.
     init(body: Any) throws {
-        // JSONSerialization raises an Objective-C exception (not a Swift
-        // error) on anything it cannot serialize, so this is checked first.
-        guard JSONSerialization.isValidJSONObject(body) else {
-            throw DecodingError.dataCorrupted(.init(codingPath: [], debugDescription: "not a message object"))
-        }
-        self = try JSONDecoder().decode(WebMessage.self, from: JSONSerialization.data(withJSONObject: body))
+        self = try decodeWebValue(WebMessage.self, from: body)
     }
+}
+
+/// A value as WebKit hands it over (a posted message's body, or what a
+/// promise resolved with: Foundation types) decoded as `type`, through its
+/// Codable path. JSONSerialization raises an Objective-C exception (not a
+/// Swift error) on anything it cannot serialize, so that is checked first.
+private func decodeWebValue<T: Decodable>(_ type: T.Type, from value: Any) throws -> T {
+    guard JSONSerialization.isValidJSONObject(value) else {
+        throw DecodingError.dataCorrupted(.init(codingPath: [], debugDescription: "not a JSON object"))
+    }
+    let data: Data = try JSONSerialization.data(withJSONObject: value)
+    return try JSONDecoder().decode(type, from: data)
 }
 
 enum PencilGesture: String, Encodable { case tap, squeeze }
@@ -327,9 +336,7 @@ enum HoldReply: Equatable {
             self = .cancel
             return
         }
-        guard let body = reply["shape"], JSONSerialization.isValidJSONObject(body),
-              let data = try? JSONSerialization.data(withJSONObject: body),
-              let shape = try? JSONDecoder().decode(HeldShape.self, from: data) else {
+        guard let body = reply["shape"], let shape = try? decodeWebValue(HeldShape.self, from: body) else {
             self = .nothing
             return
         }
@@ -373,18 +380,12 @@ final class Bridge: NSObject, WKScriptMessageHandlerWithReply {
     }
 
     /// Delivers `message` and waits for the web's promise. False when it
-    /// could not be delivered or the web rejected it.
+    /// could not be delivered or the web rejected it. The page's value is
+    /// not handed back (`return true`): WebKit may fail to convert it.
     @discardableResult
     func send(_ message: HostMessage) async -> Bool {
-        guard let webView, let data = try? JSONEncoder().encode(message),
-              let json = String(data: data, encoding: .utf8) else { return false }
-        do {
-            _ = try await webView.callAsync("await window.gammaNative.receive(JSON.parse(json)); return true;",
-                                            arguments: ["json": json], in: .page)
-            return true
-        } catch {
-            return false
-        }
+        let result: Any? = await deliver(message, running: "await window.gammaNative.receive(JSON.parse(json)); return true;")
+        return result != nil
     }
 
     /// Delivers `message` and hands back what the web's promise resolved
@@ -392,10 +393,16 @@ final class Bridge: NSObject, WKScriptMessageHandlerWithReply {
     /// page without a listener for the type does), or nil when it could not
     /// be delivered or the web rejected it.
     func ask(_ message: HostMessage) async -> Any? {
+        await deliver(message, running: "return (await window.gammaNative.receive(JSON.parse(json))) ?? {};")
+    }
+
+    /// Runs `body` in the page with `message` as its `json`: what `body`
+    /// returned, or nil when the message could not be encoded or
+    /// delivered, or `body` threw (the web rejected the message).
+    private func deliver(_ message: HostMessage, running body: String) async -> Any? {
         guard let webView, let data = try? JSONEncoder().encode(message),
               let json = String(data: data, encoding: .utf8) else { return nil }
-        return try? await webView.callAsync("return (await window.gammaNative.receive(JSON.parse(json))) ?? {};",
-                                            arguments: ["json": json], in: .page)
+        return try? await webView.callAsync(body, arguments: ["json": json], in: .page)
     }
 }
 

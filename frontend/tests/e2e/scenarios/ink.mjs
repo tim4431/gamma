@@ -14,7 +14,7 @@
 // stopping a page the server was updated under. /Ink in the
 // annotated PDF is backend/tests/test_ink.py; the chat's view_ink is
 // test_ai_tools_ink.py.
-import { Account, PYTHON, assertMenuFrom, assertOpensInPlace, fakeAiModels, until } from "../harness.mjs";
+import { Account, PYTHON, assertMenuFrom, assertMenuRoles, assertOpensInPlace, fakeAiModels, until } from "../harness.mjs";
 import { waitForPdf } from "./pdf.mjs";
 import { DEFAULT_TOOLS, decodeStroke, encodeStroke, newInk, strokeWidth } from "../../../src/ink/ink.js";
 import { execFileSync } from "node:child_process";
@@ -331,6 +331,9 @@ export async function inkScenarios({ server, browser, alice, makePdf, step, unti
         "Pen · Ballpoint · Brush · Pencil · Calligraphy");
       assertEq(await styles.getByRole("menuitemradio", { name: "Pen", exact: true }).getAttribute("aria-checked"), "true");
       await assertMenuFrom(page.locator(".inkStyleMenu"), picker, "below", "the strip's Pen style menu");
+      // one menu, named Pen style, opened by the picker
+      assertEq(JSON.stringify([await picker.getAttribute("aria-haspopup"), await picker.getAttribute("aria-expanded")]), JSON.stringify(["menu", "true"]));
+      await assertMenuRoles(page.getByRole("menu", { name: "Pen style", exact: true }), "the strip's Pen style menu");
       assertEq(await styles.locator(".inkBrushPreview").count(), 5, "each row led by a stroke in its look");
       await styles.getByRole("menuitemradio", { name: "Ballpoint", exact: true }).click();
       await page.locator(".pdfInkSub").getByRole("button", { name: "Style: Ballpoint", exact: true }).waitFor();
@@ -421,13 +424,18 @@ export async function inkScenarios({ server, browser, alice, makePdf, step, unti
     await assertOpensInPlace(page, ".inkStripMenu", () => more.click(), { what: "the More menu" });
     assertEq(await more.getAttribute("aria-expanded"), "true");
     await assertMenuFrom(page.locator(".inkStripMenu"), more, "below", "the More menu");
+    // one menu, named by More; a modifier's row a checkbox
+    const moreItems = await assertMenuRoles(page.getByRole("menu", { name: "More handwriting tools", exact: true }), "the More menu");
+    const roleOf = (text) => moreItems.find((i) => i.text === text)?.role;
+    assertEq(JSON.stringify(["Ruler", "Stamp line", "Shapes", "Handwriting settings…"].map(roleOf)),
+      JSON.stringify(["menuitemcheckbox", "menuitem", "menuitemcheckbox", "menuitem"]), `the More menu's rows: ${JSON.stringify(moreItems)}`);
     const menu = page.locator(".inkStripMenu");
     const paste = menu.locator("[data-command='ink.paste']");
     assert(await paste.isDisabled(), "nothing on the handwriting clipboard: Paste is greyed");
     assertEq(await paste.getAttribute("title"), "Copy or cut handwriting first");
     assertEq(await paste.textContent(), "Paste handwritingCtrl+V", "the command's label and its chord");
     assert(!(await menu.locator("[data-command='ink.selectAll']").isDisabled()), "Select all applies with a tool armed");
-    assertEq(await menu.getByRole("button", { name: "Handwriting settings…", exact: true }).count(), 1);
+    assertEq(await menu.getByRole("menuitem", { name: "Handwriting settings…", exact: true }).count(), 1);
     await page.keyboard.press("Escape");
     await until(async () => !(await page.$(".inkStripMenu")), { what: "the menu closed by Escape" });
     assertEq(await page.locator(".pdfInkBar").count(), 1, "the strip stays open: Escape went to the menu");
@@ -443,7 +451,7 @@ export async function inkScenarios({ server, browser, alice, makePdf, step, unti
     assertEq(await page.locator(".pdfInkBar").count(), 1, "the strip stays open");
     assert(await more.evaluate((el) => el === document.activeElement), "the focus stays on More");
     await more.click();
-    await menu.getByRole("button", { name: "Handwriting settings…", exact: true }).click();
+    await menu.getByRole("menuitem", { name: "Handwriting settings…", exact: true }).click();
     const dialog = page.getByRole("dialog", { name: "Settings", exact: true });
     await dialog.waitFor();
     await until(() => page.locator(".settingsPane [data-setting='Reset presets']").first().isVisible(), { what: "the Handwriting section in view" });
@@ -471,8 +479,12 @@ export async function inkScenarios({ server, browser, alice, makePdf, step, unti
     await page.waitForSelector(".pdfInkSub[data-ink-options='tool']");
     let menu = await toolMenu();
     await assertMenuFrom(menu, page.locator(".pdfInkSub button[aria-label='Tool menu']"), "below", "the Tool menu");
-    assert(await menu.getByRole("button", { name: "Move left", exact: true }).isDisabled(), "nothing to the left of key 1");
-    assert(await menu.getByRole("button", { name: "Hidden tools", exact: true }).isDisabled(), "no hidden tools yet");
+    // one menu, named by its button
+    const toolButton = page.locator(".pdfInkSub button[aria-label='Tool menu']");
+    assertEq(JSON.stringify([await toolButton.getAttribute("aria-haspopup"), await toolButton.getAttribute("aria-expanded")]), JSON.stringify(["menu", "true"]));
+    await assertMenuRoles(page.getByRole("menu", { name: "Tool menu", exact: true }), "the Tool menu");
+    assert(await menu.getByRole("menuitem", { name: "Move left", exact: true }).isDisabled(), "nothing to the left of key 1");
+    assert(await menu.getByRole("menuitem", { name: "Hidden tools", exact: true }).isDisabled(), "no hidden tools yet");
     // A press on More while the Tool menu stands open swaps the two: one
     // menu, More's, and the Tool button no longer expanded.
     const more = page.locator(".pdfInkBar button[aria-label='More handwriting tools']");
@@ -485,7 +497,7 @@ export async function inkScenarios({ server, browser, alice, makePdf, step, unti
     await page.keyboard.press("Escape");
     await until(async () => !(await page.$(".inkStripMenu")), { what: "More's menu closed by Escape" });
     menu = await toolMenu();
-    await menu.getByRole("button", { name: "Move right", exact: true }).click();
+    await menu.getByRole("menuitem", { name: "Move right", exact: true }).click();
     await until(async () => (await pillText()).includes(`${first} is now key 2.`), { what: "the move's pill" });
     assertEq(await presetName(1), first, "key 2 is the moved preset");
     assert((await armed().getAttribute("aria-label")).includes("key 2"), "still armed, at key 2");
@@ -495,12 +507,12 @@ export async function inkScenarios({ server, browser, alice, makePdf, step, unti
     assertEq(await name(), first, "key 2 arms the moved one");
     await armed().click();
     menu = await toolMenu();
-    await menu.getByRole("button", { name: "Move left", exact: true }).click();
+    await menu.getByRole("menuitem", { name: "Move left", exact: true }).click();
     await until(async () => (await pillText()).includes(`${first} is now key 1.`), { what: "moved back" });
     assertEq(await ids(), order, "the ids never change");
     // Hide: off the row and out of the keys, kept in the list; the pill offers Show; Hidden tools brings it back
     menu = await toolMenu();
-    await menu.getByRole("button", { name: "Hide", exact: true }).click();
+    await menu.getByRole("menuitem", { name: "Hide", exact: true }).click();
     await until(async () => (await presets().count()) === 6, { what: "six presets on the row" });
     assert((await pillText()).includes(`${first} hidden.`), "the pill names it");
     assertEq(await page.locator(".statusPill").getByRole("button", { name: "Show", exact: true }).count(), 1, "Show is on the pill");
@@ -509,8 +521,9 @@ export async function inkScenarios({ server, browser, alice, makePdf, step, unti
     assertEq(await page.evaluate(() => JSON.parse(localStorage.getItem("gamma-ink-tools")).filter((t) => t.hidden === true).length), 1, "kept in the list, hidden");
     await armed().click();
     menu = await toolMenu();
-    await menu.getByRole("button", { name: "Hidden tools", exact: true }).click();
-    await menu.getByRole("menu", { name: "Hidden tools" }).getByRole("button", { name: new RegExp(`^${first} · `) }).click();
+    await menu.getByRole("menuitem", { name: "Hidden tools", exact: true }).click();
+    await assertMenuRoles(menu.getByRole("menu", { name: "Hidden tools", exact: true }), "the Hidden tools flyout", 1);
+    await menu.getByRole("menu", { name: "Hidden tools" }).getByRole("menuitem", { name: new RegExp(`^${first} · `) }).click();
     await until(async () => (await presets().count()) === 7, { what: "seven presets again" });
     assertEq(await presetName(0), first, "back where it was, at key 1");
     assertEq(await ids(), order);
@@ -560,7 +573,7 @@ export async function inkScenarios({ server, browser, alice, makePdf, step, unti
     const shift = async (who, n) => {
       for (let i = 0; i < Math.abs(n); i++) {
         const key = Number((await armed().getAttribute("aria-label")).match(/key (\d)/)[1]) + Math.sign(n);
-        await (await toolMenu()).getByRole("button", { name: n < 0 ? "Move left" : "Move right", exact: true }).click();
+        await (await toolMenu()).getByRole("menuitem", { name: n < 0 ? "Move left" : "Move right", exact: true }).click();
         await until(async () => (await pillText()).includes(`${who} is now key ${key}.`), { what: `${who} at key ${key}` });
       }
     };
@@ -578,7 +591,7 @@ export async function inkScenarios({ server, browser, alice, makePdf, step, unti
       await page.keyboard.press("5");
       lastPen = await name();
       await optionsRow();
-      await (await toolMenu()).getByRole("button", { name: "Hide", exact: true }).click();
+      await (await toolMenu()).getByRole("menuitem", { name: "Hide", exact: true }).click();
       await until(async () => (await presets().count()) === 6, { what: "the last pen hidden" });
       assert((await name()) !== lastPen, "its neighbour is armed");
       // closed and opened again: the strip arms the first pen, as the stylus writes with it
@@ -597,8 +610,8 @@ export async function inkScenarios({ server, browser, alice, makePdf, step, unti
         await page.keyboard.press("1");
         await optionsRow().catch(() => {});
         const menu = await toolMenu().catch(() => null);
-        await menu?.getByRole("button", { name: "Hidden tools", exact: true }).click().catch(() => {});
-        await menu?.getByRole("menu", { name: "Hidden tools" }).getByRole("button", { name: new RegExp(`^${lastPen} · `) }).click().catch(() => {});
+        await menu?.getByRole("menuitem", { name: "Hidden tools", exact: true }).click().catch(() => {});
+        await menu?.getByRole("menu", { name: "Hidden tools" }).getByRole("menuitem", { name: new RegExp(`^${lastPen} · `) }).click().catch(() => {});
         await until(async () => (await presets().count()) === 7, { what: "seven presets again" }).catch(() => {});
       }
       const at = (await presets().evaluateAll((els) => els.map((el) => el.getAttribute("aria-label").split(" · ")[0]))).indexOf(highlighter);
@@ -1140,7 +1153,7 @@ export async function inkScenarios({ server, browser, alice, makePdf, step, unti
   // Settings → Reading & editing, its rows, and back.
   const openReadingSettings = async () => {
     await page.locator('[data-guide="header.account"]').click();
-    await page.getByRole("button", { name: "Settings…", exact: true }).click();
+    await page.getByRole("menuitem", { name: "Settings…", exact: true }).click();
     const dialog = page.getByRole("dialog", { name: "Settings", exact: true });
     await dialog.waitFor();
     await page.getByRole("navigation", { name: "Settings categories" }).getByRole("button", { name: "Reading & editing", exact: true }).click();
@@ -1899,7 +1912,7 @@ export async function inkScenarios({ server, browser, alice, makePdf, step, unti
   const localFirst = (p) => p.evaluate(() => JSON.parse(localStorage.getItem("gamma-ink-tools") || "[]")[0]?.color);
   const asked = async (p) => {
     await p.locator('[data-guide="header.account"]').click();
-    await p.getByRole("button", { name: "Settings…", exact: true }).click();
+    await p.getByRole("menuitem", { name: "Settings…", exact: true }).click();
     const dialog = p.getByRole("dialog", { name: "Settings", exact: true });
     await dialog.waitFor();
     await p.getByRole("navigation", { name: "Settings categories" }).getByRole("button", { name: "Help & diagnostics", exact: true }).click();

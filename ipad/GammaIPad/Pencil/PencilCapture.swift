@@ -137,7 +137,8 @@ final class PencilCapture: UIGestureRecognizer {
             var recorder = StrokeRecorder()
             record(touch, into: &recorder)
             recordings[key] = recorder
-            claims.began(key, at: recorder.points[0], time: touch.timestamp)
+            let first: [Double] = recorder.samples[0]
+            claims.began(key, at: CGPoint(x: first[0], y: first[1]), time: touch.timestamp)
         }
     }
 
@@ -314,8 +315,9 @@ struct HoldWatch: Equatable {
         guard let next = due(recorder), now >= next.time - 0.005 else { return false }
         let samples = recorder.samples
         let last = samples[samples.count - 1]
-        pending = Ask(anchor: next.anchor, n: samples.count, from: CGPoint(x: last[0], y: last[1]),
-                      tSnap: samples[next.anchor][3] + PencilCapture.holdDelay * 1000)
+        let from: CGPoint = CGPoint(x: last[0], y: last[1])
+        let tSnap: Double = samples[next.anchor][3] + PencilCapture.holdDelay * 1000
+        pending = Ask(anchor: next.anchor, n: samples.count, from: from, tSnap: tSnap)
         return true
     }
 
@@ -385,7 +387,11 @@ struct ClaimQueue<Touch: Hashable> {
     mutating func claim(near point: CGPoint, at now: TimeInterval) -> Touch? {
         forget(before: now)
         let reach = self.reach
-        guard let i = entries.firstIndex(where: { hypot(Double($0.at.x - point.x), Double($0.at.y - point.y)) <= Double(reach) }) else {
+        guard let i = entries.firstIndex(where: { (candidate: Entry) -> Bool in
+            let dx: Double = Double(candidate.at.x - point.x)
+            let dy: Double = Double(candidate.at.y - point.y)
+            return hypot(dx, dy) <= Double(reach)
+        }) else {
             return nil
         }
         let entry = entries.remove(at: i)
@@ -403,7 +409,7 @@ struct ClaimQueue<Touch: Hashable> {
 /// never going back, then, when the Pencil reports its tilt, `a` and `z`,
 /// its altitude and azimuth in degrees (the web converts them back to
 /// radians, as WebKit gives a page's pointer events), and after them, when
-/// it reports its barrel roll (iPadOS 17.5), `r`, in degrees 0…360,
+/// it reports its barrel roll (iPadOS 17.5), `r`, in degrees in [0, 360),
 /// clockwise as seen (PointerEvent.twist's convention: the page turns a
 /// calligraphy nib by the first sample's). The lift reports no force, so a
 /// zero keeps the last pressure, as the web's own sampling does.
@@ -414,7 +420,6 @@ struct ClaimQueue<Touch: Hashable> {
 /// anchor is within the slop of it.
 struct StrokeRecorder {
     private(set) var samples: [[Double]] = []
-    private(set) var points: [CGPoint] = []
     /// The stillness anchor's index in `samples`.
     private(set) var stillSince = 0
     /// The anchor sample's time, on the touches' clock (seconds of system uptime).
@@ -430,12 +435,14 @@ struct StrokeRecorder {
         let measured = maximumForce > 0 ? force / maximumForce : 0.5
         let p = measured > 0 ? min(1, measured) : (samples.last?[2] ?? 0.5)
         let t = max(samples.last?[3] ?? 0, (time - begin) * 1000)
-        var sample = [x, y, p, t]
+        var sample: [Double] = [x, y, p, t]
         if let altitude, let azimuth {
-            sample += [altitude * 180 / .pi, azimuth * 180 / .pi]
+            let altitudeDegrees: Double = altitude * 180 / .pi
+            let azimuthDegrees: Double = azimuth * 180 / .pi
+            sample += [altitudeDegrees, azimuthDegrees]
             if let roll, roll.isFinite {
-                let degrees = (roll * 180 / .pi).truncatingRemainder(dividingBy: 360)
-                sample.append(degrees < 0 ? degrees + 360 : degrees)
+                let degrees: Double = roll * 180 / .pi
+                sample.append(mod(degrees, 360))
             }
         }
         if samples.isEmpty {
@@ -449,6 +456,5 @@ struct StrokeRecorder {
             }
         }
         samples.append(sample)
-        points.append(CGPoint(x: x, y: y))
     }
 }

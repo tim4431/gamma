@@ -600,7 +600,7 @@ export function MdTableWrap({ idx, onEdit, model, editKey, children }) {
             </ContextMenu>
           ) : null}
           {menu?.kind === "table" ? (
-            <ContextMenu x={menu.x} y={menu.y} onClose={() => setMenu(null)}>
+            <ContextMenu x={menu.x} y={menu.y} onClose={() => setMenu(null)} aria-label={t("Table options")}>
               <MenuItem icon={CopyIcon} onClick={() => { setMenu(null); if (model) copyText(serializeTable(model)); }}>{t("Copy table")}</MenuItem>
               <MenuItem danger icon={Trash2Icon} onClick={() => pick({ type: "deleteTable" })}>{t("Delete table")}</MenuItem>
             </ContextMenu>

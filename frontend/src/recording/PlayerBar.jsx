@@ -173,13 +173,13 @@ const PlayerMenu = React.memo(function PlayerMenu({ kind, menu, mode, rate, onMo
       {kind === "mode" ? MODES.map((m) => {
         const Icon = MODE_ICONS[m];
         return (
-          <MenuItem key={m} icon={Icon} title={t(MODE_TITLES[m])} trailing={mode === m ? <CheckIcon size={14} /> : null}
+          <MenuItem key={m} role="menuitemradio" icon={Icon} title={t(MODE_TITLES[m])} trailing={mode === m ? <CheckIcon size={14} /> : null}
             aria-checked={mode === m} onMouseDown={keepFocus} onClick={() => onMode(m)}>
             {t(MODE_LABELS[m])}
           </MenuItem>
         );
       }) : REPLAY_RATES.map((r) => (
-        <MenuItem key={r} trailing={rate === r ? <CheckIcon size={14} /> : null} aria-checked={rate === r} onMouseDown={keepFocus}
+        <MenuItem key={r} role="menuitemradio" trailing={rate === r ? <CheckIcon size={14} /> : null} aria-checked={rate === r} onMouseDown={keepFocus}
           onClick={() => onRate(r)}>
           {r}×
         </MenuItem>

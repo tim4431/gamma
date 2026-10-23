@@ -178,7 +178,7 @@ the value the page resolved with (`{}` when it resolved with nothing).
 
 | Message | Resolves | Meaning |
 |---|---|---|
-| `{type: "stroke", pointerId, samples: [[x, y, p, t, a, z, r?], …], held?}` | `{committed}`, two frames later (React's commit and a paint) | The claimed stroke ended. x, y in viewport CSS px; p = force / maximum force, the lift keeping the last pressure; t = ms from the first sample, from the hardware timestamps, never going back; a, z = the Pencil's altitude and azimuth in degrees (`altitudeAngle` and `azimuthAngle(in:)` of the web view, the angles WebKit gives the page in radians). A shell with `pencilRoll` adds r, `[x, y, p, t, a, z, r]`: the barrel roll in degrees, 0..359, clockwise as seen from the screen (PointerEvent.twist's convention), from `UITouch.rollAngle`; without it the nib takes no roll. An older shell sends `[x, y, p, t]`, and the stroke has no tilt. `held`: the `n` of the hold whose shape the shell drew the line as, left out when it drew none; the page commits a held shape only for that hold. No samples: the system cancelled the touch, or the page took a hold (`cancel`), and the claim just ends |
+| `{type: "stroke", pointerId, samples: [[x, y, p, t, a, z, r?], …], held?}` | `{committed}`, two frames later (React's commit and a paint) | The claimed stroke ended. x, y in viewport CSS px; p = force / maximum force, the lift keeping the last pressure; t = ms from the first sample, from the hardware timestamps, never going back; a, z = the Pencil's altitude and azimuth in degrees (`altitudeAngle` and `azimuthAngle(in:)` of the web view, the angles WebKit gives the page in radians). A shell with `pencilRoll` adds r, `[x, y, p, t, a, z, r]`: the barrel roll in degrees in [0, 360), clockwise as seen from the screen (PointerEvent.twist's convention), from `UITouch.rollAngle`; without it the nib takes no roll. An older shell sends `[x, y, p, t]`, and the stroke has no tilt. `held`: the `n` of the hold whose shape the shell drew the line as, left out when it drew none; the page commits a held shape only for that hold. No samples: the system cancelled the touch, or the page took a hold (`cancel`), and the claim just ends |
 | `{type: "hold", pointerId, samples}` | at once: `{shape: {kind, params}}`, `{cancel: true}` or `{}` | The captured Pencil has stayed within 3 pt of one sample for 600 ms ([The pen](#the-pen), step 6); the samples so far, as `stroke` sends them. `shape`: the stroke snaps; `kind` is `line`, `arrow`, `triangle`, `rect`, `polygon`, `circle` or `ellipse`, and `params` its `shapes.js` parameters in viewport CSS px (points and lengths; `angle` in degrees, `n` a count), which the shell draws and refits. `cancel`: the page took the hold (*Paste here*); the line goes and the touch ends with an empty `stroke`. `{}`: nothing, which is also what a page without a `hold` listener resolves with |
 | `{type: "pencil", gesture: "tap"\|"squeeze", action, phase?: "ended"}` | at once | A double tap, or a squeeze's end. `action` is the system's preferred action: `switchEraser`, `switchPrevious`, `showColorPalette`, `showInkAttributes`, `runSystemShortcut` or `ignore`. `phase: "ended"` comes from a shell with `pencilPhases`; a squeeze without it, from an older shell, is a quick squeeze |
 | `{type: "squeeze", phase: "began"\|"cancelled", action}` | at once | A squeeze's start, and its cancel, which comes instead of its `pencil` when the system cancels it. A type of its own, so a page that predates it ignores both and still acts once per squeeze, on its `pencil` |
@@ -738,9 +738,9 @@ confirm: [research/pymupdf-ios.md](../research/pymupdf-ios.md).
     `inkLooks`)
   - the cloud sign-in's requests and PKCE (`CloudSignInTests`)
   - claim matching and sampling (`PencilTests`): the samples' tilt, the
-    roll's seventh value (degrees, clockwise; none without `rollAngle`),
-    the ruler's projection (`RulerSnap`: points onto the line, the
-    outermost two kept) and
+    roll's seventh value (degrees in [0, 360), clockwise; none without
+    `rollAngle`), the ruler's projection (`RulerSnap`: points onto the
+    line, the outermost two kept) and
     the stillness anchor, when a hold is asked (`HoldWatch`, with the time
     given), the lazy brush, the ribbon, a gesture's hover place
     (`GestureHover`), the feedback each `haptic` kind plays

@@ -396,10 +396,12 @@ is a `MenuItem` (icon column, ellipsizing label, optional `trailing` node or
 `MenuDivider`; `menuGroups(...groups)` drops empty groups and puts one
 divider between the rest, so a menu a viewer sees half of has no doubled
 rule. Popover menus use the same rows: the topbar's account, View and Add
-menus and the page header's Document popover. A popover that hosts a flyout
-renders its panel as a `MenuScope` (the flyout state a `ContextMenu`
-carries), so the account menu's **Tours** is a `SubMenuItem` like any other
-(`data-guide="account.tour"` on its trigger, `data-tour` on its rows). A
+menus and the page header's Document popover. The account, View and
+Document menus render their panel as a `MenuScope` (the flyout state and
+the menu role a `ContextMenu` carries), so the account menu's **Tours** is
+a `SubMenuItem` like any other (`data-guide="account.tour"` on its trigger,
+`data-tour` on its rows); the Add popover, whose rows sit under its URL
+field, keeps a plain panel. A
 click on a flyout's trigger opens it and never toggles it shut. A row that opens a nested list is a
 `SubMenuItem` — it renders its panel *inside* the parent menu's DOM (a
 portalled panel would sit outside the parent's outside-pointerdown test, and
@@ -426,9 +428,10 @@ opens these menus from the keyboard. The press takes the button's tooltip
 away (`InkTooltips`), and the menu comes in the same frame.
 
 One hook holds the menus of one toolbar, one open at a time.
-`trigger(kind)` is a button's props: the press, the keyboard's click,
-`aria-haspopup="menu"` and `aria-expanded`. `menu` is the open menu's
-`ContextMenu` props, and `close()` is what a row calls before it acts. The
+`trigger(kind)` is a button's props: its id, the press, the keyboard's
+click, `aria-haspopup="menu"` and `aria-expanded`. `menu` is the open
+menu's `ContextMenu` props, which name it by its button
+(`aria-labelledby`). `close()` is what a row calls before it acts. The
 pressed button is the open menu's `ignoreRef`, so a press on it closes the
 menu rather than closing and reopening it. A press on another button of
 the toolbar swaps the menus: the open menu's outside press queues its
@@ -445,6 +448,58 @@ above the bar. The tool strip's More, Tool and Style menus and the
 selection menu's Style menu open below their buttons. `MenuSelect` and
 `ActionMenu` open on the click (`useDropdown`), and `MenuButton` is a
 row's stand-in for its right-click menu ([below](#menubutton)).
+
+To assistive technology a menu is WAI-ARIA's
+[menu](https://www.w3.org/WAI/ARIA/apg/patterns/menubar/). The element
+around its rows, the `MenuScope`, has `role="menu"`: every `ContextMenu`
+and the account, View and Document menus. A menu is vertical, the role's
+default, so nothing sets `aria-orientation`. Inside a menu a `MenuItem` is
+a `menuitem` and a `MenuDivider` a `separator`. A row whose check the
+row itself sets passes its own role with `aria-checked`. A toggle is a
+`menuitemcheckbox` (the View menu's windows, a page's labels, the strip
+More's Ruler, Shapes and Zoom window). One of a set is a `menuitemradio`
+(`MenuSelect`'s choices, the account menu's workspaces, the player's mode
+and speed, the Style menu's brushes, a `Segmented` inside a menu). A
+`MenuSelect` with headings puts each set of radios in a `group` named by
+its heading. In Move to folder (a page's) and Move to (a folder's) a check
+marks the folder it is in. That is no state the row sets, so the row stays
+a `menuitem`, and its title says so.
+
+Every other control in a menu is a `menuitem` too: the account card, a
+notice's link and the highlight menu's colours. No other role stands
+between an item and its menu or group, so a notice is no `status` region
+there, and its sentence describes its link. The one control that is no
+item is the page menu's "New label…" field, a text box in the labels
+flyout, which the menu role has no place for. A flyout is a menu of its
+own inside its row's wrapper, as the pattern nests a submenu. So a
+flyout's rows sit in two menus and every other row in exactly one. No
+element adds a second `role="menu"` around rows that already have one.
+Outside a menu (a dialog's list, the Add popover, a settings popover) a
+`MenuItem` stays a plain button. A `ContextMenu` that holds something
+else passes `role="none"`: the handwriting selection menu and the text
+box menu are toolbars, and the model picker's list is a listbox. The
+selection menu's Style picker opens a menu of its own, portalled outside
+that toolbar.
+
+A menu is named by what opens it. `MenuSelect`, `ActionMenu`, a flyout
+and every `useMenuTrigger` menu (the player's mode and speed, the strip's
+More and Tool) point `aria-labelledby` at their button or row. Another
+menu with a button of its own takes that button's name as its
+`aria-label` (Account & settings, View, Document, Export chat, Translate,
+Comment actions, Recording actions, Table options). The Style menu is
+named Pen style, not by its picker, whose name is the brush it shows. A
+context menu opens at the pointer, on a right-click, a held finger or a
+row's "⋯" standing in for them. No control of its own names it, so it
+goes without a name, as a native context menu does. The dropdowns'
+buttons, every `useMenuTrigger` button, a flyout's row, the account, View
+and Document buttons and the chat's export button say
+`aria-haspopup="menu"` and `aria-expanded`. A `MenuButton` says
+`aria-haspopup` alone. The roles change neither the keyboard nor the
+focus. The rows are Tab stops, and the pattern's arrow keys and its focus
+moving into an opening menu are not built. The browser suite's
+`assertMenuRoles` (harness.mjs) reads an open menu this way. The last
+step of `touch.mjs` calls it, and so do the handwriting and replay steps
+that open the strip's, the selection's and the player's menus.
 
 A menu that lists commands lists their ids: `CommandMenuItem`
 (`app/CommandMenuItem.jsx`) draws a catalog command ([hotkeys.md](hotkeys.md))

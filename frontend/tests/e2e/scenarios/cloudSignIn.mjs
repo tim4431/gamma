@@ -17,7 +17,7 @@ export async function cloudSignInScenarios(env) {
   const settingsNav = (page, name) => page.getByRole("navigation", { name: "Settings categories" }).getByRole("button", { name, exact: true });
   async function openSettings(page, pane) {
     await page.getByRole("button", { name: "Account & settings", exact: true }).click();
-    await page.getByRole("button", { name: "Settings…", exact: true }).click();
+    await page.getByRole("menuitem", { name: "Settings…", exact: true }).click();
     await settingsNav(page, pane).click();
   }
 

@@ -73,7 +73,7 @@ export async function contextualGuideScenarios(env) {
       for (const [title, menu] of [["Chat", "AI Chat"], ["Notes", "Notes"]]) {
         await page.getByRole("button", { name: `Close ${title}`, exact: true }).click();
         await page.click('[data-guide="header.view"]');
-        await page.locator('.menuPopover').getByRole("button", { name: menu, exact: true }).click();
+        await page.locator('.menuPopover').getByRole("menuitemcheckbox", { name: menu, exact: true }).click();
         await page.getByRole("button", { name: `Close ${title}`, exact: true }).waitFor();
         await page.keyboard.press("Escape"); // the menu, which reaches over the window's header
       }

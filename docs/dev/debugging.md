@@ -465,6 +465,9 @@ frame: no frame of it where it then moves
 ([ui-design.md](ui-design.md#menus-and-popups-open-in-place)).
 `assertMenuFrom` finds a toolbar button's menu 4 px below or above that
 button, by its left edge ([ui-design.md](ui-design.md#menus-and-submenus)).
+`assertMenuRoles` reads an open menu's roles: one `role="menu"` around its
+items, every control in it an item, and no menu around it but a flyout's
+parent. The locator that finds the menu by its name checks the name.
 
 The run is split into groups (`GROUPS` in `tests/e2e/select.mjs`, one per
 scenario file except `notes-pdf-share`, whose scenarios hand data along;
@@ -648,6 +651,9 @@ The scenarios live in `tests/e2e/scenarios/`:
     under their buttons by the left edge (`assertMenuFrom`). A press on
     More while the Tool menu is open swaps the two, and More opened with
     Enter closes on Escape with the focus left on it.
+  - Each of them reads as one menu named by its button, the Style menu as
+    Pen style (`assertMenuRoles`). The Tool menu's Hidden tools flyout is
+    a menu inside it, named by its row.
   - Mouse strokes becoming an ink block with an `.ink` upload, persistence
     across a reload, the eraser, stroke undo/redo, a lasso move + delete
     and the notes card's jump + outline (`/Ink` in the exported PDF is
@@ -708,9 +714,9 @@ The scenarios live in `tests/e2e/scenarios/`:
     a caption, are refused on the pill and change nothing.
   - The Style row restyles a pen to Brush and Dotted, and a highlighter
     takes a line, never a brush.
-  - The selection's Style picker opens its menu 4 px under it. Opened with
-    Enter, Escape closes that menu alone and the focus stays on the
-    picker.
+  - The selection's Style picker opens its menu 4 px under it, a menu of
+    its own outside the selection menu's toolbar. Opened with Enter,
+    Escape closes that menu alone and the focus stays on the picker.
   - A tap on the picker opens the menu, the tap's click leaves it open,
     and a second tap closes it.
   - The Color row rings the colour every selected stroke shares, none for
@@ -763,9 +769,9 @@ The scenarios live in `tests/e2e/scenarios/`:
   - Play shades the note and fades the stroke until their moment, a tap on
     the stroke seeks, and Escape closes the player.
   - The player's mode and speed menus open on the press, 4 px above their
-    buttons. A press on one while the other is open swaps them, a second
-    press closes it, and after Enter and Escape the focus stays on the
-    mode button.
+    buttons. Each is a menu of radios named by its button. A press on one
+    while the other is open swaps them, a second press closes it, and
+    after Enter and Escape the focus stays on the mode button.
   - In the notebook view, Follow scrolls the viewer to the sheet being
     written on.
   - With no viewer shown, Play docks the player over the notes, and Escape
@@ -811,7 +817,12 @@ The scenarios live in `tests/e2e/scenarios/`:
   finger and the "⋯" for every menu, Select mode, the folder menu's moves,
   the View menu's command rows, the pill's Undo, a notebook's place across
   its views and tabs, the viewer's touch tools, the editing bar's marks,
-  and the chat's composer and history rows. `--group touch`.
+  and the chat's composer and history rows. Its last step reads those
+  menus as assistive technology does
+  ([ui-design.md](ui-design.md#menus-and-submenus)). Each is one
+  `role="menu"` around its items, with no role between them but a group.
+  A flyout sits inside its parent, and a menu a control opens is named by
+  it. `--group touch`.
 - `pdfTouch.mjs`: 400% rendering under an emulated canvas limit, distant-page
   release/repaint, live ink, native touch swipes ([pdf_loading.md](pdf_loading.md)).
   `--only "pdf touch"`.

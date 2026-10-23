@@ -64,7 +64,7 @@ export async function inkShapesScenarios({ server, browser, alice, makePdf, step
     assertEq(await rulerRow.getAttribute("aria-checked"), "false");
     assertEq(await shapesRow.getAttribute("aria-checked"), "false");
     assertEq(await rulerRow.locator(".ctxMenuKey").textContent(), "R", "the row names its key");
-    const stamp = stripMenu().getByRole("button", { name: "Stamp line", exact: true });
+    const stamp = stripMenu().getByRole("menuitem", { name: "Stamp line", exact: true });
     assert(await stamp.isDisabled(), "Stamp line waits for the ruler");
     assertEq(await stamp.getAttribute("title"), "Show the ruler first");
     await shapesRow.click();
@@ -186,7 +186,7 @@ export async function inkShapesScenarios({ server, browser, alice, makePdf, step
     const r = await rulerOf();
     const before = new Set((await savedStrokes()).map((s) => s.id));
     const armed = await bar().locator(".inkToolBtn.modeActive .inkToolInk").evaluate((el) => getComputedStyle(el).backgroundColor);
-    await stripMenu().getByRole("button", { name: "Stamp line", exact: true }).click();
+    await stripMenu().getByRole("menuitem", { name: "Stamp line", exact: true }).click();
     await page.locator(".statusPill").getByText("Line stamped along the ruler.").waitFor();
     const stamped = await newStroke(before, "the stamped line saved");
     assertEq(JSON.stringify([stamped.shape?.kind, stamped.ch, stamped.pen]), JSON.stringify(["line", "xyt", false]));

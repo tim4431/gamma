@@ -9,7 +9,7 @@
 // here: an init script stands in for MediaRecorder and Audio. The server's
 // side is backend/tests/test_recordings.py.
 import { waitForPdf } from "./pdf.mjs";
-import { assertMenuFrom } from "../harness.mjs";
+import { assertMenuFrom, assertMenuRoles } from "../harness.mjs";
 import { encodeStroke, newCanvasInk } from "../../../src/ink/ink.js";
 
 async function drawLine(page, from, to) {
@@ -171,6 +171,11 @@ export async function recordingScenarios({ server, browser, alice, makePdf, step
     await page.waitForSelector(".ctxMenu .ctxMenuItem", { timeout: 5000 });
     // up from the bar, by the button's left edge
     await assertMenuFrom(page.locator(".ctxMenu"), page.locator(".replayBar button[data-role='mode']"), "above", "the mode menu");
+    // one menu, named by its button, the modes radios and the current one checked
+    const modeName = await page.getAttribute(".replayBar button[data-role='mode']", "aria-label");
+    const modes = await assertMenuRoles(page.getByRole("menu", { name: modeName, exact: true }), "the mode menu");
+    assert(modes.every((m) => m.role === "menuitemradio") && modes.filter((m) => m.checked === "true").length === 1,
+      `the modes are radios, one checked: ${JSON.stringify(modes)}`);
     await onMode(9, 0);                   // the smallest move a hand makes, off the glyph
     await sleep(500);
     assert(!(await page.$(".inkTooltip")), "the press keeps the trigger's tooltip away while the pointer stays on it");
@@ -193,6 +198,10 @@ export async function recordingScenarios({ server, browser, alice, makePdf, step
     assertEq(await page.getAttribute(".replayBar button[data-role='mode']", "aria-expanded"), "false", "the mode button no longer expanded");
     assertEq(await page.getAttribute(".replayBar .replayRate", "aria-expanded"), "true", "the speed button expanded");
     await assertMenuFrom(page.locator(".ctxMenu"), page.locator(".replayBar .replayRate"), "above", "the speed menu, from its own button");
+    const speedName = await page.getAttribute(".replayBar .replayRate", "aria-label");
+    const speeds = await assertMenuRoles(page.getByRole("menu", { name: speedName, exact: true }), "the speed menu");
+    assert(speeds.every((s) => s.role === "menuitemradio") && speeds.filter((s) => s.checked === "true").length === 1,
+      `the speeds are radios, one checked: ${JSON.stringify(speeds)}`);
     await page.click(".replayBar .replayRate");
     await until(async () => !(await page.$(".ctxMenu")), { what: "speed menu closed by a second press" });
     // Enter (a click with no press behind it) opens it too; Escape closes

@@ -83,7 +83,7 @@ export function RecordingCard({ block, editable }) {
       </span>
       {n ? <MenuButton label={t("Recording actions")} className="recMenuBtn" open={(e) => setMenu({ x: e.clientX, y: e.clientY })} /> : null}
       {menu ? (
-        <ContextMenu x={menu.x} y={menu.y} onClose={() => setMenu(null)}>
+        <ContextMenu x={menu.x} y={menu.y} onClose={() => setMenu(null)} aria-label={t("Recording actions")}>
           {editable && ctx?.transcribe ? (
             <MenuItem icon={SparklesIcon} onClick={() => { setMenu(null); ctx.transcribe(block.id); }}
               title={t("Write the spoken words under the recording, each paragraph linked to its moment")}>
