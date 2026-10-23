@@ -459,8 +459,11 @@ AI:
   sections appear only once a provider exists; a guest sees the usage too,
   without Reset. The chat's setup card (no AI connected, `ChatSetupCard` in
   `chat/ChatDock.jsx`) reads the masked key list alongside `/api/ai/models`
-  and shows once both are in, tiles and all. It opens this pane through
-  `openAiKeysEditor({service})`: Settings is fetched as the pointer or the
+  and shows once both are in, tiles and all. Until the chat knows whether
+  an AI is connected it is a plain frame, with no header tools and no
+  empty-state text; when the `/api/ai/models` read fails it shows them as if
+  one were (App's `aiInfoFailed`), and a send says what is wrong. The card
+  opens this pane through `openAiKeysEditor({service})`: Settings is fetched as the pointer or the
   focus reaches a tile, and the add dialog, set to the tile's service, opens
   with Settings on the list the card read while the pane reads its own (a
   chat error card's fix opens an entry's form once the list has loaded,

@@ -451,8 +451,9 @@ export default function ChatDock({
   // focus reaches a button that opens it, so Settings opens with the click;
   // onSetupInfo hands App the masked key list the setup card read (GET
   // /api/ai/settings, the one Connections shows), so a tile's connect dialog
-  // can open with Settings instead of a round trip later.
-  aiInfo, aiProvider, openAiKeysEditor, openSettings, preloadSettings, onSetupInfo, isAdmin = false, focusSignal = 0,
+  // can open with Settings instead of a round trip later. aiInfoFailed: App's
+  // read of /api/ai/models failed, so aiInfo may never come.
+  aiInfo, aiInfoFailed = false, aiProvider, openAiKeysEditor, openSettings, preloadSettings, onSetupInfo, isAdmin = false, focusSignal = 0,
   aiHealth, dismissAiHealth,
   openPopover, setOpenPopover,
   setStatus, askConfirm,
@@ -506,7 +507,8 @@ export default function ChatDock({
   // payload, read alongside /api/ai/models while that is unknown (and again
   // whenever the AI goes off), so the card lands whole. Until the chat knows
   // which it is (`aiKnown`), the window is a plain frame: no header tools,
-  // no empty-state text.
+  // no empty-state text. A failed read counts as known: the chat then shows
+  // as it would with an AI, and a send says what is wrong.
   const aiOff = !readOnly && !!aiInfo && !aiInfo.enabled;
   const wantsSetup = !readOnly && !aiInfo?.enabled;
   const [setupInfo, setSetupInfo] = useState(null);
@@ -518,7 +520,7 @@ export default function ChatDock({
       .catch(() => { if (live) setSetupInfo({ failed: true }); });
     return () => { live = false; };
   }, [wantsSetup]);
-  const aiKnown = readOnly || (!!aiInfo && (aiInfo.enabled || !!setupInfo));
+  const aiKnown = readOnly || (aiInfo ? aiInfo.enabled || !!setupInfo : aiInfoFailed);
   const settingsIntent = preloadSettings
     ? { onPointerEnter: preloadSettings, onPointerDown: preloadSettings, onFocus: preloadSettings } : {};
   const composerRef = useRef(null);
@@ -1684,7 +1686,7 @@ export default function ChatDock({
   // conversation to lose (a viewer's chat is never kept, an empty one has
   // nothing to drop).
   const discardArmed = newChatAlt && canSave && chatMessages.length > 0;
-  const headerContent = aiOff || !aiInfo ? null : (
+  const headerContent = aiOff || !aiKnown ? null : (
     <>
       <div className="ctlBtnRow chatPanelHeaderBtns">
         {/* First in the strip: a button right of ⚙ would push its popover

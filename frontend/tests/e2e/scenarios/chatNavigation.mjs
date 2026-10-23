@@ -1576,4 +1576,20 @@ export async function chatNavigationScenarios(env) {
       assertNoProblems(page);
     } finally { await ctx.close(); }
   });
+
+  await step("chat navigation: when the read of the AI's models fails the chat stops waiting — its tools and empty-state text show", async () => {
+    await alice.api("/api/chats/home", { method: "PUT", body: { messages: [] } });
+    const ctx = await alice.context(browser);
+    await ctx.addInitScript(() => localStorage.setItem("gamma-ai-login-check", "off"));
+    await ctx.route("**/api/ai/models*", (route) => route.fulfill({ status: 500, json: { detail: "models unavailable" } }));
+    const page = await openPage(ctx, `${server.base}/?ws=${alice.ws}`);
+    try {
+      await page.locator(".chatEmpty", { hasText: "Ask AI anything" }).waitFor();
+      await page.getByRole("button", { name: "Chat history", exact: true }).waitFor();
+      await page.getByRole("button", { name: "Find in this conversation" }).waitFor();
+      assertEq(await page.locator(".chatSetup").count(), 0, "no setup card: the chat does not know there is no AI");
+      assert(await page.getByRole("combobox", { name: "Message AI" }).isEnabled(), "the message box takes a question");
+      assertNoProblems(page, [/\/api\/ai\/models -> 500/]);
+    } finally { await ctx.close(); }
+  });
 }

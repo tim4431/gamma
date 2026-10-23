@@ -2930,7 +2930,12 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   }
 
   // The model switchers everywhere feed off /ai/models — refresh after edits.
-  const refreshAiModels = () => apiJson(`${API}/ai/models`).then(setAiInfo).catch(() => {});
+  // A read that fails leaves the last list and says so (`aiInfoFailed`): the
+  // chat, waiting to learn its AI before it shows its tools, stops waiting.
+  const [aiInfoFailed, setAiInfoFailed] = useState(false);
+  const refreshAiModels = () => apiJson(`${API}/ai/models`)
+    .then((info) => { setAiInfo(info); setAiInfoFailed(false); })
+    .catch(() => setAiInfoFailed(true));
 
   // A connection the dialog just made: test it right away, and when the
   // dialog came from the chat's setup card go back to the chat, ready to ask.
@@ -9944,7 +9949,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           chatEffort={chatEffort} setChatEffort={setChatEffort}
           chatSpeed={chatSpeed} setChatSpeed={setChatSpeed}
           dictationModel={dictationModel} dictationLang={dictationLang}
-          chatSystem={chatSystem} aiInfo={aiInfo} aiProvider={aiProvider}
+          chatSystem={chatSystem} aiInfo={aiInfo} aiInfoFailed={aiInfoFailed} aiProvider={aiProvider}
           chatContextChars={chatContextChars} setChatContextChars={setChatContextChars} multiContextChars={multiContextChars}
           openAiKeysEditor={openAiKeysEditor} preloadSettings={SettingsDialog.preload}
           onSetupInfo={(info) => { chatKeysInfoRef.current = info; }}
