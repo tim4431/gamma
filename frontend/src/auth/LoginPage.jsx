@@ -10,10 +10,11 @@ import { T, t, tn } from "../shared/i18n/i18n.js";
 // tools/branding (design/brand/outputs.json) and served under /media/.
 const DEMO_SCENE_URL = "/media/gamma-scene-light.svg";
 
-// Every page shown before (or instead of) the app: login, loading, an
-// unavailable workspace, a session conflict, a blocked share link. A page
-// that reports a situation (`headline`) leads with it under the mark; the
-// others with the name. `scene` (a demo server's landing) puts a picture
+// Every page shown before (or instead of) the app: login, an unavailable
+// workspace, a session conflict, a blocked share link. While the session is
+// still being read the splash shows instead (Splash, shared/ui/BrandMark.jsx).
+// A page that reports a situation (`headline`) leads with it under the mark;
+// the others with the name. `scene` (a demo server's landing) puts a picture
 // beside the content instead, which then brings its own heading. Under the
 // iPad app every one of them also offers the app's server picker (the
 // account menu's "Server…" row needs a signed-in library), so a reachable
@@ -69,10 +70,6 @@ function LoginNotice({ children }) {
       <span>{children}</span>
     </div>
   );
-}
-
-export function AuthLoading() {
-  return <AuthShell><p className="loginLoading">{t("Loading...")}</p></AuthShell>;
 }
 
 export function WorkspaceUnavailablePage() {

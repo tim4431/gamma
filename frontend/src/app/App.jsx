@@ -109,7 +109,7 @@ import { commandById, commandChord } from "./commands.js";
 import { CommandMenuItem } from "./CommandMenuItem.jsx";
 import { loadSession, saveSession, clearSession, setSessionScope } from "./sessionState";
 import { ROLE_LABEL, workspaceMeta } from "../settings/workspaceRoles.js";
-import { AuthLoading, LoginPage, SessionConflictPage, ShareBlockedPage, WorkspaceUnavailablePage, cloudOutcomeInUrl } from "../auth/LoginPage";
+import { LoginPage, SessionConflictPage, ShareBlockedPage, WorkspaceUnavailablePage, cloudOutcomeInUrl } from "../auth/LoginPage";
 import { guestExpiryLabel } from "../auth/guestExpiry";
 import { McpAuthorization } from "../auth/McpConsent";
 import { TRANSLATE_LANGS, themeScheme, translateModelFor, useAppPrefs, useProfileSync } from "./prefs";
@@ -162,7 +162,7 @@ import { retryableStatus } from "../collaboration/collabSession.js";
 import { applyOps, applyPatch, displacedRow } from "../shared/model/blockOps";
 import { PresenceBar } from "../collaboration/Presence";
 import { ShareAccessPill } from "../sharing/ShareAccess";
-import { BrandMark } from "../shared/ui/BrandMark";
+import { BrandMark, Splash } from "../shared/ui/BrandMark";
 import { cleanLinkName, loadLinkName, saveLinkName, LINK_NAME_MAX } from "../collaboration/linkName";
 import { modelList, useProviderEditor } from "../settings/providerEditor.js";
 import { useGuide } from "../guide/useGuide";
@@ -480,15 +480,8 @@ function PageHostGate() {
     })();
     return () => { active = false; };
   }, [boot]);
-  // The same splash index.html paints before the bundle, so the hand-over
-  // doesn't jump (BrandMark is the cached favicon).
-  if (!boot) return (
-    <div id="splash" role="status" aria-label={t("Loading Gamma…")}>
-      <BrandMark className="mark" size={56} />
-      <div className="name">{t("Gamma")}</div>
-      <div className="spin" />
-    </div>
-  );
+  // The splash stays until the server's config is read.
+  if (!boot) return <Splash />;
   return <LibraryApp publicPage={boot.publicPage || null} initialServerConfig={boot.serverConfig || null} />;
 }
 
@@ -8216,7 +8209,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   }
 
   if (workspaceUnavailable) return <WorkspaceUnavailablePage />;
-  if (authUser === null) return <AuthLoading />;
+  if (authUser === null) return <Splash />;
 
   if (authUser === false) {
     return (
@@ -9178,7 +9171,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
               </div>
             ) : null}
             {homeMode && homeMatchCount === 0 ? searchElsewhere(true) : null}
-            {homeMode && homeView === "grid" ? (
+            {/* Until the listing has come back it is blank: no "empty" line
+                before the rows, and nothing the rows would push down. */}
+            {homeMode && !homeLoaded ? null : homeMode && homeView === "grid" ? (
                 <>
                   {libraryStart || (homeItems.length === 0 && !newFolderOpen ? (
                     <div className="empty">{homeEmptyText}</div>

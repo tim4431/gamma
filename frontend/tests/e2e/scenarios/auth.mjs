@@ -161,4 +161,33 @@ export async function authScenarios({ server, browser, alice, step, until, asser
       assertNoProblems(page);
     } finally { await ctx.close(); }
   });
+
+  await step("auth: one splash, its mark drawn in place, holds until the library, which never says it is empty before its rows", async () => {
+    const ctx = await alice.context(browser);
+    try {
+      // A server a little away: the session and the listing each take a beat.
+      for (const url of ["**/api/session", "**/api/blocks/root/children"]) {
+        await ctx.route(url, async (route) => { await new Promise((r) => setTimeout(r, 300)); await route.continue(); });
+      }
+      // What the page showed before the rows, caught as it went in.
+      await ctx.addInitScript(() => {
+        const seen = (window.__shown = { splash: 0, picture: 0, card: 0, empty: 0 });
+        new MutationObserver(() => {
+          if (document.querySelector(".fileRow")) return;
+          if (document.querySelector("#splash svg.mark")) seen.splash++;
+          if (document.querySelector("#splash img")) seen.picture++;
+          if (document.querySelector(".loginCard")) seen.card++;
+          if (document.querySelector(".blockList .empty")) seen.empty++;
+        }).observe(document, { childList: true, subtree: true });
+      });
+      const page = await openPage(ctx, `${server.base}/?ws=${alice.ws}`);
+      await page.locator(".fileRow").first().waitFor({ timeout: 15000 });
+      const shown = await page.evaluate(() => window.__shown);
+      assert(shown.splash > 0, "the splash showed while the session was read");
+      assertEq(shown.picture, 0, "its mark never waits on a picture");
+      assertEq(shown.card, 0, "no card of its own while the session is read");
+      assertEq(shown.empty, 0, "the listing never says it is empty before its rows");
+      assertNoProblems(page);
+    } finally { await ctx.close(); }
+  });
 }

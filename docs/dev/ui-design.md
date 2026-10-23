@@ -687,9 +687,17 @@ library" for a signed-in one, "Open in my library" for the owner.
 
 ### Sign-in and status pages
 
+Until the first real screen there is one splash: the one `index.html`
+paints before the bundle, then the same one drawn by `Splash`
+(`shared/ui/BrandMark.jsx`) while the server's config, the session and an
+assistant's consent request are read. Its mark is drawn in place, not
+loaded as a picture, and its spinner turns on from where it was, so no
+hand-over shows. The library's listing stays blank until it has come
+back, so it never says it is empty before its rows arrive.
+
 `AuthShell` in `auth/LoginPage.jsx` frames every page shown before or
-instead of the app: the login (also a share link's sign-in gate), loading,
-an unavailable workspace, a session conflict and a blocked share link. It
+instead of the app: the login (also a share link's sign-in gate), an
+unavailable workspace, a session conflict and a blocked share link. It
 shows the brand mark (`shared/ui/BrandMark.jsx`, the favicon artwork) over the name, or over the
 situation's headline on a status page. The card hangs at a fixed height near
 the optical centre instead of being centred, so an error that appears
