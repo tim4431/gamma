@@ -63,7 +63,7 @@ class Frame:
 class PagePlan:
     frame: Frame
     curves: list = field(default_factory=list)    # indices into note.curves, in drawing order
-    shapes: list = field(default_factory=list)    # indices into note.shapes, by their indices
+    shapes: list = field(default_factory=list)    # indices into note.shapes, in drawing order
     stickies: list = field(default_factory=list)  # indices into note.media, by z
     boxes: list = field(default_factory=list)     # indices into note.media (text, math, pictures), by z
 
@@ -543,17 +543,36 @@ def _square_corners(pts: list, equal_sides: bool) -> bool:
     return not equal_sides or all(abs(sides[i] - sides[i + 2]) <= SIDES * max(sides[i], sides[i + 2]) for i in (0, 1))
 
 
+def _path_corners(pts: list, segments: tuple) -> list | None:
+    """A path's corners: the end of each line, and each cubic flattened as
+    a curve is (``_cubic``); None past MAX_STROKE_SAMPLES, counted before
+    one is made."""
+    steps, at = [], 0
+    for segment in segments:
+        steps.append(_pieces(*pts[at:at + 4]) if segment == 3 else 1)
+        at += segment
+    if 1 + sum(steps) > MAX_STROKE_SAMPLES:
+        return None
+    out, at = [pts[0]], 0
+    for segment, n in zip(segments, steps):
+        out += [(x, y) for x, y, _t in _cubic(*pts[at:at + 4], n=n)] if segment == 3 else [pts[at + 1]]
+        at += segment
+    return out
+
+
 def shape_stroke(shape: Shape, frame: Frame, left_out: Counter | None = None) -> dict | None:
-    """One shape as an even stroke dict without an ``id``. A line, an
-    arrow, a rectangle, a triangle or an ellipse gets the ``shape`` record
-    the client's recogniser would write for it (params in page points,
-    rounded to hundredths, normalised as shapes.js does) and the samples
-    shapes.js draws those params as (``ink.shape_samples``), so a handle
-    drag rebuilds the stroke it is. A curved line, a polygon, a rectangle or
-    ellipse whose corners are not square, and every shape from an ink group
-    are plain strokes of their outline: a straight line as one with a
-    record is drawn, a polygon's corners with a sample at most SHAPE_STEP
-    apart (``ink.densify``), an ellipse as many samples as a record's
+    """One shape as an even stroke dict without an ``id``, a pencil's with
+    the pencil brush. A line, an arrow, a rectangle, a triangle or an
+    ellipse gets the ``shape`` record the client's recogniser would write
+    for it (params in page points, rounded to hundredths, normalised as
+    shapes.js does) and the samples shapes.js draws those params as
+    (``ink.shape_samples``), so a handle drag rebuilds the stroke it is. A
+    curved line, a polygon, a rectangle or ellipse whose corners are not
+    square, every shape from an ink group and a piece of a partly erased
+    shape (a path) are plain strokes of their outline: a straight line as
+    one with a record is drawn, a polygon's corners and a path's with a
+    sample at most SHAPE_STEP apart (``ink.densify``, a path's curves
+    flattened as a curve is), an ellipse as many samples as a record's
     (``_ellipse_points``), a curved line flattened as a curve is, its head
     as an arrow's. A fill only a record can carry is dropped (counted in
     ``left_out``). None when its outline takes more than MAX_STROKE_SAMPLES
@@ -566,8 +585,10 @@ def shape_stroke(shape: Shape, frame: Frame, left_out: Counter | None = None) ->
     stroke = {"color": _hex(shape.rgba), "pen": False}
     if alpha < 1:
         stroke["opacity"] = max(0.001, round(alpha, 3))
-    if shape.highlighter:
+    if shape.style == STYLE_HIGHLIGHTER:
         stroke["tool"] = "highlighter"
+    elif shape.style == STYLE_PENCIL:
+        stroke["brush"] = "pencil"
     if shape.dash:
         stroke["dash"] = shape.dash
     record = None  # (kind, params), drawn by shape_samples
@@ -605,6 +626,9 @@ def shape_stroke(shape: Shape, frame: Frame, left_out: Counter | None = None) ->
     elif kind == "triangle" and not plain and len(pts) == 3:
         record = ("triangle", _rounded({"x1": pts[0][0], "y1": pts[0][1], "x2": pts[1][0], "y2": pts[1][1],
                                         "x3": pts[2][0], "y3": pts[2][1]}))
+    elif kind == "path":
+        corners = _path_corners(pts, shape.segments)
+        samples = inkmod.densify(corners, False, MAX_STROKE_SAMPLES) if corners else None
     else:
         samples = inkmod.densify(pts, len(pts) > 2, MAX_STROKE_SAMPLES) if len(pts) > 1 else pts
     if record is not None:
@@ -644,16 +668,17 @@ def sticky_stroke(media: Media, frame: Frame) -> dict | None:
 
 def page_strokes(note: Note, page: PagePlan, left_out: Counter, left: list | None = None):
     """The page's stroke dicts in the order they are drawn: the stickies
-    (by z), the curves (drawing order), then the shapes (by their
-    indices). A stroke that cannot be one is counted in ``left_out``
-    ("stroke"). ``left`` (``[n]``, shared by the note's pages) is what is
-    left of the note's samples, which each stroke spends: the stroke that
-    would go past it and every one after it are counted ("samples") and
-    never made."""
+    (by z), then the curves and shapes in the note's drawing order
+    (``Curve.z``, ``Shape.z``). A stroke that cannot be one is counted in
+    ``left_out`` ("stroke"). ``left`` (``[n]``, shared by the note's pages)
+    is what is left of the note's samples, which each stroke spends: the
+    stroke that would go past it and every one after it are counted
+    ("samples") and never made."""
     frame = page.frame
-    makers = ([(sticky_stroke, note.media[i]) for i in page.stickies]
-              + [(curve_stroke, note.curves[i]) for i in page.curves]
-              + [(lambda shape, at: shape_stroke(shape, at, left_out), note.shapes[i]) for i in page.shapes])
+    drawn = sorted([(note.curves[i], curve_stroke) for i in page.curves]
+                   + [(note.shapes[i], lambda shape, at: shape_stroke(shape, at, left_out)) for i in page.shapes],
+                   key=lambda pair: pair[0].z)
+    makers = [(sticky_stroke, note.media[i]) for i in page.stickies] + [(make, item) for item, make in drawn]
     for make, item in makers:
         if left is not None and left[0] <= 0:
             left_out["samples"] += 1

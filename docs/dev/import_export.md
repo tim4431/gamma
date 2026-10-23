@@ -556,9 +556,12 @@ curve becomes one gamma-ink v2 stroke ([handwriting.md](handwriting.md)
   bytes), stroke ids `n0`, `n1`, … in each file, so the same note stores the
   same files in any workspace. Each file passes `ink.parse_ink` on its bytes
   and is stored as `ink.dumps`.
-- **Groups** (16.x) are read with their transforms composed and their
-  widths scaled. A curve of style 6, or with an alpha of 0, is not drawn by
+- **Strokes.** The curves the eraser cut one stroke into share a UUID, and
+  the tools (`curvesstyles`) and dashes count strokes, so every piece keeps
+  its stroke's. A curve of style 6, or with an alpha of 0, is not drawn by
   Notability and not imported.
+- **Groups** (16.x) are read with their transforms composed and their
+  widths scaled, their shapes from the shape list each member holds.
 - **Shapes** keep the record the client's recogniser writes (params in page
   points, normalised as `shapes.js` does), so a handle drag rebuilds them: a
   line, a straight arrow, a rectangle or square with square corners, a
@@ -570,12 +573,17 @@ curve becomes one gamma-ink v2 stroke ([handwriting.md](handwriting.md)
   samples: what a handle drag writes again from the params. A curved
   line, a polygon, a skewed rectangle or ellipse, and every shape in an
   ink group are plain even strokes of their outline, at the same step; a
-  curved line is flattened as a curve is, its head drawn as an arrow's.
+  curved line is flattened as a curve is, its head drawn as an arrow's. A
+  partly erased shape is a plain stroke along each piece of its centre
+  line the eraser left (`outlinePath`). A pencil shape keeps the pencil
+  brush.
 - **A sticky note** (a coloured sheet to write on) is a filled rectangle
   stroke in band 0, turned as it was: under the ink in every renderer and
   exporter, and moved and resized like any shape. An empty text box would
   go when its editor closed, could not turn and would lie under the ink.
-- On a page the strokes go stickies, curves, then shapes.
+- On a page the strokes go stickies, then the curves and shapes in the
+  note's own z-order: a shape's index and a group's are their places among
+  the strokes.
 
 **Text, math, pictures, recordings.**
 
@@ -712,7 +720,8 @@ lists the upload's notes and, not imported, its other files.
   stroke deleted, undone, moved or restyled, so erased ink could come back.
   An `.ntb` beside notes is a warning.
 - A Supernote `.note`, and a "PDF + Recording" backup (add its PDF instead).
-- Left out with a warning: partly erased shapes, a polygon's fill, objects
+- Left out with a warning: a partly erased shape whose centre line does
+  not read, a polygon's fill, objects
   of a kind this import does not know, and anything past the limits. A
   template paper comes in as plain paper of its colour.
 - Not kept: a text box's turn, alignment, fonts, per-run colours and
@@ -724,6 +733,16 @@ lists the upload's notes and, not imported, its other files.
   boxes lie under the ink layer.
 - A long paper note is a notebook of as many sheets, and the notebook view
   mounts every sheet ([notebooks.md](notebooks.md) "Not built yet").
+
+**Real notes.** `backend/tests/test_notability_samples.py` imports every
+`.note` of a folder of samples and fails on anything left out for want of
+reading it, and checks that each `.ntb` is refused. The folder is
+`GAMMA_NOTABILITY_SAMPLES`, by default the `input/` of a
+[Notability-notes-converter](https://github.com/nokcha0/Notability-notes-converter)
+checkout beside this repository. That folder's example note (16.1.5,
+exported as both "Note" and "NTB") is pinned against its own bytes and its
+thumbnail. The samples are not in this repository, since the converter has
+no licence, so CI skips the module.
 
 ## Zotero RDF export
 

@@ -260,12 +260,27 @@ def test_styles_dashes_and_what_is_never_drawn():
     assert [c.dash for c in hidden.curves] == [None, "dotted", "dashed"]  # by each curve's index in its hash
 
 
+def test_styles_and_dashes_count_the_strokes_the_eraser_cut():
+    """The pieces the eraser cut a stroke into are consecutive curves
+    sharing a curveUUID, and curvesstyles and the keys of dashStyles count
+    strokes: Notability 16's sample note has 596 curves and 149 styles."""
+    curves = [fx.curve(WORKED, style=5), fx.curve(WORKED, style=5), fx.curve(WORKED, rgba=(9, 9, 9, 107), style=4),
+              fx.curve(WORKED), fx.curve(WORKED), fx.curve(WORKED)]
+    strokes = [0, 0, 1, 2, 2, 3]
+    note = note_of(fx.session(curves=curves, strokes=strokes, dashes={2: 1, 3: 2}))
+    assert [c.style for c in note.curves] == [5, 5, 4, 3, 3, 3]
+    assert [c.dash for c in note.curves] == [None, None, None, "dashed", "dashed", "dotted"]
+    per_curve = note_of(fx.session(curves=curves, strokes=strokes, styles=[3, 5, 4, 5, 3, 3], dashes={2: 1}))
+    assert [c.style for c in per_curve.curves] == [3, 5, 4, 5, 3, 3]  # a byte for every curve: counted by curve
+    assert [c.dash for c in per_curve.curves] == [None, None, "dashed", None, None, None]
+
+
 def test_a_groups_transform_and_its_nesting():
     inner = {"transform": [1, 0, 0, 1, 0, 0], "index": 0, "curves": [fx.curve(WORKED, width=1.0)]}
     group = {"transform": [0, 0.5, -0.5, 0, 100, 0], "index": 1, "curves": [fx.curve(WORKED, width=2.0)],
              "groups": [inner]}
     note = note_of(fx.session(curves=[fx.curve(WORKED), fx.curve(WORKED)], groups=[group]))
-    assert len(note.curves) == 4  # the group before curve 1, its own group before its curve 0
+    assert len(note.curves) == 4  # the group at position 1, between the strokes; the one in it at 0, below its curve
     first, nested, grouped, last = note.curves
     assert grouped.ink.scale == pytest.approx(0.5) and grouped.base == pytest.approx(1.0)
     assert nb.curve_points(grouped)[0] == pytest.approx((100 - 0.5 * 20, 0.5 * 10))  # turned a quarter, halved
@@ -276,6 +291,25 @@ def test_a_groups_transform_and_its_nesting():
         deep = {"transform": [1, 0, 0, 1, 0, 0], "index": 0, "curves": [fx.curve(WORKED)], "groups": [deep]}
     note = note_of(fx.session(groups=[deep]))
     assert len(note.curves) == nb.MAX_GROUP_DEPTH and note.left_out["group"] == 1
+
+
+def test_strokes_shapes_and_groups_share_one_z_order():
+    """A shape's index and an ink group's are positions in one z-order and
+    the strokes take the other positions in turn; a group's members are
+    drawn at its position, one after another. A page draws them so."""
+    curves = [fx.curve(WORKED, width=1.0), fx.curve(WORKED, width=2.0), fx.curve(WORKED, width=2.0),
+              fx.curve(WORKED, width=4.0)]
+    group = {"transform": [1, 0, 0, 1, 0, 0], "index": 4, "curves": [fx.curve(WORKED, width=5.0)],
+             "shapes": [("line", fx.shape(startPt=(0, 5), endPt=(10, 5), width=6.0))]}
+    shapes = [("line", 3, fx.shape(startPt=(0, 0), endPt=(10, 0), width=3.0)),
+              ("line", 1, fx.shape(startPt=(0, 0), endPt=(10, 0), width=1.5))]
+    note = note_of(fx.session(curves=curves, strokes=[0, 1, 1, 2], shapes=shapes, groups=[group]))
+    drawn = sorted(note.curves + note.shapes, key=lambda item: item.z)
+    widths = [1.0, 1.5, 2.0, 2.0, 3.0, 5.0, 6.0, 4.0]  # stroke 0, shape 1, stroke 1, shape 3, the group at 4, stroke 2
+    assert [item.base if isinstance(item, nb.Curve) else item.width for item in drawn] == widths
+    assert [item.z for item in drawn] == list(range(8))
+    strokes = nm.page_strokes(note, nm.plan_note(note, {}).pages[0], Counter())
+    assert [round(s["size"] * 565 / 612, 2) for s in strokes] == widths
 
 
 def _spatial(note_bytes: bytes):
@@ -660,16 +694,54 @@ def test_rectangles_triangles_and_ellipses():
 
 def test_grouped_shapes_are_plain_strokes():
     group = {"transform": [2, 0, 0, 2, 0, 0], "index": 0,
-             "shapes": [fx.shape(rotatedRect={"corners": [[0, 0], [20, 0], [20, 10], [0, 10]]}, width=1.5),
-                        fx.shape(points=[(0, 0), (10, 0), (10, 10), (0, 10)])]}
+             "shapes": [("ellipse", fx.shape(rotatedRect={"corners": [[0, 0], [20, 0], [20, 10], [0, 10]]}, width=1.5)),
+                        ("square", fx.shape(points=[(0, 0), (10, 0), (10, 10), (0, 10)]))]}
     note = note_of(fx.session(groups=[group]))
-    assert [(s.kind, s.grouped) for s in note.shapes] == [("ellipse", True), ("polygon", True)]
+    assert [(s.kind, s.grouped) for s in note.shapes] == [("ellipse", True), ("square", True)]
     ellipse, square = (nm.shape_stroke(s, frame()) for s in note.shapes)
     assert "shape" not in ellipse and ellipse["size"] == 3.0
     xs = [s["x"] for s in decoded(ellipse)]
     assert len(xs) == 50  # as many as a record's: max(48, ceil(96.9 / 2)), and the first again
     assert min(xs) == pytest.approx(0, abs=0.05) and max(xs) == 40
     assert "shape" not in square and len(decoded(square)) == 4 * 10 + 1  # 20 pt sides, a sample every 2 pt
+
+
+def test_a_partly_erased_shape_is_what_the_eraser_left_of_its_centre_line():
+    """A partialshape's outlinePath is what is left of the shape's centre
+    line: each piece of it (a move and what follows) is a plain stroke
+    along it with the shape's look, a quadratic drawn as its cubic and a
+    close back to the piece's start. One that does not read is counted. A
+    pencil shape keeps the pencil, and its record."""
+    left = fx.path((0, [(0, 0)]), (1, [(30, 0)]),
+                   (0, [(50, 0)]), (1, [(80, 0)]), (1, [(80, 20)]),
+                   (0, [(0, 40)]), (2, [(20, 60), (40, 40)]), (3, [(50, 30), (60, 30), (70, 40)]), (4, []))
+    erased = fx.shape(outlinePath=left, strokePath=fx.path((0, [(0, -1)]), (1, [(30, -1)])), width=1.5,
+                      rgba=(1, 0.5, 0, 1), style=5, pattern=1)
+    damaged = [fx.shape(strokePath=left), fx.shape(outlinePath=left[4:]), fx.shape(outlinePath=left[:-8]),
+               fx.shape(outlinePath=fx.path((1, [(0, 0)]))), fx.shape(outlinePath=fx.path((0, [(0, 0)]), (5, [(1, 1)]))),
+               fx.shape(outlinePath=fx.path((0, [(0, 0)]), (1, [(math.nan, 0)])))]
+    note = _shapes_note([("partialshape", erased), *(("partialshape", shape) for shape in damaged),
+                         ("line", fx.shape(startPt=(0, 0), endPt=(10, 0), style=5))])
+    assert note.left_out["partial shape"] == len(damaged)
+    one, two, three, pencil = note.shapes
+    assert {(s.kind, s.style, s.dash, s.width) for s in (one, two, three)} == {("path", 5, "dashed", 1.5)}
+    assert (one.points, one.segments, two.points, two.segments) == ([(0, 0), (30, 0)], (1,),
+                                                                    [(50, 0), (80, 0), (80, 20)], (1, 1))
+    assert three.segments == (3, 3, 1) and three.points[-1] == (0, 40)
+    assert [v for p in three.points[1:3] for v in p] == pytest.approx([40 / 3, 160 / 3, 80 / 3, 160 / 3])
+    for shape, ends, corner in ((one, [(0, 0), (30, 0)], (30, 0)), (two, [(50, 0), (80, 20)], (80, 0)),
+                                (three, [(0, 40), (0, 40)], (40, 40))):
+        stroke = nm.shape_stroke(shape, frame())
+        assert "shape" not in stroke and (stroke["pen"], stroke["brush"], stroke["dash"]) == (False, "pencil", "dashed")
+        pts = xy(stroke)
+        assert [pts[0], pts[-1]] == ends and corner in pts
+        assert max(math.dist(a, b) for a, b in zip(pts, pts[1:])) <= ink.SHAPE_STEP + 0.01
+    line = nm.shape_stroke(pencil, frame())
+    assert line["brush"] == "pencil" and line["shape"]["kind"] == "line"
+
+    group = {"transform": [0, 1, -1, 0, 100, 0], "index": 0, "shapes": [("partialshape", erased)]}
+    turned = note_of(fx.session(groups=[group])).shapes
+    assert [(s.kind, s.grouped) for s in turned] == [("path", True)] * 3 and turned[0].points == [(100, 0), (100, 30)]
 
 
 def test_a_sticky_is_a_filled_rect_under_the_ink():
@@ -1065,6 +1137,9 @@ def test_the_layout_shapes_and_groups_a_note_may_hold(monkeypatch):
     assert len(note_of(fx.session(layout=[None, None, None])).layout) == 2  # read no further than the pages
 
     monkeypatch.setattr(nb, "MAX_SHAPES", 2)
+    pieces = fx.path(*((kind, [(x + 5 * kind, 0)]) for x in (0, 10, 20) for kind in (0, 1)))
+    note = _shapes_note([("partialshape", fx.shape(outlinePath=pieces))])
+    assert len(note.shapes) == 2 and note.left_out["shapes limit"] == 1  # a piece is a shape
     monkeypatch.setattr(nb, "MAX_CURVE_POINTS", 3)
     line = fx.shape(startPt=(0, 0), endPt=(10, 0))
     note = _shapes_note([("line", line), ("polygon", fx.shape(points=[(0, 0), (5, 0), (5, 5), (0, 5)])),

@@ -175,8 +175,9 @@ def picture_bytes(data: bytes, media: nb.Media) -> tuple[bytes, str]:
             out = io.BytesIO()
             if angle:
                 c, s = abs(math.cos(angle)), abs(math.sin(angle))
-                fit = min(1.0, MAX_TURNED_SIDE / max(image.width * c + image.height * s,
-                                                     image.width * s + image.height * c))
+                # Pillow's expanded size rounds the turned corners outward: up to 2 px past their extent
+                fit = min(1.0, (MAX_TURNED_SIDE - 2) / max(image.width * c + image.height * s,
+                                                           image.width * s + image.height * c))
                 if fit < 1:  # the turned picture's longer side at most MAX_TURNED_SIDE
                     image = image.resize((max(1, math.floor(image.width * fit)), max(1, math.floor(image.height * fit))),
                                          Image.LANCZOS)

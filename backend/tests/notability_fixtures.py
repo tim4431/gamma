@@ -107,14 +107,18 @@ def _f32(values) -> bytes:
 
 
 def ink_hash(arch: Archiver, curves=(), *, shapes=None, dashes=None, groups=None, styles=True,
-             channels=True) -> plistlib.UID:
+             channels=True, strokes=None) -> plistlib.UID:
     """An InkedSpatialHash: the counts as UIDs to ints and the arrays
-    inline, as GLKeyedArchiver writes them. ``styles=False`` leaves
-    ``curvesstyles`` out; a short list of style bytes writes it short.
-    ``channels`` writes force, altitude and azimuth (the defaults where a
-    curve has none). ``shapes`` is ``[(kind, index, shape dict)]``,
-    ``dashes`` ``{curve index: 1 | 2}``, ``groups`` ``[{transform, index,
-    curves, shapes?, groups?}]``."""
+    inline, as GLKeyedArchiver writes them. ``strokes`` numbers each
+    curve's stroke, the curves of one stroke (the pieces the eraser cut it
+    into) one after another: they share a curveUUID, and ``curvesstyles``
+    has a byte per stroke, its first curve's; without it there are no
+    UUIDs and a byte per curve. ``styles=False`` leaves ``curvesstyles``
+    out; a list of style bytes writes those. ``channels`` writes force,
+    altitude and azimuth (the defaults where a curve has none). ``shapes``
+    is ``[(kind, index, shape dict)]``, ``dashes`` ``{stroke number: 1 |
+    2}``, ``groups`` ``[{transform, index, curves, strokes?, shapes?:
+    [(kind, shape dict)], groups?}]``."""
     curves = list(curves)
     n_points = sum(len(c["points"]) for c in curves)
     n_anchors = sum(c["anchors"] for c in curves)
@@ -131,8 +135,13 @@ def ink_hash(arch: Archiver, curves=(), *, shapes=None, dashes=None, groups=None
         "curvescolors": bytes(v for c in curves for v in c["rgba"]),
         "eventTokens": b"\xff\xff\xff\xff" * len(curves),
     }
+    if strokes is not None:
+        strokes = list(strokes)
+        assert len(strokes) == len(curves) and strokes == sorted(strokes)
+        fields["curveUUIDs"] = b"".join((1 + s).to_bytes(16, "big") for s in strokes)
     if styles is True:
-        fields["curvesstyles"] = bytes(c["style"] for c in curves)
+        fields["curvesstyles"] = bytes(c["style"] for i, c in enumerate(curves)
+                                       if strokes is None or not i or strokes[i] != strokes[i - 1])
     elif styles:
         fields["curvesstyles"] = bytes(styles)
     if channels:
@@ -153,14 +162,15 @@ def ink_hash(arch: Archiver, curves=(), *, shapes=None, dashes=None, groups=None
 def group_bytes(group: dict) -> bytes:
     """One ``groupsArrays`` element: a plain plist ``{inkGroup:
     {inkGroupObjects, transform}, index}``, its curves a complete
-    NSKeyedArchiver archive of another hash (type 1), its shapes shape
-    dicts (type 2)."""
+    NSKeyedArchiver archive of another hash (type 1), each shape a shape
+    list of its own, ``{shapes, kinds, indices}`` (type 2)."""
     items = []
     if group.get("curves") or group.get("groups"):
         inner = Archiver("NSKeyedArchiver", "root")
-        root = ink_hash(inner, group.get("curves", ()), groups=group.get("groups"))
+        root = ink_hash(inner, group.get("curves", ()), groups=group.get("groups"), strokes=group.get("strokes"))
         items.append({"type": 1, "object": inner.dumps(root)})
-    items += [{"type": 2, "object": shape} for shape in group.get("shapes", ())]
+    items += [{"type": 2, "object": {"shapes": [shape], "kinds": [kind], "indices": [0]}}
+              for kind, shape in group.get("shapes", ())]
     return plistlib.dumps({"inkGroup": {"inkGroupObjects": items, "transform": list(group["transform"]),
                                         "isCustomSticker": False, "options": 0,
                                         "appearance": {"style": 3, "strokeWidth": 1.0,
@@ -179,6 +189,17 @@ def shape(**fields) -> dict:
         look["dashStyle"] = {"pattern": fields.pop("pattern", 0), "arrowHead": fields.pop("arrow", 0)}
     return {"appearance": look, **{k: [list(p) for p in v] if k == "points" else list(v) if isinstance(v, tuple)
                                    else v for k, v in fields.items()}}
+
+
+def path(*elements) -> bytes:
+    """A CGPath as Notability archives one, as a partly erased shape's
+    ``outlinePath`` (what is left of its centre line) and ``strokePath``
+    (the outline it fills) hold it: the magic, the element count (uint32),
+    a byte per element, then the points as float64 pairs. ``elements`` are
+    ``(type, points)``: 0 move, 1 line, 2 quadratic, 3 cubic, 4 close."""
+    kinds = bytes(kind for kind, _points in elements)
+    values = [v for _kind, points in elements for point in points for v in point]
+    return b"\x25\xb3\xe5\x48" + struct.pack("<I", len(kinds)) + kinds + struct.pack(f"<{len(values)}d", *values)
 
 
 # --- text ----------------------------------------------------------------------------------
@@ -267,11 +288,12 @@ def _pdf_file(arch: Archiver, name: str, version) -> plistlib.UID:
     return arch.obj("PDFFile", fields)
 
 
-def session(*, width=565.0, layout=(), pdfs=None, curves=(), shapes=None, dashes=None, groups=None, media=(),
-            flow=None, paper=None, version=9, indexed=False, archiver="GLKeyedArchiver", styles=True,
+def session(*, width=565.0, layout=(), pdfs=None, curves=(), strokes=None, shapes=None, dashes=None, groups=None,
+            media=(), flow=None, paper=None, version=9, indexed=False, archiver="GLKeyedArchiver", styles=True,
             channels=True, reflow="locked", file_keys=False, name="Note", subject="unsortedNotesKey",
             created=1_700_000_000.0) -> bytes:
-    """A Session.plist. ``layout`` is a list of ``(pdf name, page)`` or None
+    """A Session.plist. ``curves`` to ``groups`` are the ink (``ink_hash``);
+    ``layout`` is a list of ``(pdf name, page)`` or None
     for a blank page; ``pdfs`` ``{name: PDFFile.version or None}``;
     ``paper`` the PaperAttributes as ``{identifier, orientation, size,
     sizing, lines}`` (with it, the layout is the paper model's, as 11.x and
@@ -295,7 +317,8 @@ def session(*, width=565.0, layout=(), pdfs=None, curves=(), shapes=None, dashes
     rich = {
         "formatVersion": 5,
         "Handwriting Overlay": arch.obj("HandwritingObject", {"SpatialHash": ink_hash(
-            arch, curves, shapes=shapes, dashes=dashes, groups=groups, styles=styles, channels=channels)}),
+            arch, curves, shapes=shapes, dashes=dashes, groups=groups, styles=styles, channels=channels,
+            strokes=strokes)}),
         "pdfFiles": arch.array(list(pdf_objects.values())),
         "pageLayoutArray": arch.array([] if paper is not None else entries),
         "mediaObjects": arch.array([media_object(arch, m) for m in media]),

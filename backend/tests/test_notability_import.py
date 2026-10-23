@@ -263,6 +263,18 @@ def test_a_turned_and_cropped_picture_is_stored_turned(accounts, monkeypatch):
     assert picture.size[0] / picture.size[1] == pytest.approx((w * c + h * s) / (w * s + h * c), rel=0.05)
 
 
+def test_a_turned_picture_stays_within_its_longest_side(monkeypatch):
+    """Pillow's expanded size rounds the turned corners outward, up to 2 px
+    past their extent, and the fit leaves room for it: a photo of
+    Notability-notes-converter's example note came out 2,049 px long."""
+    from PIL import Image
+    monkeypatch.setattr(ni, "MAX_TURNED_SIDE", 100)
+    photo = fx.jpeg(300, 400)
+    for angle in (k / 20 for k in range(1, 60)):  # 0.1, 0.35, 1.15 and more came out 101 px
+        media = nb.Media(kind="picture", x=0, y=0, w=30, h=40, rotation=angle, picture="a.jpg")
+        assert max(Image.open(io.BytesIO(ni.picture_bytes(photo, media)[0])).size) <= 100, angle
+
+
 # --- many notes, re-import, filing ------------------------------------------------------------
 
 def test_a_packed_note_is_opened_only_while_it_is_read(monkeypatch):

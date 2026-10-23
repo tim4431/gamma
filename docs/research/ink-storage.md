@@ -68,29 +68,35 @@ reads of it are in [notability-format.md](notability-format.md).
   16.1.5 samples gnnote examined; which app builds wrote them first is
   **[inferred]**.
 - **Tool is an explicit byte, not an alpha inference.** `curvesstyles`
-  holds one byte per curve: 3 pen, 4 highlighter, 5 pencil (**[verified]**
+  holds one byte per stroke: 3 pen, 4 highlighter, 5 pencil (**[verified]**
   for 3 and 4 by colour and width; 5 **[inferred]** from opaque colours
-  and 1.3–1.8 widths); the array is absent in ≤ 8.4.8 files and can be
-  shorter than the curve count. The highlighter's colour alpha is stored
+  and 1.3–1.8 widths); the array is absent in ≤ 8.4.8 files, and shorter
+  than the curve count where the eraser cut strokes into pieces (149 styles
+  for 596 curves in the 16.1.5 sample, **[verified]**: see the next
+  bullets). The highlighter's colour alpha is stored
   as 0x6B (≈ 0.42) in 10.2.4, 15.3 and 16.1.5, 0x44 in 8.4.8.
   **[verified]**. The file does not order highlighters under pen ink
   (only `NBNoteTakingSessionIsHighlighterBehindTextKey`, behind typed
   text); converters that draw highlighters first then pens match
   screenshots. **[inferred]** for the on-screen order and blend mode.
 - **Dash is a small enum, geometry derived.** `dashStyles` is a plist
-  mapping a curve index to `pattern` 1 dashed / 2 dotted, solid curves
+  mapping a stroke's number to `pattern` 1 dashed / 2 dotted, solid strokes
   absent; no dash or gap length is stored, so it is derived from the width
   at render time (the app's PDF export draws dotted highlighters as
   filled fragments). **[verified]** (notesconverter).
 - **Shapes are parametric objects, not curves.** A recognised shape is a
   Shape record (`line`, `rectangle`, `square`, `triangle`, `polygon`,
   `circle`, `ellipse`, with an `arrowHead` and a dash style in its
-  appearance), kept in z-order with its own uuid in 15.3+; a partially
-  erased shape becomes `partialshape` with a CGPath outline that keeps the
-  gap. **[verified]** (gnnote, nokcha0).
+  appearance), with its own uuid in 15.3+, in one z-order with the strokes
+  and ink groups: a shape's index and a group's are positions in it, and
+  the strokes take the rest. A partially erased shape becomes
+  `partialshape`, with CGPaths of what is left of its centre line and of
+  the outline that keeps the gap. **[verified]** (gnnote, nokcha0, and the
+  16.1.5 sample's bytes).
 - **Partial erasing re-saves the stroke as separate curves.** No eraser
-  masks are stored: the pieces are ordinary curves (still `1 + 3k`
-  points) with the same style; the `.ntb` export encodes a break inside
+  masks are stored: the pieces are ordinary consecutive curves (still
+  `1 + 3k` points) sharing the stroke's style byte and its `curveUUIDs`
+  entry; the `.ntb` export encodes a break inside
   one ink path with a move-to command. **[verified]** (gnnote, inkterop).
   The cut geometry is not public.
 - **The current format is an op log.** Modern `.ntb` (Mac 16.x, and the
