@@ -20,7 +20,12 @@ folder and of every folder below it into the library chat's history
 findable. ChatDock's `chatKey` is the open page's id, else the open
 folder's id, else `home`. A bucket switch empties the composer at once and
 then reads the stored conversation; a draft typed while that read is in
-flight stays (opening a history entry still empties it). A remount of the
+flight stays (opening a history entry still empties it). Meanwhile the
+transcript shows what this tab holds of the bucket, before the frame is
+painted: its own copy (a reply sent here), else what the dock last showed
+of it (the session's `remember` / `recall`, the last twenty
+conversations), which the stored copy then replaces in place. A bucket
+never shown stays blank until it is read, rather than saying it is empty. A remount of the
 dock in the same bucket (an iPad turning, the dock closed and opened
 again) brings the draft back, and an ask from App (a handwriting block's
 "Transcribe with AI") is sent once however often the dock mounts: both
@@ -109,6 +114,10 @@ active conversation) and `/api/chat-history` (the archive).
   conversation first (highlighted, "now") and then the bucket's archived
   ones newest-first (`GET /chat-history?bucket=`; title, age, message count
   in the tooltip), with a search box filtering on title + first message.
+  Each bucket's list as last read stays while the dock is mounted: after a
+  page change, an archive or an open, the popover opens on it and reads it
+  again in place. A first read shows "Loading…" only when it is slow
+  (`.loadingHint`, [Motion](ui-design.md#things-that-change-in-place)).
   Clicking an entry POSTs `/chat-history/{id}/open` with the current
   conversation and its version: the current one is archived (a newer stored
   one too, as for New chat), the entry becomes the active row and leaves

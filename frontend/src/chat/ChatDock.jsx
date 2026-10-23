@@ -3,7 +3,7 @@
 // pasted figures, the "+" context picker, and the per-message PDF attach.
 // App provides context (open paper, library, selections) and the model/effort/
 // prompt preferences it also needs elsewhere.
-import React, { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { API, apiJson, copyText, downloadFetched, isPdfFile, makeId, readNdjson, withWorkspace } from "../shared/lib/utils";
 import { DEFAULT_PICTURE_BUDGET, addPictures, chipPicture, historyPictures, isPictureFile, pictureAlt, pictureUrl } from "./chatPictures.js";
 import { pictureSrc } from "./pictureSrc.js";
@@ -45,6 +45,7 @@ import { effortFor, providerModels, speedFor } from "./modelPrefs";
 import { AlertCircleIcon, ArrowDownIcon, ArrowUpIcon, BookIcon, BotIcon, CheckIcon, ChevronDownIcon, ChevronUpIcon, ClockIcon, CopyIcon, DownloadIcon, EyeIcon, FileIcon, FolderIcon, HighlightIcon, HistoryIcon, InfoIcon, MessageSquareIcon, MicIcon, OutlineIcon, PaperclipIcon, PencilIcon, PenIcon, PlusIcon, QuoteIcon, SearchIcon, SettingsIcon, ShieldIcon, SlidersIcon, SparklesIcon, SquareCheckIcon, StopIcon, TextCursorIcon, TrashIcon, XIcon, ZapIcon } from "../shared/ui/Icons";
 import { T, getLocale, t, tn } from "../shared/i18n/i18n.js";
 import { DialogOverlay, Popover } from "../shared/ui/Surfaces";
+import ListMotion from "../shared/ui/ListMotion";
 
 const JSON_HEADERS = { "Content-Type": "application/json" };
 
@@ -165,30 +166,36 @@ function ChatErrorCard({ message, compact, actions }) {
 // The agent's work in a reply (chat/agentSteps.js): one pill summing up its
 // steps, which expands to every call's chip (arguments and output), and
 // under it the changes — renamed or filed pages, edited or added notes —
-// each old → new with a link to what changed. While the reply streams, the
-// pill names the step running now, each new one morphing in over the last.
-// `waiting`: what the running call waits for — the user's answer on an
-// approval card, or a blocked paper from their browser — so nothing spins.
-// `helpers`: the helpers the running call handed documents to, a row each
-// under the pill, laid out as a chip: the document and what its helper is
-// doing now.
-function AgentSteps({ actions, running, waiting, helpers = [], open, onToggle, titleOf, children }) {
+// each old → new with a link to what changed. While the reply streams
+// (`live`) the same pill says what is under way from the start: "Thinking"
+// (or "Responding" once text arrives, the token count ticking beside it),
+// the step running now, or what that step waits for, each new label
+// morphing in over the last. `waiting`: what the running call waits for —
+// the user's answer on an approval card, or a blocked paper from their
+// browser — so nothing spins. `helpers`: the helpers the running call
+// handed documents to, a row each under the pill, laid out as a chip: the
+// document and what its helper is doing now. A reply that ends without a
+// step folds its pill away (ChatDock); meanwhile it keeps its last words.
+function AgentSteps({ actions, live, running, waiting, helpers = [], usage, text, open, onToggle, titleOf, children }) {
   const { failed, declined } = splitActions(actions);
-  const live = !!running;
+  const done = !live && actions.length > 0;
+  const label = waiting === "paper" ? t("Waiting for the paper from your browser")
+    : waiting ? t("Waiting for your approval")
+      : running ? runningLabel(running, titleOf)
+        : done ? stepsSummary(actions)
+          : text ? t("Responding") : t("Thinking");
   return (
     <div className="chatStepsWrap">
-      <button type="button" className={`chatPill chatSteps${live ? " live" : ""}`} onClick={onToggle} aria-expanded={open}
-        title={open ? t("Hide the steps") : t("Show every step with its arguments and output")}>
-        {waiting ? <ShieldIcon size={14} /> : live ? <span className="transferSpin inline" aria-hidden="true" /> : <CheckIcon size={14} />}
-        <span className="chatPillText">
-          <MorphText>
-            {waiting === "paper" ? t("Waiting for the paper from your browser")
-              : waiting ? t("Waiting for your approval")
-                : live ? runningLabel(running, titleOf) : stepsSummary(actions)}
-          </MorphText>
+      <button type="button" className={`chatPill chatSteps${live ? " live" : ""}`} aria-live="polite"
+        onClick={actions.length ? onToggle : undefined} aria-expanded={actions.length ? open : undefined}
+        title={!actions.length ? undefined : open ? t("Hide the steps") : t("Show every step with its arguments and output")}>
+        {waiting ? <ShieldIcon size={14} /> : done ? <CheckIcon size={14} /> : <span className="transferSpin inline" aria-hidden="true" />}
+        <span className={`chatPillText${live && !waiting ? " shimmerText" : ""}`}>
+          <MorphText>{label}</MorphText>
         </span>
-        {failed && !live ? <span className="chatStepsFailed">{t("{n} failed", { n: failed })}</span> : null}
-        {declined && !live ? <span className="chatStepsDeclined">{t("{n} not allowed", { n: declined })}</span> : null}
+        {live ? <UsageLine usage={usage} className="chatMsgUsage live" /> : null}
+        {failed && done ? <span className="chatStepsFailed">{t("{n} failed", { n: failed })}</span> : null}
+        {declined && done ? <span className="chatStepsDeclined">{t("{n} not allowed", { n: declined })}</span> : null}
         {actions.length ? <Chevron open={open} dir="down" size={14} /> : null}
       </button>
       {live && helpers.length ? (
@@ -731,9 +738,11 @@ export default function ChatDock({
   // document. Messages record the doc ids they carried (pdfDocs); older
   // saves only have display names — treat any sent PDF as covering the
   // current one. The composer is left alone: a bucket switch empties it up
-  // front, so a draft typed while the stored copy loads stays.
+  // front, so a draft typed while the stored copy loads stays. The session
+  // keeps what was shown (`remember`), for a return to this bucket.
   function showLoaded(msgs, title) {
     setChatMessages(msgs);
+    session.remember(chatKey, msgs, title || "");
     const lastUser = [...msgs].reverse().find((m) => m.role === "user");
     const references = [...new Set((lastUser?.contextPages || []).map((p) => p.id))].slice(0, MAX_CHAT_REFERENCES);
     setChatDocs(references);
@@ -751,8 +760,12 @@ export default function ChatDock({
   // The bucket whose stored conversation has been read (or failed to): an
   // ask from App waits for it, so it never starts over the history.
   const [loadedFor, setLoadedFor] = useState("");
-  // Load chat from backend whenever the chat bucket changes.
-  useEffect(() => {
+  // Load chat from backend whenever the chat bucket changes. What this tab
+  // holds of it shows at once, before the frame is painted: its own copy
+  // (a reply sent here), else what the dock last showed of it; the stored
+  // copy then replaces it in place. A bucket never seen shows nothing until
+  // it is read.
+  useLayoutEffect(() => {
     let cancelled = false;
     setChatDocs([]);
     setChatIncludeNotes(false);
@@ -760,7 +773,8 @@ export default function ChatDock({
     setDocPicker(false);
     const reply = session.getSnapshot().replies.get(chatKey);
     const reloadSaved = session.isSaved(chatKey);
-    showLoaded(reply?.messages || [], reply?.title);
+    const shown = reply || session.recall(chatKey);
+    showLoaded(shown?.messages || [], shown?.title);
     setLoadError("");
     apiJson(`${API}/chats/${encodeURIComponent(chatKey)}`)
       .then(data => {
@@ -807,9 +821,10 @@ export default function ChatDock({
           || session.getSnapshot().replies.get(key) !== reply || session.version(key) !== version) return;
         session.forget(key);
         session.seen(key, data.messages || [], data.updated_at);
+        session.remember(key, data.messages || [], data.title || "");
         setChatMessages(data.messages || []);
         setChatTitle(data.title || "");
-        setHistory(null);
+        setHistoryRead("");
       }).catch(() => {});
     };
     window.addEventListener("focus", refresh);
@@ -824,16 +839,21 @@ export default function ChatDock({
   // "New chat" archives the current one there instead of deleting it, and
   // opening an entry swaps it with the current one. Both send the client's
   // copy of the conversation, so a reply still sitting in the autosave
-  // debounce is kept. The list loads lazily when the popover opens and is
-  // dropped on any change (bucket switch, archive, open) so it re-fetches.
-  const [history, setHistory] = useState(null); // null = not loaded yet
+  // debounce is kept. The list loads lazily when the popover opens. Each
+  // bucket's list as last read stays (`histories`): after any change (a
+  // bucket switch, an archive, an open) the popover opens on it at once and
+  // reads it again in place (`historyRead`, the bucket read since).
+  const [histories, setHistories] = useState(() => new Map()); // bucket -> its entries
+  const [historyRead, setHistoryRead] = useState("");
+  const history = histories.get(chatKey) ?? null; // null = never read here
+  const editHistory = (change) => setHistories((all) => new Map(all).set(chatKey, change(all.get(chatKey) || [])));
   const [historyQuery, setHistoryQuery] = useState("");
   const [renaming, setRenaming] = useState(null); // {id: "" = the active chat | entry id, text}
   const [picked, setPicked] = useState(() => new Set()); // history entries ticked for deleting
   const renameCancelRef = useRef(false);
   const [rowMenu, setRowMenu] = useState(null); // {x, y, row}: a history row's menu
   const historyOpen = openPopover === "chathistory";
-  useEffect(() => { setHistory(null); setHistoryQuery(""); setRenaming(null); }, [chatKey]);
+  useEffect(() => { setHistoryRead(""); setHistoryQuery(""); setRenaming(null); }, [chatKey]);
   // The selection belongs to the open popover: closing it drops the ticks.
   useEffect(() => { if (!historyOpen) { setPicked(new Set()); setRowMenu(null); } }, [historyOpen]);
   const togglePicked = (id) => setPicked((prev) => {
@@ -844,13 +864,23 @@ export default function ChatDock({
   const pickOrOpen = (id) => (picked.size ? togglePicked(id) : openHistory(id));
   const openRowMenu = (row) => (e) => { e.preventDefault(); setRowMenu({ x: e.clientX, y: e.clientY, row }); };
   useEffect(() => {
-    if (readOnly || !historyOpen || history != null) return;
+    if (readOnly || !historyOpen || historyRead === chatKey) return;
     let cancelled = false;
-    apiJson(`${API}/chat-history?bucket=${encodeURIComponent(chatKey)}`)
-      .then((data) => { if (!cancelled) setHistory(data.sessions || []); })
-      .catch((err) => { if (!cancelled) { setHistory([]); setStatus(t("Chat history: {message}", { message: err.message })); } });
+    const key = chatKey;
+    apiJson(`${API}/chat-history?bucket=${encodeURIComponent(key)}`)
+      .then((data) => {
+        if (cancelled) return;
+        setHistories((all) => new Map(all).set(key, data.sessions || []));
+        setHistoryRead(key);
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setHistories((all) => (all.has(key) ? all : new Map(all).set(key, [])));
+        setHistoryRead(key);
+        setStatus(t("Chat history: {message}", { message: err.message }));
+      });
     return () => { cancelled = true; };
-  }, [historyOpen, history, chatKey, readOnly]);
+  }, [historyOpen, historyRead, chatKey, readOnly]);
   const activeTitle = chatTitle || deriveTitle(chatMessages) || t("Untitled");
   // The page an agent step names (a citation pill gets its paper from
   // GammaNavContext's citeSource).
@@ -860,6 +890,9 @@ export default function ChatDock({
   const visibleMessages = busyHere && (!chatMessages.length || chatMessages.at(-1).role === "user")
     ? [...chatMessages, { role: "ai", text: "", partial: true }]
     : chatMessages;
+  // The messages' keys for ListMotion: their places, as React keys them (a
+  // reply takes its placeholder's place, so it does not come in twice).
+  const motionKeys = useMemo(() => visibleMessages.map((_, i) => String(i)), [visibleMessages.length]);
   // The conversation as this tab holds it — after a flush, which may have
   // merged in what another tab saved — and the version it is based on, so
   // the server archives a newer stored copy instead of dropping it.
@@ -895,7 +928,8 @@ export default function ChatDock({
     setChatTitle("");
     attachPdfManualRef.current = false;
     setAttachPdf(nativePdf); // new chat: the full PDF goes again (where the provider takes it)
-    setHistory(null);
+    session.remember(chatKey, [], "");
+    setHistoryRead("");
   }
 
   async function openHistory(id) {
@@ -909,7 +943,7 @@ export default function ChatDock({
       if (chatKeyRef.current !== chatKey) return;
       showLoaded(data.messages || [], data.title);
       setChatInput("");
-      setHistory(null);
+      setHistoryRead("");
       setOpenPopover(null);
       chatStickRef.current = true;
     } catch (err) {
@@ -932,7 +966,7 @@ export default function ChatDock({
         await apiJson(`${API}/chats/${encodeURIComponent(chatKey)}`,
           { method: "PUT", headers: JSON_HEADERS, body: JSON.stringify({ title }) });
       } else {
-        setHistory((prev) => (prev || []).map((s) => (s.id === edit.id ? { ...s, title } : s)));
+        editHistory((prev) => prev.map((s) => (s.id === edit.id ? { ...s, title } : s)));
         await apiJson(`${API}/chat-history/${edit.id}`,
           { method: "PUT", headers: JSON_HEADERS, body: JSON.stringify({ title }) });
       }
@@ -943,13 +977,13 @@ export default function ChatDock({
 
   function deleteHistory(entry) {
     const run = async () => {
-      setHistory((prev) => (prev || []).filter((s) => s.id !== entry.id));
+      editHistory((prev) => prev.filter((s) => s.id !== entry.id));
       setPicked((prev) => { const next = new Set(prev); next.delete(entry.id); return next; });
       try {
         await apiJson(`${API}/chat-history/${entry.id}`, { method: "DELETE" });
       } catch (err) {
         setStatus(t("Couldn't delete the conversation: {message}", { message: err.message }));
-        setHistory(null);
+        setHistoryRead("");
       }
     };
     askConfirm({
@@ -965,14 +999,14 @@ export default function ChatDock({
     const ids = [...picked];
     if (!ids.length) return;
     const run = async () => {
-      setHistory((prev) => (prev || []).filter((s) => !ids.includes(s.id)));
+      editHistory((prev) => prev.filter((s) => !ids.includes(s.id)));
       setPicked(new Set());
       try {
         await apiJson(`${API}/chat-history/delete`,
           { method: "POST", headers: JSON_HEADERS, body: JSON.stringify({ ids }) });
       } catch (err) {
         setStatus(t("Couldn't delete the conversations: {message}", { message: err.message }));
-        setHistory(null);
+        setHistoryRead("");
       }
     };
     askConfirm({
@@ -1817,7 +1851,7 @@ export default function ChatDock({
                     </>}
                   </ContextMenu>
                 ) : null}
-                {history == null ? <div className="popoverHint">{t("Loading…")}</div>
+                {history == null ? <div className="popoverHint loadingHint">{t("Loading…")}</div>
                   : historyRows.length <= 1 && !historyQuery.trim() ? <div className="popoverHint">{t("No earlier conversations — New chat keeps the current one here.")}</div>
                   : !historyRows.length ? <div className="popoverHint">{t("No conversation matches.")}</div>
                   : null}
@@ -1921,21 +1955,27 @@ export default function ChatDock({
         }}
       >
         {chatTextScale.badge}
-        {/* Until the chat knows its AI, nothing stands in for an empty conversation. */}
-        {setupCard && !visibleMessages.length && !loadError ? setupCard : visibleMessages.length === 0 ? (!aiKnown ? null : (
-          <div className="chatEmpty">
-            {loadError || (readOnly ? t("No saved conversation for this page.")
-              : focusedBlockId ? t("Ask AI about this page…") : agentIntro || t("Ask AI anything, or generate a report from your pages…"))}
-          </div>
-        )) : (
-          visibleMessages.map((m, i) => {
+        {/* What stands in for an empty conversation waits until the chat
+            knows its AI and has read the stored conversation. */}
+        {visibleMessages.length || !aiKnown || loadedFor !== chatKey ? null
+          : setupCard && !loadError ? setupCard : (
+            <div className="chatEmpty">
+              {loadError || (readOnly ? t("No saved conversation for this page.")
+                : focusedBlockId ? t("Ask AI about this page…") : agentIntro || t("Ask AI anything, or generate a report from your pages…"))}
+            </div>
+          )}
+        {/* A message sent or answered rises into place; a conversation
+            loaded or switched to shows still (its messages are the ones
+            just loaded). */}
+        <ListMotion scope={chatKey} keys={motionKeys} enter="rise" moves={false} still={chatMessages === loadedMessages}>
+          {visibleMessages.map((m, i) => {
             const isUser = m.role === "user";
             const isResponding = busyHere && !isUser && m.partial && i === visibleMessages.length - 1;
             const isFindHit = chatFindOpen && chatFind.trim() && chatFindMatches[chatFindIdx] === i;
             if (editingMsg?.idx === i) {
               const resend = () => { const text = editingMsg.text; setEditingMsg(null); resendFrom(i, text); };
               return (
-                <div key={i} className="chatBubbleRow user" data-msg-idx={i}>
+                <div key={i} className="chatBubbleRow user" data-msg-idx={i} data-motion-key={i}>
                   <div className="chatMsgCol">
                     <div className="chatBubble user chatEditBubble">
                       <AutoGrowTextarea
@@ -1964,7 +2004,7 @@ export default function ChatDock({
               );
             }
             return (
-              <div key={i} className={`chatBubbleRow ${isUser ? "user" : "ai"}${isFindHit ? " findHit" : ""}`} data-msg-idx={i}>
+              <div key={i} className={`chatBubbleRow ${isUser ? "user" : "ai"}${isFindHit ? " findHit" : ""}`} data-msg-idx={i} data-motion-key={i}>
                 <div className="chatMsgCol">
                   <div className={`chatBubble ${isUser ? "user" : "ai"}${m.error && !m.errorKind ? " error" : ""}`}>
                     {m.images?.length ? (
@@ -1986,9 +2026,12 @@ export default function ChatDock({
                       <ContextCoverage items={m.context} actions={m.actions} tools={!!m.tools}
                         trimmed={m.trimmed} shortened={m.shortened} truncated={m.truncated} />
                     ) : null}
-                    {!isUser && (m.actions?.length || (isResponding && m.step)) ? (
-                      <AgentSteps actions={m.actions || []} running={isResponding ? m.step : null}
-                        helpers={m.helpers}
+                    {/* The reply's one status pill, from the start of the turn; a
+                        reply that ends without a step folds it away. */}
+                    {!isUser ? (
+                      <Collapse open={isResponding || !!m.actions?.length} className="chatStepsFold">
+                      <AgentSteps actions={m.actions || []} live={isResponding} running={isResponding ? m.step : null}
+                        helpers={m.helpers} usage={isResponding ? liveUsage(m.usage, m.live) : null} text={m.text}
                         waiting={!isResponding ? ""
                           : m.approval && !answeredApprovals.has(m.approval.id) ? "approval"
                             : m.handoffs?.length ? "paper" : ""}
@@ -2025,6 +2068,7 @@ export default function ChatDock({
                         })}
                       </div>
                       </AgentSteps>
+                      </Collapse>
                     ) : null}
                     {!isUser && m.actions?.length ? (
                       <AgentChanges actions={m.actions} onOpenPage={onOpenPage} busy={busyHere}
@@ -2057,14 +2101,6 @@ export default function ChatDock({
                     {!isUser && m.errorKind && !isResponding ? (
                       <ChatErrorCard message={m} compact={!m.error} actions={errorActions(m, i)} />
                     ) : null}
-                    {isResponding && !m.step ? (
-                      <div className="chatThinking" role="status" aria-label={m.text ? t("AI is responding") : t("AI is thinking")}>
-                        <span className="shimmerText" aria-hidden="true">
-                          <MorphText>{m.text ? t("Responding") : t("Thinking")}</MorphText>
-                        </span>
-                        <UsageLine usage={liveUsage(m.usage, m.live)} className="chatMsgUsage live" />
-                      </div>
-                    ) : null}
                   </div>
                   {!isResponding ? <div className="chatMsgFoot">
                     {!isUser && m.model ? (
@@ -2090,8 +2126,8 @@ export default function ChatDock({
                 </div>
               </div>
             );
-          })
-        )}
+          })}
+        </ListMotion>
         {/* An earlier conversation stays readable; the card follows it. */}
         {visibleMessages.length ? setupCard : null}
       </div>

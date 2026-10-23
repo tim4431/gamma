@@ -3817,22 +3817,6 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
   color: var(--text-muted);
 }
 .chatBubble.ai .katex-display { margin: 8px 0; overflow-x: auto; overflow-y: hidden; }
-/* The live status stays inside the reply alongside tool activity and text. */
-.chatThinking {
-  display: flex;
-  align-items: center;
-  gap: 0.6em;
-  width: fit-content;
-  margin-top: 6px;
-  padding: 0.3em 0.7em;
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-full);
-  background: var(--bg-raised);
-  color: var(--text-muted);
-  font-size: calc(var(--fs-2xs) * var(--text-scale, 1));
-  line-height: 1.5;
-}
-.chatThinking:first-child { margin-top: 0; }
 /* Model + effort switchers use shared MenuSelect/uiBtn sizing; this block is
    layout-only so chat controls cannot drift from buttons elsewhere. */
 /* prompt editor */
@@ -4900,6 +4884,10 @@ a.shareBrand:hover { background: var(--bg-hover); }
    changes it made, each old → new, under an accent rule. */
 .chatStepsWrap { display: flex; flex-direction: column; gap: 6px; margin-bottom: 8px; min-width: 0; }
 .chatSteps { align-self: flex-start; }
+/* While the reply's first step has not landed the pill is its status alone,
+   with nothing to unfold. */
+.chatSteps:not([aria-expanded]) { cursor: default; }
+.chatSteps:not([aria-expanded]):hover { color: var(--text-muted); }
 .chatStepsFailed { flex: none; color: var(--danger); }
 .chatStepsDeclined { flex: none; color: var(--text-secondary); }
 :is(.chatStepsFailed, .chatStepsDeclined)::before { content: "·"; margin-right: 6px; color: var(--text-muted); }
