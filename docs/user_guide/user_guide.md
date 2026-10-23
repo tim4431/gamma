@@ -258,7 +258,7 @@ The **link button** in the top bar shares the open page.
 
 - **Share** makes the link. **Copy link** carries the workspace, so a teammate lands in the right library.
 - **Who has access**: invite people by name, each with **View** or **Edit**. They find the page in their Inbox.
-- **Gamma Cloud**: on a server with Gamma Cloud sign-in, the switch beside Who has access invites someone by their Gamma Cloud username, even without an account here yet. They show as **pending** until they sign in with Gamma Cloud, then the page is theirs to open.
+- **Gamma Cloud**: on a server with Gamma Cloud sign-in, the switch beside Who has access invites someone by their Gamma Cloud username, even without an account here yet. They show as **pending** until they sign in with Gamma Cloud, then the page is theirs to open. If someone here already goes by their username, they get a name like *tim-2*, with their Gamma Cloud name shown beside it.
 - **Requests to join**: on a server that admits invited people only, someone who signs in from your link without an invitation asks to join instead. The request heads Who has access with **Approve** and **Decline**, and comes to your Inbox; they sign in again once you approve.
 - **General access**: anyone with the link, signed-in users, or invited people only, with View or Edit for that audience.
 - Editors edit alongside you with live cursors. **Stop sharing** ends the link.

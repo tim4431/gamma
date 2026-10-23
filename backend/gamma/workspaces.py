@@ -217,14 +217,20 @@ def list_for_user(user_id: str) -> list[dict]:
 
 
 def members(ws: str) -> list[dict]:
-    """``[{username, role, added_by, added_at}]`` — the people by name."""
+    """``[{username, role, added_by, added_at, cloud?}]`` — the people by
+    name; ``cloud`` is a member's Gamma Cloud username where it differs from
+    the name here (``cloud_auth.cloud_names``: a ``tim-2``)."""
+    from . import cloud_auth  # local: cloud_auth imports this module
+
     with connect_users_db() as conn:
         rows = conn.execute(
-            "SELECT u.username, m.role, COALESCE(a.username, ''), m.added_at FROM workspace_members m "
+            "SELECT u.username, m.role, COALESCE(a.username, ''), m.added_at, u.id FROM workspace_members m "
             "JOIN users u ON u.id = m.user_id LEFT JOIN users a ON a.id = m.added_by WHERE m.workspace_id = ? "
             "ORDER BY CASE m.role WHEN 'owner' THEN 0 WHEN 'editor' THEN 1 ELSE 2 END, u.username",
             (ws,)).fetchall()
-    return [{"username": r[0], "role": r[1], "added_by": r[2], "added_at": r[3]} for r in rows]
+        clouds = cloud_auth.cloud_names(conn, [r[4] for r in rows])
+    return [{"username": r[0], "role": r[1], "added_by": r[2], "added_at": r[3],
+             **({"cloud": clouds[r[4]]} if r[4] in clouds else {})} for r in rows]
 
 
 def membership_count(user_id: str) -> int:

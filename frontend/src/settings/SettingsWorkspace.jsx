@@ -186,9 +186,10 @@ export function StorageRow({ quota, me }) {
 
 // The explicit members, each with a role menu and a remove button
 // (owners). `me` marks "you"; the last owner cannot go; leaving yourself
-// is an action row of the dialog, not a button on your own row. Pending
-// invitations by Gamma Cloud username (`pending: true`) follow, tagged, with
-// only a remove button (`onCancel`).
+// is an action row of the dialog, not a button on your own row. A member
+// whose Gamma Cloud username is not their name here (a `tim-2`) shows it
+// (`cloud`). Pending invitations by Gamma Cloud username (`pending: true`)
+// follow, tagged, with only a remove button (`onCancel`).
 export function MembersList({ info, me, canManage, busy, onSetRole, onRemove, onCancel }) {
   const members = info?.members || [];
   const owners = members.filter((m) => m.role === "owner" && !m.pending).length;
@@ -208,6 +209,7 @@ export function MembersList({ info, me, canManage, busy, onSetRole, onRemove, on
           </span>
           <span className="aiProvDesc">
             {ROLE_OPTIONS.find(([r]) => r === m.role)?.[1] || m.role}
+            {m.cloud && !m.pending ? t(" · Gamma Cloud {name}", { name: m.cloud }) : ""}
             {m.added_by && m.added_by !== m.username ? t(" · invited by {added_by}", { added_by: m.added_by }) : ""}
           </span>
         </span>

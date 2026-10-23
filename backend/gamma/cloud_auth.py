@@ -14,7 +14,10 @@ and the rules for an identity this server has not seen (``policy``):
   container does, whose first admin was seeded under the customer's username;
 - ``provision``: a new account is created under the username (empty password,
   so only the cloud can sign it in) with its personal workspace — the free
-  share host;
+  share host. A username some other account here goes by (one linked to
+  another cloud identity, a guest, several case variants) gives the first
+  free variant, ``tim-2``; one held by an account with no cloud link is
+  refused, since that account may be the person's own;
 - ``invited``: like ``provision`` for a subject an invitation waits for —
   to a shared workspace (``pending_memberships``) or to a share
   (``pending_share_users``, gamma/shares.py) — or whose request to join an
@@ -1010,25 +1013,25 @@ def _resolve(claims: dict, stale: list[str]) -> tuple[str, str]:
             stale.append(link(conn, known["user_id"], claims, claims.get("_refresh_token", "")))
             conn.commit()
             return known["user_id"], account_name(conn, known["user_id"])
-        row = conn.execute("SELECT id, username, is_guest FROM users WHERE username = ?", (username,)).fetchone()
-        if row is None:
-            # Cloud usernames are lowercase; a local username may not be. One
-            # case-insensitive match claims, an ambiguous set does not.
-            rows = conn.execute("SELECT id, username, is_guest FROM users WHERE LOWER(username) = ?",
-                                (username,)).fetchall()
-            if len(rows) == 1:
-                row = rows[0]
-        exists = bool(row) and not row["is_guest"]
-        local = row["username"] if row else username
-        taken = bool(row) and (row["is_guest"] or identity_of(conn, row["id"]) is not None)
+        # Whose is the cloud username here? A local name is unique whatever
+        # its case (a page host finds its account by it): an exact match,
+        # else the one case-insensitive match, names the account; several
+        # case variants name none, and the name is in use all the same.
+        rows = conn.execute("SELECT id, username, is_guest FROM users WHERE LOWER(username) = ?",
+                            (username.lower(),)).fetchall()
+        exact = [r for r in rows if r["username"] == username]
+        row = exact[0] if exact else rows[0] if len(rows) == 1 else None
         is_admin_seed = bool(admin_subject) and subject == admin_subject
-        if taken:
-            raise CloudAuthError(f"The username \"{local}\" on this server belongs to someone else. "
-                                 "Sign in with that account and link it, or ask the admin.")
-        if exists:
+        if row and not row["is_guest"] and identity_of(conn, row["id"]) is None:
+            # An account of that name with no cloud link may be this person's
+            # own, from before Gamma Cloud. It is never linked automatically,
+            # or anyone with that cloud username would take it over: only the
+            # claim policy and the admin subject link it.
+            local = row["username"]
             if not (cfg["policy"] == "claim" or is_admin_seed):
-                raise CloudAuthError(f"\"{local}\" exists on this server but is not linked to your Gamma Cloud "
-                                     "account. Sign in with its password and link it from Settings → Account & sync.")
+                raise CloudAuthError(f"\"{local}\" on this server is not linked to your Gamma Cloud account. If it "
+                                     "is yours, sign in with its password and link it from Settings → Account & "
+                                     "sync; if it is someone else's, ask the admin.")
             stale.append(link(conn, row["id"], claims, claims.get("_refresh_token", "")))
             if is_admin_seed:
                 conn.execute("UPDATE users SET is_admin = 1 WHERE id = ?", (row["id"],))
@@ -1036,6 +1039,8 @@ def _resolve(claims: dict, stale: list[str]) -> tuple[str, str]:
             log.info(f"cloud sign-in: {local} claimed by cloud username {username}")
             return row["id"], local
         if not is_admin_seed:
+            # Admission comes before the name: whoever nothing admits is
+            # refused, or asks to join, whatever their username.
             if cfg["policy"] == "invited":
                 if not _invited(conn, subject):
                     raise NotInvited()
@@ -1046,14 +1051,52 @@ def _resolve(claims: dict, stale: list[str]) -> tuple[str, str]:
                                                 if hosted.read_only() else "")
             if full:
                 raise CloudAuthError(full)
+        # The name is someone else's here (an account linked to another cloud
+        # identity, a guest, several case variants): the new account takes
+        # the first free variant of it. The link, not the name, signs it in.
+        name = _free_name(conn, username) if rows else username
     # New account: the seed helper makes the row + personal workspace.
-    seed.create_cloud_account(username, is_admin=is_admin_seed)
+    seed.create_cloud_account(name, is_admin=is_admin_seed)
     with connect_users_db() as conn:
-        user_id = account_id(conn, username)
+        user_id = account_id(conn, name)
         stale.append(link(conn, user_id, claims, claims.get("_refresh_token", "")))
         conn.commit()
-    log.info(f"cloud sign-in: provisioned account {username}" + (" (admin)" if is_admin_seed else ""))
-    return user_id, username
+    log.info(f"cloud sign-in: provisioned account {name}"
+             + (f" (the cloud username {username} is in use here)" if name != username else "")
+             + (" (admin)" if is_admin_seed else ""))
+    return user_id, name
+
+
+def _free_name(conn, username: str) -> str:
+    """The first of ``<username>-2``, ``-3``, … that no account here goes by
+    in any case: the name a new cloud account takes when its own cloud
+    username is in use here."""
+    n = 2
+    while conn.execute("SELECT 1 FROM users WHERE LOWER(username) = ?", (f"{username}-{n}".lower(),)).fetchone():
+        n += 1
+    return f"{username}-{n}"
+
+
+def cloud_names(conn, user_ids) -> dict[str, str]:
+    """``{account id: its Gamma Cloud username}`` for the accounts among
+    ``user_ids`` whose linked cloud username is not their name here (in any
+    case): what a list of people shows beside a name such as ``tim-2``, so
+    the person is recognized. ``conn``: an open users.db connection."""
+    wanted = sorted({u for u in user_ids if u})
+    if not wanted:
+        return {}
+    rows = conn.execute("SELECT i.user_id, i.claims, u.username FROM identities i JOIN users u ON u.id = i.user_id "
+                        "WHERE i.provider = ? AND i.user_id IN (SELECT value FROM json_each(?))",
+                        (PROVIDER, json.dumps(wanted))).fetchall()
+    out = {}
+    for user_id, claims, local in rows:
+        try:
+            cloud = str(json.loads(claims or "{}").get("username") or "")
+        except ValueError:
+            continue
+        if cloud and cloud.lower() != local.lower():
+            out[user_id] = cloud
+    return out
 
 
 def safe_next(raw: str) -> str:

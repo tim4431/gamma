@@ -884,8 +884,9 @@ The scenarios live in `tests/e2e/scenarios/`:
   covers. `cloudSignIn.mjs`'s last step starts a Gamma under the `invited`
   policy against `fakeCloud.mjs`: a page shared by Gamma Cloud username,
   a newcomer signing in from the link's gate, a request to join approved
-  in the Share popover and one from the login page approved under Server →
-  Sign-in. `--only "cloud sign-in: a page shared"`.
+  in the Share popover, a namesake of the owner who asks to join and lands
+  as `lab-owner-2`, and a request from the login page approved under
+  Server → Sign-in. `--only "cloud sign-in: a page shared"`.
 
 Every step also asserts that no API call failed (4xx/5xx), no console error
 and no page error happened meanwhile (`openPage` records them;

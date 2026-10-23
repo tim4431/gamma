@@ -244,7 +244,8 @@ in the [API reference](api.md).
 
 `GET /session` and `/workspaces/mine` use `members` as a count. Workspace
 details use `members` as an array, with pending invitations last
-(`pending: true`). Details report `personal_of` as the owner's username; the
+(`pending: true`), and a member's Gamma Cloud username as `cloud` where it
+differs from the name here. Details report `personal_of` as the owner's username; the
 session list instead has a boolean `personal`.
 
 ## Browser startup and switching

@@ -75,12 +75,18 @@ class CloudInvite(BaseModel):
 
 def _settings(share: dict, manager: bool = False) -> dict:
     """A share as its dialog shows it: the people (the invited and who
-    created it) by username, then the invitations by Gamma Cloud username
-    still waiting (``pending``), and for a ``manager`` (who may change the
-    share) the requests to join that came through it (``requests``)."""
+    created it) by username, an invited account's Gamma Cloud username
+    beside it (``cloud``) where the two differ; then the invitations by
+    Gamma Cloud username still waiting (``pending``), and for a ``manager``
+    (who may change the share) the requests to join that came through it
+    (``requests``)."""
     with connect_users_db() as conn:
         names = account_names(conn, [share["created_by"], *(u["user_id"] for u in share["users"])])
-    invited = [{"name": names[u["user_id"]], "role": u["role"]} for u in share["users"] if u["user_id"] in names]
+        clouds = cloud_auth.cloud_names(conn, [u["user_id"] for u in share["users"]])
+    # a Gamma Cloud username beside a name here that differs from it (tim-2)
+    invited = [{"name": names[u["user_id"]], "role": u["role"],
+                **({"cloud": clouds[u["user_id"]]} if u["user_id"] in clouds else {})}
+               for u in share["users"] if u["user_id"] in names]
     out = {"token": share["token"], "page_id": share["page_id"], "folder": share["folder"],
            "audience": share["audience"], "role": share["role"], "users": invited,
            "pending": shares.pending(share["token"]), "created_by": names.get(share["created_by"], "")}

@@ -506,7 +506,9 @@ export function SharePopover({
                 />
               ) : null}
               {users.map((u) => (
-                <PersonRow key={u.name} name={u.name} sub={t("Invited")} icon={UserIcon}>
+                <PersonRow key={u.name} name={u.name} icon={UserIcon}
+                  // a name here that is not their Gamma Cloud one (tim-2) says which that is
+                  sub={u.cloud ? t("Invited · Gamma Cloud {name}", { name: u.cloud }) : t("Invited")}>
                   <Segmented
                     value={u.role} options={ROLE_SEGMENTS[kind]}
                     onChange={(role) => { if (role !== u.role) onSetRole(u.name, role); }}
