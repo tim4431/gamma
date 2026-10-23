@@ -867,8 +867,10 @@ export async function inkEditingScenarios({ server, browser, alice, bob, makePdf
       const fmenu = fpage.getByRole("toolbar", { name: "Edit handwriting", exact: true });
       const more = fmenu.getByRole("button", { name: "More", exact: true });
       const moreRow = async () => { if (await more.getAttribute("aria-expanded") !== "true") await more.click(); };
-      await waitForPdf(fpage, 1);
-      await until(async () => (await fpage.locator(paths).count()) >= 480, { what: "both groups drawn", timeout: 30000 });
+      // 480 strokes of 1000 samples are about 11 s of outlines on a fast desktop before the PDF's text
+      // layer gets the main thread, and a CI runner is several times slower
+      await waitForPdf(fpage, 1, 120000);
+      await until(async () => (await fpage.locator(paths).count()) >= 480, { what: "both groups drawn", timeout: 120000 });
       await fpage.getByRole("button", { name: "Handwriting tools", exact: true }).click();
       await fpage.waitForSelector(".pdfInkBar");
       // what the pill says, as it changes: a final message is up a second, which a long task can outlast
@@ -881,7 +883,7 @@ export async function inkEditingScenarios({ server, browser, alice, bob, makePdf
       });
       const refused = async (what) => {
         await until(() => fpage.evaluate(() => window.pillSaid.includes("This handwriting note is full. Move part of it to a new note, or start a new one.")),
-          { what: `${what} refused on the pill`, timeout: 15000 });
+          { what: `${what} refused on the pill`, timeout: 45000 });
         await fpage.evaluate(() => { window.pillSaid = []; });
         await fpage.waitForTimeout(300);
         assertEq(await fpage.locator('[data-page="1"] .inkSelRect').count(), 1, `${what}: the selection's box still around the strokes`);

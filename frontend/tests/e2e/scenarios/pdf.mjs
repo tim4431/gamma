@@ -63,8 +63,8 @@ export async function dragSelectPdfText(page, pageNo, needle) {
   return { x: box.x2, y: box.y };
 }
 
-export async function waitForPdf(page, pageNo = 1) {
-  await page.waitForSelector(`[data-page="${pageNo}"] .textLayer span`, { timeout: 30000 });
+export async function waitForPdf(page, pageNo = 1, timeout = 30000) {
+  await page.waitForSelector(`[data-page="${pageNo}"] .textLayer span`, { timeout });
 }
 
 export async function pdfScenarios({ server, browser, alice, makePdf, step, until, sleep, assert, assertEq, assertNoProblems, openPage, flags }, { alice2, second }) {

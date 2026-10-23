@@ -426,9 +426,14 @@ def test_a_pencil_is_painted_with_its_grain_anchored_at_the_page_corner():
 def test_grain_tiles_keep_nothing_per_colour():
     """The Markdown export's to_svg writes a tile per pencil colour, and the
     colours are a writer's data: nothing is kept per colour (only the
-    palette differs; the rest of the PNG is made once)."""
+    palette differs; the rest of the PNG is made once). A first batch of
+    other colours fills the interpreter's own caches first: Python 3.12
+    keeps up to 2000 freed tuples of a size for reuse, 128 KB of the
+    channels' 3-tuples, which tracemalloc counts as kept."""
     import tracemalloc
     assert inkmod.grain_png("#1F1F1F") == inkmod.grain_png("rgb(31, 31, 31)")
+    for i in range(3000):
+        inkmod.grain_png(f"rgb({i % 256},{i // 256},8)")
     tracemalloc.start()
     try:
         before = tracemalloc.get_traced_memory()[0]
