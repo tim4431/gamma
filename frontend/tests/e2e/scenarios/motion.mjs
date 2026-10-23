@@ -1,5 +1,6 @@
 import { generateNKeysBetween } from "fractional-indexing";
-import { Account, arrived, assertNear, live, sleep, wanted } from "../harness.mjs";
+import { Account, arrived, assertNear, live, makePdf, sleep, wanted } from "../harness.mjs";
+import { selectPdfText, waitForPdf } from "./pdf.mjs";
 
 // Motion (docs/dev/ui-design.md, "Motion"): a menu grows in from the point
 // it opens from and leaves through a still copy of itself, inert and out of
@@ -9,8 +10,14 @@ import { Account, arrived, assertNear, live, sleep, wanted } from "../harness.mj
 // frame slides to the option chosen; in the notes, a block added mid-list
 // fades in while the rows below glide to make room, but nothing moves on a
 // page opening or for another client's block, and a fold closes before
-// its rows go; the share popover and Recently deleted open on their
-// content.
+// its rows go; the Inbox opens a tab on what it showed last, a first
+// listing waits blank in its room and comes into focus, and its rows and
+// day headers leave through copies; In progress goes with the last task
+// running as Finished's header glides up, and a removed task leaves; the
+// PDF margin's cards grow in and shrink away, a reply glides its thread to
+// the top of the Comments window and rises into its thread; the share
+// popover and Recently deleted open on their content; under reduced
+// motion none of it moves.
 export async function motionScenarios(env) {
   const { server, browser, step, openPage, assert, assertEq, assertNoProblems, until } = env;
   if (!wanted("motion")) return;
@@ -221,8 +228,278 @@ export async function motionScenarios(env) {
     } finally { await ctx.close(); }
   });
 
+  // Every glide, arrival and leaving copy the page makes, and every CSS
+  // animation that starts, from before it loads: "moving <key>", "entering
+  // fade empty", "leaving row inboxRow", "leaving row inboxRow +ids" when a
+  // copy kept an id, "reveal in", "anim sharpen-in reveal".
+  const record = (ctx) => ctx.addInitScript(() => {
+    window.__moves = [];
+    const name = (el) => (typeof el.className === "string" && el.className ? el.className.split(" ")[0] : el.localName);
+    const ids = ["data-motion-key", "data-inbox-id", "data-card-for", "data-thread-id", "data-comment-id"];
+    const go = () => {
+      new MutationObserver((records) => {
+        for (const r of records) {
+          if (r.type === "attributes") {
+            const v = r.target.getAttribute(r.attributeName);
+            if (v === null) continue;
+            if (r.attributeName === "data-reveal") window.__moves.push(`reveal ${v}`);
+            else if (r.attributeName === "data-entering") window.__moves.push(`entering ${v} ${r.target.dataset.motionKey || name(r.target)}`);
+            else window.__moves.push(`moving ${r.target.dataset.motionKey || name(r.target)}`);
+            continue;
+          }
+          for (const n of r.addedNodes) {
+            if (n.nodeType !== 1 || !n.dataset.leaving) continue;
+            const kept = ids.some((a) => n.hasAttribute(a) || n.querySelector(`[${a}]`));
+            window.__moves.push(`leaving ${n.dataset.leaving} ${name(n)}${kept ? " +ids" : ""}`);
+          }
+        }
+      }).observe(document, { subtree: true, childList: true, attributes: true, attributeFilter: ["data-moving", "data-entering", "data-reveal"] });
+      document.addEventListener("animationstart", (e) => window.__moves.push(`anim ${e.animationName} ${name(e.target)}`), true);
+    };
+    if (document.documentElement) go(); else document.addEventListener("readystatechange", go, { once: true });
+  });
+  const moves = (page) => page.evaluate(() => window.__moves.splice(0));
   // The requests `pattern` matches, answered `ms` later.
   const slowly = (page, pattern, ms) => page.route(pattern, async (route) => { await sleep(ms); await route.continue().catch(() => {}); });
+  const copiesGone = (page) => until(async () => (await page.locator("[data-leaving]").count()) === 0, { timeout: 3000, what: "every copy goes" });
+
+  // motion-ann shares pages with motion-user: an Inbox item each.
+  await server.manage("create-user", "motion-ann", "motion-ann-pw");
+  const ann = await new Account(server, "motion-ann", "motion-ann-pw").login();
+  const shareWithUser = async (title) => {
+    const shared = await ann.api("/api/pages", { method: "POST", body: { title } });
+    await ann.api(`/api/share/${shared.id}`, { method: "POST", body: { audience: "list", users: [{ name: "motion-user", role: "view" }] } });
+  };
+  const bell = (page) => page.locator('[data-guide="header.inbox"]');
+  const inbox = (page) => page.locator(live(".inboxPopover"));
+  const inboxRows = (page) => inbox(page).locator(live(".inboxRow"));
+
+  await step("motion: the Inbox opens a tab on what it showed last; a tab's first listing waits blank in its room and comes into focus; a row read in Unread leaves through a keyless copy as the rows below close up, a day's header goes with its last row as the empty state comes in, and Mark all read empties the tab at once", async () => {
+    for (const title of ["Shared one", "Shared two", "Shared three"]) await shareWithUser(title);
+    const ctx = await user.context(browser);
+    await record(ctx);
+    const page = await openPage(ctx, home);
+    try {
+      await bell(page).click();
+      await until(async () => (await inboxRows(page).count()) === 3, { what: "the three shares" });
+      await page.keyboard.press("Escape");
+      await inbox(page).waitFor({ state: "detached" });
+      // opened again, with its listing slow: the rows it showed, at once
+      await slowly(page, "**/api/inbox?filter=unread*", 800);
+      await bell(page).click();
+      await inbox(page).waitFor();
+      assertEq(await inboxRows(page).count(), 3, "the rows it showed, while it looks again");
+      assertEq(await inbox(page).locator(".inboxLoading").count(), 0, "no Loading…");
+      await page.unroute("**/api/inbox?filter=unread*");
+
+      // All, the first time, slow: blank in the room the listing had, Loading… after a moment, then the rows come into focus
+      const box = inbox(page).locator(".inboxRows");
+      const tall = await box.evaluate((el) => el.offsetHeight);
+      await slowly(page, "**/api/inbox?filter=all*", 900);
+      await moves(page);
+      await inbox(page).locator(".segGroup button", { hasText: "All" }).click();
+      const waiting = await box.evaluate((el) => ({ h: el.offsetHeight, reveal: el.dataset.reveal, shown: getComputedStyle(el.querySelector(".inboxLoading")).opacity }));
+      assertEq(waiting.reveal, "wait", "All waits for its first listing");
+      assertNear(waiting.h, tall, 1, "in the room the listing had");
+      assertEq(waiting.shown, "0", "Loading… not shown yet");
+      await until(async () => (await box.evaluate((el) => getComputedStyle(el.querySelector(".inboxLoading") || el).opacity)) === "1", { what: "Loading… fades in after a moment" });
+      await until(async () => (await inboxRows(page).count()) === 3, { what: "All's rows" });
+      let seen = await moves(page);
+      assert(seen.includes("reveal in") && seen.includes("anim sharpen-in reveal"), `the listing comes into focus: ${seen}`);
+      assert(!seen.some((m) => m.startsWith("entering ") || m.startsWith("moving ")), `nothing else moves for a tab's listing: ${seen}`);
+      await page.unroute("**/api/inbox?filter=all*");
+      // back to Unread: what it showed, at once
+      await inbox(page).locator(".segGroup button", { hasText: "Unread" }).click();
+      assertEq(await inboxRows(page).count(), 3, "Unread as it was");
+      await sleep(400);
+
+      await moves(page);
+      const first = inboxRows(page).first();
+      await first.hover();
+      await first.getByRole("button", { name: "Mark read" }).click();
+      await until(async () => (await inboxRows(page).count()) === 2, { what: "the row leaves Unread" });
+      seen = await moves(page);
+      assert(seen.includes("leaving row inboxRow"), `it leaves through a copy: ${seen}`);
+      assert(!seen.some((m) => m.endsWith("+ids")), `the copy carries no key or id: ${seen}`);
+      assert(seen.filter((m) => m.startsWith("moving ")).length >= 1, `the rows below close up: ${seen}`);
+      await arrived(inboxRows(page).first());
+      await copiesGone(page);
+      for (let n = 2; n > 0; n--) {
+        const row = inboxRows(page).first();
+        await row.hover();
+        await row.getByRole("button", { name: "Mark read" }).click();
+        await until(async () => (await inboxRows(page).count()) === n - 1, { what: "the next row leaves" });
+        await copiesGone(page);
+      }
+      seen = await moves(page);
+      assert(seen.includes("leaving row popoverSection"), `the day's header goes with its last row: ${seen}`);
+      assert(seen.includes("entering fade empty"), `the empty state comes in: ${seen}`);
+      await inbox(page).locator(".setEmpty", { hasText: "You're all caught up." }).waitFor();
+
+      // two more, then Mark all read: at once
+      await shareWithUser("Shared four");
+      await shareWithUser("Shared five");
+      await until(async () => (await inboxRows(page).count()) === 2, { timeout: 8000, what: "the listing's next look brings them" });
+      await arrived(inboxRows(page).first());
+      await moves(page);
+      await inbox(page).getByRole("button", { name: "Mark all read", exact: true }).click();
+      await inbox(page).locator(".setEmpty", { hasText: "You're all caught up." }).waitFor();
+      seen = await moves(page);
+      assert(!seen.some((m) => m.startsWith("leaving row")), `Mark all read takes them at once: ${seen}`);
+      await page.keyboard.press("Escape");
+      await assertNoProblems(page);
+    } finally { await ctx.close(); }
+  });
+
+  await step("motion: in Background tasks the last task running finishes and In progress goes with it as Finished's header glides up, one removed leaves through a copy, and Clear finished takes the rest at once", async () => {
+    const ctx = await user.context(browser);
+    await record(ctx);
+    const page = await openPage(ctx, home);
+    try {
+      await page.waitForSelector(".folderNewBtn", { timeout: 15000 });
+      const upload = async (files) => {
+        await page.click("button[aria-label='Add']");
+        const chooser = page.waitForEvent("filechooser");
+        await page.locator(".addPopover .ctxMenuItem", { hasText: "Upload files" }).click();
+        await (await chooser).setFiles(files);
+      };
+      await upload([1, 2].map((i) => ({ name: `quick-${i}.pdf`, mimeType: "application/pdf", buffer: Buffer.from(makePdf([[`Quick ${i}`]])) })));
+      const tray = page.locator(live(".tasksPopover"));
+      const row = (text) => tray.locator(live(".taskRow"), { hasText: text });
+      // (what the quick ones start, indexing and the rest, over before the slow one)
+      await page.click("button[aria-label='Background tasks']");
+      await row("quick-2.pdf").waitFor();
+      await sleep(2000); // (a poll's turn: the jobs the uploads start show)
+      await until(async () => !(await tray.locator(live(".popoverSection"), { hasText: "In progress" }).count()), { timeout: 15000, what: "nothing running" });
+      await page.keyboard.press("Escape");
+      await tray.waitFor({ state: "detached" });
+      // a slow upload, the tray open on it: it runs, then finishes
+      const cdp = await ctx.newCDPSession(page);
+      await cdp.send("Network.emulateNetworkConditions", { offline: false, latency: 10, downloadThroughput: -1, uploadThroughput: (768 * 1024) / 8 });
+      await upload([{ name: "slow.pdf", mimeType: "application/pdf", buffer: Buffer.from(makePdf([["Slow"]], { padBytes: 1024 * 1024 })) }]);
+      await page.click("button[aria-label='Background tasks']");
+      await row("slow.pdf").locator(".taskBar").waitFor({ timeout: 10000 });
+      await row("quick-2.pdf").waitFor();
+      await moves(page);
+      await until(async () => (await row("slow.pdf").getAttribute("class")).includes("done"), { timeout: 20000, what: "the slow upload finishes" });
+      await cdp.send("Network.emulateNetworkConditions", { offline: false, latency: 0, downloadThroughput: -1, uploadThroughput: -1 });
+      let seen = await moves(page);
+      assert(seen.some((m) => m === "moving head:finished"), `Finished's header moves up: ${seen}`);
+      assert(seen.includes("leaving row popoverSection"), `In progress goes with its last row: ${seen}`);
+      await copiesGone(page);
+      await arrived(row("quick-2.pdf"));
+
+      await moves(page);
+      const quick = row("quick-2.pdf");
+      await quick.hover();
+      await quick.getByRole("button", { name: "Remove quick-2.pdf", exact: true }).click();
+      await quick.waitFor({ state: "detached" });
+      seen = await moves(page);
+      assert(seen.includes("leaving row taskRow"), `it leaves through a copy: ${seen}`);
+      await copiesGone(page);
+
+      await moves(page);
+      await tray.getByRole("button", { name: "Clear finished", exact: true }).click();
+      await tray.locator(".setEmpty", { hasText: "Nothing running" }).waitFor();
+      await sleep(300);
+      seen = await moves(page);
+      assert(!seen.some((m) => m.startsWith("leaving row")), `Clear finished takes them at once: ${seen}`);
+      await page.keyboard.press("Escape");
+      await assertNoProblems(page);
+    } finally { await ctx.close(); }
+  });
+
+  // A paper of four lines, a highlight on each (made through the page's
+  // selection popup), for the margin's cards and the Comments window.
+  const four = makePdf([["A line about alpha", "", "", "", "A line about beta", "", "", "", "A line about gamma", "", "", "", "A line about delta"]]);
+  const up = await user.upload("/api/uploads", four, "four.pdf", "application/pdf");
+  const paper = await user.api(`/api/blocks/by-doc/${up.doc_id}`, { method: "POST", body: { default_title: "Four lines", source_url: up.source_url } });
+  const paperUrl = `${server.base}/?ws=${user.ws}&page=${paper.id}`;
+  const hl = {};
+  const post = (block_id, body, thread_id) => until(async () => (await user.api(`/api/pages/${paper.id}/comments`, { method: "POST", body: { block_id, body, thread_id } }).catch(() => null))?.thread, { what: `"${body}" stored` });
+  // with room beside the page: its cards in the margin
+  const withMargin = async (page) => {
+    await waitForPdf(page, 1);
+    const zoomOut = page.getByRole("button", { name: "Zoom out", exact: true });
+    for (let i = 0; i < 12 && !(await page.locator('[data-page="1"] .commentCard').count()); i++) { await zoomOut.click(); await sleep(250); }
+    await page.locator('[data-page="1"] .commentCard').first().waitFor({ timeout: 5000 });
+  };
+  const card = (page, text) => page.locator(live(".commentCard"), { hasText: text });
+
+  await step("motion: a card grows into the PDF margin and one resolved shrinks away; a reply glides its thread to the top of the Comments window, and one typed in the card rises into its thread; a new comment's card hands its place to its thread's, still", async () => {
+    const ctx = await user.context(browser, { viewport: { width: 1600, height: 900 } });
+    await record(ctx);
+    const page = await openPage(ctx, paperUrl);
+    try {
+      await waitForPdf(page, 1);
+      for (const word of ["alpha", "beta", "gamma", "delta"]) {
+        const before = await page.evaluate(() => [...new Set([...document.querySelectorAll('[data-page="1"] [data-hl-id]')].map((el) => el.dataset.hlId))]);
+        await selectPdfText(page, 1, `about ${word}`);
+        await page.waitForSelector(".plainTip .colorBtn", { timeout: 5000 });
+        await page.locator(".plainTip .colorBtn").first().click();
+        hl[word] = await until(async () => (await page.evaluate(() => [...new Set([...document.querySelectorAll('[data-page="1"] [data-hl-id]')].map((el) => el.dataset.hlId))]))
+          .find((id) => !before.includes(id)), { what: `the highlight on ${word}` });
+        await page.keyboard.press("Escape");
+      }
+      const alpha = await post(hl.alpha, "On alpha");
+      await post(hl.beta, "On beta");
+      await withMargin(page);
+      await card(page, "On beta").waitFor();
+      await page.getByRole("button", { name: "View", exact: true }).click();
+      await page.locator(".menuPopover .ctxMenuItem", { hasText: "Comments" }).click();
+      await page.keyboard.press("Escape");
+      const panelRows = page.locator(".commentsPanel .commentsPanelRow");
+      await until(async () => (await panelRows.count()) === 2, { what: "the window's two threads" });
+      await sleep(400);
+      await moves(page);
+
+      // a reply to alpha (the lower row): it glides to the top
+      await post(hl.alpha, "A reply on alpha", alpha.id);
+      await until(async () => (await panelRows.first().innerText()).includes("On alpha"), { timeout: 8000, what: "alpha's thread on top" });
+      let seen = await moves(page);
+      assert(seen.includes(`moving ${alpha.id}`), `the replied thread glides up: ${seen}`);
+      // a new thread: its card grows in, its row rises in
+      await post(hl.gamma, "On gamma");
+      await card(page, "On gamma").waitFor({ timeout: 8000 });
+      await until(async () => (await panelRows.count()) === 3, { what: "gamma's row" });
+      seen = await moves(page);
+      assert(seen.some((m) => /^entering card \S+$/.test(m)), `its card grows in: ${seen}`);
+      assert(seen.some((m) => /^entering rise \S+$/.test(m)), `its row rises in: ${seen}`);
+      await arrived(card(page, "On gamma"));
+      // alpha resolved: its card shrinks away, keyless
+      await moves(page);
+      await user.api(`/api/comments/${alpha.id}/resolve`, { method: "POST", body: { resolved: true } });
+      await card(page, "On alpha").waitFor({ state: "detached", timeout: 8000 });
+      seen = await moves(page);
+      assert(seen.includes("leaving card commentCard"), `its card shrinks away: ${seen}`);
+      await copiesGone(page);
+
+      // the highlight menu's Comment on delta: a card of its own grows in; stored, the thread's card takes its place still
+      await page.locator(`[data-page="1"] [data-hl-id="${hl.delta}"]`).first().click({ button: "right" });
+      await page.locator(".ctxMenu").getByRole("menuitem", { name: "Comment", exact: true }).click();
+      await page.locator(".commentCard.active .commentNew").waitFor();
+      seen = await moves(page);
+      assert(seen.some((m) => m === `entering card new:${hl.delta}`), `the new comment's card grows in: ${seen}`);
+      await copiesGone(page);
+      await sleep(300);
+      await moves(page);
+      await page.keyboard.type("On delta");
+      await page.keyboard.press("Shift+Enter");
+      await page.locator(".commentCard.active .commentField").waitFor();
+      await until(async () => !(await page.locator(".commentCard .commentNew").count()), { what: "the new card handed over" });
+      seen = await moves(page);
+      assert(!seen.some((m) => /^(entering|leaving) card/.test(m)), `neither card comes in nor goes: ${seen}`);
+      // a reply typed in the active card rises into its thread
+      await sleep(300);
+      await page.keyboard.type("A reply on delta");
+      await page.keyboard.press("Shift+Enter");
+      await page.locator(".commentCard.active .commentBody", { hasText: "A reply on delta" }).waitFor();
+      seen = await moves(page);
+      assert(seen.some((m) => m.startsWith("entering rise ")), `the reply rises in: ${seen}`);
+      await page.keyboard.press("Escape");
+      await assertNoProblems(page);
+    } finally { await ctx.close(); }
+  });
 
   await step("motion: the share popover opened again shows its settings at once while it asks again; Recently deleted, asked for as the pointer reaches its button, lands with its pages; the Import dialog's Zotero mark fades in once loaded", async () => {
     const shared = await user.api("/api/pages", { method: "POST", body: { title: "Share again" } });
@@ -279,6 +556,41 @@ export async function motionScenarios(env) {
       await dialog.waitFor();
       await dialog.locator('.formatAppImage[data-fade="shown"]').waitFor();
       await page.keyboard.press("Escape");
+      await assertNoProblems(page);
+    } finally { await ctx.close(); }
+  });
+
+  await step("motion: under reduced motion an Inbox row read leaves no copy and moves nothing, a first listing's Loading… shows at once, and a resolved card goes at once", async () => {
+    await shareWithUser("Shared six");
+    const ctx = await user.context(browser, { reducedMotion: "reduce", viewport: { width: 1600, height: 900 } });
+    await record(ctx);
+    const page = await openPage(ctx, home);
+    try {
+      await bell(page).click();
+      await until(async () => (await inboxRows(page).count()) === 1, { what: "the new share" });
+      await moves(page);
+      const row = inboxRows(page).first();
+      await row.hover();
+      await row.getByRole("button", { name: "Mark read" }).click();
+      await inbox(page).locator(".setEmpty", { hasText: "You're all caught up." }).waitFor();
+      let seen = await moves(page);
+      assert(!seen.some((m) => /^(leaving row|moving|entering)/.test(m)), `nothing moves: ${seen}`);
+      await slowly(page, "**/api/inbox?filter=archived*", 900);
+      await inbox(page).locator(".segGroup button", { hasText: "Archived" }).click();
+      await sleep(50);
+      assertEq(await inbox(page).locator(".inboxLoading").evaluate((el) => getComputedStyle(el).opacity), "1", "Loading… at once");
+      await page.unroute("**/api/inbox?filter=archived*");
+      await page.keyboard.press("Escape");
+
+      await page.goto(paperUrl);
+      await withMargin(page);
+      const beta = (await user.api(`/api/pages/${paper.id}/comments`)).threads.find((th) => th.comments[0].body === "On beta");
+      await moves(page);
+      await user.api(`/api/comments/${beta.id}/resolve`, { method: "POST", body: { resolved: true } });
+      await card(page, "On beta").waitFor({ state: "detached", timeout: 8000 });
+      seen = await moves(page);
+      assert(!seen.some((m) => m.startsWith("leaving card")), `the card goes at once: ${seen}`);
+      assertEq(await page.locator("[data-leaving]").count(), 0, "no copy");
       await assertNoProblems(page);
     } finally { await ctx.close(); }
   });

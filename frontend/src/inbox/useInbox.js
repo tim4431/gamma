@@ -12,7 +12,10 @@
 // one look (a return to the tab fires both focus and visibilitychange, and
 // a comment on the open page also sends `comments`).
 //
-// Items load when the panel opens, 50 at a time ("Show older"). Marks show
+// Items load when the panel opens, 50 at a time ("Show older"). Each tab
+// keeps the listing it last showed, so the panel opens, and a tab comes
+// back, on what it held while a fresh look is on its way, and that look
+// changes it in place (`loaded` turns true once it is in). Marks show
 // at once; an answer to a request sent before the latest mark, or while a
 // mark was on its way (the server may have answered it before the mark was
 // stored), is dropped, so a poll never undoes a mark, and a count or
@@ -36,6 +39,9 @@ const MARK_BATCH = 100; // the ids one POST /api/inbox/mark takes
 const RUNG_KEY = "gamma-inbox-rung"; // the item ids this browser has rung, the latest kept
 const RUNG_CAP = 200;
 const EMPTY = { filter: "unread", items: [], more: false, loaded: false, failed: false };
+// The tab `filter` as `kept` holds it from when it was last seen (nothing
+// the first time), its fresh look still to come.
+const reopened = (kept, filter) => ({ ...(kept.get(filter) || EMPTY), filter, loaded: false, failed: false });
 const post = (body) => ({
   method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
 });
@@ -55,6 +61,9 @@ export function useInbox({ enabled, open, notify = false, onOpen, onStatus }) {
   const [list, setList] = useState(EMPTY);
   const listRef = useRef(list);
   listRef.current = list;
+  // The listing each tab showed last, by filter: what it opens on again.
+  const kept = useRef(new Map());
+  useEffect(() => { kept.current.set(list.filter, list); }, [list]);
   const cb = useRef({});
   cb.current = { onOpen, onStatus, notify, open, enabled };
   // Bumped by every mark sent: an answer to an earlier request is stale.
@@ -144,10 +153,10 @@ export function useInbox({ enabled, open, notify = false, onOpen, onStatus }) {
   }, [fetchList, fetchCount]);
 
   useEffect(() => {
-    if (!enabled) { setUnread(0); known.current = 0; setList(EMPTY); return undefined; }
+    if (!enabled) { setUnread(0); known.current = 0; kept.current.clear(); setList(EMPTY); return undefined; }
     if (open) {
-      // the panel opens on a fresh listing of the tab it showed last
-      const next = { ...EMPTY, filter: listRef.current.filter };
+      // the panel opens on the tab it showed last, as it was, and looks again
+      const next = reopened(kept.current, listRef.current.filter);
       listRef.current = next;
       setList(next);
       fetchList();
@@ -185,7 +194,7 @@ export function useInbox({ enabled, open, notify = false, onOpen, onStatus }) {
 
   const setFilter = useCallback((filter) => {
     if (filter === listRef.current.filter) return;
-    const next = { ...EMPTY, filter };
+    const next = reopened(kept.current, filter);
     listRef.current = next;
     setList(next);
     fetchList();

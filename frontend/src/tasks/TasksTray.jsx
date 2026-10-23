@@ -7,6 +7,7 @@
 // same progress block the export and import dialogs show.
 import React from "react";
 import { Empty } from "../settings/SettingsKit";
+import ListMotion from "../shared/ui/ListMotion";
 import {
   ActivityIcon, AlertCircleIcon, CheckIcon, ClockIcon, CloudDownloadIcon, DatabaseIcon, DownloadIcon,
   ExportIcon, FileIcon, HardDriveIcon, ImportIcon, RefreshIcon, SearchIcon, SparklesIcon, StopIcon,
@@ -107,7 +108,7 @@ function TaskRow({ task, tasks, now, onOpen, onRetry }) {
     </>
   );
   return (
-    <div className={`taskRow ${task.state}`} data-guide="tasks.row" title={info ? `${title} — ${info}` : title}>
+    <div className={`taskRow ${task.state}`} data-motion-key={task.id} data-guide="tasks.row" title={info ? `${title} — ${info}` : title}>
       <StatusGlyph state={task.state} />
       <span className="taskKind" aria-hidden="true"><Icon size={14} /></span>
       {openable ? (
@@ -138,7 +139,11 @@ function TaskRow({ task, tasks, now, onOpen, onRetry }) {
 }
 
 // The panel under the button. `onOpen(task)`: bring back the window of a
-// task that has one; `onRetry(task)`: start the same work again.
+// task that has one; `onRetry(task)`: start the same work again. Its list
+// moves as it changes (ListMotion): a task that finishes glides past the
+// header to the top of Finished, one that comes fades in, one removed
+// leaves from where it stood while the rest close up, and a header goes
+// with its last row.
 export function TasksPanel({ tasks, onOpen, onRetry }) {
   const { watch } = tasks;
   React.useEffect(() => watch(), [watch]); // fresh progress while it is open
@@ -146,20 +151,33 @@ export function TasksPanel({ tasks, onOpen, onRetry }) {
   const active = rows.filter(isActive);
   const finished = rows.filter((task) => !isActive(task));
   const now = useNow(active.length > 0);
+  // Clear finished takes them all at once: leaving one by one, all
+  // together, they would say nothing.
+  const cleared = React.useRef(false);
+  React.useEffect(() => { cleared.current = false; });
   const row = (task) => <TaskRow key={task.id} task={task} tasks={tasks} now={now} onOpen={onOpen} onRetry={onRetry} />;
+  // the list's items in order: each header, then its rows
+  const keys = [
+    ...(rows.length ? [] : ["empty"]),
+    ...(active.length ? ["head:active", ...active.map((task) => task.id)] : []),
+    ...(finished.length ? ["head:finished", ...finished.map((task) => task.id)] : []),
+  ];
   return (
     <Popover className="tasksPopover" role="region" data-guide="tasks.panel" aria-label={t("Background tasks")}>
       <div className="popoverTitle tasksHead">
         <span>{t("Background tasks")}</span>
         {finished.length ? (
-          <button type="button" className="uiBtn ghost sm" data-guide="tasks.clear" onClick={() => tasks.clear().catch(() => {})}>{t("Clear finished")}</button>
+          <button type="button" className="uiBtn ghost sm" data-guide="tasks.clear"
+            onClick={() => { cleared.current = true; tasks.clear().catch(() => {}); }}>{t("Clear finished")}</button>
         ) : null}
       </div>
-      {!rows.length ? <Empty icon={ActivityIcon}>{t("Nothing running")}</Empty> : null}
-      {active.length ? <div className="popoverSection">{t("In progress")}</div> : null}
-      {active.map(row)}
-      {finished.length ? <div className="popoverSection">{t("Finished")}</div> : null}
-      {finished.map(row)}
+      <ListMotion keys={keys} leave="row" still={cleared.current}>
+        {!rows.length ? <div data-motion-key="empty"><Empty icon={ActivityIcon}>{t("Nothing running")}</Empty></div> : null}
+        {active.length ? <div className="popoverSection" data-motion-key="head:active">{t("In progress")}</div> : null}
+        {active.map(row)}
+        {finished.length ? <div className="popoverSection" data-motion-key="head:finished">{t("Finished")}</div> : null}
+        {finished.map(row)}
+      </ListMotion>
     </Popover>
   );
 }

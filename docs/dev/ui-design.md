@@ -1038,19 +1038,20 @@ is plain markup, and a first render never moves.
   (the library cards' snapshots, the Import and Export dialogs' Zotero
   mark); one already in the cache shows at once.
 - **`Reveal`** `ready k fallback`: where a first load lands (the share
-  popover's settings, Recently deleted's pages). While it waits it holds,
-  blank, the height its content last had under `k`, and its `fallback`
-  ("Loading…") fades in only after `--dur-slow`, so a load that answers
-  fast never shows it. Content that takes the
+  popover's settings, the Inbox's listing, Recently deleted's pages).
+  While it waits it holds, blank, the height its content last had under
+  `k`, and its `fallback` ("Loading…") fades in only after `--dur-slow`,
+  so a load that answers fast never shows it. Content that takes the
   place of a placeholder comes into focus as a pane does; content ready at
   once is plain. It is a column, and it never eases a height: what holds
   it changes size once, as the content lands, so it is not for a surface
   placed from its size (the thread popover), which would jump. Under
   reduced motion the fallback shows at once. Content already there is
   better than any placeholder: the share popover keeps a target's
-  settings while it asks for them again, and Recently deleted asks for
-  its list with its module, as the pointer or the focus reaches its
-  button, so it lands whole. Search results, which change with every
+  settings while it asks for them again, the Inbox opens each tab on the
+  listing it showed last and refreshes it in place, and Recently deleted
+  asks for its list with its module, as the pointer or the focus reaches
+  its button, so it lands whole. Search results, which change with every
   key, take none.
 - A switch's thumb travels with `--ease-pop`, its one overshoot.
 - **`.shakeNo`**, replayed by removing and adding it: a field that
@@ -1117,6 +1118,30 @@ Its rows and their children bodies are the items, with the backlinks and
 the tail under them; it plays only when the tree's shape changed
 (`sameShape`, `shared/model/blockModel.js`), so a keystroke or a fold
 moves nothing.
+
+The small lists are on it too. An empty state can be an item of its own
+(its key "empty"), so it fades in as the last item leaves; a section's
+header is one, so it goes with its last row.
+
+- **The Inbox**: its rows and day headers; a row read in Unread or
+  archived leaves (`"row"`) and a new one fades in. Each tab is a scope,
+  and Mark all read empties the tab at once (`still`).
+- **Background tasks**: a task that finishes glides past the header to
+  the top of Finished (with nothing else running, In progress goes with
+  it and Finished's header glides up), one removed leaves (`"row"`), and
+  Clear finished takes them all at once.
+- **The PDF margin**: a card grows in and shrinks away (`"card"`), and
+  `moves={false}`, since stackCards places the cards and their `top`
+  moves them on `--dur-slow`. A new comment stored hands its card to its
+  thread's still.
+- **The Comments window**: a thread rises in (`"rise"`) and one with a
+  new reply glides to the top. A list that fills from none (the page's
+  threads loading) comes in still.
+- **A thread's comments**: a reply rises in. A margin card opening to its
+  whole thread is another scope.
+
+The copies drop the ids the app and the tests find these items by
+(`data-inbox-id`; `data-card-for`, `data-thread-id`, `data-comment-id`).
 
 ## Block editor interactions
 

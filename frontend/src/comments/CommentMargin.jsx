@@ -5,10 +5,13 @@
 // (marginLayout.js stackCards, marginSlot.jsx createMarginStack). A card at rest shows its thread's first
 // comment, clamped, and how many replies follow; the active one is the
 // whole thread as the popover draws it (Thread.jsx), with its reply field.
-// A new comment opens as a card of its own, its field focused. Loaded on
-// first use (marginSlot.jsx).
+// A new comment opens as a card of its own, its field focused. A card
+// that comes grows in where it stands and one that goes shrinks away there
+// (ListMotion); the others move to their new places through their `top`.
+// Loaded on first use (marginSlot.jsx).
 import React, { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { t } from "../shared/i18n/i18n.js";
+import ListMotion from "../shared/ui/ListMotion";
 import { CommentComposer } from "./CommentComposer";
 import { COMMENT_POPUPS, SignInToComment, Thread, useLatestHandler } from "./Thread";
 import { isOpen, laterComments } from "./comments.js";
@@ -79,6 +82,15 @@ export default function CommentMargin({ margin, anchors, pageNumber, pageTop = 0
   }
   const active = activeKey(target, threadsByBlock);
   const hasActive = cards.some((c) => c.key === active);
+  // A new comment stored: its thread's card stands with the new card while
+  // it is on its way, then takes its place as the active one; neither comes
+  // in nor goes with motion.
+  const composing = cards.find((c) => c.compose)?.blockId || "";
+  const shown = useRef({ composing: "", keys: [] });
+  const was = shown.current;
+  const handoff = cards.some((c) => !c.compose && c.blockId === (composing || was.composing) && !was.keys.includes(c.key))
+    || (!!was.composing && !composing && cards.some((c) => c.key === active && c.blockId === was.composing));
+  useLayoutEffect(() => { shown.current = { composing, keys: cards.map((c) => c.key) }; });
 
   // Each card's height as drawn, measured before the paint and again when
   // it changes size (a thread opening, a field growing, a formula drawn).
@@ -155,18 +167,21 @@ export default function CommentMargin({ margin, anchors, pageNumber, pageTop = 0
 
   return (
     <div className={`commentMargin${hasActive ? " hasActive" : ""}`} data-comment-margin={pageNumber} style={{ left: `calc(100% + ${COLUMN_GAP}px)`, width: CARD_W }}>
-      {cards.map((c) => (
-        <div key={c.key} ref={boxRef(c.key)} className={`commentCard${c.key === active ? " active" : ""}`}
-          data-card-for={c.blockId} style={{ top: tops.get(c.key) ?? c.top }}
-          onKeyDown={(e) => { if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); close(); } }}>
-          {c.compose ? (
-            <NewCard blockId={c.blockId} margin={margin} onEscape={close} />
-          ) : (
-            <ThreadCard thread={c.thread} active={c.key === active} margin={margin}
-              onActivate={(threadId) => activate(c.blockId, threadId)} onEscape={close} />
-          )}
-        </div>
-      ))}
+      <ListMotion keys={cards.map((c) => c.key)} moves={false} enter="card" leave="card" still={handoff}
+        strip={["data-card-for", "data-thread-id", "data-comment-id"]}>
+        {cards.map((c) => (
+          <div key={c.key} ref={boxRef(c.key)} className={`commentCard${c.key === active ? " active" : ""}`}
+            data-motion-key={c.key} data-card-for={c.blockId} style={{ top: tops.get(c.key) ?? c.top }}
+            onKeyDown={(e) => { if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); close(); } }}>
+            {c.compose ? (
+              <NewCard blockId={c.blockId} margin={margin} onEscape={close} />
+            ) : (
+              <ThreadCard thread={c.thread} active={c.key === active} margin={margin}
+                onActivate={(threadId) => activate(c.blockId, threadId)} onEscape={close} />
+            )}
+          </div>
+        ))}
+      </ListMotion>
     </div>
   );
 }
