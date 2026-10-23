@@ -1056,20 +1056,36 @@ and what it holds travels with it.
   ("list-move"), so the item's own animation and transitions are left
   alone, and it carries `data-moving` meanwhile. One interrupted starts
   again from where it was seen.
-- **What comes fades in where it will rest**, a moment late, so the items
-  around it have opened its room first (`[data-entering="fade"]`). It
-  never travels, so a box read right after the change is its own. A new
-  item that holds one that was already there, such as the body a row was
-  just indented into, does not fade. While it fades the recipe stands in
-  for the item's own animation, so an item in such a list has no arrival
-  of its own.
-- **What goes is gone at once**, and the rest closes up over its place.
-- **Nothing moves** on a first render, in a new `scope` (another page),
-  for a change marked `still` (a load, another client's or the agent's
-  edit, a text box's measured size), while it is `off`, under reduced
-  motion, or while the list is out of sight. Only what is near the window
-  glides, and a change that moves more than 60 items or brings more than
-  `most` new ones does that part at once (a paste of many blocks).
+- **What comes comes in where it will rest** (`enter`, motion.css
+  `[data-entering]`). `"fade"`, the default, fades in a moment late, so the
+  items around it have opened its room first: an outline's row. `"rise"`
+  lifts `--move-sm` into place: a message, a tab. `"card"` grows in as a
+  surface does. A fading item never travels, so a box read right after the
+  change is its own. A new item that holds one that was already there,
+  such as the body a row was just indented into, does not come in. While
+  it comes in the recipe stands in for the item's own animation, so an
+  item in such a list has no arrival of its own.
+- **What goes leaves from where it stood** while the rest closes up over
+  its place (`leave`, `[data-leaving]`): `"row"` fades, `"tab"` sinks back,
+  `"card"` shrinks away. It goes through a still copy made while it stands
+  (`stillCopy`, leave.js), so the list renders the `keys` it holds, in
+  order, for ListMotion to see which went. The copy drops its key and the
+  attributes in `strip`, those app code finds the list's items by. Without
+  `leave` it is gone at once. Its holder should position it
+  (`position: relative`), so the copy is clipped and scrolled with the
+  list.
+- **Nothing moves** on a first render, in a new `scope` (another page,
+  another filter), for a change marked `still` (a load, another client's
+  or the agent's edit, a text box's measured size), while it is `off`,
+  under reduced motion, or while the list is out of sight. It plays only
+  when `shape` changed (by `same`; with neither, the `keys`). Only what is
+  near the window moves, and a change that moves more than 60 items or
+  brings or takes more than `most` (8) does that part at once (a paste of
+  many blocks, Mark all read). `moves={false}` leaves the places alone
+  where they transition already (the comment margin's cards).
+- **Boxes are the window's**, so an insert above the view that scroll
+  anchoring absorbs moves nothing. A strip that scrolls itself to an item
+  in the same change measures in its content instead (`space="content"`).
 - **A popup over the window stays put.** An item holding what matches
   `hold`, such as the caret's "/" or `[[` menu, stays still, since a
   moving ancestor would carry it off. A key typed or a paste in the list

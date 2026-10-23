@@ -208,12 +208,22 @@
    ListMotion (shared/ui/ListMotion.jsx) wraps a list without a box of its
    own. An item that moved is laid out at its new place at once and glides
    there from where it stood, on --dur-slow --ease-out (a Web Animation it
-   starts: [data-moving] marks the item meanwhile). A new item fades in
-   where it will rest, a moment late, so the items around it have opened
-   its room first. */
+   starts: [data-moving] marks the item meanwhile). A new item comes in
+   where it will rest: "fade" a moment late, so the items around it have
+   opened its room first (an outline's row); "rise" lifting --move-sm into
+   place (a message, a tab); "card" growing in as a surface does. One that
+   goes leaves through a still copy where it stood while the rest closes
+   up: "row" fades, "tab" sinks back, "card" shrinks away. */
 .listMotion { display: contents; }
 @keyframes list-in { 0%, 30% { opacity: 0; } }
+@keyframes list-rise { from { opacity: 0; translate: 0 var(--move-sm); } }
+@keyframes list-sink { to { opacity: 0; translate: 0 var(--move-sm); } }
 [data-entering="fade"] { animation: list-in var(--dur-slow); }
+[data-entering="rise"] { animation: list-rise var(--dur-slow) var(--ease-out); }
+[data-entering="card"] { animation: surface-in var(--dur-slow) var(--ease-out); }
+[data-leaving="row"] { animation: fade-out var(--dur-base) forwards; }
+[data-leaving="tab"] { animation: list-sink var(--dur-base) var(--ease-out) forwards; }
+[data-leaving="card"] { animation: surface-out var(--dur-base) var(--ease-out) forwards; }
 
 /* A chevron that turns with what it opens (Chevron): a right-pointing
    one turns down, a down-pointing one flips up. A text caret (▸) turns

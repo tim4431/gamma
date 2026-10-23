@@ -4,7 +4,7 @@
 // and what a list's change glides (ListMotion).
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { arriving, listGlides, longestMs, reducedMotion, textSplit } from "../src/shared/ui/motion.js";
+import { arriving, listGlides, longestMs, reducedMotion, sameKeys, textSplit } from "../src/shared/ui/motion.js";
 
 test("textSplit: the letters two labels share at each end stay; the middle changes", () => {
   assert.deepEqual(textSplit("Copy", "Copied"), { head: "Cop", from: "y", to: "ied", tail: "" });
@@ -106,4 +106,13 @@ test("listGlides: an item held still stays, and what it holds is not carried", (
 
 test("reducedMotion: false where the setting can't be read", () => {
   assert.equal(reducedMotion(), false);
+});
+
+test("sameKeys: the same keys in the same order", () => {
+  assert.equal(sameKeys(["a", "b"], ["a", "b"]), true);
+  assert.equal(sameKeys(["a", "b"], ["b", "a"]), false);
+  assert.equal(sameKeys(["a"], ["a", "b"]), false);
+  assert.equal(sameKeys(null, ["a"]), false);
+  const k = ["a"];
+  assert.equal(sameKeys(k, k), true);
 });

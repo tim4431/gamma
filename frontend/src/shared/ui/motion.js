@@ -28,8 +28,8 @@ export const longestMs = (list) => Math.max(0, ...String(list).split(",").map((t
 
 // The arrivals that move or size what they hold (motion.css): a surface
 // growing in, a toast rising, a body opening, a list's item gliding to
-// its new place (ListMotion).
-const MOVING_ARRIVALS = new Set(["surface-in", "rise-in", "collapse-open", "list-move"]);
+// its new place or rising into it (ListMotion).
+const MOVING_ARRIVALS = new Set(["surface-in", "rise-in", "collapse-open", "list-move", "list-rise"]);
 
 // The arrivals under way around `el`: those running on it and on what
 // holds it (the popover growing in around a row). A box read before they
@@ -82,4 +82,12 @@ export function listGlides(items, { top = -Infinity, bottom = Infinity, far = In
     carried[i] = { x: dx, y: dy };
   });
   return { moves: moves.length > moving ? [] : moves, enters: enters.length > entering ? [] : enters };
+}
+
+// Whether two lists of keys are the same, in the same order.
+export function sameKeys(a, b) {
+  if (a === b) return true;
+  if (!a || !b || a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+  return true;
 }

@@ -81,6 +81,34 @@ export function stillCopy(node) {
   return { copy, scrolls };
 }
 
+// Where `node` stands, read while it still does: what holds it, what
+// follows it, and its box in the window and in what positions it. With
+// it, standBack puts a copy of `node` there once `node` has gone.
+export function standing(node) {
+  return {
+    parent: node.parentNode, next: node.nextSibling, seen: node.getBoundingClientRect(),
+    left: node.offsetLeft, top: node.offsetTop, width: node.offsetWidth, height: node.offsetHeight,
+  };
+}
+
+// Puts `copy` where `node` stood (`at`, standing(node)) without holding its
+// room: what came after it closes up at once. What holds it may have moved
+// meanwhile (a stack hung from the window's bottom shrinks toward it), so
+// once in, the copy is put back where it was seen. False when its place
+// went with it.
+export function standBack(copy, at) {
+  if (!at.parent.isConnected) return false;
+  Object.assign(copy.style, {
+    position: "absolute", boxSizing: "border-box", margin: "0",
+    left: `${at.left}px`, top: `${at.top}px`, width: `${at.width}px`, height: `${at.height}px`,
+  });
+  at.parent.insertBefore(copy, at.next?.parentNode === at.parent ? at.next : null);
+  const now = copy.getBoundingClientRect();
+  copy.style.left = `${at.left + at.seen.left - now.left}px`;
+  copy.style.top = `${at.top + at.seen.top - now.top}px`;
+  return true;
+}
+
 // Leaves `node`, which React is about to take out of the page, through a
 // copy that plays `kind`'s way out. Called while `node` still stands; the
 // copy goes in once it has gone, in a microtask, so before the browser
@@ -92,33 +120,20 @@ export function leave(node, kind) {
   if (!node?.isConnected || reducedMotion() || node.ownerDocument.hidden) return;
   const style = getComputedStyle(node);
   if (style.visibility === "hidden" || !node.getClientRects().length) return;
-  const parent = node.parentNode, next = node.nextSibling;
   const arrived = arrivals.get(kind) || 0;
   const { copy, scrolls } = stillCopy(node);
   copy.dataset.leaving = kind;
   // A surface in the flow (a toast in its stack) leaves from where it
-  // stood without holding its room: the ones after it close up at once.
-  // Its stack may move as it goes (one hung from the window's bottom
-  // shrinks toward it), so once in, the copy is put back where it was seen.
+  // stood without holding its room (standBack); one over the page keeps
+  // its own place.
+  const at = standing(node);
   const inFlow = style.position === "static" || style.position === "relative";
-  const seen = inFlow ? node.getBoundingClientRect() : null;
-  if (inFlow) {
-    Object.assign(copy.style, {
-      position: "absolute", boxSizing: "border-box", margin: "0",
-      left: `${node.offsetLeft}px`, top: `${node.offsetTop}px`,
-      width: `${node.offsetWidth}px`, height: `${node.offsetHeight}px`,
-    });
-  }
   add(pending, kind, 1);
   queueMicrotask(() => {
     add(pending, kind, -1);
-    if (node.isConnected || !parent.isConnected || (arrivals.get(kind) || 0) !== arrived) return;
-    parent.insertBefore(copy, next?.parentNode === parent ? next : null);
-    if (seen) {
-      const at = copy.getBoundingClientRect();
-      copy.style.left = `${parseFloat(copy.style.left) + seen.left - at.left}px`;
-      copy.style.top = `${parseFloat(copy.style.top) + seen.top - at.top}px`;
-    }
+    if (node.isConnected || !at.parent.isConnected || (arrivals.get(kind) || 0) !== arrived) return;
+    if (inFlow) standBack(copy, at);
+    else at.parent.insertBefore(copy, at.next?.parentNode === at.parent ? at.next : null);
     for (const [el, top, left] of scrolls) { el.scrollTop = top; el.scrollLeft = left; }
     if (!leaving.has(kind)) leaving.set(kind, new Set());
     leaving.get(kind).add(copy);
