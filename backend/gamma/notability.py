@@ -266,6 +266,7 @@ class Media:
     latex: str = ""                # math
     rgba: tuple | None = None
     picture: str | None = None     # picture: its image below the note's folder; None when missing
+    animation: str | None = None   # picture: an animated GIF's animation below the note's folder
     crop: tuple | None = None      # picture: FigureCropRectKey, in source pixels
     caption: str = ""              # picture: captionFieldText when isCaptionEnabled
 
@@ -910,8 +911,10 @@ class _Reader:
         note.media = [media for _z, _order, media in found]
 
     def _picture(self, obj: dict, media: Media) -> bool:
-        """A picture's image, crop, flips and caption; False when it names
-        no image at all (counted as unreadable)."""
+        """A picture's image, crop, flips and caption, and an animated GIF's
+        animation (``isGif``: ``Assets/<assetsIdKey>/media.gif``, beside the
+        still frame its image is); False when it names no image at all
+        (counted as unreadable)."""
         arch, note = self.arch, self.note
         figure = arch.get(obj, "figure")
         snapshot = arch.get(arch.get(figure, "FigureBackgroundObjectKey"), "kImageObjectSnapshotKey")
@@ -926,6 +929,8 @@ class _Reader:
         if key is None:
             self._missing(rel)
         media.picture = key
+        ident = self._name(obj.get("assetsIdKey")) if arch.flag(obj.get("isGif")) else None
+        media.animation = self.members.resolve(f"Assets/{ident}/media.gif") if ident else None
         media.crop = parse_numbers(arch.string(arch.get(figure, "FigureCropRectKey")), 4)
         media.flip_h = arch.flag(obj.get("isFlippedHorizontal"))
         media.flip_v = arch.flag(obj.get("isFlippedVertical"))

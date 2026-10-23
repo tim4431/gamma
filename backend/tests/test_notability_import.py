@@ -263,6 +263,26 @@ def test_a_turned_and_cropped_picture_is_stored_turned(accounts, monkeypatch):
     assert picture.size[0] / picture.size[1] == pytest.approx((w * c + h * s) / (w * s + h * c), rel=0.05)
 
 
+def test_an_animated_gif_shown_whole_comes_in_moving(accounts):
+    """An animated GIF's still frame is its image and its animation is
+    Assets/<assetsIdKey>/media.gif: shown whole, the animation is stored as
+    it came; cropped, the still frame is, cropped; without the animation,
+    the still frame as it came."""
+    from PIL import Image
+    owner, ws = accounts["nbi_owner"], workspace_of("nbi_owner")
+    still, moving = fx.jpeg(24, 16), fx.gif(48, 32, frames=3)
+    shown = {"kind": "picture", "origin": (10, 10), "size": (48, 32), "path": "Images/Image 5.jpg", "gif": "A1"}
+    pictures = [shown, {**shown, "origin": (100, 10), "size": (24, 16), "crop": (0, 0, 12, 8)},
+                {**shown, "origin": (200, 10), "gif": "Gone"}]
+    result = imported(owner, note("Animated picture", media=pictures,
+                                  files={"Images/Image 5.jpg": still, "Assets/A1/media.gif": moving}), "Gif.note")
+    assert result["pictures_imported"] == 3 and not reasons(result)
+    boxes = subtree(owner, result["pages"][0]["id"])["children"][0]["children"]
+    whole, cropped, alone = (stored(ws, b["content"].split("(")[1][:-1]) for b in boxes)
+    assert whole == moving and alone == still
+    assert (Image.open(io.BytesIO(cropped)).format, Image.open(io.BytesIO(cropped)).size) == ("JPEG", (12, 8))
+
+
 def test_a_turned_picture_stays_within_its_longest_side(monkeypatch):
     """Pillow's expanded size rounds the turned corners outward, up to 2 px
     past their extent, and the fit leaves room for it: a photo of
@@ -561,7 +581,7 @@ def test_a_picture_file_shown_over_and_over_is_read_a_few_times(accounts, monkey
     monkeypatch.setattr(fx, "media_object", one_object)
     picture = {"kind": "picture", "origin": (10, 10), "size": (40, 40), "path": "Images/a.png", "crop": (0, 0, 20, 20)}
     decoded, bytes_of = [], ni.picture_bytes
-    monkeypatch.setattr(ni, "picture_bytes", lambda data, media: decoded.append(1) or bytes_of(data, media))
+    monkeypatch.setattr(ni, "picture_bytes", lambda *args: decoded.append(1) or bytes_of(*args))
     result = imported(owner, note("One picture named often", media=[picture] * 9,
                                   files={"Images/a.png": fx.png(40, 40)}), "Often.note")
     assert result["pictures_imported"] == ni.MAX_PICTURE_USES == len(decoded)

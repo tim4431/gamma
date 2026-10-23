@@ -268,7 +268,10 @@ Four kinds [V]:
   the turn; `isFlippedHorizontal`/`Vertical` from 15.3 [V]. The order of
   the flips and the turn is not documented [I: flip, then turn].
 - An animated GIF's still frame is in `Images/`, the animation in
-  `Assets/<id>/media.gif`.
+  `Assets/<id>/media.gif`: its object says `isGif` and names `<id>` as its
+  `assetsIdKey` (every picture has one; only a GIF's names a folder), its
+  crop in the still frame's pixels; `remoteUrl` is where it came from [V on
+  the sample, whose 352 × 240 GIF has a 220 × 150 still].
 
 ## Audio and the stroke timeline
 

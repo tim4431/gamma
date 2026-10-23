@@ -119,8 +119,9 @@ def test_the_example_s_shapes_and_groups_come_in_whole(example):
 def test_the_example_imports_as_notability_shows_it(example):
     """A notebook of two ruled letter sheets with its 871 strokes (699
     curves, 170 shapes, 2 stickies) and 8 pictures, the photo cropped as
-    Notability crops it and the turned ones stored turned, and the text
-    typed on its pages as the page's notes: nothing left out."""
+    Notability crops it, the turned ones stored turned and the GIF as its
+    animation, and the text typed on its pages as the page's notes:
+    nothing left out."""
     ws, report = imported(EXAMPLE)
     assert (report["pages_created"], report["strokes_imported"], report["pictures_imported"]) == (1, 871, 8)
     assert report["warnings"] == [] and report["skipped"] == []
@@ -137,6 +138,8 @@ def test_the_example_imports_as_notability_shows_it(example):
     assert (photo.format, photo.size) == ("JPEG", (2250, 1550))  # FigureCropRectKey of a 2250 × 3000 photo
     assert all(p.format == "PNG" and p.mode == "RGBA" and p.getpixel((0, 0))[3] == 0 and max(p.size) <= 2048
                for p in turned)
+    (moving,) = [p for p in pictures[1] if p.format == "GIF"]
+    assert (moving.size, moving.n_frames) == ((352, 240), 18)  # its animation, not the 220 × 150 still frame
     notes = [b["content"] for b in sorted(blocks, key=lambda b: b["position"]) if b["parent_id"] == page_id
              and "sheet" not in b["properties"]]
     assert notes == ["https://github.com/nokcha0/Notability-notes-converter", "DIFFERENT **FONT**",

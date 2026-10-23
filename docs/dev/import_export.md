@@ -604,7 +604,9 @@ curve becomes one gamma-ink v2 stroke ([handwriting.md](handwriting.md)
   unless it is cropped, flipped, turned or stretched; then Pillow applies
   the EXIF orientation, the crop, the flips, the stretch and the turn, and a
   turned picture is a PNG with transparent corners, at most 2,048 px on its
-  longer side (`picture_bytes`).
+  longer side (`picture_bytes`). An animated GIF's image is its still
+  frame: shown whole, the GIF itself comes in its place, so it moves; a
+  cropped, flipped or turned one stays its still frame, so done.
 - Each recording (`.m4a`, listed by `Recordings/library.plist`) becomes a
   recording block after everything else ([recording.md](recording.md)): one
   segment, its length from the file's movie header
@@ -726,8 +728,9 @@ lists the upload's notes and, not imported, its other files.
   template paper comes in as plain paper of its colour.
 - Not kept: a text box's turn, alignment, fonts, per-run colours and
   underline; a sticky's lines; Notability's pencil shading and dash
-  lengths (Gamma draws its own); an animated GIF's animation (its still
-  frame comes in); where a caption is drawn; note links and tags; the
+  lengths (Gamma draws its own); the animation of a GIF cropped, flipped
+  or turned (its still frame comes in); where a caption is drawn; note
+  links and tags; the
   handwriting Notability recognised (`HandwritingIndex`).
 - A text box or picture that overlaps a sticky is drawn under it, since
   boxes lie under the ink layer.
