@@ -1,6 +1,6 @@
 ---
 name: release
-description: Release the desktop app and the browser extension from main by dispatching desktop.yml → GitHub Release v<next>, which carries the installers, the Gamma Connector zip and the AI plugins. A merge to main never does this on its own. Not the iPad app — that is `release-ipad` (TestFlight).
+description: Release the desktop app, the browser extension and the iPad app from main by dispatching desktop.yml → GitHub Release v<next>, which carries the installers, the Gamma Connector zip and the AI plugins, then a TestFlight marker on main for the iPad. A merge to main never does this on its own. A TestFlight build alone, between releases, is `release-ipad`.
 ---
 
 # Release from main
@@ -13,8 +13,10 @@ publishes the GitHub Release. Nothing is bumped or tagged by hand
 `desktop/package.json`'s version when that floor is higher — raise it for
 a minor/major and merge first). The browser extension has no release of
 its own: its zip rides on the same release with the same version. The iPad
-app is not on this release: it goes to TestFlight through a marked commit
-merged to `main` (the `release-ipad` skill).
+app ships with it too: once the release is out, the publish job's last
+step pushes an empty commit carrying the next `ipad-test-release-NNN`
+marker to `main`, and the Mac mini builds that for TestFlight. A dry run
+sends nothing; `release-ipad` is for a TestFlight build between releases.
 
 **Argument**: none needed. Optional `--dry` builds without publishing
 (`-f publish=false`), `--prerelease` marks the release as a pre-release.
@@ -53,4 +55,8 @@ merged to `main` (the `release-ipad` skill).
    zip to the Chrome Web Store (`gh run list --workflow chrome-store.yml
    --limit 1` once the release is out; a notice says when an earlier
    version is still in review and this one was skipped, and the
-   workflow's daily run submits it once that review is over).
+   workflow's daily run submits it once that review is over). Last, the
+   `Send the iPad app to TestFlight` step's notice names the marker it
+   pushed (`git log origin/main -1` shows the commit). When it warns that
+   `main` moved past the release since the dispatch, it pushed none: offer
+   `release-ipad`.

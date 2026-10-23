@@ -185,7 +185,8 @@ changes an iOS wheel needs, each commented there; why each was made is in
   an unsigned device build on macOS: `.github/workflows/ipad.yml`
   ([docs/dev/github_actions.md](../docs/dev/github_actions.md#ipadyml)).
 - TestFlight: a Mac mini signs and uploads a build for every commit on
-  `main` whose message carries a new `ipad-test-release-NNN` marker
+  `main` whose message carries a new `ipad-test-release-NNN` marker; every
+  desktop release from `main` pushes one
   ([docs/dev/github_actions.md](../docs/dev/github_actions.md#the-ipad-testflight-release)).
 
 What is not built yet (background running, a store release) is listed in

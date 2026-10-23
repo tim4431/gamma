@@ -4,9 +4,11 @@ Nine workflows live in `.github/workflows/`. A merge to `main` publishes
 only the Docker image and, when the site or its inputs changed, the website. The desktop app, with the browser extension on the same
 release, is released by dispatching `desktop.yml` — the `release` skill
 does that — and nothing is bumped or tagged by hand: versions are computed
-from the tags. The iPad app is released outside Actions: a Mac mini watches
-`main` for a commit message carrying an `ipad-test-release-NNN` marker and
-uploads a TestFlight build for it ([below](#the-ipad-testflight-release)). The
+from the tags. The iPad app is built and signed outside Actions: a Mac mini
+watches `main` for a commit message carrying an `ipad-test-release-NNN`
+marker and uploads a TestFlight build for it. Every desktop release from
+`main` pushes such a marker
+([below](#the-ipad-testflight-release)). The
 account server (`cloud/`) and the website (`sites/`) are separate from all
 of that: each has its own check and its own publish (`cloud.yml`,
 `site.yml`), dispatched from any branch (the `build-cloud` / `build-site`
@@ -20,7 +22,7 @@ Watchtower (the `update-demo-server`, `update-share-host` and
 | Workflow | File | Runs when | Produces |
 |---|---|---|---|
 | `check` | `check.yml` | every pull request to `main`, except one that only touches the account server or the website | pass/fail: brand asset consistency, the iPad's pins resolved, backend pytest, frontend unit tests + build, the browser suite (two shards on two runners, 3 workers each), extension unit tests + zip (~5 min) |
-| `desktop` | `desktop.yml` | manual dispatch only (`release` skill) | Windows installer, macOS dmg + zip, Debian/Ubuntu deb, the update-feed files, the browser extension's `gamma-connector-<version>.zip` → GitHub Release `v<version>`; the MSIX artifact + a Microsoft Store submission when the secrets exist; a Docker tag `<version>` |
+| `desktop` | `desktop.yml` | manual dispatch only (`release` skill) | Windows installer, macOS dmg + zip, Debian/Ubuntu deb, the update-feed files, the browser extension's `gamma-connector-<version>.zip` → GitHub Release `v<version>`; the MSIX artifact + a Microsoft Store submission when the secrets exist; a Docker tag `<version>`; from `main`, an empty commit on `main` with the next `ipad-test-release-NNN` marker (TestFlight) |
 | `chrome-store` | `chrome-store.yml` | dispatched by the desktop release (not a pre-release) when the `CWS_*` variables exist; daily at 09:17 UTC for a release the store skipped; manual dispatch with a tag | the release's Connector zip uploaded to the Chrome Web Store and submitted for review (API V2) |
 | `docker` | `docker.yml` | every push to `main` except one that only touches the account server or the website; dispatched by the desktop release with a version; manual dispatch from any branch (a `sha-<short>` image only) | `ghcr.io/tim4431/gamma:sha-<short>` on every run; `:latest` only from `main`; `:<version>` and `:<major.minor>` when dispatched with a version; linux/amd64 + arm64 |
 | `cloud` | `cloud.yml` | a pull request touching `cloud/`; manual dispatch from any branch (`update-account-server` skill) | pass/fail: the account server's pytest; when dispatched and green, `ghcr.io/tim4431/gamma-cloud:latest` + `:sha-<short>` (`cloud/Dockerfile`, amd64) |
@@ -57,8 +59,10 @@ release skill ───▶ desktop.yml  meta: version = max(package.json, newest
                         publish: Release v<version> (notes = commits since previous tag)
                         └─▶ dispatch docker.yml -f version   ─▶ ghcr :<version> :<major.minor>
                         └─▶ dispatch chrome-store.yml -f tag ─▶ Chrome Web Store review (if CWS_* variables)
+                        └─▶ push an empty commit marked ipad-test-release-NNN to main
+                            ─▶ the Mac mini: TestFlight (below)
                         Windows leg: MSIX → msstore publish (if PARTNER_CENTER_* secrets)
-release-ipad ────▶ a commit marked ipad-test-release-NNN merged to main
+release-ipad ────▶ a commit marked ipad-test-release-NNN merged to main  ← TestFlight between releases
                    └─▶ the Mac mini (polls main every minute): build, test, sign → TestFlight
 ```
 
@@ -267,6 +271,15 @@ the app, runs the tests, signs it and uploads it to TestFlight. Nothing is
 dispatched by hand, and nothing is submitted to the App Store: that step
 stays manual in App Store Connect.
 
+Every desktop release from `main` sends one. The `desktop` publish job's
+last step pushes an empty commit, `Gamma <version> to TestFlight
+(ipad-test-release-NNN)` with the next number, on top of the released
+commit. A push with `GITHUB_TOKEN` starts no workflow, so `docker.yml` and
+`site.yml` do not run again. `main` then has a commit `dev` lacks; it
+changes no file, so the next merge from `dev` is unaffected. When `main`
+has moved past the released commit since the dispatch, the step only
+warns: the iPad would get code the release lacks.
+
 - The three-digit `NNN` is a trigger ID, not the app's version
   (`CFBundleShortVersionString` comes from `ipad/project.yml`). Each
   release takes a new number; a marker that was already used is ignored,
@@ -275,7 +288,8 @@ stays manual in App Store Connect.
   kept in the squashed commit's title or body. The `merge` skill merges
   with a merge commit, which keeps it.
 - The `release-ipad` skill finds the next number from `main`'s history and
-  walks through the commit and the merge.
+  walks through the commit and the merge: a TestFlight build between
+  desktop releases, or after a release whose step warned.
 
 ## `docker.yml`
 

@@ -960,9 +960,10 @@ Only an iPad can show these, and none has been run yet:
   and is not built.
 - **A store release.** TestFlight builds exist: a Mac mini signs and
   uploads one for every commit on `main` whose message carries a new
-  `ipad-test-release-NNN` marker
-  ([github_actions.md](github_actions.md#the-ipad-testflight-release); the
-  `release-ipad` skill). CI itself signs and uploads nothing, the App
+  `ipad-test-release-NNN` marker. Every desktop release from `main`
+  pushes one, and the `release-ipad` skill sends one between releases
+  ([github_actions.md](github_actions.md#the-ipad-testflight-release)).
+  CI itself signs and uploads nothing, the App
   Store submission is not automated, and App Review has not been tried
   ([research/ipad-web-shell.md](../research/ipad-web-shell.md), risk 9).
 - **PyMuPDF on a device.** The framework step in `project.yml` was

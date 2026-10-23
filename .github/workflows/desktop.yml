@@ -18,6 +18,9 @@
 # extension (extension/, zipped with the release version) and the AI
 # assistant plugins; the publish job then dispatches chrome-store.yml, which
 # submits that zip to the Chrome Web Store, when the CWS_* variables exist.
+# Last, a release from main pushes an empty commit carrying the next
+# ipad-test-release-NNN marker to main, which sends the iPad app to
+# TestFlight (the Mac mini, docs/dev/github_actions.md).
 #
 # Every installer bundles the frozen backend (PyInstaller) + built frontend,
 # so a released app is fully self-contained — no Python or Node needed.
@@ -616,3 +619,29 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ needs.meta.outputs.tag }}
         run: gh workflow run chrome-store.yml --ref "$TAG" -f "tag=$TAG"
+      # The iPad app ships with every release from main. The Mac mini that
+      # signs it polls main for a commit message carrying an
+      # ipad-test-release-NNN marker it has not seen (docs/dev/github_actions.md),
+      # so the release puts an empty commit with the next one on top of the
+      # released commit. Pushed with GITHUB_TOKEN, it starts no workflow. When
+      # main has moved past the release since the dispatch, the iPad would get
+      # code the release lacks: no marker then (the release-ipad skill sends
+      # one by hand).
+      - name: Send the iPad app to TestFlight
+        if: github.ref == 'refs/heads/main'
+        shell: bash
+        env:
+          VERSION: ${{ needs.meta.outputs.version }}
+        run: |
+          git fetch -q origin main
+          if [ "$(git rev-parse origin/main)" != "$GITHUB_SHA" ]; then
+            echo "::warning::main moved past $GITHUB_SHA since the dispatch: no TestFlight marker; run the release-ipad skill"
+            exit 0
+          fi
+          last=$(git log origin/main --format=%B | grep -oE 'ipad-test-release-[0-9]{3}' | sort -u | tail -1 || true)
+          n=1; [ -n "$last" ] && n=$((10#${last##*-} + 1))
+          marker=$(printf 'ipad-test-release-%03d' "$n")
+          git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+            commit --allow-empty -q -m "Gamma $VERSION to TestFlight ($marker)"
+          git push -q origin HEAD:main
+          echo "::notice::$marker on main: the Mac mini builds the iPad app for TestFlight"
