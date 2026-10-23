@@ -2809,11 +2809,20 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     ? scopedAiModels[0].id
     : chatModel;
 
+  // The masked key list the chat's setup card read (ChatDock onSetupInfo):
+  // the one Connections shows, so a tile's connect dialog opens on it with
+  // Settings while the pane reads its own.
+  const chatKeysInfoRef = useRef(null);
   async function loadAiKeys() {
     aiEditor.close();
-    setAiKeysInfo(null);
     setAiKeyTests({});
     setAiKeyUsage({});
+    const fromChat = pendingAiFormRef.current?.service ? chatKeysInfoRef.current : null;
+    setAiKeysInfo(fromChat);
+    if (fromChat) {
+      openAiForm(pendingAiFormRef.current, fromChat);
+      pendingAiFormRef.current = null;
+    }
     try {
       const info = await apiJson(`${API}/ai/settings`);
       setAiKeysInfo(info);
@@ -2891,9 +2900,11 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     return () => clearTimeout(timer);
   }, [authUser?.user, shareMode]);
   // Entering the AI panes from elsewhere refetches the masked key list;
-  // moving between them keeps it (their edits refresh it themselves).
+  // moving between them keeps it (their edits refresh it themselves). It
+  // runs before the frame is painted, so a form left open on an earlier
+  // visit never shows again.
   const prevSettingsPaneRef = useRef(null);
-  useEffect(() => {
+  useLayoutEffect(() => {
     const cameFrom = prevSettingsPaneRef.current;
     prevSettingsPaneRef.current = settingsOpen;
     if (isAiPane(settingsOpen) && !isAiPane(cameFrom) && authUser?.user && !shareMode) loadAiKeys();
@@ -9935,7 +9946,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           dictationModel={dictationModel} dictationLang={dictationLang}
           chatSystem={chatSystem} aiInfo={aiInfo} aiProvider={aiProvider}
           chatContextChars={chatContextChars} setChatContextChars={setChatContextChars} multiContextChars={multiContextChars}
-          openAiKeysEditor={openAiKeysEditor}
+          openAiKeysEditor={openAiKeysEditor} preloadSettings={SettingsDialog.preload}
+          onSetupInfo={(info) => { chatKeysInfoRef.current = info; }}
           focusSignal={chatFocusSignal}
           openSettings={openSettingsPane}
           isAdmin={!!authUser?.is_admin}
@@ -11377,7 +11389,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         profileSync={profileSync}
         notices={notices}
         onPaneChange={setSettingsOpen}
-        onClose={() => setSettingsOpen(null)}
+        onClose={() => { aiEditor.close(); setSettingsOpen(null); }}
         papers={{
           theme,
           setTheme,

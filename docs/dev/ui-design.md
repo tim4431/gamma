@@ -593,6 +593,14 @@ or raise the unsaved-edits question. Every `reportOverlay` dialog uses it
 move-block dialogs, the chat's page picker); Quick Open closes on its own
 `mousedown` check instead.
 
+A dialog takes the focus as it opens, unless something inside it holds it
+already, and gives it back on close to what had it as it opened. When
+Settings opens with an editor dialog in it (the chat's AI tiles open it on
+the connect dialog), the editor holds the focus, Escape closes the editor
+alone and Settings has the focus back; a second Escape closes Settings and
+the tile has it. Closing Settings closes its editor too, so the next visit
+to the pane never shows the one left open.
+
 Destructive affordances all read from one set of tokens — `--danger`,
 `--danger-bg`, `--danger-border` — so the solid confirm button
 (`.uiBtn.primary.danger`), the outlined one (`.uiBtn.danger`) and a menu's

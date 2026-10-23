@@ -370,9 +370,10 @@ function SelChip({ kind, icon, label, note, cut, auto = false, text, title, onRe
 // (settings/providerEditor.js aiServiceTiles over GET /api/ai/settings). A tile
 // opens Settings → Connections with the connect dialog set to that service.
 // An account that can't store keys (a guest) can only ask for a shared one;
-// an admin may also share one with the whole server.
-function ChatSetupCard({ info, isAdmin, onConnect, openSettings }) {
-  const tiles = info && !info.failed ? aiServiceTiles(info, { long: true }) : [];
+// an admin may also share one with the whole server. `intent`: the handlers
+// that fetch Settings as the pointer or the focus reaches what opens it.
+function ChatSetupCard({ info, isAdmin, onConnect, openSettings, intent }) {
+  const tiles = info.failed ? [] : aiServiceTiles(info, { long: true });
   return (
     <div className="chatSetup" data-guide="chat.setup">
       <span className="chatSetupIcon" aria-hidden="true"><SparklesIcon size={20} /></span>
@@ -380,15 +381,15 @@ function ChatSetupCard({ info, isAdmin, onConnect, openSettings }) {
       <p className="chatSetupText">
         {t("Ask about the paper you are reading and get answers that cite the page they come from. The assistant can also search, summarize and organize your library.")}
       </p>
-      {info?.failed ? (
-        <button type="button" className="uiBtn primary chatSetupRetry" onClick={() => onConnect()}>{t("Set up AI…")}</button>
-      ) : info && !info.can_edit ? (
+      {info.failed ? (
+        <button type="button" className="uiBtn primary chatSetupRetry" {...intent} onClick={() => onConnect()}>{t("Set up AI…")}</button>
+      ) : !info.can_edit ? (
         <p className="chatSetupText">{t("No AI service is shared on this server — ask your administrator.")}</p>
-      ) : info ? (
+      ) : (
         <>
           <div className="chatSetupTiles" role="group" aria-label={t("Connect an AI service")}>
             {tiles.map((tile) => (
-              <button key={tile.value} type="button" className="chatSetupTile" onClick={() => onConnect(tile.value)}>
+              <button key={tile.value} type="button" className="chatSetupTile" {...intent} onClick={() => onConnect(tile.value)}>
                 <span className="chatSetupTileName">{tile.label}</span>
                 <span className="chatSetupTileHint">{tile.hint}</span>
               </button>
@@ -396,11 +397,11 @@ function ChatSetupCard({ info, isAdmin, onConnect, openSettings }) {
           </div>
           <p className="chatSetupNote">{t("Keys are stored on this server and never shown again. Pick one to connect — it takes about a minute.")}</p>
         </>
-      ) : null}
+      )}
       {isAdmin && openSettings ? (
         <p className="chatSetupNote">
           {t("Or share one with everyone on this server: {link}", {
-            link: <button type="button" className="chatEmptyLink" onClick={() => openSettings("server")}>{t("Settings › Server › Shared AI provider")}</button>,
+            link: <button type="button" className="chatEmptyLink" {...intent} onClick={() => openSettings("server")}>{t("Settings › Server › Shared AI provider")}</button>,
           })}
         </p>
       ) : null}
@@ -439,7 +440,12 @@ export default function ChatDock({
   // that connection's form (an error card's "Update key", the login check's
   // Fix…). focusSignal: bumped by App when a connection made from the setup
   // card is ready — the message box takes the focus once the chat is enabled.
-  aiInfo, aiProvider, openAiKeysEditor, openSettings, isAdmin = false, focusSignal = 0,
+  // preloadSettings fetches the Settings module ahead, as the pointer or the
+  // focus reaches a button that opens it, so Settings opens with the click;
+  // onSetupInfo hands App the masked key list the setup card read (GET
+  // /api/ai/settings, the one Connections shows), so a tile's connect dialog
+  // can open with Settings instead of a round trip later.
+  aiInfo, aiProvider, openAiKeysEditor, openSettings, preloadSettings, onSetupInfo, isAdmin = false, focusSignal = 0,
   aiHealth, dismissAiHealth,
   openPopover, setOpenPopover,
   setStatus, askConfirm,
@@ -490,17 +496,24 @@ export default function ChatDock({
   // No AI connected (known once /api/ai/models answered): the setup card
   // takes the empty state, the composer is disabled and the header's tools
   // go — a send could only fail. The card's tiles come from the settings
-  // payload, fetched only then.
+  // payload, read alongside /api/ai/models while that is unknown (and again
+  // whenever the AI goes off), so the card lands whole. Until the chat knows
+  // which it is (`aiKnown`), the window is a plain frame: no header tools,
+  // no empty-state text.
   const aiOff = !readOnly && !!aiInfo && !aiInfo.enabled;
+  const wantsSetup = !readOnly && !aiInfo?.enabled;
   const [setupInfo, setSetupInfo] = useState(null);
   useEffect(() => {
-    if (!aiOff) return undefined;
+    if (!wantsSetup) return undefined;
     let live = true;
     apiJson(`${API}/ai/settings`)
-      .then((info) => { if (live) setSetupInfo(info); })
+      .then((info) => { if (live) { setSetupInfo(info); onSetupInfo?.(info); } })
       .catch(() => { if (live) setSetupInfo({ failed: true }); });
     return () => { live = false; };
-  }, [aiOff]);
+  }, [wantsSetup]);
+  const aiKnown = readOnly || (!!aiInfo && (aiInfo.enabled || !!setupInfo));
+  const settingsIntent = preloadSettings
+    ? { onPointerEnter: preloadSettings, onPointerDown: preloadSettings, onFocus: preloadSettings } : {};
   const composerRef = useRef(null);
   const focusPendingRef = useRef(false);
   useEffect(() => { if (focusSignal) focusPendingRef.current = true; }, [focusSignal]);
@@ -1593,7 +1606,8 @@ export default function ChatDock({
       connection: openEntry, new_chat: latest ? newChat : null,
     }[copy.fix];
     if (fix && !readOnly) {
-      out.push(<button key="fix" type="button" className="uiBtn sm primary" onClick={() => fix()}>{fixLabel(copy.fix)}</button>);
+      out.push(<button key="fix" type="button" className="uiBtn sm primary" {...(fix === newChat ? {} : settingsIntent)}
+        onClick={() => fix()}>{fixLabel(copy.fix)}</button>);
     }
     if (latest) {
       out.push(<button key="retry" type="button" className="uiBtn sm" onClick={() => retryReply(idx)}>{t("Retry")}</button>);
@@ -1627,16 +1641,16 @@ export default function ChatDock({
     </button>
   );
   // No AI connected: the setup card, alone in the empty transcript or after
-  // an earlier conversation.
-  const setupCard = aiOff ? (
-    <ChatSetupCard info={setupInfo} isAdmin={isAdmin} openSettings={openSettings}
+  // an earlier conversation, once the tiles it offers are known.
+  const setupCard = aiOff && setupInfo ? (
+    <ChatSetupCard info={setupInfo} isAdmin={isAdmin} openSettings={openSettings} intent={settingsIntent}
       onConnect={(service) => openAiKeysEditor({ service })} />
   ) : null;
   // Alt over New chat turns it into Discard: only when there is a saved
   // conversation to lose (a viewer's chat is never kept, an empty one has
   // nothing to drop).
   const discardArmed = newChatAlt && canSave && chatMessages.length > 0;
-  const headerContent = aiOff ? null : (
+  const headerContent = aiOff || !aiInfo ? null : (
     <>
       <div className="ctlBtnRow chatPanelHeaderBtns">
         {/* First in the strip: a button right of ⚙ would push its popover
@@ -1852,7 +1866,7 @@ export default function ChatDock({
           <span className="chatHealthText">
             {failureCopy(aiHealth.kind, { provider: aiHealth.provider_name, auth: aiHealth.provider_auth }).headline}
           </span>
-          <button className="uiBtn sm" onClick={() => openAiKeysEditor({ entry: aiHealth.provider_id })}>{t("Fix…")}</button>
+          <button className="uiBtn sm" {...settingsIntent} onClick={() => openAiKeysEditor({ entry: aiHealth.provider_id })}>{t("Fix…")}</button>
           <button className="uiClose" onClick={dismissAiHealth} title={t("Dismiss")} aria-label={t("Dismiss")}><XIcon size={14} /></button>
         </div>
       ) : null}
@@ -1907,12 +1921,13 @@ export default function ChatDock({
         }}
       >
         {chatTextScale.badge}
-        {setupCard && !visibleMessages.length && !loadError ? setupCard : visibleMessages.length === 0 ? (
+        {/* Until the chat knows its AI, nothing stands in for an empty conversation. */}
+        {setupCard && !visibleMessages.length && !loadError ? setupCard : visibleMessages.length === 0 ? (!aiKnown ? null : (
           <div className="chatEmpty">
             {loadError || (readOnly ? t("No saved conversation for this page.")
               : focusedBlockId ? t("Ask AI about this page…") : agentIntro || t("Ask AI anything, or generate a report from your pages…"))}
           </div>
-        ) : (
+        )) : (
           visibleMessages.map((m, i) => {
             const isUser = m.role === "user";
             const isResponding = busyHere && !isUser && m.partial && i === visibleMessages.length - 1;

@@ -45,8 +45,10 @@ screen downloads only what it paints.
   and the View rows a phone shows there), the View menu (Import/Export, the
   AI Chat toggle and the Comments window), Share, Recently deleted, a
   comment control (a row's, the page title's: the thread popover), the
-  Inbox's bell and its row in the phone's More sheet (the Inbox panel). The
-  import review is fetched
+  Inbox's bell and its row in the phone's More sheet (the Inbox panel), and
+  in the chat the buttons that open Settings: the setup card's tiles, an
+  error card's fix, the connection check's Fix… (ChatDock is a chunk of its
+  own, so App hands it `preloadSettings`). The import review is fetched
   while the Import dialog is open, since a picked file opens it already
   uploading. The palette has no button: it is fetched when the main thread
   is idle after the library is up.

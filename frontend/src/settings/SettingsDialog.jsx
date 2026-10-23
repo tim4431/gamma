@@ -1137,11 +1137,19 @@ export default function SettingsDialog({
   // The account card's storage line: read it again whenever the dialog opens.
   React.useEffect(() => { if (activePane) users?.refreshQuota?.(); }, [!!activePane]); // eslint-disable-line react-hooks/exhaustive-deps
   // Keep keyboard navigation inside the settings surface; Escape uses the same
-  // draft guard as Close and clicking the backdrop.
-  React.useEffect(() => {
+  // draft guard as Close and clicking the backdrop. What had the focus as
+  // Settings opened is read while it renders, and gets it back on close: by
+  // the commit, a dialog that opened with Settings (the chat's AI tiles open
+  // the connect dialog) may hold it. Settings takes the focus before any such
+  // dialog's own effect runs, so the dialog hands it back to Settings, not to
+  // what is behind; one that already holds it keeps it.
+  const openedFrom = React.useRef(null);
+  if (!activePane) openedFrom.current = null;
+  else if (!openedFrom.current) openedFrom.current = document.activeElement;
+  React.useLayoutEffect(() => {
     if (!activePane) return;
-    const previous = document.activeElement;
-    modalRef.current?.focus();
+    const previous = openedFrom.current;
+    if (!modalRef.current?.contains(document.activeElement)) modalRef.current?.focus();
     return () => previous?.focus?.();
   }, [!!activePane]);
   if (!activePane) return null;

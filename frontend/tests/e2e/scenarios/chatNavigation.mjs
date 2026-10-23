@@ -1386,4 +1386,26 @@ export async function chatNavigationScenarios(env) {
       await alice.api(`/api/blocks/${histPage.id}`, { method: "DELETE" });
     }
   });
+
+  await step("chat navigation: until the chat knows its AI it is a plain frame — no header tools, no empty-state text", async () => {
+    await alice.api("/api/chats/home", { method: "PUT", body: { messages: [] } });
+    const ctx = await alice.context(browser);
+    await ctx.addInitScript(() => localStorage.setItem("gamma-ai-login-check", "off"));
+    let release, answered = false;
+    const held = new Promise((resolve) => { release = resolve; });
+    await ctx.route("**/api/ai/models*", async (route) => { await held; await route.fulfill({ json: FAKE_AI_MODELS }); });
+    ctx.on("response", (res) => { if (new URL(res.url()).pathname === "/api/chats/home") answered = true; });
+    const page = await openPage(ctx, `${server.base}/?ws=${alice.ws}`);
+    try {
+      await page.locator(".chatPanel").waitFor();
+      await until(() => answered, { what: "the conversation is read" });
+      await page.waitForTimeout(300); // what is absent is looked for once the read has landed
+      assertEq(await page.locator(".chatEmpty").count(), 0, "no empty-state text yet");
+      assertEq(await page.getByRole("button", { name: "Find in this conversation" }).count(), 0, "no header tools yet");
+      release();
+      await page.locator(".chatEmpty", { hasText: "Ask AI anything" }).waitFor();
+      await page.getByRole("button", { name: "Find in this conversation" }).waitFor();
+      assertNoProblems(page);
+    } finally { await ctx.close(); }
+  });
 }
