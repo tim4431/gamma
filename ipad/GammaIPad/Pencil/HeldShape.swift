@@ -162,7 +162,7 @@ struct HeldShape: Equatable {
             let n = value("n")
             return HeldShape(kind: kind, params: Self.rounded([
                 "cx": value("cx"), "cy": value("cy"), "r": value("r") * scale, "n": n,
-                "angle": Self.mod(Self.round2(angle), 360 / n),
+                "angle": mod(Self.round2(angle), 360 / n),
             ]))
         case .circle:
             return HeldShape(kind: kind, params: Self.rounded(["cx": value("cx"), "cy": value("cy"), "r": value("r") * scale]))
@@ -173,7 +173,7 @@ struct HeldShape: Equatable {
                 turned += 90
             }
             return HeldShape(kind: kind, params: Self.rounded([
-                "cx": value("cx"), "cy": value("cy"), "rx": rx, "ry": ry, "angle": Self.mod(Self.round2(turned), 180),
+                "cx": value("cx"), "cy": value("cy"), "rx": rx, "ry": ry, "angle": mod(Self.round2(turned), 180),
             ]))
         case .line, .arrow:
             return self // refit above
@@ -211,11 +211,6 @@ struct HeldShape: Equatable {
     /// Two decimals, as shapes.js round2 (Math.round(v × 100) / 100).
     static func round2(_ v: Double) -> Double {
         (v * 100 + 0.5).rounded(.down) / 100
-    }
-
-    /// shapes.js mod: a remainder in [0, m) whatever the sign of v.
-    static func mod(_ v: Double, _ m: Double) -> Double {
-        (v.truncatingRemainder(dividingBy: m) + m).truncatingRemainder(dividingBy: m)
     }
 
     /// Every param to two decimals but `n`, a count (shapes.js rounded).
@@ -287,4 +282,13 @@ struct ShapeHold: Equatable {
         guard refitting, let pointer = latest else { return snap }
         return snap.refit(pointer: pointer, from: from)
     }
+}
+
+/// ink.js mod, which the web's ink modules share: a remainder in [0, m)
+/// whatever the sign of v. A held shape's angles fold by it, and so do the
+/// live nib (InkTool.liveNib) and a sample's roll (StrokeRecorder). The
+/// second remainder matters: for a v just below 0, v + m rounds to m
+/// itself, which it folds to 0.
+func mod(_ v: Double, _ m: Double) -> Double {
+    (v.truncatingRemainder(dividingBy: m) + m).truncatingRemainder(dividingBy: m)
 }

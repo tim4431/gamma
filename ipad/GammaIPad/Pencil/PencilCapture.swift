@@ -137,7 +137,8 @@ final class PencilCapture: UIGestureRecognizer {
             var recorder = StrokeRecorder()
             record(touch, into: &recorder)
             recordings[key] = recorder
-            claims.began(key, at: recorder.points[0], time: touch.timestamp)
+            let first: [Double] = recorder.samples[0]
+            claims.began(key, at: CGPoint(x: first[0], y: first[1]), time: touch.timestamp)
         }
     }
 
@@ -408,7 +409,7 @@ struct ClaimQueue<Touch: Hashable> {
 /// never going back, then, when the Pencil reports its tilt, `a` and `z`,
 /// its altitude and azimuth in degrees (the web converts them back to
 /// radians, as WebKit gives a page's pointer events), and after them, when
-/// it reports its barrel roll (iPadOS 17.5), `r`, in degrees 0…360,
+/// it reports its barrel roll (iPadOS 17.5), `r`, in degrees in [0, 360),
 /// clockwise as seen (PointerEvent.twist's convention: the page turns a
 /// calligraphy nib by the first sample's). The lift reports no force, so a
 /// zero keeps the last pressure, as the web's own sampling does.
@@ -419,7 +420,6 @@ struct ClaimQueue<Touch: Hashable> {
 /// anchor is within the slop of it.
 struct StrokeRecorder {
     private(set) var samples: [[Double]] = []
-    private(set) var points: [CGPoint] = []
     /// The stillness anchor's index in `samples`.
     private(set) var stillSince = 0
     /// The anchor sample's time, on the touches' clock (seconds of system uptime).
@@ -441,8 +441,8 @@ struct StrokeRecorder {
             let azimuthDegrees: Double = azimuth * 180 / .pi
             sample += [altitudeDegrees, azimuthDegrees]
             if let roll, roll.isFinite {
-                let degrees: Double = (roll * 180 / .pi).truncatingRemainder(dividingBy: 360)
-                sample.append(degrees < 0 ? degrees + 360 : degrees)
+                let degrees: Double = roll * 180 / .pi
+                sample.append(mod(degrees, 360))
             }
         }
         if samples.isEmpty {
@@ -456,6 +456,5 @@ struct StrokeRecorder {
             }
         }
         samples.append(sample)
-        points.append(CGPoint(x: x, y: y))
     }
 }

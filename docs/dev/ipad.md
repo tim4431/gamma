@@ -738,9 +738,9 @@ confirm: [research/pymupdf-ios.md](../research/pymupdf-ios.md).
     `inkLooks`)
   - the cloud sign-in's requests and PKCE (`CloudSignInTests`)
   - claim matching and sampling (`PencilTests`): the samples' tilt, the
-    roll's seventh value (degrees, clockwise; none without `rollAngle`),
-    the ruler's projection (`RulerSnap`: points onto the line, the
-    outermost two kept) and
+    roll's seventh value (degrees 0..359, clockwise; none without
+    `rollAngle`), the ruler's projection (`RulerSnap`: points onto the
+    line, the outermost two kept) and
     the stillness anchor, when a hold is asked (`HoldWatch`, with the time
     given), the lazy brush, the ribbon, a gesture's hover place
     (`GestureHover`), the feedback each `haptic` kind plays

@@ -11,7 +11,7 @@ import Foundation
 /// tested (PencilTests).
 enum RulerSnap {
     /// The edge's direction, a unit vector in view coordinates.
-    static func direction(_ snap: InkTool.Snap) -> (dx: Double, dy: Double) {
+    private static func direction(_ snap: InkTool.Snap) -> (dx: Double, dy: Double) {
         let a: Double = snap.angle * .pi / 180
         return (cos(a), -sin(a))
     }
@@ -31,7 +31,10 @@ enum RulerSnap {
         return CGPoint(x: x, y: y)
     }
 
-    /// One point projected onto the edge's line.
+    /// One point projected onto the edge's line: ruler.js onRail ported,
+    /// which the page projects each sample with. The live line needs only
+    /// `project`'s two ends; this stays as onRail's port, held to
+    /// ruler.test.mjs's cases (RulerSnapTests).
     static func point(_ point: CGPoint, onto snap: InkTool.Snap) -> CGPoint {
         at(along(point, snap), snap)
     }

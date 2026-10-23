@@ -124,8 +124,9 @@ enum InkWidth {
     static func widths(_ samples: [Sample], tool: InkTool.Kind, brush: InkTool.Brush, pressure: Bool, size: Double,
                        shape: Bool = false, live: Bool = false, nib: Double = 45) -> [Double]? {
         guard hasWidths(tool: tool, brush: brush, pressure: pressure, shape: shape), !samples.isEmpty else { return nil }
+        // Whether the stroke reads its samples' pressure (finishStroke.js hasPressure).
+        let read: Bool = pressure && samples[0].p != nil
         if brush == .calligraphy {
-            let read = pressure && samples[0].p != nil
             return samples.indices.map { (i: Int) -> Double in
                 let s: Sample = read ? samples[i] : Sample(x: samples[i].x, y: samples[i].y, p: 0.5, a: nil)
                 return round3(calligraphy(s, travel: travel(samples, at: i), nib: nib))
@@ -133,7 +134,6 @@ enum InkWidth {
         }
         guard brush == .brush else { return samples.map { round3(law(brush, $0) ?? 1) } }
         let size = max(0.01, size)
-        let read = pressure && samples[0].p != nil
         let simulated = read ? nil : simulatedPressure(samples, size: size)
         var arc = [Double](repeating: 0, count: samples.count)
         for i in samples.indices.dropFirst() {

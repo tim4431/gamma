@@ -106,7 +106,7 @@ final class StrokeRecorderTests: XCTestCase {
         XCTAssertEqual(stroke.samples[0], [10, 20, 0.5, 0])
         XCTAssertEqual(stroke.samples[1][2], 0.75)
         XCTAssertEqual(stroke.samples[1][3], 8, accuracy: 1e-6)
-        XCTAssertEqual(stroke.points, [CGPoint(x: 10, y: 20), CGPoint(x: 12, y: 21)])
+        XCTAssertEqual(Array(stroke.samples[1].prefix(2)), [12, 21])
     }
 
     func testTheLiftKeepsTheLastPressure() {
@@ -148,11 +148,19 @@ final class StrokeRecorderTests: XCTestCase {
         XCTAssertEqual(stroke.samples[0].count, 7, "[x, y, p, t, a, z, r]")
         XCTAssertEqual(stroke.samples[0][6], 30, accuracy: 1e-9, "the roll in degrees")
         stroke.add(x: 11, y: 20, force: 2, maximumForce: 4, time: 0.004, altitude: Double.pi / 4, azimuth: 0, roll: -Double.pi / 2)
-        XCTAssertEqual(stroke.samples[1][6], 270, accuracy: 1e-9, "into 0…360")
+        XCTAssertEqual(stroke.samples[1][6], 270, accuracy: 1e-9, "into [0, 360)")
         stroke.add(x: 12, y: 20, force: 2, maximumForce: 4, time: 0.008, altitude: Double.pi / 4, azimuth: 0)
         XCTAssertEqual(stroke.samples[2].count, 6, "no roll reported: six values")
         stroke.add(x: 13, y: 20, force: 2, maximumForce: 4, time: 0.012, roll: 1)
         XCTAssertEqual(stroke.samples[3].count, 4, "a roll without the tilt is not written: the seventh value follows the sixth")
+    }
+
+    func testARollJustBelowZeroComesAsZero() {
+        // −1e-17 rad is −5.7e-16°, and that + 360 rounds to 360 itself:
+        // mod's second remainder folds it to 0 (the contract's 0..359)
+        var stroke = StrokeRecorder()
+        stroke.add(x: 10, y: 20, force: 2, maximumForce: 4, time: 0, altitude: Double.pi / 4, azimuth: 0, roll: -1e-17)
+        XCTAssertEqual(stroke.samples[0][6], 0, "never 360")
     }
 
     func testTheStillnessAnchorMovesOnlyPastTheSlop() {
