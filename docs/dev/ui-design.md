@@ -120,7 +120,7 @@ layer from these scales instead of a number of its own:
 | Shadow | `--shadow-1` · `-2` · `-3` | 1: raised controls (buttons, chips, the find box, the composer); 2: what floats (popovers, menus, tips, the guide card, floating toolbars and pills, a hovered card); 3: dialogs and the lightbox. Each scheme defines its own: the dark one shades with black, the light one with a little of the theme's ink. Rings (`0 0 0 Npx`) and inset accent bars are borders, not depth, and stay with their component |
 | Spacing | `--space-1`…`-8` = 2 · 4 · 6 · 8 · 12 · 16 · 24 · 32 | the shared controls and new rules. The ratchet below doesn't count spacing, so layout rules may keep their pixels |
 | Controls | `--ctl-btn` 35 · `-btn-sm` 31 · `-icon-btn` 29 · `-icon-btn-xs` 24 · `-close-sm` 22 · `-close` 26 · `-close-lg` 31 · `-tab` 33 | a `uiBtn` and a `uiBtn sm` (an `iconSq` is that square, a topbar icon button a button tall); the frameless icon button (`ctlBtn`, the viewer's control boxes, search toggles); a compact button inside a line of text (find arrows, metadata rows, the chat's change list); the round × in its three sizes; a tab. One set for a mouse and a finger alike: no pointer media query changes them ([below](#one-behaviour-for-mouse-and-finger)). What sits around a control derives from them with `calc()` (a control box's width, a field's room for its eye button, the gap kept clear of the viewer's control boxes), so a size changes in one place |
-| Motion | `--dur-fast` 100 ms · `--dur-base` 160 ms · `--dur-slow` 240 ms | fast: hover and press; base: enter, fade, small moves; slow: bars and larger moves. Loops and attention effects of half a second or more (spinners, pulses, the landed flash) keep their own period |
+| Motion | durations `--dur-fast` 100 ms · `-base` 160 ms · `-slow` 240 ms · `-long` 400 ms; easings `--ease-out` · `--ease-swap` · `--ease-pop`; travel `--move-sm` 4 · `-md` 8 · `-lg` 16; `--scale-in` 0.97 · `--scale-out` 0.99; `--blur-swap` 2 px | fast: hover, press, a tooltip going; base: a surface leaving, a swap in place, a tooltip coming; slow: a surface arriving, bars and larger moves; long: a toast or panel arriving, a reveal. `--ease-out` for whatever moves, scales or resizes, `--ease-swap` for a cross-fade in place, `--ease-pop` for a badge or a switch's thumb; a colour or opacity fade leaves its easing out. Loops and attention effects of half a second or more (spinners, pulses, the landed flash) keep their own period and easing. How each kind of thing moves is [Motion](#motion) |
 | Layers | `--z-dock` 20 · `--z-float` 30 · `--z-phone-overlay` 80 · `--z-editbar` 90 · `--z-dropdown` 100 · `--z-overlay` 1000 · `--z-popover` 1100 · `--z-modal` 1200 · `--z-subdialog` 1290 · `--z-confirm` 1300 · `--z-lightbox` 1500 · `--z-ctxmenu` 1600 · `--z-refpopup` 2000 · `--z-drop` 9999 · `--z-tip` 30000 | every z-index above 9 is a layer token (one step above a layer is `calc(var(--z-dock) + 1)`); 1–9 only orders siblings inside one component |
 
 **Reduced motion.** One rule in app.css's primitives layer honours the OS
@@ -143,7 +143,9 @@ Two node tests hold the tokens in place. Each may only get better.
 - **Raw values.** `tests/designTokens.test.mjs` scans every stylesheet
   under `src/` (tokens.css aside) for values that should be tokens: a
   colour literal, a pixel font size, a corner radius over 2 px, an
-  elevation shadow, a z-index above 9, a transition under half a second. It
+  elevation shadow, a z-index above 9, a transition's time under half a
+  second or its easing written out (a bezier or keyword: a fade leaves it
+  out, anything that moves takes an `--ease-*`). It
   fails when a file holds more of one kind than `tests/design-baseline.json`
   records, and lists the new offenders. What is left is mostly the PDF
   page's own colours. After a cleanup,
@@ -902,6 +904,31 @@ own controls.
    would raise an on-screen keyboard is `!touchTyping()`. A username or
    account field turns capitalization and correction off.
 9. A file pick goes through `pickFiles`.
+
+## Motion
+
+Motion says where a thing comes from and where it goes. It never
+decorates and never makes anyone wait. The timings, easings, travel,
+scale and blur are tokens ([Scales](#scales)), and a value is chosen by
+what the motion does, not by the nearest number:
+
+- **Coming is slower than going.** A surface arrives on `--dur-slow` and
+  leaves on `--dur-base`. A toast or a panel arrives on `--dur-long`. Hover,
+  press and a tooltip's going take `--dur-fast`.
+- **What moves eases out.** A move, a scale or a resize takes `--ease-out`,
+  both ways: a quick start that settles softly. A cross-fade between two
+  things in one place takes `--ease-swap`. A badge or a switch's thumb may
+  overshoot once with `--ease-pop`, nothing else does. A colour or opacity
+  fade leaves its easing out.
+- **Small distances.** A surface grows from `--scale-in` and shrinks to
+  `--scale-out`. Text lifts `--move-sm`, a toast `--move-md`, a panel
+  `--move-lg`. A cross-fade passes through `--blur-swap`, which makes a
+  short move read as a whole one.
+- **Name the properties.** A transition lists the properties it animates,
+  never `all`, so an unrelated change does not ride along.
+- **Reduced motion ends everything at once.** The global rule in app.css
+  ([Scales](#scales)) covers every recipe; a component adds a rule of its
+  own only for a different still state.
 
 ## Block editor interactions
 

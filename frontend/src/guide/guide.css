@@ -15,7 +15,7 @@
    pointer events fall through to the real control beneath it. */
 .guideDimFill {
   fill: rgba(0, 0, 0, 0.42);
-  transition: d var(--dur-base) ease, opacity var(--dur-slow) ease;
+  transition: d var(--dur-base) var(--ease-out), opacity var(--dur-slow);
 }
 /* While the user acts in the spotlight the sheet lifts, so the app's own
    answer (a dock's drop preview, the colour palette) is not dimmed under it. */
@@ -44,7 +44,7 @@
   display: flex;
   flex-direction: column;
   gap: 8px;
-  animation: guideIn var(--dur-base) ease-out;
+  animation: guideIn var(--dur-base) var(--ease-out);
 }
 @keyframes guideIn {
   from { opacity: 0; transform: translateY(4px); }
@@ -116,7 +116,7 @@
 @keyframes guideSpin { to { transform: rotate(360deg); } }
 /* Progress: a thin line for a demo's actions, then one segment per step. */
 .guideDemoBar { height: 3px; border-radius: 2px; background: var(--border); overflow: hidden; }
-.guideDemoBar i { display: block; height: 100%; background: var(--text-muted); border-radius: 2px; transition: width var(--dur-slow) ease; }
+.guideDemoBar i { display: block; height: 100%; background: var(--text-muted); border-radius: 2px; transition: width var(--dur-slow) var(--ease-out); }
 .guideSegments { display: flex; gap: 3px; margin-top: 2px; }
 .guideSegments i { flex: 1; height: 3px; border-radius: 2px; background: var(--border); }
 .guideSegments i.done { background: color-mix(in srgb, var(--accent) 45%, transparent); }
@@ -173,7 +173,7 @@
 /* The demo's pointer glides between targets (scene.js MOTION.glide and ease);
    a press shrinks it briefly. */
 .guideCursor {
-  transition: transform 520ms cubic-bezier(0.22, 0.61, 0.36, 1), opacity var(--dur-base) ease;
+  transition: transform 520ms cubic-bezier(0.22, 0.61, 0.36, 1), opacity var(--dur-base);
 }
 /* While the demo types, the pointer steps out of the way, so the typed
    text is the thing to watch. */

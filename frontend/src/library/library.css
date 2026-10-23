@@ -44,7 +44,7 @@
   text-align: left;
   color: var(--text-primary);
   font: inherit;
-  transition: background var(--dur-fast) ease, border-color var(--dur-fast) ease, box-shadow var(--dur-fast) ease;
+  transition: background var(--dur-fast), border-color var(--dur-fast), box-shadow var(--dur-fast);
 }
 /* One width for every fixed-width strip card, and the grid's minimum track —
    so a card is the same card wherever it is shown. */
@@ -747,7 +747,7 @@
   font-family: inherit; font-weight: inherit; line-height: inherit;
   text-align: left;
   cursor: pointer;
-  transition: background var(--dur-fast) ease, border-color var(--dur-fast) ease;
+  transition: background var(--dur-fast), border-color var(--dur-fast);
 }
 .libEmptyCard:hover { background: var(--bg-block); border-color: var(--border-hover); }
 .libEmptyCard.primary { border-color: var(--accent-fill); }

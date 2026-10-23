@@ -195,7 +195,7 @@
 html, body, .app, .topbar, .sidebar, .blockRowWrap, .blockRow,
 .blockEditor, .carouselTrack, .pageCard, .categoryFrontmatter,
 .backlinksPanel {
-  transition: background-color var(--dur-base) ease, color var(--dur-base) ease, border-color var(--dur-base) ease;
+  transition: background-color var(--dur-base), color var(--dur-base), border-color var(--dur-base);
 }
 
 html, body, #root {
@@ -283,7 +283,7 @@ html[data-shell] .app { padding-bottom: env(safe-area-inset-bottom); }
   color: var(--text-muted);
   font-size: var(--fs-lg);
   flex-shrink: 0;
-  transition: background var(--dur-fast) ease, color var(--dur-fast) ease;
+  transition: background var(--dur-fast), color var(--dur-fast);
 }
 .topbar .iconBtn:disabled { opacity: 0.4; cursor: default; }
 
@@ -308,7 +308,7 @@ html[data-shell] .app { padding-bottom: env(safe-area-inset-bottom); }
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  transition: background var(--dur-fast) ease, color var(--dur-fast) ease, transform var(--dur-fast) ease;
+  transition: background var(--dur-fast), color var(--dur-fast), transform var(--dur-fast) var(--ease-out);
 }
 .uiClose:hover { background: var(--bg-subtle); color: var(--text-bright); }
 .uiClose:active { transform: scale(0.82); }
@@ -458,7 +458,7 @@ html[data-shell] .app { padding-bottom: env(safe-area-inset-bottom); }
   margin-top: 2px;
   opacity: 0;
   pointer-events: none;
-  transition: opacity var(--dur-fast), background var(--dur-fast) ease, color var(--dur-fast) ease, transform var(--dur-fast) ease;
+  transition: opacity var(--dur-fast), background var(--dur-fast), color var(--dur-fast), transform var(--dur-fast) var(--ease-out);
 }
 
 .blockRow:hover .blockDeleteBtn,
@@ -715,7 +715,7 @@ html[data-shell] .app { padding-bottom: env(safe-area-inset-bottom); }
   color: var(--text-muted);
   user-select: none;
   pointer-events: none;
-  transition: opacity var(--dur-fast) ease;
+  transition: opacity var(--dur-fast);
 }
 /* Where a pointer hovers, a hover crossfade: the language badge yields its
    corner to the copy button. Where nothing hovers, both stay, the badge
@@ -1404,7 +1404,7 @@ html[data-shell] .app { padding-bottom: env(safe-area-inset-bottom); }
   cursor: pointer; text-align: left;
 }
 .selTransToggle:hover { background: var(--bg-hover); }
-.selTransChev { transition: transform var(--dur-fast) ease; flex-shrink: 0; }
+.selTransChev { transition: transform var(--dur-slow) var(--ease-out); flex-shrink: 0; }
 .selTransChev.open { transform: rotate(90deg); }
 .selTransLang { font-weight: 400; color: var(--text-tertiary); }
 .selTransCopy { flex-shrink: 0; }
@@ -1618,7 +1618,7 @@ html[data-shell] .app { padding-bottom: env(safe-area-inset-bottom); }
   pointer-events: none;
   z-index: var(--z-popover);
   transform: translateY(-1px);
-  transition: left 25ms ease-out; /* ds-allow: follows the pointer */
+  transition: left 25ms var(--ease-out); /* ds-allow: follows the pointer */
 }
 .sortableBlockWrap {
   display: flex;
@@ -1653,7 +1653,7 @@ html[data-shell] .app { padding-bottom: env(safe-area-inset-bottom); }
   color: var(--text-muted);
   opacity: 0;
   pointer-events: none;
-  transition: opacity var(--dur-fast) ease, color var(--dur-fast) ease, background var(--dur-fast) ease;
+  transition: opacity var(--dur-fast), color var(--dur-fast), background var(--dur-fast);
   user-select: none;
 }
 .rowHandles > .addHandle {
@@ -2260,8 +2260,8 @@ button.pdfOutlineChevron:hover { background: rgba(128, 128, 128, 0.28); color: v
   border: 1px solid transparent;
   border-bottom: none;
   min-height: var(--ctl-tab);
-  transition: background var(--dur-fast) ease, color var(--dur-fast) ease;
-  animation: tabIn var(--dur-base) ease-out;
+  transition: background var(--dur-fast), color var(--dur-fast);
+  animation: tabIn var(--dur-base) var(--ease-out);
   will-change: transform;
   position: relative;
 }
@@ -2434,7 +2434,7 @@ button.pdfOutlineChevron:hover { background: rgba(128, 128, 128, 0.28); color: v
 .mirrorStateBody > .popoverHint { padding: 0; }
 .mirrorBar { height: 5px; border-radius: var(--radius-xs); background: var(--bg-hover); overflow: hidden; }
 .mirrorBar.thin { height: 3px; flex-basis: 100%; }
-.mirrorBar span { display: block; height: 100%; background: var(--accent); transition: width var(--dur-slow) ease; }
+.mirrorBar span { display: block; height: 100%; background: var(--accent); transition: width var(--dur-slow) var(--ease-out); }
 .mirrorFile { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; font-size: var(--fs-2xs); color: var(--text-muted); min-width: 0; }
 .mirrorFile > svg { flex-shrink: 0; }
 .mirrorFile .mirrorEllipsis { flex: 1; min-width: 0; }
@@ -2732,7 +2732,7 @@ mark.merge-del { background: color-mix(in srgb, var(--danger) 16%, transparent);
   height: 20px;
   border-radius: var(--radius-full);
   background: var(--bg-subtle);
-  transition: background var(--dur-base) ease;
+  transition: background var(--dur-base);
   pointer-events: none;
 }
 .switchTrack::after {
@@ -2745,7 +2745,7 @@ mark.merge-del { background: color-mix(in srgb, var(--danger) 16%, transparent);
   border-radius: 50%;
   background: #fff;
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
-  transition: transform var(--dur-base) ease;
+  transition: transform var(--dur-base) var(--ease-out);
 }
 .switch input:checked + .switchTrack { background: var(--accent-fill); }
 .switch input:checked + .switchTrack::after { transform: translateX(14px); }
@@ -2931,7 +2931,7 @@ mark.searchMark {
 .sash {
   background: var(--border);
   flex-shrink: 0;
-  transition: background var(--dur-base) ease var(--dur-fast);
+  transition: background var(--dur-base) var(--dur-fast);
 }
 .sash-horizontal { width: 5px; cursor: col-resize; }
 .sash-vertical { height: 5px; cursor: row-resize; }
@@ -3385,7 +3385,7 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
   border: 2px solid var(--accent-fill);
   border-radius: var(--radius-md);
   pointer-events: none;
-  transition: left var(--dur-fast) ease, top var(--dur-fast) ease, width var(--dur-fast) ease, height var(--dur-fast) ease;
+  transition: left var(--dur-fast) var(--ease-out), top var(--dur-fast) var(--ease-out), width var(--dur-fast) var(--ease-out), height var(--dur-fast) var(--ease-out);
 }
 .chatPanel {
   display: flex;
@@ -3949,7 +3949,7 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
   line-height: var(--lh-ui);
   white-space: nowrap;
   box-shadow: var(--shadow-1);
-  transition: background var(--dur-fast) ease, color var(--dur-fast) ease, border-color var(--dur-fast) ease, box-shadow var(--dur-fast) ease;
+  transition: background var(--dur-fast), color var(--dur-fast), border-color var(--dur-fast), box-shadow var(--dur-fast);
 }
 .uiBtn:active:not(:disabled) { background: var(--bg-active); box-shadow: none; }
 .uiBtn.sm { min-height: var(--ctl-btn-sm); font-size: var(--fs-xs); padding: var(--space-2) var(--space-5); }
@@ -4011,7 +4011,7 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
   gap: 10px;
   padding: 8px 8px;
   border-radius: var(--radius-lg);
-  transition: background var(--dur-fast) ease;
+  transition: background var(--dur-fast);
 }
 /* Flat at rest: rows are separated by a straight inset hairline (a border
    would curve around the radius and read as a card edge), and only hover
@@ -4040,7 +4040,7 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
 }
 .quotaBarFill {
   display: block; height: 100%; border-radius: 2px;
-  background: var(--accent-fill); transition: width var(--dur-slow) ease;
+  background: var(--accent-fill); transition: width var(--dur-slow) var(--ease-out);
 }
 .quotaBarFill.warn { background: var(--warn); }
 .quotaBarFill.full { background: #e5534b; }
@@ -5236,7 +5236,7 @@ a.shareBrand:hover { background: var(--bg-hover); }
   background: var(--bg-elevated);
   color: var(--accent);
   box-shadow: var(--shadow-1);
-  animation: navBackIn var(--dur-base) ease-out;
+  animation: navBackIn var(--dur-base) var(--ease-out);
   transition: background var(--dur-fast), border-color var(--dur-fast), transform var(--dur-fast);
 }
 .topbar .navBackBtn:hover {
@@ -6323,7 +6323,7 @@ a.shareBrand:hover { background: var(--bg-hover); }
    the pointer. Several chips stack leftwards from that anchor. */
 .peerChips {
   position: absolute; right: calc(100% + 1px); top: 3px; display: flex; z-index: 3;
-  pointer-events: none; transition: opacity var(--dur-fast) ease;
+  pointer-events: none; transition: opacity var(--dur-fast);
 }
 .sortableBlockWrap:is(:hover, :focus-within) > .blockRowWrap > .peerChips { opacity: 0.25; }
 .peerChips .peerAvatar { width: 16px; height: 16px; font-size: var(--fs-2xs); margin-left: -4px; }
@@ -6639,7 +6639,7 @@ a.shareBrand:hover { background: var(--bg-hover); }
   color: var(--text-secondary);
   cursor: pointer;
   opacity: 0;
-  transition: opacity var(--dur-fast) ease;
+  transition: opacity var(--dur-fast);
 }
 .blockInkCardWrap .inkReplayBtn:hover { color: var(--text-primary); }
 .blockInkCardWrap:hover .inkReplayBtn, .blockInkCardWrap .inkReplayBtn:is(:focus-visible, [aria-pressed="true"]) { opacity: 1; }

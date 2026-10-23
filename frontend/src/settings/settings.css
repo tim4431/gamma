@@ -123,7 +123,7 @@
   background: var(--bg-block);
   border: 1px solid var(--border-subtle);
   color: var(--text-muted);
-  transition: color var(--dur-fast) ease, border-color var(--dur-fast) ease;
+  transition: color var(--dur-fast), border-color var(--dur-fast);
 }
 .settingRow:hover .setIcon { color: var(--text-secondary); border-color: var(--border-hover); }
 .settingsPane .settingRow { flex-shrink: 0; }
@@ -261,7 +261,7 @@
 .setStatLabel { display: flex; align-items: center; gap: 5px; font-size: var(--fs-2xs); color: var(--text-muted); }
 .setStatLabel svg { flex-shrink: 0; }
 .setStatBar { display: block; height: 3px; border-radius: 2px; background: var(--bg-active); overflow: hidden; }
-.setStatBar > i { display: block; height: 100%; border-radius: 2px; background: var(--accent-fill); transition: width var(--dur-slow) ease; }
+.setStatBar > i { display: block; height: 100%; border-radius: 2px; background: var(--accent-fill); transition: width var(--dur-slow) var(--ease-out); }
 .setStatBar > i.ok { background: var(--ok); }
 .setStatBar > i.warn { background: var(--warn); }
 /* Text tiles (StatText): version, uptime, counts — a smaller value, a hint line, a toned frame. */
