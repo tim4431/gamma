@@ -76,7 +76,7 @@ export function useStripKeys({ inkUi, inkSelection, inkVisible, inkTools, setInk
       if (!action) return;
       // an open menu (not one on its way out, shared/ui/leave.js), a preset
       // being dragged and a focused comment thread take Escape first
-      if (e.code === "Escape" && (document.querySelector(".ctxMenu:not([data-leaving]), .inkDragGhost")
+      if (e.code === "Escape" && (document.querySelector(".ctxMenu:not([data-leaving], [data-leaving] *), .inkDragGhost")
         || e.target?.closest?.(".commentMargin, .commentPopover"))) return;   // i18n-ignore: a selector
       if (action.prevent) e.preventDefault();
       if (action.stop) e.stopPropagation();

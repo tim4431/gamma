@@ -52,6 +52,9 @@
 .lightbox > img {
   animation: surface-in var(--dur-slow) var(--ease-out);
 }
+/* A dialog opened as another closes takes its place on the dim that was
+   there (data-over, leave.js): only the dialog grows in. */
+.reportOverlay[data-over] { animation: none; }
 
 /* Tips fade in where they stand: hovering along a row of buttons shows one
    after another, and a tip that grew would trail the pointer. The PDF
@@ -81,12 +84,14 @@
    A closed surface leaves through a still copy of itself (useLeave,
    shared/ui/leave.js) that plays its kind's way out where the surface
    stood and then goes. The copy takes no pointer, and what it holds stands
-   still: a flyout or a spinner inside it does not start over. */
+   still: a flyout or a spinner inside it does not start over (whatever
+   recipe of its own it has, hence the importance; only a dialog in its
+   backdrop plays a way out). */
 [data-leaving] { pointer-events: none !important; }
-[data-leaving] * { animation-name: none; }
+[data-leaving] * { animation-name: none !important; }
 [data-leaving="surface"] { animation: surface-out var(--dur-base) var(--ease-out) forwards; }
 [data-leaving="dialog"] { animation: fade-out var(--dur-base) forwards; }
 [data-leaving="dialog"] > :is(.reportModal, .settingsModal, img) {
-  animation: surface-out var(--dur-base) var(--ease-out) forwards;
+  animation: surface-out var(--dur-base) var(--ease-out) forwards !important;
 }
 [data-leaving="toast"] { animation: rise-out var(--dur-slow) var(--ease-out) forwards; }

@@ -25,14 +25,15 @@ const make = (html) => {
 };
 
 test("the copy carries what the markup does not, and nothing to find it by", () => {
-  const host = make('<div id="m" data-guide="x"><input id="f" value="a"><input type="checkbox"><div data-tour="t"></div></div>');
+  const host = make('<div id="m" data-guide="x"><input id="f" value="a"><input type="checkbox"><div data-tour="t"></div><svg><clipPath id="c"></clipPath></svg></div>');
   const node = host.firstChild;
   node.querySelector("input").value = "typed";
   node.querySelector("[type=checkbox]").checked = true;
   const { copy } = stillCopy(node);
   assert.equal(copy.querySelector("input").value, "typed");
   assert.equal(copy.querySelector("[type=checkbox]").checked, true);
-  assert.equal(copy.querySelectorAll("[id], [data-guide], [data-tour]").length + (copy.id ? 1 : 0), 0);
+  assert.equal(copy.querySelectorAll(":not(svg *)[id], [data-guide], [data-tour]").length + (copy.id ? 1 : 0), 0);
+  assert.equal(copy.querySelector("clipPath").id, "c", "a drawing keeps the ids it points at");
   assert.equal(copy.getAttribute("aria-hidden"), "true");
   assert.ok(copy.hasAttribute("inert"));
   host.remove();
@@ -142,6 +143,55 @@ test("a surface that arrives takes the place of one of its kind still leaving", 
   flushSync(() => root.render(React.createElement(Pair, { open: ["c"] })));
   assert.equal(host.querySelectorAll("[data-leaving]").length, 0, "the copy goes as the next one arrives");
   assert.equal(host.querySelectorAll(".menu").length, 1);
+  root.unmount();
+  host.remove();
+});
+
+test("a copy holds no surface standing over the window and no copy already leaving", () => {
+  const host = make('<div class="modal" style="position: fixed"><p>Body</p><div class="sub" style="position: fixed">Sub</div><div data-leaving="surface">Old</div></div>');
+  const { copy } = stillCopy(host.firstChild);
+  assert.equal(copy.querySelector("p").textContent, "Body");
+  assert.equal(copy.querySelector(".sub"), null, "a sub-dialog goes at once");
+  assert.equal(copy.querySelector("[data-leaving]"), null);
+  host.remove();
+});
+
+test("a toast's copy is put back where it was seen, and a toast takes no other's place", async () => {
+  const host = make("");
+  const root = createRoot(host);
+  function Card({ id }) {
+    const ref = useLeave("toast");
+    return React.createElement("div", { ref, className: `card ${id}`, style: { position: "static" } }, id);
+  }
+  const Stack = ({ shown }) => React.createElement(React.Fragment, null, shown.map((id) => React.createElement(Card, { key: id, id })));
+  flushSync(() => root.render(React.createElement(Stack, { shown: ["a", "b", "c"] })));
+  // jsdom lays nothing out: the card reads as seen 30 px lower than its copy lands
+  const seen = { left: 0, top: 30, width: 1, height: 1 };
+  host.querySelector(".a").getBoundingClientRect = () => seen;
+  flushSync(() => root.render(React.createElement(Stack, { shown: ["b", "c", "d"] })));
+  await settle();
+  const copy = host.querySelector("[data-leaving]");
+  assert.ok(copy, "dismissed as the next one comes: it still leaves");
+  assert.equal(copy.style.top, "30px", "where it was seen");
+  root.unmount();
+  host.remove();
+});
+
+test("a dialog opened as another closes keeps the dim: it is marked as taking that one's place", async () => {
+  const host = make("");
+  const root = createRoot(host);
+  function Dialog({ id }) {
+    const ref = useLeave("dialog");
+    return React.createElement("div", { ref, className: `overlay ${id}`, style: { position: "fixed" } }, id);
+  }
+  const One = ({ id }) => (id ? React.createElement(Dialog, { key: id, id }) : null);
+  flushSync(() => root.render(React.createElement(One, { id: "palette" })));
+  assert.equal(host.querySelector(".palette").dataset.over, undefined, "nothing was there before it");
+  flushSync(() => root.render(React.createElement(One, { id: null })));
+  await settle();
+  flushSync(() => root.render(React.createElement(One, { id: "settings" })));
+  assert.equal(host.querySelector(".settings").dataset.over, "", "it opened over the palette's copy");
+  assert.equal(host.querySelectorAll("[data-leaving]").length, 0);
   root.unmount();
   host.remove();
 });

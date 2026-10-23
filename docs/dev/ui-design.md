@@ -963,14 +963,21 @@ of it where it stood, and the copy plays its kind's way out
 `DialogOverlay`, `Popover`, `ContextMenu`, `ThreadPopover`, `Lightbox`
 and the reminder cards carry it. The copy is plain DOM outside React:
 inert, `aria-hidden`, without ids or guide anchors, and it takes no
-pointer, so nothing in it answers a press or a key. A surface that
-arrives takes the place of a copy of its kind still leaving, as a native
-menu does: only one of a kind is ever seen going, and never while
-another stands. Under reduced motion there is no copy. Code that asks
-whether a surface is open skips the copies (`:not([data-leaving])`, as
-`topDialog()` in appCommands.js does). A box read while a surface is
-arriving is the smaller one it grows from: the guide's card waits for
-its anchor to land (`arriving(el)`, `shared/ui/motion.js`).
+pointer, so nothing in it answers a press or a key. What stands in its
+DOM but over the window (a sub-dialog, the caret's popups) goes at once,
+so the copy holds none of it. A surface that arrives takes the place of
+a copy of its kind still leaving, as a native menu does: only one of a
+kind is ever seen going, and never while another stands. A dialog opened
+as one closes keeps the dim that was there (`data-over`). Toasts stand
+side by side, so a toast takes no other's place, and one leaving a stack
+that moves (the reminders, hung from the window's bottom) leaves from
+where it was seen. Under reduced motion there is no copy. Code that asks
+whether a surface is open skips the copies and what they hold
+(`:not([data-leaving], [data-leaving] *)`, as `topDialog()` in
+appCommands.js does). A box read while a surface is arriving is the
+smaller one it grows from: the guide's card waits for its anchor to land
+(`arriving(el)`, `shared/ui/motion.js`, which counts only the arrivals
+that move or size what they hold).
 
 ## Block editor interactions
 

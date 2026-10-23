@@ -31,9 +31,9 @@ const cmd = (id, label, group, keys, run, extra = {}) => ({ id, label, group, ke
 // The open dialog on top, if any: every modal (Settings and its sub-dialogs,
 // Import, Export, the palette, the confirm box…) sits in a `.reportOverlay`,
 // a nested one later in the DOM than its parent. A closed one's copy on its
-// way out (data-leaving, shared/ui/leave.js) is not open.
+// way out (data-leaving, shared/ui/leave.js), and what it holds, is not open.
 function topDialog() {
-  const all = document.querySelectorAll(".reportOverlay:not([data-leaving])");
+  const all = document.querySelectorAll(".reportOverlay:not([data-leaving], [data-leaving] *)");
   return all.length ? all[all.length - 1] : null;
 }
 // While a dialog is open it owns the keys: only the commands whose

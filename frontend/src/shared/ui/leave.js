@@ -5,10 +5,10 @@
 // plain DOM outside React: inert, hidden from assistive technology and
 // from the pointer, so nothing in it answers a press or a key and the
 // next surface can open over it at once. Code that asks whether a surface
-// is open skips the copies (`:not([data-leaving])`).
+// is open skips the copies and what they hold
+// (`:not([data-leaving], [data-leaving] *)`).
 import { useCallback, useRef } from "react";
 import { reducedMotion } from "./motion.js";
-
 
 // The longest a copy stays when its animation never reports its end (a
 // tab in the background, a kind without a recipe).
@@ -18,33 +18,51 @@ const LONGEST_MS = 1000;
 // its way out, as a native menu does: a menu opened as another closes, the
 // tasks panel taking over from the More sheet, a dialog opened from one
 // that closed. So only one of a kind is ever seen leaving, and never while
-// another stands. `arrivals` counts each kind's arrivals; `leaving` holds
-// its copies in the page.
+// another stands. One that takes another's place keeps the page as it
+// stood under them: a dialog opened as one closes keeps the dim (motion.css
+// [data-over]). Toasts stand side by side, so a toast takes no other's
+// place. `arrivals` counts each kind's arrivals, `pending` its leaves whose
+// copy goes in at the end of the commit, `leaving` its copies in the page.
+const SIDE_BY_SIDE = new Set(["toast"]);
 const arrivals = new Map();
+const pending = new Map();
 const leaving = new Map();
-function arrive(kind) {
-  arrivals.set(kind, (arrivals.get(kind) || 0) + 1);
+const add = (map, kind, n) => map.set(kind, (map.get(kind) || 0) + n);
+function arrive(kind, node) {
+  if (SIDE_BY_SIDE.has(kind)) return;
+  if (pending.get(kind) || leaving.get(kind)?.size) node.dataset.over = "";
+  add(arrivals, kind, 1);
   for (const copy of leaving.get(kind) || []) copy.remove();
   leaving.delete(kind);
 }
 
-// What a copy must not carry: an id or a guide anchor would let something
-// find the copy in place of a live surface.
-const DROP = ["id", "data-guide", "data-tour", "autofocus"];
+// What a copy must not carry: a guide anchor would let the guide find the
+// copy in place of a live surface. Ids go too, save inside a drawing, whose
+// clip paths, markers and styles point at its own.
+const DROP = ["data-guide", "data-tour", "autofocus"];
 
 // A copy of `node` as it stands. cloneNode takes the markup; this adds the
 // state the markup does not hold: what a field holds, how far something is
 // scrolled (kept to apply once the copy is in the page, where scrolling
 // means something), what a canvas shows. A frame or a media element would
-// load again, so it leaves an empty box of its size instead.
+// load again, so it leaves an empty box of its size instead. A surface
+// standing in its DOM but over the window (a sub-dialog, the caret's
+// popups; position: fixed) and a copy already on its way out go at once,
+// so the copy holds neither.
 export function stillCopy(node) {
   const copy = node.cloneNode(true);
   const from = [node, ...node.querySelectorAll("*")];
   const to = [copy, ...copy.querySelectorAll("*")];
+  const view = node.ownerDocument.defaultView;
   const scrolls = [];
   from.forEach((a, i) => {
     const b = to[i];
+    if (a !== node && (a.hasAttribute("data-leaving") || view.getComputedStyle(a).position === "fixed")) {
+      b.remove();
+      return;
+    }
     for (const name of DROP) b.removeAttribute(name);
+    if (b === copy || !b.closest("svg")) b.removeAttribute("id");
     if (a.scrollTop || a.scrollLeft) scrolls.push([b, a.scrollTop, a.scrollLeft]);
     const tag = a.localName;
     if (tag === "input" || tag === "textarea" || tag === "select") {
@@ -80,16 +98,27 @@ export function leave(node, kind) {
   copy.dataset.leaving = kind;
   // A surface in the flow (a toast in its stack) leaves from where it
   // stood without holding its room: the ones after it close up at once.
-  if (style.position === "static" || style.position === "relative") {
+  // Its stack may move as it goes (one hung from the window's bottom
+  // shrinks toward it), so once in, the copy is put back where it was seen.
+  const inFlow = style.position === "static" || style.position === "relative";
+  const seen = inFlow ? node.getBoundingClientRect() : null;
+  if (inFlow) {
     Object.assign(copy.style, {
       position: "absolute", boxSizing: "border-box", margin: "0",
       left: `${node.offsetLeft}px`, top: `${node.offsetTop}px`,
       width: `${node.offsetWidth}px`, height: `${node.offsetHeight}px`,
     });
   }
+  add(pending, kind, 1);
   queueMicrotask(() => {
+    add(pending, kind, -1);
     if (node.isConnected || !parent.isConnected || (arrivals.get(kind) || 0) !== arrived) return;
     parent.insertBefore(copy, next?.parentNode === parent ? next : null);
+    if (seen) {
+      const at = copy.getBoundingClientRect();
+      copy.style.left = `${parseFloat(copy.style.left) + seen.left - at.left}px`;
+      copy.style.top = `${parseFloat(copy.style.top) + seen.top - at.top}px`;
+    }
     for (const [el, top, left] of scrolls) { el.scrollTop = top; el.scrollLeft = left; }
     if (!leaving.has(kind)) leaving.set(kind, new Set());
     leaving.get(kind).add(copy);
@@ -102,14 +131,14 @@ export function leave(node, kind) {
 // A callback ref for a surface's root element: `ref={useLeave("surface")}`.
 // `kind` names its way out in motion.css: "surface" (a menu, a popover),
 // "dialog" (a backdrop and the dialog on it), "toast". Its arrival takes
-// the place of a copy of its kind still leaving. Hand it a ref of your own
-// (an object or a function) to keep that one set as well.
+// the place of a copy of its kind still leaving (not a toast's). Hand it a
+// ref of your own (an object or a function) to keep that one set as well.
 export function useLeave(kind = "surface", ref = null) {
   const shown = useRef(null);
   return useCallback((node) => {
     if (typeof ref === "function") ref(node);
     else if (ref) ref.current = node;
-    if (node) { shown.current = node; arrive(kind); return; }
+    if (node) { shown.current = node; arrive(kind, node); return; }
     const gone = shown.current;
     shown.current = null;
     if (gone) leave(gone, kind);
