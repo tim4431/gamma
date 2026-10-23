@@ -208,6 +208,7 @@ import {
   PATH_SEP,
 } from "../library/libraryUtils";
 import { createLibraryMatcher } from "../library/librarySearch";
+import { prefetchTrash } from "../library/trashList";
 import { useComments } from "../comments/useComments";
 import { abandonedCommentHighlight, isOpen, shortCount, threadLink } from "../comments/comments.js";
 import { preloadCommentMargin } from "../comments/marginSlot";
@@ -247,6 +248,8 @@ const InboxPanel = lazySurface(() => import("../inbox/InboxPanel"));
 const preloading = (...surfaces) => () => { for (const surface of surfaces) surface.preload(); };
 const preloadAccountMenu = preloading(SettingsDialog, GuideOverlay, ReportProblem, ImportDialog, ChatDock);
 const preloadViewMenu = preloading(ImportDialog, ChatDock, CommentsPanel);
+// Recently deleted asks for its list with its module, so it lands whole.
+const preloadTrash = () => { RecentlyDeleted.preload(); prefetchTrash(); };
 
 // PDF load phases that own a row in the background-transfers popover; every
 // other phase is viewer-local. Allowlist on purpose — the transfer handling's
@@ -6072,10 +6075,12 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   const shareApi = (target, base) => (target.kind === "folder"
     ? `${API}/${base}/folder/${encodeURIComponent(target.id)}`
     : `${API}/${base}/${encodeURIComponent(target.id)}`);
+  // The same target's settings stay while they are asked again, so the
+  // popover opens on them; another target's go at once.
   async function loadShareSettings(target) {
     if (shareMode || (target.kind === "page" && !target.id)) return;
+    if (shareTarget?.kind !== target.kind || shareTarget?.id !== target.id) setShareSettings(null);
     setShareTarget(target);
-    setShareSettings(null);
     try {
       applyShareSettings(await apiJson(shareApi(target, "share-settings")));
       resetShareCopied();
@@ -9171,7 +9176,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                 {lib.organize && !folderFilter && !labelFilter ? (
                   <button type="button" className="ctlBtn" title={t("Recently deleted")} data-guide="home.trash"
                     aria-label={t("Recently deleted")} onClick={() => setTrashOpen(true)}
-                    onPointerEnter={RecentlyDeleted.preload} onFocus={RecentlyDeleted.preload}>
+                    onPointerEnter={preloadTrash} onFocus={preloadTrash}>
                     <Trash2Icon size={16} />
                   </button>
                 ) : null}

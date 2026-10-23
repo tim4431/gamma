@@ -57,7 +57,7 @@ import {
   XIcon,
 } from "../shared/ui/Icons";
 import { Popover } from "../shared/ui/Surfaces";
-import { IconSwap, MorphText } from "../shared/ui/MotionWidgets";
+import { IconSwap, MorphText, Reveal } from "../shared/ui/MotionWidgets";
 
 const ROLE_SEGMENTS = {
   page: [
@@ -273,8 +273,8 @@ function PersonRow({ name, tag, sub, icon: Icon, active, children }) {
   );
 }
 
-// Gamma Cloud: `state` is GET /api/pages/{id}/publish (null while loading),
-// `busy` the action running ("publish" | "update" | "unpublish" | "sync" |
+// Gamma Cloud: `state` is GET /api/pages/{id}/publish (the popover holds
+// the section back while it is null, loading), `busy` the action running ("publish" | "update" | "unpublish" | "sync" |
 // ""), `error` the last refusal's detail (or {message, limit} when the plan's
 // cap refused it), `copied` / `onCopy` the cloud link's copy, `canEdit` false
 // for a workspace viewer (nothing to press), `accountUrl` the Gamma Cloud
@@ -309,13 +309,6 @@ function PublishSection({ state, busy, error, copied, onCopy, canEdit, onPublish
   const counted = limit && limit.max != null ? t("{used} of {max} pages published", { used: limit.used, max: limit.max }) : "";
   const link = state?.public_url || state?.url || "";
 
-  if (!state) {
-    return (
-      <Section title={t("Gamma Cloud")}>
-        <Row icon={CloudIcon} label={t("Publish")} hint={t("Loading…")} />
-      </Section>
-    );
-  }
   if (!published) {
     return (
       <Section title={t("Gamma Cloud")}>
@@ -411,8 +404,8 @@ function PublishSection({ state, busy, error, copied, onCopy, canEdit, onPublish
   );
 }
 
-// Props: target ({kind: "page", title} or {kind: "folder", id, name}; a page
-// when omitted), settings (null while loading; {token: null} when
+// Props: target ({kind: "page", id, title} or {kind: "folder", id, name}; a
+// page when omitted), settings (null while loading; {token: null} when
 // unshared), error (the last failed save, e.g. an unknown username), me /
 // meIsGuest (your account; a guest can't search the account directory, so
 // gets no invite box), workspace (the open workspace, {name, personal,
@@ -426,7 +419,10 @@ function PublishSection({ state, busy, error, copied, onCopy, canEdit, onPublish
 // `citation` is the page's citation section (App owns it), shown when the
 // page has metadata. `publish` is the Gamma Cloud section's props
 // (PublishSection), or null where the server offers no publishing — App
-// passes neither for a folder.
+// passes neither for a folder. What is still loading keeps the place it
+// had the last time, blank a moment and then "Loading…", and comes into
+// focus once it is in (Reveal); App keeps a target's settings while it
+// asks for them again, so a popover opened again shows them at once.
 export function SharePopover({
   target, settings, error, me, meIsGuest, workspace, shareUrl, copied, onCopy,
   onCreate, onUpdate, onInvite, onSetRole, onRemove, onStop, onClose, citation, publish, cloudInvites,
@@ -453,8 +449,8 @@ export function SharePopover({
         <button type="button" className="uiClose" onClick={onClose} aria-label={t("Close")} title={t("Close")}><XIcon size={14} /></button>
       </div>
       <div className="settingsForm">
-        {settings === null ? <Empty icon={LinkIcon}>{t("Loading…")}</Empty> : null}
-        {settings ? (
+        <Reveal ready={settings !== null} k={`share:${kind}:${target?.id || ""}`}
+          fallback={<Empty icon={LinkIcon}>{t("Loading…")}</Empty>}>
           <Section title={t("Link")} guide={shared ? "share.link" : "share.start"}>
             {shared ? (
               <ShareLinkRow url={shareUrl} copied={copied} onCopy={onCopy} invited={users.length + pending.length}
@@ -466,100 +462,105 @@ export function SharePopover({
               </>
             )}
           </Section>
-        ) : null}
-        {shared ? (
-          <>
-            <Section
-              title={t("Who has access")}
-              guide="share.people"
-              action={byCloud ? <Segmented value={via} options={INVITE_VIA} onChange={setVia} /> : null}
-            >
-              {!meIsGuest ? (
-                <ShareInvite exclude={[me, ...users.map((u) => u.name)]} via={byCloud ? via : "local"}
-                  onInvite={onInvite} onInviteCloud={cloudInvites?.onInvite} />
-              ) : null}
-              {requests.map((q) => (
-                <PersonRow key={`request:${q.subject}`} name={q.username} tag={t("asks to join")}
-                  sub={q.email || t("Gamma Cloud account")} icon={CloudIcon}>
-                  <button
-                    type="button" className="uiBtn sm" onClick={() => cloudInvites?.onApprove(q.subject)}
-                    title={kind === "folder"
-                      ? t("Let them in to view every page in this folder once they sign in again; the toggle on their row then changes it")
-                      : t("Let them in to view this page once they sign in again; the toggle on their row then changes it")}
-                  >
-                    {t("Approve")}
-                  </button>
-                  <button
-                    type="button" className="uiBtn sm iconSq" onClick={() => cloudInvites?.onDecline(q.subject)}
-                    title={t("Decline: their sign-ins ask nothing more unless an admin removes the request")}
-                    aria-label={t("Decline {name}", { name: q.username })}
-                  >
-                    <XIcon size={16} />
-                  </button>
-                </PersonRow>
-              ))}
-              <PersonRow name={me} tag={t("you")} sub={t("Owner")} icon={meIsGuest ? UserIcon : ShieldIcon} active />
-              {members ? (
-                <PersonRow
-                  name={t("{name} members", { name: workspace.name })} tag={t("workspace")} icon={UsersIcon}
-                  sub={workspace.access === "public"
-                    ? tn("{n} member · anyone signed in here can read it too", "{n} members · anyone signed in here can read it too", members)
-                    : tn("{n} person · opens it with their workspace role", "{n} people · open it with their workspace role", members)}
-                />
-              ) : null}
-              {users.map((u) => (
-                <PersonRow key={u.name} name={u.name} sub={t("Invited")} icon={UserIcon}>
-                  <Segmented
-                    value={u.role} options={ROLE_SEGMENTS[kind]}
-                    onChange={(role) => { if (role !== u.role) onSetRole(u.name, role); }}
+          {shared ? (
+            <>
+              <Section
+                title={t("Who has access")}
+                guide="share.people"
+                action={byCloud ? <Segmented value={via} options={INVITE_VIA} onChange={setVia} /> : null}
+              >
+                {!meIsGuest ? (
+                  <ShareInvite exclude={[me, ...users.map((u) => u.name)]} via={byCloud ? via : "local"}
+                    onInvite={onInvite} onInviteCloud={cloudInvites?.onInvite} />
+                ) : null}
+                {requests.map((q) => (
+                  <PersonRow key={`request:${q.subject}`} name={q.username} tag={t("asks to join")}
+                    sub={q.email || t("Gamma Cloud account")} icon={CloudIcon}>
+                    <button
+                      type="button" className="uiBtn sm" onClick={() => cloudInvites?.onApprove(q.subject)}
+                      title={kind === "folder"
+                        ? t("Let them in to view every page in this folder once they sign in again; the toggle on their row then changes it")
+                        : t("Let them in to view this page once they sign in again; the toggle on their row then changes it")}
+                    >
+                      {t("Approve")}
+                    </button>
+                    <button
+                      type="button" className="uiBtn sm iconSq" onClick={() => cloudInvites?.onDecline(q.subject)}
+                      title={t("Decline: their sign-ins ask nothing more unless an admin removes the request")}
+                      aria-label={t("Decline {name}", { name: q.username })}
+                    >
+                      <XIcon size={16} />
+                    </button>
+                  </PersonRow>
+                ))}
+                <PersonRow name={me} tag={t("you")} sub={t("Owner")} icon={meIsGuest ? UserIcon : ShieldIcon} active />
+                {members ? (
+                  <PersonRow
+                    name={t("{name} members", { name: workspace.name })} tag={t("workspace")} icon={UsersIcon}
+                    sub={workspace.access === "public"
+                      ? tn("{n} member · anyone signed in here can read it too", "{n} members · anyone signed in here can read it too", members)
+                      : tn("{n} person · opens it with their workspace role", "{n} people · open it with their workspace role", members)}
                   />
-                  <button
-                    type="button" className="uiBtn sm iconSq"
-                    title={t("Remove {name}", { name: u.name })} aria-label={t("Remove {name}", { name: u.name })}
-                    onClick={() => onRemove(u.name)}
-                  >
-                    <Trash2Icon size={16} />
-                  </button>
-                </PersonRow>
-              ))}
-              {pending.map((p) => (
-                <PersonRow key={`pending:${p.subject}`} name={p.username} tag={t("pending")}
-                  sub={t("Gamma Cloud · joins on their first sign-in here")} icon={CloudIcon}>
+                ) : null}
+                {users.map((u) => (
+                  <PersonRow key={u.name} name={u.name} sub={t("Invited")} icon={UserIcon}>
+                    <Segmented
+                      value={u.role} options={ROLE_SEGMENTS[kind]}
+                      onChange={(role) => { if (role !== u.role) onSetRole(u.name, role); }}
+                    />
+                    <button
+                      type="button" className="uiBtn sm iconSq"
+                      title={t("Remove {name}", { name: u.name })} aria-label={t("Remove {name}", { name: u.name })}
+                      onClick={() => onRemove(u.name)}
+                    >
+                      <Trash2Icon size={16} />
+                    </button>
+                  </PersonRow>
+                ))}
+                {pending.map((p) => (
+                  <PersonRow key={`pending:${p.subject}`} name={p.username} tag={t("pending")}
+                    sub={t("Gamma Cloud · joins on their first sign-in here")} icon={CloudIcon}>
+                    <Segmented
+                      value={p.role} options={ROLE_SEGMENTS[kind]}
+                      onChange={(role) => { if (role !== p.role) cloudInvites?.onSetRole(p.subject, role); }}
+                    />
+                    <button
+                      type="button" className="uiBtn sm iconSq" onClick={() => cloudInvites?.onWithdraw(p.subject)}
+                      title={t("Withdraw the invitation to {username}", { username: p.username })}
+                      aria-label={t("Withdraw the invitation to {username}", { username: p.username })}
+                    >
+                      <Trash2Icon size={16} />
+                    </button>
+                  </PersonRow>
+                ))}
+                {errorLine}
+              </Section>
+              <Section
+                title={t("General access")}
+                guide="share.access"
+                action={
                   <Segmented
-                    value={p.role} options={ROLE_SEGMENTS[kind]}
-                    onChange={(role) => { if (role !== p.role) cloudInvites?.onSetRole(p.subject, role); }}
+                    value={settings.role} options={ROLE_SEGMENTS[kind]} disabled={settings.audience === "list"}
+                    onChange={(role) => { if (role !== settings.role) onUpdate({ role }); }}
                   />
-                  <button
-                    type="button" className="uiBtn sm iconSq" onClick={() => cloudInvites?.onWithdraw(p.subject)}
-                    title={t("Withdraw the invitation to {username}", { username: p.username })}
-                    aria-label={t("Withdraw the invitation to {username}", { username: p.username })}
-                  >
-                    <Trash2Icon size={16} />
-                  </button>
-                </PersonRow>
-              ))}
-              {errorLine}
-            </Section>
-            <Section
-              title={t("General access")}
-              guide="share.access"
-              action={
-                <Segmented
-                  value={settings.role} options={ROLE_SEGMENTS[kind]} disabled={settings.audience === "list"}
-                  onChange={(role) => { if (role !== settings.role) onUpdate({ role }); }}
+                }
+              >
+                <IconChoices
+                  label={t("Who can open the link")} value={settings.audience} options={AUDIENCE_TILES}
+                  onChange={(audience) => { if (audience !== settings.audience) onUpdate(audiencePatch(audience)); }}
                 />
-              }
-            >
-              <IconChoices
-                label={t("Who can open the link")} value={settings.audience} options={AUDIENCE_TILES}
-                onChange={(audience) => { if (audience !== settings.audience) onUpdate(audiencePatch(audience)); }}
-              />
-              <AccessSummary settings={settings} kind={kind} />
-            </Section>
-          </>
-        ) : null}
-        {settings && publish ? <PublishSection {...publish} /> : null}
-        {settings ? citation : null}
+                <AccessSummary settings={settings} kind={kind} />
+              </Section>
+            </>
+          ) : null}
+          {publish ? (
+            <Reveal ready={!!publish.state} k={`publish:${target?.id || ""}`}
+              fallback={<Section title={t("Gamma Cloud")}><Row icon={CloudIcon} label={t("Publish")} hint={t("Loading…")} /></Section>}>
+              <PublishSection {...publish} />
+            </Reveal>
+          ) : null}
+          {citation}
+        </Reveal>
       </div>
     </Popover>
   );

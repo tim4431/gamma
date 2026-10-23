@@ -1,5 +1,5 @@
 import { generateNKeysBetween } from "fractional-indexing";
-import { Account, arrived, assertNear, live, wanted } from "../harness.mjs";
+import { Account, arrived, assertNear, live, sleep, wanted } from "../harness.mjs";
 
 // Motion (docs/dev/ui-design.md, "Motion"): a menu grows in from the point
 // it opens from and leaves through a still copy of itself, inert and out of
@@ -9,7 +9,8 @@ import { Account, arrived, assertNear, live, wanted } from "../harness.mjs";
 // frame slides to the option chosen; in the notes, a block added mid-list
 // fades in while the rows below glide to make room, but nothing moves on a
 // page opening or for another client's block, and a fold closes before
-// its rows go.
+// its rows go; the share popover and Recently deleted open on their
+// content.
 export async function motionScenarios(env) {
   const { server, browser, step, openPage, assert, assertEq, assertNoProblems, until } = env;
   if (!wanted("motion")) return;
@@ -216,6 +217,68 @@ export async function motionScenarios(env) {
       const after = await frameOn();
       assert(after.dx < 1 && after.dw < 1 && after.dy < 1, `it lands on the one chosen: ${JSON.stringify(after)}`);
       await toggle.locator("button").first().click();
+      await assertNoProblems(page);
+    } finally { await ctx.close(); }
+  });
+
+  // The requests `pattern` matches, answered `ms` later.
+  const slowly = (page, pattern, ms) => page.route(pattern, async (route) => { await sleep(ms); await route.continue().catch(() => {}); });
+
+  await step("motion: the share popover opened again shows its settings at once while it asks again; Recently deleted, asked for as the pointer reaches its button, lands with its pages; the Import dialog's Zotero mark fades in once loaded", async () => {
+    const shared = await user.api("/api/pages", { method: "POST", body: { title: "Share again" } });
+    await user.api(`/api/share/${shared.id}`, { method: "POST" });
+    for (const title of ["Binned one", "Binned two"]) {
+      const binned = await user.api("/api/pages", { method: "POST", body: { title } });
+      await user.api(`/api/blocks/${binned.id}`, { method: "DELETE" });
+    }
+    const ctx = await user.context(browser);
+    const page = await openPage(ctx, `${server.base}/?page=${shared.id}&ws=${user.ws}`);
+    try {
+      await page.locator(".blockList").first().waitFor();
+      const pop = page.locator(live(".sharePopover"));
+      await page.click("button[aria-label='Share']");
+      await pop.getByRole("button", { name: "Copy link" }).waitFor();
+      await page.keyboard.press("Escape");
+      await pop.waitFor({ state: "detached" });
+      await slowly(page, "**/api/share-settings/**", 800);
+      await page.click("button[aria-label='Share']");
+      await pop.waitFor();
+      assertEq(await pop.getByRole("button", { name: "Copy link" }).count(), 1, "the settings it had, at once");
+      assertEq(await pop.locator(".reveal[data-reveal=\"wait\"]").count(), 0, "nothing waits");
+      await page.unroute("**/api/share-settings/**");
+      await page.keyboard.press("Escape");
+
+      await page.goto(home);
+      const trash = page.locator('[data-guide="home.trash"]');
+      await trash.waitFor();
+      const asked = page.waitForResponse((r) => r.url().endsWith("/api/trash"));
+      await trash.hover();
+      await (await asked).finished();
+      // what the dialog holds the moment it is in the page
+      await page.evaluate(() => {
+        window.__trash = null;
+        const look = () => {
+          const d = document.querySelector('.reportModal[aria-label="Recently deleted"]');
+          if (!d) return false;
+          window.__trash = { rows: d.querySelectorAll(".aiProvRow").length, waiting: !!d.querySelector('.reveal[data-reveal="wait"]') };
+          return true;
+        };
+        const mo = new MutationObserver(() => { if (look()) mo.disconnect(); });
+        mo.observe(document.body, { childList: true, subtree: true });
+      });
+      await trash.click();
+      await page.getByRole("dialog", { name: "Recently deleted" }).waitFor();
+      const landed = await page.evaluate(() => window.__trash);
+      assertEq(JSON.stringify(landed), JSON.stringify({ rows: 2, waiting: false }), "the dialog lands with its pages");
+      await page.keyboard.press("Escape");
+
+      const view = page.locator('[data-popover="menu"] > button');
+      await view.click();
+      await page.getByRole("menuitem", { name: "Import…", exact: true }).click();
+      const dialog = page.getByRole("dialog", { name: "Import", exact: true });
+      await dialog.waitFor();
+      await dialog.locator('.formatAppImage[data-fade="shown"]').waitFor();
+      await page.keyboard.press("Escape");
       await assertNoProblems(page);
     } finally { await ctx.close(); }
   });

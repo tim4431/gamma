@@ -325,3 +325,11 @@ img[data-fade] {
   transition: opacity var(--dur-slow);
 }
 img[data-fade="shown"] { opacity: 1; }
+
+/* A first load's place (Reveal): a column that keeps its content's last
+   height while it waits. What stands in for the content ("Loading…") fades
+   in only after a moment, so a load that answers fast shows none of it;
+   the content that takes its place comes into focus. */
+.reveal { display: flex; flex-direction: column; }
+.reveal[data-reveal="wait"] > * { animation: fade-in var(--dur-base) var(--dur-slow) both; }
+.reveal[data-reveal="in"] { animation: sharpen-in var(--dur-base); }

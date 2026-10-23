@@ -674,6 +674,9 @@ citation (`PublishSection`): Publish, or the published link with Copy and
 an inline-confirmed Unpublish, the sync state line with Sync now, and the
 cloud share's access as the same tiles and View / Edit toggle
 ([mirror.md](mirror.md) "What the person sees").
+Opened again on the same page or folder it shows the settings it had at
+once and asks for them again in place; a first load, and the Gamma Cloud
+section's state, come into focus where they will stand (`Reveal`).
 Every change saves at once; nothing is a bespoke control. There is no
 "reset link": stopping and sharing again mints a new address. The read-only
 view's top bar is the visitor's side of it: the brand mark (the way to the
@@ -1032,7 +1035,23 @@ is plain markup, and a first render never moves.
 - **`.countIn`**, keyed by the number: a badge's number rises into
   place when it changes; the Inbox badge also pops on when it comes.
 - **`FADE_IN`**, spread on an `<img>`: a picture fades in once loaded
-  (the library cards' snapshots); one already in the cache shows at once.
+  (the library cards' snapshots, the Import and Export dialogs' Zotero
+  mark); one already in the cache shows at once.
+- **`Reveal`** `ready k fallback`: where a first load lands (the share
+  popover's settings, Recently deleted's pages). While it waits it holds,
+  blank, the height its content last had under `k`, and its `fallback`
+  ("Loading…") fades in only after `--dur-slow`, so a load that answers
+  fast never shows it. Content that takes the
+  place of a placeholder comes into focus as a pane does; content ready at
+  once is plain. It is a column, and it never eases a height: what holds
+  it changes size once, as the content lands, so it is not for a surface
+  placed from its size (the thread popover), which would jump. Under
+  reduced motion the fallback shows at once. Content already there is
+  better than any placeholder: the share popover keeps a target's
+  settings while it asks for them again, and Recently deleted asks for
+  its list with its module, as the pointer or the focus reaches its
+  button, so it lands whole. Search results, which change with every
+  key, take none.
 - A switch's thumb travels with `--ease-pop`, its one overshoot.
 - **`.shakeNo`**, replayed by removing and adding it: a field that
   refused what was typed shakes once, a small no (a wrong password at
