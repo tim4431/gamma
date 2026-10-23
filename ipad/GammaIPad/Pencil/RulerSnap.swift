@@ -33,8 +33,8 @@ enum RulerSnap {
 
     /// One point projected onto the edge's line: ruler.js onRail ported,
     /// which the page projects each sample with. The live line needs only
-    /// `project`'s two ends; this stays as onRail's port, held to
-    /// ruler.test.mjs's cases (RulerSnapTests).
+    /// `project`'s two ends; this stays as onRail's port, tested in
+    /// RulerSnapTests.
     static func point(_ point: CGPoint, onto snap: InkTool.Snap) -> CGPoint {
         at(along(point, snap), snap)
     }

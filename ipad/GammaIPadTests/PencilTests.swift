@@ -157,7 +157,7 @@ final class StrokeRecorderTests: XCTestCase {
 
     func testARollJustBelowZeroComesAsZero() {
         // −1e-17 rad is −5.7e-16°, and that + 360 rounds to 360 itself:
-        // mod's second remainder folds it to 0 (the contract's 0..359)
+        // mod's second remainder folds it to 0, in the contract's [0, 360)
         var stroke = StrokeRecorder()
         stroke.add(x: 10, y: 20, force: 2, maximumForce: 4, time: 0, altitude: Double.pi / 4, azimuth: 0, roll: -1e-17)
         XCTAssertEqual(stroke.samples[0][6], 0, "never 360")
@@ -654,7 +654,8 @@ final class HapticFeelTests: XCTestCase {
 }
 
 /// The ruler's edge (the claim's `snap`): the web's ink/ruler.js onRail and
-/// railLine, the cases of frontend/tests/ruler.test.mjs in view coordinates.
+/// railLine. The line's wobbly and right-to-left strokes are railLine's
+/// cases in frontend/tests/ruler.test.mjs, in view coordinates.
 final class RulerSnapTests: XCTestCase {
     func testAPointIsProjectedOntoTheEdge() {
         let level = InkTool.Snap(x0: 100, y0: 200, angle: 0)
