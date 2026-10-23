@@ -35,7 +35,7 @@ def cloud_on(monkeypatch):
         calls.append((name, by))
         return {"sub": DIRECTORY[name], "username": name} if name in DIRECTORY else None
 
-    monkeypatch.setattr(workspaces, "cloud_lookup_username", fake_lookup)
+    monkeypatch.setattr(cloud_auth, "lookup_username", fake_lookup)
     yield calls
     with connect_users_db() as conn:
         conn.execute("DELETE FROM identities WHERE subject LIKE 'sub-pm-%'")
@@ -188,8 +188,7 @@ def test_invite_rules(owner, boss, cloud_on, monkeypatch):
 
 
 def test_lookups_are_rate_limited_per_account(owner, boss, cloud_on, monkeypatch):
-    from gamma.routers import workspaces as ws_router
-    monkeypatch.setattr(ws_router, "LOOKUPS_PER_10_MIN", 2)
+    monkeypatch.setattr(cloud_auth, "LOOKUPS_PER_10_MIN", 2)
     ws = _shared(boss, "PM limit lab")
     url = f"/api/workspaces/{ws}/invites"
     assert [owner.post(url, json={"username": "nobody-x"}).status_code for _ in range(3)] == [400, 400, 429]
@@ -208,22 +207,22 @@ def test_lookup_transport(monkeypatch):
         raise cloud_auth.CloudAuthError(error, status=status, error=error, body={"error": error})
 
     monkeypatch.setattr(cloud_auth, "_http", fake_http)
-    assert workspaces.lookup_with_token(ISSUER, "tok", "known") == {"sub": "acct-1", "username": "known"}
+    assert cloud_auth.lookup_with_token(ISSUER, "tok", "known") == {"sub": "acct-1", "username": "known"}
     assert seen[0] == (ISSUER + "/api/lookup/username?u=known", {"Authorization": "Bearer tok"})
-    assert workspaces.lookup_with_token(ISSUER, "tok", "gone") is None
-    with pytest.raises(workspaces.CloudLookupError, match="invalid_token"):
-        workspaces.lookup_with_token(ISSUER, "tok", "other")
+    assert cloud_auth.lookup_with_token(ISSUER, "tok", "gone") is None
+    with pytest.raises(cloud_auth.CloudLookupError, match="invalid_token"):
+        cloud_auth.lookup_with_token(ISSUER, "tok", "other")
     # cloud sign-in off, or an inviter with no linked grant: the lookup cannot be made
     monkeypatch.delenv("GAMMA_CLOUD_ISSUER", raising=False)
     monkeypatch.setattr(cloud_auth, "_get_raw", lambda key, default="": "")
-    with pytest.raises(workspaces.CloudLookupError, match="not set up"):
-        workspaces.cloud_lookup_username("known")
+    with pytest.raises(cloud_auth.CloudLookupError, match="not set up"):
+        cloud_auth.lookup_username("known")
     monkeypatch.setenv("GAMMA_CLOUD_ISSUER", ISSUER)
-    with pytest.raises(workspaces.CloudLookupError, match="Link your own Gamma Cloud account"):
-        workspaces.cloud_lookup_username("known", by="pm_owner")
-    monkeypatch.setattr(workspaces, "_cloud_access_token", lambda by: "tok-" + by)
-    known = workspaces.clean_cloud_username(" Known")
-    assert workspaces.cloud_lookup_username(known, by="pm_owner") == {"sub": "acct-1", "username": "known"}
+    with pytest.raises(cloud_auth.CloudLookupError, match="Link your own Gamma Cloud account"):
+        cloud_auth.lookup_username("known", by="pm_owner")
+    monkeypatch.setattr(cloud_auth, "_lookup_token", lambda by: "tok-" + by)
+    known = cloud_auth.clean_username(" Known")
+    assert cloud_auth.lookup_username(known, by="pm_owner") == {"sub": "acct-1", "username": "known"}
     assert seen[-1][1] == {"Authorization": "Bearer tok-pm_owner"}
 
 

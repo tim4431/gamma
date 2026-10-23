@@ -24,8 +24,6 @@ from ..server_settings import user_limits, usage_bytes, validate_quota_mb, works
 
 router = APIRouter(prefix="/api/workspaces", tags=["workspaces"])
 
-LOOKUPS_PER_10_MIN = 30  # cloud username lookups per inviting account
-
 
 class WorkspaceCreate(BaseModel):
     name: str
@@ -262,10 +260,10 @@ def invite_by_cloud_username(ws: str, payload: CloudInvite, request: Request):
         raise HTTPException(status_code=400, detail="a personal workspace has no other members")
     if not cloud_auth.settings()["enabled"]:
         raise HTTPException(status_code=400, detail="Gamma Cloud sign-in is not set up on this server")
-    ratelimit.check(f"cloud-lookup:{user_id}", LOOKUPS_PER_10_MIN, 600)
+    ratelimit.check(f"cloud-lookup:{user_id}", cloud_auth.LOOKUPS_PER_10_MIN, 600)
     try:
         invited = workspaces.invite_cloud(ws, payload.username, payload.role, by=user_id)
-    except workspaces.CloudLookupError as e:
+    except cloud_auth.CloudLookupError as e:
         raise HTTPException(status_code=503, detail=str(e))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))

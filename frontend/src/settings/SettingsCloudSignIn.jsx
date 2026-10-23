@@ -3,7 +3,8 @@
 //   server's address, the client this server is, and what happens to a cloud
 //   identity this server has not seen (refuse / claim / provision / invited;
 //   on a hosted container the plan sets it, `policy_source` "plan"), and
-//   under provision whether it accepts published pages (the share host). A
+//   under provision whether it accepts published pages (the share host);
+//   under invited, the requests to join (JoinRequests). A
 //   server with a public URL still on the desktop client (`needs_connect`)
 //   gets a Connect button: a round trip through the account server that
 //   brings back its own client id and secret (`?cloud_connect=ok` /
@@ -20,14 +21,15 @@ import { API, apiJson } from "../shared/lib/utils";
 import { Row, Segmented, PasswordInput, SettingsSyncContext, Toggle, useSettingsDraft } from "./SettingsKit";
 import { cloudSyncHint } from "./syncState.js";
 import { REOPEN_SETTINGS_KEY } from "./settingsNavigation.js";
-import { CloudIcon, ExternalLinkIcon, GlobeIcon, KeyIcon, RefreshIcon, UserIcon } from "../shared/ui/Icons";
-import { T, t } from "../shared/i18n/i18n.js";
+import { formatRelativeTime } from "../library/libraryUtils";
+import { CloudIcon, ExternalLinkIcon, GlobeIcon, KeyIcon, RefreshIcon, Trash2Icon, UserIcon, UsersIcon, XIcon } from "../shared/ui/Icons";
+import { T, t, tn } from "../shared/i18n/i18n.js";
 
 const POLICIES = [
   ["refuse", t("Refuse"), null, t("Only accounts already linked to a cloud account can sign in")],
   ["claim", t("Claim"), null, t("A cloud account whose username equals an unlinked username here signs in as it")],
   ["provision", t("Provision"), null, t("Any verified cloud account gets an account here, named after its username")],
-  ["invited", t("Invited"), null, t("A cloud account invited to a shared workspace here gets an account; nobody else")],
+  ["invited", t("Invited"), null, t("A cloud account invited here gets an account; anyone else's sign-in asks to join")],
 ];
 
 // The connect round trip's outcome, read once from the address bar and dropped.
@@ -128,7 +130,7 @@ export function CloudSignInSettings({ setStatus, action }) {
     <Row icon={UserIcon} label={t("Unknown cloud accounts")}
       hint={saved?.policy_source === "plan" ? t("Set by this server's plan")
         : t("What a cloud account that is not linked to an account here may do")}
-      title={t("Refuse: only linked accounts. Claim: a cloud username equal to an unlinked username here takes it over — for a server whose accounts were created under cloud usernames. Provision: every verified cloud account gets an account — the free share host. Invited: only a cloud account someone here invited to a shared workspace gets one.")}>
+      title={t("Refuse: only linked accounts. Claim: a cloud username equal to an unlinked username here takes it over — for a server whose accounts were created under cloud usernames. Provision: every verified cloud account gets an account — the free share host. Invited: only a cloud account someone here invited, to a shared workspace or a shared page, gets one; anyone else's sign-in asks to join, for an admin or the page's sharer to approve.")}>
       <Segmented value={draft.policy} onChange={set("policy")} options={POLICIES} disabled={disabled} />
     </Row>
     {draft.policy === "provision" ? (
@@ -137,6 +139,92 @@ export function CloudSignInSettings({ setStatus, action }) {
         title={t("The free share host: a Gamma Cloud account may publish pages here from its own Gamma. Also turns off the guest account and limits the account list to exact names.")} />
     ) : null}
     {error ? <p className="settingsPaneHint aiKeysError" role="alert">{error}</p> : null}
+    {saved ? <JoinRequests invited={saved.enabled && saved.policy === "invited"} setStatus={setStatus} /> : null}
+  </>;
+}
+
+const JOIN_STATUS_TAG = { approved: T("approved"), declined: T("declined") };
+
+// Where a request came from and what became of it, one line under its name.
+function joinRequestLine(q, now) {
+  const from = !q.from_share ? t("from the login page")
+    : q.shared_by ? t("through a page {name} shared", { name: q.shared_by }) : t("through a page no longer shared");
+  const decided = q.decided_by && q.status !== "pending"
+    ? (q.status === "approved" ? t("approved by {name}", { name: q.decided_by }) : t("declined by {name}", { name: q.decided_by }))
+    : "";
+  return [q.email, from, decided, formatRelativeTime(q.updated_at, now)].filter(Boolean).join(" · ");
+}
+
+// Requests to join (backend gamma/join_requests.py, /api/admin/join-requests):
+// Gamma Cloud accounts whose sign-in the invited policy refused, which asked
+// to join instead — who (username, e-mail address) and where from (a page
+// someone shared, or the login page). A waiting one has Approve (their next
+// sign-in gets them an account here; a page shared with invited people only
+// stays the sharer's to open for them) and Decline; a decided one has Remove
+// (a declined person may ask again, an approval not used yet is withdrawn).
+// Shown under the invited policy, and under another while some are left.
+function JoinRequests({ invited, setStatus }) {
+  const [list, setList] = React.useState(null);
+  const [error, setError] = React.useState("");
+  const [busy, setBusy] = React.useState(false);
+  React.useEffect(() => {
+    let live = true;
+    apiJson(`${API}/admin/join-requests`).then((d) => { if (live) setList(d.requests || []); })
+      .catch((err) => { if (live) setError(err.message); });
+    return () => { live = false; };
+  }, []);
+  async function act(q, status) {
+    setBusy(true); setError("");
+    try {
+      const d = await apiJson(`${API}/admin/join-requests/${encodeURIComponent(q.subject)}`, status
+        ? { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status }) }
+        : { method: "DELETE" });
+      setList(d.requests || []);
+      setStatus?.(status === "approved" ? t("{username} can sign in here now.", { username: q.username })
+        : status === "declined" ? t("Declined the request of {username}.", { username: q.username })
+        : t("Removed the request of {username}.", { username: q.username }));
+    } catch (err) { setError(err.message); }
+    finally { setBusy(false); }
+  }
+  const errorLine = error ? <p className="settingsPaneHint aiKeysError" role="alert">{error}</p> : null;
+  if (!list || (!invited && !list.length)) return errorLine;
+  const waiting = list.filter((q) => q.status === "pending").length;
+  const now = Date.now();
+  return <>
+    <Row icon={UsersIcon} label={t("Requests to join")}
+      hint={waiting ? tn("{n} person is waiting", "{n} people are waiting", waiting) : t("No one is waiting")}
+      title={t("A Gamma Cloud account nothing here admits asks to join when it signs in. Approve lets it sign in; a page shared with invited people only stays its sharer's to open, from the page's Share popover.")} />
+    {list.map((q) => (
+      <div key={q.subject} className="aiProvRow" data-join-request={q.username}>
+        <span className="aiProvAvatar"><CloudIcon size={16} /></span>
+        <span className="aiProvMeta">
+          <span className="aiProvName">
+            {q.username}
+            {JOIN_STATUS_TAG[q.status] ? <span className="uiTag">{t(JOIN_STATUS_TAG[q.status])}</span> : null}
+          </span>
+          <span className="aiProvDesc">{joinRequestLine(q, now)}</span>
+        </span>
+        <span className="aiProvActions">
+          {q.status === "pending" ? <>
+            <button className="uiBtn sm" disabled={busy} onClick={() => act(q, "approved")}
+              title={t("Let them sign in here: their next sign-in gets them an account")}>{t("Approve")}</button>
+            <button className="uiBtn sm iconSq" disabled={busy} onClick={() => act(q, "declined")}
+              title={t("Decline: their sign-ins ask nothing more unless an admin removes the request")}
+              aria-label={t("Decline {name}", { name: q.username })}>
+              <XIcon size={16} />
+            </button>
+          </> : (
+            <button className="uiBtn sm iconSq" disabled={busy} onClick={() => act(q, "")}
+              title={q.status === "declined" ? t("Remove the request: they may ask again")
+                : t("Remove the request: the approval goes, unused")}
+              aria-label={t("Remove the request of {username}", { username: q.username })}>
+              <Trash2Icon size={16} />
+            </button>
+          )}
+        </span>
+      </div>
+    ))}
+    {errorLine}
   </>;
 }
 

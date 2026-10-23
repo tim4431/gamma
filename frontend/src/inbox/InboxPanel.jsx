@@ -11,7 +11,7 @@ import { ArchiveIcon, ArchiveRestoreIcon, BellIcon, CheckIcon, MailIcon } from "
 import { PersonAvatar } from "../collaboration/Presence";
 import { t } from "../shared/i18n/i18n.js";
 import { formatRelativeTime } from "../library/libraryUtils";
-import { inboxDays, inboxSentence, inboxSnippet, isUnread } from "./inboxText.js";
+import { inboxActor, inboxDays, inboxSentence, inboxSnippet, isUnread } from "./inboxText.js";
 
 const EMPTY_TEXT = {
   unread: () => t("You're all caught up."),
@@ -24,12 +24,12 @@ function InboxRow({ item, inbox, workspaceId, now, onOpen }) {
   const sentence = inboxSentence(item);
   const snippet = inboxSnippet(item);
   const elsewhere = item.workspace_id !== workspaceId && item.workspace_name ? item.workspace_name : "";
-  const actor = item.actor || "?";
+  const actor = inboxActor(item) || "?";
   const readLabel = unread ? t("Mark read") : t("Mark unread");
   const archiveLabel = item.archived_at ? t("Move back to the inbox") : t("Archive this item");
   return (
     <div className={`inboxRow${unread ? " unread" : ""}`} data-inbox-id={item.id} data-kind={item.kind}>
-      <PersonAvatar name={actor} title={item.actor || undefined} />
+      <PersonAvatar name={actor} title={inboxActor(item) || undefined} />
       <button type="button" className="inboxMain" onClick={() => onOpen(item)} title={sentence}>
         <span className="inboxSentence">{sentence}</span>
         {snippet ? <span className="inboxSnippet">{snippet}</span> : null}

@@ -35,18 +35,18 @@ shown (member lists, who created or invited) carries usernames.
 
 A shared workspace can also invite someone who has no account here yet, by
 their Gamma Cloud username (``invite_cloud``): the account server answers
-username → subject, and the invitation waits in ``pending_memberships``
-keyed by that subject until their first cloud sign-in creates or links the
-local account (``claim_pending_memberships``, called by gamma/cloud_auth.py).
+username → subject (gamma/cloud_auth.py ``lookup_username``), and the
+invitation waits in ``pending_memberships`` keyed by that subject until
+their first cloud sign-in creates or links the local account
+(``claim_pending_memberships``, called by gamma/cloud_auth.py). A share's
+invitations by cloud username are gamma/shares.py's.
 """
 
 import os
-import re
 import secrets
 import shutil
 import sqlite3
 import time
-import urllib.parse
 
 from . import collab, jobs, storage
 from .config import WORKSPACES_DIR
@@ -64,9 +64,6 @@ MAX_NAME_LEN = 80
 MAX_WORKSPACES_PER_USER = 50
 INVITE_ROLES = ("editor", "viewer")  # what a pending (cloud-username) invitation may grant
 MAX_PENDING_PER_WORKSPACE = 100
-# The account server's username rule (cloud/gammacloud/accounts.py USERNAME_RE).
-CLOUD_USERNAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]{1,30}[a-z0-9]$")
-LOOKUP_TIMEOUT = 10
 # A deleted workspace's directory is set aside under this prefix, then removed
 # (remove_files); what a file held open keeps goes later (remove_leftovers).
 LEFTOVER_PREFIX = ".deleting-"
@@ -487,74 +484,6 @@ def _drop_prefs(ws: str, user_id: str) -> None:
 
 # --- pending memberships: invite by Gamma Cloud username ---------------------
 
-class CloudLookupError(Exception):
-    """The account server could not answer a username lookup (sign-in off,
-    unreachable, no access token) — a message safe to show the inviter."""
-
-
-def clean_cloud_username(name) -> str:
-    """A cloud username as typed ("@Alice " → "alice"), or ValueError."""
-    name = str(name or "").strip().lstrip("@").lower()
-    if not CLOUD_USERNAME_RE.match(name):
-        raise ValueError("a Gamma Cloud username is 3–32 lowercase letters, digits or dashes")
-    return name
-
-
-def lookup_with_token(issuer: str, access_token: str, name: str) -> dict | None:
-    """The account server's exact username lookup, ``GET
-    <issuer>/api/lookup/username?u=<name>`` with a bearer access token
-    (through ``cloud_auth._http``, like every call to the account server):
-    ``{sub, username}``, None when no account has that username (404),
-    CloudLookupError for anything else."""
-    from . import cloud_auth  # local: cloud_auth imports this module
-
-    url = f"{issuer}/api/lookup/username?" + urllib.parse.urlencode({"u": name})
-    status = 200
-    try:
-        body = cloud_auth._http(url, headers={"Authorization": f"Bearer {access_token}"}, timeout=LOOKUP_TIMEOUT)
-    except cloud_auth.CloudAuthError as e:
-        if e.status is None:  # unreachable
-            raise CloudLookupError(str(e)) from e
-        if e.status == 404:
-            return None
-        status, body = e.status, e.body
-    if status != 200 or not isinstance(body, dict) or not body.get("sub") or not body.get("username"):
-        body = body if isinstance(body, dict) else {}
-        detail = body.get("error_description") or body.get("error") or f"answered {status}"
-        raise CloudLookupError(f"the account server could not look the username up ({detail})")
-    return {"sub": str(body["sub"]), "username": str(body["username"]).lower()}
-
-
-def _cloud_access_token(by: str) -> str:
-    """An access token for the account server on behalf of ``by`` (the
-    inviting account's id): its own linked Gamma Cloud grant
-    (``cloud_auth.access_token_for``). CloudLookupError when the inviter has
-    no linked identity or the account server hands out no token."""
-    from . import cloud_auth  # local: cloud_auth imports this module
-
-    if not cloud_auth.grant_of(by)[0]:
-        raise CloudLookupError("Link your own Gamma Cloud account (Settings → Account & sync) to invite by "
-                               "Gamma Cloud username.")
-    token = cloud_auth.access_token_for(by)
-    if not token:
-        raise CloudLookupError("Gamma Cloud did not answer for your account. Try again later, or sign in "
-                               "with Gamma Cloud again.")
-    return token
-
-
-def cloud_lookup_username(name: str, by: str = "") -> dict | None:
-    """A clean cloud username (``clean_cloud_username``) → ``{sub, username}``
-    of that Gamma Cloud account (exact match only), None for no such
-    username, CloudLookupError when the account server cannot be asked
-    (tests replace this function)."""
-    from . import cloud_auth  # local: cloud_auth imports this module
-
-    cfg = cloud_auth.settings()
-    if not cfg["enabled"]:
-        raise CloudLookupError("Gamma Cloud sign-in is not set up on this server.")
-    return lookup_with_token(cfg["issuer"], _cloud_access_token(by), name)
-
-
 def _check_shared(conn, ws: str) -> None:
     row = conn.execute("SELECT kind FROM workspaces WHERE id = ?", (ws,)).fetchone()
     if not row:
@@ -571,16 +500,16 @@ def invite_cloud(ws: str, name, role: str, by: str) -> dict:
     <local username>}``); otherwise the invitation waits for their first
     sign-in (``{"pending": {...}}``; inviting again changes its role).
     ValueError on a personal workspace, a bad role or username, no such
-    cloud account, or someone who is already a member; CloudLookupError when
-    the account server cannot be asked."""
-    from .cloud_auth import PROVIDER  # local: cloud_auth imports this module
+    cloud account, or someone who is already a member;
+    cloud_auth.CloudLookupError when the account server cannot be asked."""
+    from . import cloud_auth  # local: cloud_auth imports this module
 
     if role not in INVITE_ROLES:
         raise ValueError("an invitation by Gamma Cloud username makes an editor or a viewer")
-    name = clean_cloud_username(name)
+    name = cloud_auth.clean_username(name)
     with connect_users_db() as conn:
         _check_shared(conn, ws)
-    found = cloud_lookup_username(name, by=by)
+    found = cloud_auth.lookup_username(name, by=by)
     if not found:
         raise ValueError(f"no Gamma Cloud account is named {name}")
     subject, username = found["sub"], found["username"]
@@ -590,7 +519,7 @@ def invite_cloud(ws: str, name, role: str, by: str) -> dict:
         conn.execute("BEGIN IMMEDIATE")
         _check_shared(conn, ws)  # again: the lookup went over the network
         linked = conn.execute("SELECT i.user_id, u.username FROM identities i JOIN users u ON u.id = i.user_id "
-                              "WHERE i.provider = ? AND i.subject = ?", (PROVIDER, subject)).fetchone()
+                              "WHERE i.provider = ? AND i.subject = ?", (cloud_auth.PROVIDER, subject)).fetchone()
         if linked:
             local, local_name = linked
             _check_account(conn, local)

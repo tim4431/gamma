@@ -67,9 +67,12 @@ username". Such an invitation grants edit or view access, never ownership:
 
 Under the `invited` sign-in policy a pending row is also what admits a
 newcomer: a cloud account with no account here is provisioned only when an
-invitation to a shared workspace waits for its subject, and the claim then
-makes it a member ([cloud_accounts.md](cloud_accounts.md) "Which local
-account").
+invitation waits for its subject (this one, or a share's), or an admin
+approved its request to join, and the claim then makes it a member
+([cloud_accounts.md](cloud_accounts.md) "Which local account"). A page or
+folder share invites by Gamma Cloud username the same way, for that page
+or folder alone ([cloud_accounts.md](cloud_accounts.md) "A share's
+invitations by cloud username").
 
 Pending rows are keyed by subject, not by username, so a later rename on
 either side does not redirect an invitation. `GET /workspaces/{id}` lists
@@ -78,13 +81,16 @@ The Manage page shows them with a *pending* tag and a remove button that
 withdraws the invitation. Deleting a workspace removes its pending rows, and
 so does converting it to personal. Counts of `members` include explicit
 members only. Invitations require cloud sign-in on this server, and the
-lookup is rate limited per inviting account. Code: `backend/gamma/workspaces.py`
-(`invite_cloud`, `claim_pending_memberships`); tests:
+lookup is rate limited per inviting account, a share's invitations
+counting too. Code: `backend/gamma/workspaces.py`
+(`invite_cloud`, `claim_pending_memberships`; the lookup is
+`cloud_auth.lookup_username`); tests:
 `backend/tests/test_pending_memberships.py`.
 
-The lookup runs on the inviter's own Gamma Cloud grant: an access token from
-the refresh token stored with their linked identity
-(`cloud_auth.access_token_for`, [cloud_accounts.md](cloud_accounts.md)). An
+The lookup (`cloud_auth.lookup_username`) runs on the inviter's own Gamma
+Cloud grant: an access token from the refresh token stored with their
+linked identity (`cloud_auth.access_token_for`,
+[cloud_accounts.md](cloud_accounts.md)). An
 inviter whose account here is not linked to Gamma Cloud is refused with
 "Link your own Gamma Cloud account" (503), and so is one whose grant the
 account server does not honour.

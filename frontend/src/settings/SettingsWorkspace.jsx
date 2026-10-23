@@ -10,8 +10,8 @@
 // The dialog (ManageWorkspaceDialog) is shared with the admin's Server pane
 // (SettingsWorkspacesAdmin.jsx), which adds access, quota, ownership, kind
 // conversion and join-as-owner in `admin` mode. Also exported from here:
-// useAccounts, useCloudSignIn, useWorkspace (one workspace's state + every
-// call on it, incl. invitations by Gamma Cloud username), AccessRows,
+// useAccounts, cloudUsername, useCloudSignIn, useWorkspace (one workspace's
+// state + every call on it, incl. invitations by Gamma Cloud username), AccessRows,
 // StorageRow, MembersList, InviteDialog, NameDialog and the access tables;
 // the role tables and workspaceMeta (the switcher's one-line description)
 // are in workspaceRoles.js.
@@ -42,6 +42,10 @@ export function useAccounts() {
   }, []);
   return accounts;
 }
+
+// A Gamma Cloud username as typed ("@Alice " → "alice"); the server checks
+// the rest (gamma/cloud_auth.py clean_username).
+export const cloudUsername = (text) => String(text || "").trim().replace(/^@/, "").toLowerCase();
 
 // Whether this server signs people in with Gamma Cloud (GET /api/server-config)
 // — what lets an owner invite someone by their cloud username.
@@ -246,7 +250,7 @@ export function InviteDialog({ name, accounts, exclude, cloud, busy, error, onSu
   const [cloudName, setCloudName] = React.useState("");
   const [role, setRole] = React.useState("editor");
   const byCloud = cloud && via === "cloud";
-  const who = byCloud ? cloudName.trim().replace(/^@/, "").toLowerCase() : username;
+  const who = byCloud ? cloudUsername(cloudName) : username;
   const submit = () => { if (who && !busy) onSubmit(who, role, byCloud ? "cloud" : "local"); };
   function pickVia(next) {
     setVia(next);

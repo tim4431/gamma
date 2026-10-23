@@ -4,8 +4,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  applyMark, inFilter, inboxDays, inboxJump, inboxSentence, inboxSnippet, inboxUrl, isFolderShare, isUnread,
-  itemsToRing, mergeListing, RING_AT_ONCE, sameListing,
+  applyMark, inFilter, inboxActor, inboxDays, inboxJump, inboxSentence, inboxSnippet, inboxUrl, isFolderShare,
+  isUnread, itemsToRing, mergeListing, RING_AT_ONCE, sameListing,
 } from "../src/inbox/inboxText.js";
 
 const item = (id, at, extra = {}) => ({
@@ -26,6 +26,22 @@ test("one sentence per kind, with the actor, the page and the workspace", () => 
   assert.equal(inboxSentence(item("a", at, { kind: "invited", page_id: "", block_id: "" })), "ann added you to Lab");
   assert.equal(inboxSentence(item("a", at, { actor: "", page_title: "" })), "Someone mentioned you in Untitled",
     "a deleted account and an untitled page");
+});
+
+test("a request to join names the Gamma Cloud username asking, who has no account here", () => {
+  const at = "2026-10-20T10:00:00.000000Z";
+  const asks = item("a", at, { kind: "join_request", actor: "", snippet: "cat", block_id: "" });
+  assert.equal(inboxSentence(asks), "cat asks to open Draft");
+  assert.equal(inboxActor(asks), "cat");
+  assert.equal(inboxSnippet(asks), "", "the sentence names the person already");
+  const folder = { ...asks, page_id: "", block_id: "f1", page_title: "Reading" };
+  assert.equal(inboxSentence(folder), "cat asks to open the folder Reading");
+  assert.equal(inboxActor(item("a", at)), "ann");
+  // decided in the Share popover: the page's or the folder's, here; elsewhere the page or the folder
+  assert.deepEqual(inboxJump(asks, "ws1"), { to: "share", pageId: "pg1", folderId: "" });
+  assert.deepEqual(inboxJump(folder, "ws1"), { to: "share", pageId: "", folderId: "f1" });
+  assert.deepEqual(inboxJump(asks, "ws2"), { to: "url", url: "/?ws=ws1&page=pg1" });
+  assert.deepEqual(inboxJump(folder, "ws2"), { to: "url", url: "/?ws=ws1&folder=f1" });
 });
 
 test("the snippet is the note's or the comment's words on one line; shares and invitations have none", () => {
