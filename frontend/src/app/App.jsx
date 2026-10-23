@@ -81,6 +81,7 @@ import {
   isFolded,
   toggleFold,
   revealBlock,
+  sameShape,
   isFoldedAway,
   updateBlockTree,
   removeBlockTree,
@@ -215,6 +216,7 @@ import { InboxBadge, InboxButton } from "../inbox/InboxButton";
 import { inboxJump, isUnread } from "../inbox/inboxText.js";
 import { DialogOverlay, Popover } from "../shared/ui/Surfaces";
 import { IconSwap, MorphText } from "../shared/ui/MotionWidgets";
+import ListMotion from "../shared/ui/ListMotion";
 
 // Surfaces fetched on first use, each mounted inside a LazyBoundary
 // (docs/dev/frontend-refactor.md, "Lazy boundaries"). `preload()` fetches
@@ -3950,6 +3952,11 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     if (next !== prev) treeOriginRef.current.set(next, "fold");
     return next;
   });
+  // The block whose children the person folded or opened, kept on the view
+  // VALUE that did it as the origins are on the tree: that fold moves
+  // (BlockTree), and one any other view change makes (a jump revealing a
+  // block, an editor opening) does not.
+  const foldMovesRef = useRef(new WeakMap());
   const saveNowRef = useRef(false); // next autosave runs without the debounce (editor close)
   // THE undo history (Ctrl+Z anywhere on the page, editors included):
   // derived from the block tree's transitions, see blockHistory.js. Declared
@@ -8360,7 +8367,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       collapsed={appPrefs.backlinksCollapsed} onCollapsedChange={appPrefs.setBacklinksCollapsed} />
   ) : null;
   const notesTail = !homeMode && !readOnly && focusedBlockId ? (
-    <div className={"notesTail" + (blocks.length ? "" : " isEmpty")}
+    <div className={"notesTail" + (blocks.length ? "" : " isEmpty")} data-motion-key="tail"
       onMouseDown={(e) => { e.preventDefault(); editTail(); }}>
       {blocks.length ? null : t("Click to start writing")}
     </div>
@@ -9486,6 +9493,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                   focusedId,
                   setFocusedId,
                   view,
+                  foldMoving: foldMovesRef.current.get(view),
                   flashingId, // a page's landing row flashes once (landingRef)
                   // The AI agent's live footprint (handleAgentEvent); rootId
                   // places a ghost row for a block being created at top level.
@@ -9617,6 +9625,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                   },
                   onToggle: (id) => {
                     const next = toggleFold(blocks, view, id);
+                    foldMovesRef.current.set(next.view, id);
                     setBlocks(next.blocks);
                     setView(next.view);
                   },
@@ -9838,13 +9847,22 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                 return (
                   <>
                     {notesInkStrip}
-                    <FileChipContext.Provider value={fileChipCtx}>
-                      <NoteSheetContext.Provider value={noteSheetCtx}>
-                        <BlockTree blocks={blocks} readOnly={readOnly} rowProps={stableRowProps(rowProps)} />
-                      </NoteSheetContext.Provider>
-                    </FileChipContext.Provider>
-                    {backlinksPanel}
-                    {notesTail}
+                    {/* A block added, removed or moved here glides the rows
+                        around it to their new places (docs/dev/ui-design.md,
+                        "Lists that change"): not a page opening or reloading,
+                        another client's or the agent's change, a text box's
+                        measured size, nor while writing on a sheet. */}
+                    <ListMotion shape={blocks} same={sameShape} scope={focusedBlockId}
+                      still={!!treeOriginRef.current.get(blocks)} off={readOnly || inkUi.open}
+                      hold=".slashMenu, .refPopup">
+                      <FileChipContext.Provider value={fileChipCtx}>
+                        <NoteSheetContext.Provider value={noteSheetCtx}>
+                          <BlockTree blocks={blocks} readOnly={readOnly} rowProps={stableRowProps(rowProps)} />
+                        </NoteSheetContext.Provider>
+                      </FileChipContext.Provider>
+                      {backlinksPanel}
+                      {notesTail}
+                    </ListMotion>
                     {notesReplayDock}
                     <BlockDropIndicator target={dropTarget} />
                   </>

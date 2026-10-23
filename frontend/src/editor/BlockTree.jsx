@@ -9,7 +9,7 @@ import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
 import rehypeRaw from "rehype-raw";
-import { isFolded, isHighlightBlock, withLegacyAccessors } from "../shared/model/blockModel";
+import { countBlocks, isFolded, isHighlightBlock, withLegacyAccessors } from "../shared/model/blockModel";
 import { DEFAULT_HIGHLIGHT, normalizeColor } from "../shared/model/palette.js";
 import { citesSeveralPapers, gammaLinkId, parseGammaLink, relativeGammaLink } from "../shared/model/gammaLinks.js";
 import { NO_LABELS, REF_RE, refIdsOf } from "./refLabels.js";
@@ -22,6 +22,7 @@ import { isTextBox } from "../markup/textBox.js";
 import { isSheet } from "../notebook/notebook";
 import { NoteSheet } from "../notebook/NoteSheet";
 import { CitationPill, GammaLinkCard, handleMarkdownCopy } from "../shared/ui/Widgets";
+import { Collapse } from "../shared/ui/MotionWidgets";
 import { DiagramFigure, diagramCodeProps } from "../shared/ui/DiagramFigure";
 import { mapOutsideCodeFences, remarkDiagrams, scanDiagramFences, setDiagramWidth } from "../shared/lib/diagramMarkdown.js";
 import { MdObject, ObjectMenuButton, findObject } from "./MdObject";
@@ -1839,7 +1840,7 @@ const SortableBlockRow = React.memo(function SortableBlockRow({ block, ...rowPro
   }
 
   return (
-    <div className="sortableBlockWrap" data-block-id={block.id} data-depth={depth}>
+    <div className="sortableBlockWrap" data-block-id={block.id} data-motion-key={block.id} data-depth={depth}>
       {/* One narrow gutter column: ⋮⋮ (drag / menu) with the "+" (add a
           block) sitting right under it, shown only while the row is hovered. */}
       <span className="rowHandles">
@@ -2011,12 +2012,15 @@ function AiGhostRow({ content, depth }) {
 // sibling the call names (at the end when it names none or an unknown one).
 // `onSheet`: a sheet holds these rows (notebook/notebook.js), which puts
 // a text box among them on it.
+// A fold of more blocks than this opens and shuts at once.
+const FOLD_MOVES_MOST = 60;
+
 function BlockTree({ blocks, readOnly, rowProps, depth = 0, parentId, onSheet = false }) {
   // Every row takes its own entry of the labels map, never the map itself
   // (a new one on every tree change would re-render each memoized row).
   // So too the comment counts: each row its own number, and whether its
   // thread popover is open.
-  const { refLabelsById, commentCounts, commentOpenFor, ...rowRest } = rowProps;
+  const { refLabelsById, commentCounts, commentOpenFor, foldMoving, ...rowRest } = rowProps;
   const live = rowProps.aiLive;
   const ghost = live?.tool === "create_block" && live.parentId === (parentId ?? rowProps.rootId) ? live : null;
   if ((!blocks || blocks.length === 0) && !ghost) return null;
@@ -2053,11 +2057,18 @@ function BlockTree({ blocks, readOnly, rowProps, depth = 0, parentId, onSheet = 
             <BlockRow block={block} depth={depth} sheetNumber={sheetNumber} onSheet={onSheet} refLabels={refLabels}
               commentCount={commentCount} commentOpen={commentOpen} place={idx} siblings={list.length} {...rowRest} />
           )}
-          {!isFolded(block, rowProps.view) && (block.children?.length > 0 || live?.parentId === block.id) ? (
-            <div className="blockChildren">
-              <BlockTree blocks={block.children} readOnly={readOnly} rowProps={rowProps} depth={depth + 1} parentId={block.id}
-                onSheet={onSheet || isSheet(rawBlock)} />
-            </div>
+          {/* The children fold under their row: the person's own toggle
+              moves (foldMoving), anything else that folds or opens them (a
+              jump revealing a block, another viewer's default) does so at
+              once, as does a subtree too large to move smoothly. */}
+          {block.children?.length > 0 || live?.parentId === block.id ? (
+            <Collapse className="blockFold" open={!isFolded(block, rowProps.view)}
+              still={foldMoving !== block.id || countBlocks(block.children, FOLD_MOVES_MOST) > FOLD_MOVES_MOST}>
+              <div className="blockChildren" data-motion-key={`under:${block.id}`}>
+                <BlockTree blocks={block.children} readOnly={readOnly} rowProps={rowProps} depth={depth + 1} parentId={block.id}
+                  onSheet={onSheet || isSheet(rawBlock)} />
+              </div>
+            </Collapse>
           ) : null}
           {ghostAt === idx + 1 ? ghostRow : null}
         </React.Fragment>

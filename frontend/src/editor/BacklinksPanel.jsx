@@ -49,7 +49,7 @@ export function BacklinksPanel({ backlinks, pageId, pageTitle, pages, refCache, 
     if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onOpen(bl); }
   };
   return (
-    <section className="backlinksPanel">
+    <section className="backlinksPanel" data-motion-key="backlinks">
       <button type="button" className="backlinksHead" aria-expanded={!collapsed}
         onClick={() => onCollapsedChange(!collapsed)}>
         <span className={`backlinksCaret turnCaret${collapsed ? "" : " open"}`} aria-hidden="true">▸</span>

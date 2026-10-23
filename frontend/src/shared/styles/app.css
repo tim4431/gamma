@@ -1458,9 +1458,10 @@ html[data-shell] .app { padding-bottom: env(safe-area-inset-bottom); }
   100% { background: transparent; box-shadow: inset 3px 0 0 transparent; }
 }
 /* The ghost row's handle columns are inert stand-ins that keep its card
-   aligned with its siblings'. */
+   aligned with its siblings'. Its tint is the one the block it becomes
+   starts its fade from (ai-create), so the handoff does not pulse. */
 .sortableBlockWrap.aiGhostWrap > .rowHandles { visibility: hidden; pointer-events: none; }
-.aiGhostWrap .blockRow { animation: none; background: color-mix(in srgb, var(--accent) 10%, transparent); box-shadow: inset 3px 0 0 var(--accent); }
+.aiGhostWrap .blockRow { animation: none; background: color-mix(in srgb, var(--accent) 22%, transparent); box-shadow: inset 3px 0 0 var(--accent); }
 .blockRendered.aiStreaming { min-height: 1.45em; }
 .blockRendered.aiStreaming > :last-child { display: inline-block; margin-bottom: 0; }
 .blockRendered.aiStreaming::after {

@@ -200,6 +200,21 @@
   transition: opacity var(--dur-fast);
 }
 
+/* The outline's children (BlockTree) open without the blur: blurring a
+   body as tall as a subtree costs more than it shows. */
+.blockFold.collapse[data-phase="opening"] > .collapseBody { animation-name: fade-in; }
+
+/* ---- Lists that change ---------------------------------------------------
+   ListMotion (shared/ui/ListMotion.jsx) wraps a list without a box of its
+   own. An item that moved is laid out at its new place at once and glides
+   there from where it stood, on --dur-slow --ease-out (a Web Animation it
+   starts: [data-moving] marks the item meanwhile). A new item fades in
+   where it will rest, a moment late, so the items around it have opened
+   its room first. */
+.listMotion { display: contents; }
+@keyframes list-in { 0%, 30% { opacity: 0; } }
+[data-entering="fade"] { animation: list-in var(--dur-slow); }
+
 /* A chevron that turns with what it opens (Chevron): a right-pointing
    one turns down, a down-pointing one flips up. A text caret (▸) turns
    the same way (.turnCaret). */

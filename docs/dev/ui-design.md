@@ -1009,14 +1009,17 @@ is plain markup, and a first render never moves.
   label changes faster than a swap takes (a progress count), and when an
   ellipsis cuts the old or the new one. Not inside a surface placed from
   its size (the selection popup): its width would move it every frame.
-- **`Collapse`** `open`: a body under the header that opens it. Its row
-  grows from nothing over `--dur-slow` while it comes into focus, and
+- **`Collapse`** `open still`: a body under the header that opens it. Its
+  row grows from nothing over `--dur-slow` while it comes into focus, and
   folds over `--dur-base`; shut, nothing is rendered, and while it folds
   the body stays, inert. In a column with a gap, the gap above it folds
   with it; while it moves nothing scrolls it (a field focusing itself as
-  it mounts). Not inside a surface placed from its size,
-  which would move as it grows. A native `<details>` opens the same way
-  where the browser animates `::details-content`.
+  it mounts). While `still` holds it opens and shuts at once: the outline
+  moves only the fold a person makes, and a jump that reveals a block
+  opens its parents still, since it scrolls to the block right away. The
+  outline's bodies fade in without the blur. Not inside a surface placed
+  from its size, which would move as it grows. A native `<details>` opens
+  the same way where the browser animates `::details-content`.
 - **`Chevron`** `open dir`: one glyph that turns with what it opens:
   `"right"` turns down, `"down"` flips up. A text caret ▸ turns the
   same way with `.turnCaret`.
@@ -1038,6 +1041,47 @@ is plain markup, and a first render never moves.
 The desktop shell's and the extension's own stylesheets move on the same
 tokens (their copies of tokens.css): the switch's thumb, the buttons, the
 extension's drawer and cookie badge.
+
+### Lists that change
+
+A list whose items are added, removed or reordered in place wraps them in
+`ListMotion` (`shared/ui/ListMotion.jsx`), which has no box of its own.
+Its items are the elements under it with a `data-motion-key`, unique in
+the list. An item may hold others, as a row's children body holds rows,
+and what it holds travels with it.
+
+- **What moves glides.** The page is laid out at once in its new order.
+  An item whose place changed is drawn from where it stood and glides to
+  its place on `--dur-slow` `--ease-out`: a Web Animation of `translate`
+  ("list-move"), so the item's own animation and transitions are left
+  alone, and it carries `data-moving` meanwhile. One interrupted starts
+  again from where it was seen.
+- **What comes fades in where it will rest**, a moment late, so the items
+  around it have opened its room first (`[data-entering="fade"]`). It
+  never travels, so a box read right after the change is its own. A new
+  item that holds one that was already there, such as the body a row was
+  just indented into, does not fade. While it fades the recipe stands in
+  for the item's own animation, so an item in such a list has no arrival
+  of its own.
+- **What goes is gone at once**, and the rest closes up over its place.
+- **Nothing moves** on a first render, in a new `scope` (another page),
+  for a change marked `still` (a load, another client's or the agent's
+  edit, a text box's measured size), while it is `off`, under reduced
+  motion, or while the list is out of sight. Only what is near the window
+  glides, and a change that moves more than 60 items or brings more than
+  `most` new ones does that part at once (a paste of many blocks).
+- **A popup over the window stays put.** An item holding what matches
+  `hold`, such as the caret's "/" or `[[` menu, stays still, since a
+  moving ancestor would carry it off. A key typed or a paste in the list
+  lands every glide at once, so a popup the caret opens is placed against
+  a row at rest.
+
+`arriving(el)` counts a glide as an arrival, so the guide's card waits
+for its anchor's row to land. The notes outline is the first list on it.
+Its rows and their children bodies are the items, with the backlinks and
+the tail under them; it plays only when the tree's shape changed
+(`sameShape`, `shared/model/blockModel.js`), so a keystroke or a fold
+moves nothing.
 
 ## Block editor interactions
 

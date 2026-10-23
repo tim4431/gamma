@@ -105,13 +105,16 @@ export function MorphText({ children, className = "" }) {
 // nothing is rendered; while it closes the content stays, inert, until the
 // row has folded. A first render, open or shut, does not move. In a column
 // with a gap the gap above it folds with it (--fold-gap), and while it
-// moves nothing scrolls it (a field focusing itself as it mounts).
-export function Collapse({ open, children, className = "", ...rest }) {
+// moves nothing scrolls it (a field focusing itself as it mounts). While
+// `still` holds, a change of `open` takes effect at once (what opened it
+// is about to measure or scroll to what it holds); a move under way ends
+// on its own.
+export function Collapse({ open, still = false, children, className = "", ...rest }) {
   // shut → opening → open → closing → shut; `open` starts a move, the
   // move's end (its recipe's own length) settles it
   const [phase, setPhase] = useState(open ? "open" : "shut");
-  if (open && (phase === "shut" || phase === "closing")) setPhase("opening");
-  if (!open && (phase === "open" || phase === "opening")) setPhase("closing");
+  if (open && (phase === "shut" || phase === "closing")) setPhase(still ? "open" : "opening");
+  if (!open && (phase === "open" || phase === "opening")) setPhase(still ? "shut" : "closing");
   const ref = useRef(null);
   const moving = phase === "opening" || phase === "closing";
   useLayoutEffect(() => {
