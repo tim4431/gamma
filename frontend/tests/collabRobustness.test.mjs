@@ -486,7 +486,7 @@ test("a failed batch keeps its id on every retry and goes at once when the socke
   h.edit(setText(h.tree, "a", "typed offline, more")); // typing doesn't cut the wait short
   assert.deepEqual([...h.timers.values()].map((x) => x.ms), [RETRY_MS]);
   up = true;
-  h.message({ t: "hello", client: ME, color: 0, seq: 0, peers: [] }); // reconnected
+  h.message({ t: "hello", client: ME, seq: 0, peers: [] }); // reconnected
   await settle();
   assert.equal(h.calls[1].body.batch, h.calls[0].body.batch);
   assert.deepEqual(h.calls[1].body.ops, h.calls[0].body.ops);
@@ -510,7 +510,7 @@ test("an insert the server already had converges on the block as the server has 
 test("text folded into a queued property-only set is protected from remote text like any set", async (t) => {
   const answer = deferred();
   const h = setup(t, () => answer.promise, { tree: [block("b", "hello")] });
-  h.message({ t: "hello", client: ME, color: 0, seq: 0, peers: [] });
+  h.message({ t: "hello", client: ME, seq: 0, peers: [] });
   h.edit([{ ...h.tree[0], properties: { color: "red" } }]);
   h.edit([{ ...h.tree[0], content: "hello world MINE" }]);
   const q = [];

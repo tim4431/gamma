@@ -13,9 +13,10 @@ that only touches those); the merge itself triggers `docker.yml`
 `cloud/` or `sites/`) and, when the site's inputs changed, `site.yml`,
 which redeploys gammapdf.com from `main`. The desktop app and the browser
 extension are NOT released by a merge — run the `release` skill for that
-(it dispatches `desktop.yml` on `main`, which releases both). The iPad app
-goes to TestFlight only when a merged commit's message carries a fresh
-`ipad-test-release-NNN` marker (the `release-ipad` skill); a plain merge
+(it dispatches `desktop.yml` on `main`, which releases both, and then sends
+the iPad app to TestFlight). The iPad app goes to TestFlight only when a
+commit on `main` carries a fresh `ipad-test-release-NNN` marker (a release
+pushes one; between releases, the `release-ipad` skill); a plain merge
 releases nothing there either. The account
 server and the website do not need a merge at all: `update-account-server`
 / `build-site` publish them from the branch. Details:
@@ -86,6 +87,6 @@ Follow-ups to offer, not to run: `update-server`, `update-demo-server` and
 `update-share-host` once the Docker run has published (they deploy that
 build to the NAS, the demo and the share host; `update-needed` checks all
 deployments); `release` if the merged
-work should ship as a new desktop app or extension version; `release-ipad`
-if it should reach TestFlight (that needs its marker in a commit before
-the merge, so it is a merge of its own).
+work should ship as a new desktop app, extension and iPad TestFlight
+version; `release-ipad` if it should reach TestFlight alone (that needs its
+marker in a commit before the merge, so it is a merge of its own).

@@ -157,7 +157,7 @@ class _Sock:
 
 
 def test_a_client_gone_while_the_hello_is_sent_is_an_ordinary_close(monkeypatch):
-    peer = collab.Peer(ws=None, client="", user="u", name="u", color=0, can_edit=True, account="u")
+    peer = collab.Peer(ws=None, client="", user="u", name="u", can_edit=True, account="u")
 
     def admitted(sock, page_id):
         peer.ws = sock
@@ -175,9 +175,8 @@ def test_a_client_gone_while_the_hello_is_sent_is_an_ordinary_close(monkeypatch)
 def test_a_peer_dropped_on_a_failed_send_is_announced_as_gone():
     async def main():
         alive, dead = _Sock(), _Sock(fail_send=True)
-        room = collab.join("cag-ghost", "page", collab.Peer(ws=alive, client="W", user="u", name="u",
-                                                               color=0, can_edit=True))
-        dead_peer = collab.Peer(ws=dead, client="X", user="v", name="v", color=1, can_edit=True)
+        room = collab.join("cag-ghost", "page", collab.Peer(ws=alive, client="W", user="u", name="u", can_edit=True))
+        dead_peer = collab.Peer(ws=dead, client="X", user="v", name="v", can_edit=True)
         collab.join("cag-ghost", "page", dead_peer)
         await room.broadcast('{"t": "ops"}')
         for _ in range(5):

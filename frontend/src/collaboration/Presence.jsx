@@ -1,12 +1,14 @@
 // Who else is on the page (collaboration/usePageCollab.js `peers`): the avatar stack in the page
-// header, and the small chips on the block a person is on. Colours are the
-// room's per-peer index (CSS --peer-N); an open editor shows as a full
-// avatar, a mere viewer as a faded one. `PersonAvatar` draws someone who is
-// not on the page, by username alone.
+// header, and the small chips on the block a person is on. A person's colour
+// comes from their name (personColor.js), so the same person looks the same
+// here as beside their comment; an open editor shows as a full avatar, a
+// mere viewer as a faded one. `PersonAvatar` draws someone who is not on the
+// page, by username alone.
 import React, { useLayoutEffect, useState } from "react";
 import { t } from "../shared/i18n/i18n.js";
 import { renderedCaretRect } from "../editor/clickToSource";
 import { scanMathSpans } from "../editor/mdScan";
+import { personColor } from "./personColor.js";
 
 function initial(peer) {
   const name = (peer?.name || "").trim();
@@ -19,18 +21,10 @@ function describe(peer) {
   return `${peer.name || "Anonymous"}${peer.user ? "" : " (via link)"} · ${what}`;
 }
 
-// A stable colour index for a name (the --peer-0…7 palette), for an avatar
-// of someone who is not on the page (PersonAvatar).
-function nameColor(name) {
-  let hash = 0;
-  for (const ch of name) hash = (hash * 31 + ch.codePointAt(0)) >>> 0;
-  return hash % 8;
-}
-
 function PeerAvatar({ peer, onClick, title }) {
   return (
     <span
-      className={`peerAvatar peer-${peer.color % 8}${peer.anchor >= 0 ? "" : " viewing"}`}
+      className={`peerAvatar peer-${personColor(peer.name)}${peer.anchor >= 0 ? "" : " viewing"}`}
       title={title || describe(peer)}
       onClick={onClick}
       role={onClick ? "button" : undefined}
@@ -41,7 +35,7 @@ function PeerAvatar({ peer, onClick, title }) {
 // The avatar of someone who is not on the page, by username: a share's
 // owner, a person to mention, a comment's author, an Inbox item's actor.
 export function PersonAvatar({ name, title }) {
-  return <PeerAvatar peer={{ name, color: nameColor(name), anchor: 0 }} title={title} />;
+  return <PeerAvatar peer={{ name, anchor: 0 }} title={title} />;
 }
 
 // Chips on a block row: up to three avatars, then a "+n".
@@ -63,7 +57,7 @@ export function PeerChips({ peers }) {
 // or the view's size changes (images loading, the window resizing).
 export function RenderedCarets({ peers, source, containerRef }) {
   const [spots, setSpots] = useState([]);
-  const key = peers.map((p) => `${p.client}:${p.head}:${p.color}:${p.name}`).join("|");
+  const key = peers.map((p) => `${p.client}:${p.head}:${p.name}`).join("|");
   useLayoutEffect(() => {
     const el = containerRef.current;
     if (!el) return undefined;
@@ -71,7 +65,7 @@ export function RenderedCarets({ peers, source, containerRef }) {
       const spans = scanMathSpans(source);
       setSpots(peers.map((p) => {
         const r = renderedCaretRect(el, source, p.head, spans);
-        return r && { ...r, client: p.client, color: p.color % 8, name: p.name || "Anonymous" };
+        return r && { ...r, client: p.client, color: personColor(p.name), name: p.name || "Anonymous" };
       }).filter(Boolean));
     };
     place();

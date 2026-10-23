@@ -1,13 +1,15 @@
 ---
 name: release-ipad
-description: Ship the iPad app to TestFlight by merging a commit whose message carries a fresh `ipad-test-release-NNN` marker into main; the Mac mini picks it up, builds, tests, signs and uploads on its own. TestFlight only, never an App Store submission.
+description: Ship the iPad app to TestFlight between desktop releases by merging a commit whose message carries a fresh `ipad-test-release-NNN` marker into main; the Mac mini picks it up, builds, tests, signs and uploads on its own. Every desktop release (the `release` skill) already sends one. TestFlight only, never an App Store submission.
 ---
 
 # Release the iPad app to TestFlight
 
-The iPad app is not released by GitHub Actions (`ipad.yml` only tests and
-makes an unsigned build) nor by the desktop `release` skill. A Mac mini
-polls `tim4431/gamma`'s `main` every minute for a commit whose message
+The iPad app is not built for release by GitHub Actions (`ipad.yml` only
+tests and makes an unsigned build). Every desktop release from `main` (the
+`release` skill) pushes a marker for it at the end; this skill is for a
+TestFlight build without a desktop release, or after a release whose
+marker step warned that `main` had moved. A Mac mini polls `tim4431/gamma`'s `main` every minute for a commit whose message
 (subject or body) contains a trigger marker, and for a new one it builds
 the app, runs the tests, signs and uploads the build to TestFlight. Nothing
 is dispatched by hand, and nothing is submitted to the App Store.

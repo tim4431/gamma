@@ -382,7 +382,7 @@ on it) or fanned out to it, never neither. A batch fanned out while the seq
 is being read reaches the socket before the hello; the client's ordered
 inbox takes it whenever it arrives. The same tab joining again (its client
 id: a reconnect before the server noticed the old socket drop, a
-display-name reconnect) replaces its peer, keeping its colour, and the old
+display-name reconnect) replaces its peer, and the old
 socket is closed with 4409. `leave` removes only that very peer, and
 unregisters a room only while it is the registered one. A leave is announced
 only when something was removed, so an old socket's teardown can neither
@@ -392,7 +392,7 @@ whose send fails leaves at once and the room announces its `leave` then
 stays with the others.
 Messages:
 
-- server → client: `hello {client, color, seq, peers, build}` on join (`build`
+- server → client: `hello {client, seq, peers, build}` on join (`build`
   as `/api/session` reports it: the client's handwriting fence compares it
   with the build the tab loaded under, [handwriting.md](handwriting.md)
   "Fences"); `join {peer}`
@@ -480,10 +480,13 @@ for its content-free nudge, `{t: "inbox"}` ([comments.md](comments.md)
 admitted to one page learns nothing about another. A tab with no page open
 (the home library, Settings) has no socket and polls instead.
 
-A peer is `{client, user, name, color, can_edit, block, anchor, head}` —
+A peer is `{client, user, name, can_edit, block, anchor, head}` —
 `user` the account's username, which the handshake reads with the session;
 the room keeps the account's id beside it (never sent) for `revalidate`.
-Colour is an index into an 8-slot palette handed out per room (CSS `--peer-N`).
+The server hands out no colour: a person's colour is one of the eight
+`--peer-N`, from their name (`collaboration/personColor.js`), so they look
+the same in the page's presence, chips and carets as beside their comments,
+mentions and Inbox items. Two people on a page may share a colour.
 A share-link visitor without an account has `user: ""` and `name` = their
 display name (`?name=`, else `Anonymous`); their op batches carry
 `actor: "link:<name>"`. A rename in the share view reconnects the socket
@@ -937,7 +940,7 @@ running ([debugging.md](debugging.md#browser-end-to-end-suite)).
 
 ## What the user sees (`src/collaboration/Presence.jsx`, CSS in `shared/styles/app.css`)
 
-- the header avatar stack (initial, peer colour; faded while only viewing;
+- the header avatar stack (initial, the person's colour; faded while only viewing;
   click jumps to the person's block; the tooltip marks an account-less
   share-link visitor "(via link)");
 - small avatar chips before the row a person is on (in the ⋮⋮ handle

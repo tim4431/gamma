@@ -49,6 +49,7 @@ import { useMentionMenu } from "./useMentionMenu.js";
 import { MentionChip, MentionContext, MentionMenuPopup } from "./MentionMenu";
 import { remarkCallouts } from "./callouts";
 import { PeerChips, RenderedCarets } from "../collaboration/Presence";
+import { personColor } from "../collaboration/personColor.js";
 import { ContextMenu, MenuItem } from "../shared/ui/Menus";
 import { API, apiJson, assetUrl, copyText, withShare, withWorkspace } from "../shared/lib/utils";
 import { copyImage } from "../shared/lib/copyImage.js";
@@ -753,7 +754,7 @@ const BlockRow = React.memo(function BlockRow({
   const peerEditing = rowPeers?.find((p) => p.anchor >= 0) || null;
   const remoteCursors = peerEditing
     ? rowPeers.filter((p) => p.anchor >= 0).map((p) => ({
-      client: p.client, rev: p.rev || 0, anchor: p.anchor, head: p.head, color: p.color, name: p.name,
+      client: p.client, rev: p.rev || 0, anchor: p.anchor, head: p.head, name: p.name,
     }))
     : null;
   // The AI agent's live footprint on this row (App.handleAgentEvent): a
@@ -1377,7 +1378,7 @@ const BlockRow = React.memo(function BlockRow({
           open={mergeOpen === block.id} onOpenChange={(v) => onMergeOpen?.(v ? block.id : null)} />
       ) : null}
       <div
-        className={`blockRow ${focusedId === block.id ? "focused" : ""}${flashingId === block.id ? " landed" : ""}${replayState ? (replayState === "pending" ? " replayPending" : " replayReached") : ""}${aiMark ? ` ai-${aiMark.kind} aiMark${aiMark.n % 2}` : ""}${scanIdx != null ? ` ai-scan aiMark${aiScan.n % 2}` : ""}${peerEditing ? ` peerOn peer-${peerEditing.color}` : ""}`}
+        className={`blockRow ${focusedId === block.id ? "focused" : ""}${flashingId === block.id ? " landed" : ""}${replayState ? (replayState === "pending" ? " replayPending" : " replayReached") : ""}${aiMark ? ` ai-${aiMark.kind} aiMark${aiMark.n % 2}` : ""}${scanIdx != null ? ` ai-scan aiMark${aiScan.n % 2}` : ""}${peerEditing ? ` peerOn peer-${personColor(peerEditing.name)}` : ""}`}
         style={scanIdx != null ? { animationDelay: `${Math.min(scanIdx * 45, 1600)}ms` } : undefined}
         onMouseDown={(e) => {
           if (e.button !== 0) return; // right-click is the context menu's

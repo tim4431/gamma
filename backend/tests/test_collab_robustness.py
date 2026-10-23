@@ -279,13 +279,13 @@ def test_a_tab_reconnecting_keeps_its_place_and_the_others_room(client, guest):
     page = make_page(guest, "Reconnect page")
     old = client.websocket_connect(f"/api/ws/page/{page['id']}?client=TAB1")
     old.__enter__()
-    color = recv_hello(old)["color"]
+    recv_hello(old)
     with client.websocket_connect(f"/api/ws/page/{page['id']}?client=OTHER") as watcher:
         recv_hello(watcher)
         # the tab reconnects (same client id) before the server noticed its old socket drop
         with client.websocket_connect(f"/api/ws/page/{page['id']}?client=TAB1") as new:
             hello = recv_hello(new)
-            assert hello["color"] == color and sorted(p["client"] for p in hello["peers"]) == ["OTHER", "TAB1"]
+            assert sorted(p["client"] for p in hello["peers"]) == ["OTHER", "TAB1"]
             # the server closes the replaced socket; its teardown removes nothing
             try:
                 with pytest.raises(WebSocketDisconnect) as closed:
@@ -320,7 +320,7 @@ def test_a_stale_room_never_takes_the_current_one_down(client, guest):
         recv_hello(z)
         current = collab.room_for(ws_id, page["id"])
         assert current is not room
-        ghost = collab.Peer(ws=None, client="A1", user="", name="", color=0, can_edit=True)
+        ghost = collab.Peer(ws=None, client="A1", user="", name="", can_edit=True)
         room.peers["A1"] = ghost
         assert collab.leave(room, ghost) is True
         assert collab.room_for(ws_id, page["id"]) is current
