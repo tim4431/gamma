@@ -205,7 +205,17 @@ export function LoginPage({
   const errorText = typeof error === "string" ? error : error?.text || "";
   const badPassword = error?.field === "password";
   const passwordRef = React.useRef(null);
-  React.useEffect(() => { if (badPassword) passwordRef.current?.focus(); }, [error, badPassword]);
+  React.useEffect(() => {
+    if (!badPassword) return;
+    const input = passwordRef.current;
+    input?.focus();
+    // the field shakes once, a small no, on each refusal (motion.css .shakeNo)
+    const field = input?.closest(".pwField");
+    if (!field) return;
+    field.classList.remove("shakeNo");
+    void field.offsetWidth;
+    field.classList.add("shakeNo");
+  }, [error, badPassword]);
   // on a Gamma Cloud server a refused password keeps the folded form it was typed in open
   React.useEffect(() => { if (errorText && leadsWithCloud) setSignInOpen(true); }, [errorText, leadsWithCloud]);
   const hours = Number(guestTtlHours) || 0;

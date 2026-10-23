@@ -1023,6 +1023,13 @@ is plain markup, and a first render never moves.
 - **`FADE_IN`**, spread on an `<img>`: a picture fades in once loaded
   (the library cards' snapshots); one already in the cache shows at once.
 - A switch's thumb travels with `--ease-pop`, its one overshoot.
+- **`.shakeNo`**, replayed by removing and adding it: a field that
+  refused what was typed shakes once, a small no (a wrong password at
+  sign-in).
+
+The desktop shell's and the extension's own stylesheets move on the same
+tokens (their copies of tokens.css): the switch's thumb, the buttons, the
+extension's drawer and cookie badge.
 
 ## Block editor interactions
 

@@ -264,6 +264,16 @@
   animation: count-in var(--dur-base) var(--ease-out);
 }
 
+/* A field that refused what was typed (a wrong password at sign-in)
+   shakes once, a small no; it is played again for each refusal. */
+@keyframes shake-no {
+  20% { translate: calc(-1 * var(--move-md)) 0; }
+  40% { translate: var(--move-md) 0; }
+  60% { translate: calc(-1 * var(--move-sm)) 0; }
+  80% { translate: var(--move-sm) 0; }
+}
+.shakeNo { animation: shake-no var(--dur-long) var(--ease-swap); }
+
 /* A picture fades in once it has loaded (FADE_IN): a page's snapshot on
    its library card arrives softly instead of popping into its frame. */
 img[data-fade] {
