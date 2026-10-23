@@ -26,8 +26,8 @@ export async function quickOpenScenarios(env) {
       await dialog.waitFor();
       const input = dialog.getByRole("textbox", { name: "Search pages by title or label" });
       await until(() => input.evaluate((el) => el === document.activeElement), { what: "the palette's input takes focus" });
-      // every page, and the Welcome page a new account starts with
-      await until(async () => (await dialog.getByRole("option").count()) === titles.length + 1, { what: "every page listed before typing" });
+      // every page, and the Welcome page and the Sketchbook a new account starts with
+      await until(async () => (await dialog.getByRole("option").count()) === titles.length + 2, { what: "every page listed before typing" });
       assert(await dialog.getByRole("option", { name: /Atomic clocks/ }).locator(".quickOpenTag").textContent() === "Current",
         "the open page is tagged Current");
 

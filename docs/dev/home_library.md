@@ -296,7 +296,7 @@ the pages filed in the folder or below it.
 **Start your library.** A library with nothing of the user's in it yet
 shows `library/LibraryEmpty.jsx` at the root, in both views, instead of the
 empty line. Nothing of the user's means no root pages, or only seeded ones
-(`properties.seeded`, the Welcome page every new account starts with):
+(`properties.seeded`, the Welcome page and the Sketchbook every new account starts with):
 `isFreshLibrary` in `library/libraryUtils.js`, the same test the first
 tour's offer uses. The panel sits above the New page / New folder items and
 the Welcome page: a dashed card with the mark and four action cards. They

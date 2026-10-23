@@ -4,7 +4,7 @@
 while this server takes guests (``logins_open``: it can, and the admin's
 switch is on):
 ``guest-<8 url-safe chars>``, ``is_guest = 1``, an empty password hash, its
-own personal workspace with the welcome page, and — when
+own personal workspace with the welcome page and the Sketchbook, and — when
 ``GAMMA_GUEST_SEED`` names a workspace backup zip — that zip restored into
 it. A guest account lives ``guest_ttl_hours`` (gamma/server_settings.py)
 after ``users.created_at``; then the session middleware treats it as signed
@@ -100,7 +100,7 @@ def _insert_account() -> tuple[str, str]:
 
 
 def new_guest() -> tuple[str, str]:
-    """Mint a guest account with its own workspace (the welcome page, then
+    """Mint a guest account with its own workspace (the welcome pages, then
     the ``GAMMA_GUEST_SEED`` library when one is set); returns its ``(id,
     username)``. The caller mints the session. A seed that cannot be
     restored is logged and skipped: the visitor still gets the welcome

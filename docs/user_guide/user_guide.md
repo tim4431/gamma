@@ -37,7 +37,7 @@ Read papers, keep what you learn. This guide shows each part of Gamma in a short
 2. **Add a paper**: press **+** and paste any link (arXiv, DOI, a publisher page). Gamma finds the PDF. Or upload PDFs, or drag files and folders into the window.
 3. **Read it.** The paper opens with a Notes panel beside it. Select text to highlight, type under the highlight to add a note. Everything else builds on that.
 
-A new account starts with a **Welcome** page to practise on. **Tours** in the account menu walk you through each part on the real controls.
+A new account starts with a **Welcome** page to practise on, and a **Sketchbook**: a notebook whose drawings show what to try with the pen and circle where each button is. **Tours** in the account menu walk you through each part on the real controls.
 
 ## Highlight and annotate
 

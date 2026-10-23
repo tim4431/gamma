@@ -187,6 +187,9 @@ No schema change: sheets are blocks and properties.
   (`notability_map.paper`: its size, colour and ruling, normalized), with
   its ink groups (`canvas` space, the sheet's size) and text boxes under
   it.
+- The Sketchbook every new account starts with is a notebook made on the
+  server too: four sheets, each with one ink group and its text boxes
+  ([onboarding.md](onboarding.md#the-sketchbook)).
 
 ## Client
 

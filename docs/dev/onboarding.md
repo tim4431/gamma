@@ -1,8 +1,8 @@
 # Onboarding: tours and contextual guides
 
 **Status: the engine, the two manual tours (first paper, AI chat), fifteen
-triggered tours, twenty-seven hints and the welcome page with its sample PDF
-are built. The first paper tour is also offered to every new library.** A
+triggered tours, twenty-seven hints, the welcome page with its sample PDF
+and the Sketchbook notebook are built. The first paper tour is also offered to every new library.** A
 checklist is not built (see "Not built").
 What exists: `frontend/src/guide/` (anchor registry, event bus, trigger rules
 in `triggers.js`, `useGuide`, `GuideOverlay` and its positioner `place.js`,
@@ -61,7 +61,8 @@ demo server (`facts.demo`, from `GET /api/server-config`'s
 `demo`) the same keys live in sessionStorage (`guideStorage(demo)` in
 `triggers.js`), so every visit starts fresh ([guests.md](guests.md) "Demo
 mode"). Every new account starts with the Welcome page and its sample PDF
-(see "The welcome page and its sample PDF").
+(see "The welcome page and its sample PDF") and the Sketchbook, a notebook
+of cartoon drawings on what to try with the pen (see "The Sketchbook").
 
 ## Manual tours (implemented)
 
@@ -618,7 +619,7 @@ edited or switched off without the others.
 
 | Layer | What it is | Driven by | Where the content lives |
 |---|---|---|---|
-| **Welcome page** | A real page in the new workspace ("Welcome to Gamma"), with its own sample PDF attached, so every tour step has something to act on | Seeding | `backend/gamma/onboarding/welcome.md` (imported through the `.md` parser at seed time) |
+| **Welcome page** | A real page in the new workspace ("Welcome to Gamma"), with its own sample PDF attached, so every tour step has something to act on; beside it the Sketchbook, a notebook to try the pen on | Seeding | `backend/gamma/onboarding/welcome.md` (imported through the `.md` parser at seed time); `backend/gamma/sketchbook.py` (drawn as code) |
 | **Tours** | Sequential coach marks: a spotlight on one control plus a card. Task-driven: a step advances when the user does the thing, or on Next | The guide engine | `frontend/src/guide/tours/*.js`, one declarative script per tour |
 | **Hints** | One card right after the first use of a feature, beside the control, no dimming | Triggers (state or event), not sequence | `frontend/src/guide/tours/hints.js`, one-step triggered guides |
 
@@ -923,6 +924,75 @@ preference, synced with the profile ([settings.md](settings.md)).
 - The notes go in as one op batch (`apply_ops` + `after_commit`, what
   `commit_ops` does, on a connection closed right there) after
   `blocks_store.create_page` made the page ([collab.md](collab.md)).
+- It is made after the Sketchbook (below) and placed before it, so it leads
+  the library both in the default order, the newest change first, and in
+  the manual one.
+
+## The Sketchbook
+
+A notebook ([notebooks.md](notebooks.md)) seeded beside the Welcome page,
+with hand-drawn steps that show what to try with the pen and where its
+controls are, so the handwriting tools have a page to be tried on from the
+first minute. It is not a tour: nothing points at the live controls or
+waits for the user. The user writes over it, erases and lassos its
+drawings with the real tools, and deletes it like any page. Drawing on it
+raises the Handwriting tour (`ink.stroke`) like any first stroke.
+
+- **What it holds.** Four A4 sheets, titled in the notes "Hi there",
+  "Oops? No problem", "Make it yours" and "Keep going", each on a paper of
+  its own (cream dots, ruled, grid, cream dots) so the paper menu has
+  something to show. Eleven numbered steps: pick up the pen (and write
+  your name on a dotted line), the five pen styles (a lane each), the
+  highlighter (over hand-lettered words), the eraser (a scribble), the
+  lasso (a star to carry into a box), undo, draw and hold (a shaky circle
+  and a neat one), the Text tool, the paper, replay, the two views, and
+  new pages and notebooks. "Have fun!" rounds it off.
+- **Where to press.** Each step that has a control draws it as the app
+  shows it, at about the size the notes view shows it (`K` points to a
+  CSS pixel), and circles the one to press in red, with a lettered label:
+  the markup strip (`_strip`, its pens and highlighters over their colour
+  bars, and the armed pen's Style row under it for the styles), the
+  notebook view's column of controls (`_column`), a page among the notes
+  with its own buttons (`_page_in_notes`), the Notebook button beside a
+  page's title (`_title_row`) and the top bar's + with the Add menu
+  (`_add_menu`). The icons are the app's: `ICONS` copies the markup of
+  each one from `frontend/src/shared/ui/Icons.jsx`, and
+  `test_sketchbook.py` fails when an icon there changes. Moving a control
+  means moving its drawing here too (the strip's order is `STRIP`).
+  Words a control shows ("Style", "Pen", "Notebook", "New notebook") are
+  small text boxes; the rest of a menu or row is grey bars.
+- **How it is made.** `gamma/sketchbook.py` draws it as code; there is no
+  asset in the repo. Each line is SVG path data (`M L H V C S Q A Z`, as
+  the icons use it) sampled every 2 pt as drawn (`flatten`, given the
+  step in the drawing's own units when it is scaled); the headings are a
+  single-line capital alphabet of the same path data (`GLYPHS`), each
+  letter a little turned and lifted. The controls are Ballpoint lines,
+  their pressed grounds one opaque zigzag each, drawn before what stands
+  on them. The step texts are text boxes, measured with
+  `text_box.measure`.
+- **The strokes are ordinary.** A pen line presses in and lifts off (`p`),
+  with the plain Pen's `w = 1 + (p − 0.5)` from the brush table
+  ([handwriting.md](handwriting.md) "The brush table"), so a restyle bakes
+  the same widths again. The controls and the dotted and dashed lines are
+  Ballpoint (`monoline`, `pen: false`); the swashes under the titles and
+  the stars' colour are highlighters at 0.6. Every stroke has `t0`
+  and `t`: the sheets are timed one after another along an afternoon in
+  2026, so a sheet's replay draws it again, and no recording ever covers
+  it.
+- **Blocks.** Each sheet is a sheet block (titled, its paper, folded),
+  holding one ink group (a `canvas` file; `ink.group_files` numbers its
+  strokes, 70 to 150 KB each) and then its text boxes. A first stroke of
+  the user's starts a group of its own, as on any page, so the guide's
+  file stays as it was.
+- **Seeding.** `seed._seed_sketchbook` stores the four files through
+  `storage.store_file` and writes the page (`properties.seeded:
+  "sketchbook"`) and its sheets as one op batch, inside `seed_welcome`, so
+  every path that seeds the Welcome page seeds it too, guests included.
+  The drawing is deterministic and made once per process
+  (`sketchbook.sheets`), so every workspace stores the same files. A file
+  the storage limits refuse, or a drawing that fails, leaves the account
+  with the Welcome page alone.
+- It is English only, like welcome.md.
 
 ## Hints and empty states
 
@@ -958,8 +1028,10 @@ frontend/src/guide/
   tours/hints.js    the hints
   guide.css
 backend/gamma/onboarding/welcome.md   the seeded page (and the sample PDF's source)
-backend/gamma/seed.py                 seed_welcome: parses it, renders the PDF, one op batch
-backend/tests/test_welcome.py         who gets it, the PDF, the op batch, the fallbacks
+backend/gamma/sketchbook.py           the Sketchbook's sheets, drawn as code
+backend/gamma/seed.py                 seed_welcome: parses it, renders the PDF, one op batch; the Sketchbook
+backend/tests/test_welcome.py         who gets them, the PDF, the op batches, the order, the fallbacks
+backend/tests/test_sketchbook.py      the drawing: paths, glyphs, the files, widths, times, text boxes
 frontend/tests/guide.test.mjs         schema, anchor references, event names, triggers, placement
 frontend/tests/e2e/scenarios/guide.mjs            the first-run tour end to end, home anchors present
 frontend/tests/e2e/scenarios/contextualGuide.mjs  Arrange windows (its scenes, then the user's own fold
@@ -1041,10 +1113,18 @@ frontend/tests/e2e/scenarios/triggeredGuide.mjs   offers and hints: tables (made
   on everyday moves (a line break, `/`, a paste, a fourth tab…) are settled
   for every case but the one about them (`EVERYDAY`, `offers`).
 - Backend (`test_welcome.py`, `test_guests.py`): a new account's workspace
-  holds the welcome page with its PDF, `seeded` property and one op batch; a
-  guest's names the lifetime; existing, shared and non-empty workspaces are
-  never seeded; a refused PDF or a missing welcome.md never fails the
-  account.
+  holds the welcome page with its PDF, `seeded` property and one op batch,
+  then the Sketchbook's sheets with their drawings and text boxes,
+  the Welcome page first in every order; a guest's names the lifetime;
+  existing, shared and non-empty workspaces are never seeded; a refused
+  file, a broken drawing or a missing welcome.md never fails the account.
+  `test_sketchbook.py`: the path sampler (arcs too) and the glyphs, the
+  icons the same as Icons.jsx's, the same files every time, one group per
+  sheet drawn on it, the Pen's widths, strokes timed in drawing order in
+  the past, and text boxes on their sheet apart.
+- Browser (`notebooks.mjs`, the `sketchbook:` step): the Sketchbook's pages
+  draw in the notes view with their text boxes, a page's replay plays and
+  stops, and a line of the user's own makes a second group.
 
 ## Rules
 

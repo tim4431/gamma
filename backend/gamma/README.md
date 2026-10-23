@@ -24,7 +24,8 @@ cloud_auth.py      Sign in with Gamma Cloud: an OpenID Connect client of cloud/,
 cloud_sync.py      what a linked account's cloud grant does: the hourly grant check, the profile sync, the server list
 hosted.py          a hosted container (GAMMA_HOSTED=1) learns its plan's limits from the account server
 integrations.py    revocable read / write tokens per account and workspace (MCP, the HTTP API, mirrors)
-seed.py            workspace file creation, the Welcome page new accounts start with, first admin
+seed.py            workspace file creation, the Welcome page and Sketchbook new accounts start with, first admin
+sketchbook.py      the seeded Sketchbook notebook, its cartoon sheets drawn as code (docs/dev/onboarding.md)
 onboarding/        welcome.md, the seeded Welcome page (docs/dev/onboarding.md)
 
 # Blocks, collaboration and sync
