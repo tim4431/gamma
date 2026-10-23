@@ -5,7 +5,10 @@ One row of users.db ``inbox_items`` per event and recipient, written when
 the event happens: someone mentioned in a note (``mention``) or in a
 comment (``comment_mention``), a reply in a thread they are in (``reply``),
 their thread resolved by someone else (``resolved``), a page or folder
-shared with them (``shared``), added to a shared workspace (``invited``).
+shared with them (``shared``), added to a shared workspace (``invited``),
+someone without an account here asking to join through a share they
+manage (``join_request``: its actor is ``cloud:<subject>``, its snippet the
+cloud username; gamma/join_requests.py).
 A notes-index scan could find a block that says ``@alice``, but not who
 typed it or when, and would notify again on every edit; so the producers
 write the row, after their own commit, through ``emit``, which never
@@ -26,7 +29,7 @@ import json
 import re
 from datetime import datetime, timedelta, timezone
 
-from . import collab, mentions, workspaces
+from . import collab, join_requests, mentions, workspaces
 from .auth import LINK_ACTOR_PREFIX, MIRROR_ACTOR, ShareScope, share_access, share_lookup
 from .blocks_store import new_block_id
 from .db import account_names, connect_pages_db, connect_users_db, format_stamp, page_now
@@ -444,8 +447,8 @@ def _folder_share_admits(token: str, folder: str, user_id: str) -> bool:
 
 def _target(row) -> str:
     """What a listed row (``_COLUMNS``) is titled by: its page, or a folder
-    share's folder."""
-    return row[4] or (row[5] if row[1] == "shared" else "")
+    share's folder (a ``shared`` item's, a ``join_request``'s)."""
+    return row[4] or (row[5] if row[1] in ("shared", "join_request") else "")
 
 
 def _titles(ws: str, ids) -> dict:
@@ -467,15 +470,17 @@ def _titles(ws: str, ids) -> dict:
 def _settle(user_id: str) -> set[str]:
     """Archive the account's items that lead nowhere any more: the page is
     in Recently deleted or gone, the block or the comment is gone, a
-    ``mention``'s note names the account no more, or the account can no
-    longer reach the page (or the workspace, for an invitation; the share,
-    for a ``shared`` item). An item whose way in is another now takes the
-    token ``reach`` gives: ``""`` once the account is a member, the token
-    of a share that names it after the old one stopped. Only the
-    workspaces read whole count: one that cannot be read keeps its items.
-    Returns the ids of the items checked that still lead somewhere."""
+    ``mention``'s note names the account no more, a ``join_request``'s
+    request no longer waits on that page's or folder's share, or the
+    account can no longer reach the page (or the workspace, for an
+    invitation; the share, for a ``shared`` item). An item whose way in is
+    another now takes the token ``reach`` gives: ``""`` once the account is
+    a member, the token of a share that names it after the old one
+    stopped. Only the workspaces read whole count: one that cannot be read
+    keeps its items. Returns the ids of the items checked that still lead
+    somewhere."""
     with connect_users_db() as conn:
-        rows = conn.execute("SELECT id, kind, workspace_id, page_id, block_id, comment_id, share_token "
+        rows = conn.execute("SELECT id, kind, workspace_id, page_id, block_id, comment_id, share_token, actor "
                             "FROM inbox_items WHERE user_id = ? AND archived_at IS NULL", (user_id,)).fetchall()
     by_ws: dict[str, list] = {}
     for r in rows:
@@ -519,10 +524,12 @@ def _check(ws: str, user_id: str, items: list) -> tuple[list[str], dict[str, str
     if any(r[1] == "mention" for r in items):
         with connect_users_db() as users:
             name = account_names(users, [user_id]).get(user_id, "")
+    prefix = join_requests.ACTOR_PREFIX
+    asking = join_requests.asking(r[7][len(prefix):] for r in items if r[1] == "join_request")
     member = bool(workspaces.role_of(ws, user_id))
     ways: dict[tuple, str | None] = {}  # (page, token) → the token reach gives now, None for none
     gone, tokens = [], {}
-    for item_id, kind, _ws, page_id, block_id, comment_id, token in items:
+    for item_id, kind, _ws, page_id, block_id, comment_id, token, actor in items:
         now = token
         if page_id:
             key = (page_id, token or "")
@@ -538,6 +545,8 @@ def _check(ws: str, user_id: str, items: list) -> tuple[list[str], dict[str, str
             lost = not member
         if kind == "mention" and block_id in texts and name not in mentions.people_in(texts[block_id] or ""):
             lost = True  # the note names the account no more
+        if kind == "join_request" and asking.get(actor[len(prefix):]) != (ws, page_id, block_id):
+            lost = True  # the request was decided, or no longer asks to open this
         if lost or (block_id and block_id not in texts) or (comment_id and comment_id not in shown):
             gone.append(item_id)
         elif now is not None and now != token:

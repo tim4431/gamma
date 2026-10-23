@@ -247,6 +247,10 @@ def restore_zip(ws: str, zpath: Path, mode: str = "replace", *, selected: set[st
         progress(phase="checking")
         _validate(tdir)
         _normalize_copies(tdir)
+        # a step may have written files beside the backup's (41: the
+        # converted stroke files); they travel with the rest
+        upload_names += sorted(p.name for p in (tdir / "uploads").iterdir()
+                               if p.is_file() and p.name not in upload_names)
         root = ws_dir(ws)
         review = None
         if selected is not None:
@@ -317,7 +321,9 @@ def _normalize_copies(tdir: Path) -> None:
     (``pages_db_chats``, step 28) and the op log's batch columns
     (``page_ops_batch_id``, step 33). Then every copy runs the workspace
     steps above its stamp (0 counting as the base,
-    ``migrations.run_workspace_steps``), and the schema statements (an old
+    ``migrations.run_workspace_steps``; a copy stamped above this Gamma's
+    ``SCHEMA_VERSION`` is refused — it was made by a newer release and
+    holds shapes this code cannot read), and the schema statements (an old
     file lacks the op log), the notes index built from its rows
     (``block_fts``, step 28), the folder and label trees (``folder_blocks``,
     step 29), the content normalizers (whose rewrites the index follows)
@@ -330,6 +336,9 @@ def _normalize_copies(tdir: Path) -> None:
     with closing(sqlite3.connect(str(tdir / "pages.db"))) as conn:
         register_functions(conn)
         stamp = conn.execute("PRAGMA user_version").fetchone()[0]
+        if stamp > migrations.SCHEMA_VERSION:
+            raise BackupError(f"this backup was made by a newer Gamma (data version {stamp}; this one reads up "
+                              f"to {migrations.SCHEMA_VERSION}): update Gamma before restoring it")
         if stamp < migrations.WS_VERSION_BASE:
             block_columns(conn)
             page_changes(conn)

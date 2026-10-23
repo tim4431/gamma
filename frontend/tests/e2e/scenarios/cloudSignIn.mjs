@@ -3,7 +3,8 @@
 // it on under Settings → Server → Sign-in, the login page grows the button,
 // and an account sees its link row. The round trip through a real account server
 // is covered by backend/tests/test_cloud_auth.py; here the browser is never
-// sent there (the button's target is asserted, not followed).
+// sent there (the button's target is asserted, not followed), except on the
+// Gamma servers a step starts against the fake account server (fakeCloud.mjs).
 import { Account, Server, wanted } from "../harness.mjs";
 import { FakeCloud } from "../fakeCloud.mjs";
 
@@ -16,7 +17,7 @@ export async function cloudSignInScenarios(env) {
   const settingsNav = (page, name) => page.getByRole("navigation", { name: "Settings categories" }).getByRole("button", { name, exact: true });
   async function openSettings(page, pane) {
     await page.getByRole("button", { name: "Account & settings", exact: true }).click();
-    await page.getByRole("button", { name: "Settings…", exact: true }).click();
+    await page.getByRole("menuitem", { name: "Settings…", exact: true }).click();
     await settingsNav(page, pane).click();
   }
 
@@ -237,6 +238,135 @@ export async function cloudSignInScenarios(env) {
     } finally {
       if (ctx) await ctx.close();
       await hosted.stop();
+      await cloud.stop();
+    }
+  });
+
+  // A page shared by Gamma Cloud username, and requests to join
+  // (docs/dev/cloud_accounts.md "Requests to join"): a second Gamma that
+  // signs people in through the fake account server and admits invited
+  // people only. Its owner links their own Gamma Cloud account (the lookup
+  // runs on it) and names a newcomer in the Share popover's Gamma Cloud box;
+  // the newcomer signs in from the link's gate and lands on the page.
+  // Someone nobody invited asks to join instead: the gate says so, the
+  // request heads the popover's people with Approve, and approved they get
+  // in at their next sign-in. A sign-in from the login page asks the admin,
+  // whose Server pane lists it.
+  await step("cloud sign-in: a page shared by Gamma Cloud username, and requests to join", async () => {
+    const cloud = new FakeCloud();
+    await cloud.start();
+    const lab = new Server({ env: { GAMMA_CLOUD_ISSUER: cloud.issuer, GAMMA_CLOUD_POLICY: "invited" } });
+    const contexts = [];
+    const context = async (account) => {
+      const ctx = account ? await account.context(browser) : await browser.newContext({ viewport: { width: 1280, height: 860 } });
+      contexts.push(ctx);
+      return ctx;
+    };
+    const gate = [/GET \/api\/share\/[^ ]+ -> 401/];
+    try {
+      await lab.start();
+      await lab.manage("create-user", "lab-owner", "lab-owner-pw");
+      await lab.manage("set-admin", "lab-owner", "on");
+      const owner = await new Account(lab, "lab-owner", "lab-owner-pw").login();
+      const pg = await owner.api("/api/pages", { method: "POST", body: { title: "Cloud shared paper" } });
+      const { token } = await owner.api(`/api/share/${pg.id}`, { method: "POST", body: { audience: "list", role: "view" } });
+      const link = `${lab.base}/?share=${token}`;
+
+      // the owner links their Gamma Cloud account on the way to the page, and invites by cloud username
+      cloud.person("sub-lab-owner", "lab-owner");
+      const page = await openPage(await context(owner),
+        `${lab.base}/api/auth/cloud/start?link=1&next=${encodeURIComponent(`/?page=${pg.id}&ws=${owner.ws}`)}`);
+      await page.click("button[aria-label='Share']");
+      const pop = page.locator(".sharePopover");
+      const people = pop.locator(".setSectionGroup", { hasText: "Who has access" });
+      await people.getByRole("button", { name: "Gamma Cloud", exact: true }).click();
+      cloud.person("sub-ann", "ann-cloud");
+      await pop.getByRole("textbox", { name: "Gamma Cloud username" }).fill("@Ann-Cloud");
+      await pop.getByRole("button", { name: "Invite", exact: true }).click();
+      const annRow = pop.locator(".aiProvRow", { hasText: "ann-cloud" });
+      await annRow.getByText("pending", { exact: true }).waitFor();
+      await annRow.getByRole("button", { name: "Edit", exact: true }).click();
+      await until(() => owner.api(`/api/share-settings/${pg.id}`).then((s) => s.pending[0]?.role === "edit"),
+        { what: "the waiting invitation's role" });
+      await assertNoProblems(page);
+
+      // the newcomer: the link's gate offers Gamma Cloud, and the sign-in lands on the page
+      const ann = await openPage(await context(), link);
+      await ann.getByText("Sign in to open this shared page", { exact: true }).waitFor({ timeout: 15000 });
+      await ann.getByText("asks the person who shared this page to let you in", { exact: false }).waitFor();
+      await ann.getByRole("link", { name: "Sign in with Gamma Cloud", exact: true }).click();
+      await until(async () => (await ann.textContent(".readOnlyTitle").catch(() => "")).includes("Cloud shared paper"),
+        { what: "the page after the cloud sign-in" });
+      assertEq((await owner.api(`/api/share-settings/${pg.id}`)).users[0]?.name, "ann-cloud", "the invitation was claimed");
+      await assertNoProblems(ann, gate);
+
+      // someone nobody invited asks to join: the gate says so
+      cloud.person("sub-bea", "bea-cloud");
+      const bea = await openPage(await context(), link);
+      await bea.getByRole("link", { name: "Sign in with Gamma Cloud", exact: true }).click();
+      await bea.getByRole("status").filter({ hasText: "Asked to join. Sign in again once your request is approved." }).waitFor();
+      assert(!bea.url().includes("cloud_join"), "the outcome is dropped from the address bar");
+      assert(bea.url().includes(`share=${token}`), "the gate keeps its link");
+      assert((await owner.api("/api/inbox?filter=unread")).items.some((i) => i.kind === "join_request" && i.snippet === "bea-cloud"),
+        "the owner hears of it");
+      // the owner approves it in the popover: a waiting invitation to view
+      await page.keyboard.press("Escape");
+      await pop.waitFor({ state: "detached" });
+      await page.click("button[aria-label='Share']");
+      const beaRow = pop.locator(".aiProvRow", { hasText: "bea-cloud" });
+      await beaRow.getByText("asks to join", { exact: true }).waitFor();
+      await beaRow.getByRole("button", { name: "Approve", exact: true }).click();
+      await beaRow.getByText("pending", { exact: true }).waitFor();
+      assert(!(await owner.api("/api/inbox?filter=unread")).items.some((i) => i.kind === "join_request"), "the request's item settled");
+      await assertNoProblems(page);
+      // and her next sign-in lands on the page
+      await bea.getByRole("link", { name: "Sign in with Gamma Cloud", exact: true }).click();
+      await until(async () => (await bea.textContent(".readOnlyTitle").catch(() => "")).includes("Cloud shared paper"),
+        { what: "the page after the approval" });
+      await assertNoProblems(bea, gate);
+
+      // a namesake: another Gamma Cloud account named like the owner here
+      // asks to join like anyone, and approved, signs in as lab-owner-2;
+      // the popover says which Gamma Cloud account that is
+      cloud.person("sub-lab-owner-b", "lab-owner");
+      const twin = await openPage(await context(), link);
+      await twin.getByRole("link", { name: "Sign in with Gamma Cloud", exact: true }).click();
+      await twin.getByRole("status").filter({ hasText: "Asked to join." }).waitFor();
+      await page.keyboard.press("Escape");
+      await pop.waitFor({ state: "detached" });
+      await page.click("button[aria-label='Share']");
+      await pop.locator(".aiProvRow", { hasText: "asks to join" }).getByRole("button", { name: "Approve", exact: true }).click();
+      await pop.locator(".aiProvRow", { hasText: "pending" }).waitFor();
+      await twin.getByRole("link", { name: "Sign in with Gamma Cloud", exact: true }).click();
+      await until(async () => (await twin.textContent(".readOnlyTitle").catch(() => "")).includes("Cloud shared paper"),
+        { what: "the namesake on the page" });
+      await assertNoProblems(twin, gate);
+      await page.keyboard.press("Escape");
+      await pop.waitFor({ state: "detached" });
+      await page.click("button[aria-label='Share']");
+      await pop.locator(".aiProvRow", { hasText: "lab-owner-2" }).getByText("Invited · Gamma Cloud lab-owner", { exact: true }).waitFor();
+      await assertNoProblems(page);
+
+      // from the login page the request goes to the admin, whose Server pane lists it
+      cloud.person("sub-cyd", "cyd-cloud");
+      const cyd = await openPage(await context(), lab.base);
+      await cyd.getByText("asks this server's admin to let you in", { exact: false }).waitFor({ timeout: 15000 });
+      await cyd.getByRole("link", { name: "Sign in with Gamma Cloud", exact: true }).click();
+      await cyd.getByRole("status").filter({ hasText: "Asked to join." }).waitFor();
+      await page.keyboard.press("Escape");
+      await pop.waitFor({ state: "detached" });
+      await openSettings(page, "Server");
+      const cydRow = page.locator('.aiProvRow[data-join-request="cyd-cloud"]');
+      await cydRow.getByText("from the login page", { exact: false }).waitFor();
+      await cydRow.getByRole("button", { name: "Approve", exact: true }).click();
+      await cydRow.locator(".uiTag").filter({ hasText: /^approved$/ }).waitFor();
+      await assertNoProblems(page);
+      await cyd.getByRole("link", { name: "Sign in with Gamma Cloud", exact: true }).click();
+      await cyd.waitForSelector(".folderNewBtn", { timeout: 15000 });
+      await assertNoProblems(cyd);
+    } finally {
+      for (const ctx of contexts) await ctx.close();
+      await lab.stop();
       await cloud.stop();
     }
   });

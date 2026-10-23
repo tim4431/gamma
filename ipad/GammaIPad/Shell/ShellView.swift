@@ -92,9 +92,15 @@ final class ShellController: UIViewController {
         shell.navigation.presenter = self
         shell.navigation.onLoad = { [weak self] failure in self?.onLoad?(failure) }
         shell.bridge.onMessage = { [weak self] message in self?.answer(message) ?? [:] }
-        capture.onPreview = { [weak self] points, tool in self?.live.show(points, tool: tool) }
-        capture.onStroke = { [weak self] pointerId, samples in self?.deliver(pointerId: pointerId, samples: samples) }
+        capture.onPreview = { [weak self] samples, predicted, shape, tool in
+            self?.live.show(samples, predicted: predicted, shape: shape, tool: tool)
+        }
+        capture.onStroke = { [weak self] pointerId, samples, held in
+            self?.deliver(pointerId: pointerId, samples: samples, held: held)
+        }
         capture.onAbandon = { [weak self] pointerId in self?.abandon(pointerId: pointerId) }
+        capture.onHold = { [weak self] pointerId, samples in self?.hold(pointerId: pointerId, samples: samples) }
+        capture.onDrop = { [weak self] in self?.live.cancel() }
         gestures.onGesture = { [weak self] message in
             guard let self else { return }
             Task { await self.shell.bridge.send(message) }
@@ -121,6 +127,7 @@ final class ShellController: UIViewController {
             ])
         }
         capture.surface = shell.webView
+        gestures.surface = shell.webView
         container.addGestureRecognizer(capture)
         container.addInteraction(gestures.interaction)
         view = container
@@ -155,15 +162,31 @@ final class ShellController: UIViewController {
         case .servers:
             onServers?()
             return [:]
+        case let .haptic(kind, at):
+            // A gesture's tick comes without a place: where the Pencil hovered for it.
+            let place: CGPoint? = at ?? (kind == .tool ? gestures.recentHover : nil)
+            PencilHaptics.play(kind, at: place, in: shell.webView)
+            return [:]
         }
     }
 
-    /// The lift: the samples go to the web, and the line stays until the web
-    /// has painted the stroke itself.
-    private func deliver(pointerId: Int, samples: [[Double]]) {
+    /// The captured Pencil held still: the page answers at once, from the
+    /// samples (a shape to draw, the hold taken for *Paste here*, or
+    /// nothing), and the capture follows its answer.
+    private func hold(pointerId: Int, samples: [[Double]]) {
+        Task {
+            let reply = await shell.bridge.ask(.hold(pointerId: pointerId, samples: samples))
+            capture.held(HoldReply(reply: reply), pointerId: pointerId)
+        }
+    }
+
+    /// The lift: the samples go to the web, with the hold whose shape the
+    /// line was drawn as, and the line stays until the web has painted the
+    /// stroke itself.
+    private func deliver(pointerId: Int, samples: [[Double]], held: Int?) {
         let line = live.finish()
         Task {
-            await shell.bridge.send(.stroke(pointerId: pointerId, samples: samples))
+            await shell.bridge.send(.stroke(pointerId: pointerId, samples: samples, held: held))
             if let line { live.remove(line) }
         }
         Task {

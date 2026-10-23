@@ -186,11 +186,14 @@ row.
 
 **File format** (*community*: `.note` is a zip with an NSKeyedArchiver
 `Session.plist`). Strokes are flat float32 point arrays with per-stroke
-point counts, one width and one RGBA colour per stroke (alpha carries the
-highlighter's translucency), and optional per-point *fractional widths*
-(the pressure record). Polylines, no Bézier control points. The open
-converters draw them as round-capped `M/L` paths and ignore the fractional
-widths.
+point counts, one base width and one RGBA colour per stroke (alpha carries
+the highlighter's translucency), and per-anchor *fractional widths* (the
+pressure record, a multiplier of the base width). The points are a fitted
+cubic Bézier chain (`1 + 3k` points per curve: anchor, then control,
+control, anchor), not a polyline, and the careful converters interpolate
+the fractional widths along each segment; the first ones drew `M/L` paths
+and ignored them. What this and GoodNotes' storage mean for Gamma's own
+file is in [ink-storage.md](ink-storage.md).
 
 ### Against Gamma's ink
 

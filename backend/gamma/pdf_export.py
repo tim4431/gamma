@@ -41,6 +41,7 @@ from PyPDF2.generic import (
     DecodedStreamObject,
     DictionaryObject,
     FloatObject,
+    IndirectObject,
     NameObject,
     NullObject,
     NumberObject,
@@ -366,19 +367,34 @@ def _square_annotation(writer, rects, color, note, author, block_id=""):
     return _finish_annotation(annot, color, note, author)
 
 
+def _ink_scale(ink, rotation, crop) -> float:
+    """User-space units per display point, for a group's widths and dashes.
+    Display points are pdf.js scale-1 points, so the crop box has the same
+    size unless the page was replaced; widths scale by the ratio."""
+    sw = float(ink.space.width)
+    cw, ch = crop[2] - crop[0], crop[3] - crop[1]
+    return ((cw if rotation in (0, 180) else ch) / sw) if sw else 1.0
+
+
 def _ink_annotations(ink, rotation, crop, note, author, block_id=""):
     """One handwriting group → ``/Ink`` annotations, one per look bucket
     (``ink.ink_buckets``): ``/InkList`` polylines in user space, ``/BS /W``
-    the bucket's mean drawn width, ``/C`` + ``/CA`` its colour. Every
-    annotation also carries its strokes as ``/GammaInk`` (the gamma-ink JSON)
-    so a Gamma re-import keeps pressure and time; other readers ignore the
-    private key. The note rides on the first bucket only."""
+    the bucket's mean drawn width, ``/BS /S /D /D [on off]`` when the
+    bucket's first stroke is dashed or dotted (a bucket mixing dashes takes
+    that one's: the bucket key has no dash, so a re-export keeps its
+    ``/NM`` set), ``/C`` + ``/CA`` its colour at the opacity the screen
+    draws it (``ink.drawn_alpha``). Every annotation also carries
+    its strokes as ``/GammaInk`` (the gamma-ink version 2 JSON, verbatim)
+    so a Gamma re-import keeps pressure, time, the dash and every key;
+    other readers ignore the private key. The note rides on the first
+    bucket only, and the Zotero ``/NM`` carries the bucket's first-seen
+    index. → ``[(band, annotation)]`` in bucket order: the caller appends a
+    page's annotations band 0 (drawn under) first, across every group on
+    the page, so a viewer paints them in the layer order
+    (``annotate_pdf``)."""
     from . import ink as inkmod
     sw, sh = float(ink.space.width), float(ink.space.height)
-    # Display points are pdf.js scale-1 points, so the crop box has the same
-    # size unless the page was replaced; widths scale by the ratio.
-    cw, ch = crop[2] - crop[0], crop[3] - crop[1]
-    k = ((cw if rotation in (0, 180) else ch) / sw) if sw else 1.0
+    k = _ink_scale(ink, rotation, crop)
     out = []
     for n, bucket in enumerate(inkmod.ink_buckets(ink)):
         first = bucket[0]
@@ -400,26 +416,28 @@ def _ink_annotations(ink, rotation, crop, note, author, block_id=""):
             continue
         width = (sum(widths) / len(widths)) * k
         pad = width / 2 + 1
+        border = DictionaryObject({NameObject("/W"): FloatObject(round(width, 2)), NameObject("/S"): NameObject("/S")})
+        pattern = inkmod.dash_pattern(first)
+        if pattern:
+            border[NameObject("/S")] = NameObject("/D")
+            border[NameObject("/D")] = ArrayObject(FloatObject(f"{v * k:.2f}") for v in pattern)
         annot = DictionaryObject({
             NameObject("/Type"): NameObject("/Annot"),
             NameObject("/Subtype"): NameObject("/Ink"),
             NameObject("/Rect"): ArrayObject(
                 FloatObject(v) for v in (min(xs) - pad, min(ys) - pad, max(xs) + pad, max(ys) + pad)),
             NameObject("/InkList"): ArrayObject(paths),
-            NameObject("/BS"): DictionaryObject({
-                NameObject("/W"): FloatObject(round(width, 2)),
-                NameObject("/S"): NameObject("/S"),
-            }),
+            NameObject("/BS"): border,
             NameObject("/GammaInk"): TextStringObject(inkmod.dumps({
                 "format": inkmod.FORMAT, "version": inkmod.VERSION,
-                "space": ink.space.model_dump(exclude_none=True),
-                "strokes": [s.model_dump(exclude_none=True) for s in bucket],
+                "space": inkmod.to_dict(ink.space),
+                "strokes": [inkmod.to_dict(s) for s in bucket],
             }).decode("utf-8")),
         })
         if block_id:
             annot[NameObject("/NM")] = TextStringObject(f"Zotero-{zotero_annot_key(f'{block_id}:{n}')}")
-        out.append(_finish_annotation(annot, (r, g, b, min(a, first.opacity)),
-                                      note if n == 0 else "", author))
+        out.append((inkmod.band_of(first), _finish_annotation(annot, (r, g, b, inkmod.drawn_alpha(first, a)),
+                                                              note if n == 0 else "", author)))
     return out
 
 
@@ -573,15 +591,22 @@ def annotate_pdf(pdf_bytes: bytes, highlights, author: str = "", ink=(),
         annot = _text_box_annotation(writer, glyphs, tb, rotation, crop, author, resolve_ref)
         writer.add_annotation(page_number=tb["page"] - 1, annotation=annot)
         written += 1
+    by_page: dict[int, list] = {}
     for group in ink:
         ink_file = group.get("ink")
         page_num = ink_file.space.page if ink_file and ink_file.space.kind == "pdf-page" else None
         if not page_num or page_num < 1 or page_num > len(writer.pages):
             continue
         crop, rotation = page_frame(writer.pages[page_num - 1])
-        for annot in _ink_annotations(ink_file, rotation, crop, group.get("note") or "",
-                                      author, block_id=group.get("id") or ""):
-            writer.add_annotation(page_number=page_num - 1, annotation=annot)
+        by_page.setdefault(page_num - 1, []).extend(_ink_annotations(
+            ink_file, rotation, crop, group.get("note") or "", author, block_id=group.get("id") or ""))
+    # A page's annotations from every group on it go band 0 first (a stable
+    # sort: groups and buckets keep their order within a band), as the layers
+    # draw: /Ink has no blend mode, so the order alone keeps a later group's
+    # highlighter from painting over an earlier group's pen.
+    for page_index, annots in by_page.items():
+        for _, annot in sorted(annots, key=lambda pair: pair[0]):
+            writer.add_annotation(page_number=page_index, annotation=annot)
             written += 1
     for h in highlights:
         pos = h.get("position") or {}
@@ -613,19 +638,68 @@ def annotate_pdf(pdf_bytes: bytes, highlights, author: str = "", ink=(),
 def page_with_ink(src, page_no: int, inks) -> tuple[bytes, int]:
     """Page ``page_no`` (1-based) of the PDF ``src`` (a path or bytes) on
     its own, with the handwriting groups ``inks`` (``gamma.ink.InkFile``s
-    drawn on that page) written on it as ``/Ink`` like ``annotate_pdf`` →
-    ``(pdf bytes, the source's page count)``; ``b""`` for a page past the
-    end. The agent's view_ink renders it (gamma/ink_view.py)."""
+    drawn on that page) stamped into its content (``_stamp_ink``), every
+    look as drawn → ``(pdf bytes, the source's page count)``; ``b""`` for a
+    page past the end. The agent's view_ink renders it (gamma/ink_view.py)."""
     reader = ExportPdfReader(io.BytesIO(src) if isinstance(src, (bytes, bytearray)) else str(src))
     pages = len(reader.pages)
     if not 1 <= page_no <= pages:
         return b"", pages
     writer = PdfWriter()
     writer.add_page(reader.pages[page_no - 1])
-    crop, rotation = page_frame(writer.pages[0])
-    for ink in inks:
-        for annot in _ink_annotations(ink, rotation, crop, "", ""):
-            writer.add_annotation(page_number=0, annotation=annot)
+    page = writer.pages[0]
+    crop, rotation = page_frame(page)
+    _stamp_ink(writer, page, inks, rotation, crop)
     out = io.BytesIO()
     writer.write(out)
     return out.getvalue(), pages
+
+
+def _stamp_ink(writer, page, inks, rotation, crop) -> None:
+    """Draw the groups ``inks`` into ``page``'s content as vectors —
+    ``ink.pdf_path_ops``, so baked widths, tapers, dashes, the pencil's
+    shades and grain and the calligraphy nib show as drawn, and
+    highlighters multiply onto the page's text as on screen — every
+    group's band 0 before any group's band 1, mapped through the page's
+    frame like the /Ink export. The page's own content is wrapped in
+    ``q … Q`` first, so a state it leaves set cannot move the strokes
+    (they are drawn in the page's default space, where the grain's
+    patterns are placed too), and the graphics states and patterns the
+    strokes use join its resources."""
+    from . import ink as inkmod
+
+    def to_pdf_of(ink):
+        sw, sh = float(ink.space.width), float(ink.space.height)
+        return lambda x, y: viewer_point_to_pdf(x / sw, y / sh, rotation, crop)
+
+    parts = [inkmod.pdf_path_ops(ink, to_pdf_of(ink), _ink_scale(ink, rotation, crop), band=band)
+             for band in (0, 1) for ink in inks]
+    ops = b"\n".join(part for part in parts if part)
+    if not ops:
+        return
+
+    def stream(data: bytes):
+        obj = DecodedStreamObject()
+        obj.set_data(data)
+        return writer._add_object(obj)
+
+    current = page.get("/Contents")
+    resolved = _resolve(current)
+    if resolved is None:
+        old = []
+    elif isinstance(resolved, ArrayObject):
+        old = list(resolved)
+    else:
+        old = [current if isinstance(current, IndirectObject) else writer._add_object(resolved)]
+    page[NameObject("/Contents")] = ArrayObject([stream(b"q\n"), *old, stream(b"\nQ\n" + ops + b"\n")])
+    for key, found in (("/ExtGState", inkmod.pdf_path_resources(ops)),
+                       ("/Pattern", inkmod.GrainPatterns(writer).resources(ops))):
+        if not found:
+            continue
+        resources = _resolve(page.get("/Resources"))
+        if resources is None:
+            resources = page[NameObject("/Resources")] = DictionaryObject()
+        own = _resolve(resources.get(key))
+        if own is None:
+            own = resources[NameObject(key)] = DictionaryObject()
+        own.update(found)

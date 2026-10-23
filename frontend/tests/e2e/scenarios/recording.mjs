@@ -3,10 +3,14 @@
 // audio, the note typed and the stroke drawn meanwhile carry the moment they
 // were made, the card plays the recording back with the stroke faded until
 // its moment and the note shaded, a tap on the stroke seeks, and Escape
-// closes the player. The browser has no microphone and no decoder here:
-// an init script stands in for MediaRecorder and Audio. The server's side
-// is backend/tests/test_recordings.py.
+// closes the player; in a notebook view, Follow scrolls the viewer to the
+// sheet being written on; with no viewer shown, the player docks over the
+// notes. The browser has no microphone and no decoder
+// here: an init script stands in for MediaRecorder and Audio. The server's
+// side is backend/tests/test_recordings.py.
 import { waitForPdf } from "./pdf.mjs";
+import { assertMenuFrom, assertMenuRoles } from "../harness.mjs";
+import { encodeStroke, newCanvasInk } from "../../../src/ink/ink.js";
 
 async function drawLine(page, from, to) {
   await page.mouse.move(from[0], from[1]);
@@ -165,6 +169,13 @@ export async function recordingScenarios({ server, browser, alice, makePdf, step
     assert(held.menu && !held.tooltip, `the press swaps the tooltip for the menu at once: ${JSON.stringify(held)}`);
     await page.mouse.up();
     await page.waitForSelector(".ctxMenu .ctxMenuItem", { timeout: 5000 });
+    // up from the bar, by the button's left edge
+    await assertMenuFrom(page.locator(".ctxMenu"), page.locator(".replayBar button[data-role='mode']"), "above", "the mode menu");
+    // one menu, named by its button, the modes radios and the current one checked
+    const modeName = await page.getAttribute(".replayBar button[data-role='mode']", "aria-label");
+    const modes = await assertMenuRoles(page.getByRole("menu", { name: modeName, exact: true }), "the mode menu");
+    assert(modes.every((m) => m.role === "menuitemradio") && modes.filter((m) => m.checked === "true").length === 1,
+      `the modes are radios, one checked: ${JSON.stringify(modes)}`);
     await onMode(9, 0);                   // the smallest move a hand makes, off the glyph
     await sleep(500);
     assert(!(await page.$(".inkTooltip")), "the press keeps the trigger's tooltip away while the pointer stays on it");
@@ -174,14 +185,34 @@ export async function recordingScenarios({ server, browser, alice, makePdf, step
     await onMode();
     await page.mouse.down(); await page.mouse.up();
     await until(async () => !(await page.$(".ctxMenu")), { what: "mode menu closed by a second press" });
+    // A press on the speed button while the mode menu stands open swaps the
+    // two: one menu, the speed's, and its button the one expanded. A second
+    // press on the speed button closes it.
+    await onMode();
+    await page.mouse.down(); await page.mouse.up();
+    await page.waitForSelector(".ctxMenu .ctxMenuItem", { timeout: 5000 });
+    await page.click(".replayBar .replayRate");
+    await until(async () => (await page.locator(".ctxMenu .ctxMenuItem").allTextContents()).join(" ") === "0.7× 1× 1.25× 1.5× 2×",
+      { what: "the speed menu in the mode menu's place" });
+    assertEq(await page.locator(".ctxMenu").count(), 1, "one menu at a time");
+    assertEq(await page.getAttribute(".replayBar button[data-role='mode']", "aria-expanded"), "false", "the mode button no longer expanded");
+    assertEq(await page.getAttribute(".replayBar .replayRate", "aria-expanded"), "true", "the speed button expanded");
+    await assertMenuFrom(page.locator(".ctxMenu"), page.locator(".replayBar .replayRate"), "above", "the speed menu, from its own button");
+    const speedName = await page.getAttribute(".replayBar .replayRate", "aria-label");
+    const speeds = await assertMenuRoles(page.getByRole("menu", { name: speedName, exact: true }), "the speed menu");
+    assert(speeds.every((s) => s.role === "menuitemradio") && speeds.filter((s) => s.checked === "true").length === 1,
+      `the speeds are radios, one checked: ${JSON.stringify(speeds)}`);
+    await page.click(".replayBar .replayRate");
+    await until(async () => !(await page.$(".ctxMenu")), { what: "speed menu closed by a second press" });
     // Enter (a click with no press behind it) opens it too; Escape closes
-    // the menu and leaves the player.
+    // the menu and leaves the player, the focus still on the button.
     await page.focus(".replayBar button[data-role='mode']");
     await page.keyboard.press("Enter");
     await page.waitForSelector(".ctxMenu .ctxMenuItem", { timeout: 5000 });
     await page.keyboard.press("Escape");
     await until(async () => !(await page.$(".ctxMenu")), { what: "mode menu closed by Escape" });
     assert(await page.$(".replayBar"), "Escape on the open menu leaves the player");
+    assert(await page.$eval(".replayBar button[data-role='mode']", (el) => el === document.activeElement), "the focus stays on the mode button");
     await lift.evaluate((el) => el.remove());
     // back to the start, then a tap on the stroke plays from just before it was written
     await page.$eval(".replayScrub input[type='range']", (el) => {
@@ -199,5 +230,74 @@ export async function recordingScenarios({ server, browser, alice, makePdf, step
     await until(async () => !(await page.$(".replayBar")), { what: "player closed by Escape" });
     assert(!(await page.$(".blockRow.replayPending")), "no row stays shaded once the player closes");
     assertNoProblems(page);
+  });
+
+  await step("recording: in the notebook view, Follow scrolls the viewer to the sheet being written on", async () => {
+    // Follow is App's showTick, one function for the app's life: a group is shown through the page as it
+    // is when its mark is reached, not as the app's first render had it (no notebook view). A notebook
+    // made through the API: two sheets, a recording four seconds long and, on the second sheet, a stroke
+    // written a second and a half into it.
+    const audio = await account.upload("/api/upload-file", Buffer.from([0x1a, 0x45, 0xdf, 0xa3, 0x84, 0x42, 0x86, 0x81, 0x01]), "follow.webm", "audio/webm");
+    const started = Date.now() - 60_000;
+    const stroke = encodeStroke({ id: "followed", color: "#1f1f1f", size: 2, ch: "xyt", t0: started + 1500,
+      samples: Array.from({ length: 13 }, (_, i) => ({ x: 80 + i * 10, y: 120, t: i * 40 })) });
+    const notebook = await account.api("/api/blocks", { method: "POST", body: { parent_id: "root", content: "Followed notebook" } });
+    const paper = { width: 595.28, height: 841.89, color: "#ffffff", pattern: "blank", spacing: 24, line: "#c8d1dc" };
+    const sheets = [];
+    for (let i = 0; i < 2; i++) {
+      sheets.push(await account.api("/api/blocks", { method: "POST", body: { parent_id: notebook.id, content: "", properties: { sheet: paper, collapsed: true } } }));
+    }
+    const sheetInk = await account.api("/api/upload-ink", { method: "POST", body: { ...newCanvasInk(paper.width, paper.height), strokes: [stroke] } });
+    await account.api("/api/blocks", { method: "POST", body: { parent_id: sheets[1].id, content: "", properties: { ink_url: sheetInk.url, ink_strokes: 1 } } });
+    await account.api("/api/blocks", { method: "POST", body: { parent_id: notebook.id, content: "Followed audio",
+      properties: { t0: started, recording: { started, state: "done", dur: 4000,
+        segments: [{ url: audio.url, started, dur: 4000, bytes: 9, mime: "audio/webm" }] } } } });
+    const fctx = await account.context(browser);
+    await fctx.addInitScript(fakeMedia);
+    try {
+      // the notebook view, at its first sheet: Follow brings the second into view
+      const npage = await openPage(fctx, `${server.base}/?page=${notebook.id}&ws=${account.ws}`);
+      await npage.locator(".noteSheetBar button[aria-label='Notebook view']").first().click();
+      await npage.waitForSelector(".nbViewer .nbSheet", { timeout: 15000 });
+      const secondInView = () => npage.evaluate((id) => {
+        const viewer = document.querySelector(".nbViewer"), sheet = viewer?.querySelector(`.nbSheet[data-sheet-id="${id}"]`);
+        if (!sheet) return false;
+        const v = viewer.getBoundingClientRect(), s = sheet.getBoundingClientRect();
+        return s.top < v.bottom - 100 && s.bottom > v.top + 100;
+      }, sheets[1].id);
+      assert(!(await secondInView()), "the second sheet starts out of view");
+      await npage.click(".recordingCard button[aria-label='Play recording']");
+      await npage.waitForSelector(".replayBar", { timeout: 5000 });
+      await until(secondInView, { what: "Follow scrolls the notebook view to the second sheet", timeout: 10000 });
+      await npage.keyboard.press("Escape");
+      await until(async () => !(await npage.$(".replayBar")), { what: "the player closed" });
+      assertNoProblems(npage);
+    } finally { await fctx.close(); }
+  });
+
+  await step("recording: with no viewer shown, Play docks the player over the notes, and Escape closes it", async () => {
+    // A page of notes with no paper and no notebook view: the player has no viewer to sit in, so it docks
+    // in the notes' list (App's notesReplayDock), stuck to its bottom edge as the list scrolls.
+    const audio = await account.upload("/api/upload-file", Buffer.from([0x1a, 0x45, 0xdf, 0xa3, 0x84, 0x42, 0x86, 0x81, 0x01]), "notes.webm", "audio/webm");
+    const started = Date.now() - 60_000;
+    const notes = await account.api("/api/blocks", { method: "POST", body: { parent_id: "root", content: "Notes with a recording" } });
+    await account.api("/api/blocks", { method: "POST", body: { parent_id: notes.id, content: "Notes audio",
+      properties: { t0: started, recording: { started, state: "done", dur: 4000,
+        segments: [{ url: audio.url, started, dur: 4000, bytes: 9, mime: "audio/webm" }] } } } });
+    const nctx = await account.context(browser);
+    await nctx.addInitScript(fakeMedia);
+    try {
+      const npage = await openPage(nctx, `${server.base}/?page=${notes.id}&ws=${account.ws}`);
+      await npage.click(".recordingCard button[aria-label='Play recording']");
+      const bar = npage.locator(".blockList .notesReplayDock .replayBar");
+      await bar.waitFor({ timeout: 5000 });
+      assertEq(await npage.locator(".replayBar").count(), 1, "one player, over the notes");
+      const [list, shown] = [await npage.locator(".blockList").boundingBox(), await bar.boundingBox()];
+      assert(shown.width > 0 && shown.y >= list.y && shown.y + shown.height <= list.y + list.height + 1,
+        `the player in view, within the notes' list: bar ${JSON.stringify(shown)}, list ${JSON.stringify(list)}`);
+      await npage.keyboard.press("Escape");
+      await until(async () => !(await npage.$(".replayBar")), { what: "the player closed" });
+      assertNoProblems(npage);
+    } finally { await nctx.close(); }
   });
 }

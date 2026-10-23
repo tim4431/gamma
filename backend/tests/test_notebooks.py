@@ -32,7 +32,7 @@ def _sheet(sid, parent, position, paper=None):
 
 
 def _canvas_ink(client, strokes, width=A4["width"], height=A4["height"]):
-    data = {"format": "gamma-ink", "version": 1, "space": {"kind": "canvas", "width": width, "height": height},
+    data = {"format": "gamma-ink", "version": 2, "space": {"kind": "canvas", "width": width, "height": height},
             "strokes": strokes}
     body = json.dumps(data, sort_keys=True, separators=(",", ":")).encode()
     r = client.post("/api/upload-ink", content=body, headers={"Content-Type": "application/json"})
@@ -103,6 +103,35 @@ def test_a_page_with_sheets_exports_as_a_pdf_of_them(guest):
     assert first.count(b" l S") >= 2
     second = reader.pages[1].get_contents().get_data()
     assert second.count(b" l S") > 40                        # the grid's lines
+
+
+def test_the_notebook_pdf_paints_a_pencil_with_one_tile_per_colour_for_every_sheet():
+    """A pencil is filled with the screen's grain (ink.GrainPatterns): every
+    sheet of one size paints with the same pattern, and the document holds
+    one tile image per colour and one soft mask, whatever the sheets."""
+    from PyPDF2 import PdfReader
+
+    def drawing(*colors):
+        strokes = [{"id": f"p{i}", "brush": "pencil", "color": c, "size": 6, "ch": "xyt",
+                    "pts": inkmod.encode_points([{"x": 100, "y": 100 + 40 * i, "t": 0}, {"x": 300, "y": 100 + 40 * i, "t": 90}], "xyt")}
+                   for i, c in enumerate(colors)]
+        return inkmod.parse_ink({"format": "gamma-ink", "version": 2,
+                                 "space": {"kind": "canvas", "width": A4["width"], "height": A4["height"]}, "strokes": strokes})
+    letter = notebook.normalize_paper({"width": 612, "height": 792})
+    pdf = notebook.notebook_pdf([(A4, [], [drawing("#000000", "#dc2626")]), (A4, [], [drawing("#000000")]),
+                                 (letter, [], [drawing("#000000")]), (A4, [], [])])
+    pages = PdfReader(io.BytesIO(pdf)).pages
+    patterns = [(page.get("/Resources") or {}).get("/Pattern") for page in pages]
+    assert patterns[3] is None, "a sheet without a pencil declares no pattern"
+    refs = [{name: p.raw_get(name) for name in p} for p in patterns[:3]]
+    black = [next(ref for name, ref in r.items() if "Grain000000" in name) for r in refs]
+    assert black[0].idnum == black[1].idnum, "the same pattern on two sheets of one size"
+    assert black[2].idnum != black[0].idnum, "another sheet height, another placement"
+    tiles = {pat.get_object()["/Resources"]["/XObject"].raw_get("/Tile").idnum for r in refs for pat in r.values()}
+    masks = {pat.get_object()["/Resources"]["/XObject"]["/Tile"].raw_get("/SMask").idnum for r in refs for pat in r.values()}
+    assert len(tiles) == 2 and len(masks) == 1
+    # the sheet's frame is flipped by its content: the pattern is placed from the sheet's top
+    assert [float(v) for v in black[0].get_object()["/Matrix"]] == [1, 0, 0, 1, 0, A4["height"]]
 
 
 def test_a_page_with_neither_a_pdf_nor_sheets_has_no_pdf_to_export(guest):

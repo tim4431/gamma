@@ -3377,11 +3377,15 @@ def agent_system(scope: dict, perms: dict | None = None, base: str = "") -> str:
         text += (
             "\nHandwriting: a handwriting block (read_block: \"handwriting on p. N\" or \"on the "
             "page of paper above\") holds pen strokes, and its text is only a caption. Look at "
-            "the strokes with view_ink before answering from handwriting.")
+            "the strokes with view_ink before answering from handwriting. Handwriting the user "
+            "selected (\"selected handwriting\" in the notes section) is part of a block, attached "
+            "as a picture of just those strokes, saved or not: read it there, not with view_ink, "
+            "which shows the whole block as it was saved.")
         if "edit_block" in names:
             text += (
-                " To transcribe handwriting, read it with view_ink and write the text into that "
-                "block's caption with edit_block — append when it already has a caption, unless "
+                " To transcribe handwriting, read it with view_ink (a selection: from its picture) and "
+                "write the text into that block's caption with edit_block — append when it already "
+                "has a caption, unless "
                 "the user asks to replace it: keep the lines as written, math as LaTeX ($…$), and "
                 "mark a word you cannot read [illegible] instead of guessing.")
         text += (

@@ -17,7 +17,9 @@
 // reply, Resolve, the selection's Comment as a card), and the badge and
 // popover without room; the pages' margins as one column (a card grown at
 // a page's foot pushing the next page's down), and a card pressed with a
-// pen or the Text tool armed opening and drawing nothing.
+// pen or the Text tool armed opening and drawing nothing; beside the pen
+// strip, a press on a card letting go of a handwriting selection, and the
+// card keeping its right-click, Enter and Escape from the strip.
 import { editRow } from "./notes.mjs";
 import { dragSelectPdfText, selectPdfText, waitForPdf } from "./pdf.mjs";
 import { Account, assertOpensInPlace, sleep, wanted } from "../harness.mjs";
@@ -510,7 +512,7 @@ export async function commentScenarios({ server, browser, makePdf, step, until, 
     const mark = A.locator('[data-page="1"] [data-hl-id]').first();
     await mark.waitFor({ timeout: 10000 });
     await mark.click({ button: "right" });
-    await A.locator(".ctxMenu").getByRole("button", { name: "Comment", exact: true }).click();
+    await A.locator(".ctxMenu").getByRole("menuitem", { name: "Comment", exact: true }).click();
     await popover(A).waitFor();
     assertEq(await popover(A).locator(".commentPopTitle").innerText(), "Comments on this highlight");
     await focused(field(popover(A).locator(".commentNew")), "ready to write");
@@ -841,6 +843,111 @@ export async function commentScenarios({ server, browser, makePdf, step, until, 
     assertEq(await drawn(), 0, "no stroke and no text box on the page");
     assertEq(await extras(), 0, "none stored");
     await A.click("button[aria-label='Handwriting tools']");
+    assertNoProblems(A);
+  });
+
+  await step("comments: beside the pen strip a card keeps its own: a press on it lets go of a handwriting selection (Ctrl+C copies the card's text, Backspace leaves the strokes), a right-click opens no Paste here, and with the zoom window open Enter opens it and Escape closes it alone", async () => {
+    // (A is on the step before's two pages, the strip closed, page 2's card at rest)
+    const headCard = A.locator(".commentCard").filter({ hasText: "Top of page two" });
+    const active = A.locator(".commentCard.active");
+    const strokes = () => A.locator('[data-page="2"] .inkLayer path').count();
+    const menu = A.locator(".inkEditMenu");
+    const pasteHere = A.getByRole("menuitem", { name: "Paste here", exact: true });
+    // (the step before may leave the strip open: an Escape pressed before a
+    // card's field has the focus is the strip's, and closes it first)
+    if (!(await A.locator(".pdfInkBar").count())) await A.click("button[aria-label='Handwriting tools']");
+    await A.locator(".pdfInkBar").waitFor();
+    await A.evaluate(() => document.activeElement?.blur?.());
+    await A.keyboard.press("1");
+    await A.waitForSelector(".pdfInkBar .inkToolBtn.modeActive .inkToolInk");
+    // page 2's top a little under the strip, its lines' card in view
+    const page2 = A.locator('.pdfViewer [data-page="2"]');
+    const top = (await page2.boundingBox()).y;
+    await A.locator(".pdfViewer").evaluate((el, dy) => el.scrollBy(0, dy), top - 150);
+    const box = await until(async () => { const b = await page2.boundingBox(); return Math.abs(b.y - 150) < 2 ? b : null; },
+      { what: "page 2's top under the strip" });
+    // page 2's points on screen; a line through them with the mouse
+    const at = (x, y) => [box.x + x * box.width / 612, box.y + y * box.width / 612];
+    const line = async (points) => {
+      const [[x0, y0], ...rest] = points.map(([x, y]) => at(x, y));
+      await A.mouse.move(x0, y0);
+      await A.mouse.down();
+      for (const [x, y] of rest) await A.mouse.move(x, y, { steps: 6 });
+      await A.mouse.up();
+    };
+    await line([[150, 200], [350, 220]]);
+    await until(async () => (await strokes()) === 1, { what: "a stroke under page 2's lines" });
+    const lasso = async () => {
+      await A.evaluate(() => document.activeElement?.blur?.());
+      await A.keyboard.press("l");
+      await line([[120, 170], [380, 170], [380, 250], [120, 250], [120, 170]]);
+      await menu.waitFor({ timeout: 5000 });
+    };
+    await lasso();
+    await A.keyboard.press("Control+c");
+    await A.getByText("Copied 1 stroke.", { exact: true }).first().waitFor({ timeout: 5000 });
+    await A.keyboard.press("Escape"); // (the selection menu's: the selection goes)
+    await menu.waitFor({ state: "detached" });
+    // with strokes copied and a pen armed, a right-click on blank page offers Paste here
+    await A.keyboard.press("1");
+    const [bx, by] = at(300, 320);
+    await A.mouse.click(bx, by, { button: "right" });
+    await pasteHere.waitFor({ timeout: 5000 });
+    await A.keyboard.press("Escape");
+    await pasteHere.waitFor({ state: "detached" });
+
+    // A press on the card, a selection held: the card opens and the selection goes, as on a press off the page.
+    await lasso();
+    await headCard.locator(".commentBody").first().click();
+    await active.waitFor();
+    await focused(field(active), "the pressed card's reply field takes the focus");
+    await until(async () => !(await menu.count()) && !(await A.locator('[data-page="2"] .inkSelRect').count()),
+      { what: "the press on the card let go of the handwriting selection" });
+    // so its text selected, Ctrl+C is the browser's copy of the text (the
+    // handwriting's Ctrl+C would take the key: no copy event)
+    await active.locator(".commentBody").first().click({ clickCount: 3 });
+    await A.evaluate(() => {
+      window.e2eCopied = null;
+      document.addEventListener("copy", () => { window.e2eCopied = String(window.getSelection()); }, { once: true });
+    });
+    await A.keyboard.press("Control+c");
+    await until(async () => (await A.evaluate(() => window.e2eCopied))?.includes("Top of page two"),
+      { what: "Ctrl+C copies the card's text" });
+    // and Backspace on one of its controls deletes no handwriting
+    const control = active.locator(".commentThread button").first();
+    await control.focus();
+    await A.keyboard.press("Backspace");
+    await sleep(300);
+    assertEq(await strokes(), 1, "the stroke stays");
+    // a right-click on the card: the card's own, no Paste here
+    await active.locator(".commentBody").first().click({ button: "right" });
+    await sleep(300);
+    assertEq(await pasteHere.count(), 0, "no Paste here on a card");
+
+    // The zoom window open (Z: the focus on the card, in no field): a focused
+    // card keeps its Escape and its Enter from the strip.
+    await A.keyboard.press("z");
+    const panel = A.getByRole("region", { name: "Zoom window", exact: true });
+    await panel.waitFor({ timeout: 5000 });
+    const zoomBox = () => A.locator(".pdfViewer .inkZoomRect").evaluate((el) => `${el.dataset.x},${el.dataset.y},${el.dataset.w},${el.dataset.h}`);
+    let settled = null;
+    await until(async () => { const now = await zoomBox(); const same = now === settled; settled = now; return same; }, { what: "the zoom window settled" });
+    await control.focus();
+    await A.keyboard.press("Escape");
+    await active.waitFor({ state: "detached" });
+    await sleep(300);
+    assertEq(await panel.count(), 1, "Escape on the card closes the card alone: the zoom window stays");
+    assertEq(await A.locator(".pdfInkBar").count(), 1, "and the strip");
+    await headCard.locator(".commentThread").first().focus();
+    await A.keyboard.press("Enter");
+    await active.waitFor();
+    await focused(field(active), "Enter on the card at rest opens it");
+    assertEq(await zoomBox(), settled, "and is no New line of the zoom window");
+    await A.keyboard.press("Escape");
+    await active.waitFor({ state: "detached" });
+    // closing the strip closes the zoom window with it
+    await A.click("button[aria-label='Handwriting tools']");
+    await panel.waitFor({ state: "detached" });
     assertNoProblems(A);
   });
 

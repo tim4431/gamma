@@ -48,7 +48,47 @@ test("a change selects the groups that exercise it", () => {
   assert.deepEqual(pick(["frontend/src/guide/useGuide.js"]).sort(), ["contextual-guide", "guide", "triggered-guide"]);
   assert.deepEqual(pick(["docs/dev/debugging.md", "desktop/main.js", "backend/tests/test_ink.py"]), []);
   assert.equal(pick(["frontend/src/app/App.jsx"]).length, GROUPS.length);
-  assert.deepEqual(pick(["backend/gamma/ink.py"]).sort(), ["ink", "ink-editing", "notebooks", "triggered-guide"]);
+  // the pens' "Use this browser's pens instead?" (prefs.js useProfileSync, App's onReplaced) is ink.mjs's
+  for (const file of ["frontend/src/app/prefs.js", "frontend/src/app/prefDefs.js"]) assert.ok(pick([file]).includes("ink"), file);
+  assert.deepEqual(pick(["backend/gamma/ink.py"]).sort(), ["ink", "ink-editing", "ink-shapes", "notebooks", "transfers", "triggered-guide"]);
+  // the Notability import is an export's groups; its fixture writer is the transfers scenario's
+  assert.deepEqual(pick(["backend/gamma/notability_import.py"]).sort(), ["diagrams", "files", "ink", "transfers"]);
+  assert.deepEqual(pick(["backend/tests/notability_fixtures.py"]), ["transfers"]);
+  // and the note that scenario imports goes through ink.py (its strokes: encode_points, the
+  // stroke file's checks, group_files) and notebook.py (its paper page: normalize_paper, paper_ops)
+  for (const file of ["backend/gamma/ink.py", "backend/gamma/notebook.py"]) assert.ok(pick([file]).includes("transfers"), file);
+  // a comment card stands in the page's box, where the ink layer and the text boxes leave its presses alone
+  for (const file of ["frontend/src/ink/InkLayer.jsx", "frontend/src/markup/TextBoxLayer.jsx"]) assert.ok(pick([file]).includes("comments"), file);
+  // the handwriting's owners in src/ink/: the ink-live socket, the build fence and the save are
+  // collab's too; what Play disarms, clears, stops or lists is the recording's; the Pencil and the
+  // strip keys are the iPad's; and each keeps every group the rest of src/ink/ selects
+  const ink = (name) => `frontend/src/ink/${name}`;
+  const inkGroups = pick([ink("ink.js")]);
+  assert.ok(!inkGroups.includes("collab") && !inkGroups.includes("recording"), "the rest of src/ink/ selects neither");
+  const owners = {
+    collab: ["inkLive.js", "useInkLive.js", "buildFence.js", "inkSaver.js", "useInkSave.js", "useInkDocument.js", "inkHistory.js", "inkEdits.js"],
+    recording: ["useInkStrip.js", "stripState.js", "useInkSelection.js", "selectionEdits.js", "useInkSurfaces.js", "inkSurfaces.js",
+      "useInkDocument.js", "inkHistory.js", "inkEdits.js"],
+    ipad: ["usePencil.js", "useStripKeys.js", "pencilActions.js", "stripKeys.js", "inkCommands.js"],
+  };
+  for (const [id, names] of Object.entries(owners)) {
+    for (const name of names) {
+      const groups = pick([ink(name)]);
+      assert.ok(groups.includes(id), `${name} selects ${id}`);
+      for (const g of inkGroups) assert.ok(groups.includes(g), `${name} keeps ${g}`);
+    }
+  }
+  // an owner's pure parts select its groups; the commands' context is ink-editing's and the iPad's
+  // (Ctrl+C / X / V / D / A), not every group as App's does
+  const parts = { "stripState.js": ["useInkStrip.js"], "inkHistory.js": ["useInkDocument.js"], "inkEdits.js": ["useInkDocument.js", "useInkStrokes.js"],
+    "selectionEdits.js": ["useInkSelection.js"], "inkSurfaces.js": ["useInkSurfaces.js"] };
+  for (const [part, from] of Object.entries(parts)) assert.deepEqual(pick([ink(part)]), pick(from.map(ink)), `${part} selects ${from.join(" and ")}'s groups`);
+  assert.deepEqual(pick([ink("inkCommands.js")]), inkGroups);
+  assert.ok(inkGroups.includes("ink-editing") && inkGroups.includes("ipad"));
+  // the next sheet's rule moved into notebook.js: a notebook change still selects notebooks
+  assert.ok(pick(["frontend/src/notebook/notebook.js"]).includes("notebooks"));
+  // the chat's pictures of handwriting are the AI modules' groups
+  assert.deepEqual(pick(["backend/gamma/ink_view.py"]).sort(), pick(["backend/gamma/ai_context.py"]).sort());
   // a scenario helper selects the scenarios importing it
   const notes = pick(["frontend/tests/e2e/scenarios/notes.mjs"]);
   for (const id of ["notes-pdf-share", "collab", "files", "diagrams"]) assert.ok(notes.includes(id), id);

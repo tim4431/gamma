@@ -158,7 +158,7 @@
    its own case, so only real acronyms are uppercase. Each class's own rule
    holds its layout (dock titles also a size step up). */
 :is(.dockGrip, .homeListLabel, .pinnedLabel, .carouselLabel, .popoverLabel, .popoverSection,
-  .searchSection, .ctxMenuLabel, .slashMenuTitle, .refPopupHead, .keyGroupLabel, .quickOpenSection) {
+  .searchSection, .ctxMenuLabel, .slashMenuTitle, .refPopupHead, .keyGroupLabel, .quickOpenSection, .inkOptCaption) {
   font-size: var(--fs-xs);
   font-weight: 600;
   letter-spacing: 0;
@@ -2560,6 +2560,7 @@ mark.merge-del { background: color-mix(in srgb, var(--danger) 16%, transparent);
    under the box) beside the Invite button. */
 .shareInvite { display: flex; align-items: flex-start; gap: 8px; padding: 4px 8px 6px; }
 .shareInvite .setPick { flex: 1; min-width: 0; }
+.shareInvite > .aiKeyInput { flex: 1; min-width: 0; margin-bottom: 0; } /* the Gamma Cloud username field */
 .shareInvite > .uiBtn.sm { flex-shrink: 0; min-height: 32px; }
 /* ...its field and match rows keep the settings kit's look, not the
    topbar's own input and pill button. */
@@ -4458,7 +4459,7 @@ a.shareBrand:hover { background: var(--bg-hover); }
   font-size: var(--fs-md);
 }
 .loginInput.invalid { border-color: var(--danger); }
-.loginError {
+.loginError, .loginNotice {
   display: flex;
   align-items: flex-start;
   gap: 8px;
@@ -4471,7 +4472,10 @@ a.shareBrand:hover { background: var(--bg-hover); }
   font-size: var(--fs-sm);
   line-height: var(--lh-ui);
 }
-.loginError > svg { flex: none; margin-top: 1px; }
+/* a sign-in's outcome that is no failure (a request to join sent): the same box in the accent's tint */
+.loginNotice { border-color: var(--border); background: var(--accent-bg); color: var(--text-primary); }
+.loginError > svg, .loginNotice > svg { flex: none; margin-top: 1px; }
+.loginNotice > svg { color: var(--accent); }
 .loginBtn {
   display: block;
   width: 100%;
@@ -5815,6 +5819,8 @@ a.shareBrand:hover { background: var(--bg-hover); }
    border-box, padding on an <svg> eats its own content box and the glyph
    renders at zero width (i.e. invisibly). */
 :is(.ctxMenuCheck, .ctxSubChev) { margin-left: auto; flex-shrink: 0; }
+/* A checked row that names its key too: the check after the key, not pushed apart from it. */
+.ctxMenuKey + .ctxMenuCheck { margin-left: 6px; }
 .ctxMenuCheck { color: var(--text-primary); }
 /* A row's shortcut (MenuItem `keys`), and the rule between groups
    (MenuDivider). */
@@ -6355,7 +6361,7 @@ a.shareBrand:hover { background: var(--bg-hover); }
    click over a link. */
 .pdfViewer.inkArmed .pdfPageWrap { cursor: crosshair; }
 .pdfViewer.inkTouchDraw .pdfPageWrap { touch-action: none; }
-.inkLayer, .inkCanvas {
+.inkLayer, .inkCanvas, .inkWetCanvas {
   position: absolute;
   left: 0;
   top: 0;
@@ -6364,7 +6370,8 @@ a.shareBrand:hover { background: var(--bg-hover); }
   pointer-events: none;
 }
 .inkLayer { z-index: 6; overflow: visible; }
-.inkCanvas { z-index: 6; display: none; }
+/* The stroke in progress; peers' strokes in progress (ink-live) have a canvas of their own under it. */
+.inkCanvas, .inkWetCanvas { z-index: 6; display: none; }
 .pdfViewer .pdfPageWrap.inkHovering, .pdfPageWrap.inkHovering .textLayer { cursor: none; }
 /* Drawn over an arbitrary PDF page, so fixed white/black like the lasso,
    not theme tokens. */
@@ -6376,6 +6383,20 @@ a.shareBrand:hover { background: var(--bg-hover); }
 .inkCursor span { position: absolute; left: 50%; top: 50%; width: 2px; height: 2px;
   transform: translate(-50%, -50%); border-radius: 50%; background: #222; box-shadow: 0 0 0 1px #fff; }
 .inkCursor[data-tool="eraser"] { background: #ffffff18; }
+/* The eraser filter's glyph inside the ring (a pen or a highlighter) when a filter is on. */
+.inkCursorGlyph { display: none; position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+  color: #222; filter: drop-shadow(0 0 1px #fff) drop-shadow(0 0 1px #fff); } /* ds-allow: drawn over the paper like the ring's centre mark above, not the UI theme */
+.inkCursor[data-filter="pen"] .inkCursorGlyph-pen, .inkCursor[data-filter="highlighter"] .inkCursorGlyph-highlighter { display: block; }
+/* A brush pen's footprint is a teardrop (a pencil's leaning ellipse is set inline from its tilt). */
+.inkCursor[data-brush="brush"] { border-radius: 50% 50% 50% 0; }
+/* A dashed or dotted preset's ring is dashed or dotted: the dark line carries the pattern, over a light halo. */
+.inkCursor[data-dash] { border-color: #222; box-shadow: 0 0 0 1px #ffffffc0; } /* ds-allow: drawn over the paper like the ring above, not the UI theme */
+.inkCursor[data-dash="dashed"] { border-style: dashed; }
+.inkCursor[data-dash="dotted"] { border-style: dotted; }
+.inkCursor[data-filter] span { display: none; }
+/* A calligraphy pen's footprint is its nib: a bar its width long and a hairline thick, turned to the nib's angle (counterclockwise as seen). */
+.inkCursor[data-brush="calligraphy"] { border-radius: 1px; transform: translate(-50%, -50%) rotate(calc(-1deg * var(--nib, 45))); }
+.inkCursor[data-brush="calligraphy"] span { display: none; }
 .inkTransformHandle {
   position: absolute; z-index: 7; width: 28px; height: 28px; padding: 5px;
   border-radius: 50%; border: 1px solid rgba(80, 140, 255, 0.95); background: var(--bg-elevated); color: var(--text-primary);
@@ -6385,6 +6406,14 @@ a.shareBrand:hover { background: var(--bg-hover); }
 .inkTransform-resize { transform: translate(0, 0); cursor: nwse-resize; }
 .inkTransform-rotate { transform: translate(0, -100%); cursor: grab; }
 .inkTransform-rotate:active { cursor: grabbing; }
+/* A shape's own handles (editable shapes): a 28 px target centred on the point, drawn as a small ring in the selection blue. */
+.inkTransformHandle.inkShapeHandle { transform: translate(-50%, -50%); padding: 0; border: 0; background: transparent; cursor: move; }
+.inkShapeDot { width: 12px; height: 12px; box-sizing: border-box; border-radius: 50%; pointer-events: none;
+  border: 2px solid rgba(80, 140, 255, 0.95); /* ds-allow: the selection's blue (.inkSelRect), drawn over the page */
+  background: var(--bg-elevated); }
+/* The dot carries the keyboard's ring, so the button around it draws none. */
+.inkShapeHandle:focus-visible { outline: none; }
+.inkShapeHandle:focus-visible .inkShapeDot { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
 .inkTooltip { position: fixed; z-index: var(--z-tip); pointer-events: none; width: max-content; max-width: min(280px, calc(100vw - 16px));
   padding: 6px 9px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-elevated);
   color: var(--text-primary); font-size: var(--fs-xs); line-height: var(--lh-ui); box-shadow: var(--shadow-2); }
@@ -6395,7 +6424,9 @@ a.shareBrand:hover { background: var(--bg-hover); }
 .inkEditRow .inkDeleteBtn { color: var(--danger); }
 .inkEditOptions { align-items: center; border-top: 1px solid var(--border); margin-top: 4px; }
 .inkEditOptions .ctlBtn, .inkEditOptions .colorBtn { min-width: 32px; min-height: 32px; }
-:is(.pdfViewer.pdfDark, [data-theme="gamma-dark"] .pdfViewer) :is(.inkLayer, .inkCanvas, .textBoxBody) { filter: invert(1) hue-rotate(180deg); }
+/* The selection menu's second row (More edits): the first row's targets. */
+.inkEditOptions.inkEditMore .ctlBtn { flex: 1; min-width: 36px; min-height: 36px; }
+:is(.pdfViewer.pdfDark, [data-theme="gamma-dark"] .pdfViewer) :is(.inkLayer, .inkCanvas, .inkWetCanvas, .textBoxBody) { filter: invert(1) hue-rotate(180deg); }
 /* The brief outline after a jump from the notes. */
 .inkFlash {
   fill: none;
@@ -6423,9 +6454,9 @@ a.shareBrand:hover { background: var(--bg-hover); }
 }
 
 /* The tool strip (markup/MarkupToolbar.jsx): top-centre of the viewer,
-   the control-box surface laid flat. Row one is the tools (presets,
-   eraser, lasso, text, hand, close, undo/redo); the options row of the armed
-   tool opens under it. */
+   the control-box surface laid flat. Row one is the tools in five groups
+   (presets | eraser, lasso, text | hand | More, close | undo/redo); the
+   options row of the armed tool opens under it. */
 .pdfInkBar {
   position: absolute;
   z-index: calc(var(--z-dock) + 1);
@@ -6464,11 +6495,45 @@ a.shareBrand:hover { background: var(--bg-hover); }
   gap: 2px;
   padding: 3px 5px;
 }
+.pdfInkRow { position: relative; } /* the drop bar of a preset drag is placed in it */
 .pdfInkSub { border-top: 1px solid var(--border); padding: 4px 6px; }
-.pdfInkHistory { display: flex; flex: none; gap: 2px; margin-left: auto; }
+.pdfInkHistory { display: flex; flex: none; gap: 2px; }
 .pdfInkSep { width: 1px; height: 16px; background: var(--border); margin: 0 3px; }
-/* A preset: the icon with its colour bar underneath (the bar's height follows the width). */
-.pdfInkBar .inkToolBtn { position: relative; width: var(--ctl-icon-btn); height: calc(var(--ctl-icon-btn) + 2px); padding-bottom: 6px; }
+.pdfInkSepEnd { margin-left: auto; } /* the rule before Undo / Redo, which pins them to the right end */
+/* A preset: the icon with its colour bar underneath (the bar's height
+   follows the width). touch-action: none, since a held finger drags it
+   along the row (usePresetDrag) and the viewer never scrolls from a button. */
+.pdfInkBar .inkToolBtn { position: relative; width: var(--ctl-icon-btn); height: calc(var(--ctl-icon-btn) + 2px); padding-bottom: 6px; touch-action: none; }
+.pdfInkBar .inkToolBtn.inkDragging { opacity: 0.35; }
+/* The 2 px accent bar where a dragged preset will land, and the ghost of
+   the preset riding with the pointer (on the body: the strip is transformed). */
+.inkDropBar { position: absolute; width: 2px; border-radius: 1px; background: var(--accent); pointer-events: none; z-index: 1; }
+.inkDragGhost {
+  position: fixed;
+  z-index: var(--z-tip);
+  width: var(--ctl-icon-btn);
+  height: calc(var(--ctl-icon-btn) + 2px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding-bottom: 6px;
+  box-sizing: border-box;
+  transform: translate(-50%, -50%);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  box-shadow: var(--shadow-2);
+  pointer-events: none;
+  opacity: 0.9;
+}
+/* A preset's options: three captioned sub-rows, Style, Color and Width
+   (the caption a 14 px line); on a phone (the block after the strip's
+   rules) the captions go, Style and Width share one wrapping line and
+   Color takes the next, so the open strip stays low over the page. */
+.pdfInkSub.inkPresetOptions { flex-direction: column; align-items: stretch; gap: 2px; }
+.inkOptRow { display: flex; align-items: center; flex-wrap: wrap; gap: 2px; }
+.inkOptCaption { flex: none; min-width: 44px; line-height: 14px; }
 .inkToolInk {
   position: absolute;
   left: 6px;
@@ -6486,15 +6551,48 @@ a.shareBrand:hover { background: var(--bg-hover); }
 }
 .inkCustomColor.selected { background: var(--ink-custom); }
 .inkCustomColor input { position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; height: 100%; }
+/* The picker is invisible: its keyboard focus rings the swatch, as on every swatch. */
+.inkCustomColor:has(input:focus-visible) { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
 /* A width choice: a dot of the tool's colour; an eraser size: a hollow ring. */
 .pdfInkBar .inkSizeBtn { width: calc(var(--ctl-icon-btn) - 2px); }
 .inkSizeDot { display: block; border-radius: var(--radius-full); margin: 0 auto; }
 .inkEraserDot { border: 1.5px solid currentColor; box-sizing: border-box; }
-/* Eraser / lasso mode choices: icon + word, a pill when active. */
-.pdfInkBar .inkSegBtn { width: auto; padding: 0 8px; gap: 5px; font-size: var(--fs-xs); border-radius: var(--radius-full); }
+/* A smoothing level: a hollow dot growing with the string's length. */
+.inkSmoothDot { border: 1.5px solid currentColor; box-sizing: border-box; opacity: 0.8; }
+/* Labelled groups in the options rows and the zoom window's bar: real boxes (display: contents would drop them, and their name, from Safari's accessibility tree). */
+.inkSmoothing, .inkStraight, .inkErases, .inkLine, .inkNib, .inkRulerRotation, .inkRulerUnits, .inkShapeKinds, .inkZoomGroup { display: inline-flex; align-items: center; gap: 2px; }
+/* A calligraphy pen's Nib angle: − and + around the degrees, then the nib drawn at its angle. */
+.inkNibReadout { min-width: 30px; text-align: center; font-size: var(--fs-xs); font-variant-numeric: tabular-nums; }
+.inkNibPreview { flex: none; color: var(--text-primary); }
+/* The selection's Fill: None and the swatches, for the closed shapes selected. */
+.inkFillChoices { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 4px; }
+.inkFillGlyph { flex: none; color: var(--text-secondary); }
+/* The ruler's row and the Shapes tool's (data-ink-options="ruler" / "shape"): the readouts, and the unit pills. */
+.inkRulerAngle, .inkShapeUses { padding: 0 6px; font-size: var(--fs-xs); color: var(--text-secondary); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.pdfInkSub .inkRulerUnits .inkSegBtn { min-width: 32px; justify-content: center; }
+/* The pen's Style picker (ink/InkStylePicker.jsx): a short stroke drawn in
+   the brush's look, its name and a chevron, a pill like the trios beside
+   it; the rows of its menu lead with the same stroke. */
+.ctlBtn.inkStyleBtn { width: auto; padding: 0 6px 0 8px; gap: 5px; font-size: var(--fs-xs); border-radius: var(--radius-full); }
+.inkStyleBtn .inkBrushPreview, .inkStyleMenu .inkBrushPreview { flex: none; color: var(--text-primary); }
+.inkStyleMenu .ctxMenuIcon { width: 28px; }
+/* The pills, icon + word (pressed when chosen): the strip's options rows, the selection menu's Style row and the zoom window's bar. */
+:is(.pdfInkBar, .inkEditOptions, .inkZoomBar) .inkSegBtn { width: auto; padding: 0 8px; gap: 5px; font-size: var(--fs-xs); border-radius: var(--radius-full); }
 /* The Text tool's sizes as their numbers; "no background" as a struck-out swatch. */
 .pdfInkBar .inkTextSize { width: auto; min-width: calc(var(--ctl-icon-btn) - 2px); padding: 0 4px; font-size: var(--fs-xs); }
 .textNoBackground { background: linear-gradient(135deg, transparent 43%, var(--danger) 43% 57%, transparent 57%), var(--bg-elevated); }
+/* A phone (480 px and under): the options row's layout (above), and the
+   strip's dot buttons (widths, Smoothing, eraser sizes) and pills a little
+   narrower. After the strip's rules, which are as specific, so it wins. */
+@media (max-width: 480px) {
+  .inkOptCaption { display: none; }
+  .pdfInkSub.inkPresetOptions { flex-direction: row; flex-wrap: wrap; align-items: center; justify-content: center; }
+  .inkOptStyle { order: 1; }
+  .inkOptWidth { order: 2; }
+  .inkOptColor { order: 3; flex-basis: 100%; justify-content: center; }
+  .pdfInkBar .inkSizeBtn { width: 24px; }
+  .pdfInkBar .inkSegBtn { padding: 0 6px; }
+}
 
 /* The notes: a rounded-square pen marker in the dot slot (a text box's is
    a T), the strokes as a picture above the caption (on white: the card is
@@ -6556,6 +6654,152 @@ a.shareBrand:hover { background: var(--bg-hover); }
   pointer-events: none;
 }
 .pdfViewer.inkSelect .pdfPageWrap { cursor: default; }
+/* The zoom window's box on its page (ink/InkLayer.jsx InkZoomRect), in the
+   selection blue: the part of the page the panel under the viewer shows.
+   It takes no pointer; its drag band above the top edge and its resize
+   corner do, at a fixed screen size, and never let the viewer pan. */
+.inkZoomRect {
+  position: absolute;
+  z-index: 7;
+  box-sizing: border-box;
+  pointer-events: none;
+  /* ds-allow-start: the selection blue, drawn over the paper like .inkSelRect */
+  border: 2px solid rgba(80, 140, 255, 0.95);
+  background: rgba(80, 140, 255, 0.06);
+  /* ds-allow-end */
+  border-radius: 2px;
+}
+.inkZoomBand, .inkZoomResize { position: absolute; padding: 0; pointer-events: auto; touch-action: none; }
+.inkZoomBand {
+  left: -2px;
+  right: -2px;
+  bottom: 100%;
+  height: 16px;
+  border: 0;
+  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+  background: rgba(80, 140, 255, 0.95); /* ds-allow: the selection blue */
+  cursor: move;
+}
+.inkZoomResize {
+  right: -11px;
+  bottom: -11px;
+  width: 20px;
+  height: 20px;
+  border: 2px solid rgba(80, 140, 255, 0.95); /* ds-allow: the selection blue */
+  border-radius: 50%;
+  background: var(--bg-elevated);
+  cursor: nwse-resize;
+}
+/* The zoom window's panel (ink/ZoomWindow.jsx), docked along the viewer's
+   bottom under its scroller, which gives up the panel's height
+   (pdf/PdfViewer.jsx): a grip on its top edge, a bar of the strip's
+   controls, and the view — the page at the window's magnification, moved
+   so the window shows, painted as the viewer paints its pages. The view
+   takes every touch, whether or not fingers draw: a finger there never
+   scrolls or zooms. Its top border, grip and bar are zoomWindow.js
+   ZOOM_CHROME tall together. The viewer's own bottom controls stand above
+   it while it is open. */
+.inkZoomPanel {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: var(--z-dock);
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  border-top: 1px solid var(--border);
+  background: var(--bg-elevated);
+}
+.inkZoomGrip { flex: none; height: 8px; display: flex; align-items: center; justify-content: center; cursor: ns-resize; touch-action: none; }
+.inkZoomGrip::after { content: ""; width: 36px; height: 3px; border-radius: var(--radius-full); background: var(--border-hover); }
+.inkZoomGrip:is(:hover, :focus-visible)::after { background: var(--accent); }
+.inkZoomBar { flex: none; height: 36px; box-sizing: border-box; display: flex; align-items: center; gap: 2px; padding: 0 6px 4px; overflow-x: auto; }
+.inkZoomBar .inkSegBtn { white-space: nowrap; }
+.inkZoomReadout { min-width: 40px; text-align: center; font-size: var(--fs-xs); color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+.inkZoomClose { margin-left: auto; flex: none; }
+.inkZoomView { position: relative; flex: 1; min-height: 0; overflow: hidden; touch-action: none; background: var(--bg-deeper); }
+.inkZoomPage { position: absolute; left: 0; top: 0; transform-origin: 0 0; background: #fff; } /* ds-allow: the paper, as the viewer's page box */
+.inkZoomRaster { position: absolute; display: none; pointer-events: none; }
+.inkZoomPanel.inkArmed .inkZoomPage { cursor: crosshair; }
+.inkZoomPage.inkHovering { cursor: none; }
+/* ds-allow-start: the page's paper and the themes' treatment of it, as .pdfViewer's pages take them */
+.inkZoomPanel.pdfDark .inkZoomPage { background: #0f0f0f; }
+.inkZoomPanel.pdfDark .inkZoomRaster { filter: invert(0.94) hue-rotate(180deg); }
+/* ds-allow-end */
+/* Gamma Dark keeps its paper with Flip page colors on too, as the viewer's
+   pages do: as specific as the flip rules above, and after them. */
+[data-theme="gamma-dark"] .inkZoomPanel .inkZoomPage { background: var(--pdf-paper); isolation: isolate; }
+[data-theme="gamma-dark"] .inkZoomPanel .inkZoomRaster { filter: invert(1) hue-rotate(180deg); mix-blend-mode: screen; opacity: 0.9; }
+:is([data-theme="sepia"], [data-theme="solarized"], [data-theme="gray"], [data-theme="gamma-light"]) .inkZoomPanel:not(.pdfDark) .inkZoomPage { background: var(--pdf-paper); isolation: isolate; }
+:is([data-theme="sepia"], [data-theme="solarized"], [data-theme="gray"]) .inkZoomPanel:not(.pdfDark) .inkZoomRaster { mix-blend-mode: multiply; opacity: 0.82; }
+[data-theme="gamma-light"] .inkZoomPanel:not(.pdfDark) .inkZoomRaster { mix-blend-mode: multiply; }
+:is(.inkZoomPanel.pdfDark, [data-theme="gamma-dark"] .inkZoomPanel) :is(.inkLayer, .inkCanvas, .inkWetCanvas) { filter: invert(1) hue-rotate(180deg); }
+.viewerWrap.inkZoomOpen :is(.pdfCloseBtn, .pdfFullscreenBox) { bottom: calc(14px + var(--ink-zoom-h, 0px)); }
+.viewerWrap.inkZoomOpen .recordingPill { bottom: calc(12px + var(--ink-zoom-h, 0px)); }
+.viewerWrap.inkZoomOpen .replayBar { bottom: calc(10px + var(--ink-zoom-h, 0px)); }
+.viewerWrap.inkZoomOpen .pdfZoomOverlay { top: calc((100% - var(--ink-zoom-h, 0px)) / 2); }
+/* The ruler (ink/InkLayer.jsx InkRuler): an anchor on its middle line, as
+   long as the ruler and turned by its angle; the band 36 css px wide
+   (RULER_PX) at any zoom, its edges, ticks and numbers, the angle knob in
+   the middle and a handle at each end, drawn over the paper in the
+   selection blue like the lasso's box, outside the dark-page filter. The
+   band is touch-action: none, and takes the pointer (a pen with a stroke
+   tool writes along it instead, ink/InkLayer.jsx writesOnBand). */
+/* ds-allow-start: drawn over the paper in the selection blue, as .inkSelRect */
+.inkRuler { position: absolute; z-index: 7; height: 0; pointer-events: none; transform-origin: 50% 50%; }
+.inkRulerBand {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: -18px;
+  height: 36px;
+  background: rgba(80, 140, 255, 0.1);
+  pointer-events: auto;
+  touch-action: none;
+  cursor: grab;
+  outline: none;
+}
+.inkRulerBand:active { cursor: grabbing; }
+.inkRulerBand:focus-visible { box-shadow: 0 0 0 2px rgba(80, 140, 255, 0.6); }
+.inkRulerMarks { position: absolute; left: 0; top: 0; overflow: visible; pointer-events: none; }
+.inkRulerEdge, .inkRulerTick { stroke: rgba(80, 140, 255, 0.95); stroke-width: 1; shape-rendering: crispEdges; }
+.inkRulerNum { fill: rgba(80, 140, 255, 0.95); font-size: var(--fs-2xs); font-variant-numeric: tabular-nums; }
+.inkRulerSpot { position: absolute; top: 0; width: 0; height: 0; }
+.inkRulerKnob {
+  position: absolute;
+  left: 0;
+  top: 0;
+  min-width: 42px;
+  height: 22px;
+  padding: 0 6px;
+  border: 1px solid rgba(80, 140, 255, 0.95);
+  border-radius: var(--radius-full);
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  pointer-events: auto;
+  touch-action: none;
+  cursor: grab;
+}
+.inkRulerEnd {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 14px;
+  height: 30px;
+  padding: 0;
+  transform: translate(-50%, -50%);
+  border: 1px solid rgba(80, 140, 255, 0.95);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated);
+  pointer-events: auto;
+  touch-action: none;
+  cursor: ew-resize;
+}
+/* ds-allow-end */
 .mcpConsent { max-width: 480px; }
 .mcpConsentPage { overflow: auto; }
 .mcpConsent p { line-height: 1.5; }

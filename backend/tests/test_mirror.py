@@ -864,11 +864,41 @@ def test_resolving_a_conflict_writes_into_the_page_the_block_is_in_now():
     assert local.client.get(f"/api/mirrors/{local.ws}").json()["conflicts_open"] == 0
 
 
-def _ink_file(side, strokes):
+def test_a_page_pushed_whole_with_a_refused_drawing_is_looked_at_again(monkeypatch):
+    """A page new here that goes over whole (``_push_whole``) with a drawing
+    the remote refuses lands without it, like an edited page does, and is
+    deferred the same way: the drawing goes the round after the remote
+    takes it, with no other edit here."""
+    from gamma import ink as inkmod
+    from gamma.routers import ink as ink_router
+
+    remote, local, _ = _pair()
+    page = local.page("New here, drawn on")
+    local.insert(page["id"], "txt", "words")
+    ul = _ink_file(local, [("a", 100)])
+    local.ops(page["id"], [{"op": "insert", "id": "inkW", "parent": page["id"], "content": "",
+                            "props": {"ink_url": ul, "ink_strokes": 1}}])
+
+    def refuse(data):
+        raise inkmod.InkVersionError("pretend the remote is older")
+    monkeypatch.setattr(ink_router, "parse_ink", refuse)
+    status = _sync(local)
+    assert status["pages_pushed"] == 1
+    assert remote.texts(page["id"])["txt"] == "words", "the page went over whole, but for the drawing"
+    there = next(c for c in remote.tree(page["id"])["children"] if c["id"] == "inkW")
+    assert "ink_url" not in there["properties"]
+    conflicts = local.client.get(f"/api/mirrors/{local.ws}/conflicts").json()["conflicts"]
+    assert [(c["kind"], c["block_id"]) for c in conflicts] == [("file", "inkW")]
+    monkeypatch.setattr(ink_router, "parse_ink", inkmod.parse_ink)
+    status = _sync(local)
+    assert status["files_pushed"] == 1 and _strokes(remote, "inkW") == (ul, ["a"])
+
+
+def _ink_file(side, strokes, version=2):
     """Upload a drawing of ``[(stroke id, x)]`` on ``side``: its url."""
     import json as _json
     from gamma import ink as inkmod
-    data = {"format": "gamma-ink", "version": 1, "space": {"kind": "pdf-page", "page": 1, "width": 612, "height": 792},
+    data = {"format": "gamma-ink", "version": version, "space": {"kind": "pdf-page", "page": 1, "width": 612, "height": 792},
             "strokes": [{"id": sid, "tool": "pen", "color": "#1f1f1f", "size": 2, "opacity": 1, "pen": True, "ch": "xy",
                          "pts": inkmod.encode_points([{"x": x, "y": 100.0}, {"x": x + 5, "y": 105.0}], "xy")}
                         for sid, x in strokes]}
@@ -908,6 +938,377 @@ def test_both_sides_drawing_in_one_group_keep_every_stroke():
     # settled: the next round moves nothing
     status = _sync(local)
     assert status["pages_pulled"] == 0 and status["pages_pushed"] == 0
+
+
+def test_a_drawing_the_remote_refuses_waits_in_a_conflict_row(monkeypatch):
+    """A 400 on an .ink push (a remote whose release does not take this
+    copy's files) is one ``file`` conflict row on the block, and the page's
+    other changes land; the next round does not write the row twice."""
+    from gamma import ink as inkmod
+    from gamma.db import connect_pages_db
+    from gamma.routers import ink as ink_router
+
+    remote, local, _ = _pair()
+    page = remote.page("Ink refused")
+    remote.insert(page["id"], "txt", "before")
+    _sync(local)
+    ul = _ink_file(local, [("a", 100)])
+    name = ul.rsplit("/", 1)[1]
+    local.ops(page["id"], [{"op": "set", "id": "txt", "content": "after"},
+                           {"op": "insert", "id": "inkR", "parent": page["id"], "content": "",
+                            "props": {"ink_url": ul, "ink_strokes": 1}}])
+
+    def refuse(data):
+        raise inkmod.InkVersionError("pretend the remote is older")
+    monkeypatch.setattr(ink_router, "parse_ink", refuse)
+    status = _sync(local)
+    assert status["pages_pushed"] == 1
+    assert remote.texts(page["id"])["txt"] == "after", "the page's other ops landed"
+    there = next(c for c in remote.tree(page["id"])["children"] if c["id"] == "inkR")
+    assert "ink_url" not in there["properties"], "the block went without the drawing it names"
+    conflicts = local.client.get(f"/api/mirrors/{local.ws}/conflicts").json()["conflicts"]
+    assert [(c["kind"], c["block_id"], c["mine"], c["theirs"]) for c in conflicts] == \
+        [("file", "inkR", name, "update Gamma")]
+    _sync(local)  # still refused: the same open row, not another
+    assert len(local.client.get(f"/api/mirrors/{local.ws}/conflicts").json()["conflicts"]) == 1
+    with connect_pages_db(local.ws) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM sync_conflicts WHERE kind = 'file'").fetchone()[0] == 1
+    # the remote updated: the drawing goes with the next round
+    monkeypatch.setattr(ink_router, "parse_ink", inkmod.parse_ink)
+    assert _strokes(local, "inkR") == (ul, ["a"]), "the drawing never left this copy"
+    status = _sync(local)
+    assert status["files_pushed"] == 1 and _strokes(remote, "inkR") == (ul, ["a"])
+
+
+def test_a_page_adopted_with_a_refused_drawing_is_looked_at_again(monkeypatch):
+    """A page both sides hold, linked with this copy's version
+    (``_adopt_page``, ``adopt: mine``), whose drawing the remote refuses is
+    deferred like an edited page or one pushed whole: the drawing goes the
+    round after the remote takes it, with no other edit on either side."""
+    from gamma import ink as inkmod
+    from gamma.routers import ink as ink_router
+
+    remote = Side("mr_adopt_ink_remote")
+    local = Side("mr_adopt_ink_local")
+    page = remote.page("Drawn on in the copy")
+    remote.insert(page["id"], "inkA", "")
+    local.client.post("/api/pages", json={"id": page["id"], "title": "Drawn on in the copy"}).raise_for_status()
+    local.insert(page["id"], "inkA", "")
+    ul = _ink_file(local, [("a", 100)])
+    local.ops(page["id"], [{"op": "set", "id": "inkA", "props": {"ink_url": ul, "ink_strokes": 1}}])
+    token = create_token(remote.id, remote.ws, "link", 90, scope="write")["token"]
+    r = local.client.post("/api/mirrors", json={"remote_url": "http://testserver", "token": token,
+                                                "workspace_id": local.ws, "adopt": "mine"})
+    assert r.status_code == 201, r.text
+
+    def refuse(data):
+        raise inkmod.InkVersionError("pretend the remote is older")
+    monkeypatch.setattr(ink_router, "parse_ink", refuse)
+    _sync(local)
+    assert "ink_url" not in remote.tree(page["id"])["children"][0]["properties"]
+    conflicts = local.client.get(f"/api/mirrors/{local.ws}/conflicts").json()["conflicts"]
+    assert [(c["kind"], c["block_id"]) for c in conflicts] == [("file", "inkA")]
+    assert page["id"] in sync_engine.get_mirror(local.ws)["status"]["retry"]
+    # the remote updated: the drawing goes with the next round
+    monkeypatch.setattr(ink_router, "parse_ink", inkmod.parse_ink)
+    status = _sync(local)
+    assert status["files_pushed"] == 1 and _strokes(remote, "inkA") == (ul, ["a"])
+
+
+def test_a_refused_drawing_is_charged_to_the_block_that_draws_it():
+    """The ``file`` row of a refused drawing names the block whose
+    ``ink_url`` is the file, the block ``_without_files`` holds back, never
+    one that only mentions the file in another property."""
+    side = Side("mr_ink_lookup")
+    page = side.page("Two blocks name one drawing")
+    url = _ink_file(side, [("a", 100)])
+    name = url.rsplit("/", 1)[1]
+    blocks = {page["id"]: {"parent": "root", "position": "a0", "content": "Two blocks name one drawing", "props": {}},
+              "mentions": {"parent": page["id"], "position": "a0", "content": "", "props": {"note": f"from {url}"}},
+              "draws": {"parent": page["id"], "position": "a1", "content": "",
+                        "props": {"ink_url": url, "ink_strokes": 1}}}
+
+    class Older:
+        """A remote whose release refuses this copy's drawings."""
+
+        def head_ok(self, path):
+            return False
+
+        def post_file(self, path, name, data, progress=None):
+            raise sync_engine.RemoteError(400, "update Gamma")
+
+    refused = sync_engine._push_files(side.ws, Older(), {name}, {"files_pushed": 0}, page_id=page["id"], blocks=blocks)
+    assert refused == {name}
+    with connect_pages_db(side.ws) as conn:
+        assert [r[0] for r in conn.execute("SELECT block_id FROM sync_conflicts WHERE kind = 'file'")] == ["draws"]
+    ops = [{"op": "set", "id": bid, "props": dict(blocks[bid]["props"])} for bid in ("mentions", "draws")]
+    assert sync_engine._without_files(ops, refused, blocks) == ops[:1]
+
+
+def _drawn_meanwhile(monkeypatch, remote, page_id, ops=(), *, older=False):
+    """The ops the engine pushes to ``page_id``, recorded as sent. Before
+    the first push reaches the remote, ``ops`` are written there: someone
+    drawing while the round runs. ``older``: the remote answers like a
+    release from before ink merge reports, which ignores ``base_ids`` and
+    names no ``ink_conflicts``."""
+    sent, waiting, fetch = [], list(ops), sync_engine.default_fetch
+    path_ = f"/api/pages/{page_id}/ops"
+
+    def racing(method, path, body, headers):
+        if method == "POST" and path == path_:
+            payload = json.loads(body)
+            sent.extend(payload["ops"])
+            if waiting:
+                remote.ops(page_id, waiting)
+                waiting.clear()
+            if older:
+                payload["ops"] = [{k: v for k, v in op.items() if k != "base_ids"} for op in payload["ops"]]
+                body = json.dumps(payload).encode()
+        status, out = fetch(method, path, body, headers)
+        if older and method == "POST" and path == path_ and status == 200:
+            out = json.dumps({k: v for k, v in json.loads(out).items() if k != "ink_conflicts"}).encode()
+        return status, out
+
+    monkeypatch.setattr(sync_engine, "default_fetch", racing)
+    return sent
+
+
+def _name(url):
+    return url.rsplit("/", 1)[1]
+
+
+def test_a_drawing_push_names_its_base_strokes_when_this_copy_holds_the_base(monkeypatch):
+    """A drawing pushed with the one it was edited from (``base_props``)
+    also names that file's stroke ids (``base_ids``, as the web client's
+    save does), read from this copy's uploads, so a remote that no longer
+    holds the base merges by deletions; with the file gone here they are
+    left off."""
+    from gamma import storage
+
+    remote, local, _ = _pair()
+    page = remote.page("Base strokes")
+    u0 = _ink_file(remote, [("a", 100), ("c", 500)])
+    remote.ops(page["id"], [{"op": "insert", "id": "inkB", "parent": page["id"], "content": "",
+                             "props": {"ink_url": u0, "ink_strokes": 2}}])
+    _sync(local)
+    sent = _drawn_meanwhile(monkeypatch, remote, page["id"])
+    u1 = _ink_file(local, [("a", 100), ("c", 500), ("b", 300)])
+    local.ops(page["id"], [{"op": "set", "id": "inkB", "props": {"ink_url": u1, "ink_strokes": 3},
+                            "base_props": {"ink_url": u0}}])
+    _sync(local)
+    u2 = _ink_file(local, [("a", 100), ("c", 500), ("b", 300), ("d", 600)])
+    local.ops(page["id"], [{"op": "set", "id": "inkB", "props": {"ink_url": u2, "ink_strokes": 4},
+                            "base_props": {"ink_url": u1}}])
+    storage.delete(local.ws, _name(u1))  # the base purged here meanwhile
+    _sync(local)
+    assert [(op["props"]["ink_url"], op.get("base_ids")) for op in sent if op["id"] == "inkB"] == \
+        [(u1, ["a", "c"]), (u2, None)]
+    assert _strokes(remote, "inkB") == (u2, ["a", "c", "b", "d"])
+
+
+def test_a_base_the_remote_no_longer_holds_is_pushed_so_it_merges_three_way(monkeypatch):
+    """This copy adds a stroke and leaves another alone while the remote
+    erases that one and has purged the file both started from: the push
+    uploads the base first, so the remote merges three-way — the erase
+    stands, the new stroke joins it, and nothing is reported (by stroke ids
+    alone the kept stroke would read as a change made here that was lost)."""
+    from gamma import storage
+
+    remote, local, _ = _pair()
+    page = remote.page("Base purged there")
+    u0 = _ink_file(remote, [("a", 100), ("c", 500)])
+    remote.ops(page["id"], [{"op": "insert", "id": "inkP", "parent": page["id"], "content": "",
+                             "props": {"ink_url": u0, "ink_strokes": 2}}])
+    _sync(local)
+    ul = _ink_file(local, [("a", 100), ("c", 500), ("b", 300)])
+    local.ops(page["id"], [{"op": "set", "id": "inkP", "props": {"ink_url": ul}, "base_props": {"ink_url": u0}}])
+    ur = _ink_file(remote, [("a", 100)])
+    _drawn_meanwhile(monkeypatch, remote, page["id"],
+                     [{"op": "set", "id": "inkP", "props": {"ink_url": ur}, "base_props": {"ink_url": u0}}])
+    storage.delete(remote.ws, _name(u0))
+    _sync(local)
+    assert _strokes(local, "inkP") == _strokes(remote, "inkP")
+    assert sorted(_strokes(remote, "inkP")[1]) == ["a", "b"]
+    assert local.client.get(f"/api/mirrors/{local.ws}/conflicts").json()["conflicts"] == []
+    assert storage.exists(remote.ws, _name(u0)), "the base went there first"
+
+
+def test_a_drawing_the_remote_merged_over_this_copys_change_is_one_conflict_row(monkeypatch):
+    """Someone moved a stroke there while this copy's move of it was on its
+    way: the remote merges the two drawings, keeps its own move and says
+    so (``ink_conflicts``). That is one ``ink_merged`` row on the group —
+    ``mine`` the drawing sent, ``theirs`` the remote's report, ``result``
+    the merged drawing both sides hold, ``base`` the one both started from
+    — and only one, however many rounds follow. Resolving it writes
+    nothing into the group."""
+    remote, local, _ = _pair()
+    page = remote.page("Drawn on both sides at once")
+    u0 = _ink_file(remote, [("a", 100), ("c", 500)])
+    remote.ops(page["id"], [{"op": "insert", "id": "inkM", "parent": page["id"], "content": "",
+                             "props": {"ink_url": u0, "ink_strokes": 2}}])
+    _sync(local)
+    ul = _ink_file(local, [("a", 150), ("c", 500)])
+    ur = _ink_file(remote, [("a", 200), ("c", 500)])
+    local.ops(page["id"], [{"op": "set", "id": "inkM", "props": {"ink_url": ul}, "base_props": {"ink_url": u0}}])
+    _drawn_meanwhile(monkeypatch, remote, page["id"],
+                     [{"op": "set", "id": "inkM", "props": {"ink_url": ur}, "base_props": {"ink_url": u0}}])
+    _sync(local)
+    assert _strokes(local, "inkM") == _strokes(remote, "inkM") == (ur, ["a", "c"])
+    rows = local.client.get(f"/api/mirrors/{local.ws}/conflicts").json()["conflicts"]
+    assert [(c["kind"], c["block_id"], c["mine"], c["result"], c["base"]) for c in rows] == \
+        [("ink_merged", "inkM", _name(ul), _name(ur), _name(u0))]
+    assert json.loads(rows[0]["theirs"]) == {"clean": False, "lost_ours": ["a"], "returned": []}
+    _sync(local)
+    assert len(local.client.get(f"/api/mirrors/{local.ws}/conflicts").json()["conflicts"]) == 1
+    r = local.client.post(f"/api/mirrors/{local.ws}/conflicts/{rows[0]['id']}", json={"choice": "mine"})
+    assert r.status_code == 200 and _strokes(local, "inkM") == (ur, ["a", "c"])
+    assert local.client.get(f"/api/mirrors/{local.ws}").json()["conflicts_open"] == 0
+
+
+def test_a_drawing_sent_again_after_a_lost_push_is_merged_there_and_reported(monkeypatch):
+    """A drawing whose push never reached the remote (the link dropped)
+    goes again next round (``_confirm_push``) with its base's stroke ids;
+    someone moved the same stroke there meanwhile, so the remote merges the
+    resend, and its report is the one ``ink_merged`` row."""
+    remote, local, _ = _pair()
+    page = remote.page("Lost on the way")
+    u0 = _ink_file(remote, [("a", 100), ("c", 500)])
+    remote.ops(page["id"], [{"op": "insert", "id": "inkL", "parent": page["id"], "content": "",
+                             "props": {"ink_url": u0, "ink_strokes": 2}}])
+    _sync(local)
+    ul = _ink_file(local, [("a", 150), ("c", 500)])
+    local.ops(page["id"], [{"op": "set", "id": "inkL", "props": {"ink_url": ul}, "base_props": {"ink_url": u0}}])
+    posts, fetch = [], sync_engine.default_fetch
+
+    def dropped(method, path, body, headers):
+        if method == "POST" and path == f"/api/pages/{page['id']}/ops":
+            posts.append(json.loads(body)["ops"])
+            if len(posts) == 1:
+                raise sync_engine.RemoteError(0, "cannot reach the remote")
+        return fetch(method, path, body, headers)
+
+    monkeypatch.setattr(sync_engine, "default_fetch", dropped)
+    status = local.client.post(f"/api/mirrors/{local.ws}/sync?wait=1").json()["status"]
+    assert status["last_error"] and page["id"] in status["retry"]
+    ur = _ink_file(remote, [("a", 200), ("c", 500)])
+    remote.ops(page["id"], [{"op": "set", "id": "inkL", "props": {"ink_url": ur}, "base_props": {"ink_url": u0}}])
+    _sync(local)
+    assert [op.get("base_ids") for batch in posts for op in batch if op["id"] == "inkL"] == [["a", "c"]] * 2
+    assert _strokes(local, "inkL") == _strokes(remote, "inkL") == (ur, ["a", "c"])
+    rows = local.client.get(f"/api/mirrors/{local.ws}/conflicts").json()["conflicts"]
+    assert [(c["kind"], c["block_id"], c["mine"], json.loads(c["theirs"])["lost_ours"]) for c in rows] == \
+        [("ink_merged", "inkL", _name(ul), ["a"])]
+
+
+@pytest.mark.parametrize("case", ["clean", "older"])
+def test_a_clean_ink_merge_or_an_older_remote_records_nothing(monkeypatch, case):
+    """A merge that kept every change of both sides (a stroke added on
+    each), or a remote of a release that reports no merge (an answer
+    without ``ink_conflicts``), leaves no row; both sides end on one
+    drawing."""
+    remote, local, _ = _pair()
+    page = remote.page("Drawn on both sides")
+    u0 = _ink_file(remote, [("a", 100)])
+    remote.ops(page["id"], [{"op": "insert", "id": "inkC", "parent": page["id"], "content": "",
+                             "props": {"ink_url": u0, "ink_strokes": 1}}])
+    _sync(local)
+    if case == "clean":
+        ul, ur = _ink_file(local, [("a", 100), ("b", 300)]), _ink_file(remote, [("a", 100), ("x", 600)])
+    else:  # the same stroke moved on both sides: not clean, but this remote cannot say so
+        ul, ur = _ink_file(local, [("a", 150)]), _ink_file(remote, [("a", 200)])
+    local.ops(page["id"], [{"op": "set", "id": "inkC", "props": {"ink_url": ul}, "base_props": {"ink_url": u0}}])
+    _drawn_meanwhile(monkeypatch, remote, page["id"],
+                     [{"op": "set", "id": "inkC", "props": {"ink_url": ur}, "base_props": {"ink_url": u0}}],
+                     older=case == "older")
+    _sync(local)
+    there = _strokes(remote, "inkC")
+    assert _strokes(local, "inkC") == there
+    assert sorted(there[1]) == (["a", "b", "x"] if case == "clean" else ["a"])
+    assert local.client.get(f"/api/mirrors/{local.ws}/conflicts").json()["conflicts"] == []
+
+
+def test_drawings_go_in_one_batch_and_each_merge_is_reported_on_its_group(monkeypatch):
+    """Drawings ride in the batches every op rides in (MAX_OPS each), and
+    the remote reports each ink merge by its block (``ink_conflicts``):
+    two groups whose stroke was moved on both sides at once go in one POST
+    and are two ``ink_merged`` rows, each on its own group with its own
+    report; a group merged cleanly in the same batch is none."""
+    remote, local, _ = _pair()
+    page = remote.page("Three groups drawn on both sides")
+    u0 = _ink_file(remote, [("a", 100), ("c", 500)])
+    groups = ("inkG1", "inkG2", "inkG3")
+    remote.ops(page["id"], [{"op": "insert", "id": g, "parent": page["id"], "content": "",
+                             "props": {"ink_url": u0, "ink_strokes": 2}} for g in groups])
+    _sync(local)
+    here = {"inkG1": [("a", 150), ("c", 500)], "inkG2": [("a", 100), ("c", 550)], "inkG3": [("a", 100), ("c", 500), ("b", 300)]}
+    there = {"inkG1": [("a", 200), ("c", 500)], "inkG2": [("a", 100), ("c", 600)], "inkG3": [("a", 100), ("c", 500), ("x", 700)]}
+    mine = {g: _ink_file(local, s) for g, s in here.items()}
+    local.ops(page["id"], [{"op": "set", "id": g, "props": {"ink_url": u}, "base_props": {"ink_url": u0}} for g, u in mine.items()])
+    _drawn_meanwhile(monkeypatch, remote, page["id"],
+                     [{"op": "set", "id": g, "props": {"ink_url": _ink_file(remote, s)}, "base_props": {"ink_url": u0}}
+                      for g, s in there.items()])
+    posts, racing = [], sync_engine.default_fetch
+
+    def counted(method, path, body, headers):
+        if method == "POST" and path == f"/api/pages/{page['id']}/ops":
+            posts.append(sorted(op["id"] for op in json.loads(body)["ops"]))
+        return racing(method, path, body, headers)
+
+    monkeypatch.setattr(sync_engine, "default_fetch", counted)
+    _sync(local)
+    assert posts == [list(groups)], "one POST for the three drawings"
+    rows = local.client.get(f"/api/mirrors/{local.ws}/conflicts").json()["conflicts"]
+    assert sorted((c["kind"], c["block_id"], c["mine"], json.loads(c["theirs"])["lost_ours"]) for c in rows) == \
+        [("ink_merged", "inkG1", _name(mine["inkG1"]), ["a"]), ("ink_merged", "inkG2", _name(mine["inkG2"]), ["c"])]
+    assert sorted(_strokes(remote, "inkG3")[1]) == ["a", "b", "c", "x"], "the clean merge keeps both strokes"
+    assert all(_strokes(local, g) == _strokes(remote, g) for g in groups)
+
+
+def test_a_drawing_waiting_on_the_remote_does_not_hold_a_force_back(monkeypatch):
+    """A force push to a remote that refuses this copy's drawings: the page
+    holding one lands without it and waits on the retry list, but it went
+    through the force (its other changes landed, its base is saved), so
+    the force's policy is spent — a page made on the remote afterwards is
+    pulled, not deleted there as one only the remote had. A page that
+    failed outright went through nothing: the policy waits for it."""
+    from gamma import ink as inkmod
+    from gamma.routers import ink as ink_router
+
+    remote, local, _ = _pair()
+    page = remote.page("Drawn on here")
+    remote.insert(page["id"], "txt", "words")
+    _sync(local)
+    monkeypatch.setattr(sync_engine, "sync_in_background", lambda ws: sync_engine.sync_workspace(ws))
+    ul = _ink_file(local, [("a", 100)])
+    local.ops(page["id"], [{"op": "insert", "id": "inkF", "parent": page["id"], "content": "",
+                            "props": {"ink_url": ul, "ink_strokes": 1}}])
+
+    def refuse(data):
+        raise inkmod.InkVersionError("pretend the remote is older")
+    monkeypatch.setattr(ink_router, "parse_ink", refuse)
+    local.client.post(f"/api/mirrors/{local.ws}/force", json={"direction": "push"}).raise_for_status()
+    status = sync_engine.get_mirror(local.ws)["status"]
+    assert list(status["retry"]) == [page["id"]] and "prune" not in status and "adopt" not in status
+    later = remote.page("Made there after the force")
+    _sync(local)
+    assert later["id"] in remote.pages() and later["id"] in local.pages()
+    monkeypatch.setattr(ink_router, "parse_ink", inkmod.parse_ink)
+    status = _sync(local)
+    assert _strokes(remote, "inkF") == (ul, ["a"]) and status["retry"] == {}
+    real = sync_engine._sync_page
+
+    def boom(ws, remote_, page_id, **kw):
+        if page_id == page["id"]:
+            raise KeyError("a bug in the engine")
+        return real(ws, remote_, page_id, **kw)
+
+    monkeypatch.setattr(sync_engine, "_sync_page", boom)
+    local.client.post(f"/api/mirrors/{local.ws}/force", json={"direction": "push"}).raise_for_status()
+    status = sync_engine.get_mirror(local.ws)["status"]
+    assert status["prune"] is True and status["adopt"] == "mine"
+    monkeypatch.setattr(sync_engine, "_sync_page", real)
+    status = _sync(local)
+    assert "prune" not in status and "adopt" not in status
 
 
 def test_a_redirect_off_the_remote_drops_its_credentials():

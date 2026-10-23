@@ -107,8 +107,8 @@ These describe the implementation unless explicitly marked as plans.
 
 - [Frontend decomposition](frontend-refactor.md): the one live plan. The
   folder layout and the bundle split are done, and "Lazy boundaries" describes
-  the chunks as built; moving state ownership out of `App.jsx` has barely
-  started.
+  the chunks as built; moving state ownership out of `App.jsx` has started:
+  the block tree's view, the AI connect dialog's form and handwriting.
 - [Block-centric design](block_centric.md): the design reference for the
   block model, with its staged roadmap. The stages are built; the block
   zoom-in is the open item. The stored shapes as built are in

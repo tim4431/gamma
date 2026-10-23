@@ -10,8 +10,8 @@
 // The dialog (ManageWorkspaceDialog) is shared with the admin's Server pane
 // (SettingsWorkspacesAdmin.jsx), which adds access, quota, ownership, kind
 // conversion and join-as-owner in `admin` mode. Also exported from here:
-// useAccounts, useCloudSignIn, useWorkspace (one workspace's state + every
-// call on it, incl. invitations by Gamma Cloud username), AccessRows,
+// useAccounts, cloudUsername, useCloudSignIn, useWorkspace (one workspace's
+// state + every call on it, incl. invitations by Gamma Cloud username), AccessRows,
 // StorageRow, MembersList, InviteDialog, NameDialog and the access tables;
 // the role tables and workspaceMeta (the switcher's one-line description)
 // are in workspaceRoles.js.
@@ -42,6 +42,10 @@ export function useAccounts() {
   }, []);
   return accounts;
 }
+
+// A Gamma Cloud username as typed ("@Alice " → "alice"); the server checks
+// the rest (gamma/cloud_auth.py clean_username).
+export const cloudUsername = (text) => String(text || "").trim().replace(/^@/, "").toLowerCase();
 
 // Whether this server signs people in with Gamma Cloud (GET /api/server-config)
 // — what lets an owner invite someone by their cloud username.
@@ -182,9 +186,10 @@ export function StorageRow({ quota, me }) {
 
 // The explicit members, each with a role menu and a remove button
 // (owners). `me` marks "you"; the last owner cannot go; leaving yourself
-// is an action row of the dialog, not a button on your own row. Pending
-// invitations by Gamma Cloud username (`pending: true`) follow, tagged, with
-// only a remove button (`onCancel`).
+// is an action row of the dialog, not a button on your own row. A member
+// whose Gamma Cloud username is not their name here (a `tim-2`) shows it
+// (`cloud`). Pending invitations by Gamma Cloud username (`pending: true`)
+// follow, tagged, with only a remove button (`onCancel`).
 export function MembersList({ info, me, canManage, busy, onSetRole, onRemove, onCancel }) {
   const members = info?.members || [];
   const owners = members.filter((m) => m.role === "owner" && !m.pending).length;
@@ -204,6 +209,7 @@ export function MembersList({ info, me, canManage, busy, onSetRole, onRemove, on
           </span>
           <span className="aiProvDesc">
             {ROLE_OPTIONS.find(([r]) => r === m.role)?.[1] || m.role}
+            {m.cloud && !m.pending ? t(" · Gamma Cloud {name}", { name: m.cloud }) : ""}
             {m.added_by && m.added_by !== m.username ? t(" · invited by {added_by}", { added_by: m.added_by }) : ""}
           </span>
         </span>
@@ -246,7 +252,7 @@ export function InviteDialog({ name, accounts, exclude, cloud, busy, error, onSu
   const [cloudName, setCloudName] = React.useState("");
   const [role, setRole] = React.useState("editor");
   const byCloud = cloud && via === "cloud";
-  const who = byCloud ? cloudName.trim().replace(/^@/, "").toLowerCase() : username;
+  const who = byCloud ? cloudUsername(cloudName) : username;
   const submit = () => { if (who && !busy) onSubmit(who, role, byCloud ? "cloud" : "local"); };
   function pickVia(next) {
     setVia(next);

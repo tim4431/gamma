@@ -25,7 +25,7 @@ export async function settingsScenarios(env) {
   async function openSettings(page) {
     // The account button — on a phone, the bottom bar's More.
     await page.locator('[data-guide="header.account"]').click();
-    await page.getByRole("button", { name: "Settings…", exact: true }).click();
+    await page.getByRole("menuitem", { name: "Settings…", exact: true }).click();
     await page.getByRole("dialog", { name: "Settings", exact: true }).waitFor();
   }
   const nav = (page, name) => page.getByRole("navigation", { name: "Settings categories" }).getByRole("button", { name, exact: true });
@@ -73,14 +73,14 @@ export async function settingsScenarios(env) {
       assertEq(await today.getAttribute("data-value"), "1200");
       if (flags.keep) await graph.screenshot({ path: `${server.dir}/usage-chart-light.png` });
       await graph.getByRole("button", { name: "Chart interval", exact: true }).click();
-      await page.getByRole("button", { name: "Monthly · last 12 months", exact: true }).click();
+      await page.getByRole("menuitemradio", { name: "Monthly · last 12 months", exact: true }).click();
       assertEq(await graph.locator("button.usageChartBar").count(), 12);
       assertEq(await graph.locator(".usageChartHeadline strong").innerText(), "910k");
       const september = graph.locator('[data-date="2026-09-01"]');
       assertEq(Number(await september.getAttribute("data-value")), daily.reduce((sum, day) => sum + day.input + day.output, 0));
       if (flags.keep) await graph.screenshot({ path: `${server.dir}/usage-chart-monthly.png` });
       await graph.getByRole("button", { name: "Chart interval", exact: true }).click();
-      await page.getByRole("button", { name: "Daily · last 30 days", exact: true }).click();
+      await page.getByRole("menuitemradio", { name: "Daily · last 30 days", exact: true }).click();
       await today.click();
       const color = await today.locator(".usageChartFill").evaluate((el) => getComputedStyle(el).backgroundColor);
       await page.evaluate(() => { document.documentElement.dataset.theme = "sepia"; document.documentElement.dataset.scheme = "light"; });
@@ -126,7 +126,7 @@ export async function settingsScenarios(env) {
       }
       // The saved service joins the picker next to the chat models.
       await row(page, "Translate with").getByRole("button", { name: "Translate with", exact: true }).click();
-      await page.locator(".uiSelectMenu").getByRole("button", { name: "Google Cloud Translation" }).click();
+      await page.locator(".uiSelectMenu").getByRole("menuitemradio", { name: "Google Cloud Translation" }).click();
       await until(() => page.evaluate(() => localStorage.getItem("gamma-translate-model")).then((v) => v === "engine:google"));
       // Reasoning effort means nothing to a translation service; the Speed
       // section keeps only the parallel requests.
@@ -187,7 +187,7 @@ export async function settingsScenarios(env) {
       await until(() => brave.innerText().then((text) => text.includes("Not set up")));
 
       await engine.click();
-      await page.locator(".uiSelectMenu").getByRole("button", { name: "Off", exact: true }).click();
+      await page.locator(".uiSelectMenu").getByRole("menuitemradio", { name: "Off", exact: true }).click();
       await until(() => engine.innerText().then((text) => text.includes("Off")));
       await page.reload();
       await page.waitForSelector(".folderNewBtn");
@@ -292,7 +292,8 @@ export async function settingsScenarios(env) {
       await until(async () => (await caps(del)) === "Ctrl Shift K", { what: "reset" });
       assertEq(await caps(ren), "F2", "the clash is gone with the reset");
       await page.getByRole("searchbox", { name: "Filter shortcuts" }).fill("duplicate");
-      await until(async () => (await page.locator(".keyboardPane .setRow").count()) === 2, { what: "filtered to the two duplicate rows" });
+      // Duplicate block above / below, and the handwriting group's Duplicate handwriting.
+      await until(async () => (await page.locator(".keyboardPane .setRow").count()) === 3, { what: "filtered to the three duplicate rows" });
       assertNoProblems(page);
     } finally { await ctx.close(); }
   });
@@ -417,7 +418,7 @@ export async function settingsScenarios(env) {
       await dialog.getByRole("group", { name: "AI service" }).getByRole("button", { name: "Other", exact: true }).click();
       const pick = async (menu, option) => {
         await dialog.getByRole("button", { name: menu, exact: true }).click();
-        await page.locator(".uiSelectMenu").getByRole("button", { name: option, exact: true }).click();
+        await page.locator(".uiSelectMenu").getByRole("menuitemradio", { name: option, exact: true }).click();
       };
       // One vendor, one plan: no Plan menu.
       assertEq(await dialog.getByRole("button", { name: "Plan", exact: true }).count(), 0);
@@ -840,7 +841,7 @@ export async function settingsScenarios(env) {
       const pickerRow = row(page, "Text highlights");
       assertEq(await pickerRow.getByRole("button", { name: "Text highlights", exact: true }).innerText(), "Highlight");
       await pickerRow.getByRole("button", { name: "Text highlights", exact: true }).click();
-      await page.locator(".uiSelectMenu").getByRole("button", { name: "Work", exact: true }).click();
+      await page.locator(".uiSelectMenu").getByRole("menuitemradio", { name: "Work", exact: true }).click();
       await until(async () => { const p = await palette(); return p?.pickers?.highlight === p?.groups?.[3]?.id; });
       assertEq(await pickerRow.getByRole("button", { name: "Text highlights", exact: true }).innerText(), "Work");
       // deleting the chosen group sends the picker back to its default group
@@ -929,7 +930,7 @@ export async function settingsScenarios(env) {
       await unsaved.waitFor();
       await dialog.getByRole("button", { name: "Keep editing", exact: true }).click();
       await dialog.getByRole("button", { name: "Frequency", exact: true }).click();
-      await page.getByRole("button", { name: "Daily", exact: true }).click();
+      await page.getByRole("menuitemradio", { name: "Daily", exact: true }).click();
       await dialog.locator("ol li").first().waitFor(); // the schedule preview answered
       await dialog.getByRole("button", { name: "Create task", exact: true }).click();
       await dialog.waitFor({ state: "detached" });
@@ -937,7 +938,7 @@ export async function settingsScenarios(env) {
       await rowOf.waitFor();
       assert((await rowOf.innerText()).includes("Daily · 03:00"), "the row shows the daily schedule");
       await rowOf.getByRole("button", { name: "Actions for Nightly", exact: true }).click();
-      await page.getByRole("button", { name: "Run now", exact: true }).click();
+      await page.getByRole("menuitem", { name: "Run now", exact: true }).click();
       // Run now wakes the scheduler at once; the table polls every 5 s
       await until(() => rowOf.innerText().then((t) => /finished|failed/i.test(t)), { timeout: 20000, what: "the queued run to finish" });
       assert(/finished/i.test(await rowOf.innerText()), "the run finished");
@@ -945,7 +946,7 @@ export async function settingsScenarios(env) {
       await until(() => rowOf.innerText().then((t) => /Finished\s+\w{3} \d+, \d+:\d+.*\s+\d+ snapshots? · [\d.]+ [KMG]?B/.test(t)),
         { what: "the Last run cell's time and result" });
       await rowOf.getByRole("button", { name: "Actions for Nightly", exact: true }).click();
-      await page.getByRole("button", { name: "Delete task", exact: true }).click();
+      await page.getByRole("menuitem", { name: "Delete task", exact: true }).click();
       await page.locator(".confirmHead").waitFor();
       await page.locator(".reportModalBtns button", { hasText: "Delete task" }).click();
       await rowOf.waitFor({ state: "detached" });
@@ -979,7 +980,7 @@ export async function settingsScenarios(env) {
       await page.getByText("You can keep up to 5 backup tasks. Delete one to add another.").waitFor();
       const actions = page.getByRole("button", { name: "Actions for Task 1", exact: true });
       await actions.click();
-      const duplicate = page.getByRole("button", { name: "Duplicate task", exact: true });
+      const duplicate = page.getByRole("menuitem", { name: "Duplicate task", exact: true });
       assert(await duplicate.isDisabled(), "Duplicate too");
       await actions.click(); // (Escape would close Settings)
       await duplicate.waitFor({ state: "detached" });
@@ -1007,7 +1008,7 @@ export async function settingsScenarios(env) {
       const beforeRestore = page.locator(".aiProvRow").filter({ has: page.locator(".uiTag", { hasText: "Before restore" }) });
       assertEq(await beforeRestore.count(), 0, "no pre-restore snapshot yet");
       await snapshot.getByRole("button", { name: "Restore", exact: true }).click();
-      await page.getByRole("button", { name: "Replace…", exact: true }).click();
+      await page.getByRole("menuitem", { name: "Replace…", exact: true }).click();
       await page.locator(".confirmModal").getByRole("button", { name: "Replace", exact: true }).click();
       await beforeRestore.waitFor({ timeout: 15000 });
       assertEq(await beforeRestore.count(), 1, "one pre-restore snapshot");
@@ -1133,7 +1134,7 @@ export async function settingsScenarios(env) {
       await field(setUp, "Access key ID").fill("AKIAE2EOFFSITE");
       await field(setUp, "Secret key").fill("e2e-offsite-secret");
       await often(setUp).click();
-      await page.locator(".uiSelectMenu").getByRole("button", { name: "Every 6 hours", exact: true }).click();
+      await page.locator(".uiSelectMenu").getByRole("menuitemradio", { name: "Every 6 hours", exact: true }).click();
       await field(setUp, "Copies kept").fill("3");
       await save.click();
       await setUp.waitFor({ state: "detached" });
@@ -1413,7 +1414,7 @@ export async function settingsScenarios(env) {
       const services = dialog.getByRole("group", { name: "AI service" });
       await services.getByRole("button", { name: "Other", exact: true }).click();
       await dialog.getByRole("button", { name: "Service", exact: true }).click();
-      await page.locator(".uiSelectMenu").getByRole("button", { name: "Custom endpoint", exact: true }).click();
+      await page.locator(".uiSelectMenu").getByRole("menuitemradio", { name: "Custom endpoint", exact: true }).click();
       await dialog.getByRole("button", { name: "API protocol", exact: true }).waitFor();
       assertEq(await dialog.getByRole("link", { name: /^Get a key at/ }).count(), 0, "a custom endpoint has no key link");
       await dialog.getByRole("textbox", { name: /Base URL/ }).fill("https://example.invalid");
@@ -1464,7 +1465,7 @@ export async function settingsScenarios(env) {
       const modelChip = page.getByRole("button", { name: "Model, reasoning effort and speed", exact: true });
       assert((await modelChip.innerText()).includes("test-model-b"));
       await modelChip.click();
-      await page.locator(".uiSelectMenu").getByRole("button", { name: "test-model-a", exact: true }).click();
+      await page.locator(".uiSelectMenu").getByRole("menuitemradio", { name: "test-model-a", exact: true }).click();
       await page.locator('[title^="Chat settings"]').click();
       const popover = page.locator(".chatSettingsPop");
       await popover.locator('input[type="number"]').fill("42000");
@@ -1487,7 +1488,7 @@ export async function settingsScenarios(env) {
       // The matrix and chat popover edit the same per-kind permissions.
       const pick = async (scope, name, state) => {
         await scope.getByRole("button", { name, exact: true }).click();
-        await page.locator(".uiSelectMenu").getByRole("button", { name: state, exact: true }).click();
+        await page.locator(".uiSelectMenu").getByRole("menuitemradio", { name: state, exact: true }).click();
       };
       await pick(page, "Rename pages — Folder chat", "Off");
       await pick(page, "Use journal sign-ins — Folder chat", "Off");
@@ -1524,12 +1525,12 @@ export async function settingsScenarios(env) {
         const menu = page.locator(".uiSelectMenu");
         const choose = async (tool, kind, state) => {
           await permission(tool, kind).click();
-          await menu.getByRole("button", { name: state, exact: true }).click();
+          await menu.getByRole("menuitemradio", { name: state, exact: true }).click();
         };
         const preset = (kind) => matrix.getByRole("button", { name: `${kind} permissions`, exact: true });
         const choosePreset = async (kind, label) => {
           await preset(kind).click();
-          await menu.getByRole("button", { name: label, exact: true }).click();
+          await menu.getByRole("menuitemradio", { name: label, exact: true }).click();
         };
         await master.check();
         for (const kind of ["Folder chat", "PDF chat", "Notes chat"]) await choosePreset(kind, "Allow all");
@@ -1553,7 +1554,7 @@ export async function settingsScenarios(env) {
         // Journal sign-ins are part of fetching: on or off, nothing to ask.
         await permission("Use journal sign-ins").click();
         assertEq(JSON.stringify(await menu.locator(".ctxMenuItem").allInnerTexts()), JSON.stringify(["Allow", "Off"]));
-        await menu.getByRole("button", { name: "Allow", exact: true }).click();
+        await menu.getByRole("menuitemradio", { name: "Allow", exact: true }).click();
         await choose("Fetch documents", "Folder chat", "Off");
         assertEq(await permission("Use journal sign-ins").isDisabled(), true);
         assertEq(await stateOf("Use journal sign-ins"), "Allow", "dependent choices are remembered");
@@ -1598,10 +1599,10 @@ export async function settingsScenarios(env) {
         assertEq(await page.getByRole("button", { name: "Start dictation" }).count(), transcribe ? 1 : 0, `mic with transcribe=${transcribe}`);
         assertEq(await page.getByRole("button", { name: "PDF", exact: true }).count(), 0, "no PDF in the library's context");
         await chip.click();
-        await page.locator(".uiSelectMenu").getByRole("button", { name: "high", exact: true }).click();
+        await page.locator(".uiSelectMenu").getByRole("menuitemradio", { name: "high", exact: true }).click();
         await until(async () => (await chip.innerText()).includes("model · high"), { what: "the chip names the effort" });
         await chip.click();
-        await page.locator(".uiSelectMenu").getByRole("button", { name: "Default", exact: true }).click();
+        await page.locator(".uiSelectMenu").getByRole("menuitemradio", { name: "Default", exact: true }).click();
         assertNoProblems(page);
       } finally { await ctx.close(); }
     }
@@ -1718,7 +1719,7 @@ export async function settingsScenarios(env) {
       // window.open would leave the test; record the URL instead.
       await page.evaluate(() => { window.__opened = []; window.open = (u) => { window.__opened.push(u); return {}; }; });
       await page.getByRole("button", { name: "Account & settings", exact: true }).click();
-      await page.getByRole("button", { name: "Report a problem…", exact: true }).click();
+      await page.getByRole("menuitem", { name: "Report a problem…", exact: true }).click();
       const dialog = page.getByRole("dialog", { name: "Report a problem", exact: true });
       await dialog.waitFor();
       const open = dialog.getByRole("button", { name: "Open GitHub issue", exact: true });
@@ -1961,7 +1962,7 @@ export async function settingsScenarios(env) {
       assertEq(await shared.getByRole("button").count(), 0, "no edit or delete on a shared row");
       await shared.getByRole("radio").check();
       await row(page, "Default chat model").getByRole("button").click();
-      await page.locator(".uiSelectMenu").getByRole("button", { name: "lab-model", exact: true }).click();
+      await page.locator(".uiSelectMenu").getByRole("menuitemradio", { name: "lab-model", exact: true }).click();
       // Token usage says what is left of the allowance.
       await row(page, "Shared allowance").getByText("0 of 50k tokens in the last 24 h", { exact: true }).waitFor();
 
@@ -2118,8 +2119,14 @@ export async function settingsScenarios(env) {
       await rows.waitFor();
       assert((await rows.textContent()).includes("Gamma v9.9.9 is available — this server runs v1.0.0"), "the message with its values");
       assert((await rows.textContent()).includes("A backup task failed"), "a title-only notice");
-      await rows.getByRole("button", { name: /See the update/ }).waitFor();
-      const item = page.getByRole("button", { name: "Settings…", exact: true });
+      await rows.getByRole("menuitem", { name: /See the update/ }).waitFor();
+      // The link is an item of the menu itself, nothing between them, and
+      // the notice's sentence describes it.
+      const [around, described] = await rows.getByRole("menuitem", { name: /See the update/ }).evaluate((el) =>
+        [el.parentElement.closest("[role]")?.getAttribute("role"), document.getElementById(el.getAttribute("aria-describedby"))?.textContent]);
+      assertEq(around, "menu", "a notice's link sits in the menu, no status region between");
+      assert((described || "").includes("Gamma v9.9.9 is available"), `the link is described by its sentence: ${described}`);
+      const item = page.getByRole("menuitem", { name: "Settings…", exact: true });
       await item.locator(".noticeDot").waitFor();
       await item.click();
       await page.getByRole("dialog", { name: "Settings", exact: true }).waitFor();
@@ -2149,7 +2156,7 @@ export async function settingsScenarios(env) {
       await page.evaluate(() => window.dispatchEvent(new Event("focus")));
       await account.locator(".noticeDot").waitFor();
       await account.click();
-      await page.getByTestId("account-notices").getByRole("button", { name: /Review storage/ }).click();
+      await page.getByTestId("account-notices").getByRole("menuitem", { name: /Review storage/ }).click();
       await page.getByRole("dialog", { name: "Settings", exact: true }).waitFor();
       assertEq(await nav(page, "Account & sync").getAttribute("aria-current"), "page", "the row's link opens its pane");
       await until(() => seen.includes("storage:90"), { what: "visiting the pane resolves it" });

@@ -6,7 +6,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { applyOps } from "../src/shared/model/blockOps.js";
-import { MAX_RETRY_MS, RETRY_MS, createCollabSession } from "../src/collaboration/collabSession.js";
+import { MAX_OPS, MAX_RETRY_MS, RETRY_MS, createCollabSession } from "../src/collaboration/collabSession.js";
 import { mergeTextBox } from "../src/markup/textBox.js";
 
 const ME = "this-client";
@@ -30,7 +30,10 @@ function setup(t, api, { canWrite = true, connect = true } = {}) {
   };
   h.session = createCollabSession({
     clientId: ME,
-    api: (path, init) => { h.calls.push({ url: path, body: init?.body ? JSON.parse(init.body) : null }); return api(path, init); },
+    api: (path, init, opts) => {
+      h.calls.push({ url: path, body: init?.body ? JSON.parse(init.body) : null, keepalive: opts?.keepalive || null });
+      return api(path, init);
+    },
     openSocket: () => {
       const ws = { readyState: 1, sent: [], closed: false, send(m) { ws.sent.push(JSON.parse(m)); }, close() { ws.closed = true; } };
       h.sockets.push(ws);
@@ -126,7 +129,7 @@ test("network retries keep local content protected until it is acknowledged", as
   assert.deepEqual(h.notices[h.notices.length - 1], ["pending", ""], "the notice goes once it is saved");
 });
 
-test("retries never give up, ever longer apart; the edits stay for pagehide", async (t) => {
+test("retries never give up, ever longer apart; the edits stay for a close", async (t) => {
   const h = setup(t, async () => { throw new Error("offline"); });
   h.edit([block("a", "mine"), block("b")]);
   await h.session.flush();
@@ -142,11 +145,138 @@ test("retries never give up, ever longer apart; the edits stay for pagehide", as
   assert.equal(h.timers.size, 1, "a retry is still armed");
   assert.match(h.notices[h.notices.length - 1][1], /Retrying/);
   assert.equal(h.session.hasPending(), true);
-  h.session.pagehide();
-  assert.equal(h.keepalive.length, 1);
-  assert.deepEqual(h.keepalive[0].body.ops.map((op) => [op.op, op.id, op.content]), [["set", "a", "mine"]]);
-  // the batch keeps its id: a copy that already landed is answered, not re-applied
-  assert.equal(h.keepalive[0].body.batch, h.calls[0].body.batch);
+  // the tab closes or is hidden: the batch waiting for its retry goes at once, with keepalive
+  h.session.hide();
+  const last = h.calls.at(-1);
+  assert.deepEqual([h.calls.length, last.keepalive], [10, "critical"]);
+  assert.deepEqual(last.body.ops.map((op) => [op.op, op.id, op.content]), [["set", "a", "mine"]]);
+  // the batch keeps its id: one that already landed is answered, not re-applied
+  assert.equal(last.body.batch, h.calls[0].body.batch);
+  assert.deepEqual(h.keepalive, [], "nothing else to send");
+});
+
+// The bodies the hook claims of the page's keepalive room (usePageCollab,
+// shared/lib/keepalive.js) are the very ones hide sends.
+test("pendingKeepaliveBodies is what hide sends, unsent: each page's batch out under its id, then its queue in batches of MAX_OPS", async (t) => {
+  const h = setup(t, async () => { throw new Error("offline"); });
+  // page a: a set and 1200 new blocks — the first MAX_OPS out (their POST failed, a retry armed), the rest queued
+  const many = Array.from({ length: 1200 }, (_, i) => block(`n${i}`));
+  h.edit([block("a", "mine"), { ...block("b"), position: "a1" }, ...many]);
+  await h.session.flush();
+  assert.equal(h.calls.length, 1);
+  // page b: an edit queued, not sent yet (page a keeps its session)
+  h.load("page-b", [block("c")]);
+  h.edit([block("c", "c1")]);
+  const pending = h.session.pendingKeepaliveBodies();
+  assert.deepEqual(h.session.pendingKeepaliveBodies(), pending, "reading them again gives the same bodies, the same batch ids");
+  assert.equal(h.keepalive.length, 0, "and sends nothing");
+  assert.equal(h.session.hasPending(), true);
+  const parsed = pending.map(({ path, body }) => ({ path, body: JSON.parse(body) }));
+  assert.deepEqual(parsed.map((b) => [b.path, b.body.ops.length]), [
+    ["/pages/page-a/ops", MAX_OPS], ["/pages/page-a/ops", MAX_OPS], ["/pages/page-a/ops", 1201 - 2 * MAX_OPS], ["/pages/page-b/ops", 1],
+  ]);
+  assert.equal(parsed[0].body.batch, h.calls[0].body.batch, "the batch out under its own id");
+  assert.deepEqual(parsed[0].body.ops, h.calls[0].body.ops);
+  assert.equal(new Set(parsed.map((b) => b.body.batch)).size, 4, "every batch its own id");
+  assert.ok(parsed.every((b) => b.body.client === ME));
+  // hide sends every one of them at once, as they were read: page b's batch through its own
+  // send, with keepalive; page a's batch out, on its way again since page b opened, as a copy
+  // under its id, and the queue behind it as copies under the names hide gave it
+  const before = h.calls.length;
+  h.session.hide();
+  const [sent, ...more] = h.calls.slice(before);
+  assert.deepEqual([sent.url, sent.keepalive, more], ["/pages/page-b/ops", "critical", []]);
+  assert.deepEqual({ client: sent.body.client, batch: sent.body.batch, ops: sent.body.ops }, parsed[3].body);
+  assert.deepEqual(h.keepalive, parsed.slice(0, 3));
+  assert.deepEqual([...h.keepalive, sent].flatMap((b) => b.body.ops.map((op) => op.id)),
+    ["a", ...many.map((n) => n.id), "c"], "every edit, in order");
+  // nothing is spent: the edits stay pending, under the same ids, until answered
+  assert.deepEqual(h.session.pendingKeepaliveBodies(), pending);
+  assert.equal(h.session.hasPending(), true);
+});
+
+test("hide twice sends it all twice, under the same ids", async (t) => {
+  const h = setup(t, () => new Promise(() => {}));   // answers that never come: a closing tab
+  h.edit([block("a", "mine"), block("b")]);
+  const pending = h.session.pendingKeepaliveBodies().map((b) => JSON.parse(b.body));
+  h.session.hide();
+  h.session.hide();   // on pagehide, then on visibilitychange: a first one stopped part way
+  assert.deepEqual(h.calls.map((c) => [c.keepalive, c.body.batch]), [["critical", pending[0].batch]]);
+  assert.deepEqual(h.keepalive.map((b) => b.body), pending, "the batch on its way goes again as a copy");
+});
+
+test("edits made after hide queue behind the batches it named: none folds into them, they go under their names, the new ones after", async (t) => {
+  let answer = deferred();
+  const h = setup(t, () => answer.promise);
+  h.edit([block("a", "one"), block("b")]);
+  h.session.flush();   // a batch on its way
+  h.edit([block("a", "one two"), block("b", "b1")]);
+  h.session.hide();   // pagehide, into the back-forward cache: the queue behind that batch is named, and copied
+  const [out, behind] = h.session.pendingKeepaliveBodies().map((b) => JSON.parse(b.body));
+  assert.deepEqual(h.keepalive.map((b) => b.body), [out, behind], "the batch on its way, and the one behind it");
+  assert.deepEqual(behind.ops.map((op) => [op.id, op.content]), [["a", "one two"], ["b", "b1"]]);
+  // shown again from the cache, typing goes on: the set of a queues behind the named batch, not in it
+  h.edit([block("a", "one two three"), block("b", "b1")]);
+  const answered = [];
+  for (let seq = 1; seq <= 3; seq++) {
+    const now = answer;
+    answer = deferred();
+    const call = h.calls.at(-1);
+    answered.push([call.body.batch, call.body.ops.map((op) => [op.id, op.content])]);
+    now.resolve({ seq, ops: call.body.ops });
+    await settle();
+  }
+  assert.deepEqual(answered, [
+    [out.batch, [["a", "one"]]],
+    [behind.batch, [["a", "one two"], ["b", "b1"]]],
+    [answered[2][0], [["a", "one two three"]]],
+  ]);
+  assert.ok(![out.batch, behind.batch].includes(answered[2][0]), "the edit made after takes a fresh id");
+  assert.equal(h.session.hasPending(), false);
+});
+
+// Going hidden is no close: copies sent at once can land out of order, and
+// one landing before the batch it follows is never undone (its in-order
+// send is a replay), so the server would keep the word taken back here.
+test("hide(false), the tab going hidden: only the batch that goes next leaves, and the edit behind it follows its answer", async (t) => {
+  let answer = null;
+  const h = setup(t, () => {
+    if (answer) return answer.promise;
+    const e = new Error("503 restarting");
+    e.status = 503;
+    return Promise.reject(e);
+  });
+  h.edit([block("a", "a world"), block("b")]);
+  await h.session.flush();   // refused: the batch waits for its retry
+  answer = deferred();
+  h.edit([block("a", "a"), block("b")]);   // the word taken back, queued behind it
+  h.session.hide(false);
+  assert.deepEqual(h.calls.map((c) => [c.keepalive, c.body.batch, c.body.ops.map((op) => op.content)]),
+    [[null, h.calls[0].body.batch, ["a world"]], ["critical", h.calls[0].body.batch, ["a world"]]],
+    "the batch waiting for its retry goes at once, with keepalive, under its id");
+  h.session.hide(false);   // shown and hidden again while it is on its way: a copy of it alone
+  assert.deepEqual(h.keepalive.map((b) => [b.body.batch, b.body.ops.map((op) => op.content)]),
+    [[h.calls[0].body.batch, ["a world"]]], "nothing of the edit behind it, which could land first");
+  const first = answer;
+  answer = deferred();
+  first.resolve({ seq: 1, ops: h.calls[1].body.ops });
+  await settle();
+  assert.deepEqual(h.calls.slice(2).map((c) => [c.keepalive, c.body.ops.map((op) => [op.content, op.base])]),
+    [[null, [["a", "a world"]]]], "the edit behind it goes once that batch is answered");
+  assert.ok(!h.calls.slice(0, 2).some((c) => c.body.batch === h.calls[2].body.batch), "under an id of its own");
+  answer.resolve({ seq: 2, ops: h.calls[2].body.ops });
+  await settle();
+  assert.equal(h.session.hasPending(), false);
+});
+
+test("hide leaves a page in Recently deleted alone: its edits wait, unsent and unclaimed", async (t) => {
+  const h = setup(t, async () => { throw new Error("offline"); });
+  h.edit([block("a", "mine"), block("b")]);
+  h.session.gone("page-a", { id: "trash-1" });
+  assert.deepEqual(h.session.pendingKeepaliveBodies(), []);
+  h.session.hide();
+  assert.deepEqual([h.keepalive, h.calls], [[], []]);
+  assert.equal(h.session.hasPending(), true, "the edits stay for when the page is restored");
 });
 
 test("a rejected batch is dropped and the page reloads", async (t) => {
@@ -248,6 +378,23 @@ test("presence: join, leave, a standalone cursor and the caret on a batch", (t) 
   assert.deepEqual([h.peers[0].block, h.peers[0].anchor, h.peers[0].rev], ["b", 5, 2]);
   h.message({ t: "leave", client: "p2" });
   assert.deepEqual(h.peers, []);
+});
+
+test("ink-live: a stroke in progress goes out on the open socket only, and a peer's reaches onInkLive", (t) => {
+  const h = setup(t, async () => ({}));
+  const got = [];
+  h.options.onInkLive = (msg) => got.push(msg);
+  h.message({ t: "hello", client: ME, color: 0, seq: 0, peers: [] });
+  const chunk = { page: 1, g: null, id: "k7Qm2x", style: { tool: "pen", size: 2, color: "#1f1f1f", opacity: 1, pen: true }, k: 1, n: 0, samples: [[1, 2, 0.5, 0, null, null]] };
+  assert.equal(h.session.sendInkLive(chunk), true);
+  assert.deepEqual(h.socket().sent, [{ ...chunk, t: "ink-live" }]);
+  assert.equal(h.timers.size, 0, "never queued or retried");
+  h.socket().readyState = 3;
+  assert.equal(h.session.sendInkLive({ ...chunk, n: 1 }), false, "dropped while the socket is down");
+  assert.equal(h.socket().sent.length, 1);
+  h.message({ t: "ink-live", client: "p2", ...chunk });
+  assert.deepEqual(got, [{ t: "ink-live", client: "p2", ...chunk }]);
+  assert.deepEqual(h.peers, [], "presence is untouched");
 });
 
 test("our caret goes out throttled, rides on a batch while edits are queued, and is not repeated", async (t) => {

@@ -1,0 +1,477 @@
+{
+ "about": "The codec's integers and the canonical bytes' numbers, the same on both sides (docs/dev/handwriting.md 'Channels' and 'The bytes of an upload'): gamma/ink.py encode_points and frontend/src/ink/ink.js encodePoints turn each `encode` case's `samples` (channels `ch`) into exactly `pts`, and gamma/ink.py dumps and ink.js serializeInk write each `files` case's `file` (JSON text, its literals as written) as exactly `bytes`, so a file the server writes (an import, a merge, the upgrade step) is byte for byte the one a client writes for the same strokes. Every value is rounded as Math.round rounds it: to the nearest integer, a half going up (0.5 is 1, -0.5 is 0, 2.5 is 3), never to the even one. x and y are times 100; p is held to 0..1, then times 1000; t is as it is; a is held to 0..90; z is as it is; w is held to 0..4, then times 1000; o is held to 0..1, then times 1000; a letter not known here is the sample's next `rest` value. A channel a sample lacks or holds as null is p 0.5, t 0, a 90, z 0, w 1, o 1, rest 0. x, y, t, w and o are written as deltas after the first sample. A number is written as JSON.stringify writes it (ECMAScript Number::toString): the shortest digits that read back as the same double, plainly from 1e-6 up to 1e21 and as d[.ddd]e+n or d[.ddd]e-n outside (1e-7, 1.5e+21), minus zero as 0, a whole float as an integer, an integer past 2^53 as the double a client reads. Each `encode` case is `{note, ch, samples, pts}`, each `files` case `{note, file, bytes}`; backend/tests/test_shared_fixtures.py also checks that dumps writes the parsed file (parse_ink) as the same bytes.",
+ "encode": [
+  {
+   "note": "x and y: a half goes up as Math.round takes it (0.125 pt is 13, 0.625 pt is 63, -0.125 pt is -12, -0.375 pt is -37), and one that rounds to minus zero is 0",
+   "ch": "xy",
+   "samples": [
+    {
+     "x": 0.125,
+     "y": -0.125
+    },
+    {
+     "x": 0.625,
+     "y": -0.375
+    },
+    {
+     "x": -0.004,
+     "y": 1.005
+    },
+    {
+     "x": 612.345,
+     "y": -0.005
+    }
+   ],
+   "pts": [
+    13,
+    -12,
+    50,
+    -25,
+    -63,
+    137,
+    61235,
+    -100
+   ]
+  },
+  {
+   "note": "t: a fraction of a millisecond is rounded, never cut (16.5 is 17, 8.6 is 9, -2.5 is -2), and a missing or null time is 0",
+   "ch": "xyt",
+   "samples": [
+    {
+     "x": 0,
+     "y": 0,
+     "t": 0
+    },
+    {
+     "x": 1,
+     "y": 0,
+     "t": 16.5
+    },
+    {
+     "x": 2,
+     "y": 0,
+     "t": 8.6
+    },
+    {
+     "x": 3,
+     "y": 0
+    },
+    {
+     "x": 4,
+     "y": 0,
+     "t": null
+    },
+    {
+     "x": 5,
+     "y": 0,
+     "t": -2.5
+    }
+   ],
+   "pts": [
+    0,
+    0,
+    0,
+    100,
+    0,
+    17,
+    100,
+    0,
+    -8,
+    100,
+    0,
+    -9,
+    100,
+    0,
+    0,
+    100,
+    0,
+    -2
+   ]
+  },
+  {
+   "note": "p: held to 0..1, then a half up (0.0005 is 1, 0.0025 is 3), and a missing or null pressure is 0.5",
+   "ch": "xyp",
+   "samples": [
+    {
+     "x": 0,
+     "y": 0,
+     "p": 0.0005
+    },
+    {
+     "x": 0,
+     "y": 0,
+     "p": 0.0025
+    },
+    {
+     "x": 0,
+     "y": 0,
+     "p": 1.7
+    },
+    {
+     "x": 0,
+     "y": 0,
+     "p": -0.3
+    },
+    {
+     "x": 0,
+     "y": 0
+    },
+    {
+     "x": 0,
+     "y": 0,
+     "p": null
+    }
+   ],
+   "pts": [
+    0,
+    0,
+    1,
+    0,
+    0,
+    3,
+    0,
+    0,
+    1000,
+    0,
+    0,
+    0,
+    0,
+    0,
+    500,
+    0,
+    0,
+    500
+   ]
+  },
+  {
+   "note": "w: held to 0..4 before it is written × 1000 (5 is 4000, -1 is 0), a half up (0.0005 is 1, 1.0125 is 1013), and a missing or null w is 1",
+   "ch": "xyw",
+   "samples": [
+    {
+     "x": 0,
+     "y": 0,
+     "w": 5
+    },
+    {
+     "x": 0,
+     "y": 0,
+     "w": -1
+    },
+    {
+     "x": 0,
+     "y": 0,
+     "w": 0.0005
+    },
+    {
+     "x": 0,
+     "y": 0,
+     "w": 1.0125
+    },
+    {
+     "x": 0,
+     "y": 0
+    },
+    {
+     "x": 0,
+     "y": 0,
+     "w": null
+    }
+   ],
+   "pts": [
+    0,
+    0,
+    4000,
+    0,
+    0,
+    -4000,
+    0,
+    0,
+    1,
+    0,
+    0,
+    1012,
+    0,
+    0,
+    -13,
+    0,
+    0,
+    0
+   ]
+  },
+  {
+   "note": "o: held to 0..1 before it is written × 1000 (1.5 is 1000, -0.2 is 0), a half up (0.0125 is 13), and a missing or null o is 1",
+   "ch": "xyo",
+   "samples": [
+    {
+     "x": 0,
+     "y": 0,
+     "o": 1.5
+    },
+    {
+     "x": 0,
+     "y": 0,
+     "o": -0.2
+    },
+    {
+     "x": 0,
+     "y": 0,
+     "o": 0.0125
+    },
+    {
+     "x": 0,
+     "y": 0,
+     "o": 0.4995
+    },
+    {
+     "x": 0,
+     "y": 0
+    },
+    {
+     "x": 0,
+     "y": 0,
+     "o": null
+    }
+   ],
+   "pts": [
+    0,
+    0,
+    1000,
+    0,
+    0,
+    -1000,
+    0,
+    0,
+    13,
+    0,
+    0,
+    487,
+    0,
+    0,
+    500,
+    0,
+    0,
+    0
+   ]
+  },
+  {
+   "note": "a and z: a held to 0..90 and z free, both a half up (a 44.5 is 45; z 6.5 is 7, -7.5 is -7), and a sample without tilt is upright (a 90, z 0)",
+   "ch": "xyaz",
+   "samples": [
+    {
+     "x": 0,
+     "y": 0,
+     "a": 44.5,
+     "z": 6.5
+    },
+    {
+     "x": 0,
+     "y": 0,
+     "a": -10,
+     "z": -7.5
+    },
+    {
+     "x": 0,
+     "y": 0,
+     "a": 120,
+     "z": 359.5
+    },
+    {
+     "x": 0,
+     "y": 0
+    },
+    {
+     "x": 0,
+     "y": 0,
+     "a": null,
+     "z": null
+    }
+   ],
+   "pts": [
+    0,
+    0,
+    45,
+    7,
+    0,
+    0,
+    0,
+    -7,
+    0,
+    0,
+    90,
+    360,
+    0,
+    0,
+    90,
+    0,
+    0,
+    0,
+    90,
+    0
+   ]
+  },
+  {
+   "note": "letters this build does not know take the sample's next rest values in order, a half up (2.5 is 3, -2.5 is -2, -0.5 is 0), and a missing or null one is 0",
+   "ch": "xyqps",
+   "samples": [
+    {
+     "x": 0,
+     "y": 0,
+     "p": 0.5,
+     "rest": [
+      2.5,
+      -0.5
+     ]
+    },
+    {
+     "x": 0,
+     "y": 0,
+     "p": 0.5,
+     "rest": [
+      -2.5
+     ]
+    },
+    {
+     "x": 0,
+     "y": 0,
+     "p": 0.5,
+     "rest": []
+    },
+    {
+     "x": 0,
+     "y": 0,
+     "p": 0.5
+    },
+    {
+     "x": 0,
+     "y": 0,
+     "p": 0.5,
+     "rest": [
+      null,
+      7.5
+     ]
+    }
+   ],
+   "pts": [
+    0,
+    0,
+    3,
+    500,
+    0,
+    0,
+    0,
+    -2,
+    500,
+    0,
+    0,
+    0,
+    0,
+    500,
+    0,
+    0,
+    0,
+    0,
+    500,
+    0,
+    0,
+    0,
+    0,
+    500,
+    8
+   ]
+  },
+  {
+   "note": "a pressure pen with every channel: halves throughout, deltas after the first sample",
+   "ch": "xyptazwo",
+   "samples": [
+    {
+     "x": 120.405,
+     "y": 305.125,
+     "p": 0.6205,
+     "t": 0,
+     "a": 70.5,
+     "z": 202.5,
+     "w": 1.1205,
+     "o": 0.9995
+    },
+    {
+     "x": 121.115,
+     "y": 306.995,
+     "p": 0.6425,
+     "t": 8.5,
+     "a": 69.5,
+     "z": 203.5,
+     "w": 1.1425,
+     "o": 0.9985
+    },
+    {
+     "x": 122.5,
+     "y": 308.5,
+     "p": 0.5,
+     "t": 16.5,
+     "a": 68.5,
+     "z": 204.5,
+     "w": 1.0005,
+     "o": 1
+    }
+   ],
+   "pts": [
+    12041,
+    30513,
+    621,
+    0,
+    71,
+    203,
+    1121,
+    1000,
+    71,
+    187,
+    643,
+    9,
+    70,
+    204,
+    22,
+    -1,
+    138,
+    150,
+    500,
+    8,
+    69,
+    205,
+    -142,
+    1
+   ]
+  }
+ ],
+ "files": [
+  {
+   "note": "below 1e-6 a number takes an exponent as JSON.stringify writes it: 1e-7, 1.5e-7, -2.5e-8 (never 1e-07)",
+   "file": "{\"format\": \"gamma-ink\", \"version\": 2, \"space\": {\"kind\": \"pdf-page\", \"page\": 1, \"width\": 612, \"height\": 792}, \"strokes\": [{\"id\": \"a\", \"ch\": \"xy\", \"pts\": [100, 200], \"tiny\": 1e-7, \"tinier\": 1.5e-7, \"neg\": -2.5e-8, \"edge\": 9.99e-7}]}",
+   "bytes": "{\"format\":\"gamma-ink\",\"space\":{\"height\":792,\"kind\":\"pdf-page\",\"page\":1,\"width\":612},\"strokes\":[{\"ch\":\"xy\",\"edge\":9.99e-7,\"id\":\"a\",\"neg\":-2.5e-8,\"pts\":[100,200],\"tinier\":1.5e-7,\"tiny\":1e-7}],\"version\":2}"
+  },
+  {
+   "note": "from 1e-6 up to 1e21 a number is written plainly: 0.000001, 0.00001 (never 1e-05), 1e16 as 10000000000000000, 1e20 as 100000000000000000000",
+   "file": "{\"format\": \"gamma-ink\", \"version\": 2, \"space\": {\"kind\": \"pdf-page\", \"page\": 1, \"width\": 612, \"height\": 792}, \"strokes\": [{\"id\": \"a\", \"ch\": \"xy\", \"pts\": [100, 200], \"small\": 0.00001, \"least\": 0.000001, \"big\": 1e16, \"bigger\": 1e20, \"mid\": 123456.789}]}",
+   "bytes": "{\"format\":\"gamma-ink\",\"space\":{\"height\":792,\"kind\":\"pdf-page\",\"page\":1,\"width\":612},\"strokes\":[{\"big\":10000000000000000,\"bigger\":100000000000000000000,\"ch\":\"xy\",\"id\":\"a\",\"least\":0.000001,\"mid\":123456.789,\"pts\":[100,200],\"small\":0.00001}],\"version\":2}"
+  },
+  {
+   "note": "from 1e21 up the exponent carries its sign: 1e21 is 1e+21 written as 1e21, 1e21 as a whole float or 1000000000000000000000; 1.5e300 is 1.5e+300",
+   "file": "{\"format\": \"gamma-ink\", \"version\": 2, \"space\": {\"kind\": \"canvas\", \"width\": 595.28, \"height\": 841.89, \"dpi\": 1e21}, \"strokes\": [{\"id\": \"a\", \"ch\": \"xy\", \"pts\": [100, 200], \"whole\": 1.0e21, \"digits\": 1000000000000000000000, \"far\": 1.5e300}]}",
+   "bytes": "{\"format\":\"gamma-ink\",\"space\":{\"dpi\":1e+21,\"height\":841.89,\"kind\":\"canvas\",\"width\":595.28},\"strokes\":[{\"ch\":\"xy\",\"digits\":1e+21,\"far\":1.5e+300,\"id\":\"a\",\"pts\":[100,200],\"whole\":1e+21}],\"version\":2}"
+  },
+  {
+   "note": "minus zero is 0 and a whole float an integer (612.0 is 612, -0.0 is 0, 1.6e0 is 1.6), in known keys and in extras",
+   "file": "{\"format\": \"gamma-ink\", \"version\": 2, \"space\": {\"kind\": \"pdf-page\", \"page\": 1, \"width\": 612.0, \"height\": 792.0}, \"strokes\": [{\"id\": \"a\", \"size\": 1.6e0, \"opacity\": 1.0, \"ch\": \"xy\", \"pts\": [100, 200], \"zero\": -0.0, \"list\": [-0.0, 2.0, -3.50]}]}",
+   "bytes": "{\"format\":\"gamma-ink\",\"space\":{\"height\":792,\"kind\":\"pdf-page\",\"page\":1,\"width\":612},\"strokes\":[{\"ch\":\"xy\",\"id\":\"a\",\"list\":[0,2,-3.5],\"opacity\":1,\"pts\":[100,200],\"size\":1.6,\"zero\":0}],\"version\":2}"
+  },
+  {
+   "note": "an integer past 2^53 is the double a client reads it as (12345678901234567890 is 12345678901234567000, 9007199254740993 is 9007199254740992)",
+   "file": "{\"format\": \"gamma-ink\", \"version\": 2, \"space\": {\"kind\": \"pdf-page\", \"page\": 1, \"width\": 612, \"height\": 792}, \"strokes\": [{\"id\": \"a\", \"ch\": \"xy\", \"pts\": [100, 200], \"long\": 12345678901234567890, \"odd\": 9007199254740993, \"safe\": -9007199254740991}]}",
+   "bytes": "{\"format\":\"gamma-ink\",\"space\":{\"height\":792,\"kind\":\"pdf-page\",\"page\":1,\"width\":612},\"strokes\":[{\"ch\":\"xy\",\"id\":\"a\",\"long\":12345678901234567000,\"odd\":9007199254740992,\"pts\":[100,200],\"safe\":-9007199254740991}],\"version\":2}"
+  },
+  {
+   "note": "the shortest digits that read back as the same double, in known keys too: 0.30000000000000004, 5e-324, 1.7976931348623157e+308, a size of 1e-7",
+   "file": "{\"format\": \"gamma-ink\", \"version\": 2, \"space\": {\"kind\": \"pdf-page\", \"page\": 1, \"width\": 612, \"height\": 792}, \"strokes\": [{\"id\": \"a\", \"size\": 1e-7, \"opacity\": 0.30000000000000004, \"ch\": \"xy\", \"pts\": [100, 200], \"least\": 5e-324, \"most\": 1.7976931348623157e308}], \"origin\": {\"scale\": [0.1, 1e-7, 2.5e-7, 1e21]}}",
+   "bytes": "{\"format\":\"gamma-ink\",\"origin\":{\"scale\":[0.1,1e-7,2.5e-7,1e+21]},\"space\":{\"height\":792,\"kind\":\"pdf-page\",\"page\":1,\"width\":612},\"strokes\":[{\"ch\":\"xy\",\"id\":\"a\",\"least\":5e-324,\"most\":1.7976931348623157e+308,\"opacity\":0.30000000000000004,\"pts\":[100,200],\"size\":1e-7}],\"version\":2}"
+  }
+ ]
+}

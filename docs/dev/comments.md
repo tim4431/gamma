@@ -56,9 +56,9 @@ The workspace's migration needs no step of its own for the table: it is
 additive, and `db._open_ws_db` applies `PAGES_SCHEMA` to every `pages.db` it
 opens, as do `seed.create_workspace_files`, `ws_backup._normalize_copies`
 and the Gamma export's in-memory database. Step 40 (`comments_inbox`) is a
-global step only ([migrations.md](migrations.md) rule 2), so
-`migrations.workspace_format()` stays where it was and clones and
-publications keep syncing across the upgrade.
+global step only ([migrations.md](migrations.md) rule 2), so it does not
+move `migrations.workspace_format()`: the comments never pause clones and
+publications.
 
 ## Who may comment
 
@@ -218,8 +218,9 @@ and it would notify again on every edit.
 | `comment_mention` | a comment's text gains `@name` (a new comment, a reply, an edit) | each person newly named | `comments.after_write` → `inbox.from_comment` |
 | `reply` | a reply is posted | the authors of the thread's other comments and the people they mention, less those the reply itself mentions | the same |
 | `resolved` | someone resolves a thread another person started | the thread's author | the same |
-| `shared` | people are invited to a page or folder share | each new invitee, with the share's token | `routers/shares._invite`, from both `_create` and `_update`: it compares the old and the new `share_users`, keeps `added_at` for the people who stay, and `_tell` writes the items after the commit |
+| `shared` | people are invited to a page or folder share | each new invitee, with the share's token | `routers/shares._invite`, from both `_create` and `_update`: it compares the old and the new `share_users`, keeps `added_at` for the people who stay, and `shares.tell` writes the items after the commit; also `shares.invite_cloud`'s linked branch and `shares.claim_pending` for each share joined, from its inviter |
 | `invited` | an account is added to a shared workspace | the new member | `workspaces.set_member` (which returns whether it inserted the membership: a role change tells no one), `invite_cloud`'s linked branch, `claim_pending_memberships` for each workspace joined, from its inviter, and `workspaces.create` for an owner someone else made a shared workspace for (an admin's `POST /api/workspaces` with an owner) |
+| `join_request` | someone with no account here asks to join through a share's link (a refused cloud sign-in under the `invited` policy, [cloud_accounts.md](cloud_accounts.md) "Requests to join") | whoever made the share and the workspace's owners, while they edit there | `join_requests.ask`, for a new request or one that moved to this share. The actor is `cloud:<subject>`, no account (listed as `""`); the snippet is the cloud username, which the sentence names. It settles once the request no longer waits on that page's or folder's share (approved, declined, gone or moved), and a click opens that Share popover |
 
 No one hears of a batch that an offline copy wrote (client `sync`: the
 names were typed on the other server, so mentions typed in a clone tell no
@@ -712,7 +713,12 @@ stronger: its wash mixed with its own strong line colour (`--hl-line`, or
 the card away and makes none active. The page's pens, lasso, eraser and
 Text tool leave a press on a card alone (`.commentMargin` is in
 `ink/InkLayer.jsx`'s `NOT_INK`, and `markup/TextBoxLayer.jsx` skips it),
-so a card is pressed, read and typed in with a tool armed. A link visitor without an account
+and a right-click on one opens no "Paste here" (`BESIDE_PAGE`), so a card
+is pressed, read and typed in with a tool armed. A press on a card lets go
+of a handwriting selection, as a press off the page does, so the strip's
+Delete and the handwriting's Ctrl+C, X and D reach no strokes while a card
+is read; a focused card or thread popover keeps its Enter and Escape from
+the strip ([hotkeys.md](hotkeys.md) "Widget keys"). A link visitor without an account
 can make a card active to read it and gets "Sign in to comment" under
 the thread, as in the popover.
 
@@ -772,7 +778,8 @@ in its title.
 **The panel.** A header popover with Unread, All and Archived (a
 `Segmented`), Mark all read, and the items grouped by day (Today,
 Yesterday, then the date). A row has the actor's avatar, one sentence
-("ann replied to a comment on Draft"), the note's or the comment's words,
+("ann replied to a comment on Draft"; a request to join names the cloud
+username asking, `inboxActor`: "cat asks to open Draft"), the note's or the comment's words,
 the workspace's name when it is not this one, and the time. Its actions,
 shown on hover and focus (always under a touch screen), mark it read or
 unread and archive it or move it back. Items load when the panel opens, 50
@@ -791,8 +798,11 @@ scrolls to the note. An item reached through a share navigates to
 `?ws=&page=&block=&thread=` (a folder share's to `?ws=&folder=`); App
 reads `thread` at boot. An invitation
 switches to its workspace. A folder shared with a member opens the folder
-in the library. The mark goes with `keepalive`, so a navigation never cuts
-it off.
+in the library. A request to join of this workspace opens the Share
+popover of its page (the page opened first) or folder, where it is
+decided; one of another workspace navigates to that page or folder. The mark goes through the page's keepalive ledger at
+`normal` priority (`apiJson`'s `keepalive`, [collab.md](collab.md)
+"Keepalive"), so a navigation does not cut it off.
 
 **System notifications.** The browser pref `inboxSystemNotifications`
 (Settings → Appearance › Interface › Inbox notifications; off by default;
@@ -878,7 +888,10 @@ has notifications; the iPad's WKWebView has none, and the row says so.
   composer as a note's editor (pickers, math, the "/" menu, Enter and
   Shift+Enter, the send button), drafts, `?thread=` and Copy link, the
   selection popup's Comment, and the PDF margin's cards (placement,
-  activation, a reply, Escape, Resolve, no margin at fit-width).
+  activation, a reply, Escape, Resolve, no margin at fit-width; beside
+  the pen strip, a press with a tool armed, a handwriting selection let
+  go, the right-click, Enter and Escape). `frontend/src/ink/**` and
+  `frontend/src/markup/**` select it too.
 - Browser: the `inbox` group (`tests/e2e/scenarios/inbox.mjs`): an
   invitation's jump, a mention's nudge reaching an open page within 3 s and
   the home library catching up on focus, the jumps in place, into another

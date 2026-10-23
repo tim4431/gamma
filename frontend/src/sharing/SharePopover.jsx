@@ -25,6 +25,15 @@
 // them is the only prose. Invited people carry their own View / Edit toggle
 // on top, whatever the tiles say.
 //
+// Gamma Cloud people (`cloudInvites`, docs/dev/api.md "Shares"): on a server
+// that signs people in with Gamma Cloud, Who has access's This server /
+// Gamma Cloud switch turns the invite box into a field for a Gamma Cloud
+// username — someone with no account here yet. Their invitation waits,
+// tagged pending with its own View / Edit toggle, until their first sign-in.
+// Someone who signed in from the link with nothing to admit them asked to
+// join instead: their request heads the list (the manager's view only) with
+// Approve — a pending invitation to view — and Decline.
+//
 // Gamma Cloud (PublishSection, docs/dev/mirror.md "Publishing"): on a server
 // with cloud sign-in, a page can also be published to the share host, so its
 // link works while this computer is off. Not published: one sentence and a
@@ -39,7 +48,7 @@
 // (GET/POST/DELETE /api/pages/{id}/publish) and polls it while open.
 import React from "react";
 import { AccountPicker, Empty, IconChoices, Row, Section, Segmented } from "../settings/SettingsKit";
-import { useAccounts } from "../settings/SettingsWorkspace";
+import { cloudUsername, useAccounts } from "../settings/SettingsWorkspace";
 import { mirrorState } from "../collaboration/MirrorPopover";
 import { T, t, tn } from "../shared/i18n/i18n.js";
 import {
@@ -63,6 +72,14 @@ const AUDIENCE_TILES = [
   { value: "anyone", label: T("Anyone"), hint: T("with the link"), Icon: GlobeIcon },
   { value: "users", label: T("Signed in"), hint: T("any account here"), Icon: UsersIcon },
   { value: "list", label: T("Invited only"), hint: T("the people above"), Icon: ShieldIcon },
+];
+
+// Whom the invite box names: an account on this server, or a Gamma Cloud
+// username (Who has access's switch, while this server signs in with Gamma Cloud).
+const INVITE_VIA = [
+  ["local", t("This server"), null, t("Invite an account on this server")],
+  ["cloud", t("Gamma Cloud"), null,
+    t("Invite someone by their Gamma Cloud username: they need no account here, and join on their first sign-in")],
 ];
 
 // The cloud share's tiles: the same three, their hints in the share host's terms.
@@ -128,30 +145,43 @@ function CopyLinkButton({ url, copied, onCopy, primary = false }) {
 
 // Invite, on top of the people: an account from the directory, invited to
 // view (the toggle on their row changes it), additive to general access.
-// Enter on a picked name invites; the box empties for the next one.
-function ShareInvite({ exclude, onInvite }) {
+// Enter on a picked name invites; the box empties for the next one. `via`
+// "cloud" makes it a field for a Gamma Cloud username (`onInviteCloud`),
+// invited to view as well.
+function ShareInvite({ exclude, via, onInvite, onInviteCloud }) {
   const accounts = useAccounts();
   const [username, setUsername] = React.useState("");
-  const [round, setRound] = React.useState(0); // remounts the picker empty after each invitation
+  const [cloudName, setCloudName] = React.useState("");
+  const [round, setRound] = React.useState(0); // remounts the field empty after each invitation
   const [busy, setBusy] = React.useState(false);
+  const byCloud = via === "cloud";
+  const who = byCloud ? cloudUsername(cloudName) : username;
   async function submit() {
-    if (!username || busy) return;
+    if (!who || busy) return;
     setBusy(true);
-    const ok = await onInvite(username, "view");
+    const ok = await (byCloud ? onInviteCloud(who) : onInvite(who, "view"));
     setBusy(false);
-    if (ok !== false) { setUsername(""); setRound((n) => n + 1); }
+    if (ok !== false) { setUsername(""); setCloudName(""); setRound((n) => n + 1); }
   }
   return (
     <div
       className="shareInvite"
       // the picker's own Enter picks the first match; the next Enter invites
-      onKeyDown={(event) => { if (event.key === "Enter" && !event.defaultPrevented && username) { event.preventDefault(); submit(); } }}
+      onKeyDown={(event) => { if (event.key === "Enter" && !event.defaultPrevented && who) { event.preventDefault(); submit(); } }}
     >
-      <AccountPicker
-        key={round} accounts={accounts} exclude={exclude} value={username} onChange={setUsername}
-        placeholder={t("Invite people by name…")} autoFocus={round > 0} compact
-      />
-      <button type="button" className="uiBtn sm primary" disabled={!username || busy} onClick={submit}>{t("Invite")}</button>
+      {byCloud ? (
+        <input
+          key={round} className="aiKeyInput" type="text" spellCheck={false} autoComplete="off" autoCapitalize="none"
+          autoCorrect="off" autoFocus placeholder={t("Gamma Cloud username…")} aria-label={t("Gamma Cloud username")}
+          value={cloudName} onChange={(event) => setCloudName(event.target.value)}
+        />
+      ) : (
+        <AccountPicker
+          key={round} accounts={accounts} exclude={exclude} value={username} onChange={setUsername}
+          placeholder={t("Invite people by name…")} autoFocus={round > 0} compact
+        />
+      )}
+      <button type="button" className="uiBtn sm primary" disabled={!who || busy} onClick={submit}>{t("Invite")}</button>
     </div>
   );
 }
@@ -386,16 +416,25 @@ function PublishSection({ state, busy, error, copied, onCopy, canEdit, onPublish
 // gets no invite box), workspace (the open workspace, {name, personal,
 // members, access}: a shared one's members already open every page),
 // shareUrl, copied / onCopy, and one callback per action — onCreate (Share)
-// takes the new share's settings ({audience, role}). `citation` is the page's
-// citation section (App owns it), shown when the page has metadata.
-// `publish` is the Gamma Cloud section's props (PublishSection), or null
-// where the server offers no publishing — App passes neither for a folder.
+// takes the new share's settings ({audience, role}). `cloudInvites` is
+// {enabled (this server signs in with Gamma Cloud: the invite box's switch),
+// onInvite(username), onSetRole(subject, role), onWithdraw(subject),
+// onApprove(subject), onDecline(subject)} for the people named by Gamma
+// Cloud: the settings' `pending` invitations and the `requests` to join.
+// `citation` is the page's citation section (App owns it), shown when the
+// page has metadata. `publish` is the Gamma Cloud section's props
+// (PublishSection), or null where the server offers no publishing — App
+// passes neither for a folder.
 export function SharePopover({
   target, settings, error, me, meIsGuest, workspace, shareUrl, copied, onCopy,
-  onCreate, onUpdate, onInvite, onSetRole, onRemove, onStop, onClose, citation, publish,
+  onCreate, onUpdate, onInvite, onSetRole, onRemove, onStop, onClose, citation, publish, cloudInvites,
 }) {
   const users = settings?.users || [];
+  const pending = settings?.pending || [];
+  const requests = settings?.requests || [];
   const shared = !!settings?.token;
+  const [via, setVia] = React.useState("local");
+  const byCloud = !!cloudInvites?.enabled && !meIsGuest;
   const kind = target?.kind === "folder" ? "folder" : "page";
   const title = kind === "folder"
     ? t("Share folder “{name}”", { name: target?.name || "" })
@@ -416,7 +455,8 @@ export function SharePopover({
         {settings ? (
           <Section title={t("Link")} guide={shared ? "share.link" : "share.start"}>
             {shared ? (
-              <ShareLinkRow url={shareUrl} copied={copied} onCopy={onCopy} invited={users.length} onStop={onStop} />
+              <ShareLinkRow url={shareUrl} copied={copied} onCopy={onCopy} invited={users.length + pending.length}
+                onStop={onStop} />
             ) : (
               <>
                 <StartSharing kind={kind} onCreate={onCreate} />
@@ -427,8 +467,35 @@ export function SharePopover({
         ) : null}
         {shared ? (
           <>
-            <Section title={t("Who has access")} guide="share.people">
-              {!meIsGuest ? <ShareInvite exclude={[me, ...users.map((u) => u.name)]} onInvite={onInvite} /> : null}
+            <Section
+              title={t("Who has access")}
+              guide="share.people"
+              action={byCloud ? <Segmented value={via} options={INVITE_VIA} onChange={setVia} /> : null}
+            >
+              {!meIsGuest ? (
+                <ShareInvite exclude={[me, ...users.map((u) => u.name)]} via={byCloud ? via : "local"}
+                  onInvite={onInvite} onInviteCloud={cloudInvites?.onInvite} />
+              ) : null}
+              {requests.map((q) => (
+                <PersonRow key={`request:${q.subject}`} name={q.username} tag={t("asks to join")}
+                  sub={q.email || t("Gamma Cloud account")} icon={CloudIcon}>
+                  <button
+                    type="button" className="uiBtn sm" onClick={() => cloudInvites?.onApprove(q.subject)}
+                    title={kind === "folder"
+                      ? t("Let them in to view every page in this folder once they sign in again; the toggle on their row then changes it")
+                      : t("Let them in to view this page once they sign in again; the toggle on their row then changes it")}
+                  >
+                    {t("Approve")}
+                  </button>
+                  <button
+                    type="button" className="uiBtn sm iconSq" onClick={() => cloudInvites?.onDecline(q.subject)}
+                    title={t("Decline: their sign-ins ask nothing more unless an admin removes the request")}
+                    aria-label={t("Decline {name}", { name: q.username })}
+                  >
+                    <XIcon size={16} />
+                  </button>
+                </PersonRow>
+              ))}
               <PersonRow name={me} tag={t("you")} sub={t("Owner")} icon={meIsGuest ? UserIcon : ShieldIcon} active />
               {members ? (
                 <PersonRow
@@ -439,7 +506,9 @@ export function SharePopover({
                 />
               ) : null}
               {users.map((u) => (
-                <PersonRow key={u.name} name={u.name} sub={t("Invited")} icon={UserIcon}>
+                <PersonRow key={u.name} name={u.name} icon={UserIcon}
+                  // a name here that is not their Gamma Cloud one (tim-2) says which that is
+                  sub={u.cloud ? t("Invited · Gamma Cloud {name}", { name: u.cloud }) : t("Invited")}>
                   <Segmented
                     value={u.role} options={ROLE_SEGMENTS[kind]}
                     onChange={(role) => { if (role !== u.role) onSetRole(u.name, role); }}
@@ -448,6 +517,22 @@ export function SharePopover({
                     type="button" className="uiBtn sm iconSq"
                     title={t("Remove {name}", { name: u.name })} aria-label={t("Remove {name}", { name: u.name })}
                     onClick={() => onRemove(u.name)}
+                  >
+                    <Trash2Icon size={16} />
+                  </button>
+                </PersonRow>
+              ))}
+              {pending.map((p) => (
+                <PersonRow key={`pending:${p.subject}`} name={p.username} tag={t("pending")}
+                  sub={t("Gamma Cloud · joins on their first sign-in here")} icon={CloudIcon}>
+                  <Segmented
+                    value={p.role} options={ROLE_SEGMENTS[kind]}
+                    onChange={(role) => { if (role !== p.role) cloudInvites?.onSetRole(p.subject, role); }}
+                  />
+                  <button
+                    type="button" className="uiBtn sm iconSq" onClick={() => cloudInvites?.onWithdraw(p.subject)}
+                    title={t("Withdraw the invitation to {username}", { username: p.username })}
+                    aria-label={t("Withdraw the invitation to {username}", { username: p.username })}
                   >
                     <Trash2Icon size={16} />
                   </button>

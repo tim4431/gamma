@@ -26,7 +26,7 @@ Watchtower (the `update-demo-server`, `update-share-host` and
 | `cloud` | `cloud.yml` | a pull request touching `cloud/`; manual dispatch from any branch (`update-account-server` skill) | pass/fail: the account server's pytest; when dispatched and green, `ghcr.io/tim4431/gamma-cloud:latest` + `:sha-<short>` (`cloud/Dockerfile`, amd64) |
 | `fleet` | `fleet.yml` | a pull request or a push to `main` touching `cloud/fleet/`; manual dispatch from any branch | pass/fail: the fleet agent's pytest; on a push to main or a dispatch, when green, `ghcr.io/tim4431/gamma-fleet:latest` + `:sha-<short>` (`cloud/fleet/Dockerfile`, amd64; [hosted.md](hosted.md)) |
 | `site` | `site.yml` | a PR or a push to `main` touching `sites/`, `docs/` (the artwork it copies and the documents it renders), `PRIVACY.md` or `TERMS.md`; manual dispatch from any branch (`build-site` skill) | pass/fail: the site builds with every internal link resolving and its Worker passes a dry run; on a push or dispatch, gammapdf.com: `sites/dist` deployed as a Cloudflare Worker (static assets only; needs `CLOUDFLARE_API_TOKEN` + `CLOUDFLARE_ACCOUNT_ID`; [sites/README.md](../../sites/README.md)) |
-| `ipad` | `ipad.yml` | a pull request touching `ipad/`, `backend/requirements.txt`, `tools/build_frontend_if_needed.mjs` or the workflow; manual dispatch | pass/fail on macOS: the app's Python, wheels, server code and web app prepared (`ipad/scripts/build-python.sh`), the Xcode project generated (XcodeGen), the XCTest suite on an iPad simulator with the embedded server started, an unsigned device build ([ipad/README.md](../../ipad/README.md)) |
+| `ipad` | `ipad.yml` | a pull request touching `ipad/`, the ink fixtures its tests read (`tests/shared/inkwidth.json`, `inkhold.json`), `backend/requirements.txt`, `tools/build_frontend_if_needed.mjs` or the workflow; manual dispatch | pass/fail on macOS: the app's Python, wheels, server code and web app prepared (`ipad/scripts/build-python.sh`), the Xcode project generated (XcodeGen), the XCTest suite on an iPad simulator with the embedded server started, an unsigned device build ([ipad/README.md](../../ipad/README.md)) |
 | `Assistant plugin package` | `codex-plugin.yml` | PRs touching the plugin or its tooling, or manual dispatch | plugin packaging and installer tests on Windows/macOS/Linux and preview plugin release assets (pins `checkout@v4`/`setup-python@v5`/`upload-artifact@v4`, older than the rule below) |
 
 The `desktop` workflow also builds the versioned assistant plugin assets —
@@ -225,8 +225,11 @@ red check is fixed on the branch as normal work.
 One macOS job (`macos-15`, 50 minutes) for the iPad app, which carries
 the Gamma server and the built web app ([ipad.md](ipad.md#the-local-server)).
 It runs for the server's dependencies and the frontend's build helper as
-well as for `ipad/`, but not for backend or frontend code, which the other
-checks test. A change that matters on the device is dispatched by hand.
+well as for `ipad/`, but not for backend or frontend code, which the
+other checks test. It also runs for the two ink fixtures the Swift ports
+of the brush table and the held shape are held to
+(`tests/shared/inkwidth.json`, `inkhold.json`, resources of the test
+bundle). A change that matters on the device is dispatched by hand.
 
 - Python 3.13 (`setup-python`), so pip's environment markers match the
   device's, and Node 22 with `npm ci` in `frontend/`.

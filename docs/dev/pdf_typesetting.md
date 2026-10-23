@@ -51,7 +51,9 @@ part of it: they live beside the blocks ([comments.md](comments.md)).
 Handwriting blocks (`ink_url`) become `/Ink` annotations: one per look
 bucket (colour × tool × size × opacity) of the group, `/InkList` polylines
 mapped through the same rect → user-space conversion, `/BS /W` the mean
-drawn width, the caption on the first, an `/NM`, and a private `/GammaInk`
+drawn width, `/BS /S /D /D [on off]` when the bucket's first stroke is
+dashed or dotted (the pattern its size's, [handwriting.md](handwriting.md)
+"Dash geometry"), the caption on the first, an `/NM`, and a private `/GammaInk`
 string holding the bucket's `gamma-ink` strokes for a lossless re-import.
 Same skip rule as highlights for ink still embedded in the file.
 
@@ -77,8 +79,10 @@ A page with sheets of paper and no PDF has none to annotate:
 `annotated_pdf` writes `notebook.notebook_pdf` instead. Each sheet is a PDF page of its paper's
 size, painted with the paper, its text boxes typeset on it as real,
 selectable text, and the ink groups under it drawn over them as vectors
-in the content (the page is the drawing, so no `/FreeText` or `/Ink`
-layer). The switches do not apply.
+in the content, as the screen draws them, the pencil's grain and the
+calligraphy nib included (a dashed or dotted pressure stroke as one
+dashed line at its mean width and shade). The page is the drawing, so
+there is no `/FreeText` or `/Ink` layer. The switches do not apply.
 
 ### Notes drawn on the page
 

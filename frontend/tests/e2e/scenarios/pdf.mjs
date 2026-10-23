@@ -63,8 +63,8 @@ export async function dragSelectPdfText(page, pageNo, needle) {
   return { x: box.x2, y: box.y };
 }
 
-export async function waitForPdf(page, pageNo = 1) {
-  await page.waitForSelector(`[data-page="${pageNo}"] .textLayer span`, { timeout: 30000 });
+export async function waitForPdf(page, pageNo = 1, timeout = 30000) {
+  await page.waitForSelector(`[data-page="${pageNo}"] .textLayer span`, { timeout });
 }
 
 export async function pdfScenarios({ server, browser, alice, makePdf, step, until, sleep, assert, assertEq, assertNoProblems, openPage, flags }, { alice2, second }) {
@@ -269,7 +269,7 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
   await step("pdf: a highlight made with the notes window closed is saved, and so is the next", async () => {
     const toggleNotes = async () => {
       await page.getByRole("button", { name: "View", exact: true }).click();
-      await page.locator(".menuPopover").getByRole("button", { name: "Notes" }).click();
+      await page.locator(".menuPopover").getByRole("menuitemcheckbox", { name: "Notes" }).click();
       await page.keyboard.press("Escape");
     };
     const highlight = async (needle) => {
@@ -427,7 +427,7 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
         return Math.abs(m.width - before.width) < 1 && Math.abs(m.dx - before.dx) < 1 && Math.abs(m.dy - before.dy) < 1;
       }, { what: `badge keeps its place and size when the PDF zooms (interface scale ${scale})` });
       await page.getByRole("button", { name: "Account & settings", exact: true }).click();
-      const settings = page.getByRole("button", { name: "Settings…", exact: true });
+      const settings = page.getByRole("menuitem", { name: "Settings…", exact: true });
       const tours = page.locator('[data-guide="account.tour"]');
       const settingsBox = await settings.boundingBox();
       const toursBox = await tours.boundingBox();
@@ -797,7 +797,7 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
       await page.getByText("A picture.").waitFor();
       const downloadEvent = page.waitForEvent("download");
       await page.getByRole("button", { name: "Export chat", exact: true }).click();
-      await page.getByRole("button", { name: "Export conversation", exact: true }).click();
+      await page.getByRole("menuitem", { name: "Export conversation", exact: true }).click();
       const download = await downloadEvent;
       assert(download.suggestedFilename().endsWith(".zip"), download.suggestedFilename());
       const zip = JSON.parse(execFileSync(PYTHON, ["-c", [

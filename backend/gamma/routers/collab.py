@@ -11,7 +11,7 @@ from fastapi import APIRouter, HTTPException, Request, WebSocket, WebSocketDisco
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse
 
-from .. import collab
+from .. import collab, version
 from ..auth import (ANONYMOUS_NAME, SESSION_COOKIE, actor_of, is_link_visitor, link_name, link_ratelimit,
                     note_share_miss, require_ws_writer, requested_ws, resolve_ws, session_lookup,
                     share_lookup, share_scope, share_via, workspace_access)
@@ -41,11 +41,12 @@ def _scope_page(request: Request, ws: str, page_id: str):
 @router.post("/pages/{page_id}/ops")
 def post_ops(page_id: str, payload: OpsRequest, request: Request):
     """Apply a batch of block ops to a page: ``{client, batch?, ops,
-    cursor?}`` → ``{seq, at, ops}`` with the ops as applied (positions the
-    server had to re-key carry their final value). ``cursor`` (``{block,
-    anchor, head}``, the writer's caret in the text after the batch) is
-    fanned out with the batch and stored as the writer's presence. A batch
-    id already applied for this client gets the same answer again, nothing
+    cursor?}`` → ``{seq, at, ops, ink_conflicts?}`` with the ops as applied
+    (positions the server had to re-key carry their final value) and each
+    ink merge's report by block. ``cursor`` (``{block, anchor, head}``, the
+    writer's caret in the text after the batch) is fanned out with the
+    batch and stored as the writer's presence. A batch id already applied
+    for this client gets the same answer again (without reports), nothing
     re-applied. A refused batch: ``{detail, missing?, conflict?, index?}``
     (gamma/ops.py ``OpError``). A workspace editor or an edit share. Sync
     def, like every endpoint that touches a database: the batch may wait on
@@ -67,7 +68,10 @@ def post_ops(page_id: str, payload: OpsRequest, request: Request):
         body = {"detail": e.detail, **({"missing": e.missing} if e.missing else {}),
                 **({"conflict": e.conflict, "index": e.index} if e.conflict else {})}
         return JSONResponse(status_code=e.status, content=body)
-    return {"seq": result["seq"], "at": result["at"], "ops": result["ops"]}
+    out = {"seq": result["seq"], "at": result["at"], "ops": result["ops"]}
+    if "ink_conflicts" in result:  # each ink merge's {clean, lost_ours, returned} by block (handwriting.md "Two writers")
+        out["ink_conflicts"] = result["ink_conflicts"]
+    return out
 
 
 @router.get("/pages/{page_id}/ops")
@@ -136,10 +140,13 @@ async def page_socket(sock: WebSocket, page_id: str):
     seq, peers}`` on join, ``join {peer}`` / ``leave {client}``, ``cursor
     {client, block, anchor, head}``, ``ops {seq, actor, client, at, ops}``
     for every applied batch, ``reload`` for changes ops can't express (a
-    restore included), ``trashed`` when the page went to Recently deleted.
-    Client → server: ``cursor {block, anchor, head}`` only — writes are
-    ``POST /pages/{id}/ops``. Closed with 4403 when access is refused or
-    revoked (``collab.revalidate``), 4409 when the same tab joined again.
+    restore included), ``trashed`` when the page went to Recently deleted,
+    ``ink-live {client, …}`` a peer's handwriting stroke in progress.
+    Client → server: ``cursor {block, anchor, head}`` and ``ink-live``
+    (relayed to the others when the sender may edit, never stored:
+    ``collab.ink_live``) — writes are ``POST /pages/{id}/ops``. Closed
+    with 4403 when access is refused or revoked (``collab.revalidate``),
+    4409 when the same tab joined again.
     The database reads (the access check, the log position) run in worker
     threads; the room itself lives on the loop. A client gone at any point
     of the handshake (navigated away as the socket opened) is an ordinary
@@ -166,8 +173,10 @@ async def page_socket(sock: WebSocket, page_id: str):
             with connect_pages_db(ws) as conn:
                 return latest_seq(conn, page_id)
         seq = await run_in_threadpool(log_position)
+        # `build`: what the client's handwriting fence compares with the
+        # build it loaded under (docs/dev/handwriting.md "Client", the build fence).
         await sock.send_text(json.dumps({"t": "hello", "client": client, "color": peer.color, "seq": seq,
-                                         "peers": room.presence()}))
+                                         "peers": room.presence(), "build": version.build_info()}))
         await room.broadcast(json.dumps({"t": "join", "peer": peer.public()}), exclude=client)
         # Access once more now that the peer is in the room (after the hello,
         # which stays the first message a socket gets): a revoke that landed
@@ -193,6 +202,11 @@ async def page_socket(sock: WebSocket, page_id: str):
                 await room.broadcast(json.dumps({
                     "t": "cursor", "client": client, "block": peer.block,
                     "anchor": peer.anchor, "head": peer.head}), exclude=client)
+            elif msg.get("t") == "ink-live":
+                # a stroke in progress, relayed to the others and kept nowhere
+                text = collab.ink_live(msg, peer)
+                if text is not None:
+                    await room.broadcast(text, exclude=client)
     except (WebSocketDisconnect, RuntimeError, ValueError, TypeError):
         pass
     finally:

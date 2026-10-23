@@ -32,8 +32,8 @@ import threading
 import time
 from dataclasses import asdict, dataclass, field
 
-from . import (backup_schedule, cloud_auth, cloud_sync, hosted, integrity, logbuf, server_settings, sync_engine,
-               translate_engines, version)
+from . import (backup_schedule, cloud_auth, cloud_sync, hosted, integrity, join_requests, logbuf, server_settings,
+               sync_engine, translate_engines, version)
 from .db import NOTICES_SEEN_PREF_KEY, connect_users_db, get_pref, update_pref
 from .server_settings import MB
 
@@ -220,6 +220,18 @@ def cloud_setup(_user_id):
         return notice("cloud-setup", "connect", "info", "server",
                       "Connect this server to Gamma Cloud to finish turning on its sign-in")
     return None
+
+
+@source(admin_only=True)
+def join_requests_waiting(_user_id):
+    """Gamma Cloud accounts ask to join this server (gamma/join_requests.py;
+    info, seen once per newest request): Server → Sign-in lists them."""
+    count, newest = join_requests.waiting()
+    if not count:
+        return None
+    return notice("join-requests", newest, "info", "server",
+                  "{n} person asks to join this server" if count == 1 else "{n} people ask to join this server",
+                  n=count)
 
 
 @source()

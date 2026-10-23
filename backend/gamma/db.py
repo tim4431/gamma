@@ -44,7 +44,7 @@ from .textnorm import normalize_text
 # The data-directory schema version this code expects (users.db
 # ``PRAGMA user_version``). Bump it together with a new step in
 # gamma/migrations.py — never without one, never without bumping.
-SCHEMA_VERSION = 40
+SCHEMA_VERSION = 42
 # A workspace's pages.db keeps a version of its own (its ``PRAGMA
 # user_version``): the newest step whose per-workspace part has run on it
 # (gamma/migrations.py WORKSPACE_STEPS). One stamped 0 is at this version:
@@ -310,6 +310,38 @@ USERS_SCHEMA = [
         role TEXT NOT NULL,
         added_at TEXT NOT NULL DEFAULT '',
         PRIMARY KEY (token, user_id)
+    )""",
+    # A share's invitation for someone who has no account here yet, named by
+    # their Gamma Cloud account (gamma/shares.py invite_cloud): the share's
+    # twin of pending_memberships. subject = the account server's stable id,
+    # username = the cloud username (lowercase), role "view" or "edit",
+    # invited_by an account id. Their first cloud sign-in turns it into a
+    # share_users row (shares.claim_pending); the rows go with their share.
+    """CREATE TABLE IF NOT EXISTS pending_share_users (
+        token TEXT NOT NULL,
+        subject TEXT NOT NULL,
+        username TEXT NOT NULL,
+        role TEXT NOT NULL,
+        invited_by TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL,
+        PRIMARY KEY (token, subject)
+    )""",
+    "CREATE INDEX IF NOT EXISTS idx_pending_share_subject ON pending_share_users(subject)",
+    # A Gamma Cloud account asking to join this server (gamma/join_requests.py):
+    # its sign-in was refused under the `invited` policy. One row per subject:
+    # the cloud username and e-mail it signed in with, the share link it came
+    # from ('' from the login page), status "pending" / "approved" /
+    # "declined", who decided (an account id), and when it asked first and
+    # last (or was decided).
+    """CREATE TABLE IF NOT EXISTS join_requests (
+        subject TEXT PRIMARY KEY,
+        username TEXT NOT NULL,
+        email TEXT NOT NULL DEFAULT '',
+        share_token TEXT NOT NULL DEFAULT '',
+        status TEXT NOT NULL DEFAULT 'pending',
+        decided_by TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
     )""",
     # Small JSON values that follow the ACCOUNT (docs/dev/settings.md):
     # workspace_id '' = account-wide (the profile, the AI provider entries:
@@ -744,10 +776,11 @@ def account_id(conn: sqlite3.Connection, username: str) -> str:
 
 def delete_shares(conn: sqlite3.Connection, where: str, params) -> int:
     """Delete the shares ``WHERE where`` together with their invitations
-    (``share_users``, keyed by token): the two always go together, or an
-    invitation is left pointing at a token that no longer exists. Returns
-    how many shares went."""
-    conn.execute(f"DELETE FROM share_users WHERE token IN (SELECT token FROM shares WHERE {where})", params)
+    (``share_users`` and ``pending_share_users``, keyed by token): they
+    always go together, or an invitation is left pointing at a token that
+    no longer exists. Returns how many shares went."""
+    for table in ("share_users", "pending_share_users"):
+        conn.execute(f"DELETE FROM {table} WHERE token IN (SELECT token FROM shares WHERE {where})", params)
     return conn.execute(f"DELETE FROM shares WHERE {where}", params).rowcount
 
 

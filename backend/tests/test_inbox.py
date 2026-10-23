@@ -588,11 +588,8 @@ def test_a_users_db_error_never_fails_the_write(own, edi, lab, monkeypatch):
 def test_a_share_name_that_cannot_be_read_still_tells_the_invitee(own, out, monkeypatch):
     """A shared item's snippet is a nicety: a pages.db read that fails is
     logged, and the invitee still hears of the share, without the name."""
-    from types import SimpleNamespace
-
-    from gamma import logbuf
+    from gamma import logbuf, shares
     from gamma.auth import ShareScope, share_lookup
-    from gamma.routers import shares
 
     page = make_page(own, "Unreadable share name")["id"]
     r = own.post(f"/api/share/{page}", json={"audience": "list", "users": [{"name": "ib_out", "role": "view"}]})
@@ -604,8 +601,8 @@ def test_a_share_name_that_cannot_be_read_still_tells_the_invitee(own, out, monk
         raise sqlite3.OperationalError("database is locked")
 
     monkeypatch.setattr(shares, "connect_pages_db", busy)
-    shares._tell(workspace_of("ib_own"), SimpleNamespace(state=SimpleNamespace(user_id=account_of("ib_own"))),
-                 ShareScope.of(share_lookup(token)), token, [account_of("ib_out")])
+    shares.tell(workspace_of("ib_own"), ShareScope.of(share_lookup(token)), token, account_of("ib_own"),
+                [account_of("ib_out")])
     monkeypatch.undo()
     assert sorted(i["snippet"] for i in _items(out, kind="shared", page_id=page)) == ["", "Unreadable share name"]
     assert any("[shares] the name of shared" in e["msg"] for e in logbuf.tail(start))

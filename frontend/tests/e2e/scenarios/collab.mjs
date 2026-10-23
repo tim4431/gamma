@@ -6,9 +6,13 @@
 // going with them), a note moved in with a reload surviving Ctrl+Z, a failed
 // refresh keeping the page, undo never deleting what the other wrote in our
 // note, an indent around an open editor keeping it open, typing at one caret
-// keeping both people's keystrokes, a two-batch paste leaving the idle tab
-// silent, typing kept through Recently deleted and a restore, and a
-// highlight one person makes on the PDF showing up for the other.
+// keeping both people's keystrokes, a word taken back while a save waits
+// for its retry kept taken back through a tab switch, a two-batch paste
+// leaving the idle tab silent, typing kept through Recently deleted and a
+// restore, a highlight one person makes on the PDF showing up for the
+// other, and a stroke one person is drawing showing on the other's page
+// before it is saved (ink-live), and going from it at once when undone
+// before its save.
 import { tree, same, editRow, closeEditor } from "./notes.mjs";
 import { waitForPdf, selectPdfText } from "./pdf.mjs";
 
@@ -336,6 +340,41 @@ export async function collabScenarios({ server, browser, alice, bob, makePdf, st
     assertNoProblems(A); assertNoProblems(B);
   });
 
+  await step("collab: a word taken back while a save waits for its retry, then a tab switch, leaves the server with the tab's text", async () => {
+    const pg = await scratchPage("Tab switch", ["hello"], [A]);
+    await editRow(A, "hello");
+    // the save's first POST meets a server restarting: the batch waits for its retry
+    await A.route("**/api/pages/*/ops", (route) => route.fulfill({ status: 503, contentType: "application/json", body: "{\"detail\":\"restarting\"}" }), { times: 1 });
+    const refused = A.waitForResponse((r) => r.url().includes("/ops") && r.request().method() === "POST" && r.status() === 503);
+    await A.keyboard.type(" world");
+    await refused;
+    for (let i = 0; i < 6; i++) await A.keyboard.press("Backspace");   // taken back, queued behind it
+    // a slow connection holds the first POST after the switch a moment, so a copy sent beside it would land first
+    let held = false, answered = 0;
+    await A.route("**/api/pages/*/ops", async (route) => {
+      if (route.request().method() === "POST" && !held) { held = true; await sleep(150); }
+      await route.continue();
+    });
+    const onFinished = (r) => { if (r.url().includes("/ops") && r.method() === "POST") answered++; };
+    A.on("requestfinished", onFinished);
+    await A.evaluate(() => {
+      Object.defineProperty(document, "visibilityState", { value: "hidden", configurable: true });
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+    await sleep(300);
+    await A.evaluate(() => {
+      delete document.visibilityState;
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+    // the batch that waited, then the word taken back: two POSTs, in order
+    await until(async () => answered >= 2 && !(await pill(A)).includes("Not saved"), { what: "both saves answered" });
+    A.off("requestfinished", onFinished);
+    await A.unroute("**/api/pages/*/ops");
+    assertEq((await pg.tree())[0]?.content, "hello", "the server's text");
+    await closeEditor(A);
+    assertNoProblems(A, [/ops -> 503/]);
+  });
+
   await step("collab: a long paste arriving in two batches makes the idle tab send nothing", async () => {
     await scratchPage("Two-batch paste", ["paste here"]);
     const posted = [];
@@ -375,10 +414,12 @@ export async function collabScenarios({ server, browser, alice, bob, makePdf, st
     assertNoProblems(B);
   });
 
+  let sharedPaperId = null;   // the paper both tabs are left on, for the ink-live step
   await step("collab: a highlight bob makes on the PDF appears on alice's page", async () => {
     const pdf = makePdf([["Shared paper about tensor networks", "and matrix product states"]]);
     const up = await aliceT.upload("/api/uploads", pdf, "shared.pdf", "application/pdf");
     const paper = await aliceT.api(`/api/blocks/by-doc/${up.doc_id}`, { method: "POST", body: { default_title: "Shared paper", source_url: up.source_url } });
+    sharedPaperId = paper.id;
     const purl = `${server.base}/?page=${paper.id}&ws=${teamId}`;
     await A.goto(purl); await B.goto(purl);
     await waitForPdf(A, 1); await waitForPdf(B, 1);
@@ -387,6 +428,127 @@ export async function collabScenarios({ server, browser, alice, bob, makePdf, st
     await B.locator(".plainTip .colorBtn").first().click();
     await A.waitForSelector('[data-page="1"] [data-hl-id]', { timeout: 10000 });
     await until(async () => ((await A.textContent(".blockRow .blockQuote").catch(() => "")) || "").includes("tensor networks"), { what: "quote row on alice's side" });
+    assertNoProblems(A); assertNoProblems(B);
+  });
+
+  await step("collab: the stroke alice is drawing shows on bob's page within 700 ms and grows as she writes, long before it is saved; the saved stroke takes its place", async () => {
+    // both tabs are still on the shared paper of the step before
+    const paperId = sharedPaperId;
+    assert(paperId, "the shared paper of the step before");
+    // bob's wet canvas (ink-live): the wet strokes it draws, their ids, and how many of its pixels are painted
+    const wet = (p) => p.evaluate(() => {
+      const c = document.querySelector('[data-page="1"] .inkWetCanvas');
+      let painted = 0;
+      if (c?.width && c.height && c.style.display !== "none") {
+        const data = c.getContext("2d").getImageData(0, 0, c.width, c.height).data;
+        for (let i = 3; i < data.length; i += 4) if (data[i]) painted++;
+      }
+      return { n: Number(c?.dataset.wet || 0), ids: (c?.dataset.wetIds || "").split(" ").filter(Boolean), painted };
+    });
+    const paths = (p) => p.$$eval('[data-page="1"] .inkLayer path', (els) => els.length);
+    const savedGroup = async () => ((await aliceT.api(`/api/blocks/${paperId}/subtree`)).block.children || [])
+      .find((b) => b.properties?.ink_url?.endsWith(".ink")) || null;
+    assertEq(await paths(B), 0, "no handwriting on the paper yet");
+    assertEq(await savedGroup(), null, "no ink block on the server yet");
+    await A.click("button[aria-label='Handwriting tools']");
+    await A.waitForSelector(".pdfInkBar .inkToolBtn.modeActive .inkToolInk");   // a pen armed
+    // From here on bob's page logs every frame [wet strokes, saved paths]: the
+    // wet stroke must hand over to the saved one without a frame of neither.
+    await B.evaluate(() => {
+      const log = (window.__inkLiveLog = []);
+      const tick = () => {
+        const c = document.querySelector('[data-page="1"] .inkWetCanvas');
+        log.push([Number(c?.dataset.wet || 0), document.querySelectorAll('[data-page="1"] .inkLayer path').length]);
+        if (!window.__inkLiveStop && log.length < 50000) requestAnimationFrame(tick);
+      };
+      requestAnimationFrame(tick);
+    });
+    // a long stroke: two seconds of writing, a move every 25 ms
+    const box = await A.locator('[data-page="1"]').boundingBox();
+    const points = Array.from({ length: 80 }, (_, i) => [box.x + 100 + 3 * i, box.y + 300 + 20 * Math.sin(i / 6)]);
+    await A.mouse.move(...points[0]);
+    const downAt = Date.now();
+    await A.mouse.down();
+    let writing = true;
+    const writer = (async () => {
+      for (const [x, y] of points.slice(1)) { await A.mouse.move(x, y); await sleep(25); }
+      writing = false;
+    })();
+    // the wet stroke reaches bob's page within 700 ms of the pen going down,
+    // while alice is still writing: nothing is committed yet, let alone saved
+    await B.waitForFunction(() => Number(document.querySelector('[data-page="1"] .inkWetCanvas')?.dataset.wet || 0) === 1,
+      null, { timeout: 700, polling: 20 }).catch(() => { throw new Error("no wet stroke on bob's page within 700 ms of alice's pen going down"); });
+    const seenAfter = Date.now() - downAt;
+    assert(writing, `alice is still writing when bob sees the stroke (${seenAfter} ms after the down)`);
+    const first = await wet(B);
+    assert(first.painted > 0, "the wet stroke is painted on bob's canvas");
+    assertEq(await paths(B), 0, "bob's page holds no saved stroke yet");
+    assertEq(await savedGroup(), null, "nothing is saved while alice's pen is down");
+    // it grows on bob's page as alice writes on
+    await until(async () => (await wet(B)).painted > first.painted * 1.5 + 20,
+      { what: `the wet stroke growing on bob's page (${first.painted} px at first)`, timeout: 4000, every: 50 });
+    await writer;
+    const during = await wet(B);
+    assertEq(during.n, 1, "one wet stroke while the pen is down");
+    assertEq(await savedGroup(), null, "still nothing saved before the lift");
+    await A.mouse.up();
+    // the flush lands: bob's page shows the stored stroke and the wet one is gone
+    await until(async () => (await paths(B)) === 1 && (await wet(B)).n === 0,
+      { what: "the stored stroke in the wet stroke's place on bob's page", timeout: 15000 });
+    const log = await B.evaluate(() => { window.__inkLiveStop = true; return window.__inkLiveLog; });
+    const from = log.findIndex(([n]) => n > 0);
+    assert(from >= 0, "bob's frames saw the wet stroke");
+    const gap = log.slice(from).findIndex(([n, p]) => n + p === 0);
+    assert(gap < 0, `no frame on bob's page without the stroke between the wet one and the saved one (frame ${from + gap} of ${log.length})`);
+    assert(log.slice(from).every(([n]) => n <= 1), "never more than the one wet stroke");
+    const group = await until(savedGroup, { what: "the ink block on the server" });
+    const file = await aliceT.api(group.properties.ink_url);
+    assertEq(JSON.stringify(file.strokes.map((s) => s.id)), JSON.stringify(during.ids), "the stored stroke is the wet one, by id");
+    assert(file.strokes[0].pts.length / file.strokes[0].ch.length >= 40, "the whole long stroke is stored");
+    await A.keyboard.press("Escape");
+    assertNoProblems(A); assertNoProblems(B);
+  });
+
+  await step("collab: a stroke alice undoes right after the lift, before a save holds it, leaves bob's page at once (a drop), not a minute later", async () => {
+    const paperId = sharedPaperId;
+    assert(paperId, "the shared paper of the steps before");
+    const wetOn = (p) => p.evaluate(() => Number(document.querySelector('[data-page="1"] .inkWetCanvas')?.dataset.wet || 0));
+    const savedIds = async () => {
+      const group = ((await aliceT.api(`/api/blocks/${paperId}/subtree`)).block.children || []).find((b) => b.properties?.ink_url?.endsWith(".ink"));
+      return group ? (await aliceT.api(group.properties.ink_url)).strokes.map((s) => s.id) : [];
+    };
+    const before = await savedIds();
+    assertEq(before.length, 1, "the stroke of the step before is saved");
+    if (!(await A.$(".pdfInkBar"))) await A.click("button[aria-label='Handwriting tools']");
+    await A.waitForSelector(".pdfInkBar .inkToolBtn.modeActive .inkToolInk");   // a pen armed
+    // bob's page logs the wet strokes of every frame
+    await B.evaluate(() => {
+      const log = (window.__inkDropLog = []);
+      const tick = () => {
+        log.push(Number(document.querySelector('[data-page="1"] .inkWetCanvas')?.dataset.wet || 0));
+        if (!window.__inkDropStop && log.length < 50000) requestAnimationFrame(tick);
+      };
+      requestAnimationFrame(tick);
+    });
+    const box = await A.locator('[data-page="1"]').boundingBox();
+    await A.mouse.move(box.x + 120, box.y + 460);
+    await A.mouse.down();
+    for (let i = 1; i <= 16; i++) { await A.mouse.move(box.x + 120 + 8 * i, box.y + 460 + 3 * i); await sleep(25); }
+    await A.mouse.up();
+    const alicePaths = () => A.$$eval('[data-page="1"] .inkLayer path', (els) => els.length);
+    await until(async () => (await alicePaths()) === 2, { what: "the new stroke on alice's page", timeout: 600, every: 20 });
+    await A.keyboard.press("Control+z");   // within the 700 ms before the first flush
+    const undoneAt = Date.now();
+    await until(async () => (await alicePaths()) === 1, { what: "the stroke undone on alice's page" });
+    await until(async () => (await wetOn(B)) === 0 && await B.evaluate(() => window.__inkDropLog.some((n) => n > 0)),
+      { what: "the undone stroke seen on bob's page, then gone from it", timeout: 5000, every: 50 });
+    const gone = Date.now() - undoneAt;
+    await B.evaluate(() => { window.__inkDropStop = true; });
+    assert(gone < 5000, `the wet stroke went ${gone} ms after the undo, not after the minute a stroke without news waits`);
+    await sleep(1500);   // past the flush the undo scheduled
+    assertEq(JSON.stringify(await savedIds()), JSON.stringify(before), "no saved file ever held the undone stroke");
+    assertEq(await wetOn(B), 0, "and it does not come back");
+    await A.keyboard.press("Escape");
     assertNoProblems(A); assertNoProblems(B);
   });
 

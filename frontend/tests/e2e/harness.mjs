@@ -9,7 +9,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
-import { chromium, webkit } from "playwright";
+import { chromium, firefox, webkit } from "playwright";
 
 export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const BACKEND = path.join(ROOT, "backend");
@@ -201,9 +201,12 @@ export class Account {
 // ---------------------------------------------------------------------------
 // Browser
 
+// Chromium, or the engine GAMMA_E2E_BROWSER names (webkit, firefox: each
+// installed once with `npx playwright install <name>`).
 export async function launchBrowser() {
   const opts = { headless: !flags.headed };
   if (process.env.GAMMA_E2E_BROWSER === "webkit") return english(await webkit.launch(opts));
+  if (process.env.GAMMA_E2E_BROWSER === "firefox") return english(await firefox.launch(opts));
   try {
     return english(await chromium.launch(opts));
   } catch (e) {
@@ -234,9 +237,9 @@ function english(browser) {
     // emulation.
     if (!options.hasTouch) await ctx.addInitScript(() => { Object.defineProperty(Navigator.prototype, "maxTouchPoints", { get: () => 0, configurable: true }); });
     const close = ctx.close.bind(ctx);
-    ctx.close = async (...args) => {
-      for (const page of ctx.pages()) await lastLook(page);
-      return close(...args);
+    ctx.close = async ({ lastLook: look = true, ...options } = {}) => {
+      if (look) for (const page of ctx.pages()) await lastLook(page);
+      return close(options);
     };
     return ctx;
   };
@@ -246,7 +249,10 @@ function english(browser) {
 // A scenario closes its context in `finally`, which runs before step()'s
 // catch: by then the page that shows the failure is gone. So a page closed
 // during a step leaves its last look (a screenshot and its recorded
-// problems), which step() writes out only if the step fails.
+// problems), which step() writes out only if the step fails. A step timing
+// its close (a page closed before a save is due) passes
+// `{lastLook: false}` to `page.close` or `context.close`, which closes at
+// once.
 async function lastLook(page) {
   if (!running || page.isClosed()) return;
   let shot = null;
@@ -272,7 +278,10 @@ export async function openPage(ctx, url) {
   openPages.add(page);
   page.on("close", () => openPages.delete(page));
   const close = page.close.bind(page);
-  page.close = async (...args) => { await lastLook(page); return close(...args); };
+  page.close = async ({ lastLook: look = true, ...options } = {}) => {
+    if (look) await lastLook(page);
+    return close(options);
+  };
   page.on("response", (r) => {
     const u = r.url();
     if (!u.includes("/api/") || r.status() < 400) return;
@@ -351,6 +360,65 @@ export async function assertOpensInPlace(page, selector, act, { ms = 600, what =
     }
   }
   if (!seen) throw new Error(`${what} never showed`);
+}
+
+// Asserts where an open menu stands from the button that opened it
+// (useMenuTrigger, placement.js menuAnchor): its left edge on the button's,
+// and its top 4 px under the button (`side` "below") or its bottom 4 px
+// over it ("above").
+export async function assertMenuFrom(menu, button, side, what = "the menu") {
+  const m = await menu.boundingBox(), b = await button.boundingBox();
+  const gap = side === "above" ? b.y - (m.y + m.height) : m.y - (b.y + b.height);
+  if (Math.abs(gap - 4) > 1 || Math.abs(m.x - b.x) > 1) {
+    throw new Error(`${what} is not 4 px ${side} its button, by its left edge: menu ${JSON.stringify(m)}, button ${JSON.stringify(b)}`);
+  }
+}
+
+// Asserts an open menu reads as WAI-ARIA's menu (docs/dev/ui-design.md,
+// "Menus and submenus"): `menu` is the one role="menu" around its items,
+// vertical (no aria-orientation: the role's default), and sits inside
+// `around` other menus (a flyout: 1, its parent). Each item of its own
+// level sits in exactly one menu of that level, directly in the menu or in
+// a group of it; a checkbox or radio item says whether it is checked; and
+// every control in it is an item. Returns those items: {text, role,
+// checked}. Find the menu by its name (getByRole("menu", {name})) to
+// check its name too.
+export async function assertMenuRoles(menu, what, around = 0) {
+  const ITEMS = '[role="menuitem"], [role="menuitemcheckbox"], [role="menuitemradio"]';
+  const shape = await menu.evaluate((el, ITEMS) => {
+    const menusAround = (node) => {
+      let n = 0;
+      for (let p = node.parentElement; p; p = p.parentElement) if (p.getAttribute("role") === "menu") n++;
+      return n;
+    };
+    const own = (node) => node.closest('[role="menu"]') === el;
+    return {
+      role: el.getAttribute("role"),
+      orientation: el.getAttribute("aria-orientation"),
+      around: menusAround(el),
+      items: [...el.querySelectorAll(ITEMS)].filter(own).map((item) => ({
+        text: (item.querySelector(".ctxMenuText") || item).textContent.trim(),
+        role: item.getAttribute("role"),
+        checked: item.getAttribute("aria-checked"),
+        menus: menusAround(item),
+        // the nearest element with a role around it: its menu, or a group in it
+        container: item.parentElement.closest("[role]")?.getAttribute("role"),
+      })),
+      strays: [...el.querySelectorAll("button, input, select, textarea, a[href], [tabindex]")]
+        .filter((node) => own(node) && !node.matches(ITEMS)).map((node) => node.outerHTML.slice(0, 120)),
+    };
+  }, ITEMS);
+  assertEq(shape.role, "menu", `${what} is a menu`);
+  assertEq(shape.orientation, null, `${what} is vertical, the menu role's default`);
+  assertEq(shape.around, around, around ? `${what} sits inside its parent menu` : `${what} sits inside no other menu`);
+  assert(shape.items.length > 0, `${what} has items`);
+  for (const item of shape.items) {
+    assertEq(item.menus, around + 1, `${what}: "${item.text}" is inside exactly one menu of its level`);
+    assert(["menu", "group"].includes(item.container), `${what}: "${item.text}" sits in its menu or a group of it, not a ${item.container}`);
+    if (item.role !== "menuitem") assert(["true", "false"].includes(item.checked), `${what}: "${item.text}" (${item.role}) says whether it is checked`);
+  }
+  assertEq(shape.strays.join(" | "), "", `${what}: every control in it is a menu item`);
+  return shape.items.map(({ text, role, checked }) => ({ text, role, checked }));
 }
 
 // ---------------------------------------------------------------------------
@@ -447,6 +515,7 @@ async function saveFailureArtifacts(name, err, closed = []) {
 
 export function assert(cond, msg) { if (!cond) throw new Error(msg || "assertion failed"); }
 export function assertEq(a, b, msg) { if (a !== b) throw new Error(`${msg || "not equal"}: ${JSON.stringify(a)} !== ${JSON.stringify(b)}`); }
+export function assertNear(a, b, tol, msg) { if (!(Math.abs(a - b) <= tol)) throw new Error(`${msg || "not near"}: ${a} vs ${b}`); }
 
 // Poll until `fn` returns truthy (state that lands after a debounce or a
 // websocket round trip).

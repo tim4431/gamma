@@ -3,7 +3,9 @@
 - ``GET /api/server-config`` (public): what the login page needs — whether
   cloud sign-in is on, the account server's address and whether the page
   leads with it (``cloud.lead``: a hosted container or a share host, whose
-  people all come from Gamma Cloud), whether guests may
+  people all come from Gamma Cloud), whether a newcomer's cloud sign-in
+  asks to join (``cloud.join_requests``: the ``invited`` policy,
+  gamma/join_requests.py), whether guests may
   sign in, for how long (``guest_ttl_hours``), whether a guest starts with
   the ``GAMMA_GUEST_SEED`` library (``guest_seeded``) and ``demo`` mode
   (docs/dev/guests.md) — and ``page_host``, the per-account page hostname
@@ -14,11 +16,13 @@
 - ``GET /api/auth/cloud/start?next=&link=1`` → redirect to the account
   server (``link=1`` with a session attaches the identity to that account);
 - ``GET /api/auth/cloud/callback?code=&state=`` → session cookie + redirect
-  to ``next``, or back to the login page with ``?cloud_error=``; the
+  to ``next``, or back to ``next`` signed out with ``?cloud_error=``; the
   preference profile is pulled before the redirect and this server put on
-  the person's server list (gamma/cloud_sync.py). A sign-in the desktop app
-  started instead sends the browser to the app's loopback address with
-  ``?result=`` or ``?error=``, and sets no cookie;
+  the person's server list (gamma/cloud_sync.py). A sign-in the
+  ``invited`` policy refuses asks to join instead and goes back to ``next``
+  with ``?cloud_join=sent|waiting|declined`` (gamma/join_requests.py). A
+  sign-in the desktop app started instead sends the browser to the app's
+  loopback address with ``?result=`` or ``?error=``, and sets no cookie;
 - ``POST /api/auth/cloud/app-start`` ``{next, link, return_to, challenge}``
   → ``{url}``: the desktop app's sign-in, which it opens in the system
   browser; ``POST /api/auth/cloud/app-claim`` (a form: ``result``,
@@ -37,6 +41,9 @@
 - ``POST /api/auth/cloud/sync``: Settings → Account & sync's Sync now, and the
   answer to a first sync's choice (its Fetch from cloud / Push to cloud
   dialog; ``merge`` is API-only).
+- ``GET /api/admin/join-requests``, ``PUT …/{subject}`` ``{status:
+  approved|declined}``, ``DELETE …/{subject}`` (admins): the requests to
+  join, Settings → Server → Sign-in (gamma/join_requests.py).
 """
 
 from typing import Literal
@@ -46,7 +53,7 @@ from fastapi import APIRouter, Form, HTTPException, Request
 from fastapi.responses import JSONResponse, RedirectResponse
 from pydantic import BaseModel, Field
 
-from .. import cloud_auth, cloud_sync, config, guests, hosted, ratelimit, server_settings
+from .. import cloud_auth, cloud_sync, config, guests, hosted, join_requests, ratelimit, server_settings
 from ..auth import require_admin, require_personal_user_id, require_user_id, set_session_cookie
 from ..cloud_auth import CloudAuthError
 from ..db import connect_users_db
@@ -62,7 +69,8 @@ def server_config():
     enabled = cfg["enabled"] and not cloud_auth.needs_connect()  # an unconnected server offers no cloud button
     plan = hosted.limits()
     lead = enabled and (config.hosted() or cfg["share_host"])
-    return {"cloud": {"enabled": enabled, "issuer": cfg["issuer"] if enabled else "", "lead": lead},
+    return {"cloud": {"enabled": enabled, "issuer": cfg["issuer"] if enabled else "", "lead": lead,
+                      "join_requests": enabled and cfg["policy"] == "invited"},
             "password_login": True, "registration": False, "guest": guests.logins_open(),
             "guest_ttl_hours": server_settings.guest_ttl_hours(), "demo": server_settings.demo_mode(),
             "guest_seeded": bool(config.guest_seed_path()), "page_host": config.page_host_pattern(),
@@ -82,7 +90,7 @@ def cloud_start(request: Request, next: str = "/", link: str = ""):
         url = cloud_auth.begin(request, link_user=link_user, next_path=cloud_auth.safe_next(next))
     except CloudAuthError as e:
         if str(e) == cloud_auth.NOT_CONNECTED:  # a page to show it on, not an error body
-            return _login_redirect(str(e), cloud_auth.safe_next(next))
+            return _back(cloud_auth.safe_next(next), cloud_error=str(e))
         raise HTTPException(503, str(e))
     return RedirectResponse(url, status_code=302, headers={"Cache-Control": "no-store"})
 
@@ -93,11 +101,6 @@ def _to_app(app: dict, **params: str) -> RedirectResponse:
     return RedirectResponse(cloud_auth.app_redirect(app["return_to"], **params), status_code=302,
                             headers={"Cache-Control": "no-store"})
 
-
-def _login_redirect(error: str, next_path: str = "/") -> RedirectResponse:
-    query = urlencode({"cloud_error": error})
-    return RedirectResponse(f"{next_path.split('?')[0] or '/'}?{query}", status_code=302,
-                            headers={"Cache-Control": "no-store"})
 
 
 class AppStartRequest(BaseModel):
@@ -134,8 +137,11 @@ def cloud_callback(request: Request, code: str = "", state: str = "", error: str
     ratelimit.check(f"cloud-callback:ip:{ratelimit.client_ip(request)}", 30, 600)
     pending = cloud_auth.take_pending(request, state)
     app = (pending or {}).get("app")
-    # A sign-in the desktop app started reports back to the app, not this browser.
-    refuse = (lambda e: _to_app(app, error=e)) if app else _login_redirect
+    # A refusal goes back to the page the sign-in started from, which says why
+    # (a share link's sign-in gate keeps its link); a sign-in the desktop app
+    # started reports back to the app, not this browser.
+    back = cloud_auth.safe_next((pending or {}).get("next") or "/")
+    refuse = (lambda e: _to_app(app, error=e)) if app else (lambda e: _back(back, cloud_error=e))
     if error:
         return refuse(error_description or ("Sign-in cancelled." if error == "access_denied" else error))
     refresh = ""
@@ -143,6 +149,14 @@ def cloud_callback(request: Request, code: str = "", state: str = "", error: str
         claims, tokens, next_path = cloud_auth.exchange(request, code=code, pending=pending)
         refresh = claims["_refresh_token"] = tokens.get("refresh_token", "")
         user_id, _username = cloud_auth.resolve_account(claims)
+    except cloud_auth.NotInvited as e:
+        # nothing admits this cloud account here: its sign-in asks to join instead
+        cloud_auth.revoke_later([refresh])
+        asked = join_requests.ask(claims, next_path)
+        log.info(f"cloud sign-in refused, not invited: the request to join is {asked or 'not kept (too many wait)'}")
+        if not asked:
+            return refuse(str(e))
+        return _to_app(app, error=join_requests.MESSAGES[asked]) if app else _back(back, cloud_join=asked)
     except CloudAuthError as e:
         log.info(f"cloud sign-in refused: {e}")
         cloud_auth.revoke_later([refresh])  # a refused sign-in leaves no device behind at the account server
@@ -174,7 +188,7 @@ def cloud_app_claim(request: Request, result: str = Form("", max_length=128), ve
         user_id, next_path = cloud_auth.app_claim(result, verifier)
     except CloudAuthError as e:
         log.info(f"cloud sign-in: an app claim was refused: {e}")
-        return _login_redirect(str(e))
+        return _back("/", cloud_error=str(e))
     token = new_session(user_id, via="cloud")
     resp = RedirectResponse(next_path, status_code=303, headers={"Cache-Control": "no-store"})
     set_session_cookie(resp, token, request)
@@ -202,9 +216,12 @@ def cloud_connect_callback(request: Request, code: str = "", state: str = "", er
 
 
 def _back(path: str, **params) -> RedirectResponse:
-    """A redirect to ``path`` with ``params`` added to its query."""
+    """A redirect to ``path`` with ``params`` added to its query, in place
+    of any outcome an earlier round trip left there
+    (``cloud_auth.OUTCOME_PARAMS``)."""
     url = urlsplit(path)
-    query = urlencode([*parse_qsl(url.query), *params.items()])
+    query = urlencode([*((k, v) for k, v in parse_qsl(url.query) if k not in cloud_auth.OUTCOME_PARAMS),
+                       *params.items()])
     return RedirectResponse(f"{url.path or '/'}?{query}", status_code=302, headers={"Cache-Control": "no-store"})
 
 
@@ -250,6 +267,42 @@ def cloud_sync_now(payload: SyncRequest, request: Request):
     if not outcome:
         raise HTTPException(502, status.get("error") or cloud_sync.UNREACHABLE)
     return {"outcome": outcome, "profile": status}
+
+
+class JoinDecision(BaseModel):
+    status: Literal["approved", "declined"]
+
+
+@router.get("/api/admin/join-requests")
+def list_join_requests(request: Request):
+    """Every request to join, the waiting ones first (Settings → Server →
+    Sign-in)."""
+    require_admin(request)
+    return {"requests": join_requests.listing()}
+
+
+@router.put("/api/admin/join-requests/{subject}")
+def decide_join_request(subject: str, payload: JoinDecision, request: Request):
+    """Approve a request to join (the person's next sign-in gets them an
+    account here) or decline it (their sign-ins ask nothing more)."""
+    require_admin(request)
+    try:
+        join_requests.decide(subject, payload.status, request.state.user_id)
+    except ValueError as e:
+        raise HTTPException(404, str(e))
+    return {"requests": join_requests.listing()}
+
+
+@router.delete("/api/admin/join-requests/{subject}")
+def remove_join_request(subject: str, request: Request):
+    """Remove a request: a declined person may ask again, an approval not
+    used yet is withdrawn."""
+    require_admin(request)
+    try:
+        join_requests.remove(subject)
+    except ValueError as e:
+        raise HTTPException(404, str(e))
+    return {"requests": join_requests.listing()}
 
 
 @router.post("/api/auth/cloud/unlink")

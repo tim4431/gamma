@@ -60,7 +60,7 @@ export async function chatNavigationScenarios(env) {
             await until(async () => !(await page.locator(".chatPanel").count()));
             await page.evaluate(() => window.chatStream.push({ delta: " Continued with the panel closed." }));
             await page.getByRole("button", { name: "View", exact: true }).click();
-            await page.locator(".menuPopover").getByRole("button", { name: "AI Chat" }).click();
+            await page.locator(".menuPopover").getByRole("menuitemcheckbox", { name: "AI Chat" }).click();
             await page.getByRole("button", { name: "View", exact: true }).click();
             await until(async () => (await page.locator(".chatPanel").innerText()).includes("Continued with the panel closed."));
             await page.getByRole("button", { name: "Stop generating", exact: true }).waitFor();
@@ -136,7 +136,7 @@ export async function chatNavigationScenarios(env) {
       await input.fill("A draft question");
       const downloadEvent = page.waitForEvent("download");
       await page.getByRole("button", { name: "Export chat", exact: true }).click();
-      await page.getByRole("button", { name: "Export context", exact: true }).click();
+      await page.getByRole("menuitem", { name: "Export context", exact: true }).click();
       const download = await downloadEvent;
       assert(download.suggestedFilename().endsWith(" - context.md"), download.suggestedFilename());
       const text = await readFile(await download.path(), "utf8");
@@ -199,7 +199,7 @@ export async function chatNavigationScenarios(env) {
       await page.getByRole("button", { name: "Chat history", exact: true }).click();
       await page.locator(".chatHistRow", { hasText: "Keep this one" }).click({ button: "right" });
       const downloadEvent = page.waitForEvent("download");
-      await page.getByRole("button", { name: "Export", exact: true }).click();
+      await page.getByRole("menuitem", { name: "Export", exact: true }).click();
       const download = await downloadEvent;
       assertEq(download.suggestedFilename(), "Keep this one.md", "no pictures: the bare transcript");
       const text = await readFile(await download.path(), "utf8");
@@ -539,7 +539,8 @@ export async function chatNavigationScenarios(env) {
       let saved;
       await until(async () => {
         saved = await alice.api(`/api/chats/${pdf.id}`);
-        return saved.messages?.length === 2 && saved.messages.at(-1).errorKind && !saved.messages.at(-1).partial;
+        // the retried answer's save, not the refused request's (two messages, an error kind, too)
+        return saved.messages?.length === 2 && saved.messages.at(-1).errorKind === "overloaded" && !saved.messages.at(-1).partial;
       });
       assertEq(saved.messages.at(-1).text, "Half an answer");
       assertEq(saved.messages.at(-1).errorKind, "overloaded");
@@ -720,6 +721,8 @@ export async function chatNavigationScenarios(env) {
     const chipSpeed = async (page) => [await chip(page).locator(".chatSpeedGlyph").count(),
       await chip(page).getAttribute("title")];
     const menuItems = (page) => page.locator(".uiSelectMenu .ctxMenuItem").allInnerTexts();
+    // Until model-info answers, the menu offers the generic levels: wait for the model's own.
+    const menuShows = (page, want, what) => until(async () => (await menuItems(page)).join() === want, { what });
     // The pick is an account preference: wait for it to reach the profile
     // before the next page load reads it.
     const saved = (effort) => until(async () => ((await alice.api("/api/prefs/profile")).value?.chatEffort || "") === effort,
@@ -735,7 +738,7 @@ export async function chatNavigationScenarios(env) {
     let { ctx, page } = await load(["low", "medium", "high", "xhigh"]);
     try {
       await chip(page).click();
-      assertEq((await menuItems(page)).join(), "model,Default,low,medium,high,xhigh", "the model's own levels");
+      await menuShows(page, "model,Default,low,medium,high,xhigh", "the model's own levels");
       await page.locator(".uiSelectMenu .ctxMenuItem", { hasText: "xhigh" }).click();
       await until(async () => (await chip(page).innerText()) === "model · xhigh", { what: "the chip names the effort" });
       assertEq((await send(page)).join(), "xhigh,", "the effort, and no speed tier to ask for");
@@ -762,7 +765,7 @@ export async function chatNavigationScenarios(env) {
     ({ ctx, page } = await load([]));
     try {
       await chip(page).click();
-      assertEq((await menuItems(page)).join(), "model", "no effort levels to offer");
+      await menuShows(page, "model", "no effort levels to offer");
       assertEq(await page.locator(".uiSelectMenu", { hasText: "Reasoning effort" }).count(), 0);
       assertEq(await page.locator(".uiSelectMenu", { hasText: "Speed" }).count(), 0);
       assertNoProblems(page);
@@ -774,7 +777,7 @@ export async function chatNavigationScenarios(env) {
     ({ ctx, page } = await load(["low", "high"], ["flex", "fast"]));
     try {
       await chip(page).click();
-      assertEq((await menuItems(page)).join(), "model,Default,low,high,Default,flex,fast", "effort then speed");
+      await menuShows(page, "model,Default,low,high,Default,flex,fast", "effort then speed");
       await page.locator(".uiSelectMenu .ctxMenuItem", { hasText: "fast" }).click();
       await until(async () => (await chipSpeed(page)).join() === "1,Model, reasoning effort and speed (fast)",
         { what: "the chip carries the speed glyph" });
@@ -1165,7 +1168,7 @@ export async function chatNavigationScenarios(env) {
       await page.locator('[title^="Chat settings"]').click();
       const popover = page.locator(".chatSettingsPop");
       await popover.getByRole("button", { name: "Fetch documents", exact: true }).click();
-      await page.locator(".uiSelectMenu").getByRole("button", { name: "Ask", exact: true }).click();
+      await page.locator(".uiSelectMenu").getByRole("menuitemradio", { name: "Ask", exact: true }).click();
       await page.locator('[title^="Chat settings"]').click();
       const second = await send("Fetch the paper it cites", 2);
       assertEq(JSON.stringify(second.granted), JSON.stringify(["block_edit"]));

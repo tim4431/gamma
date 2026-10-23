@@ -23,7 +23,7 @@ Read papers, keep what you learn. This guide shows each part of Gamma in a short
 | [Offline copies](#offline-copies) | A synced copy on your laptop or iPad |
 | [Gamma Connector](#gamma-connector) | Save papers from the browser |
 | [Assistants](#assistants) | Codex, Claude Code, DeepSeek Harness and other MCP clients; the tools they get |
-| [Import and export](#import-and-export) | Zotero, Obsidian, Notion, PDF, BibTeX |
+| [Import and export](#import-and-export) | Zotero, Notability, Obsidian, Notion, PDF, BibTeX |
 | [Backups and upgrades](#backups-and-upgrades) | Snapshots, exports, what a new version does |
 | [Install as an app](#install-as-an-app) | iPad, phone, desktop |
 | [Settings](#settings) | Where things are |
@@ -56,9 +56,11 @@ A new account starts with a **Welcome** page to practise on. **Tours** in the ac
 The pen button in the viewer's zoom column opens the tool strip: pens and highlighters, an eraser, a lasso, the Text tool, undo and redo.
 
 - A **stylus** draws right away, with pressure, while fingers scroll. The mouse draws once the strip is open.
-- The **lasso** moves, resizes, recolors, duplicates or deletes strokes.
+- The **lasso** moves, resizes, recolors, flips, copies, duplicates or deletes strokes. Ctrl+C / X / V copy, cut and paste them; to paste at a point, hold the pen still on the page, or right-click there. **New note** in the lasso's menu gives the selection a note of its own.
+- **More** (⋯) on the strip holds the **ruler** (a straight edge: a pen along its edge draws a straight line), **Shapes** (drag a line, an arrow, a rectangle or an ellipse) and the **zoom window** (write large in a panel under the page, on PDF pages). A shape you select has handles to reshape it and can be filled.
+- The pen's **Style** menu offers Pen, Ballpoint, Brush, Pencil and **Calligraphy**, a flat nib whose angle you set.
 - The strokes on a page become **one ink block** in the notes, with a caption under it. Its play button replays the writing.
-- **Transcribe with AI** in the block's menu turns handwriting into text, math as LaTeX.
+- **Transcribe with AI** in the block's menu turns handwriting into text, math as LaTeX; **Transcribe** in the lasso's menu does it for just the selected strokes.
 
 <img alt="The Text tool is picked, a click places a box on the page, a sentence is typed into it, and the box appears in the notes with a T marker" src="assets/text-box.svg" width="100%">
 
@@ -256,6 +258,8 @@ The **link button** in the top bar shares the open page.
 
 - **Share** makes the link. **Copy link** carries the workspace, so a teammate lands in the right library.
 - **Who has access**: invite people by name, each with **View** or **Edit**. They find the page in their Inbox.
+- **Gamma Cloud**: on a server with Gamma Cloud sign-in, the switch beside Who has access invites someone by their Gamma Cloud username, even without an account here yet. They show as **pending** until they sign in with Gamma Cloud, then the page is theirs to open. If someone here already goes by their username, they get a name like *tim-2*, with their Gamma Cloud name shown beside it.
+- **Requests to join**: on a server that admits invited people only, someone who signs in from your link without an invitation asks to join instead. The request heads Who has access with **Approve** and **Decline**, and comes to your Inbox; they sign in again once you approve.
 - **General access**: anyone with the link, signed-in users, or invited people only, with View or Edit for that audience.
 - Editors edit alongside you with live cursors. **Stop sharing** ends the link.
 - **Share a folder** the same way: the link opens every page filed in it.
@@ -287,7 +291,7 @@ Comments are a conversation about a note, a highlight or a page. They sit beside
 
 The **bell** in the top bar is your **Inbox** (on a phone, **More → Inbox**). Its number counts what you have not read yet, across every workspace and share you can open.
 
-- It tells you when someone mentions you in a note or a comment, replies in a thread you wrote in or were mentioned in, resolves a thread you started, shares a page or a folder with you, or adds you to a workspace.
+- It tells you when someone mentions you in a note or a comment, replies in a thread you wrote in or were mentioned in, resolves a thread you started, shares a page or a folder with you, adds you to a workspace, or asks to join through a link you shared (a click opens its Share popover).
 - **Unread**, **All** and **Archived** sort the items; **Mark all read** clears the count. Each item's buttons mark it read or unread and archive it or move it back.
 - **Click an item** to go there: the page opens at the note, with the thread showing for a comment, in another workspace or through the share link when that is how you reach it. An invitation opens its workspace.
 - An item whose page, note or comment is gone, or that you can no longer open, moves to **Archived** by itself.
@@ -364,7 +368,8 @@ The first ten are the chat's own reading tools. An assistant never gets the writ
 
 Both are in the **View menu (≡)**, on a page or on the home library (with a folder open, Export takes the whole folder).
 
-- **Import**: a Zotero library (RDF with files: pick or drop the export folder, or a .zip of it), an Obsidian vault or Notion export, Markdown, Logseq, annotations embedded in a PDF, or a Gamma export from another Gamma.
+- **Import**: a Zotero library (RDF with files: pick or drop the export folder, or a .zip of it), Notability notes, an Obsidian vault or Notion export, Markdown, Logseq, annotations embedded in a PDF, or a Gamma export from another Gamma.
+- **From Notability**: export the notes with File Format **Note**, not NTB, which Gamma cannot read yet (in a note: the options icon → Export Options; in the library: press and hold a note → Export Options). Then pick the .note files, or a .zip of them, under **Notability notes**. Each note becomes a page. A note with PDF pages keeps them as its PDF, its paper pages printed into it; a note on paper alone becomes a notebook. Handwriting, shapes, sticky notes, text boxes, math, pictures and recordings come along, and the text typed on the page itself becomes the page's notes. A recording plays, but the handwriting does not replay with it. Notes already imported are skipped.
 - **Export**: **Annotated PDF** (highlights, ink and text boxes as real annotations), **Notes as PDF** or **Markdown**, **BibTeX**, an **Obsidian vault**, a **Logseq graph**, a **Zotero library**, or a **Gamma zip**.
 - **Keep a bibliography up to date**: share a folder, then Export → BibTeX → *Keep this .bib up to date* gives a link Overleaf can refresh.
 - **Keep a folder on your disk**: in the desktop app, a folder's *Keep on this computer…* writes its papers as PDFs beside Markdown notes into a directory you pick and keeps it up to date. One way: what you change there is neither sent back nor overwritten.
@@ -397,7 +402,7 @@ Account menu → **Settings**, or **Ctrl+,**; the card with your name at the top
 | Keyboard | Every shortcut, rebindable; what Enter makes |
 | AI → Connections, Chat, Tool usage, Integrations | Providers and keys, defaults, agent permissions, assistants |
 | Workspaces, Backups, Maintenance | Workspaces and clones, snapshots, storage and index health |
-| Users, Server (administrators) | Accounts, public URL, shared workspaces, server backups, the log |
+| Users, Server (administrators) | Accounts, public URL, Gamma Cloud sign-in and requests to join, shared workspaces, server backups, the log |
 | Help & diagnostics | Session log, **Report a problem…** (adds what a maintainer needs, never your notes) |
 
 ## Shortcut cheat sheet
@@ -423,6 +428,8 @@ Account menu → **Settings**, or **Ctrl+,**; the card with your name at the top
 | Ctrl+K | Link the selection (URL from the clipboard) |
 | Ctrl+Shift+. | Quote or unquote the selected lines |
 | Ctrl+Shift+M | Comment on the note being edited |
+| Ctrl+C / Ctrl+X / Ctrl+V / Ctrl+D / Ctrl+A | With the pen strip open: copy / cut / paste / duplicate the selected handwriting; select all handwriting on the page |
+| 1–9 · P / H · [ / ] · E · L · T · V · R · S · Z | Pen strip: a preset by number · next pen / highlighter (Shift: previous) · thinner / thicker · eraser (hold it to erase once) · lasso · text · hand · ruler · shapes · zoom window (Enter in it: a new line) |
 | `/` · `[[` · `@` | Command menu (in a comment, the commands that write text) · page link · in a note or a comment, mention a date, person or page; in chat, attach a paper |
 | Ctrl+wheel | Zoom the PDF at the cursor |
 | Ctrl+drag on the page | Capture a region for the chat, and an optional area highlight |

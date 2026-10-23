@@ -2,9 +2,11 @@
 // machine: op batches out, remote ops and presence in, same-block
 // reconciliation, catch-up) wired to the app. ONE hook per open page. This
 // file owns only what needs the browser or React: the fetch wrapper, the
-// socket URL (share token / workspace), the keepalive POST on pagehide, and
+// socket URL (share token / workspace), the keepalive sends as the tab
+// closes or is hidden and their claim on the page's keepalive room, and
 // `peers` / `me` as React state.
 import { useEffect, useRef, useState } from "react";
+import { keepaliveFetch, keepaliveShare, registerKeepaliveClaim } from "../shared/lib/keepalive.js";
 import { API, apiJson, getLinkName, makeId, withShare, withWorkspace } from "../shared/lib/utils";
 import { createCollabSession } from "./collabSession";
 
@@ -31,17 +33,19 @@ function socketUrl(pageId) {
 //   onStatus(text)            — the status line
 //   onSaveNotice(text, kind)  — the lasting save notice (collabSession.js)
 //   onGone(pageId, gone)      — the page went to Recently deleted, or is back (null)
+//   onInkLive(msg)            — a peer's handwriting stroke in progress (ink/inkLive.js)
+//   onBuild(build)            — the server's build, from the socket's hello
 //   onComments(msg)           — a comment was written on the page, or the socket
 //                               (re)joined (null): refetch its threads
 // A `{t: "inbox"}` nudge (the account's inbox has news) becomes the window
 // event gamma:inbox, whatever page it arrived on.
-// Returns the session's commit/flush/hasPending/sendCursor/overlay/
+// Returns the session's commit/flush/hasPending/sendCursor/sendInkLive/overlay/
 // reloadFailed/tooLong/gone, `peers`, `me`, and `reconnect` (reopen the
 // socket — after a display-name change, since the name travels in the
 // handshake). While edits are unsaved, leaving the tab asks first
-// (beforeunload); a tab going to the background flushes (a phone may kill it
-// without a pagehide), and the browser coming back online or the window
-// regaining focus retries a failed save at once.
+// (beforeunload); a tab going to the background sends the next batch with
+// keepalive (a phone may kill it without a pagehide), and the browser coming
+// back online or the window regaining focus retries a failed save at once.
 export function usePageCollab(opts) {
   const o = useRef(opts);
   o.current = opts;
@@ -53,13 +57,15 @@ export function usePageCollab(opts) {
   if (!ref.current) {
     ref.current = createCollabSession({
       clientId: CLIENT_ID,
-      api: (path, init) => apiJson(`${API}${path}`, init),
+      api: (path, init, opts) => apiJson(`${API}${path}`, init, opts),
       openSocket: (id) => new WebSocket(socketUrl(id)),
+      // The queued edits have no other copy: they come first in the page's
+      // keepalive room (shared/lib/keepalive.js, docs/dev/collab.md "Keepalive").
       keepalivePost: (path, body) => {
-        fetch(withShare(`${API}${path}`), {
+        keepaliveFetch(withShare(`${API}${path}`), {
           method: "POST", headers: { "Content-Type": "application/json" },
-          body, keepalive: true, credentials: "include",
-        }).catch(() => {});
+          body, credentials: "include",
+        }, { priority: "critical" }).catch(() => {});
       },
       opts: () => o.current,
       onPeers: setPeers,
@@ -71,24 +77,51 @@ export function usePageCollab(opts) {
   }
   const session = ref.current;
 
-  // Tab closing / reloading: a keepalive POST of what is still queued, and
-  // the browser's "leave site?" while anything is unsaved.
+  // The tab closing or reloading: every unsaved edit goes at once with
+  // keepalive (session.hide), and the browser's "leave site?" while
+  // anything is unsaved. Going hidden, the next batch goes with keepalive
+  // and the rest follows its answer, in order (hide(false)). A close fires
+  // pagehide and then visibilitychange (hidden) in one task, and Firefox
+  // can stop a pagehide listener (docs/research/keepalive-abort.md):
+  // visibilitychange sends nothing more after a pagehide that sent
+  // everything, everything after one stopped part way, and the next batch
+  // after none. `closing`: pagehide began in this task (1) or sent
+  // everything (2). Until then the bytes a close will send are claimed from
+  // the page's keepalive room, so the lower priorities (handwriting, the
+  // profile) leave it free; none once sent, until the next task or the
+  // page shows again (pageshow from the back-forward cache, or visible).
   useEffect(() => {
-    const onHide = () => session.pagehide();
+    let closing = 0;
+    const unclaim = registerKeepaliveClaim("page-edits",
+      () => (closing === 2 ? 0 : keepaliveShare(session.pendingKeepaliveBodies().map((b) => b.body))));
+    const onHide = () => {
+      closing = 1;
+      session.hide();
+      closing = 2;
+      setTimeout(() => { closing = 0; });
+    };
+    const onShow = () => { closing = 0; };
     const onLeave = (e) => {
       if (!session.hasPending()) return;
       e.preventDefault();
       e.returnValue = "";
     };
-    const onVisibility = () => { if (document.visibilityState === "hidden") session.flush(); };
+    const onVisibility = () => {
+      if (document.visibilityState !== "hidden") onShow();
+      else if (closing === 1) onHide();
+      else if (!closing) session.hide(false);
+    };
     const onOnline = () => session.retryNow();
     window.addEventListener("pagehide", onHide);
+    window.addEventListener("pageshow", onShow);
     window.addEventListener("beforeunload", onLeave);
     document.addEventListener("visibilitychange", onVisibility);
     window.addEventListener("online", onOnline);
     window.addEventListener("focus", onOnline);
     return () => {
+      unclaim();
       window.removeEventListener("pagehide", onHide);
+      window.removeEventListener("pageshow", onShow);
       window.removeEventListener("beforeunload", onLeave);
       document.removeEventListener("visibilitychange", onVisibility);
       window.removeEventListener("online", onOnline);
@@ -104,7 +137,7 @@ export function usePageCollab(opts) {
 
   return {
     commit: session.commit, flush: session.flush, hasPending: session.hasPending, peers, me,
-    sendCursor: session.sendCursor, overlay: session.overlay, reloadFailed: session.reloadFailed,
+    sendCursor: session.sendCursor, sendInkLive: session.sendInkLive, overlay: session.overlay, reloadFailed: session.reloadFailed,
     tooLong: session.tooLong, gone: session.gone,
     reconnect: () => { if (enabled && pageId) session.connect(pageId); },
   };

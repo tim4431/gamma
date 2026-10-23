@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { appendInkSample, predictedInkSamples } from "../src/ink/inkInput.js";
+import { appendInkSample, penTilt, penTwist, predictedInkSamples } from "../src/ink/inkInput.js";
 
 const drawing = (k = 1) => ({ samples: [], pen: true, pressure: true, startTime: 100, k,
   use: { tool: "pen" }, toPt: (e) => ({ x: e.clientX / k, y: e.clientY / k }) });
@@ -39,4 +39,43 @@ test("prediction is bounded in time and screen distance and never changes stored
     d.use.tool = "highlighter";
     assert.deepEqual(predictedInkSamples(d, move), []);
   }
+});
+
+// docs/dev/handwriting.md "Width": tilt is captured for pen pointers only,
+// as integer degrees, and only when the pen reports one.
+test("a pen's tilt is read as integer degrees from altitude / azimuth, else from tiltX / tiltY; upright or a mouse has none", () => {
+  const rad = (deg) => deg * Math.PI / 180;
+  assert.deepEqual(penTilt({ altitudeAngle: rad(40.4), azimuthAngle: rad(215.6) }), { a: 40, z: 216 });
+  assert.deepEqual(penTilt({ altitudeAngle: rad(10), azimuthAngle: rad(359.8) }), { a: 10, z: 0 }, "the azimuth wraps at 360");
+  assert.equal(penTilt({ altitudeAngle: Math.PI / 2, azimuthAngle: 0 }), null, "upright: no tilt to report");
+  assert.equal(penTilt({ altitudeAngle: rad(89.6), azimuthAngle: 1 }), null, "an altitude that rounds to 90 is upright");
+  // tiltX / tiltY, as the Pointer Events spec converts them
+  assert.deepEqual(penTilt({ tiltX: 30, tiltY: 0 }), { a: 60, z: 0 });
+  assert.deepEqual(penTilt({ tiltX: 0, tiltY: -45 }), { a: 45, z: 270 });
+  assert.deepEqual(penTilt({ tiltX: -30, tiltY: 30 }), { a: 51, z: 135 });
+  assert.deepEqual(penTilt({ tiltX: 90, tiltY: 0 }), { a: 0, z: 0 }, "flat on the page");
+  assert.equal(penTilt({ tiltX: 0, tiltY: 0 }), null);
+  assert.equal(penTilt({}), null);
+  // a sample: a pen's carries a and z, the lift keeps the last contact's; a mouse's never does
+  const d = drawing();
+  const tilted = (x, timeStamp, deg) => ({ ...event(x, timeStamp), altitudeAngle: rad(deg), azimuthAngle: rad(90) });
+  appendInkSample(d, tilted(10, 100, 50));
+  appendInkSample(d, { ...event(20, 104), altitudeAngle: Math.PI / 2, azimuthAngle: 0 });
+  appendInkSample(d, tilted(30, 108, 35));
+  appendInkSample(d, { ...tilted(40, 112, 80), pressure: 0 }, true);
+  assert.deepEqual(d.samples.map(({ a, z }) => [a, z]), [[50, 90], [undefined, undefined], [35, 90], [35, 90]]);
+  const mouse = Object.assign(drawing(), { pen: false });
+  appendInkSample(mouse, tilted(10, 100, 50));
+  assert.equal("a" in mouse.samples[0], false);
+});
+
+test("penTwist: a pen's barrel roll as integer degrees 0..359, clockwise; null for a mouse, a finger or no twist", () => {
+  assert.equal(penTwist({ pointerType: "pen", twist: 30.4 }), 30);
+  assert.equal(penTwist({ pointerType: "pen", twist: 0 }), 0, "a pen without the sensor reports 0: no turn");
+  assert.equal(penTwist({ pointerType: "pen", twist: 359.6 }), 0);
+  assert.equal(penTwist({ pointerType: "pen", twist: -90 }), 270);
+  assert.equal(penTwist({ pointerType: "mouse", twist: 45 }), null);
+  assert.equal(penTwist({ pointerType: "touch", twist: 45 }), null);
+  assert.equal(penTwist({ pointerType: "pen" }), null);
+  assert.equal(penTwist({ twist: 12 }), 12, "the iPad host's event (hostInk.js hostEvent) carries no pointerType");
 });

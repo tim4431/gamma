@@ -66,7 +66,7 @@ export async function authScenarios({ server, browser, alice, step, until, asser
       const other = await (await fetch(`${server.base}/api/login-guest`, { method: "POST" })).json();
       assert(/^guest-/.test(other.username) && other.username !== session.user, "every guest login mints a fresh account");
       // Logging out deletes a guest: the menu says so first.
-      await page.getByRole("button", { name: "Log out", exact: true }).click();
+      await page.getByRole("menuitem", { name: "Log out", exact: true }).click();
       const confirm = page.locator(".confirmModal", { hasText: "Log out and delete this workspace?" });
       await confirm.waitFor();
       await confirm.getByRole("button", { name: "Log out and delete", exact: true }).click();

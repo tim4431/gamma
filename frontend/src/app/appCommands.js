@@ -12,7 +12,11 @@
 // palette(prefix), back(), undo(redo), renameTitle(), deletePages(), recentlyDeleted(), toggleChat(),
 // toggleComments(), togglePdf(), toggleNotes(), openSettings(pane), exportAs(format),
 // downloadPdf(), importDialog(), newPage(), share(), metadata(), attach(),
-// reportProblem() }.
+// reportProblem(), and for the handwriting group (docs/dev/handwriting.md
+// "Copy, cut and paste"): inkOpen (the markup strip is open), inkTool (a
+// tool other than the hand is armed), inkSelected (the lasso holds
+// strokes), inkClip (the handwriting clipboard holds strokes), inkCopy(),
+// inkCut(), inkPaste(), inkDuplicate(), inkSelectAll() }.
 import { t } from "../shared/i18n/i18n.js";
 import { isTextField } from "../shared/lib/hotkeys.js";
 
@@ -20,6 +24,7 @@ export const GROUP_NAVIGATION = t("Navigation");
 export const GROUP_PAGE = t("Page");
 export const GROUP_VIEW = t("View");
 export const GROUP_LIBRARY = t("Library");
+export const GROUP_HANDWRITING = t("Handwriting");
 
 const cmd = (id, label, group, keys, run, extra = {}) => ({ id, label, group, keys, run, ...extra });
 
@@ -114,4 +119,33 @@ export const APP_COMMANDS = [
   cmd("app.exportObsidian", t("Export the library as an Obsidian vault"), GROUP_LIBRARY, null, (c) => { c.exportAs("obsidian"); }, { when: (c) => !c.shareMode }),
   cmd("app.exportGamma", t("Export the library as a Gamma backup"), GROUP_LIBRARY, null, (c) => { c.exportAs("gamma"); }, { when: (c) => !c.shareMode }),
   cmd("app.reportProblem", t("Report a problem…"), GROUP_LIBRARY, null, (c) => { c.reportProblem(); }, { when: (c) => !c.shareMode }),
+
+  // Handwriting on the markup strip (docs/dev/handwriting.md "Copy, cut and
+  // paste"): the keys every editor gives copy, cut, paste, duplicate and
+  // select all, kept to the strip's selection and clipboard by their
+  // `when`. A key that arrived in a text field is declined, so Ctrl+C in a
+  // caption stays the browser's; the strip's More menu and the selection
+  // menu run the same commands.
+  cmd("ink.copy", t("Copy handwriting"), GROUP_HANDWRITING, "Mod-c", inkRun((c) => c.inkCopy()), { edits: true, when: (c) => !!c.inkSelected }),
+  cmd("ink.cut", t("Cut handwriting"), GROUP_HANDWRITING, "Mod-x", inkRun((c) => c.inkCut()), { edits: true, when: (c) => !!c.inkSelected }),
+  cmd("ink.paste", t("Paste handwriting"), GROUP_HANDWRITING, "Mod-v", inkRun((c) => c.inkPaste()),
+    { edits: true, when: (c) => !!c.inkOpen && !!c.inkTool && !!c.inkClip && textCollapsed() }),
+  cmd("ink.duplicate", t("Duplicate handwriting"), GROUP_HANDWRITING, "Mod-d", inkRun((c) => c.inkDuplicate()), { edits: true, when: (c) => !!c.inkSelected }),
+  cmd("ink.selectAll", t("Select all handwriting on this page"), GROUP_HANDWRITING, "Mod-a", inkRun((c) => c.inkSelectAll()),
+    { edits: true, when: (c) => !!c.inkOpen && !!c.inkTool }),
 ];
+
+// A handwriting command's run: declined for a key pressed in a text field
+// (the field keeps its own copy and paste); from the palette or a menu
+// there is no event.
+function inkRun(fn) {
+  return (c, e) => {
+    if (e && isTextField(e.target)) return false;
+    return fn(c);
+  };
+}
+// No text is selected on the page (a paste then belongs to the handwriting,
+// not to a selection the browser would replace). True outside a browser.
+function textCollapsed() {
+  return typeof window === "undefined" || window.getSelection?.()?.isCollapsed !== false;
+}

@@ -1,0 +1,75 @@
+{
+ "about": "The one-time upgrade of gamma-ink version 1 files to version 2 (docs/dev/handwriting.md 'Upgrading version 1'): gamma/ink.py upgrade_v1 + dumps and frontend/src/ink/ink.js upgradeV1 + serializeInk must turn the bytes in `v1` into exactly the bytes in `v2`, and leave `v2` byte-identical when run on it again. The law: version 2; for every stroke whose tool is pen (or absent), pen is not false, brush is absent and ch has p but no w, a w channel is appended to ch and each sample gains w = 500 + clamp(p, 0, 1000) (the multiplier 1 + (p/1000 - 0.5) times 1000), written absolute on the first sample and as a delta after it; every other stroke and every other key is kept; the output is canonical: keys sorted at every level, no whitespace, null-valued keys dropped, whole-number floats written as integers, non-ASCII text as UTF-8 (never \\\\u-escaped). Each case is `{note, v1, v2}` with both files as JSON text.",
+ "cases": [
+  {
+   "note": "pressure pen with p: w appended, 500 + p, deltas after the first sample",
+   "v1": "{\"format\": \"gamma-ink\", \"version\": 1, \"space\": {\"kind\": \"pdf-page\", \"page\": 1, \"width\": 612, \"height\": 792}, \"strokes\": [{\"id\": \"a\", \"tool\": \"pen\", \"color\": \"#1f1f1f\", \"size\": 1.6, \"opacity\": 1, \"pen\": true, \"ch\": \"xyp\", \"pts\": [12040, 30512, 620, 18, -3, 700, 22, 1, 450]}]}",
+   "v2": "{\"format\":\"gamma-ink\",\"space\":{\"height\":792,\"kind\":\"pdf-page\",\"page\":1,\"width\":612},\"strokes\":[{\"ch\":\"xypw\",\"color\":\"#1f1f1f\",\"id\":\"a\",\"opacity\":1,\"pen\":true,\"pts\":[12040,30512,620,1120,18,-3,700,80,22,1,450,-250],\"size\":1.6,\"tool\":\"pen\"}],\"version\":2}"
+  },
+  {
+   "note": "pen without p: unchanged but the version",
+   "v1": "{\"format\": \"gamma-ink\", \"version\": 1, \"space\": {\"kind\": \"pdf-page\", \"page\": 1, \"width\": 612, \"height\": 792}, \"strokes\": [{\"id\": \"b\", \"tool\": \"pen\", \"color\": \"#1f1f1f\", \"size\": 1.6, \"opacity\": 1, \"pen\": true, \"ch\": \"xy\", \"pts\": [10000, 20000, 15, 2, 14, 3]}]}",
+   "v2": "{\"format\":\"gamma-ink\",\"space\":{\"height\":792,\"kind\":\"pdf-page\",\"page\":1,\"width\":612},\"strokes\":[{\"ch\":\"xy\",\"color\":\"#1f1f1f\",\"id\":\"b\",\"opacity\":1,\"pen\":true,\"pts\":[10000,20000,15,2,14,3],\"size\":1.6,\"tool\":\"pen\"}],\"version\":2}"
+  },
+  {
+   "note": "monoline keeps p and gets no w",
+   "v1": "{\"format\": \"gamma-ink\", \"version\": 1, \"space\": {\"kind\": \"pdf-page\", \"page\": 1, \"width\": 612, \"height\": 792}, \"strokes\": [{\"id\": \"c\", \"tool\": \"pen\", \"color\": \"#1f1f1f\", \"size\": 1.6, \"opacity\": 1, \"pen\": true, \"ch\": \"xyp\", \"pts\": [10000, 20000, 300, 15, 2, 900], \"brush\": \"monoline\"}]}",
+   "v2": "{\"format\":\"gamma-ink\",\"space\":{\"height\":792,\"kind\":\"pdf-page\",\"page\":1,\"width\":612},\"strokes\":[{\"brush\":\"monoline\",\"ch\":\"xyp\",\"color\":\"#1f1f1f\",\"id\":\"c\",\"opacity\":1,\"pen\":true,\"pts\":[10000,20000,300,15,2,900],\"size\":1.6,\"tool\":\"pen\"}],\"version\":2}"
+  },
+  {
+   "note": "highlighter keeps p and gets no w",
+   "v1": "{\"format\": \"gamma-ink\", \"version\": 1, \"space\": {\"kind\": \"pdf-page\", \"page\": 1, \"width\": 612, \"height\": 792}, \"strokes\": [{\"id\": \"d\", \"tool\": \"highlighter\", \"color\": \"#ffe066\", \"size\": 14, \"opacity\": 0.6, \"pen\": true, \"ch\": \"xyp\", \"pts\": [5000, 5000, 1000, 2000, 0, 1000]}]}",
+   "v2": "{\"format\":\"gamma-ink\",\"space\":{\"height\":792,\"kind\":\"pdf-page\",\"page\":1,\"width\":612},\"strokes\":[{\"ch\":\"xyp\",\"color\":\"#ffe066\",\"id\":\"d\",\"opacity\":0.6,\"pen\":true,\"pts\":[5000,5000,1000,2000,0,1000],\"size\":14,\"tool\":\"highlighter\"}],\"version\":2}"
+  },
+  {
+   "note": "mouse or finger (pen false) keeps p and gets no w",
+   "v1": "{\"format\": \"gamma-ink\", \"version\": 1, \"space\": {\"kind\": \"pdf-page\", \"page\": 1, \"width\": 612, \"height\": 792}, \"strokes\": [{\"id\": \"e\", \"tool\": \"pen\", \"color\": \"#1f1f1f\", \"size\": 1.6, \"opacity\": 1, \"pen\": false, \"ch\": \"xyp\", \"pts\": [10000, 20000, 500, 15, 2, 500]}]}",
+   "v2": "{\"format\":\"gamma-ink\",\"space\":{\"height\":792,\"kind\":\"pdf-page\",\"page\":1,\"width\":612},\"strokes\":[{\"ch\":\"xyp\",\"color\":\"#1f1f1f\",\"id\":\"e\",\"opacity\":1,\"pen\":false,\"pts\":[10000,20000,500,15,2,500],\"size\":1.6,\"tool\":\"pen\"}],\"version\":2}"
+  },
+  {
+   "note": "mixed file: defaults omitted count as pen true, p is clamped to 0..1000 before baking, others untouched",
+   "v1": "{\"format\": \"gamma-ink\", \"version\": 1, \"space\": {\"kind\": \"pdf-page\", \"page\": 1, \"width\": 612, \"height\": 792}, \"strokes\": [{\"id\": \"f1\", \"ch\": \"xyp\", \"pts\": [100, 200, 1100, 10, 10, -50, 10, 10, 250]}, {\"id\": \"f2\", \"pts\": [300, 400, 5, 5]}, {\"id\": \"f3\", \"tool\": \"highlighter\", \"color\": \"#ffe066\", \"size\": 14, \"opacity\": 0.6, \"pen\": true, \"ch\": \"xyp\", \"pts\": [5000, 5000, 1000, 2000, 0, 1000]}, {\"id\": \"f4\", \"tool\": \"pen\", \"color\": \"#dc2626\", \"size\": 3, \"opacity\": 1, \"pen\": true, \"ch\": \"xyp\", \"pts\": [900, 900, 400, 10, 0, 600], \"brush\": \"monoline\"}, {\"id\": \"f5\", \"tool\": \"pen\", \"color\": \"#1f1f1f\", \"size\": 1.6, \"opacity\": 1, \"pen\": false, \"ch\": \"xyp\", \"pts\": [900, 900, 400, 10, 0, 600]}, {\"id\": \"f6\", \"tool\": \"pen\", \"color\": \"#2563eb\", \"size\": 2.4, \"opacity\": 1, \"pen\": true, \"ch\": \"xyp\", \"pts\": [900, 900, 400, 10, 0, 600]}]}",
+   "v2": "{\"format\":\"gamma-ink\",\"space\":{\"height\":792,\"kind\":\"pdf-page\",\"page\":1,\"width\":612},\"strokes\":[{\"ch\":\"xypw\",\"id\":\"f1\",\"pts\":[100,200,1100,1500,10,10,-50,-1000,10,10,250,250]},{\"id\":\"f2\",\"pts\":[300,400,5,5]},{\"ch\":\"xyp\",\"color\":\"#ffe066\",\"id\":\"f3\",\"opacity\":0.6,\"pen\":true,\"pts\":[5000,5000,1000,2000,0,1000],\"size\":14,\"tool\":\"highlighter\"},{\"brush\":\"monoline\",\"ch\":\"xyp\",\"color\":\"#dc2626\",\"id\":\"f4\",\"opacity\":1,\"pen\":true,\"pts\":[900,900,400,10,0,600],\"size\":3,\"tool\":\"pen\"},{\"ch\":\"xyp\",\"color\":\"#1f1f1f\",\"id\":\"f5\",\"opacity\":1,\"pen\":false,\"pts\":[900,900,400,10,0,600],\"size\":1.6,\"tool\":\"pen\"},{\"ch\":\"xypw\",\"color\":\"#2563eb\",\"id\":\"f6\",\"opacity\":1,\"pen\":true,\"pts\":[900,900,400,900,10,0,600,200],\"size\":2.4,\"tool\":\"pen\"}],\"version\":2}"
+  },
+  {
+   "note": "timed pen (t0, t): w goes after t",
+   "v1": "{\"format\": \"gamma-ink\", \"version\": 1, \"space\": {\"kind\": \"pdf-page\", \"page\": 1, \"width\": 612, \"height\": 792}, \"strokes\": [{\"id\": \"g\", \"tool\": \"pen\", \"color\": \"#1f1f1f\", \"size\": 1.6, \"opacity\": 1, \"pen\": true, \"ch\": \"xypt\", \"pts\": [12040, 30512, 620, 0, 18, -3, 700, 8, 22, 1, 450, 9], \"t0\": 1757760000000}]}",
+   "v2": "{\"format\":\"gamma-ink\",\"space\":{\"height\":792,\"kind\":\"pdf-page\",\"page\":1,\"width\":612},\"strokes\":[{\"ch\":\"xyptw\",\"color\":\"#1f1f1f\",\"id\":\"g\",\"opacity\":1,\"pen\":true,\"pts\":[12040,30512,620,0,1120,18,-3,700,8,80,22,1,450,9,-250],\"size\":1.6,\"t0\":1757760000000,\"tool\":\"pen\"}],\"version\":2}"
+  },
+  {
+   "note": "tilt (a, z) pen: w goes last",
+   "v1": "{\"format\": \"gamma-ink\", \"version\": 1, \"space\": {\"kind\": \"pdf-page\", \"page\": 1, \"width\": 612, \"height\": 792}, \"strokes\": [{\"id\": \"h\", \"tool\": \"pen\", \"color\": \"#1f1f1f\", \"size\": 1.6, \"opacity\": 1, \"pen\": true, \"ch\": \"xyptaz\", \"pts\": [2000, 1000, 300, 0, 40, 70, 10, 0, 800, 25, 45, 80], \"t0\": 100}]}",
+   "v2": "{\"format\":\"gamma-ink\",\"space\":{\"height\":792,\"kind\":\"pdf-page\",\"page\":1,\"width\":612},\"strokes\":[{\"ch\":\"xyptazw\",\"color\":\"#1f1f1f\",\"id\":\"h\",\"opacity\":1,\"pen\":true,\"pts\":[2000,1000,300,0,40,70,800,10,0,800,25,45,80,500],\"size\":1.6,\"t0\":100,\"tool\":\"pen\"}],\"version\":2}"
+  },
+  {
+   "note": "a file without a version, whole floats, a null key, unsorted keys and whitespace is canonicalised",
+   "v1": "{\n \"strokes\": [\n  {\"pts\": [100, 200, 500, 10, 10, 500], \"ch\": \"xyp\", \"t0\": null, \"pen\": true, \"id\": \"i\", \"size\": 2.0, \"opacity\": 1.0, \"color\": \"#1f1f1f\", \"tool\": \"pen\"}\n ],\n \"space\": {\"height\": 792.0, \"width\": 612.0, \"page\": 1, \"kind\": \"pdf-page\"},\n \"format\": \"gamma-ink\"\n}",
+   "v2": "{\"format\":\"gamma-ink\",\"space\":{\"height\":792,\"kind\":\"pdf-page\",\"page\":1,\"width\":612},\"strokes\":[{\"ch\":\"xypw\",\"color\":\"#1f1f1f\",\"id\":\"i\",\"opacity\":1,\"pen\":true,\"pts\":[100,200,500,1000,10,10,500,0],\"size\":2,\"tool\":\"pen\"}],\"version\":2}"
+  },
+  {
+   "note": "a sheet's canvas space is kept as it is",
+   "v1": "{\"format\": \"gamma-ink\", \"version\": 1, \"space\": {\"kind\": \"canvas\", \"width\": 595.28, \"height\": 841.89}, \"strokes\": [{\"id\": \"j\", \"tool\": \"pen\", \"color\": \"#1f1f1f\", \"size\": 1.6, \"opacity\": 1, \"pen\": true, \"ch\": \"xyp\", \"pts\": [1000, 1000, 500, 100, 0, 750]}]}",
+   "v2": "{\"format\":\"gamma-ink\",\"space\":{\"height\":841.89,\"kind\":\"canvas\",\"width\":595.28},\"strokes\":[{\"ch\":\"xypw\",\"color\":\"#1f1f1f\",\"id\":\"j\",\"opacity\":1,\"pen\":true,\"pts\":[1000,1000,500,1000,100,0,750,250],\"size\":1.6,\"tool\":\"pen\"}],\"version\":2}"
+  },
+  {
+   "note": "w is appended to the channel list in whatever order it had",
+   "v1": "{\"format\": \"gamma-ink\", \"version\": 1, \"space\": {\"kind\": \"pdf-page\", \"page\": 1, \"width\": 612, \"height\": 792}, \"strokes\": [{\"id\": \"k\", \"tool\": \"pen\", \"color\": \"#1f1f1f\", \"size\": 1.6, \"opacity\": 1, \"pen\": true, \"ch\": \"xytp\", \"pts\": [1000, 1000, 0, 100, 10, 0, 16, 1000], \"t0\": 5}]}",
+   "v2": "{\"format\":\"gamma-ink\",\"space\":{\"height\":792,\"kind\":\"pdf-page\",\"page\":1,\"width\":612},\"strokes\":[{\"ch\":\"xytpw\",\"color\":\"#1f1f1f\",\"id\":\"k\",\"opacity\":1,\"pen\":true,\"pts\":[1000,1000,0,100,600,10,0,16,1000,900],\"size\":1.6,\"t0\":5,\"tool\":\"pen\"}],\"version\":2}"
+  },
+  {
+   "note": "a one-sample dot gets one absolute w",
+   "v1": "{\"format\": \"gamma-ink\", \"version\": 1, \"space\": {\"kind\": \"pdf-page\", \"page\": 1, \"width\": 612, \"height\": 792}, \"strokes\": [{\"id\": \"l\", \"tool\": \"pen\", \"color\": \"#1f1f1f\", \"size\": 1.6, \"opacity\": 1, \"pen\": true, \"ch\": \"xyp\", \"pts\": [4242, 4242, 0]}]}",
+   "v2": "{\"format\":\"gamma-ink\",\"space\":{\"height\":792,\"kind\":\"pdf-page\",\"page\":1,\"width\":612},\"strokes\":[{\"ch\":\"xypw\",\"color\":\"#1f1f1f\",\"id\":\"l\",\"opacity\":1,\"pen\":true,\"pts\":[4242,4242,0,500],\"size\":1.6,\"tool\":\"pen\"}],\"version\":2}"
+  },
+  {
+   "note": "an empty file changes only its version",
+   "v1": "{\"format\": \"gamma-ink\", \"version\": 1, \"space\": {\"kind\": \"pdf-page\", \"page\": 1, \"width\": 612, \"height\": 792}, \"strokes\": []}",
+   "v2": "{\"format\":\"gamma-ink\",\"space\":{\"height\":792,\"kind\":\"pdf-page\",\"page\":1,\"width\":612},\"strokes\":[],\"version\":2}"
+  },
+  {
+   "note": "non-ASCII text in an extra key is written as UTF-8, never escaped, on both sides",
+   "v1": "{\"format\": \"gamma-ink\", \"version\": 1, \"space\": {\"kind\": \"pdf-page\", \"page\": 2, \"width\": 612, \"height\": 792}, \"strokes\": [{\"id\": \"a\", \"tool\": \"pen\", \"color\": \"#1f1f1f\", \"size\": 1.6, \"opacity\": 1, \"pen\": true, \"ch\": \"xyp\", \"pts\": [12040, 30512, 620], \"note\": \"café — ✓ 字\"}, {\"id\": \"b\", \"tool\": \"highlighter\", \"color\": \"#ffe066\", \"size\": 12, \"opacity\": 0.5, \"ch\": \"xy\", \"pts\": [100, 100, 1000, 0], \"label\": {\"text\": \"naïve\"}}]}",
+   "v2": "{\"format\":\"gamma-ink\",\"space\":{\"height\":792,\"kind\":\"pdf-page\",\"page\":2,\"width\":612},\"strokes\":[{\"ch\":\"xypw\",\"color\":\"#1f1f1f\",\"id\":\"a\",\"note\":\"café — ✓ 字\",\"opacity\":1,\"pen\":true,\"pts\":[12040,30512,620,1120],\"size\":1.6,\"tool\":\"pen\"},{\"ch\":\"xy\",\"color\":\"#ffe066\",\"id\":\"b\",\"label\":{\"text\":\"naïve\"},\"opacity\":0.5,\"pts\":[100,100,1000,0],\"size\":12,\"tool\":\"highlighter\"}],\"version\":2}"
+  }
+ ]
+}

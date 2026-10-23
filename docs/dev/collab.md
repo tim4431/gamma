@@ -392,7 +392,10 @@ whose send fails leaves at once and the room announces its `leave` then
 stays with the others.
 Messages:
 
-- server → client: `hello {client, color, seq, peers}` on join; `join {peer}`
+- server → client: `hello {client, color, seq, peers, build}` on join (`build`
+  as `/api/session` reports it: the client's handwriting fence compares it
+  with the build the tab loaded under, [handwriting.md](handwriting.md)
+  "Fences"); `join {peer}`
   / `leave {client}`; `cursor {client, block, anchor, head}`; `ops {seq, at,
   actor, client, ops, cursor?}` for every applied batch (the sender's own
   included, it filters by client id; `cursor` is the writer's caret in the
@@ -400,21 +403,70 @@ Messages:
   it as the writer's presence); `reload {seq}` (refetch the tree — a
   change ops cannot express, a restore, the page back from Recently
   deleted); `trashed` (the page went to Recently deleted: keep the unsent
-  edits, show it, wait for a `reload`); `comments {block_id, thread_id}`
-  (a comment on the page was written, resolved or deleted: refetch the
-  page's threads; sent to every peer but the writer's tab, through
-  `publish`'s `exclude`, [comments.md](comments.md) "The API"). A comment
-  is no block: it has no op, no seq and no row in the op log, so a client
-  that reconnects refetches the threads on its `hello` instead of catching
-  up. `inbox` (no fields): something new is in the account's Inbox; sent
-  to every page socket of the recipient's account, whatever room it is in
-  (`collab.publish_account`, below), and the tab refetches its Inbox count.
-  A client ignores a message type it does not know.
-- client → server: `cursor {block, anchor, head}` only (`anchor`/`head` = -1
-  when no editor is open on that block). **Writes never travel over the
-  socket**: they are `POST /api/pages/{id}/ops`, so auth and scoping live in
-  one place. A dropped socket does not stop HTTP saves; a closing tab attempts
-  to flush queued edits with a keepalive fetch.
+  edits, show it, wait for a `reload`); `ink-live {client, …}`, a peer's
+  handwriting stroke in progress, relayed as it came (below); `comments
+  {block_id, thread_id}` (a comment on the page was written, resolved or
+  deleted: refetch the page's threads; sent to every peer but the writer's
+  tab, through `publish`'s `exclude`, [comments.md](comments.md) "The API").
+  A comment is no block: it has no op, no seq and no row in the op log, so a
+  client that reconnects refetches the threads on its `hello` instead of
+  catching up. `inbox` (no fields): something new is in the account's Inbox;
+  sent to every page socket of the recipient's account, whatever room it is
+  in (`collab.publish_account`, below), and the tab refetches its Inbox
+  count. A client ignores a message type it does not know.
+- client → server: `cursor {block, anchor, head}` (`anchor`/`head` = -1
+  when no editor is open on that block) and `ink-live`. **Writes never
+  travel over the socket**: they are `POST /api/pages/{id}/ops`, so auth
+  and scoping live in one place. A dropped socket does not stop HTTP
+  saves. A tab that closes sends its unsaved edits at once with
+  keepalive, the first of the page's keepalive requests. One going to the
+  background sends its next batch with keepalive, and the rest in order
+  ("Keepalive" below).
+
+**`ink-live`** is the stroke under someone's pen, shown to the others
+before its file lands ([handwriting.md](handwriting.md) "Live
+co-drawing"). It is presence, not a write: the server relays it to the
+room's other peers and never stores, logs or replays it, so a later
+joiner sees nothing until the committed drawing arrives. The client
+sends, at most every 50 ms while a stroke is in progress:
+
+```json
+{"t": "ink-live", "page": 3, "id": "k7Qm2x",
+ "style": {"tool": "pen", "brush": "brush", "size": 2, "color": "#1f1f1f", "opacity": 1, "pen": true, "dash": "dashed"},
+ "n": 24, "samples": [[120.4, 305.12, 0.62, 410, 71, 203]], "done": true}
+```
+
+- `page`: the surface, the PDF page number or a sheet's block id.
+- `id`: the stroke id the committed stroke will carry.
+- `style`: the preset's look as the stroke will be encoded. `brush` and
+  `dash` come only when set, and a calligraphy pen's `nib` (its angle,
+  0..179).
+- `n`: the index of this chunk's first sample in the stroke.
+- `samples`: the samples since the last chunk as `[x, y, p, t, a, z]`:
+  page points to two decimals, pressure 0..1 or null, ms since the
+  stroke's first sample, and altitude and azimuth in integer degrees or
+  null.
+- `done: true` marks the last chunk (the lift; its `samples` may be
+  empty).
+- `drop: true` takes the stroke away (no `samples`). It is sent for a
+  stroke cancelled before it was committed, or committed and then
+  undone, erased or cut before a saved file held it: no file will ever
+  replace it.
+
+A receiver ignores any other key, such as the `g` and `k` an older build
+sends.
+
+The server (`routers/collab.py`, `collab.ink_live`) relays the message to
+the room's other peers with `client` set to the sender's. It relays only
+when the sender `can_edit`, `id` is a string, `samples` holds at most 64
+entries and the relayed message is at most 16 KB. Anything else is
+dropped silently, and nothing goes into the op log
+(`backend/tests/test_collab.py`). Peers draw it on a canvas of its own
+through the client's own brush table and bake its width as the samples
+come. The committed stroke of the same `id` replaces it when a loaded
+file holds it. A wet stroke whose file never lands goes 60 s after its
+last chunk, and a peer leaving the page (a `leave`, or this socket
+closing) takes all of theirs.
 
 **One account's sockets.** `collab.publish_account(user_id, message)`
 sends to every page socket whose peer is that account (`peer.account`, a
@@ -444,9 +496,11 @@ machine over injected dependencies — the JSON call, the socket factory, the
 keepalive POST, timers, and callbacks for peers/me — so the node tests drive
 it with fakes. `usePageCollab` (`collaboration/usePageCollab.js`, one per open page in App.jsx)
 only wires it to the browser: `utils.apiJson`, `new WebSocket(...)` on the
-share- or workspace-qualified URL, the pagehide keepalive, a `beforeunload`
-prompt while `hasPending()`, a flush when the tab goes to the background
-(`visibilitychange` to hidden — a phone may kill it without a pagehide), an
+share- or workspace-qualified URL, `hide()` on `pagehide` and
+`hide(false)` on going hidden (a phone may kill a hidden tab without a
+pagehide) with its claim on the page's keepalive room ("Keepalive" below),
+a `beforeunload`
+prompt while `hasPending()`, an
 immediate retry on the browser's `online` and on the window regaining
 focus, and `peers` / `me` as React state. The session owns:
 
@@ -489,9 +543,10 @@ focus, and `peers` / `me` as React state. The session owns:
   `set` ops on one block coalesce (`pushOp`); typing flushes
   after 350 ms, a structural op after 80 ms, an editor closing at once
   (`saveNowRef`), `flush()` before navigation. A batch (`out`) is at most
-  `MAX_OPS` ops of the queue, in order (a paste of 600 blocks is two). It
-  keeps its id (`batch`) until the server answers it, on every retry and in
-  the pagehide keepalive, so a retry of a batch that did land is answered,
+  `MAX_OPS` ops of the queue, in order (a paste of 600 blocks is two), or
+  the next batch `hide()` named, under that name. A batch keeps its id
+  (`batch`) until the server answers it, on every retry and in `hide()`'s
+  keepalive sends, so a retry of a batch that did land is answered,
   not applied again. The POST response is the ack: re-keyed positions are
   adopted from it, and an insert the server already had converges on the
   block as the server has it. A refused batch is handled by why:
@@ -704,7 +759,14 @@ focus, and `peers` / `me` as React state. The session owns:
   After the ack a held-back caret move goes out standalone; a `hello`
   (reconnect) resends the current caret, since the server starts a joiner
   with none. A socket the server closed with 4403 (access revoked) is not
-  reopened.
+  reopened. `sendInkLive(msg)` writes an `ink-live` chunk on the open
+  socket and drops it when the socket is down (never queued or retried:
+  the committed stroke follows by HTTP). An incoming `ink-live` reaches
+  App through the session's `onInkLive(msg)` ([handwriting.md](handwriting.md)
+  "Live co-drawing"), which hands it to the wet strokes' store
+  (`ink/inkLive.js`). `ink/useInkLive.js` keeps only the wet strokes of
+  the clients in `peers`, so a `leave` (or the socket closing, which
+  empties `peers`) takes a peer's wet strokes with their cursor.
 
 `diffTrees(base, next, pageId, pos)` emits inserts (unknown ids), moves (a
 known id under another parent, or out of order — the longest increasing run
@@ -738,6 +800,140 @@ not undoable. Remote changes are rebased as described above.
 
 Ops on the page root (a rename, page properties) update the title / page
 state in App instead of the tree.
+
+### Keepalive
+
+A closing tab's last requests go with `fetch` `keepalive`, which outlives
+the page. Browsers carry at most 64 KiB of keepalive request bodies in
+flight per page, `sendBeacon`'s included in Chromium and WebKit (the app
+sends none), and refuse a keepalive fetch past that (a network error:
+nothing is sent).
+So every keepalive request of the page goes through one
+ledger, `shared/lib/keepalive.js`. It counts each request's body bytes
+from the moment it starts until its answer's body is in or it fails, and
+gives a request the room of its priority:
+
+- `critical`, no other copy: the unsaved page edits the session's `hide()`
+  sends. The cap (`KEEPALIVE_CAP`) less what is in flight.
+- `normal`, small and recoverable: the profile's `PATCH` (`app/prefs.js`),
+  the reading position's `PUT` (App's `flushReadPos`), the discard of an
+  unfinished upload in parts (`uploadParts.js`, no body), an Inbox mark
+  (`inbox/useInbox.js`). That less what the critical senders claim.
+- `low`, kept by a journal: handwriting (`ink/inkSaver.js` `flushInk`,
+  [handwriting.md](handwriting.md) "Fences"). That less `NORMAL_RESERVE`
+  (8 KiB), kept for the normal senders.
+
+A sender with no other copy claims what it will send at a close
+(`registerKeepaliveClaim(key, fn)`, `fn() → bytes`). A claim is read only
+when a `normal` or `low` request asks for room, never on an edit, and at
+most once a task. The ledger keeps each claim's bytes until a microtask
+(a flush asks before every request it sends), and reads them afresh at
+once after a claim is registered or dropped or a `critical` request goes.
+`usePageCollab` claims `page-edits`. The session's
+`pendingKeepaliveBodies()` is what `hide()` sends at a close, read
+without sending it: per page with unsaved edits (not one in Recently
+deleted), the batch out under its own id, then the queue in batches of
+`MAX_OPS` under the ids they take. The claim is the bytes of those bodies
+that go with keepalive from an empty page (`keepaliveShare`: a batch over
+the cap goes plain and claims nothing). Once `pagehide` has sent them the
+claim is 0, until the next task or until the page shows again.
+
+**When they send.** A tab closed while it shows fires `pagehide` first and
+`visibilitychange` (hidden) after it, in one task. So did every close
+measured that ran the page's listeners, in headless Chromium, WebKit and
+Firefox ([research/keepalive-abort.md](../research/keepalive-abort.md)).
+Firefox can stop a `pagehide` listener before it sends. It stops the first
+one of a tab that is the last page of its content process, and in some
+closes the second. So each sender sends from both events, and marks its
+data sent only once the request has gone. Whichever event runs, the data
+leaves with keepalive, but for the edits' batches behind the next one
+(below). What a stopped listener left unsent goes from the other:
+
+- The edits: `usePageCollab` calls `hide()` on `pagehide`. Going hidden
+  in the same task sends nothing more after a `hide()` that ran, and all
+  again after one stopped part way. The server answers a batch id it has
+  without applying it twice. With no `pagehide` before it, going hidden
+  sends the next batch only (`hide(false)`, below).
+- The profile and the reading position: each sends its armed push on both
+  and drops the timer after the request. A second `PATCH` or `PUT` sets
+  the same values.
+- Handwriting: `pagehide` flushes every unsaved draft, each `PUT` beside
+  its upload. Going hidden flushes what waits on the save timer, each `PUT`
+  after its upload. The draft journal holds each drawing from its change
+  on, so one the close does not land comes back on the next visit
+  ([handwriting.md](handwriting.md) "Fences").
+- The draft journal (`journalAll`) and the viewer's layout
+  (`app/sessionState.js` `flushSession`) write on both.
+
+A tab going to the background sends the same way, since a phone may freeze
+or end a hidden tab without a `pagehide`, but for the edits' batches behind
+the next one. A tab hidden before it closes sent then, and its `pagehide`
+sends what is still unsaved. The claim keeps the edits' room whichever
+listener runs first: their batches go with keepalive whenever the edits
+alone fit the cap.
+
+At a close, `hide()` first names the rest of the queue: batches of
+`MAX_OPS` ops under the ids `pendingKeepaliveBodies()` gave them
+(`sealed`). With no batch on its way, the next one goes through the
+session's own send, with keepalive, so its answer is read if the page lives
+on. A batch on its way goes again as a copy under its id (`keepalivePost`),
+since a closing page may cut a plain request off. The named batches behind
+it go as copies. Nothing is spent: the session sends each named batch later
+under its name, and one whose copy landed first is answered, not applied
+again. Edits made after `hide()` queue behind the named batches and never
+fold into them (`pushOp`'s floor). Copies sent at once can reach the server
+out of order. A copy naming a block an earlier batch inserts is then
+refused (404), and goes again in order if the page lives. A copy that
+applies before the batch it follows is never undone: its in-order send is
+a replay. The server would then keep a word the tab took back.
+
+So only a close sends copies behind a batch. Going hidden, `hide(false)`
+sends the next batch alone with keepalive: the one out, again or as a copy
+while it is on its way, else the next of the queue. The rest follows its
+answer, in order. A close whose `pagehide` listener Firefox stopped before
+its first statement sends just that batch. In the app Firefox stopped only
+`journalAll`, the first of six `pagehide` listeners. The edits' listener is
+the fifth
+([research/keepalive-abort.md](../research/keepalive-abort.md#the-app-at-a-close)).
+
+The claim holds what the edits needed when a lower priority asked. A
+tab hidden with a drawing to save sends it with keepalive. Back on the
+page, the edits can grow past the room that upload leaves them while it
+is still on its way, and the tab can close before it is answered. Then
+the edits' POST goes both ways at once: with keepalive, and as the plain
+copy it would be otherwise. `keepaliveFetch` does this for a `critical`
+request whose body fits beside the critical requests on their way but
+not beside everything. Its batch id makes the copy that lands second a
+replay. In Chromium and WebKit, a page leaving for another (a
+navigation, a reload) stops counting its earlier keepalive requests, so
+the keepalive copy goes. So does a page that closes itself
+(`window.close()`): both browsers stop counting them before `pagehide`,
+Chromium failing their fetches with a `TypeError` and WebKit giving no
+sign. A tab closed any other way refuses the keepalive copy, and only the
+plain copy goes. No request is aborted to make room: both browsers keep an
+aborted keepalive request going and free its share a task later
+(Chromium) or once it is answered (WebKit). So a keepalive sent in the
+abort's own task is refused
+([research/keepalive-abort.md](../research/keepalive-abort.md)).
+
+`keepaliveFetch(url, init, {priority})` sends with keepalive when the
+body (`bodyBytes`: a string's UTF-8, a Blob's size, a buffer's bytes; a
+body whose length is not known before it goes counts as too long) fits
+the priority's room. Otherwise it sends a plain fetch, which a closing
+page may cut off but the browser never refuses. `available(priority)` is
+the room, for a planner (`ink/inkFlush.js`), never below 0: a request
+with no body (a `DELETE`) always goes with keepalive, since it takes
+none. Chromium and Firefox refuse one only past 256 keepalive requests in
+flight, far more than the app sends. `apiJson(url, init, {keepalive:
+priority})` sends through the ledger. The fetch's promise settles with
+the answer's headers, a moment before the browser stops counting the
+request, so the ledger reads a copy of the answer to its end
+(`Response.clone()`).
+`frontend/tests/keepalive.test.mjs` pins the policy and runs a closing
+tab's requests over a model of the browser's rule. The scratch scenario
+`tests/e2e/tabClose.mjs` closes a real tab right after a change, and
+`--stop pagehide` closes it with no `pagehide` listener of the app
+running ([debugging.md](debugging.md#browser-end-to-end-suite)).
 
 ## What the user sees (`src/collaboration/Presence.jsx`, CSS in `shared/styles/app.css`)
 
@@ -814,9 +1010,24 @@ state in App instead of the tree.
   keystroke on a queued move, a refetch's overlay, an older batch read
   late), retries and their backoff, rejection, navigation
   during a save, presence messages, the caret throttle, reconnect backoff,
-  read-only sessions; browser behavior is covered separately below.
+  read-only sessions, and `pendingKeepaliveBodies` as exactly what
+  `hide()` sends at a close (every page's batches, none of a page in
+  Recently deleted, the next one through the session's send with keepalive
+  and the rest as copies), the same ids twice when it runs twice, edits
+  made after it queuing behind the batches it named, and going hidden
+  (`hide(false)`) sending only the batch that goes next; browser behavior
+  is covered separately below.
+- `frontend/tests/keepalive.test.mjs`: the page's keepalive ledger
+  ("Keepalive") — body bytes, each priority's room (never below 0, so a
+  body-less request always fits), claims read lazily and once a task,
+  release once the answer's body is in or the request fails, a plain
+  fetch for what does not fit, the edits sent both ways when a drawing
+  from an earlier flush holds their room (nothing aborted for them), and
+  a closing tab's requests over a model of the browser's 64 KiB rule,
+  also with one sender's `pagehide` listener stopped.
 - `frontend/tests/collabRobustness.test.mjs`: the refused-batch paths
-  (conflict, signed out, refused for good), every op on a deleted block
+  (conflict, signed out, refused for good), a conflict dropping ops from
+  a batch `hide()` named, which keeps its name, every op on a deleted block
   dropped in one round trip, a delete racing a move into it, a rescue not
   repeated and its budget restored, ours put back on top of theirs (a block
   both moved, a note a rescue re-created), a remote move this tab can't
@@ -841,20 +1052,40 @@ state in App instead of the tree.
   reload surviving Ctrl+Z, a failed refresh keeping the page and retrying,
   undo never deleting the text the other wrote in our note, the other
   indenting around an open editor keeping it open, typing at one caret
-  keeping both people's keystrokes, a paste arriving as two batches leaving
+  keeping both people's keystrokes, a word taken back while a save waits
+  for its retry staying taken back on the server through a tab switch, a
+  paste arriving as two batches leaving
   the idle tab silent, typing kept through Recently deleted and saved after
   the restore, a
   highlight made by the other person; `share.mjs` covers the invited editor on a share link and
   the stranger typing through an anyone-with-the-link edit share under a
   renamed display name, and `textBoxes.mjs` a text box one person moves
   while the other types in it.
+- A closing tab: `node tests/e2e/tabClose.mjs` from `frontend/`, a scratch
+  scenario apart from the groups
+  ([debugging.md](debugging.md#browser-end-to-end-suite)). It types in a
+  note, closes the tab at once and asserts that the server got the typing,
+  also with no `pagehide` listener of the app running (`--stop pagehide`).
 
 ## Limits and next steps
 
 - Queued edits live in memory, not in durable offline storage. The tab asks
   before it closes with edits unsaved. Keepalive saves on tab close are best
-  effort and subject to browser limits (64 KB), so an outage followed by
-  confirming the close, or a crash, still loses them.
+  effort. The edits come first in the page's 64 KiB of keepalive bodies
+  ("Keepalive"), but a batch past that goes as a plain fetch the closing
+  page may cut off. So a closing tab may lose edits past 64 KiB, and edits
+  that grew past their room while a drawing's upload from an earlier
+  flush was still on its way (leaving for another page takes their
+  keepalive copy). At a close the plain copy reached a loopback server
+  from most Chromium closes. From WebKit it arrived in 13 of 45 closes
+  at 1 KiB. Once a new connection took 50 or 200 ms to open, it arrived
+  in 2 of 480 ([research/keepalive-abort.md](../research/keepalive-abort.md)).
+  An outage followed by confirming the close, or a crash, still loses
+  them.
+- A close or a reload with a batch unanswered and edits behind it sends
+  them at once, and they can land out of order. A copy that applies before
+  the batch it follows is never undone ("Keepalive"). Keeping their order
+  would take a server that holds a batch until the one it follows lands.
 - A remote delete of a block with our text edit in flight applies at once;
   the edit then comes back as a rescue only if our base still held the
   block, else it is dropped with the block (the screen already showed the

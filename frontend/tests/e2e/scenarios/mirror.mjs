@@ -23,7 +23,7 @@ export async function mirrorScenarios(env) {
       const page = await openPage(ctx, server.base);
       await page.waitForSelector(".folderNewBtn");
       await page.getByRole("button", { name: "Account & settings", exact: true }).click();
-      await page.getByRole("button", { name: "Settings…", exact: true }).click();
+      await page.getByRole("menuitem", { name: "Settings…", exact: true }).click();
       await page.getByRole("dialog", { name: "Settings", exact: true }).waitFor();
       await page.getByRole("navigation", { name: "Settings categories" }).getByRole("button", { name: "Workspaces", exact: true }).click();
       await page.getByText("No clones yet.", { exact: true }).waitFor();
@@ -131,6 +131,10 @@ export async function mirrorScenarios(env) {
       // local and remote side by side as what each changed against the base, the merged text under them, Keep on the current one
       assert((await merge.locator("mark.merge-mine").count()) >= 1 && (await merge.locator("mark.merge-theirs").count()) >= 1, "both sides coloured");
       assertEq(await merge.locator(".mergeVersion").count(), 3, "local, remote and the merged text");
+      // each named by its side and the hint it shows
+      for (const name of ["Local (changed here)", "Remote (changed on origin)", "Merged (both edits in one text)"]) {
+        assertEq(await merge.getByRole("region", { name, exact: true }).count(), 1, name);
+      }
       assertEq((await merge.locator(".mergeVersion.mine mark.merge-mine").first().textContent()).trim(), "(copy)", "local added '(copy)' at the front");
       assertEq((await merge.locator(".mergeVersion.theirs mark.merge-theirs").first().textContent()).trim(), "(original)", "remote added '(original)' at the end");
       assert(await merge.getByRole("radio", { name: "Merged", exact: true }).isChecked(), "the merged text, being in the block, is preselected");
@@ -146,14 +150,14 @@ export async function mirrorScenarios(env) {
       // The row of a paused clone first: tagged, its status line saying which side to update.
       await page.route("**/api/mirrors", gapped);
       await page.getByRole("button", { name: "Account & settings", exact: true }).click();
-      await page.getByRole("button", { name: "Settings…", exact: true }).click();
+      await page.getByRole("menuitem", { name: "Settings…", exact: true }).click();
       await page.getByRole("dialog", { name: "Settings", exact: true }).waitFor();
       await page.getByRole("navigation", { name: "Settings categories" }).getByRole("button", { name: "Workspaces", exact: true }).click();
       const pausedRow = page.locator(".aiProvRow", { hasText: "clone of" });
       await pausedRow.getByText("update needed", { exact: true }).waitFor();
       await pausedRow.getByText("paused · update this Gamma to sync again", { exact: true }).waitFor();      await page.unroute("**/api/mirrors", gapped);
       await page.locator(".aiProvRow", { hasText: "clone of" }).getByRole("button", { name: "More", exact: true }).click();
-      await page.getByRole("button", { name: "Remove origin", exact: true }).click(); // the menu row
+      await page.getByRole("menuitem", { name: "Remove origin", exact: true }).click(); // the menu row
       await page.getByRole("button", { name: "Remove origin", exact: true }).click(); // the confirm
       await page.getByText("No clones yet.", { exact: true }).waitFor();
       assertEq((await user.api("/api/mirrors")).mirrors.length, 0);

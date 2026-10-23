@@ -230,7 +230,7 @@ export async function inboxScenarios({ server, browser, step, until, assert, ass
     try {
       await N.locator(".blockRow", { hasText: "Elsewhere" }).first().waitFor();
       await N.locator('[data-guide="header.account"]').click();
-      await N.getByRole("button", { name: "Settings…", exact: true }).click();
+      await N.getByRole("menuitem", { name: "Settings…", exact: true }).click();
       const dialog = N.getByRole("dialog", { name: "Settings", exact: true });
       await dialog.waitFor();
       await N.getByRole("searchbox", { name: "Search settings" }).fill("Inbox notifications");

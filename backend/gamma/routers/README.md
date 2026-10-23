@@ -39,7 +39,7 @@ One module per API area. Mounted under `/api` in `gamma/app.py`.
 | `clip.py`     | `/api/clip`, `/clip/note`, `/library/*` | the Gamma Connector's endpoints: save a page or a selection, look the library up for the popup |
 | `publisher_sessions.py` | `/api/publisher-sessions*` | publisher sign-in cookies the Connector imports, stored encrypted and write-only |
 | `shares.py`   | `/api/share/*`, `/api/share-settings/*` | share links of a page or a folder (by id) |
-| `imports.py`  | `/api/import/*`, `/jobs/import`     | Logseq, embedded-PDF-annotation, Markdown and the reviewed library imports (the import itself a job) |
+| `imports.py`  | `/api/import/*`, `/jobs/import`     | Logseq, embedded-PDF-annotation, Markdown and the reviewed library imports — Zotero, Markdown zips, Notability notes, Gamma exports (the import itself a job) |
 | `export.py`   | `/api/pages/{id}/export*`, `/folders/{id}/export`, `/bibliography`, `/jobs/export` | every export format, as a download or a job |
 
 Gotchas:

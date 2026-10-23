@@ -82,11 +82,12 @@ test("every preference declares one scope; the profile carries exactly the accou
   const account = new Set(ACCOUNT_PREFS);
   // Appearance, reading, library, chat behaviour, budgets and prompts follow the account…
   for (const name of ["theme", "pdfDarkPage", "embAnnots", "translateLang", "enterNewNote", "searchDetailsHome",
-    "fileLabels", "recentThumbs", "agentEnabled", "agentPerms", "chatEffort", "chatContextChars", "toolRounds", "chatSystem"]) {
+    "fileLabels", "recentThumbs", "agentEnabled", "agentPerms", "chatEffort", "chatContextChars", "toolRounds", "chatSystem", "inkTools"]) {
     assert.ok(account.has(name), `${name} is account-scoped`);
   }
   // …what describes this device, or names this server's provider entries, stays here.
-  for (const name of ["uiScale", "statusBarVisible", "inkPenOnly", "inkTools", "inkEraserSize", "metaModel", "translateModel"]) {
+  for (const name of ["uiScale", "statusBarVisible", "inkPenOnly", "inkEraserMode", "inkEraserSize", "inkLassoMode", "inkHoverPreview",
+    "inkPencilTap", "inkPencilSqueeze", "inkHaptics", "metaModel", "translateModel"]) {
     assert.ok(!account.has(name), `${name} is browser-scoped`);
   }
   // Imported annotations leave the stored PDF by default, so the blocks are
@@ -103,7 +104,7 @@ test("the profile codec keeps valid entries and drops the rest", async () => {
   assert.equal(setterName("pdfDarkPage"), "setPdfDarkPage");
   const read = readProfile({
     theme: "sepia", pdfDarkPage: "yes", translateLang: "xx", translateParallel: 99, toolRounds: 12,
-    chatSystem: "Be brief.", uiScale: 1.4, inkTools: [], unknownPref: 1,
+    chatSystem: "Be brief.", uiScale: 1.4, inkTools: "nope", unknownPref: 1,
     agentPerms: { pdf: { block_edit: false, publisher_cookies: false } },
   });
   assert.equal(read.theme, "sepia");
@@ -113,6 +114,9 @@ test("the profile codec keeps valid entries and drops the rest", async () => {
   for (const dropped of ["pdfDarkPage", "translateLang", "uiScale", "inkTools", "unknownPref"]) {
     assert.ok(!(dropped in read), `${dropped} dropped`);
   }
+  // The strip's presets are a list in the profile, checked by the same codec as the stored one.
+  const presets = readProfile({ inkTools: [{ id: "a", kind: "pen", color: "#DC2626", size: 4, hidden: true, dash: "dotted" }, { id: "b", kind: "pen", color: "#000000", size: 2 }] }).inkTools;
+  assert.deepEqual(presets, [{ id: "a", kind: "pen", color: "#dc2626", size: 4, hidden: true, dash: "dotted" }, { id: "b", kind: "pen", color: "#000000", size: 2 }]);
   assert.equal(read.agentPerms.pdf.block_edit, "off");
   assert.equal(read.agentPerms.pdf.publisher_cookies, "off");
   assert.equal(read.agentPerms.folder.publisher_cookies, "allow", "existing accounts keep connected fetching enabled");

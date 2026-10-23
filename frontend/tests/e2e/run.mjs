@@ -53,6 +53,8 @@ import { guideScenarios } from "./scenarios/guide.mjs";
 import { contextualGuideScenarios } from "./scenarios/contextualGuide.mjs";
 import { triggeredGuideScenarios } from "./scenarios/triggeredGuide.mjs";
 import { inkEditingScenarios } from "./scenarios/inkEditing.mjs";
+import { inkShapesScenarios } from "./scenarios/inkShapes.mjs";
+import { inkZoomScenarios } from "./scenarios/inkZoom.mjs";
 import { pdfLoadScenarios } from "./scenarios/pdfload.mjs";
 import { pdfTouchScenarios } from "./scenarios/pdfTouch.mjs";
 import { ipadScenarios } from "./scenarios/ipad.mjs";
@@ -77,6 +79,8 @@ const RUNNERS = {
   "contextual-guide": contextualGuideScenarios,
   "triggered-guide": triggeredGuideScenarios,
   "ink-editing": inkEditingScenarios,
+  "ink-shapes": inkShapesScenarios,
+  "ink-zoom": inkZoomScenarios,
   "pdf-load": pdfLoadScenarios,
   "ink": inkScenarios,
   "notebooks": notebookScenarios,

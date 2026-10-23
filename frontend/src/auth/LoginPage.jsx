@@ -1,9 +1,9 @@
 import React from "react";
 import { PasswordInput } from "../settings/SettingsKit";
-import { AlertCircleIcon, ArrowLeftIcon, CheckIcon, ChevronRightIcon, ServerIcon } from "../shared/ui/Icons";
+import { AlertCircleIcon, ArrowLeftIcon, CheckIcon, ChevronRightIcon, MailIcon, ServerIcon } from "../shared/ui/Icons";
 import { BrandMark } from "../shared/ui/BrandMark";
 import { nativeHost, postToHost } from "../shared/lib/host.js";
-import { t, tn } from "../shared/i18n/i18n.js";
+import { T, t, tn } from "../shared/i18n/i18n.js";
 
 // The demo landing's picture: the README hero's paper and notes, cropped by
 // tools/branding (design/brand/outputs.json) and served under /media/.
@@ -60,6 +60,16 @@ function LoginError({ children }) {
   );
 }
 
+// A sign-in's outcome that is no failure: a request to join sent, or waiting.
+function LoginNotice({ children }) {
+  return (
+    <div className="loginNotice" role="status">
+      <MailIcon size={16} aria-hidden="true" />
+      <span>{children}</span>
+    </div>
+  );
+}
+
 export function AuthLoading() {
   return <AuthShell><p className="loginLoading">{t("Loading...")}</p></AuthShell>;
 }
@@ -98,18 +108,46 @@ export function SessionConflictPage({ tabUser, activeUser, onReload }) {
   );
 }
 
-// The cloud sign-in callback sends a refused sign-in back here as
-// `?cloud_error=`: shown once, then dropped from the address bar.
-function takeCloudError() {
+// The cloud sign-in callback sends a refused sign-in back to the page it
+// started from as `?cloud_error=`, or, when the refusal asked to join
+// instead (the invited policy, gamma/join_requests.py), as `?cloud_join=`
+// `sent` | `waiting` | `declined`: shown once, then dropped from the
+// address bar.
+function takeParam(name) {
   try {
     const url = new URL(window.location.href);
-    const message = url.searchParams.get("cloud_error");
-    if (!message) return "";
-    url.searchParams.delete("cloud_error");
+    const value = url.searchParams.get(name);
+    if (!value) return "";
+    url.searchParams.delete(name);
     window.history.replaceState(null, "", url.pathname + (url.search || "") + url.hash);
-    return message;
+    return value;
   } catch { return ""; }
 }
+const takeCloudError = () => takeParam("cloud_error");
+const takeCloudJoin = () => takeParam("cloud_join");
+
+// Whether the address carries a cloud sign-in's outcome for this page to
+// show: a share view that opens anyway then shows its sign-in page.
+export function cloudOutcomeInUrl() {
+  const q = new URLSearchParams(window.location.search);
+  return q.has("cloud_error") || q.has("cloud_join");
+}
+
+// This page's address to come back to after a sign-in, without an earlier
+// sign-in's outcome (read before the page drops it from the address bar).
+function hereWithoutOutcome() {
+  const q = new URLSearchParams(window.location.search);
+  q.delete("cloud_error");
+  q.delete("cloud_join");
+  const search = q.toString();
+  return window.location.pathname + (search ? `?${search}` : "");
+}
+
+const JOIN_OUTCOMES = {
+  sent: T("Asked to join. Sign in again once your request is approved."),
+  waiting: T("Your request to join is still waiting. Sign in again once it is approved."),
+  declined: T("Your request to join was declined."),
+};
 
 // `demo` (a demo server, GET /api/server-config): a small landing page — the
 // product pictured beside what it does — that leads with Try the demo (the
@@ -126,6 +164,9 @@ function takeCloudError() {
 // `cloudLogin.lead` (a Gamma Cloud server: a hosted container or the shared
 // server, whose people all sign in through Gamma Cloud): the page is that
 // one button, and the password form folds behind Admin sign-in.
+// `cloudLogin.join_requests` (the invited policy): a newcomer's Gamma Cloud
+// sign-in asks to join, which the foot says, and to whom — the person who
+// shared the page on a share link's gate (`forShare`), else the admin.
 export function LoginPage({
   username,
   password,
@@ -140,10 +181,23 @@ export function LoginPage({
   guestSeeded = false,
   guestTtlHours,
   readOnly = false,
-  next = window.location.pathname + window.location.search,
+  next = hereWithoutOutcome(),
+  forShare = false,
   onBack,
 }) {
   const [cloudError] = React.useState(takeCloudError);
+  const [cloudJoin] = React.useState(takeCloudJoin);
+  const joinOutcome = JOIN_OUTCOMES[cloudJoin] ? (cloudJoin === "declined"
+    ? <LoginError>{t(JOIN_OUTCOMES[cloudJoin])}</LoginError>
+    : <LoginNotice>{t(JOIN_OUTCOMES[cloudJoin])}</LoginNotice>) : null;
+  const asksToJoin = !!cloudLogin?.enabled && !!cloudLogin.join_requests;
+  const joinFoot = asksToJoin ? (
+    <p className="loginFoot">
+      {forShare
+        ? t("New here? Signing in with Gamma Cloud asks the person who shared this page to let you in. They see your Gamma Cloud username and e-mail address.")
+        : t("New here? Signing in with Gamma Cloud asks this server's admin to let you in. They see your Gamma Cloud username and e-mail address.")}
+    </p>
+  ) : null;
   const leadsWithDemo = demo && !!onGuestLogin;
   const leadsWithCloud = !leadsWithDemo && !!cloudLogin?.enabled && !!cloudLogin.lead;
   const [signInOpen, setSignInOpen] = React.useState(false);
@@ -208,8 +262,9 @@ export function LoginPage({
     {cloudButton ? <>
       {cloudButton}
       {cloudError ? <LoginError>{cloudError}</LoginError> : null}
+      {joinOutcome}
       <div className="loginOr">{t("or use your account on this server")}</div>
-    </> : cloudError ? <LoginError>{cloudError}</LoginError> : null}
+    </> : <>{cloudError ? <LoginError>{cloudError}</LoginError> : null}{joinOutcome}</>}
     {passwordForm}
   </>;
   const adminSignIn = (
@@ -227,6 +282,7 @@ export function LoginPage({
         {readOnlyNote}
         {cloudButton}
         {cloudError ? <LoginError>{cloudError}</LoginError> : null}
+        {joinOutcome}
         {adminSignIn}
         {signInOpen ? <div className="loginDisclosureBody">{passwordForm}</div> : null}
         {onBack ? (
@@ -234,6 +290,7 @@ export function LoginPage({
             <ArrowLeftIcon size={14} />{t("Back to the shared page")}
           </button>
         ) : null}
+        {joinFoot}
       </AuthShell>
     );
   }
@@ -249,8 +306,9 @@ export function LoginPage({
         ) : null}
         {/* No self-service sign-up on a Gamma server (server-config's
             `registration` is always off); with Gamma Cloud sign-in on,
-            whether a newcomer gets in is the admin's policy, so say nothing. */}
-        {cloudLogin?.enabled ? null : (
+            whether a newcomer gets in is the admin's policy, so say
+            nothing unless their sign-in asks to join. */}
+        {cloudLogin?.enabled ? joinFoot : (
           <p className="loginFoot">{t("New here? Accounts are made by the person who runs this server.")}</p>
         )}
       </AuthShell>
@@ -278,6 +336,7 @@ export function LoginPage({
       </p>
       {errorText && !signInOpen ? <LoginError>{errorText}</LoginError> : null}
       {cloudError && !signInOpen ? <LoginError>{cloudError}</LoginError> : null}
+      {!signInOpen ? joinOutcome : null}
       {adminSignIn}
       {signInOpen ? <div className="loginDisclosureBody">{signIn}</div> : null}
     </AuthShell>

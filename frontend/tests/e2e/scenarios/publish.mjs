@@ -61,7 +61,7 @@ export async function publishScenarios(env) {
       assertEq(status.identity?.username, "pubber", "the account is linked to its cloud identity");
       // the Account pane's row says so, with the settings sync after it
       await page.getByRole("button", { name: "Account & settings", exact: true }).click();
-      await page.getByRole("button", { name: "Settings…", exact: true }).click();
+      await page.getByRole("menuitem", { name: "Settings…", exact: true }).click();
       await page.getByRole("navigation", { name: "Settings categories" }).getByRole("button", { name: "Account & sync", exact: true }).click();
       const row = page.locator('.setRow[data-setting="Gamma Cloud"]');
       await row.locator(".uiTag", { hasText: "linked" }).waitFor();
@@ -154,7 +154,7 @@ export async function publishScenarios(env) {
       await pill.waitFor();
       // Settings → Account & sync lists it under Publishing; Workspaces keeps it out of the clones
       await page.getByRole("button", { name: "Account & settings", exact: true }).click();
-      await page.getByRole("button", { name: "Settings…", exact: true }).click();
+      await page.getByRole("menuitem", { name: "Settings…", exact: true }).click();
       const nav = page.getByRole("navigation", { name: "Settings categories" });
       await nav.getByRole("button", { name: "Account & sync", exact: true }).click();
       const row = page.locator(".aiProvRow[data-publication]");
@@ -186,7 +186,7 @@ export async function publishScenarios(env) {
       const token = new URL(again.url).searchParams.get("share");
       await page.keyboard.press("Escape");
       await page.getByRole("button", { name: "Account & settings", exact: true }).click();
-      await page.getByRole("button", { name: "Settings…", exact: true }).click();
+      await page.getByRole("menuitem", { name: "Settings…", exact: true }).click();
       await page.getByRole("navigation", { name: "Settings categories" }).getByRole("button", { name: "Account & sync", exact: true }).click();
       const row = page.locator(".aiProvRow[data-publication]");
       await until(() => row.textContent().then((t) => t.includes("1 published page")), { what: "the row counts the page again" });
@@ -233,7 +233,7 @@ export async function publishScenarios(env) {
     // second account takes Push from the dialog the row opens on its own.
     const linkFromSettings = async (p) => {
       await p.getByRole("button", { name: "Account & settings", exact: true }).click();
-      await p.getByRole("button", { name: "Settings…", exact: true }).click();
+      await p.getByRole("menuitem", { name: "Settings…", exact: true }).click();
       await p.getByRole("navigation", { name: "Settings categories" }).getByRole("button", { name: "Account & sync", exact: true }).click();
       await p.getByRole("button", { name: "Link Gamma Cloud account", exact: true }).click();
     };

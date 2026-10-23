@@ -339,7 +339,7 @@ class _Canvas:
 
     # -- page bookkeeping --
     def _new_page(self):
-        self.pages.append({"ops": [], "fonts": {HELV}, "xobjects": {}, "links": []})
+        self.pages.append({"ops": [], "fonts": {HELV}, "xobjects": {}, "links": [], "ink": False})
         self.y = MARGIN_TOP
 
     @property
@@ -467,7 +467,9 @@ class _Canvas:
         self.need(h)
         top = self.y
         self.page["ops"].append(inkmod.pdf_path_ops(
-            ink_file, lambda px, py: (x + (px - box[0]) * scale, top + (py - box[1]) * scale), scale))
+            ink_file, lambda px, py: (x + (px - box[0]) * scale, top + (py - box[1]) * scale), scale,
+            frame=(1, 0, 0, -1, 0, PAGE_H)))            # the page's y-down frame (write)
+        self.page["ink"] = True
         self.y += h + IMAGE_GAP
         return True
 
@@ -602,10 +604,12 @@ class _Canvas:
     # -- output --
     def write(self):
         """Flush the pages into the writer and return its PDF bytes."""
+        from . import ink as inkmod
         total = len(self.pages)
         self.glyphs.finalize()
         finalize_cid(self.writer)
         glyph_fonts = self.glyphs.resources()
+        grain = inkmod.GrainPatterns(self.writer)   # one tile per pencil colour for the whole document
         for n, page in enumerate(self.pages):
             self._footer(page, n + 1, total)
             # add_blank_page returns the page it was handed, not the clone that
@@ -624,6 +628,13 @@ class _Canvas:
             if page["xobjects"]:
                 resources[NameObject("/XObject")] = DictionaryObject(
                     {NameObject("/" + name): ref for name, ref in page["xobjects"].items()})
+            if page["ink"]:                      # the graphics states and grain its handwriting sets
+                states = inkmod.pdf_path_resources(body)
+                if states:
+                    resources[NameObject("/ExtGState")] = states
+                patterns = grain.resources(body)
+                if patterns:
+                    resources[NameObject("/Pattern")] = patterns
             pdf_page[NameObject("/Resources")] = resources
             self._link_annotations(n, page["links"])
         self._bookmarks()

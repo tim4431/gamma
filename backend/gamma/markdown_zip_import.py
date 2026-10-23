@@ -43,7 +43,8 @@ naming and link conventions:
   place, one common root directory (and any such wrapper) is dropped.
 
 There is no cap on the size of the zip or its number of notes; what guards
-the server is a zip-bomb rule (MAX_RATIO) and the free disk (see below).
+the server is the guarded walk the library imports share (gamma/import_zip.py:
+a zip-bomb rule, nested zips spooled to temporary files) and the free disk.
 """
 
 import contextlib
@@ -54,20 +55,18 @@ import json
 import posixpath
 import re
 import shutil
-import tempfile
 import unicodedata
 import zipfile
 from urllib.parse import unquote
 
 from fastapi import HTTPException
-from fractional_indexing import generate_key_between, generate_n_keys_between
 
 from . import config, jobs
-from .blocks_store import (FOLDERS, STORED_COLUMNS, filing, folder_inserts, folder_paths, last_child_position,
-                           new_block_id, split_path, touch_page, write_lock)
-from .db import page_now
+from .blocks_store import (FOLDERS, filing, folder_inserts, folder_paths, insert_page_tree, new_block_id,
+                           split_path, write_lock)
 from .import_review import archive_entries, destination, validate_selection
 from .import_staging import MIN_FREE_BYTES
+from .import_zip import check_ratio, new_walk, walk_zip
 from .logbuf import log
 from .markdown_import import (MAX_BLOCKS, MAX_MARKDOWN_BYTES, TooManyBlocks, fm_list, fm_text, md_to_blocks,
                               parse_frontmatter)
@@ -75,20 +74,6 @@ from .ops import after_commit, apply_batches, ensure_filing
 from .server_settings import MB, workspace_quota
 from .storage import IMAGE_MEDIA_TYPES, content_digest, is_pdf, store_file, upload_media_type
 
-# The zip-bomb guard, in place of a cap on the unpacked size (Apache POI's
-# rule): an entry past RATIO_GRACE bytes that inflates more than MAX_RATIO
-# times its compressed size is not read, and an archive that does so as a
-# whole is refused. Notes pack about 4:1 and photos or PDFs 1:1, a zip
-# bomb 1000:1. What the import writes — a nested zip spooled to a
-# temporary file, a bundled file stored — must leave the disk
-# MIN_FREE_BYTES free, as the staged upload had to.
-MAX_RATIO = 100
-RATIO_GRACE = 1 << 20
-# Zips inside the zip are opened (Notion's Part-N.zip, a zipped export) to
-# this depth. Each one opened holds a temporary file until the import ends,
-# hence a ceiling on how many, far above Notion's parts.
-MAX_ZIP_DEPTH = 2
-MAX_NESTED_ZIPS = 500
 # A Notion database's rows, in tables of at most this many rows (and
 # characters): each table one block the editor renders and can save
 # (ops.MAX_CONTENT is 200,000 characters).
@@ -131,96 +116,7 @@ _COMMENT_RE = re.compile(r"%%.*?%%", re.S)
 _SKIP_DIRS = {".obsidian", ".trash"}
 
 
-# --- zip walking -------------------------------------------------------------
-
-class _Entry:
-    __slots__ = ("path", "source_path", "size", "_zf", "_info")
-
-    def __init__(self, path, zf, info):
-        self.path = path
-        self.source_path = path
-        self.size = info.file_size
-        self._zf, self._info = zf, info
-
-    def read(self) -> bytes:
-        return self._zf.read(self._info)
-
-    def head(self, n: int) -> bytes:
-        with self._zf.open(self._info) as f:
-            return f.read(n)
-
-
-def _entry_name(zi) -> str:
-    name = zi.filename
-    if not (zi.flag_bits & 0x800):  # no UTF-8 flag: zipfile decoded cp437
-        try:
-            name = name.encode("cp437").decode("utf-8")
-        except (UnicodeEncodeError, UnicodeDecodeError):
-            pass
-    return unicodedata.normalize("NFC", name.replace("\\", "/")).lstrip("/")
-
-
-def _walk_zip(zf, prefix, out, walk, depth=0):
-    """Collect ``zf``'s files as entries in ``out``, the zips inside it
-    opened in place (``_open_nested``). ``walk``: an ExitStack the zips
-    opened are closed by, their count, ``[path, reason]`` for what was
-    left out, and the sizes the whole archive's ratio is checked on."""
-    for zi in zf.infolist():
-        if zi.is_dir():
-            continue
-        name = _entry_name(zi)
-        parts = name.split("/")
-        if any(p in ("__MACOSX", ".DS_Store", "") or p.startswith("._") for p in parts):
-            continue
-        full = f"{prefix}{name}"
-        if zi.file_size > RATIO_GRACE and zi.file_size > MAX_RATIO * zi.compress_size:
-            walk["left_out"].append([full, f"unpacks to over {MAX_RATIO} times its packed size, "
-                                           "like a zip bomb: not read"])
-            continue
-        walk["unpacked"] += zi.file_size
-        walk["packed"] += zi.compress_size
-        if name.lower().endswith(".zip"):
-            # Notion's Part-N.zip: its members are siblings of the part file.
-            inner = _open_nested(zf, zi, full, depth, walk)
-            if inner is not None:
-                _walk_zip(inner, posixpath.dirname(full) + "/" if "/" in full else "", out, walk, depth + 1)
-                continue
-        out.append(_Entry(full, zf, zi))
-
-
-def _open_nested(zf, zi, path, depth, walk):
-    """The zip ``zi`` inside ``zf`` (at ``path``), spooled to a temporary
-    file, never held in memory (a Notion part is gigabytes) — or None,
-    with the reason in ``walk``, when it is not opened: too deep, one too
-    many, or no zip after all. It then stays a file, which a note may link.
-    507 when spooling it would leave the disk with less than MIN_FREE_BYTES
-    free."""
-    if depth >= MAX_ZIP_DEPTH:
-        walk["left_out"].append([path, f"a zip nested more than {MAX_ZIP_DEPTH} deep is not opened: "
-                                       "its notes are not imported"])
-        return None
-    if walk["zips"] >= MAX_NESTED_ZIPS:
-        walk["left_out"].append([path, f"more than {MAX_NESTED_ZIPS} zips inside the zip: this one is not "
-                                       "opened, its notes are not imported"])
-        return None
-    if shutil.disk_usage(tempfile.gettempdir()).free - zi.file_size < MIN_FREE_BYTES:
-        raise HTTPException(status_code=507, detail="the server's disk has no room to unpack this zip")
-    spool = tempfile.TemporaryFile()
-    try:
-        with zf.open(zi) as src:
-            shutil.copyfileobj(src, spool, 1 << 20)
-        inner = zipfile.ZipFile(spool)
-    except BaseException as exc:
-        spool.close()
-        if not isinstance(exc, zipfile.BadZipFile):
-            raise
-        walk["left_out"].append([path, "not a readable zip: not opened"])
-        return None
-    walk["stack"].callback(spool.close)  # a ZipFile leaves a file it was handed open
-    walk["stack"].enter_context(inner)
-    walk["zips"] += 1
-    return inner
-
+# --- the walked entries ------------------------------------------------------
 
 def _strip_wrappers(entries):
     """Drop one common root directory (a zipped folder) plus any number of
@@ -461,7 +357,7 @@ def markdown_page(ws: str, conn, raw: bytes, original: str, folder: str = "", *,
         if filed:
             props["folders"] = [filed]
         results = apply_batches(conn, [(FOLDERS, tree_ops)], actor=actor) if tree_ops else []
-        imported = insert_note_page(conn, page_id, title, props, tree, actor)
+        imported = insert_page_tree(conn, page_id, title, props, tree, actor)
         conn.commit()
     except BaseException:
         conn.rollback()
@@ -470,38 +366,6 @@ def markdown_page(ws: str, conn, raw: bytes, original: str, folder: str = "", *,
         after_commit(ws, conn, result)
     return {"block_id": page_id, "title": title, "original_filename": original,
             "imported": imported, "folders": props.get("folders", [])}
-
-
-def insert_note_page(conn, page_id, title, props, tree, actor) -> int:
-    """Insert a root page (last on root) plus its ``{content, children}``
-    tree (a node's own ``id`` is honoured), touched by ``actor``
-    (``touch_page``); returns the number of note blocks written. Takes the
-    write lock first (the position is read under it); the caller commits."""
-    write_lock(conn)
-    now = page_now()
-    pos = generate_key_between(last_child_position(conn, "root"), None)
-    conn.execute(
-        f"INSERT INTO unified_blocks ({STORED_COLUMNS}) VALUES (?,'root',?,?,?,?,?,?)",
-        (page_id, pos, title, json.dumps(props), now, now, page_id),
-    )
-    imported = 0
-    pending = [(page_id, tree)]
-    while pending:
-        parent_id, nodes = pending.pop()
-        if not nodes:
-            continue
-        positions = generate_n_keys_between(None, None, n=len(nodes))
-        for node, child_pos in zip(nodes, positions):
-            child_id = node.get("id") or new_block_id()
-            conn.execute(
-                f"INSERT INTO unified_blocks ({STORED_COLUMNS}) VALUES (?,?,?,?,?,?,?,?)",
-                (child_id, parent_id, child_pos, node.get("content", ""), "{}", now, now, page_id),
-            )
-            imported += 1
-            if node.get("children"):
-                pending.append((child_id, node["children"]))
-    touch_page(conn, page_id, actor, now=now)
-    return imported
 
 
 class _Plan:
@@ -546,11 +410,9 @@ def _import_zip(ws, zf, conn, folder, unpacked, *, actor, preview, selected, pro
     progress = progress or jobs.no_progress
     under, under_path = destination(conn, folder)
     entries = []
-    walk = {"stack": unpacked, "zips": 0, "left_out": [], "unpacked": 0, "packed": 0}
-    _walk_zip(zf, "", entries, walk)
-    if walk["unpacked"] > RATIO_GRACE and walk["unpacked"] > MAX_RATIO * walk["packed"]:
-        raise HTTPException(status_code=413, detail=f"this zip unpacks to over {MAX_RATIO} times its size, "
-                                                    "like a zip bomb: refused")
+    walk = new_walk(unpacked)
+    walk_zip(zf, "", entries, walk)
+    check_ratio(walk)
     _strip_wrappers(entries)
     report = {"pages_created": 0, "pages_skipped": 0, "blocks_imported": 0,
               "assets_stored": 0, "links_resolved": 0, "notion": False, "obsidian": False,
@@ -837,7 +699,7 @@ def _import_zip(ws, zf, conn, folder, unpacked, *, actor, preview, selected, pro
             return
         try:
             for plan in staged:
-                report["blocks_imported"] += insert_note_page(conn, plan.page_id, plan.title, plan.props,
+                report["blocks_imported"] += insert_page_tree(conn, plan.page_id, plan.title, plan.props,
                                                               plan.tree, actor)
             conn.commit()
         except BaseException:

@@ -16,7 +16,7 @@ export async function mcpScenarios(env) {
       const page = await openPage(ctx, server.base);
       const openServer = async () => {
         await page.getByRole("button", { name: "Account & settings", exact: true }).click();
-        await page.getByRole("button", { name: "Settings…", exact: true }).click();
+        await page.getByRole("menuitem", { name: "Settings…", exact: true }).click();
         await page.getByRole("navigation", { name: "Settings categories" }).getByRole("button", { name: "Server", exact: true }).click();
         await page.getByRole("textbox", { name: "Public server URL", exact: true }).waitFor();
       };

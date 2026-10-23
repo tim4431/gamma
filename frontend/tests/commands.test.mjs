@@ -54,6 +54,29 @@ test("the user guide's cheat sheet names every default shortcut", () => {
   }
 });
 
+test("the handwriting commands keep to the strip's selection and clipboard, and decline a key from a text field", () => {
+  const by = (id) => commandById(id);
+  assert.deepEqual(["ink.copy", "ink.cut", "ink.paste", "ink.duplicate", "ink.selectAll"].map((id) => by(id).keys),
+    ["Mod-c", "Mod-x", "Mod-v", "Mod-d", "Mod-a"]);
+  assert.ok(["ink.copy", "ink.cut", "ink.paste", "ink.duplicate", "ink.selectAll"].every((id) => by(id).edits && GROUPS.includes(by(id).group)));
+  const none = { inkOpen: false, inkTool: false, inkSelected: false, inkClip: false };
+  for (const id of ["ink.copy", "ink.cut", "ink.duplicate"]) {
+    assert.equal(by(id).when(none), false, `${id} waits for a selection`);
+    assert.equal(by(id).when({ ...none, inkSelected: true }), true);
+  }
+  assert.equal(by("ink.paste").when({ ...none, inkOpen: true, inkTool: true }), false, "paste waits for a clipboard");
+  assert.equal(by("ink.paste").when({ ...none, inkOpen: true, inkTool: true, inkClip: true }), true, "outside a browser no text is selected");
+  assert.equal(by("ink.paste").when({ ...none, inkOpen: true, inkClip: true }), false, "paste needs a tool other than the hand");
+  assert.equal(by("ink.selectAll").when({ ...none, inkOpen: true, inkTool: true }), true);
+  assert.equal(by("ink.selectAll").when({ ...none, inkOpen: true }), false);
+  const calls = [];
+  const ctx = { inkCopy: () => { calls.push("copy"); return true; }, inkSelectAll: () => { calls.push("all"); return true; } };
+  assert.equal(by("ink.copy").run(ctx, { target: { tagName: "INPUT" } }), false, "a key in a text field is declined");
+  assert.equal(by("ink.copy").run(ctx, { target: { tagName: "DIV", isContentEditable: false } }), true);
+  assert.equal(by("ink.selectAll").run(ctx), true, "no event from the palette or a menu");
+  assert.deepEqual(calls, ["copy", "all"]);
+});
+
 test("fixedKeys follows the Enter preference", () => {
   assert.deepEqual(fixedKeys(false)[0][0], ["Shift-Enter"]);
   assert.deepEqual(fixedKeys(true)[0][0], ["Enter"]);

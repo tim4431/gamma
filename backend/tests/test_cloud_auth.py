@@ -232,7 +232,8 @@ def error_of(r):
 
 def test_server_config_and_start(cloud, monkeypatch):
     c = browser()
-    assert c.get("/api/server-config").json()["cloud"] == {"enabled": True, "issuer": ISSUER, "lead": False}
+    assert c.get("/api/server-config").json()["cloud"] == {"enabled": True, "issuer": ISSUER, "lead": False,
+                                                           "join_requests": False}
     # a share host's people all come from Gamma Cloud: its login page leads with that button
     monkeypatch.setenv("GAMMA_CLOUD_SHARE_HOST", "1")
     assert c.get("/api/server-config").json()["cloud"]["lead"] is True
@@ -251,6 +252,9 @@ def test_refuse_policy(cloud):
     assert c.get("/api/session").json()["user"] is None
     # the refused sign-in's refresh token went back: no device is left at the account server
     assert cloud.revoked == ["rt-1"]
+    # the refusal goes back to the page the sign-in started from (a share link's gate keeps its link)
+    r = callback(c, start(c, next="/?share=ws.secret"))
+    assert r.headers["location"].startswith("/?share=ws.secret&cloud_error=") and "not linked" in error_of(r)
 
 
 def test_provision_policy_creates_account(cloud, monkeypatch):
@@ -306,11 +310,58 @@ def test_claim_policy_links_existing_username(cloud, monkeypatch):
     assert c.post("/api/auth/cloud/unlink").json()["ok"] is True
     assert c.get("/api/auth/cloud/status").json()["identity"] is None
     assert cloud.revoked == ["rt-1", "rt-1"]  # the refused first try's token, then the unlinked one's
-    # a different cloud account with the same username cannot claim a linked or taken name
+    # a different cloud account with the same username claims no linked name, and claim provisions no one
     r = callback(c, start(c))
     assert r.headers["location"] == "/"  # ca_bob re-claims (unlinked, claim policy)
     cloud.person["sub"] = "sub-other-ca_bob"
-    assert "belongs to someone else" in error_of(callback(browser(), start(browser())))
+    assert "not linked" in error_of(callback(browser(), start(browser())))
+    assert account_of("ca_bob-2") == ""
+
+
+def test_a_name_in_use_here_gets_the_first_free_variant(cloud, monkeypatch):
+    """A new cloud account whose username another account here goes by, one
+    linked to another cloud identity or several case variants, gets the
+    first free variant of it; the link, not the name, signs it in again.
+    An account of that name with no cloud link may be the person's own: it
+    is not taken over, and the refusal says what to do."""
+    monkeypatch.setenv("GAMMA_CLOUD_POLICY", "provision")
+    make_user("ca_nia", "pw-ca_nia-123")
+    with connect_users_db() as conn:
+        cloud_auth.link(conn, account_of("ca_nia"), {"sub": "sub-ca_nia", "preferred_username": "ca_nia",
+                                                     "email": "ca_nia@example.org"})
+        conn.commit()
+
+    def sign_in(sub, name):
+        cloud.person.update({"sub": sub, "preferred_username": name, "email": f"{sub}@example.org"})
+        c = browser()
+        return c, callback(c, start(c))
+
+    c, r = sign_in("sub-ca_nia-b", "ca_nia")
+    assert r.headers["location"] == "/" and c.get("/api/session").json()["user"] == "ca_nia-2"
+    c, _ = sign_in("sub-ca_nia-b", "ca_nia")
+    assert c.get("/api/session").json()["user"] == "ca_nia-2"
+    # a variant some account goes by, in any case, is skipped
+    make_user("CA_NIA-3", "pw-ca_nia-123")
+    c, _ = sign_in("sub-ca_nia-c", "ca_nia")
+    assert c.get("/api/session").json()["user"] == "ca_nia-4"
+    # several case variants name no account: the name is in use all the same
+    make_user("CA_Ola", "pw-ca_ola-123")
+    make_user("ca_olA", "pw-ca_ola-123")
+    c, _ = sign_in("sub-ca_ola", "ca_ola")
+    assert c.get("/api/session").json()["user"] == "ca_ola-2"
+    # an account of that name with no cloud link is not taken over
+    make_user("ca_pia", "pw-ca_pia-123")
+    _, r = sign_in("sub-ca_pia", "ca_pia")
+    assert "If it is yours, sign in with its password" in error_of(r)
+    assert account_of("ca_pia-2") == ""
+    # a list of people shows the cloud username beside a name that differs from it, in more than case
+    make_user("CA_Quin", "pw-ca_quin-123")
+    with connect_users_db() as conn:
+        cloud_auth.link(conn, account_of("CA_Quin"), {"sub": "sub-ca_quin", "preferred_username": "ca_quin",
+                                                      "email": "ca_quin@example.org"})
+        conn.commit()
+        named = cloud_auth.cloud_names(conn, [account_of(n) for n in ("ca_nia", "ca_nia-2", "CA_Quin", "ca_pia")])
+    assert named == {account_of("ca_nia-2"): "ca_nia"}
 
 
 def test_claim_is_case_insensitive_when_unambiguous(cloud, monkeypatch):
@@ -518,7 +569,7 @@ def test_default_issuer_until_one_is_saved(monkeypatch):
         cfg = c.get("/api/admin/settings").json()["cloud"]
         assert (cfg["issuer"], cfg["enabled"], cfg["source"]) == ("https://account.example", True, "saved")
         assert c.get("/api/server-config").json()["cloud"] == {"enabled": True, "issuer": "https://account.example",
-                                                                "lead": False}
+                                                                "lead": False, "join_requests": False}
         status = c.get("/api/auth/cloud/status").json()
         assert status["enabled"] and status["connected"] and not status["identity"]
         # a saved empty address keeps it off; a saved one replaces the default
@@ -541,7 +592,8 @@ def test_connecting_a_server_at_a_public_address(cloud, monkeypatch):
         admin = login("ca_conn", "pw-ca_conn-123")
         # the desktop client cannot sign in at a public address: no cloud button, no link, a readable refusal
         assert cloud_auth.needs_connect()
-        assert admin.get("/api/server-config").json()["cloud"] == {"enabled": False, "issuer": "", "lead": False}
+        assert admin.get("/api/server-config").json()["cloud"] == {"enabled": False, "issuer": "", "lead": False,
+                                                                   "join_requests": False}
         assert admin.get("/api/admin/settings").json()["cloud"]["needs_connect"] is True
         assert admin.get("/api/auth/cloud/status").json()["connected"] is False
         r = browser().get("/api/auth/cloud/start", follow_redirects=False)
@@ -1055,7 +1107,7 @@ def test_every_outbound_call_identifies_as_gamma(monkeypatch, tmp_path):
     import io
     import urllib.request
 
-    from gamma import sync_engine, workspaces
+    from gamma import sync_engine
 
     seen = []
 
@@ -1078,7 +1130,7 @@ def test_every_outbound_call_identifies_as_gamma(monkeypatch, tmp_path):
         cloud_auth.discovery("https://acct.example")  # the body is not a full discovery document
     except cloud_auth.CloudAuthError:
         pass
-    workspaces.lookup_with_token("https://acct.example", "tok", "alice")
+    cloud_auth.lookup_with_token("https://acct.example", "tok", "alice")
     sync_engine.Remote("https://share.example", "", "gamma_x").get("/api/sync/whoami")
     assert len(seen) == 3 and all(ua.startswith("Gamma/") for ua in seen), seen
 

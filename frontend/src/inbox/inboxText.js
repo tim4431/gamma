@@ -7,7 +7,8 @@
 // An item is the server's `{id, kind, actor, workspace_id, workspace_name,
 // page_id, page_title, block_id, thread_id, comment_id, share_token,
 // snippet, at, read_at, archived_at}` (GET /api/inbox); `actor` is a
-// username ("" once the account is gone).
+// username ("" once the account is gone). A `join_request` comes from
+// someone with no account here: its snippet is their Gamma Cloud username.
 import { fmtDate, t } from "../shared/i18n/i18n.js";
 import { parseStamp } from "../library/libraryUtils.js";
 import { anchorSnippet } from "../comments/comments.js";
@@ -22,12 +23,17 @@ export function inFilter(item, filter) {
   return isUnread(item);
 }
 
-// A folder share's item names the folder (block_id), not a page.
-export const isFolderShare = (item) => item.kind === "shared" && !item.page_id && !!item.block_id;
+// A folder share's item names the folder (block_id), not a page: a share
+// of it, or a request to join through it.
+export const isFolderShare = (item) => (item.kind === "shared" || item.kind === "join_request")
+  && !item.page_id && !!item.block_id;
+
+// Who the item is from: the account, or the Gamma Cloud username asking to join.
+export const inboxActor = (item) => (item.kind === "join_request" ? item.snippet : item.actor) || "";
 
 // What happened, in one sentence.
 export function inboxSentence(item) {
-  const who = item.actor || t("Someone");
+  const who = inboxActor(item) || t("Someone");
   const page = item.page_title || t("Untitled");
   switch (item.kind) {
     case "mention": return t("{who} mentioned you in {page}", { who, page });
@@ -39,15 +45,18 @@ export function inboxSentence(item) {
         : t("{who} shared {page} with you", { who, page });
     case "invited":
       return t("{who} added you to {workspace}", { who, workspace: item.workspace_name || item.snippet || t("a workspace") });
+    case "join_request":
+      return isFolderShare(item) ? t("{who} asks to open the folder {name}", { who, name: page })
+        : t("{who} asks to open {page}", { who, page });
     default: return t("{who} wrote on {page}", { who, page });
   }
 }
 
 // The words under the sentence: the note's or the comment's text as one
-// line of at most `max` characters. A share's and an invitation's snippet
-// is the name the sentence already says, so they have none.
+// line of at most `max` characters. A share's, an invitation's and a
+// request's snippet is the name the sentence already says, so they have none.
 export function inboxSnippet(item, max = 140) {
-  if (item.kind === "shared" || item.kind === "invited") return "";
+  if (item.kind === "shared" || item.kind === "invited" || item.kind === "join_request") return "";
   return anchorSnippet(item.snippet, max);
 }
 
@@ -95,11 +104,17 @@ export function inboxUrl({ share = "", ws = "", folder = "", page = "", block = 
 // - `{to: "workspace", workspaceId}`: an invitation, the workspace switch;
 // - `{to: "url", url}`: through the share that reached the item, or into
 //   another workspace (`?ws=&page=&block=&thread=`), a navigation;
+// - `{to: "share", pageId, folderId}`: a request to join through a share of
+//   this workspace, the page's or the folder's Share popover, where it is
+//   decided (the other id "");
 // - `{to: "here", pageId, blockId, threadId}`: a page of this workspace,
 //   opened in place (a folder share's item: the folder, `pageId` "").
 export function inboxJump(item, workspaceId, base = "/") {
   if (item.kind === "invited") return { to: "workspace", workspaceId: item.workspace_id };
   const folder = isFolderShare(item);
+  if (item.kind === "join_request" && item.workspace_id === workspaceId) {
+    return { to: "share", pageId: item.page_id || "", folderId: folder ? item.block_id : "" };
+  }
   const where = {
     page: item.page_id || "", block: folder ? "" : item.block_id || "", thread: item.thread_id || "",
   };

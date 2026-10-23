@@ -5,7 +5,8 @@ import { test } from "node:test";
 import { setWallClock } from "../src/shared/model/wallClock.js";
 import {
   DEFAULT_PAPER, blockToSheet, firstSheetId, inkBySheet, insertSheetAfter, newSheet, normalizePaper, paperBefore, paperLines,
-  paperSizeKey, sheetAfterPlan, sheetIdAfter, sheetOfBlock, sheetsOf, stableId, turnPaper, withAllSheetsPaper, withSheetPaper,
+  paperSizeKey, sheetAfterPlan, sheetIdAfter, sheetOfBlock, sheetsOf, stableId, turnPaper, wantsSheetAfter, withAllSheetsPaper,
+  withSheetPaper,
 } from "../src/notebook/notebook.js";
 import { placeAt, placeY } from "../src/notebook/sheetPlace.js";
 
@@ -126,6 +127,18 @@ test("a page after a sheet gets the id that follows from it; after another block
   const again = sheetAfterPlan(withNext, "s1", ids);
   assert.notEqual(again.id, sheetIdAfter("s1"));
   assert.equal(again.add, true);
+});
+
+test("writing into the last quarter of the last sheet wants the next sheet; anywhere else, or on another sheet, does not", () => {
+  const sheets = [{ id: "s1", paper: { height: 800 } }, { id: "s2", paper: { height: 400 } }];
+  const box = (y2) => [10, y2 - 20, 60, y2];
+  assert.equal(wantsSheetAfter(sheets, "s2", box(301)), true, "past three quarters of the last sheet's height");
+  assert.equal(wantsSheetAfter(sheets, "s2", box(300)), false, "at three quarters exactly: not yet");
+  assert.equal(wantsSheetAfter(sheets, "s2", box(500)), true, "its bottom edge counts, below the paper too");
+  assert.equal(wantsSheetAfter(sheets, "s1", box(790)), false, "only the last sheet");
+  assert.equal(wantsSheetAfter(sheets, "s9", box(390)), false, "a sheet not among them");
+  assert.equal(wantsSheetAfter(sheets, "s2", null), false, "a stroke without bounds");
+  assert.equal(wantsSheetAfter([], "s1", box(790)), false, "no sheets");
 });
 
 test("a new page goes right after its block, folded, on the paper of the sheet before it", () => {

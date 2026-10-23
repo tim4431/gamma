@@ -950,8 +950,12 @@ containers.
 against the discovery document and the JWKS (both cached in memory, the
 JWKS refetched on an unknown key id): issuer, audience, expiry, nonce, and
 `email_verified` — an unverified cloud account is refused here as well as
-on the account server. A refusal is a message on the login page
-(`/?cloud_error=`), never a stack trace.
+on the account server. A refusal is a message on the page the sign-in
+started from, signed out: `next` with `?cloud_error=`, its query kept, so a
+share link's sign-in gate shows it and keeps its link — never a stack
+trace. `next` never carries what an earlier round trip reported there
+(`cloud_auth.safe_next` drops `cloud_error`, `cloud_join` and the connect
+outcomes), so a sign-in that succeeds lands on the page as it was.
 
 **The desktop app's sign-in.** The desktop window cannot run this flow
 itself. Its navigation guard sends the account server's page to the system
@@ -996,9 +1000,27 @@ there and still ends in the system browser.
 | the identity is… | policy `refuse` (default) | `claim` | `provision` | `invited` |
 |---|---|---|---|---|
 | linked already | that account | that account | that account | that account |
-| unknown, username = username exists, unlinked (exact, else one case-insensitive match — usernames are lowercase, usernames need not be) | refused with "sign in with its password and link it" | linked to it | refused, as under `refuse` | refused, as under `refuse` |
-| unknown, username = username taken (guest, or linked to another subject) | refused | refused | refused | refused |
-| unknown, no such username | refused | refused | a new account under the username, empty password hash, personal workspace | a new account as under `provision` when an invitation to a shared workspace here waits for the subject, else refused with "This server admits invited people only" |
+| unknown, username = username exists, unlinked (exact, else one case-insensitive match — usernames are lowercase, usernames need not be) | refused: "if it is yours, sign in with its password and link it; if it is someone else's, ask the admin" | linked to it | refused, as under `refuse` | refused, as under `refuse` |
+| unknown, username in use otherwise (an account linked to another subject, a guest, or several case variants) | refused, as for no such username | refused | a new account under the first free variant of the username, `name-2`, `name-3`, … | as for no such username, the account under that variant |
+| unknown, no such username | refused | refused | a new account under the username, empty password hash, personal workspace | a new account as under `provision` when something here admits the subject — an invitation waiting for it, to a shared workspace or to a share, or its request to join an admin approved —, else refused (`NotInvited`, "This server admits invited people only"), and the sign-in asks to join ("Requests to join" below) |
+
+Admission comes before the name: a policy that refuses the subject, or
+`invited` asking it to join, does so whatever its username, and the name
+only matters once an account is made. A local name is unique whatever its
+case (a page host finds its account by name, case-insensitively), so a
+cloud username some other account here goes by, linked to another cloud
+identity, gives the new account the first variant no account goes by in
+any case (`cloud_auth._free_name`). The link, not the name, signs it in
+again; invitations are keyed by subject, so they land on it all the same.
+An account of that name with no cloud link is left alone: it may be the
+person's own, from before Gamma Cloud, and linking it automatically would
+hand it to anyone with that cloud username, so only `claim` and the admin
+subject link it. Not built: the choice for that case on the sign-in page
+(sign in to it with its password and link it, or continue as a new
+account under a variant); the refusal says what to do. Lists of people
+show an account's Gamma Cloud username beside a name here that differs
+from it in more than case (`cloud_auth.cloud_names`): the share popover's
+invited people and a workspace's members, as `cloud`.
 
 On a hosted container a new account is also refused once the plan's
 account cap is reached ("Hosted containers" below).
@@ -1014,9 +1036,12 @@ no password, since nothing else could sign it in. `manage.py
 list-identities` / `link-identity` / `unlink-identity` are the shell
 equivalents. An identity names its account by id (`identities.user_id`),
 so a rename leaves it linked; deleting the account drops it.
-Once the account is known, every sign-in claims the shared-workspace
-invitations waiting for its subject (`workspaces.claim_pending_memberships`,
-[workspaces.md](workspaces.md) "Pending invitations").
+Once the account is known, every sign-in claims what waits for its
+subject: the shared-workspace invitations
+(`workspaces.claim_pending_memberships`, [workspaces.md](workspaces.md)
+"Pending invitations") and the share invitations (`shares.claim_pending`,
+"Requests to join" below), and drops its request to join, answered
+(`join_requests.joined`).
 
 **Access tokens.** `cloud_auth.access_token_for(user_id)` turns the
 stored refresh token into an access token for the endpoints under "What
@@ -1120,11 +1145,85 @@ with `DELETE /api/me/servers`, then revokes the grant
 (`cloud_sync.release`). If no access token is cached, the release refreshes
 once first. Failures are warnings, never errors to the person.
 
-**The username lookup** for invitations
-([workspaces.md](workspaces.md) "Pending invitations") runs on the
-inviter's own grant (`workspaces._cloud_access_token` →
+**The username lookup** (`cloud_auth.lookup_username`) for invitations
+by Gamma Cloud username — to a shared workspace
+([workspaces.md](workspaces.md) "Pending invitations") or to a share
+(below) — runs on the inviter's own grant (`cloud_auth._lookup_token` →
 `access_token_for`). An inviter whose account here is not linked gets
-"Link your own Gamma Cloud account" (503).
+"Link your own Gamma Cloud account" (503). Both kinds count against one
+budget per inviting account, 30 lookups in 10 minutes
+(`cloud_auth.LOOKUPS_PER_10_MIN`).
+
+**A share's invitations by cloud username** (`gamma/shares.py`). A page
+or folder share invites the accounts here by username (`share_users`); on
+a server with cloud sign-in its Share popover also names someone who has
+no account here yet, by their Gamma Cloud username
+(`POST /api/share-settings/{page}/invites`, [api.md](api.md) "Shares").
+The twin of a pending membership: the lookup answers the subject, and the
+invitation waits in `pending_share_users` (users.db: the share's token,
+the subject, the cloud username, the role, the inviter, the time; one per
+share and subject) until the person's first cloud sign-in creates, claims
+or links their account, which turns it into a `share_users` row with its
+role and an Inbox item from the inviter (`shares.claim_pending`; an
+invitation the account holds already keeps its own role). Inviting again,
+by name or by the subject (no lookup), changes the role. Someone whose
+cloud identity is linked here already is invited at once, as by username.
+The rows go with their share (`db.delete_shares`: stopping it, the folder
+or the workspace going), and a share takes at most 100 waiting
+(`shares.MAX_PENDING_PER_SHARE`). A waiting invitation is also what the
+`invited` policy admits a newcomer on (`shares.waiting`), so a server that
+admits invited people only can open one page to one person. Never a guest
+or an integration token: the lookup spends the caller's own grant.
+
+**Requests to join** (`gamma/join_requests.py`). Under the `invited`
+policy a cloud account that nothing admits is refused (`NotInvited`), and
+that refusal asks to join instead: the callback keeps a row in
+`join_requests` (users.db: one per subject, with the username and e-mail
+address it signed in with, the share link its `next` opened, if that share
+exists, the status `pending` / `approved` / `declined`, who decided, when
+it asked first and last) and sends the browser back to `next` with
+`?cloud_join=`:
+
+- `sent`: a new request. The share's maker and the workspace's owners,
+  while they edit there, get a `join_request` Inbox item from
+  `cloud:<subject>` with the username as its snippet
+  ([comments.md](comments.md) "The inbox"); the admins a `join-requests`
+  notice ([settings.md](settings.md) "Notices").
+- `waiting`: one waits already. It takes this sign-in's share (a sign-in
+  from the login page keeps the one it had) and time; a share it moves to
+  is told as for a new one.
+- `declined`: it asks nothing more until an admin removes the row.
+- with 200 waiting already (`MAX_PENDING`) nothing is kept, and the plain
+  refusal goes back as `cloud_error`.
+
+The refused sign-in's refresh token is revoked as for any refusal, so the
+person has no device here. A sign-in the desktop app started gets the
+outcome as its `error` sentence (`join_requests.MESSAGES`).
+`server-config`'s `cloud.join_requests` tells the login page, whose foot
+then says that signing in asks to join, whom (the person who shared the
+page, on a share link's gate; else the admin), and that they see the
+username and e-mail address. Two places decide:
+
+- **The share's managers** (its workspace's editors and owners, no guest)
+  see the requests through its link in its settings (`requests`) and in
+  the Share popover: Approve is an invitation by the subject
+  (`POST …/invites {subject, role: "view"}`), which answers the request,
+  admits the person at their next sign-in and opens the page for them;
+  Decline (`DELETE …/requests/{subject}`) marks it declined.
+- **An admin** sees every request in Settings → Server → Sign-in
+  (`GET /api/admin/join-requests`): Approve (`approved`: the next sign-in
+  gets them an account and what is shared with every signed-in account —
+  a page shared with invited people only stays its sharer's to open),
+  Decline, and Remove for a decided one (a declined person may ask again,
+  an approval not used yet goes). The list names the share's maker, never
+  the page, which an admin may not read.
+
+The row goes when the person's sign-in is admitted, however that came
+about (`join_requests.joined`). An Inbox item settles once its request no
+longer waits on that page's or folder's share. Not built: a request from
+an account already here that a share refuses (the "Not shared with you"
+page has no button), and a mail to the requester when they are let in;
+the gate says to sign in again.
 
 **The share host.** One Gamma in cloud mode holds every free account's
 published pages (the plan's step 5). It runs cloud sign-in under the
@@ -1362,13 +1461,16 @@ beside a running server reaches it at the server's next sync.
 | `offsite` | the off-site copies' interval and copies kept (`offsite._held_to_plan`): the plan's value where `GAMMA_OFFSITE_INTERVAL` / `GAMMA_OFFSITE_KEEP` are unset. Over a value the environment sets, and over the saved settings, it wins only where it is stricter (a shorter interval, more copies) |
 
 **The `invited` policy.** A new account is provisioned only for a subject
-holding an invitation to a shared workspace here (a `pending_memberships`
-row, [workspaces.md](workspaces.md) "Pending invitations"); the sign-in
-then claims it as every sign-in does. Anyone else is refused with "This
-server admits invited people only. Ask its admin for an invitation." An
-existing unlinked account is not claimed, as under `refuse`. It is a policy
-like the others: the environment, the Sign-in pane and the admin API take
-it on any server.
+something here admits: an invitation to a shared workspace (a
+`pending_memberships` row, [workspaces.md](workspaces.md) "Pending
+invitations") or to a share (a `pending_share_users` row) waiting for it,
+or its request to join an admin approved; the sign-in then claims what
+waits as every sign-in does. Anyone else is refused with "This server
+admits invited people only. Ask its admin for an invitation.", and the
+refused sign-in asks to join ("Requests to join" above). An existing
+unlinked account is not claimed, as under `refuse`. It is a policy like the
+others: the environment, the Sign-in pane and the admin API take it on any
+server.
 
 **Read-only.** While the cached answer says `read_only`, every POST, PUT,
 PATCH and DELETE under `/api/` is answered 423 with `{detail, read_only:
