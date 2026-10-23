@@ -25,6 +25,7 @@ import { NO_MENTIONS, mentionChip, mentionChipClass, proseMentions } from "./men
 import { assetUrl } from "../shared/lib/utils";
 import { commandById } from "../app/commands.js";
 import { menuPress } from "../shared/ui/press.js";
+import { personColor } from "../collaboration/personColor.js";
 
 // Clicking a rendered widget drops the caret just inside it, which un-renders
 // the span (the caret now touches it) so the source is editable in place.
@@ -668,8 +669,8 @@ function inlineRenderField(ctx) {
 
 // --- other people's carets ------------------------------------------------
 // The peers editing THIS block (collab.js presence: {client, rev, anchor,
-// head, color, name}) render as a coloured caret with a name tag plus a
-// tinted selection. A StateField keyed by peer: a peer whose `rev` changed
+// head, name}) render as a caret in the person's colour (personColor.js)
+// with a name tag, plus a tinted selection. A StateField keyed by peer: a peer whose `rev` changed
 // (a new caret report — standalone, or riding on its batch) is placed fresh
 // from its offsets, in the text of the transaction that carries the effect
 // (the batch's text change comes in the same render, and runs first); the
@@ -678,15 +679,14 @@ function inlineRenderField(ctx) {
 const setRemoteCursors = StateEffect.define();
 
 class RemoteCaretWidget extends WidgetType {
-  constructor(name, color) {
+  constructor(name) {
     super();
     this.name = name;
-    this.color = color;
   }
-  eq(other) { return other.name === this.name && other.color === this.color; }
+  eq(other) { return other.name === this.name; }
   toDOM() {
     const span = document.createElement("span");
-    span.className = `cmRemoteCaret peer-${this.color}`;
+    span.className = `cmRemoteCaret peer-${personColor(this.name)}`;
     span.setAttribute("data-name", this.name);
     return span;
   }
@@ -697,13 +697,13 @@ function buildRemoteDecos(peers) {
   const ranges = [];
   for (const c of peers.values()) {
     const from = Math.min(c.anchor, c.head), to = Math.max(c.anchor, c.head);
-    if (from < to) ranges.push(Decoration.mark({ class: `cmRemoteSel peer-${c.color}` }).range(from, to));
-    ranges.push(Decoration.widget({ widget: new RemoteCaretWidget(c.name || "", c.color || 0), side: 1 }).range(c.head));
+    if (from < to) ranges.push(Decoration.mark({ class: `cmRemoteSel peer-${personColor(c.name)}` }).range(from, to));
+    ranges.push(Decoration.widget({ widget: new RemoteCaretWidget(c.name), side: 1 }).range(c.head));
   }
   return Decoration.set(ranges, true);
 }
 
-// state: { peers: Map<client, {rev, anchor, head, color, name}> (positions
+// state: { peers: Map<client, {rev, anchor, head, name}> (positions
 // kept current in this editor's text), deco: the decorations built from it }
 const remoteCursorField = StateField.define({
   create: () => ({ peers: new Map(), deco: Decoration.none }),
@@ -723,11 +723,11 @@ const remoteCursorField = StateField.define({
       const clamp = (n) => Math.max(0, Math.min(Number(n) || 0, len));
       const next = new Map();
       for (const c of e.value || []) {
-        const key = c.client || `${c.color}:${c.name}`;
+        const key = c.client || c.name;
         const prev = peers.get(key);
-        next.set(key, prev && prev.rev === c.rev && prev.color === c.color && prev.name === c.name
+        next.set(key, prev && prev.rev === c.rev && prev.name === c.name
           ? prev
-          : { rev: c.rev, anchor: clamp(c.anchor), head: clamp(c.head), color: c.color || 0, name: c.name || "" });
+          : { rev: c.rev, anchor: clamp(c.anchor), head: clamp(c.head), name: c.name || "" });
       }
       peers = next;
       changed = true;
@@ -1179,7 +1179,7 @@ const BlockCmEditor = React.forwardRef(function BlockCmEditor({
   }, [value]);
 
   // Peers' carets in this block.
-  const cursorsKey = (remoteCursors || []).map((c) => `${c.client}:${c.rev}:${c.color}:${c.anchor}:${c.head}:${c.name}`).join("|");
+  const cursorsKey = (remoteCursors || []).map((c) => `${c.client}:${c.rev}:${c.anchor}:${c.head}:${c.name}`).join("|");
   useEffect(() => {
     const view = viewRef.current;
     if (!view) return;

@@ -234,7 +234,7 @@ export function createCollabSession({ clientId, api, openSocket, keepalivePost, 
     reconnectTimer: null,
   };
   let peers = [];       // other clients on the page
-  let me = { client: clientId, color: 0, connected: false };
+  let me = { client: clientId, connected: false };
   const setPeers = (next) => {
     peers = typeof next === "function" ? next(peers) : next;
     onPeers?.(peers);
@@ -973,7 +973,7 @@ export function createCollabSession({ clientId, api, openSocket, keepalivePost, 
         if (session.pageId !== pageId && msg.t !== "hello" && msg.t !== "inbox") return;
         switch (msg.t) {
           case "hello": {
-            setMe({ client: msg.client, color: msg.color, connected: true });
+            setMe({ client: msg.client, connected: true });
             // The server's build, compared with the one this page loaded
             // under (ink/buildFence.js: a tab left open across an update
             // stops drawing).

@@ -7,7 +7,7 @@ client that follows them live; the web app's home view re-reads them
 instead). Gamma runs as one uvicorn process everywhere (Docker,
 the desktop sidecar), so nothing needs to be shared across workers. A room
 holds the websocket peers
-(``routers/collab.py`` accepts them) with their identity, colour and last
+(``routers/collab.py`` accepts them) with their identity and last
 cursor; ``publish`` sends a message to every peer and is safe to call from
 the event loop AND from threadpool code (the sync AI chat endpoint runs the
 agent's tools there): sends are always scheduled on the loop the sockets
@@ -33,7 +33,6 @@ from dataclasses import dataclass, field
 
 from .logbuf import log
 
-PALETTE = 8  # colour indexes handed out per room (CSS: --peer-0 … --peer-7)
 CLOSE_REVOKED = 4403   # the peer lost access to the page
 CLOSE_REPLACED = 4409  # the same tab (client id) joined again on a newer socket
 
@@ -47,7 +46,6 @@ class Peer:
     client: str
     user: str          # session username (what the others see), "" for an anonymous share viewer
     name: str
-    color: int
     can_edit: bool
     block: str = ""    # block the peer is on (focused row or open editor)
     anchor: int = -1   # selection inside the open editor, -1 = no editor open
@@ -58,8 +56,7 @@ class Peer:
     token: str = ""    # the share token it came through, "" for a member
 
     def public(self) -> dict:
-        return {"client": self.client, "user": self.user, "name": self.name,
-                "color": self.color, "can_edit": self.can_edit,
+        return {"client": self.client, "user": self.user, "name": self.name, "can_edit": self.can_edit,
                 "block": self.block, "anchor": self.anchor, "head": self.head}
 
 
@@ -67,13 +64,6 @@ class Peer:
 class Room:
     key: tuple[str, str]
     peers: dict[str, Peer] = field(default_factory=dict)
-
-    def next_color(self) -> int:
-        used = {p.color for p in self.peers.values()}
-        for i in range(PALETTE):
-            if i not in used:
-                return i
-        return len(self.peers) % PALETTE
 
     def presence(self) -> list[dict]:
         return [p.public() for p in self.peers.values()]

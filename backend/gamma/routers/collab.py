@@ -130,14 +130,14 @@ def _socket_access(sock: WebSocket, page_id: str) -> tuple[str, collab.Peer] | N
     else:
         user = sock.state.user or ""
         name = user or ANONYMOUS_NAME
-    return ws, collab.Peer(ws=sock, client="", user=user, name=name, color=0, can_edit=can_edit,
+    return ws, collab.Peer(ws=sock, client="", user=user, name=name, can_edit=can_edit,
                            account=account, is_guest=is_guest, token=token)
 
 
 @router.websocket("/ws/page/{page_id}")
 async def page_socket(sock: WebSocket, page_id: str):
-    """The page's live channel. Server → client: ``hello {client, color,
-    seq, peers}`` on join, ``join {peer}`` / ``leave {client}``, ``cursor
+    """The page's live channel. Server → client: ``hello {client, seq,
+    peers}`` on join, ``join {peer}`` / ``leave {client}``, ``cursor
     {client, block, anchor, head}``, ``ops {seq, actor, client, at, ops}``
     for every applied batch, ``reload`` for changes ops can't express (a
     restore included), ``trashed`` when the page went to Recently deleted,
@@ -160,9 +160,6 @@ async def page_socket(sock: WebSocket, page_id: str):
     try:
         await sock.accept()
         client = peer.client = (sock.query_params.get("client") or secrets.token_urlsafe(6))[:32]
-        room = collab.room_for(ws, page_id)
-        same_tab = room.peers.get(client) if room else None  # a reconnect keeps its colour
-        peer.color = same_tab.color if same_tab else room.next_color() if room else 0
         room = collab.join(ws, page_id, peer)
         # The log position is read only now that the peer is in the room: a
         # batch committed before this read is counted in the hello (the client
@@ -175,7 +172,7 @@ async def page_socket(sock: WebSocket, page_id: str):
         seq = await run_in_threadpool(log_position)
         # `build`: what the client's handwriting fence compares with the
         # build it loaded under (docs/dev/handwriting.md "Client", the build fence).
-        await sock.send_text(json.dumps({"t": "hello", "client": client, "color": peer.color, "seq": seq,
+        await sock.send_text(json.dumps({"t": "hello", "client": client, "seq": seq,
                                          "peers": room.presence(), "build": version.build_info()}))
         await room.broadcast(json.dumps({"t": "join", "peer": peer.public()}), exclude=client)
         # Access once more now that the peer is in the room (after the hello,

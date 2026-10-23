@@ -99,7 +99,7 @@ test("deferred content preserves every remote property patch", async (t) => {
 test("a remote edit ordered after our ack wins, with its caret", async (t) => {
   const ack = deferred();
   const h = setup(t, () => ack.promise);
-  h.message({ t: "hello", client: ME, color: 0, seq: 0, peers: [{ client: "p2", color: 1 }] });
+  h.message({ t: "hello", client: ME, seq: 0, peers: [{ client: "p2" }] });
   h.edit([block("a", "mine"), block("b")]);
   const saving = h.session.flush();
   ack.resolve(batch(1, [{ op: "set", id: "a", content: "mine" }], ME));
@@ -347,8 +347,8 @@ test("a hello with a newer sequence catches up from the log", async (t) => {
     assert.ok(url.endsWith("?since=0"));
     return { seq: 1, batches: [batch(1, [{ op: "set", id: "b", content: "late" }])] };
   });
-  h.message({ t: "hello", client: ME, color: 2, seq: 1, peers: [{ client: ME, color: 2 }, { client: "p2", color: 1 }] });
-  assert.deepEqual(h.me, { client: ME, color: 2, connected: true });
+  h.message({ t: "hello", client: ME, seq: 1, peers: [{ client: ME }, { client: "p2" }] });
+  assert.deepEqual(h.me, { client: ME, connected: true });
   assert.deepEqual(h.peers.map((p) => p.client), ["p2"]);
   await settle();
   assert.equal(h.tree[1].content, "late");
@@ -367,8 +367,8 @@ test("a reload message refetches instead of applying, and the next load resumes"
 
 test("presence: join, leave, a standalone cursor and the caret on a batch", (t) => {
   const h = setup(t, async () => ({}));
-  h.message({ t: "hello", client: ME, color: 0, seq: 0, peers: [] });
-  h.message({ t: "join", peer: { client: "p2", color: 1 } });
+  h.message({ t: "hello", client: ME, seq: 0, peers: [] });
+  h.message({ t: "join", peer: { client: "p2" } });
   assert.deepEqual(h.peers.map((p) => p.client), ["p2"]);
   h.message({ t: "cursor", client: "p2", block: "a", anchor: 1, head: 1 });
   assert.equal(h.peers[0].block, "a");
@@ -384,7 +384,7 @@ test("ink-live: a stroke in progress goes out on the open socket only, and a pee
   const h = setup(t, async () => ({}));
   const got = [];
   h.options.onInkLive = (msg) => got.push(msg);
-  h.message({ t: "hello", client: ME, color: 0, seq: 0, peers: [] });
+  h.message({ t: "hello", client: ME, seq: 0, peers: [] });
   const chunk = { page: 1, g: null, id: "k7Qm2x", style: { tool: "pen", size: 2, color: "#1f1f1f", opacity: 1, pen: true }, k: 1, n: 0, samples: [[1, 2, 0.5, 0, null, null]] };
   assert.equal(h.session.sendInkLive(chunk), true);
   assert.deepEqual(h.socket().sent, [{ ...chunk, t: "ink-live" }]);
@@ -399,7 +399,7 @@ test("ink-live: a stroke in progress goes out on the open socket only, and a pee
 
 test("our caret goes out throttled, rides on a batch while edits are queued, and is not repeated", async (t) => {
   const h = setup(t, async (url, init) => batch(1, JSON.parse(init.body).ops, ME));
-  h.message({ t: "hello", client: ME, color: 0, seq: 0, peers: [] });
+  h.message({ t: "hello", client: ME, seq: 0, peers: [] });
   h.session.sendCursor({ block: "a", anchor: 1, head: 1 });
   assert.equal(h.socket().sent.length, 0, "throttled");
   h.fire();
@@ -419,7 +419,7 @@ test("our caret goes out throttled, rides on a batch while edits are queued, and
 
 test("the socket reconnects with growing backoff until disconnect", (t) => {
   const h = setup(t, async () => ({}));
-  h.message({ t: "hello", client: ME, color: 0, seq: 0, peers: [{ client: "p2", color: 1 }] });
+  h.message({ t: "hello", client: ME, seq: 0, peers: [{ client: "p2" }] });
   assert.equal(h.me.connected, true);
   h.socket().onclose();
   assert.equal(h.me.connected, false);
@@ -612,7 +612,7 @@ test("a text box: an older batch acked while its page was away, read from the lo
 
 test("the room's comments nudge and every hello refetch the page's threads; an inbox nudge is the account's, on any page", async (t) => {
   const h = setup(t, async () => ({ seq: 0, batches: [] }));
-  h.message({ t: "hello", client: ME, color: 0, seq: 0, peers: [] });
+  h.message({ t: "hello", client: ME, seq: 0, peers: [] });
   h.message({ t: "comments", block_id: "a", thread_id: "c1" });
   assert.deepEqual(h.comments, [null, { t: "comments", block_id: "a", thread_id: "c1" }]);
   h.message({ t: "inbox" });

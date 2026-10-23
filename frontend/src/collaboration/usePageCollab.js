@@ -51,7 +51,7 @@ export function usePageCollab(opts) {
   o.current = opts;
   const { pageId, enabled } = opts;
   const [peers, setPeers] = useState([]);       // other clients on the page
-  const [me, setMe] = useState({ client: CLIENT_ID, color: 0, connected: false });
+  const [me, setMe] = useState({ client: CLIENT_ID, connected: false });
 
   const ref = useRef(null);
   if (!ref.current) {

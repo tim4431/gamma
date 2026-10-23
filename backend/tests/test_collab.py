@@ -296,7 +296,7 @@ def test_socket_hello_and_fanout(guest):
         assert [p["client"] for p in hello["peers"]] == ["aa"] and hello["peers"][0]["name"] == guest_name()
         with guest.websocket_connect(f"/api/ws/page/{page['id']}?client=bb") as b:
             hb = recv_hello(b)
-            assert hb["color"] != hello["color"] and {p["client"] for p in hb["peers"]} == {"aa", "bb"}
+            assert {p["client"] for p in hb["peers"]} == {"aa", "bb"}
             assert recv(a, "join")["peer"]["client"] == "bb"
             # a write reaches both, tagged with the writer's client id and the next seq
             r = _ops(guest, page["id"], [{"op": "insert", "id": "wsA", "parent": page["id"], "content": "hi"}], client_id="aa")
